@@ -31,10 +31,8 @@
 //!
 //! Already fog-filtered SIM-SIDE, on the ROAD's gate rather than the herd list's: `Discovered` or
 //! `Active`, because a working does not wander off and remembering one is remembering something
-//! true. **The band's own bill is NOT a sum of these rows** — `PopulationCohortState`'s
-//! `quarrywork_demand` / `quarrywork_supplied` / `quarrywork_shortfall` carry it, precisely because
-//! these rows are fog-filtered and a working out of sight would drop out of a client-side total the
-//! band still owes.
+//! true. **A working is kept by its own `extract` crew** (`docs/plan_site_crews.md` §2.5), so its
+//! standing bill and what that crew spent keeping it are on this row and nowhere else.
 
 use flatbuffers::{ForwardsUOffset, Vector};
 use godot::prelude::*;
@@ -128,8 +126,8 @@ pub(crate) fn deposits_to_array(
         //          It is NOT `-1`: this working WILL run out, just not while it is idle.
         // Flattening the two into one "no runway" is the defect the split exists to prevent.
         let _ = dict.insert("turns_remaining", deposit.turnsRemaining() as i64);
-        // **THE STANDING BILL — the patch / herd / road quad, verbatim**, drawn from the band's
-        // `quarrywork` pool. **`demand - supplied == shortfall` HOLDS ON THE WIRE**, all three
+        // **THE STANDING BILL — the patch / herd / road quad, verbatim**, paid by the working's own
+        // `extract` crew before it cuts. **`demand - supplied == shortfall` HOLDS ON THE WIRE**, all three
         // reading the sim's STAMPED basis at the post-decay position, so nothing here is re-derived
         // by subtraction — the build arm moves the ladder position inside the same turn, and a bill
         // struck on one side of the accrual against a payment on the other are two readings of two
@@ -137,14 +135,24 @@ pub(crate) fn deposits_to_array(
         //
         // **`0` ON BOTH FREE FLOORS** (`forestry:deadfall`, `extraction:gathering`), which declare
         // no upkeep at all: nobody built them, so there is nothing to hold, and that is the whole of
-        // what makes a floor free. `upkeep_workers_needed` is the whole `quarrywork` keepers the
-        // bill wants — the readout that makes a standing cost legible ("wants 2, you have 0").
+        // what makes a floor free. `upkeep_workers_needed` is the whole keeping hands the bill wants.
         let _ = dict.insert("upkeep_demand", f64::from(deposit.upkeepDemand()));
         let _ = dict.insert("upkeep_supplied", f64::from(deposit.upkeepSupplied()));
         let _ = dict.insert("upkeep_shortfall", f64::from(deposit.upkeepShortfall()));
         let _ = dict.insert(
             "upkeep_workers_needed",
             deposit.upkeepWorkersNeeded() as i64,
+        );
+        // THE KEEPING LINE'S TWO FORECASTS (`docs/plan_site_crews.md`), whole workers like the count
+        // above: the workers once the in-flight rung is done, and the ABSOLUTE game turn the keeping
+        // first needs one more whole worker (`-1` = never within the build).
+        let _ = dict.insert(
+            "upkeep_workers_at_completion",
+            i64::from(deposit.upkeepWorkersAtCompletion()),
+        );
+        let _ = dict.insert(
+            "upkeep_next_worker_turn",
+            i64::from(deposit.upkeepNextWorkerTurn()),
         );
         // THE NEGLECT COUNTDOWN, NOT THE COUNTER — `RouteState`'s rule verbatim. `0` means IT IS
         // SLIDING NOW, and a working whose bill is met reads its rung's full grace + 1 ("walk away
@@ -198,6 +206,15 @@ pub(crate) fn deposits_to_array(
         // re-derived on the client.
         let _ = dict.insert("upkeep_kit_id", deposit.upkeepKitId().unwrap_or_default());
         let _ = dict.insert("upkeep_kit_named", deposit.upkeepKitNamed());
+        // **WHAT THIS WORKING'S OWN CREW SPENT KEEPING IT** — the patch / herd pair
+        // (`docs/plan_site_crews.md` §2.5): the hands spent keeping, and whether the band-wide
+        // settlement filled less than the site's keeping-tool claim.
+        let _ = dict.insert("upkeep_hands", f64::from(deposit.upkeepHands()));
+        let _ = dict.insert("upkeep_tools_short", deposit.upkeepToolsShort());
+        let _ = dict.insert(
+            "upkeep_toe",
+            &crate::dict::population::kit_toe_to_array(deposit.upkeepToe()),
+        );
         // --- THE ESCAPEMENT FLOOR AND THE CURVE IT IS DRAGGED ON (issue #650) -------------------
         // ⛔ **THE SOURCE-LEVEL `floor` IS GONE FROM THE WIRE, AND NOTHING HERE MAY RE-DERIVE ONE.**
         // It published where this turn's crews stopped, deepest-first across the bands cutting the

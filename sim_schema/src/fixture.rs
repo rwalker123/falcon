@@ -521,6 +521,17 @@ fn seed_snapshot() -> WorldSnapshot {
             // other way round would show a client author an ordering the schema promises cannot
             // happen — and invite exactly the re-sort it forbids.
             assignment.take_species = vec!["flax".to_string(), "wild_emmer".to_string()];
+            // **WHICH KIT ITEMS ARE SHORT, BY NAME** — a nested repeated field, seeded for
+            // `material_yield`'s reason. Spelled out rather than `rows()` on `pool_toe`'s rule: the
+            // list is keyed by item, and a duplicate item on one row is not something the server
+            // can emit. The saturation pass rewrites the floats; the keying is what survives.
+            assignment.kit_toe = ["baskets", "spears"]
+                .iter()
+                .map(|item| KitToeLineState {
+                    item_id: (*item).to_string(),
+                    ..Default::default()
+                })
+                .collect();
         }
         // **A trade party's shipment** (arc #527) — a repeated field on the cohort, seeded for the
         // same reason the assignment's material account above is: an empty one is a field the decode
@@ -530,7 +541,7 @@ fn seed_snapshot() -> WorldSnapshot {
         cohort.material_upkeep_need = rows();
         cohort.material_upkeep_income = rows();
         cohort.material_store = rows();
-        // **THE FIVE STANDING POOLS' TABLES OF EQUIPMENT** (`docs/plan_pool_toe.md` §4) — spelled
+        // **THE STANDING POOLS' TABLES OF EQUIPMENT** (`docs/plan_pool_toe.md` §4) — spelled
         // out rather than `rows()`, on `kit_item_conditions`' rule: the list is keyed by
         // `(pool, item)` and a duplicate key is not something the server can emit.
         //
@@ -547,12 +558,12 @@ fn seed_snapshot() -> WorldSnapshot {
         // (see `PoolToeLineState::filled`).
         //
         // What the pairs still carry is the KEYING, which saturation does not touch: two pools
-        // sharing `stone_dressing` is the band-wide settlement's own case.
+        // sharing `stone_dressing` is the band-wide settlement's own case. Only `roadwork` and
+        // `builders` publish a line (`docs/plan_site_crews.md` §4).
         cohort.pool_toe = [
-            ("agriculture", "hoes", 6.0, 6.0),
             ("roadwork", "earthmoving", 4.0, 1.5),
             ("roadwork", "stone_dressing", 2.0, 0.0),
-            ("quarrywork", "stone_dressing", 3.0, 3.0),
+            ("builders", "stone_dressing", 3.0, 3.0),
             ("builders", "hoes", 2.0, 0.5),
         ]
         .iter()
@@ -563,13 +574,14 @@ fn seed_snapshot() -> WorldSnapshot {
             filled: *filled,
         })
         .collect();
-        // **THE FOUR KEEPING POOLS' CREW ACCOUNTS** (issue #715) — spelled out rather than `rows()`
-        // for `pool_toe`'s reason: the list is keyed by pool and a duplicate key is not something
-        // the server can emit. `builders` is deliberately absent — it is not a keeping pool.
+        // **THE KEEPING POOL'S CREW ACCOUNT** (issue #715) — spelled out rather than `rows()` for
+        // `pool_toe`'s reason: the list is keyed by pool and a duplicate key is not something the
+        // server can emit. `roadwork` is the one keeping pool (`docs/plan_site_crews.md` §4);
+        // `builders` is deliberately absent — it is not a keeping pool.
         //
         // The saturation pass rewrites the floats, so the counts below do not reach the artifact;
         // what survives is the KEYING, which is what a decode has to carry.
-        cohort.pool_crew = ["agriculture", "husbandry", "roadwork", "quarrywork"]
+        cohort.pool_crew = ["roadwork"]
             .iter()
             .enumerate()
             .map(|(rank, pool)| PoolCrewLineState {
@@ -654,6 +666,15 @@ fn seed_snapshot() -> WorldSnapshot {
         herd.build_material_cost = rows();
         herd.upkeep_material_demand = rows();
         herd.upkeep_material_supplied = rows();
+        // **WHICH KEEPING TOOLS THE SITE IS SHORT OF** — spelled out on `kit_toe`'s rule: keyed by
+        // item, and a duplicate item on one site is not something the server can emit.
+        herd.upkeep_toe = ["hoes", "crook"]
+            .iter()
+            .map(|item| KitToeLineState {
+                item_id: (*item).to_string(),
+                ..Default::default()
+            })
+            .collect();
         // …and the per-rung PRE-COMMIT quote pair, which is a different question from the stamped
         // bill above and therefore a different pair of nested repeated fields.
         herd.tame_upkeep_material_demand = rows();
@@ -748,6 +769,15 @@ fn seed_snapshot() -> WorldSnapshot {
         patch.build_material_cost = rows();
         patch.upkeep_material_demand = rows();
         patch.upkeep_material_supplied = rows();
+        // **WHICH KEEPING TOOLS THE SITE IS SHORT OF** — spelled out on `kit_toe`'s rule: keyed by
+        // item, and a duplicate item on one site is not something the server can emit.
+        patch.upkeep_toe = ["hoes", "crook"]
+            .iter()
+            .map(|item| KitToeLineState {
+                item_id: (*item).to_string(),
+                ..Default::default()
+            })
+            .collect();
         // …and the per-rung PRE-COMMIT quote pair — see the herd twin.
         patch.cultivation_upkeep_material_demand = rows();
         patch.field_upkeep_material_demand = rows();
@@ -838,6 +868,15 @@ fn seed_snapshot() -> WorldSnapshot {
         deposit.regrowth_samples = vec![0.0; REGROWTH_CURVE_SAMPLES];
         // **The kits the working offers** — a `[string]`, seeded for the same reason.
         deposit.offered_kit_ids = rows();
+        // **WHICH KEEPING TOOLS THE SITE IS SHORT OF** — spelled out on `kit_toe`'s rule: keyed by
+        // item, and a duplicate item on one site is not something the server can emit.
+        deposit.upkeep_toe = ["hoes", "crook"]
+            .iter()
+            .map(|item| KitToeLineState {
+                item_id: (*item).to_string(),
+                ..Default::default()
+            })
+            .collect();
     }
 
     // --- knowledge -------------------------------------------------------

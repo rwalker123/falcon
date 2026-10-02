@@ -333,10 +333,9 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                             fauna_id: herd_id.to_string(),
                             floor: SUSTAIN_FLOOR,
                         },
-                        workers: KEEPER_WORKERS,
+                        workers: KEEPER_WORKERS + KEEPER_WORKERS,
                         kit: None,
                         priority: SourcePriority::default(),
-                        upkeep_kit: None,
                     },
                     // **The builders' pool, staffed** — a `set_herd_output` commitment is an
                     // ordinary build and is raised from this pool at the head of the band's queue,
@@ -347,20 +346,11 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                         workers: BUILDERS,
                         kit: None,
                         priority: SourcePriority::default(),
-                        upkeep_kit: None,
                     },
                     // **The keeping role, staffed** — the fixture's keeper really is keeping the
                     // herd, and an unstaffed `husbandry` pool reads as total neglect (see
                     // `grazing_2d_pen`'s own note): an accelerating shed would terminate the herd
                     // and there would be nothing left to milk.
-                    LaborAssignment {
-                        party: None,
-                        target: LaborTarget::Husbandry,
-                        workers: KEEPER_WORKERS,
-                        kit: None,
-                        priority: SourcePriority::default(),
-                        upkeep_kit: None,
-                    },
                 ],
                 ..Default::default()
             },
@@ -1129,6 +1119,7 @@ fn seed_the_hunt_row(app: &mut App, keeper: Entity, herd_id: &str) {
         &party,
         output_mult,
         workers,
+        core_sim::NO_HANDS,
         floor,
         labor.yield_average_horizon_turns,
         labor.arrivals_horizon_turns,
@@ -1256,11 +1247,20 @@ fn the_take_crew_answers_for_the_meat_side_alone() {
     }
     let all_meat = published_hunt_row(&mut app);
 
-    let (mut app, _, keeper) = wire_world(FLEECE_SPECIES, SEED_COMPARISON_RUNG, 1.0);
+    let (mut app, milk_herd, keeper) = wire_world(FLEECE_SPECIES, SEED_COMPARISON_RUNG, 1.0);
     for _ in 0..SETTLE_TURNS {
         publishing_turn(&mut app, keeper);
     }
     let all_milk = published_hunt_row(&mut app);
+    // **The row's whole crew carries the hands its keeping took** (`docs/plan_site_crews.md` §4):
+    // the take side is the structural minimum, and the keeping sits on top of it.
+    let milk_keeping = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(&milk_herd)
+        .expect("the milk herd survives")
+        .upkeep_hands;
+    let take_and_keeping = (PARTIAL_BODY_CREW as f32 + milk_keeping).ceil() as u32;
 
     assert!(
         all_meat.workers_needed > 0,
@@ -1268,9 +1268,9 @@ fn the_take_crew_answers_for_the_meat_side_alone() {
          {all_meat:?}"
     );
     assert_eq!(
-        all_milk.workers_needed, PARTIAL_BODY_CREW,
-        "a herd nothing is ever taken from asks for the take crew's structural MINIMUM, however \
-         much milk it gives — `fauna::peak_animal_drop`'s `+ 1` is the partial body a turn's \
+        all_milk.workers_needed, take_and_keeping,
+        "a herd nothing is ever taken from asks for the take crew's structural MINIMUM plus its \
+         keeping, however much milk it gives — `fauna::peak_animal_drop`'s `+ 1` is the partial body a turn's \
          regrowth could tip over, and it is the whole of what is left here: {all_milk:?}"
     );
     assert!(

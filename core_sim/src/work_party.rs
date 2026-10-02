@@ -418,23 +418,34 @@ pub struct CaravanPricing {
 }
 
 impl CaravanPricing {
-    /// Price a caravan of `workers` carrying `kit`, against `wear`, beside `other_rows`.
+    /// Price a caravan carrying `kit` at the row's `priority`, against `wear`, beside `other_rows`.
+    ///
+    /// ⛔ **THE KIT IS SPREAD OVER `take_hands`**, the staffed crew less its planned keeping
+    /// (`docs/plan_site_crews.md` §2.3): a take kit is carried by the hands taking. `claim` is the
+    /// row's take-kit claim ([`crate::take_claims::take_kit_claim`]), never its head count.
+    #[allow(clippy::too_many_arguments)] // the ration's own inputs: roster, kit, hands, claim, rank, rows
     pub fn resolve(
         equipment: &crate::equipment_config::EquipmentConfig,
         kit: &crate::equipment_config::KitChoice,
-        workers: u32,
+        take_hands: f32,
+        claim: f32,
+        priority: crate::components::SourcePriority,
         wear: &crate::components::BandEquipment,
-        other_rows: &[(crate::equipment_config::KitChoice, f32)],
+        other_rows: &[crate::equipment_config::KittedRow],
         labor: &LaborConfig,
     ) -> Self {
-        let crew = workers as f32;
         let budget = crate::equipment_config::BandItemBudget::with_prospective_row(
-            other_rows.iter().map(|(kit, held)| (kit, *held)),
+            other_rows.iter().cloned(),
             kit,
-            crew,
+            claim,
+            priority,
         );
-        let coverage =
-            equipment.coverage_from_units(kit, crew, wear, budget.share_for(crew, wear, equipment));
+        let coverage = equipment.coverage_from_units(
+            kit,
+            take_hands,
+            wear,
+            budget.share_for_prospective(wear, equipment),
+        );
         let haul_carry = coverage.weighted_rate(|kit| {
             equipment.hunt_per_worker_biomass_capacity(
                 labor.hunt.per_worker_biomass_capacity,
@@ -607,6 +618,9 @@ pub fn forecast_hunt_caravan(
     hunters: &HuntingParty,
     output_multiplier: f32,
     floor: f32,
+    // **What the row's crew spends keeping the herd** — netted off the hands present every turn
+    // ([`take_hands_present`]).
+    keep_hands: f32,
     horizon: u32,
 ) -> CaravanForecast {
     let pack = hunt_pack_biomass(herd, fauna, carry_per_worker);
@@ -618,7 +632,7 @@ pub fn forecast_hunt_caravan(
                 carry_per_worker,
                 hunters,
                 output_multiplier,
-                present,
+                take_hands_present(present, keep_hands),
                 floor,
                 // A party's load waits at the source for the next porter — it keeps every carcass.
                 crate::fauna::CarcassKept::Whole,
@@ -665,16 +679,20 @@ pub fn forecast_extract_caravan(
     pack: f32,
     gear_per_worker: f32,
     floor: f32,
+    // **What the row's crew spends keeping the working** — the cutters are the hands present less
+    // it ([`take_hands_present`]), and they alone bring tools and carry.
+    keep_hands: f32,
     horizon: u32,
 ) -> CaravanForecast {
     let mut projection = crate::extraction::DepositProjection::new(working);
     forecast_caravan(party, horizon, pack, |present| {
+        let cutters = take_hands_present(present, keep_hands);
         projection
             .step(
-                present,
+                cutters,
                 crate::extraction::CrewLift {
-                    tools: gear_per_worker * present as f32,
-                    carry: pack * present as f32,
+                    tools: gear_per_worker * cutters,
+                    carry: pack * cutters,
                 },
                 floor,
                 ground,
@@ -686,6 +704,16 @@ pub fn forecast_extract_caravan(
                 bulk: taken,
             })
     })
+}
+
+/// ⛔ **THE HANDS A PRESENT PARTY TAKES WITH, AFTER KEEPING** (`docs/plan_site_crews.md` §2.1) —
+/// the hands standing at the source keep it first, up to `keep_hands` (what the row's whole crew
+/// spends keeping), and take with the rest. The forecast twin of the turn's
+/// `SiteKeeping::at_the_source`: a hand on the road keeps nothing and takes nothing, so every turn
+/// of the caravan nets the keeping from whoever is present.
+pub fn take_hands_present(present: u32, keep_hands: f32) -> f32 {
+    let present = present as f32;
+    present - keep_hands.clamp(crate::fauna::NO_HANDS, present)
 }
 
 /// **One hunter's pack off this herd** — the carry at the herd's rung, seated in whole animals.
@@ -704,8 +732,8 @@ pub fn hunt_pack_biomass(
 /// of [`forecast_hunt_caravan`]. A basket is continuous, so one pack is one gatherer's carry.
 ///
 /// A gather at no crew takes nothing, which the projection reads as a spent stand; the caravan asks
-/// at no crew every turn the party is walking out or wholly on the road, so that case is read as a
-/// zero take on a stand that goes on regrowing, never as the end of the run.
+/// at no crew every turn the party is walking out, wholly on the road or wholly keeping, so that
+/// case is read as a zero take on a stand that goes on regrowing, never as the end of the run.
 #[allow(clippy::too_many_arguments)] // the gather's full context, plus the caravan's own term
 pub fn forecast_forage_caravan(
     party: &WorkParty,
@@ -718,21 +746,22 @@ pub fn forecast_forage_caravan(
     output_multiplier: f32,
     floor: f32,
     take_species: &crate::components::TakeSelection,
+    // **What the row's crew spends keeping the patch** — netted off the hands present every turn
+    // ([`take_hands_present`]).
+    keep_hands: f32,
     horizon: u32,
 ) -> CaravanForecast {
     let mut projection = ForageProjection::new(patch);
-    forecast_caravan(
-        party,
-        horizon,
-        carry_per_worker,
-        |present| match projection.step(
+    forecast_caravan(party, horizon, carry_per_worker, |present| {
+        let gatherers = take_hands_present(present, keep_hands);
+        match projection.step(
             tile_composition,
             forage,
             flora,
             carry_per_worker,
             seasonal,
             output_multiplier,
-            present,
+            gatherers,
             floor,
             take_species,
         ) {
@@ -740,10 +769,12 @@ pub fn forecast_forage_caravan(
                 cargo: turn.provisions,
                 bulk: turn.biomass,
             }),
-            None if present == NOBODY_ON_THE_ROAD => Some(SourceTake::default()),
+            // Nobody gathering — walking out, all on the road, or every hand present keeping — is
+            // a zero take on a stand that goes on regrowing, never the end of the run.
+            None if gatherers <= crate::fauna::NO_HANDS => Some(SourceTake::default()),
             None => None,
-        },
-    )
+        }
+    })
 }
 
 #[cfg(test)]

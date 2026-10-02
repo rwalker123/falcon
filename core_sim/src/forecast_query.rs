@@ -70,8 +70,14 @@ pub fn answer_forecast_query(world: &mut World, query: &QueryPayload) -> QueryRe
         QueryPayload::HuntTripForecast(ask) => answer_hunt_trip_forecast(world, ask),
         QueryPayload::DenialRaidForecast(ask) => answer_denial_raid_forecast(world, ask),
         QueryPayload::HuntCrewTake(ask) => answer_hunt_crew_take(world, ask),
-        QueryPayload::WorkPartyForecast(ask) => answer_work_party_forecast(world, ask),
+        QueryPayload::WorkPartyForecast(ask) => answer_work_party_forecast(
+            world,
+            ask,
+            RungAsked::AsItStands,
+            &mut TakeAccounts::default(),
+        ),
         QueryPayload::DepositCrewTake(ask) => answer_deposit_crew_take(world, ask),
+        QueryPayload::ForageCrewTake(ask) => answer_forage_crew_take(world, ask),
         // **Answered by the server, from disk.** The slot list is a question about the filesystem,
         // not about a world — it has no `World` to resolve against and must be answerable while the
         // server is idle, which is exactly when a player opens the load menu. Reaching here means
@@ -120,6 +126,7 @@ fn resolve_ask(
         wear,
         kit,
         other_rows,
+        priority,
     } = resolve_quarry_and_kit(world, faction_id, band_id, herd_id, kit_id)?;
     let equipment = world.resource::<EquipmentConfigHandle>().get();
 
@@ -131,16 +138,22 @@ fn resolve_ask(
     // "ONE BAND, ONE SET OF GEAR"): a prospective party competes with the rows already staffed
     // exactly as a committed one does, so a band whose two trapping rows share four traps is quoted
     // the half-armed party the turn will actually pay.
+    //
+    // **A party ranks its kit claim at its own row's Priority** — no near/far distinction: the
+    // band's row on this herd where it has one, else the default a new row is given, exactly as a
+    // local prospective crew is settled (`docs/plan_site_crews.md` §2.3).
+    let party_crew = party_workers as f32;
     let budget = crate::equipment_config::BandItemBudget::with_prospective_row(
-        other_rows.iter().map(|(kit, workers)| (kit, *workers)),
-        &kit,
-        party_workers as f32,
+        other_rows, &kit,
+        // **A detached party takes the standing surplus until it is spent**, so every one of its
+        // hunters takes something and the whole party claims the kit.
+        party_crew, priority,
     );
     let coverage = equipment.coverage_from_units(
         &kit,
         party_workers as f32,
         &wear,
-        budget.share_for(party_workers as f32, &wear, &equipment),
+        budget.share_for_prospective(&wear, &equipment),
     );
     let party = query_hunting_party(world, &equipment, &coverage, &wear, herd.body_mass);
     let per_worker_haul = query_per_worker_haul(world, &equipment, &coverage, &wear);
@@ -161,7 +174,11 @@ struct AskedQuarry {
     /// dropped — the denominator a prospective crew's share of the band's gear is struck against
     /// ([`crate::components::LaborAllocation::rows_excluding_source`]). Empty for a band with no
     /// allocation, which is the whole-ledger reading a detached party has always had.
-    other_rows: Vec<(crate::equipment_config::KitChoice, f32)>,
+    other_rows: Vec<crate::equipment_config::KittedRow>,
+    /// **The rank the band's row on this herd claims its take gear at**, or the default where the
+    /// band works no row there ([`crate::components::LaborAllocation::priority_on`]) — what every
+    /// crew asked about on this herd is settled at, a party included.
+    priority: crate::components::SourcePriority,
 }
 
 /// `LaborTarget::same_source` keys a Hunt row on its `fauna_id` alone, so the floor a query names
@@ -213,22 +230,34 @@ fn resolve_quarry_and_kit(
     };
     // **The competing claims on that ledger**, with this herd's own row excluded — see
     // [`AskedQuarry::other_rows`].
-    let other_rows = allocation
-        .map(|allocation| {
-            allocation.rows_excluding_source(
-                &equipment,
-                &crate::components::LaborTarget::Hunt {
-                    fauna_id: herd_id.to_string(),
-                    floor: SOURCE_IS_KEYED_BY_QUARRY_ALONE,
-                },
-            )
-        })
-        .unwrap_or_default();
+    let herd_row = crate::components::LaborTarget::Hunt {
+        fauna_id: herd_id.to_string(),
+        floor: SOURCE_IS_KEYED_BY_QUARRY_ALONE,
+    };
+    // **Every row's claim, struck the way the turn strikes it** ([`crate::take_claims`]).
+    let other_rows = crate::take_claims::with_world_sources(world, |sources| {
+        allocation
+            .as_ref()
+            .map(|allocation| {
+                allocation.rows_excluding_source(
+                    &equipment,
+                    &herd_row,
+                    &crate::take_claims::row_claims(sources, allocation, &wear).claims,
+                )
+            })
+            .unwrap_or_default()
+    });
+    let priority = allocation
+        .as_ref()
+        .map_or_else(crate::components::SourcePriority::default, |allocation| {
+            allocation.priority_on(&herd_row)
+        });
     Ok(AskedQuarry {
         herd,
         wear,
         kit,
         other_rows,
+        priority,
     })
 }
 
@@ -674,6 +703,7 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
         wear,
         kit,
         other_rows,
+        priority,
     } = match resolve_quarry_and_kit(
         world,
         ask.faction_id,
@@ -701,6 +731,8 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
         // from its own share of it — the share moves with the crew size, which is why the rows
         // travel rather than a budget (`fauna::HuntCrewCurveInputs::other_rows`).
         other_rows: &other_rows,
+        // **Settled at the row's own rank** — the band's items go High, then Normal, then Low.
+        priority,
         intrinsic,
         // **BASE, not `expedition_tuning`** — see this function's doc.
         tuning: combat.tuning(),
@@ -717,8 +749,36 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
             .hunt
             .per_worker_biomass_capacity,
         max_workers: ask.max_workers,
+        // **Each row is what its crew collects after keeping** (`docs/plan_site_crews.md` §2.2) —
+        // the deposit curve's rule ([`crate::extraction::deposit_crew_quote`]).
+        keeping: crate::fauna::herd_crew_keeping_next_turn(
+            &herd,
+            &fauna,
+            &world
+                .resource::<crate::intensification::LadderConfigHandle>()
+                .get(),
+            None,
+        ),
     };
     let curve = crate::fauna::hunt_crew_take_curve(&inputs);
+    // **AND ONCE THE RUNG IS FINISHED** — the same crews on the herd as it will stand when the rung
+    // in flight (or the next one up) is done, its keeping re-struck at that rung and netted exactly
+    // as today's is: the compose sheet's *once tamed / once corralled* figure. `None` where the herd
+    // has no rung left to climb, or its species cannot climb it.
+    let ladder = world
+        .resource::<crate::intensification::LadderConfigHandle>()
+        .get();
+    let raised = herd_once_raised(&herd, &ladder, FactionId(ask.faction_id));
+    let raised_keeping = raised.as_ref().and_then(|raised| {
+        crate::fauna::herd_crew_keeping_next_turn(raised, &fauna, &ladder, None)
+    });
+    let raised_curve = raised.as_ref().map(|raised| {
+        crate::fauna::hunt_crew_take_curve(&crate::fauna::HuntCrewCurveInputs {
+            herd: raised,
+            keeping: raised_keeping,
+            ..inputs
+        })
+    });
     // **WHY THE CURVE STOPS WHERE IT DOES** — the rows say *that* another hand buys nothing, never
     // *why*, and on a band short of spears the plateau is the count of armed hunters rather than
     // anything about the herd. Both halves of that sentence are read off the inputs already in
@@ -733,11 +793,33 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
         .to_string();
     let per_crew = curve
         .into_iter()
-        .map(|row| HuntCrewTakeRow {
-            workers: row.workers,
-            animals_low: row.low,
-            animals_likely: row.likely,
-            animals_high: row.high,
+        .enumerate()
+        .map(|(index, row)| {
+            let (next_rung_animals_likely, next_rung_keep_hands) = match &raised_curve {
+                Some(raised_curve) => (
+                    raised_curve
+                        .get(index)
+                        .map_or(NOTHING_TAKEN_ONCE_RAISED, |raised_row| raised_row.likely),
+                    crate::fauna::crew_keep_hands(raised_keeping, &equipment, &wear, row.workers),
+                ),
+                None => (NOTHING_TAKEN_ONCE_RAISED, crate::fauna::NO_HANDS),
+            };
+            HuntCrewTakeRow {
+                workers: row.workers,
+                animals_low: row.low,
+                animals_likely: row.likely,
+                animals_high: row.high,
+                // **The hands this crew keeps the herd with** — the split each row's take is
+                // struck on (`HuntCrewCurveInputs::keeping`).
+                keep_hands: crate::fauna::crew_keep_hands(
+                    inputs.keeping,
+                    &equipment,
+                    &wear,
+                    row.workers,
+                ),
+                next_rung_animals_likely,
+                next_rung_keep_hands,
+            }
         })
         .collect();
     QueryReply::HuntCrewTake(HuntCrewTakeReply {
@@ -769,6 +851,67 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
 /// is the work-party query's answer (`WorkPartySource::Extract`), not this one's. `in_range` is a
 /// plain fact on the reply (true inside the apron) and zeroes nothing — the hunt crew-take curve's
 /// rule, which has no range gate at all.
+/// **THE PATCH'S TAKE AT EVERY CREW SIZE, AFTER KEEPING** — one row per crew `1..=max_workers`, each
+/// the work-party forecast's own `take_next_turn` and `keep_hands` at that crew
+/// ([`answer_work_party_forecast`]), so the curve and the single-crew answer are one arithmetic: the
+/// crew keeps the patch first and gathers with the rest, at its share of the band's baskets and its
+/// row's Priority (`docs/plan_site_crews.md` §2.1).
+fn answer_forage_crew_take(
+    world: &mut World,
+    ask: &sim_runtime::ForageCrewTakeQuery,
+) -> QueryReply {
+    if ask.max_workers > MAX_CREW_TAKE_WORKERS {
+        return query_failure(query_error::INVALID_CREW);
+    }
+    let mut per_crew = Vec::with_capacity(ask.max_workers as usize);
+    for workers in 1..=ask.max_workers {
+        let one = WorkPartyForecastQuery {
+            faction_id: ask.faction_id,
+            band_id: ask.band_id,
+            source: WorkPartySource::Forage {
+                x: ask.x,
+                y: ask.y,
+                take_species: ask.take_species.clone(),
+            },
+            kit_id: ask.kit_id.clone(),
+            workers,
+            floor: ask.floor,
+        };
+        let (take, keep_hands) = match answer_work_party_forecast(
+            world,
+            &one,
+            RungAsked::AsItStands,
+            &mut TakeAccounts::default(),
+        ) {
+            QueryReply::WorkPartyForecast(answer) => (answer.take_next_turn, answer.keep_hands),
+            refusal => return refusal,
+        };
+        // **AND ONCE THE RUNG IS FINISHED** — the same crew's take and keeping on the finished
+        // rung, its bill netted exactly as today's is, priced for the crop the ground would be
+        // committed to: the compose sheet's *once sown* figure, every account of it.
+        let mut next_rung = TakeAccounts::default();
+        let (next_rung_take, next_rung_keep_hands) = match answer_work_party_forecast(
+            world,
+            &one,
+            RungAsked::NextRung { crop: &ask.crop },
+            &mut next_rung,
+        ) {
+            QueryReply::WorkPartyForecast(answer) => (answer.take_next_turn, answer.keep_hands),
+            refusal => return refusal,
+        };
+        per_crew.push(sim_runtime::ForageCrewTakeRow {
+            workers,
+            take,
+            keep_hands,
+            next_rung_take,
+            next_rung_keep_hands,
+            next_rung_fodder: next_rung.fodder,
+            next_rung_materials: next_rung.materials,
+        });
+    }
+    QueryReply::ForageCrewTake(sim_runtime::ForageCrewTakeReply { per_crew })
+}
+
 fn answer_deposit_crew_take(world: &mut World, ask: &DepositCrewTakeQuery) -> QueryReply {
     if !floor_is_valid(ask.floor) {
         return query_failure(query_error::INVALID_FLOOR);
@@ -871,6 +1014,10 @@ fn answer_deposit_crew_take(world: &mut World, ask: &DepositCrewTakeQuery) -> Qu
         material: ask.material.clone(),
         floor: ask.floor,
     };
+    // **Every committed row's claim, struck the way the turn strikes it** ([`crate::take_claims`]).
+    let claims = crate::take_claims::with_world_sources(world, |sources| {
+        crate::take_claims::row_claims(sources, &allocation, &wear).claims
+    });
     let per_crew = (1..=ask.max_workers)
         .map(|workers| {
             let quote = crate::extraction::deposit_crew_quote(
@@ -878,6 +1025,7 @@ fn answer_deposit_crew_take(world: &mut World, ask: &DepositCrewTakeQuery) -> Qu
                 &ladder,
                 &extraction,
                 &allocation,
+                &claims,
                 &target,
                 &kit,
                 workers,
@@ -891,6 +1039,7 @@ fn answer_deposit_crew_take(world: &mut World, ask: &DepositCrewTakeQuery) -> Qu
                 take: quote.take,
                 armed_workers: quote.armed_workers,
                 next_rung_take: quote.next_rung_take,
+                keep_hands: quote.keep_hands,
             }
         })
         .collect();
@@ -936,7 +1085,94 @@ const MAX_CREW_TAKE_WORKERS: u32 = 1_000;
 ///
 /// It fights at the **base** tuning, like the crew-take curve and unlike the raid sheet: a party is
 /// the band's own people hunting their range, not a detached expedition.
-fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -> QueryReply {
+/// **What a source with no rung left to climb takes once "raised"** — nothing, stated rather than
+/// guessed (the forage twin answers the same `0` through an empty work-party reply).
+const NOTHING_TAKEN_ONCE_RAISED: f32 = 0.0;
+
+/// **THE HERD ONCE THE RUNG IT IS CLIMBING IS FINISHED** — the animal twin of [`patch_once_raised`]:
+/// the rung in flight, or the next one up where nothing is in flight, finished on a clone. A pen is
+/// seated through [`crate::fauna::Herd::corral_at`] (which refuses a species that cannot be penned);
+/// the pastoral rung is seated at its top and the herd owned by the asking faction, taming being
+/// what claims a herd. The bill is cleared so the keeping re-strikes at the finished rung. `None` at
+/// the top of the branch or where the species' husbandry ceiling forbids the rung.
+fn herd_once_raised(
+    herd: &crate::fauna::Herd,
+    ladder: &crate::intensification::LadderConfig,
+    faction: FactionId,
+) -> Option<crate::fauna::Herd> {
+    use crate::intensification::RungKey;
+    let standing = herd.standing();
+    let rung = standing.raising.or_else(|| standing.held.above())?;
+    let mut raised = herd.clone();
+    raised.upkeep_demanded = None;
+    raised.owner.get_or_insert(faction);
+    match rung {
+        RungKey::AnimalPen => {
+            let tile = raised.current_pos;
+            raised.corral_at(tile, ladder).then_some(raised)
+        }
+        RungKey::AnimalPastoral if raised.can_domesticate() => {
+            let (base, width) = raised.rung_span(rung, ladder);
+            raised.set_ladder_position(base + width, ladder);
+            Some(raised)
+        }
+        _ => None,
+    }
+}
+
+/// **WHICH RUNG A FORAGE ASK IS PRICED ON** — the patch as it stands, or as it will stand once the
+/// rung in flight (or, with none, the next rung up) is finished: the compose sheet's *once sown /
+/// once tended* figure ([`sim_runtime::ForageCrewTakeRow::next_rung_take`]).
+///
+/// `NextRung` names the crop an **uncommitted** patch would be committed to (`""` = the one the sim
+/// would settle on, [`crate::forage::default_species_for_rung`]); a committed patch ignores it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RungAsked<'a> {
+    AsItStands,
+    NextRung { crop: &'a str },
+}
+
+/// **WHAT THE ASKED CREW'S NEXT-TURN TAKE PAYS BESIDES FOOD** — the fodder and the per-material
+/// vector of the same take, filled by [`answer_work_party_forecast`] on a forage ask and read by the
+/// crew curve's next-rung half. Fodder is the **credited** figure: `0` where the sim would refuse
+/// it (no Foddering and no fodder-bearing commitment), exactly as the labor arm's gate does.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct TakeAccounts {
+    fodder: f32,
+    materials: Vec<sim_runtime::commands::MaterialPayoff>,
+}
+
+/// **THE PATCH ONCE THE RUNG IT IS CLIMBING IS FINISHED** — the rung in flight, or the next one up
+/// where nothing is in flight, seated at that rung's top on a clone, at the capacity the rung buys
+/// ([`crate::forage::patch_carrying_capacity`]) and with its keeping bill re-struck at that rung
+/// (the stamp cleared, so the bill is the finished rung's, not today's interpolated one). The stand
+/// itself is unchanged: finishing a rung does not grow a crop. `None` at the top of the branch.
+fn patch_once_raised(
+    patch: &crate::forage::ForagePatch,
+    ladder: &crate::intensification::LadderConfig,
+    forage: &crate::labor_config::ForageLaborConfig,
+    tile_capacity: Option<f32>,
+) -> Option<crate::forage::ForagePatch> {
+    let standing = patch.standing();
+    let rung = standing.raising.or_else(|| standing.held.above())?;
+    let (base, width) = crate::forage::patch_rung_span(patch, rung, ladder);
+    let mut raised = patch.clone();
+    raised.set_ladder_position(base + width, ladder);
+    raised.upkeep_demanded = None;
+    raised.carrying_capacity = crate::forage::patch_carrying_capacity(
+        crate::forage::patch_land_capacity(patch, tile_capacity),
+        &raised,
+        forage,
+    );
+    Some(raised)
+}
+
+fn answer_work_party_forecast(
+    world: &mut World,
+    ask: &WorkPartyForecastQuery,
+    rung_asked: RungAsked<'_>,
+    accounts: &mut TakeAccounts,
+) -> QueryReply {
     if !floor_is_valid(ask.floor) {
         return query_failure(query_error::INVALID_FLOOR);
     }
@@ -1041,6 +1277,61 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
             else {
                 return query_failure(query_error::UNKNOWN_PATCH);
             };
+            // **The patch once its rung is finished**, where the ask wants that figure. A patch at
+            // the top of its branch has no rung to finish and answers nothing taken.
+            let patch = match rung_asked {
+                RungAsked::AsItStands => patch,
+                RungAsked::NextRung { crop } => {
+                    let ground = world
+                        .resource::<crate::resources::TileRegistry>()
+                        .index(tile.x, tile.y)
+                        .and_then(|entity| world.get::<crate::components::Tile>(entity))
+                        .cloned();
+                    let tile_capacity = ground
+                        .as_ref()
+                        .map(|ground| crate::forage::tile_forage_capacity(&labor.forage, ground));
+                    let mut patch = patch;
+                    // **THE CROP THE GROUND WOULD BE COMMITTED TO** — a commitment reweights the
+                    // basket, so an uncommitted patch is priced on the plant the sheet picked when
+                    // it grows here, else the one the sim would settle on for that rung. A
+                    // committed patch keeps its own.
+                    if patch.species.is_none() {
+                        let composition = ground
+                            .as_ref()
+                            .map(|ground| {
+                                crate::forage::tile_flora_composition(
+                                    &flora,
+                                    &labor.forage,
+                                    ground,
+                                    map_seed,
+                                )
+                                .into_owned()
+                            })
+                            .unwrap_or_default();
+                        let standing = patch.standing();
+                        patch.species = if composition.iter().any(|entry| entry.species == crop) {
+                            Some(crop.to_string())
+                        } else {
+                            standing
+                                .raising
+                                .or_else(|| standing.held.above())
+                                .and_then(|rung| {
+                                    crate::forage::default_species_for_rung(
+                                        &composition,
+                                        &flora,
+                                        rung,
+                                    )
+                                })
+                        };
+                    }
+                    match patch_once_raised(&patch, &ladder, &labor.forage, tile_capacity) {
+                        Some(raised) => raised,
+                        None => {
+                            return QueryReply::WorkPartyForecast(WorkPartyForecastReply::default())
+                        }
+                    }
+                }
+            };
             let take = crate::components::TakeSelection::from_keys(take_species);
             (
                 Asked::Forage {
@@ -1108,12 +1399,29 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
             return query_failure(query_error::KIT_WRONG_JOB)
         }
     };
+    // **The asked crew's planned split and every committed row's claim**, struck the way the turn
+    // strikes them ([`crate::take_claims`]).
+    let (split, claims) = crate::take_claims::with_world_sources(world, |sources| {
+        (
+            crate::take_claims::take_kit_claim(
+                sources,
+                &wear,
+                crate::take_claims::declared_on(&allocation, &target),
+                &target,
+                &kit,
+                ask.workers,
+            ),
+            crate::take_claims::row_claims(sources, &allocation, &wear).claims,
+        )
+    });
     let pricing = crate::work_party::CaravanPricing::resolve(
         &equipment,
         &kit,
-        ask.workers,
+        split.take_hands(ask.workers),
+        split.claim,
+        allocation.priority_on(&target),
         &wear,
-        &allocation.rows_excluding_source(&equipment, &target),
+        &allocation.rows_excluding_source(&equipment, &target, &claims),
         &labor,
     );
     let source_pos = match &asked {
@@ -1156,9 +1464,59 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
         (seasonal, composition)
     };
 
-    let Some((walk_tiles, walk_turns)) = walk else {
-        // **Inside the apron: the ordinary local row's steady rate**, and nobody walks.
-        let rate_home = match &asked {
+    // **WHAT THE ASKED CREW SPENDS KEEPING THE SITE** (`docs/plan_site_crews.md` §2.1) — the split
+    // the seed and the turn take. Inside the apron the local rate is struck on the hands it leaves;
+    // past it the caravan nets it off the hands present every turn
+    // ([`crate::work_party::take_hands_present`]), so a kept site quotes what its crew collects
+    // after keeping, near or far.
+    //
+    // **The band's declared climb on this source** answers for a meter at zero, as it does for the
+    // turn and the seed: a crew raising `tame` on an unstarted herd keeps it from the first turn.
+    let declared = crate::components::BuildSource::of(&target)
+        .and_then(|source| allocation.build_queue_entry(&source))
+        .and_then(|entry| match entry.declared {
+            crate::components::BuildJob::Rung(improvement) => Some(improvement),
+            // Neither "work on a rung already held" kind raises a rung.
+            crate::components::BuildJob::ExtendPen
+            | crate::components::BuildJob::SetHerdOutput(_) => None,
+        });
+    let keeping = match &asked {
+        Asked::Hunt(herd) => {
+            crate::fauna::herd_crew_keeping_next_turn(herd, &fauna, &ladder, declared)
+        }
+        Asked::Forage { patch, tile, .. } => crate::forage::patch_crew_keeping(
+            patch,
+            &ladder,
+            &labor.forage,
+            world
+                .resource::<crate::resources::TileRegistry>()
+                .index(tile.x, tile.y)
+                .and_then(|entity| world.get::<crate::components::Tile>(entity))
+                .map(|ground| crate::forage::tile_forage_capacity(&labor.forage, ground)),
+            declared,
+        ),
+        Asked::Extract { .. } => None,
+    };
+    let keep_hands = match &asked {
+        Asked::Extract {
+            working, ground, ..
+        } => crate::extraction::crew_keep_hands(
+            &equipment,
+            &wear,
+            working,
+            ground,
+            &extraction,
+            &ladder,
+            ask.workers,
+        ),
+        _ => crate::fauna::crew_keep_hands(keeping, &equipment, &wear, ask.workers),
+    };
+    // **THE CREW'S TAKE AT THE SOURCE, AFTER KEEPING, OVER `turns`** — the local row's own
+    // projection, struck on the hands the keeping leaves (`docs/plan_site_crews.md` §2.1). The steady
+    // rate inside the apron, and the next turn's take on every source.
+    let take_hands = ask.workers as f32 - keep_hands;
+    let take_at_the_source = |turns: u32| -> f32 {
+        match &asked {
             Asked::Hunt(herd) => {
                 let hunters =
                     pricing.hunters(&equipment, &wear, &combat, intrinsic, herd.body_mass);
@@ -1168,9 +1526,9 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
                     pricing.haul_carry,
                     &hunters,
                     output_multiplier,
-                    ask.workers,
+                    take_hands,
                     ask.floor,
-                    horizon,
+                    turns,
                     // A query answers between turns — the next thing that happens is a regrowth.
                     crate::fauna::ProjectionStart::BeforeRegrowth,
                 )
@@ -1186,10 +1544,10 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
                     pricing.forage_carry,
                     seasonal,
                     output_multiplier,
-                    ask.workers,
+                    take_hands,
                     ask.floor,
                     take,
-                    horizon,
+                    turns,
                     crate::fauna::ProjectionStart::BeforeRegrowth,
                 )
             }
@@ -1202,22 +1560,92 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
                 weight,
             } => crate::extraction::project_realized_deposit(
                 working,
-                ask.workers,
+                take_hands,
                 crate::extraction::CrewLift {
-                    tools: deposit_gear_per_worker(working) * ask.workers as f32,
+                    tools: deposit_gear_per_worker(working) * take_hands,
                     carry: crate::work_party::material_pack(pricing.haul_carry, *weight)
-                        * ask.workers as f32,
+                        * take_hands,
                 },
                 ask.floor,
                 ground,
                 &extraction,
                 &ladder,
-                horizon,
+                turns,
             ),
+        }
+    };
+    let take_next_turn = take_at_the_source(NEXT_TURN_ONLY);
+    // **THE SAME TAKE'S OTHER ACCOUNTS** — one projected turn at the source, its biomass routed
+    // through the patch's fodder and material rates exactly as the labor arm credits them.
+    if let Asked::Forage { patch, tile, take } = &asked {
+        let (seasonal, composition) = forage_ground(*tile);
+        let taken = crate::forage::ForageProjection::starting(
+            patch,
+            crate::fauna::ProjectionStart::BeforeRegrowth,
+        )
+        .step(
+            &composition,
+            &labor.forage,
+            &flora,
+            pricing.forage_carry,
+            seasonal,
+            output_multiplier,
+            take_hands,
+            ask.floor,
+            take,
+        )
+        .map_or(NOTHING_TAKEN_ONCE_RAISED, |turn| turn.biomass);
+        let fodder_credited =
+            crate::systems::committed_to_a_fodder_crop(patch.species.as_deref(), &flora)
+                || crate::intensification::knows(
+                    world.resource::<crate::DiscoveryProgressLedger>(),
+                    faction,
+                    crate::FODDERING_DISCOVERY_ID,
+                    ladder.knowledge.completion_threshold,
+                );
+        accounts.fodder = if fodder_credited {
+            crate::forage::tended_take_fodder(
+                taken,
+                patch,
+                &composition,
+                &flora,
+                &labor.forage,
+                output_multiplier,
+                take,
+            )
+        } else {
+            NOTHING_TAKEN_ONCE_RAISED
         };
+        let mut by_material: std::collections::BTreeMap<String, f32> = Default::default();
+        for row in crate::forage::patch_material_yields_taking(
+            patch,
+            &composition,
+            &flora,
+            &labor.forage,
+            take,
+        ) {
+            *by_material.entry(row.material).or_default() +=
+                taken * row.per_biomass * output_multiplier;
+        }
+        accounts.materials = by_material
+            .into_iter()
+            .filter(|(_, amount)| *amount > NOTHING_TAKEN_ONCE_RAISED)
+            .map(
+                |(material_id, amount)| sim_runtime::commands::MaterialPayoff {
+                    material_id,
+                    amount,
+                },
+            )
+            .collect();
+    }
+    let Some((walk_tiles, walk_turns)) = walk else {
+        // **Inside the apron: the ordinary local row's steady rate**, and nobody walks.
+        let rate_home = take_at_the_source(horizon);
         return QueryReply::WorkPartyForecast(WorkPartyForecastReply {
             posts_a_party: false,
             rate_home,
+            take_next_turn,
+            keep_hands,
             ..WorkPartyForecastReply::default()
         });
     };
@@ -1241,6 +1669,7 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
                 &hunters,
                 output_multiplier,
                 ask.floor,
+                keep_hands,
                 horizon,
             )
         }
@@ -1257,6 +1686,7 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
                 output_multiplier,
                 ask.floor,
                 take,
+                keep_hands,
                 horizon,
             )
         }
@@ -1273,6 +1703,7 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
             crate::work_party::material_pack(pricing.haul_carry, *weight),
             deposit_gear_per_worker(working),
             ask.floor,
+            keep_hands,
             horizon,
         ),
     };
@@ -1283,8 +1714,13 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
         walk_turns,
         hunters_on_the_road: forecast.mean_on_the_road,
         first_load_turn: forecast.first_load_turn,
+        take_next_turn,
+        keep_hands,
     })
 }
+
+/// One turn of projection — the next turn's take ([`WorkPartyForecastReply::take_next_turn`]).
+const NEXT_TURN_ONLY: u32 = 1;
 
 /// A refusal, as its token. One constructor so the reply shape cannot drift between the seven
 /// failure paths.
@@ -1501,6 +1937,7 @@ mod tests {
         world.insert_resource(LaborConfigHandle::default());
         world.insert_resource(FaunaConfigHandle::default());
         world.insert_resource(ExpeditionConfigHandle::default());
+        world.insert_resource(crate::intensification::LadderConfigHandle::default());
         world.insert_resource(HerdRegistry {
             herds: vec![test_herd()],
         });
@@ -2074,7 +2511,7 @@ mod tests {
             let seed = crate::fauna::retreat_seed(crate::HARNESS_MAP_SEED, tick, &herd.id, workers);
             let killed = crate::systems::hunt_take(
                 &mut herd,
-                workers,
+                workers as f32,
                 floor,
                 RESIDENT_CARRY_PER_WORKER,
                 &party,
@@ -2290,7 +2727,7 @@ mod tests {
             &fauna,
         );
         let affordable = crate::fauna::animals_affordable(room, DEER_BODY);
-        let reach = crate::fauna::animals_engaged(SWEEP_CREW, fauna.engage_rate_for(DEER));
+        let reach = crate::fauna::animals_engaged(SWEEP_CREW as f32, fauna.engage_rate_for(DEER));
         assert!(
             affordable > 0.0 && affordable < reach,
             "the thin fixture must let the ROOM bind at a crew of {SWEEP_CREW} ({affordable} \
@@ -2469,7 +2906,7 @@ mod tests {
              part body at all"
         );
         assert_eq!(
-            crate::fauna::animals_engaged(1, rate),
+            crate::fauna::animals_engaged(1.0, rate),
             rate,
             "one hunter reaches its own rate — a part body, neither rounded up to one nor down to \
              nothing"
@@ -2551,7 +2988,7 @@ mod tests {
                 &herd,
                 &fauna,
                 &party,
-                workers,
+                workers as f32,
                 STRIP_IT_BARE,
                 HuntDraw::EXPECTED,
                 crate::fauna::EngagementQuantum::WholeAnimals,
@@ -2790,7 +3227,7 @@ mod tests {
             &herd_of_biomass(AUROCHS, AUROCHS_BODY, FAT_HERD),
             &fauna,
             &party,
-            ZERO_READING_CREW,
+            ZERO_READING_CREW as f32,
             STRIP_IT_BARE,
             HuntDraw::EXPECTED,
             crate::fauna::EngagementQuantum::WholeAnimals,
@@ -3016,7 +3453,7 @@ mod tests {
             RESIDENT_CARRY_PER_WORKER,
             &party,
             NEUTRAL_OUTPUT,
-            REPORTED_CREW,
+            REPORTED_CREW as f32,
             STRIP_IT_BARE,
             horizon,
             crate::fauna::ProjectionStart::BeforeRegrowth,
@@ -3134,6 +3571,167 @@ mod tests {
             MAX_CREW_TAKE_WORKERS as usize,
             "a crew exactly at the bound is a legal question with a full answer"
         );
+    }
+
+    /// ⛔ **A KEPT HERD'S CURVE QUOTES WHAT ITS CREW COLLECTS AFTER KEEPING**
+    /// (`docs/plan_site_crews.md` §2.2), the deposit curve's rule. The row at crew `w` takes with
+    /// `w − keep_hands`: the same herd with its bill stated at nothing is the unkept curve, and a
+    /// bill of exactly [`KEEPING_HANDS`] shifts every row by that many hands — nothing while the
+    /// crew is all keeping, then the unkept curve's row `w − KEEPING_HANDS`.
+    /// **TAME THE WORLD'S HERD AND STATE ITS LIVE KEEPING BILL** — a quote prices the live bill at
+    /// the state the next turn will find, never a stamp, so a test stating a bill states it through
+    /// the ladder: the pastoral rung's `work_per_turn` scaled until the tamed herd's live
+    /// `herd_upkeep_demand`, one regrowth on, reads `bill`.
+    fn tame_with_live_bill(world: &mut World, bill: f32) {
+        let ladder = world
+            .resource::<crate::intensification::LadderConfigHandle>()
+            .get();
+        let fauna = world.resource::<FaunaConfigHandle>().get();
+        let current = {
+            let mut registry = world.resource_mut::<HerdRegistry>();
+            let herd = &mut registry.herds[0];
+            herd.tame_outright(FACTION, &ladder);
+            // **Read where the quote reads it** — the herd as the next turn's take finds it.
+            crate::fauna::herd_upkeep_demand(
+                &crate::fauna::next_turns_quarry(herd, &fauna),
+                &fauna,
+                &ladder,
+            )
+        };
+        let scaled = ladder.with_upkeep_scaled(
+            crate::intensification::RungKey::AnimalPastoral,
+            bill / current,
+        );
+        world
+            .resource_mut::<crate::intensification::LadderConfigHandle>()
+            .replace(std::sync::Arc::new(scaled));
+    }
+
+    #[test]
+    fn a_kept_herds_curve_nets_the_hands_its_crew_keeps_with() {
+        /// Whole hands the stated bill costs.
+        const KEEPING_HANDS: u32 = 2;
+        /// A probe bill, to read the rate a keeping hand works at before stating the real one.
+        const PROBE_BILL: f32 = 1.0;
+        /// A bill of nothing — the same tamed herd, unkept.
+        const NO_BILL: f32 = 0.0;
+        /// Float slack on a curve struck at a keeping count off one division.
+        const TOLERANCE: f32 = 1e-3;
+        let curve_at = |bill: Option<f32>| {
+            let mut world = world_hunting(DEER, DEER_BODY);
+            tame_with_live_bill(&mut world, bill.unwrap_or(NO_BILL));
+            crew_curve(
+                &mut world,
+                &crew_ask(SWEEP_CREW, crate::components::DEFAULT_ESCAPEMENT_FLOOR),
+            )
+        };
+        // The rate one keeping hand works at, for this band's ledger — read off the seam itself.
+        let rate = {
+            let mut world = world_hunting(DEER, DEER_BODY);
+            let equipment = world.resource::<EquipmentConfigHandle>().get();
+            let wear = world
+                .query::<&BandEquipment>()
+                .iter(&world)
+                .next()
+                .cloned()
+                .unwrap_or_default();
+            let ladder = world
+                .resource::<crate::intensification::LadderConfigHandle>()
+                .get();
+            let mut herd = world.resource::<HerdRegistry>().herds[0].clone();
+            herd.tame_outright(FACTION, &ladder);
+            let keeping = crate::fauna::CrewKeeping {
+                rung: herd.standing().held,
+                demand: PROBE_BILL,
+            };
+            PROBE_BILL / crate::fauna::crew_keep_hands(Some(keeping), &equipment, &wear, SWEEP_CREW)
+        };
+        let unkept = curve_at(Some(NO_BILL));
+        let kept = curve_at(Some(KEEPING_HANDS as f32 * rate));
+        assert!(
+            unkept.iter().any(|row| row.animals_likely > 0.0),
+            "liveness: the unkept curve must take something"
+        );
+        for row in &kept {
+            let expected = row
+                .workers
+                .checked_sub(KEEPING_HANDS)
+                .and_then(|take| take.checked_sub(1))
+                .map_or(0.0, |index| unkept[index as usize].animals_likely);
+            assert!(
+                (row.animals_likely - expected).abs() < TOLERANCE,
+                "crew {}: a kept herd's row is the unkept row {KEEPING_HANDS} hands smaller — {} \
+                 against {expected}",
+                row.workers,
+                row.animals_likely
+            );
+        }
+    }
+
+    /// ⛔ **THE HUNT CURVE STATES THE HANDS EACH CREW KEEPS WITH, AND THEY RISE WITH THE BILL.**
+    /// The same tamed herd at two live bills: each row's `keep_hands` is the split its take is
+    /// struck on, so the dearer bill keeps with more hands wherever the crew is not all keeping.
+    #[test]
+    fn a_hunt_curves_keep_hands_rise_with_the_bill() {
+        /// A bill a sweep crew covers with hands to spare.
+        const LIGHT_BILL: f32 = 1.0;
+        /// Twice that.
+        const HEAVY_BILL: f32 = 2.0;
+        let curve_at = |bill: f32| {
+            let mut world = world_hunting(DEER, DEER_BODY);
+            tame_with_live_bill(&mut world, bill);
+            crew_curve(
+                &mut world,
+                &crew_ask(SWEEP_CREW, crate::components::DEFAULT_ESCAPEMENT_FLOOR),
+            )
+        };
+        let light = curve_at(LIGHT_BILL);
+        let heavy = curve_at(HEAVY_BILL);
+        let last = light.len() - 1;
+        assert!(
+            light[last].keep_hands > 0.0,
+            "liveness: a tamed herd's crew keeps it"
+        );
+        assert!(
+            heavy[last].keep_hands > light[last].keep_hands,
+            "a heavier bill keeps with more hands: {} against {}",
+            heavy[last].keep_hands,
+            light[last].keep_hands
+        );
+    }
+
+    /// ⛔ **ONCE TAMED IS WHAT THIS CREW TAKES ON THE TAMED HERD, ITS KEEPING NETTED** — the hunt
+    /// twin of the forage curve's `next_rung_take`. A wild herd owes nothing, so its rows keep with
+    /// no hands; each row's next-rung figures must be the same crew's row on that herd once tamed —
+    /// the pastoral bill re-struck and netted — never a crew-blind payoff.
+    #[test]
+    fn a_wild_herds_once_tamed_figure_is_the_tamed_herds_own_row() {
+        /// Float slack on a curve struck twice through the same arithmetic.
+        const TOLERANCE: f32 = 1e-4;
+        let floor = crate::components::DEFAULT_ESCAPEMENT_FLOOR;
+        let mut wild = world_hunting(DEER, DEER_BODY);
+        let quoted = crew_curve(&mut wild, &crew_ask(SWEEP_CREW, floor));
+        let mut tamed = world_hunting(DEER, DEER_BODY);
+        {
+            let ladder = tamed
+                .resource::<crate::intensification::LadderConfigHandle>()
+                .get();
+            tamed.resource_mut::<HerdRegistry>().herds[0].tame_outright(FACTION, &ladder);
+        }
+        let on_the_tamed = crew_curve(&mut tamed, &crew_ask(SWEEP_CREW, floor));
+        assert!(
+            quoted.iter().any(|row| row.next_rung_keep_hands > 0.0),
+            "liveness: the tamed herd owes keeping, so some crew keeps it once tamed"
+        );
+        for (row, tamed_row) in quoted.iter().zip(&on_the_tamed) {
+            assert!(
+                (row.next_rung_animals_likely - tamed_row.animals_likely).abs() < TOLERANCE,
+                "crew {}: once tamed is the tamed herd's own row — {} against {}",
+                row.workers,
+                row.next_rung_animals_likely,
+                tamed_row.animals_likely
+            );
+        }
     }
 
     #[test]
@@ -3520,8 +4118,12 @@ mod tests {
                         continue;
                     };
                     rows_checked += 1;
-                    let range =
-                        crate::fauna::forecast_take_range(&forecast, crew, STRIP_IT_BARE, sigmas);
+                    let range = crate::fauna::forecast_take_range(
+                        &forecast,
+                        crew as f32,
+                        STRIP_IT_BARE,
+                        sigmas,
+                    );
                     let (low, likely, high) = (
                         range.low.component(axis),
                         range.likely.component(axis),
@@ -3530,7 +4132,7 @@ mod tests {
                     let takes_at = |draw_sigmas: f32| -> Vec<f32> {
                         crate::fauna::forecast_take_outcomes(
                             &forecast,
-                            crew,
+                            crew as f32,
                             STRIP_IT_BARE,
                             HuntDraw::Quantile {
                                 sigmas: draw_sigmas,

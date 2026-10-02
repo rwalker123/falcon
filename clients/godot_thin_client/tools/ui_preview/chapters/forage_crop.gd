@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 69
+const EXPECTED_CHECKPOINTS := 71
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -17,6 +17,7 @@ const Q := preload("res://tools/ui_preview/node_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
 const Spine := preload("res://tools/ui_preview/compose_vocab.gd")
 const TileFx := preload("res://tools/ui_preview/fixtures_tile.gd")
+const ForecastFx := preload("res://tools/ui_preview/fixtures_forecast.gd")
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -420,6 +421,18 @@ func run(harness) -> void:
 	# proving the substitution wherever it lands, so it follows the number rather than the widget.
 	# The FACE's absence is asserted beside it: the pair would otherwise pass on a sheet quoting the
 	# crop in two places, which is exactly the two-numbers-one-question defect being removed.
+	# **THE CURVE IS ASKED WITH THE PICKED CROP, AND RE-ASKED WHEN IT CHANGES** — the line is the
+	# curve row's, priced on the crop the ask names. Every forage curve ask is recorded on its way to
+	# the ordinary stand-in, so the claim is about the ask as well as about the text.
+	var query: ForecastQuery = h._hud.forecast_query()
+	var asked_crops: Array[String] = []
+	query.set_sender(func(request_id: int, ask: Dictionary) -> bool:
+		if String(ask.get("kind", "")) == ForecastQuery.KIND_FORAGE_CREW_TAKE:
+			asked_crops.append(String(ask.get("crop", "")))
+		query.deliver.call_deferred([ForecastFx.answer(h._hud, request_id, ask)])
+		return true)
+	# A curve an earlier frame already holds would be answered from the seam without an ask.
+	query.reset()
 	h._hud._compose.set_forage_count(1)
 	h._hud._compose.set_forage_species("wild_emmer")
 	h._compose_forage(_long_basket_tile_fixture())
@@ -436,6 +449,11 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("forage_crop_then_groundnut")
 	var then_groundnut = Readout.improvement_deal_text(h._hud._drawercompose._compose_sheet)
+	ForecastFx.install(h._hud)
+	h._assert_hud("the forage curve was asked with the picked crop (%s)" % str(asked_crops),
+		asked_crops.has("wild_emmer"))
+	h._assert_hud("…and asked again with the new crop once the pick changed",
+		not asked_crops.is_empty() and asked_crops[asked_crops.size() - 1] == "wild_tubers")
 	print("ui_preview: deal-block  emmer=%s  ground_nut=%s" % [then_emmer, then_groundnut])
 	var payoff_key = String(HudComposeVocab.IMPROVEMENT_PAYOFF_ROW_LABELS[
 		SourceForecast.IMPROVEMENT_CULTIVATE]).to_upper()
@@ -506,14 +524,12 @@ func run(harness) -> void:
 	h._assert_hud("no payoff is restated on the improvement box's face",
 		not ForageFx.improvement_face(h._hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_CULTIVATE)
 			.contains(ForageFx.IMPROVEMENT_PAYOFF_NEEDLE))
-	h._assert_hud("…while what the tile would pay once prepared reads in the readout's payoff row",
-		Readout.improvement_deal_text(h._hud._drawercompose._compose_sheet).contains(
-			String(HudComposeVocab.IMPROVEMENT_PAYOFF_ROW_LABELS[
-				SourceForecast.IMPROVEMENT_CULTIVATE]).to_upper()))
-	# The block is that ONE row at every crew — see `improvement_running_plant` for why the count is
-	# what pins the retired baseline rather than a `contains`.
-	h._assert_hud("…as the block's ONLY row, at a crew of zero as at any other",
-		Readout.improvement_deal_rows(h._hud._drawercompose._compose_sheet) == 1)
+	# **A CREW OF NONE QUOTES NO PAYOFF.** The `ONCE TENDED` figure is the crew curve's — what THIS
+	# crew takes once the rung stands — and the curve has no row for a crew of nobody, so the readout
+	# states none rather than a crew-blind figure. The liveness half is at the end of this block: the
+	# same sheet at one forager quotes it again.
+	h._assert_hud("…and a crew of none quotes no payoff — the figure is a crew's, and there is none",
+		Readout.improvement_deal_rows(h._hud._drawercompose._compose_sheet) == 0)
 	# **THE BUILDING CAPTION AT A CREW THAT REACHES NOTHING — two reasons for one answer.** A composed
 	# build suppresses the floor walk outright, and a zero crew reaches no holding rate either, so a
 	# caption composing the arrow's key unconditionally fails here whichever of the two it read.
@@ -531,6 +547,15 @@ func run(harness) -> void:
 	# an empty crew — the shape a build-rate line would have read most confidently on.
 	h._assert_hud("an unstaffed build claims no build rate — nobody is building it",
 		not Readout.teaching_line(h._hud._drawercompose._compose_sheet).to_lower().contains("building at"))
+	# LIVENESS for the crew-of-none claim above: the same sheet at one forager states the payoff row
+	# again, so the absence there is about the crew rather than a sheet that lost the row outright.
+	h._hud._compose.set_forage_count(1)
+	h._compose_forage(BaseFx.food_tile_fixture())
+	await h._settle()
+	h._assert_hud("…while one forager on the same sheet reads the payoff row again",
+		Readout.improvement_deal_text(h._hud._drawercompose._compose_sheet).contains(
+			String(HudComposeVocab.IMPROVEMENT_PAYOFF_ROW_LABELS[
+				SourceForecast.IMPROVEMENT_CULTIVATE]).to_upper()))
 
 	# State 2-unassign (B) — the SAME 0 workers on a tile this band DOES work: that is the sim's
 	# unassign, not a no-op. The button stays live and is RENAMED, and the "assign to begin" line is

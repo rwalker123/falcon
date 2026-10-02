@@ -8,11 +8,12 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 196
+const EXPECTED_CHECKPOINTS := 234
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
+const ForecastFx := preload("res://tools/ui_preview/fixtures_forecast.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
 const Spine := preload("res://tools/ui_preview/compose_vocab.gd")
@@ -1045,7 +1046,7 @@ func _spread_rate_assignment(kind: String, overdraws: bool) -> Dictionary:
 func _assert_readout_names_both_rates() -> void:
 	var forage := SourceForecast.source_yield_readout(
 		_spread_rate_assignment(SourceForecast.LABOR_KIND_FORAGE, false),
-		SourceForecast.LABOR_KIND_FORAGE)
+		SourceForecast.LABOR_KIND_FORAGE, SourceForecast.MAX_USEFUL_UNBOUNDED)
 	# (0) THE FIXTURE REALLY IS THE REGIME. Every other canned row in this harness collapses the two
 	# onto one number, and on such a row every claim below passes with the word restored.
 	h._assert_hud("the fixture's two published rates really do differ (%s vs %s)"
@@ -1068,7 +1069,7 @@ func _assert_readout_names_both_rates() -> void:
 	# here rather than above.
 	var hunt := SourceForecast.source_yield_readout(
 		_spread_rate_assignment(SourceForecast.LABOR_KIND_HUNT, true),
-		SourceForecast.LABOR_KIND_HUNT)
+		SourceForecast.LABOR_KIND_HUNT, SourceForecast.MAX_USEFUL_UNBOUNDED)
 	var hunt_tooltip := SourceForecast.YIELD_TOOLTIP_RATES_FORMAT % [
 		SourceForecast.format_signed(READOUT_REALIZED_RATE),
 		SourceForecast.format_signed(READOUT_ACTUAL_RATE)] \
@@ -2154,7 +2155,8 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("forage_fodder_standing")
 	var fodder_readout := SourceForecast.source_yield_readout(
-		_fodder_field_assignment(), SourceForecast.LABOR_KIND_FORAGE)
+		_fodder_field_assignment(), SourceForecast.LABOR_KIND_FORAGE,
+		SourceForecast.MAX_USEFUL_UNBOUNDED)
 	# EQUALITY, not `contains`: half the claim is what the suffix must NOT also say. A `+0.00 /turn`
 	# leading it is exactly the reading this arc removed, and a containment test passes with it there.
 	h._assert_hud("a fodder-only source's readout states its feed rate ALONE (got \"%s\")"
@@ -2457,6 +2459,9 @@ func run(harness) -> void:
 	h._hud._compose.reset_forage_source()
 	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
 	h._hud._compose.set_forage_count(AT_FLOOR_FORAGERS)
+	# SHOWN as well as composed: a kept patch's take is the crew curve's answer, and the sheet that
+	# answer rebuilds is the SELECTED tile's — the live game's only shape.
+	h._show_tile(at_floor)
 	h._compose_forage(at_floor)
 	await h._settle()
 	await h._save("forage_at_floor")
@@ -2540,6 +2545,9 @@ func run(harness) -> void:
 	h._hud._compose.reset_forage_source()
 	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
 	h._hud._compose.set_forage_count(AT_FLOOR_FORAGERS)
+	# SHOWN as well as composed: a kept patch's take is the crew curve's answer, and the sheet that
+	# answer rebuilds is the SELECTED tile's — the live game's only shape.
+	h._show_tile(below_floor)
 	h._compose_forage(below_floor)
 	await h._settle()
 	await h._save("forage_below_floor")
@@ -2572,6 +2580,7 @@ func run(harness) -> void:
 	h._hud._compose.reset_forage_source()
 	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
 	h._hud._compose.set_forage_count(AT_FLOOR_FORAGERS)
+	h._show_tile(descending)
 	h._compose_forage(descending)
 	await h._settle()
 	await h._save("forage_reaches_floor")
@@ -2593,3 +2602,204 @@ func run(harness) -> void:
 	# about a WORD, which every canned row in this harness was structurally unable to expose (see
 	# `_assert_readout_names_both_rates`).
 	_assert_readout_names_both_rates()
+
+	# State forage_kept_curve — **A KEPT PATCH'S TAKE IS THE SIM'S CREW CURVE**
+	# (`ForecastQuery.KIND_FORAGE_CREW_TAKE`). The reference patch with its crew spending
+	# `KEPT_CURVE_KEEP_HANDS` keeping it: the stand-in curve takes those hands off the crew first, so
+	# three foragers gather with one and the headline is that ONE hand's take — the sheet composes no
+	# take of its own on a kept patch.
+	var kept := BaseFx.food_tile_fixture()
+	kept["patch_upkeep_hands"] = KEPT_CURVE_KEEP_HANDS
+	h._hud._compose.reset_forage_source()
+	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
+	h._show_tile(kept)
+	h._compose_forage(kept)
+	await h._settle()
+	# The crew is dialed AFTER the first open, which re-seeds it off the band's standing row.
+	h._hud._compose.set_forage_count(KEPT_CURVE_CREW)
+	h._compose_forage(kept)
+	await h._settle()
+	h._assert_hud("precondition: the sheet stands at the dialed crew of %d (got %d)"
+			% [KEPT_CURVE_CREW, h._hud._compose.forage_count()],
+		h._hud._compose.forage_count() == KEPT_CURVE_CREW)
+	await h._save("forage_kept_curve")
+	var kept_text = Readout.yields_text(h._hud._drawercompose._compose_sheet)
+	var kept_priced := ForageFx.floorify(kept, HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	var kept_forecast := SourceForecast.forecast_inputs(kept_priced, SourceForecast.SOURCE_KIND_FORAGE,
+		HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK)
+	var one_hand := minf((float(KEPT_CURVE_CREW) - KEPT_CURVE_KEEP_HANDS)
+		* float(kept_forecast["per_worker"]), float(kept_forecast["next_ceiling"]))
+	print("ui_preview: kept curve  %s (gatherers' take %s)" % [kept_text,
+		SourceForecast.format_magnitude(one_hand)])
+	h._assert_hud("a kept patch's headline is the curve's take for the gatherers left after keeping (%s)"
+			% kept_text,
+		kept_text.contains(SourceForecast.format_magnitude(one_hand)))
+	h._assert_hud("…which is below what the whole crew would gather, so the keeping really came off (%s)"
+			% SourceForecast.format_magnitude(minf(float(KEPT_CURVE_CREW)
+				* float(kept_forecast["per_worker"]), float(kept_forecast["next_ceiling"]))),
+		one_hand < minf(float(KEPT_CURVE_CREW) * float(kept_forecast["per_worker"]),
+			float(kept_forecast["next_ceiling"])))
+
+	# ⛔ **THE PILLS AND THE CAP NAME THE WHOLE CREW THE STEPPER SETS** — each take target plus the
+	# keeping hands that crew needs, read off the curve's `keep_hands`. The stand-in keeps
+	# `KEPT_CURVE_KEEP_HANDS` at every crew that size or more, so a take target of `t` is a crew of
+	# `t + KEPT_CURVE_KEEP_HANDS` — composed here from the chart's own take targets, never through the
+	# conversion under test.
+	var sheet = h._hud._drawercompose._compose_sheet
+	var take_model := SourceForecast.floor_chart_model(
+		h._hud._drawercompose._forage_priced_patch(kept_priced, h._hud._band_labor.player_band()),
+		SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+		SourceForecast.FLOOR_FOOD_PEAK, KEPT_CURVE_CREW, "harvesters", false)
+	var keep_whole := int(ceilf(KEPT_CURVE_KEEP_HANDS))
+	for pill in [[HudWidgets.CREW_TARGET_CLEAR, "crew_to_clear"], [HudWidgets.CREW_TARGET_HOLD, "crew_to_hold"]]:
+		var take_target := int(take_model.get(pill[1], SourceForecast.NO_CREW_ANSWER))
+		var shown := Readout.crew_target_count(sheet, String(pill[0]))
+		h._assert_hud("the `%s` pill names the whole crew — take %d + keeping %d (got %d)"
+				% [pill[0], take_target, keep_whole, shown],
+			take_target > 0 and shown == take_target + keep_whole)
+	var take_useful := SourceForecast.max_useful_workers(SourceForecast.forecast_inputs(
+		h._hud._drawercompose._forage_priced_patch(kept_priced, h._hud._band_labor.player_band()),
+		SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+		SourceForecast.FLOOR_FOOD_PEAK))
+	var cap_want := SourceForecast.MAX_USEFUL_NOTE_FORMAT % [take_useful + keep_whole,
+		SourceForecast.MAX_USEFUL_NOUN_MANY]
+	h._assert_hud("…and the cap note names the same whole crew, `%s`" % cap_want,
+		_sheet_has_text(sheet, cap_want))
+
+	# ⛔ **AND THE VERDICT'S CREW COUNT IS THE WHOLE CREW TOO.** A crew all of whom the keeping takes
+	# gathers nothing, so it cannot draw the patch down and the verdict states the crew that WOULD reach
+	# the floor — take hands plus the 2 keeping. (The walk itself is drawn by the gatherers the curve
+	# names, so a crew of 3 here — 1 gatherer — honestly reaches the floor in its own time.)
+	h._hud._compose.set_forage_floor(KEPT_CURVE_DEEP_FLOOR)
+	h._hud._compose.set_forage_count(keep_whole)
+	h._compose_forage(kept)
+	await h._settle()
+	await h._save("forage_kept_curve_verdict")
+	var deep_model := SourceForecast.floor_chart_model(
+		h._hud._drawercompose._forage_priced_patch(kept_priced, h._hud._band_labor.player_band()),
+		SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+		KEPT_CURVE_DEEP_FLOOR, keep_whole, "harvesters", false)
+	var reach_take := int(deep_model.get("reaching_crew", 0))
+	var verdict_text = Readout.verdict_text(h._hud._drawercompose._compose_sheet)
+	var verdict_want := SourceForecast.VERDICT_SETTLES_CREW_FORMAT % [reach_take + keep_whole,
+		"harvesters"]
+	print("ui_preview: kept curve verdict  %s" % verdict_text)
+	h._assert_hud("precondition: a deep floor this crew cannot reach states a reaching crew (%d take hands)"
+			% reach_take, reach_take > 0)
+	h._assert_hud("the verdict names the whole crew that would reach the floor, `%s` (got \"%s\")"
+			% [verdict_want.strip_edges(), verdict_text],
+		String(verdict_text).ends_with(verdict_want))
+	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
+
+	await _crew_split_sheet_states()
+
+## ---- THE CREW SPLIT UNDER THE STEPPER (`CrewSplitMarks`) ----------------------------------------
+##
+## One mark per harvester under the sheet's stepper, the tending share off the crew curve row's
+## `keep_hands` AT THE STEPPER'S CREW, and the same sentence muted under the next-turn figure. The
+## patch authors its curve with a DIFFERENT keep at every crew, so a sheet reading the wrong row — or
+## a constant — lands on a figure the claims name. While the curve is in flight there are no marks.
+func _crew_split_sheet_states() -> void:
+	var tile := BaseFx.food_tile_fixture()
+	tile["patch_upkeep_hands"] = KEPT_CURVE_KEEP_HANDS
+	var rows: Array = []
+	for workers in range(1, CREW_SPLIT_CURVE_ROWS + 1):
+		# A take that rises with every gatherer, so the curve plateaus nowhere inside the rows and the
+		# stepper's cap is the band's pool rather than the curve.
+		var keep := CREW_SPLIT_KEEP_PER_HAND * float(workers)
+		rows.append({"workers": workers,
+			"take": CREW_SPLIT_TAKE_PER_GATHERER * (float(workers) - keep),
+			SourceForecast.FORAGE_CREW_KEEP_HANDS_KEY: keep})
+	tile[ForecastFx.FORAGE_CREW_TAKE_KEY] = {"per_crew": rows}
+	var query: ForecastQuery = h._hud.forecast_query()
+	query.reset()
+	h._hud._drawercompose.close_compose_sheet()
+	h._hud._compose.reset_forage_source()
+	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
+	h._show_tile(tile)
+	await h._settle()
+	h._compose_forage(tile)
+	await h._settle()
+	# Dial the crew on the open sheet (a close would reset the composition), then forget the curve so
+	# the next render is read before the stand-in has answered.
+	h._hud._compose.set_forage_count(CREW_SPLIT_SHEET_CREW)
+	query.reset()
+	h._compose_forage(tile)
+	h._assert_hud("crew split, sheet — while the curve is in flight there are no marks",
+		_crew_split_on_sheet() == null)
+	await h._settle()
+	h._compose_forage(tile)
+	await h._settle()
+	await h._save("forage_crew_split_sheet")
+	h._assert_hud("crew split, sheet — precondition: the stepper stands at %d (got %d)"
+			% [CREW_SPLIT_SHEET_CREW, h._hud._compose.forage_count()],
+		h._hud._compose.forage_count() == CREW_SPLIT_SHEET_CREW)
+	var marks := _crew_split_on_sheet()
+	var want_keep := CREW_SPLIT_KEEP_PER_HAND * float(CREW_SPLIT_SHEET_CREW)
+	h._assert_hud("crew split, sheet — the marks count the stepper's crew (%s)"
+			% ("none" if marks == null else str(marks.crew())),
+		marks != null and marks.crew() == CREW_SPLIT_SHEET_CREW)
+	h._assert_hud("crew split, sheet — the tending share is the curve row's `keep_hands` at that crew (%s, want %.2f)"
+			% [("none" if marks == null else "%.2f" % marks.keep_hands()), want_keep],
+		marks != null and is_equal_approx(marks.keep_hands(), want_keep))
+	h._assert_hud("crew split, sheet — the hover says it in whole people (\"%s\")"
+			% ("" if marks == null else marks.tooltip_text),
+		marks != null and marks.tooltip_text == CREW_SPLIT_SHEET_WORDS)
+	h._assert_hud("crew split, sheet — the same sentence reads under the next-turn figure",
+		_crew_split_sentence() == CREW_SPLIT_SHEET_WORDS)
+	# The stepper moves, and the marks follow it through the curve rather than staying put.
+	h._hud._compose.set_forage_count(CREW_SPLIT_STEPPED_CREW)
+	h._compose_forage(tile)
+	await h._settle()
+	await h._save("forage_crew_split_sheet_stepped")
+	var stepped := _crew_split_on_sheet()
+	var stepped_keep := CREW_SPLIT_KEEP_PER_HAND * float(CREW_SPLIT_STEPPED_CREW)
+	h._assert_hud("crew split, sheet — stepped to %d, the marks follow the crew and its curve row (%s)"
+			% [CREW_SPLIT_STEPPED_CREW, "none" if stepped == null
+				else "%d · %.2f" % [stepped.crew(), stepped.keep_hands()]],
+		stepped != null and stepped.crew() == CREW_SPLIT_STEPPED_CREW
+			and is_equal_approx(stepped.keep_hands(), stepped_keep))
+	h._assert_hud("crew split, sheet — …and the sentence follows, a whole person needing no `About` (\"%s\")"
+			% _crew_split_sentence(),
+		_crew_split_sentence() == CREW_SPLIT_STEPPED_WORDS)
+	h._hud._drawercompose.close_compose_sheet()
+	h._hud._compose.reset_forage_source()
+	query.reset()
+	await h._settle()
+
+## The crew-split marks on the open compose sheet, or `null` where it draws none.
+func _crew_split_on_sheet() -> CrewSplitMarks:
+	return Readout.crew_split_marks(h._hud._drawercompose._compose_sheet)
+
+## The muted sentence under the sheet's next-turn figure, `""` where none is drawn.
+func _crew_split_sentence() -> String:
+	return Readout.crew_split_sentence(h._hud._drawercompose._compose_sheet)
+
+## The authored curve's keeping: half a hand per worker, so every crew's row differs.
+const CREW_SPLIT_KEEP_PER_HAND := 0.5
+const CREW_SPLIT_CURVE_ROWS := 8
+## What each gatherer the keeping leaves takes, on the authored curve.
+const CREW_SPLIT_TAKE_PER_GATHERER := 0.2
+## The two crews the sheet is read at, and the sentences each must state — spelled out.
+const CREW_SPLIT_SHEET_CREW := 3
+const CREW_SPLIT_STEPPED_CREW := 2
+const CREW_SPLIT_SHEET_WORDS := "About 2 of 3 are tending the patch; 1 is free to harvest."
+const CREW_SPLIT_STEPPED_WORDS := "1 of 2 is tending the patch; 1 is free to harvest."
+
+## Any Label or RichTextLabel under `root` whose text contains `needle`.
+func _sheet_has_text(root: Node, needle: String) -> bool:
+	if root == null:
+		return false
+	if (root is Label and (root as Label).text.contains(needle)) \
+			or (root is RichTextLabel and (root as RichTextLabel).get_parsed_text().contains(needle)):
+		return true
+	for child in root.get_children():
+		if _sheet_has_text(child, needle):
+			return true
+	return false
+
+## A floor deep enough that the kept-curve crew settles short of it, so the verdict names a crew.
+const KEPT_CURVE_DEEP_FLOOR := 0.05
+## The kept-curve state's crew, and the hands of it the patch's keeping takes.
+const KEPT_CURVE_CREW := 3
+const KEPT_CURVE_KEEP_HANDS := 2.0

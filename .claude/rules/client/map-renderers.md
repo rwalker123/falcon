@@ -70,6 +70,17 @@ used to take `herds_here[0]`, and only when the hex held no units at all: a mult
 opened on the same herd, and a herd sharing a hex with any band could not be selected from the map
 at any number of clicks (issue #429).
 
+### ⛔ A JUMP TO THE SELECTED HEX IS NOT A RE-CLICK
+
+`focus_and_select_tile` — the target of `HudLayer.alert_focus_requested` — selects a hex "as if it
+were clicked", and a click on the ALREADY-SELECTED hex advances the cycle. So it skips the click when
+the hex is already `selected_tile` and only centres it. Every band verb reaches it:
+`BandPanelController.dispatch_verb` → `_select_band_on_map` jumps to the band's own hex, which is the
+hex the player selected to see the band at all. The cycle moved the selection to the LAND,
+`note_selection_occupant` closed the verb the press had just opened, and Split, Scout, Deny and Trade
+all did nothing. Guarded live by `live_seat_probe` (`harness-live-seat.md`), which reaches Split
+through a hex click and a pushed press.
+
 ### ⛔ RETIRED — THE DOUBLE-CLICK QUICK-HUNT. INSPECTING MUST NOT MUTATE STATE
 
 Double-clicking a herd on the map assigned the player band's **entire idle pool** to hunt it —

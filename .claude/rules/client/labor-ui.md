@@ -63,7 +63,8 @@ sheets read the band's WHOLE store of four against their own crew of four and ca
 covered. One band's gear, counted twice, on the two surfaces the player staffs from.
 
 `LaborAssignment.kitWorkersHolding` is the sim's own per-row answer (the `min` over the kit's items
-of that row's share, cut pro-rata by head count from one band-wide budget), and `shortfall_line`
+of that row's share of one band-wide budget, settled by the rows' Priority — High first — with the
+largest remainder deciding only inside a short tier), and `shortfall_line`
 takes it in two arms:
 
 **THE STEPPER DECIDES WHICH ARM ANSWERS.** Two cases, and the test between them is
@@ -309,6 +310,24 @@ otherwise           :  w = ceil(sat + (T − sat × equipped) / bare)
 the blend and the re-solve reverted. No shipped fixture states the coverage terms, so every existing
 state takes the absent-means-covered path where `carry_per_worker` returns `equipped` and
 `crew_for_target` reduces to `ceil(target / per_worker)`.
+
+## ⛔ THE KEEPING POOLS ARE RETIRED — a site's crew keeps it (`docs/plan_site_crews.md`)
+
+`assign_labor … agriculture|husbandry|quarrywork` is refused by the sim and `Main.format_assign_labor`
+builds nothing for it; the band-wide roles it still builds are `scout`, `warrior`, `roadwork` and
+`builders`. A patch, a herd and a working are kept by the crew on their own work row, which keeps
+first and collects with what is left. Where the sections below name the Agriculture or Husbandry
+POOL, a pool card, or a remedy of *raise this band's … role*, read the site's own crew instead:
+
+- **The price clause** (`DetailFormat.build_price_clause`) names who pays the keeping through
+  `HudWorkVocab.keeping_role_name` — `Roadwork` for a road, `its own crew` for every site.
+- **The under-kept notes** name the row's crew: `This ground is slipping — add hands to this row's
+  crew.` / `Animals drifting off — add hands to this row's crew.`, with the `— its crew is short of
+  tools.` forms where the site's keeping tools came up short (`upkeep_tools_short`, the SITE's own
+  flag; the pool TOE the row used to join on is retired for these webs).
+- **What the crew spends keeping is on the wire**: `upkeep_hands` per patch, herd and working
+  (`native-extension.md`). The compose sheet reads the patch pair as `patch_upkeep_hands` /
+  `patch_upkeep_tools_short` off `tile_info`.
 
 ## Key scripts
 
@@ -1583,6 +1602,70 @@ own flags contradict — which is also why the retired repair fixture could not 
 > crew-gated version of exactly that once and fixed it; the attempt is recorded at both sites so it is
 > not tried a third time.
 
+### ⛔ A KEPT PATCH'S TAKE IS THE SIM'S CREW CURVE (`ForecastQuery.KIND_FORAGE_CREW_TAKE`)
+
+A site's crew keeps it before it collects, and only the sim knows how many hands that is at each crew,
+so the forage sheet composes NO take of its own on a kept patch (`_forage_is_kept`: the patch owes
+keeping). It asks `forage_crew_take` (`{faction_id, band_id, x, y, take_species, kit_id, floor,
+max_workers, crop}` → `per_crew[{workers, take, keep_hands, next_rung_take, next_rung_fodder,
+next_rung_materials, next_rung_keep_hands}]`) through `_forage_crew_take_view` — the deposit
+curve's request/caching pattern, keyed on the band's POOL plus the patch's biomass, keeping bill and
+keeping hands, so a new turn is a new question — and `_drag_forage_crew_take` re-asks on a floor drag.
+
+- **Food** is the row's `take` at the stepper's crew. **Fodder, materials and the hold rate** are priced
+  on the gatherers the row names (`workers - keep_hands`), so every account on the line describes the
+  same hands; there is no other client netting.
+- **While the reply is in flight** the readout states the seam's sentence (`HUNT_TAKE_PENDING`, or the
+  refusal) and no take — no fallback arithmetic.
+- **The cap and both crew pills name the WHOLE crew the stepper sets**: each take target (the take's
+  useful count, `crew_to_clear`, `crew_to_hold`) goes through ONE conversion,
+  `SourceForecast.forage_curve_crew_for` — the smallest curve row whose gatherers (`workers -
+  keep_hands`) reach it — so a pill reading `5 clear it now` is five harvesters of whom two keep. The
+  pills are converted in `_kept_crew_targets`, on the build and on every drag refill. Pending, only the
+  pool caps the stepper and neither pill names a crew. The hunt and deposit pills already walk curves
+  indexed by whole crew, so they needed no conversion.
+- **The floor walk is drawn by the gatherers, and the verdict names the whole crew.**
+  `floor_chart_model`'s `take_crew` (`_kept_take_crew`: the row's `workers - keep_hands`) is the carry
+  the stock walk uses, so the reach, the settle and the take targets all describe the hands that take.
+  The verdict's `K harvesters would reach the floor` is re-spelled through the same
+  `forage_curve_crew_for` (`SourceForecast.verdict_with_reaching_crew`, off the model's
+  `reaching_crew`), so no number on the sheet is in take hands. While the curve is pending the walk
+  uses the whole crew and the clause closes without a count.
+- **An unkept patch keeps the closed form** — there is no keeping to take out of the crew.
+- The hunt sheet reads `HuntCrewTake` and the deposit sheet `DepositCrewTake`, both already netted.
+- `ui_preview`'s stand-in (`fixtures_forecast.forage_crew_take_answer`) takes the tile's own
+  `patch_upkeep_hands` off the crew; `forage_kept_curve` is its frame and
+  `forage_kept_curve_verdict` the verdict's whole-crew count.
+
+#### ⛔ `ONCE SOWN` / `ONCE TENDED` / `ONCE TAMED` IS THE CREW CURVE'S ROW, NOT A CREW-BLIND QUOTE
+
+`patch_field_yield` / `patch_tended_yield` / `pastoral_yield` / `corral_yield` are crew-blind: what
+the finished rung pays a crew big enough to take all of it. A four-hand crew on a committed Harvest
+read `ONCE SOWN 12.48` where those four hands take 0.85. So the deal row reads the curve row at the
+stepper's crew.
+
+- **Forage rows carry the whole next-rung line**: `next_rung_take` (food), `next_rung_fodder`
+  (credited, 0 when the faction cannot bank fodder) and `next_rung_materials` (`[{material_id,
+  amount}]`), keeping netted, plus `next_rung_keep_hands`. `_crop_payoff_terms` takes the row and
+  states all three accounts from it. A refused fodder account keeps the lock glyph and states no figure.
+- **Scope on the plant web: a kept or raising patch, or ground already committed** (`curve_deal` in
+  the forage builder). Only a WILD patch merely offered a rung keeps the crop quote. The sheet asks the
+  curve itself when no kept view is live.
+- **The picked crop rides the ask.** `forage_crew_take` carries `crop` (the composed species on
+  uncommitted ground, `""` on committed ground, where the sim reads the commitment), and the crop is a
+  term of the cache key, so picking a different crop is a new question and a new line.
+- **Hunt rows carry `next_rung_animals_likely`** and `next_rung_keep_hands`. `_hunt_curve_payoff_terms`
+  turns the animals into the herd's own accounts through the body quantum
+  (`rescaled_from_biomass(herd, "", animals × body_quantum)`), so `ONCE TAMED` / `ONCE CORRALLED`
+  states the row at the sheet's crew in food, hide or both.
+- **The hunt curve's key carries the herd's state** (`_hunt_curve_herd_terms`: rung, domestication,
+  biomass), because the rows price the rung above the one the herd stands on. Without it a herd that
+  climbed a rung reused the previous rung's answer.
+- **`next_rung_keep_hands` is decoded and not displayed**: the figures are already net of keeping.
+- **While the curve is pending, refused, or has no row for the crew, the deal row is absent**, never
+  a crew-blind fallback (`_curve_next_rung_row` answers `{}`). A crew of zero has no row, so a kept,
+  raising or committed patch at zero states no deal.
+
 ### THE HEADLINE IS **NEXT TURN'S** TAKE, NOT THIS INSTANT'S ROOM (§4.7)
 
 Reported from play: a patch at **102** against a floor of **103**, regrowing and being harvested back
@@ -1802,6 +1885,34 @@ crew* wherever it is computed.
 
 ### THE CAP NOTE AND THE WASTE HAZARD ARE TWO QUESTIONS OF ONE CEILING
 
+> #### ⛔ EVERY SURFACE ASKS ONE PREDICATE ON ONE NUMBER PER WEB — the `+`'s own ceiling
+>
+> A worked row is overstaffed iff `crew_is_wasted(workers, ceiling)`, and the ceiling is the number
+> its `+` is struck at:
+>
+> | web | ceiling | reader |
+> |---|---|---|
+> | forage | `workers_needed` (keeping included) | `SourceForecast.worked_row_ceiling` |
+> | hunt | `hunt_useful_workers` | `SourceForecast.worked_row_ceiling` |
+> | extract | `useful_cutters` | `HudDepositVocab.published_useful_cutters` |
+>
+> The client's closed form answers a food row only where the wire is silent. The board row's note
+> (`source_yield_readout`), its `⚠ overstaffed` clause, the map's band source list
+> (`BandOverlayRenderer.food_overstaffed_text` and its extract arm), the drawer's standing summary
+> (`DrawerComposeController._overstaff_note_ceiling`) and the Groundwork row all read it.
+>
+> ⛔ **`workers_needed` IS THE `+`'s CEILING ON FORAGE ALONE.** On a hunt row and a working it is the
+> take the crew RAN, inverted — on a working clamped into `[1, crew]` — so it can never exceed the
+> crew standing there. Read as a ceiling it greyed a one-forester deadfall's `+` beside a sheet
+> offering a second hand; read as the overstaff number it called a hunt crew overstaffed while its
+> `+` still offered a hand. `source_yield_readout`'s `overstaff_ceiling` is therefore a REQUIRED
+> argument: a default that read the row's own `workers_needed` would put the second number back.
+>
+> **Reported from play:** a wild Harvest (crew 3, `workers_needed` 3) read `⚠ overstaffed` on the map
+> while the board said nothing and capped its `+` at 3. The list divided the closed-form take ceiling
+> — which counts no keeping hands — and came out under 3. The board was right.
+> `band_panel_preview`'s `_assert_board_and_map_list_agree` holds both cases on one row.
+
 `SourceForecast.crew_is_wasted(workers, useful)` — `workers > useful`, STRICTLY — is the second
 question asked of `max_useful_workers`, and it is asked BESIDE `source_worker_cap_state` rather than
 inside it. The two read the same number and answer differently:
@@ -1837,25 +1948,21 @@ so the work board's row hover, the map source list's `ATTENTION_OVERSTAFFED` cla
 roster's value cell all route through `HudDepositVocab.overstaffed_clause` — one spelling, or the
 player learns three marks for one state.
 
-**IT IS A FALLBACK, NOT A SECOND VOICE — THE WIRE'S ANSWER WINS WHERE IT HAS ONE.**
-`LaborAssignment.workersNeeded` is the sim's post-hoc overstaffing telemetry, published on **all three
-webs** (`systems::labor`'s `Extract` arm fills `SourceYield::workers_needed` beside its `overdraws`),
-and `source_yield_readout` already states it in FIGURES on the row's face through
-`OVERSTAFF_NOTE_FORMAT` — *only 2 of 5 bring anything home*. A `⚠ overstaffed` beside that is one
-condition wearing two spellings. So `_work_source_models` gates the clause:
+**ONE NUMBER, TWO SPELLINGS, NEVER BOTH.** Where the wire published the row's ceiling,
+`source_yield_readout` states the condition in FIGURES through `OVERSTAFF_NOTE_FORMAT` — *only 3 of 5
+bring anything home*, the ceiling first. Where it is silent the `⚠ overstaffed` clause answers on the
+closed form. `SourceForecast.worked_row_published_ceiling` is the one test: it answers the ceiling
+where the wire published it and `MAX_USEFUL_UNBOUNDED` where it did not, so `_work_source_models`
+passes it to the readout and gates the clause on it:
 
 ```gdscript
-var overstaffed := "" if int(m.get("workers_needed", 0)) > 0 \
+var overstaffed := "" if published_ceiling != SourceForecast.MAX_USEFUL_UNBOUNDED \
     else HudDepositVocab.overstaffed_clause(workers, useful)
 ```
 
 The two terms of the row's `attention` bool are therefore **mutually exclusive by construction**, and
-the flag is raised by whichever one spoke.
-
-**PREFERRING THE SIM IS PREFERRING THE BETTER NUMBER, not merely the first one.** It inverts the take
-that actually ran; the client divides by the ceiling the stepper caps at. The two are free to differ,
-and only the sim's can quantify. The client's ceiling answers exactly one state — `workers_needed ==
-0`, the rehydrated save's *unknown* — which is the arm
+the flag is raised by whichever one spoke. The closed form answers exactly one state — no published
+ceiling, the rehydrated save's *unknown* — which is the arm
 `band_panel_preview._assert_a_crew_bigger_than_its_source_is_flagged` stages; the published arm is the
 A/B beside it (`_assert_the_wire_s_answer_silences_the_client_s`), which asserts **both halves**: the
 face carries the sim's figures AND the hover carries no `⚠ overstaffed`. One half alone is not the
@@ -3796,8 +3903,8 @@ retires, so no rung of that picker can be disabled.
 > in it.** It read *"the override's home is the queue row's settings strip (`build_kit`)"*;
 > `docs/plan_pool_toe.md` §3 retired that picker on the reasoning this bullet was already halfway to
 > — a build's tools are a property of the RUNG being raised, so neither the BAND nor the ENTRY is the
-> right place to name one. `build_kit` is unreachable from the UI and `cargo xtask command-guard` is
-> its only driver until the verb retires end to end in a later slice.
+> right place to name one. `build_kit` has since retired end to end (`docs/plan_site_crews.md`):
+> the server refuses it and the client has no builder, signal or relay for it.
 >
 > **The refusal is in the HANDLER, not the parser**, so `command_guard` — a parser-level gate — cannot
 > see it; the `builders` role is swept BARE there for that reason.
@@ -4385,12 +4492,44 @@ useful — free up idle workers to send more"*. `BUILD_BOUND_NOTE_FORMAT` — th
 sheet's own builders stepper first — is deleted with that stepper: there is one control here, so
 there is one nearer lever, and `_forecast_worker_cap` takes no `build_crew` argument.
 
-**Every clamp reads the wire's `idle_workers`, NOT `HudBandLaborState.effective_idle`.** The two agree
-about the builders now (see below), but they still answer different questions: the sheet's ceiling is
-judged against a REFUSAL the sim makes, and `idleWorkers` IS `BandWorkforce::idle()` — every staffed
-hand across every activity and role, minus the bench — where `effective_idle` is an OPTIMISTIC answer
-carrying the pending overlay. A ceiling composed from the optimistic one would offer a crew on the
-strength of a command the server has not acknowledged.
+⛔ **THE POOL IS `effective_idle` PLUS THE EFFECTIVE CREW HERE — THE WORK ROW'S IDLE RULE.** It read
+the wire's `idle_workers` plus the wire crew, on the reasoning that a ceiling built on the optimistic
+overlay offers a crew on the strength of a command the server has not acknowledged. The row's `+`
+cannot take that rule: it has to count its own just-pressed edits, or repeated presses outrun the
+band. So the two rules disagreed exactly while an edit was in flight — a `+` pressed on one row left
+the sheet beside it offering the hand that row had just spent. `effective_idle` nets the bench and
+every role row as `BandWorkforce::idle()` does, so on a settled frame the two readings are equal.
+**A fixture whose `idle_workers` disagrees with `working_age` minus its rows now changes what the
+sheet offers**, which is why four harness fixtures were corrected with this rule.
+
+### ⛔ THE SHEET'S `+` AND THE ROW'S `+` READ ONE CEILING
+
+The `+` on a compose sheet and the `+` on the Work row for the same source are struck at ONE number,
+the sim's "most hands that still help" (`docs/plan_site_crews.md` §4):
+
+| web | the ceiling | the one reader |
+|---|---|---|
+| forage | the row's `workers_needed`, through `with_published_site_crew` | `SourceForecast.worked_row_ceiling` |
+| hunt | the row's `hunt_useful_workers`, through `with_published_useful_crew` | `SourceForecast.worked_row_ceiling` |
+| extract | the row's `useful_cutters` | `HudDepositVocab.published_useful_cutters` |
+
+`BandPanelController._work_source_models` gates its rows on that reader through
+`SourceForecast.crew_cap_state`, the body `source_worker_cap_state` now delegates to.
+
+⛔ **AND THE SHEET OPENS ON THAT ROW.** On a source the band already works, the seed takes the row's
+crew, floor, take selection AND kit (`DrawerComposeController._standing_kit_id`, off the effective
+worker map so a pending re-kit counts). The kit used to seed from the job's default, so a crew sent
+out on any other kit opened a sheet composing something else, and its `+` fell back to the curve. A
+player who then picks another kit gets the curve, which is the rule below. A band with no row seeds
+`NO_KIT_ID`, which resolves to the source's own default as the old reset did.
+
+**THE SHEET READS THE ROW'S FIGURE ONLY WHILE IT COMPOSES THAT ROW.**
+`DrawerComposeController._composed_standing_row` hands back the band's own row (the effective worker
+map, so a pending edit counts) when the sheet's floor and kit match it — and on forage, its take
+species too. Anything else is a different question: the published figure was struck at the row's
+floor and kit, so on a moved dial it answers something nobody asked, and the sheet's own curve keeps
+its job. `_standing_row_cap` maps `PUBLISHED_NO_USEFUL_CREW` to `MAX_USEFUL_BARREN`: a cap of zero
+would clamp the stepper to `0`, and committing `0` is an unassign.
 
 ### `effective_idle` SUMS `staffed_total`, AND FOR ONE RELEASE IT DID NOT
 
@@ -7331,14 +7470,16 @@ site's keeping tools follow from its rung.
   was sound; the LINE was not. It read *"\"No kit\" is a real choice — the site worked bare-handed."*
   and drew under an Upkeep picker that, on a wild source, should never have been there — explaining
   that going toolless was fine for a site with nothing to keep. What its slot carries now is
-  `WORK_INSPECT_KITS_UPKEEP_FORMAT`, the site's own standing bill; a caveat about what ONE control's
+  the tending line (`HudWorkVocab.tending_line`), the site's own standing bill; a caveat about what ONE control's
   `No kit` entry means is per-control and lives in that control's tooltip. **The width measurement
   survives its subject and is why the replacement is short**: *"the hint is shorter than
   `WORK_PRIORITY_HINT` as a MEASUREMENT — that sentence is the longest this card renders on one line,
   and the first draft of this one ran seven characters past it and drew ellipsised."*
-- **`WORK_INSPECT_KITS_UPKEEP_FORMAT` ("Kept at %s a turn.") is composed from the STAMPED pair.**
-  `RungLadder.upkeep_price_terms` joins `upkeepDemand` (work) and `upkeepMaterialDemand` (goods) into
-  terms — `Kept at 1 work · 0.05 hurdles a turn.` — and its EMPTINESS is the gate on the keeping row,
+- **The keeping row is the site's TENDING line, in whole workers and turns** (`tending_line`, off the
+  sim's `upkeep_workers_needed` / `upkeep_next_worker_turn` / `upkeep_workers_at_completion`), then
+  the goods (`RungLadder.upkeep_material_terms`): `Tending: 1 worker now · 0.05 hurdles a turn`. The
+  retired `Kept at 1 work · 0.05 hurdles a turn.` priced the work in units nobody staffs in.
+  `RungLadder.upkeep_price_terms` over the STAMPED pair is still the gate — its EMPTINESS is the gate on the keeping row,
   which is that line ALONE since `docs/plan_pool_toe.md` §3 retired the picker above it.
   It is deliberately NOT `build_upkeep_demand`'s per-rung quote: that answers *what would a rung cost
   to hold* for a rung nobody has started, this answers *what is this source billed right now*, and
@@ -7812,6 +7953,22 @@ gatherer leaves the plants nobody picked standing, a cultivator weeds them out. 
 cultivate-with-nothing-picked line NAMES the crop the game would settle on, because silence there is
 the game choosing for the player without saying so.
 
+⛔ **ON GROUND ALREADY COMMITTED, THE LINE STATES THE COMMITMENT.** `Committed to Wild Emmer —
+sowing 94%` (`TAKE_NOTE_COMMITTED_FORMAT`): the crop off `patch_committed_species`, the participle and
+meter of the rung in flight. A committed patch sends no crop on the next commit, so
+`_resolve_crop_selection` answers `""` there — and the default line, handed that `""`, read *"Nothing
+picked — this ground would be committed to ."* on a Tended Patch of Wild Emmer mid-Sow. Reported from
+play; "Nothing picked" was false as well as blank. `_mount_take_chips` takes the ground's crop
+(`ground_committed`), so the lit chip is that crop too, and `_take_consequence_note` answers `""` for
+any branch with no name to format — a crop sentence never ends on a blank.
+
+⛔ **AND EVERY CHIP ON THAT GROUND IS DISABLED, ITS HOVER SAYING WHY.** The composition sends no crop
+on committed ground, so a press could only move a pill that changes nothing. Each chip entry carries
+`HudWidgets.SPECIES_CHIP_DISABLED_REASON_KEY`, and `_species_chip` disables it and routes the reason
+through `disabled_tooltip` (`HudFloraVocab.TAKE_CHIP_COMMITTED_REASON_FORMAT` — *This ground is
+committed to Wild Emmer.*). This is the "a disabled control says why" rule; the "a chip carries no
+tooltip" rule above covers a LIVE chip.
+
 **WHETHER THE CROP WAS CHOSEN OR SETTLED IS THE MODEL'S TO REMEMBER.** `resolve_forage_species`
 writes its answer back every render, so from the second render on the player's pick and the game's
 default are the same string and a before-and-after comparison reads every settled crop as a chosen
@@ -8032,6 +8189,42 @@ much of its assigned crew the bill consumes.
   **both** sides now.
 - **The idle clause is its own line from its own composer** (`upkeep_pool_idle_line`) rather than a
   clause welded onto the coverage sentence, so `HudFormat.join_tooltip_lines` can drop it alone.
+
+## ⛔ EVERY LADDER CARD'S RUNGS ARE BUTTONS, AND A LOCKED ONE READS AS BLOCKED
+
+One row builder (`RungLadder._build_row`) draws every improvement ladder card — the plant and animal
+track (`track`), the workings (`deposit_track`), the road card (`route_track`) and the ring card:
+
+- **A rung that could be ordered is a button-styled row** (`_build_rung_button`): a `PanelContainer`
+  holding a ghost `Button` (the hit area and chrome, first so it draws beneath) and the content over it
+  with `MOUSE_FILTER_IGNORE` — name left, face right (`RUNG_TRACK_FACE_META`), then the rung's price
+  lines. **Buildable → enabled**, its press the same `on_pick(verb)` as before. **Locked → DISABLED**,
+  its face `🔒 <blocker>` in WARN (`RUNG_LOCKED_FACE_FORMAT`).
+- **The blocker comes from the data the card already holds.** A craft refusal names the craft by its
+  display name — on the route and deposit branches off the refusal record's `GATE_NAME_KEY` (set by
+  `RungGates._route_craft_refusal` / `_deposit_craft_refusal` from the ladder's knowledge roster); on
+  the plant/animal branch off `RungGates.RUNG_KNOWLEDGE_TRACKS` and the same roster (`knowledge_labels`,
+  `track()`'s `labels`). **Every other refusal states a SHORT clause, never a sentence** — a sentence
+  after the `🔒` elides (`This animal will n…`). Route and deposit records carry their own short form
+  (`🔒 pick a band`, `🔒 no crew`, `🔒 too small`); the plant/animal gates are sentences, so
+  `RungLadder._track_lock` picks a `HudFloraVocab.GATE_SHORT_*` clause by KIND: barred from below
+  (`Tended Patch first`), an outright species/ground bar (`can't be tamed` / `can't be penned` per the
+  rung, `not for this animal` on an unnamed one, `nothing here grows to it` on a plant), an unnamed
+  craft (`needs a craft`), or the source gate (`tame it first`, `ground won't take seed`). The
+  sentence stays the hover.
+- **The locked hover says how to unlock it, then the figures.** `Learn <craft> to raise this to <a
+  rung>.` (`RUNG_LOCKED_LEARN_FORMAT`, the rung through `tending_rung_phrase`) where a craft blocks,
+  then every refusal sentence, then the work/upkeep figure where the producer's own hover does not
+  already state it (`_lock_row`).
+- **A rung's material cost is inside its own button** — the pile, the stall warning and the standing
+  bill are quiet lines in the button's content (`_row_aside`, given the card's width less the button's
+  padding, or a wrapping label measured at zero width fits the card to one word a line). Nothing
+  floats under the list.
+- **The banked rungs and the one the source stands on are plain markers**: no button, the standing
+  rung's name in INK and `where you are` in INK_DIM — never the SIGNAL a press wears.
+- ⛔ This replaced the rule that a locked rung is a plain text line because *"a greyed button would
+  offer an act the sim refuses"*: reported from play, the locked rung then read as ordinary text and
+  nothing on it said blocked. A disabled button offers no act.
 
 ## THE `⌃` TRACK'S PRICE ASIDES, and the work row's third shortfall (`docs/plan_standing_upkeep.md` §2.7)
 
@@ -8452,3 +8645,23 @@ The committed row prints `netRateHome`, so past the apron `_with_home_rate` subs
   move with the drag: the section is not re-asked mid-gesture, and the release rebuilds at the
   committed floor, which asks again.
 
+## THE CREW SPLIT ON THE SHEET — the marks under the stepper, the sentence under the figure
+
+The Work-tab rows' crew-split marks (`band-city-panel.md` → "THE CREW SPLIT") ride all three compose
+sheets too: forage, hunt and Groundwork. They sit under each sheet's crew stepper, with the same
+sentence muted under the next-turn figure.
+
+- **The tending figure is the crew curve row's `keep_hands` at the stepper's crew.** Forage reads
+  it through `DrawerComposeController._forage_sheet_keep_hands`. Hunt and deposit read it through
+  `_curve_row_keep_hands`, which gives `NO_UPKEEP_DEMAND` unless the view is READY. A stepper press
+  rebuilds the sheet, so the marks follow the crew through the curve. Nothing is computed
+  client-side.
+- **No figure, no marks**: an unkept patch (no tending bill), a curve still in flight or refused, or a
+  curve with no row for the crew.
+- **The sentence sits in the readout box under the yields row.** It is passed as the
+  `crew_split_sentence` of `_mount_readout` (forage and hunt) and of `_mount_deposit_readout`. Both
+  mount it through `_mount_crew_split_sentence`, with meta `HudWorkVocab.CREW_SPLIT_SENTENCE_META`.
+  The split is a property of the crew, not of the floor, so it is outside the live registry.
+- **The hunt row's `keep_hands` is not its `next_rung_keep_hands`.** The first is the keeping at the
+  rung the herd stands on now. The second is the keeping once the next rung is built, and it belongs
+  to the deal.

@@ -192,9 +192,9 @@ func run(harness) -> void:
 	var wasted_model := {"has_yield": true, "workers": 2, "workers_needed": 0,
 		"actual_yield": 0.30, "sustainable_yield": 0.30, "wasted_yield": 0.75, "overdraws": false}
 	var wasted_forage := SourceForecast.source_yield_readout(
-		wasted_model, SourceForecast.LABOR_KIND_FORAGE)
+		wasted_model, SourceForecast.LABOR_KIND_FORAGE, SourceForecast.MAX_USEFUL_UNBOUNDED)
 	var wasted_hunt := SourceForecast.source_yield_readout(
-		wasted_model, SourceForecast.LABOR_KIND_HUNT)
+		wasted_model, SourceForecast.LABOR_KIND_HUNT, SourceForecast.MAX_USEFUL_UNBOUNDED)
 	# **THE CLAIM IS ABOUT THE WASTE NOTE, NOT ABOUT AN EMPTY CHANNEL.** `muted_note` is a shared
 	# small-print slot — the forecast's BAND rides it too since §6.4 — so an `== ""` here would start
 	# failing on a patch that merely reports a stochastic take, i.e. for a reason this assertion has
@@ -498,6 +498,10 @@ func run(harness) -> void:
 	var kit_band: Dictionary = h._hud._band_labor.player_band()
 	var kit_patch := ForageFx.floorify(BaseFx.food_tile_fixture(),
 		HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	# **AN UNKEPT PATCH**, because this is a claim about the closed form's kit repricing: a KEPT patch's
+	# take is the sim's crew curve (`ForecastQuery.KIND_FORAGE_CREW_TAKE`), which the kit reaches through
+	# the ask rather than through this arithmetic.
+	kit_patch["patch_upkeep_demand"] = SourceForecast.NO_UPKEEP_DEMAND
 	var forage_kit_before: String = h._hud._compose.forage_kit_id()
 	h._hud._compose.set_forage_kit_id(BandFx.KIT_ID_GATHERING)
 	var basketed: Dictionary = h._hud._drawercompose._forage_priced_patch(kit_patch, kit_band)
@@ -825,14 +829,23 @@ const COVERED_ROW_ARMED := 4.0
 ## row handed in states something else (the free-store reading, which is `0 of 4` — the store is all
 ## out with the two rows); and a row the sheet is not composing — a picker mid-change, whose `kit_id`
 ## is not the kit being rendered — is ignored rather than quoted at the wrong kit.
+## The item the committed row's table is short of.
+const COMMITTED_ROW_SHORT_ITEM := "spears"
+
 func _assert_a_committed_sheet_states_its_own_row() -> void:
 	var roster := BandFx.kit_roster_fixture()
 	var big_game := KitRoster.kit_by_id(roster, BandFx.KIT_ID_BIG_GAME)
 	var band := BandFx.band_fixture()
 	band["kit_item_conditions"] = BandFx.kit_condition_rows(COMMITTED_ROW_STOCK)
+	# The row's TABLE OF EQUIPMENT says it is short — a line it claims was not filled. Without it the
+	# row claims nothing and is not short, whatever `kit_workers_holding` says.
 	var row := {
 		"kit_id": BandFx.KIT_ID_BIG_GAME, "workers": COMMITTED_ROW_CREW,
 		SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY: COMMITTED_ROW_ARMED,
+		SourceForecast.ASSIGNMENT_KIT_TOE_KEY: [{
+			HudBandLaborState.POOL_TOE_ITEM_KEY: COMMITTED_ROW_SHORT_ITEM,
+			HudBandLaborState.POOL_TOE_REQUIRED_KEY: float(COMMITTED_ROW_CREW),
+			HudBandLaborState.POOL_TOE_FILLED_KEY: COMMITTED_ROW_ARMED}],
 	}
 	var committed := KitRoster.tier_hint(roster, big_game, band, KitRoster.JOB_HUNT,
 		COMMITTED_ROW_CREW, row)

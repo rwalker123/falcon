@@ -3,6 +3,7 @@ paths:
   - "clients/godot_thin_client/src/scripts/ui/{BandCityPanel,BandFoodStatus,PenStatus}.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/BandPanelController.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/WorkInspectorDialog.gd"
+  - "clients/godot_thin_client/src/scripts/ui/hud/DisclosureTriangle.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/{TradeZoneController,TradeLedger,TradeHoverCard,FactionMark,RungLinkIcon,hud_trade_vocab}.gd"
   - "clients/godot_thin_client/tools/band_panel_preview.gd"
   - "clients/godot_thin_client/tools/band_panel_trade_tab.gd"
@@ -19,14 +20,16 @@ paths:
 
 | Script | Purpose |
 |--------|---------|
-| `ui/hud/BandPanelController.gd` | `RefCounted` controller (HUD decomposition Phase 2d, `docs/plan_hud_decomposition.md`) owning the **BAND/CITY PANEL's whole render path** — the last big mass to leave `Hud.gd`. It holds the panel HANDLE (`_panel`), the three public **zone builders** `build_band_zone` / `build_work_zone` / `build_parties_zone` and everything under them (the band zone's vitals/PEOPLE/food-outlook/WORKFORCE + role cards; the work zone's paged board, filter chips, pager, inspector strip and source models; the parties zone's rows and inspector strip; and the **BAND VERBS** — their registration on the action bar, their `enabled` predicate, the one dispatch and the verb sheets' form builders, see "THE BAND VERBS"), the panel's **cycler + snapshot refresh** (`render_band` / `refresh_snapshot` / `rerender` / `cycle_band` / `focus_band` / `select_expedition` / `focus_labor_source` / `confirm_recall_expedition` / `_push_zone_badges`), and the **zone state that survives a snapshot** — `_work_filter` / `_work_sort` / `_work_page` / `_work_open_key` / `_work_policy_open` / `_roster_expanded` / `_work_zone_host` / `_work_zone_band` / `_band_zone_tier` / `_party_open_key` / `_send_expedition_count` — ~1,580 lines, 72 moved functions. **`_band_zone_tier` is why the band and work halves are ONE controller**: it is a bare `int` written by `build_band_zone` and read by `_on_zones_resized`, so splitting them would have straddled it. Hud holds it as `_bandpanel`, constructed in `_ready` after `_disclosures` (the vitals row wires its carets through it). **THE PANEL HANDLE IS PRIVATE** — the two non-moving `HudLayer` readers (`_refresh_disclosure_hosts`, `_render_occupant_drawer`) only ever asked "is a panel injected?", so they ask **`has_panel()`** instead of holding the node. **The injection surface is TWO Callables** (it was nine, then six; the three detail-line ones went with `BandDetailLines`, and the four send-expedition/quarry targeting ones went with `TargetingController`), each retained on HudLayer by the "an injection you still have to hold is relocated, not eliminated" test: `_emit_assign_labor` (owns the `assign_labor_requested` emit + optimistic pending write, so `assign_labor` stays INDIRECT) · `_herd_label_for_id`. Each is reached through a **typed adapter**. The band verbs' picks and sends (`begin_move_band` / `begin_verb_pick` / `send_expedition_to` / `begin_pick_quarry` / `disarm_verb_picks` / `is_expedition_quarry`) go through a typed **`TargetingController`** collaborator, not Callables. **THE IS-THIS-MINE TEST IS ONE STATIC ON `HudConst`, AND IT FAILS CLOSED.** `HudConst.is_player_unit(unit)` is a `class_name` static every host calls directly — no preload, no injection, no `Callable` through a constructor, which was the objection the six private `_is_player_unit` copies were justified by. A row that carries NO `faction` key defaults to `HudConst.NO_FACTION_ID` and is therefore NOT the player's; defaulting it to `PLAYER_FACTION_ID` made an unattributed row the player's own and exempted it from every foreign-disclosure gate. Collaborators: the SAME `_band_labor` / `_compose` model instances BY REFERENCE, `_selectioncard` (roster lookup + map pinning, for the cycler / labor-source / party jump routing, **plus `selected_terrain_label()`** — the one selection read the vitals rows need), `_disclosures` for `wire_label` ONLY, **`_banddetail` (a typed `BandDetailLines` ref — the vitals label and the parties inspector strip render through it; the three `*_fn` members `_unit_summary_lines_fn` / `_expedition_summary_lines_fn` / `_expedition_row_tooltip_fn` and their adapter wrappers are DELETED, the tooltip being a static `DetailFormat.expedition_row_tooltip` call now)**, and the HUD CanvasLayer as the **host** it `add_child`s its `ConfirmationDialog` into (a `RefCounted` cannot parent — the `TurnOrbController` pattern). **Every signal it emits is RELAYED by HudLayer** (the controller never emits a HudLayer signal), among them `cancel_order_requested` · `send_denial_raid_requested` · `send_trade_expedition_requested` · `recall_expedition_requested` · **`split_band_requested`** · `alert_focus_requested` · `roster_occupant_selected`. **`set_band_city_panel` / `cycle_panel_band` / `focus_panel_band` MUST stay callable on the HUD node** — `Main._wire_band_city_panel` probes all three with `has_method` and binds the latter two to `BandCityPanel`'s `cycle_requested` / `subject_activated`, and a failed probe fails SILENTLY — so HudLayer keeps them as thin delegators. **`_build_allocation_panel` does NOT live on this controller**: it writes the drawer's `%AllocationPanel` node, so it stays with the drawer render dispatch (it moved to `SubjectDrawerController` with that dispatch in Phase 2c-3, still a thin function stacking this controller's three public zone builders; its two siblings on that host, `_build_band_move_actions` / `_build_expedition_panel`, are branches of `_render_occupant_drawer` and travelled with it for the same reason). Word tables, formats and thresholds stay on `HudLayer` and are read back as `HudLayer.X`, the `HudWidgets`/`HudFormat`/`SelectionCardController`/`DrawerComposeController` convention. Behaviour identical to the old inlined band-panel code |
+| `ui/hud/BandPanelController.gd` | `RefCounted` controller (HUD decomposition Phase 2d, `docs/plan_hud_decomposition.md`) owning the **BAND/CITY PANEL's whole render path** — the last big mass to leave `Hud.gd`. It holds the panel HANDLE (`_panel`), the three public **zone builders** `build_band_zone` / `build_work_zone` / `build_parties_zone` and everything under them (the band zone's vitals/PEOPLE/food-outlook/WORKFORCE + role cards; the work zone's five collapsible sections, site rows, pool lines, inspector strip and source models; the parties zone's rows and inspector strip; and the **BAND VERBS** — their registration on the action bar, their `enabled` predicate, the one dispatch and the verb sheets' form builders, see "THE BAND VERBS"), the panel's **cycler + snapshot refresh** (`render_band` / `refresh_snapshot` / `rerender` / `cycle_band` / `focus_band` / `select_expedition` / `focus_labor_source` / `confirm_recall_expedition` / `_push_zone_badges`), and the **zone state that survives a snapshot** — `_collapsed_sections` / `_work_sort` / `_work_open_key` / `_work_policy_open` / `_roster_expanded` / `_work_zone_host` / `_work_zone_band` / `_band_zone_tier` / `_party_open_key` / `_send_expedition_count` — ~1,580 lines, 72 moved functions. **`_band_zone_tier` is why the band and work halves are ONE controller**: it is a bare `int` written by `build_band_zone` and read by `_on_zones_resized`, so splitting them would have straddled it. Hud holds it as `_bandpanel`, constructed in `_ready` after `_disclosures` (the vitals row wires its carets through it). **THE PANEL HANDLE IS PRIVATE** — the two non-moving `HudLayer` readers (`_refresh_disclosure_hosts`, `_render_occupant_drawer`) only ever asked "is a panel injected?", so they ask **`has_panel()`** instead of holding the node. **The injection surface is TWO Callables** (it was nine, then six; the three detail-line ones went with `BandDetailLines`, and the four send-expedition/quarry targeting ones went with `TargetingController`), each retained on HudLayer by the "an injection you still have to hold is relocated, not eliminated" test: `_emit_assign_labor` (owns the `assign_labor_requested` emit + optimistic pending write, so `assign_labor` stays INDIRECT) · `_herd_label_for_id`. Each is reached through a **typed adapter**. The band verbs' picks and sends (`begin_move_band` / `begin_verb_pick` / `send_expedition_to` / `begin_pick_quarry` / `disarm_verb_picks` / `is_expedition_quarry`) go through a typed **`TargetingController`** collaborator, not Callables. **THE IS-THIS-MINE TEST IS ONE STATIC ON `HudConst`, AND IT FAILS CLOSED.** `HudConst.is_player_unit(unit)` is a `class_name` static every host calls directly — no preload, no injection, no `Callable` through a constructor, which was the objection the six private `_is_player_unit` copies were justified by. A row that carries NO `faction` key defaults to `HudConst.NO_FACTION_ID` and is therefore NOT the player's; defaulting it to `PLAYER_FACTION_ID` made an unattributed row the player's own and exempted it from every foreign-disclosure gate. Collaborators: the SAME `_band_labor` / `_compose` model instances BY REFERENCE, `_selectioncard` (roster lookup + map pinning, for the cycler / labor-source / party jump routing, **plus `selected_terrain_label()`** — the one selection read the vitals rows need), `_disclosures` for `wire_label` ONLY, **`_banddetail` (a typed `BandDetailLines` ref — the vitals label and the parties inspector strip render through it; the three `*_fn` members `_unit_summary_lines_fn` / `_expedition_summary_lines_fn` / `_expedition_row_tooltip_fn` and their adapter wrappers are DELETED, the tooltip being a static `DetailFormat.expedition_row_tooltip` call now)**, and the HUD CanvasLayer as the **host** it `add_child`s its `ConfirmationDialog` into (a `RefCounted` cannot parent — the `TurnOrbController` pattern). **Every signal it emits is RELAYED by HudLayer** (the controller never emits a HudLayer signal), among them `cancel_order_requested` · `send_denial_raid_requested` · `send_trade_expedition_requested` · `recall_expedition_requested` · **`split_band_requested`** · `alert_focus_requested` · `roster_occupant_selected`. **`set_band_city_panel` / `cycle_panel_band` / `focus_panel_band` MUST stay callable on the HUD node** — `Main._wire_band_city_panel` probes all three with `has_method` and binds the latter two to `BandCityPanel`'s `cycle_requested` / `subject_activated`, and a failed probe fails SILENTLY — so HudLayer keeps them as thin delegators. **`_build_allocation_panel` does NOT live on this controller**: it writes the drawer's `%AllocationPanel` node, so it stays with the drawer render dispatch (it moved to `SubjectDrawerController` with that dispatch in Phase 2c-3, still a thin function stacking this controller's three public zone builders; its two siblings on that host, `_build_band_move_actions` / `_build_expedition_panel`, are branches of `_render_occupant_drawer` and travelled with it for the same reason). Word tables, formats and thresholds stay on `HudLayer` and are read back as `HudLayer.X`, the `HudWidgets`/`HudFormat`/`SelectionCardController`/`DrawerComposeController` convention. Behaviour identical to the old inlined band-panel code |
 | `ui/BandCityPanel.gd` / `.tscn` | The dockable **Band/City command center** CanvasLayer — persistent whenever ≥1 player band exists, dockable to any of the 4 edges (default left, persisted to `user://band_city_dock.cfg`) + collapse-to-rail (the rail runs along the dock's PLENTIFUL axis — stacked on L/R, one line with the restore toggle right-justified on T/B — and `COLLAPSED_SIZE` is a FLOOR on the strip it reserves, not an answer; see "The collapsed rail runs along the dock's plentiful axis"). Header (stage glyph/name/label + the band's hex coordinates + `◀ n/N ▶` cycler + 2×2 dock chooser + collapse) plus an **ACTION REGISTRY** — a registration seam (`register_action` / `action_invoked`) holding every verb the panel offers, the `⚒` included, rendered on its own BAR row under the header on a vertical dock, on the SUBJECT ROW itself on a horizontal one and on the COLLAPSED RAIL in either, taking zero height wherever it is not the live mount; see "The action registry is ONE list with THREE mount points" — body hosts **AN ORDERED LIST OF NAMED ZONES AT A FIXED CROSS-AXIS SIZE**, declared by the SUBJECT via **`set_zone_layout(specs)`** and filled by **`set_zones(contents)`** (keys `&"band"`/`&"work"`/`&"knowledge"`/`&"parties"`; the panel OWNS and frees them, and frees a content handed in for a zone the layout does not declare). A band declares three, the faction page four — see "THE BODY IS AN ORDERED LIST OF ZONES". Two shells, chosen by the panel's own **WIDTH** (`wide_shell_min_width()` — never a dock-edge test, so a resizable dock needs no special case). **That threshold is DERIVED FROM THE LIVE ZONE LIST, never hand-picked and never a fixed set of terms**: it sums each declared zone's flank (an EXPANDING zone contributing `ZONE_WORK_MIN_WIDTH`, the one readable board column the test exists to protect) plus **one `RAIL_SEPARATOR_SPAN` per GAP** plus `PANEL_CHROME_H` — so a band's three come to 380 + 380 + 354 + 2×25 + 26 = **1190** and the faction page's four to 380 + 380 + 354 + 354 + 3×25 + 26 = **1569**. **It is therefore PER-SUBJECT**: on a window between the two the faction page correctly tabs while a band's page stays abreast, which is also why `set_zone_layout` is called BEFORE the zone contents are built. `ZONE_WORK_MIN_WIDTH` (380) MIRRORS Hud's `WORK_COLUMN_MIN_WIDTH` — one readable board column — exactly as `ZONE_WORK_MAX_WIDTH` (1520) mirrors `WORK_COLUMN_MIN_WIDTH × WORK_MAX_COLUMNS`; the two are a PAIR with Hud's column consts and move with them. The chrome term is load-bearing because the threshold is tested against the panel's OUTER `_panel_extent().x` while the zones live in `_interior_size()`. It shipped hand-picked at **900**, which broke the whole 900–1055 band (the derived threshold was 1056 then, before the flanks widened): the work zone came out 224px, Hud clamped to one column, its labels clipped — and the NARROW shell would have given the board the full 874px, so flipping wide early made it ~4× narrower, degrading the thing the wide shell exists to improve. `PANEL_CHROME_H` is a `const`; `_wide_separator_span()` and `_fixed_zone_span()` are FUNCTIONS over `_zone_layout`, shared by `wide_shell_min_width()`, `_card_width()`, `_affordable_work_columns()` and `zone_size()` so none of them can disagree about how much width the chrome eats. (`WIDE_SEPARATOR_SPAN`, the `const` that hard-wired TWO gaps, is deleted — it was the one term a fourth column could not have been added around.) **wide** (in practice T/B) = every declared zone side by side, the flanks fixed at `ZONE_BAND_WIDTH` (380) / `ZONE_PARTY_WIDTH` (`PANEL_WIDTH − PANEL_CHROME_H` = 354 — see "The wide shell's flanks are never narrower than the narrow shell's zone") / `ZONE_KNOWLEDGE_WIDTH` (the same 354, taking the same floor for the same rule), work EXPAND_FILL, `LINE_SOFT` hairlines in every gap, no tab bar; **narrow** (in practice L/R) = the subject's own tab bar under the header + exactly one zone beneath it (active tab = SIGNAL ink + a 2px SIGNAL underline, badges via `set_tab_badge(zone, text, hot)`, selection persisted as `CONFIG_KEY_TAB`). **The cross-axis size is FIXED** — `PANEL_WIDTH` 380 (L/R) / `_horizontal_panel_height()` = the body budget (`PANEL_HEIGHT_WIDE` 418 at one band column, `PANEL_HEIGHT_WIDE_TWO_COLUMN` 335 at two, the `maxf` making 418 the live answer at both) **plus the active shell's own chrome** (`_shell_chrome_height()`: 0 wide, the tab bar narrow), clamped to `MAX_WIDE_HEIGHT_FRACTION` of the window (T/B) — see "The strip's height is 418 at ONE band column and 335 at two" — so `current_reservation_size()` changes ONLY on dock/collapse/hide/viewport-resize and a content edit can no longer re-emit `reservation_changed` → `MapView.set_reserved_inset` → cache invalidation (the map flicker on every `+` press). **TWO sanctioned `ScrollContainer`s exist in the panel — the PARTIES list and the BAND zone** — and the harness asserts both halves for each: that it exists, and that no OTHER zone has grown one (`_assert_scroll_only_where_sanctioned`, a table of `(node name, owning zone)` pairs, so a scroll under the wrong zone still fails). Everything else is no-scroll by design; the work zone pages itself against **`work_zone_size()`** — a named reader of the KEYED **`zone_size(zone)`**, which is one answer with one parameter rather than a named accessor per zone that a fourth zone would have to add a fifth of — the zone's interior after chrome — e.g. 354×1107 in a 380 L dock, 789×300 in a 1920 bottom dock with the chrome rail sharing that row — and re-pages on the **`zones_resized`** signal). **Zone hosts are plain `Control`s, not containers**, so an over-wide zone content cannot push the card past its fixed cross-axis size; `clip_contents` keeps overflow inside its own zone. Reserves its edge via `reservation_changed(edge, size)` → `Main._apply_reservation(&"band_panel", …)`, which since issue #377 fans a HORIZONTAL dock's reservation to the map at 0 (the card floats over live map) and a TOP dock's to the HUD at 0 as well (its readouts belong beside the card, not below the strip). On a **BOTTOM** dock the strip also carries **a trailing CHROME RAIL** the HUD parks its stacked bottom-bar chrome into (`rail_slot_host` / `set_rail_width`, issue #324) — a SIBLING of the card, not a cell of its row, and bottom-only since #377 (a top dock never displaces `BottomBar`, so its chrome stays home). See "Band/City dockable panel". See "Band/City dockable panel" + `docs/plan_band_city_dock.md` |
+| `ui/hud/DisclosureTriangle.gd` | The Work tab section head's fold control's MARK — a filled triangle (`▼` open, `▶` folded) DRAWN with `draw_colored_polygon`, its bounding box (`drawn_rect`) centred in its rect by geometry; laid full-rect over the ghost Button that is the hit area. See "THE SECTION HEAD'S TRIANGLE IS DRAWN" |
 | `ui/hud/WorkInspectorDialog.gd` | **The work board's inspector, rehosted OUT of the work zone** (`docs/plan_standing_upkeep.md` §4.9 item 12d) — see "THE WORK INSPECTOR IS A DIALOG" below. An **`AutoSizingPanel`** on its OWN `CanvasLayer` (`HudLayer.work_inspector_host()`, `WORK_INSPECTOR_LAYER_INDEX` = 105), holding the `PanelContainer` `BandPanelController._build_work_inspector` still builds — the head line, the conditional notes, the arrivals strip, and (since item 12d's SECOND pass) the POLICY / PRIORITY / KITS **sections** with their controls drawn, over a two-button actions row. **A `Control` on a layer and never a `Popup`**: `Popup` auto-hides on an outside click and on parent focus loss, which is precisely the dismissal this surface forbids (it RE-TARGETS when another board row is selected, so a stepper press elsewhere is ordinary use). **NON-MODAL — no catcher, no scrim**: every pixel it claims is a pixel of dead map, so it claims only the card. **Centred in the ROOM the dock leaves — one placement for all four dock edges**, no `room_bounds` (it is a surface you WRITE INTO, so it takes a layer above the docked ones rather than dodging them — `panel-framework.md`'s table). `_room()` is the viewport inside `VIEWPORT_MARGIN` cut back to the panel card's MAP-FACING side, read through `BandCityPanel.map_facing_edge`, the one table naming which side of a docked card faces the map. It was centred in the raw viewport for one slice, which held only while the card was ~104–156px tall; the sections took it to 340 and a viewport centre then ran straight through a bottom dock's panel. `mount(strip, reserved, card_rect, map_facing)` is the whole API: `reserved` is `BandPanelController._work_inspector_height`'s answer for the same model and becomes the card's `min_height`, which is how *reserved ≥ drawn* survived the move. Rebuilt per render, never patched (the rung track's rule — every figure on the strip moves per snapshot), and the re-mount IS the re-target |
 | `ui/hud/FactionRollup.gd` | **All-`static`, stateless** builder of the FACTION PAGE's FOUR zones (issue #450) — the all-band rollup the cycler pins first. `build_band_zone` (the summed PEOPLE bar + the band page's own vitals rows — Food / **Fodder** / **Upkeep** / Morale / Growth; a sixth, Trade, went with arc #527's retired account, and the `Kit` row it sat beside went with `docs/plan_standing_upkeep.md` §4.9 item 12 — durabilities never aggregated, so that row was an alert and a drill-down, and the CRAFTING panel's kit ledger already states the items in full. The **`Upkeep`** row is the standing MATERIAL bill, folded PER BAND out of `DetailFormat.band_material_bill` and rendering only where some band on the roster owes a good — see `band-readouts.md` → "THE STANDING MATERIAL BILL". The `Fodder` row is the Food row beat for beat, sums the same way, and has the band row's DORMANT form on the same gate folded across the roster — see `band-readouts.md` → "THE FACTION PAGE'S `Fodder:` ROW". `build_band_zone` took the faction's `{track: progress}` row as a sixth parameter for that row's hover alone, and **takes no knowledge row at all now** — the dormant row's hover was retired (it reached the whole block, not the row), and the parameter went with its one reader. `_build_vitals_label` CLEARS the previous render's carets before building, which this page did not do until a dormant row inherited one), `build_work_zone` (the whole workforce as one bar and the per-band roster), **`build_knowledge_zone`** (SETTLING, the craft tracks, DISCOVERIES — the fourth column the panel's ordered-list body exists to hold, with a `full` HEIGHT TIER that drops the last of the three in a height-capped horizontal dock) and `build_parties_zone` (every party and the band it left, its NAME jumping to that band — see "THE PARTIES ROW NAMES THE HOME BAND" for why `_summary_row` binds a separate `jump_owner`), plus the `_stat_row` leaf they are built from. Its two new inputs are threaded in as PARAMETERS like every other: the player faction's sedentarization entry and its discovered-site array, read off `FactionReadouts` (`faction_sedentarization` / `faction_discovered_sites`), which is where the PLAYER-FACTION FILTER over those two per-faction wire arrays already lives — a second walk looking for `PLAYER_FACTION_ID` is a second chance to disagree about whose faction is being reported. **It is a shared LAYER rather than a controller because the page is a READOUT** — no steppers, no compose sheet, no open row, nothing that survives a snapshot; its one control, the Open Borders toggle, reads its state off the snapshot and emits through a Callable the controller threads in — so it has no per-cluster state to own, which is the whole of what makes a controller one (`hud-modules.md`). The one thing it needs is threaded in as a PARAMETER: the `HudBandLaborState` instance, plus the caller's `herd_label_for_id` Callable (the treatment `HudFormat.panel_expedition_summary` already takes — a stateless layer must not reach for the roster/selection/herd-list state that resolver reads). **IT RE-DERIVES NOTHING**: every total is a SUM over answers the per-band surfaces already give (`DetailFormat.band_net_food` / `band_provisions` / `band_fodder_store` / `band_net_fodder` / `band_material_bill`, `HudBandLaborState.effective_idle` / `effective_worker_map` / `effective_role_workers` / `band_party_workers`, `FactionReadouts.faction_tracks`), so a band's own page and this one cannot disagree about a number — a rollup with its own food ledger would be a second source of truth for the identity `larder_delta == income − consumption − pen_feed − raid_forfeit` the food arc keeps closed. Dependency direction: it reads `HudWidgets` / `HudFormat` / `DetailFormat` / `SourceForecast` / `HudStyle` / the vocab leaves and `FactionReadouts`' track table, and none of them may read it back |
 | `ui/hud/TradeZoneController.gd` | `RefCounted` controller for the band page's **Trade tab** (issue #731) — builds the zone (FULL or SHORT tier, chosen by measurement), owns the list popover and the hover card. See "The Trade tab" |
 | `ui/hud/TradeLedger.gd` | **All-`static`** arithmetic for the Trade tab and the Food/Fodder popovers: which crossings are trade, one good's net across its ratings, shipments grouped by party, the network's camps and relays, one good across the network |
 | `ui/hud/TradeHoverCard.gd` | The Trade tab's hover card: a row's rating piles or a shipment's cargo, placed beside the row and never under the list panel |
 | `ui/hud/FactionMark.gd` | **The one faction mark** — a flag glyph in `MapView.faction_color`, on every counterparty; the slot a faction's flag (#647) fills |
+| `ui/hud/CrewSplitMarks.gd` | One small square per worker, **drawn** (a custom-draw `Control`, not glyphs): how a site's crew divides between tending it and taking from it — see "THE CREW SPLIT" below. Mounted on every Work-tab site row and under the forage compose sheet's stepper |
 | `ui/hud/RungLinkIcon.gd` | A pooling link's rung as a glyph (path dotted, trail dashed, dirt road solid pigment, paved road double; open ground a faint dot) |
 | `ui/hud/hud_trade_vocab.gd` | `HudTradeVocab` — the crossing codes (direction / link / cause), the tab's thresholds, words and sizes |
 | `ui/PenStatus.gd` | Single source of truth for **"is this pen's herd starving?"** — `FULLY_FED` / `FED_EPSILON` + `fed_fraction(herd)` / `is_starving(fed)`, reading `HerdTelemetryState.penFedFraction` (`< 1` ⇒ the pen's own pasture plus the fodder carried in did not cover its demand, so the herd is SHRINKING every turn — it is never a bill the keeper failed to pay, human food not being animal feed). Plus `herd_is_starving(herd)` for a caller holding only the herd dict. The ONE test all three surfaces ask — the herd drawer's **`Fed:`** row (`DetailFormat.pen_feed_value`, which carries the mark, the fed share, the pasture/fodder split and the shortfall; the CORRAL row states the rung alone, see `herd-readouts.md`), the map's distress badge (`MapView._draw_herd`) and the turn orb's `starving_pen` producer — so they can never disagree about which pen is dying |
@@ -587,7 +590,7 @@ stretch, and widening it into that gap would put it over a live HUD column.
   360px T/B dock). A tier change re-renders the zones; anything else just re-pages the board — that
   is what `_on_zones_resized` distinguishes, and skipping it lands a tall-shell band zone in a short
   box where its host silently clips it.
-- **Zone `work` — THE PAGED BOARD** (`BandPanelController.build_work_zone` / `_fill_work_zone`). Header (`WORK` ·
+- **Zone `work` — five collapsible SECTIONS in one scroll since `docs/plan_site_crews.md`; see "THE WORK TAB IS FIVE SECTIONS". What follows describes the retired PAGED BOARD** (`BandPanelController.build_work_zone` / `_fill_work_zone`). Header (`WORK` ·
   n sources · total /turn · the fodder total when non-zero · **`Output 62%` when the band is below
   full productivity** · a `⋯` `MenuButton`) · filter CHIPS · the board · pager. **The inspector strip
   is NOT in that stack any more** — §4.9 item 12d hosts it as a viewport-centred `WorkInspectorDialog`
@@ -2330,6 +2333,170 @@ Measuring only the deepest column passed the 130/263 flank at 88% — the short 
 it. Two independent failure modes (uniformly empty = a tier that did not rise; lopsided = the wrong
 split) need two claims.
 
+## THE WORK TAB IS FIVE SECTIONS, AND EVERY SITE HAS ONE SPINNER (`docs/plan_site_crews.md` §3)
+
+A site's crew keeps it before it collects, so the Agriculture, Husbandry and Groundwork POOLS are
+retired and each patch, herd and working is staffed on its OWN row. The Work zone
+(`BandPanelController._fill_work_zone_column`) is the work head over five collapsible SECTIONS, in
+this order, each headed by its fold control (a filled `▼` open, `▶` folded) and its NAME — nothing
+else; the `N on work` readout is retired, the hands being on each section's own steppers. The one
+head-level warning kept is BUILD QUEUE's `⚠` (`BUILD_QUEUE_NO_BUILDERS_MARK`, WARN, the pool's hover)
+while something is queued and no builder is on it:
+
+| section | holds | always drawn? |
+|---|---|---|
+| BUILD QUEUE | the `Builders` pool row (stepper, kit face, TOE mark), then the queue rows | yes |
+| AGRICULTURE | one row per forage source | only with a forage row |
+| HUSBANDRY | one row per hunt source | only with a hunt row |
+| ROADWORK | the `Road crew` pool row, the Spread/Priority pick where the road bill is live, then the roads kept | with a road (below) |
+| GROUNDWORK | one row per held working (`extraction-workings.md`) | only with a working |
+
+- **The sections ARE the filter.** The Gathering chips, the pager and the paged board's capacity
+  arithmetic (`_work_board_capacity` and its column/row preference) are retired.
+- **One sanctioned `ScrollContainer` holds them** (`HudWorkVocab.WORK_SECTIONS_SCROLL_NAME`, under
+  `ZONE_WORK`). The items flow COLUMN-MAJOR across the columns `set_work_columns` grants
+  (`_flow_work_sections`): the want is `ceil(total height / room)` clamped to `WORK_MAX_COLUMNS`,
+  each column fills to `max(room, total / columns)`, and a section's gap and head keep with its first
+  row. The two expansions — the whole queue, the whole road roster — still take the zone in its
+  place. Without a panel (the no-dock host) the columns are returned bare.
+- **A folded section keeps its head** (`WORK_SECTION_COLLAPSED_META`) and draws no body.
+  `_collapsed_sections` is zone MODE, so it survives a band change.
+- **ROADWORK draws where the band has roads to keep** (`_roadwork_section_shows`): a kept road it can
+  see, road keeping owed out of sight, a road build in its queue — or a road crew still staffed, so a
+  band whose last road went never strands hands on a stepper it cannot reach. BUILD QUEUE always draws.
+- **A pool row is drawn exactly like a site row** (`_build_pool_line` on `_site_row_shell`, the frame
+  `_build_work_row` and the GROUNDWORK rows share): the same backing, stripe column and indent, an icon
+  in the icon column (`🔨` Builders, `🛤` Road crew — `POOL_ICON_*`), the title at `WORK_ROW_FONT_SIZE`
+  in INK (WARN when pending or short), the stepper at the site rows' default metric so it lands in
+  their column, and a muted line two saying what the hands do (`BUILDERS_POOL_SUBLINE` /
+  `ROAD_CREW_POOL_SUBLINE`, meta `WORK_POOL_SUBLINE_META`; the Builders' kit face follows it). Drawn
+  bold and flush-left, the two lines read as the head of the NEXT section. `WORK_POOL_LINE_HEIGHT` is
+  `WORK_ROW_TWO_LINE_HEIGHT`. The pool stepper's narrow metric (`POOL_STEPPER_*`) is retired with the
+  four-card row that needed it.
+- **The pool rows keep the retired cards' readings**: the one-slot mark (`⚠` work short in WARN, else
+  `ⓘ` in `INK_DIM` for tools short or a spare hand), the role hint, coverage, tool and idle sentences
+  on the row's hover, and the same three metas the cards carried, on the row node. The Builders row is
+  never work-short.
+- **The road pool's row is `Road crew`** (`ROLE_NAME_ROADWORK`) and its section stays `ROADWORK`: the
+  row names the hands, the section the work.
+
+### THE SECTION HEAD'S TRIANGLE IS DRAWN, NOT TYPED
+
+The fold control is a ghost `Button` (`WORK_SECTION_CHEVRON_WIDTH` × `WORK_SECTION_CHEVRON_HEIGHT`, the
+head's own height, so the hit area and row height are unchanged) carrying a `DisclosureTriangle` laid
+over it full-rect: a filled equilateral triangle of side `WORK_SECTION_TRIANGLE_SIDE`, `▼` while open
+and `▶` while folded, in INK_DIM. **It is drawn because a glyph cannot be centred**: the `⌄` / `›` it
+replaced sat off-centre in the button by the font's baseline and side bearings, and by a different
+amount at each interface scale. The polygon is centred by arithmetic in the control's own
+coordinates, and the whole-UI scale transforms it with the button. `band_panel_preview
+._assert_section_triangle_centred` measures the drawn bounds against the button's rect, both axes,
+±1px, in both states (measured offset 0.00, 0.00).
+
+### EVERY ROW ON THE WORK TAB SHARES THE SITE ROWS' COLUMNS
+
+Every row in every section puts its icon at the site rows' icon column, its title at their title
+column and its second line at their line-two column (measured on the drawn nodes by
+`band_panel_preview._assert_roadwork_and_queue_share_the_site_columns`):
+
+- **Road rows are site rows** (`_build_roadwork_roster_row` on `_site_row_shell`): the road mark
+  (`ROADWORK_ROSTER_ICON`), the locator as the title in INK (`ROADWORK_ROSTER_NAME_META`); line two
+  `road_row_value` in DANGER when the keeping is short, INK_DIM otherwise
+  (`ROADWORK_ROSTER_VALUE_META`), the stripe DANGER with it; and the `Build` pill line only while a
+  road build is queued on it (`roadwork_roster_row_height(queued)`).
+- **No site row carries a `✕`; a click opens its INSPECTOR, which holds the put-down.** A harvest or
+  hunt row's card has `Unassign`; a GROUNDWORK row's (`_build_working_inspector`) has `Stop holding this
+  working`; a road row's (`_build_road_inspector`, reserving `_road_inspector_height`) has the head
+  (mark, locator, state), `Jump to source` and `Stop keeping this road` — the road ladder card's own
+  label and hover, keyed `ROADWORK_ROSTER_ABANDON_META` to the tile, sending `abandon <f> road <x> <y>`
+  through `_emit_road_abandon` → `road_abandon_requested`. The roster models carry the card's `key` /
+  `kind` / `x` / `y`, and `_find_work_model` searches site, workings and road models alike.
+- **The fund-mode pick and the unseen line are the Road crew row's own lines** (`_build_pool_line`'s
+  `extras`): the Spread/Priority pair at `ALLOC_SECTION_FONT_SIZE` and the "kept out of sight" hint,
+  each in the row's line-two indent and charged to the row's reservation. The road block's height is
+  the drawn rows' own `custom_minimum_size` summed.
+- **A build-queue entry's marker column is the site rows' stripe-and-icon column**
+  (`BUILD_QUEUE_MARKER_WIDTH` = `WORK_ROW_TITLE_OFFSET`, the `▸` centred in it), so the job face starts
+  in the title column under `Builders`. **The date leads line two** (`QUEUE_SECOND_LINE_DATE_INDEX`, at
+  `ALLOC_SECTION_FONT_SIZE`, then `· Build: <level>` and the tools mark): the face lost the width the
+  wider marker column took, and on line one the fixed 168px date column left `🌱 Cultivate (71, 18)`
+  9px short. Line two has the row's width, so neither clips.
+
+### A site row is four lines
+
+```
+Harvest (72, 18)        🌾   ♻  ⚠   [−] 3 [+]
+Tended Patch
++0.20 /turn · 50% left standing
+[Priority: Normal] [Build: High]
+```
+
+- **Line two is the rung the site stands on** (`HudWorkVocab.site_crew_line`), and nothing else:
+  `IMPROVEMENT_DONE_LABELS` of the standing rung, a deposit rung's catalog name, or `Wild`. **Covered
+  keeping says nothing and no row states a fraction of a person**: the retired `keeps X of Y · N
+  harvesting` split the crew into keepers and takers, which is a fraction on most turns, and the
+  accounts line below already says what the take produces.
+- **The keeping mark** (`_build_site_keeping_mark`) rides line one after the policy marks: `⚠` when the
+  crew kept less than the site owes, `ⓘ` when its keeping tools came up short, else an empty slot. Its
+  hover is in WHOLE WORKERS AND TURNS (`HudWorkVocab.site_keeping_hint` over `tending_line`): a short
+  site leads `Short: tending needs 2 workers, this crew can't cover it.`, then both marks state
+  `Tending: 2 workers now · another needed around turn 58 · 3 workers once it's a Tended Patch` (a noun
+  rung takes `a`/`an`, the two animal states `Pastoral` / `Penned` none — `tending_rung_phrase`), and a
+  tools-short site closes with the tools sentence. The `another…` clause drops where the sim's
+  `upkeep_next_worker_turn` is `-1` (it is an ABSOLUTE game turn otherwise), the `when…` clause where no build is in flight on the site (the
+  rung named is the in-flight build's destination). The three counts are the sim's
+  (`upkeep_workers_needed` / `upkeep_next_worker_turn` / `upkeep_workers_at_completion`, read by
+  `HudWorkVocab.tending_of`); nothing converts work units to hands. The marks run keeps its `⚠` only
+  for a missing GOOD with the work paid, the one at-risk case the keeping mark does not state.
+- **The `+` reads the sim's most-useful crew, which already counts the keeping.** A forage row carries
+  its `workers_needed` onto the forecast (`SourceForecast.with_published_site_crew` →
+  `FORECAST_SITE_CREW_KEY`, returned as it stands by `max_useful_workers`); a hunt row carries
+  `hunt_useful_workers` (`with_published_useful_crew`), a working `useful_cutters`. The `+` gate, the
+  cap note and the overstaffed flag read those; **the client adds no keeping count of its own** (it did
+  for one batch, and double-counted on hunt rows). A `workers_needed` of `0` is the rehydrated save's
+  *unknown* and leaves the closed form to answer. Capped on the take alone, a Harvest under a Cultivate
+  whose keeping took one worker went dead at the take's count with an idle worker standing by.
+- **Two priority pills, on their own line under the row** (`_build_pill_line`, meta
+  `WORK_ROW_PILL_LINE_META`). `Priority: <level>` is on every
+  harvest, hunt and GROUNDWORK row and cycles `work_priority` (Normal → High → Low → Normal).
+  `Build: <level>` is on a row only while its site has a build in this band's queue, and cycles
+  `build_priority` (`build_priority_requested`, relayed by `HudLayer`, formatted by
+  `Main.format_build_priority`). **A ROAD row carries the `Build` pill alone**, only while a road build
+  is queued on it: a road has no crew, so there is nothing for `Priority` to rank and the server
+  refuses `work_priority`'s road form by name.
+  Neither writes an optimistic overlay: both marks are captured live, so the new level arrives on the
+  command's own recapture and there is nothing to roll back. A line of their own, so neither the rung
+  line nor the accounts line is ever cut to seat them; `site_row_height` / `EXTRACT_ROW_HEIGHT` charge
+  it. The retired `High priority ·` accounts prefix is what `Priority` replaced.
+- **Every build-queue row is two lines** (`BUILD_QUEUE_ROW_HEIGHT`): the second states the entry's own
+  mark READ-ONLY, `Build: Normal` (blank on a pending entry), then `· ◆ builders short of tools` on
+  the tool-short head while its strip is closed.
+
+### EVERY SITE VERB SPELLS ITS SOURCE ONE WAY — `Main.site_address`
+
+`build_order`, `build_priority`, `work_priority`, `unqueue` and a road's `abandon` all compose their
+source through the one static:
+
+| source | spelled | payload carries |
+|---|---|---|
+| a herd | `<herd_id>` | `herd_id` |
+| a working | `<x> <y> <material>` | `material` |
+| a road build | `road <x> <y>` | `road: true` |
+| a patch | `<x> <y>` | nothing else — the bare tile ALWAYS means the patch |
+
+⛔ **A WORKING OR A ROAD SENT AS THE BARE TILE LANDS ON THE PATCH ON THAT HEX**, which is why the
+emitters (`_emit_build_order`, `_emit_unqueue`, `_commit_build_priority`, `_commit_work_priority`, both
+road `✕`s) state `material` and `road` on every payload. `work_priority` passes `allow_road = false`
+and builds no line for a road. Each wire queue entry states its own site
+(`BuildQueueEntryState.material` / `.road`), and `HudBandLaborState.queue_entry_key` keys it off
+those alone — a working by its material, a road by `road`, never by inferring from the deposit rows.
+`_deposit_queue_models` gives a queued working build its queue row, face `Quarry · Stone (70, 17)`;
+`_road_queue_models` and `road_queue_tiles` select road entries on `road`, not on `kind`.
+
+The sections below describe the retired paged board, the POOLS block and its cards wherever they
+speak of chips, a pager, board capacity, a row of pool cards, or `agriculture` / `husbandry` /
+`quarrywork` staffing; the readings those cards carried now live on the two pool lines and on each
+site row as above.
+
 ## THE POOLS BLOCK — all three work pools, on the tab that spends them (§4.7)
 
 > #### ⛔ THIS SECTION SUPERSEDES THE KEEPING BLOCK BELOW, WHICH WAS ON THE **BAND** TAB
@@ -2630,6 +2797,20 @@ in work units), so the hint is the only place a pool's holdings are named; the i
   tools before idle, and `POOL_CARD_IDLE_META` still carries the idle sentence.
 - **The Builders card is never work-short** (`_build_pools_block` passes it no `cover`), so a builders
   pool short of tools always takes the `ⓘ`.
+- **THE TOOL LINES NAME THE SHORT TOOLS** — `Short of hoes.` / `More hoes would speed this up.` / `The
+  top job in the queue is short of earthmoving tools.` (`POOL_TOOLS_SHORT_*_FORMAT`), off the pool's
+  `pool_toe` lines with `filled < required` and the equipment roster's display names
+  (`pool_tools_short_line`'s `item_names`). Named as the cause, never COUNTED (#716). The unnamed
+  `*_LINE` forms stand only where the roster has not arrived. **The queue HEAD names the same tools**
+  off the same lines (`_builders_short_tool_names`): its amber second line `◆ builders short of hoes`
+  (`build_queue_tools_text`), its hover (`build_queue_tools_tooltip`) and its open strip's detail
+  line. **A SITE's keeping tools are named the same way**, off the site's own `upkeep_toe` lines
+  (`BandPanelController._site_short_tool_names`): the keeping mark's hover ends `Short of hoes.` /
+  `More hoes would speed this up.` (`site_keeping_hint`'s `tools_named`), and the work-row note and
+  its hover read `…its crew is short of hoes.` (`WORK_ROW_UNDER_*_TOOLS_NAMED_FORMAT`, through
+  `under_kept_note` / `under_kept_tooltip`). `upkeep_tools_short` stays the GATE — the lines only name
+  what it says. With the roster's names loaded nothing on the Work tab says *short of tools*
+  (`band_panel_preview._assert_site_tools_are_named` sweeps every label and hover).
 - **…AND ITS TOOL LINE NAMES THE JOB, NOT THE POOL** — `POOL_TOOLS_SHORT_BUILDERS_LINE`, *The top job
   in the queue is short of tools.*, chosen by `pool_tools_short_line`'s `kind` argument whatever the
   work reading. The builders' tool claim is the queue HEAD entry's alone (`docs/plan_pool_toe.md`
@@ -3323,7 +3504,9 @@ red line there asks for is a decision, not a failing run.
 - **`HudComposeVocab.IMPROVEMENT_RUNNING_LABELS["corral"]` went `Building the pen` → `Penning`** in the
   same measurement. It was the one phrase among four single words, it is the craft's own name, and at
   203px it would have set this column's reservation on its own.
-- **The date column is `168.0`, measured and not guessed**, and under-sizing it is not cosmetic here.
+- **The date column was `168.0`, measured and not guessed.** It has since left line one: the date
+  leads the row's SECOND line (see "EVERY ROW ON THE WORK TAB SHARES THE SITE ROWS' COLUMNS"), so the
+  column width and the face/date squeeze measured here describe the retired one-line layout.
 
 Asserted in `band_panel_preview` on FOUR states — the reported two-leg sow (rendered as
 `band_panel_queue_legs`), the same board with **one** work unit banked (the turn the defect starts on,
@@ -3418,8 +3601,8 @@ did not leave the block until the turn resolved. All three land on the row that 
 
 `docs/plan_pool_toe.md` §3 took the per-entry kit back off the queue: **a build's tools follow from
 the RUNG it raises**, so an entry has nothing to override and the strip has one control. The
-`build_kit` COMMAND is retired in a later slice — leaving the verb unreachable from the UI is the
-expected state, and `cargo xtask command-guard` is its only live driver meanwhile.
+`build_kit` COMMAND is retired end to end since (`docs/plan_site_crews.md`): the server's parser
+refuses it, and the client's builder, signal and relay are gone.
 
 **What that RETIRES, stated so nobody re-derives it:** `BUILD_QUEUE_KIT_WIDTH`,
 `BUILD_QUEUE_SETTINGS_KIT_KEY`, `BUILD_QUEUE_KIT_TOOLTIP`, `BUILD_QUEUE_KIT_PICKER_META`, the
@@ -3804,13 +3987,14 @@ dead and completely green. `_drive_click` pushes the player's own events through
 Godot decide whether anything was pressed; sabotage-verified by disabling the `✕`, which the emitted
 form would have pressed anyway.
 
-**`build_kit` and `build_order` are driven in `command_guard`**, both source forms each, because a
-well-formed line that means the wrong thing is exactly what that gate exists for. `build_kit` is the
-first SOURCE-addressed verb it drives — it names no band, every band holding the source holding the
-same entry — so `BandHandle` grew a `SourceAddressed` outcome keyed on the parsed VARIANT rather than
-on the harness's own label, which is what stops a band-addressed command being opted out of the handle
-check by being relabelled. The `builders` role is swept BARE there now: the sim refuses a `kit` token
-on it, and that refusal is in the handler rather than the parser, so a parser-level gate cannot see it.
+**`build_order`, `build_priority`, `work_priority` and `unqueue` are driven in `command_guard` in every
+site form they take**, because a well-formed line that means the wrong thing is exactly what that
+gate exists for (the forms are "EVERY SITE VERB SPELLS ITS SOURCE ONE WAY" below). `BandHandle`'s
+`SourceAddressed` outcome is keyed on the parsed VARIANT rather than on the harness's own label, which
+is what stops a band-addressed command being opted out of the handle check by being relabelled. The
+`builders` role is swept BARE: the sim refuses a `kit` token on it, and that refusal is in the handler
+rather than the parser, so a parser-level gate cannot see it. `build_kit` and `upkeep_kit` are
+retired, and the guard asserts `Main` has no builder and the HUD no signal for either.
 
 ### THE EXPANSION — the whole queue over the whole Work zone (§4.9 item 9c)
 
@@ -4705,7 +4889,7 @@ unreserved 106px risk against a 396px box.
              <the rank hint>
  ────────────────────────────────────────
  KITS        Harvesters [Harvesting kit ▾]
-             Kept at 2 work a turn.            ← only where the site OWES upkeep
+             Tending: 2 workers now · …        ← only where the site OWES upkeep
  ────────────────────────────────────────
  Jump to source                  Unassign
 ```
@@ -5167,7 +5351,8 @@ as `BandPanelController.work_priority_requested`, relayed by `HudLayer` and form
 is chosen (a non-empty herd id is the herd form, else two integer tokens name a tile), which is how
 the sim's own parser chooses. **It names a BAND** for `build_order`'s reason: the ordering it feeds is
 a band's — the shedding walk partitions that band's rows and the pen-feed split serves that band's
-stores — where `unqueue` and `build_kit` are source-addressed because their subject is the ground.
+stores — where `unqueue` is source-addressed because its subject is the ground. Its source is spelled
+by `Main.site_address` like every other site verb (below).
 
 **⛔ NO OPTIMISTIC OVERLAY, AND THEREFORE NO ROLLBACK HANDLE.** `LaborAssignment.priority` is captured
 LIVE off the allocation the command mutates and the server re-captures after every command, so the
@@ -5532,6 +5717,29 @@ up, the rung-in-progress `◎60%` mark beside it, and the BUILDERS note in the s
 
 ## THE ROW SAYS WHEN ITS GEAR DOES NOT REACH ITS CREW — `kit_note`, a slot of its own
 
+> ### ⛔ SHORT IS THE ROW'S TABLE OF EQUIPMENT, AND THE NOTE NAMES THE ITEMS
+>
+> A take row's kit is short where its own `kit_toe` (`[{item_id, required, filled}]`, one line per
+> item the kit CLAIMS) has any line with `filled < required` (`KitRoster.row_toe_is_short`, through
+> `HudWorkVocab.pool_toe_row_is_short` — the pool lines' own test, the keys being one spelling). An
+> absent or empty table claims nothing and is never short. **`kit_workers_holding < workers` is NOT
+> the test any more**: hands the row does not claim kit for work bare BY DESIGN, so the comparison
+> flagged every over-crewed row falsely. The compose sheet's committed-row line gates on the same
+> table.
+>
+> The note NAMES the short items — `Short of baskets`, `Short of spears and sleds`
+> (`HudWorkVocab.KIT_SHORT_ITEMS_FORMAT`, `toe_short_item_names`, `natural_list`) — each by its
+> equipment-roster display name lower-cased, off `StartingLoadoutController.item_display_names()`
+> (the parsed `equipment_config_json`'s `items`), pushed to the panel by `HudLayer` with the roster
+> (`BandPanelController.set_item_display_names`). Never an item name in code, never a count. Where
+> the roster has not arrived the count sentence below stands. The `◆` mark is drawn on the same test.
+>
+> **`workers_needed` is crew-independent** and can dwarf the crew (47 on a 3-hand patch). It drives
+> the `+` gate and the overstaffed note only, and no surface states it bare —
+> `band_panel_work_kit_short` asserts the 47 appears nowhere on its row.
+>
+> The paragraphs below describe the head-count reading this replaced.
+
 Reported from play: a band outfitted with four trapping kits staffed two hunt rows of four — Rabbit
 Warren and Wild Fowl, both resolving `trapping` — so each row arms two of its four hunters. **The
 game said nothing anywhere**, and the player had no way to find out which tiles the gear had gone to.
@@ -5557,8 +5765,9 @@ COMPLETE kit, over the row's own `workers`); `_work_row_kit_note` turns it into 
   all three; the compose sheets never carried it.
 
   **What went with the words:** that clause was the ONLY place the row said that adding workers makes
-  a kit shortfall **worse** rather than better — the band's ledger is cut pro-rata by head count, so
-  each hand added to a short row takes a smaller share and more of the crew ends up bare-handed. It
+  a kit shortfall **worse** rather than better — the band's items settle by the rows' Priority, High
+  first, and inside a short tier each hand added to a row takes from a fixed share, so more of the crew
+  ends up bare-handed. It
   is the very gear-against-hands distinction the note's ink rule below is built on, and **nothing
   states it in words now.** No shorter replacement was invented: the number alone is what was asked
   for, and the register survives in the INK and in the row's own `◆` mark.
@@ -5694,23 +5903,24 @@ flag anywhere on this panel.
 ```
 
 `overstaffed` is `HudDepositVocab.overstaffed_clause(workers, useful)` over
-`SourceForecast.crew_is_wasted`, measured against the SAME `max_useful_workers` the row's `+` gate
-(`source_worker_cap_state`) is struck at — so the ceiling is resolved once per arm and spent twice.
+`SourceForecast.crew_is_wasted`, measured against the SAME ceiling the row's `+` gate is struck at —
+`SourceForecast.worked_row_ceiling` through `crew_cap_state`, the one reader the compose sheet and
+the map list also call on this row — so the ceiling is resolved once per arm and spent twice.
 
-⛔ **AND IT IS A FALLBACK, NOT A SECOND VOICE.** `workers_needed` is published on all three webs now,
-and where it answers `source_yield_readout` already states the condition in FIGURES on the row's face,
-so the clause is gated off it:
+⛔ **AND IT IS A FALLBACK, NOT A SECOND VOICE.** Where the wire published the row's ceiling,
+`source_yield_readout` already states the condition in FIGURES on the row's face, so the clause is
+gated off the one test that decides it:
 
 ```gdscript
-var overstaffed := "" if int(m.get("workers_needed", 0)) > 0 \
+var overstaffed := "" if published_ceiling != SourceForecast.MAX_USEFUL_UNBOUNDED \
     else HudDepositVocab.overstaffed_clause(workers, useful)
 ```
 
 `note` and `overstaffed` are therefore **mutually exclusive by construction** and the flag is raised
 by whichever one spoke — a row can never carry both, which would be one condition wearing two
-spellings. The client's ceiling answers exactly one state: `workers_needed == 0`, the rehydrated
-save's *unknown*. `labor-ui.md` → "The cap note and the waste hazard are two questions of one ceiling"
-holds why the sim's number is also the better one.
+spellings. The closed form answers exactly one state: no published ceiling, the rehydrated save's
+*unknown*. `labor-ui.md` → "EVERY SURFACE ASKS ONE PREDICATE ON ONE NUMBER PER WEB" holds which
+number each web's ceiling is.
 
 **The clause also rides the row's TOOLTIP**, because a mark the player cannot read is not a fix: the
 `+` gate's own note is empty on a band with no idle hands, which is exactly the band that has to move
@@ -6072,15 +6282,15 @@ party launches from the herd drawer's sheet.
   `_trade_destination`) and sends and selects nothing; another highlighted target replaces it. The sheet
   then shows a read-only `Prey` / `To` row (`HudWidgets.build_read_only_field`) with a `✕`
   (`HudWidgets.FIELD_CLEAR_META`, `_build_field_clear_button`) that clears it, and its Send COMMITS
-  straight away — no pick — through the same `_commit_denial` / `_commit_trade` the armed click uses.
+  straight away — no pick — through `_commit_denial` / `_commit_trade`.
   Both targets are re-resolved live every render and dropped when the herd leaves the snapshot or the
   tie parks, and both are reset with the verb.
-- **With no target, the send arms the pick; the click commits** (`_build_verb_send`). Scout's send, and
-  Deny and Trade's when no target is set, is a toggle that arms `TargetingController.begin_verb_pick` /
-  `begin_pick_quarry` with the sheet's values captured in a `commit` Callable — `_commit_denial` /
-  `_commit_trade`, and Scout's `send_expedition_to` — and, for Deny and Trade, a `hover` Callable
-  (`_deny_hover_detail` / `_trade_hover_detail`) that states in the banner what a click on the hovered
-  hex would commit to. The sheet stays open with its send drawn `armed`
+- **With no target, Scout's and Deny's send arms the pick; the click commits** (`_build_verb_send`).
+  It is a toggle that arms `TargetingController.begin_verb_pick` / `begin_pick_quarry` with the
+  sheet's values captured in a `commit` Callable — `_commit_denial`, and Scout's `send_expedition_to`
+  — and, for Deny, a `hover` Callable (`_deny_hover_detail`) that states in the banner what a click on
+  the hovered hex would commit to. **Trade's send has no pick**: with no destination it is greyed with
+  its reason ("ONE ROW PER GOOD"). The sheet stays open with its send drawn `armed`
   (`HudComposeVocab.VERB_SEND_ARMED_STYLE`), and re-arms on every render while armed, so an edit made
   while the pick is up is what the click sends. Split's button commits `split_band` itself. The labels
   stay `Send scouting party` / `Send Denial Raid` / `Send shipment`.
@@ -6576,22 +6786,81 @@ whose payload holds a cargo LIST. That is the `send_denial_raid_requested` prece
 other party verb's payload could express gets its own signal, and `Main.format_send_trade_expedition`
 is its own builder for the same reason.
 
+### ONE ROW PER GOOD — the sheet is the approved prototype
+
+The sheet follows the maintainer-approved prototype (`trade_sheet.html`), top to bottom:
+
+```
+TRADE · FROM FIRBROOK
+Load a shipment                                  ✕
+To       Rushford · 3 tiles NE                   ✕     (or `Pick a band on the map`, WARN)
+Porters                                  [−] 1 [+]
+1 of 2 free workers · each carries 6.0
+Pack                                 0.0 of 6.0 carried
+▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬ (WARN when full)
+CARGO
+  Food    77.7 held                  [−][ 0.0][+] All
+  Hay     6.0 held · weighs 0.5 each [−][ 0.0][+] All
+▸ Bone    8.5 held · 4 grades        [−][ 0.0][+] All
+[ Send shipment ]
+Pick a band on the map to trade with. Load something first.   (WARN, also the Send's hover)
+```
+
+- **One row per GOOD** (`_trade_cargo_goods`): Food, Hay, then each material in the order the band
+  first lists it. A material the band holds none of has no row. The row's name is the material id
+  capitalised; its second line is `<held> held`, `· N grades` when there is more than one, and
+  `· weighs X each` only when one unit is not one unit of pack space.
+- **The manifest underneath is unchanged — one amount per PILE.** `_trade_cargo_rows` and
+  `_trade_manifest_lines` are untouched, so the command a loaded sheet sends is the one it always sent
+  for the same cargo (`trade.gd`'s `_assert_the_command_is_unchanged`).
+- **A good loads BEST GRADE FIRST.** Its piles are ordered by their readings' VALUES, axis by axis in
+  declared order, highest first (`_trade_batch_sorts_before`) — the sim's numbers, no client table of
+  grade words. A good's amount is dealt over its piles in that order (`_write_cargo`), so `+` and
+  `All` take the best and `−` gives back the worst.
+- **Grades are collapsed by default** behind the Work tab's drawn `DisclosureTriangle`
+  (`HudWidgets.CARGO_GRADES_TOGGLE_META`). An open good lists one line per grade, the whole axis text
+  WRAPPING rather than eliding, each with its own `−` / amount / `+` and no `All`. A good of one grade
+  draws a same-width spacer instead. Which goods are open (`_trade_open_goods`) resets with the verb.
+- **The controls are light so the name gets the width**: `TRADE_CARGO_CONTROL_SEPARATION` and the
+  narrow `TRADE_CARGO_FIELD_WIDTH` keep a good's name and second line whole in the tile card's column;
+  `All` is an inline link (`CARGO_CONTROL_MAX` meta).
+- **A full pack greys every `+` and `All`** with `TRADE_PACK_FULL_REASON`; a row already carrying all
+  the band holds greys them with `TRADE_CARGO_ALL_LOADED_REASON` (`_cargo_add_blocked_reason`, off the
+  same ceiling the control clamps to). The bar draws WARN once less room is left than half the tenth
+  the sheet names amounts in (`TRADE_PACK_FULL_EPSILON`).
+- **Fewer porters TRIM the load; they do not refuse it** (`_fit_manifest_to_pack`, every render): the
+  goods give back from the last row up, each worst grade first, floored onto the tenth, until the pack
+  holds it. The over-cap Send reason stays as a guard and is unreachable in play.
+- **Porters** is the party stepper (`TRADE_PORTERS_LABEL`), its `+` greyed at the idle count with
+  `TRADE_PORTERS_AT_MAX_REASON`; the line under it is `N of M free workers · each carries X`, X the
+  sim's resolved `expedition_trade_per_worker_carry`.
+- **The Send waits for a destination and a load**, each a clause of its hover and of the WARN line
+  under it (`TRADE_SEND_NEEDS_DESTINATION`, `TRADE_SEND_NEEDS_CARGO`). **There is no armed pick on this
+  sheet**: the destination is set by a click on a ringed band while the sheet is open, and the Send
+  commits to it. The sheet ends at the Send and that reason line; no closing hint follows it, a
+  good's own `weighs X each` being where a carry weight is stated.
+- **The `To` row is always drawn**: the picked band named as the cycler names it, then
+  `N tiles <bearing>` to where the tie last saw it (`_trade_destination_where`, `compass_bearing`),
+  with the REMEMBERED sighting and its `≈` walk on the value's hover; unpicked, `Pick a band on the
+  map` in WARN with no `READ_ONLY_FIELD_META`.
+
+> **What this supersedes in the sections below:** a manifest row per PILE with its rating on the face, the
+> `Max` button and its two hints, the `Mass ▰▰▱` meter, and an over-cap manifest disabling the Send.
+> The tie gate, the remembered-position keystone, the typed field's rules, the floors and the three
+> mass terms below all stand.
+
 ### THE TIE IS THE GATE, AND THE PICK TEACHES IT RATHER THAN ENFORCING IT SILENTLY
 
-A shipment has one site: its subject is a band, reached on the map — pre-selected while the sheet is
-open, or by the armed pick's click — and the herd drawer's hunting-party branch has nothing to stay in
-step with. Both resolve only a band the sender holds a LIVE tie to
+A shipment has one site: its subject is a band, reached on the map — pre-selected by a click while
+the sheet is open — and the herd drawer's hunting-party branch has nothing to stay in step with. The
+click resolves only a band the sender holds a LIVE tie to
 (`TargetingController.trade_destination_at` over `HudBandLaborState.connections_for_band`, keyed on the
 durable `band_id`, and `tie_is_live`), because `ConnectionLedger::get(..).strength > NO_TIE` is what the
 sim gates the launch on.
 
-- **A PARKED tie (strength 0) is named in the hover with its reason** (`COMPOSE_DESTINATION_PARKED_REASON`)
-  **and refused at the click** (`TRADE_PICK_MISS_TEXT`), the pick staying armed. Zero means *"we know
-  such a people exist and have no current dealings"*, and the thing the player has to learn is that the
-  TIE is what gates trade. The hover and the click both read `TargetingController.tie_at`, so the
-  banner cannot name a band the click would not resolve.
-- **Only LIVE ties are highlighted** (`TargetingController.live_tie_tiles`, the ring set the sheet and
-  the armed pick both draw), so a parked tie's band is never offered as a pre-selection.
+- **Only LIVE ties are ringed** (`TargetingController.live_tie_tiles`), so a PARKED tie's band
+  (strength 0 — *"we know such a people exist and have no current dealings"*) is never offered, and a
+  click on it sets nothing.
 - **The `📦 Trade` verb is gated on IDLE WORKERS and never on the ties**; a sender with no live tie
   gets `COMPOSE_DESTINATION_NO_TIES` on the sheet over a visible-and-disabled send, since no click could
   be accepted.
@@ -6603,7 +6872,7 @@ sim gates the launch on.
 
 A connection can only ever grant `Discovered` (`.claude/rules/core_sim/connections.md`), so
 `lastSeen{X,Y,Turn}` is where the subject WAS and nothing may render it as a live position. The `To`
-row and the Trade pick's hover banner both state it through `_trade_destination_notes` — the sighting
+row's hover states it through `_trade_destination_notes` — the sighting
 and its turn in those words, and the walk
 quoted from it wears a **`≈`** and the clause *"if they are still there"*. A remembered band behaves
 exactly like a remembered herd, which every player has already been taught by a herd that moved.
@@ -6903,7 +7172,7 @@ ring caret's offer test.
 title `Label` that was already there, so the strip's reservation does not move; the label CLIPS, this
 zone's standing rule, and the clause is appended rather than given its own child precisely so it is
 the first thing to go. `DetailFormat.standing_rung_face` routes through **`rung_row_value`**, the same
-fork the tile card's rung row goes through — so the hazard mark, `slipping`/`drifting`, `Lapsed`,
+fork the tile card's rung row goes through — so the hazard mark, `slipping`/`drifting`, `not queued`,
 `Held`, `Reverting` and the floored percent all arrive already decided, and the two surfaces cannot
 word one rung differently. It takes **no `declared_rung` and no `build_crew`**: both are countdown
 terms and a STANDING rung returns on `rung_row_value`'s first branch, so accepting them would
@@ -7073,9 +7342,11 @@ work half even where the material half is zero — so the gate is a disjunction.
 is empty on every shipped rung but `animal:pen`, which is why reading only the work account would have
 been right today and wrong on the next rung that eats a good.
 
-**The line states the TERMS and not the rung word** (`WORK_INSPECT_KITS_UPKEEP_FORMAT`, *"Kept at %s a
-turn."*) — and it is the whole of what that half of the section draws now: the head line already
-names the rung through `DetailFormat.standing_rung_face`
+**The line states the site's TENDING and not the standing rung** (`HudWorkVocab.tending_line`, then the
+goods its keeping swallows: *"Tending: 1 worker now · 0.05 hurdles a turn"*) — and it is the whole of
+what that half of the section draws now. The retired `Kept at 1 work a turn.` priced the keeping in work
+units no player staffs in. The head line already names the standing rung through
+`DetailFormat.standing_rung_face`
 (`Hunt Aurochs · 🐄 Corralled 100%`), and one rung worded twice on one card is how two surfaces come to
 disagree about one source. On a wild source the head line states no rung at all, which is the same
 verdict read through the other producer — the harness asserts both together.
@@ -7469,3 +7740,38 @@ is ADJACENT to its anchor row — one gap under it, or over it when opened upwar
 not merely visible, and that a list which fits its room is drawn at its full content height with
 nothing to scroll (one that does not fills the room and scrolls). `trade_tab_camps_bone` asserts a
 count of one reads singular.
+
+## THE CREW SPLIT — one mark per worker, under the stepper (`CrewSplitMarks`)
+
+A site's crew tends it before it takes, and nothing on the row said how the hands divide. Every
+Work-tab site row whose site has a tending bill now carries one small square per worker at the end of
+its second line, under the stepper: the tending share fills from the left in a muted earth, the takers
+are bright, and a person split between the two is one square shaded in part.
+
+- **The tending figure is the ROW's own `keep_hands`** (`LaborAssignment.keepHands`), the hands this
+  band's crew spent keeping the site. Every row reads it, harvest, hunt and groundwork alike. Nothing
+  is derived.
+- ⛔ **NEVER the site's `upkeep_hands`.** That figure sums every band keeping the site, so with two
+  bands on one patch each row would draw the other band's tenders as its own.
+- **The key must be on the merged row.** `keep_hands` is in `HudBandLaborState.OPTIONAL_YIELD_KEYS`.
+  A key missing from that allowlist never reaches the Work tab.
+- **A pending row draws no marks.** The pending overlay replaces the merged row and carries no
+  `keep_hands`, so the marks appear with the next snapshot.
+- **Only where there is a bill.** `HudWorkVocab.crew_split_shown` (a crew, and at least
+  `CREW_SPLIT_MIN_KEEP_HANDS` tending) gates both surfaces. A wild patch owes nothing and draws nothing.
+- **Information, not an alert.** No warning ink and no ⚠. The two inks are `HudStyle.CREW_TEND` /
+  `CREW_TAKE` (and their `_LINE` edges), DERIVED in `apply_palette` from `VOICE_PIGMENT` darkened and
+  `HEALTHY` lightened, so every theme gets them without a palette entry.
+- **The words are `HudWorkVocab.crew_split_words`**: whole people, `About` where the figure falls more
+  than `CREW_SPLIT_WHOLE_PERSON_SLACK` from a whole person, the verb and the thing kept per web
+  (harvest / hunt / cut; the patch / the herd / the working). All tending reads `All 3 are tending the
+  patch — nobody is free to harvest.` The sentence is the native hover, and a keyboard focus floats the
+  same sentence in a small card under the marks, because Godot shows no tooltip on focus.
+- **It rides the rung line, so the row's reserved height does not move.** The rung word and the marks
+  both expand and share the line; the marks are right-aligned under the stepper.
+- **A wide crew never widens its row.** The control's minimum width is one floor-sized mark plus a
+  `+N`, and at draw time it fits the crew to the width it was actually given: the squares shrink toward
+  `CREW_SPLIT_MARK_SIZE_FLOOR`, then the first N are drawn and the rest counted as `+M`.
+  `layout_for(width)` is that arithmetic, pure, so a harness asks the question the draw answers.
+
+The compose sheet's half is `labor-ui.md` → "THE CREW SPLIT ON THE SHEET".

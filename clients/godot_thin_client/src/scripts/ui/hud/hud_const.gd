@@ -68,21 +68,14 @@ const LABOR_KIND_SCOUT := "scout"
 
 const LABOR_KIND_WARRIOR := "warrior"
 
-# **THE TWO KEEPING ROLES** (`docs/plan_standing_upkeep.md` §2.5) — the same family as scout and
-# warrior, and staffed by the same `assign_labor <faction> <band> <kind> <workers>`. `agriculture`
-# holds every tended patch and Field the band works; `husbandry` holds every tamed herd and pen. One
-# role per WEB, because the two intensification ladders are already split that way.
-#
-# **EACH IS A POOL, NOT A CREW ON A TILE.** The role's hands are measured against the SUM of what the
-# band holds on that web, so there is nothing left over to waste on a demand that does not divide
-# into whole workers — which is why the per-source `maintain` crew this replaced left the tile.
-const LABOR_KIND_AGRICULTURE := "agriculture"
+# ⛔ **THE `agriculture`, `husbandry` AND `quarrywork` KEEPING POOLS ARE RETIRED**
+# (`docs/plan_site_crews.md` §0): a site's own crew keeps it before it collects, so a patch, a herd and
+# a working are staffed on their own row and the sim refuses the three role tokens by name. No
+# `LABOR_KIND_*` spells them any more.
 
-const LABOR_KIND_HUSBANDRY := "husbandry"
-
-# **THE THIRD KEEPING ROLE** (arc #532) — the same family again, staffed by the same
-# `assign_labor <faction> <band> roadwork <workers>`, and it keeps the ROAD TILES THIS BAND BUILT,
-# wherever the band has since walked.
+# **THE ROADWORK POOL** (arc #532) — the one keeping pool left (`docs/plan_site_crews.md` §1),
+# staffed by `assign_labor <faction> <band> roadwork <workers>`, and it keeps the ROAD TILES THIS BAND
+# BUILT, wherever the band has since walked.
 #
 # ⛔ **ONE BAND KEEPS A ROAD TILE, NEVER TWO, AND NOTHING ABOUT IT IS SHARED.** `Road::keeper` is a
 # single band — the one that graded or paved the tile — `route_keeping_claims` walks the roads a band
@@ -102,28 +95,6 @@ const LABOR_KIND_HUSBANDRY := "husbandry"
 # fog-filtered, so a road out of sight would drop out of any client-side total the band still owes
 # for. `fodder_need`'s rule, and load-bearing for the identical reason.
 const LABOR_KIND_ROADWORK := "roadwork"
-
-# **THE FOURTH KEEPING ROLE** (`docs/plan_extraction.md` §6, arc #583) — the same family again,
-# staffed by the same `assign_labor <faction> <band> quarrywork <workers>`, and it holds every
-# WORKING this band has opened on either deposit branch, worked or idle. `0` stops holding them at
-# all, after which each slides back down its ladder.
-#
-# ⛔ **THE TOKEN IS THE SIM'S GRAMMAR AND THE PLAYER NEVER SEES IT.** `Quarry` is ONE RUNG of ONE of
-# the two branches this pool holds — a coppice and a flint scatter are neither quarries nor
-# quarrywork — so every player-facing string for this pool, its roster and its cards says
-# **Groundwork**. `Workings` held that slot for an arc and was overruled: *working* is the SIM's
-# own noun for an opened deposit, not a word the player brought. See
-# `HudWorkVocab.ROLE_NAME_QUARRYWORK`.
-#
-# **ONE ROLE FOR BOTH BRANCHES.** Forestry and extraction split on KNOWLEDGE and on nothing a keeper
-# does — *hold the face open, clear what has fallen* is one job — so a second pool would be a
-# distinction nothing in the game can express.
-#
-# **THE BILL IS A COHORT FIELD, NOT A SUM OF ROWS.** `quarrywork_demand` / `quarrywork_supplied` /
-# `quarrywork_shortfall` ride the band, and a readout reads them straight: the `deposits` rows are
-# fog-filtered, so a working out of sight would drop out of any client-side total the band still owes
-# for. `roadwork`'s rule one pool over, and load-bearing for the identical reason.
-const LABOR_KIND_QUARRYWORK := "quarrywork"
 
 # **THE TWO DEPOSIT BRANCHES' TAKE ROW** (`docs/plan_extraction.md` §6) — the only source row in the
 # game that pays no food, and the whole of what wood and stone cost.

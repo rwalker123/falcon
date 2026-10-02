@@ -358,6 +358,22 @@ pressing things; the deadline is not.
 on the button, with the existing spacer still holding `Set out` hard right. **MEASURED: the card is
 587px before and after, and the sentence renders on ONE line** at the card's width — no wrap.
 
+## ⛔ A BAND VERB PUTS THE CARD AWAY
+
+On a fresh game the card opens itself and floats over the right-hand column of a band verb's sheet,
+which is where the Split sheet's stepper `+` and its confirm sit. So **every band verb that is
+dispatched — Move, Scout, Deny, Trade, Split — collapses the expanded card to its reopen pill**, the
+same `collapse()` its own Done/✕ reaches through `_on_dismissed`. Nothing is lost: every pick was sent
+as it was made (`_write_pick` → `_send_order`), and the pill brings the card back.
+
+- The edge is `BandPanelController.band_verb_opened(mission)`, emitted by `dispatch_verb` after its
+  enabled gate. `HudLayer` relays it to `StartingLoadoutController.collapse_for_verb`; the two
+  controllers never talk directly.
+- **Only an EXPANDED card yields.** A card already at its pill, or a surface with no window open, is
+  left as it is: `collapse()` on a closed surface would raise a pill for a window that has shut.
+- Guarded end to end by `live_seat_probe`'s assertion 2 (`harness-live-seat.md`), which fails by name
+  — *pressing Split did not put the outfit card away to its pill* — when the relay is cut.
+
 ## Two measurements that a screenshot is the only witness for
 
 - **The column seam is 2px where the horizontal rules are 1px.** The HUD renders at a fractional

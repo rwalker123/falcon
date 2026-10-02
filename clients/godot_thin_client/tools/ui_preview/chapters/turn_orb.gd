@@ -75,7 +75,7 @@ const PLANT_TENDED_UPKEEP_DEMAND := 2.0
 
 const PLANT_FIELD_UPKEEP_DEMAND := 4.0
 
-# What the band's Agriculture pool actually paid each SHORT patch. Deliberately NOT zero: the row
+# What each SHORT patch's own crew actually paid. Deliberately NOT zero: the row
 # quotes the SHORTFALL, so a supplied of nothing would make the shortfall and the demand the same
 # number and a producer quoting the wrong one of the two would read correct.
 const PLANT_TENDED_UPKEEP_SUPPLIED := 0.5
@@ -309,7 +309,7 @@ func _settle_turn_orb_resolve(answer_turn: int) -> void:
 	h._assert_turn_orb("the resolve gate never lifted in %d steps of %.2fs" % [
 		TURN_ORB_RESOLVE_MAX_STEPS, TURN_ORB_ANIM_STEP_SEC], false)
 
-## The SAME penned herd, UNDER-KEPT (`turn_orb_under_kept`): its Husbandry pool did not cover this
+## The SAME penned herd, UNDER-KEPT (`turn_orb_under_kept`): its own crew did not cover this
 ## herd's bill, so the shed clock has started and `neglect_grace_remaining` is counting down. The
 ## shortfall comes off `HerdFx.domesticated_herd_fixture`, which stages a pen paid half its rate.
 ##
@@ -328,7 +328,7 @@ func _under_kept_herd_fixture() -> Dictionary:
 	return fixture
 
 ## **THE HERD THE POOL COVERS, AND IT IS THE REPORTED DEFECT ITSELF** (`turn_orb_under_kept`). Same
-## rung, same species roster, same fed pen — and its Husbandry share meets its whole bill, so
+## rung, same species roster, same fed pen — and its own crew meets its whole bill, so
 ## `upkeepShortfall` is zero and the orb must say NOTHING about it.
 ##
 ## **ITS HUNT PARTY IS SMALLER THAN ITS KEEPER DEMAND, WHICH IS WHAT MAKES IT A CONTROL RATHER THAN A
@@ -421,9 +421,9 @@ func _neglect_patches_fixture() -> Array:
 ## The under-kept detail line the producer must compose for one source, built from the VOCABULARY and
 ## the fixture's own numbers rather than from `AttentionController`'s own composer — an expectation
 ## made out of the code under test can only agree with itself.
-func _expected_under_kept_detail(role: String, shortfall: float, clause: String) -> String:
+func _expected_under_kept_detail(shortfall: float, clause: String) -> String:
 	return HudAttentionVocab.ATTENTION_UNDER_KEPT_DETAIL_FORMAT % [
-		role, DetailFormat.format_work_units(shortfall), clause]
+		DetailFormat.format_work_units(shortfall), clause]
 
 ## The CONSEQUENCE half of an under-kept detail — everything after the pool's own bill, which is the
 ## only place a countdown can appear. The bill itself carries digits now, so the *renders no countdown
@@ -983,17 +983,17 @@ func run(harness) -> void:
 	# **THE COUNTDOWN, at N > 0, BESIDE THE POOL THE ROW SENDS THE PLAYER TO.** The number is the wire's
 	# own `(grace + 1) - neglect` and the bill is its published shortfall; the client does no arithmetic
 	# on either, so a row quoting anything else means someone re-derived it.
-	var soon_detail := _expected_under_kept_detail(HudWorkVocab.ROLE_NAME_AGRICULTURE,
+	var soon_detail := _expected_under_kept_detail(
 		PLANT_TENDED_UPKEEP_DEMAND - PLANT_TENDED_UPKEEP_SUPPLIED,
 		HudAttentionVocab.ATTENTION_LAPSE_SOON_FORMAT % [
 			NEGLECT_GRACE_SOON, HudAttentionVocab.ATTENTION_TURN_PLURAL_SUFFIX])
-	h._assert_hud("…whose detail names the Agriculture pool, its bill in WORK, and the countdown — `%s`"
+	h._assert_hud("…whose detail names the site crew, its bill in WORK, and the countdown — `%s`"
 		% soon_detail,
 		lapsing_soon != null and String(lapsing_soon["detail"]) == soon_detail)
 	# **AND AT ZERO, which is NOT "nothing at risk".** `0` is the wire's "the penalty is biting NOW" —
 	# the most urgent reading there is — so it must never render as a `0`-turn countdown. The FIELD's own
 	# bill rides it, so a producer quoting one rung's rate on every row fails here rather than above.
-	var now_detail := _expected_under_kept_detail(HudWorkVocab.ROLE_NAME_AGRICULTURE,
+	var now_detail := _expected_under_kept_detail(
 		PLANT_FIELD_UPKEEP_DEMAND - PLANT_FIELD_UPKEEP_SUPPLIED,
 		HudAttentionVocab.ATTENTION_LAPSE_NOW)
 	h._assert_hud("a rung at grace 0 says the ground is reverting NOW, never `in 0 turns`",
@@ -1014,11 +1014,11 @@ func run(harness) -> void:
 	# the wire.
 	var herd_row: Variant = _orb_row_with(neglect_rows,
 		HudAttentionVocab.ATTENTION_UNDER_KEPT_HERD_LABEL_FORMAT % RED_DEER_LABEL)
-	var herd_detail := _expected_under_kept_detail(HudWorkVocab.ROLE_NAME_HUSBANDRY,
+	var herd_detail := _expected_under_kept_detail(
 		HerdFx.ANIMAL_PEN_UPKEEP_DEMAND - HerdFx.ANIMAL_PEN_UPKEEP_SUPPLIED,
 		HudAttentionVocab.ATTENTION_SHED_SOON_FORMAT % [
 			NEGLECT_GRACE_HERD, HudAttentionVocab.ATTENTION_TURN_PLURAL_SUFFIX])
-	h._assert_hud("a herd whose Husbandry pool came up short raises a row naming the pool and the bill",
+	h._assert_hud("a herd whose own crew came up short raises a row naming the crew and the bill",
 		herd_row != null and String(herd_row["detail"]) == herd_detail)
 	# **THE ANIMAL PAIR'S NEGATIVE HALF, AND IT IS THE PLAYTEST REPORT ITSELF.** This herd's pool covers
 	# it (`upkeepShortfall == 0`) while its hunting party is smaller than the keeper count the sim names

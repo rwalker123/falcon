@@ -2070,7 +2070,6 @@ mod food_flow_tests {
             workers: 4,
             kit: None,
             priority: SourcePriority::default(),
-            upkeep_kit: None,
         }
     }
 
@@ -2090,8 +2089,7 @@ mod food_flow_tests {
             last_raid_forfeit: 0.0,
             last_roadwork_demand: 0.0,
             last_roadwork_supplied: 0.0,
-            last_quarrywork_demand: 0.0,
-            last_quarrywork_supplied: 0.0,
+            last_keeping_issued: Default::default(),
             last_pool_toe: Vec::new(),
             last_pool_crew: Vec::new(),
             last_fodder_need: 0.0,
@@ -2142,8 +2140,7 @@ mod food_flow_tests {
             last_raid_forfeit: 0.0,
             last_roadwork_demand: 0.0,
             last_roadwork_supplied: 0.0,
-            last_quarrywork_demand: 0.0,
-            last_quarrywork_supplied: 0.0,
+            last_keeping_issued: Default::default(),
             last_pool_toe: Vec::new(),
             last_pool_crew: Vec::new(),
             last_fodder_need: 0.0,

@@ -74,11 +74,11 @@ pub const BUILD_METER_ROTS: i32 = -3;
 /// is saying so.
 ///
 /// **THE REMEDY IS OFF THE BUILD LINE ENTIRELY.** The measured case is a half-tamed herd with an
-/// empty `husbandry` role: the hunters draw the flock to their floor, the unmet keeping suppresses
+/// empty keeping: the flock stands on its floor, the unmet keeping suppresses
 /// its regrowth, and the `Tame`'s own escapement gate never reopens. Adding builders does nothing.
 /// A surface showing this must therefore pair it with the source's own `upkeepShortfall` /
 /// `neglectGraceRemaining`, because *"staff the keeping"* is the sentence — on the animal web,
-/// `assign_labor <faction> <band> husbandry <n>`.
+/// raising the herd's own hunt row (`docs/plan_site_crews.md` §2.1).
 ///
 /// **Every entry BEHIND a blocked head publishes it too**, since nothing below a head that never
 /// finishes finishes either. A *waiting* entry whose own gate refuses publishes the honest
@@ -409,6 +409,21 @@ pub struct HerdTelemetryState {
     /// therefore contradicted this identity for most of a `Tame`.
     #[serde(default)]
     pub upkeep_workers_needed: u32,
+    /// **Whole workers the keeping takes once the rung in flight is finished** — equal to
+    /// `upkeep_workers_needed` where no build is in flight (`docs/plan_site_crews.md`).
+    #[serde(default)]
+    pub upkeep_workers_at_completion: u32,
+    /// **The game turn the keeping first needs one more whole worker than now**, projected along
+    /// the build's own pace; [`NO_NEXT_KEEPING_WORKER`] = never within the build.
+    #[serde(default = "no_next_keeping_worker")]
+    pub upkeep_next_worker_turn: i32,
+    /// **WHICH KEEPING TOOLS THIS SITE IS SHORT OF, BY NAME** — one
+    /// [`crate::state::population::KitToeLineState`] per tool the site's keeping claimed this turn,
+    /// summed over the crews keeping it. Short is `filled < required`, and
+    /// `upkeep_tools_short` is exactly *"some line is short"*. Empty = the keeping claimed no tool.
+    /// Appended last (append-only).
+    #[serde(default)]
+    pub upkeep_toe: Vec<crate::state::population::KitToeLineState>,
     /// **Is there anything here to neglect?** `false` for a **wild** herd — nobody's to keep, so it
     /// never sheds and [`Self::neglect_grace_remaining`] means nothing. Read this first, exactly as
     /// [`ForagePatchState::owner`]'s `has_owner` companion is read first.
@@ -946,6 +961,15 @@ pub struct HerdTelemetryState {
     /// The animal twin of [`ForagePatchState::upkeep_kit_named`].
     #[serde(default)]
     pub upkeep_kit_named: bool,
+    /// **The crew hands spent keeping this source this turn** (`docs/plan_site_crews.md` §2.1) —
+    /// fractional, summed across every band whose crew keeps it. The row's `keeps N of M` reads it;
+    /// `0` on a source that owes nothing or that nobody works.
+    #[serde(default)]
+    pub upkeep_hands: f32,
+    /// **The band-wide settlement filled less than this site's keeping-tool claim**
+    /// (`docs/plan_site_crews.md` §2.3) — its crew kept with more of its own hands. The row's `ⓘ`.
+    #[serde(default)]
+    pub upkeep_tools_short: bool,
 }
 
 impl Default for HerdTelemetryState {
@@ -993,6 +1017,9 @@ impl Default for HerdTelemetryState {
             upkeep_supplied: 0.0,
             upkeep_shortfall: 0.0,
             upkeep_workers_needed: 0,
+            upkeep_workers_at_completion: 0,
+            upkeep_next_worker_turn: NO_NEXT_KEEPING_WORKER,
+            upkeep_toe: Vec::new(),
             has_neglect_grace: false,
             neglect_grace_remaining: 0,
             provisions_per_biomass: 0.0,
@@ -1055,6 +1082,8 @@ impl Default for HerdTelemetryState {
             corral_build_material_cost: Vec::new(),
             upkeep_kit_id: String::new(),
             upkeep_kit_named: false,
+            upkeep_hands: NO_UPKEEP_HANDS,
+            upkeep_tools_short: false,
             corral_material: Vec::new(),
             pastoral_material: Vec::new(),
         }
@@ -1271,6 +1300,21 @@ pub struct ForagePatchState {
     /// what a single worker allocation forced, and each activity answers for itself now.
     #[serde(default)]
     pub upkeep_workers_needed: u32,
+    /// **Whole workers the keeping takes once the rung in flight is finished** — equal to
+    /// `upkeep_workers_needed` where no build is in flight (`docs/plan_site_crews.md`).
+    #[serde(default)]
+    pub upkeep_workers_at_completion: u32,
+    /// **The game turn the keeping first needs one more whole worker than now**, projected along
+    /// the build's own pace; [`NO_NEXT_KEEPING_WORKER`] = never within the build.
+    #[serde(default = "no_next_keeping_worker")]
+    pub upkeep_next_worker_turn: i32,
+    /// **WHICH KEEPING TOOLS THIS SITE IS SHORT OF, BY NAME** — one
+    /// [`crate::state::population::KitToeLineState`] per tool the site's keeping claimed this turn,
+    /// summed over the crews keeping it. Short is `filled < required`, and
+    /// `upkeep_tools_short` is exactly *"some line is short"*. Empty = the keeping claimed no tool.
+    /// Appended last (append-only).
+    #[serde(default)]
+    pub upkeep_toe: Vec<crate::state::population::KitToeLineState>,
     /// **Is there anything here to neglect?** `false` for a wild patch (both improvement meters at
     /// zero), which is most of them. Read this before [`Self::neglect_grace_remaining`].
     #[serde(default)]
@@ -1530,7 +1574,7 @@ pub struct ForagePatchState {
     /// must read the meter.
     ///
     /// **It is what a build's closed form nets, and `upkeep_demand` is not.** A build crew supplies
-    /// nothing toward the maintenance rate — the keeping pool owes that for every meter carrying
+    /// nothing toward the maintenance rate — the site's own crew owes that for every meter carrying
     /// work, at any fullness — so what eats a build is the ground going backwards under it. The rot
     /// does not vary with the build crew, so a compose sheet re-prices a *proposed* crew against it
     /// and lands on the sim's own answer for the committed one; the client cannot derive it, holding
@@ -1736,6 +1780,15 @@ pub struct ForagePatchState {
     /// picked — and a picker needs it to draw its `(default)` mark.
     #[serde(default)]
     pub upkeep_kit_named: bool,
+    /// **The crew hands spent keeping this source this turn** (`docs/plan_site_crews.md` §2.1) —
+    /// fractional, summed across every band whose crew keeps it. The row's `keeps N of M` reads it;
+    /// `0` on a source that owes nothing or that nobody works.
+    #[serde(default)]
+    pub upkeep_hands: f32,
+    /// **The band-wide settlement filled less than this site's keeping-tool claim**
+    /// (`docs/plan_site_crews.md` §2.3) — its crew kept with more of its own hands. The row's `ⓘ`.
+    #[serde(default)]
+    pub upkeep_tools_short: bool,
 }
 
 /// **"This working does not run out"** — the wire value of [`DepositState::turns_remaining`] on a
@@ -1903,7 +1956,7 @@ pub struct DepositState {
     /// `>= 0` is a real count; [`DEPOSIT_RUNWAY_NOT_APPLICABLE`] (`-1`) and
     /// [`DEPOSIT_RUNWAY_NO_TAKE`] (`-2`) are the two ways of having no runway to quote.
     pub turns_remaining: i32,
-    /// **The standing bill**, in work units per turn, drawn from the band's `quarrywork` pool. All
+    /// **The standing bill**, in work units per turn, kept first by the working's own `extract` crew. All
     /// three read the **stamped** basis (`DepositSource::upkeep_demanded`), so
     /// `demand − supplied == shortfall` holds verbatim on the wire.
     ///
@@ -1915,9 +1968,24 @@ pub struct DepositState {
     pub upkeep_supplied: f32,
     /// See [`Self::upkeep_demand`].
     pub upkeep_shortfall: f32,
-    /// Whole `quarrywork` keepers the bill wants — `ceil(demand / per-worker output)`. `0` for a
+    /// Whole keeping hands the bill wants — `ceil(demand / per-worker output)`. `0` for a
     /// working that owes nothing.
     pub upkeep_workers_needed: u32,
+    /// **Whole workers the keeping takes once the rung in flight is finished** — equal to
+    /// `upkeep_workers_needed` where no build is in flight (`docs/plan_site_crews.md`).
+    #[serde(default)]
+    pub upkeep_workers_at_completion: u32,
+    /// **The game turn the keeping first needs one more whole worker than now**, projected along
+    /// the build's own pace; [`NO_NEXT_KEEPING_WORKER`] = never within the build.
+    #[serde(default = "no_next_keeping_worker")]
+    pub upkeep_next_worker_turn: i32,
+    /// **WHICH KEEPING TOOLS THIS SITE IS SHORT OF, BY NAME** — one
+    /// [`crate::state::population::KitToeLineState`] per tool the site's keeping claimed this turn,
+    /// summed over the crews keeping it. Short is `filled < required`, and
+    /// `upkeep_tools_short` is exactly *"some line is short"*. Empty = the keeping claimed no tool.
+    /// Appended last (append-only).
+    #[serde(default)]
+    pub upkeep_toe: Vec<crate::state::population::KitToeLineState>,
     /// `false` = **nothing at risk here** (a working on either free floor, which declares no
     /// upkeep). Read this before the countdown beside it.
     pub has_neglect_grace: bool,
@@ -1945,7 +2013,7 @@ pub struct DepositState {
     /// The kit this working's build is being raised with — [`ForagePatchState::build_kit_id`]'s
     /// twin, off the same one resolution seam. `""` only where no band has this working queued.
     pub build_kit_id: String,
-    /// The keeping kit this working's `quarrywork` keepers carry — see
+    /// The keeping kit this working's keeping hands carry — see
     /// [`ForagePatchState::upkeep_kit_id`] for the whole rationale.
     pub upkeep_kit_id: String,
     /// **Not recoverable from the id** — a player may name the very kit the derivation would have
@@ -1964,6 +2032,29 @@ pub struct DepositState {
     /// (`extraction::working_offered_kits`). The picker lists these beside the itemless `none`.
     #[serde(default)]
     pub offered_kit_ids: Vec<String>,
+    /// **The crew hands spent keeping this source this turn** (`docs/plan_site_crews.md` §2.1) —
+    /// fractional, summed across every band whose crew keeps it. The row's `keeps N of M` reads it;
+    /// `0` on a source that owes nothing or that nobody works.
+    #[serde(default)]
+    pub upkeep_hands: f32,
+    /// **The band-wide settlement filled less than this site's keeping-tool claim**
+    /// (`docs/plan_site_crews.md` §2.3) — its crew kept with more of its own hands. The row's `ⓘ`.
+    #[serde(default)]
+    pub upkeep_tools_short: bool,
+}
+
+/// **NO HAND WAS SPENT KEEPING** — `upkeep_hands`' reading on a source nobody keeps.
+pub const NO_UPKEEP_HANDS: f32 = 0.0;
+
+/// **The keeping needs no more whole workers within the build** — the wire's `-1` on
+/// `upkeepNextWorkerTurn`: nothing in flight, the build is not dated, or no whole-worker step
+/// before it completes.
+pub const NO_NEXT_KEEPING_WORKER: i32 = -1;
+
+/// The serde default of `upkeep_next_worker_turn` — [`NO_NEXT_KEEPING_WORKER`], never a `0` that
+/// would read as a turn.
+fn no_next_keeping_worker() -> i32 {
+    NO_NEXT_KEEPING_WORKER
 }
 
 impl Default for DepositState {
@@ -1992,6 +2083,9 @@ impl Default for DepositState {
             upkeep_supplied: 0.0,
             upkeep_shortfall: 0.0,
             upkeep_workers_needed: 0,
+            upkeep_workers_at_completion: 0,
+            upkeep_next_worker_turn: NO_NEXT_KEEPING_WORKER,
+            upkeep_toe: Vec::new(),
             has_neglect_grace: false,
             neglect_grace_remaining: 0,
             // Same rule one field over: `0` renders as a finished build.
@@ -2003,6 +2097,8 @@ impl Default for DepositState {
             upkeep_kit_named: false,
             default_kit_id: String::new(),
             offered_kit_ids: Vec::new(),
+            upkeep_hands: NO_UPKEEP_HANDS,
+            upkeep_tools_short: false,
         }
     }
 }

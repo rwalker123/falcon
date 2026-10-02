@@ -103,7 +103,7 @@ fn hunt_once(species: &str, workers: u32, party: &HuntingParty) -> (u32, f32, bo
     let mut herd = herd_of(&fauna, species);
     let outcome = hunt_take(
         &mut herd,
-        workers,
+        workers as f32,
         STRIP_IT_BARE,
         equipped_haul_rate(),
         party,
@@ -185,7 +185,7 @@ fn a_bare_handed_horde_takes_nothing_over_any_horizon() {
         let seed = core_sim::retreat_seed(u64::from(turn), u64::from(turn), &herd.id, HORDE);
         let outcome = hunt_take(
             &mut herd,
-            HORDE,
+            HORDE as f32,
             STRIP_IT_BARE,
             equipped_haul_rate(),
             &bare,
@@ -351,7 +351,7 @@ fn a_fractional_engagement_reaches_part_of_an_animal_and_fails_at_the_fight() {
         (TINY_PARTY as f32 * engage) < 1.0,
         "the fixture must actually be in the fractional regime ({TINY_PARTY} × {engage})"
     );
-    let reach = animals_engaged(TINY_PARTY, engage);
+    let reach = animals_engaged(TINY_PARTY as f32, engage);
     assert_eq!(
         reach,
         TINY_PARTY as f32 * engage,
@@ -555,7 +555,7 @@ fn a_sub_threshold_party_kills_after_enough_turns() {
     for turn in 1..=PATIENCE {
         let outcome = hunt_take(
             &mut herd,
-            SMALL_PARTY,
+            SMALL_PARTY as f32,
             STRIP_IT_BARE,
             equipped_haul_rate(),
             &party,
@@ -610,7 +610,7 @@ fn more_hunters_shorten_the_wait_for_a_sub_threshold_kill() {
         for turn in 1..=100 {
             let outcome = hunt_take(
                 &mut herd,
-                workers,
+                workers as f32,
                 STRIP_IT_BARE,
                 equipped_haul_rate(),
                 &party,
@@ -870,7 +870,7 @@ fn the_shipped_fight_is_seed_independent() {
         let mut herd = herd_of(&fauna, DEER);
         hunt_take(
             &mut herd,
-            CREW,
+            CREW as f32,
             STRIP_IT_BARE,
             equipped_haul_rate(),
             &party,
@@ -907,7 +907,7 @@ fn the_escapement_floor_still_bounds_a_party_that_could_take_far_more() {
 
     let outcome = hunt_take(
         &mut herd,
-        HUGE_CREW,
+        HUGE_CREW as f32,
         0.5,
         equipped_haul_rate(),
         &HuntingParty::builtin_equipped(),
@@ -981,7 +981,7 @@ fn the_passive_device_beats_spears_on_every_small_game_row_and_takes_no_large_ga
             ferocity: def.ferocity,
             wounds: DamageLedger::default(),
         };
-        let reached = animals_engaged(HUNTERS, def.engage_rate);
+        let reached = animals_engaged(HUNTERS as f32, def.engage_rate);
         let stayed = party.stayers(reached, def.combat.wariness, HuntDraw::EXPECTED);
         resolve_hunt_fight(
             stayed,

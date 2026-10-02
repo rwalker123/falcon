@@ -110,13 +110,12 @@ const ATTENTION_CLAUSE_SEPARATOR := " — "
 # so the unit is the arc's default rather than this row's claim, and the two words it costs are two
 # words of the countdown that would otherwise clip off the popover.
 #
-# **IT NAMES THE POOL AND QUOTES WORK, and it had to stop doing neither.** It read `%d of %d keepers`,
-# and both numbers were meaningless — the left one was the source's HUNT party and the right its
-# keeper demand, two different activities subtracted from each other. Hands are also the wrong unit
-# now that gear moves how many hands a rate takes, so the bill is quoted in the work units the sim
-# bills it in. The pool NAME is the remedy: `Husbandry` and `Agriculture` are the cards the player
-# raises, from `HudWorkVocab.keeping_role_name` so the row and those cards are one word.
-const ATTENTION_UNDER_KEPT_DETAIL_FORMAT := "%s short %s work" \
+# **IT QUOTES WORK, AND ITS SUBJECT IS THE SITE'S OWN CREW.** It named a POOL (`Husbandry short 1
+# work`) until `docs/plan_site_crews.md` retired the keeping pools: a patch or a herd is kept by the
+# crew on its own work row now, so the remedy is that row's stepper and the row names the crew. The
+# bill stays in the work units the sim bills it in — hands are the wrong unit once gear moves how many
+# hands a rate takes.
+const ATTENTION_UNDER_KEPT_DETAIL_FORMAT := "Crew short %s work" \
     + ATTENTION_CLAUSE_SEPARATOR + "%s"
 
 const ATTENTION_SHED_SOON_FORMAT := "sheds in %d turn%s"

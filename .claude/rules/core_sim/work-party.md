@@ -50,6 +50,14 @@ A source the band's own hands reach takes **no party at all**, and every number 
 it was before any of this existed. Far work *falls out of* one model instead of sitting beside it
 only while that holds.
 
+**A work party IS its row — no near/far distinction beyond the physics of the walk** (carry, porters
+on the road, the keeping paid only by the hands present). Every feature a local crew has, a party
+has, **Priority included**: its take-kit claim is settled at its row's own rank
+(`BandItemBudget`, `docs/plan_site_crews.md` §2.3), and every forecast that prices a party — the
+caravan (`CaravanPricing`), the trip and denial sheets, the compose query — ranks it at that row's
+Priority, or at the default a new row is given where no row exists yet. Pinned by
+`kit_selection::a_high_party_beats_a_normal_local_row_for_a_scarce_kit`.
+
 `work_party::party_begins_past` is the one place the threshold lives, and it is **`band_work_range`
 for every job**. Hunt gets no longer apron than forage: the retired `hunt_reach` was a patch over the
 wrong model, and a party that follows its herd never roams out of range.
@@ -130,8 +138,12 @@ its own inline take, the forecast around a projected one (`WorkParty::step`). Or
    from the whole round trip rejoins (absent for exactly `2 · w` takes).
 2. **Walking out → no take.** A new party walks out once, `walk_turns` turns with nobody at the
    source, never re-raised.
-3. **Take with the hunters PRESENT** (`workers − on the road`) through the **ordinary take path** —
-   every arm the resident take runs. There is no caravan-specific take formula.
+3. **Keep, then take, with the hunters PRESENT** (`workers − on the road`) through the **ordinary
+   take path** — every arm the resident take runs. There is no caravan-specific take formula. A kept
+   site's keeping comes out of the hands present first and is capped at them
+   (`SiteKeeping::at_the_source`, `docs/plan_site_crews.md`): a party still walking out keeps nothing.
+   The forecast steps the same split (`work_party::take_hands_present`) off the keeping planned at
+   the staffed crew, so a far kept site's `netRateHome` is what lands after keeping.
 4. **The whole take goes into the load.** Nothing is eaten out of it at the source — see below.
 5. **Fill and dispatch.** While the load holds one pack and a hunter is present, one hunter leaves
    with one pack. Departures therefore never exceed the hunters present.
@@ -265,7 +277,10 @@ is kept by scaling the two parts onto the row's `actual` in their own proportion
 turn: the forecast steps a crew that moves every turn, and neither the seed nor the query knows who is
 on the road now, so the row's own head count off the band's share of its gear
 (`BandItemBudget::with_prospective_row` beside its other rows) is the one input all three resolve
-identically. The turn's *take* is still priced at the hunters present.
+identically. The turn's *take* is still priced at the hunters present. **The kit is spread over the
+staffed crew's take hands and settled on its claim** (`CaravanPricing::resolve(take_hands, claim,
+…)`, `equipment.md` → "A ROW CLAIMS ONLY THE TAKE HANDS"), struck by the same `take_claims` function
+in all three, so a party's carry is what its cutters and gatherers hold.
 
 **The seed and the query step the band's STANDING party when it has one**, restamped for the crew
 asked about — a stepper press on a live posting re-seeds that posting, not a fresh one that would
@@ -303,7 +318,38 @@ units per turn.
 
 **The reply** is `posts_a_party`, `rate_home`, `walk_tiles`, `walk_turns`, `hunters_on_the_road` (a
 mean, so a float) and `first_load_turn` (1-based, `0` = none within the horizon) — every walk field
-reads `0` inside the apron.
+reads `0` inside the apron — plus **`take_next_turn`** (next turn's take AT THE SOURCE by the asked
+crew, struck on the hands its keeping leaves, before any walk) and **`keep_hands`** (the fractional
+hands it spends keeping), appended (proto 7 / 8). They are what the compose sheet previews a crew of
+`n` on every web, rather than pricing every worker as a taker; pinned on a patch by
+`forage_cultivation::a_kept_patchs_next_turn_take_is_quoted_on_the_hands_its_keeping_leaves`.
+
+**`ForageCrewTake`** (proto query **9**, reply **12**) is the patch's whole crew curve in one round
+trip — the hunt and deposit curves' shape: one `ForageCrewTakeRow{workers, take, keep_hands}` per
+crew `1..=max_workers`, each row **the work-party forecast's own `take_next_turn` / `keep_hands` at
+that crew** (`forecast_query::answer_forage_crew_take` asks it per crew), so the stepper and a
+one-crew quote are one arithmetic. Seat-gated like the other faction-bearing questions. Pinned by
+`forage_cultivation::a_patchs_crew_curve_is_the_single_crew_answer_at_every_size`.
+
+**Each row also carries `next_rung_take` / `next_rung_keep_hands`** (proto 4 / 5): the same crew on
+the patch once the rung in flight is finished — the next rung up where nothing is in flight — with
+**that rung's keeping netted** (`forecast_query::patch_once_raised`: the meter seated at the rung's
+top on a clone, `K` re-struck at the rung's gain, the bill re-struck at the finished rung). `0` at the
+top of the branch. It is the compose sheet's *once sown / once tended* figure.
+`ForagePatchState.fieldYield` / `tendedYield` are **not** that figure and must not stand in for it:
+they are the rung's crew-blind payoff (`forage::rung_payoff`), so a crew too small to keep a Field
+read `12.48` beside a sheet whose own keeping left it nothing. Pinned beside the next-turn quote by
+`server::tests::a_lapsed_fields_quote_is_what_the_turn_pays_and_once_sown_nets_the_fields_keeping`.
+
+**The next-rung half states every account and is priced for a CROP.** Each row also carries
+`next_rung_fodder` (proto 6) and `next_rung_materials:[MaterialPayoff]` (proto 7) — the same take's
+fodder and per-material vector, off one projected turn's biomass through the patch's own rates, as
+the labor arm credits them. Fodder is the **credited** figure: `0` without Foddering unless the
+commitment is to a fodder-bearing plant (`systems::committed_to_a_fodder_crop`, the credit site's own
+gate). Materials are one row per material and never summed. The ask carries `crop` (proto 9): an
+**uncommitted** patch is priced as committed to it when it grows in the tile's basket, else to
+`forage::default_species_for_rung` for that rung; a committed patch ignores it. Pinned by
+`server::tests::an_uncommitted_patchs_once_tended_is_priced_for_the_picked_crop_in_every_account`.
 
 ## Every exit brings everything home, through ONE settle step
 
@@ -372,6 +418,7 @@ the arm reach this row"* is the question the settlements must go on asking.
 | `work_party_caravan::a_herd_back_inside_the_apron_brings_its_caravan_home_once` | a re-entered source settles its caravan once, clears `party` and publishes none |
 | `work_party_caravan::a_vanished_herd_brings_its_caravan_home_as_the_row_lapses` | a vanished herd's caravan comes home once, before the row lapses |
 | `work_party_caravan::the_query_quotes_exactly_the_rate_the_row_publishes` | forecast == actual on the encoded snapshot |
+| `work_party_caravan::a_far_kept_herds_caravan_forecast_is_what_its_party_lands_after_keeping` | a far kept herd: query == `netRateHome`, what lands over the horizon is that rate to within one landing, and the unkept price overshoots |
 | `work_party_caravan::a_deposit_eight_hexes_out_posts_a_party_that_walks_six_each_way` | a far working posts a party on the wire, and nothing lands while it walks out |
 | `work_party_caravan::a_local_working_takes_no_party_and_its_numbers_are_unchanged` | the deposit web's local identity: the take seam's own figure |
 | `work_party_caravan::the_query_quotes_exactly_the_rate_an_extract_row_publishes` | forecast == actual on the deposit web, in material units |

@@ -271,7 +271,6 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                     workers: KEEPER_WORKERS,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 }],
                 ..Default::default()
             },
@@ -615,7 +614,6 @@ fn begin_extension(
                 workers: KEEPER_WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }),
         }
         assert!(
@@ -624,13 +622,6 @@ fn begin_extension(
                 core_sim::BuildJob::ExtendPen,
             ),
             "the keeper band works the herd whose pen it is widening"
-        );
-        assert!(
-            allocation.set_build_entry_kit(
-                &core_sim::BuildSource::Herd(id.to_string()),
-                Some(bare_builders()),
-            ),
-            "the entry just declared takes the bare kit"
         );
     }
     began
@@ -874,23 +865,6 @@ fn the_husbandry_density_ladder_scales_carrying_capacity_per_species() {
         (goat_wild - deer_wild).abs() < eps,
         "the two species share the same wild base on the same tile ({goat_wild} vs {deer_wild})"
     );
-}
-
-/// **THE EMPTY KIT, NAMED ON A FIXTURE'S QUEUE ENTRY** — an isolation, not a default.
-///
-/// It rides the **entry** because that is where a build's kit lives
-/// (`docs/plan_standing_upkeep.md` §4.7a ②); a kit on the `builders` row is not an input at all.
-/// An absent kit means *derive from this entry's web*, and the roster's answer (`tillage` for a
-/// patch, `hurdling` for a herd) adds `+0.5` work per covered worker per turn. A start-stocked band holds a
-/// unit per worker and a half, so at the crews these fixtures staff every builder is geared and the
-/// pool delivers half again what it asserts, moving every pacing claim below. Naming `none` holds
-/// the gear axis at its identity so these arms measure the **crew**, exactly as
-/// `FaunaConfig::without_retreat` holds the retreat at its identity across the hunt suites. The
-/// geared default is pinned in `core_sim/tests/build_turns_closed_form.rs`.
-fn bare_builders() -> core_sim::KitChoice {
-    core_sim::EquipmentConfig::builtin()
-        .kit("none")
-        .expect("the shipped roster carries the empty kit")
 }
 
 /// **Meet every managed herd's keeping bill for this turn**, as a staffed `husbandry` role would.

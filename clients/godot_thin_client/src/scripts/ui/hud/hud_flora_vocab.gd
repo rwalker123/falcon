@@ -100,6 +100,32 @@ const GATE_REASON_CROP_CANNOT_CLIMB_FORMAT := "Nothing growing here can be taken
 # the destination.
 const GATE_REASON_PATH_BLOCKED_FORMAT := "%s must be raised first: %s"
 
+# ---- THE SHORT CLAUSE A LOCKED LADDER RUNG SHOWS (`RungLadder._track_lock`) -----------------------
+#
+# The gate reasons above are SENTENCES, and a rung button has room for a clause after its `🔒`; a
+# sentence there elides to `This animal will n…`. So every kind of plant/animal refusal has a short
+# clause here for the button's face, and the sentence stays the hover. A craft refusal states the
+# craft's own NAME instead (off the ladder's knowledge roster), and only falls back to the unnamed
+# clause where the roster has not named it.
+const GATE_SHORT_NEVER_TAMED := "can't be tamed"
+const GATE_SHORT_NEVER_PENNED := "can't be penned"
+## An outright animal bar on a rung this table does not name.
+const GATE_SHORT_NOT_FOR_THIS_ANIMAL := "not for this animal"
+## The plant twin: nothing growing on this ground can climb to the rung.
+const GATE_SHORT_CROP_CANNOT_CLIMB := "nothing here grows to it"
+const GATE_SHORT_NEEDS_CRAFT_UNNAMED := "needs a craft"
+## Corral needs the herd fully tamed first.
+const GATE_SHORT_HERD_UNTAMED := "tame it first"
+## Sow needs ground that will take seed.
+const GATE_SHORT_GROUND_REFUSES := "ground won't take seed"
+## A rung barred by a rung below it, named by that rung's word.
+const GATE_SHORT_PATH_BLOCKED_FORMAT := "%s first"
+## The outright bars, keyed on the rung they refuse.
+const GATE_SHORT_NEVER_BY_RUNG := {
+    "tame": GATE_SHORT_NEVER_TAMED,
+    "corral": GATE_SHORT_NEVER_PENNED,
+}
+
 # **THE PATCH-ECOLOGY GATE REASON IS GONE** ("Patch is Stressed — ease workers off and let it regrow
 # to Thriving"), with `GATE_PHASE_UNKNOWN_LABEL`, the "not Thriving" phrase it fell back to on a
 # redacted tile. No rung on either web gates on a source's health: a crew drawing the ground down
@@ -586,6 +612,18 @@ const TAKE_ROW_LABEL_SINGLE := "Crop"
 # and the chips are NOT greyed to signal it.
 const TAKE_NOTE_CULTIVATE_NARROWED_FORMAT := "%s weeds the rest out of the ground."
 const TAKE_NOTE_CULTIVATE_DEFAULT_FORMAT := "Nothing picked — this ground would be committed to %s."
+
+# **THE GROUND IS ALREADY COMMITTED — say to what, and how far the rung in flight has got.** A patch
+# that already carries a crop (`patch_committed_species`) sends no crop on the next commit, so the
+# resolver answers `""` for it — and the DEFAULT line above, handed that `""`, read *"Nothing picked —
+# this ground would be committed to ."* on a Tended Patch of Wild Emmer 94% into its Sow. Reported
+# from play. "Nothing picked" was false as well as blank: the crop was chosen turns ago.
+# `%s` the crop's display name, `%s` the rung's participle (lowercased), `%d` the rung's meter.
+const TAKE_NOTE_COMMITTED_FORMAT := "Committed to %s — %s %d%%"
+
+# …and every chip on that ground is DISABLED, with this as its hover: the composition sends no crop
+# there, so a press could only move a pill that changes nothing. `%s` the committed crop's name.
+const TAKE_CHIP_COMMITTED_REASON_FORMAT := "This ground is committed to %s."
 
 # **THE NUMBERS FOR A NARROWED CREW ARE COMPOSED FROM THE WIRE'S PER-SPECIES RATES.**
 # `provisionsPerBiomass` on the patch is the BASKET AVERAGE, which is why this sheet once sat still

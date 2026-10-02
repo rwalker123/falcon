@@ -64,10 +64,10 @@ fn source_tile(app: &App) -> UVec2 {
 /// comes back out of the buffer as itself.
 const CROP: &str = "wild_emmer";
 
-/// A headless world with one resident band that staffs a Forage source's take crew and the band's
-/// own **agriculture** and **builders** roles. The band is sized to afford all three rows: they draw
-/// on one pool, so a band short of `TAKE + BUILD + KEEP` would have `LaborAllocation::normalize` trim
-/// the tail and the fixture would publish numbers it never staffed.
+/// A headless world with one resident band that staffs a Forage source's crew and the band's own
+/// **roadwork** and **builders** pools. The band is sized to afford all three rows: they draw on one
+/// pool, so a band short of `TAKE + BUILD + KEEP` would have `LaborAllocation::normalize` trim the
+/// tail and the fixture would publish numbers it never staffed.
 fn world_with_a_keeping_band() -> (App, UVec2) {
     let mut app = build_test_app();
     // One `update()` runs the whole Startup worldgen chain, which is what seeds the `TileRegistry`
@@ -127,16 +127,14 @@ fn world_with_a_keeping_band() -> (App, UVec2) {
                     workers: TAKE_CREW,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 },
-                // The keeping — a row of its own, on the band rather than the tile.
+                // The road-keeping — a pool of its own, on the band rather than on any tile.
                 LaborAssignment {
                     party: None,
-                    target: LaborTarget::Agriculture,
+                    target: LaborTarget::Roadwork,
                     workers: KEEP_CREW,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 },
                 // …and so is the building, since §2.5.
                 LaborAssignment {
@@ -145,14 +143,13 @@ fn world_with_a_keeping_band() -> (App, UVec2) {
                     workers: BUILD_CREW,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 },
             ],
             // The declaration the source row's `improvement` token is derived from.
             build_queue: vec![BuildQueueEntry {
                 source: BuildSource::Patch(source),
                 declared: BuildJob::Rung(DECLARED),
-                kit: Some(bare_builders()),
+                priority: core_sim::SourcePriority::default(),
             }],
             upkeep_fund_mode: UpkeepFundMode::Priority,
             ..Default::default()
@@ -246,20 +243,23 @@ fn a_source_row_states_its_take_crew_and_the_job_queued_on_it() {
 fn the_bands_standing_pools_reach_the_client_as_their_own_rows() {
     let (app, _source) = world_with_a_keeping_band();
     assert_eq!(
-        published_role(&app, "agriculture"),
+        published_role(&app, "roadwork"),
         Some(KEEP_CREW),
-        "the agriculture role is an ordinary assignment row with its hands in `workers`"
+        "the roadwork pool is an ordinary assignment row with its hands in `workers`"
     );
     assert_eq!(
         published_role(&app, "builders"),
         Some(BUILD_CREW),
         "and so is the builders pool — the band's only build staffing since §2.5"
     );
-    assert_eq!(
-        published_role(&app, "husbandry"),
-        None,
-        "and the roles are separate rows — a band keeping no herds publishes none"
-    );
+    for retired in ["agriculture", "husbandry", "quarrywork"] {
+        assert_eq!(
+            published_role(&app, retired),
+            None,
+            "the retired `{retired}` pool publishes no row — a site's own crew keeps it \
+             (`docs/plan_site_crews.md` §4)"
+        );
+    }
 }
 
 /// **THE FUND MODE IS ON THE COHORT, AS THE TOKEN THE COMMAND TAKES.** Without it a client cannot
@@ -365,7 +365,7 @@ fn a_worked_rows_rank_reaches_the_client() {
         Some(fb::SourcePriority::Low),
         "the marked worked row publishes the player's own rank: {ranks:?}"
     );
-    for role in ["agriculture", "builders"] {
+    for role in ["roadwork", "builders"] {
         assert_eq!(
             ranks
                 .iter()
@@ -375,6 +375,127 @@ fn a_worked_rows_rank_reaches_the_client() {
             "a band-wide role is not a worked source and publishes the default: {ranks:?}"
         );
     }
+}
+
+/// **A QUEUED BUILD'S OWN MARK REACHES THE CLIENT** (`docs/plan_site_crews.md` §2.4) — on the queue
+/// entry, as the command's own token, and apart from its site row's rank: the entry is marked
+/// `high` while the row stays `normal`, so a capture that copied the row's rank onto the entry
+/// would read `normal` here.
+#[test]
+fn a_queued_builds_mark_reaches_the_client() {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let (mut app, source) = world_with_a_keeping_band();
+    {
+        let mut allocation = app
+            .world
+            .query::<&mut LaborAllocation>()
+            .iter_mut(&mut app.world)
+            .find(|allocation| {
+                allocation
+                    .assignments
+                    .first()
+                    .is_some_and(|row| row.workers == TAKE_CREW)
+            })
+            .expect("the fixture band exists");
+        assert!(
+            allocation.set_build_priority(&BuildSource::Patch(source), SourcePriority::High),
+            "the fixture band has a build queued on the source"
+        );
+    }
+    recapture_snapshot_in_place(&mut app.world);
+
+    let bytes = encoded_snapshot(&app);
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let marks: Vec<String> = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .flat_map(|cohort| cohort.buildQueue().into_iter().flatten())
+        .map(|entry| entry.buildPriority().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(
+        marks,
+        vec![SourcePriority::High.as_str().to_string()],
+        "the entry publishes its own Build mark"
+    );
+}
+
+/// ⛔ **EACH QUEUED BUILD STATES ITS OWN SITE, IN THE COMMAND GRAMMAR'S TERMS**
+/// (`docs/plan_site_crews.md` §2.4). Two workings queued on one hex publish two entries that differ
+/// by their `material`, a road queued on the same hex says `road`, and the patch entry says
+/// neither — so a client can address each back as `<x> <y> <material>`, `road <x> <y>` or
+/// `<x> <y>` with no join, and two workings on one tile cannot be read as one.
+#[test]
+fn two_workings_and_a_road_on_one_tile_publish_distinguishable_entries() {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+    const WOOD: &str = "wood";
+    const STONE: &str = "stone";
+
+    let (mut app, source) = world_with_a_keeping_band();
+    {
+        let mut allocation = app
+            .world
+            .query::<&mut LaborAllocation>()
+            .iter_mut(&mut app.world)
+            .find(|allocation| !allocation.build_queue.is_empty())
+            .expect("the fixture band has a build queued on its patch");
+        // Pushed straight onto the queue: the capture is under test, not the declaration gates.
+        for site in [
+            BuildSource::Deposit {
+                tile: source,
+                material: WOOD.to_string(),
+            },
+            BuildSource::Deposit {
+                tile: source,
+                material: STONE.to_string(),
+            },
+            BuildSource::Road(source),
+        ] {
+            allocation.build_queue.push(BuildQueueEntry {
+                source: site,
+                declared: BuildJob::Rung(Improvement::Fell),
+                priority: SourcePriority::default(),
+            });
+        }
+    }
+    recapture_snapshot_in_place(&mut app.world);
+
+    let bytes = encoded_snapshot(&app);
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let sites: Vec<(u32, u32, String, bool)> = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .flat_map(|cohort| cohort.buildQueue().into_iter().flatten())
+        .map(|entry| {
+            (
+                entry.targetX(),
+                entry.targetY(),
+                entry.material().unwrap_or_default().to_string(),
+                entry.road(),
+            )
+        })
+        .collect();
+    let at = |material: &str, road: bool| (source.x, source.y, material.to_string(), road);
+    assert_eq!(
+        sites,
+        vec![
+            at("", false),
+            at(WOOD, false),
+            at(STONE, false),
+            at("", true)
+        ],
+        "the patch, each working and the road on one tile are four distinguishable entries"
+    );
 }
 
 #[test]
@@ -419,21 +540,4 @@ fn a_bare_gathering_row_publishes_an_empty_job_token() {
         (TAKE_CREW, ""),
         "a pure gather states its take crew and an honest empty job"
     );
-}
-
-/// **THE EMPTY KIT, NAMED ON A FIXTURE'S QUEUE ENTRY** — an isolation, not a default.
-///
-/// It rides the **entry** because that is where a build's kit lives
-/// (`docs/plan_standing_upkeep.md` §4.7a ②); a kit on the `builders` row is not an input at all.
-/// An absent kit means *derive from this entry's web*, and the roster's answer (`tillage` for a
-/// patch, `hurdling` for a herd) adds `+0.5` work per covered worker per turn. A start-stocked band holds a
-/// unit per worker and a half, so at the crews these fixtures staff every builder is geared and the
-/// pool delivers half again what it asserts, moving every pacing claim below. Naming `none` holds
-/// the gear axis at its identity so these arms measure the **crew**, exactly as
-/// `FaunaConfig::without_retreat` holds the retreat at its identity across the hunt suites. The
-/// geared default is pinned in `core_sim/tests/build_turns_closed_form.rs`.
-fn bare_builders() -> core_sim::KitChoice {
-    core_sim::EquipmentConfig::builtin()
-        .kit("none")
-        .expect("the shipped roster carries the empty kit")
 }

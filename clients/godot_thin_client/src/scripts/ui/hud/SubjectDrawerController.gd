@@ -84,6 +84,10 @@ var _left_dock_scroll: ScrollContainer = null
 # --- Owned state (moved off HudLayer, all drawer-only) ---
 # One drawer fit in flight at a time — see `fit_subject_drawer`.
 var _subject_fit_pending: bool = false
+# A request that arrived while a fit was in flight, and whether any of them FORCED — folded into the
+# in-flight pass's measurement, its force kept.
+var _subject_fit_requested: bool = false
+var _subject_fit_force_requested: bool = false
 # The last land-drawer BBCode STRING (skips a same-markup BBCode reparse) and the last-applied
 # drawer content height (skips a same-height reflow).
 #
@@ -298,14 +302,42 @@ func _render_unknown_contents_note(force: bool) -> void:
 ## deferred call is flushed inside the same frame and is not enough; one `process_frame` is.
 ## Coalesced, so the render + the body's own `minimum_size_changed` collapse into one fit. The frame
 ## wait is threaded through the injected HOST — a `RefCounted` has no `get_tree()`.
+##
+## ⛔ **IT MEASURES ONLY A SETTLED BODY, AND IT NEVER DROPS A REQUEST.** Reported from play: stepping the
+## Split sheet's workers 4 → 5 grew the tile card a band of nothing under its last line. The
+## mechanism: an OS click lands in the frame's INPUT step, so the sheet rebuild it triggers adds fresh
+## wrapping Labels that have no width until the END-of-frame container sort — and this fit, resuming
+## on that same frame's `process_frame`, measured them one word per line (a body of ~1600px against a
+## real 574) and sized the drawer to it, capped only by the dock's room. The settle that followed was a
+## second request arriving while a fit was in flight, which this function used to DROP — so whether
+## the card ever came back depended on frame timing. Now (a) the body's height is read at that
+## frame's `frame_pre_draw` — after the end-of-frame sort has given every fresh Label its width — and
+## (b) a request arriving mid-fit is folded into that measurement, its `force` kept.
+## `band_panel_preview._assert_drawer_fit_survives_an_unsettled_rebuild` stages the race exactly.
 func fit_subject_drawer(force: bool = false) -> void:
-    if _subject_scroll == null or _subject_body == null or _subject_fit_pending:
-        return
-    _subject_fit_pending = true
-    await _host.get_tree().process_frame
-    _subject_fit_pending = false
     if _subject_scroll == null or _subject_body == null:
         return
+    if _subject_fit_pending:
+        _subject_fit_requested = true
+        _subject_fit_force_requested = _subject_fit_force_requested or force
+        return
+    _subject_fit_pending = true
+    _subject_fit_requested = false
+    await _host.get_tree().process_frame
+    # **…AND THEN FOR THAT FRAME'S CONTAINER SORT.** `process_frame` fires BEFORE the end-of-frame flush
+    # of deferred calls, so a rebuild made in this frame's input step still has unsized wrapping Labels
+    # here; `frame_pre_draw` fires AFTER the flush, so every Label added this frame has its width and
+    # its real height.
+    await RenderingServer.frame_pre_draw
+    if _subject_scroll == null or _subject_body == null:
+        _subject_fit_pending = false
+        return
+    _subject_fit_pending = false
+    # Every request that arrived while this pass waited is answered by the measurement below, which is
+    # taken after all of them — but a FORCED one (the dock's room moved) must not lose its force.
+    force = force or _subject_fit_force_requested
+    _subject_fit_requested = false
+    _subject_fit_force_requested = false
     # Once the teardown/rebuild flash is gone, a same-structure restate settles to the SAME content
     # height, so the awaited resize (which reflows the drawer) is pure churn — skip it unless the
     # height actually moved, or a caller FORCES it because the dock ROOM changed (window resize, feed
@@ -953,6 +985,9 @@ func _make_band_verb_row(band: Dictionary) -> HBoxContainer:
             HudSprites.for_mark(String(verb[HudComposeVocab.VERB_KEY_MARK])))
         button.set_meta(HudWidgets.VERB_BUTTON_META, StringName(verb[HudComposeVocab.VERB_KEY_ID]))
         button.disabled = not _bandpanel.verb_enabled(mission, live)
+        # **A GREYED VERB SAYS WHY** — the gate's own reasons lead the hover, the verb's name follows
+        # (`selection-card.md` → "A DISABLED CONTROL SAYS WHY"). An available verb keeps its name.
+        button.tooltip_text = _bandpanel.verb_tooltip(mission, live)
         button.pressed.connect(func() -> void: _bandpanel.dispatch_verb(mission, live))
         row.add_child(button)
     return row

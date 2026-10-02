@@ -784,6 +784,21 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   `0`, because *which item is the weapon* is a fact about the kit and *whether it reaches this
 >   quarry* is a fact about the party.
 >
+> **EACH ROW STATES THE HANDS ITS CREW KEEPS WITH** — `keep_hands` (proto 7), `fauna::crew_keep_hands`
+> over the curve's own `keeping`: the split every quantile on the row is struck on. `0` on a herd
+> that owes no keeping.
+>
+> **EACH ROW ALSO QUOTES THE HERD ONCE ITS NEXT RUNG IS FINISHED** — `next_rung_animals_likely`
+> and `next_rung_keep_hands` (proto 5 / 6), the forage curve's `next_rung_take` twin: the same crew
+> on a clone with the rung in flight (or the next one up) seated by
+> `forecast_query::herd_once_raised` — a pen through `Herd::corral_at`, the pastoral rung at its
+> top with the asking faction as owner — its bill cleared so the keeping re-strikes at the finished
+> rung, and the curve re-run through the same `hunt_crew_take_curve`. `0` and `NO_HANDS` at the top
+> of the branch or where the husbandry ceiling forbids the rung. It is the compose sheet's *once
+> tamed / once corralled* figure; `pastoralYield` / `corralYield` are crew-blind rung payoffs and
+> must not stand in for it. Pinned by
+> `forecast_query::tests::a_wild_herds_once_tamed_figure_is_the_tamed_herds_own_row`.
+>
 > **The gate both readings run on is one function**, `fauna::crew_can_wound` — a positive
 > `combat::strike_damage`, which `resolve_hunt_fight`'s one-sided arm reads too, so the count of armed
 > hands and the fight that pays them cannot disagree about who lands anything. It is deliberately not
@@ -1114,9 +1129,10 @@ and their systems `advance_harvest_assignments`/`advance_scout_assignments`/`adv
 plus the `scout`/`forage`/`hunt_fauna`/`follow_herd` command handlers) is **removed**. A band is now a
 **labor pool**: a `LaborAllocation` component (`components.rs`) partitions its whole working-age workers
 (`available_workers(working)` = `floor`) across `LaborTarget`s — `Forage { tile, policy, species }`,
-`Hunt { fauna_id, policy }`, `Scout`, `Warrior`, and the two **keeping roles** `Agriculture` /
-`Husbandry` (`docs/plan_standing_upkeep.md` §2.5 — a band-level maintenance pool per food web, one
-row each, staffed exactly like Scout and Warrior) — with the invariant `Σ workers ≤ available`. Each
+`Hunt { fauna_id, policy }`, `Extract`, `Scout`, `Warrior`, and the band-level `Builders` and
+`Roadwork` pools — with the invariant `Σ workers ≤ available`. A source row's crew keeps its source
+before it takes (`docs/plan_site_crews.md`; `intensification.md` → "KEEPING IS THE SITE'S OWN
+CREW'S FIRST JOB"). Each
 staffed row is a `LaborAssignment { target, workers, improvement }`: **`policy` is the harvest STANCE
 and `improvement` is what the crew is BUILDING**, two independent axes since issue #442 — see "An
 assignment has TWO axes" in `intensification.md`. `advance_labor_allocation`

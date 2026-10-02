@@ -848,7 +848,7 @@ rows a player would act on are the ones page 1 cannot cut. High to low:
 | 4 | `ATTENTION_BUILD_STALLED` | `SourceForecast.build_is_stalled`, off the badge entry | the BUILD cell's own sentinel face |
 | 3 | `ATTENTION_OVER_CUT` | the sim's `overdraws` verdict | the RATE cell's `⚠` and WARN ink |
 | 2 | `ATTENTION_UNDER_KEPT` | `DetailFormat.rung_is_at_risk` on a food source, `HudDepositVocab.is_at_risk` on a working | `⚠ slipping` / `⚠ drifting` / `⚠ going back` |
-| 1 | `ATTENTION_OVERSTAFFED` | `SourceForecast.crew_is_wasted` against `max_useful_workers` (food) or the row's published `useful_cutters` (a working, `HudDepositVocab.published_useful_cutters`) | `⚠ overstaffed` |
+| 1 | `ATTENTION_OVERSTAFFED` | `SourceForecast.crew_is_wasted` against the row's `+` ceiling — `worked_row_ceiling` on a food row (forage `workers_needed`, hunt `hunt_useful_workers`), `published_useful_cutters` on a working; the work board's own predicate (`labor-ui.md`) | `⚠ overstaffed` |
 | 0 | `ATTENTION_NONE` | — | — |
 
 **THE WASTE RANKS UNDER THE THREE LOSSES, and the three above it moved up one to make room.** A crew

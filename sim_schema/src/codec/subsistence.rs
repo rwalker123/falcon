@@ -12,6 +12,43 @@ use crate::state::subsistence::{
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
+
+/// **A SITE'S KEEPING-TOOL LINES** — absent rather than empty where the keeping claimed no tool,
+/// the `kitToe` convention.
+fn create_upkeep_toe<'a>(
+    builder: &mut FbBuilder<'a>,
+    lines: &[crate::state::population::KitToeLineState],
+) -> Option<WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::KitToeLine<'a>>>>> {
+    if lines.is_empty() {
+        return None;
+    }
+    let rows: Vec<_> = lines
+        .iter()
+        .map(|line| {
+            let item_id = builder.create_string(&line.item_id);
+            fb::KitToeLine::create(
+                builder,
+                &fb::KitToeLineArgs {
+                    itemId: Some(item_id),
+                    required: line.required,
+                    filled: line.filled,
+                },
+            )
+        })
+        .collect();
+    Some(builder.create_vector(&rows))
+}
+
+/// The decode twin of [`create_upkeep_toe`].
+fn decode_upkeep_toe(
+    lines: Option<flatbuffers::Vector<'_, ForwardsUOffset<fb::KitToeLine<'_>>>>,
+) -> Vec<crate::state::population::KitToeLineState> {
+    map_rows(lines, |line| crate::state::population::KitToeLineState {
+        item_id: text(line.itemId()),
+        required: line.required(),
+        filled: line.filled(),
+    })
+}
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
 pub(crate) fn serialize_subsistence_section<'a>(
@@ -502,6 +539,7 @@ fn create_herds<'a>(
             create_material_payoffs(builder, &herd.corral_upkeep_material_demand);
         let corral_build_material_cost =
             create_material_payoffs(builder, &herd.corral_build_material_cost);
+        let upkeep_toe = create_upkeep_toe(builder, &herd.upkeep_toe);
         let entry = fb::HerdTelemetryState::create(
             builder,
             &fb::HerdTelemetryStateArgs {
@@ -615,6 +653,9 @@ fn create_herds<'a>(
                 upkeepSupplied: herd.upkeep_supplied,
                 upkeepShortfall: herd.upkeep_shortfall,
                 upkeepWorkersNeeded: herd.upkeep_workers_needed,
+                upkeepWorkersAtCompletion: herd.upkeep_workers_at_completion,
+                upkeepNextWorkerTurn: herd.upkeep_next_worker_turn,
+                upkeepToe: upkeep_toe,
                 // **The PRE-COMMIT rate** — appended last (append-only wire). `upkeepDemand` above
                 // is what the KEEPING rung bills today; these are what each rung would cost to
                 // hold, so a sheet quoting a Tame on an unstarted herd nets a rate rather than
@@ -664,6 +705,9 @@ fn create_herds<'a>(
                 // **WHAT THIS SITE IS KEPT WITH** — the resolved kit, and whether a band stated it.
                 upkeepKitId: Some(upkeep_kit_id),
                 upkeepKitNamed: herd.upkeep_kit_named,
+                // **WHAT THE HERD'S OWN CREW SPENT KEEPING IT** (`docs/plan_site_crews.md` §2.2).
+                upkeepHands: herd.upkeep_hands,
+                upkeepToolsShort: herd.upkeep_tools_short,
                 // **WHAT A PEN RING SWALLOWS TO RAISE** — appended last (append-only wire), and
                 // the material twin of `corralWorkCost`. It carries what `buildMaterialCost` above
                 // cannot on a CORRALLED herd, where the rung above the pen is none.
@@ -779,6 +823,7 @@ fn create_forage_patches<'a>(
             create_material_payoffs(builder, &patch.cultivation_upkeep_material_demand);
         let field_upkeep_material_demand =
             create_material_payoffs(builder, &patch.field_upkeep_material_demand);
+        let upkeep_toe = create_upkeep_toe(builder, &patch.upkeep_toe);
         let entry = fb::ForagePatchState::create(
             builder,
             &fb::ForagePatchStateArgs {
@@ -842,6 +887,9 @@ fn create_forage_patches<'a>(
                 upkeepSupplied: patch.upkeep_supplied,
                 upkeepShortfall: patch.upkeep_shortfall,
                 upkeepWorkersNeeded: patch.upkeep_workers_needed,
+                upkeepWorkersAtCompletion: patch.upkeep_workers_at_completion,
+                upkeepNextWorkerTurn: patch.upkeep_next_worker_turn,
+                upkeepToe: upkeep_toe,
                 // **The PRE-COMMIT rate** — appended last (append-only wire), the plant twin of the
                 // herd's pair: `upkeepDemand` above is what the AT-RISK rung bills today, and these
                 // are what each rung would cost to hold, so a sheet quoting a Cultivate on a wild
@@ -890,6 +938,9 @@ fn create_forage_patches<'a>(
                 // **WHAT THIS SITE IS KEPT WITH** — the resolved kit, and whether a band stated it.
                 upkeepKitId: Some(upkeep_kit_id),
                 upkeepKitNamed: patch.upkeep_kit_named,
+                // **WHAT THE PATCH'S OWN CREW SPENT KEEPING IT** (`docs/plan_site_crews.md` §2.1).
+                upkeepHands: patch.upkeep_hands,
+                upkeepToolsShort: patch.upkeep_tools_short,
             },
         );
         entries.push(entry);
@@ -1192,6 +1243,7 @@ fn create_deposits<'a>(
             } else {
                 Some(builder.create_vector(&deposit.regrowth_samples))
             };
+            let upkeep_toe = create_upkeep_toe(builder, &deposit.upkeep_toe);
             fb::DepositState::create(
                 builder,
                 &fb::DepositStateArgs {
@@ -1216,6 +1268,9 @@ fn create_deposits<'a>(
                     upkeepSupplied: deposit.upkeep_supplied,
                     upkeepShortfall: deposit.upkeep_shortfall,
                     upkeepWorkersNeeded: deposit.upkeep_workers_needed,
+                    upkeepWorkersAtCompletion: deposit.upkeep_workers_at_completion,
+                    upkeepNextWorkerTurn: deposit.upkeep_next_worker_turn,
+                    upkeepToe: upkeep_toe,
                     hasNeglectGrace: deposit.has_neglect_grace,
                     neglectGraceRemaining: deposit.neglect_grace_remaining,
                     buildTurnsRemaining: deposit.build_turns_remaining,
@@ -1226,6 +1281,10 @@ fn create_deposits<'a>(
                     upkeepKitNamed: deposit.upkeep_kit_named,
                     defaultKitId: Some(default_kit_id),
                     offeredKitIds: Some(offered_kit_ids),
+                    // **WHAT THE WORKING'S OWN CREW SPENT KEEPING IT** (`docs/plan_site_crews.md`
+                    // §2.5).
+                    upkeepHands: deposit.upkeep_hands,
+                    upkeepToolsShort: deposit.upkeep_tools_short,
                 },
             )
         })
@@ -1259,6 +1318,9 @@ fn decode_deposit(deposit: fb::DepositState<'_>) -> DepositState {
         upkeep_supplied: deposit.upkeepSupplied(),
         upkeep_shortfall: deposit.upkeepShortfall(),
         upkeep_workers_needed: deposit.upkeepWorkersNeeded(),
+        upkeep_workers_at_completion: deposit.upkeepWorkersAtCompletion(),
+        upkeep_next_worker_turn: deposit.upkeepNextWorkerTurn(),
+        upkeep_toe: decode_upkeep_toe(deposit.upkeepToe()),
         has_neglect_grace: deposit.hasNeglectGrace(),
         neglect_grace_remaining: deposit.neglectGraceRemaining(),
         build_turns_remaining: deposit.buildTurnsRemaining(),
@@ -1269,6 +1331,8 @@ fn decode_deposit(deposit: fb::DepositState<'_>) -> DepositState {
         upkeep_kit_named: deposit.upkeepKitNamed(),
         default_kit_id: text(deposit.defaultKitId()),
         offered_kit_ids: decode_strings(deposit.offeredKitIds()),
+        upkeep_hands: deposit.upkeepHands(),
+        upkeep_tools_short: deposit.upkeepToolsShort(),
     }
 }
 
@@ -1511,6 +1575,9 @@ fn decode_herd(herd: fb::HerdTelemetryState<'_>) -> HerdTelemetryState {
         upkeep_supplied: herd.upkeepSupplied(),
         upkeep_shortfall: herd.upkeepShortfall(),
         upkeep_workers_needed: herd.upkeepWorkersNeeded(),
+        upkeep_workers_at_completion: herd.upkeepWorkersAtCompletion(),
+        upkeep_next_worker_turn: herd.upkeepNextWorkerTurn(),
+        upkeep_toe: decode_upkeep_toe(herd.upkeepToe()),
         has_neglect_grace: herd.hasNeglectGrace(),
         neglect_grace_remaining: herd.neglectGraceRemaining(),
         provisions_per_biomass: herd.provisionsPerBiomass(),
@@ -1560,6 +1627,8 @@ fn decode_herd(herd: fb::HerdTelemetryState<'_>) -> HerdTelemetryState {
         corral_build_material_cost: decode_material_payoffs(herd.corralBuildMaterialCost()),
         upkeep_kit_id: text(herd.upkeepKitId()),
         upkeep_kit_named: herd.upkeepKitNamed(),
+        upkeep_hands: herd.upkeepHands(),
+        upkeep_tools_short: herd.upkeepToolsShort(),
     }
 }
 
@@ -1598,6 +1667,9 @@ fn decode_forage_patch(patch: fb::ForagePatchState<'_>) -> ForagePatchState {
         upkeep_supplied: patch.upkeepSupplied(),
         upkeep_shortfall: patch.upkeepShortfall(),
         upkeep_workers_needed: patch.upkeepWorkersNeeded(),
+        upkeep_workers_at_completion: patch.upkeepWorkersAtCompletion(),
+        upkeep_next_worker_turn: patch.upkeepNextWorkerTurn(),
+        upkeep_toe: decode_upkeep_toe(patch.upkeepToe()),
         has_neglect_grace: patch.hasNeglectGrace(),
         neglect_grace_remaining: patch.neglectGraceRemaining(),
         provisions_per_biomass: patch.provisionsPerBiomass(),
@@ -1637,6 +1709,8 @@ fn decode_forage_patch(patch: fb::ForagePatchState<'_>) -> ForagePatchState {
         field_upkeep_material_demand: decode_material_payoffs(patch.fieldUpkeepMaterialDemand()),
         upkeep_kit_id: text(patch.upkeepKitId()),
         upkeep_kit_named: patch.upkeepKitNamed(),
+        upkeep_hands: patch.upkeepHands(),
+        upkeep_tools_short: patch.upkeepToolsShort(),
     }
 }
 

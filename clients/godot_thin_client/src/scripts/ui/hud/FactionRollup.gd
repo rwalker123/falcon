@@ -910,14 +910,11 @@ static func _build_workforce_block(labor: HudBandLaborState) -> VBoxContainer:
         # (`docs/plan_standing_upkeep.md` §2.5): there is no per-source build crew to sum any more.
         build_workers += int(labor.effective_role_workers(
             band, HudConst.LABOR_KIND_BUILDERS).get("workers", 0))
-        # **ALL FOUR NON-BUILD ROLES, and the KEEPING PAIR was missing from this bar alone.** The band
-        # zone's twin has counted `agriculture` / `husbandry` since they landed; this one summed scout
-        # and warrior, so a faction whose bands keep anything lost those hands off a chart that is
-        # supposed to partition the same `working_age` its header sums.
+        # **ALL THREE NON-BUILD ROLES** — scout, warrior and the roadwork pool, the band zone's own
+        # Roles segment one scale up. A site's keepers are part of that site's crew now
+        # (`docs/plan_site_crews.md`), so they are already in the Forage / Hunt sums above.
         role_workers += int(labor.effective_role_workers(band, HudConst.LABOR_KIND_SCOUT).get("workers", 0)) \
             + int(labor.effective_role_workers(band, HudConst.LABOR_KIND_WARRIOR).get("workers", 0)) \
-            + int(labor.effective_role_workers(band, HudConst.LABOR_KIND_AGRICULTURE).get("workers", 0)) \
-            + int(labor.effective_role_workers(band, HudConst.LABOR_KIND_HUSBANDRY).get("workers", 0)) \
             + int(labor.effective_role_workers(band, HudConst.LABOR_KIND_ROADWORK).get("workers", 0))
         party_workers += labor.band_party_workers(band)
         bench_workers += labor.bench_workers(band)

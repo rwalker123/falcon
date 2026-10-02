@@ -274,7 +274,7 @@ fn a_road_keepers_own_output() -> f32 {
     // is the honest stock for a one-worker coverage and it cannot go stale on the spawn's own dials.
     let ledger = core_sim::BandEquipment::start_stocked(&equipment);
     let rung = RungKey::RouteDirtRoad.wire_key();
-    let kit = equipment.keeping_kit_for(None, core_sim::RungBranch::Route, Some(&rung));
+    let kit = equipment.keeping_kit_for(core_sim::RungBranch::Route, Some(&rung));
     build_work_per_worker_turn(
         equipment
             .coverage(&kit, 1.0, &ledger)

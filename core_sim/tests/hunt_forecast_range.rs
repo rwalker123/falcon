@@ -219,7 +219,6 @@ fn spawn_hunters(app: &mut App, pos: UVec2, fauna_id: &str, floor: f32) -> bevy:
                     workers: CREW,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 }],
                 ..Default::default()
             },
@@ -244,6 +243,7 @@ fn seed_the_forecast(app: &mut App, band: bevy::prelude::Entity, fauna_id: &str,
             &party_at(&combat),
             CONTENT_BAND_OUTPUT_MULTIPLIER,
             CREW,
+            core_sim::NO_HANDS,
             floor,
             labor.yield_average_horizon_turns,
             labor.arrivals_horizon_turns,
@@ -459,7 +459,7 @@ fn the_range_widens_with_a_stochastic_fight_and_contains_the_take_across_many_se
         let mut quarry = herd.clone();
         let outcome = hunt_take(
             &mut quarry,
-            CREW,
+            CREW as f32,
             FOOD_PEAK,
             equipped_haul_rate(),
             &party,
@@ -767,6 +767,7 @@ fn the_exported_terms_compose_the_gate_and_the_forecast_agrees() {
             &retuned(party, &combat),
             CONTENT_BAND_OUTPUT_MULTIPLIER,
             workers,
+            core_sim::NO_HANDS,
             FOOD_PEAK,
             labor.yield_average_horizon_turns,
             labor.arrivals_horizon_turns,
@@ -915,7 +916,6 @@ fn a_gather_reports_a_point_and_pays_it() {
                         workers: CREW,
                         kit: None,
                         priority: SourcePriority::default(),
-                        upkeep_kit: None,
                     }],
                     ..Default::default()
                 },
@@ -944,6 +944,7 @@ fn a_gather_reports_a_point_and_pays_it() {
             seasonal,
             CONTENT_BAND_OUTPUT_MULTIPLIER,
             CREW,
+            core_sim::NO_HANDS,
             FOOD_PEAK,
             &TakeSelection::EVERYTHING,
             labor.yield_average_horizon_turns,

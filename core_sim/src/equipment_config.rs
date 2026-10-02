@@ -1175,13 +1175,12 @@ pub enum KitJob {
     Forage,
     Scout,
     Warrior,
-    /// **The plant web's standing keepers** — the `agriculture` role's job
-    /// (`docs/plan_standing_upkeep.md` §2.5). It has its own job rather than borrowing the
-    /// gatherers' because gear **covers people**: folding keepers into `Forage` would divide the
-    /// band's baskets among hands that are not carrying anything home.
+    /// **The plant web's keeping** — the job name the roster's plant keeping kits list (`tillage`).
+    /// Its band-level role retired with `docs/plan_site_crews.md`: a patch's own crew keeps it and
+    /// its keeping tools follow from the patch's rung, so this survives as roster vocabulary.
     Agriculture,
-    /// **The animal web's standing keepers** — the `husbandry` role's job, the twin of
-    /// [`KitJob::Agriculture`] and separate from `Hunt` for its reason.
+    /// **The animal web's keeping** — the twin of [`KitJob::Agriculture`] (`hurdling`), retired
+    /// as a band-level role for the same reason.
     Husbandry,
     /// **THE BAND'S BUILDERS** — the `builders` role's job (`docs/plan_standing_upkeep.md` §2.5).
     ///
@@ -1246,18 +1245,11 @@ pub enum KitJob {
     /// compared in one language. The *variant* is named for the branch pair it serves.
     #[serde(rename = "extract")]
     Extraction,
-    /// **THE BAND'S WORKING KEEPERS** — the `quarrywork` role's job, and the deposit branches' twin
-    /// of [`KitJob::Agriculture`] / [`KitJob::Husbandry`] / [`KitJob::Roadwork`]
-    /// (`docs/plan_extraction.md` §6).
-    ///
-    /// **One job for both branches**, matching the one role: holding a face open and clearing what
-    /// has fallen is one job, and which ladder the deposit is on is the deposit's.
-    ///
-    /// ⛔ **IT IS SPLIT FROM [`KitJob::Extraction`]**, on [`KitJob::Agriculture`]'s stated reason:
-    /// **gear covers people**, so sharing a job with the take row would divide the take kit's axes
-    /// among hands that are not cutting. Its keepers are geared through the rung requirement
-    /// ([`EquipmentConfig::pool_toe`]), not through a default kit, so `default_kits.quarrywork`
-    /// stays `none`.
+    /// **The deposit branches' keeping** — the twin of [`KitJob::Agriculture`] /
+    /// [`KitJob::Husbandry`]. Its band-level role retired with `docs/plan_site_crews.md`: a
+    /// working's own `extract` crew keeps it, geared through the rung requirement rather than a
+    /// default kit, so this survives as roster vocabulary and `default_kits.quarrywork` stays
+    /// `none`.
     Quarrywork,
 }
 
@@ -1327,9 +1319,8 @@ pub struct DefaultKitsConfig {
     pub forage: String,
     pub scout: String,
     pub warrior: String,
-    /// **What a plant keeper works with today: nothing.** The shipped roster declares no maintenance
-    /// gear, so the `agriculture` role's default is the ordinary empty `none` kit rather than a
-    /// sentinel — the day a hoe declares a stat, this row is where it lands.
+    /// **The plant keeping job's default kit** — the ordinary empty `none`. A site crew's keeping
+    /// tools follow from its rung (`docs/plan_site_crews.md` §2.3), never from this default.
     pub agriculture: String,
     /// The animal keeper's default — see [`Self::agriculture`].
     pub husbandry: String,
@@ -1432,6 +1423,34 @@ impl KitCoverage {
         &self.crews
     }
 
+    /// ⛔ **THE FEWEST HANDS WHOSE CAPACITY REACHES `room`** — this coverage's crews walked
+    /// best-equipped first, each hand at its crew's per-worker `rate`, and any hand past the
+    /// coverage at `beyond` (a hand the band has no unit for). Fractional; a crew-independent count,
+    /// because it reads the units the row holds rather than how thinly they are spread.
+    ///
+    /// Where nothing past the coverage takes anything (`beyond` is nothing), the hands that take
+    /// something are the whole answer.
+    pub fn hands_to_reach(&self, room: f32, rate: impl Fn(&KitChoice) -> f32, beyond: f32) -> f32 {
+        let mut left = room.max(NO_CLAIMING_HANDS);
+        let mut hands = NO_CLAIMING_HANDS;
+        for crew in &self.crews {
+            if left <= NO_CLAIMING_HANDS {
+                return hands;
+            }
+            let per_hand = rate(&crew.kit);
+            let capacity = crew.workers * per_hand;
+            if capacity >= left {
+                return hands + hands_to_reach(left, per_hand);
+            }
+            left -= capacity;
+            hands += crew.workers;
+        }
+        if left <= NO_CLAIMING_HANDS || beyond <= NO_CLAIMING_HANDS {
+            return hands;
+        }
+        hands + hands_to_reach(left, beyond)
+    }
+
     /// **The head count this coverage divides** — `0` for a job nobody is staffed on.
     ///
     /// The one authority for the denominator: [`Self::workers_holding`] over this is the whole
@@ -1523,91 +1542,93 @@ pub struct DepositGear {
     pub wear_kit: KitChoice,
 }
 
-/// **WHAT ONE BAND'S GEAR IS BEING ASKED FOR, ITEM BY ITEM** — the denominator every row's share of
-/// the ledger is struck against ([`EquipmentConfig::coverage_from_units`]).
+/// **ONE ROW'S CLAIM ON THE BAND'S TAKE GEAR** — the row's resolved kit, the hands on it that claim
+/// the kit, and its player-set `Priority`, which is the order the band's items are settled in
+/// ([`BandItemBudget`]). `source` names the row it came from, or `None` for a crew nobody has
+/// committed yet ([`BandItemBudget::with_prospective_row`]).
+///
+/// `claim` is **not the head count**: it is the take hands that would take something with the kit
+/// ([`crate::take_claims::take_kit_claim`], `docs/plan_site_crews.md` §2.3).
+#[derive(Debug, Clone)]
+pub struct KittedRow {
+    pub kit: KitChoice,
+    pub claim: f32,
+    pub priority: crate::components::SourcePriority,
+    pub source: Option<crate::components::LaborTarget>,
+}
+
+/// ⛔ **WHAT ONE BAND'S TAKE GEAR IS ASKED FOR, AND WHO GETS IT** — the per-item settlement every
+/// take and role row's share of the ledger is struck from ([`EquipmentConfig::coverage_from_units`]).
 ///
 /// # It is per ITEM because two kits can name the same thing
 ///
-/// The upkeep side groups its claims by **kit id** (`systems::labor::keeping_rates`), which is
-/// enough there because no two kits on one web share an item. A band's *work rows* are not so
-/// lucky: `big_game` and `trapping` both carry the sled, so a kit-id grouping would still sled a
-/// full crew on each of two rows off one stock. The key here is the item, so anything two rows both
-/// reach for is split between them however they named it.
+/// `big_game` and `trapping` both carry the sled, so a kit-id grouping would sled a full crew on
+/// each of two rows off one stock. The key here is the item, so anything two rows both reach for is
+/// split between them however they named it.
 ///
-/// # The split is PRO-RATA, by head count
+/// # The split is BY PRIORITY, then whole units by largest remainder (`docs/plan_site_crews.md` §2.3)
 ///
-/// A row's share of an item is `live units × (its workers ÷ every row's workers that want it)`,
-/// which is the same rule the keeping pool splits by and deliberately **not** a priority order:
-/// `SourcePriority` decides who sheds a worker, and making it decide who gets the spears as well
-/// would be a design lever nobody has asked for. **Fractional units are fine** — `Crew::workers` is
-/// fractional by design, and coverage clamps the share against the people on the row anyway.
+/// Per item, the rows are served **High in full, then Normal, then Low** — the row's own
+/// `SourcePriority`, the same mark its keeping claims and a pool's tools settle at. Inside a tier the
+/// stock cannot cover, the tier's whole units are apportioned **by largest remainder on the rows'
+/// claims** (each row's quota is `units × its need ÷ the tier's need`, floored, and the units left go
+/// to the largest remainders, ties to the earlier row). A row's need is `claim ÷ workers_per_unit`.
+///
+/// ⛔ **THE CLAIM IS NOT THE HEAD COUNT.** It is the take hands that would take something with the
+/// kit — planned as if equipped, capped at the row's take hands ([`KittedRow::claim`]). A hand a site
+/// does not need claims nothing and works bare, so raising a crew past its site's yield cannot pull
+/// a kit off a row that needs it. So a
+/// High boar hunt of 4 and a Normal sheep hunt of 2 over five stalking kits reads **4 of 4** and **1
+/// of 2**, where the head-count split this replaced gave the boar 3.3 and the sheep 1.7.
+///
+/// **A band that is not short is unchanged**: every tier is covered, so every row takes its whole
+/// need and coverage clamps it against the people on the row, exactly as before.
 ///
 /// # An item NOTHING asks for is not rationed
 ///
-/// Demand of zero means no budgeted row carries the item, so the caller asking about it is the only
-/// claimant and gets the band's whole live stock. That is what keeps a **detached party** — whose
-/// allocation is empty, and which works no source rows — reading exactly what the ledger-wide
-/// [`EquipmentConfig::coverage`] gave it.
+/// A caller asking about an item no row carries — a **detached party** reading its own ledger — gets
+/// the band's whole live stock, what the ledger-wide [`EquipmentConfig::coverage`] gave it.
 ///
-/// ⛔ **THE BUILDERS' POOL USED TO BE THE SECOND EXAMPLE HERE, AND NO POOL IS ONE.** This paragraph
-/// read *"…and the builders' pool (whose kit is resolved from the build queue rather than from a
-/// row)"*, which was true only while that row resolved through
-/// [`crate::components::LaborAssignment::kit_choice`] and got `default_kits.builders` — `none` — so
-/// a pool that really was holding gear put **no demand** on it and every take row divided a stock
-/// the builders were already spending. The five standing pools are out of this budget entirely now
-/// ([`crate::components::LaborTarget::is_standing_pool`]): their tools are settled band-wide by
-/// `SourcePriority` in `systems::labor::settle_pool_tools`, so they are rationed there instead, and
-/// leaving them here as well would ration one stock twice.
+/// ⛔ **The standing pools are not in this budget** ([`crate::components::LaborTarget::is_standing_pool`]):
+/// their tools, and each site crew's keeping tools, are settled band-wide in
+/// `systems::labor::settle_pool_tools`, and what they were issued is reserved off the stock here
+/// first ([`Self::reserving`]). Re-adding them would ration one stock twice.
 #[derive(Debug, Clone, Default)]
 pub struct BandItemBudget {
-    /// Workers wanting each item, summed over the rows that carry it. A `Vec` walked linearly
-    /// rather than a map: a roster is a handful of items and a band a handful of rows, so the probe
-    /// is cheaper than hashing.
-    demand: Vec<(Arc<str>, f32)>,
-    /// **Units the standing pools were already ISSUED this turn**, per item — taken off the live
-    /// stock before any row's share is struck ([`Self::reserving`]). Empty unless a pool settled
-    /// the item, which on the shipped roster means the `axe` alone.
+    /// Every claiming row, in the band's row order (a prospective row last) — the order a tie in a
+    /// tier breaks to.
+    rows: Vec<KittedRow>,
+    /// **Units the standing pools and the site keeping were already ISSUED this turn**, per item —
+    /// taken off the live stock before any row is served ([`Self::reserving`]).
     reserved: Vec<(Arc<str>, f32)>,
 }
-
-/// No row has asked for this item — see [`BandItemBudget`]'s third rule.
-const NO_ITEM_DEMAND: f32 = 0.0;
 
 /// The band holds none of it (or holds none in serving condition).
 const NO_UNITS_IN_HAND: f32 = 0.0;
 
-/// **A row can never draw more than the band's WHOLE stock**, whatever head count it asks with.
-const WHOLE_STOCK: f32 = 1.0;
+/// No units settled on this row.
+const NO_UNITS_SETTLED: f32 = 0.0;
 
 impl BandItemBudget {
-    /// Build the budget from the band's rows — each row's **resolved** kit and the head count
-    /// standing on it.
-    pub fn of_rows<'a>(rows: impl IntoIterator<Item = (&'a KitChoice, f32)>) -> Self {
-        let mut demand: Vec<(Arc<str>, f32)> = Vec::new();
-        for (kit, workers) in rows {
-            for item in kit.uses.iter() {
-                match demand.iter_mut().find(|(id, _)| id == item) {
-                    Some((_, wanted)) => *wanted += workers,
-                    None => demand.push((Arc::clone(item), workers)),
-                }
-            }
-        }
+    /// Build the budget from the band's rows — each row's **resolved** kit, head count and rank, in
+    /// the band's row order.
+    pub fn of_rows(rows: impl IntoIterator<Item = KittedRow>) -> Self {
         Self {
-            demand,
+            rows: rows.into_iter().collect(),
             reserved: Vec::new(),
         }
     }
 
     /// **ONE UNIT ARMS ONE PERSON PER TURN, ACROSS BOTH ACCOUNTS** — take the units the standing
-    /// pools were issued off the stock this budget divides.
+    /// pools and the site keeping were issued off the stock this budget divides.
     ///
     /// The pools settle **first** (`systems::labor::plan_pool_tools` runs above every take row in
     /// `advance_labor_allocation`), so the take rows are rationed out of what the settlement left.
     /// Without it an item carried both in a take kit and in a pool's rung requirement — the `axe`,
-    /// on the `woodcutting` kit and on `forestry`'s `build_work` — armed a feller and a keeper off the same
-    /// unit, because the two allocations never saw each other.
+    /// on the `woodcutting` kit and on `forestry`'s `build_work` — armed a feller and a keeper off the
+    /// same unit.
     ///
-    /// `issued` is in whole units per item (`PoolToeLine::filled`); a repeated id is summed.
+    /// `issued` is in units per item (`PoolToeLine::filled`); a repeated id is summed.
     pub fn reserving<'a>(mut self, issued: impl IntoIterator<Item = (&'a str, f32)>) -> Self {
         for (item, units) in issued {
             if units <= NO_UNITS_IN_HAND {
@@ -1621,65 +1642,253 @@ impl BandItemBudget {
         self
     }
 
-    /// **THE BUDGET A ROW NOBODY HAS COMMITTED YET COMPETES UNDER** — the band's *other* rows,
-    /// chained with the party being asked about, so a prospective crew of `workers` is rationed
+    /// **THE BUDGET A ROW NOBODY HAS COMMITTED YET COMPETES UNDER** — the band's *other* rows, with
+    /// the crew being asked about appended last at `priority`, so a prospective crew is settled
     /// exactly as a committed one is.
     ///
-    /// ⛔ **`other_rows` must EXCLUDE any row already standing on the source being asked about.**
-    /// A forecast, a commit-time seed and the turn's take describe one crew on one source; leaving
-    /// that source's existing row in would count its head twice — once as itself and once as the
-    /// ask — and quote a share smaller than the take will pay.
-    ///
-    /// Demand of zero still falls through to the whole live stock ([`Self::units_for`]), so a band
-    /// with nothing else staffed reads what the ledger-wide [`EquipmentConfig::coverage`] gave it.
-    /// That is the same *"an item nothing asks for is not rationed"* rule, not a second one.
-    pub fn with_prospective_row<'a>(
-        other_rows: impl IntoIterator<Item = (&'a KitChoice, f32)>,
-        kit: &'a KitChoice,
-        workers: f32,
+    /// ⛔ **`other_rows` must EXCLUDE any row already standing on the source being asked about**
+    /// ([`crate::components::LaborAllocation::rows_excluding_source`]): leaving it in would count
+    /// that source's crew twice and quote a share smaller than the take will pay.
+    pub fn with_prospective_row(
+        other_rows: impl IntoIterator<Item = KittedRow>,
+        kit: &KitChoice,
+        // **The asked-about crew's claiming hands** — not its head count
+        // ([`crate::take_claims::take_kit_claim`]).
+        claim: f32,
+        priority: crate::components::SourcePriority,
     ) -> Self {
-        Self::of_rows(
-            other_rows
-                .into_iter()
-                .chain(std::iter::once((kit, workers))),
-        )
+        Self::of_rows(other_rows.into_iter().chain(std::iter::once(KittedRow {
+            kit: kit.clone(),
+            claim,
+            priority,
+            source: None,
+        })))
     }
 
-    /// **One row's units of `item`** — its pro-rata share of what the band holds in serving
-    /// condition.
-    pub fn units_for(
+    /// The settled units of `item` for every row, in row order — the whole of the rule
+    /// ([`BandItemBudget`]'s doc). A row that does not carry the item gets none.
+    fn settle(
         &self,
         item: &str,
-        workers: f32,
         wear: &crate::components::BandEquipment,
         config: &EquipmentConfig,
-    ) -> f32 {
-        // **What the pools did not take** — [`Self::reserving`].
+    ) -> Vec<f32> {
+        self.settle_and_leave(item, wear, config).0
+    }
+
+    /// [`Self::settle`], and the whole units of `item` no claim took — what is still on the shelf.
+    fn settle_and_leave(
+        &self,
+        item: &str,
+        wear: &crate::components::BandEquipment,
+        config: &EquipmentConfig,
+    ) -> (Vec<f32>, f32) {
+        let per_unit = config
+            .item(item)
+            .map_or_else(one_worker, |def| def.workers_per_unit) as f32;
         let issued = self
             .reserved
             .iter()
             .find(|(id, _)| id.as_ref() == item)
             .map_or(NO_UNITS_IN_HAND, |(_, units)| *units);
-        let live = (wear.live_units(item, config) as f32 - issued).max(NO_UNITS_IN_HAND);
-        let wanted = self
-            .demand
+        // Whole units: a tool is carried by a person, and what the settlement reserved is whole.
+        let mut left = (wear.live_units(item, config) as f32 - issued)
+            .max(NO_UNITS_IN_HAND)
+            .floor();
+        let need: Vec<f32> = self
+            .rows
             .iter()
-            .find(|(id, _)| id.as_ref() == item)
-            .map_or(NO_ITEM_DEMAND, |(_, wanted)| *wanted);
-        if wanted <= NO_ITEM_DEMAND {
-            return live;
+            .map(|row| {
+                if row.kit.uses.iter().any(|used| used.as_ref() == item) {
+                    row.claim / per_unit
+                } else {
+                    NO_UNITS_SETTLED
+                }
+            })
+            .collect();
+        let mut settled = vec![NO_UNITS_SETTLED; self.rows.len()];
+        for tier in crate::components::SourcePriority::SERVED_FIRST_TO_LAST {
+            let members: Vec<usize> = (0..self.rows.len())
+                .filter(|&index| {
+                    self.rows[index].priority == tier && need[index] > NO_UNITS_SETTLED
+                })
+                .collect();
+            let wanted: f32 = members.iter().map(|&index| need[index]).sum();
+            if wanted <= NO_UNITS_SETTLED {
+                continue;
+            }
+            if left >= wanted {
+                for &index in &members {
+                    settled[index] = need[index];
+                }
+                left -= wanted;
+                continue;
+            }
+            // **The tier the stock cannot cover**: whole units by largest remainder on the claims.
+            let quota: Vec<f32> = members
+                .iter()
+                .map(|&index| left * need[index] / wanted)
+                .collect();
+            let mut handed = NO_UNITS_SETTLED;
+            for (slot, &index) in members.iter().enumerate() {
+                settled[index] = quota[slot].floor();
+                handed += settled[index];
+            }
+            let mut order: Vec<usize> = (0..members.len()).collect();
+            // Largest remainder first; a stable sort keeps the earlier row ahead on a tie.
+            order.sort_by(|&a, &b| {
+                let (ra, rb) = (quota[a] - quota[a].floor(), quota[b] - quota[b].floor());
+                rb.total_cmp(&ra)
+            });
+            let mut spare = left - handed;
+            for slot in order {
+                if spare < WHOLE_UNIT {
+                    break;
+                }
+                settled[members[slot]] += WHOLE_UNIT;
+                spare -= WHOLE_UNIT;
+            }
+            left = NO_UNITS_IN_HAND;
         }
-        live * (workers / wanted).min(WHOLE_STOCK)
+        (settled, left)
     }
 
-    /// The `units` closure [`EquipmentConfig::coverage_from_units`] takes, for one row of `workers`.
-    pub fn share_for<'a>(
+    /// **The units of `item` the settlement left on the shelf** — the live stock less what the pools
+    /// were issued and every row was settled. An item no row claims is all on the shelf.
+    pub fn unclaimed_units(
+        &self,
+        item: &str,
+        wear: &crate::components::BandEquipment,
+        config: &EquipmentConfig,
+    ) -> f32 {
+        let claimed = self
+            .rows
+            .iter()
+            .any(|claim| claim.kit.uses.iter().any(|used| used.as_ref() == item));
+        if claimed {
+            self.settle_and_leave(item, wear, config).1
+        } else {
+            self.units_for_row(item, self.rows.len(), wear, config)
+        }
+    }
+
+    /// ⛔ **THE COVERAGE A ROW'S CREW COULD REACH WITH** — its `take_hands` armed from the units it
+    /// was settled, plus one more hand for every unit still on the shelf, armed from it
+    /// (`docs/plan_site_crews.md` §4). What the row's needed crew is walked over
+    /// ([`KitCoverage::hands_to_reach`]): a hand the player adds takes a spare kit if one is lying
+    /// there, and works bare if not — so the count reads the band's stock, never the crew's size.
+    pub fn reach_coverage_for_source(
+        &self,
+        source: &crate::components::LaborTarget,
+        kit: &KitChoice,
+        take_hands: f32,
+        wear: &crate::components::BandEquipment,
+        config: &EquipmentConfig,
+    ) -> KitCoverage {
+        let row = self.row_of(source);
+        let spare = |item: &str| self.unclaimed_units(item, wear, config);
+        let spare_hands: f32 = kit
+            .uses
+            .iter()
+            .map(|item| {
+                spare(item)
+                    * config
+                        .item(item)
+                        .map_or_else(one_worker, |def| def.workers_per_unit)
+                        as f32
+            })
+            .sum();
+        config.coverage_from_units(kit, take_hands + spare_hands, wear, |item| {
+            self.units_for_row(item, row, wear, config) + spare(item)
+        })
+    }
+
+    /// **One row's settled units of `item`** — `row` is its index in the budget. An item no row
+    /// carries is not rationed: the whole live stock, less what the pools were issued.
+    pub fn units_for_row(
+        &self,
+        item: &str,
+        row: usize,
+        wear: &crate::components::BandEquipment,
+        config: &EquipmentConfig,
+    ) -> f32 {
+        let claimed = self
+            .rows
+            .iter()
+            .any(|claim| claim.kit.uses.iter().any(|used| used.as_ref() == item));
+        if !claimed || row >= self.rows.len() {
+            let issued = self
+                .reserved
+                .iter()
+                .find(|(id, _)| id.as_ref() == item)
+                .map_or(NO_UNITS_IN_HAND, |(_, units)| *units);
+            return (wear.live_units(item, config) as f32 - issued).max(NO_UNITS_IN_HAND);
+        }
+        self.settle(item, wear, config)[row]
+    }
+
+    /// The `units` closure [`EquipmentConfig::coverage_from_units`] takes, for the row at `row`.
+    pub fn share_for_row<'a>(
         &'a self,
-        workers: f32,
+        row: usize,
         wear: &'a crate::components::BandEquipment,
         config: &'a EquipmentConfig,
     ) -> impl Fn(&str) -> f32 + 'a {
-        move |item| self.units_for(item, workers, wear, config)
+        move |item| self.units_for_row(item, row, wear, config)
+    }
+
+    /// **The committed row on `source`** — its index in the budget, matched by
+    /// [`crate::components::LaborTarget::same_source`]. A source with no row answers past the end,
+    /// which [`Self::units_for_row`] reads as unrationed.
+    pub fn row_of(&self, source: &crate::components::LaborTarget) -> usize {
+        self.rows
+            .iter()
+            .position(|row| {
+                row.source
+                    .as_ref()
+                    .is_some_and(|own| own.same_source(source))
+            })
+            .unwrap_or(self.rows.len())
+    }
+
+    /// The `units` closure for the committed row on `source` ([`Self::row_of`]).
+    pub fn share_for_source<'a>(
+        &'a self,
+        source: &crate::components::LaborTarget,
+        wear: &'a crate::components::BandEquipment,
+        config: &'a EquipmentConfig,
+    ) -> impl Fn(&str) -> f32 + 'a {
+        self.share_for_row(self.row_of(source), wear, config)
+    }
+
+    /// The `units` closure for the crew [`Self::with_prospective_row`] appended — the last row.
+    pub fn share_for_prospective<'a>(
+        &'a self,
+        wear: &'a crate::components::BandEquipment,
+        config: &'a EquipmentConfig,
+    ) -> impl Fn(&str) -> f32 + 'a {
+        self.share_for_row(self.rows.len().saturating_sub(1), wear, config)
+    }
+}
+
+/// One unit, the quantum the in-tier apportionment hands out.
+const WHOLE_UNIT: f32 = 1.0;
+
+/// **ONE HAND, FULLY EQUIPPED** — one person holding one unit of every item a kit carries
+/// ([`EquipmentConfig::one_equipped_hand`]).
+pub const ONE_EQUIPPED_HAND: f32 = 1.0;
+
+/// No hand takes anything with a kit here.
+pub const NO_CLAIMING_HANDS: f32 = 0.0;
+
+/// **THE TAKE HANDS THAT REACH `room` AT `per_equipped_hand`** — the planned take-kit claim of one
+/// site (`docs/plan_site_crews.md` §2.3). Fractional, like the take it plans; a rate of nothing
+/// reaches nothing.
+pub fn hands_to_reach(room: f32, per_equipped_hand: f32) -> f32 {
+    if per_equipped_hand > NO_CLAIMING_HANDS {
+        room.max(NO_CLAIMING_HANDS) / per_equipped_hand
+    } else {
+        NO_CLAIMING_HANDS
     }
 }
 
@@ -2209,31 +2418,16 @@ impl EquipmentConfig {
         self.work_kit_for(Self::keeping_job(branch), branch, rung)
     }
 
-    /// **THE KIT ONE WORK SITE IS ACTUALLY KEPT WITH** — [`Self::builders_kit_for`]'s twin, on the
-    /// same three rules: the kit named on **this site's row** wins (`none` included), else the
-    /// roster answers for this site's web, else the job's own default.
-    ///
-    /// ⛔ **THE SELECTION IS PER WORK SITE, NEVER PER BAND** (`docs/plan_standing_upkeep.md` §2.7).
-    /// The band is the pool of workers and goods to draw from; it does not decide which tool a given
-    /// site is worked with. `site_kit` is therefore [`crate::components::LaborAssignment::upkeep_kit`]
-    /// — the same place the take kit lives and one account over from
-    /// [`crate::components::BuildQueueEntry::kit`], which makes the identical argument: *a single
-    /// stored id per band cannot be right for both food webs*. It was read off the band's
-    /// `agriculture` / `husbandry` **role row** until §2.7, which pinned one tool onto every site
-    /// that band kept with no way back.
-    ///
-    /// It takes no `Option<branch>` where the builders' seam does, because a site **is** a web: a
-    /// patch is plant and a herd is animal, so there is no *"nothing is being worked"* case for a
-    /// branch to be absent in.
+    /// **THE KIT THE ROSTER KEEPS A SITE OF THIS WEB WITH** — the roster's answer for `branch`
+    /// ([`Self::keeping_kit_for_branch`]), else the keeping job's own default. There is no per-site
+    /// override to consult: a site's keeping tools follow from its own rung and are settled
+    /// band-wide (`docs/plan_pool_toe.md` §4), which retired the `upkeep_kit` command.
     pub fn keeping_kit_for(
         &self,
-        site_kit: Option<&KitChoice>,
         branch: crate::intensification::RungBranch,
         rung: Option<&str>,
     ) -> KitChoice {
-        site_kit
-            .cloned()
-            .or_else(|| self.keeping_kit_for_branch(branch, rung))
+        self.keeping_kit_for_branch(branch, rung)
             .unwrap_or_else(|| self.default_kit(Self::keeping_job(branch)))
     }
 
@@ -2249,34 +2443,6 @@ impl EquipmentConfig {
         let fresh = crate::components::BandEquipment::start_stocked(self);
         self.kits_for_job(job)
             .find(|kit| self.build_work_per_worker(kit, &fresh, branch, rung) > NO_BUILD_GEAR)
-    }
-
-    /// **THE KIT ONE QUEUE ENTRY IS RAISED WITH** — the one seam the turn, the wear charge and the
-    /// wire all resolve through, so a card cannot state a kit the pool is not using.
-    ///
-    /// 1. **The kit named on THIS ENTRY wins**, `none` included — that is how a player sends the
-    ///    pool out bare-handed on one job to conserve gear, and *"an absent `kitId` means the job's
-    ///    default"* is the rule every other selection already follows.
-    /// 2. **Otherwise the roster answers for this entry's web** ([`Self::build_kit_for_branch`]).
-    /// 3. **`default_kits.builders` is the FALL-BACK, not the answer** — reached when the entry
-    ///    named nothing and either there is no entry at all (`branch` is `None`: nothing is being
-    ///    raised, so no tool is out) or no roster entry serves that web.
-    ///
-    /// ⛔ **A kit on the `builders` ROW is not an input, and the row cannot carry one**
-    /// (`docs/plan_standing_upkeep.md` §4.7a ②). It was rule ① until §4.7: a single stored id per
-    /// **band** is the one thing the per-entry derivation cannot express, so one pick pinned the
-    /// animal web's tool onto every later plant build with no way back. `assign_labor` refuses a
-    /// `kit` token on that role rather than storing one nothing reads.
-    pub fn builders_kit_for(
-        &self,
-        entry_kit: Option<&KitChoice>,
-        branch: Option<crate::intensification::RungBranch>,
-        rung: Option<&str>,
-    ) -> KitChoice {
-        entry_kit
-            .cloned()
-            .or_else(|| branch.and_then(|branch| self.build_kit_for_branch(branch, rung)))
-            .unwrap_or_else(|| self.default_kit(KitJob::Builders))
     }
 
     /// **The same kit holding only the tools that WORKED this build** — what a build's wear is
@@ -2515,6 +2681,18 @@ impl EquipmentConfig {
         self.coverage_from_units(kit, workers, wear, |item| {
             wear.live_units(item, self) as f32
         })
+    }
+
+    /// ⛔ **ONE HAND HOLDING THE WHOLE OF `kit`** — the coverage a take-kit claim's rate is read off
+    /// (`docs/plan_site_crews.md` §2.3): the band's ledger read for the kit's tier and condition,
+    /// with no share applied. A dead item still covers nobody, so a band whose kit is spent plans at
+    /// the bare rate.
+    pub fn one_equipped_hand(
+        &self,
+        kit: &KitChoice,
+        wear: &crate::components::BandEquipment,
+    ) -> KitCoverage {
+        self.coverage_from_units(kit, ONE_EQUIPPED_HAND, wear, |_| ONE_EQUIPPED_HAND)
     }
 
     /// **[`Self::coverage`] over a UNIT BUDGET the caller decides** — the one implementation of the
@@ -4514,6 +4692,114 @@ mod tests {
     use super::*;
     use crate::combat::RangeBand;
     use crate::components::BandEquipment;
+
+    /// A band holding `spears` spears and nothing else, and the `big_game` kit that reaches for them.
+    fn spears_and_the_kit(spears: u32) -> (Arc<EquipmentConfig>, BandEquipment, KitChoice) {
+        const SPEARS: &str = "spears";
+        let config = EquipmentConfig::builtin();
+        let kit = config
+            .kit("big_game")
+            .expect("the shipped roster carries big_game");
+        let tier = config
+            .item(SPEARS)
+            .expect("the shipped roster carries spears")
+            .default_tier()
+            .id
+            .clone();
+        let mut wear = BandEquipment::default();
+        wear.stock(SPEARS, spears, &tier, None);
+        (config, wear, kit)
+    }
+
+    /// One hunt row on its own herd, claiming `workers` hands at `priority`.
+    fn a_hunt_row(
+        kit: &KitChoice,
+        herd: &str,
+        workers: f32,
+        priority: crate::components::SourcePriority,
+    ) -> KittedRow {
+        KittedRow {
+            kit: kit.clone(),
+            claim: workers,
+            priority,
+            source: Some(crate::components::LaborTarget::Hunt {
+                fauna_id: herd.to_string(),
+                floor: crate::DEFAULT_ESCAPEMENT_FLOOR,
+            }),
+        }
+    }
+
+    /// ⛔ **A TAKE KIT'S ITEMS SETTLE BY THE ROW'S PRIORITY** (`docs/plan_site_crews.md` §2.3) — the
+    /// playtest band: a High boar hunt of 4 and a Normal sheep hunt of 2 on the stalking kit, over
+    /// five spears. The High row is armed in full and the Normal one takes what is left: **4 and
+    /// 1**, where the head-count split gave 3.3 and 1.7. **Both row orders**, so the rank decides
+    /// and not the position.
+    #[test]
+    fn a_take_kits_items_settle_high_first_whichever_row_comes_first() {
+        use crate::components::SourcePriority;
+        const FIVE_SPEARS: u32 = 5;
+        let (config, wear, kit) = spears_and_the_kit(FIVE_SPEARS);
+        let boar = a_hunt_row(&kit, "boar", 4.0, SourcePriority::High);
+        let sheep = a_hunt_row(&kit, "sheep", 2.0, SourcePriority::Normal);
+        for boar_first in [true, false] {
+            let rows = if boar_first {
+                vec![boar.clone(), sheep.clone()]
+            } else {
+                vec![sheep.clone(), boar.clone()]
+            };
+            let budget = BandItemBudget::of_rows(rows.clone());
+            let units_of = |herd: &str| {
+                let row = budget.row_of(rows.iter().find(|row| {
+                    matches!(&row.source, Some(crate::components::LaborTarget::Hunt { fauna_id, .. }) if fauna_id == herd)
+                })
+                .and_then(|row| row.source.as_ref())
+                .expect("the fixture row"));
+                budget.units_for_row("spears", row, &wear, &config)
+            };
+            assert_eq!(
+                (units_of("boar"), units_of("sheep")),
+                (4.0, 1.0),
+                "the High boar row is armed in full and the Normal sheep row gets the one left                  (boar listed first: {boar_first})"
+            );
+        }
+    }
+
+    /// **Inside one tier, whole units by LARGEST REMAINDER on head count** — the pro-rata rule, now
+    /// in whole spears. Two Normal rows of 3 and 2 over four spears have quotas 2.4 and 1.6: the
+    /// floors hand out three and the last goes to the larger remainder, so **2 and 2** rather than
+    /// the 2.4 / 1.6 a continuous split gives. An exact tie (2 and 2 over three) goes to the earlier
+    /// row.
+    #[test]
+    fn a_short_tier_splits_whole_units_by_largest_remainder() {
+        use crate::components::SourcePriority;
+        let (config, wear, kit) = spears_and_the_kit(4);
+        let budget = BandItemBudget::of_rows(vec![
+            a_hunt_row(&kit, "first", 3.0, SourcePriority::Normal),
+            a_hunt_row(&kit, "second", 2.0, SourcePriority::Normal),
+        ]);
+        assert_eq!(
+            (
+                budget.units_for_row("spears", 0, &wear, &config),
+                budget.units_for_row("spears", 1, &wear, &config)
+            ),
+            (2.0, 2.0),
+            "the fourth spear goes to the larger remainder (0.6 against 0.4)"
+        );
+
+        let (config, wear, kit) = spears_and_the_kit(3);
+        let budget = BandItemBudget::of_rows(vec![
+            a_hunt_row(&kit, "first", 2.0, SourcePriority::Normal),
+            a_hunt_row(&kit, "second", 2.0, SourcePriority::Normal),
+        ]);
+        assert_eq!(
+            (
+                budget.units_for_row("spears", 0, &wear, &config),
+                budget.units_for_row("spears", 1, &wear, &config)
+            ),
+            (2.0, 1.0),
+            "an exact tie goes to the earlier row"
+        );
+    }
     use crate::creatures_config::CreaturesConfig;
     use crate::intensification::RungBranch;
 

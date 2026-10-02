@@ -200,14 +200,12 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         // report PASS for exactly the regression it exists to catch.
         let sent = match band_handle(&payload) {
             BandHandle::Named(id) => id,
-            // **A SOURCE- OR PLACE-ADDRESSED VERB NAMES NO BAND, AND THAT IS CORRECT** — `build_kit`
-            // sets a property of a queue ENTRY, which every band holding that source holds, and
-            // `abandon` names a faction and a tile. The handle assertion has nothing to check, so it
-            // is skipped; the KIT assertion below is not, and for `build_kit` it is the whole point.
-            // **The exemption is keyed on the parsed VARIANT, never on the Godot half's own label**,
-            // so a band-addressed command cannot be opted out of the handle check by being
-            // relabelled.
-            BandHandle::SourceAddressed | BandHandle::PlaceAddressed => {
+            // **A PLACE-ADDRESSED VERB NAMES NO BAND, AND THAT IS CORRECT** — `abandon` and
+            // `unqueue` name a faction and a source. The handle assertion has nothing to check, so
+            // it is skipped; the KIT assertion below is not. **The exemption is keyed on the parsed
+            // VARIANT, never on the Godot half's own label**, so a band-addressed command cannot be
+            // opted out of the handle check by being relabelled.
+            BandHandle::PlaceAddressed => {
                 if let Some(failure) = kit_failure(&label, &line, &payload, &expected_kit) {
                     failures.push(failure);
                 }
@@ -340,16 +338,12 @@ enum BandHandle {
     Omitted,
     /// A variant that names no band at all.
     NotBandAddressed,
-    /// A variant that addresses a SOURCE rather than a band, deliberately — `build_kit`, whose
-    /// subject is one queue entry and which therefore reaches every band holding that source. It is
-    /// its own outcome rather than [`Self::NotBandAddressed`] so that *"this verb has no band"* stays
-    /// a stated fact about one variant instead of a hole any un-listed command falls through.
-    SourceAddressed,
     /// A variant that addresses a FACTION AND A PLACE and names no band — `abandon`, which drops
-    /// every band-of-that-faction's holding on the tile, a forage assignment there included. Its own
-    /// outcome for the same reason [`Self::SourceAddressed`] is: the exemption has to be a stated
-    /// fact about one variant, keyed on the PARSED variant rather than on the Godot half's label, so
-    /// a band-addressed command cannot be opted out of the handle check by being relabelled.
+    /// every band-of-that-faction's holding on the tile, a forage assignment there included, and
+    /// `unqueue`, which withdraws the entry on every band that has it queued. Its own outcome rather
+    /// than [`Self::NotBandAddressed`]: the exemption has to be a stated fact about one variant, keyed
+    /// on the PARSED variant rather than on the Godot half's label, so a band-addressed command
+    /// cannot be opted out of the handle check by being relabelled.
     PlaceAddressed,
 }
 
@@ -399,16 +393,19 @@ fn band_handle(payload: &CommandPayload) -> BandHandle {
         // that band's own rows and the pen-feed split serves that band's own stores, so its handle is
         // REQUIRED exactly as the queue reorder's is (`docs/plan_standing_upkeep.md` §4.9 item 9b).
         CommandPayload::WorkPriority { band_id, .. } => Some(*band_id),
+        // …and so does a queued build's BUILD MARK: the settlement it ranks is that band's own tools
+        // and stores (`docs/plan_site_crews.md` §2.4), so its handle is required for the same reason.
+        CommandPayload::BuildPriority { band_id, .. } => Some(*band_id),
         // …and the BENCH's rank names a band too, and requires it: a bench belongs to exactly one
         // band, so there is no faction-wide reading of this verb to fall back on.
         CommandPayload::BenchPriority { band_id, .. } => Some(*band_id),
-        // …while the per-entry kit names a SOURCE and no band at all (§4.7a ②).
-        CommandPayload::BuildKit { .. } => return BandHandle::SourceAddressed,
         // ⛔ **AND `abandon` NAMES A PLACE** (arc #532). The roadwork roster's `✕` is its only
         // emitter and it deliberately carries no band token: the sim drops every holding this
         // FACTION has on the tile, which is why the roster's own tooltip warns that a forage
         // assignment there goes down with the road.
-        CommandPayload::Abandon { .. } => return BandHandle::PlaceAddressed,
+        CommandPayload::Abandon { .. } | CommandPayload::Unqueue { .. } => {
+            return BandHandle::PlaceAddressed
+        }
         // ⛔ **AND SO DO THE TWO DEPOSIT BRANCHES' THREE TILE VERBS** (issue #650). `fell`,
         // `coppice` and `quarry` name a faction, a tile and a MATERIAL — a working's key is
         // `(tile, material)` because one hex can hold two — and no band at all: a working belongs
@@ -463,7 +460,6 @@ enum KitToken {
 fn kit_token(payload: &CommandPayload) -> KitToken {
     let optional = match payload {
         CommandPayload::AssignLabor { kit_id, .. }
-        | CommandPayload::BuildKit { kit_id, .. }
         | CommandPayload::SendDenialRaid { kit_id, .. }
         | CommandPayload::SendHuntExpedition { kit_id, .. }
         | CommandPayload::SendTradeExpedition { kit_id, .. }
@@ -638,6 +634,27 @@ mod tests {
             axis_failure.contains("carries no kit"),
             "a kitless VARIANT must not report as a dropped tail — the remedies differ: {axis_failure}"
         );
+    }
+
+    /// ⛔ **THE BAND-SCOPED VERBS' WORKING AND ROAD FORMS STILL CARRY THE BAND HANDLE**
+    /// (`docs/plan_site_crews.md` §2.4). The source grows a material or a leading `road` token, and
+    /// the handle must still resolve to the fixture's band id — the gate's own question, asked of the
+    /// lines a Groundwork row's pills and a road's Build pill will emit.
+    #[test]
+    fn a_working_or_road_source_still_names_the_band() {
+        const BAND: u64 = 71_204;
+        for line in [
+            "work_priority 0 71204 44 23 wood low",
+            "build_priority 0 71204 44 23 stone high",
+            "build_priority 0 71204 road 44 23 normal",
+            "build_order 0 71204 road 44 23 0",
+            "build_order 0 71204 44 23 wood 1",
+        ] {
+            assert!(
+                matches!(band_handle(&parse(line)), BandHandle::Named(id) if id == BAND),
+                "the band handle must survive the widened source: {line}"
+            );
+        }
     }
 
     /// The band's larder in the fixture, in ticks — `21.050001`, and it is adversarial on PURPOSE.

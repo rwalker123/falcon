@@ -27,9 +27,10 @@ Both are invisible to a fixture harness — there is no socket in one — and in
 check, because nothing is missing, only unsent. Each time, the only thing that caught them was
 driving a real client against a real server, by hand.
 
-macOS blocks synthetic mouse input, so a probe cannot click the HUD. It calls `Main`'s handlers by
-name instead — `_on_hud_split_band`, `_on_hud_next_turn` — which are exactly the functions the HUD's
-signals are connected to, so everything from the handler down is the shipped path.
+The split is driven through the HUD the player uses: `MapView.handle_hex_click` on the band's hex
+(the function a real map click calls), the card's Split verb pressed through `Viewport.push_input`
+(reached by hit test, as a click is), then the sheet's stepper and confirm. The turn is still
+`Main._on_hud_next_turn` by name — the function End Turn's signal is connected to.
 
 > ⛔ **A pass here is not evidence about what a player sees or can reach.** It says the bytes make the
 > round trip and the world obeys. Reachability stays a human's judgement in a live client.
@@ -41,8 +42,19 @@ signals are connected to, so everything from the handler down is the shipped pat
 causes by name: the claim was refused, or it was granted with nothing for the stream to greet with, or
 frames addressed to that token never arrived — which is the missing-greeting regression exactly.
 
-**2. One faction-bearing command.** `split_band` through `Main._on_hud_split_band`, and the world
-comes back holding one more resident band. **The assertion is the EFFECT, not the send**: a `true`
+**2. One faction-bearing command, through the UI.** Select the band by its hex, press Split in its
+card, compose the sheet up to the sim's founding floor and press `Form the band`; the world comes back
+holding one more resident band. **The path is the player's because the handler path was green while
+every band verb did nothing**: pressing a verb jumped the map back to the band's hex, which was
+re-clicked as the selected hex, cycled the selection onto the land, and closed the verb the press had
+just opened (`map-renderers.md` → "A JUMP TO THE SELECTED HEX IS NOT A RE-CLICK"). The probe fails on
+that by name — *the verb closed as it opened* — before the command is ever built. **Every press is a
+REAL viewport click** — the verb, each stepper `+`, the confirm. On a fresh game the outfit card opens
+itself over the sheet's right column, and a band verb puts it away to its pill
+(`starting-loadout.md` → "A BAND VERB PUTS THE CARD AWAY"), so the probe asserts the card was up
+before Split and at its pill after, that each `+` click RAISES the count (a click the card swallowed
+would not), and that a real click on the pill brings the card back. **The assertion is the EFFECT,
+not the send**: a `true`
 from `_send_runtime_command` only means the frame reached the socket, which was the case throughout
 both regressions. The band count changing is the only thing that says the world obeyed. A failure
 means the command never reached the seated link, or the server refused it — the dropped-seat

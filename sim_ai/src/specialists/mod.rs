@@ -68,7 +68,7 @@ pub struct Cost {
     pub splits: Vec<u64>,
     /// The labor rows this proposal sets, keyed as [`row_key`] does (band, kind, target) —
     /// every `assign_labor` it emits, donors and targets alike, and the patch's forage row for a
-    /// `cultivate` / `sow`; a `builders` or `agriculture` pool is a row too. Two proposals
+    /// `cultivate` / `sow`; a `builders` pool is a row too. Two proposals
     /// setting one row would each overwrite the other's count.
     pub rows: Vec<String>,
 }

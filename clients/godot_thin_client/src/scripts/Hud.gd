@@ -112,33 +112,8 @@ signal abandon_requested(payload: Dictionary)
 ## whole `deposits` section and the band's own rows with it.
 signal abandon_working_requested(payload: Dictionary)
 
-## The KIT one queued build is raised with — { faction, x, y, herd_id, kit_id, default_kit_id }, Main
-## formatting `build_kit <faction> <x> <y> [kit <id>]` / `build_kit <faction> <herd_id> [kit <id>]`
-## (`docs/plan_standing_upkeep.md` §4.7a ②). It was RELAYED from `BandPanelController`'s queue-row
-## settings strip, which was its only emitter; **that picker is gone and nothing emits it now** — see
-## the ⛔ below for what the relay is still here for.
-##
-## **ITS OWN SIGNAL BECAUSE THE BUILDERS' KIT IS PER QUEUE ENTRY, not per band.** `assign_labor`
-## REFUSES a `kit` token on the `builders` role now: one stored id per band is the one thing the
-## sim's per-entry derivation cannot express, and honouring it as an override pinned a band raising a
-## plant Cultivate to the animal web's tool with no way back.
-##
-## **AN ABSENT `kit` TOKEN CLEARS THE OVERRIDE** back to that derivation, which is why the payload
-## carries `default_kit_id`: `Main._kit_token` omits the token when the selection equals the default,
-## so picking the `(default)` entry is how a player hands the choice back. `none` is bare-handed and
-## is a real selection.
-##
-## ⛔ **NOTHING IN THE UI EMITS IT ANY MORE.** The queue row's picker retired with
-## `docs/plan_pool_toe.md` §3 — a build's tools follow from its rung — so the relay below and
-## `Main.format_build_kit` exist for `cargo xtask command-guard`, which parses the emitted line with
-## the real server parser. The verb retires end to end in the slice that owns that drive.
-##
-## > ⛔ RETIRED — **`upkeep_kit_requested`**, the per-SITE keeping kit, which carried the same payload
-## > with a wider reach: *"a queue entry belongs to the band that declared it; a site's keeping tool is
-## > owed by every band of the faction working that site."* §3 retired that choice too, and unlike
-## > `build_kit` nothing drives its grammar, so the signal, its relay and `Main.format_upkeep_kit` went
-## > rather than standing with no reader at all.
-signal build_kit_requested(payload: Dictionary)
+## > ⛔ RETIRED — **`build_kit_requested`** and **`upkeep_kit_requested`**: both verbs are refused by
+## > the server now (`docs/plan_site_crews.md`), a build's and a site's tools following from the rung.
 
 ## The band's build queue was DRAGGED into a new order — { faction, band_id, x, y, herd_id, position },
 ## Main formatting `build_order <faction> <band> <x> <y> <position>` /
@@ -164,6 +139,12 @@ signal build_order_requested(payload: Dictionary)
 ## No optimistic overlay and so no `pending_entity`: the mark is captured live off the allocation, and
 ## the server re-captures after every command, so it arrives on this command's own recapture.
 signal work_priority_requested(payload: Dictionary)
+
+## Emitted when the player cycles a QUEUED build's own mark from its site's work row
+## (`docs/plan_site_crews.md` §2.4). Payload keys: { faction, band_id, x, y, herd_id, level }. Main
+## formats `build_priority <faction> <band_id> <source…> <level>`. No optimistic overlay and so no
+## `pending_entity`, `work_priority_requested`'s reason: the entry's mark is captured live.
+signal build_priority_requested(payload: Dictionary)
 
 ## Emitted when the player picks how a band splits a keeping POOL it cannot stretch
 ## (`docs/plan_standing_upkeep.md` §2.5). Payload keys: { faction, band_id, mode }, `mode` being
@@ -759,12 +740,6 @@ func _ready() -> void:
     # **THE WITHDRAWAL'S OPTIMISTIC HALF RIDES THIS RELAY**, which is why it is a method rather than a
     # lambda — see `_on_queue_row_unqueue_requested`.
     _bandpanel.unqueue_requested.connect(_on_queue_row_unqueue_requested)
-    # `build_kit`, straight through: it needs no optimistic write on this layer, `buildKitId` being
-    # captured LIVE, so the recapture the command triggers already carries the pick. **No UI control
-    # emits it since `docs/plan_pool_toe.md` §3** — the relay is what `cargo xtask command-guard`
-    # records the grammar off, and the verb retires with that drive.
-    _bandpanel.build_kit_requested.connect(
-        func(payload: Dictionary) -> void: build_kit_requested.emit(payload))
     # …and the ring, whose entry point moved to the work row's standing-rung mark (§4.9 item 12c).
     # Straight through: `extend_pen` declares a build-queue entry and the recapture it triggers is
     # what draws it, so there is no optimistic write on this layer.
@@ -774,6 +749,8 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: build_order_requested.emit(payload))
     _bandpanel.work_priority_requested.connect(
         func(payload: Dictionary) -> void: work_priority_requested.emit(payload))
+    _bandpanel.build_priority_requested.connect(
+        func(payload: Dictionary) -> void: build_priority_requested.emit(payload))
     # The WORK row's `⌃` is the DECLARATION now (`docs/plan_standing_upkeep.md` §4.7a ①), and this
     # relay carries its optimistic write — see `_on_work_row_improvement_requested`.
     _bandpanel.improvement_requested.connect(_on_work_row_improvement_requested)
@@ -849,6 +826,9 @@ func _ready() -> void:
     # …and the orb's loadout row has to bring that picker back, the knowledge row's hand-over one
     # line up, for the same reason.
     _turnorb.set_starting_loadout_panel(_loadout)
+    # A band verb opening puts the outfitting card away, as its own Done/✕ would, so the verb's sheet
+    # is never under it. The Band panel announces the verb; it does not reach the card itself.
+    _bandpanel.band_verb_opened.connect(func(_mission: String) -> void: _loadout.collapse_for_verb())
     # The band/expedition attention producers + orb jump-routing. Constructed AFTER `_bandpanel` (its
     # expedition/pen jumps reuse the panel's own focus paths) and handed the ONE retained helper,
     # `_herd_label_for_id`. It emits its OWN `alert_focus_requested`, relayed onto the HudLayer signal
@@ -981,7 +961,7 @@ func notify_targeting_click(tile_info: Dictionary) -> void:
         return
     _targeting.try_dispatch(tile_info)
 
-## The hex under the pointer (`MapView.tile_hovered`, relayed by `Main`): an armed Deny or Trade pick
+## The hex under the pointer (`MapView.tile_hovered`, relayed by `Main`): an armed Deny pick
 ## states what a click there would commit to in its banner. Reflective delegator, reached BY NAME.
 func notify_hex_hovered(tile_info: Dictionary) -> void:
     _targeting.note_hover(tile_info)
@@ -1102,8 +1082,8 @@ func update_road_network(roads_variant: Variant) -> void:
     _band_labor.set_roads(roads_variant)
 
 ## THE LIVE WORKINGS ON THE GROUND, into the shared labor model (arc #583) — the deposit twin of
-## `update_road_network`, and it exists for one reader: the WORKINGS ROSTER, which names WHICH
-## workings the band's `quarrywork` pool is paying for. `Main` reaches this BY NAME through
+## `update_road_network`, and it exists for one reader: the WORKINGS ROSTER (the Work tab's GROUNDWORK
+## rows), which names WHICH workings this band holds — each kept by its own crew. `Main` reaches this BY NAME through
 ## `_hud_invoke`, so it stays a thin `HudLayer` delegator.
 func update_deposits(deposits_variant: Variant) -> void:
     _band_labor.set_deposits(deposits_variant)
@@ -1338,6 +1318,8 @@ func update_opening_loadout(state: Variant) -> void:
 ## the sim publishing a second copy of a list it already sends.
 func update_equipment_config(config_json: Variant) -> void:
     _loadout.set_equipment_config(config_json)
+    # The item NAMES ride to the Band panel, whose kit and tool lines name the short items.
+    _bandpanel.set_item_display_names(_loadout.item_display_names())
 
 ## Open / close the OPENING LOADOUT picker. Reached BY NAME from the preview harnesses, which stand
 ## the panel up without a live campaign — the `open_crafting_panel` idiom.
@@ -1691,7 +1673,7 @@ func _on_queue_row_unqueue_requested(payload: Dictionary) -> void:
     if entity >= 0:
         _band_labor.record_pending_unqueue(entity, String(payload.get("kind", "")),
             int(payload.get("x", -1)), int(payload.get("y", -1)),
-            String(payload.get("herd_id", "")))
+            String(payload.get("herd_id", "")), String(payload.get("material", "")))
         _after_pending_change()
         # …and an OPEN compose sheet on that source stops reading DECLARED on the same frame, the
         # mirror of the declaration relay's own refresh: `_after_pending_change` re-renders the drawer
@@ -1708,7 +1690,8 @@ func drop_pending_unqueue(payload: Dictionary) -> void:
         return
     if _band_labor.drop_pending_unqueue(entity, _band_labor.pending_key(
             String(payload.get("kind", "")), int(payload.get("x", -1)),
-            int(payload.get("y", -1)), String(payload.get("herd_id", "")))):
+            int(payload.get("y", -1)), String(payload.get("herd_id", "")),
+            String(payload.get("material", "")))):
         _after_pending_change()
         _drawercompose.refresh_compose_sheet()
 

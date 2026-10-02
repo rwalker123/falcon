@@ -325,38 +325,18 @@ call them instead of reaching for their own bespoke accrue/cost/decay levers, so
   is no longer a second cost for them to disagree about.
 
   **AND THE SAME SUPPLY REACHES KEEPING NOW.** An equipped keeper covers more of a rung's demand,
-  where the demand itself is untouched — the build rule's mirror one account over. `tillage` gained
-  the `agriculture` job and `hurdling` the `husbandry` one so a site has something to derive;
-  **`default_kits` for both is `none`, and a stored `none` could beat that derivation the way it did
-  on the builders row** — the same fork guards all three.
+  where the demand itself is untouched — the build rule's mirror one account over. `tillage` lists
+  the `agriculture` job and `hurdling` the `husbandry` one — the keeping vocabulary of each web —
+  and **`default_kits` for both is `none`**.
 
-  > ⛔ **THE KEEPING KIT IS PER WORK SITE, AND SO IS THE WEAR IT SPENDS**
-  > (`docs/plan_standing_upkeep.md` §2.7). The kit comes off the worked row
-  > (`LaborAssignment::upkeep_kit`, `None` = the web's derivation), never off the band's `agriculture`
-  > / `husbandry` role — the band is the pool of workers and goods to draw from, and it does not
-  > decide which tool a given site is worked with. The command is `upkeep_kit`; see `equipment.md`
-  > → "The build axis" for its grammar, its refusals and what it puts on the wire.
-  >
-  > **SO WHAT IS SPLIT IS THE WORKER POOL, IN WORKER-NEED UNITS.** With one rate per web the split was
-  > one work total divided in proportion to demand. There is no single rate now, so `maintenance_shares`
-  > divides the **head count**: a claim asks for `demand ÷ what one of its own keepers delivers`, the
-  > pool is split across those needs by the same `distribute_upkeep_pool` under the same
-  > `upkeep_fund_mode`, and each site is supplied `its hands × its own rate`. Where the rates agree —
-  > every branch on the shipped roster — the two are the same expression scaled by a constant and the
-  > answer does not move by a bit (`upkeep_kit_per_site_is_pacing_neutral_on_the_shipped_roster`).
-  >
-  > **AND SITES SHARING A KIT SHARE ITS SCARCITY.** `coverage` answers *"of these workers, how many
-  > carry the kit, given what the band owns"*, so asking it once per site double-counts: three hoes
-  > would arm two keepers on one patch and three on another. `keeping_rates` groups the claims by
-  > their **resolved kit** and takes coverage once per group. The group's share of the pool is struck
-  > off its share of the **demand**, because a group's rate depends on how many hands stand in it and
-  > that is what the split is solving for — the demand is the one measure of *how much of this band's
-  > keeping is this group* that does not mention a kit.
-  >
-  > **THE WEAR FOLLOWS THE SITE.** `WearQuantum::UpkeepWork` is charged against **that site's own**
-  > kit, on **what the pool supplied to that site** and never on the rung's demand. Two patches kept
-  > with two different tools wear two different tools; the retired per-band wear kit billed both
-  > against one.
+  > ⛔ **THE KEEPING'S TOOLS ARE PER WORK SITE, AND SO IS THE WEAR THEY SPEND**
+  > (`docs/plan_site_crews.md` §2.3). A site's keeping claims the tools its **rung** requires, one
+  > of each per planned keeping hand, at the site row's own priority — see "KEEPING IS THE SITE'S
+  > OWN CREW'S FIRST JOB" below. Sites sharing a tool share its scarcity through the one settlement
+  > (`settle_scarce_tools`, each site its own group), so three hoes cannot arm two keepers on one
+  > patch and three on another. **The wear follows the site**: `WearQuantum::UpkeepWork` is charged
+  > against the tools that site's keeping was issued, on the work it kept and never on the rung's
+  > demand.
 - **NO `learn_multiplier(floor)` TERM** — see "THE FLOOR CAME OFF THE BUILD RATE". `build_accrual`
   takes no floor at all, and neither does the upkeep: what an improvement loses is the work its
   keepers did not supply, which is a fact about a crew and a rung rather than about how hard anyone
@@ -383,6 +363,16 @@ call them instead of reaching for their own bespoke accrue/cost/decay levers, so
   *completed* and would give a source mid-investment the least forgiveness on the ladder) — and **the
   wire's countdown reads the same seam**, so a published "lapses in N turns" cannot describe a rung
   the sim is not acting on.
+  ⛔ **A COMPLETED RUNG RESETS THE COUNTER.** The keeping is billed while a meter is still being
+  raised, so a build staffed short of its bill used to finish with its grace already spent and lose
+  the rung on the very next turn (a Field sown on tick 133 went feral on 134). Every branch's one
+  position mutator — `ForagePatch::set_ladder_position`, `Herd::set_ladder_position`,
+  `DepositSource::set_ladder_position`, `Road::set_position` — now resets `neglect_turns` to
+  `NEGLECT_NONE` when the held rung rises (`intensification::rung_rose`), so a just-finished rung
+  starts with its full grace. A fall, or a move inside one rung, resets nothing. A pen RING is not a
+  rung and does not reset it. Pinned by
+  `forage_field::a_field_finished_short_of_its_bill_keeps_the_rung_for_its_full_grace` and
+  `fauna::tests::a_completed_tame_resets_the_neglect_counter`.
   `intensification::neglect_grace_remaining` owns the arithmetic: `(grace + 1) − neglect`, floored at
   zero, so **`0` means the penalty is biting now** and the client subtracts nothing.
 - **The COST MULTIPLIER — the rung owns the mechanic, the source is priced.** It prices the **job**
@@ -408,8 +398,8 @@ call them instead of reaching for their own bespoke accrue/cost/decay levers, so
   `Herd::corralled_tended_this_turn` flag on the animal side until its own slice lands); a pen is
   lost outright with its herd rather than bleeding a meter.
   The take reads its crew off the row (`LaborAssignment::workers`) and both standing pools off their
-  own band-level rows (`LaborAllocation::workers_on(&LaborTarget::{Builders, Agriculture,
-  Husbandry})`), and the take path is read by
+  own band-level row (`LaborAllocation::workers_on(&LaborTarget::Builders)`) — the keeping is the
+  row's own crew, first (`take_hands_after_keeping`) — and the take path is read by
   `forage::forage_take`, `systems::hunt_take`, both forward projections and
   `fauna::forecast_expected_take` alike, and the improvement axis moves none of them — so
   **forecast == actual** for free (see "Pre-commit Yield Forecast"). **Extending** a pen (2d-β) reads
@@ -451,13 +441,14 @@ call them instead of reaching for their own bespoke accrue/cost/decay levers, so
 
 | Activity | Where the hands are | Set by | On the wire |
 |---|---|---|---|
-| **take** | `LaborAssignment::workers` on the source's row | `assign_labor <faction> <band> forage\|hunt …` | `workers` |
-| **keeping** | `LaborTarget::Agriculture` / `LaborTarget::Husbandry`, a **band-level row** | `assign_labor <faction> <band> agriculture\|husbandry <n>` | a row of `laborAssignments`, `kind` = the role |
+| **keeping, then take** | `LaborAssignment::workers` on the source's row — it keeps first and takes with the rest (`docs/plan_site_crews.md` §2.1) | `assign_labor <faction> <band> forage\|hunt\|extract …` | `workers`, and `upkeepHands` on the source |
 | **building** | `LaborTarget::Builders`, a **band-level row** | `assign_labor <faction> <band> builders <n>` | likewise, `kind = "builders"` |
 
-**Both standing crews left the tile, one slice apart, and for the same reason**: an indivisible
-supplier meeting a per-source demand wastes whatever it does not spend, and the waste grows as gear
-makes a hand worth more. A pool has no leftover by construction.
+**The builders left the tile and stay off it**: a build is a job worked off a queue, not a standing
+charge on a source. **The keeping came back to the site** (`docs/plan_site_crews.md`): the retired
+band-level keeping pool had no leftover, but it also had no *place* — the player could not see or
+steer which site a keeper stood on — and a fractional `keep_hands` removes the leftover the pool
+existed to avoid.
 
 > #### THE QUEUE IS THE DECLARATION, and a verb no longer names a crew
 >
@@ -485,10 +476,8 @@ makes a hand worth more. A pool has no leftover by construction.
 >   with different queues compare equal, so the rollback record and the command no-op guard would
 >   both report *nothing changed* about the one input the whole funding rule reads.
 >
-> **Spread is not offered, and the asymmetry with the keeping is honest.** An under-kept improvement
-> degrades toward a threshold you can stay above, so spreading a short keeping pool loses nothing
-> while you recover; splitting a builder pool across three jobs just means nothing finishes. A queue
-> removes the choice rather than offering a bad one.
+> **Spread is not offered.** Splitting a builder pool across three jobs just means nothing finishes;
+> a queue removes the choice rather than offering a bad one.
 
 > #### ⛔ A DEAD ENTRY PARKS THE POOL FOR EVER, SO IT IS RETIRED AND ANNOUNCED
 >
@@ -548,35 +537,32 @@ makes a hand worth more. A pool has no leftover by construction.
 Each crew's work is `intensification::activity_work(workers)` = `workers × PER_WORKER_OUTPUT`:
 
 ```text
-upkeep_supplied  = this source's share of the band's keeping POOL (§2.5)
+upkeep_supplied  = keep_hands × keep_rate, summed over the bands on the source   // site_crews §2.1
 upkeep_shortfall = max(0, upkeep_demand − upkeep_supplied)     // → decay, at the rung's rate
 build_work       = (this source is the queue's HEAD) ? builders × PER_WORKER_OUTPUT : 0
                                                                 // − the POOL's gear, off the JOB
-take             = min(take_workers × per_worker_capacity, source_offer)
+take             = min((crew − keep_hands) × per_worker_capacity, source_offer)
 ```
 
-> #### A SOURCE ROW IS THE BAND'S **HOLDING**, so it survives losing its take crew
+> #### A SOURCE ROW IS THE BAND'S **HOLDING**, so it survives losing its crew
 >
-> `LaborAllocation::set_assignment` used to drop the row outright at `workers == 0`, which made the
-> take crew a source's licence to exist — and therefore **re-coupled the take to the keeping**, the
-> one separation §2.2 is for. A band that finished a Field and moved its gatherers to a richer patch
-> lost the row, so the Field put no demand into the `agriculture` pool, drew no share, and bled its
-> **full** rate with keepers standing idle in the role and **no command that could aim them at it**.
-> The wire published `upkeepShortfall = demand` faithfully, so the client's under-kept warning fired
-> on a state with no remedy. It is the mirror of the arc's own headline: you could neither gather the
-> patch **nor** keep it.
+> `LaborAllocation::set_assignment` used to drop the row outright at `workers == 0`, so a band that
+> took its crew off a finished Field lost the row and with it any way to put hands back on that
+> ground. A row at zero now survives as the holding: it keeps nothing (the site's crew is its
+> keeping, `docs/plan_site_crews.md` §2.1), the meter rots past its grace, and the remedy is that
+> row's own crew stepper — a crew no larger than the bill keeps and takes nothing.
 >
 > **The rule, in one sentence: a source row lasts as long as the band still has something there.**
 >
 > - **`is_source()` splits the two kinds of row.** A band-wide **role** *is* its head count, so
->   `assign_labor … scout|agriculture 0` still removes it. A **Forage/Hunt** row is the band's
+>   `assign_labor … scout|roadwork 0` still removes it. A **Forage/Hunt** row is the band's
 >   holding of that patch or herd, so zero gatherers only unstaffs the take: the row survives with its
 >   improvement, its build crew and its kit. **A row is never created at zero** — unassigning ground
 >   the band never worked still says nothing.
 > - **What "something there" means is the GROUND's answer, not the row's**:
 >   `systems::source_has_a_meter_at_risk` — a meter carrying progress
->   (`forage::patch_unwinding_rung` / `fauna::herd_keeping_rung`), which is exactly what the pool
->   funds and what the decay pass bleeds. A wild stand and an unowned herd answer `false`.
+>   (`forage::patch_unwinding_rung` / `fauna::herd_keeping_rung`), which is exactly what the crew
+>   keeps and what the decay pass bleeds. A wild stand and an unowned herd answer `false`.
 > - **Asked at two moments, deliberately the same question at both.** The **command** asks it the
 >   instant the take goes to zero, so unstaffing a wild patch clears the row on the spot instead of
 >   leaving a `+0.00` row to age out; the **turn** asks it again in each source arm of
@@ -599,16 +585,16 @@ take             = min(take_workers × per_worker_capacity, source_offer)
 >   credited once per assignment rather than per worker, so `systems::labor` gates all four earn sites
 >   on the take crew being present (`credit_managed_rung_lesson` takes it as its `eligible`). Free
 >   knowledge from a patch nobody works is the defect that gate exists to prevent.
-> - **Unstaffing the gatherers no longer abandons the build beside them.** The row survives, so the
->   `Cultivate` and its entry do too — `assign_labor … 0` is *"stop gathering"*, and `unqueue` /
->   `abandon` are how you walk away from a build. Pinned by
->   `forage_cultivation::a_patch_with_no_gatherers_is_still_kept_by_the_bands_pool` (kept, and the
->   liveness half that it still rots unfunded) and
+> - **Unstaffing the crew no longer abandons the build beside them.** The row survives, so the
+>   `Cultivate` and its entry do too — `assign_labor … 0` is *"stop working this ground"*, and
+>   `unqueue` / `abandon` are how you walk away from a build. Pinned by
+>   `forage_cultivation::a_crew_sized_to_the_bill_keeps_a_patch_while_gathering_nothing` (kept, and
+>   the liveness half that an empty row still rots) and
 >   `components::tests::a_role_row_still_goes_at_zero_and_an_unworked_source_is_never_created`.
 
 - **Every row draws on one finite band, and that IS the opportunity cost.**
   `LaborAssignment::staffed_total` is a row's take, `LaborAllocation::assigned_total` sums it over
-  every row — **the three standing roles included, because they are rows** — and
+  every row — **the standing roles included, because they are rows** — and
   `BandWorkforce::assigned` reports it, so `idleWorkers` nets out builders and keepers like anyone
   else. **"No cap" means no cap on ONE ROLE** (fifty builders may finish a Cultivate in a turn),
   never a licence to exceed the pool.
@@ -721,19 +707,19 @@ first *rate*** (`docs/plan_standing_upkeep.md`).
 >   net < 0  →  it LOSES GROUND — work already bought, bleeding
 > ```
 >
-> **THE RATE IS OWED ALWAYS, AND ALWAYS BY THE SAME POOL** (`docs/plan_standing_upkeep.md` §4.6a).
-> The band's keeping owes it for **every meter carrying work, at any fullness** — from the first work
-> banked until the last — and a **build crew supplies nothing toward it**: its whole output is
-> progress, so the pace is `work_cost / crew` again.
+> **THE RATE IS OWED ALWAYS, AND ALWAYS BY THE SAME HANDS** (`docs/plan_standing_upkeep.md` §4.6a).
+> The site's own crew owes it for **every meter carrying work, at any fullness** — from the first
+> work banked until the last (`docs/plan_site_crews.md` §2.1) — and a **build crew supplies nothing
+> toward it**: its whole output is progress, so the pace is `work_cost / crew` again.
 >
 > **The meter's FULLNESS used to be the who-pays test** (`forage::patch_is_maintaining` /
 > `fauna::herd_is_maintaining`, both deleted), and §2.4 carries the two autopsies. A **half-built**
 > meter whose builders left could not be held at all — it was billed to a crew that was not there and
 > bled its full rate with keepers idle in the role and no command that could aim them at it; and a
-> **held** rung eroding to 99% flipped into *building*, so it stopped being the pool's business at the
-> moment it started needing it, and would have displaced the player's real build off the head of the
-> next slice's queue. There is no third concept either: an earlier cut gave an unfinished meter its
-> own demand (`meter_raising_demand`), the same rate under a second name.
+> **held** rung eroding to 99% flipped into *building*, so it stopped being the keepers' business at
+> the moment it started needing it, and would have displaced the player's real build off the head of
+> the next slice's queue. There is no third concept either: an earlier cut gave an unfinished meter
+> its own demand (`meter_raising_demand`), the same rate under a second name.
 >
 > **`shortfall` used to BE the decay**, so raising a demand made the improvement rot faster in exact
 > proportion and neither number could move. Splitting them is what let the plant demands become whole
@@ -796,11 +782,11 @@ first *rate*** (`docs/plan_standing_upkeep.md`).
 > > nothing, and everything behind the head is waiting on a build that cannot advance.
 > >
 > > **THE REMEDY IS OFF THE BUILD LINE ENTIRELY.** The measured case is the animal web's own:
-> > a half-tamed herd with an empty `husbandry` role advances three turns and freezes, because the
-> > hunters draw the flock to their floor, the unmet keeping suppresses its regrowth, and the
-> > `Tame`'s escapement gate never reopens. **Adding builders does nothing.** A surface showing `-4`
-> > must pair it with that source's own `upkeepShortfall` / `neglectGraceRemaining`, because the
-> > sentence is *staff the keeping* — `assign_labor <f> <b> husbandry <n>`.
+> > a half-tamed herd with nobody on its own row stands on its floor and freezes, because the
+> > unmet keeping suppresses its regrowth and the `Tame`'s escapement gate never reopens. **Adding
+> > builders does nothing.** A surface showing `-4` must pair it with that source's own
+> > `upkeepShortfall` / `neglectGraceRemaining`, because the sentence is *staff the keeping* —
+> > raise the herd's own row (`docs/plan_site_crews.md` §2.1).
 > >
 > > **ONLY THE HEAD, WITH A STAFFED POOL, IS `-4`.** A *waiting* entry whose gate refuses may well be
 > > eligible by the time it reaches the head, so it publishes the honest `-1` and stops the chain
@@ -834,8 +820,8 @@ first *rate*** (`docs/plan_standing_upkeep.md`).
 > > being the vector index**, so there is no second integer for the two to drift apart on. It names
 > > only each entry's **source**; the job, the kit, the destination and the estimate stay
 > > source-addressed and keep the winner rule above, and they agree across every holder by
-> > construction (one `cultivate` enqueues the same declaration on every band working the source,
-> > `build_kit` sets every holder's entry). It is **captured live** off `LaborAllocation::build_queue`
+> > construction (one `cultivate` enqueues the same declaration on every band working the source).
+> > It is **captured live** off `LaborAllocation::build_queue`
 > > rather than turn-written — `buildKitId`'s discipline — so `build_order` / `unqueue` / a
 > > declaration land on the command's own recapture and the client keeps **no optimistic ordering
 > > overlay**, an overlay being the second ordering this rule exists to forbid.
@@ -951,10 +937,11 @@ first *rate*** (`docs/plan_standing_upkeep.md`).
 >
 > Pinned on the encoded snapshot, four states pairwise distinct, by
 > `core_sim/tests/build_turns_on_the_wire.rs`, **on the shipped ladder**: a half-built `plant:tended`
-> meter with no builders and the `agriculture` role staffed → `-2`, the same meter with the role
-> empty and the grace spent → `-3`, and a refused gate → `-1`. **The exact-equality arm is the one
-> that carries the test**: rotting is reached by a `< 0` comparison and holding by falling through
-> it, so a suite staged only *below* the line passes with both wired to the same branch.
+> meter with no builders and the patch's own row staffed past its bill → `-2`, the same meter with
+> nobody on its row and the grace spent → `-3`, and a refused gate → `-1`. **The exact-equality arm
+> is the one that carries the test**: rotting is reached by a `< 0` comparison and holding by
+> falling through it, so a suite staged only *below* the line passes with both wired to the same
+> branch.
 
 - **THE MAINTENANCE RATE IS NOT A TAX ON BUILDING — `work_cost / crew` IS the pace** (§4.6a). A build
   crew supplies nothing toward the rate, so `RungDef::build_accrual` is `activity_work(workers)` and
@@ -964,8 +951,8 @@ first *rate*** (`docs/plan_standing_upkeep.md`).
   and on ground nobody has started there is nothing banked and therefore nothing to rot — which is how
   issue #545's repro (one builder against `plant:tended`'s demand of `2.0`, quoted `-3`) resolves to
   an honest 50 turns. **`<rung>UpkeepDemand` still answers what holding the quoted rung will cost the
-  keeping pool** — a real cost the player must see before committing — it is simply not netted off the
-  build; see "A price without the rate that eats it is not a quote".
+  site's crew** — a real cost the player must see before committing — it is simply not netted off
+  the build; see "A price without the rate that eats it is not a quote".
 - **ALL FOUR MANAGED RUNGS DECLARE ONE.** `upkeep_demand` is an honest `0` on the two `wild` rungs
   rather than a sentinel — `corralYield`'s rule.
 - **THE DECAY IS PROPORTIONAL, continuously** (§2.4). Meet the demand and the net is zero and the
@@ -973,19 +960,20 @@ first *rate*** (`docs/plan_standing_upkeep.md`).
   the upkeep's own `grace_turns`. Half the hands a meter needs means it slides at half rate — not at
   the full neglect rate and not at nothing, which the binary `tended_this_turn` /
   `tamed_this_turn` flags could not express.
-  - **THE HANDS ARE ALWAYS THE BAND'S KEEPING POOL** (`forage::patch_upkeep_supply` /
-    `fauna::herd_upkeep_supply`, one rule and two seams of the same shape), from the **first work
-    banked** until the last. An **abandoned** part-build still owes, and can now still be *held*.
-    **The verb names the meter** on both webs, so a `Sow` or a `Corral` answers for the rung it is
-    starting from its first turn — the supply is stamped in Population and read by the next Logistics
-    pass, so it has to describe the meter that pass will judge. (Since the fullness test went, the
-    resolved meter's *identity* no longer changes what is supplied; what it still decides is that
-    ground with **nothing** on it is billed nothing.)
+  - **THE HANDS ARE ALWAYS THE SITE'S OWN CREW** (`forage::patch_upkeep_supply` /
+    `fauna::herd_upkeep_supply`, one rule and two seams of the same shape,
+    `docs/plan_site_crews.md`), from the **first work banked** until the last. An **abandoned**
+    part-build still owes, and can now still be *held*. **The verb names the meter** on both webs,
+    so a `Sow` or a `Corral` answers for the rung it is starting from its first turn — the supply is
+    stamped in Population and read by the next Logistics pass, so it has to describe the meter that
+    pass will judge. (Since the fullness test went, the resolved meter's *identity* no longer
+    changes what is supplied; what it still decides is that ground with **nothing** on it is billed
+    nothing.)
   - **NEITHER WHAT IS OWED NOR WHO PAYS IT MOVES.** The rate is the same on both sides of completion
     and on both webs, and so is the payer. *"You cannot be billed to hold something you have not
     finished building"* is **deleted** — you can, and that is what makes a half-built meter holdable
-    at all. A tended patch eroded to 99% is short of its cost, still tended, and still the pool's:
-    three facts, none of them each other.
+    at all. A tended patch eroded to 99% is short of its cost, still tended, and still its crew's to
+    keep: three facts, none of them each other.
   - **THE PENALTY DIFFERS BY WEB, and only the penalty does.** A plant meter **bleeds** the shortfall
     (`forage::advance_cultivation`); an animal flock **sheds** the animals the missing hands cannot
     hold (`fauna::advance_husbandry`, `uncontained_overage` = `shortfall_in_loads ×
@@ -1109,202 +1097,222 @@ worked; a second axis would ask the player to state the same thing twice.
   the funding decision — re-ordering is the one input a list can carry that a stepper cannot, and
   without it *all hands on the head* cannot be steered at all.
 
-#### MAINTENANCE IS A BAND-LEVEL POOL, not a crew on the tile
+- **THE BUILD'S MARK** (`docs/plan_site_crews.md` §2.4) — `BuildQueueEntry::priority`, a
+  `SourcePriority` on the **entry**, not on the source row. The builders claim their tools, and the
+  build its material pile, at the **head entry's** mark; the site row's own `priority` ranks that
+  site's crew (its keeping tools and its take). So a `Low` build loses a contested hoe to a `Normal`
+  keeping site and a `High` build wins it (`build_queue.rs::
+  a_low_build_loses_the_hoe_to_a_normal_site_and_a_high_build_wins_it`). Set by
+  `build_priority <faction> <band> <source…> high|normal|low` (proto field **77**,
+  `BuildPriorityCommand`, `LaborAllocation::set_build_priority`); a new entry is `Normal`, and
+  re-declaring the verb keeps the mark as it keeps the place and the kit. Published as
+  `BuildQueueEntryState.buildPriority`. **Every queued build is addressable**: a patch by `<x> <y>`,
+  a herd by its id, a working by `<x> <y> <material>` and a road by `road <x> <y>` (the site
+  grammar, `yield-forecast.md` → "The player's rank on a worked row"). A Groundwork row carries both
+  marks, like a harvest or hunt row; **a road carries only the Build mark**, while a road build is
+  queued, because it has no crew for a Priority to rank — its keeping claims bid at `Normal`. Pinned
+  by `pool_toe::a_low_groundwork_row_loses_the_one_chisel_to_a_normal_one` and
+  `::a_road_builds_mark_ranks_its_builders_tool_claim`.
 
-**Three standing roles, one per branch** — `LaborTarget::Agriculture` keeps every tended patch and
-Field the band works, `LaborTarget::Husbandry` every pastoral herd and pen, and
-`LaborTarget::Roadwork` every road the band is standing on. Staffed through
-`assign_labor <faction> <band> agriculture|husbandry|roadwork <workers>` like Scout and Warrior,
-published as ordinary rows of `laborAssignments` with those `kind`s, shed by `normalize` and
-checkpointed like any other row (§2.5).
+#### KEEPING IS THE SITE'S OWN CREW'S FIRST JOB
 
-> **The route pool reuses this whole seam and adds nothing to it** — the same `keeping_rates` →
-> `KeepingRate::worker_need` → `distribute_upkeep_pool` chain, under the same `upkeep_fund_mode`.
-> Where it differs is that a road is **not a source row**: it is owned by nobody, so what the pool
-> funds is resolved from the ground the band is standing on rather than from `assignments`. It is
-> settled **inside** `advance_labor_allocation`'s band loop (`settle_bands_roadwork`), from the same
-> seat the two food webs settle theirs — reading the `roadwork` pool the shed left. See
-> `.claude/rules/core_sim/routes.md` → "The keeping".
+**Spec: `docs/plan_site_crews.md`.** The forage, hunt or extract row on a source is that source's
+crew, and it keeps the source **before** it takes from it. The band-level keeping pools
+(`agriculture`, `husbandry`, `quarrywork`) are retired; **only roads keep a band-level pool**
+(`LaborTarget::Roadwork`, `.claude/rules/core_sim/routes.md` → "The keeping"), because a road is
+owned by nobody and has no row to carry a crew.
 
-- **WHY IT LEFT THE TILE: an indivisible supplier meeting a per-source demand WASTES what it does not
-  spend.** A patch asking for `2.0` work staffed by three hands throws one away, once per source, and
-  the waste grows as gear makes a hand worth more. **A pool has no leftover by construction** — every
-  unit either meets a demand or is still in the pool
-  (`intensification::tests::a_short_pool_is_spent_whole_under_both_modes`).
-- **One role per BRANCH because the branches are already separate ladders** — this is their existing
-  split, not a new axis, which is why the route branch's arrival added a role rather than an axis.
-  (`RungKey::upkeep_role`, which read it off `RungKey::branch`, retired with the completion hand-off
-  that was its only caller.)
-- **The band's demand is the SUM** over everything it holds on that web, and **every meter carrying
-  work draws, at any fullness** (`systems::labor::maintenance_shares`, §4.6a). A source claims a share
-  through **`forage::patch_claims_keeping`** / **`fauna::herd_claims_keeping`** — one function per web,
-  answering *does this source claim at all*.
-  > **⛔ AND IT PRICES THAT CLAIM OFF THE STAMPED BILL — `patch_keeping_basis` / `herd_keeping_basis`,
-  > NEVER THE LIVE DEMAND.** `maintenance_shares` and the capture must quote the same number or the
-  > wire contradicts itself: `snapshot.fbs` states `demand − supplied == shortfall` verbatim on **both**
-  > the herd and patch tables. The shares and the stamp both sit inside the per-band loop, and the
-  > **build accrual that moves the ladder position runs later in the same iteration** — so with two
-  > bands on one source, one of them also building, band A's share and stamp are struck at position P
-  > while band B's shares read a *risen* live demand at P′. The published pair then fails the
-  > identity, and band B's pool spends work the source never owed. **A demand that moves mid-turn is
-  > only safe to read once**, which is what the stamp is for.
-  > **⛔ THE LABOUR PASS MAY NOT RUN TWICE WITHOUT A LOGISTICS PASS BETWEEN, and a debug assertion
-  > now says so.** `upkeep_supplied` **accumulates** (its clear lives in Logistics, so several bands can
-  > pay one source in one turn) while `upkeep_demanded` is stamped **first-write-wins** and never
-  > re-struck. A driver that calls `advance_labor_allocation` twice therefore judges a **doubled supply
-  > against one turn's bill** — it *overstates* keeping, silently. Measured across three consecutive
-  > passes: supplied `3.70 → 5.56 → 7.41` against a bill stamped once at `1.85`.
-  >
-  > **The guard fires on BANKED SUPPLY BESIDE A STAMPED BILL, not on a stamped bill alone**, and the
-  > narrowing is evidence rather than convenience: the bill is stamped for every *worked* source
-  > whether or not it owes anything — an honest `Some(0.0)` on a wild patch — so a stamp says only
-  > *"a pass has run"*, which is true of ~24 harnesses that stage no keeping and double nothing. Supply
-  > with **no** bill is also legitimate: a fixture hand-seating `upkeep_supplied` to stand a source up
-  > as *kept last turn*. Supply **and** bill is the misuse and nothing else, because this pass writes
-  > the two together, in the same arm, for the same source.
-  >
-  > It **panics** rather than declining the second stamp: a guard that quietly refused would leave the
-  > doubled supply standing while claiming the pair was sound. Debug-only; the production ordering is
-  > untouched, and the within-turn accumulation across bands is deliberate and load-bearing.
-  >
-  > **Its own test needed a two-turn warm-up** — the demand interpolates on the position, so a source at
-  > `RUNG_UNSTARTED` honestly owes `0` and supplies `0`, and measuring there compares two zeroes and
-  > passes with the guard ripped out.
+```text
+keep_hands = min(crew, bill ÷ keep_rate)          // f32 — a hand may be part-keeping
+take_hands = crew − keep_hands                     // systems::labor::take_hands_after_keeping
+upkeep_supplied += keep_hands × keep_rate          // stamped on the source, summed across bands
+```
 
-  > **BOTH WEBS' `*_keeping_meter` ARE RETIRED, and the demand takes NO VERB on either.** The meter
-  > resolver existed because the demand **stepped** when a verb started on a finished rung, so the claim
-  > and the payment seams had to agree which meter they meant across the Population→Logistics carry.
-  > Interpolation removed the step — first on plants (§4.10), then on animals (§4.11) — so there is
-  > nothing left for that carry to straddle. **What survives is the CLAIM's verb term**, which answers a
-  > different question: `maintenance_shares` runs *before* the accrual and the capture *after* it, so a
-  > source about to bank its first work must still claim on the turn it has banked nothing.
+`keep_rate` there is shorthand: the hands are **walked best-equipped first**
+(`systems::labor::KeepingSplit`). Each hand holding a unit the settlement issued keeps at that
+tool's rate, **every other hand bare**, until the bill is met or the crew runs out. So `kept` is the
+work actually delivered, and `armed_kept` (the tool-holding hands' share) is the only work the
+keeping tools wear on. It replaced a coverage-mixed rate over the planned hands, which paid every
+extra unarmed hand that mixed rate. With hoe rate 2, bare 1, bill 4 and one hoe, it is **3 hands**
+(1 armed + 2 bare), not 2.67. A crew of 2.67 keeps 3.67 and the site reads short. Pinned by
+`systems::labor::keeping_split_tests::a_tool_short_site_keeps_with_its_armed_hands_at_the_tool_rate_and_the_rest_bare`.
 
-  > **⛔ IT USED TO BE `source_has_a_meter_at_risk`, AND THAT WAS A SECOND DEFINITION THAT DRIFTED.**
-  > That seam is **progress-only**; the payment side (`patch_upkeep_supply` → what is now
-  > `patch_keeping_basis`) is
-  > **progress-OR-verb**. Reported from play: a band 6% into a Cultivate with Agriculture staffed read
-  > `Short 2 of the 2 work` — i.e. **supplied 0.0 on a staffed role**.
-  >
-  > **A within-turn ordering fault.** `maintenance_shares` runs *before* the assignment loop banks the
-  > meter, so on the turn a build banks its FIRST work the patch still reads `progress == 0`, is skipped,
-  > and gets a share of zero — which the payment side then dutifully pays, having correctly worked out
-  > that the pool owes for this meter from turn one. Capture reads the post-accrual patch: demand 2.0,
-  > supplied 0.0.
-  >
-  > **The animal web had it too, with a different cause**: `owner` is recorded on the first accrual,
-  > which happens after the shares are split, so a herd mid-Tame read as wild and claimed nothing.
-  >
-  > **`patch_unwinding_rung` / `herd_keeping_rung` are the SAME question asked with NO VERB**
-  > (`NOTHING_IN_FLIGHT`) that `patch_claims_keeping` asks with one, not a parallel spelling — so the
-  > decay pass, the snapshot and the wire
-  > countdowns are byte-identical while the claim side gained the verb term. `source_has_a_meter_at_risk`
-  > survives as the **row-survival** seam alone, and its doc says so.
-  >
-  > **The retired `patch_keeping_meter` is NOT what holds them together any more.** Its two jobs
-  > split — `patch_claims_keeping` is the gate and `patch_keeping_basis` the bill — so "one function,
-  > so they cannot drift" no longer describes the code. What keeps them honest now is that the bill
-  > is **stamped** (`upkeep_demanded`) and every reader takes the stamp.
+- **Zero crew is unkept.** A row at `0` workers survives as the band's holding (see "A SOURCE ROW IS
+  THE BAND'S HOLDING"), but it keeps nothing: the meter rots past its grace, and the remedy is the
+  row's own crew stepper. The builders pay none of the bill (§4.6a), so a build fixture that wants a
+  kept meter staffs the row, not the builders.
+- **Several bands on one source split the ONE bill pro-rata by crew** (`systems::labor::SiteCrews`,
+  counted over every band before the loop): each band's claim is `bill × its crew ÷ the source's
+  total crew`, so the source is kept exactly once. The denominator is the staffed crews before the
+  shed.
+- **The claim** is `systems::labor::site_keeping_claims` — every worked source that
+  `forage::patch_claims_keeping` / `fauna::herd_claims_keeping` / the deposit's own gate says owes,
+  priced off the **stamped** bill (`patch_keeping_basis` / `herd_keeping_basis` / the deposit's
+  `upkeep_demanded`), skipping a row at `0` crew or a bill at `0`, sorted so the settlement is
+  order-independent.
+- **The tools, in order** (`docs/plan_site_crews.md` §2.3): the crew plans **as if equipped** —
+  `keep_hands` at the rung's `fully_equipped_keeper_rate` — and claims one of each tool the rung
+  requires per planned keeping hand, as a `ToolClaimStage::Keeping` claim at the **row's** priority.
+  `settle_scarce_tools` settles it with each site as its own group, beside the roadwork and builders
+  pools; the units it issues arm that many hands, and `keep_hands` is re-struck from the walk above
+  (`systems::labor::site_keeping`). A site short of its tools keeps with **more** hands and takes
+  with fewer — `upkeepToolsShort` says so on the wire. What was issued is parked on
+  `LaborAllocation::last_keeping_issued` (`KeepingIssue { source, item, units }`) so a seed or a
+  quote reserves it exactly as the turn did (`LaborAllocation::issued_excluding_site`).
+- **Wear is charged on the ARMED work kept** (`charge_keeping_wear` on `SiteKeeping::armed_kept`,
+  `upkeep_work`), from the tools the keeping was issued. Bare hands wear nothing.
+- **A forecast reads the same split** — `systems::prospective_keep_hands(equipment, band_kit, rung,
+  demand, crew)` is the pre-settlement reading the seed and the previews use, so a quote on the
+  hands the keeping leaves is the take the turn pays. ⛔ **A quote prices the LIVE bill at the state
+  the next turn will find, never the stamp.** `forage::patch_crew_keeping`,
+  `fauna::herd_crew_keeping` and `extraction::crew_keep_hands` / `crew_keeping_issue` read
+  `patch_upkeep_demand` / `herd_upkeep_demand` / `deposit_upkeep_demand`. The stamp is struck
+  before a turn's build accrual and stands until the next Logistics clears it, so between turns it
+  is the LAST turn's starting position: a Cultivate in flight, or a pen just completed, was quoted
+  the old bill while the turn billed the new one. A herd's bill rides its head count, so a
+  between-turns quote reads the herd after the next turn's regrowth:
+  `fauna::herd_crew_keeping_next_turn` (`next_turns_quarry`). The take claims read
+  `ClaimSources::patch` / `herd`, which step the source the same way when the reading is between
+  turns. Pinned by
+  `forage_cultivation::a_between_turns_quote_on_a_cultivate_in_flight_keeps_with_the_hands_the_next_turn_settles`
+  and `build_turns_closed_form::a_between_turns_quote_keeps_with_the_hands_the_next_turn_settles`
+  (a Tame in flight, and the turn after the pen completes).
+  The published shortfall and rot still read the stamp (`*_keeping_basis`), because they judge the
+  turn that ran. ⛔ **It is the turn's own split, uncontended**:
+  the hands planned as if equipped, issued the tools the band holds for them
+  (`prospective_keeping_issue`), the keeping struck at the rate those units give
+  (`keeping_rate_from`). It was the shed's all-or-nothing reading (`keeping_need_the_band_can_arm`),
+  which prices every keeper bare when the band holds fewer tools than the plan, while the turn issues
+  what it has and arms that many. Reported on a lapsed Field with one hoe against a 3.9 bill: the
+  sheet quoted 0.15 food at crew 4 (3.9 keeping) and the turn paid 0.32 (3.2 keeping) — and the
+  take-kit claim, which reads this same function, left the turn's spare gatherers basketless; it
+  pays 1.00 now and the quote says 1.00. The SHED keeps the all-or-nothing reading on purpose (it
+  must never thin a hand the keeping needs). Pinned by `server::tests::
+  a_lapsed_fields_quote_is_what_the_turn_pays_and_once_sown_nets_the_fields_keeping`. `fauna::herd_crew_keeping` /
+  `forage::patch_crew_keeping` resolve a site's `(rung, bill)` once for every reader, and
+  `fauna::crew_keep_hands` turns a crew into its keeping hands. **Every compose-sheet quote nets it**:
+  the hunt crew curve's row `w` takes with `w − keep_hands(w)` (`HuntCrewCurveInputs::keeping`, which
+  also moves the board's `huntUsefulWorkers`), the work-party query's local rate is struck on the
+  take hands on all three webs, and the deposit curve always did (`deposit_crew_quote`). Pinned by
+  `forecast_query::tests::a_kept_herds_curve_nets_the_hands_its_crew_keeps_with` and
+  `work_party_caravan::a_kept_herd_inside_the_apron_is_quoted_what_its_crew_takes_after_keeping`.
+- **Only the hands AT THE SOURCE keep it.** A far row's party walks out and sends porters home, so
+  the arm's crew is the hands present; `SiteKeeping::at_the_source` caps the keeping at them and
+  scales the work (and its wear) with it — a party still walking out keeps nothing. Found on bench
+  seed 22, where a walking party paid a tended patch's whole bill with nobody there; pinned by
+  `work_party_caravan::a_party_walking_out_keeps_nothing_at_the_source`.
+- **The caravan forecast nets it the same way.** `work_party::forecast_*_caravan` take a
+  `keep_hands` — the site's keeping at the row's staffed crew, read off the site as it stands
+  (`fauna::crew_keep_hands` / `extraction::crew_keep_hands`, the declared climb included) — and
+  every stepped turn takes with `work_party::take_hands_present`: the hands present less
+  `min(present, keep_hands)`, the forecast twin of `at_the_source`. The turn, the seed and the query
+  pass the one reading, so a far kept site's `netRateHome` is what its party lands after keeping.
+  Pinned by
+  `work_party_caravan::a_far_kept_herds_caravan_forecast_is_what_its_party_lands_after_keeping`.
+- **The stamped bill and the double-pass guard are unchanged.** `upkeep_supplied` **accumulates**
+  across the bands on a source and `upkeep_demanded` is stamped **first-write-wins**; a driver that
+  runs `advance_labor_allocation` twice with no Logistics pass between measures a doubled supply
+  against one bill, and a debug assertion panics on it. A labour-only fixture loop runs
+  `forage::advance_cultivation` + `fauna::advance_husbandry` (or clears the scratch) between passes.
+- **The claim's verb term** (`source_banking_its_first_work`) survives: a source about to bank its
+  first work claims its keeping on the turn it has banked nothing, restricted to the funded head of
+  the queue and gated on that head's own rung gate (`head_rung_gate`, fresh, pre-loop) — so a
+  blocked head claims no keeping.
 
-  **THE VERB TERM IS NARROWED TO THE FUNDED HEAD, and that is deliberate.** Taking it straight from the
-  queue entry — the literal "same input as the payment side" — makes *every waiting entry* claim its full
-  demand, and `Spread` funds proportionally, so two queued-but-unfunded builds would dilute the share of
-  the Field the band actually holds. That is a new way to starve a real holding. `source_banking_its_first_work`
-  restricts it to `build_queue[0]` when `builders > 0`, mirroring the assignment loop's own `build_workers`
-  rule. **Claim-side verb ⊆ payment-side verb**, so the two cannot disagree in the direction that caused
-  the bug.
-  > **⛔ AND THE HEAD'S OWN GATE IS PART OF THE TERM — an earlier cut accepted that a blocked head
-  > would bill the pool, and that acceptance was wrong.** The note here read *"it self-announces as
-  > `BUILD_QUEUE_BLOCKED` and the player has explicitly staffed builders at it"*, which sounds
-  > self-limiting and is not: the default fund mode is **`Spread`**, so the claim is pro-rata and a head
-  > that banks **nothing** dilutes the share of everything the band actually holds. A band working a
-  > tended patch (demand 2.0) with a blocked `Cultivate` queued on bare ground supplies that patch
-  > **1.5 of 2.0** and bleeds it once its grace expires. `Priority` was never affected — an unbanked
-  > meter's `at_risk_cost` is 0 and sorts last. Found by PR review, and it is the animal case reported
-  > from play: a blocked `Tame` at the head permanently starving `husbandry`.
-  >
-  > **The gate cannot be read off the published cause.** `advance_cultivation` / `advance_husbandry`
-  > clear `build_blocked_reason` to `Open` in **Logistics**, which runs before Population, so at
-  > `maintenance_shares` time it is always `Open`. A one-turn-lagged read was rejected too — it
-  > re-opens the first-turn bug on the turn a block clears. `head_rung_gate` resolves the head's gate
-  > **fresh, pre-loop**.
-  >
-  > **The four rung term-lists are named functions both callers use** (`plant_tended_gate`,
-  > `plant_field_gate`, `animal_pastoral_gate`, `animal_pen_gate`), so the refusal ordering and the
-  > published cause have one home. **What is still evaluated twice is the terms**, from identical
-  > inputs — collapsing that means hoisting the per-rung resolution out of the 3k-line assignment loop,
-  > which was deliberately not attempted. **If the two drift, the symptom is a head that claims while
-  > banking nothing, or banks while claiming nothing**, and the two new guards catch both.
-  >
-  > **It narrows only, so the subset invariant holds**: the payment side reads any queued entry's
-  > declaration and applies no gate; the claim side was already `build_queue[0]` and the gate is a
-  > further conjunct. **Zero-progress only** — `patch_build_verb` honours a declaration solely at a
-  > zero meter, so a blocked head with banked work derives its verb from progress and keeps claiming.
+**THE SHED** (`LaborAllocation::normalize`, `ShedFacts` / `SourceShedFacts::keeping_need`):
 
-  So what the pool funds, what the decay pass bleeds and what keeps a holding alive cannot come to be
-  three questions.
-  - **HOLDS, not harvests.** A row's eligibility is the *ground's* answer and never its take crew.
-    `maintenance_shares` used to skip rows at `workers == 0`, which made a finished improvement's
-    keeping depend on somebody still gathering it — see "A SOURCE ROW IS THE BAND'S HOLDING" above.
-- **THE SHED TAKES THEM IN A STATED ORDER — Agriculture, Husbandry, Roadwork** — at both step 3 (a
-  keeper above the demand) and step 8 (one below it). **Roadwork last, on recoverability**: a road
-  carries the longest graces on the ladder and a lost one is re-earned by traffic alone, where a
-  feral patch wants a `Cultivate` and a shed flock is gone. Each pool's `ShedFacts` surplus is
-  decremented **by name** as the walk spends it; the wildcard that used to catch the second role
-  underflowed the moment a third one existed.
-- **THE SHORTFALL SPLIT IS A PER-BAND PLAYER OPTION** — `LaborAllocation::upkeep_fund_mode`
-  (`intensification::UpkeepFundMode`), set by `upkeep_mode <faction> <band> spread|priority` (proto
-  field **56**, `UpkeepModeCommand`, reusing the retired `MaintainCommand`'s slot):
-  - **`spread`** — proportional to demand, so everything degrades a little. The **default**, because
-    it is what an unstated policy means: nobody is singled out.
-  - **`priority`** — fund sources completely until the pool runs out, **most-invested first**, so the
-    biggest investments stay whole and the marginal ones rot.
-- **The ORDER IS TOTAL, because a checkpoint has to reproduce it.** `distribute_upkeep_pool` funds in
-  **slice order** and the *caller* sorts — most-invested first on the at-risk meter's **stored cost**
-  (`forage::patch_at_risk_cost` / `fauna::herd_at_risk_cost`), tie-broken on a stable per-source key
-  (a tile's coordinates, a herd's id). The ladder owns the arithmetic and the web owns the ranking,
-  because *"most invested"* is a per-web reading. **The stored cost rather than the live progress**:
-  a meter eroding under a shortfall would otherwise slide *down* the priority order exactly as it
-  started to need the hands.
-- **It rides the checkpoint** on the band's `LaborAllocation`, which `capture_sim_state` clones whole
-  — asserted rather than assumed by
-  `forage_cultivation::the_maintenance_split_survives_a_checkpoint_under_both_modes`.
-- **RETIRED with it**: `LaborAssignment::maintain_workers`, `ActivityCrew::Maintain`,
-  `LaborAllocation::set_maintain_workers`, the `maintain` command and `MaintainCommand`. The wire slot
-  `maintainWorkers` is `(deprecated)` in place — FlatBuffers field ids are positional.
-- **AND THE BUILD CREW FOLLOWED IT OFF THE TILE ONE SLICE LATER**, taking
-  `LaborAssignment::improvement` / `improvement_workers`, `ActivityCrew`, `LaborAllocation::idle_for`,
-  `set_improvement` / `set_build_workers`, `server::crew_is_affordable` /
-  `emit_crew_unaffordable`, `systems::labor::quoted_build_crew` and the five verbs' trailing
-  `<workers>` argument (proto fields `reserved`) with it. `improvementWorkers` is `(deprecated)` in
-  place beside `maintainWorkers`, for the same positional reason.
+- **Step 3** sheds spare **Roadwork** keepers only; the retired pools have no row to shed.
+- **Step 5** thins a site row only **above its keeping line** — a hand is taken only while
+  `workers − 1 ≥ keeping_need` (`components::hands_above_keeping`), so a shrinking band gives up
+  gatherers before it gives up keepers.
+- **Step 8** (a hand below the need) takes **Roadwork** first, then a keeping hand off the least
+  productive improved site row that still has two or more hands — a row's last hand is never shed
+  as a keeping hand. The keeping need is priced at the bare rate when the band cannot arm it.
+
+`LaborAllocation::upkeep_fund_mode` (`spread` / `priority`, `upkeep_mode`) now splits the
+**roadwork** pool alone — `distribute_upkeep_pool` is its only caller. Retired with the food webs'
+pools: `LaborTarget::{Agriculture, Husbandry, Quarrywork}`, `maintenance_shares`, the per-pool shed
+facts, `settle_bands_extraction`, and the `assign_labor … agriculture|husbandry|quarrywork` tokens.
+The `KitJob`s of those names stay in the equipment vocabulary (`default_kits`, the kits' `jobs`
+lists).
 
 #### The standing upkeep on the wire
 
-`ForagePatchState` / `HerdTelemetryState` each carry **`upkeepDemand`**, **`upkeepSupplied`**,
-**`upkeepShortfall`** and **`upkeepWorkersNeeded`**. The first three ship rather than two, per the
-sim-answers discipline — the sim answers and the client does zero arithmetic.
+`ForagePatchState` / `HerdTelemetryState` / `DepositState` each carry **`upkeepDemand`**,
+**`upkeepSupplied`**, **`upkeepShortfall`**, **`upkeepWorkersNeeded`**, and — appended by
+`docs/plan_site_crews.md` §4 — **`upkeepHands`** (`float`, the hands the crew spent keeping, summed
+across bands) and **`upkeepToolsShort`** (`bool`, the keeping held fewer tools than it planned for).
+
+**A row carries its OWN share: `LaborAssignment.keepHands`** (`float`, appended last). The source's
+`upkeepHands` sums every band keeping the site, so a row's crew-split marks read the row's figure:
+the hands **this row's** crew spent keeping this turn, written per row by the keeping fold after the
+arms (`SourceYield::keep_hands`, from `site_keeping`), and the prospective split on a pre-commit seed
+(`fauna::forecast_source_yield`: `workers − take_hands`). `0` on a row that keeps nothing. Viewer
+scoping is the row's own. The rows on one site sum to its `upkeepHands`. Pinned by
+`server::tests::two_bands_on_one_site_publish_each_rows_own_keep_hands`. **The crew curves carry the
+same figure per asked crew** — `ForageCrewTakeRow.keep_hands`, `HuntCrewTakeRow.keep_hands` (proto
+7) and `DepositCrewTakeRow.keep_hands` (proto 5) — pinned by
+`forecast_query::tests::a_hunt_curves_keep_hands_rise_with_the_bill` and
+`server::tests::a_deposit_curves_keep_hands_rise_with_the_bill`.
+
+**`upkeepToe:[KitToeLine{itemId, required, filled}]` names which tools** — one line per tool the
+site's keeping claimed this turn, the take row's `kitToe` shape. The source stamps the lines
+(`upkeep_toe`, cleared on `upkeep_supplied`'s cycle) through `components::merge_keeping_tool_lines`,
+**per `(faction, item)`**, summed over one people's crews. Absent where the keeping claimed no tool.
+Pinned by `build_queue::a_hoe_short_kept_patch_names_the_hoes_it_is_short_of` (a patch whose band
+holds no hoes publishes `hoes required 1.8 filled 0`; the paid control reads filled).
+
+> ⛔ **BOTH ARE VIEWER-SCOPED — EACH VIEWER GETS ITS OWN PEOPLE'S LINES, AND THE FLAG IS READ OFF
+> THEM.** A rival's lines would publish its tool stock, and the mark is a statement about the
+> viewer's own crew. The capture filters on the line's `faction` (`snapshot::subsistence::
+> upkeep_toe_lines`) and derives `upkeepToolsShort` from the same filtered lines
+> (`viewer_keeping_tools_short`), so the two cannot disagree. **The flag used to be a per-source bool
+> OR-ed across every band**, which marked a viewer short because a rival's crew was — the same leak;
+> the source no longer stores a flag at all. A patch carrying lines is never a viewer-invariant row
+> (`patch_row_is_viewer_invariant`), so a multi-seat memo cannot share one viewer's lines with
+> another. Pinned on the encoded frame for both viewers by
+> `frame_is_viewer_scoped::a_site_kept_by_two_peoples_publishes_each_viewer_only_its_own_keeping_tools`.
 
 - **`upkeepDemand` follows `corralYield`'s rule: always meaningful, never a sentinel.** A rung with no
   upkeep publishes an honest `0`.
 - **IT ANSWERS FOR THE RUNG THE SOURCE IS ON, WHICH IS WHY A QUOTE CANNOT READ IT** — see "A price
   without the rate that eats it is not a quote" below, the pair that closes that gap.
-- **`upkeepWorkersNeeded` is the MAINTAIN activity's own `workers_needed`** —
-  `ceil(demand / PER_WORKER_OUTPUT)`, in keepers — beside the TAKE activity's
-  (`SourceYield::workersNeeded`, in haulers). Two counts in two units, because a `max` across units
-  was the compromise a single allocation forced.
-- **THE PER-SOURCE QUARTET SURVIVED THE MOVE, and it answers a better question.** `upkeepSupplied` is
-  now that source's **share of the band's pool**, so the trio stopped answering *"did you staff this
-  one"* and started answering *"where is my pooled shortfall landing"*.
-- **There is no `maintain` flag and no per-source keeper crew on the wire.** The band's own keeping is
-  a row of `laborAssignments` (`kind` `"agriculture"` / `"husbandry"`), and how it splits when short
-  is `PopulationCohortState.upkeepFundMode` — the same token `upkeep_mode` takes.
-- **`upkeepSupplied` / `upkeepShortfall` are transient per-turn scratch on the source**, stamped once
-  per worked source by `advance_labor_allocation` (before the arm branches by rung, so a Field's early
-  return cannot skip it) and cleared by the Logistics decay pass — exactly `buildTurnsRemaining`'s
-  cycle, and for its reason: they describe *this* turn's keepers.
+- **`upkeepWorkersNeeded`** is `ceil(demand / PER_WORKER_OUTPUT)`, in bare keepers — the keeping's
+  own count. The row's `SourceYield::workersNeeded` counts the **whole** crew needed, keeping hands
+  plus take hands (`yield-forecast.md` → "`workers_needed` IS THE ROW'S WHOLE CREW").
+- **The keeping line's two forecasts** (appended, `docs/plan_site_crews.md`), both in
+  `upkeepWorkersNeeded`'s unit so the three read as one line (`intensification::keeping_forecast`):
+  - **`upkeepWorkersAtCompletion`** (`uint`) — whole keepers once the rung **in flight** is
+    finished: the same keeping basis on a clone of the source set to that rung's top. Equal to
+    `upkeepWorkersNeeded` where nothing is in flight.
+  - **`upkeepNextWorkerTurn`** (`int`, a **game turn**, the capture tick plus the forecast) — the
+    first turn whose bill takes one more whole keeper than today's, projecting the meter along the
+    in-flight leg's own pace (`BuildPace`: the leg's `starts_after` on the queue's running sum and
+    the entry's `balance`, so a waiting entry is walked from its chained start). A turn's bill is
+    struck in Logistics off the position the **previous** turn's accrual left, so the step lands
+    one turn after the accrual that crosses it. **`-1`** = never within the build: nothing in
+    flight, the entry is not dated (stalled, rotting, blocked), or no whole-keeper step before it
+    completes.
+  - The pace is the **builder's** state: a patch or herd reads it off its `build_legs` (withheld
+    for a rival's build like every other leg), and a working off `DepositSource::build_pace`, which
+    the chain pass stamps beside its countdown and the row reads only where the viewer's band has it
+    queued. Pinned by `build_queue::a_cultivate_in_flights_keeping_forecast_comes_true_on_the_turn_it_names`,
+    which drives the shipped turn and checks both against the published `upkeepWorkersNeeded`.
+- **All six are transient per-turn scratch on the source**, stamped by `advance_labor_allocation`
+  and cleared by the Logistics decay pass (`advance_cultivation` / `advance_husbandry` /
+  `advance_deposits`) — exactly `buildTurnsRemaining`'s cycle, and for its reason: they describe
+  *this* turn's keepers.
+- **`BuildQueueEntryState.buildPriority`** (`"high"` / `"normal"` / `"low"`) is the queued build's
+  own mark — see "THE BUILD'S MARK" under the builders pool above.
+- **`BuildQueueEntryState.material` / `.road`** (appended) state which site on the tile an entry is,
+  in the command grammar's terms: a working's entry carries its deposit's `material` (`""`
+  elsewhere), a road's carries `road = true`. Two workings queued on one hex are two
+  distinguishable entries (`source_crews_on_the_wire::
+  two_workings_and_a_road_on_one_tile_publish_distinguishable_entries`).
+- **`poolCrew` / `poolToe` state `roadwork` and `builders` only**, and the `quarrywork*` triple on
+  `PopulationCohortState` is `(deprecated)` and publishes `0`.
 - **The four `*BuildFraction` slots and the two `*CrewNeeded` slots are `(deprecated)`** and no
-  longer written; the client's native reader stops inserting their dict keys and inserts the upkeep
-  quartet instead. The GDScript that reads the retired keys is a separate pass.
+  longer written.
 
 ### THE MATERIAL HALF — a rung costs WORK **and** GOODS, on both terms
 
@@ -1740,7 +1748,7 @@ Field at 40% is a whole Tended patch plus 40% of the Field's own extra.
   The supply is stamped in Population and judged by the next Logistics pass; while the demand was the
   rung's flat rate that carry was exact, but an interpolated demand is a **moving target** — the build
   banks work between the stamp and the judgement, so the pass reads a bill above the one the keepers
-  were handed. Measured on a three-entry build queue with `agriculture` fully staffed, that gap bled
+  were handed. Measured on a three-entry build queue with its keeping fully staffed, that gap bled
   **~0.03 work a turn** off the very meter it was funding: a permanent shortfall on a correctly-played
   band, which also re-armed `neglect_turns` every turn so the wire counted down a grace that could
   never reset. `forage::patch_keeping_basis` is the one seam the decay pass, the published shortfall,
@@ -1763,7 +1771,7 @@ Field at 40% is a whole Tended patch plus 40% of the Field's own extra.
   > **THE QUOTE RESOLVES THROUGH THE SAME TILE THE BILL DOES.** `cultivationUpkeepDemand` /
   > `fieldUpkeepDemand` were the bare ladder rates, identical on every patch in the game, back when
   > the plant rungs were `flat`. Scaled, that pair and `patch_upkeep_demand` become **two producers
-  > of one verdict** — the compose sheet quoting `4.0` for a Field the keeping pool will bill `4.31`
+  > of one verdict** — the compose sheet quoting `4.0` for a Field its crew will be billed `4.31`
   > — so both quotes take the patch's own tile capacity. Pinned by
   > `the_quoted_price_is_the_price_the_patch_will_be_billed`, deliberately on a **non-reference**
   > tile, since on `AlluvialPlain` the scaled and unscaled answers agree and the test would pass
@@ -1991,12 +1999,13 @@ asserted on both webs; the accept only on the plant one.
 
 ### A KEEPING TOOL WEARS NOW, ON THE WORK IT SUPPLIED
 
-Once gear fed the keeping pool (§4.8's upkeep half), a hoe raised what a keeper supplied **forever,
+Once gear fed the keeping (§4.8's upkeep half), a hoe raised what a keeper supplied **forever,
 free** — `WearQuantum` had `BuildProgress` and no upkeep quantum. `UpkeepWork` closes it.
 
-- **Charged on work SUPPLIED, not demand and not head count** — the value `patch_upkeep_supply` /
-  `herd_upkeep_supply` returns, which the distributor already caps at the demand. So an over-large pool
-  spends only what it was asked for, and a pool with nothing at risk claims no share and wears nothing.
+- **Charged on work SUPPLIED, not demand and not head count** — the work the site's keeping hands
+  put on the ground, which `keep_hands = min(crew, bill ÷ keep_rate)` already caps at the bill. So
+  an over-large crew spends only what it was asked for, and a site with nothing at risk keeps
+  nothing and wears nothing.
 - **Against THIS SITE'S OWN kit** (§2.7), which travels beside the share it pays for (`KeepingAward`).
   Two patches one band keeps with two different tools wear two different tools; the retired per-band
   wear kit billed both against one, so a bare-handed site ran the hoes down beside it.
@@ -2057,24 +2066,13 @@ its table carries a fallback, so a key this sim adds later renders honestly rath
 > stock falls under the floor, which is the `escapement` key one step later. `selection-card.md` →
 > "THE BLOCKED ROW NAMES THE REMEDY" carries the autopsy.
 
-### AN UNNAMED `builders` KIT STORES **NOTHING**, OR THE PER-ENTRY DERIVATION IS DEAD
+### A `builders` row stores no kit, and there is no per-entry kit to derive
 
-`handle_assign_labor` resolves a kit for every staffed row, and for `builders` with no `kit` token it
-stored `default_kits.builders` — `"none"`. `EquipmentConfig::builders_kit_for` applies *a named row kit
-wins* first, so that stored `none` beat the per-branch derivation §4.6b exists for, and **the pool
-built bare-handed on every job**. Not cosmetic: `BuildersGear::resolve` reads the same field.
-
-The client was already right — `BandPanelController._commanded_role_kit_id` emits no `kit` token on
-that row precisely so the derivation stays live — and the server was filling the slot in on the way
-past. The fork lives in `handle_assign_labor`'s `crew_kit` rather than in `default_kit_for_target`,
-because the question is *what does this command store*, not *which kit is the absent one*; that helper
-also serves the raid path, which has no derivation to defer to. **An explicit `kit <id>` still stores
-and still wins.**
-
-**IT SURVIVED BECAUSE EVERY FIXTURE HAND-BUILT THE ROW** (`kit: Some(bare_builders())`), so no test
-ever drove `assign_labor … builders <n>` into `builders_kit`. The test that closes it drives the real
-command path on both webs **and** asserts an explicit `kit none` is still honoured — without that third
-case, "never store anything" satisfies the pair and silently deletes the override.
+`handle_assign_labor` refuses a `kit` token on a standing pool (`builders`, `roadwork`) by name, and
+an unnamed one stores nothing. The per-entry derivation that once made an unnamed pool's stored
+`none` a defect is retired with the `build_kit` command and `BuildQueueEntry::kit`
+(`equipment.md` → "RETIRED: the per-entry builders' kit and the per-site keeping kit"): the pool's
+tools follow from the rung in flight.
 
 ### The build on the wire — the fraction stays, the WORK is appended
 
@@ -2169,7 +2167,7 @@ Appended (append-only) on both tables:
   ```
 
   **The divisor's second term is the ROT, and there is no floor factor.** `<rung>UpkeepDemand` is the
-  keeping pool's bill and is never netted off a build (§4.6a); `learn_multiplier(floor)` came off the
+  site crew's bill and is never netted off a build (§4.6a); `learn_multiplier(floor)` came off the
   build accrual with the crews' separation, so the crew term is the head count and nothing else. Both
   producers must carry the same expression or the sheet and the card disagree at every floor.
 

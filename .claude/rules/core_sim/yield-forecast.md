@@ -763,17 +763,42 @@ client's compose-time "Expected yield" row promises. Shape:
   `changing_the_floor_reseeds_the_expected_yield`, `a_barren_source_seeds_zero`,
   `unassigning_a_source_drops_its_yield_row`.
 
-### `workers_needed` IS THE TAKE'S OWN COUNT, and each activity states its own
+### `workers_needed` IS THE ROW'S WHOLE CREW — its keeping hands plus its take's
+
+> ⛔ **ON A PATCH AND A HERD IT IS CREW-INDEPENDENT, AND IT IS THE FORAGE ROW'S `+` CAP.** The
+> take half was the take over the crew's **average** rate, and the average dilutes as bare hands are
+> added, so the count climbed with the crew: on a saved band a kept row read `4` at crew 3 and `5` at
+> crew 4, inviting one more hand every time. It is now the fewest take hands whose capacity reaches
+> the room (`KitCoverage::hands_to_reach`), walked best-equipped first over **the units the row was
+> settled plus the units still on the shelf** (`BandItemBudget::reach_coverage_for_source`): a hand
+> the player adds takes a spare kit if one is lying there and works bare if not.
+>
+> - **Forage** — `forage::forage_crew_needed`: `ceil(hands_to_reach(room) + keep_hands)`, the keep
+>   hands folded in and rounded **once**. Rounding the take half first and then adding the keep
+>   reported a hand more than the crew needs. The post-pass that adds keeping skips forage rows.
+> - **Hunt** — `fauna::hunt_crew_needed`: the haul half walked the same way, `max` the reach half
+>   (`hunt_engage_workers` at the party's own retreat); the keeping is still added by
+>   `crew_needed_with_keeping`, because a hunt's take crew is whole hunters.
+> - **A labor-bound row reads ABOVE its crew** — another hand would take more, so the cap allows it.
+>   It used to read the crew itself, which refused the `+` on exactly the rows a hand helps.
+> - **The seed strikes it the same way** off the regrown source, so it matches the turn.
+>
+> Saved band, kept row on a thin stand, crew 3 → 4 → 3: `workersNeeded` **3, 3, 3**.
 
 `workers_needed` is written in **two** places — the resolved turn (`advance_labor_allocation`'s three
 telemetry arms) and the assign-time seed (`forage::forage_source_yield_preview` /
-`fauna::hunt_source_yield_preview` → `fauna::forecast_source_yield`) — and both now answer the same,
-simpler question: **how many hands does it take to haul what this source offers?** It is inverted out
-of an **undipped** take, because a building crew no longer changes what a gathering crew carries.
+`fauna::hunt_source_yield_preview` → `fauna::forecast_source_yield`) — and both answer the same
+question: **how many of this row's hands were needed?** The take half is inverted out of an
+**undipped** take, because a building crew no longer changes what a gathering crew carries. **The
+keeping half is added on top** (`ceil(take_needed + keep_hands)`, `docs/plan_site_crews.md` §4,
+folded in once — see the callout above): a site's row is one crew with one stepper that keeps
+first, so `workers > workers_needed` stays the overstaffing signal only if the count carries both.
+The resolved turn adds the settled `keep_hands` after the arms (`site_keeping`); the seed adds
+`workers − take_hands`, the same split through `prospective_keep_hands`. A row that keeps nothing is
+unchanged, and an all-keeping row (crew short of its bill) reads its keeping hands.
 
-The **maintain** activity publishes its own count beside it (`upkeepWorkersNeeded` =
-`ceil(upkeep_demand / PER_WORKER_OUTPUT)`, in keepers), and the **build**'s crew is simply the number
-the player typed on the verb. A `max` across those units was the compromise a single allocation
+**`upkeepWorkersNeeded` stays the keeping's own count** (`ceil(upkeep_demand / PER_WORKER_OUTPUT)`,
+in bare keepers), and the **build**'s crew is simply the number the player typed on the verb. A `max` across those units was the compromise a single allocation
 forced, and it is what made a row read `workersNeeded: 1` beside `wastedYield: 0.80`.
 
 **The floor it replaced was a real fix to a real defect, and the defect is gone rather than
@@ -1246,13 +1271,13 @@ is positional.
 |---|---|---|
 | 1 | a **scout** | *Nothing is lost* |
 | 2 | a **warrior**, if nothing threatens the band | |
-| 3 | a **keeper above the keeping demand** — Agriculture first, then Husbandry | |
+| 3 | a **Roadwork keeper above the roads' demand** — the one band-level keeping pool left | |
 | 4 | a **builder**, while more than one remains and something is queued | |
-| 5 | **thin the least-productive worked source that has two or more hands — and the crafting BENCH, ranked beside them** — "least productive" is the four-level test below, whose second level passes over a source still accruing knowledge | *Output falls, nothing ends* |
+| 5 | **thin the least-productive worked source that has two or more hands and a hand ABOVE its keeping line — and the crafting BENCH, ranked beside them** — "least productive" is the four-level test below, whose second level passes over a source still accruing knowledge; a site row gives a hand only while `workers − 1 ≥ keeping_need` (`docs/plan_site_crews.md` §2.6) | *Output falls, nothing ends* |
 | 5b | **the crafting bench's LAST hand** — the job stalls, keeping its recipe, its progress and the pile it drew | |
 | 6 | **empty the least-productive source carrying no improvement and no queued build** | *Something ends* |
 | 7 | a **warrior**, unconditionally | |
-| 8 | a **keeper below the demand** — improvements begin to rot | |
+| 8 | a **keeper below the demand** — a Roadwork keeper first, then a keeping hand off the least-productive improved site row with two or more hands; improvements begin to rot | |
 | 9 | **empty the least-productive improved source with no queued build** | |
 | 10 | **empty a source carrying a queued build** — the row drops and the declaration goes with it | |
 | 11 | **the last builder** — every queued build stalls | |
@@ -1282,7 +1307,8 @@ hand is shed:
 | Fact | Resolved from |
 |---|---|
 | `threatened` | the **same trigger** `advance_predator_raids` fires on — a carnivore with `aggression > 0` inside `predators.raid_radius`. That pass runs straight after this one off the same herd positions, so a band the pack reaches this turn keeps its guard. A band whose tile will not resolve reads **threatened**: the guard is the reading that costs people when it is wrong |
-| `spare_*_keepers` | `keeping_claims` — the **one** definition of the band's keeping bill, which `maintenance_shares` also splits its pools against — summed per web and divided by `build_work_per_worker_turn`, so the surplus is struck against the supply the split will actually make, **behind the tool gate below** |
+| `spare_roadwork_keepers` | `route_keeping_claims` — the **one** definition of the roads' keeping bill, the same claims the roadwork pool is paid against — divided by the keeper rate, so the surplus is struck against the supply the split will actually make, **behind the tool gate below** |
+| `keeping_need` (per site row) | `site_keeping_needs` — the site's own claim (`site_keeping_claims`, its pro-rata share of the bill) in hands at the rate the band can arm (`keeping_need_the_band_can_arm`: the as-if-equipped rate if the band's stock covers the planned claim, bare otherwise) — the line steps 5 and 8 read |
 | `accruing_knowledge` | the source's rung names a lesson, the faction has not completed it, and the floor leaves practice to be had. It deliberately does **not** ask the escapement room the live credit is also gated on: that room comes from this turn's take, which has not happened yet, so this is *"is there a lesson here to lose"* — the conservative direction, which protects a row from being thinned and never exposes one. **Step 5 alone reads it, and reads it as a LEVEL** (below) |
 | `improved` | `patch_at_risk_cost` / `herd_at_risk_cost` above `RUNG_UNSTARTED` — work on the ladder, finished or in flight |
 
@@ -1302,10 +1328,13 @@ longer has the hands to bank.
 >
 > `systems::labor::spare_keepers_the_band_can_arm` puts one question in front of the answer: **per
 > tool this pool's sites require, does the band hold at least that many live units?** If not, the pool
-> reports `0`. The requirement is `pool_toe_claims`' own — the same seam the settlement's stage-1 bid
-> is summed from — so *"what this pool requires"* keeps one definition, and `keeping_worker_need`,
-> `fully_equipped_keeper_rate` and the four-step order are all untouched: this is a **gate in front of
-> the answer**, never a second rate.
+> reports `0`. A **site row's** line is gated the same way from the other side:
+> `keeping_need_the_band_can_arm` prices its keeping need at the bare rate when the band cannot arm
+> the planned keeping hands, so the line sits **higher** and the shed keeps the hand. The
+> requirement is `pool_toe_claims`' own — the same seam the settlement's stage-1 bid is summed from
+> — so *"what this pool requires"* keeps one definition, and `keeping_worker_need`,
+> `fully_equipped_keeper_rate` and the four-step order are all untouched: this is a **gate in front
+> of the answer**, never a second rate.
 >
 > **It answers `0`, never a smaller number.** Sizing the real surplus needs the rate the pool will be
 > *delivered*, and there is none to read — see the ordering fact below.
@@ -1324,16 +1353,16 @@ longer has the hands to bank.
 >
 > **It asks about this pool's OWN requirement alone.** A pool can hold enough for itself and still lose
 > the band-wide settlement to another pool bidding on the same tool; that is unknowable before the
-> settlement and the gate does not pretend otherwise. **All four keeping pools go through it** —
-> Roadwork and Quarrywork as much as the two food webs — because the defect was in the shared helper.
+> settlement and the gate does not pretend otherwise. **The Roadwork pool goes through it**, and
+> each site row's keeping line through its twin.
 > A pool whose rungs want no tool requires nothing and is never gated
 > (`::a_pool_that_requires_no_tool_keeps_its_spare_keepers`).
 >
-> `shedding_order::a_pool_short_of_its_tool_keeps_the_keeper_the_bill_still_needs` drives it through a
-> real turn — the keeper stays and step 5 thins the worked row instead — against the control
-> `::the_same_band_with_a_hoe_per_working_hand_sheds_its_spare_keeper`, which is half the claim: without
-> it, *"a short pool never sheds a keeper"* would pass on a gate that fired unconditionally and step 3
-> would be dead for every band in the game.
+> `shedding_order::a_crew_short_of_its_tool_keeps_the_hand_its_keeping_still_needs` drives the site
+> half through a real turn against the control
+> `::the_same_band_with_a_hoe_per_keeping_hand_thins_above_the_line`, which is half the claim:
+> without it, *"a short crew never gives a keeping hand"* would pass on a gate that fired
+> unconditionally and step 5 would never thin a kept site in the game.
 
 **"Least productive" is FOUR levels at step 5 and THREE everywhere else, and the top one is the
 player's own.**
@@ -1495,10 +1524,27 @@ row the player marked to give up. The codec maps the two rather than casting, so
 into the other.
 
 `work_priority` names a **band**, like `build_order` and unlike the source-addressed `unqueue` /
-`build_kit`: the orderings it feeds partition one band's own rows and serve one band's own stores.
+`abandon`: the orderings it feeds partition one band's own rows and serve one band's own stores.
 `xtask`'s command guard classifies it as band-addressed for that reason. An unknown level is refused
 **by name** (`upkeep_mode`'s rule) — a mistyped rank must not silently land on the default, which is
 the one value that would look like it worked.
+
+**The site source grammar** (every queue verb: `abandon`, `unqueue`, `build_order`,
+`work_priority`, `build_priority` — `command_text::parse_site_source`) is the tile-or-herd grammar
+plus two shapes a tile alone cannot name: `<x> <y> <material>` is a **working** (one hex can hold
+two deposits; the material sits where `fell` carries it) and `road <x> <y>` is a **road** (a tile can
+carry a road and a patch, so the road is said out loud and leads). They ride `material` / `road` on
+each proto message (fields **7** / **8** on the band-scoped three, **5** / **6** on `abandon` /
+`unqueue`). The bare tile still names the patch. What each verb does with the two new shapes:
+
+| verb | `<x> <y> <material>` | `road <x> <y>` |
+|---|---|---|
+| `work_priority` | the extract row's Priority | **refused by name** — a road has no crew |
+| `build_priority` / `build_order` | the queued working build | the queued road build |
+| `unqueue` | withdraws the queued working build | withdraws the queued road build; the keeper stays |
+| `abandon` | **is `abandon_working`** — `handle_abandon` calls it, one path | puts down the road alone (keeper and entry), not the patch |
+
+A bare-tile `abandon` is a **place**: its patch row and its road, never a working.
 
 ### `normalize` and the commands now measure the same pool
 

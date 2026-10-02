@@ -1214,6 +1214,22 @@ a sentence is a string — a frame shows a plausible verdict whichever clock it 
 
 ## `chapters/trade.gd` — the cargo picker and a shipment in flight (arc #527, issue #517)
 
+> #### THE SHEET IS ONE ROW PER GOOD NOW, AND THE CHAPTER WAS RE-AIMED WITH IT
+>
+> `band-city-panel.md` → "ONE ROW PER GOOD". `EXPECTED_CHECKPOINTS` **144**, RE-MEASURED. Frames
+> added: `trade_cargo_grades_open` (the hide's two grades, best first) and `trade_sheet_prototype`
+> (the approved prototype's own band, goods and numbers, for the side-by-side). `trade_cargo_over_cap`
+> is now **`trade_cargo_fit_to_pack`** — a smaller party trims the load bottom up rather than greying
+> the Send. `trade_hover_destination` is **retired** with the armed trade pick: the destination is a
+> click on a ringed band while the sheet is open, and the remembered sighting rides the `To` row's
+> hover. The claims that are this rework's: the opening sheet's two Send reasons, one row per good in
+> order with no row for a stone pile held at zero, the hide's sub-line by EQUALITY, collapsed grades
+> and a single-grade good with no disclosure, best grade first on `+` / spill / `−`, a full pack
+> greying `+` and `All` with its reason, and the sent cargo and command line equal to the per-pile
+> manifest's. Lines are found by `CARGO_ROW_KEY_META` and their own Labels, case-insensitively; a
+> good's main line also carries `CARGO_GOOD_ROW_META`. **Sabotage-verified** by reversing the grade
+> order: the four best-first claims fail, and the pack-clamp claims after them cascade.
+
 **Sits after `crafting_bench` in `CHAPTERS`** — it was appended last when it landed, and
 `selective_gather`, `knowledge_panel` and `supply_network` have followed it since, which is exactly
 the case the release note at the end of this paragraph exists for. **Seventeen frames and one hundred
@@ -3398,3 +3414,181 @@ subtracted.
 **A clean run is 445 frames / 2324 `PASS`, exit 0 — RE-MEASURED windowed** on the band-verbs branch
 merged with the work party, not summed from either side.
 
+
+## `chapters/crew_cap_parity.gd` — the sheet's `+` and the row's `+` agree
+
+**Appended LAST in `CHAPTERS`**, PNG-less, `EXPECTED_CHECKPOINTS` **34** — RE-MEASURED, not summed.
+The behaviour is `labor-ui.md`'s → "THE SHEET'S `+` AND THE ROW'S `+` READ ONE CEILING"; what belongs
+here is the shape of the drive.
+
+**ONE FIXTURE SOURCE FOR BOTH SURFACES.** One band (entity 961) on the food tile carries a forage row,
+a hunt row on a fought herd, and an extract row on the next hex's wood, each published at a ceiling of
+3, each row's `kit_id` the kit the sheet itself resolves (`_resolved_kit`), and two idle hands
+(`PARITY_IDLE`, with `working_age` derived from the crews so the band is internally consistent). Each
+web is asked in three states, and both `+`s must agree in each:
+
+| state | both `+`s |
+|---|---|
+| the crew AT its ceiling | dead |
+| the crew BELOW it, two idle | live |
+| the crew below it, the two idle spent by a pending scout edit | dead |
+
+**Both `+`s are read off rendered controls.** The row's is `can_add` off `_work_source_models` for
+food and the `+` of `_build_extract_row` for a working (`_workings_roster_models` carries no
+`workers`, which made the first cut of this claim pass at the cap on a live `+`); the sheet's is its
+crew row's `+`, opened fresh after `reset_*_source`, so the seed is the row's.
+
+**Sabotage-verified twice, disjointly.** The sheet ignoring the standing row
+(`_composed_standing_row` → `{}`) fails exactly forage and extract AT THE CAP (`row dead, sheet live`).
+The sheet's pool back on the wire's `idle_workers` fails exactly the three PENDING claims. **Hunt does
+not fail the first**: this herd's curve plateau coincides with its published `hunt_useful_workers`,
+so the hunt half guards the idle rule and not the ceiling.
+
+**The idle-rule change exposed four fixtures whose `idle_workers` disagreed with `working_age` minus
+their rows** (`hunt.gd`'s `_delivered_oracle_band`, the panel-band roster and its stale copy;
+`workings.gd`'s worked quarry). Each is corrected rather than worked around: a band no server can send
+was being priced on the wire's number, and the sheet now reads the overlay's.
+
+**TWO MORE BLOCKS RIDE THE SAME BAND.**
+
+- **The kit seed** (`_assert_kit_seeded_from_row`): the forage and hunt rows name a kit that is NOT
+  the source's default (`_other_kit`, through the sheet's own resolution). Each sheet is opened after
+  its composed kit is reset, so the seed must win over a reset. The claims are that the sheet opens on
+  the row's kit and that the two `+`s agree at the cap on it. A working is left out: this harness's
+  roster offers a working no kit but its own default.
+- **The overstaff number** (`_assert_overstaffed_reads_the_plus_ceiling`): the hunt row and the
+  working publish a `workers_needed` of 1, below every crew staged. One below the cap, the `+` is live
+  and no surface says overstaffed: the board note, its hover clause, the map list and both drawer
+  summaries. One above it, the `+` is dead and each says so, the note quoting the ceiling (`only 3 of
+  4`). Forage is left out because its ceiling IS its `workers_needed`.
+
+**Sabotage-verified.** Seeding `NO_KIT_ID` fails the two kit equalities and the forage at-cap parity
+(the hunt curve coincides again). Restoring `workers_needed` as the note's number fails the six note
+claims, and as the map list's fails the map claim alone.
+
+**A clean run is 460 frames / 2467 `PASS`, exit 0 — RE-MEASURED windowed.**
+
+## The unqueued rung and the committed crop line
+
+**`improvements.gd`'s feral-Field block** asserts the row reads `99% built · not queued`, unmarked
+and in neutral ink, with the retired `Lapsed` word and its mark absent. Beside it, the same patch with
+`meter_rot_per_turn` set asserts the rotting twin: marked, red, and its own hover. The stable and the
+rotting readings are a pair, since a face that always or never marks passes one of them.
+`EXPECTED_CHECKPOINTS` is **213**, re-measured.
+
+**`selective_gather.gd`'s `forage_take_sow_committed`** is the playtest sheet: a Tended Patch
+committed to Wild Emmer with its Sow at 94%. The crop line must read `Committed to Wild Emmer — sowing
+94%`, spelled out in the chapter. It must not say `Nothing picked` or leave the name blank, the
+committed crop's chip must be the lit one, and the meter is asserted mid-Sow as a precondition.
+
+**The same frame carries the curve deal and the disabled chips.** The tile authors a forage crew
+curve (`_sow_curve_rows`, a distinct `next_rung_take` at every crew) and the sheet is composed at
+crew 3 (`SOW_SHEET_CREW`, the band pool's cap). Its claims:
+
+- while the curve is pending, read with no settle after the open, the `ONCE SOWN` row is absent;
+- once answered, `ONCE SOWN` quotes `0.85`, the row at crew 3, and not the tile's crew-blind
+  `2.40` field yield;
+- every crop chip is disabled, its hover exactly `This ground is committed to Wild Emmer.`
+
+`EXPECTED_CHECKPOINTS` is **77**, re-measured.
+
+**Sabotage-verified.** Passing `""` as the ground's crop fails the line and the lit-chip claims. The
+blank-name negative stays green, because an empty name now draws no line at all. Marking every
+unqueued rung fails the neutral-ink and no-mark claims. Reverting the deal's food to the crew-blind
+quote fails both `ONCE SOWN` claims; never setting the chips' reason fails the chip claim; answering a
+figure while the curve is pending fails the pending claim.
+
+**A clean run is 461 frames / 2479 `PASS`, exit 0 — RE-MEASURED windowed.**
+
+## The deal row reads the curve on every web
+
+The behaviour is `labor-ui.md`'s → "`ONCE SOWN` / `ONCE TENDED` / `ONCE TAMED` IS THE CREW CURVE'S
+ROW". The stand-ins answer the new fields: `fixtures_forecast.gd` gives every forage row
+`next_rung_take` / `_fodder` / `_materials` off the asked crop's rung quote, scaled by the band's
+output and the crew's share, and every hunt row `next_rung_animals_likely` off the rung payoff turned
+back into animals.
+
+- **`forage_take_sow_curve_deal`** (`selective_gather.gd`): an UNCOMMITTED patch mid-Sow with an
+  authored curve whose crew-3 row carries `0.66 food · 0.40 fodder · 0.15 fibre`. A precondition says
+  the crop quote carries none of those terms; then food, fodder and material are each asserted against
+  the row. `EXPECTED_CHECKPOINTS` **82**.
+- **The crop rides the ask** (`forage_crop.gd`, the emmer/groundnut block): every forage ask is
+  recorded through `set_sender` after `query.reset()`, and the curve must be asked with `wild_emmer`
+  and, after the pick changes, last with `wild_tubers`. The reset is load-bearing: a cached emmer
+  answer sends no ask.
+- **`forage_unstaffed`'s deal claims INVERTED**: a crew of none quotes NO payoff row, and a liveness
+  claim at the end of the block reads the row back at one forager. `EXPECTED_CHECKPOINTS` **71**.
+- **`herd_tame_curve_deal`** (`hunt.gd`): the boar composed with Tame at two hunters, against a sender
+  authoring `0.05 × workers` animals on every row. The deal must equal those animals through the body
+  quantum (`0.20 food`), with a precondition that it differs from the crew-blind
+  `BOAR_TAME_PAYOFF_FACE`. `EXPECTED_CHECKPOINTS` **349**.
+
+**The hunt curve's key had to carry the herd's state** for the existing corral frames to stay right:
+without it `herd_corral_depleted` and the corral offer reused the tame frame's cached answer.
+
+**Sabotage-verified in one run, three disjoint mutations**: the crop dropped from the ask fails the
+two ask claims and the selected-crop payoff claim; the fodder read off the crop quote fails the fodder
+claim alone; the hunt deal back on `_improvement_payoff_terms` fails the curve claim alone (`1.48
+food`).
+
+**A clean run is 463 frames / 2487 `PASS`, exit 0 — RE-MEASURED windowed.** `band_panel_preview`
+1500 `PASS`, exit 0 (a first run failed only the foreign-mouse guard and passed on re-run).
+
+## The crew split under the sheet's stepper (`chapters/forage_accounts.gd`)
+
+Two frames and eight claims, appended last in the chapter: `forage_crew_split_sheet` (crew 3) and
+`forage_crew_split_sheet_stepped` (crew 2). The behaviour is `labor-ui.md` → "THE CREW SPLIT ON THE
+SHEET".
+
+- **The patch authors its curve with a different `keep_hands` at every crew** (half a hand per
+  worker) and a take that rises with every gatherer, so the cap is the pool and a sheet reading the
+  wrong row lands on a figure the claims name.
+- **The crew is dialled on the OPEN sheet.** A close resets the composition, which is how the first
+  cut read crew 1 at every step.
+- **The pending claim** resets the query and reads the sheet with no settle: no marks.
+- The claims: the marks count the stepper's crew; the share is the row's `keep_hands` at that crew;
+  the hover and the sentence under the figure are spelled out by equality (`About 2 of 3 …`, then
+  `1 of 2 …` with no `About`); and stepping to 2 moves both.
+- `EXPECTED_CHECKPOINTS` **234**, re-measured.
+
+**Sabotage-verified**: the sheet reading crew 1's row fails five claims; marks drawn with no bill
+fails the pending claim.
+
+## The crew split on the hunt and Groundwork sheets (`chapters/hunt.gd`, `chapters/workings.gd`)
+
+The hunt chapter appends one frame and four claims: `herd_crew_split_sheet`. The workings chapter
+has four claims inside `_crew_curve_states`. The behaviour is `labor-ui.md` → "THE CREW SPLIT ON THE
+SHEET".
+
+- **Each curve authors half a hand of keeping per worker**, so every crew's row differs. Hunt uses a
+  wrapping `set_sender` over `ForecastFx.answer`, and the wood uses the authored curve's rows.
+  `ForecastFx.install` restores the stock sender afterwards.
+- The claims, at crews 3 and 2 on each sheet: the marks count the stepper's crew, the share is the
+  row's `keep_hands` at that crew, and the hover and the sentence are spelled out by equality.
+- **The finders are shared.** `Readout.crew_split_marks` / `crew_split_sentence` (`readouts.gd`)
+  serve all three chapters.
+- `EXPECTED_CHECKPOINTS`: hunt **354**, workings **179**, both re-measured.
+
+**Sabotage-verified**: either sheet reading crew 1's row fails its four claims.
+
+## A rung slipping, beside its loss (`chapters/event_dock.gd`)
+
+One frame and eight claims, appended last in the chapter: `event_dock_rung_slipping`, read at the
+Routine floor. The behaviour is `event-dock.md` → "`slipping` is ROUTINE, and its loss is the
+Alert".
+
+- Two slips: the sim's shipped detail with no `band=`, and one carrying `band=5`.
+- One loss: `status=feral reason=untended`.
+- The claims:
+  - the slip resolves to Routine and its row draws `▾`;
+  - exactly one Work-tab link exists, and it is band 5's;
+  - the loss is Alert and draws `⚠`;
+  - the slip's detail reads `slipping` on the drawn row, with no `Progress` / `X` token, and the
+    loss's reads `feral`;
+  - a `trimmed` line still shows its tile, so the hiding stays scoped.
+- `EXPECTED_CHECKPOINTS` **229**, re-measured.
+
+**Sabotage-verified**: the slip at Alert with `⚠` fails two claims, and dropping it from the
+work-link set fails the link claim. Dropping the status scoping fails both detail claims.
+
+**A clean run is 467 frames / 2511 `PASS`, exit 0 — RE-MEASURED windowed.**

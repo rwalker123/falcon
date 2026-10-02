@@ -1081,29 +1081,22 @@ fn spawn_crew_of(
                 tags: Vec::new(),
             },
             LaborAllocation {
-                // **THE HUNT ROW, AND THE BAND'S KEEPING ROLE BESIDE IT.** A managed herd is owed
-                // its keeping every turn (`docs/plan_standing_upkeep.md` §2.4), and hunting it is
-                // not keeping it — a band that staffed none would watch its own flock drift off
-                // while it worked. Since §2.5 the keeping is a **band-level pool** rather than a
-                // crew on the herd, so the fixture staffs the `husbandry` role at the herd's own
-                // demand (`keeper_crew`), which is what a player reading `upkeepWorkersNeeded`
-                // would staff.
-                assignments: with_keeping_role(
-                    with_builders_pool(
-                        vec![LaborAssignment {
-                            party: None,
-                            target: LaborTarget::Hunt {
-                                fauna_id: herd_id.to_string(),
-                                floor: policy,
-                            },
-                            workers: hunters,
-                            kit: None,
-                            priority: SourcePriority::default(),
-                            upkeep_kit: None,
-                        }],
-                        improvement.map_or(0, |_| hunters),
-                    ),
-                    keepers,
+                // **THE HUNT ROW, STAFFED FOR ITS KEEPING TOO.** A managed herd is owed its keeping
+                // every turn (`docs/plan_standing_upkeep.md` §2.4), and the hunt row is the herd's
+                // crew: it keeps first and hunts with the rest (`docs/plan_site_crews.md` §2.2). So
+                // the row carries the keeping hands on top of the hunters.
+                assignments: with_builders_pool(
+                    vec![LaborAssignment {
+                        party: None,
+                        target: LaborTarget::Hunt {
+                            fauna_id: herd_id.to_string(),
+                            floor: policy,
+                        },
+                        workers: hunters + keepers,
+                        kit: None,
+                        priority: SourcePriority::default(),
+                    }],
+                    improvement.map_or(0, |_| hunters),
                 ),
                 // **The declaration** — a verb states what is raised, and the `builders` pool above
                 // raises it (`docs/plan_standing_upkeep.md` §2.5).
@@ -1111,7 +1104,7 @@ fn spawn_crew_of(
                     .map(|declared| core_sim::BuildQueueEntry {
                         source: core_sim::BuildSource::Herd(herd_id.to_string()),
                         declared: core_sim::BuildJob::Rung(declared),
-                        kit: None,
+                        priority: core_sim::SourcePriority::default(),
                     })
                     .into_iter()
                     .collect(),
@@ -1777,7 +1770,6 @@ fn an_untamed_herd_quotes_the_tame_it_would_take_on_and_the_quote_halves_with_th
                 workers: keepers,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             });
         run_turns_with_hunt(&mut app, 1);
         count(herd_of(&app, &id).build_turns_remaining)
@@ -3431,7 +3423,6 @@ fn set_hunt_improvement(
                         workers: builders,
                         kit: None,
                         priority: SourcePriority::default(),
-                        upkeep_kit: None,
                     }),
                 }
                 assert!(
@@ -4006,12 +3997,81 @@ fn a_tames_first_turn_draws_the_husbandry_pool_and_a_wild_hunt_draws_nothing() {
     );
 }
 
+/// ⛔ **A TAMED HERD'S OWN CREW SHORT OF ITS BILL SHEDS IT; A CREW PAST THE BILL KEEPS IT AND
+/// CULLS** (`docs/plan_site_crews.md` §2.2). The hunt row is the herd's crew and keeps it first: a
+/// crew smaller than the bill spends every hand on the keeping, takes nothing and still falls short,
+/// so past the grace the flock sheds toward what that crew can hold; a crew past the bill meets it
+/// outright and the rest cull.
+#[test]
+fn a_tamed_herds_crew_short_of_its_bill_sheds_and_a_kept_one_culls() {
+    /// The herd is sized to want this many keeping hands, off the species' own `animals_per_herder`.
+    const HANDS_THE_HERD_WANTS: f32 = 3.0;
+    /// A crew one hand short of the whole bill at any gear the fixture band holds.
+    const A_SHORT_CREW: u32 = 1;
+    /// Hands past the bill, so the kept arm has a take.
+    const SPARE_HANDS: u32 = 3;
+
+    let run = |crew: u32| {
+        let mut app = spawn_world();
+        let id = prime_thriving_herd(&mut app);
+        {
+            let heads_per_hand = app
+                .world
+                .resource::<FaunaConfigHandle>()
+                .get()
+                .animals_per_herder_for(FIXTURE_SPECIES);
+            let mut registry = app.world.resource_mut::<HerdRegistry>();
+            let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+            herd.biomass = HANDS_THE_HERD_WANTS * heads_per_hand * herd.body_mass;
+        }
+        domesticate(&mut app, &id);
+        let seated = herd_of(&app, &id).biomass;
+        let band = spawn_hunter(&mut app, &id, MSY_BIOMASS_FRACTION);
+        set_hunt_workers(&mut app, band, crew);
+        // Past the grace, so a shortfall is shedding rather than being forgiven.
+        let past_the_grace = neglect_grace(&app, &id) + 2;
+        run_turns_with_hunt(&mut app, past_the_grace);
+        let herd = herd_of(&app, &id);
+        (herd, yield_of(&app, band), seated)
+    };
+
+    let (short, short_take, seated) = run(A_SHORT_CREW);
+    assert!(
+        short.upkeep_hands > 0.0 && short.upkeep_hands <= A_SHORT_CREW as f32,
+        "a crew short of the bill spends its hands on the keeping: {}",
+        short.upkeep_hands
+    );
+    assert!(
+        short_take <= 0.0,
+        "…so nobody is left to cull: took {short_take}"
+    );
+    assert!(
+        short.biomass < seated,
+        "…and with nothing culled the flock still shrank, which is the shed: {seated} -> {}",
+        short.biomass
+    );
+
+    let (kept, kept_take, _) = run(HANDS_THE_HERD_WANTS as u32 + SPARE_HANDS);
+    assert_eq!(
+        kept.neglect_turns, 0,
+        "a crew past the bill keeps the herd outright — no neglect, nothing sheds"
+    );
+    assert!(
+        kept.upkeep_hands > 0.0
+            && kept.upkeep_hands < (HANDS_THE_HERD_WANTS as u32 + SPARE_HANDS) as f32,
+        "…the keeping takes what the bill needs and leaves the rest: {}",
+        kept.upkeep_hands
+    );
+    assert!(kept_take > 0.0, "…and the rest cull: took {kept_take}");
+}
+
 /// **THE SUPPLY STAMP ACCUMULATES ACROSS THE BANDS WORKING ONE HERD.** The demand is per-**source**,
 /// so two bands each put a fraction of it on the ground; assigning would let whichever band the loop
 /// visited last speak for all of them, and the herd would shed as if the other crew were not there.
 ///
-/// It has been a `+=` since slice 3, when no animal rung declared an upkeep and it was therefore
-/// inert. It stops being inert here, so it is measured rather than assumed.
+/// **Each band's crew keeps its pro-rata share of the one bill** (`docs/plan_site_crews.md` §2.1):
+/// two crews of one share it half and half, so the herd is kept exactly once — its whole bill, not
+/// two whole bills and not one crew's half.
 #[test]
 fn two_bands_keeping_one_herd_sum_their_hands() {
     let mut app = spawn_world();
@@ -4072,26 +4132,36 @@ fn two_bands_keeping_one_herd_sum_their_hands() {
         "fixture: a start-stocked band's derived keeping kit must actually deliver something — a \
          bare {one_keeper} means the derivation resolved `none`"
     );
-    assert_eq!(
-        herd_of(&app, &id).upkeep_supplied,
-        2.0 * one_keeper,
-        "both bands' keepers are on the herd, so both are counted"
+    let herd = herd_of(&app, &id);
+    let expected = 2.0 * (demand / 2.0).min(one_keeper);
+    assert!(
+        (herd.upkeep_supplied - expected).abs() < 1e-4,
+        "both bands' crews keep their half of the one bill, so both are counted: {} against \
+         {expected}",
+        herd.upkeep_supplied
+    );
+    assert!(
+        herd.upkeep_hands > 0.0 && herd.upkeep_hands <= 2.0,
+        "the two crews' keeping hands sum on the herd: {}",
+        herd.upkeep_hands
     );
 }
 
-/// Put `workers` on a band's **husbandry role** — the fixture's stand-in for
-/// `assign_labor <faction> <band> husbandry <workers>`.
+/// Put `workers` on a band's **hunt row** — its whole crew, which keeps the herd first and hunts
+/// with the rest (`docs/plan_site_crews.md` §2.2). The fixture's stand-in for
+/// `assign_labor <faction> <band> hunt <herd> <workers>`.
 fn set_maintain_workers(app: &mut App, band: bevy::prelude::Entity, workers: u32) {
     let mut allocation = app
         .world
         .get_mut::<LaborAllocation>(band)
         .expect("band exists");
-    // **SET, not add** — the command it stands in for states a number, and the fixture band already
-    // carries a keeping role from `spawn_crew_of`. `set_assignment` is handed exactly the headroom
-    // this row needs (what every other row holds, plus these keepers), because a fixture stating a
-    // role outright is not testing the refusal a real command can make.
-    let headroom = allocation.assigned_total() + workers;
-    allocation.set_assignment(LaborTarget::Husbandry, workers, headroom, None);
+    // **SET, not add** — the command it stands in for states a number.
+    let row = allocation
+        .assignments
+        .iter_mut()
+        .find(|row| matches!(row.target, LaborTarget::Hunt { .. }))
+        .expect("the fixture band works the herd");
+    row.workers = workers;
 }
 
 /// **Append the band-wide `builders` pool to a fixture's rows** — the hands a declared build is
@@ -4118,23 +4188,6 @@ fn with_builders_pool(mut rows: Vec<LaborAssignment>, builders: u32) -> Vec<Labo
                     .expect("the shipped roster carries the empty kit"),
             ),
             priority: SourcePriority::default(),
-            upkeep_kit: None,
-        });
-    }
-    rows
-}
-
-/// **Append the band-wide `husbandry` role to a fixture's rows** — see [`with_builders_pool`] for
-/// the building half.
-fn with_keeping_role(mut rows: Vec<LaborAssignment>, keepers: u32) -> Vec<LaborAssignment> {
-    if keepers > 0 {
-        rows.push(LaborAssignment {
-            party: None,
-            target: LaborTarget::Husbandry,
-            workers: keepers,
-            kit: None,
-            priority: SourcePriority::default(),
-            upkeep_kit: None,
         });
     }
     rows
@@ -5116,20 +5169,24 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
             .resource::<TileRegistry>()
             .index(pos.x, pos.y)
             .expect("the herd's tile resolves");
-        let hunt_row = |id: &str| LaborAssignment {
+        let hunt_row = |id: &str, crew: u32| LaborAssignment {
             party: None,
             target: LaborTarget::Hunt {
                 fauna_id: id.to_string(),
                 floor: AT_THE_FLOOR,
             },
-            workers: DIP_VISIBLE_HUNTERS,
+            workers: crew,
             kit: None,
             priority: SourcePriority::default(),
-            upkeep_kit: None,
         };
-        let rows = with_keeping_role(
-            with_builders_pool(vec![hunt_row(&holding), hunt_row(&build)], BUILDERS),
-            keepers,
+        // **The holding's own row carries its keeping hands** (`docs/plan_site_crews.md` §2.2); the
+        // blocked head's row carries its hunters alone.
+        let rows = with_builders_pool(
+            vec![
+                hunt_row(&holding, DIP_VISIBLE_HUNTERS + keepers),
+                hunt_row(&build, DIP_VISIBLE_HUNTERS),
+            ],
+            BUILDERS,
         );
         let staffed: u32 = rows.iter().map(|row| row.staffed_total()).sum();
         app.world.spawn((
@@ -5169,7 +5226,7 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
                 build_queue: vec![core_sim::BuildQueueEntry {
                     source: core_sim::BuildSource::Herd(build.clone()),
                     declared: core_sim::BuildJob::Rung(Improvement::Tame),
-                    kit: None,
+                    priority: core_sim::SourcePriority::default(),
                 }],
                 ..Default::default()
             },

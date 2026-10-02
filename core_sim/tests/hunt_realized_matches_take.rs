@@ -103,7 +103,7 @@ fn drive(species: &str, capacity: f32, hunters: u32, carry: f32) -> Readings {
             carry,
             &party,
             NEUTRAL_OUTPUT,
-            hunters,
+            hunters as f32,
             FLOOR,
             REALIZED_HORIZON,
             ProjectionStart::AfterRegrowth,
@@ -111,7 +111,7 @@ fn drive(species: &str, capacity: f32, hunters: u32, carry: f32) -> Readings {
         .provisions;
         let outcome = hunt_take(
             &mut herd,
-            hunters,
+            hunters as f32,
             FLOOR,
             carry,
             &party,
@@ -125,7 +125,7 @@ fn drive(species: &str, capacity: f32, hunters: u32, carry: f32) -> Readings {
             carry,
             &party,
             NEUTRAL_OUTPUT,
-            hunters,
+            hunters as f32,
             FLOOR,
             ARRIVALS_HORIZON,
         );

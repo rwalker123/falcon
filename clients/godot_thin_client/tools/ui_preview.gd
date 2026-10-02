@@ -57,6 +57,7 @@ const CHAPTERS := [
 	"res://tools/ui_preview/chapters/supply_network.gd",
 	"res://tools/ui_preview/chapters/starting_loadout.gd",
 	"res://tools/ui_preview/chapters/workings.gd",
+	"res://tools/ui_preview/chapters/crew_cap_parity.gd",
 ]
 
 ## The one method a chapter owes the harness (see the chapter contract in
@@ -740,8 +741,9 @@ func _turn_orb_advance_button() -> Button:
 ## builders seed those themselves — and stopped being invisible the moment the adapter also had to
 ## seed the growth terms: every compose sheet opened this way lost its chart.
 func _compose_forage(tile_info: Dictionary) -> void:
-	_hud._drawercompose.open_forage_compose(
-		ForageFx.floorify(tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX))
+	var priced := ForageFx.floorify(tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	ForecastFx.note_forage_tile(priced)
+	_hud._drawercompose.open_forage_compose(priced)
 
 ## Open the herd compose sheet, optionally DIALING IN a count and/or policy.
 ##

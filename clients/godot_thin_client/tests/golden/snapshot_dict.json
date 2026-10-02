@@ -585,10 +585,26 @@
       "tile_y": 187,
       "turns_remaining": 10,
       "upkeep_demand": 8.58,
+      "upkeep_hands": 40.82,
       "upkeep_kit_id": "deposits[0].upkeep_kit_id",
       "upkeep_kit_named": false,
+      "upkeep_next_worker_turn": 26,
       "upkeep_shortfall": 109.129997,
       "upkeep_supplied": 40.529999,
+      "upkeep_toe": [
+        {
+          "filled": 17.940001,
+          "item_id": "hoes",
+          "required": 32.41
+        },
+        {
+          "filled": 39.110001,
+          "item_id": "crook",
+          "required": 110.779999
+        }
+      ],
+      "upkeep_tools_short": true,
+      "upkeep_workers_at_completion": 34,
       "upkeep_workers_needed": 83
     },
     {
@@ -618,10 +634,26 @@
       "tile_y": 162,
       "turns_remaining": 113,
       "upkeep_demand": 18.440001,
+      "upkeep_hands": 96.720001,
       "upkeep_kit_id": "deposits[1].upkeep_kit_id",
       "upkeep_kit_named": true,
+      "upkeep_next_worker_turn": 121,
       "upkeep_shortfall": 73.75,
       "upkeep_supplied": 45.66,
+      "upkeep_toe": [
+        {
+          "filled": 4.42,
+          "item_id": "hoes",
+          "required": 36.029999
+        },
+        {
+          "filled": 33.93,
+          "item_id": "crook",
+          "required": 15.93
+        }
+      ],
+      "upkeep_tools_short": false,
+      "upkeep_workers_at_completion": 171,
       "upkeep_workers_needed": 112
     },
     {
@@ -651,10 +683,26 @@
       "tile_y": 37,
       "turns_remaining": 12,
       "upkeep_demand": 21.76,
+      "upkeep_hands": 82.980003,
       "upkeep_kit_id": "deposits[2].upkeep_kit_id",
       "upkeep_kit_named": false,
+      "upkeep_next_worker_turn": 92,
       "upkeep_shortfall": 11.28,
       "upkeep_supplied": 78.470001,
+      "upkeep_toe": [
+        {
+          "filled": 75.410004,
+          "item_id": "hoes",
+          "required": 22.370001
+        },
+        {
+          "filled": 98.449997,
+          "item_id": "crook",
+          "required": 34.529999
+        }
+      ],
+      "upkeep_tools_short": true,
+      "upkeep_workers_at_completion": 128,
       "upkeep_workers_needed": 125
     }
   ],
@@ -1187,6 +1235,7 @@
       "tended_yield": 11.58,
       "tile_capacity": 74.75,
       "upkeep_demand": 46.18,
+      "upkeep_hands": 52.389999,
       "upkeep_kit_id": "forage_patches[0].upkeep_kit_id",
       "upkeep_kit_named": true,
       "upkeep_material_demand": [
@@ -1217,8 +1266,23 @@
           "material_id": "forage_patches[0].upkeep_material_supplied[2].material_id"
         }
       ],
+      "upkeep_next_worker_turn": 74,
       "upkeep_shortfall": 85.980003,
       "upkeep_supplied": 28.360001,
+      "upkeep_toe": [
+        {
+          "filled": 96.389999,
+          "item_id": "hoes",
+          "required": 50.639999
+        },
+        {
+          "filled": 30.42,
+          "item_id": "crook",
+          "required": 111.769997
+        }
+      ],
+      "upkeep_tools_short": true,
+      "upkeep_workers_at_completion": 58,
       "upkeep_workers_needed": 99,
       "x": 0,
       "y": 1
@@ -1536,6 +1600,7 @@
       "tended_yield": 86.169998,
       "tile_capacity": 2.22,
       "upkeep_demand": 10.09,
+      "upkeep_hands": 17.91,
       "upkeep_kit_id": "forage_patches[1].upkeep_kit_id",
       "upkeep_kit_named": false,
       "upkeep_material_demand": [
@@ -1566,8 +1631,23 @@
           "material_id": "forage_patches[1].upkeep_material_supplied[2].material_id"
         }
       ],
+      "upkeep_next_worker_turn": 89,
       "upkeep_shortfall": 34.380001,
       "upkeep_supplied": 37.41,
+      "upkeep_toe": [
+        {
+          "filled": 101.349998,
+          "item_id": "hoes",
+          "required": 6.64
+        },
+        {
+          "filled": 92.860001,
+          "item_id": "crook",
+          "required": 35.0
+        }
+      ],
+      "upkeep_tools_short": true,
+      "upkeep_workers_at_completion": 51,
       "upkeep_workers_needed": 48,
       "x": 1,
       "y": 2
@@ -1885,6 +1965,7 @@
       "tended_yield": 94.239998,
       "tile_capacity": 28.540001,
       "upkeep_demand": 62.389999,
+      "upkeep_hands": 60.970001,
       "upkeep_kit_id": "forage_patches[2].upkeep_kit_id",
       "upkeep_kit_named": true,
       "upkeep_material_demand": [
@@ -1915,8 +1996,23 @@
           "material_id": "forage_patches[2].upkeep_material_supplied[2].material_id"
         }
       ],
+      "upkeep_next_worker_turn": 92,
       "upkeep_shortfall": 101.790001,
       "upkeep_supplied": 78.580002,
+      "upkeep_toe": [
+        {
+          "filled": 105.660004,
+          "item_id": "hoes",
+          "required": 23.879999
+        },
+        {
+          "filled": 90.18,
+          "item_id": "crook",
+          "required": 95.160004
+        }
+      ],
+      "upkeep_tools_short": false,
+      "upkeep_workers_at_completion": 48,
       "upkeep_workers_needed": 133,
       "x": 2,
       "y": 0
@@ -2323,6 +2419,7 @@
       "tame_work_cost": 86.699997,
       "tame_work_done": 60.59,
       "upkeep_demand": 43.459999,
+      "upkeep_hands": 78.230003,
       "upkeep_kit_id": "herds[0].upkeep_kit_id",
       "upkeep_kit_named": true,
       "upkeep_material_demand": [
@@ -2353,8 +2450,23 @@
           "material_id": "herds[0].upkeep_material_supplied[2].material_id"
         }
       ],
+      "upkeep_next_worker_turn": 13,
       "upkeep_shortfall": 10.37,
       "upkeep_supplied": 24.889999,
+      "upkeep_toe": [
+        {
+          "filled": 6.19,
+          "item_id": "hoes",
+          "required": 110.139999
+        },
+        {
+          "filled": 92.279999,
+          "item_id": "crook",
+          "required": 91.910004
+        }
+      ],
+      "upkeep_tools_short": true,
+      "upkeep_workers_at_completion": 111,
       "upkeep_workers_needed": 156,
       "x": 0,
       "y": 1
@@ -2555,6 +2667,7 @@
       "tame_work_cost": 84.620003,
       "tame_work_done": 10.41,
       "upkeep_demand": 25.92,
+      "upkeep_hands": 82.889999,
       "upkeep_kit_id": "herds[1].upkeep_kit_id",
       "upkeep_kit_named": false,
       "upkeep_material_demand": [
@@ -2585,8 +2698,23 @@
           "material_id": "herds[1].upkeep_material_supplied[2].material_id"
         }
       ],
+      "upkeep_next_worker_turn": 134,
       "upkeep_shortfall": 8.97,
       "upkeep_supplied": 47.07,
+      "upkeep_toe": [
+        {
+          "filled": 103.860001,
+          "item_id": "hoes",
+          "required": 67.760002
+        },
+        {
+          "filled": 36.169998,
+          "item_id": "crook",
+          "required": 39.720001
+        }
+      ],
+      "upkeep_tools_short": true,
+      "upkeep_workers_at_completion": 102,
       "upkeep_workers_needed": 119,
       "x": 1,
       "y": 2
@@ -2787,6 +2915,7 @@
       "tame_work_cost": 50.41,
       "tame_work_done": 32.84,
       "upkeep_demand": 38.830002,
+      "upkeep_hands": 57.720001,
       "upkeep_kit_id": "herds[2].upkeep_kit_id",
       "upkeep_kit_named": true,
       "upkeep_material_demand": [
@@ -2817,8 +2946,23 @@
           "material_id": "herds[2].upkeep_material_supplied[2].material_id"
         }
       ],
+      "upkeep_next_worker_turn": 175,
       "upkeep_shortfall": 75.959999,
       "upkeep_supplied": 46.810001,
+      "upkeep_toe": [
+        {
+          "filled": 87.360001,
+          "item_id": "hoes",
+          "required": 18.9
+        },
+        {
+          "filled": 9.96,
+          "item_id": "crook",
+          "required": 93.360001
+        }
+      ],
+      "upkeep_tools_short": false,
+      "upkeep_workers_at_completion": 37,
       "upkeep_workers_needed": 134,
       "x": 2,
       "y": 0
@@ -4290,20 +4434,29 @@
       },
       "build_queue": [
         {
+          "build_priority": "populations[0].build_queue[0].build_priority",
           "fauna_id": "populations[0].build_queue[0].fauna_id",
           "kind": "populations[0].build_queue[0].kind",
+          "material": "populations[0].build_queue[0].material",
+          "road": true,
           "target_x": 128,
           "target_y": 117
         },
         {
+          "build_priority": "populations[0].build_queue[1].build_priority",
           "fauna_id": "populations[0].build_queue[1].fauna_id",
           "kind": "populations[0].build_queue[1].kind",
+          "material": "populations[0].build_queue[1].material",
+          "road": false,
           "target_x": 145,
           "target_y": 156
         },
         {
+          "build_priority": "populations[0].build_queue[2].build_priority",
           "fauna_id": "populations[0].build_queue[2].fauna_id",
           "kind": "populations[0].build_queue[2].kind",
+          "material": "populations[0].build_queue[2].material",
+          "road": false,
           "target_x": 114,
           "target_y": 103
         }
@@ -4727,8 +4880,21 @@
           "hunt_useful_workers": 43,
           "hunters_on_the_road": 119,
           "improvement": "populations[0].labor_assignments[0].improvement",
+          "keep_hands": 98.620003,
           "kind": "populations[0].labor_assignments[0].kind",
           "kit_id": "populations[0].labor_assignments[0].kit_id",
+          "kit_toe": [
+            {
+              "filled": 111.93,
+              "item_id": "baskets",
+              "required": 14.35
+            },
+            {
+              "filled": 15.1,
+              "item_id": "spears",
+              "required": 69.349998
+            }
+          ],
           "kit_workers_holding": 99.230003,
           "material": "populations[0].labor_assignments[0].material",
           "material_upkeep_demand": [
@@ -4807,8 +4973,21 @@
           "hunt_useful_workers": 144,
           "hunters_on_the_road": 12,
           "improvement": "populations[0].labor_assignments[1].improvement",
+          "keep_hands": 3.33,
           "kind": "populations[0].labor_assignments[1].kind",
           "kit_id": "populations[0].labor_assignments[1].kit_id",
+          "kit_toe": [
+            {
+              "filled": 66.639999,
+              "item_id": "baskets",
+              "required": 14.49
+            },
+            {
+              "filled": 28.790001,
+              "item_id": "spears",
+              "required": 100.269997
+            }
+          ],
           "kit_workers_holding": 53.110001,
           "material": "populations[0].labor_assignments[1].material",
           "material_upkeep_demand": [
@@ -4887,8 +5066,21 @@
           "hunt_useful_workers": 121,
           "hunters_on_the_road": 121,
           "improvement": "populations[0].labor_assignments[2].improvement",
+          "keep_hands": 103.919998,
           "kind": "populations[0].labor_assignments[2].kind",
           "kit_id": "populations[0].labor_assignments[2].kit_id",
+          "kit_toe": [
+            {
+              "filled": 59.34,
+              "item_id": "baskets",
+              "required": 48.099998
+            },
+            {
+              "filled": 24.24,
+              "item_id": "spears",
+              "required": 86.139999
+            }
+          ],
           "kit_workers_holding": 14.23,
           "material": "populations[0].labor_assignments[2].material",
           "material_upkeep_demand": [
@@ -5122,54 +5314,33 @@
         {
           "idle_keepers": 19.24,
           "keepers": 35.959999,
-          "pool": "agriculture"
-        },
-        {
-          "idle_keepers": 70.25,
-          "keepers": 0.09,
-          "pool": "husbandry"
-        },
-        {
-          "idle_keepers": 19.620001,
-          "keepers": 75.519997,
           "pool": "roadwork"
-        },
-        {
-          "idle_keepers": 58.41,
-          "keepers": 62.630001,
-          "pool": "quarrywork"
         }
       ],
       "pool_toe": [
         {
           "filled": 75.68,
-          "item_id": "hoes",
-          "pool": "agriculture",
+          "item_id": "earthmoving",
+          "pool": "roadwork",
           "required": 45.049999
         },
         {
           "filled": 87.029999,
-          "item_id": "earthmoving",
+          "item_id": "stone_dressing",
           "pool": "roadwork",
           "required": 102.550003
         },
         {
           "filled": 28.26,
           "item_id": "stone_dressing",
-          "pool": "roadwork",
+          "pool": "builders",
           "required": 70.599998
         },
         {
           "filled": 49.139999,
-          "item_id": "stone_dressing",
-          "pool": "quarrywork",
-          "required": 20.5
-        },
-        {
-          "filled": 41.650002,
           "item_id": "hoes",
           "pool": "builders",
-          "required": 30.620001
+          "required": 20.5
         }
       ],
       "pooling_links": [
@@ -5189,9 +5360,6 @@
           "rung_id": "populations[0].pooling_links[2].rung_id"
         }
       ],
-      "quarrywork_demand": 73.029999,
-      "quarrywork_shortfall": 76.830002,
-      "quarrywork_supplied": 34.189999,
       "raid_forfeit": 89.769997,
       "raid_radius": 51,
       "roadwork_demand": 58.639999,
@@ -5353,20 +5521,29 @@
       },
       "build_queue": [
         {
+          "build_priority": "populations[1].build_queue[0].build_priority",
           "fauna_id": "populations[1].build_queue[0].fauna_id",
           "kind": "populations[1].build_queue[0].kind",
+          "material": "populations[1].build_queue[0].material",
+          "road": true,
           "target_x": 151,
           "target_y": 162
         },
         {
+          "build_priority": "populations[1].build_queue[1].build_priority",
           "fauna_id": "populations[1].build_queue[1].fauna_id",
           "kind": "populations[1].build_queue[1].kind",
+          "material": "populations[1].build_queue[1].material",
+          "road": false,
           "target_x": 62,
           "target_y": 51
         },
         {
+          "build_priority": "populations[1].build_queue[2].build_priority",
           "fauna_id": "populations[1].build_queue[2].fauna_id",
           "kind": "populations[1].build_queue[2].kind",
+          "material": "populations[1].build_queue[2].material",
+          "road": false,
           "target_x": 189,
           "target_y": 200
         }
@@ -5790,8 +5967,21 @@
           "hunt_useful_workers": 30,
           "hunters_on_the_road": 118,
           "improvement": "populations[1].labor_assignments[0].improvement",
+          "keep_hands": 55.380001,
           "kind": "populations[1].labor_assignments[0].kind",
           "kit_id": "populations[1].labor_assignments[0].kit_id",
+          "kit_toe": [
+            {
+              "filled": 10.64,
+              "item_id": "baskets",
+              "required": 26.690001
+            },
+            {
+              "filled": 87.690002,
+              "item_id": "spears",
+              "required": 107.209999
+            }
+          ],
           "kit_workers_holding": 68.360001,
           "material": "populations[1].labor_assignments[0].material",
           "material_upkeep_demand": [
@@ -5870,8 +6060,21 @@
           "hunt_useful_workers": 41,
           "hunters_on_the_road": 1,
           "improvement": "populations[1].labor_assignments[1].improvement",
+          "keep_hands": 57.48,
           "kind": "populations[1].labor_assignments[1].kind",
           "kit_id": "populations[1].labor_assignments[1].kit_id",
+          "kit_toe": [
+            {
+              "filled": 89.300003,
+              "item_id": "baskets",
+              "required": 37.080002
+            },
+            {
+              "filled": 47.5,
+              "item_id": "spears",
+              "required": 100.540001
+            }
+          ],
           "kit_workers_holding": 76.669998,
           "material": "populations[1].labor_assignments[1].material",
           "material_upkeep_demand": [
@@ -5950,8 +6153,21 @@
           "hunt_useful_workers": 184,
           "hunters_on_the_road": 68,
           "improvement": "populations[1].labor_assignments[2].improvement",
+          "keep_hands": 26.209999,
           "kind": "populations[1].labor_assignments[2].kind",
           "kit_id": "populations[1].labor_assignments[2].kit_id",
+          "kit_toe": [
+            {
+              "filled": 32.0,
+              "item_id": "baskets",
+              "required": 95.849998
+            },
+            {
+              "filled": 56.27,
+              "item_id": "spears",
+              "required": 15.91
+            }
+          ],
           "kit_workers_holding": 15.11,
           "material": "populations[1].labor_assignments[2].material",
           "material_upkeep_demand": [
@@ -6131,54 +6347,33 @@
         {
           "idle_keepers": 80.169998,
           "keepers": 38.990002,
-          "pool": "agriculture"
-        },
-        {
-          "idle_keepers": 67.480003,
-          "keepers": 16.68,
-          "pool": "husbandry"
-        },
-        {
-          "idle_keepers": 40.110001,
-          "keepers": 1.87,
           "pool": "roadwork"
-        },
-        {
-          "idle_keepers": 108.959999,
-          "keepers": 25.639999,
-          "pool": "quarrywork"
         }
       ],
       "pool_toe": [
         {
           "filled": 65.529999,
-          "item_id": "hoes",
-          "pool": "agriculture",
+          "item_id": "earthmoving",
+          "pool": "roadwork",
           "required": 31.26
         },
         {
           "filled": 13.28,
-          "item_id": "earthmoving",
+          "item_id": "stone_dressing",
           "pool": "roadwork",
           "required": 23.450001
         },
         {
           "filled": 59.580002,
           "item_id": "stone_dressing",
-          "pool": "roadwork",
+          "pool": "builders",
           "required": 70.019997
         },
         {
           "filled": 44.110001,
-          "item_id": "stone_dressing",
-          "pool": "quarrywork",
-          "required": 43.040001
-        },
-        {
-          "filled": 72.599998,
           "item_id": "hoes",
           "pool": "builders",
-          "required": 84.980003
+          "required": 43.040001
         }
       ],
       "pooling_links": [
@@ -6198,9 +6393,6 @@
           "rung_id": "populations[1].pooling_links[2].rung_id"
         }
       ],
-      "quarrywork_demand": 108.370003,
-      "quarrywork_shortfall": 103.940002,
-      "quarrywork_supplied": 106.830002,
       "raid_forfeit": 69.870003,
       "raid_radius": 80,
       "roadwork_demand": 67.360001,
@@ -6379,20 +6571,29 @@
       },
       "build_queue": [
         {
+          "build_priority": "populations[2].build_queue[0].build_priority",
           "fauna_id": "populations[2].build_queue[0].fauna_id",
           "kind": "populations[2].build_queue[0].kind",
+          "material": "populations[2].build_queue[0].material",
+          "road": true,
           "target_x": 90,
           "target_y": 79
         },
         {
+          "build_priority": "populations[2].build_queue[1].build_priority",
           "fauna_id": "populations[2].build_queue[1].fauna_id",
           "kind": "populations[2].build_queue[1].kind",
+          "material": "populations[2].build_queue[1].material",
+          "road": false,
           "target_x": 3,
           "target_y": 14
         },
         {
+          "build_priority": "populations[2].build_queue[2].build_priority",
           "fauna_id": "populations[2].build_queue[2].fauna_id",
           "kind": "populations[2].build_queue[2].kind",
+          "material": "populations[2].build_queue[2].material",
+          "road": false,
           "target_x": 24,
           "target_y": 13
         }
@@ -6816,8 +7017,21 @@
           "hunt_useful_workers": 17,
           "hunters_on_the_road": 153,
           "improvement": "populations[2].labor_assignments[0].improvement",
+          "keep_hands": 84.419998,
           "kind": "populations[2].labor_assignments[0].kind",
           "kit_id": "populations[2].labor_assignments[0].kit_id",
+          "kit_toe": [
+            {
+              "filled": 63.439999,
+              "item_id": "baskets",
+              "required": 64.300003
+            },
+            {
+              "filled": 13.58,
+              "item_id": "spears",
+              "required": 93.540001
+            }
+          ],
           "kit_workers_holding": 63.790001,
           "material": "populations[2].labor_assignments[0].material",
           "material_upkeep_demand": [
@@ -6896,8 +7110,21 @@
           "hunt_useful_workers": 102,
           "hunters_on_the_road": 22,
           "improvement": "populations[2].labor_assignments[1].improvement",
+          "keep_hands": 63.639999,
           "kind": "populations[2].labor_assignments[1].kind",
           "kit_id": "populations[2].labor_assignments[1].kit_id",
+          "kit_toe": [
+            {
+              "filled": 31.379999,
+              "item_id": "baskets",
+              "required": 93.110001
+            },
+            {
+              "filled": 34.830002,
+              "item_id": "spears",
+              "required": 16.91
+            }
+          ],
           "kit_workers_holding": 0.66,
           "material": "populations[2].labor_assignments[1].material",
           "material_upkeep_demand": [
@@ -6976,8 +7203,21 @@
           "hunt_useful_workers": 51,
           "hunters_on_the_road": 23,
           "improvement": "populations[2].labor_assignments[2].improvement",
+          "keep_hands": 45.779999,
           "kind": "populations[2].labor_assignments[2].kind",
           "kit_id": "populations[2].labor_assignments[2].kit_id",
+          "kit_toe": [
+            {
+              "filled": 59.009998,
+              "item_id": "baskets",
+              "required": 108.949997
+            },
+            {
+              "filled": 59.580002,
+              "item_id": "spears",
+              "required": 88.730003
+            }
+          ],
           "kit_workers_holding": 75.290001,
           "material": "populations[2].labor_assignments[2].material",
           "material_upkeep_demand": [
@@ -7211,54 +7451,33 @@
         {
           "idle_keepers": 20.99,
           "keepers": 62.919998,
-          "pool": "agriculture"
-        },
-        {
-          "idle_keepers": 4.88,
-          "keepers": 107.080002,
-          "pool": "husbandry"
-        },
-        {
-          "idle_keepers": 94.169998,
-          "keepers": 35.75,
           "pool": "roadwork"
-        },
-        {
-          "idle_keepers": 50.970001,
-          "keepers": 112.489998,
-          "pool": "quarrywork"
         }
       ],
       "pool_toe": [
         {
           "filled": 100.459999,
-          "item_id": "hoes",
-          "pool": "agriculture",
+          "item_id": "earthmoving",
+          "pool": "roadwork",
           "required": 20.35
         },
         {
           "filled": 62.610001,
-          "item_id": "earthmoving",
+          "item_id": "stone_dressing",
           "pool": "roadwork",
           "required": 20.65
         },
         {
           "filled": 89.190002,
           "item_id": "stone_dressing",
-          "pool": "roadwork",
+          "pool": "builders",
           "required": 99.480003
         },
         {
           "filled": 62.779999,
-          "item_id": "stone_dressing",
-          "pool": "quarrywork",
-          "required": 108.269997
-        },
-        {
-          "filled": 75.800003,
           "item_id": "hoes",
           "pool": "builders",
-          "required": 26.959999
+          "required": 108.269997
         }
       ],
       "pooling_links": [
@@ -7278,9 +7497,6 @@
           "rung_id": "populations[2].pooling_links[2].rung_id"
         }
       ],
-      "quarrywork_demand": 68.559998,
-      "quarrywork_shortfall": 36.98,
-      "quarrywork_supplied": 83.269997,
       "raid_forfeit": 89.860001,
       "raid_radius": 1,
       "roadwork_demand": 39.720001,

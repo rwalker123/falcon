@@ -231,9 +231,8 @@ pub enum CommandPayload {
     /// of two things. So it takes [`Self::Fell`]'s grammar, closed trailing material and all.
     ///
     /// **It exists because the row outlives its crew.** A working raised above its free floor is a
-    /// holding, so `assign_labor … extract … 0` is *"stop cutting"* and keeps the row — and the row
-    /// keeps drawing the band's `quarrywork` pool for the whole ~104 turns the meter takes to slide
-    /// back to the free floor, competing with the live workings beside it.
+    /// holding, so `assign_labor … extract … 0` is *"stop cutting"* and keeps the row and its queue
+    /// entry, unkept, for the whole ~104 turns the meter takes to slide back to the free floor.
     AbandonWorking {
         faction_id: u32,
         target_x: u32,
@@ -260,6 +259,10 @@ pub enum CommandPayload {
     ///
     /// **One bit per source, never a number.** It is disposal rather than a smaller share; the
     /// per-source *funding* lever stays deleted.
+    ///
+    /// **The bare tile names a PLACE** — every holding on it, its road included. The working form
+    /// (`material`) is [`Self::AbandonWorking`] exactly, and the road form (`road`) puts down the
+    /// tile's road alone (`docs/plan_site_crews.md` §2.4).
     Abandon {
         faction_id: u32,
         /// The source: `Some` tile coordinates for a patch, or [`Self::Abandon::herd_id`] for a
@@ -267,6 +270,11 @@ pub enum CommandPayload {
         target_x: Option<u32>,
         target_y: Option<u32>,
         herd_id: Option<String>,
+        /// **A working**: with the tile pair, the deposit's material key — one hex can hold two
+        /// workings, so the tile alone names neither. `None` = the tile's forage patch.
+        material: Option<String>,
+        /// **A road**: with the tile pair, the tile's road rather than its patch.
+        road: bool,
     },
     /// **WITHDRAW A DECLARATION** — drop the source's build-queue entry only, leaving the row, its
     /// take crew, its kit and the meter exactly as they are.
@@ -280,6 +288,11 @@ pub enum CommandPayload {
         target_x: Option<u32>,
         target_y: Option<u32>,
         herd_id: Option<String>,
+        /// **A working**: with the tile pair, the deposit's material key — one hex can hold two
+        /// workings, so the tile alone names neither. `None` = the tile's forage patch.
+        material: Option<String>,
+        /// **A road**: with the tile pair, the tile's road rather than its patch.
+        road: bool,
     },
     /// **RE-ORDER ONE BAND'S BUILD QUEUE** — move its entry for the named source to `position`
     /// (0-based, clamped to the queue's length).
@@ -294,53 +307,17 @@ pub enum CommandPayload {
         target_y: Option<u32>,
         herd_id: Option<String>,
         position: u32,
+        /// **A working**: with the tile pair, the deposit's material key — one hex can hold two
+        /// workings, so the tile alone names neither. `None` = the tile's forage patch.
+        material: Option<String>,
+        /// **A road build**: with the tile pair, the road's queue entry rather than the tile's
+        /// patch.
+        road: bool,
     },
-    /// **NAME THE KIT ONE QUEUED BUILD IS RAISED WITH** — on every band of the faction that has the
-    /// source queued (`docs/plan_standing_upkeep.md` §4.7a ②). The row, its take crew and the meter
-    /// are untouched; this sets a property of the **queue entry**.
-    ///
-    /// **The builders' kit is per ENTRY, not per band.** A build's default is derived from that
-    /// entry's own food web — `tillage`'s hoes for a Cultivate, `hurdling`'s crook for a `Tame` — so one stored id per band
-    /// is the one thing the derivation cannot express: naming a kit on the `builders` labor row
-    /// pinned the animal web's tool onto every later plant build with no way back. `assign_labor`
-    /// refuses a `kit` token on that role, and this is where the override lives.
-    ///
-    /// **An absent [`Self::BuildKit::kit_id`] CLEARS the override** back to the derivation — the same
-    /// *"an absent `kitId` means the job's default"* rule every other selection follows, and what lets
-    /// a client say *"back to default"* with no new vocabulary. An explicit bare-handed kit is a
-    /// **real** selection and survives the round trip.
-    BuildKit {
-        faction_id: u32,
-        target_x: Option<u32>,
-        target_y: Option<u32>,
-        herd_id: Option<String>,
-        /// Absent = clear the override; present = this roster kit, the bare one included.
-        kit_id: Option<String>,
-    },
-    /// **NAME THE KIT ONE WORK SITE IS KEPT WITH** — on every band of the faction that works the
-    /// source (`docs/plan_standing_upkeep.md` §2.7). The take crew, its own kit, the queue entry and
-    /// the meter are untouched; this sets a property of the **worked row**.
-    ///
-    /// **The keeping kit is per WORK SITE, not per band.** The band is the pool of workers and goods
-    /// to draw from; it does not decide which tool a given site is worked with. A single stored id on
-    /// the band's `agriculture` / `husbandry` role row — which is where this lived until §2.7 — could
-    /// not say *hoes on the Field, bare hands on the scrub patch beside it*. `assign_labor` refuses a
-    /// `kit` token on those roles, and this is where the override lives.
-    ///
-    /// **An absent [`Self::UpkeepKit::kit_id`] CLEARS the override** back to the site's own web
-    /// derivation — the same *"an absent `kitId` means the job's default"* rule every other selection
-    /// follows. An explicit bare-handed kit is a **real** selection and survives the round trip.
-    ///
-    /// **A kit that does not serve this site's web is a command FAILURE**, never a silent fall back,
-    /// exactly as `build_kit` refuses one whose `jobs` does not list `builders`.
-    UpkeepKit {
-        faction_id: u32,
-        target_x: Option<u32>,
-        target_y: Option<u32>,
-        herd_id: Option<String>,
-        /// Absent = clear the override; present = this roster kit, the bare one included.
-        kit_id: Option<String>,
-    },
+    // **RETIRED: `BuildKit` and `UpkeepKit`** (proto fields 60 and 63, reserved). The per-entry
+    // builders' kit and the per-site keeping kit were overrides of a per-kit lookup that
+    // `docs/plan_pool_toe.md` §4 replaced: a pool's tools follow from the rung each of its sites
+    // stands on and are settled band-wide by the player's marks, so nothing read either stored kit.
     /// **MARK ONE WORKED ROW WITH THE PLAYER'S OWN RANK** — `high` | `normal` | `low`, on the named
     /// band's assignment for that source (`docs/plan_standing_upkeep.md` §4.9 item 9b).
     ///
@@ -360,15 +337,41 @@ pub enum CommandPayload {
         herd_id: Option<String>,
         /// The level token: `"high"`, `"normal"` or `"low"`.
         level: String,
+        /// **A working**: with the tile pair, the deposit's material key — one hex can hold two
+        /// workings, so the tile alone names neither. `None` = the tile's forage patch.
+        material: Option<String>,
+        /// **A road build**: with the tile pair, the road's queue entry rather than the tile's
+        /// patch.
+        road: bool,
+    },
+    /// **Mark one QUEUED BUILD with the player's own Build mark** (`docs/plan_site_crews.md` §2.4) —
+    /// `"high"`, `"normal"` or `"low"` on the named band's queue entry for this source. The
+    /// builders' tool claim and the build's material claim rank at the head entry's mark; the site
+    /// row's [`CommandPayload::WorkPriority`] ranks that site's own crew. Addressed exactly as
+    /// `work_priority` is.
+    BuildPriority {
+        faction_id: u32,
+        band_id: u64,
+        target_x: Option<u32>,
+        target_y: Option<u32>,
+        herd_id: Option<String>,
+        /// The level token: `"high"`, `"normal"` or `"low"`.
+        level: String,
+        /// **A working**: with the tile pair, the deposit's material key — one hex can hold two
+        /// workings, so the tile alone names neither. `None` = the tile's forage patch.
+        material: Option<String>,
+        /// **A road build**: with the tile pair, the road's queue entry rather than the tile's
+        /// patch.
+        road: bool,
     },
     /// **Say how a band splits a maintenance pool it cannot stretch**
     /// (`docs/plan_standing_upkeep.md` §2.5) — `"spread"` (everything degrades a little) or
     /// `"priority"` (fund sources completely, most-invested first).
     ///
-    /// It replaces the retired `Maintain`, which put hands on **one source's** keeping. Maintenance
-    /// is a band-level standing role now (`assign_labor <faction> <band> agriculture|husbandry
-    /// <workers>`), so what is left to decide is not *where the hands go* but *what happens when
-    /// there are not enough of them* — and that is one decision per band, not one per source.
+    /// It governs the one keeping **pool** left, `roadwork` (`docs/plan_site_crews.md` §1): a patch,
+    /// herd or working is kept by its own crew, which keeps it first. What is left to decide for the
+    /// roads is not *where the hands go* but *what happens when there are not enough of them* — one
+    /// decision per band, not one per road.
     UpkeepMode {
         faction_id: u32,
         band_id: u64,
@@ -716,6 +719,9 @@ pub enum QueryPayload {
     /// *"What does each crew size cut off this working with this kit?"* — the deposit compose
     /// sheet, before the commit. See [`DepositCrewTakeQuery`].
     DepositCrewTake(DepositCrewTakeQuery),
+    /// **The patch's take at every crew size, after keeping** — the forage twin of
+    /// [`Self::DepositCrewTake`]. See [`ForageCrewTakeQuery`].
+    ForageCrewTake(ForageCrewTakeQuery),
 }
 
 /// **THE DEPOSIT COMPOSE SHEET'S QUESTION** (#663) — what a crew of each size, off this band,
@@ -741,6 +747,60 @@ pub struct DepositCrewTakeQuery {
     pub max_workers: u32,
 }
 
+/// **THE PATCH'S TAKE AT EVERY CREW SIZE, AFTER KEEPING** (`docs/plan_site_crews.md`) — so the
+/// compose sheet reads the take at `n` workers rather than pricing every worker as a gatherer: a
+/// kept patch's crew keeps it first and gathers with the rest.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ForageCrewTakeQuery {
+    pub faction_id: u32,
+    /// The asking band's durable `BandId`.
+    pub band_id: u64,
+    pub x: u32,
+    pub y: u32,
+    /// The crop selection the crew gathers; empty = the whole basket.
+    pub take_species: Vec<String>,
+    /// An `equipment.json` roster id, **required**; unknown or not listing `forage` is refused.
+    pub kit_id: String,
+    /// The composed escapement floor, a fraction of the patch's capacity.
+    pub floor: f32,
+    /// The stepper's cap: one row per crew size `1..=max_workers`.
+    pub max_workers: u32,
+    /// **The crop the ground WOULD be committed to**, for the rows' `next_rung_*` — the sheet's
+    /// picked crop on an uncommitted patch. `""` = the plant the sim would settle on for the rung;
+    /// a plant that does not grow here is treated the same. Ignored on a committed patch.
+    pub crop: String,
+}
+
+/// **ONE CREW SIZE ON THE PATCH COMPOSE SHEET** — see [`ForageCrewTakeQuery`].
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ForageCrewTakeRow {
+    /// Echoed so the row is self-describing. Rows ascend from `1`.
+    pub workers: u32,
+    /// **Next turn's take, in provisions**, by the hands left after keeping.
+    pub take: f32,
+    /// **The hands this crew spends keeping the patch**, fractional.
+    pub keep_hands: f32,
+    /// **Next turn's take, in provisions, once the rung in flight is finished** — or the next rung
+    /// up where nothing is in flight: the same crew on the finished rung, **its keeping netted** at
+    /// that rung's bill. `0` at the top of the branch. The compose sheet's *once sown / once tended*.
+    pub next_rung_take: f32,
+    /// **The hands this crew would spend keeping the finished rung**, fractional.
+    pub next_rung_keep_hands: f32,
+    /// **The same take's fodder once the rung is finished**, credited — `0` where the sim would
+    /// refuse the credit (no Foddering, and no commitment to a fodder-bearing plant).
+    pub next_rung_fodder: f32,
+    /// **The same take's materials once the rung is finished**, one row per material, keeping
+    /// netted. Never summed across materials.
+    pub next_rung_materials: Vec<MaterialPayoff>,
+}
+
+/// The answer to [`ForageCrewTakeQuery`].
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ForageCrewTakeReply {
+    /// One row per crew size, ascending, `1..=max_workers`.
+    pub per_crew: Vec<ForageCrewTakeRow>,
+}
+
 /// **ONE CREW SIZE ON THE DEPOSIT COMPOSE SHEET** — see [`DepositCrewTakeQuery`].
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct DepositCrewTakeRow {
@@ -758,6 +818,8 @@ pub struct DepositCrewTakeRow {
     /// **The crew's cut once the working is raised one rung**, before the reach caps it — the
     /// sheet's *"once felled"* figure. `0` at the top of a branch.
     pub next_rung_take: f32,
+    /// **The hands this crew spends keeping the working**, fractional — `workers - keep_hands` cut.
+    pub keep_hands: f32,
 }
 
 /// The answer to [`DepositCrewTakeQuery`].
@@ -835,6 +897,13 @@ pub struct WorkPartyForecastReply {
     pub hunters_on_the_road: f32,
     /// The 1-based turn the first load lands, or `0` for none within the horizon.
     pub first_load_turn: u32,
+    /// **Next turn's take AT THE SOURCE by the asked crew, after keeping** — food off a herd or a
+    /// patch, the material's units off a deposit, by the hands the site's keeping leaves
+    /// (`docs/plan_site_crews.md` §2.1). Before any walk: a far crew's take lands home later.
+    pub take_next_turn: f32,
+    /// **The hands the asked crew spends keeping the site**, fractional — `workers − keep_hands`
+    /// gather, hunt or cut.
+    pub keep_hands: f32,
 }
 
 /// The grid the player is **configuring**, not the one the server is running: the ceiling is a
@@ -954,6 +1023,7 @@ pub enum QueryReply {
     WorkPartyForecast(WorkPartyForecastReply),
     /// The deposit compose sheet's crew curve.
     DepositCrewTake(DepositCrewTakeReply),
+    ForageCrewTake(ForageCrewTakeReply),
 }
 
 /// **Whether this connection now drives that faction.**
@@ -1332,6 +1402,17 @@ pub struct HuntCrewTakeRow {
     pub animals_low: f32,
     pub animals_likely: f32,
     pub animals_high: f32,
+    /// **The hands this crew spends keeping the herd**, fractional — the split every quantile on
+    /// this row is struck on. `0` on a herd that owes no keeping.
+    pub keep_hands: f32,
+    /// **The same crew's likely take once the rung in flight is finished** — or the next rung up
+    /// where nothing is in flight — in animals a turn, **its keeping netted** at that rung's bill.
+    /// `0` where the herd has no rung left to climb or its species cannot climb it. The compose
+    /// sheet's *once tamed / once corralled* figure; the forage twin is
+    /// [`ForageCrewTakeRow::next_rung_take`].
+    pub next_rung_animals_likely: f32,
+    /// **The hands this crew would spend keeping the finished rung**, fractional.
+    pub next_rung_keep_hands: f32,
 }
 
 /// **The hunt take curve** — what each crew size actually brings down, so a pre-commit panel can
@@ -1782,22 +1863,30 @@ impl CommandEnvelope {
                 target_x,
                 target_y,
                 herd_id,
+                material,
+                road,
             } => pb::command_envelope::Command::Abandon(pb::AbandonCommand {
                 faction_id: *faction_id,
                 target_x: *target_x,
                 target_y: *target_y,
                 herd_id: herd_id.clone(),
+                material: material.clone(),
+                road: *road,
             }),
             CommandPayload::Unqueue {
                 faction_id,
                 target_x,
                 target_y,
                 herd_id,
+                material,
+                road,
             } => pb::command_envelope::Command::Unqueue(pb::UnqueueCommand {
                 faction_id: *faction_id,
                 target_x: *target_x,
                 target_y: *target_y,
                 herd_id: herd_id.clone(),
+                material: material.clone(),
+                road: *road,
             }),
             CommandPayload::BuildOrder {
                 faction_id,
@@ -1806,6 +1895,8 @@ impl CommandEnvelope {
                 target_y,
                 herd_id,
                 position,
+                material,
+                road,
             } => pb::command_envelope::Command::BuildOrder(pb::BuildOrderCommand {
                 faction_id: *faction_id,
                 band_id: *band_id,
@@ -1813,32 +1904,8 @@ impl CommandEnvelope {
                 target_y: *target_y,
                 herd_id: herd_id.clone(),
                 position: *position,
-            }),
-            CommandPayload::BuildKit {
-                faction_id,
-                target_x,
-                target_y,
-                herd_id,
-                kit_id,
-            } => pb::command_envelope::Command::BuildKit(pb::BuildKitCommand {
-                faction_id: *faction_id,
-                target_x: *target_x,
-                target_y: *target_y,
-                herd_id: herd_id.clone(),
-                kit_id: kit_id.clone(),
-            }),
-            CommandPayload::UpkeepKit {
-                faction_id,
-                target_x,
-                target_y,
-                herd_id,
-                kit_id,
-            } => pb::command_envelope::Command::UpkeepKit(pb::UpkeepKitCommand {
-                faction_id: *faction_id,
-                target_x: *target_x,
-                target_y: *target_y,
-                herd_id: herd_id.clone(),
-                kit_id: kit_id.clone(),
+                material: material.clone(),
+                road: *road,
             }),
             CommandPayload::WorkPriority {
                 faction_id,
@@ -1847,6 +1914,8 @@ impl CommandEnvelope {
                 target_y,
                 herd_id,
                 level,
+                material,
+                road,
             } => pb::command_envelope::Command::WorkPriority(pb::WorkPriorityCommand {
                 faction_id: *faction_id,
                 band_id: *band_id,
@@ -1854,6 +1923,27 @@ impl CommandEnvelope {
                 target_y: *target_y,
                 herd_id: herd_id.clone(),
                 level: level.clone(),
+                material: material.clone(),
+                road: *road,
+            }),
+            CommandPayload::BuildPriority {
+                faction_id,
+                band_id,
+                target_x,
+                target_y,
+                herd_id,
+                level,
+                material,
+                road,
+            } => pb::command_envelope::Command::BuildPriority(pb::BuildPriorityCommand {
+                faction_id: *faction_id,
+                band_id: *band_id,
+                target_x: *target_x,
+                target_y: *target_y,
+                herd_id: herd_id.clone(),
+                level: level.clone(),
+                material: material.clone(),
+                road: *road,
             }),
             CommandPayload::UpkeepMode {
                 faction_id,
@@ -2261,6 +2351,19 @@ impl CommandEnvelope {
                                 height: ask.height,
                             })
                         }
+                        QueryPayload::ForageCrewTake(ask) => {
+                            pb::query_command::Query::ForageCrewTake(pb::ForageCrewTakeQuery {
+                                faction_id: ask.faction_id,
+                                band_id: ask.band_id,
+                                x: ask.x,
+                                y: ask.y,
+                                take_species: ask.take_species.clone(),
+                                kit_id: ask.kit_id.clone(),
+                                floor: ask.floor,
+                                max_workers: ask.max_workers,
+                                crop: ask.crop.clone(),
+                            })
+                        }
                         QueryPayload::DepositCrewTake(ask) => {
                             pb::query_command::Query::DepositCrewTake(pb::DepositCrewTakeQuery {
                                 faction_id: ask.faction_id,
@@ -2538,12 +2641,16 @@ impl CommandEnvelope {
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,
                 herd_id: cmd.herd_id,
+                material: cmd.material,
+                road: cmd.road,
             },
             pb::command_envelope::Command::Unqueue(cmd) => CommandPayload::Unqueue {
                 faction_id: cmd.faction_id,
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,
                 herd_id: cmd.herd_id,
+                material: cmd.material,
+                road: cmd.road,
             },
             pb::command_envelope::Command::BuildOrder(cmd) => CommandPayload::BuildOrder {
                 faction_id: cmd.faction_id,
@@ -2552,20 +2659,8 @@ impl CommandEnvelope {
                 target_y: cmd.target_y,
                 herd_id: cmd.herd_id,
                 position: cmd.position,
-            },
-            pb::command_envelope::Command::BuildKit(cmd) => CommandPayload::BuildKit {
-                faction_id: cmd.faction_id,
-                target_x: cmd.target_x,
-                target_y: cmd.target_y,
-                herd_id: cmd.herd_id,
-                kit_id: cmd.kit_id,
-            },
-            pb::command_envelope::Command::UpkeepKit(cmd) => CommandPayload::UpkeepKit {
-                faction_id: cmd.faction_id,
-                target_x: cmd.target_x,
-                target_y: cmd.target_y,
-                herd_id: cmd.herd_id,
-                kit_id: cmd.kit_id,
+                material: cmd.material,
+                road: cmd.road,
             },
             pb::command_envelope::Command::WorkPriority(cmd) => CommandPayload::WorkPriority {
                 faction_id: cmd.faction_id,
@@ -2574,6 +2669,18 @@ impl CommandEnvelope {
                 target_y: cmd.target_y,
                 herd_id: cmd.herd_id,
                 level: cmd.level,
+                material: cmd.material,
+                road: cmd.road,
+            },
+            pb::command_envelope::Command::BuildPriority(cmd) => CommandPayload::BuildPriority {
+                faction_id: cmd.faction_id,
+                band_id: cmd.band_id,
+                target_x: cmd.target_x,
+                target_y: cmd.target_y,
+                herd_id: cmd.herd_id,
+                level: cmd.level,
+                material: cmd.material,
+                road: cmd.road,
             },
             pb::command_envelope::Command::UpkeepMode(cmd) => CommandPayload::UpkeepMode {
                 faction_id: cmd.faction_id,
@@ -2770,6 +2877,19 @@ impl CommandEnvelope {
                     pb::query_command::Query::WorkPartyForecast(ask) => {
                         QueryPayload::WorkPartyForecast(work_party_query_from_proto(ask)?)
                     }
+                    pb::query_command::Query::ForageCrewTake(ask) => {
+                        QueryPayload::ForageCrewTake(ForageCrewTakeQuery {
+                            faction_id: ask.faction_id,
+                            band_id: ask.band_id,
+                            x: ask.x,
+                            y: ask.y,
+                            take_species: ask.take_species,
+                            kit_id: ask.kit_id,
+                            floor: ask.floor,
+                            max_workers: ask.max_workers,
+                            crop: ask.crop,
+                        })
+                    }
                     pb::query_command::Query::DepositCrewTake(ask) => {
                         QueryPayload::DepositCrewTake(DepositCrewTakeQuery {
                             faction_id: ask.faction_id,
@@ -2926,6 +3046,9 @@ impl QueryReplyEnvelope {
                             animals_low: row.animals_low,
                             animals_likely: row.animals_likely,
                             animals_high: row.animals_high,
+                            keep_hands: row.keep_hands,
+                            next_rung_animals_likely: row.next_rung_animals_likely,
+                            next_rung_keep_hands: row.next_rung_keep_hands,
                         })
                         .collect(),
                     armed_crew: answer.armed_crew,
@@ -2935,6 +3058,30 @@ impl QueryReplyEnvelope {
             QueryReply::ListSaves(slots) => {
                 pb::query_reply_envelope::Reply::ListSaves(pb::ListSavesReply {
                     slots: slots.iter().map(save_slot_info_to_proto).collect(),
+                })
+            }
+            QueryReply::ForageCrewTake(answer) => {
+                pb::query_reply_envelope::Reply::ForageCrewTake(pb::ForageCrewTakeReply {
+                    per_crew: answer
+                        .per_crew
+                        .iter()
+                        .map(|row| pb::ForageCrewTakeRow {
+                            workers: row.workers,
+                            take: row.take,
+                            keep_hands: row.keep_hands,
+                            next_rung_take: row.next_rung_take,
+                            next_rung_keep_hands: row.next_rung_keep_hands,
+                            next_rung_fodder: row.next_rung_fodder,
+                            next_rung_materials: row
+                                .next_rung_materials
+                                .iter()
+                                .map(|payoff| pb::MaterialPayoff {
+                                    material_id: payoff.material_id.clone(),
+                                    amount: payoff.amount,
+                                })
+                                .collect(),
+                        })
+                        .collect(),
                 })
             }
             QueryReply::DepositCrewTake(answer) => {
@@ -2947,6 +3094,7 @@ impl QueryReplyEnvelope {
                             take: row.take,
                             armed_workers: row.armed_workers,
                             next_rung_take: row.next_rung_take,
+                            keep_hands: row.keep_hands,
                         })
                         .collect(),
                     held_rung: answer.held_rung.clone(),
@@ -2962,6 +3110,8 @@ impl QueryReplyEnvelope {
                     walk_turns: answer.walk_turns,
                     hunters_on_the_road: answer.hunters_on_the_road,
                     first_load_turn: answer.first_load_turn,
+                    take_next_turn: answer.take_next_turn,
+                    keep_hands: answer.keep_hands,
                 })
             }
             QueryReply::SaveOp(reply) => {
@@ -3028,10 +3178,37 @@ impl QueryReplyEnvelope {
                             animals_low: row.animals_low,
                             animals_likely: row.animals_likely,
                             animals_high: row.animals_high,
+                            keep_hands: row.keep_hands,
+                            next_rung_animals_likely: row.next_rung_animals_likely,
+                            next_rung_keep_hands: row.next_rung_keep_hands,
                         })
                         .collect(),
                     armed_crew: answer.armed_crew,
                     weapon_item_id: answer.weapon_item_id,
+                })
+            }
+            pb::query_reply_envelope::Reply::ForageCrewTake(answer) => {
+                QueryReply::ForageCrewTake(ForageCrewTakeReply {
+                    per_crew: answer
+                        .per_crew
+                        .into_iter()
+                        .map(|row| ForageCrewTakeRow {
+                            workers: row.workers,
+                            take: row.take,
+                            keep_hands: row.keep_hands,
+                            next_rung_take: row.next_rung_take,
+                            next_rung_keep_hands: row.next_rung_keep_hands,
+                            next_rung_fodder: row.next_rung_fodder,
+                            next_rung_materials: row
+                                .next_rung_materials
+                                .into_iter()
+                                .map(|payoff| MaterialPayoff {
+                                    material_id: payoff.material_id,
+                                    amount: payoff.amount,
+                                })
+                                .collect(),
+                        })
+                        .collect(),
                 })
             }
             pb::query_reply_envelope::Reply::DepositCrewTake(answer) => {
@@ -3044,6 +3221,7 @@ impl QueryReplyEnvelope {
                             take: row.take,
                             armed_workers: row.armed_workers,
                             next_rung_take: row.next_rung_take,
+                            keep_hands: row.keep_hands,
                         })
                         .collect(),
                     held_rung: answer.held_rung,
@@ -3059,6 +3237,8 @@ impl QueryReplyEnvelope {
                     walk_turns: answer.walk_turns,
                     hunters_on_the_road: answer.hunters_on_the_road,
                     first_load_turn: answer.first_load_turn,
+                    take_next_turn: answer.take_next_turn,
+                    keep_hands: answer.keep_hands,
                 })
             }
             pb::query_reply_envelope::Reply::ListSaves(reply) => QueryReply::ListSaves(
@@ -3367,6 +3547,121 @@ mod tests {
         }
     }
 
+    /// **A working and a road survive the envelope on every verb that takes the site grammar**
+    /// (`docs/plan_site_crews.md` §2.4) — the appended `material` and `road` fields, beside the tile
+    /// pair they qualify.
+    #[test]
+    fn band_scoped_sources_round_trip_through_the_envelope() {
+        for payload in [
+            CommandPayload::WorkPriority {
+                faction_id: 1,
+                band_id: 7,
+                target_x: Some(4),
+                target_y: Some(9),
+                herd_id: None,
+                level: "low".to_string(),
+                material: Some("wood".to_string()),
+                road: false,
+            },
+            CommandPayload::BuildPriority {
+                faction_id: 2,
+                band_id: 8,
+                target_x: Some(5),
+                target_y: Some(11),
+                herd_id: None,
+                level: "high".to_string(),
+                material: None,
+                road: true,
+            },
+            CommandPayload::BuildOrder {
+                faction_id: 3,
+                band_id: 9,
+                target_x: Some(6),
+                target_y: Some(13),
+                herd_id: None,
+                position: 2,
+                material: Some("stone".to_string()),
+                road: false,
+            },
+            CommandPayload::Abandon {
+                faction_id: 4,
+                target_x: Some(7),
+                target_y: Some(15),
+                herd_id: None,
+                material: None,
+                road: true,
+            },
+            CommandPayload::Unqueue {
+                faction_id: 5,
+                target_x: Some(8),
+                target_y: Some(17),
+                herd_id: None,
+                material: Some("wood".to_string()),
+                road: false,
+            },
+        ] {
+            let envelope = CommandEnvelope {
+                payload: payload.clone(),
+                correlation_id: None,
+            };
+            let bytes = envelope.encode_to_vec().expect("encode");
+            let decoded = CommandEnvelope::decode(&bytes).expect("decode");
+            assert_eq!(decoded.payload, payload);
+        }
+    }
+
+    /// **The patch's crew curve survives the envelope, question and answer both** — every field a
+    /// distinct value so a transposition cannot pass.
+    #[test]
+    fn the_forage_crew_curve_round_trips() {
+        let ask = QueryPayload::ForageCrewTake(ForageCrewTakeQuery {
+            faction_id: 2,
+            band_id: 9,
+            x: 4,
+            y: 7,
+            take_species: vec!["wild_emmer".to_string()],
+            kit_id: "gathering".to_string(),
+            floor: 0.35,
+            max_workers: 6,
+            crop: "flax".to_string(),
+        });
+        let envelope = CommandEnvelope {
+            payload: CommandPayload::Query {
+                request_id: 11,
+                query: ask.clone(),
+            },
+            correlation_id: None,
+        };
+        let decoded =
+            CommandEnvelope::decode(&envelope.encode_to_vec().expect("encode")).expect("decode");
+        assert_eq!(
+            decoded.payload,
+            CommandPayload::Query {
+                request_id: 11,
+                query: ask
+            }
+        );
+        let reply = QueryReplyEnvelope {
+            request_id: 11,
+            reply: QueryReply::ForageCrewTake(ForageCrewTakeReply {
+                per_crew: vec![ForageCrewTakeRow {
+                    workers: 3,
+                    take: 1.75,
+                    keep_hands: 0.5,
+                    next_rung_take: 0.6,
+                    next_rung_keep_hands: 2.25,
+                    next_rung_fodder: 0.4,
+                    next_rung_materials: vec![MaterialPayoff {
+                        material_id: "fibre".to_string(),
+                        amount: 0.3,
+                    }],
+                }],
+            }),
+        };
+        let bytes = reply.encode_to_vec().expect("encode");
+        assert_eq!(QueryReplyEnvelope::decode(&bytes).expect("decode"), reply);
+    }
+
     /// **The crew-take curve survives the wire, question and answer both.**
     ///
     /// Every field is given a DISTINCT value — `low < likely < high`, ascending crews, a floor that
@@ -3419,6 +3714,8 @@ mod tests {
                 walk_turns: 7,
                 hunters_on_the_road: 1.5,
                 first_load_turn: 11,
+                take_next_turn: 12.5,
+                keep_hands: 1.25,
             }),
         };
         let bytes = reply.encode_to_vec().expect("encode");
@@ -3461,6 +3758,9 @@ mod tests {
                         animals_low: workers as f32 * 0.25,
                         animals_likely: workers as f32 * 0.5,
                         animals_high: workers as f32 * 0.75,
+                        next_rung_animals_likely: workers as f32 * 0.4,
+                        next_rung_keep_hands: 1.5,
+                        keep_hands: 0.75,
                     })
                     .collect(),
                 // **Short of the crew asked about, and named** — the shape the sheet's
@@ -3509,6 +3809,7 @@ mod tests {
                         take: workers as f32 * 0.6,
                         armed_workers: workers as f32 * 0.5,
                         next_rung_take: workers as f32 * 2.25,
+                        keep_hands: workers as f32 * 0.2,
                     })
                     .collect(),
                 held_rung: "forestry:deadfall".to_string(),

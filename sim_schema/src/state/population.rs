@@ -77,8 +77,9 @@ pub struct LaborAssignmentState {
     /// Derived per-turn at capture. Appended (append-only).
     #[serde(default)]
     pub sustainable_yield: f32,
-    /// Minimum workers that would have produced this turn's take — the **overstaffing** signal.
-    /// `workers > workers_needed` ⇒ the binding constraint was not labor, so the extra workers were
+    /// Minimum workers that would have produced this turn's take, **plus the hands the row's site
+    /// kept with** (`upkeepHands`, rounded up — `docs/plan_site_crews.md` §4: the row is one crew
+    /// that keeps first) — the **overstaffing** signal. `workers > workers_needed` ⇒ the binding constraint was not labor, so the extra workers were
     /// idle. `0` when the source produced nothing. **Derived at every rung** since the intensification
     /// ladder's slice 7 — a tended patch / Field / corralled herd used to report a hardcoded `1`,
     /// which claimed one worker could carry home whatever the land offered. Derived per-turn at
@@ -305,6 +306,10 @@ pub struct LaborAssignmentState {
     /// unpublished. A client-side quotient therefore divides by the fightless engagement reach and
     /// reads high — 2.3× on a Wild Aurochs. **Read this field; do not re-derive it.**
     ///
+    /// **It counts the crew's keeping hands** (`docs/plan_site_crews.md` §2.2): each crew size on the
+    /// curve hunts with the hands its keeping leaves, so the plateau is the whole crew — add nothing
+    /// for keeping.
+    ///
     /// **The domain is this source's own crew pool** — the hands already on the row plus the band's
     /// idle ones, the same domain the compose sheet asks its curve over. A curve still rising at the
     /// top of that pool reports the pool itself: *every hand this band has is still buying take*.
@@ -416,14 +421,39 @@ pub struct LaborAssignmentState {
     /// The number the work row prints.
     #[serde(default)]
     pub net_rate_home: f32,
-    /// **HOW MANY CUTTERS THIS WORKING CAN USE, GEAR INCLUDED** (#663) — the plateau of the
-    /// deposit crew curve over this row's crew pool (its workers plus the band's idle hands), at the
-    /// row's own kit and floor, read by the compose sheet's `curve_useful_cutters` rule: the smallest
-    /// crew whose take reaches the curve's best within `0.1%`. **The pool** while the take is still
-    /// rising at the last crew, **`1`** where the curve pays nothing, **`0`** on a non-extract row
-    /// and on a row with no pool. Derived at capture.
+    /// **HOW MANY CUTTERS THIS WORKING CAN USE, GEAR INCLUDED** (#663) — the crew whose capacity
+    /// reaches the room above the row's floor: take hands at the units the row's claim settles plus
+    /// the spare ones, best-equipped first, **plus its keep hands**, rounded once
+    /// (`docs/plan_site_crews.md` §4). Crew-independent and not capped by the band's pool. **`1`**
+    /// where nothing is reachable, **`0`** on a non-extract row. Derived at capture.
     #[serde(default)]
     pub useful_cutters: u32,
+    /// **WHICH OF THIS ROW'S KIT ITEMS ARE SHORT, BY NAME** (`docs/plan_site_crews.md` §2.3) — one
+    /// [`KitToeLineState`] per item the row's kit carries, wherever the row claims any of it. An
+    /// item is short where `filled < required`. Empty = the row claims nothing. The builders' and
+    /// Roadwork's twin is [`PopulationCohortState::pool_toe`]. Appended last (append-only).
+    #[serde(default)]
+    pub kit_toe: Vec<KitToeLineState>,
+    /// **THIS ROW'S OWN KEEPING HANDS** — the fractional hands this row's crew spent keeping its
+    /// site this turn, its own share of the bill (the source's `upkeep_hands` sums every band
+    /// keeping the site). `0` on a row that keeps nothing. Appended last (append-only).
+    #[serde(default)]
+    pub keep_hands: f32,
+}
+
+/// **ONE LINE OF ONE TAKE ROW'S TABLE OF EQUIPMENT** — a row of [`LaborAssignmentState::kit_toe`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct KitToeLineState {
+    /// The `equipment.json` item id. The client resolves it to the roster's display name; no item
+    /// is spelled in client code.
+    pub item_id: String,
+    /// **Units the row claimed** — its take hands that would take something with the kit, over the
+    /// item's `workers_per_unit`. ⛔ **Never `0`**: a line exists only where something is claimed.
+    pub required: f32,
+    /// **Units the band's take-gear settlement handed the row.** Exactly `required` where the row's
+    /// priority tier was covered; whole units where its tier was short. **Short is
+    /// `filled < required`.**
+    pub filled: f32,
 }
 
 /// **THE THREE RANKS A WORKED ROW CAN CARRY** — the wire twin of core_sim's `SourcePriority`, and
@@ -1592,30 +1622,22 @@ pub struct PopulationCohortState {
     /// beside it — [`Self::equipment_batches`] and [`Self::material_batches`] — are already here.
     #[serde(default)]
     pub loadout_window: Option<BandLoadoutWindowState>,
-    /// **WHAT THE WORKINGS THIS BAND KEEPS COST IT THIS TURN**, in work units per turn — the exact
-    /// [`Self::roadwork_demand`] triple, one pool over, so the Work board can show the `quarrywork`
-    /// role's need the way it shows agriculture's and husbandry's.
-    ///
-    /// **One pool for both deposit branches**: forestry and extraction split on *knowledge* and on
-    /// nothing a keeper does, so a band keeping a coppice and a quarry pays both out of this bill.
-    ///
-    /// ⛔ **THE SIM SUMS IT AND A CLIENT MUST NOT**, [`Self::roadwork_demand`]'s rule and
-    /// load-bearing for its reason: deposit rows are **fog-filtered**, so a working out of sight
-    /// would silently drop out of any client-side total the band certainly still owes. It is summed
-    /// *before* fog, and published whether or not the band can pay it — it is the alarm.
-    ///
-    /// `demand − supplied == shortfall` holds verbatim, as it does on the
-    /// [`crate::state::subsistence::DepositState`] row. Appended last (append-only).
+    /// ⛔ **DEPRECATED — ALWAYS `0`** (`docs/plan_site_crews.md` §4). The retired `quarrywork`
+    /// keeping pool's bill: each working is kept first by its own `extract` crew and states what it
+    /// kept on its own [`crate::state::subsistence::DepositState`] row. Kept because the wire is
+    /// positional; nothing reads it. Appended last (append-only).
     #[serde(default)]
     pub quarrywork_demand: f32,
-    /// See [`Self::quarrywork_demand`] — what this band's `quarrywork` keepers paid in this turn.
+    /// ⛔ **DEPRECATED — ALWAYS `0`.** See [`Self::quarrywork_demand`].
     #[serde(default)]
     pub quarrywork_supplied: f32,
-    /// See [`Self::quarrywork_demand`] — `demand − supplied`, verbatim.
+    /// ⛔ **DEPRECATED — ALWAYS `0`.** See [`Self::quarrywork_demand`].
     #[serde(default)]
     pub quarrywork_shortfall: f32,
     /// **WHAT EACH STANDING POOL'S OWN SITES REQUIRE THIS TURN, AND WHAT THE BAND GAVE THEM** —
-    /// one row per `(pool, item)` (`docs/plan_pool_toe.md` §4).
+    /// one row per `(pool, item)` (`docs/plan_pool_toe.md` §4), for **`roadwork` and `builders`
+    /// only** (`docs/plan_site_crews.md` §4): a site crew is not a pool, and its keeping-tool claim is
+    /// stated on its own source row as `upkeep_tools_short`.
     ///
     /// ⛔ **IT REPLACES A POOL ROW'S [`LaborAssignmentState::kit_id`]**, which had room for one tool
     /// where a pool needs as many as it has kinds of site: a Roadwork pool keeping a dirt road and a
@@ -1638,18 +1660,14 @@ pub struct PopulationCohortState {
     /// a deficit (`docs/plan_pool_toe.md` §2.3 step 5). A client-side *"this keeper is idle"* is
     /// wrong in exactly the cases that top-up exists for — the sim has that keeper working.
     ///
-    /// ⛔ **FOUR POOLS, AND `builders` IS NOT ONE OF THEM** — `agriculture`, `husbandry`,
-    /// `roadwork`, `quarrywork`. The builders are not a keeping pool: the whole head count goes on
-    /// the build queue's head (§2.4), so no builder is ever left standing by a plan that wanted
-    /// fewer. A builders pool with an empty *queue* is idle in a different sense and is not
-    /// measured here.
+    /// ⛔ **ONE POOL, `roadwork`, AND `builders` IS NOT ONE** (`docs/plan_site_crews.md` §1): a
+    /// patch, herd or working is kept by its own crew, whose keeping hands ride its source row as
+    /// `upkeep_hands`. The builders are not a keeping pool: the whole head count goes on the build
+    /// queue's head (§2.4), so no builder is ever left standing by a plan that wanted fewer.
     ///
-    /// **A row exists for every keeping pool this cohort can hold**, filled or not — unlike
-    /// [`Self::pool_toe`]'s. That is **four on a band and three on an anonymous cohort**: one with
-    /// no band id keeps no roads, because a road's keeper *is* a band, so it publishes
-    /// `agriculture`, `husbandry` and `quarrywork` and has no `roadwork` pool to report on. An
-    /// absent row therefore reads *"this cohort has no such pool"* — the same answer `builders`'
-    /// absence already gives, and it needs no separate branch on the reading side.
+    /// **A band states the line whether or not it keeps a road** — a pool with a head count and no
+    /// roads is all idle. A cohort with no band id keeps no roads, because a road's keeper *is* a
+    /// band, and states no line; an absent row reads *"this cohort has no such pool"*.
     /// Appended last (append-only).
     #[serde(default)]
     pub pool_crew: Vec<PoolCrewLineState>,
@@ -1728,8 +1746,7 @@ pub struct PoolingLinkState {
 /// [`PopulationCohortState::pool_toe`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct PoolToeLineState {
-    /// Which pool, in the [`LaborAssignmentState::kind`] vocabulary — `"agriculture"`,
-    /// `"husbandry"`, `"roadwork"`, `"quarrywork"` or `"builders"`.
+    /// Which pool, in the [`LaborAssignmentState::kind`] vocabulary — `"roadwork"` or `"builders"`.
     pub pool: String,
     /// The `equipment.json` item id this line is about.
     pub item_id: String,
@@ -1760,8 +1777,8 @@ pub struct PoolToeLineState {
 /// rules that govern the vector are stated.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct PoolCrewLineState {
-    /// Which pool, in the [`LaborAssignmentState::kind`] vocabulary — `"agriculture"`,
-    /// `"husbandry"`, `"roadwork"` or `"quarrywork"`. ⛔ **Never `"builders"`.**
+    /// Which pool, in the [`LaborAssignmentState::kind`] vocabulary — `"roadwork"`, the one keeping
+    /// pool left. ⛔ **Never `"builders"`.**
     pub pool: String,
     /// **Keepers this pool employed on nothing at all this turn.**
     ///
@@ -1798,11 +1815,12 @@ pub struct PoolCrewLineState {
 /// **ONE ENTRY OF ONE BAND'S BUILD QUEUE** — a row of [`PopulationCohortState::build_queue`],
 /// naming only the **source** the entry is a build on.
 ///
-/// An entry names its source and nothing else, deliberately: the declared job, the kit, the
-/// destination rung, the legs, the chained date and the blocked cause are all published on the
+/// An entry names its source and its **Build mark**, and nothing else: the declared job, the kit,
+/// the destination rung, the legs, the chained date and the blocked cause are all published on the
 /// **source** row (`ForagePatchState` / the herd twin) and agree across every band holding the
 /// source by construction — `cultivate`/`sow`/`tame` enqueue the same declaration on every band
-/// working it, and `build_kit` is source-addressed and sets every holder's entry.
+/// working it. The mark is the
+/// entry's own and per band (`build_priority` names one band), so it rides here.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct BuildQueueEntryState {
     /// Which web the entry is on, in the [`LaborAssignmentState::kind`] vocabulary — `"forage"` for
@@ -1818,6 +1836,20 @@ pub struct BuildQueueEntryState {
     /// The herd's id. Empty on a forage entry.
     #[serde(default)]
     pub fauna_id: String,
+    /// **This build's own mark** — `"high"`, `"normal"` or `"low"` (`docs/plan_site_crews.md`
+    /// §2.4). The builders' tool claim and the build's pile rank at the head entry's mark; the site
+    /// row's `priority` ranks the site's crew.
+    #[serde(default)]
+    pub build_priority: String,
+    /// **The deposit's material on a working's entry** — one hex can hold two workings, so the tile
+    /// alone names neither. Empty on a patch, herd or road entry. The command grammar's
+    /// `<x> <y> <material>` (`docs/plan_site_crews.md` §2.4).
+    #[serde(default)]
+    pub material: String,
+    /// **`true` on a road's entry** — the command grammar's `road <x> <y>`, since a road's tile may
+    /// also carry a patch.
+    #[serde(default)]
+    pub road: bool,
 }
 
 /// **One run of a band's hunt workers holding the same gear** — a row of

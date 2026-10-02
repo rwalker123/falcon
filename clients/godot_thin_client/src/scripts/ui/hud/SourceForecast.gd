@@ -866,16 +866,21 @@ const ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY := "hunt_useful_workers"
 # three spears and no sled field ZERO stalking kits; `DetailFormat.KIT_ITEM_WORKERS_HOLDING_KEY` is
 # the per-ITEM reading, which is where a readout goes to name WHICH thing is missing.
 #
-# ⛔ **NO CLIENT MAY RE-DERIVE IT FROM THE ITEM COUNTS.** The band's ledger is cut once, pro-rata by
-# head count over every row reaching for each item, so two rows naming `trapping` against four traps
-# each get two — an answer that depends on the rows BESIDE this one and that nothing on this row
-# carries.
+# ⛔ **NO CLIENT MAY RE-DERIVE IT FROM THE ITEM COUNTS.** The band's ledger is cut once over every row
+# reaching for each item, settled by the rows' Priority — High first — with the largest remainder
+# deciding only inside a tier that is short, so what one row holds depends on the rows BESIDE it and
+# their marks, which nothing on this row carries.
 #
 # **IT RIDES PRESENCE-SENSITIVELY, and `== workers` is the equality that means *nothing to be short
 # of***: that is what an itemless kit (`none`) publishes on purpose, so no reader needs a `none`
 # branch. An ABSENT key is the third reading — *this row states no coverage* — which is a hand-built
 # fixture or an optimistic row, never the decoder, and which every readout treats as silence.
 const ASSIGNMENT_KIT_WORKERS_HOLDING_KEY := "kit_workers_holding"
+## **THE ROW'S TABLE OF EQUIPMENT** — `[{item_id, required, filled}]`, one line per item its kit
+## CLAIMS. Short is any line with `filled < required`; an empty or absent list claims nothing and is
+## never short. Hands the row does not claim kit for work bare BY DESIGN, so `kit_workers_holding <
+## workers` is not a shortfall test.
+const ASSIGNMENT_KIT_TOE_KEY := "kit_toe"
 # **THE WORK PARTY, ON A LABOR ASSIGNMENT** (`docs/plan_civilization_steps.md` §One work party) —
 # the ten keys the decoder writes for a row whose source is past the band's own apron. They ride the
 # work-row map (`HudBandLaborState.effective_worker_map`) and are read in exactly ONE place,
@@ -1332,14 +1337,27 @@ const FORECAST_BUILD_GEAR_WORK_KEY := "build_work_from_gear"
 # the rung's grace, and a client re-deriving it would be a second authority over the number the whole
 # readout exists to make legible (the sim-answers-the-client-renders discipline).
 #
-# **`upkeep_supplied` IS THIS SOURCE'S SHARE OF ITS BAND'S POOL** (`docs/plan_standing_upkeep.md`
-# §2.5), not the hands standing on it: maintenance is a band-level role, so the three fields stopped
-# answering *"did you staff this one"* and answer *"where is my pooled shortfall landing"*. Every
-# readout of them must be worded that way — a row that reads as a per-source staffing verdict points
-# the player at a stepper that no longer exists.
+# **`upkeep_supplied` IS WHAT THIS SITE'S OWN CREW KEPT** (`docs/plan_site_crews.md` §2.1): a site's
+# crew keeps it first and collects with what is left, so the three fields answer *"did this row's crew
+# cover what its site owes"* — and the stepper on that row is the lever.
 const FORECAST_UPKEEP_DEMAND_KEY := "upkeep_demand"
 const FORECAST_UPKEEP_SUPPLIED_KEY := "upkeep_supplied"
 const FORECAST_UPKEEP_SHORTFALL_KEY := "upkeep_shortfall"
+# **THE CREW HANDS SPENT KEEPING, and whether the site's keeping tools came up short**
+# (`docs/plan_site_crews.md` §4). `upkeep_hands` is fractional and summed over every band keeping the
+# site; `crew − upkeep_hands` is what collected. `upkeep_tools_short` is the band-wide settlement
+# filling less than this site's keeping-tool claim — the row's `ⓘ` where the work is still covered.
+const FORECAST_UPKEEP_HANDS_KEY := "upkeep_hands"
+## **THE HANDS ONE LABOR ROW'S OWN CREW SPENT KEEPING ITS SITE** (`LaborAssignment.keepHands`) — this
+## band's share of the site's summed `upkeep_hands`, which is what a row's crew-split marks draw.
+const ASSIGNMENT_KEEP_HANDS_KEY := "keep_hands"
+## **THE HANDS A CREW-CURVE ROW'S CREW SPENDS KEEPING ITS SOURCE** — the same field on all three
+## curves (forage, hunt, deposit), which is what the compose sheets' crew-split marks read.
+const CREW_CURVE_KEEP_HANDS_KEY := "keep_hands"
+const FORECAST_UPKEEP_TOOLS_SHORT_KEY := "upkeep_tools_short"
+## …and the SITE's keeping-tool table, `[{item_id, required, filled}]` (`[]` where the site claims no
+## tool) — the lines `upkeep_tools_short` is derived from, read to NAME the short tool.
+const FORECAST_UPKEEP_TOE_KEY := "upkeep_toe"
 # **WHAT THIS SOURCE'S KEEPING IS WORTH IN HANDS** — `ceil(demand / PER_WORKER_OUTPUT)`, beside the
 # take activity's `SourceYield.workersNeeded` (hands to haul the offer). It is a SIZE, not a staffing
 # order: nobody is assigned here any more, so it reads as *this much of the band's keeping pool*.
@@ -3659,6 +3677,25 @@ static func teaching_note(lesson: String, floor: float, taking: bool,
 ## **IT TAKES NO `regrows` TERM.** One existed to drop the reaching sentence's *"then holds it"*
 ## clause where there was no aftermath to promise; the clause is off both readings now, so the flag
 ## chose between two identical strings. See `VERDICT_REACHES_FORMAT`.
+## `floor_chart_model`'s `take_crew` when every hand of the crew gathers.
+const WHOLE_CREW_TAKES := -1.0
+
+## **THE VERDICT'S CREW CLAUSE, RESTATED FOR A CONVERTED CREW** — `text` with its
+## `K <noun> would reach the floor` clause re-spelled at `crew` (or closed with `VERDICT_SETTLES_END`
+## where the conversion has no answer). Any other verdict passes through untouched.
+static func verdict_with_reaching_crew(verdict: Dictionary, reaching: int, crew: int,
+        crew_noun: String) -> Dictionary:
+    var text := String(verdict.get("text", ""))
+    if reaching <= 0:
+        return verdict
+    var clause := VERDICT_SETTLES_CREW_FORMAT % [reaching, crew_noun]
+    if not text.ends_with(clause):
+        return verdict
+    var out := verdict.duplicate()
+    out["text"] = text.left(text.length() - clause.length()) \
+        + ((VERDICT_SETTLES_CREW_FORMAT % [crew, crew_noun]) if crew > 0 else VERDICT_SETTLES_END)
+    return out
+
 static func harvest_verdict(walk: Dictionary, workers: int, biomass: float, capacity: float,
         floor: float, reaching_crew: int, crew_noun: String,
         body_mass: float = 0.0, quarry: String = "",
@@ -3713,7 +3750,7 @@ static func harvest_verdict(walk: Dictionary, workers: int, biomass: float, capa
 ## curve-reading section above for why leaving them there was the panel being two models at once.
 static func floor_chart_model(src: Dictionary, kind: String, prefix: String, floor: float,
         workers: int, crew_noun: String, lesson_known: bool,
-        per_crew: Array = []) -> Dictionary:
+        per_crew: Array = [], take_crew: float = WHOLE_CREW_TAKES) -> Dictionary:
     var capacity := float(src.get(prefix + FORECAST_CAPACITY_KEY, 0.0))
     var biomass := float(src.get(prefix + FORECAST_BIOMASS_KEY, 0.0))
     var samples := regrowth_samples(src, prefix)
@@ -3743,7 +3780,11 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
     # biomass, so the picture is the same picture — only its third bound got the fight.
     var curve_take := crew_take_biomass(per_crew, workers, body_mass) \
         if has_crew_take_curve(per_crew) else ENGAGEMENT_UNBOUNDED
-    var walk := project_stock(samples, biomass, capacity, floor_value, float(workers) * carry,
+    # **THE WALK IS DRAWN BY THE HANDS THAT GATHER** — on a KEPT patch the caller hands in the crew the
+    # sim says is left after keeping (`take_crew`), so the reach, the settle and the verdict describe
+    # the hands that actually take; everywhere else the whole crew takes.
+    var takers := float(workers) if take_crew < 0.0 else take_crew
+    var walk := project_stock(samples, biomass, capacity, floor_value, takers * carry,
         curve_take if is_finite(curve_take) \
             else engaged_quantum(workers, body_mass, engage_rate, stay))
     # **ALL THREE CREW ANSWERS CARRY THE RETREAT.** They ask different questions about different stocks
@@ -3827,6 +3868,11 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
         "crew_to_clear": crew_to_clear(escapement_room(src, prefix, floor_value), carry, reaching,
             body_mass, engage_rate, stay, per_crew),
         "crew_to_hold": hold,
+        # The verdict's `K <noun> would reach the floor` count and its noun, carried beside the sentence
+        # so a caller that converts the crew (a KEPT patch, `DrawerComposeController._kept_crew_targets`)
+        # can restate that one clause through the same conversion as the pills.
+        "reaching_crew": reaching,
+        "crew_noun": crew_noun,
         # `takes_next_turn` from the SAME room the readout's headline is composed from
         # (`escapement_room_next_turn`), so the sentence and the number above it are one answer.
         "verdict": harvest_verdict(walk, workers, biomass, capacity, floor_value, reaching,
@@ -5045,6 +5091,20 @@ static func has_upkeep(state: Dictionary) -> bool:
 static func upkeep_is_short(state: Dictionary) -> bool:
     return float(state.get("shortfall", NO_UPKEEP_DEMAND)) >= UPKEEP_WORK_MIN
 
+## The crew hands this site's keeping took this turn (`FORECAST_UPKEEP_HANDS_KEY`), floored at zero.
+static func upkeep_hands(src: Dictionary, prefix: String) -> float:
+    return maxf(float(src.get(prefix + FORECAST_UPKEEP_HANDS_KEY, NO_UPKEEP_DEMAND)),
+        NO_UPKEEP_DEMAND)
+
+## Was this site's keeping-tool claim filled less than in full? (`FORECAST_UPKEEP_TOOLS_SHORT_KEY`)
+static func upkeep_tools_short(src: Dictionary, prefix: String) -> bool:
+    return bool(src.get(prefix + FORECAST_UPKEEP_TOOLS_SHORT_KEY, false))
+
+## The site's keeping-tool table — `[]` where it claims none.
+static func upkeep_toe(src: Dictionary, prefix: String) -> Array:
+    var lines: Variant = src.get(prefix + FORECAST_UPKEEP_TOE_KEY, [])
+    return lines if lines is Array else []
+
 ## **THE PILE THE RUNG ABOVE THIS SOURCE SWALLOWS TO RAISE** — one row per good, `[]` when the wire
 ## quotes none. See `FORECAST_BUILD_MATERIAL_COST_KEY`: it prices exactly ONE rung, so a caller may
 ## only attach it to the rung directly above where the source stands.
@@ -5629,6 +5689,69 @@ static func with_published_useful_crew(forecast: Dictionary, source: Dictionary)
         int(source[ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY]), PUBLISHED_NO_USEFUL_CREW)
     return out
 
+## **A FORAGE ROW'S PUBLISHED CREW** — the row's `workers_needed`, the sim's most hands that still help
+## on this site, keeping included. `0` is the rehydrated save's *unknown* and publishes nothing, so the
+## client's closed form answers there.
+static func with_published_site_crew(forecast: Dictionary, useful: int) -> Dictionary:
+    if useful <= PUBLISHED_NO_USEFUL_CREW:
+        return forecast
+    var out := forecast.duplicate()
+    out[FORECAST_SITE_CREW_KEY] = useful
+    return out
+
+## The forecast slot a forage row's published site crew travels in. Read FIRST by
+## `max_useful_workers` and returned as it stands: it is the sim's whole answer for a worked site, so no
+## closed form and no hold floor may move it.
+const FORECAST_SITE_CREW_KEY := "published_site_crew"
+
+## ---- THE FORAGE CREW CURVE (`ForecastQuery.KIND_FORAGE_CREW_TAKE`) -----------------------------
+##
+## One row per crew size: `workers`, `take` (next turn's provisions by the hands the patch's keeping
+## leaves) and `keep_hands` (how many of the crew keep it, fractional). The compose sheet reads a KEPT
+## patch's take off it rather than composing one: the keeping comes out of the crew first, and only
+## the sim knows how many hands that is at each crew.
+const FORAGE_CREW_TAKE_KEY := "take"
+const FORAGE_CREW_KEEP_HANDS_KEY := "keep_hands"
+## The same crew's take ONCE the rung in flight is finished (or the next rung up where none is), its
+## keeping netted at that rung's bill — the sheet's `ONCE SOWN` / `ONCE TENDED` figure. Provisions.
+const FORAGE_CREW_NEXT_RUNG_TAKE_KEY := "next_rung_take"
+## …and that take's credited FODDER and its MATERIALS (`{material_id, amount}` rows, never summed).
+const FORAGE_CREW_NEXT_RUNG_FODDER_KEY := "next_rung_fodder"
+const FORAGE_CREW_NEXT_RUNG_MATERIALS_KEY := "next_rung_materials"
+## The hunt curve's twin: the same crew's likely take once the next rung stands, animals a turn.
+const HUNT_CREW_NEXT_RUNG_ANIMALS_KEY := "next_rung_animals_likely"
+
+## The row for `workers`, `{}` where the curve has none.
+static func forage_crew_row(per_crew: Array, workers: int) -> Dictionary:
+    for row_variant in per_crew:
+        if row_variant is Dictionary and int((row_variant as Dictionary).get(
+                CREW_TAKE_WORKERS_KEY, 0)) == workers:
+            return row_variant
+    return {}
+
+## **THE WHOLE CREW A TAKE TARGET NEEDS ON A KEPT PATCH** — the smallest crew on the curve whose
+## GATHERERS (`workers - keep_hands`, the sim's own keeping at that crew) reach `take_hands`. The one
+## conversion the cap and both crew pills go through, so all three name crews the stepper sets.
+## `NO_CREW_ANSWER` passes through, and answers where no row on the curve gets there; `0` stays `0`.
+static func forage_curve_crew_for(per_crew: Array, take_hands: int) -> int:
+    if take_hands == NO_CREW_ANSWER or take_hands == MAX_USEFUL_UNBOUNDED:
+        return NO_CREW_ANSWER
+    if take_hands <= 0:
+        return take_hands
+    for row_variant in per_crew:
+        if not (row_variant is Dictionary):
+            continue
+        var row: Dictionary = row_variant
+        var workers := int(row.get(CREW_TAKE_WORKERS_KEY, 0))
+        if float(workers) - float(row.get(FORAGE_CREW_KEEP_HANDS_KEY, 0.0)) \
+                >= float(take_hands) - CREW_TAKE_REACH_TOLERANCE:
+            return workers
+    return NO_CREW_ANSWER
+
+## **A KEPT PATCH'S USEFUL CREW** — the take's own useful count, through `forage_curve_crew_for`.
+static func forage_curve_useful(per_crew: Array, take_useful: int) -> int:
+    return forage_curve_crew_for(per_crew, take_useful)
+
 ## The ceiling the sim published for this source, or `NO_CREW_ANSWER` where it published none — which
 ## is every surface with no assigned row behind it (the compose sheet, which holds the curve itself,
 ## and every pre-commit forecast).
@@ -5679,7 +5802,14 @@ static func party_readout(row: Dictionary) -> Dictionary:
 static func party_is_posted(party: Dictionary) -> bool:
     return bool(party.get(PARTY_PRESENT_KEY, false))
 
+## ⛔ **ON A WORKED ROW THE CAP IS THE SIM'S, AND IT ALREADY COUNTS THE KEEPING** (`docs/plan_site_crews.md`).
+## A site's crew keeps it before it collects, and the sim's "most hands that still help" — a forage
+## row's `workers_needed`, a hunt row's `hunt_useful_workers`, a working's `useful_cutters` — include
+## those keeping hands. The board carries that figure onto the forecast (`with_published_site_crew`,
+## `with_published_useful_crew`) and this reads it; it never adds a keeping count of its own.
 static func max_useful_workers(forecast: Dictionary) -> int:
+    if forecast.has(FORECAST_SITE_CREW_KEY):
+        return int(forecast[FORECAST_SITE_CREW_KEY])
     if not bool(forecast.get("known", false)):
         return MAX_USEFUL_UNBOUNDED
     # ON THE AXIS THE SPECIES PAYS (issue #337): a wolf's food per-worker and ceiling are both 0, so
@@ -5825,8 +5955,12 @@ static func max_useful_workers(forecast: Dictionary) -> int:
 ## workers past the point they help. An unknown forecast (MAX_USEFUL_UNBOUNDED — no wire data) falls
 ## back to the plain `idle > 0` gate. Returns `{can_add, note}`; `note` is set ONLY when max-useful (not
 ## idle) is what stopped the `+`, so the row tooltip explains a dead button rather than leaving it
-## mysterious (the idle-exhausted gate explains itself). Scout/Warrior are band-wide roles with no
-## ceiling — they keep the plain gate and never call this.
+## mysterious. Scout/Warrior are band-wide roles with no ceiling — they keep the plain gate and never
+## call this.
+##
+## **`blocked_reason` IS THE GREYED `+`'s HOVER, AND IT NAMES WHICHEVER CONDITION FAILED** — no free
+## hands, or the source's ceiling (`selection-card.md` → "A DISABLED CONTROL SAYS WHY"); `""` while the
+## `+` can add. It is returned by the gate itself, so the face and the sentence are one test.
 ##
 ## **`useful_floor` IS RETIRED, AND WITH IT `herd_crew_floor`** (`docs/plan_standing_upkeep.md` §2.2).
 ## Both twins used to RAISE this ceiling to a managed herd's `herdersNeeded`, because one crew both
@@ -5841,16 +5975,26 @@ static func max_useful_workers(forecast: Dictionary) -> int:
 ## It lives inside `max_useful_workers`, where both twins pick it up without either caller being
 ## trusted to remember it.
 static func source_worker_cap_state(forecast: Dictionary, workers: int, idle: int) -> Dictionary:
-    var useful := max_useful_workers(forecast)
+    return crew_cap_state(max_useful_workers(forecast), workers, idle)
+
+## **THE SAME GATE, HANDED THE CEILING RATHER THAN A FORECAST** — what a worked row calls with
+## `worked_row_ceiling`'s answer, so the row's `+` and the compose sheet's (which caps at that same
+## number on the row's own composition) are struck at one ceiling by construction.
+static func crew_cap_state(useful: int, workers: int, idle: int) -> Dictionary:
+    var no_idle := "" if idle > 0 else HudWorkVocab.STEPPER_NO_IDLE_REASON
     if useful == MAX_USEFUL_UNBOUNDED or workers < useful:
-        return {"can_add": idle > 0, "note": ""}
-    # At/over this source's max-useful: the `+` is capped by the source, not by idle. Explain only
-    # when idle workers remain (else the idle-exhausted gate already reads for itself).
-    var note := ""
-    if idle > 0:
-        var noun := MAX_USEFUL_NOUN_ONE if useful == 1 else MAX_USEFUL_NOUN_MANY
-        note = MAX_USEFUL_CAPPED_TOOLTIP % [useful, noun]
-    return {"can_add": false, "note": note}
+        return {"can_add": idle > 0, "note": "", "blocked_reason": no_idle}
+    # At/over this source's max-useful: the `+` is capped by the source, not by idle. The ROW note
+    # explains only when idle workers remain (else the idle-exhausted gate is the binding one); the
+    # `+`'s own hover names both when both hold.
+    var noun := MAX_USEFUL_NOUN_ONE if useful == 1 else MAX_USEFUL_NOUN_MANY
+    var full := MAX_USEFUL_CAPPED_TOOLTIP % [useful, noun]
+    var note := full if idle > 0 else ""
+    var reasons := PackedStringArray([full])
+    if no_idle != "":
+        reasons.insert(0, no_idle)
+    return {"can_add": false, "note": note,
+        "blocked_reason": HudWorkVocab.DISABLED_REASON_SEPARATOR.join(reasons)}
 
 ## **IS THIS CREW BIGGER THAN ITS SOURCE CAN USE?** — hands standing on a job that has nothing left
 ## for them, which is the one question every web asks and only two of them used to answer. It is the
@@ -5878,6 +6022,50 @@ static func crew_is_wasted(workers: int, useful: int) -> bool:
     if useful <= MAX_USEFUL_UNBOUNDED:
         return false
     return workers > useful
+
+## ⛔ **THE `+` CEILING OF A WORKED FOOD ROW — ONE PRODUCER, READ BY THE ROW AND BY ITS SHEET.**
+## `kind` is the row's labor kind, `entry` its assignment (the worker map's copy or the wire's), `src`
+## the LIVE source it works — the bare-keyed forage patch, or the herd from the world list (herds
+## migrate, so never the assignment's launch-time target). The answer is the sim's "most hands that
+## still help" (`docs/plan_site_crews.md` §4): a forage row's `workers_needed`
+## (`with_published_site_crew`), a hunt row's `hunt_useful_workers` (`with_published_useful_crew`),
+## the client's closed form only where the wire is silent. The working's twin is
+## `HudDepositVocab.published_useful_cutters`.
+##
+## ⛔ **THE COMPOSE SHEET CALLS THIS TOO, ON THE ROW'S OWN COMPOSITION**
+## (`DrawerComposeController._composed_standing_row`). It capped on its own curve's plateau while the
+## row capped here, so the same crew on the same ground could read `+` live on the sheet and dead on
+## the Work row — reported from play on a deadfall wood. Where the sheet composes something else (a
+## moved floor, another kit, another take selection) the published figure answers a question nobody
+## asked, and the sheet's curve keeps its job.
+##
+## ⛔ **AND IT IS THE NUMBER THE ROW IS JUDGED OVERSTAFFED AGAINST, ON EVERY SURFACE.** The overstaff
+## note (`source_yield_readout`'s `overstaff_ceiling`), the work board's `⚠ overstaffed` clause and the
+## map's band source list all read this — one predicate (`crew_is_wasted`) on the number the `+` is
+## struck at. The hunt warning read the row's `workers_needed` while its `+` read
+## `hunt_useful_workers`; those are different numbers (the take this crew RAN, inverted, against the
+## most hands that would still help), so a crew the `+` allowed could read overstaffed.
+static func worked_row_ceiling(kind: String, entry: Dictionary, src: Dictionary) -> int:
+    return max_useful_workers(_worked_row_forecast(kind, entry, src))
+
+## The same ceiling **where the WIRE published it**, else `MAX_USEFUL_UNBOUNDED` — the overstaff
+## NOTE's argument. The note quotes the figure, so it speaks only for the sim's own number; where the
+## wire is silent (a rehydrated save) the board's `⚠ overstaffed` clause answers on the closed form
+## instead, and the two are exclusive by this one test.
+static func worked_row_published_ceiling(kind: String, entry: Dictionary, src: Dictionary) -> int:
+    var forecast := _worked_row_forecast(kind, entry, src)
+    if forecast.has(FORECAST_SITE_CREW_KEY) or forecast.has(FORECAST_PUBLISHED_USEFUL_CREW_KEY):
+        return max_useful_workers(forecast)
+    return MAX_USEFUL_UNBOUNDED
+
+static func _worked_row_forecast(kind: String, entry: Dictionary, src: Dictionary) -> Dictionary:
+    var floor := clamp_floor(float(entry.get("floor", DEFAULT_HARVEST_FLOOR)))
+    if kind == LABOR_KIND_FORAGE:
+        return with_published_site_crew(
+            forecast_inputs(src, SOURCE_KIND_FORAGE, BARE_SOURCE_PREFIX, floor),
+            int(entry.get("workers_needed", PUBLISHED_NO_USEFUL_CREW)))
+    return with_published_useful_crew(
+        forecast_inputs(src, SOURCE_KIND_HERD, BARE_SOURCE_PREFIX, floor), entry)
 
 ## The take `workers` would ACTUALLY produce here: min(workers × per_worker, ceiling, the party's
 ## reach), scaled by the acting band's output multiplier (the sim exports the forecast at 1.0).
@@ -5978,7 +6166,14 @@ static func expected_yield_account(forecast: Dictionary, workers: int, band: Dic
 ##     a source can be overstaffed while perfectly sustainable, or overdrawn while fully used.
 ## Parts are empty when the source carries no confirmed data (pending assign), so
 ## the row degrades to bare rather than asserting a wrong state.
-static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
+##
+## ⛔ **`overstaff_ceiling` IS REQUIRED: the row's own `+` ceiling where the wire published it**
+## (`worked_row_published_ceiling` on a food row, `HudDepositVocab.published_useful_cutters` on a
+## working), `MAX_USEFUL_UNBOUNDED` for no claim. The note read `workers_needed` itself, which on a
+## hunt row and a working is the take this crew RAN, inverted — never more than the crew — so it could
+## call a crew overstaffed whom the `+` beside it still offered a hand to. A defaulted argument would
+## put that second number back silently.
+static func source_yield_readout(m: Dictionary, kind: String, overstaff_ceiling: int) -> Dictionary:
     var label_suffix := ""
     var warn := false
     var tooltip := ""
@@ -6083,13 +6278,12 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
         # say from growing a dangling separator on the surfaces that join this suffix.
         var components := yield_components(rate, fodder_rate, zero_account, material_rows)
         label_suffix = "" if components == "" else " " + components
-    # Overstaffing: fewer workers were needed than are assigned, so the remainder produced nothing
-    # here. `workers_needed == 0` means "unknown" (rehydrated) → no note.
+    # Overstaffing: the crew is bigger than the row's own `+` ceiling, so the hands past it produce
+    # nothing here. An unpublished ceiling (`MAX_USEFUL_UNBOUNDED`) makes no claim.
     var note := ""
     var workers := int(m.get("workers", 0))
-    var needed := int(m.get("workers_needed", 0))
-    if needed > 0 and workers > needed:
-        note = OVERSTAFF_NOTE_FORMAT % [needed, workers]
+    if crew_is_wasted(workers, overstaff_ceiling):
+        note = OVERSTAFF_NOTE_FORMAT % [overstaff_ceiling, workers]
         tooltip = OVERSTAFF_TOOLTIP if tooltip == "" \
             else tooltip + TOOLTIP_LINE_SEPARATOR + OVERSTAFF_TOOLTIP
     # UNDERSTAFFING: `wasted_yield` is food the source offered that the crew could not collect — the

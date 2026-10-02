@@ -177,7 +177,6 @@ fn hunt_row(herd_id: &str, priority: SourcePriority) -> LaborAssignment {
         workers: KEEPER_WORKERS,
         kit: None,
         priority,
-        upkeep_kit: None,
     }
 }
 
@@ -522,13 +521,6 @@ fn pen_build_pile() -> f32 {
         .expect("the shipped pen rung declares the good on its pile")
 }
 
-/// The empty kit, so the pace under test is the pool's own and no start-stocked tool moves it.
-fn bare_builders() -> core_sim::KitChoice {
-    core_sim::EquipmentConfig::builtin()
-        .kit("none")
-        .expect("the shipped roster carries the empty kit")
-}
-
 /// Staff the band's `builders` row at [`RING_BUILDERS`] and queue `job` on `source` with a bare kit —
 /// the sim half of what `handle_extend_pen` and a `corral` order each do.
 fn queue_a_build(
@@ -547,15 +539,10 @@ fn queue_a_build(
         workers: RING_BUILDERS,
         kit: None,
         priority: SourcePriority::default(),
-        upkeep_kit: None,
     });
     assert!(
         allocation.enqueue_build(source.clone(), job),
         "the keeper band works the source it is building"
-    );
-    assert!(
-        allocation.set_build_entry_kit(&source, Some(bare_builders())),
-        "the entry just declared takes the bare kit"
     );
     // ⛔ **THE BUILDERS ROW SPENDS THE SAME POOL THE KEEPERS DO.** `normalize` sheds crews until
     // `Σ assignments ≤ available`, so a band sized for its hunt rows alone has this row trimmed to a
@@ -661,6 +648,19 @@ fn run_ring_turn(
     };
     let keeper = spawn_keeper(&mut app, rows, tile);
     begin_a_ring(&mut app, keeper, "pen_big");
+    // **The ring's pile is claimed at its BUILD mark** (`docs/plan_site_crews.md` §2.4), the mark on
+    // the queue entry rather than the pen's hunt row — marked alike here, so "the ring's rank" is one
+    // statement about both the build and the pen it widens.
+    assert!(
+        app.world
+            .get_mut::<LaborAllocation>(keeper)
+            .expect("the keeper band keeps its allocation")
+            .set_build_priority(
+                &core_sim::BuildSource::Herd("pen_big".to_string()),
+                ring_rank
+            ),
+        "the ring was just queued, so its entry takes the mark"
+    );
     if arrangement == Arrangement::Edited {
         edit_the_big_row(&mut app, keeper, ring_rank);
     }

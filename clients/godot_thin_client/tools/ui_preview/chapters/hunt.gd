@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 346
+const EXPECTED_CHECKPOINTS := 354
 
 ## The countdown verdict's opening, as a needle — the precondition every claim about that sentence
 ## rests on ("this model reached the reaching branch at all").
@@ -291,7 +291,9 @@ func _delivered_oracle_band() -> Dictionary:
 	return BandFx.with_band_id({
 		"name": "Ashfell", "id": "Ashfell", "entity": 840, "faction": 0, "size": 120,
 		"current_x": 66, "current_y": 10, "pos": [66, 10],
-		"working_age": 30, "idle_workers": 26,
+		# Nobody assigned, so every working-age hand is idle — the sim's invariant, which the sheet's
+		# crew pool reads (`effective_idle`) rather than trusting `idle_workers` beside it.
+		"working_age": 26, "idle_workers": 26,
 		"hunt_reach": 7, "work_range": 2, "max_expedition_party_size": 8,
 		"hunt_per_worker_provisions": 0.8,
 		"output_multiplier": 1.0,
@@ -1689,6 +1691,10 @@ func run(harness) -> void:
 	# ---- …AND WHERE THE CURVE STOPPED FOR WANT OF WEAPONS, THE CAP SAYS SO ------------------------
 	await _armed_crew_note_states()
 
+	await _tame_deal_reads_the_curve()
+
+	await _hunt_crew_split_follows_the_stepper()
+
 
 # =====================================================================================
 #  THE PRE-LAUNCH FIGHT (`docs/plan_hunt_through_combat.md` §2.1, §4.2, §6.5)
@@ -1741,6 +1747,102 @@ const GATE_MAMMOTH_ENGAGE_RATE := 0.05
 ## whether either line is spoken at all. Built on the deadly-herd mammoth, which already carries the
 ## `defense 12` the refusal is judged on, so this fixture adds the two fields the arc appended and
 ## changes nothing else about the animal.
+## ⛔ **ONCE TAMED IS THE CREW CURVE ROW'S `next_rung_animals_likely`, AT THE SHEET'S CREW** — not the
+## crew-blind `pastoral_yield`. The boar mid-Tame, a curve whose every row carries a DISTINCT next-rung
+## figure, and the deal must state the row at the composed crew in the herd's own food.
+func _tame_deal_reads_the_curve() -> void:
+	var query: ForecastQuery = h._hud.forecast_query()
+	query.set_sender(func(request_id: int, ask: Dictionary) -> bool:
+		var reply := ForecastFx.answer(h._hud, request_id, ask)
+		if String(ask.get("kind", "")) == ForecastQuery.KIND_HUNT_CREW_TAKE:
+			for row in reply.get("per_crew", []):
+				(row as Dictionary)[SourceForecast.HUNT_CREW_NEXT_RUNG_ANIMALS_KEY] = \
+					TAME_CURVE_ANIMALS_PER_HUNTER * float((row as Dictionary).get(
+						SourceForecast.CREW_TAKE_WORKERS_KEY, 0))
+		query.deliver.call_deferred([reply])
+		return true)
+	query.reset()
+	var boar := HerdFx.investment_pair_boar_herd()
+	h._hud._compose.reset_hunt_source()
+	h._hud._compose.set_hunt_band(-1)
+	h._show_herd(boar)
+	h._compose_herd(boar, PELT_FRAME_HUNTERS, ForageFx.COMPOSE_FLOOR_UNSET, "tame")
+	await h._settle()
+	h._compose_herd(boar, PELT_FRAME_HUNTERS, ForageFx.COMPOSE_FLOOR_UNSET, "tame")
+	await h._settle()
+	await h._save("herd_tame_curve_deal")
+	var live: Dictionary = h._hud._selection.herd()
+	var animals := TAME_CURVE_ANIMALS_PER_HUNTER * float(h._hud._compose.hunt_count())
+	var food := animals * SourceForecast.body_quantum(live, "") \
+		* float(live.get(SourceForecast.FORECAST_PROVISIONS_PER_BIOMASS_KEY, 0.0))
+	var deal := Readout.improvement_deal_value(h._hud._drawercompose._compose_sheet)
+	h._assert_hud("once tamed — precondition: the curve's food differs from the crew-blind quote (%s)"
+			% SourceForecast.format_magnitude(food),
+		food > 0.0 and SourceForecast.PICKER_FOOD_PRODUCT_FORMAT
+			% SourceForecast.format_magnitude(food) != BOAR_TAME_PAYOFF_FACE)
+	h._assert_hud("…and ONCE TAMED is the curve row at crew %d (\"%s\")"
+			% [h._hud._compose.hunt_count(), deal],
+		deal == SourceForecast.PICKER_FOOD_PRODUCT_FORMAT % SourceForecast.format_magnitude(food))
+	ForecastFx.install(h._hud)
+	query.reset()
+	h._hud._drawercompose.close_compose_sheet()
+	h._hud._compose.reset_hunt_source()
+
+## **THE HUNT SHEET'S CREW SPLIT IS THE CURVE ROW'S `keep_hands` AT THE STEPPER'S CREW.** A sender
+## authors half a hand of keeping per hunter on every row, so a sheet reading the wrong row lands on a
+## figure the claims name; the stepper then moves and the marks and the sentence must follow.
+func _hunt_crew_split_follows_the_stepper() -> void:
+	var query: ForecastQuery = h._hud.forecast_query()
+	query.set_sender(func(request_id: int, ask: Dictionary) -> bool:
+		var reply := ForecastFx.answer(h._hud, request_id, ask)
+		if String(ask.get("kind", "")) == ForecastQuery.KIND_HUNT_CREW_TAKE:
+			for row in reply.get("per_crew", []):
+				(row as Dictionary)[SourceForecast.CREW_CURVE_KEEP_HANDS_KEY] = \
+					HUNT_SPLIT_KEEP_PER_HAND * float((row as Dictionary).get(
+						SourceForecast.CREW_TAKE_WORKERS_KEY, 0))
+		query.deliver.call_deferred([reply])
+		return true)
+	query.reset()
+	var boar := HerdFx.investment_pair_boar_herd()
+	h._hud._compose.reset_hunt_source()
+	h._hud._compose.set_hunt_band(-1)
+	h._show_herd(boar)
+	for crew in [HUNT_SPLIT_CREW, HUNT_SPLIT_STEPPED_CREW]:
+		h._compose_herd(boar, crew)
+		await h._settle()
+		h._compose_herd(boar, crew)
+		await h._settle()
+		if crew == HUNT_SPLIT_CREW:
+			await h._save("herd_crew_split_sheet")
+		var sheet = h._hud._drawercompose._compose_sheet
+		var marks := Readout.crew_split_marks(sheet)
+		var want := HUNT_SPLIT_KEEP_PER_HAND * float(crew)
+		var words := HUNT_SPLIT_WORDS if crew == HUNT_SPLIT_CREW else HUNT_SPLIT_STEPPED_WORDS
+		h._assert_hud("crew split, hunt sheet at %d — the marks are the curve row's (%s, want %d · %.2f)"
+				% [crew, "none" if marks == null else "%d · %.2f" % [marks.crew(), marks.keep_hands()],
+					crew, want],
+			marks != null and marks.crew() == crew and is_equal_approx(marks.keep_hands(), want))
+		h._assert_hud("…and the hover and the sentence under the figure both read \"%s\" (%s | %s)"
+				% [words, "" if marks == null else marks.tooltip_text,
+					Readout.crew_split_sentence(sheet)],
+			marks != null and marks.tooltip_text == words
+				and Readout.crew_split_sentence(sheet) == words)
+	ForecastFx.install(h._hud)
+	query.reset()
+	h._hud._drawercompose.close_compose_sheet()
+	h._hud._compose.reset_hunt_source()
+
+## The authored keeping on the hunt curve, and the two crews the sheet is read at, with their words.
+const HUNT_SPLIT_KEEP_PER_HAND := 0.5
+const HUNT_SPLIT_CREW := 3
+const HUNT_SPLIT_STEPPED_CREW := 2
+const HUNT_SPLIT_WORDS := "About 2 of 3 are tending the herd; 1 is free to hunt."
+const HUNT_SPLIT_STEPPED_WORDS := "1 of 2 is tending the herd; 1 is free to hunt."
+
+## The authored hunt curve's next-rung take, animals a turn per hunter on the row — distinct at every
+## crew, so a deal reading the wrong row cannot land on the right figure.
+const TAME_CURVE_ANIMALS_PER_HUNTER := 0.05
+
 func _combat_gate_mammoth() -> Dictionary:
 	var herd := HerdFx.deadly_herd_fixture()
 	herd["defense"] = GATE_MAMMOTH_DEFENSE
@@ -3162,7 +3264,8 @@ func _overdraw_is_the_wires_answer() -> void:
 				% [str(derived), str(wire_answer)], derived != bool(wire_answer))
 		# (1) THE TILE CARD'S TOOLTIP AND THE DRAWER'S STANDING SUMMARY — one producer, the one the
 		#     reported tooltip came out of.
-		var readout := SourceForecast.source_yield_readout(row, SourceForecast.LABOR_KIND_HUNT)
+		var readout := SourceForecast.source_yield_readout(row, SourceForecast.LABOR_KIND_HUNT,
+			SourceForecast.MAX_USEFUL_UNBOUNDED)
 		h._assert_hud("the worked-row readout flies the wire's ⚠ (%s)" % str(wire_answer),
 			bool(readout["warn"]) == bool(wire_answer))
 		# (2) THE MAP BADGE — the same row, through the renderer's own reader, since a plate is drawn
@@ -3408,12 +3511,15 @@ const PANEL_BAND_PICKER_ABSENT := "<no Band: picker>"
 ## distance — the ONLY thing that differs between them is the idle crew, which is precisely what makes
 ## composing for the wrong band visible in the frame.
 func _panel_band_roster() -> Array:
+	# Each band's `working_age` IS its idle crew — nobody assigned — which is the sim's invariant
+	# (`idle_workers == working_age − assigned − bench`) and what the sheet's crew pool reads now
+	# (`HudBandLaborState.source_crew_pool_*`, `effective_idle` plus the crew on the source).
 	return [
 		BandFx.with_band_id({"entity": 841, "faction": 0, "size": 120, "current_x": 66, "current_y": 10,
-			"working_age": 14, "idle_workers": PANEL_BAND_PARENT_IDLE, "hunt_reach": 7, "work_range": 2,
+			"working_age": PANEL_BAND_PARENT_IDLE, "idle_workers": PANEL_BAND_PARENT_IDLE, "hunt_reach": 7, "work_range": 2,
 			"max_expedition_party_size": 8, "activity": "forage", "labor_assignments": []}),
 		BandFx.with_band_id({"entity": 842, "faction": 0, "size": 40, "current_x": 67, "current_y": 10,
-			"working_age": 6, "idle_workers": PANEL_BAND_COLONY_IDLE, "hunt_reach": 7, "work_range": 2,
+			"working_age": PANEL_BAND_COLONY_IDLE, "idle_workers": PANEL_BAND_COLONY_IDLE, "hunt_reach": 7, "work_range": 2,
 			"max_expedition_party_size": 8, "activity": "forage", "labor_assignments": []}),
 	]
 
@@ -3422,6 +3528,7 @@ func _panel_band_roster() -> Array:
 func _stale_panel_band() -> Dictionary:
 	var stale: Dictionary = (_panel_band_roster()[PANEL_BAND_COLONY_INDEX - 1] as Dictionary).duplicate(true)
 	stale["idle_workers"] = PANEL_BAND_STALE_IDLE
+	stale["working_age"] = PANEL_BAND_STALE_IDLE
 	return stale
 
 ## The `Band:` picker's rendered FACE. Found STRUCTURALLY — `_build_band_picker` is the only row that

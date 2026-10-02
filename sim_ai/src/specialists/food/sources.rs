@@ -151,11 +151,12 @@ pub(crate) fn kit_units_held(
         .min()
 }
 
-/// **The hands on `row` its take did not need** — `workers − workers_needed`, the frame's own
-/// overstaffing signal: `LaborAssignmentState::workers_needed` is *"Minimum workers that would
-/// have produced this turn's take — the **overstaffing** signal. `workers > workers_needed` ⇒ the
-/// binding constraint was not labor, so the extra workers were idle."* They cost nothing to move,
-/// because the row's take is what the needed hands bring home.
+/// **The hands on `row` its crew did not need** — `workers − workers_needed`, the frame's own
+/// overstaffing signal: `LaborAssignmentState::workers_needed` is the minimum workers that would
+/// have produced this turn's take **plus the hands the row's site kept with** (a site's crew keeps
+/// first, `docs/plan_site_crews.md` §4), so `workers > workers_needed` ⇒ the extra workers were
+/// idle. They cost nothing to move, because the row's take and keeping are what the needed hands
+/// do.
 ///
 /// `0` when `workers_needed` is `0`: that is the sim's *"the source produced nothing"* and a fresh
 /// row the turn has not resolved yet alike, and neither is an overstaffing signal — a row nobody
@@ -166,6 +167,62 @@ pub(crate) fn surplus_hands(row: &LaborAssignmentState) -> u32 {
     } else {
         row.workers.saturating_sub(row.workers_needed)
     }
+}
+
+/// **A site a band keeps** — a patch under its forage row or a herd under its hunt row, read
+/// through the four upkeep fields both tables publish alike (`docs/plan_site_crews.md` §4).
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum KeptSite<'v> {
+    Patch(&'v ForagePatchState),
+    Herd(&'v HerdTelemetryState),
+}
+
+impl KeptSite<'_> {
+    /// `upkeepWorkersNeeded` — the keeping's own count, in bare keepers.
+    pub(crate) fn workers_needed(&self) -> u32 {
+        match self {
+            KeptSite::Patch(patch) => patch.upkeep_workers_needed,
+            KeptSite::Herd(herd) => herd.upkeep_workers_needed,
+        }
+    }
+
+    /// `upkeepHands` — the crew's hands spent keeping this turn.
+    pub(crate) fn hands(&self) -> f32 {
+        match self {
+            KeptSite::Patch(patch) => patch.upkeep_hands,
+            KeptSite::Herd(herd) => herd.upkeep_hands,
+        }
+    }
+
+    /// `upkeepShortfall` — the bill left unpaid.
+    pub(crate) fn shortfall(&self) -> f32 {
+        match self {
+            KeptSite::Patch(patch) => patch.upkeep_shortfall,
+            KeptSite::Herd(herd) => herd.upkeep_shortfall,
+        }
+    }
+}
+
+/// **The whole hands `row`'s own site spent keeping this turn** — the source's published
+/// `upkeepHands`, rounded up (`docs/plan_site_crews.md` §4) — the floor `Food::draw` never takes a
+/// row below, since a hand drawn under it comes out of the keeping and rots the site. It is summed across every band on the
+/// source, so a row sharing its site reads the whole crew's keeping: the conservative direction,
+/// which holds a hand back from a draw rather than letting one go that the keeping needed. `0` for
+/// a role row and for a source the frame does not carry.
+pub(crate) fn keeping_hands(view: &SeatView, row: &LaborAssignmentState) -> u32 {
+    let hands = match row.kind.as_str() {
+        ROLE_FORAGE => view
+            .patch_at(Tile::new(row.target_x, row.target_y))
+            .map(|patch| patch.upkeep_hands),
+        ROLE_HUNT => view
+            .snapshot
+            .herds
+            .iter()
+            .find(|herd| herd.id == row.fauna_id)
+            .map(|herd| herd.upkeep_hands),
+        _ => None,
+    };
+    hands.unwrap_or_default().max(0.0).ceil() as u32
 }
 
 /// Whether a band of another faction than `faction` stands on `tile`. **Ground under a rival is

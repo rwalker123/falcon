@@ -1472,12 +1472,10 @@ const ROAD_LADDER_ABANDON_LABEL := "Stop keeping this road"
 const ROAD_LADDER_ABANDON_TOOLTIP := "Drops this band's keeping of the road and its place in the " \
 	+ "queue. The rung stays, and with nobody keeping it rots back down at its own rate."
 
-## ⛔ **AND WHERE THE HEX ALSO CARRIES WORK OF YOURS, THE ROW SAYS SO.** `abandon <faction> <x> <y>`
-## names a PLACE: `handle_abandon` drops the faction's labor rows on that tile as well as the road's
-## keeper, because a tile may carry a road and a patch and putting one down without the other would be
-## silently partial. **There is no road-only abandon** — the sim has no such verb — so the honest thing
-## is to state the consequence rather than to narrow the command.
-const ROAD_LADDER_ABANDON_ALSO := "…and the foraging your people do on this hex goes down with it"
+## > ⛔ RETIRED — `ROAD_LADDER_ABANDON_ALSO`, *"…and the foraging your people do on this hex goes down
+## > with it"*. It was true while `abandon <f> <x> <y>` was the only road drop and named a PLACE; the
+## > road's `✕` sends `abandon <f> road <x> <y>` now (`docs/plan_site_crews.md` §2.4), which puts down
+## > the road alone, so the warning would state a consequence the command no longer has.
 
 ## ⛔ **THE NAME COLUMN IS NARROWER ON THIS BRANCH, and the wrapping is why.** The shared
 ## `HudWorkVocab.RUNG_TRACK_NAME_WIDTH` (150px) leaves 142px of a 292px card for the value, and
@@ -1528,6 +1526,9 @@ const GATE_ROW_PRIORITY := [
 const GATE_KIND_KEY := "kind"
 const GATE_SHORT_KEY := "short"
 const GATE_LONG_KEY := "long"
+## …and, on a CRAFT refusal, the craft's display name alone (`""` where the roster has not named it) —
+## what a locked rung's `🔒` states.
+const GATE_NAME_KEY := "name"
 
 ## The GROUND gate — `requires_rung`. A road cannot be built on bare ground because of it: a dirt road
 ## wants a trail beneath it and a trail is worn in only by traffic.

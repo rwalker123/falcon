@@ -123,14 +123,15 @@ fn world_with_a_cultivate_staffed_at(builders: u32) -> (App, UVec2) {
     world_with_a_patch(builders, HALF_BUILT)
 }
 
-/// **Put `keepers` on the band's `agriculture` role** — the fixture's stand-in for
-/// `assign_labor <faction> <band> agriculture <workers>`, which is the only thing that differs
-/// between the holding arm and the rotting one. The band is sized to afford the row, or
+/// **Put `keepers` more hands on the patch's own gathering row** — the fixture's stand-in for
+/// raising that row's crew, which is the only thing that differs between the holding arm and the
+/// rotting one. The band is sized to afford the row, or
 /// `LaborAllocation::normalize` trims the very role under measurement.
 fn staff_the_keeping(app: &mut App, source: UVec2, keepers: u32) {
     // **The band that holds THIS patch**, not the first one the query hands back: worldgen's own
     // starting units are bands too, and staffing one of those would leave the fixture's own
-    // `agriculture` pool empty while the test believed it was full.
+    // patch unkept while the test believed it was held. The keeping hands are the patch row's own
+    // crew (`docs/plan_site_crews.md` §2.1): it keeps first and gathers with the rest.
     let band = {
         let mut query = app
             .world
@@ -151,7 +152,14 @@ fn staff_the_keeping(app: &mut App, source: UVec2, keepers: u32) {
             .get_mut::<LaborAllocation>(band)
             .expect("the band keeps its allocation");
         let headroom = allocation.assigned_total() + keepers;
-        allocation.set_assignment(LaborTarget::Agriculture, keepers, headroom, None);
+        let row = allocation
+            .assignments
+            .iter_mut()
+            .find(|assignment| {
+                matches!(assignment.target, LaborTarget::Forage { tile, .. } if tile == source)
+            })
+            .expect("the fixture's band holds the source patch");
+        row.workers += keepers;
         headroom
     };
     let mut cohort = app
@@ -425,7 +433,6 @@ fn spawn_the_holding_band(
                     workers: gatherers,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 },
                 // **The builders are a band-level POOL** (`docs/plan_standing_upkeep.md` §2.5), and
                 // the whole of it goes on the head of the queue below. `builders == 0` is the
@@ -437,14 +444,13 @@ fn spawn_the_holding_band(
                     workers: builders,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 },
             ],
             build_queue: declared
                 .map(|declared| core_sim::BuildQueueEntry {
                     source: core_sim::BuildSource::Patch(source),
                     declared: core_sim::BuildJob::Rung(declared),
-                    kit: None,
+                    priority: core_sim::SourcePriority::default(),
                 })
                 .into_iter()
                 .collect(),
@@ -529,7 +535,8 @@ fn a_sowable_site(app: &mut App) -> UVec2 {
 /// rung's clamped share of the position, which is `0` for the whole of that leg, and `-1` renders as
 /// **no line at all** on the tile card.
 ///
-/// Read off the encoded buffer, and staged exactly like the rotting arm above: unkept, past the
+/// Read off the encoded buffer, and staged exactly like the rotting arm above: unkept — nobody on
+/// the patch's own row, whose crew is its keeping (`docs/plan_site_crews.md` §2.1) — past the
 /// rung's own grace, with nobody on the pool.
 #[test]
 fn an_abandoned_two_leg_sow_publishes_the_meter_state_rather_than_no_answer() {
@@ -594,7 +601,7 @@ fn an_abandoned_two_leg_sow_publishes_the_meter_state_rather_than_no_answer() {
         &mut app,
         tile,
         source,
-        A_GATHERER,
+        NOBODY_GATHERING,
         NOBODY_BUILDING,
         Some(core_sim::Improvement::Sow),
     );
@@ -665,7 +672,7 @@ fn published_patch_field<T>(
 /// ⛔ **THE KIT NAMED ON THE ENTRY IS GONE FROM THIS TEST.** It used to carry a fourth arm — `none`
 /// on the entry, *"going out bare is a real selection"* — and `docs/plan_pool_toe.md` retires that
 /// lever: a pool's tools follow from the rung, so an entry's kit prices nothing. The loss is stated
-/// in §3 rather than hidden, and the `build_kit` command is retired end to end by #676.
+/// in §3 rather than hidden, and the `build_kit` command is retired (proto field 60 reserved).
 #[test]
 fn a_plant_build_is_geared_by_the_rungs_own_tool_and_by_nothing_else() {
     /// The pool raising the Cultivate. More than one, so a per-worker sum is visible as a sum.
@@ -818,10 +825,15 @@ fn the_build_countdown_publishes_five_distinct_states_on_the_wire() {
         "a half-built meter the keeping covers holds where it is, indefinitely, and says so"
     );
 
-    // (3) **The same meter with the `agriculture` role EMPTY publishes ROTTING** — past the rung's
-    // own grace the ground is going backwards, and the player is losing work already bought rather
-    // than merely waiting.
-    let (mut app, source) = world_with_a_cultivate_staffed_at(NOBODY_BUILDING);
+    // (3) **The same meter with NOBODY ON THE PATCH'S OWN ROW publishes ROTTING** — the site's crew
+    // is its keeping (`docs/plan_site_crews.md` §2.1), so past the rung's own grace the ground is
+    // going backwards, and the player is losing work already bought rather than merely waiting.
+    let (mut app, source) = world_with_a_patch_knowing(
+        NOBODY_BUILDING,
+        HALF_BUILT,
+        THE_GATE_IS_OPEN,
+        NOBODY_GATHERING,
+    );
     let span = turns_past_the_grace(&app);
     let mut rotting = NO_BUILD_TURNS_ESTIMATE;
     for _ in 0..span {
@@ -1422,7 +1434,8 @@ fn a_blocked_head_publishes_no_supply_against_the_zero_demand_it_publishes() {
                 }) {
                     allocation.build_queue.push(core_sim::BuildQueueEntry {
                         source: core_sim::BuildSource::Patch(source),
-                        declared: core_sim::BuildJob::Rung(core_sim::Improvement::Cultivate), kit: None,});
+                        priority: core_sim::SourcePriority::default(),
+                        declared: core_sim::BuildJob::Rung(core_sim::Improvement::Cultivate),});
                     found = true;
                 }
             }

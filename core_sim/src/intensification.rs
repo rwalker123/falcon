@@ -24,7 +24,7 @@
 //! ground, not gathering"*, which is true of a **shared** crew and of nothing else.
 //!
 //! **The build's own output is net of nothing.** The rung's standing [`RungUpkeep`] is owed every
-//! turn, while building and while holding alike — but it is owed by the band's **keeping pool**, for
+//! turn, while building and while holding alike — but it is owed by the site's **own crew**, for
 //! every meter carrying work at any fullness (`docs/plan_standing_upkeep.md` §4.6a), so a build
 //! crew's whole output is progress and the pace is `work_cost / crew`. What can still eat a build is
 //! the **rot**: what the keeping failed to cover, bleeding off the very meter the builders are
@@ -164,6 +164,177 @@ pub fn neglect_grace_remaining(neglect_turns: u16, grace_turns: u32) -> u32 {
 /// `Herd::neglect_turns`, written every turn the source's upkeep requirement is met (a crew worked
 /// the patch; the herd's keepers can hold its animals).
 pub const NEGLECT_NONE: u16 = 0;
+
+/// **WHAT A DECAY CROSSED** — the two edges a falling position can cross on each rung of its branch,
+/// newest rung first (the order the unwind runs in).
+///
+/// - **`slipped`** — the position left the rung's TOP: the rung is no longer achieved, and it pays
+///   a fading share of itself. Announced at [`DECAY_SLIP_STATUS`] (the feed's lowest importance).
+/// - **`lost`** — the position fell to (or below) the rung's BASE, the top of the rung beneath it:
+///   every unit of work put into the rung is gone. Announced at [`DECAY_LOST_STATUS`] (Alert).
+///
+/// A rung crossing both edges in one decay is reported **lost only**: an investment gone subsumes it
+/// slipping on the way. Each is an EDGE, so a position that stays below re-announces nothing, and a
+/// rung that recovers to its top and slips again is announced again.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RungDecayEdges {
+    pub slipped: Vec<(RungKey, (f32, f32))>,
+    pub lost: Vec<(RungKey, (f32, f32))>,
+}
+
+impl RungDecayEdges {
+    pub fn is_empty(&self) -> bool {
+        self.slipped.is_empty() && self.lost.is_empty()
+    }
+}
+
+/// **RECORD A COMPLETED RUNG AS ACHIEVED** — `peak` rises to `held` where `held` is above it (see
+/// `ForagePatch::peak_rung`).
+pub fn raise_peak(peak: &mut Option<RungKey>, held: RungKey) {
+    if peak.is_none_or(|peak| held != peak && held.is_at_or_above(peak)) {
+        *peak = Some(held);
+    }
+}
+
+/// **A LOSS IS ONLY A LOSS OF SOMETHING HAD** — drop from `edges.lost` every rung above `peak` (a
+/// part-built meter rotting to empty: its work is gone, but the rung was never achieved, and the row
+/// already reads *losing ground*), and lower `peak` beneath every loss kept, so the rung must be
+/// achieved again before it can be lost again.
+pub fn settle_achieved_losses(edges: &mut RungDecayEdges, peak: &mut Option<RungKey>) {
+    edges
+        .lost
+        .retain(|(rung, _)| peak.is_some_and(|peak| peak.is_at_or_above(*rung)));
+    // Newest first, so the last write is the lowest rung lost.
+    for (rung, _) in &edges.lost {
+        *peak = rung.below();
+    }
+}
+
+/// **THE BAND A DECAY LINE LINKS TO, FOR ONE PEOPLE** — of `faction`'s bands with a row on the
+/// site (`candidates`: `(faction, band, crew on the site)`), the one with the largest crew, ties to
+/// the lowest `BandId`. `None` where no band of that people works the site.
+pub fn site_band_for(
+    candidates: &[(FactionId, crate::components::BandId, u32)],
+    faction: FactionId,
+) -> Option<crate::components::BandId> {
+    candidates
+        .iter()
+        .filter(|(owner, _, _)| *owner == faction)
+        .max_by(|(_, a_band, a_crew), (_, b_band, b_crew)| {
+            a_crew.cmp(b_crew).then_with(|| b_band.0.cmp(&a_band.0))
+        })
+        .map(|(_, band, _)| *band)
+}
+
+/// **The `status=` token a slip announces with** — the event dock's lowest importance rung.
+pub const DECAY_SLIP_STATUS: &str = "slipping";
+/// **The `status=` token a loss announces with** — the dock's Alert (`status=feral`), the token a
+/// lost plant rung has always carried, so every branch's loss reads on one rule.
+pub const DECAY_LOST_STATUS: &str = "feral";
+/// The percentage a meter is stated in on a slip line.
+const PERCENT: f32 = 100.0;
+/// The highest percentage a slipped rung can read — it is by definition short of full.
+const SLIPPED_PERCENT_MAX: u32 = 99;
+
+/// **THE EDGES A DECAY FROM `was` TO `now` CROSSED ON `branch`** — see [`RungDecayEdges`].
+/// `span_of` is each rung's `(base, width)` on the source's own price list **as it stood before the
+/// decay** (a plant patch's Field price lapses with its meter, so a span read after would move the
+/// top the slip is measured against). A rung of no width (a branch's root) has nothing to lose.
+pub fn rung_decay_edges(
+    branch: RungBranch,
+    was: f32,
+    now: f32,
+    span_of: impl Fn(RungKey) -> (f32, f32),
+) -> RungDecayEdges {
+    let mut edges = RungDecayEdges::default();
+    if now >= was {
+        return edges;
+    }
+    for rung in RungKey::ALL
+        .iter()
+        .rev()
+        .copied()
+        .filter(|rung| rung.branch() == branch)
+    {
+        let (base, width) = span_of(rung);
+        if width <= NO_RUNG_WIDTH {
+            continue;
+        }
+        let top = base + width;
+        if was > base && now <= base {
+            edges.lost.push((rung, (base, width)));
+        } else if was >= top && now < top {
+            edges.slipped.push((rung, (base, width)));
+        }
+    }
+    edges
+}
+
+/// **ANNOUNCE A DECAY'S EDGES** to `faction`'s feed, on `kind`'s channel — one Info line per slip
+/// (`Field at (44, 24) is slipping — 94%`) and one Alert line per loss (`Field at (44, 24) lost —
+/// back to a tended patch`). Tokens: `status=` ([`DECAY_SLIP_STATUS`] / [`DECAY_LOST_STATUS`]),
+/// `rung=` (the wire key), `x=` / `y=`, and on a slip `progress=` (whole percent of the rung's own
+/// meter). Every value is one word; the prose lives in the label.
+#[allow(clippy::too_many_arguments)] // one feed line's whole context: whom, which band, which channel, where, and what
+pub fn announce_rung_decay(
+    event_log: &mut crate::resources::CommandEventLog,
+    tick: u64,
+    faction: FactionId,
+    band: Option<crate::components::BandId>,
+    kind_of: impl Fn(RungKey) -> crate::resources::CommandEventKind,
+    tile: bevy::math::UVec2,
+    now: f32,
+    edges: &RungDecayEdges,
+) {
+    let (x, y) = (tile.x, tile.y);
+    // **`band=` links the line to the Work row** that works or keeps the site
+    // ([`site_band_for`]); absent where no band of the people told has a row on it.
+    let band_token = band.map_or(String::new(), |band| format!(" band={}", band.0));
+    for (rung, _) in &edges.lost {
+        let back_to = rung.below().unwrap_or(*rung).feed_fallback();
+        event_log.push(crate::resources::CommandEventEntry::new(
+            tick,
+            kind_of(*rung),
+            faction,
+            format!(
+                "{} at ({x}, {y}) lost — back to {back_to}",
+                rung.feed_name()
+            ),
+            Some(format!(
+                "status={DECAY_LOST_STATUS} reason=untended rung={} x={x} y={y}{band_token}",
+                rung.wire_key()
+            )),
+        ));
+    }
+    for (rung, (base, width)) in &edges.slipped {
+        let percent = (((now - base) / width) * PERCENT)
+            .floor()
+            .clamp(0.0, SLIPPED_PERCENT_MAX as f32) as u32;
+        event_log.push(crate::resources::CommandEventEntry::new(
+            tick,
+            kind_of(*rung),
+            faction,
+            format!(
+                "{} at ({x}, {y}) is slipping — {percent}%",
+                rung.feed_name()
+            ),
+            Some(format!(
+                "status={DECAY_SLIP_STATUS} rung={} x={x} y={y} progress={percent}{band_token}",
+                rung.wire_key()
+            )),
+        ));
+    }
+}
+
+/// **DID THE HELD RUNG JUST RISE?** — `now` is a higher rung than `was` on the same branch: a build
+/// completed. Every branch's one position mutator asks this and, on `true`, resets the source's
+/// neglect counter to [`NEGLECT_NONE`], so **a just-finished rung starts with its full grace**
+/// rather than inheriting the shortfall turns its build ran up (the maintainer's decision: a Field
+/// completed by a crew short of its bill was revoked the very next turn, its one grace turn spent
+/// while it was still being sown). A fall, or no move, answers `false`.
+pub fn rung_rose(was: RungKey, now: RungKey) -> bool {
+    now != was && now.is_at_or_above(was)
+}
 
 /// **HOW FAST A CREW WORKING A SOURCE AT `floor` LEARNS AND BUILDS** — `floor / MSY_BIOMASS_FRACTION`,
 /// normalised so the **food peak is ×1.0** (`docs/plan_harvest_floor.md` §3).
@@ -382,10 +553,10 @@ pub fn build_turns_remaining(cost: f32, done: f32, work_this_turn: f32) -> Optio
 /// # WHY THE TWO NON-FINISHING STATES ARE NOT ONE
 ///
 /// **THE ROT IS THE DENOMINATOR** (`docs/plan_standing_upkeep.md` §4.6a). A build crew supplies
-/// nothing toward the maintenance rate — the keeping pool owes that for every meter carrying work,
-/// at any fullness — so what eats a build is the **rot**: what the keeping failed to cover, bleeding
-/// off the very meter the builders are raising ([`RungDef::meter_rot`]). Builders raising a meter
-/// more slowly than it bleeds are losing work already bought.
+/// nothing toward the maintenance rate — the site's own crew owes that for every meter carrying
+/// work, at any fullness — so what eats a build is the **rot**: what the keeping failed to cover,
+/// bleeding off the very meter the builders are raising ([`RungDef::meter_rot`]). Builders raising
+/// a meter more slowly than it bleeds are losing work already bought.
 ///
 /// That the two non-finishing states are **actionable and permanent** — standing facts about a
 /// staffing the player has already committed — is what separates them from the no-answer state,
@@ -430,7 +601,7 @@ pub enum BuildTurns {
     /// than merely waiting its turn.
     ///
     /// **The remedy is off the build line entirely.** The measured case is a half-tamed herd with an
-    /// empty `husbandry` role: the hunters draw the flock to their floor, the unmet keeping
+    /// empty keeping: the flock stands on its floor, the unmet keeping
     /// suppresses its regrowth, and the `Tame`'s own escapement gate never reopens. What fixes it is
     /// `assign_labor <faction> <band> husbandry <n>`.
     Blocked,
@@ -512,7 +683,7 @@ pub enum BuildGate {
     /// plant `Cultivate` and animal `Tame` — and never by rung 3, where bare ground stands below
     /// every floor by construction.
     ///
-    /// **This is the animal web's escapement stall**, whose remedy is the `husbandry` pool rather
+    /// **This is the animal web's escapement stall**, whose remedy is the herd's own crew rather
     /// than anything on the build line (`.claude/rules/core_sim/husbandry.md` → "THE REGROWTH
     /// SUPPRESSION CLOSES A LOOP").
     Escapement,
@@ -714,7 +885,126 @@ pub struct PublishedBuildLeg {
     pub leg: BuildLeg,
     /// `None` is the wire's *"no estimate"*, exactly as the entry's own countdown uses it.
     pub turns: Option<BuildTurns>,
+    /// **Turns before this leg starts banking** — everything above it on the queue's running sum,
+    /// the same sum [`Self::turns`] ends on. `None` where the leg cannot be dated.
+    pub starts_after: Option<u32>,
+    /// **Work this leg banks per turn once it starts** — the entry's `balance` at the full pool
+    /// ([`BuildQuote::balance`]), the pace its countdown was struck at.
+    pub work_per_turn: f32,
 }
+
+/// **THE RUNG IN FLIGHT, AS A PACE** — the first leg with work left, when the queue can date it:
+/// the rung, the work it still owes, when it starts and how fast it banks. What the keeping
+/// forecast projects the meter along ([`keeping_forecast`]), so it moves at exactly the pace
+/// `buildTurnsRemaining` was struck at.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct BuildPace {
+    pub rung: RungKey,
+    pub work: f32,
+    pub starts_after: u32,
+    pub work_per_turn: f32,
+}
+
+impl BuildPace {
+    /// The in-flight leg of a dated leg list, or `None` where nothing is in flight or the leg the
+    /// source is on cannot be dated (a stalled, rotting or blocked entry).
+    pub fn in_flight(legs: &[PublishedBuildLeg]) -> Option<BuildPace> {
+        let leg = legs
+            .iter()
+            .find(|published| published.leg.work_remaining > LEG_ALREADY_PAID)?;
+        Some(BuildPace {
+            rung: leg.leg.rung,
+            work: leg.leg.work_remaining,
+            starts_after: leg.starts_after?,
+            work_per_turn: leg.work_per_turn,
+        })
+    }
+}
+
+/// **THE KEEPING LINE'S TWO FORECASTS, IN WHOLE WORKERS** (`docs/plan_site_crews.md`) — what the
+/// site's keeping will take once the rung in flight is finished, and the first turn from now it
+/// needs one more whole worker than it does now. Both are `ceil(demand ÷ PER_WORKER_OUTPUT)`, the
+/// unit `upkeepWorkersNeeded` is quoted in, so the three read as one line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeepingForecast {
+    /// Whole workers once the in-flight rung completes; equal to now where nothing is in flight.
+    pub workers_at_completion: u32,
+    /// Turns from now until the turn whose keeping bill first takes one more whole worker than now,
+    /// or `None` where it does not within the build (nothing in flight, or no whole-worker step
+    /// before completion). A bill is struck in Logistics off the position the previous turn's
+    /// accrual left, so this is one more than the accruals it takes to reach the step.
+    pub turns_to_next_worker: Option<u32>,
+}
+
+/// Whole workers a keeping bill of `demand` takes — [`PER_WORKER_OUTPUT`] per hand, the rate
+/// `upkeepWorkersNeeded` is quoted at.
+pub fn keeping_workers(demand: f32) -> u32 {
+    if demand <= NO_UPKEEP_DEMAND {
+        return 0;
+    }
+    (demand / PER_WORKER_OUTPUT).ceil() as u32
+}
+
+/// **PROJECT THE KEEPING ALONG THE BUILD'S OWN PACE** — `demand_now` is the site's current bill,
+/// `position_now` its ladder position, and `demand_at(position)` the bill the same site would owe
+/// standing at `position` (the caller's keeping basis on a clone). The meter is walked at
+/// `pace.work_per_turn` from turn `pace.starts_after`, capped at the in-flight rung's top — the
+/// countdown's own arithmetic, so the two forecasts agree with `buildTurnsRemaining`.
+///
+/// **The bill never falls as a rung is climbed**, so the first whole-worker step is found by
+/// bisection over the turns to completion.
+pub fn keeping_forecast(
+    demand_now: f32,
+    position_now: f32,
+    pace: Option<BuildPace>,
+    demand_at: impl Fn(f32) -> f32,
+) -> KeepingForecast {
+    let now = keeping_workers(demand_now);
+    let Some(pace) = pace else {
+        return KeepingForecast {
+            workers_at_completion: now,
+            turns_to_next_worker: None,
+        };
+    };
+    let workers_at_completion = keeping_workers(demand_at(position_now + pace.work));
+    if pace.work_per_turn <= BUILD_BALANCE_HOLDS || workers_at_completion <= now {
+        return KeepingForecast {
+            workers_at_completion,
+            turns_to_next_worker: None,
+        };
+    }
+    let banked_by = |turn: u32| {
+        let working = turn.saturating_sub(pace.starts_after) as f32;
+        (pace.work_per_turn * working).min(pace.work)
+    };
+    let finished = pace
+        .starts_after
+        .saturating_add((pace.work / pace.work_per_turn).ceil() as u32);
+    // The fewest further turns of accrual after which the meter's bill takes more whole workers
+    // than now — `0` is possible, because a turn's bill is struck in Logistics off the position the
+    // PREVIOUS turn's accrual left, so the meter can already stand past a step the bill has not yet
+    // been struck at.
+    let (mut low, mut high) = (NO_FURTHER_ACCRUAL, finished);
+    while low < high {
+        let mid = low + (high - low) / 2;
+        if keeping_workers(demand_at(position_now + banked_by(mid))) > now {
+            high = mid;
+        } else {
+            low = mid + 1;
+        }
+    }
+    // …and the bill that reads it is struck on the turn AFTER that accrual.
+    KeepingForecast {
+        workers_at_completion,
+        turns_to_next_worker: Some(low + BILL_STRUCK_NEXT_TURN),
+    }
+}
+
+/// No further turn of accrual — the meter as it stands.
+const NO_FURTHER_ACCRUAL: u32 = 0;
+
+/// A turn's keeping bill is struck off the position the turn before it left.
+const BILL_STRUCK_NEXT_TURN: u32 = 1;
 
 /// **A LEG WITH NOTHING LEFT TO PAY** — the `work_remaining` of a rung the source has already
 /// covered. Named because a leg list is built by clamping every rung's span against the position,
@@ -932,7 +1222,7 @@ pub fn activity_work(workers: u32) -> f32 {
 // maintenance rate netted off a build crew's output (`docs/plan_standing_upkeep.md` §4.6a).
 //
 // **A BUILD CREW SUPPLIES NOTHING TOWARD THE RATE; ITS WHOLE OUTPUT IS PROGRESS.** The rate is owed
-// by the band's keeping pool for **every** meter carrying work, at any fullness (§2.4), so there is
+// by the site's own crew for **every** meter carrying work, at any fullness (§2.4), so there is
 // nothing left for a build's accrual to subtract. What eats a build now is the **rot** — what the
 // keeping failed to cover, bleeding off the same meter the builders are raising — and that is a
 // signed term on [`RungDef::build_balance`] rather than a floor on the accrual.
@@ -1428,6 +1718,59 @@ impl RungKey {
     /// the two together, so this is a *reading* of the ladder rather than a second authority.
     ///
     /// `None` for a rung no verb drives — the two wild rungs, which are nothing to build.
+    /// **THE RUNG ONE BELOW THIS ONE ON ITS BRANCH** — the inverse of [`Self::above`]; `None` at the
+    /// branch's root.
+    pub fn below(self) -> Option<RungKey> {
+        RungKey::ALL
+            .iter()
+            .copied()
+            .find(|rung| rung.above() == Some(self))
+    }
+
+    /// **WHAT THE FEED CALLS A SOURCE STANDING ON THIS RUNG**, capitalised to lead a line — the
+    /// subject of a slip or a loss (`Field at (44, 24) is slipping — 94%`).
+    pub fn feed_name(self) -> &'static str {
+        match self {
+            RungKey::PlantWild => "Wild ground",
+            RungKey::PlantTended => "Tended patch",
+            RungKey::PlantField => "Field",
+            RungKey::AnimalWild => "Wild herd",
+            RungKey::AnimalPastoral => "Tamed herd",
+            RungKey::AnimalPen => "Pen",
+            RungKey::RoutePath => "Path",
+            RungKey::RouteTrail => "Trail",
+            RungKey::RouteDirtRoad => "Road",
+            RungKey::RoutePavedRoad => "Paved road",
+            RungKey::ForestryDeadfall => "Deadfall",
+            RungKey::ForestryFelling => "Felling",
+            RungKey::ForestryCoppice => "Coppice",
+            RungKey::ExtractionGathering => "Surface gathering",
+            RungKey::ExtractionQuarry => "Quarry",
+        }
+    }
+
+    /// **WHAT A LOSS LEAVES BEHIND, IN THE FEED'S WORDS** — the rung a source falls *back to*
+    /// (`… lost — back to a tended patch`).
+    pub fn feed_fallback(self) -> &'static str {
+        match self {
+            RungKey::PlantWild => "wild ground",
+            RungKey::PlantTended => "a tended patch",
+            RungKey::PlantField => "a field",
+            RungKey::AnimalWild => "a wild herd",
+            RungKey::AnimalPastoral => "a tamed herd",
+            RungKey::AnimalPen => "a pen",
+            RungKey::RoutePath => "a path",
+            RungKey::RouteTrail => "a trail",
+            RungKey::RouteDirtRoad => "a road",
+            RungKey::RoutePavedRoad => "a paved road",
+            RungKey::ForestryDeadfall => "deadfall",
+            RungKey::ForestryFelling => "a felled wood",
+            RungKey::ForestryCoppice => "a coppice",
+            RungKey::ExtractionGathering => "surface gathering",
+            RungKey::ExtractionQuarry => "a quarry",
+        }
+    }
+
     pub fn builder_verb(self) -> Option<Improvement> {
         match self {
             RungKey::PlantWild | RungKey::AnimalWild => None,
@@ -3172,7 +3515,7 @@ impl RungDef {
     //
     // **There was never a second demand.** The maintenance rate is owed *always*, while building and
     // while held alike (`docs/plan_standing_upkeep.md` §2.4); what the meter decides is only **who
-    // supplies it** — the build crew below its cost, the band's keeping pool at it. A second concept
+    // supplies it** — the build crew below its cost, the site's own crew at it. A second concept
     // for the same rate could only ever drift from the first, and the per-web split it carried (a
     // plant meter owed its rot rate, an animal one owed its whole keeping) was an exception with no
     // fact under it: *you cannot be billed to hold something you have not finished building* is
@@ -3556,6 +3899,23 @@ pub struct LadderConfig {
 }
 
 impl LadderConfig {
+    /// **THIS LADDER WITH `rung`'s KEEPING RATE SCALED BY `factor`** — the one way to state a
+    /// source's bill now that every quote prices the LIVE bill rather than a stamp: a fixture that
+    /// wants a bill of `B` scales the rung its source holds by `B ÷ live`. A rung declaring no
+    /// `upkeep` is returned unchanged.
+    pub fn with_upkeep_scaled(&self, rung: RungKey, factor: f32) -> LadderConfig {
+        let mut scaled = self.clone();
+        if let Some(upkeep) = scaled
+            .rungs
+            .iter_mut()
+            .find(|def| def.branch == rung.branch() && def.id == rung.id())
+            .and_then(|def| def.upkeep.as_mut())
+        {
+            upkeep.work_per_turn *= factor;
+        }
+        scaled
+    }
+
     pub fn builtin() -> Arc<Self> {
         Arc::new(
             LadderConfig::from_json_str(BUILTIN_INTENSIFICATION_LADDER)
@@ -3682,7 +4042,7 @@ impl LadderConfig {
         // (`docs/plan_standing_upkeep.md` §4.8).
         let cost = rung.build_cost(cost_multiplier)?;
         // **Quoted NET OF THE ROT, exactly as the live stamp is** — never net of the maintenance
-        // rate, which the keeping pool owes whatever this crew does. `rot_this_turn` is the
+        // rate, which the site's own crew owes whatever this crew does. `rot_this_turn` is the
         // **source's** live bleed ([`RungDef::meter_rot`] on the meter at risk), so a quote and the
         // card beside it describe one number. On ground nobody has started there is nothing banked
         // and therefore nothing to rot, so the answer is `work_cost / the pool's supply`.
@@ -4832,7 +5192,7 @@ fn validate_upkeep(rung: &RungDef, where_: &str) -> Result<(), LadderConfigError
     }
     // ⛔ **NO DEPOSIT RUNG MAY DECLARE A STANDING MATERIAL RATE, AND THE REFUSAL IS THE POINT.**
     // The two deposit branches settle the **work** half of their keeping
-    // (`systems::settle_bands_extraction`) and have no settle pass for a material one — so a rate
+    // (the `Extract` arm's keeping) and have no settle pass for a material one — so a rate
     // here would parse, validate, publish a demand, and be paid by nobody: the *"looks live but
     // isn't"* failure this whole file is written against, and exactly what
     // `routes::road_meter_rot` reports having shipped for one slice when `route:paved_road`
@@ -5114,7 +5474,7 @@ mod tests {
     }
 
     /// **WHAT A CREW OF `workers` ACTUALLY BANKS ON THIS RUNG** — its whole output, which is what
-    /// `build_accrual` answers now that the rate is nobody's tax but the keeping pool's
+    /// `build_accrual` answers now that the rate is nobody's tax but the site crew's
     /// (`docs/plan_standing_upkeep.md` §4.6a). Stated once here so every assertion below reads the
     /// model rather than restating the arithmetic.
     fn expected_net(_rung: &RungDef, workers: u32) -> f32 {
@@ -5444,7 +5804,7 @@ mod tests {
         let build = tended.build.as_ref().expect("tended rung builds");
 
         // The crew IS the throughput, with nothing netted off it: the maintenance rate is the
-        // keeping pool's whatever the builders do (`docs/plan_standing_upkeep.md` §4.6a).
+        // site crew's whatever the builders do (`docs/plan_standing_upkeep.md` §4.6a).
         let crew = A_CREW_OF_TWO;
         assert_eq!(
             tended.build_accrual(Some(Improvement::Cultivate), true, crew, NO_BUILD_GEAR),
@@ -5493,8 +5853,8 @@ mod tests {
             assert_eq!(work(0), 0.0, "{key:?}: nobody working, nothing built");
             // **THERE IS NO MINIMUM VIABLE CREW ANY MORE** (`docs/plan_standing_upkeep.md` §4.6a).
             // The maintenance rate used to be netted off here, so a crew at or below it banked
-            // nothing; the keeping pool owes that rate whatever the builders do, so **one hand banks
-            // one worker-turn on every rung**, however dear the rung is to hold.
+            // nothing; the site's own crew owes that rate whatever the builders do, so **one hand
+            // banks one worker-turn on every rung**, however dear the rung is to hold.
             assert_eq!(
                 work(SOLE_BUILDER),
                 PER_WORKER_OUTPUT,
@@ -7278,7 +7638,7 @@ mod tests {
             assert_eq!(
                 banked,
                 expected_net(rung, crew),
-                "{key:?}: the builders bank their whole head count — the keeping pool owes the \
+                "{key:?}: the builders bank their whole head count — the site's own crew owes the \
                  rate, and a build supplies none of it (§4.6a)"
             );
             // **The floor cannot reach it: `build_accrual` does not take one.** What a *gatherer*

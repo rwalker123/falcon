@@ -22,6 +22,7 @@
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
+use bevy::prelude::Entity;
 use bevy::MinimalPlugins;
 
 use core_sim::TakeSelection;
@@ -495,18 +496,9 @@ fn spawn_forager_of(
                             species: None,
                             take_species: TakeSelection::EVERYTHING,
                         },
-                        workers: foragers,
+                        workers: foragers + keepers,
                         kit: None,
                         priority: SourcePriority::default(),
-                        upkeep_kit: None,
-                    },
-                    LaborAssignment {
-                        party: None,
-                        target: LaborTarget::Agriculture,
-                        workers: keepers,
-                        kit: None,
-                        priority: SourcePriority::default(),
-                        upkeep_kit: None,
                     },
                     // **A pool of the same size staffs the build** — what this fixture meant when
                     // one crew did every job (`docs/plan_standing_upkeep.md` §2.5).
@@ -516,7 +508,6 @@ fn spawn_forager_of(
                         workers: foragers,
                         kit: None,
                         priority: SourcePriority::default(),
-                        upkeep_kit: None,
                     },
                 ],
                 build_queue: improvement
@@ -525,7 +516,7 @@ fn spawn_forager_of(
                         declared: core_sim::BuildJob::Rung(declared),
                         // ⛔ **AN ENTRY'S KIT PRICES NOTHING** since `docs/plan_pool_toe.md`: a
                         // pool's tools follow from the rung. The gear axis is held on the LEDGER.
-                        kit: None,
+                        priority: core_sim::SourcePriority::default(),
                     })
                     .into_iter()
                     .collect(),
@@ -1150,38 +1141,21 @@ fn a_bare_ground_sow_wears_the_builders_kit_on_its_first_leg() {
     );
 }
 
-/// **Put the shipped plant builders' kit on the QUEUE ENTRY, and NOTHING on the keeping row** —
-/// the isolation the wear arm above needs, since both jobs derive the same kit when neither names
-/// one.
-///
-/// **The entry, not the `builders` row.** A build's kit is a property of the job since
-/// `docs/plan_standing_upkeep.md` §4.7a ②, and the row carries none at all.
+/// **Stock the band with the shipped plant builders' gear, one unit per builder** — the tools the
+/// rung in flight asks the pool for (`docs/plan_pool_toe.md` §4), so the wear arm above has
+/// something to spend.
 fn gear_the_builders_alone(app: &mut App, band: bevy::prelude::Entity) {
     let equipment = core_sim::EquipmentConfig::for_a_stocked_fixture();
-    let kit = equipment
-        .kit(TILLAGE_KIT)
-        .expect("the shipped roster carries the tillage kit");
     let builders = {
-        let mut allocation = app
+        let allocation = app
             .world
-            .get_mut::<LaborAllocation>(band)
+            .get::<LaborAllocation>(band)
             .expect("the fixture band keeps its allocation");
-        let mut builders = 0;
-        for assignment in &mut allocation.assignments {
-            match assignment.target {
-                LaborTarget::Builders => builders = assignment.workers,
-                LaborTarget::Agriculture => assignment.kit = Some(bare_builders()),
-                _ => {}
-            }
-        }
         assert!(
             !allocation.build_queue.is_empty(),
-            "fixture: the band must have declared a build for the kit to ride"
+            "fixture: the band must have declared a build for the gear to be spent on"
         );
-        for entry in allocation.build_queue.iter_mut() {
-            entry.kit = Some(kit.clone());
-        }
-        builders
+        allocation.workers_on(&LaborTarget::Builders)
     };
     app.world
         .entity_mut(band)
@@ -1191,8 +1165,7 @@ fn gear_the_builders_alone(app: &mut App, band: bevy::prelude::Entity) {
         ));
 }
 
-/// The plant web's builders kit, and the one item it carries — what a build's wear is spent on.
-const TILLAGE_KIT: &str = "tillage";
+/// The plant web's builders' tool — what a build's wear is spent on.
 const TILLAGE_ITEM: &str = "hoes";
 
 /// **THE LADDER MUST CLIMB: wild ≤ tended < Field** (on a *bare* patch). Same tile, same biomass,
@@ -1359,7 +1332,12 @@ fn sowing_a_tended_patch_leaves_the_gatherers_take_alone_then_upgrades_it() {
             patch.owner = Some(FactionId(0));
             patch.species = crop;
         }
-        spawn_forager_of(&mut baseline, tile, coord, None, foragers);
+        let band = spawn_forager_of(&mut baseline, tile, coord, None, foragers);
+        // **Holding the same tools as the sowing arm**, which the build fixture disarms: the crew
+        // keeps the patch before it gathers (`docs/plan_site_crews.md` §2.1), and a hoe on the
+        // keeping frees hands for the take — so a baseline that kept its hoe would out-gather the
+        // sowing arm by the tool, not by the build.
+        core_sim::disarm_the_builders(&mut baseline.world, band, RungKey::PlantTended);
         if turns == 0 {
             baseline.world.run_system_once(advance_labor_allocation);
             return provisions_f32(&mut baseline);
@@ -1433,6 +1411,299 @@ fn sowing_a_tended_patch_leaves_the_gatherers_take_alone_then_upgrades_it() {
     );
 }
 
+// ---------------------------------------------------------------------------------------------
+// The site's own crew keeps it first (`docs/plan_site_crews.md` §2.1)
+// ---------------------------------------------------------------------------------------------
+
+/// **A standing Field on ground worth exactly one tender-load**, owned and committed, and a band
+/// working it with `crew` hands holding `ledger` — nothing else on the band, so the row's crew is the
+/// whole of what keeps and gathers.
+///
+/// **The load is set, not searched for.** The Field's bill is quoted per tender-load
+/// (`forage::patch_tender_loads`), and the reference tile is one load by construction —
+/// `forage.cultivation.capacity_per_tender` IS its `K`. Setting that dial to the fixture tile's own
+/// `K` puts this tile on the reference footing, so the bill in bare hands is the ladder's own
+/// `work_per_turn` over [`core_sim::PER_WORKER_OUTPUT`], read rather than restated.
+fn a_field_worked_by(crew: u32, ledger: core_sim::BandEquipment) -> (App, Entity, UVec2) {
+    let mut app = spawn_world();
+    let (tile, coord) = prime_thriving_patch(&mut app);
+    seat_completed_rung(&mut app, coord, RungKey::PlantField);
+    let crop = default_sowable_species(&app, coord);
+    {
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry.patch_mut(coord).expect("the fixture patch");
+        patch.owner = Some(FactionId(0));
+        patch.species = crop;
+    }
+    let one_load = {
+        let labor = app.world.resource::<LaborConfigHandle>().get();
+        let ground = app.world.get::<Tile>(tile).expect("the fixture tile");
+        let mut config = (*labor).clone();
+        config.forage.cultivation.capacity_per_tender = tile_forage_capacity(&labor.forage, ground);
+        config
+    };
+    app.world
+        .resource_mut::<LaborConfigHandle>()
+        .replace(std::sync::Arc::new(one_load));
+    let band = app
+        .world
+        .spawn((
+            PopulationCohort {
+                home: tile,
+                current_tile: tile,
+                size: 30,
+                children: scalar_zero(),
+                working: scalar_from_f32(crew as f32),
+                elders: scalar_zero(),
+                stores: LocalStore::new(),
+                morale: scalar_one(),
+                last_food_consumption: 0.0,
+                last_food_need: 0.0,
+                last_turn_food_transfers: Default::default(),
+                last_turn_fodder_transfers: Default::default(),
+                last_turn_transfer_crossings: Vec::new(),
+                last_morale_delta: scalar_zero(),
+                last_morale_cause: MoraleCause::None,
+                last_morale_contributions: Default::default(),
+                last_fertility_factors: Default::default(),
+                discontent_fraction: scalar_zero(),
+                grievance: scalar_zero(),
+                last_emigrated: 0,
+                last_immigrated: 0,
+                age_turns: 0,
+                generation: 0 as GenerationId,
+                faction: FactionId(0),
+                knowledge: Vec::new(),
+            },
+            StartingUnit {
+                kind: "BandForager".to_string(),
+                tags: Vec::new(),
+            },
+            ledger,
+            LaborAllocation {
+                assignments: vec![LaborAssignment {
+                    party: None,
+                    target: LaborTarget::Forage {
+                        tile: coord,
+                        floor: FIELD_CREW_FLOOR,
+                        species: None,
+                        take_species: TakeSelection::EVERYTHING,
+                    },
+                    workers: crew,
+                    kit: None,
+                    priority: SourcePriority::default(),
+                }],
+                ..Default::default()
+            },
+        ))
+        .id();
+    (app, band, coord)
+}
+
+/// **A shallow floor**, so the standing crop the take sees is wide open and the hands are the only
+/// thing that binds it.
+const FIELD_CREW_FLOOR: f32 = 0.1;
+
+/// The Field's bill **in bare hands** on one tender-load — the ladder's own `work_per_turn` over one
+/// worker-turn.
+fn field_bill_in_bare_hands(app: &App) -> f32 {
+    const ONE_TENDER_LOAD: f32 = 1.0;
+    app.world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .rung(RungKey::PlantField)
+        .upkeep_demand(ONE_TENDER_LOAD)
+        / core_sim::PER_WORKER_OUTPUT
+}
+
+/// What one turn left: the hands the keeping took, the supply against the bill, and the food the
+/// band banked.
+#[derive(Debug)]
+struct KeptTurn {
+    keep_hands: f32,
+    supplied: f32,
+    demand: f32,
+    tools_short: bool,
+    food: f32,
+}
+
+fn one_kept_turn(app: &mut App, band: Entity, coord: UVec2) -> KeptTurn {
+    run_turns_with_forage(app, 1);
+    let registry = app.world.resource::<ForageRegistry>();
+    let patch = registry.patch(coord).expect("the fixture patch");
+    KeptTurn {
+        keep_hands: patch.upkeep_hands,
+        supplied: patch.upkeep_supplied,
+        demand: patch.upkeep_demanded.unwrap_or_default(),
+        tools_short: patch.upkeep_toe.iter().any(|line| line.is_short()),
+        food: app
+            .world
+            .get::<PopulationCohort>(band)
+            .expect("the band")
+            .stores
+            .get(FOOD)
+            .to_f32(),
+    }
+}
+
+/// ⛔ **A FIELD FINISHED BY A CREW SHORT OF ITS BILL KEEPS THE RUNG FOR ITS FULL GRACE, THEN
+/// DECAYS.** The neglect counter counts consecutive short turns and the keeping is billed while a
+/// meter is still being raised, so a Sow staffed short of its bill used to finish with its grace
+/// already spent — and the Field was revoked on the very next turn (reported from play: sown on
+/// tick 133, "gone feral" on 134). The turn a rung completes, its counter resets.
+///
+/// The completion is driven through the ONE position mutator every accrual ends in, from just under
+/// the Field's top with a counter run up past any grace, so the reset has something to undo.
+#[test]
+fn a_field_finished_short_of_its_bill_keeps_the_rung_for_its_full_grace() {
+    /// One bare hand against a four-hand bill — short every turn.
+    const SHORT_CREW: u32 = 1;
+    /// How far under the Field's top the build stands the turn before it finishes.
+    const LAST_STEP: f32 = 1.0;
+    let (mut app, _, coord) = a_field_worked_by(SHORT_CREW, core_sim::BandEquipment::default());
+    {
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        let (base, width) = core_sim::plant_rung_span(RungKey::PlantField, &ladder);
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry.patch_mut(coord).expect("the fixture patch");
+        patch.set_ladder_position(base + width - LAST_STEP, &ladder);
+        patch.neglect_turns = WELL_PAST_ANY_GRACE;
+        patch.set_ladder_position(base + width, &ladder);
+        assert!(
+            patch.standing().held == RungKey::PlantField,
+            "fixture: the Field is finished"
+        );
+    }
+    let held_field = |app: &App| {
+        app.world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .expect("the fixture patch")
+            .standing()
+            .held
+            == RungKey::PlantField
+    };
+    for turn in 1..=field_grace(&app) {
+        run_turns_with_forage(&mut app, 1);
+        assert!(
+            held_field(&app),
+            "turn {turn} after completion is inside the Field's grace — the rung holds"
+        );
+    }
+    run_turns_with_forage(&mut app, 1);
+    assert!(
+        !held_field(&app),
+        "past the grace a short crew's Field decays — the reset bought the grace, not immunity"
+    );
+}
+
+/// ⛔ **A FIELD'S CREW OF FOUR BARE HANDS KEEPS IT AND HARVESTS NOTHING; FIVE HARVEST ONE HAND'S
+/// WORTH** (`docs/plan_site_crews.md` §5). The row keeps before it takes: `keep_hands =
+/// min(crew, bill ÷ keep_rate)` and the take runs on what is left — so a crew exactly the size of
+/// the bill is all keeping, and each hand past it is one gatherer.
+///
+/// "One hand's worth" is asserted as the SLOPE — a sixth hand banks what the fifth did — because
+/// the take is labor-bound here, and a flat `> 0` would pass a split that gave the take a fraction
+/// of the crew.
+#[test]
+fn a_fields_crew_of_its_bill_in_bare_hands_keeps_it_and_one_more_hand_harvests() {
+    /// Float slack on the hand counts and the fixed-point food store.
+    const TOLERANCE: f32 = 1e-3;
+
+    let bill = {
+        let (app, _, _) = a_field_worked_by(1, core_sim::BandEquipment::default());
+        field_bill_in_bare_hands(&app)
+    };
+    assert!(
+        bill.fract() == 0.0 && bill >= 1.0,
+        "fixture: the Field's bill on one load must be whole bare hands (the ladder says 4), got \
+         {bill}"
+    );
+    let at_the_bill = bill as u32;
+
+    let run = |crew: u32| {
+        let (mut app, band, coord) = a_field_worked_by(crew, core_sim::BandEquipment::default());
+        one_kept_turn(&mut app, band, coord)
+    };
+    let kept = run(at_the_bill);
+    assert!(
+        (kept.keep_hands - bill).abs() < TOLERANCE && kept.supplied + TOLERANCE >= kept.demand,
+        "{at_the_bill} bare hands are the whole bill, so every one keeps and the bill is met: \
+         {kept:?}"
+    );
+    assert!(
+        kept.food < NEAR_ZERO_PROVISIONS,
+        "…and nobody is left to harvest: {kept:?}"
+    );
+
+    let one_over = run(at_the_bill + 1);
+    let two_over = run(at_the_bill + 2);
+    assert!(
+        (one_over.keep_hands - bill).abs() < TOLERANCE
+            && (two_over.keep_hands - bill).abs() < TOLERANCE,
+        "the keeping takes the bill and no more, however big the crew: {one_over:?} {two_over:?}"
+    );
+    assert!(
+        one_over.food > NEAR_ZERO_PROVISIONS,
+        "one hand past the bill harvests: {one_over:?}"
+    );
+    assert!(
+        (two_over.food - 2.0 * one_over.food).abs() < TOLERANCE * two_over.food.max(1.0),
+        "…one hand's worth — a second spare hand banks what the first did: {} against 2 × {}",
+        two_over.food,
+        one_over.food
+    );
+}
+
+/// ⛔ **A TOOL-SHORT SITE KEEPS WITH MORE HANDS AND COLLECTS LESS** (`docs/plan_site_crews.md`
+/// §2.3). The same crew on the same Field, once holding the hoes its keeping plans for and once
+/// without them: bare, each keeper covers less of the one bill, so more of the crew keeps and fewer
+/// gather. The gathering kit is held in both arms, so the only thing that differs is the keeping's
+/// tool.
+#[test]
+fn a_tool_short_site_keeps_with_more_hands_and_collects_less() {
+    let bill = {
+        let (app, _, _) = a_field_worked_by(1, core_sim::BandEquipment::default());
+        field_bill_in_bare_hands(&app)
+    };
+    /// Hands past the bare bill, so both arms have a take to compare.
+    const SPARE_HANDS: u32 = 2;
+    let crew = bill as u32 + SPARE_HANDS;
+    let equipment = core_sim::EquipmentConfig::for_a_stocked_fixture();
+
+    let run = |hoes: bool| {
+        let mut ledger = core_sim::BandEquipment::start_stocked_for(&equipment, crew as f32);
+        if !hoes {
+            ledger.restore_batches(TILLAGE_ITEM, Vec::new());
+        }
+        let (mut app, band, coord) = a_field_worked_by(crew, ledger);
+        one_kept_turn(&mut app, band, coord)
+    };
+    let armed = run(true);
+    let short = run(false);
+    assert!(
+        !armed.tools_short && short.tools_short,
+        "fixture: the armed arm holds its keeping's hoes and the other is short of them: armed \
+         {armed:?}, short {short:?}"
+    );
+    assert!(
+        short.keep_hands > armed.keep_hands,
+        "a tool-short site keeps with MORE hands: {} against {}",
+        short.keep_hands,
+        armed.keep_hands
+    );
+    assert!(
+        short.food < armed.food,
+        "…and so collects less: {} against {}",
+        short.food,
+        armed.food
+    );
+    assert!(
+        short.supplied + 1e-3 >= short.demand && armed.supplied + 1e-3 >= armed.demand,
+        "…while both keep the whole bill, since the crew has the hands: {short:?} {armed:?}"
+    );
+}
+
 /// **Completion retires the build verb** (issue #420) — the `Sow` twin of the plant rung-2, animal
 /// rung-2 and animal rung-3 cases pinned in `systems::labor::labor_yield_tests`. The turn a Field
 /// finishes, the assignment is rewritten from `Sow` onto the harvest rung, carrying the tile, the
@@ -1476,6 +1747,21 @@ fn a_completed_field_retires_the_sow_verb_onto_the_harvest_rung() {
         Some(core_sim::BuildJob::Rung(Improvement::Sow)),
         "an unfinished build keeps its entry — only completion retires it"
     );
+    // **The row's whole crew** — the gatherers and the hands that keep the ground before they
+    // gather (`docs/plan_site_crews.md` §2.1) — which completion must carry across untouched.
+    let staffed = app
+        .world
+        .get::<LaborAllocation>(band)
+        .unwrap()
+        .assignments
+        .iter()
+        .find(|a| matches!(a.target, LaborTarget::Forage { .. }))
+        .expect("the fixture band forages")
+        .workers;
+    assert!(
+        staffed > sow_crew(&app, coord),
+        "fixture: the row carries its keeping hands beside the sowing crew, got {staffed}"
+    );
 
     run_turns_with_forage(&mut app, 1);
     assert!(
@@ -1487,8 +1773,8 @@ fn a_completed_field_retires_the_sow_verb_onto_the_harvest_rung() {
         "fixture: this is the completing turn"
     );
     let allocation = app.world.get::<LaborAllocation>(band).unwrap();
-    // **The worked source is still one row — and the band holds the standing-role rows beside it**
-    // (`agriculture`, `builders`), which are band-wide rather than sources.
+    // **The worked source is still one row — and the band holds the `builders` pool beside it**,
+    // which is band-wide rather than a source.
     let sources: Vec<&core_sim::LaborAssignment> = allocation
         .assignments
         .iter()
@@ -1501,8 +1787,7 @@ fn a_completed_field_retires_the_sow_verb_onto_the_harvest_rung() {
     );
     let assignment = sources[0];
     assert_eq!(
-        assignment.workers,
-        sow_crew(&app, coord),
+        assignment.workers, staffed,
         "the crew stays on the ground it sowed"
     );
     assert_eq!(
@@ -1986,17 +2271,13 @@ fn a_gap_in_a_sow_cannot_strand_the_tended_rung_below_complete() {
     assert!(saw_untended, "the sweep never saw untended ground");
 }
 
-/// **Losing a Field is announced on the `sow` channel, ONCE** — the rung-3 twin of the tended patch's
-/// feral line, pushed on the edge the position falls out of the Field's span and never again.
-///
-/// **The bleed does not stop there, and the second announcement is CORRECT.** One position means the
-/// source goes on down through the tended rung's range and loses that rung too, on the `cultivate`
-/// channel — the ground really did revert through both, and each 25-turn investment is announced
-/// where it was lost. So this asserts the pair by channel rather than counting feral lines: exactly
-/// one Sow line for the Field, exactly one Cultivate line for the ground, neither repeated over the
-/// hundred bleeding turns between them.
+/// ⛔ **A FIELD SLIPS ON THE `sow` CHANNEL, ONCE, AND IS LOST ONCE** — the rung-3 twin of the
+/// tended patch's pair. The slip (`status=slipping`, Info) rides the edge the position leaves the
+/// Field's top; the loss (`status=feral`, Alert) the edge it falls to the tended rung's top. One
+/// position means the bleed goes on down through the tended range too, so the ground beneath slips
+/// and is lost on the `cultivate` channel — each rung announced where it went, never repeated.
 #[test]
-fn losing_a_field_pushes_one_feed_line_on_the_sow_channel() {
+fn losing_a_field_pushes_one_slip_and_one_loss_on_the_sow_channel() {
     let mut app = spawn_world();
     let (_tile, coord) = find_sowable_tile(&app);
     {
@@ -2008,76 +2289,119 @@ fn losing_a_field_pushes_one_feed_line_on_the_sow_channel() {
     let grace = field_grace(&app);
     run_turns_untended(&mut app, grace);
     assert_eq!(
-        feral_lines_on(&app, "sow"),
+        decay_lines(&app, "slipping", "plant:field"),
         0,
-        "nothing is lost, so nothing is announced, while the grace holds"
+        "nothing is said while the grace holds"
     );
 
-    // **The Field goes on the FIRST bleeding turn past its grace** — the retention bar is deleted
-    // (`docs/plan_standing_upkeep.md` §2.8), and what makes that a rounding rather than a cliff is
-    // that the payout fades with the position.
     run_turns_untended(&mut app, 1);
     assert_eq!(
-        feral_lines_on(&app, "sow"),
+        decay_lines(&app, "slipping", "plant:field"),
         1,
-        "the Field's loss is announced on the turn it happens"
+        "the Field slips on the first bleeding turn past its grace"
     );
     assert_eq!(
-        feral_lines_on(&app, "cultivate"),
+        decay_lines(&app, "feral", "plant:field"),
         0,
-        "…and the ground beneath it is untouched — the position eats the Field first"
+        "…and is not lost yet"
     );
 
-    // **Then run it into the ground.** The source walks down through the tended rung's range and
-    // loses that too, once, on its own channel — and the Field's line is NOT repeated over the
-    // hundred bleeding turns in between, which is the thing this test exists to catch.
     let survives = unmaintained_field_turns_before_loss(&app, coord);
-    run_turns_untended(&mut app, survives);
+    let (_, bleed) = field_build(&app, coord);
+    let to_the_tended_top = (field_cost(&app) / bleed).ceil() as u32;
+    run_turns_untended(&mut app, survives.max(to_the_tended_top));
     assert_eq!(
-        feral_lines_on(&app, "sow"),
+        decay_lines(&app, "slipping", "plant:field"),
         1,
-        "the Field's loss is announced once, not every turn of the bleed that follows"
+        "the Field's slip is announced once, not every turn of the bleed"
     );
     assert_eq!(
-        feral_lines_on(&app, "cultivate"),
+        decay_lines(&app, "feral", "plant:field"),
         1,
-        "and the tended ground's loss is announced once too, on its own channel — the source really \
-         did revert through both rungs"
+        "the Field's loss is announced once, the turn its last work is gone"
     );
-    let detail = app
+    let lost = app
         .world
         .resource::<CommandEventLog>()
         .iter()
-        .find(|entry| entry.label.contains("gone feral"))
-        .expect("the feral line")
-        .detail
-        .clone()
-        .unwrap_or_default();
+        .find(|entry| {
+            entry.detail.as_deref().is_some_and(|detail| {
+                detail.contains("status=feral") && detail.contains("rung=plant:field")
+            })
+        })
+        .expect("the Field's loss line")
+        .clone();
     assert!(
-        detail.contains("action=sow"),
-        "a lost Field reads on the `sow` channel, not `cultivate`: {detail}"
+        lost.label.ends_with("lost — back to a tended patch"),
+        "the loss names the rung left standing: {}",
+        lost.label
+    );
+    assert_eq!(
+        lost.kind,
+        core_sim::CommandEventKind::Sow,
+        "a lost Field reads on the `sow` channel"
     );
 }
 
-/// Feed lines announcing a plant rung going feral.
-/// **Feral lines on ONE verb's channel** — `action=sow` for a lost Field, `action=cultivate` for the
-/// tended ground beneath it.
-///
-/// **The channel is not optional any more.** With one position a long bleed walks the source down
-/// through *both* plant rungs, so it genuinely loses two and genuinely announces two — a counter that
-/// matched only on `"gone feral"` reads `2` and looks like a double-fire on one rung. The rungs are
-/// distinguishable exactly where the feed already distinguishes them: the `action=` token.
-fn feral_lines_on(app: &App, action: &str) -> usize {
-    let token = format!("action={action}");
+/// ⛔ **A PART-BUILT FIELD ROTTING TO EMPTY IS NOT "LOST"** — it was never had. Its work is gone,
+/// and the row already reads *not queued, losing ground*, but the loss Alert is for a rung that was
+/// ACHIEVED since the position last stood at its base. So a Field half sown and left to rot back to
+/// the tended rung's top emits no loss line and no slip line (it never stood at its top), where an
+/// achieved one emits exactly one ([`losing_a_field_pushes_one_slip_and_one_loss_on_the_sow_channel`]).
+#[test]
+fn a_part_built_field_rotting_to_empty_is_not_announced_lost() {
+    /// How far up the Field leg the abandoned Sow stood.
+    const HALF_SOWN: f32 = 0.5;
+    /// Turns past the bleed's own arithmetic, so the meter is certainly empty.
+    const SLACK_TURNS: u32 = 2;
+    let mut app = spawn_world();
+    let (_tile, coord) = find_sowable_tile(&app);
+    let tended_top = {
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        let (base, width) = core_sim::plant_rung_span(RungKey::PlantField, &ladder);
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry.patch_mut(coord).expect("patch");
+        patch.owner = Some(FactionId(0));
+        patch.set_ladder_position(base + width * HALF_SOWN, &ladder);
+        base
+    };
+    let (_, bleed) = field_build(&app, coord);
+    let turns =
+        field_grace(&app) + (field_cost(&app) * HALF_SOWN / bleed).ceil() as u32 + SLACK_TURNS;
+    run_turns_untended(&mut app, turns);
+    let position = app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .expect("patch")
+        .ladder_position();
+    assert!(
+        position <= tended_top,
+        "fixture: the half-sown meter rotted to the tended rung's top ({position} vs {tended_top})"
+    );
+    assert_eq!(
+        decay_lines(&app, "feral", "plant:field"),
+        0,
+        "a Field never had is not announced lost"
+    );
+    assert_eq!(
+        decay_lines(&app, "slipping", "plant:field"),
+        0,
+        "…nor slipping — it never stood at its top"
+    );
+}
+
+/// Feed lines carrying `status=<status>` about the rung `rung` (its wire key).
+fn decay_lines(app: &App, status: &str, rung: &str) -> usize {
+    let (status, rung) = (format!("status={status}"), format!("rung={rung}"));
     app.world
         .resource::<CommandEventLog>()
         .iter()
-        .filter(|entry| entry.label.contains("gone feral"))
         .filter(|entry| {
             entry
                 .detail
                 .as_deref()
-                .is_some_and(|detail| detail.contains(&token))
+                .is_some_and(|detail| detail.contains(&status) && detail.contains(&rung))
         })
         .count()
 }
@@ -2146,21 +2470,4 @@ fn a_cultivate_on_a_field_is_handed_back_rather_than_stalling_forever() {
         "…and the position never moved — a handed-back verb banks nothing, and the source is still \
          exactly where the fixture seated it"
     );
-}
-
-/// **THE EMPTY KIT, NAMED ON A FIXTURE'S QUEUE ENTRY** — an isolation, not a default.
-///
-/// It rides the **entry** because that is where a build's kit lives
-/// (`docs/plan_standing_upkeep.md` §4.7a ②); a kit on the `builders` row is not an input at all.
-/// An absent kit means *derive from this entry's web*, and the roster's answer (`tillage` for a
-/// patch, `hurdling` for a herd) adds `+0.5` work per covered worker per turn. A start-stocked band holds a
-/// unit per worker and a half, so at the crews these fixtures staff every builder is geared and the
-/// pool delivers half again what it asserts, moving every pacing claim below. Naming `none` holds
-/// the gear axis at its identity so these arms measure the **crew**, exactly as
-/// `FaunaConfig::without_retreat` holds the retreat at its identity across the hunt suites. The
-/// geared default is pinned in `core_sim/tests/build_turns_closed_form.rs`.
-fn bare_builders() -> core_sim::KitChoice {
-    core_sim::EquipmentConfig::builtin()
-        .kit("none")
-        .expect("the shipped roster carries the empty kit")
 }

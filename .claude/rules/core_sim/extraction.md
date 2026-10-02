@@ -427,7 +427,7 @@ rung and an absolute gear rate would erase the climb, and never a change to the 
 
 | item | tier | `deposit_take` on | also |
 |---|---|---|---|
-| `axe` | `flint` only (no bone tier — §9's *"sits oddly"*) | `forestry:felling`, `forestry:coppice` — **not** `deadfall` | `build_work` 0.5 on `forestry`, so the builders and the quarrywork keepers on a forestry working are geared through `pool_toe` |
+| `axe` | `flint` only (no bone tier — §9's *"sits oddly"*) | `forestry:felling`, `forestry:coppice` — **not** `deadfall` | `build_work` 0.5 on `forestry`, so the builders (through `pool_toe`) and a forestry working's own keeping hands (through its keeping claim) are geared by it |
 | `wedges` | `flint` only | `extraction:quarry` — **not** `gathering` | — |
 | `sled` | `plain` (the hunt's own sled) | **+0.3** on `forestry:deadfall`, **+0.4** on `extraction:gathering` — the floors' only tool, costing hide and fibre and no wood | its hunt `hunt_carry`, unchanged; shared with `big_game`/`trapping`/`ranging` and the three take kits through the per-item ration |
 
@@ -458,14 +458,25 @@ when the command names none, the seed, and `DepositState.defaultKitId`; `working
 behind `DepositState.offeredKitIds`. `default_kits.extract` and `default_kits.quarrywork` are both
 `none`. See `equipment.md` → "The take axis".
 
-**The useful-crew cap is on the row** — `LaborAssignment.usefulCutters`
-(`extraction::useful_cutters`): the plateau of the deposit crew curve over the row's crew pool (its
-workers plus the band's idle hands) at the row's own kit and floor, read by the compose sheet's own
-rule (`HudDepositVocab.curve_useful_cutters` — the smallest crew whose take reaches the curve's best
-within `0.1%`; the pool while still rising; `1` where the curve pays nothing; `0` off an extract
-row). So the Work board's overstaffed flag and the sheet's `+` stop at one crew, and a band with axes
-stops before the bare `room ÷ perWorkerBiomass` quotient. Pinned by
-`server::tests::useful_cutters_is_the_sheet_curves_plateau_and_gear_lowers_it`. The next rung's
+**The useful-crew cap is on the row** — `LaborAssignment.usefulCutters` (`extraction::useful_cutters`),
+and the row's `workersNeeded` is the same count struck by the turn: **the crew whose capacity
+reaches the room above the row's floor** (`extraction::deposit_crew_needed`), the forage and hunt
+rule (`yield-forecast.md` → "`workers_needed` IS THE ROW'S WHOLE CREW"). Take hands are walked
+best-equipped first over the units the row's claim settles plus the spare ones on the shelf, each at
+its cut (the rung's bare rate plus its tools' `deposit_take` on the held rung) capped by its carry;
+the keep hands at the row's crew are folded in and the sum rounded once. Crew-independent, so a crew
+short of the room reads above itself; `1` where nothing is reachable; `0` off an extract row. A band
+with axes still stops before the bare quotient, because its armed hands cut more each. Pinned by
+`server::tests::useful_cutters_is_the_sheet_curves_plateau_and_gear_lowers_it` and
+`::a_deadfall_above_its_floor_tells_one_cutter_a_second_would_cut_more`.
+
+> ⛔ **IT WAS THE CURVE'S PLATEAU OVER THE BAND'S OWN POOL, AND THE POOL IS WHAT CAPPED IT.** With no
+> idle hand the pool was the crew, so the plateau was the crew whatever another cutter would cut.
+> Played on Firbrook — deadfall 585.6 of 600, floored at half, one sledded cutter at `+0.6` a turn
+> and one sled in the band — the row read `usefulCutters 1` (`2` on the save with one idle hand)
+> and greyed the `+` while the compose sheet said a second forester would draw it down. It reads
+> **958** now: the one sledded hand at `0.6` and the rest bare at `0.3` against `287` of room. The
+> `DepositCrewTake` curve rises one hand at a time up to it, which is the agreement. The next rung's
 geared cut is the crew curve's `next_rung_take` alone; no committed-row field carries it.
 
 **One seam, three readers.** `take_from_deposit` (the turn), `server::seed_source_yield`'s `Extract`
@@ -498,8 +509,10 @@ off the committed row's `materialYield` / `kitWorkersHolding` alone.
 `QueryReplyEnvelope.deposit_crew_take = 11`) asks it the hunt curve's way: band, `(x, y, material)`,
 the sheet's `kit_id` (`none` included; a kit not listing `extract` is `kit_wrong_job`), `floor` and
 `max_workers`, and answers one `DepositCrewTakeRow` per crew size — `take` (this turn's cut at the
-held rung, geared, carry-capped and reach-capped), `armed_workers` (the crew's whole-kit count) and
-`next_rung_take` (the cut once raised) — plus the `held_rung` / `next_rung` it priced and `in_range`.
+held rung, geared, carry-capped and reach-capped), `armed_workers` (the crew's whole-kit count),
+`next_rung_take` (the cut once raised) and `keep_hands` (proto 5, the hands the crew keeps the
+working with — the split `take` is struck on, `DepositCrewQuote::keep_hands`) — plus the `held_rung`
+/ `next_rung` it priced and `in_range`.
 
 **One model, not a second.** Each row is `extraction::deposit_crew_quote`: the crew is a
 **prospective row** (`extraction::prospective_deposit_gear` — the whole kit, the band's other rows
@@ -534,11 +547,15 @@ applied to what was actually taken — against the items whose `deposit_take` se
 (`DepositGear::wear_kit`, effect-scoped like a build tool's wear), so a bare hand in a half-axed crew cuts for free, a take capped by the
 reach bills the smaller number, and the wedges wear nothing on a felling take.
 
-> ⛔ **THE AXE IS THE FIRST ITEM ON BOTH A TAKE ROW'S KIT AND A STANDING POOL'S REQUIREMENT**, and
-> one axe arms one person per turn across the two. The builders / quarrywork keepers are issued
-> theirs first (`settle_pool_tools`, by priority), and the `extract` rows split what is left
-> (`BandItemBudget::reserving`, pro rata) — `equipment.md` → "AND THE POOLS LEFT THE PRO-RATA ITEM
-> BUDGET" owns the rule and why the pools win.
+> ⛔ **THE AXE IS ON A TAKE ROW'S KIT, ON THE BUILDERS' REQUIREMENT AND ON THE WORKING'S OWN
+> KEEPING**, and one axe arms one person per turn across all three. The builders and each working's
+> keeping are issued theirs first (`settle_scarce_tools`, by priority — the keeping at its row's,
+> the builders at the head entry's mark), and the `extract` rows split what is left
+> (`BandItemBudget::reserving`, by row Priority, less `LaborAllocation::last_keeping_issued`) —
+> `equipment.md` → "AND THE POOLS LEFT THE PRO-RATA ITEM BUDGET" owns the rule and why the claims
+> win. `extraction::prospective_deposit_gear` reserves the keeping's issue the same way, so the seed
+> quotes the cut the turn pays
+> (`server::tests::a_seed_beside_a_kept_working_holding_axes_quotes_the_cut_the_turn_pays`).
 
 **A far working's porters carry on the row's kit.** Past `band_work_range` the take walks home a
 pack at a time (`work-party.md`), and one pack is the row's haul carry over the material's `weight`
@@ -644,7 +661,7 @@ for the verb to declare for, and the verb's own rejection names the crew.
 > The `Command` it comes out as is compared against `commanding_faction`'s own label rather than a
 > hand-written expectation, so a `fell` line that decoded into `Command::Coppice` cannot pass.
 
-## The fourth verb — `abandon_working`, and why it is not a token on `abandon`
+## The fourth verb — `abandon_working`, and why a bare-tile `abandon` never reaches a working
 
 `abandon_working <faction> <x> <y> <material>`, on the three rung verbs' grammar exactly: no band
 token, the material as the closed trailing token, and the same *"no band of yours works this"*
@@ -654,38 +671,31 @@ patch's `abandon` goes through, and **leaves the working's meter alone** to slid
 own rate. Nothing is destroyed on the spot, so it needs no confirmation, and there is no `validate_*`
 to run: putting a thing down asks nothing of the ground, the knowledge or the rung.
 
-**THE ROW OUTLIVES ITS CREW, AND THE ROW IS WHAT IS BILLED.** A working raised above its free floor
-is a holding (`source_has_a_meter_at_risk`), so `assign_labor … extract … 0` is *"stop cutting"* and
-keeps the row; `extraction_keeping_claims`' catchment is that row, so the band goes on owing the
-working's `quarrywork` bill for as long as it stands. **Measured** on a seated `extraction:quarry` at
-`AlpineMountain` with crew and keepers both at zero: 4 turns of grace at **2.10** work a turn, then a
-linear slide to **0.06** by turn 103, at which point the position reaches zero, the row prunes itself
-and the billing stops — **104 turns**. `forestry:felling` is the same shape at **1.0 → 0** over 103
-turns; `forestry:coppice` slides through `felling` on the way and takes **202**.
+**THE ROW OUTLIVES ITS CREW, AND AN EMPTY ROW KEEPS NOTHING.** A working raised above its free floor
+is a holding (`source_has_a_meter_at_risk`), so `assign_labor … extract … 0` is *"stop working
+this face"* and keeps the row — but the working's keeping is that row's own crew
+(`docs/plan_site_crews.md` §2.1), so a row at zero is unkept and the working slides. **Measured** on
+a seated `extraction:quarry` at `AlpineMountain` with nobody on it: 4 turns of grace at **2.10**
+work a turn, then a linear slide to **0.06** by turn 103, at which point the position reaches zero
+and the row prunes itself — **104 turns**. `forestry:felling` is the same shape at **1.0 → 0** over
+103 turns; `forestry:coppice` slides through `felling` on the way and takes **202**.
+`abandon_working` drops the row and its build entry at once.
 
-**So it is not a bill that runs for ever — it is a bill that cannot be stopped, on a pool that is
-shared.** Under the default `UpkeepFundMode::Spread` the abandoned working takes its proportional
-share of the band's one pool, so the workings the band still wants are funded short for as long as it
-sits there. Measured on the reference wood, where one keeper covers one `forestry:felling` working
-exactly: a live working holds at its seated **60.0** for ever alone, and slides to **49.96 in 40
-turns** the moment a walked-away sibling sits beside it. That is the leak, and before this verb no
-command could drop the sibling.
-
-> ### ⛔ IT MAY NOT BE AN OPTIONAL MATERIAL ON `abandon`
+> ### ⛔ A BARE-TILE `abandon` NEVER REACHES A WORKING; ITS MATERIAL FORM *IS* THIS VERB
 >
-> `abandon <faction> <x> <y>` names a **place**: it drops every band's holding on that tile, a forage
-> row included, *and* releases the faction's road keeping there — which its own tile card already
-> warns about in a second line. A deposit verb names a tile **and** a material, because one hex holds
-> two workings, so covering one with an optional token would make an already-destructive verb quietly
-> more destructive on exactly the hexes where the player meant one of two things. The two verbs are
-> therefore siblings rather than one verb with a tail, and `abandon_working` rides
-> `command_text.rs`'s `fell | coppice | quarry` arm so the material's position and the closed tail
-> cannot drift from the rung verbs' — which is the whole of *"the two ways of addressing one working
-> read alike"*.
+> `abandon <faction> <x> <y>` names a **place**: it drops the forage row on that tile *and*
+> releases the faction's road keeping there — which its own tile card already warns about in a
+> second line. A deposit verb names a tile **and** a material, because one hex holds two workings,
+> so a bare tile reaching the workings too would make an already-destructive verb quietly more
+> destructive on exactly the hexes where the player meant one of two things.
 >
-> **Nothing was widened to carry it**: proto field **74**, its own `CommandPayload` variant, its own
-> `Command` variant, its own `handle_abandon_working`. `abandon`'s message, grammar and handler are
-> untouched.
+> **`abandon <faction> <x> <y> <material>` is `abandon_working`, not a second definition of it**
+> (`docs/plan_site_crews.md` §2.4): `handle_abandon` calls `handle_abandon_working`, so the two
+> spellings cannot disagree. `abandon_working` keeps its own proto field (**74**), payload and
+> command, and rides `command_text.rs`'s `fell | coppice | quarry` arm so the material's position
+> and the closed tail cannot drift from the rung verbs'; `abandon`'s material form carries the same
+> token in the same place (`command_text::parse_site_source`). `unqueue <faction> <x> <y>
+> <material>` withdraws a queued `fell` / `coppice` / `quarry` and leaves the row.
 >
 > `server::tests::abandon_working_drops_one_workings_holding_and_leaves_its_neighbour` drives the
 > line through the **encoded** envelope on a hex carrying timber and rock at once, both staffed and
@@ -693,60 +703,36 @@ command could drop the sibling.
 > single-deposit fixture. `extraction::putting_a_working_down_stops_its_bill_and_its_neighbour_stops_sliding`
 > pins the gameplay claim against the measurement above: the leak arm and the fix arm one drive
 > apart, plus that the put-down working's meter still slides — untouched, not destroyed.
+> `server::tests::abandon_and_unqueue_reach_a_working_and_a_road` pins the material forms of
+> `abandon` and `unqueue`.
 
-## What a working costs to HOLD — the `quarrywork` pool
+## What a working costs to HOLD — its own crew keeps it
 
-Every **built** rung on both branches owes work per turn, drawn from `LaborTarget::Quarrywork` — the
-fourth keeping pool, and `Roadwork`'s twin two branches over. Without it a working's position never
-falls and **a quarry is free to hold for ever**, which contradicts the arc this one sits on: an
-improvement that costs nothing to hold cannot weigh on move-or-stay.
+Every **built** rung on both branches owes work per turn, and the `extract` row on the working pays
+it **first**, before it cuts (`docs/plan_site_crews.md` §2.1): `keep_hands = min(crew, bill ÷
+keep_rate)` and the cut runs on the rest. The take kit is spread over those cutters alone
+(`equipment.md` → "A ROW CLAIMS ONLY THE TAKE HANDS"), so their tools and carry are theirs whole.
+Without a bill a working's position never falls and **a quarry is free to hold for ever**, which
+contradicts the arc this one sits on: an improvement that costs nothing to hold cannot weigh on
+move-or-stay.
 
 **The two FREE FLOORS owe nothing**, and that is what makes them free: `forestry:deadfall` and
 `extraction:gathering` declare no `upkeep` at all, exactly as `plant:wild` and `route:path` do.
 Nobody built them, so there is nothing to hold.
 
-### ONE role for BOTH branches
-
-The two food webs get a keeping pool each because they are separate *ladders a crew builds with
-tools*. Forestry and extraction split on **knowledge** and on nothing a keeper does — *hold the face open,
-clear what has fallen* is one job, and which tool a keeper holds follows from the working's rung
-(`pool_toe`), not from the role. A second
-pool would be a distinction nothing in the game can express, which is the argument
-`plan_standing_upkeep.md` §6 already makes for not splitting the two it has.
-
-**It is not the `extract` take row.** The take crew stands *on the working* and is paid in material;
-the keepers are a **band pool** that holds every working the band has, worked or idle — the same
-split `Agriculture` draws from `Forage`. A working with no cutters is still held and still owes.
-
-`KitJob::Quarrywork` is split from `KitJob::Extraction` on `KitJob::Agriculture`'s stated reason:
-**gear covers people**, so sharing a job with the take row would divide the take kit's axes among
-hands that are not cutting.
-
-### The claims are the ROUTE shape, and the reason is the index
-
-`keeping_claims` sets `KeepingClaim::index` to an **assignment index**, because the plant and animal
-shares are written straight back into `maintenance_shares`' per-assignment award vector. A working's
-share is not: it lands on the **working**, in the `DepositRegistry`, exactly as a road's lands on the
-road — so `extraction_keeping_claims` indexes its own `(tile, material)` key vector, which is
-`route_keeping_claims`' arrangement. Everything downstream (`keeping_rates`,
-`KeepingRate::worker_need`, `distribute_upkeep_pool`) is the identical seam either way: **a working's
-keeper is funded exactly as a road, a field or a flock keeper is.**
-
-**The catchment is the ROW**, not a keeper — a working is held by a labor row, which is the arc's one
-deliberate departure from the route branch — and **the take crew's size is not part of it**: a source
-row survives losing its take crew, and a felling working nobody is cutting this season is still a
-face somebody has to hold. That is `Agriculture`'s *"keeping a patch does not require gathering it"*
-on a fourth pool.
-
-> #### ⛔ `KeepingClaim` GAINED A `branch`, AND THE COVERAGE IS WHY
->
-> `keeping_rates` used to take one `branch` for a whole call. **One pool can now hold sites on two
-> ladders** — a band may keep a coppice and a quarry — so a single argument would have to lie about
-> half of them. Calling it once per branch is *not* the alternative: coverage answers *"how many of
-> these hands does the band own gear for"*, a fact about the **ledger**, so two calls would arm two
-> prefixes off one stock. That is `keeping_rates`' own *"the rung is not part of the key"* note, one
-> axis over. The branch rides the claim; the parameter is gone from `keeping_rates` and
-> `keeping_worker_need`, and every construction site states its own.
+- **Paid in the `Extract` arm**, right after `deposits.open`, through the same site-keeping seam
+  the patch and herd arms use (`systems::labor::site_keeping`): the claim is the working's pro-rata
+  share of its stamped `upkeep_demanded` by crew across bands, the tools are the rung's requirement
+  (the axe on felling and coppice, `stone_dressing` on the quarry) claimed per planned keeping
+  hand at the row's priority, and `DepositSource::upkeep_supplied` / `upkeep_hands` /
+  `upkeep_toe` (per people, read off for the viewer's `upkeepToolsShort`) are stamped for the capture.
+- **The quote reads the same split** — `extraction::crew_keep_hands` / `crew_keeping_issue` and
+  `deposit_crew_quote` strike the cut on the hands the keeping leaves, and
+  `prospective_deposit_gear` reserves the keeping's tools first.
+- **Retired**: `LaborTarget::Quarrywork`, `settle_bands_extraction`, `extraction_keeping_claims` and
+  the per-assignment award vector they fed. The `quarryworkDemand` / `Supplied` / `Shortfall` triple
+  on `PopulationCohortState` is `(deprecated)` and publishes `0`; `KitJob::Quarrywork` and
+  `default_kits.quarrywork` stay in the equipment vocabulary.
 
 ### The measure: keeper-loads off the deposit's own capacity
 
@@ -777,6 +763,11 @@ as `capacity_per_tender` is `AlluvialPlain`'s `K`.
 `extraction::advance_deposits` (Logistics) is the deposit branches' `routes::advance_roads`: how
 short → the bleed at the at-risk rung's own rate past its own grace → clear the payment and
 **re-stamp the bill at the post-decay position** → **renew the stock**, at that same position.
+The grace counter (`DepositSource::neglect_turns`) resets the turn a rung completes
+(`DepositSource::set_ladder_position`), so a working raised by a crew short of its bill keeps its
+full grace — `intensification.md` → "A COMPLETED RUNG RESETS THE COUNTER".
+A working's slip and loss are announced on the `Extraction` channel to every people with an
+`extract` row on it (a working has no owner) — `event-feed.md` → "A rung's decay is two edges".
 
 **The slide shrinks its own penalty.** The position falls, the interpolated demand falls with it, and
 an abandoned working decays toward costing nothing rather than bleeding a band's roster for ever
@@ -787,12 +778,8 @@ the workings some band still has a row on would leave an **abandoned** working r
 ever: never arming its counter, never decaying. A working its band has abandoned is precisely
 what this branch's move-or-stay pressure is made of, so it is precisely the case that must decay.
 
-**The payment is a whole stage later** — `systems::settle_bands_extraction`, called from inside
-`advance_labor_allocation` at `settle_bands_roadwork`'s own seat: **after the shed** (the head count
-it divides is the one that survived) and **above the band's `continue`s** (a band whose whole
-allocation was shed still owes what its workings cost). Paying any later is the defect
-`settle_bands_roadwork`'s note records — every billed road quoting its rot at a work shortfall of
-`1.0` whatever its keepers had done.
+**The payment is a whole stage later**, in the `Extract` arm of `advance_labor_allocation` — the
+bill `advance_deposits` stamped in Logistics is what the crew's keeping hands are paid against.
 
 ### The build countdown nets the LIVE rot
 
@@ -920,8 +907,10 @@ branch.
 `DepositState` is the deposit's row: keyed `(tile, material)` because one tile can hold two, built by
 `snapshot::deposits::deposit_states` and diffed as a whole vector on `foragePatches`' rule (no
 `removedDeposits` twin — a row that leaves the frame leaves by being absent). The `extract`
-labor row carries `material` beside its tile, and `PopulationCohortState` carries the
-`quarryworkDemand` / `Supplied` / `Shortfall` triple, the roadwork triple one pool over.
+labor row carries `material` beside its tile. The working's keeping is on its own row —
+`upkeepDemand` / `upkeepSupplied` / `upkeepShortfall`, and `upkeepHands` / `upkeepToolsShort`
+(`docs/plan_site_crews.md` §4); `PopulationCohortState`'s `quarrywork*` triple is `(deprecated)` and
+publishes `0`.
 
 **A ROW DESCRIBES THE GROUND, AND THE WORKING IS ITS STATE — the FORAGE PATCH's shape.** A row is
 published for **every discovered tile that holds a deposit** — every `(tile, material)` pair whose

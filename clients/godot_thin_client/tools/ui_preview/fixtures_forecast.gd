@@ -23,6 +23,7 @@ extends RefCounted
 ## always at least a frame late.
 
 const SourceForecastRef := preload("res://src/scripts/ui/hud/SourceForecast.gd")
+const RungGatesRef := preload("res://src/scripts/ui/hud/RungGates.gd")
 
 ## The herd fixtures' own raid tables, by the key they are authored under.
 const HERD_RAID_TABLE_KEY := "hunt_trip_estimates"
@@ -125,10 +126,17 @@ static func answer(hud: Node, request_id: int, ask: Dictionary) -> Dictionary:
 		return work_party_answer(hud, request_id, ask)
 	if kind == ForecastQuery.KIND_DEPOSIT_CREW_TAKE:
 		return deposit_crew_take_answer(hud, request_id, ask)
+	if kind == ForecastQuery.KIND_FORAGE_CREW_TAKE:
+		return forage_crew_take_answer(hud, request_id, ask)
 	if kind == ForecastQuery.KIND_HUNT_CREW_TAKE:
-		return {"request_id": request_id, "ok": true, "kind": kind,
-			"per_crew": crew_take_rows(_quarry_for_id(hud, String(ask.get("herd_id", ""))),
-				int(ask.get("max_workers", 0)), float(ask.get("floor", 0.0)))}
+		var quarry := _quarry_for_id(hud, String(ask.get("herd_id", "")))
+		var rows := crew_take_rows(quarry, int(ask.get("max_workers", 0)),
+			float(ask.get("floor", 0.0)))
+		var next_animals := _hunt_next_rung_animals(hud, quarry)
+		for row in rows:
+			(row as Dictionary)[SourceForecastRef.HUNT_CREW_NEXT_RUNG_ANIMALS_KEY] = next_animals
+			(row as Dictionary)["next_rung_keep_hands"] = 0.0
+		return {"request_id": request_id, "ok": true, "kind": kind, "per_crew": rows}
 	var is_denial := kind == ForecastQuery.KIND_DENIAL_RAID
 	var herd := _herd_for_id(hud, String(ask.get("herd_id", "")),
 		HERD_DENIAL_TABLE_KEY if is_denial else HERD_RAID_TABLE_KEY)
@@ -231,6 +239,142 @@ static func deposit_crew_take_answer(hud: Node, request_id: int, ask: Dictionary
 			"armed_workers": float(workers), "next_rung_take": 0.0})
 	reply["per_crew"] = rows
 	return reply
+
+## **THE PATCH CREW CURVE'S STAND-IN** (`ForecastQuery.KIND_FORAGE_CREW_TAKE`). A tile that AUTHORS
+## its reply under `FORAGE_CREW_TAKE_KEY` is answered with it verbatim; every other is answered with a
+## curve whose keeping takes the hands the tile's own wire says the crew spent keeping
+## (`patch_upkeep_hands`) off the crew first, and whose take is the gatherers'
+## `min(per_worker × gatherers, next turn's room)` — the shape the sim answers, at the fixture's own
+## terms. A fixture stating no keeping hands answers the plain gather, so a frame that is not about
+## keeping reads the take it always did.
+const FORAGE_CREW_TAKE_KEY := "forage_crew_take"
+
+## The tiles a harness opened a forage sheet on, by `"x,y"` — what the sheet asked about, which is not
+## always the selected tile (a chapter opens a sheet on a fixture it never put on the map).
+static var forage_tiles: Dictionary = {}
+
+## Record the tile a forage sheet is about to be opened on, so the stand-in answers about it.
+static func note_forage_tile(tile_info: Dictionary) -> void:
+	forage_tiles["%d,%d" % [int(tile_info.get("x", -1)), int(tile_info.get("y", -1))]] = tile_info
+
+## **THE STAND-IN'S `next_rung_*`: THE ASKED CROP'S OWN RUNG QUOTE, FULL AT ONE GATHERER.** The sim
+## answers per crew; a stand-in that re-derived a finished rung's take would be a second growth model
+## in GDScript. What the frames need is that the line FOLLOWS THE CROP the ask names (a different pick
+## is a different answer) and is the CURVE's line — food, credited fodder and materials together — so
+## the figures are the crop's own `cultivate_*` / `sow_*` payoff at the rung the sheet is dealing,
+## scaled by the band's output, and a crew of no gatherers takes none of it. A chapter that needs a
+## crew-shaped curve authors its rows under `FORAGE_CREW_TAKE_KEY`.
+const NEXT_RUNG_STANDIN_FULL_CREW := 1.0
+
+static func forage_crew_take_answer(hud: Node, request_id: int, ask: Dictionary) -> Dictionary:
+	var kind := ForecastQuery.KIND_FORAGE_CREW_TAKE
+	var tile: Dictionary = forage_tiles.get("%d,%d" % [int(ask.get("x", -1)), int(ask.get("y", -1))],
+		hud._selection.tile_info())
+	var authored: Dictionary = tile.get(FORAGE_CREW_TAKE_KEY, {})
+	if not authored.is_empty():
+		var out := {"request_id": request_id, "ok": true, "kind": kind}
+		for key in authored:
+			out[key] = authored[key]
+		return out
+	# The SHEET's own take source and pricing — the narrowed stand and the kit-priced patch — so the
+	# stand-in answers about the same crop and kit the sheet asked about.
+	var compose: Object = hud._drawercompose
+	var basket := SourceForecastRef.flora_basket_entries(tile.get("patch_composition", []))
+	var take_tile: Dictionary = compose._forage_take_source(tile, compose._selective_take_state(
+		basket, PackedStringArray(ask.get("take_species", []))))
+	var band: Dictionary = {}
+	for row in hud._band_labor.player_bands():
+		if int((row as Dictionary).get("band_id", -1)) == int(ask.get("band_id", -2)):
+			band = row
+	if band.is_empty():
+		band = hud._band_labor.player_band()
+	var forecast: Dictionary = compose._forage_forecast(take_tile, band, float(ask.get("floor", 0.0)))
+	var keep := SourceForecastRef.upkeep_hands(tile, HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	var rows: Array = []
+	for workers in range(1, int(ask.get("max_workers", 0)) + 1):
+		var keep_hands := minf(keep, float(workers))
+		var gatherers := float(workers) - keep_hands
+		rows.append({"workers": workers, "keep_hands": keep_hands,
+			"take": minf(gatherers * float(forecast.get("per_worker", 0.0)),
+				float(forecast.get("next_ceiling", 0.0)))})
+		var share := minf(gatherers / NEXT_RUNG_STANDIN_FULL_CREW, 1.0)
+		var next: Dictionary = _forage_next_rung_quote(hud, tile, basket, band,
+			String(ask.get("crop", "")))
+		var row: Dictionary = rows[rows.size() - 1]
+		row[SourceForecastRef.FORAGE_CREW_NEXT_RUNG_TAKE_KEY] = float(next["food"]) * share
+		row["next_rung_keep_hands"] = keep_hands
+		row[SourceForecastRef.FORAGE_CREW_NEXT_RUNG_FODDER_KEY] = float(next["fodder"]) * share
+		row[SourceForecastRef.FORAGE_CREW_NEXT_RUNG_MATERIALS_KEY] = \
+			SourceForecastRef.scaled_material_rows(next["materials"], share)
+	return {"request_id": request_id, "ok": true, "kind": kind, "per_crew": rows}
+
+## The crop quote the stand-in's `next_rung_*` read: the crop the ask names (else the committed one,
+## else the rung's default), at the rung the sheet is dealing, its fodder CREDITED — `0` where the sim
+## would refuse it — and every account at the band's output.
+static func _forage_next_rung_quote(hud: Node, tile: Dictionary, basket: Array[Dictionary],
+		band: Dictionary, crop: String) -> Dictionary:
+	var compose: Object = hud._drawercompose
+	var prefix := HudComposeVocab.FORAGE_FORECAST_PREFIX
+	var committed := String(tile.get("patch_committed_species", "")).strip_edges()
+	var rung: String = compose._improvement_deal_rung(SourceForecastRef.LABOR_KIND_FORAGE, tile,
+		prefix, hud._compose.forage_improvement())
+	var output := float(band.get("output_multiplier", SourceForecastRef.OUTPUT_FULL))
+	var out := {"food": 0.0, "fodder": 0.0, "materials": []}
+	if rung == "":
+		return out
+	var species := crop if committed == "" else committed
+	if species == "":
+		species = compose._resolve_crop_selection(basket, rung, false, "")
+	var deal := SourceForecastRef.improvement_forecast(tile, SourceForecastRef.SOURCE_KIND_FORAGE,
+		prefix, SourceForecastRef.FLOOR_FOOD_PEAK, rung)
+	if not deal.is_empty():
+		out["food"] = float(deal["payoff"])
+		out["fodder"] = float(deal["payoff_fodder"])
+	for entry in basket:
+		if String(entry["species"]) != species:
+			continue
+		out["food"] = compose._flora_entry_payoff(entry, rung)
+		out["fodder"] = compose._flora_entry_fodder_payoff(entry, rung)
+		out["materials"] = compose._flora_entry_material_payoff(entry, rung)
+		break
+	if RungGatesRef.fodder_payoff_is_refused(committed, basket, compose._player_knowledge()):
+		out["fodder"] = 0.0
+	out["food"] = float(out["food"]) * output
+	out["fodder"] = float(out["fodder"]) * output
+	out["materials"] = SourceForecastRef.scaled_material_rows(out["materials"], output)
+	return out
+
+## The hunt stand-in's `next_rung_animals_likely`: the herd's crew-blind rung payoff turned back into
+## animals through the herd's own body quantum and per-biomass rates, so the sheet's crossing returns
+## the quote's figure. One value at every crew — a chapter needing a crew-shaped curve authors one.
+static func _hunt_next_rung_animals(hud: Node, herd: Dictionary) -> float:
+	var compose: Object = hud._drawercompose
+	var rung: String = compose._improvement_deal_rung(SourceForecastRef.LABOR_KIND_HUNT, herd, "",
+		hud._compose.hunt_improvement())
+	if rung == "":
+		return 0.0
+	var deal := SourceForecastRef.improvement_forecast(herd, SourceForecastRef.SOURCE_KIND_HERD, "",
+		SourceForecastRef.FLOOR_FOOD_PEAK, rung)
+	var body := SourceForecastRef.body_quantum(herd, "")
+	if deal.is_empty() or body <= 0.0:
+		return 0.0
+	var biomass := 0.0
+	var food_rate := float(herd.get(SourceForecastRef.FORECAST_PROVISIONS_PER_BIOMASS_KEY, 0.0))
+	if food_rate > 0.0:
+		biomass = float(deal["payoff"]) / food_rate
+	else:
+		var rates := SourceForecastRef.material_payoff_rows(
+			herd.get(SourceForecastRef.FORECAST_MATERIAL_PER_BIOMASS_KEY, []))
+		var payoff := SourceForecastRef.material_payoff_rows(deal.get("payoff_material", []))
+		if not rates.is_empty() and not payoff.is_empty():
+			var rate := float(rates[0][SourceForecastRef.MATERIAL_PAYOFF_AMOUNT_KEY])
+			for row in payoff:
+				if String(row[SourceForecastRef.MATERIAL_PAYOFF_ID_KEY]) \
+						== String(rates[0][SourceForecastRef.MATERIAL_PAYOFF_ID_KEY]) and rate > 0.0:
+					biomass = float(row[SourceForecastRef.MATERIAL_PAYOFF_AMOUNT_KEY]) / rate
+	var output := float(hud._band_labor.player_band().get("output_multiplier",
+		SourceForecastRef.OUTPUT_FULL))
+	return biomass / body * output
 
 ## The working at `(x, y)` carrying `material`, off the selected tile first (where a sheet is opened)
 ## and then off the labor model's whole section; `{}` where neither holds it.

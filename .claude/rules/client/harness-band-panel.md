@@ -1048,10 +1048,24 @@ ever stand on the pool that funds it.
   single `scout` line. An assertion that passes because the case was never asked is the failure mode
   this repo keeps re-learning; a guard whose whole purpose is "the client's lines parse" must ask about
   **every** line the client can build, not one representative.
-- **The drive is a sweep over `ASSIGN_LABOR_ROLES`** — scout · warrior · agriculture · husbandry ·
-  builders — each with a non-default kit, **plus the bare `assign_labor … builders 2`**, which is the
-  exact form the pool's `+` emits for a player who never opened a kit picker. The kit-bearing form
-  alone would have missed it.
+- **The drive is a sweep over `ASSIGN_LABOR_ROLES`** — scout · warrior · roadwork · builders — each
+  with a non-default kit, **plus the bare `assign_labor … builders 2`**, which is the exact form the
+  pool's `+` emits for a player who never opened a kit picker. The kit-bearing form alone would have
+  missed it. **The three retired keeping pools** (`RETIRED_ASSIGN_LABOR_ROLES`: agriculture ·
+  husbandry · quarrywork, spelled as strings because their `HudConst` constants retired) are asserted
+  to build NO line (`docs/plan_site_crews.md`).
+- **Every site verb is driven in every form it takes** (`docs/plan_site_crews.md` §2.4):
+  `build_priority` and `build_order` in the tile, herd, working (`<x> <y> <material>`) and road
+  (`road <x> <y>`) forms, `work_priority` in the first three, `unqueue` in all four — counted per form
+  in `EXPECTED_KINDS`, and driven through the controls' own emitters so a payload missing `material`
+  or `road` fails the parse check as the patch it would name. `work_priority`'s road form is asserted
+  to build NO line, and `_assert_retired_kit_verbs` asserts `Main` has no `format_build_kit` /
+  `format_upkeep_kit` and the HUD no signal for either.
+- **`band_panel_preview`'s `(f3)` state, `_assert_a_working_and_a_road_carry_their_marks`**, frames
+  `band_panel_site_marks.png`: the queued Groundwork row carries both pills and the queued road only
+  a `Build` pill, each press building the working or road form. **Every pill is re-found after a
+  press** — the optimistic write re-renders the Work tab, and pressing a held pill aborts the state
+  silently.
 - **`_assert_every_role_is_emittable` closes the other direction**: every listed role builds a real line
   from `Main.format_assign_labor`, and an unknown role builds NOTHING — so the list is a list rather
   than a builder that accepts anything.
@@ -2898,3 +2912,114 @@ bare rate says nothing where the published cap says `overstaffed`. **That premis
 trusted**, against a chapter-local bare quotient (`_worn_workings_bare_cap`) — a fixture where the two
 ceilings agreed could not say which one the row read. The stone crew sits exactly on its own published
 cap and must carry nothing, the pair's negative half.
+
+## The Work tab's SECTIONS and its SITE CREWS (`docs/plan_site_crews.md`)
+
+`_render_work_sections_states`, run straight after `_render_empty_work_zone_states`. One board carries
+every row shape the sections introduce: a WILD queued patch (owes nothing), a Tended Patch its crew
+keeps in full, a Tended Patch its crew keeps SHORT, the reference hunt
+row, and one queued build whose own mark is `high` so the pill and the queue's read-only mark both
+state a non-default level. Frames: `band_panel_work_sections`, `band_panel_work_sections_tools_short`,
+`band_panel_work_sections_collapsed`.
+
+- **Every expected string is composed from the fixture's own numbers**, never through
+  `site_crew_line` / `site_keeping_hint`: line two is the rung ALONE (`Tended Patch`, `Wild`), the
+  short hover is `Short: tending needs 2 workers, this crew can't cover it.` over `Tending: 2 workers
+  now · another needed around turn 58`, and the tools `ⓘ` hover is that tending line plus the tools
+  sentence.
+- **The pills sit on the row's own pill line** (`WORK_ROW_PILL_LINE_META`), never beside the rung line.
+- **`_assert_site_crew_is_whole_workers` is the keeping-cap claim**: a forecast whose take is useful up
+  to 2 hands, carrying the sim's site crew of 3 (`with_published_site_crew`), caps at 3 exactly — no
+  keeping count added — a crew of 2 can still add a hand, and 3 cannot. The herder-floor frame's twin
+  claim asserts both cap twins gate at the forecast's own ceiling, adding nothing.
+- **The tools-short `ⓘ` hover carries all three tending clauses**: the kept patch is being raised to a
+  Field (`improvement: sow` on its row), so it reads `Tending: 2 workers now · another needed around
+  turn 58 · 3 workers once it's a Field`, and `TENDING_RUNG_PHRASES` pins the article per rung name.
+- **The pills are claimed as a set**: a `Priority` pill on every row, exactly ONE `Build` pill and it
+  is on the queued row, and the queue row's `Build:` mark is a `Label`, not a control. Both pills are
+  pressed with REAL input (`_drive_click`) and the emitted LINE is read back through `Main`'s own
+  formatter — `build_priority 0 <band> 71 18 low` (High cycles to Low) and `work_priority … high`.
+- **The collapse is a pair**: the AGRICULTURE chevron folds its section (head kept, no harvest row)
+  while the HUSBANDRY row stays, and the same chevron unfolds it back to the full row count.
+- **The inspector on the kept patch** re-runs `_assert_kits_section_draws_its_control` and
+  `_assert_work_inspector_worst_case_fits`, both carried over from the retired POOLS worst-case state.
+- `_assert_scroll_only_where_sanctioned` gained the sections list: it exists exactly when the work
+  zone is mounted on a band page and neither expansion holds the zone.
+
+**What retired with the pools, as whole families**: the POOLS block states (`band_panel_pools_*`, the
+fund-mode worst case), the pool-card mark / TOE / idle / pending sets and their fixtures, the
+declare-time keeping claims, the keeper-tools remedy fork, the workings-roster head and its idle and
+unseen cases, the roster DOOR's workings frames, the Gathering filter state
+(`band_panel_rung_ready_filter`), the chips claims on the empty work zone, and the board-capacity
+probes (`_probe_work_board_layout`). The workings roster claims were re-aimed at the GROUNDWORK
+section: every row now carries its own crew stepper, and `_assert_groundwork_site_crew_lines` reads
+each row's rung line (no head count) and its pill line. A block's HEAD is found through `_block_head`: the Work tab's section
+head on the collapsed path, the block's own first child when expanded. Every queue row is
+`BUILD_QUEUE_ROW_HEIGHT` tall, and `WIDE_DOCK_QUEUE_ROWS` is `BUILD_QUEUE_ROWS_MAX`, the zone scrolling
+rather than trading queue rows for board rows.
+
+**A 1920×1080 display cannot run the whole walk**: macOS leaves a 928px-tall window there, so every
+state that pins a 1080-high canvas fails its pin and the dock-row walk stalls into the watchdog. The
+site-crews arc was measured on a temporary copy with those pins at 900 and the dock-row and
+interface-scale walks skipped — 188 frames / 1326 `: PASS` / 401 `assert OK`, exit 0 — which is not
+comparable to the full-walk tally above.
+
+## The Work tab's five sections in ONE frame, and the pool rows as site rows
+
+`band_panel_work_sections_all_five` (`_render_work_sections_all_five`) stands the sections band up
+with roads it keeps and two workings, so BUILD QUEUE, AGRICULTURE, HUSBANDRY, ROADWORK and GROUNDWORK
+all draw at once. `_assert_pool_row_is_a_site_row` measures each pool row against a DRAWN harvest row
+— the `+`'s right edge and the icon's x equal to theirs, the title at `WORK_ROW_FONT_SIZE` in its
+state's ink (WARN on the short road crew), and the muted second line — so the claim is that the
+columns line up, not that the code passed the same constant. `band_panel_work_sections` is the
+paired negative: the same band holding no road draws no ROADWORK section and no `Road crew` row.
+
+`band_panel_workings_inspector` is the GROUNDWORK row's click: the inspector opens, its put-down is
+keyed to the row's `(tile, material)`, and the press sends `abandon_working` and closes the card. The
+frame waits a second `_settle` because `WorkInspectorDialog.refit` fits over two frames.
+
+`band_panel_roadwork_inspector` is the road row's click, the same shape: no road row carries the
+put-down, the click opens the inspector, its `Stop keeping this road` is keyed to the row's tile, a
+real viewport click on it sends `abandon 0 road <x> <y>`, and the card closes. `command_guard`'s
+`_drive_road_abandon` reaches the verb the same way — a click on the row, then the card's put-down.
+
+## The two-slot claim moved to the BASKET row (one overstaff number per web)
+
+`_assert_kit_short_notes`' *"…beside the STAFFING note"* claim rode the short HUNT row on its
+`workers_needed`. A hunt row's overstaff note now quotes the `+`'s own ceiling (`hunt_useful_workers`,
+`labor-ui.md` → "EVERY SURFACE ASKS ONE PREDICATE ON ONE NUMBER PER WEB"), which that herd's row does
+not price, so the hunt row honestly carries no staffing note. The claim now rides the basket-short
+FORAGE row, whose site crew (`KIT_BASKET_SHORT_NEEDED` = 2) is one short of its crew: on forage
+`workers_needed` IS the ceiling, so the row is overstaffed and short of baskets in one frame. It also
+asserts the kit note is non-empty, or the claim would pass on a row that lost it. Measured: exit 0,
+1500 `PASS`.
+
+## The crew split on the Work-tab rows (`_render_work_crew_split_states`)
+
+Two frames and eighteen claims, run after the work-party states:
+`band_panel_work_crew_split` and `band_panel_work_crew_split_big`. The behaviour is
+`band-city-panel.md` → "THE CREW SPLIT".
+
+- **One board holds every case**: a patch whose keeping took 3.2 of 5 hands (the fourth mark
+  part-shaded, the hover `About 3 of 5 …`), a patch all three of whose hands tend (`All 3 are tending
+  the patch — nobody is free to harvest.`), a wild patch with no bill (no marks, the control), and a
+  wood working whose keeping took 0.6 of 2 cutters (the verb `cut`). The hunt web's words are asked of
+  the producer.
+- **Each site's `upkeep_hands` is the sum of two bands' keeping.** A second band
+  (`CREW_SPLIT_OTHER_BAND_ENTITY`) adds its share on top. A row that read the site figure would land on
+  a number the claims name.
+- The claims:
+  - marks count the crew, and the share is the ROW's own `keep_hands`;
+  - the hovers, by equality;
+  - the marks take keyboard focus, and a focus floats the same sentence;
+  - the marks sit inside their row;
+  - the second band, jumped to on the same patch, draws its own crew, keeping and sentence.
+- **The big crew** (48 hands, 12 tending) shrinks the squares to their floor and counts the rest
+  (`+31` in the frame), and the marks stay inside their row.
+
+**Sabotage-verified in one run, three disjoint mutations**: the row reading the bill instead of the
+hands fails five claims; marks drawn with no bill fails the wild-row claim; no truncation fails the
+overflow claim. A later run tried a fourth: the row reading the site's `upkeep_hands` fails five
+claims, both two-band claims among them.
+
+**A clean run is 1518 `PASS`, exit 0.**

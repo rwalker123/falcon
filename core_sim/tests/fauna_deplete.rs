@@ -206,7 +206,6 @@ fn spawn_hunter(
                     workers: HUNT_WORKERS,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 }],
                 ..Default::default()
             },

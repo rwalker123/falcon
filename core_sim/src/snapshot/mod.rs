@@ -914,6 +914,9 @@ mod tests {
     const PUBLISHING_SEAT: crate::orders::FactionId = crate::orders::FactionId(0);
 
     use super::*;
+
+    /// The tick these fixtures capture at — no turn has been resolved.
+    const FIXTURE_TURN: u64 = 0;
     // Used only by the fixtures below. They lived at file scope while
     // `restore_world_from_snapshot` needed them too; with that gone, the tests are the only caller.
     use crate::components::{
@@ -989,6 +992,7 @@ mod tests {
         // and an empty registry is exactly the "K is frozen" state `settled_capacity` answers for.
         let graze = crate::graze::GrazeRegistry::default();
         herd_snapshot_entries(HerdSnapshotInputs {
+            current_turn: FIXTURE_TURN,
             telemetry,
             registry,
             fauna,
@@ -1472,7 +1476,6 @@ mod tests {
                     workers: 10,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 },
                 LaborAssignment {
                     party: None,
@@ -1483,12 +1486,12 @@ mod tests {
                     workers: 5,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 },
             ],
             build_queue: Vec::new(),
             last_yields: vec![
                 SourceYield {
+                    keep_hands: crate::fauna::NO_HANDS,
                     // A staple gather: nothing anyone builds with, and no fodder crop in the basket.
                     materials: Vec::new(),
                     fodder: 0.0,
@@ -1508,6 +1511,7 @@ mod tests {
                     standing: 0.0,
                 },
                 SourceYield {
+                    keep_hands: crate::fauna::NO_HANDS,
                     // A hunt: no animal pays fodder, and this fixture's quarry is made of nothing.
                     materials: Vec::new(),
                     fodder: 0.0,
@@ -1529,8 +1533,7 @@ mod tests {
             last_raid_forfeit: 0.0,
             last_roadwork_demand: 0.0,
             last_roadwork_supplied: 0.0,
-            last_quarrywork_demand: 0.0,
-            last_quarrywork_supplied: 0.0,
+            last_keeping_issued: Default::default(),
             last_pool_toe: Vec::new(),
             last_pool_crew: Vec::new(),
             last_fodder_need: 0.0,
@@ -1617,7 +1620,6 @@ mod tests {
                     workers: 10,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 },
                 LaborAssignment {
                     party: None,
@@ -1628,7 +1630,6 @@ mod tests {
                     workers: 5,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 },
             ],
             build_queue: Vec::new(),
@@ -1645,8 +1646,7 @@ mod tests {
             last_raid_forfeit: 0.0,
             last_roadwork_demand: 0.0,
             last_roadwork_supplied: 0.0,
-            last_quarrywork_demand: 0.0,
-            last_quarrywork_supplied: 0.0,
+            last_keeping_issued: Default::default(),
             last_pool_toe: Vec::new(),
             last_pool_crew: Vec::new(),
             last_fodder_need: 0.0,
@@ -1705,15 +1705,13 @@ mod tests {
                 workers: 10,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
             build_queue: Vec::new(),
             last_yields: Vec::new(),
             last_raid_forfeit: 0.0,
             last_roadwork_demand: 0.0,
             last_roadwork_supplied: 0.0,
-            last_quarrywork_demand: 0.0,
-            last_quarrywork_supplied: 0.0,
+            last_keeping_issued: Default::default(),
             last_pool_toe: Vec::new(),
             last_pool_crew: Vec::new(),
             last_fodder_need: 0.0,
@@ -1763,7 +1761,6 @@ mod tests {
             workers: 6,
             kit: None,
             priority: SourcePriority::default(),
-            upkeep_kit: None,
         };
         let state = labor_assignment_to_state(
             &assignment,
@@ -1806,7 +1803,6 @@ mod tests {
             workers: 6,
             kit: None,
             priority: SourcePriority::default(),
-            upkeep_kit: None,
         };
         let state = labor_assignment_to_state(
             &assignment,
@@ -2365,6 +2361,7 @@ mod tests {
             // Nothing is queued in this fixture, so no patch names a builders kit.
             &crate::snapshot::subsistence::QueuedBuildSources::default(),
             &crate::snapshot::subsistence::WorkedSources::default(),
+            FIXTURE_TURN,
             // **Fog OFF: this fixture is not about who is looking.** The improvement gate is
             // exercised on the encoded frame in `core_sim/tests/frame_is_viewer_scoped.rs`; here it
             // must not stand between the assertion and the field it is about.
@@ -2429,6 +2426,7 @@ mod tests {
             &FloraQuoteCache::default(),
             &crate::snapshot::subsistence::QueuedBuildSources::default(),
             &crate::snapshot::subsistence::WorkedSources::default(),
+            FIXTURE_TURN,
             // **Fog OFF: this fixture is not about who is looking.** The improvement gate is
             // exercised on the encoded frame in `core_sim/tests/frame_is_viewer_scoped.rs`; here it
             // must not stand between the assertion and the field it is about.
@@ -2969,6 +2967,7 @@ mod tests {
                 &FloraQuoteCache::default(),
                 &crate::snapshot::subsistence::QueuedBuildSources::default(),
                 &crate::snapshot::subsistence::WorkedSources::default(),
+                FIXTURE_TURN,
                 // Fog OFF — see the sibling fixtures above.
                 FactionId(0),
                 &crate::visibility::VisibilityLedger::default(),

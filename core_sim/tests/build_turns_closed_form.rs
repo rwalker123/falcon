@@ -254,9 +254,6 @@ fn spawn_keepers_of(
     let kit = equipment
         .kit(HANDLING_KIT)
         .expect("the shipped roster carries the big-game kit");
-    let builders_kit = equipment
-        .kit(BUILDERS_KIT)
-        .expect("the shipped roster carries the hurdling kit");
     app.world
         .spawn((
             PopulationCohort {
@@ -315,7 +312,6 @@ fn spawn_keepers_of(
                         workers: KEEPERS,
                         kit: Some(kit.clone()),
                         priority: SourcePriority::default(),
-                        upkeep_kit: None,
                     },
                     // **The build is staffed by the band's own POOL**, at the crew the caller
                     // named (`docs/plan_standing_upkeep.md` §2.5). **The row carries no kit** — a
@@ -328,7 +324,6 @@ fn spawn_keepers_of(
                         workers: builders,
                         kit: None,
                         priority: SourcePriority::default(),
-                        upkeep_kit: None,
                     },
                 ],
                 build_queue: improvement
@@ -337,7 +332,13 @@ fn spawn_keepers_of(
                         declared: core_sim::BuildJob::Rung(declared),
                         // **The kit rides the ENTRY**, which is where a build's gear offset is read
                         // from since §4.7a ②.
-                        kit: Some(builders_kit),
+                        // **Marked above the hunt row**, because the herd's own crew keeps it first
+                        // and its keeping reaches for the same hurdles at the row's priority
+                        // (`docs/plan_site_crews.md` §2.3). A build whose mark wins the one set is
+                        // the regime the kit row's `min(crew, saturating) × worth` describes; at a
+                        // tie the keeping would hold it and the quote would be about a stock the
+                        // builders never saw.
+                        priority: core_sim::SourcePriority::High,
                     })
                     .into_iter()
                     .collect(),
@@ -955,6 +956,112 @@ fn a_herds_published_build_meters_agree_with_their_work_pairs_on_the_turn_they_c
     );
 }
 
+/// **WHAT A QUOTE BETWEEN TURNS SAYS THE KEEPERS' CREW WILL SPEND KEEPING** — the seam every
+/// forecast reads (`fauna::herd_crew_keeping_next_turn` → `fauna::crew_keep_hands`), at the band's own ledger
+/// and its queue's declared verb.
+fn quoted_keep_hands(app: &mut App, band: bevy::prelude::Entity, fauna_id: &str) -> f32 {
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let equipment = app
+        .world
+        .resource::<core_sim::EquipmentConfigHandle>()
+        .get();
+    let allocation = app
+        .world
+        .get::<LaborAllocation>(band)
+        .expect("the keeper band")
+        .clone();
+    let wear = app
+        .world
+        .get::<BandEquipment>(band)
+        .cloned()
+        .unwrap_or_default();
+    let target = allocation
+        .assignments
+        .iter()
+        .find(|row| matches!(&row.target, LaborTarget::Hunt { fauna_id: id, .. } if id == fauna_id))
+        .expect("the keeper band hunts the herd")
+        .target
+        .clone();
+    let declared = core_sim::take_claims::declared_on(&allocation, &target);
+    let registry = app.world.resource::<HerdRegistry>();
+    let herd = registry.find(fauna_id).expect("the herd");
+    core_sim::crew_keep_hands(
+        core_sim::herd_crew_keeping_next_turn(herd, &fauna, &ladder, declared),
+        &equipment,
+        &wear,
+        KEEPERS,
+    )
+}
+
+/// ⛔ **A QUOTE BETWEEN TURNS IS THE KEEPING THE NEXT TURN SETTLES** — on every turn of a Tame in
+/// flight, and on the turn after the pen completes. The bill a quote reads is the LIVE one at the
+/// state the next turn will find, never the stamp the last turn left: that stamp was struck before
+/// the last turn's accrual, so on a rising meter — and on a freshly finished pen, whose rung bills
+/// the pen's rate — it quoted the old position's bill while the turn billed the new one.
+#[test]
+fn a_between_turns_quote_keeps_with_the_hands_the_next_turn_settles() {
+    /// Float slack on hand counts struck through one arithmetic.
+    const HANDS_EPSILON: f32 = 1e-3;
+    let (mut app, id, pos) = world_with_a_tameable_herd();
+    app.world
+        .resource_mut::<DiscoveryProgressLedger>()
+        .add_progress(FactionId(0), PENNING_DISCOVERY_ID, scalar_one());
+    let keepers = spawn_taming_keepers(&mut app, pos, &id, GearHeld::APartysWorth, KEEPERS);
+    let mut compared_mid_tame = false;
+    let mut compared_after_pen = false;
+    let mut penned_turn = None;
+    for turn in 1..=MAX_BUILD_TURNS {
+        let quote = quoted_keep_hands(&mut app, keepers, &id);
+        let corralled_before = app
+            .world
+            .resource::<HerdRegistry>()
+            .find(&id)
+            .is_some_and(|herd| herd.is_corralled());
+        app.world.run_system_once(advance_herds);
+        app.world.run_system_once(advance_husbandry);
+        app.world.run_system_once(advance_labor_allocation);
+        let (settled, tamed, corralled, position) = {
+            let registry = app.world.resource::<HerdRegistry>();
+            let herd = registry.find(&id).expect("the herd");
+            (
+                herd.upkeep_hands,
+                herd.is_domesticated(),
+                herd.is_corralled(),
+                herd.ladder_position(),
+            )
+        };
+        if turn > 1 {
+            assert!(
+                (quote - settled).abs() < HANDS_EPSILON,
+                "turn {turn} (position {position}): the quote before the turn keeps with {quote} \
+                 hands, the turn settled {settled}"
+            );
+            if !tamed && settled > 0.0 {
+                compared_mid_tame = true;
+            }
+            if corralled_before {
+                compared_after_pen = true;
+            }
+        }
+        if tamed && penned_turn.is_none() && !corralled {
+            set_improvement(&mut app, keepers, Improvement::Corral);
+            penned_turn = Some(turn);
+        }
+        if corralled && corralled_before {
+            break;
+        }
+    }
+    assert!(
+        compared_mid_tame,
+        "fixture: a turn of the Tame in flight was compared"
+    );
+    assert!(
+        compared_after_pen,
+        "fixture: the turn after the pen completed was compared"
+    );
+}
+
 /// **The client's food-peak constant is the sim's, and nothing else says so.** The form divides the
 /// assignment's floor by it (`learn_multiplier(floor) = floor / MSY_BIOMASS_FRACTION`), and the
 /// client holds its own literal because no config crosses the wire — so a retune of the sim's peak
@@ -1158,8 +1265,10 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
     /// Builders on the Cultivate. More than one, so the quote is a multi-turn count and `ceil` is
     /// exercised rather than saturating at one turn.
     const BUILDERS: u32 = 2;
-    /// A gathering crew beside them, so the rung's own work predicate holds.
-    const GATHERERS: u32 = 1;
+    /// **Nobody on the patch's own row.** The site's crew keeps it first
+    /// (`docs/plan_site_crews.md` §2.1), so an empty row is what leaves the keeping unmet and the
+    /// rot live; the rung's work predicate reads the standing crop, not a crew.
+    const GATHERERS: u32 = 0;
     /// How far the meter is into its job when the walk starts — room to move in either direction,
     /// and low enough that the job is still several turns off when the walk ends (the hoes raise
     /// what each builder banks by half again).
@@ -1237,7 +1346,7 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
         patch.biomass = patch.carrying_capacity * STOCKED;
     }
 
-    // The band: gatherers, builders, and **no `agriculture` role** — which is what makes the rot real.
+    // The band: builders, and **nobody on the patch's own row** — which is what makes the rot real.
     let band_entity = app
         .world
         .spawn((
@@ -1287,7 +1396,6 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                         workers: GATHERERS,
                         kit: None,
                         priority: SourcePriority::default(),
-                        upkeep_kit: None,
                     },
                     // **The builders are a band-level pool** since `docs/plan_standing_upkeep.md` §2.5,
                     // and the whole of it goes on the head of the queue below — which is this patch.
@@ -1299,13 +1407,12 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                         workers: BUILDERS,
                         kit: None,
                         priority: SourcePriority::default(),
-                        upkeep_kit: None,
                     },
                 ],
                 build_queue: vec![core_sim::BuildQueueEntry {
                     source: core_sim::BuildSource::Patch(source),
                     declared: core_sim::BuildJob::Rung(Improvement::Cultivate),
-                    kit: None,
+                    priority: core_sim::SourcePriority::default(),
                 }],
                 ..Default::default()
             },

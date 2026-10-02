@@ -602,8 +602,10 @@ message ResyncCommand {}
 // patch the player has lost interest in otherwise draws keepers forever. ONE BIT PER SOURCE, NEVER A
 // NUMBER: this is disposal, not a smaller share - the per-source funding lever stays deleted.
 //
-// SOURCE ADDRESSING, shared by all three of these verbs: two integer tokens name a TILE, one token
-// names a HERD id. The tile form is parsed first.
+// SOURCE ADDRESSING, shared by the queue verbs: two integer tokens name a TILE, one token names a
+// HERD id, `<x> <y> <material>` names a WORKING and `road <x> <y>` names a ROAD. The tile form is
+// parsed first. On `abandon` the bare tile is a PLACE - every holding on it, its road included -
+// the working form is `abandon_working` exactly, and the road form puts down the road alone.
 message AbandonCommand {
   uint32 faction_id = 1;
   // The tile form. Both present = a patch at (x, y); both absent = the herd named below.
@@ -611,17 +613,21 @@ message AbandonCommand {
   optional uint32 target_y = 3;
   // The herd form.
   optional string herd_id = 4;
+  // A WORKING (docs/plan_site_crews.md 2.4): with the tile pair, names the deposit's material - one
+  // hex can hold two workings, so the tile alone names neither. Absent = the tile's forage patch.
+  optional string material = 5;
+  // A ROAD: with the tile pair, names the tile's road rather than its patch.
+  bool road = 6;
 }
 
-// PUT DOWN A WORKING - `abandon`'s deposit twin, and a SEPARATE VERB rather than a material token on
-// `abandon` (issue #650).
+// PUT DOWN A WORKING - `abandon`'s deposit twin (issue #650). `abandon <f> <x> <y> <material>` is
+// this verb exactly - the server routes it here - so the two spellings are one path.
 //
 // *** A DEPOSIT VERB NAMES A TILE AND A MATERIAL, WHICH IS WHY IT CANNOT RIDE `abandon`. *** The
 // working's key is (tile, material) because one hex holds two - rolling hills carry timber AND rock -
-// so a line naming only the tile names neither. `abandon <f> <x> <y>` already drops EVERY holding on
-// its tile, a forage row included, and its own tile card warns about that in a second line; widening
-// a destructive verb with an optional token would make it quietly more destructive on exactly the
-// hexes where the player meant one of two things. It is `fell`/`coppice`/`quarry`'s grammar instead,
+// so a line naming only the tile names neither. A bare-tile `abandon <f> <x> <y>` drops the forage row
+// and the road on its tile and never a working: reaching the workings too would make a destructive
+// verb quietly more destructive on exactly the hexes where the player meant one of two things. It is `fell`/`coppice`/`quarry`'s grammar instead,
 // with the material as the closed trailing token.
 //
 // WHAT IT DOES, and it is `abandon`'s contract byte for byte: it drops the band's HOLDING of that
@@ -657,6 +663,11 @@ message UnqueueCommand {
   optional uint32 target_x = 2;
   optional uint32 target_y = 3;
   optional string herd_id = 4;
+  // A WORKING (docs/plan_site_crews.md 2.4): with the tile pair, names the deposit's material - one
+  // hex can hold two workings, so the tile alone names neither. Absent = the tile's forage patch.
+  optional string material = 5;
+  // A ROAD: with the tile pair, names the tile's road rather than its patch.
+  bool road = 6;
 }
 
 // Move one band's build-queue entry to a 0-based position, clamped to the queue's length.
@@ -671,61 +682,13 @@ message BuildOrderCommand {
   optional uint32 target_y = 4;
   optional string herd_id = 5;
   uint32 position = 6;
-}
-
-// Name the kit ONE queued build is raised with, on every band of the faction that has the source
-// queued. The row, its take crew and the meter are untouched - this sets a property of the QUEUE
-// ENTRY.
-//
-// THE BUILDERS' KIT IS PER QUEUE ENTRY, NOT PER BAND (docs/plan_standing_upkeep.md 4.7a). A build's
-// default kit is derived from that entry's own food web - a hoe for a Cultivate, hurdles for a Tame -
-// so one stored id per band is the one thing the derivation cannot express: naming a kit on the
-// `builders` labor row pinned the animal web's tool onto every later plant build with no way back.
-// `assign_labor` refuses a `kit` token on that role; this is where the override lives.
-//
-// AN ABSENT `kit_id` CLEARS THE OVERRIDE back to the derivation - the same "an absent kitId means the
-// job's default" rule every other kit selection follows, and what lets a client say "back to default"
-// with no new vocabulary. An explicit bare-handed kit is a REAL selection and survives the round trip.
-//
-// SOURCE ADDRESSING is the queue family's: two integer tokens name a TILE, one token names a HERD id.
-message BuildKitCommand {
-  uint32 faction_id = 1;
-  optional uint32 target_x = 2;
-  optional uint32 target_y = 3;
-  optional string herd_id = 4;
-  // Absent = clear the override; present = this roster kit, `none` included.
-  optional string kit_id = 5;
-}
-
-// Name the kit ONE WORK SITE IS KEPT WITH, on every band of the faction that works the source. The
-// take crew, its own kit, the queue entry and the meter are untouched - this sets a property of the
-// WORKED ROW.
-//
-// THE KEEPING KIT IS PER WORK SITE, NOT PER BAND (docs/plan_standing_upkeep.md 2.7). The band is the
-// pool of workers and goods to draw from; it does not decide which tool a given site is worked with.
-// A single stored id on the band's `agriculture` / `husbandry` role row - which is where this lived
-// until 2.7 - cannot say "hoes on the Field, bare hands on the scrub patch beside it", so every site
-// a band kept was worked with one tool and there was no way back. `assign_labor` refuses a `kit`
-// token on those roles; this is where the override lives.
-//
-// AN ABSENT `kit_id` CLEARS THE OVERRIDE back to the site's own web derivation - the same "an absent
-// kitId means the job's default" rule every other kit selection follows, and what lets a client say
-// "back to default" with no new vocabulary. An explicit bare-handed kit is a REAL selection and
-// survives the round trip: it is how a player conserves the tool on one site while its neighbour
-// keeps it.
-//
-// A KIT THAT DOES NOT SERVE THIS SITE'S WEB IS A COMMAND FAILURE, never a silent fall back: a plant
-// keeping kit named on a herd is refused by name, exactly as `build_kit` refuses a kit whose `jobs`
-// does not list `builders`.
-//
-// SOURCE ADDRESSING is the queue family's: two integer tokens name a TILE, one token names a HERD id.
-message UpkeepKitCommand {
-  uint32 faction_id = 1;
-  optional uint32 target_x = 2;
-  optional uint32 target_y = 3;
-  optional string herd_id = 4;
-  // Absent = clear the override; present = this roster kit, `none` included.
-  optional string kit_id = 5;
+  // A WORKING (docs/plan_site_crews.md 2.4): with the tile pair, names the deposit's material
+  // (`extraction.json` -> `deposits`) - one hex can hold two workings, so the tile alone names
+  // neither. Absent = the tile's forage patch.
+  optional string material = 7;
+  // A ROAD BUILD: with the tile pair, names the road's queue entry rather than the tile's patch.
+  // A road has no labor row, so `work_priority` refuses it by name.
+  bool road = 8;
 }
 
 // Mark ONE WORKED ROW of one band with the player's own rank - `high` | `normal` | `low`, defaulting
@@ -737,7 +700,9 @@ message UpkeepKitCommand {
 // first. It orders candidates and never creates or removes one, so a rank cannot move a row between
 // the walk's steps, and with every row at the default the behaviour is exactly what it was.
 //
-// SOURCE ADDRESSING is the queue family's: two integer tokens name a TILE, one token names a HERD id.
+// SOURCE ADDRESSING is the band-scoped family's (`build_order`, `work_priority`, `build_priority`):
+// two integer tokens name a TILE, one token names a HERD id, `<x> <y> <material>` names a WORKING
+// and `road <x> <y>` names a ROAD.
 message WorkPriorityCommand {
   uint32 faction_id = 1;
   uint64 band_id = 2;
@@ -745,6 +710,38 @@ message WorkPriorityCommand {
   optional uint32 target_y = 4;
   optional string herd_id = 5;
   string level = 6;     // "high" | "normal" | "low"
+  // A WORKING (docs/plan_site_crews.md 2.4): with the tile pair, names the deposit's material
+  // (`extraction.json` -> `deposits`) - one hex can hold two workings, so the tile alone names
+  // neither. Absent = the tile's forage patch.
+  optional string material = 7;
+  // A ROAD BUILD: with the tile pair, names the road's queue entry rather than the tile's patch.
+  // A road has no labor row, so `work_priority` refuses it by name.
+  bool road = 8;
+}
+
+// Mark ONE QUEUED BUILD of one band with the player's own BUILD MARK - `high` | `normal` | `low`,
+// defaulting to normal (docs/plan_site_crews.md section 2.4).
+//
+// IT IS THE QUEUE ENTRY'S OWN, NOT ITS SITE ROW'S. The builders' claim on scarce tools and the
+// build's claim on scarce materials both rank at the HEAD entry's mark; the site row's
+// `work_priority` ranks that site's own crew. A mark is only settable on a declared build - an
+// unqueued source is refused rather than enrolled.
+//
+// SOURCE ADDRESSING is `work_priority`'s: two integer tokens name a TILE, one token names a HERD id.
+message BuildPriorityCommand {
+  uint32 faction_id = 1;
+  uint64 band_id = 2;
+  optional uint32 target_x = 3;
+  optional uint32 target_y = 4;
+  optional string herd_id = 5;
+  string level = 6;     // "high" | "normal" | "low"
+  // A WORKING (docs/plan_site_crews.md 2.4): with the tile pair, names the deposit's material
+  // (`extraction.json` -> `deposits`) - one hex can hold two workings, so the tile alone names
+  // neither. Absent = the tile's forage patch.
+  optional string material = 7;
+  // A ROAD BUILD: with the tile pair, names the road's queue entry rather than the tile's patch.
+  // A road has no labor row, so `work_priority` refuses it by name.
+  bool road = 8;
 }
 
 message UpkeepModeCommand {
@@ -1030,6 +1027,8 @@ message QueryCommand {
     // 7 is held by `work_party_forecast`, so the deposit compose sheet's question takes 8.
     // Seat-gated: it is answered out of the named band's gear, rows and pool issue.
     DepositCrewTakeQuery deposit_crew_take = 8;
+    // 8 is held by `deposit_crew_take`, so the patch's crew curve takes 9 (append-only).
+    ForageCrewTakeQuery forage_crew_take = 9;
   }
 }
 
@@ -1042,6 +1041,59 @@ message QueryCommand {
 // competes with the band's other rows for each tool and loses what the standing pools were issued -
 // through the same functions the turn cuts with, so committing crew n with this kit makes the turn
 // pay row n's `take`.
+// THE PATCH'S TAKE AT EVERY CREW SIZE, AFTER KEEPING (docs/plan_site_crews.md) - the forage twin of
+// `DepositCrewTakeQuery` and `HuntCrewTakeQuery`, so the compose sheet reads the take at N workers
+// rather than pricing every worker as a gatherer: a kept patch's crew keeps it first and gathers
+// with the rest. Seat-gated like the other faction-bearing questions.
+message ForageCrewTakeQuery {
+  uint32 faction_id = 1;
+  // The asking band's durable `BandId` - its live gear, rows and Priority price the crew.
+  uint64 band_id = 2;
+  uint32 x = 3;
+  uint32 y = 4;
+  // The crop selection the crew gathers (`TakeSelection` keys); empty = the whole basket.
+  repeated string take_species = 5;
+  // An `equipment.json` roster id, REQUIRED; unknown or not listing `forage` is a `QueryError`.
+  string kit_id = 6;
+  // The composed escapement floor, as a fraction of the patch's capacity.
+  float floor = 7;
+  // The stepper's cap: one row per crew size `1..=max_workers`; 0 asks for nothing.
+  uint32 max_workers = 8;
+  // THE CROP THE GROUND WOULD BE COMMITTED TO, for the rows' `next_rung_*` - the sheet's picked crop
+  // on an uncommitted patch. "" = the plant the sim would settle on for that rung; a plant that does
+  // not grow here is treated the same. Ignored on a committed patch.
+  string crop = 9;
+}
+
+// ONE CREW SIZE ON THE PATCH COMPOSE SHEET - see `ForageCrewTakeQuery`.
+message ForageCrewTakeRow {
+  // Echoed so the row is self-describing. Rows ascend from 1.
+  uint32 workers = 1;
+  // NEXT TURN'S TAKE, in provisions, by the hands left after keeping - the patch as next turn finds
+  // it, at the crew's share of the band's baskets and its row's Priority.
+  float take = 2;
+  // THE HANDS THIS CREW SPENDS KEEPING THE PATCH, fractional - `workers - keep_hands` gather.
+  float keep_hands = 3;
+  // NEXT TURN'S TAKE ONCE THE RUNG IN FLIGHT IS FINISHED (or the next rung up where nothing is in
+  // flight), in provisions: the same crew on the finished rung, ITS KEEPING NETTED at that rung's
+  // bill. The compose sheet's "once sown / once tended" figure. 0 at the top of the branch.
+  float next_rung_take = 4;
+  // The hands this crew would spend keeping the finished rung, fractional.
+  float next_rung_keep_hands = 5;
+  // The same take's FODDER once the rung is finished, CREDITED - 0 where the sim would refuse the
+  // credit (no Foddering, and no commitment to a fodder-bearing plant).
+  float next_rung_fodder = 6;
+  // The same take's MATERIALS once the rung is finished, one row per material, keeping netted.
+  // Never summed across materials.
+  repeated MaterialPayoff next_rung_materials = 7;
+}
+
+// The answer to `ForageCrewTakeQuery`.
+message ForageCrewTakeReply {
+  // ONE ROW PER CREW SIZE, ascending, `1..=max_workers`. Empty when `max_workers` is 0.
+  repeated ForageCrewTakeRow per_crew = 1;
+}
+
 message DepositCrewTakeQuery {
   uint32 faction_id = 1;
   // The asking band's durable `BandId`.
@@ -1242,6 +1294,8 @@ message QueryReplyEnvelope {
     WorkPartyForecastReply work_party_forecast = 10;
     // 10 is held by `work_party_forecast`, so the deposit compose sheet's answer takes 11.
     DepositCrewTakeReply deposit_crew_take = 11;
+    // 11 is held by `deposit_crew_take`, so the patch's crew curve takes 12 (append-only).
+    ForageCrewTakeReply forage_crew_take = 12;
   }
 }
 
@@ -1263,6 +1317,8 @@ message DepositCrewTakeRow {
   // the next rung's tool, before the reach caps it: the sheet's "once felled / coppiced / quarried"
   // figure. 0 at the top of a branch.
   float next_rung_take = 4;
+  // THE HANDS THIS CREW SPENDS KEEPING THE WORKING, fractional - `workers - keep_hands` cut.
+  float keep_hands = 5;
 }
 
 // The answer to `DepositCrewTakeQuery`.
@@ -1300,6 +1356,12 @@ message WorkPartyForecastReply {
   // The 1-based turn the first load lands at home (1 = next turn). 0 = none within the forecast
   // horizon - not "immediately".
   uint32 first_load_turn = 6;
+  // NEXT TURN'S TAKE AT THE SOURCE by the asked crew, AFTER KEEPING (docs/plan_site_crews.md) - food
+  // off a herd or a patch, the material's own units off a deposit, struck on the hands the site's
+  // keeping leaves. Before any walk: what a far crew takes lands home later (`rate_home`).
+  float take_next_turn = 7;
+  // The hands the asked crew spends keeping the site, fractional - `workers - keep_hands` take.
+  float keep_hands = 8;
 }
 
 // A query the server declined to answer. `reason` is a machine-readable snake_case token
@@ -1472,6 +1534,16 @@ message HuntCrewTakeRow {
   float animals_low = 2;
   float animals_likely = 3;
   float animals_high = 4;
+  // THE SAME CREW'S LIKELY TAKE ONCE THE RUNG IN FLIGHT IS FINISHED (or the next rung up where
+  // nothing is in flight), animals a turn, ITS KEEPING NETTED at that rung's bill. 0 where the herd
+  // has no rung left to climb or its species cannot climb it. The "once tamed / once corralled"
+  // figure; the forage twin is ForageCrewTakeRow.next_rung_take.
+  float next_rung_animals_likely = 5;
+  // The hands this crew would spend keeping the finished rung, fractional.
+  float next_rung_keep_hands = 6;
+  // THE HANDS THIS CREW SPENDS KEEPING THE HERD, fractional - the split every quantile on this row
+  // is struck on. 0 on a herd that owes no keeping.
+  float keep_hands = 7;
 }
 
 // THE HUNT TAKE CURVE - what each crew size actually brings down, so a pre-commit panel can move its
@@ -1534,8 +1606,11 @@ message CommandEnvelope {
   //   10 `inject_corruption`
   //   46 `abandon_improvement` — retired when the build verb became DERIVED from the meter
   //      (docs/plan_standing_upkeep.md 2.4); there is no stored authority left for it to clear.
-  reserved 2, 5, 6, 7, 8, 9, 10, 24, 30, 46;
-  reserved "found_camp", "domesticate", "abandon_improvement";
+  //   60 `build_kit` and 63 `upkeep_kit` - retired with the per-entry and per-site kit overrides
+  //      (docs/plan_pool_toe.md 4): a pool's tools follow from the rung each of its sites stands on
+  //      and are settled band-wide, so nothing read either stored kit any more.
+  reserved 2, 5, 6, 7, 8, 9, 10, 24, 30, 46, 60, 63;
+  reserved "found_camp", "domesticate", "abandon_improvement", "build_kit", "upkeep_kit";
   reserved "heat", "axis_bias", "support_influencer", "suppress_influencer";
   reserved "support_channel", "spawn_influencer", "inject_corruption";
 
@@ -1607,17 +1682,13 @@ message CommandEnvelope {
     AbandonCommand abandon = 57;
     UnqueueCommand unqueue = 58;
     BuildOrderCommand build_order = 59;
-    // 59 is held by `build_order`, so the queue entry's kit takes 60 (append-only; never renumber).
-    BuildKitCommand build_kit = 60;
-    // 60 is held by `build_kit`, so the worked row's rank takes 61 (append-only; never renumber).
+    // 60 was `build_kit` (RESERVED - retired, see above); the worked row's rank takes 61
+    // (append-only; never renumber).
     WorkPriorityCommand work_priority = 61;
     // 61 is held by `work_priority`, so the bench's rank takes 62 (append-only; never renumber).
     BenchPriorityCommand bench_priority = 62;
-    // 62 is held by `bench_priority`, so the work site's keeping kit takes 63 (append-only; never
-    // renumber).
-    UpkeepKitCommand upkeep_kit = 63;
-    // 63 is held by `upkeep_kit`, so the route branch's two tile verbs take 64-65 (append-only;
-    // never renumber).
+    // 63 was `upkeep_kit` (RESERVED - retired, see above), so the route branch's two tile verbs
+    // take 64-65 (append-only; never renumber).
     GradeCommand grade = 64;
     PaveCommand pave = 65;
     // 65 is held by `pave`, so the save-game verbs take 66-68 (append-only; never renumber). The
@@ -1645,5 +1716,8 @@ message CommandEnvelope {
     AbandonWorkingCommand abandon_working = 75;
     // 75 is held by `abandon_working`, so Open Borders takes 76 (append-only; never renumber).
     SetOpenBordersCommand set_open_borders = 76;
+    // 76 is held by `set_open_borders`, so the queued build's mark takes 77 (append-only; never
+    // renumber).
+    BuildPriorityCommand build_priority = 77;
   }
 }

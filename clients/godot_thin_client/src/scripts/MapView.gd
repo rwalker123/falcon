@@ -562,6 +562,14 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	# work site this turn is a fact about a band's doing — set by a command — so it is redacted with
 	# the rest of the live payload, as `patch_build_kit_id` above is.
 	"patch_upkeep_kit_id", "patch_upkeep_kit_named",
+	# …and how many of the SITE'S OWN CREW the keeping took this turn, and whether its keeping tools
+	# came up short (`docs/plan_site_crews.md` §2.2) — a settlement of this turn's hands, so live state.
+	"patch_upkeep_hands", "patch_upkeep_tools_short",
+	# …and WHICH keeping tools — the site's table of equipment those two are derived from.
+	"patch_upkeep_toe",
+	# …and the keeping line's two forecasts — the workers once the in-flight rung is done and the turn
+	# the next whole worker is needed — the same live keeping state, redacted with it.
+	"patch_upkeep_workers_at_completion", "patch_upkeep_next_worker_turn",
 	# …and what that shortfall is COSTING the meter, which is the same fact one step on. The two
 	# per-rung `*_upkeep_demand` figures beside it — and their `*_upkeep_material_demand` twins, which
 	# are the same quote in the other currency and ride the same tender-load — are deliberately NOT
@@ -3653,6 +3661,17 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# and it is set per site by a command the player issues.
 		info["patch_upkeep_kit_id"] = String(patch.get("upkeep_kit_id", ""))
 		info["patch_upkeep_kit_named"] = bool(patch.get("upkeep_kit_named", false))
+		# **THE SITE CREW'S KEEPING** (`docs/plan_site_crews.md` §2.2) — the hands of this site's own
+		# crew the sim spent keeping it, and whether their keeping tools came up short. The compose
+		# sheet and the work row read them under the same forecast keys the band's labor rows carry.
+		info["patch_upkeep_hands"] = float(patch.get("upkeep_hands", 0.0))
+		info["patch_upkeep_workers_at_completion"] = int(patch.get("upkeep_workers_at_completion", 0))
+		info["patch_upkeep_next_worker_turn"] = int(patch.get("upkeep_next_worker_turn",
+			HudWorkVocab.UPKEEP_NO_NEXT_WORKER_TURN))
+		info["patch_upkeep_tools_short"] = bool(patch.get("upkeep_tools_short", false))
+		# …and the keeping-tool table it is derived from (`[{item_id, required, filled}]`), so a
+		# surface can NAME the short tool.
+		info["patch_upkeep_toe"] = patch.get("upkeep_toe", [])
 		# WHAT GROWS HERE — the tile's named plant composition (share-descending, already sorted
 		# server-side; never re-sorted here). It is the patch's STANDING basket: seeded from the
 		# biome, then REWEIGHTED as a commitment's build lands (issue #433 — a Tended Patch weeds the
@@ -5968,8 +5987,17 @@ func focus_on_tile(col: int, row: int) -> void:
 ## Centre the view on a tile AND select it (as if the hex were clicked), so a jump
 ## from the turn-orb attention popover lands on a *selected* tile — the Tile card +
 ## Occupants roster populate, not just a recentre. Select first, then centre.
+##
+## ⛔ **A JUMP TO THE TILE ALREADY SELECTED IS NOT A RE-CLICK.** `handle_hex_click` on the selected
+## hex ADVANCES the select-then-cycle (band → next occupant → the land), which is a player's re-click
+## and never what a jump means. Every band verb reaches here through
+## `BandPanelController._select_band_on_map`, on the band's own hex — the hex the player selected to
+## see the band at all — so the cycle moved the selection to the LAND, and
+## `note_selection_occupant` then closed the verb the press had just opened: Split, Scout, Deny and
+## Trade all did nothing. The hex is already selected, so there is nothing to select; only centre it.
 func focus_and_select_tile(col: int, row: int) -> void:
-	handle_hex_click(col, row, MOUSE_BUTTON_LEFT)
+	if Vector2i(col, row) != selected_tile:
+		handle_hex_click(col, row, MOUSE_BUTTON_LEFT)
 	focus_on_tile(col, row)
 
 # --- End 2D Minimap System ---

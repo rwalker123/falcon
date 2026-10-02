@@ -766,18 +766,29 @@ pub struct Herd {
     /// a figure a crew that is no longer there paid. `advance_husbandry` clears it once per turn
     /// after everything downstream has read it, and the labor arm re-stamps it in Population.
     pub upkeep_supplied: f32,
+    /// **THE CREW HANDS SPENT KEEPING THIS SOURCE THIS TURN** — fractional, summed across the bands
+    /// whose crews keep it (`docs/plan_site_crews.md` §2.1): each crew keeps its share first and
+    /// collects with the rest, so this is what the row's `keeps N of M` reads and what the take was
+    /// struck less. Published as `upkeepHands`. Accumulates beside [`Self::upkeep_supplied`] and is
+    /// cleared on its cycle.
+    pub upkeep_hands: f32,
+    /// **WHICH KEEPING TOOLS THE CREWS KEEPING THIS SOURCE WERE SHORT OF, BY NAME** — one
+    /// [`crate::components::KeepingToolLine`] per `(faction, tool)` claimed, summed over that
+    /// people's crews. Published as `upkeepToe`, a viewer's own lines only, and the row's
+    /// `upkeepToolsShort` is read off them; cleared on `upkeep_supplied`'s cycle.
+    pub upkeep_toe: Vec<crate::components::KeepingToolLine>,
     /// **THE BILL THIS HERD'S KEEPERS WERE HANDED** — the demand [`herd_upkeep_demand`] answered when
-    /// the band's keeping pool was split, stamped by the labor arm and cleared each turn by
+    /// the site's keeping was claimed, stamped by the labor arm and cleared each turn by
     /// `advance_husbandry`. `None` = no band answered for this herd this turn.
     ///
     /// # ⛔ IT EXISTS BECAUSE THE DEMAND MOVED WITHIN THE TURN
     ///
     /// The animal twin of `ForagePatch::upkeep_demanded`, and it arrived with the same mechanic: the
     /// keeping demand **interpolates on the position** now, and the build accrual raises that position
-    /// *after* `maintenance_shares` has already split the pool against it. Judging the lagged supply
-    /// against a demand that has since risen makes a fully-staffed keeping read permanently short —
-    /// on the turn a Tame banks its first work, most sharply of all, where the share is struck at a
-    /// demand of `0` and the capture reads a live one.
+    /// *after* `site_keeping_claims` has already struck the claim against it. Judging the lagged
+    /// supply against a demand that has since risen makes a fully-staffed keeping read permanently
+    /// short — on the turn a Tame banks its first work, most sharply of all, where the share is
+    /// struck at a demand of `0` and the capture reads a live one.
     ///
     /// **First write wins**, for the plant twin's reason: several bands may work one herd, the shares
     /// were all struck at the pre-accrual position, so the bill has to be too.
@@ -886,6 +897,8 @@ impl Herd {
             neglect_turns: NEGLECT_NONE,
             neglect_pressure: NO_NEGLECT_PRESSURE,
             upkeep_supplied: NO_UPKEEP_DEMAND,
+            upkeep_hands: NO_HANDS,
+            upkeep_toe: Vec::new(),
             upkeep_demanded: None,
             upkeep_materials_demanded: BTreeMap::new(),
             upkeep_materials_supplied: BTreeMap::new(),
@@ -940,8 +953,14 @@ impl Herd {
     /// herd's owner lapses when it sheds its last animal (`advance_husbandry`), never when its
     /// position moves, because taming is monotone-up — neglect sheds *animals*, not tameness.
     pub fn set_ladder_position(&mut self, position: f32, ladder: &LadderConfig) {
+        let was = self.standing.held;
         self.ladder_position = position.max(RUNG_UNSTARTED);
         self.standing = self.standing_at(self.ladder_position, ladder);
+        // **A FINISHED RUNG STARTS WITH ITS FULL GRACE** ([`crate::intensification::rung_rose`]) —
+        // a Tame or a pen completed by keepers short of the bill does not shed on the next turn.
+        if crate::intensification::rung_rose(was, self.standing.held) {
+            self.neglect_turns = crate::intensification::NEGLECT_NONE;
+        }
     }
 
     /// [`RungStanding::at`] with **this herd's own prices** — the species' taming multiplier on the
@@ -980,7 +999,7 @@ impl Herd {
     }
 
     /// `(base, width)` of `rung` on this herd's own price list.
-    fn rung_span(&self, rung: RungKey, ladder: &LadderConfig) -> (f32, f32) {
+    pub(crate) fn rung_span(&self, rung: RungKey, ladder: &LadderConfig) -> (f32, f32) {
         let multiplier = self.taming_cost_multiplier;
         crate::intensification::rung_span(rung, &|key| {
             ladder.rung(key).build_cost(match key {
@@ -4336,6 +4355,8 @@ pub fn advance_husbandry(
         // again unless somebody restates it. (`advance_herds`' `regrow_biomass` reads it earlier in
         // the same Logistics stage, so its abandonment gate still sees last turn's value.)
         herd.upkeep_supplied = NO_UPKEEP_DEMAND;
+        herd.upkeep_hands = NO_HANDS;
+        herd.upkeep_toe.clear();
         // …and the bill it was judged against, so "already stamped" always means *this* turn.
         herd.upkeep_demanded = None;
         // **The material half rides the same cycle**, and for the same reason: it is this turn's bill
@@ -4834,7 +4855,7 @@ pub fn drop_holding_and_cancel_ring(
 // **RETIRED: `herd_is_maintaining`** — the animal twin of the retired `forage::patch_is_maintaining`,
 // and retired for the same reason (`docs/plan_standing_upkeep.md` §4.6a). The meter's **fullness**
 // decided who supplied the maintenance rate; nothing about how full a meter is decides who pays. The
-// band's `husbandry` pool owes the rate for every meter carrying work, at any fullness, and a build
+// herd's own crew owes the rate for every meter carrying work, at any fullness, and a build
 // crew supplies nothing toward it.
 
 /// **WHAT HAS BEEN SUNK INTO THE METER AT RISK** — the animal twin of `forage::patch_at_risk_cost`,
@@ -4847,7 +4868,7 @@ pub fn herd_at_risk_cost(herd: &Herd) -> f32 {
 /// **THE WORK THE AT-RISK METER WAS OWED THIS TURN, AND THE KEEPING POOL OWES ALL OF IT** — the
 /// animal twin of `forage::patch_upkeep_supply` (`docs/plan_standing_upkeep.md` §2.4/§4.6a).
 ///
-/// **A meter carrying work is billed to the band's `husbandry` pool at any fullness** — from the
+/// **A meter carrying work is billed to the herd's own crew at any fullness** — from the
 /// first work banked until the last — and a build crew supplies nothing toward it. A `Tame` in
 /// flight owes what a tamed herd owes, to the same hands.
 ///
@@ -4871,10 +4892,10 @@ pub fn herd_upkeep_supply(
 ///
 /// # ⛔ THE VERB TERM IS THE ONE-TURN CARRY, AND IT IS ALL THAT SURVIVES OF `herd_keeping_meter`
 ///
-/// `maintenance_shares` runs **before** the turn's build accrual and the capture reads the herd
+/// `site_keeping_claims` runs **before** the turn's build accrual and the capture reads the herd
 /// **after** it. On the turn a Tame banks its first work, a claim resolved on the position alone
 /// reads zero, the share comes back zero, and the capture then publishes `supplied 0` against a live
-/// demand on a **staffed** `husbandry` role. That is the defect the retired meter's `by_verb` term
+/// demand on a **staffed** keeping. That is the defect the retired meter's `by_verb` term
 /// was added for, and it survives here in the only form the interpolated demand still needs.
 ///
 /// **Exhaustive on the verb, on purpose** — a new animal verb falling through to `false` would leave
@@ -4956,7 +4977,7 @@ pub fn herd_meter_rot(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) -
 /// herd 10% into a Tame owes 10% of the rate and breeds 10% of the way to pastoral.
 ///
 /// **AND THE VERB TERM IS GONE WITH THE STEP.** It existed because the claim side
-/// (`maintenance_shares`, before the accrual) and the payment side (the capture, after it) had to
+/// (`site_keeping_claims`, before the accrual) and the payment side (the capture, after it) had to
 /// agree which meter they meant across a **discontinuity** — a herd that was wild when the shares
 /// were split and owned when the bill was read. There is no step left to straddle: the demand is a
 /// continuous function of the position, and at a position of zero it is `NO_UPKEEP_DEMAND` on both
@@ -5166,7 +5187,7 @@ fn uncontained_overage(herd: &Herd, fauna: &FaunaConfig, ladder: &LadderConfig) 
     // **THE SHORTFALL FRACTION, STRAIGHT ONTO THE HEAD COUNT.** `shortfall_in_loads ×
     // animals_per_herder` *is* `shortfall_fraction × head count` — the loads cancel — so reading the
     // fraction says the same thing without reconstructing a per-load rate, and it keeps working when
-    // the supplier is a **build crew** rather than the keeping pool (a herd mid-`Tame` is owed the
+    // the supplier is a **build crew** rather than the site's crew (a herd mid-`Tame` is owed the
     // same rate, from different hands).
     // **AND IT IS THE WORST OF THE TWO CURRENCIES** (`docs/plan_standing_upkeep.md` §4.9 item 12):
     // a pen fully staffed with no hurdles to mend the fence sheds at the hurdles' rate, one with
@@ -5871,7 +5892,7 @@ impl SourceYieldForecast {
 /// number bit-for-bit, which is why every existing caller keeps this entry point unchanged.
 pub fn forecast_expected_take(
     forecast: &SourceYieldForecast,
-    workers: u32,
+    workers: f32,
     floor: f32,
 ) -> YieldAccounts {
     forecast_production_and_take_at(forecast, workers, floor, TakeReading::Mean).1
@@ -5936,7 +5957,7 @@ pub struct TakeRange {
 /// it, so widening the reported band cannot move a single animal.
 pub fn forecast_take_range(
     forecast: &SourceYieldForecast,
-    workers: u32,
+    workers: f32,
     floor: f32,
     sigmas: f32,
 ) -> TakeRange {
@@ -6003,7 +6024,7 @@ pub fn project_realized_hunt(
     // the engagement is (see the doc above).
     party: &HuntingParty,
     output_multiplier: f32,
-    workers: u32,
+    workers: f32,
     floor: f32,
     horizon: u32,
     // **Where in the turn `herd` is being read** — see [`ProjectionStart`].
@@ -6188,7 +6209,7 @@ impl HuntProjection {
         per_worker_biomass_capacity: f32,
         party: &HuntingParty,
         output_multiplier: f32,
-        workers: u32,
+        workers: f32,
         floor: f32,
         // **What the crew keeps of the take** — see [`CarcassKept`].
         kept: CarcassKept,
@@ -6323,7 +6344,7 @@ pub fn project_arrivals_hunt(
     // The party doing the hunting — the schedule runs the same fight the take does.
     party: &HuntingParty,
     output_multiplier: f32,
-    workers: u32,
+    workers: f32,
     floor: f32,
     horizon: u32,
 ) -> Vec<f32> {
@@ -6453,7 +6474,7 @@ pub enum TakeReading {
 /// the same outcomes. See [`TakeReading`].
 fn forecast_production_and_take_at(
     forecast: &SourceYieldForecast,
-    workers: u32,
+    workers: f32,
     floor: f32,
     reading: TakeReading,
 ) -> (YieldAccounts, YieldAccounts) {
@@ -6507,7 +6528,7 @@ pub(crate) struct ForecastTakeOutcome {
 /// outcome.
 pub(crate) fn forecast_take_outcomes(
     forecast: &SourceYieldForecast,
-    workers: u32,
+    workers: f32,
     floor: f32,
     draw: HuntDraw,
 ) -> Vec<ForecastTakeOutcome> {
@@ -6516,7 +6537,7 @@ pub(crate) fn forecast_take_outcomes(
     // flight scales nothing about what these hunters carry. The `improvement` axis survives on this
     // signature because the *rung* still decides which ceiling the source offers, not because it
     // prices the crew.
-    let collection = forecast.per_worker_yield.scale(workers as f32);
+    let collection = forecast.per_worker_yield.scale(workers);
     // The assignment's ceiling at its floor. Undipped: the source offers what stands above the floor
     // whether the crew is harvesting it or building on it.
     let ceiling = forecast.ceiling_at(floor);
@@ -6626,6 +6647,79 @@ pub(crate) fn forecast_take_outcomes(
     }
 }
 
+/// **WHAT A CREW ON THIS HERD OWES FOR ITS KEEPING** — the rung it holds and its stamped bill, or
+/// `None` when the herd claims no keeping (a wild herd, a meter at zero with nothing declared).
+/// The one reading the seed, the crew curve and the compose-sheet query strike a prospective crew's
+/// keeping hands from ([`crate::systems::prospective_keep_hands`], `docs/plan_site_crews.md` §2.2).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CrewKeeping {
+    pub rung: RungKey,
+    pub demand: f32,
+}
+
+/// [`CrewKeeping`] for `herd`, the verb resolved off `declared` exactly as the turn resolves it.
+///
+/// ⛔ **THE DEMAND IS THE LIVE ONE, AT THE STATE THE NEXT TURN WILL FIND** — never the stamped bill
+/// (`upkeep_demanded`). The stamp is struck before a turn's build accrual and stands until the next
+/// turn's Logistics clears it, so between turns it describes the position the LAST turn started
+/// from: a Cultivate in flight, or a pen that has just completed, would be quoted the old rung's bill
+/// while the next turn bills the risen one. A quote is always about the next turn.
+pub fn herd_crew_keeping(
+    herd: &Herd,
+    fauna: &FaunaConfig,
+    ladder: &LadderConfig,
+    declared: Option<crate::components::Improvement>,
+) -> Option<CrewKeeping> {
+    herd_claims_keeping(herd, herd_build_verb(herd, declared)).then(|| CrewKeeping {
+        rung: herd.standing().held,
+        demand: herd_upkeep_demand(herd, fauna, ladder),
+    })
+}
+
+/// **[`herd_crew_keeping`] FOR A QUOTE BETWEEN TURNS** — read off the herd as the next turn's take
+/// will find it ([`next_turns_quarry`]): a herd's bill rides its head count
+/// ([`herd_keeper_load`]), so the Logistics regrowth the next turn runs first moves the bill the
+/// turn settles. Every surface that quotes a crew before its turn reads this; the turn's own claim,
+/// already past its regrowth, reads [`herd_crew_keeping`] directly.
+pub fn herd_crew_keeping_next_turn(
+    herd: &Herd,
+    fauna: &FaunaConfig,
+    ladder: &LadderConfig,
+    declared: Option<crate::components::Improvement>,
+) -> Option<CrewKeeping> {
+    herd_crew_keeping(&next_turns_quarry(herd, fauna), fauna, ladder, declared)
+}
+
+/// **The hands a crew of `crew` spends keeping first** — `NO_HANDS` with nothing to keep.
+pub fn crew_keep_hands(
+    keeping: Option<CrewKeeping>,
+    equipment: &crate::equipment_config::EquipmentConfig,
+    band_kit: &crate::components::BandEquipment,
+    crew: u32,
+) -> f32 {
+    keeping.map_or(NO_HANDS, |keeping| {
+        crate::systems::prospective_keep_hands(
+            equipment,
+            band_kit,
+            keeping.rung,
+            keeping.demand,
+            crew,
+        )
+    })
+}
+
+/// **THE ROW'S WHOLE NEEDED CREW** — the hands its take needs plus the hands its keeping spent
+/// (`docs/plan_site_crews.md` §4). A site's row is one crew with one stepper that keeps first and
+/// takes with the rest, so `workers > workers_needed` stays the overstaffing signal only if the
+/// count carries both halves. `take_needed` is the take activity's own inversion; `keep_hands` is
+/// fractional, so the sum is rounded up to whole workers. A row that keeps nothing is unchanged.
+pub fn crew_needed_with_keeping(take_needed: u32, keep_hands: f32) -> u32 {
+    if keep_hands <= NO_HANDS {
+        return take_needed;
+    }
+    (take_needed as f32 + keep_hands).ceil() as u32
+}
+
 /// Compose the **seeded** `SourceYield` telemetry row for a source from its pre-commit forecast —
 /// what the source *will* pay next turn under this staffing/policy, written at assign time so the
 /// map annotation and the band panel never show `+0.00` for an assignment that has simply not been
@@ -6637,9 +6731,10 @@ pub(crate) fn forecast_take_outcomes(
 ///   (no ⚠), exactly as the Field/corral arms record it,
 /// - `wasted` = the uncollected signal ([`forecast_production_and_take_at`]): the production the crew
 ///   could not carry home,
-/// - `workers_needed` = **the TAKE activity's own crew** — hands to haul the offer, the expected
-///   take inverted by the per-worker throughput (a ratio, so provisions-space matches the resolution
-///   path's biomass-space result). It was `source_crew_needed(standing, take)`, a `max` blending a
+/// - `workers_needed` = **the row's whole needed crew** — the hands its keeping spends plus the
+///   hands to haul the offer ([`crew_needed_with_keeping`], `docs/plan_site_crews.md` §4), the take
+///   half inverted by the per-worker throughput (a ratio, so provisions-space matches the
+///   resolution path's biomass-space result). It was `source_crew_needed(standing, take)`, a `max` blending a
 ///   herding headcount with a hauling one and a build's staffing floor, because one crew did every
 ///   job on a source and the row had one number to give. **Each activity is staffed on its own row
 ///   now** — the take on the source, the keeping and the building on the band
@@ -6662,7 +6757,11 @@ pub(crate) fn forecast_source_yield(
     forecast: &SourceYieldForecast,
     sustainable: f32,
     managed: bool,
+    // **The row's whole crew**, which the take-crew inversion below clamps to — persons.
     workers: u32,
+    // **The hands that take** — the crew less the hands its keeping spent
+    // (`docs/plan_site_crews.md` §2.1). Fractional; the take is linear in it.
+    take_hands: f32,
     floor: f32,
     realized: f32,
     arrivals: Vec<f32>,
@@ -6677,9 +6776,9 @@ pub(crate) fn forecast_source_yield(
     // **The row's scalars are the range's MIDDLE.** A telemetry row states one figure; the
     // distribution it sits in rides beside it as `range` (`docs/plan_hunt_through_combat.md` §6.4),
     // and on the shipped roster the three readings are the same number bit-for-bit.
-    let range = forecast_take_range(forecast, workers, floor, range_sigmas);
+    let range = forecast_take_range(forecast, take_hands, floor, range_sigmas);
     let (production, actual) =
-        forecast_production_and_take_at(forecast, workers, floor, TakeReading::Mean);
+        forecast_production_and_take_at(forecast, take_hands, floor, TakeReading::Mean);
     // **THE STANDING HALF, ADDED ONCE AND AFTER THE TAKE IS RESOLVED**
     // (`docs/plan_pen_standing_yield.md`). It is flat and worker-independent, so it is deliberately
     // absent from `production`, from `ceiling_at` and from `per_worker_yield` — see
@@ -6692,6 +6791,9 @@ pub(crate) fn forecast_source_yield(
     // retired work budget's share); with the build staffed in its own right there is nothing left to
     // scale it by.
     SourceYield {
+        // **The prospective split** — the hands this crew would spend keeping, its share of the
+        // site's bill: everything the take does not use.
+        keep_hands: (workers as f32 - take_hands).max(NO_HANDS),
         actual: actual.provisions + standing,
         // **THE SPLIT, ON THE PRE-COMMIT ROW TOO.** A seeded row is what the player reads on the
         // screen where they assign keepers, so a committed herd that quoted meat alone would say
@@ -6766,46 +6868,48 @@ pub(crate) fn forecast_source_yield(
         // staffing count is a RATIO, and dividing a wolf's zero food take by its zero per-worker food
         // rate is the `0/0` the vector model exists to make impossible. Every edible species divides
         // exactly the numbers it divided before #337.
-        workers_needed: match forecast.ratio_axis() {
-            Some(axis) if forecast.quantises() => hunt_take_workers(
-                forecast.ceiling_at(floor).component(axis),
-                forecast.body_mass_yield.component(axis),
-                // **THE CARRY RATE THE TAKE WAS ACTUALLY BOUND BY** — [`NO_CARRY_BOUND`] where
-                // carry does not bind ([`SourceYieldForecast::larder`], the same flag
-                // [`forecast_production_and_take_at`] hands the quantiser two screens up), so the
-                // haul term drops out of the `max` and the keepers' handling crew answers alone.
-                // Inverting the sled here published *51 haulers* beside a five-keeper
-                // `huntUsefulWorkers` on the shipped penned aurochs: two surfaces, one question,
-                // opposite answers, for a haul that never happens.
-                if forecast.larder {
-                    NO_CARRY_BOUND
-                } else {
-                    forecast.per_worker_yield.component(axis)
-                },
-                // **The engagement term is the third unit** — `hunt_engage_workers` reads it exactly
-                // as `animals_engaged` does, so the crew inverts the bound the take was actually
-                // paid. On a pen that bound is the keepers' handling rate, so the term counts
-                // keepers; only the plant web's `f32::INFINITY` drops it entirely.
-                forecast.engage_rate,
-                // **The retreat, off THIS forecast's own party and quarry** — the same
-                // `stay_fraction` the take above was priced with, so the crew and the take can
-                // never be resolved at two different dispersions.
-                forecast
-                    .fight
-                    .as_ref()
-                    .map_or(NO_RETREAT_STAGE_STAY, |(party, quarry)| {
-                        party.stay_fraction(quarry.profile.wariness)
-                    }),
-            ),
-            Some(axis) => workers_needed_for_take(
-                actual.component(axis),
-                forecast.per_worker_yield.component(axis),
-                workers,
-            ),
-            // A source that yields nothing in either currency asks for no haulers. What it costs to
-            // KEEP is a different question, answered per activity on the source's own row.
-            None => NO_CREW_ON_THIS_ACTIVITY,
-        },
+        workers_needed: crew_needed_with_keeping(
+            match forecast.ratio_axis() {
+                Some(axis) if forecast.quantises() => hunt_take_workers(
+                    forecast.ceiling_at(floor).component(axis),
+                    forecast.body_mass_yield.component(axis),
+                    // **THE CARRY RATE THE TAKE WAS ACTUALLY BOUND BY** — [`NO_CARRY_BOUND`] where
+                    // carry does not bind ([`SourceYieldForecast::larder`], the same flag
+                    // [`forecast_production_and_take_at`] hands the quantiser two screens up), so the
+                    // haul term drops out of the `max` and the keepers' handling crew answers alone.
+                    // Inverting the sled here published *51 haulers* beside a five-keeper
+                    // `huntUsefulWorkers` on the shipped penned aurochs: two surfaces, one question,
+                    // opposite answers, for a haul that never happens.
+                    if forecast.larder {
+                        NO_CARRY_BOUND
+                    } else {
+                        forecast.per_worker_yield.component(axis)
+                    },
+                    // **The engagement term is the third unit** — `hunt_engage_workers` reads it exactly
+                    // as `animals_engaged` does, so the crew inverts the bound the take was actually
+                    // paid. On a pen that bound is the keepers' handling rate, so the term counts
+                    // keepers; only the plant web's `f32::INFINITY` drops it entirely.
+                    forecast.engage_rate,
+                    // **The retreat, off THIS forecast's own party and quarry** — the same
+                    // `stay_fraction` the take above was priced with, so the crew and the take can
+                    // never be resolved at two different dispersions.
+                    forecast
+                        .fight
+                        .as_ref()
+                        .map_or(NO_RETREAT_STAGE_STAY, |(party, quarry)| {
+                            party.stay_fraction(quarry.profile.wariness)
+                        }),
+                ),
+                Some(axis) => workers_needed_for_take(
+                    actual.component(axis),
+                    forecast.per_worker_yield.component(axis),
+                    workers,
+                ),
+                // A source that yields nothing in either currency asks for no haulers.
+                None => NO_CREW_ON_THIS_ACTIVITY,
+            },
+            workers as f32 - take_hands,
+        ),
         // A **managed** source (rung 3 — a Field, a pen) takes at most its escapement MSY, so it
         // cannot overdraw whatever the dial and the crew say.
         overdraws: !managed && overdraws,
@@ -6828,6 +6932,10 @@ pub fn hunt_source_yield_preview(
     party: &HuntingParty,
     output_multiplier: f32,
     workers: u32,
+    // **The hands this crew spends keeping the herd first** (`docs/plan_site_crews.md` §2.2) —
+    // [`crate::systems::prospective_keep_hands`] for a kept herd, [`NO_HANDS`] for one that owes
+    // nothing. The take is quoted on the rest.
+    keep_hands: f32,
     floor: f32,
     realized_horizon: u32,
     arrivals_horizon: u32,
@@ -6835,6 +6943,7 @@ pub fn hunt_source_yield_preview(
     // expected take (`docs/plan_hunt_through_combat.md` §6.4). Last, matching the forage twin.
     range_sigmas: f32,
 ) -> SourceYield {
+    let take_hands = (workers as f32 - keep_hands).max(NO_HANDS);
     let forecast = hunt_forecast(
         herd,
         fauna,
@@ -6861,7 +6970,7 @@ pub fn hunt_source_yield_preview(
         per_worker_biomass_capacity,
         party,
         output_multiplier,
-        workers,
+        take_hands,
         floor,
         realized_horizon,
         ProjectionStart::BeforeRegrowth,
@@ -6874,7 +6983,7 @@ pub fn hunt_source_yield_preview(
         per_worker_biomass_capacity,
         party,
         output_multiplier,
-        workers,
+        take_hands,
         floor,
         arrivals_horizon,
     );
@@ -6888,6 +6997,7 @@ pub fn hunt_source_yield_preview(
         sustainable,
         herd.is_corralled(),
         workers,
+        take_hands,
         floor,
         realized.provisions,
         arrivals,
@@ -6898,7 +7008,7 @@ pub fn hunt_source_yield_preview(
             herd.biomass,
             per_worker_biomass_capacity,
             party,
-            workers,
+            take_hands,
             floor,
         ),
         range_sigmas,
@@ -7152,12 +7262,17 @@ pub fn herd_past_recovery(biomass: f32, carrying_capacity: f32, ecology: &Ecolog
 /// hunters and the reach is simply theirs. The defect that factor guarded against
 /// (`docs/plan_harvest_floor.md` §0.3, *"the harshest stance builds free"*) cannot recur, because
 /// there is no shared crew for a build to ride for free.
-pub fn animals_engaged(workers: u32, engage_rate: f32) -> f32 {
-    if workers == 0 {
+pub fn animals_engaged(workers: f32, engage_rate: f32) -> f32 {
+    if workers <= NO_HANDS {
         return 0.0;
     }
-    workers as f32 * engage_rate.max(0.0)
+    workers * engage_rate.max(0.0)
 }
+
+/// **A CREW OF NO HANDS** — the zero a fractional take crew is tested against
+/// (`docs/plan_site_crews.md` §2.1: a site crew keeps first, and a crew that spends every hand
+/// keeping takes with none).
+pub const NO_HANDS: f32 = 0.0;
 
 /// **The per-event seed for a retreat draw** — `(map_seed, tick, herd, party)`, order-independent by
 /// construction (`docs/plan_hunt_through_combat.md` §6.2). Two runs that resolve the same hunts in a
@@ -7404,7 +7519,7 @@ pub fn retreat_outcomes(engaged: f32, wariness: f32) -> Vec<RetreatOutcome> {
 pub fn expected_kill_over_retreat(
     engaged: f32,
     wariness: f32,
-    workers: u32,
+    workers: f32,
     party: &HuntingParty,
     quarry: Option<&QuarryFight>,
     wounds: DamageLedger,
@@ -7430,7 +7545,7 @@ pub fn expected_kill_over_retreat(
 pub fn kill_over_retreat(
     engaged: f32,
     wariness: f32,
-    workers: u32,
+    workers: f32,
     party: &HuntingParty,
     quarry: Option<&QuarryFight>,
     wounds: DamageLedger,
@@ -7485,7 +7600,7 @@ const NO_STAYERS: f32 = 0.0;
 /// largest outcome and at the caller's `draw`, and every outcome reads `min(blow, stayed)` off it. A
 /// slaughter has no fight and is read per outcome directly.
 pub struct OutcomeKills<'a> {
-    workers: u32,
+    workers: f32,
     party: &'a HuntingParty,
     quarry: Option<&'a QuarryFight>,
     wounds: DamageLedger,
@@ -7498,7 +7613,7 @@ impl<'a> OutcomeKills<'a> {
     /// band edge reads the fight's spread beside the retreat's.
     pub fn resolve(
         outcomes: &[RetreatOutcome],
-        workers: u32,
+        workers: f32,
         party: &'a HuntingParty,
         quarry: Option<&'a QuarryFight>,
         wounds: DamageLedger,
@@ -7509,7 +7624,7 @@ impl<'a> OutcomeKills<'a> {
                 .iter()
                 .map(|outcome| outcome.stayed)
                 .fold(NO_STAYERS, f32::max);
-            resolve_hunt_fight(most, workers as f32, party, fight, draw).expected_brought_down
+            resolve_hunt_fight(most, workers, party, fight, draw).expected_brought_down
         });
         Self {
             workers,
@@ -7562,7 +7677,7 @@ impl<'a> OutcomeKills<'a> {
     fn slaughter(&self, stayed: f32) -> HuntFight {
         resolve_hunt_kill(
             stayed,
-            self.workers as f32,
+            self.workers,
             self.party,
             None,
             self.wounds,
@@ -9310,6 +9425,93 @@ pub fn hunt_take_workers(
     ))
 }
 
+/// **THE ROW'S OWN ROOM ON THE MEAT SIDE AT `floor`** — the pen's take room on a penned herd, the
+/// range's escapement room on a wild one: exactly what each arm of the take sizes its crew on.
+pub fn hunt_crew_room(herd: &Herd, fauna: &FaunaConfig, floor: f32) -> f32 {
+    let room = if herd.is_corralled() {
+        herd_take_room(herd, floor, fauna)
+    } else {
+        hunt_escapement_ceiling(floor, herd.biomass, herd_capacity(herd, fauna))
+    };
+    room * herd.meat_take_fraction()
+}
+
+/// ⛔ **THE TAKE HANDS THAT WOULD TAKE SOMETHING WITH THE KIT ON THIS HERD** — the crew that brings
+/// the row's room down and carries it home at one fully equipped hunter's rates
+/// (`docs/plan_site_crews.md` §2.3): [`hunt_take_workers`]' carry and reach, and the **fight** — a
+/// hunter's spear brings down `(attack − defense) × lethality × hit_chance ÷ durability` bodies a
+/// turn, and a crew that cannot fell the peak drop does not reach the room however much it can
+/// carry. A party that cannot wound the quarry at all takes nothing, so claims nothing.
+pub fn hunt_useful_take_hands(
+    herd: &Herd,
+    fauna: &FaunaConfig,
+    floor: f32,
+    equipped_haul: f32,
+    equipped_party: &HuntingParty,
+) -> f32 {
+    let room = hunt_crew_room(herd, fauna, floor);
+    let carry_and_reach = hunt_take_workers(
+        room,
+        herd.body_mass,
+        herd_carry_rate(herd, fauna, equipped_haul),
+        herd_engage_rate(herd, fauna),
+        equipped_party.stay_fraction(herd_wariness(herd, fauna)),
+    );
+    let Some(quarry) = herd_fight_stage(herd, fauna) else {
+        return carry_and_reach as f32;
+    };
+    let Some(hunter) = equipped_party.crews.first().map(|crew| crew.hunter) else {
+        return crate::equipment_config::NO_CLAIMING_HANDS;
+    };
+    let tuning = &equipped_party.tuning;
+    let bodies_per_hunter = crate::combat::strike_damage(hunter.attack, quarry.profile.defense)
+        * tuning.lethality
+        * tuning.hit_chance
+        / quarry.profile.durability;
+    if !bodies_per_hunter.is_finite()
+        || bodies_per_hunter <= crate::equipment_config::NO_CLAIMING_HANDS
+    {
+        return crate::equipment_config::NO_CLAIMING_HANDS;
+    }
+    let fight = (peak_animal_drop(room, herd.body_mass) / bodies_per_hunter).ceil() as u32;
+    carry_and_reach.max(fight) as f32
+}
+
+/// ⛔ **A HUNT ROW'S TAKE CREW, CREW-INDEPENDENT** (`docs/plan_site_crews.md` §4) — the haul half
+/// walked over the row's own coverage best-equipped first
+/// ([`crate::equipment_config::KitCoverage::hands_to_reach`]), so hands the row's units do not reach
+/// are counted at the bare carry rather than diluting the carry of every hand; and the reach half
+/// ([`hunt_engage_workers`]) at the party's own retreat. `room` is the row's room on the meat side
+/// ([`hunt_crew_room`]), read before the take draws it down.
+#[allow(clippy::too_many_arguments)] // the crew's inputs: room, herd, coverage and its rates
+pub fn hunt_crew_needed(
+    room: f32,
+    herd: &Herd,
+    fauna: &FaunaConfig,
+    coverage: &crate::equipment_config::KitCoverage,
+    carry_per_worker: impl Fn(&crate::equipment_config::KitChoice) -> f32,
+    bare_carry: f32,
+    stay: f32,
+) -> u32 {
+    let body = herd.body_mass;
+    if !body.is_finite() || body <= 0.0 {
+        return NO_CREW_ON_THIS_ACTIVITY;
+    }
+    let haul = coverage
+        .hands_to_reach(
+            peak_animal_drop(room, body) * body,
+            |kit| herd_carry_rate(herd, fauna, carry_per_worker(kit)),
+            herd_carry_rate(herd, fauna, bare_carry),
+        )
+        .ceil() as u32;
+    haul.max(hunt_engage_workers(
+        room,
+        body,
+        herd_engage_rate(herd, fauna),
+        stay,
+    ))
+}
+
 /// **RETIRED: `hunt_provisions(biomass, &FaunaConfig, mult)`** — the single global biomass→provisions
 /// conversion, `take × hunt.provisions_per_biomass × output_multiplier`.
 ///
@@ -9484,16 +9686,16 @@ pub fn herd_resistance(herd: &Herd, fauna: &FaunaConfig) -> f32 {
 pub fn herd_collection(
     herd: &Herd,
     fauna: &FaunaConfig,
-    workers: u32,
+    workers: f32,
     per_worker_biomass_capacity: f32,
 ) -> f32 {
-    if workers == 0 {
+    if workers <= NO_HANDS {
         return NOTHING_COLLECTED;
     }
     if herd.is_corralled() && fauna.husbandry.pen_is_a_larder {
         return NO_CARRY_BOUND;
     }
-    workers as f32 * per_worker_biomass_capacity
+    workers * per_worker_biomass_capacity
 }
 
 /// **WHAT ONE WORKER CARRIES AT THE RUNG THIS HERD STANDS ON** — [`herd_collection`] asked at
@@ -9528,7 +9730,7 @@ const NOTHING_COLLECTED: f32 = 0.0;
 /// **ONE WORKER, ASKED ONLY WHETHER THE BOUND EXISTS** — [`herd_collection`]'s `workers == 0` guard
 /// means the question *"is this source carry-bound at all"* has to be put at a non-empty crew, and
 /// the answer does not depend on which one.
-const ONE_WORKER: u32 = 1;
+const ONE_WORKER: f32 = 1.0;
 
 /// **A RUNG THAT CHANGES NOTHING ABOUT HOW HARD AN ANIMAL IS TO BRING DOWN** — the identity, and
 /// [`herd_resistance`]'s answer on the range and behind a fence. Named rather than a bare `1.0` so
@@ -9657,7 +9859,7 @@ pub fn resolve_hunt_engagement(
     herd: &Herd,
     fauna: &FaunaConfig,
     party: &HuntingParty,
-    workers: u32,
+    workers: f32,
     floor: f32,
     // **Live or forecast** — a live take draws both stochastic stages from its per-event seed; a
     // curve reads their quantiles. See [`HuntDraw`].
@@ -9694,7 +9896,7 @@ pub fn resolve_hunt_engagement(
     // is still bounded by the keepers' handling rate and by the room above the floor.
     let fight = resolve_hunt_kill(
         stayed,
-        workers as f32,
+        workers,
         party,
         herd_fight_stage(herd, fauna).as_ref(),
         herd.wounds,
@@ -9733,7 +9935,7 @@ pub struct EngagementReach {
 pub fn engagement_reach(
     herd: &Herd,
     fauna: &FaunaConfig,
-    workers: u32,
+    workers: f32,
     floor: f32,
     quantum: EngagementQuantum,
 ) -> EngagementReach {
@@ -9808,13 +10010,18 @@ pub struct HuntCrewCurveInputs<'a> {
     /// [`crate::components::LaborAllocation::rows_excluding_source`]).
     ///
     /// ⛔ **The rows travel here rather than a ready-made budget, because the budget is a function
-    /// of the crew size.** At crew `w` this row's share of an item is
-    /// `live × w ÷ (other demand + w)`, and `w` moves on every row of the curve — a budget struck
-    /// once at one crew would misprice every other.
+    /// of the crew size.** At crew `w` this row's settlement depends on `w` beside the other rows'
+    /// claims, and `w` moves on every row of the curve — a budget struck once at one crew would
+    /// misprice every other.
     ///
     /// **Empty is the ordinary case**: a band with nothing else reaching for the kit's items falls
     /// through to the whole live stock, which is what a ledger-wide coverage always gave it.
-    pub other_rows: &'a [(crate::equipment_config::KitChoice, f32)],
+    pub other_rows: &'a [crate::equipment_config::KittedRow],
+    /// **The rank this row claims the band's take gear at** — its own `SourcePriority`
+    /// ([`crate::components::LaborAllocation::priority_on`]): the band's items are settled High,
+    /// then Normal, then Low (`docs/plan_site_crews.md` §2.3), so a High row's curve is armed ahead
+    /// of the Normal rows beside it.
+    pub priority: crate::components::SourcePriority,
     /// The `person` roster row — what a hunter is before any gear.
     pub intrinsic: CombatStats,
     /// The severity dials the fight resolves at. **A resident band hunting its own range passes the
@@ -9841,6 +10048,11 @@ pub struct HuntCrewCurveInputs<'a> {
     /// The largest crew the curve is asked about — the source's own crew pool (the hands on it plus
     /// the band's idle ones), which is every crew the stepper beside it can reach.
     pub max_workers: u32,
+    /// **WHAT EACH ROW'S CREW KEEPS FIRST** ([`herd_crew_keeping`]) — a row at crew `w` takes with
+    /// `w − keep_hands(w)` (`docs/plan_site_crews.md` §2.2), so a curve for a kept herd quotes what
+    /// `w` hands collect after keeping, exactly as the deposit curve does. `None` for a herd that
+    /// owes nothing.
+    pub keeping: Option<CrewKeeping>,
 }
 
 /// **THE QUARRY AS NEXT TURN'S TAKE WILL FIND IT** — a clone with one Logistics regrowth applied,
@@ -9881,20 +10093,54 @@ pub fn next_turns_quarry(herd: &Herd, fauna: &FaunaConfig) -> Herd {
 ///
 /// The share is struck per crew size — see [`HuntCrewCurveInputs::other_rows`] for why that cannot
 /// be hoisted out of the loop.
+///
+/// ⛔ **`workers` ARE TAKE HANDS, AND THEY CLAIM ONLY UP TO `useful`** — the take hands that would
+/// bring something down with the kit ([`curve_useful_take_hands`], `docs/plan_site_crews.md` §2.3),
+/// never the head count.
 fn curve_coverage(
     inputs: &HuntCrewCurveInputs<'_>,
     workers: f32,
+    useful: f32,
 ) -> crate::equipment_config::KitCoverage {
     let budget = crate::equipment_config::BandItemBudget::with_prospective_row(
-        inputs.other_rows.iter().map(|(kit, held)| (kit, *held)),
+        inputs.other_rows.iter().cloned(),
         inputs.kit,
-        workers,
+        workers.min(useful),
+        inputs.priority,
     );
     inputs.equipment.coverage_from_units(
         inputs.kit,
         workers,
         inputs.wear,
-        budget.share_for(workers, inputs.wear, inputs.equipment),
+        budget.share_for_prospective(inputs.wear, inputs.equipment),
+    )
+}
+
+/// **THE CURVE'S PLANNED TAKE-KIT CLAIM** — [`hunt_useful_take_hands`] on the regrown `quarry`, at
+/// one fully equipped hunter of the curve's kit: the same claim the turn and every other surface
+/// settle this row on (`crate::take_claims`).
+fn curve_useful_take_hands(inputs: &HuntCrewCurveInputs<'_>, quarry: &Herd) -> f32 {
+    let hand = inputs.equipment.one_equipped_hand(inputs.kit, inputs.wear);
+    hunt_useful_take_hands(
+        quarry,
+        inputs.fauna,
+        inputs.floor,
+        hand.weighted_rate(|crew| {
+            inputs.equipment.hunt_per_worker_biomass_capacity(
+                inputs.baseline_haul_rate,
+                crew,
+                inputs.wear,
+            )
+        }),
+        &PartyResolution {
+            equipment: inputs.equipment,
+            coverage: &hand,
+            wear: inputs.wear,
+            intrinsic: inputs.intrinsic,
+            tuning: inputs.tuning,
+            hunt_injury_damage_per_animal: inputs.hunt_injury_damage_per_animal,
+        }
+        .party_against(crate::equipment_config::Quarry::Mass(quarry.body_mass)),
     )
 }
 
@@ -9982,12 +10228,16 @@ pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTak
     // The retreat and the kill arm at this herd's rung — quarry facts, the same on every row.
     let wariness = herd_wariness(&quarry, inputs.fauna);
     let quarry_fight = herd_fight_stage(&quarry, inputs.fauna);
+    let useful = curve_useful_take_hands(inputs, &quarry);
     let keepers_haul_it_home = quarry.is_corralled()
         && !herd_collection(&quarry, inputs.fauna, ONE_WORKER, inputs.baseline_haul_rate)
             .is_infinite();
     (1..=inputs.max_workers)
-        .map(|workers| {
-            let coverage = curve_coverage(inputs, workers as f32);
+        .map(|crew| {
+            // **The crew keeps first** — every term below reads the hands left to take with.
+            let workers =
+                crew as f32 - crew_keep_hands(inputs.keeping, inputs.equipment, inputs.wear, crew);
+            let coverage = curve_coverage(inputs, workers, useful);
             let party = PartyResolution {
                 equipment: inputs.equipment,
                 coverage: &coverage,
@@ -10020,7 +10270,7 @@ pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTak
                         inputs.wear,
                     )
                 });
-                (workers as f32 * per_worker / quarry.body_mass)
+                (workers * per_worker / quarry.body_mass)
                     // **The carry arm still cannot bind below one body**, exactly as
                     // `quantise_animal_take`'s `carryable.max(1.0)` does not: a keeper who cannot
                     // haul a whole beast still walks one out and wastes the rest. That is a fact
@@ -10077,7 +10327,7 @@ pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTak
                 .unwrap_or(NO_STAYERS)
             };
             HuntCrewTake {
-                workers,
+                workers: crew,
                 // No clamp. `low <= likely <= high` is asserted across the roster by
                 // `forecast_query`'s `the_curve_band_brackets_its_mean_across_the_roster`.
                 low: edge(-sigmas),
@@ -10160,7 +10410,11 @@ pub fn hunt_armed_crew(inputs: &HuntCrewCurveInputs<'_>) -> u32 {
     let Some(fight) = herd_fight_stage(&quarry, inputs.fauna) else {
         return inputs.max_workers;
     };
-    let coverage = curve_coverage(inputs, inputs.max_workers as f32);
+    let coverage = curve_coverage(
+        inputs,
+        inputs.max_workers as f32,
+        curve_useful_take_hands(inputs, &quarry),
+    );
     let party = PartyResolution {
         equipment: inputs.equipment,
         coverage: &coverage,
@@ -10677,12 +10931,12 @@ pub fn hunt_take_overdraws(
     biomass: f32,
     per_worker_biomass_capacity: f32,
     party: &HuntingParty,
-    workers: u32,
+    workers: f32,
     floor: f32,
 ) -> bool {
     let cap = herd_capacity(herd, fauna);
     let ecology = herd_ecology(herd, fauna);
-    let carry = workers as f32 * per_worker_biomass_capacity.max(0.0);
+    let carry = workers * per_worker_biomass_capacity.max(0.0);
     // What the party puts on the ground in a turn: reached, less what breaks off, in biomass —
     // both terms at the herd's **own rung** ([`herd_engage_rate`], [`herd_wariness`]), so the ⚠ is
     // answered against the take that will really be paid. Identities on a wild herd.
@@ -12029,7 +12283,7 @@ mod tests {
     fn a_fractional_engagement_is_a_rate_and_rises_with_every_hunter() {
         let mut previous = 0.0;
         for workers in 1..=3u32 {
-            let engaged = animals_engaged(workers, HARD_TO_CORNER_ENGAGE_RATE);
+            let engaged = animals_engaged(workers as f32, HARD_TO_CORNER_ENGAGE_RATE);
             assert!(
                 (workers as f32 * HARD_TO_CORNER_ENGAGE_RATE) < 1.0,
                 "fixture must actually be fractional for {workers} hunters"
@@ -12047,7 +12301,7 @@ mod tests {
             previous = engaged;
         }
         // …and a crew whose reach clears whole animals is not rounded down to them either.
-        assert_eq!(animals_engaged(9, HARD_TO_CORNER_ENGAGE_RATE), 2.25);
+        assert_eq!(animals_engaged(9.0, HARD_TO_CORNER_ENGAGE_RATE), 2.25);
     }
 
     /// **No workers engage NOTHING** — a different statement from the fractional reach above, and
@@ -12056,7 +12310,7 @@ mod tests {
     fn a_party_of_no_workers_engages_nothing() {
         for rate in [HARD_TO_CORNER_ENGAGE_RATE, EASY_ENGAGE_RATE, f32::INFINITY] {
             assert_eq!(
-                animals_engaged(0, rate),
+                animals_engaged(0.0, rate),
                 0.0,
                 "an unstaffed row reaches no animals (rate {rate})"
             );
@@ -12071,8 +12325,8 @@ mod tests {
     #[test]
     fn engagement_scales_with_the_hunting_crew() {
         const CREW: u32 = 8;
-        let whole_party = animals_engaged(CREW, EASY_ENGAGE_RATE);
-        let half_party = animals_engaged(half_of(CREW), EASY_ENGAGE_RATE);
+        let whole_party = animals_engaged(CREW as f32, EASY_ENGAGE_RATE);
+        let half_party = animals_engaged((half_of(CREW)) as f32, EASY_ENGAGE_RATE);
         // Liveness: both crews genuinely reach several animals, so neither reading is the floor.
         assert_eq!(whole_party, CREW as f32 * EASY_ENGAGE_RATE);
         assert_eq!(half_party, half_of(CREW) as f32 * EASY_ENGAGE_RATE);
@@ -12088,7 +12342,7 @@ mod tests {
     fn engagement_scales_linearly_with_the_party() {
         for workers in 1..=6u32 {
             assert_eq!(
-                animals_engaged(workers, EASY_ENGAGE_RATE),
+                animals_engaged(workers as f32, EASY_ENGAGE_RATE),
                 workers as f32 * EASY_ENGAGE_RATE,
                 "engagement must scale with the party at {workers} hunters"
             );
@@ -12112,7 +12366,7 @@ mod tests {
         const AMPLE_CEILING: f32 = BODY_MASS * 100.0;
         let collection = HUNTERS as f32 * PER_WORKER_CARRY;
 
-        let engaged = animals_engaged(HUNTERS, ONE_ANIMAL_PER_HUNTER);
+        let engaged = animals_engaged(HUNTERS as f32, ONE_ANIMAL_PER_HUNTER);
         let bounded = quantise_animal_take(
             collection,
             BODY_MASS,
@@ -12196,7 +12450,7 @@ mod tests {
                         crew - 1
                     );
                     assert!(
-                        animals_engaged(crew, rate) >= peak,
+                        animals_engaged(crew as f32, rate) >= peak,
                         "rate {rate} stay {stay}: …and it must REACH the drop too — you \
                          cannot bring down what you never got near"
                     );
@@ -13174,6 +13428,51 @@ mod tests {
     /// load-bearing: the animal take lands in whole bodies, and an aurochs' growth share at this
     /// squeeze is a fraction of its 120-unit body, so both sides would agree on a quantised zero and
     /// the test would pass against the defect. The precondition below states it.
+    /// ⛔ **A JUST-FINISHED RUNG STARTS WITH ITS FULL GRACE, on the animal web too.** A herd whose
+    /// keepers ran short through its Tame carries a neglect counter well past the grace; the turn
+    /// the Tame completes, that counter resets, so the tamed herd is not shed on its first short turn.
+    /// A position that FALLS resets nothing.
+    #[test]
+    fn a_completed_tame_resets_the_neglect_counter() {
+        const BOAR: &str = "Wild Boar";
+        const WILD_CEILING: f32 = 2_000.0;
+        /// A shortfall run longer than any rung's grace.
+        const NEGLECTED_THROUGH_THE_BUILD: u16 = 9;
+        let fauna = FaunaConfig::builtin();
+        let ladder = LadderConfig::builtin();
+        let def = fauna
+            .species_by_display(BOAR)
+            .expect("the fixture names a shipped species");
+        let mut herd = Herd::new(
+            "game_grace".to_string(),
+            BOAR.to_string(),
+            SizeClass::Big,
+            vec![UVec2::new(1, 1)],
+            WILD_CEILING,
+            WILD_CEILING,
+            def.fodder_per_biomass,
+            def.regrowth_rate.expect("a tameable species breeds"),
+            def.body_mass,
+        );
+        herd.taming_cost_multiplier = fauna.taming_cost_multiplier_for(BOAR);
+        herd.neglect_turns = NEGLECTED_THROUGH_THE_BUILD;
+        assert!(
+            herd.tame_outright(FactionId(0), &ladder),
+            "fixture: the species must be tameable"
+        );
+        assert_eq!(
+            herd.neglect_turns, NEGLECT_NONE,
+            "the turn the Tame completes, the herd's neglect counter resets"
+        );
+        herd.neglect_turns = NEGLECTED_THROUGH_THE_BUILD;
+        let position = herd.ladder_position();
+        herd.set_ladder_position(position, &ladder);
+        assert_eq!(
+            herd.neglect_turns, NEGLECTED_THROUGH_THE_BUILD,
+            "a position that does not rise a rung resets nothing"
+        );
+    }
+
     #[test]
     fn a_herd_below_its_climbing_floor_publishes_the_take_it_will_hand_over() {
         /// The shipped species whose body is light enough that a squeezed herd's growth share is
@@ -13257,6 +13556,7 @@ mod tests {
             &party,
             NEUTRAL_OUTPUT,
             HUNTERS,
+            NO_HANDS,
             HALF_THE_STOCK,
             SHORT_HORIZON,
             SHORT_HORIZON,
@@ -13272,7 +13572,7 @@ mod tests {
                 let mut taking = quarry.clone();
                 let outcome = crate::systems::hunt_take(
                     &mut taking,
-                    HUNTERS,
+                    HUNTERS as f32,
                     HALF_THE_STOCK,
                     PER_HUNTER_HAUL,
                     &party,
@@ -13355,7 +13655,7 @@ mod tests {
         // hands that are on the Tame instead. What survives is that a wild hunt pays a real number
         // for the payoffs below to be compared against.
         let wild_sustain =
-            forecast_expected_take(&forecast, DIP_VISIBLE_CREW, PEAK_FLOOR).provisions;
+            forecast_expected_take(&forecast, DIP_VISIBLE_CREW as f32, PEAK_FLOOR).provisions;
         assert!(
             wild_sustain > 0.0,
             "liveness: the wild hunt must pay something for the rung payoffs to beat"
@@ -13441,7 +13741,7 @@ mod tests {
         // — the ceiling never carried a dip, and now neither does the crew: a build is staffed in
         // its own right, so the hunters carry what hunters carry. Asked at a staffing the carry
         // binds, which is where a dip would have been visible if one were left.
-        let take = expected(DIP_VISIBLE_CREW, PEAK_FLOOR);
+        let take = expected(DIP_VISIBLE_CREW as f32, PEAK_FLOOR);
         assert!(
             take > 0.0,
             "liveness: this staffing must actually take something"
@@ -13449,7 +13749,7 @@ mod tests {
         // **A deeper floor still takes more now** — the pressure axis is the player's own and the
         // build does not touch it, which is the separation the three allocations complete.
         assert!(
-            expected(DIP_VISIBLE_CREW, 0.15) >= take,
+            expected(DIP_VISIBLE_CREW as f32, 0.15) >= take,
             "a deeper floor never takes less"
         );
         // The rung PAYOFFS still climb — the axis on which the ladder is expressible at a single turn.

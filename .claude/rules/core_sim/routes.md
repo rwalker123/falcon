@@ -817,8 +817,14 @@ whose output scales with people standing there, so a work row with a stepper is 
 
 **The pool was never the problem — the automatic billing was.** With the free floor free and `grade`
 the only way onto a paid rung, every road a band pays for is one it chose by typing a command. So
-`Roadwork` covers **the roads that band is the keeper of**, exactly as `Agriculture` covers the patches
-it cultivated, and the per-road choice is exercised with `abandon`.
+`Roadwork` covers **the roads that band is the keeper of**, and the per-road choice is exercised
+with `abandon <faction> road <x> <y>`, which puts down the road alone (keeper and queue entry) and
+leaves a patch on the same tile standing; a bare-tile `abandon <faction> <x> <y>` puts down both.
+`unqueue <faction> road <x> <y>` withdraws a queued `grade` / `pave` and leaves the keeper, and
+`build_priority` / `build_order` reach the queued road build by the same address
+(`docs/plan_site_crews.md` §2.4). It is the **one band-level keeping pool left**: the food webs' and the deposits'
+keeping moved onto each site's own crew (`docs/plan_site_crews.md`), because a patch, a herd and a
+working each have a row to carry a crew and a road has none.
 
 `LaborTarget::Roadwork` is an ordinary band-wide standing role — `assign_labor <faction> <band>
 roadwork <n>`, published as a `laborAssignments` row with `kind: "roadwork"`, shed by `normalize`,
@@ -873,9 +879,12 @@ per turn by `advance_roads`.
 ### `advance_roads` is five phases, and the order is the whole of it
 
 1. **judge last turn's keeping** — `upkeep_shortfall_fraction` off the **stamped** basis arms or wipes
-   `Road::neglect_turns` (consecutive turns, never a lifetime budget);
+   `Road::neglect_turns` (consecutive turns, never a lifetime budget; `Road::set_position` resets it
+   the turn a rung completes — `intensification.md` → "A COMPLETED RUNG RESETS THE COUNTER");
 2. **bleed the rung at risk** at `shortfall_fraction × meter_decay.per_turn`, past that rung's own
-   `grace_turns`. `RungDef::upkeep_decay` owns both the rate and the strictly-greater comparison;
+   `grace_turns`. A kept road leaving a rung's top or falling to the rung beneath is announced
+   to the keeper's people on the `Road` channel — a slip (Info) and a loss (Alert), once each
+   (`event-feed.md` → "A rung's decay is two edges"). `RungDef::upkeep_decay` owns both the rate and the strictly-greater comparison;
 3. **clear** `upkeep_demanded` / `upkeep_supplied` for the coming turn's stamp;
 4. **bank this turn's traffic on every tile each journey crossed, capped at `traffic_ceiling`** — and
    count the idle turns. Each journey banks **its own** `RouteJourney::work_per_tile`, so a link and a
@@ -901,15 +910,16 @@ lookup asks it, and the decay bleeds it. Three readers that disagreed is what
 the supply this pass judges was stamped by *last* turn's Population — the same lag
 `forage::advance_cultivation` and `fauna::advance_husbandry` already run on.
 
-### The shed takes a road keeper LAST of the three
+### The shed and the road keepers
 
-`ShedStep::SpareKeeper` (step 3) and `ShedStep::NeededKeeper` (step 8) walk Agriculture, then
-Husbandry, then Roadwork. **The reason is recoverability**: a road carries the longest graces on the
-ladder, and its free floor is re-earned by **traffic alone**. `ShedFacts::spare_roadwork_keepers` is
-struck in `advance_labor_allocation` off the **same** `route_keeping_claims` the payment uses, priced
-through `routes::road_keeping_basis` — the stamp where one exists, the live demand where it does not,
-because the shed runs a whole system *before* anything is stamped and a count struck against a bill of
-zero would shed every road keeper as spare.
+`ShedStep::SpareKeeper` (step 3) sheds spare **Roadwork** keepers — the only band-level keeping pool
+— and `ShedStep::NeededKeeper` (step 8) takes a Roadwork keeper **before** a site's keeping hand
+(`docs/plan_site_crews.md` §2.6). **The reason is recoverability**: a road carries the longest
+graces on the ladder, and its free floor is re-earned by **traffic alone**.
+`ShedFacts::spare_roadwork_keepers` is struck in `advance_labor_allocation` off the **same**
+`route_keeping_claims` the payment uses, priced through `routes::road_keeping_basis` — the stamp
+where one exists, the live demand where it does not, because the shed runs a whole system *before*
+anything is stamped and a count struck against a bill of zero would shed every road keeper as spare.
 
 ## ⛔ A MAINTAINED ROAD IS TRAFFIC, SO ITS TILE IS `Seen` — and the keystone is UNTOUCHED
 

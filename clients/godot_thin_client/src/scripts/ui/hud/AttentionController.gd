@@ -581,24 +581,23 @@ func _under_kept_rung_attention() -> Array:
             "label": HudAttentionVocab.ATTENTION_UNDER_KEPT_LABEL_FORMAT % [
                 String(HudComposeVocab.IMPROVEMENT_DONE_LABELS.get(String(c["rung"]), "")),
                 int(c["x"]), int(c["y"])],
-            "detail": _under_kept_detail(SourceForecast.SOURCE_KIND_FORAGE,
+            "detail": _under_kept_detail(
                 float(c["shortfall"]), String(c["clause"])),
             "x": int(c["x"]), "y": int(c["y"]),
         })
     return items
 
-## **THE ONE UNDER-KEPT DETAIL LINE, for both webs** — *"Husbandry short 1 work — sheds in 3 turns"*.
-## The pool name is `HudWorkVocab.keeping_role_name`'s, so the row names the card the player has to
-## raise in the same word that card wears; the bill is in WORK units, because keeping is a rate the
-## band pays out of a pool and the hands that pay it are worth different amounts once they carry gear.
+## **THE ONE UNDER-KEPT DETAIL LINE, for both webs** — *"Crew short 1 work — sheds in 3 turns"*. A
+## site is kept by the crew on its own work row (`docs/plan_site_crews.md`), so that crew is the
+## subject and its stepper the remedy; the bill is in WORK units, because the hands that pay it are
+## worth different amounts once they carry gear.
 ## The trailing clause is the web's own consequence, produced by `_neglect_clause`.
 ##
 ## **IT IS BUILT FOR THE POPOVER'S OWN WIDTH.** Orb rows CLIP, so a row that says three things has to
 ## say each of them in as few words as the reading allows — which is why the clause vocabulary lost
 ## its subjects and the bill lost its `a turn`. The label above already names the source.
-static func _under_kept_detail(source_kind: String, shortfall: float, clause: String) -> String:
+static func _under_kept_detail(shortfall: float, clause: String) -> String:
     return HudAttentionVocab.ATTENTION_UNDER_KEPT_DETAIL_FORMAT % [
-        HudWorkVocab.keeping_role_name(source_kind),
         DetailFormat.format_work_units(shortfall), clause]
 
 ## Turn-orb items for the MANAGED herds one band keeps whose keeping the band's HUSBANDRY pool did not
@@ -628,7 +627,7 @@ func _under_kept_herd_attention(band: Dictionary) -> Array:
             "owner": int(band.get("entity", -1)),
             "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
             "label": HudAttentionVocab.ATTENTION_UNDER_KEPT_HERD_LABEL_FORMAT % _herd_label_for_id(herd_id),
-            "detail": _under_kept_detail(SourceForecast.SOURCE_KIND_HERD,
+            "detail": _under_kept_detail(
                 float(SourceForecast.upkeep_state(
                     herd, HudComposeVocab.BARE_FORECAST_PREFIX).get("shortfall", 0.0)),
                 _neglect_clause(herd, HudComposeVocab.BARE_FORECAST_PREFIX,

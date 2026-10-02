@@ -40,10 +40,9 @@ use bevy::prelude::Entity;
 
 use core_sim::{
     advance_labor_allocation, build_test_app, recapture_snapshot_in_place, scalar_from_f32,
-    BuildJob, BuildSource, EquipmentConfig, FactionId, FaunaConfigHandle, Herd, HerdRegistry,
-    KitChoice, LaborAllocation, LaborAssignment, LaborTarget, LadderConfig, MaterialsConfig,
-    PopulationCohort, RecipesConfig, RungKey, SizeClass, SnapshotHistory, SourcePriority,
-    TileRegistry, RUNG_COST_UNSCALED,
+    BuildJob, BuildSource, FactionId, FaunaConfigHandle, Herd, HerdRegistry, LaborAllocation,
+    LaborAssignment, LaborTarget, LadderConfig, MaterialsConfig, PopulationCohort, RecipesConfig,
+    RungKey, SizeClass, SnapshotHistory, SourcePriority, TileRegistry, RUNG_COST_UNSCALED,
 };
 
 /// The keeper faction — the capture's default viewer, so its own herds are on the wire whatever the
@@ -466,13 +465,6 @@ fn the_band_on(app: &mut App, tile: UVec2) -> Entity {
     entity
 }
 
-/// The empty kit, so the ring's pace is the pool's own and no start-stocked tool moves it.
-fn bare_builders() -> KitChoice {
-    EquipmentConfig::builtin()
-        .kit("none")
-        .expect("the shipped roster carries the empty kit")
-}
-
 /// Put a ring in flight on the penned herd and staff it, with a keeper row beside it so the pen is
 /// held exactly as a played one is.
 fn begin_a_ring(app: &mut App, band: Entity) {
@@ -507,7 +499,6 @@ fn begin_a_ring(app: &mut App, band: Entity) {
         workers: RING_BUILDERS,
         kit: None,
         priority: SourcePriority::default(),
-        upkeep_kit: None,
     });
     allocation.assignments.push(LaborAssignment {
         party: None,
@@ -515,16 +506,11 @@ fn begin_a_ring(app: &mut App, band: Entity) {
         workers: RING_BUILDERS,
         kit: None,
         priority: SourcePriority::default(),
-        upkeep_kit: None,
     });
     allocation.build_queue.clear();
     assert!(
         allocation.enqueue_build(source.clone(), BuildJob::ExtendPen),
         "the band works the pen it is ringing"
-    );
-    assert!(
-        allocation.set_build_entry_kit(&source, Some(bare_builders())),
-        "the entry just declared takes the bare kit"
     );
 }
 

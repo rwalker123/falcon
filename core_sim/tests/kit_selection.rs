@@ -267,7 +267,6 @@ fn spawn_hunting_band(
                     workers: CREW,
                     kit,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 }],
                 ..Default::default()
             },
@@ -526,7 +525,6 @@ fn a_gather_crew_wears_only_the_baskets_and_a_kitless_one_wears_nothing() {
                         workers: CREW,
                         kit: Some(chosen),
                         priority: SourcePriority::default(),
-                        upkeep_kit: None,
                     }],
                     ..Default::default()
                 },
@@ -1441,7 +1439,6 @@ fn every_labor_row_publishes_the_kit_it_is_priced_at() {
                         // Named nothing — the wire must still say which kit it is working under.
                         kit: None,
                         priority: SourcePriority::default(),
-                        upkeep_kit: None,
                     },
                     LaborAssignment {
                         party: None,
@@ -1449,7 +1446,6 @@ fn every_labor_row_publishes_the_kit_it_is_priced_at() {
                         workers: CREW,
                         kit: None,
                         priority: SourcePriority::default(),
-                        upkeep_kit: None,
                     },
                 ],
                 ..Default::default()
@@ -1848,7 +1844,6 @@ fn spawn_gathering_band(app: &mut App, baskets_owned: u32) -> (bevy::prelude::En
                     workers: CREW,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 }],
                 ..Default::default()
             },
@@ -2357,7 +2352,6 @@ fn spawn_band_hunting(
             workers: ROW_CREW,
             kit: EquipmentConfig::builtin().kit(kit_id),
             priority: SourcePriority::default(),
-            upkeep_kit: None,
         })
         .collect();
     app.world
@@ -2476,6 +2470,125 @@ fn two_hunt_rows_naming_one_kit_cannot_arm_more_hunters_than_the_band_owns() {
              {stocked_rows:?}"
         );
     }
+}
+
+/// **⛔ A HIGH ROW IS ARMED IN FULL BEFORE A NORMAL ONE** (`docs/plan_site_crews.md` §2.3) — the
+/// playtest band, end to end: a High boar hunt of 4 and a Normal sheep hunt of 2, both on the
+/// stalking kit, over five of each item. The turn arms and the wire publishes **4 of 4** and **1 of
+/// 2**, where the head-count split read "3 of 4" on the High row. **Both row orders**, so the rank
+/// decides and not the position.
+#[test]
+fn a_high_row_is_armed_in_full_before_a_normal_row_whichever_comes_first() {
+    /// The High row's crew and the Normal row's.
+    const HIGH_CREW: u32 = 4;
+    const NORMAL_CREW: u32 = 2;
+    /// Five of each stalking item — one short of the six hunters.
+    const FIVE_KITS: u32 = 5;
+    const SPEARS: &str = "spears";
+
+    for high_first in [true, false] {
+        let mut app = placid_world();
+        let (first, pos) = pin_herd(&mut app);
+        let second = pin_second_herd(&mut app, pos, SECOND_HERD_ID);
+        let high = (first.as_str(), HIGH_CREW, SourcePriority::High);
+        let normal = (second.as_str(), NORMAL_CREW, SourcePriority::Normal);
+        let rows = if high_first {
+            [high, normal]
+        } else {
+            [normal, high]
+        };
+        let band = spawn_band_hunting(
+            &mut app,
+            pos,
+            &[(rows[0].0, SLED_KIT), (rows[1].0, SLED_KIT)],
+            &[(SPEARS, FIVE_KITS), (SLED, FIVE_KITS)],
+        );
+        {
+            let mut allocation = app
+                .world
+                .get_mut::<LaborAllocation>(band)
+                .expect("the fixture spawned an allocation");
+            for (assignment, (_, crew, rank)) in allocation.assignments.iter_mut().zip(rows) {
+                assignment.workers = crew;
+                assignment.priority = rank;
+            }
+        }
+        drive_local_turn(&mut app);
+        recapture_snapshot_in_place(&mut app.world);
+
+        let published = published_row_coverage(&app, band);
+        let expected: Vec<(u32, f32)> = rows
+            .iter()
+            .map(|(_, crew, rank)| {
+                let armed = if *rank == SourcePriority::High {
+                    HIGH_CREW
+                } else {
+                    FIVE_KITS - HIGH_CREW
+                };
+                (*crew, armed as f32)
+            })
+            .collect();
+        assert_eq!(
+            published, expected,
+            "the High row reads 4 of 4 and the Normal row 1 of 2 (High listed first: {high_first})"
+        );
+    }
+}
+
+/// **⛔ A WORK PARTY IS ITS ROW — A HIGH PARTY BEATS A NORMAL LOCAL ROW FOR A SCARCE ITEM.** No
+/// near/far distinction (`docs/plan_site_crews.md` §2.3): the far row posts a party and still claims
+/// the band's gear at its own Priority. A High hunt of 4 on a herd past the apron and a Normal hunt
+/// of 2 at the camp, over five stalking kits: the party reads **4 of 4** and the local row **1 of 2**.
+#[test]
+fn a_high_party_beats_a_normal_local_row_for_a_scarce_kit() {
+    /// The far herd's distance from the camp — past `band_work_range`, so its row posts a party.
+    const FAR: u32 = 5;
+    const PARTY_CREW: u32 = 4;
+    const LOCAL_CREW: u32 = 2;
+    /// Five of each stalking item — one short of the six hunters.
+    const FIVE_KITS: u32 = 5;
+    const SPEARS: &str = "spears";
+
+    let mut app = placid_world();
+    let (local, pos) = pin_herd(&mut app);
+    let width = app.world.resource::<TileRegistry>().width;
+    let far_tile = UVec2::new((pos.x + FAR) % width, pos.y);
+    let far = pin_second_herd(&mut app, far_tile, SECOND_HERD_ID);
+    let band = spawn_band_hunting(
+        &mut app,
+        pos,
+        &[(local.as_str(), SLED_KIT), (far.as_str(), SLED_KIT)],
+        &[(SPEARS, FIVE_KITS), (SLED, FIVE_KITS)],
+    );
+    {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the fixture spawned an allocation");
+        allocation.assignments[0].workers = LOCAL_CREW;
+        allocation.assignments[0].priority = SourcePriority::Normal;
+        allocation.assignments[1].workers = PARTY_CREW;
+        allocation.assignments[1].priority = SourcePriority::High;
+    }
+    drive_local_turn(&mut app);
+    recapture_snapshot_in_place(&mut app.world);
+
+    let allocation = app
+        .world
+        .get::<LaborAllocation>(band)
+        .expect("the fixture spawned an allocation");
+    assert!(
+        allocation.assignments[1].party.is_some() && allocation.assignments[0].party.is_none(),
+        "fixture: the far row posts a work party and the camp row does not"
+    );
+    assert_eq!(
+        published_row_coverage(&app, band),
+        vec![
+            (LOCAL_CREW, (FIVE_KITS - PARTY_CREW) as f32),
+            (PARTY_CREW, PARTY_CREW as f32)
+        ],
+        "the High party is armed in full ahead of the Normal camp row"
+    );
 }
 
 /// **⛔ AND THE BUDGET IS PER ITEM, so two DIFFERENT kits sharing one cannot each carry a full set.**

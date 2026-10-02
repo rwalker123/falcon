@@ -97,7 +97,6 @@ fn eat_and_publish(larder_in_meals: f32) -> Published {
         workers: 0,
         kit: None,
         priority: SourcePriority::default(),
-        upkeep_kit: None,
     };
     let yields = SourceYield {
         actual: income,

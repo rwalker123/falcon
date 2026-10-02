@@ -327,6 +327,59 @@ the host before showing it again.
   `BandPanelController.note_selection_tile` before rendering; a verb whose anchor differs is closed and
   its armed pick with it. The per-snapshot restate (`reapply_selection`) does not call it.
 
+## A DISABLED CONTROL SAYS WHY
+
+**Every greyed control's hover names the reason it is greyed, in plain words, and what to do** —
+`No free workers — take someone off a work row to scout.` A greyed face whose hover only names the
+control reads as a bug. One clause per failed condition, each on its own line, all of them leading
+the hover with the control's ordinary tooltip after (`HudWidgets.disabled_tooltip`; the separator is
+`HudWorkVocab.DISABLED_REASON_SEPARATOR`). An enabled control keeps its ordinary tooltip unchanged.
+
+- **The reason comes from the gate that greys the control, never from a second test.** The band verbs
+  ask `BandPanelController.verb_block_reasons`, and `verb_enabled` is that list being empty;
+  `verb_tooltip` composes the hover for both the drawer's verb row and the panel's action bar. The
+  work-row cap (`SourceForecast.source_worker_cap_state`) returns its `blocked_reason` beside
+  `can_add`, the compose sheets' crew `+` reads `DrawerComposeController._crew_cap_reason` off the
+  same cap and note the sheet already prints, and the queue arrows and cargo steppers take a
+  `blocked_reason` whose emptiness IS the enabled state.
+- **The panel's action bar carries a live hover.** `BandCityPanel.register_action` takes an optional
+  `live_tooltip` Callable re-asked wherever `enabled` is (`refresh_actions`), because the reason moves
+  with the band the predicate reads. It changes text only, never geometry.
+- **The shared stepper explains both buttons.** `HudWidgets.add_stepper_controls` hovers a greyed `−`
+  with `STEPPER_MINUS_AT_ZERO_REASON` on its own and a greyed `+` with the caller's
+  `plus_blocked_reason`; `build_party_stepper_row` defaults that to `PARTY_AT_MAX_REASON` and the split
+  sheet passes `SPLIT_AT_MAX_REASON`. A caller that greys a `+` without a reason leaves it silent.
+- **Godot shows a tooltip on a disabled `Button`** — the face still takes the pointer. `ui_preview`'s
+  tile-panel chapter (`_assert_greyed_verbs_say_why`) hovers a greyed Scout through the real input
+  pass and reads the engine's tooltip popup back. That hover has to run the clock: the harness
+  freezes `Engine.time_scale`, and the viewport's tooltip delay is a scaled timer that never fires at
+  `0`.
+
+## ⛔ THE DRAWER FIT MEASURES AFTER THE FRAME'S SORT, NEVER BEFORE IT
+
+Reported from play: stepping the Split sheet's workers 4 → 5 grew the tile card a band of empty space
+under its last line. **The mechanism:** an OS click lands in the frame's INPUT step, so the sheet
+rebuild it triggers adds fresh wrapping Labels (`alloc_hint_label`) that have no width until the
+END-of-frame container sort. `fit_subject_drawer` resumed on that same frame's `process_frame` —
+which fires BEFORE the deferred flush — and read the body one word per line (≈1600px against a real
+574), then sized the drawer's scroll to `min(that, the dock's room)`. The settle that followed arrived
+as a second request while the fit was in flight, which the fit DROPPED, so whether the card ever came
+back depended on frame timing.
+
+- **The fit now awaits `process_frame` AND THEN `RenderingServer.frame_pre_draw`**, which fires after
+  the flush: every Label added that frame has its width and its real height when it is read.
+- **A request mid-flight is folded in, not dropped** — the measurement is taken after it, and a FORCED
+  one (the dock's room moved) keeps its force (`_subject_fit_force_requested`).
+- **A harness click cannot reproduce the race** (`push_input` runs from the PROCESS step, so the sort
+  already happened). `band_panel_preview._assert_drawer_fit_survives_an_unsettled_rebuild` stages it
+  exactly — a callback connected to `process_frame` ahead of the fit's own wait adds a wrapping
+  sentence in the frame the fit resumes in — and asserts the drawer is NEVER sized past its settled
+  body, not for a frame (the old fit sized it 707 over a 574 body).
+  `_assert_split_card_fits_through_stepper` also walks the stepper up and down by real clicks and
+  checks card height = its combined minimum and drawer = its body after every press.
+- Every band verb's sheet mounts in this one drawer (`_mount_verb_form`), so the one fit covers them
+  all.
+
 ## The roster row's leading MARK is a node, and the patch path must SWAP it (issue #439)
 
 A land / herd row used to fuse its glyph into the name (`_roster_name_label("%s %s" % [glyph, name])`).
@@ -559,7 +612,7 @@ FAILURE state leads with `HudSelectionVocab.RUNG_HAZARD_GLYPH`:
 | under the rot, staffed or not | `⚠ ∞ turns, losing ground (42%)` | the work already bought is going BACK — so it is RED, not amber |
 | built, and the keeping pool is short | `🌾 Tended 92% ⚠` | the rung is HELD and slipping, which no build crew fixes |
 | **the band's builders are ON it and its own gate refuses** | **`⚠ Blocked 96% — your builders are held here`**, over an indented remedy | **the hands are staffed and STUCK** — see below |
-| **the rung LAPSED — work banked, nobody on it, and no queue entry left** | **`⚠ Lapsed 99%`**, with the re-queue sentence on its hover | **nobody is on it at all**, so *Stalled* names the wrong situation and *Held* the wrong mood — see below |
+| **part-built, nobody on it, and no queue entry left** | **`99% built · not queued`**, unmarked; **`⚠ 99% built · not queued, losing ground`** in red where `meterRotPerTurn > 0` | **nobody is on it at all**, so *Stalled* names the wrong situation — see below |
 
 > #### ⛔ THE BLOCKED ROW NAMES THE REMEDY, AND THE REMEDY IS THE KEEPING ROLE (§4.6b)
 >
@@ -633,8 +686,21 @@ word on saying so.
 
 > #### ⛔ `-1` IS TWO STATES, AND THE QUEUE POSITION IS WHAT SEPARATES THEM
 >
-> **A LAPSED RUNG IS THE SAME `-1` ON A SOURCE NO BAND HAS QUEUED** — `RUNG_LAPSED_FORMAT`,
-> `⚠ Lapsed 99%`. Measured in play at tile (78, 20): a Field completed on tick 88 and went feral on
+> ⛔ **THIS STATE READ `⚠ Lapsed 99%` AND NOBODY COULD SAY WHAT IT MEANT** — reported from play on
+> a Field 94% sown under a Tended Patch, the maintainer unable to read it either. The word named no
+> fact a player can check, and the mark said *something is going wrong* about a meter that was
+> stable. It now states the two facts the wire carries — `RUNG_UNQUEUED_FORMAT`, `94% built · not
+> queued` — and earns the mark ONLY where the meter is losing work: `DetailFormat.unqueued_rung_value`
+> swaps in `RUNG_UNQUEUED_ROTTING_FORMAT` (red, through `RUNG_ROTTING_PHRASE`) when the source's
+> `meterRotPerTurn > 0` and the at-risk meter is this rung's. This reverses the earlier reading that a
+> stable lapse wears the mark because the payoff is already lost: that loss is a fact about the
+> standing rung, which the row above states, and not something going wrong with this meter.
+>
+> ⛔ **"WAS THIS RUNG EVER FINISHED" IS NOT ON THE WIRE**, so the face cannot say *Field lost*. The
+> three conjuncts below are met by a Field gone feral a hair short of full, by a cancelled queue entry
+> with work banked, and by a Sow nobody ever queued; what all three share is what the face states.
+>
+> **AN UNQUEUED RUNG IS THE SAME `-1` ON A SOURCE NO BAND HAS QUEUED.** Measured in play at tile (78, 20): a Field completed on tick 88 and went feral on
 > tick 89 (*"untended, the ground is reverting"*), which dropped the standing rung back to
 > `plant:tended`. **A build queue entry retires the turn its destination rung completes**, so the
 > feral turn found nothing left to carry the meter: at tick 93 the patch still held 49.612 of 49.624
@@ -648,7 +714,7 @@ word on saying so.
 > staffing and a client guessing from a crew disagreed with its own compose sheet.
 >
 > **THE THIRD CONJUNCT IS WHAT KEEPS A NEVER-STARTED RUNG OUT.** An untouched rung sits at `0%` in no
-> queue too, and calling that *Lapsed* would announce the loss of a payoff the player never had.
+> queue too, and has nothing built to report.
 >
 > **NEITHER NEIGHBOURING WORD FITS, AND BOTH WERE CHECKED.** `RUNG_REVERTING_FORMAT` is a rung its
 > keeping does NOT cover, actively slipping — this one published `upkeepShortfall 0` and
@@ -657,18 +723,19 @@ word on saying so.
 > mark** for that reason — the neutral would be the reassuring reading of a loss already taken.
 >
 > **THE HOVER IS WHERE THE REMEDY LIVES**, the mark being two words on a ~245px card:
-> `RUNG_LAPSED_TOOLTIP` states that the rung is part-built with nobody on it, that the banked work
-> survives, and that re-queuing from the work row's build face picks it back up. It is routed off the
-> value the row already composed (`DetailFormat.note_lapsed_hover`), not re-derived — one verdict, one
-> producer.
+> `RUNG_UNQUEUED_TOOLTIP` states that the rung is part-built with nobody on it, that the banked work
+> survives, and that re-queuing from the work row's build face picks it back up;
+> `RUNG_UNQUEUED_ROTTING_TOOLTIP` adds that it is losing work every turn. Both are routed off the
+> value the row already composed (`DetailFormat.note_lapsed_hover`, keyed on `RUNG_UNQUEUED_PHRASE`),
+> not re-derived — one verdict, one producer.
 >
 > ⛔ **IT NAMES NO CAUSE, and it opened with one for a release.** *"The ground went feral and lost
 > this rung"* is a PLANT-web sentence on a hover `note_lapsed_hover` also registers on `HUSBANDRY_ROW`
 > and `CORRAL_ROW` — a herd part-way through a Tame with nobody queued was told about ground it does
 > not have. And a feral field is only one of the ways in: **cancelling** a queue entry with work
 > banked satisfies the same three conjuncts (`build_turns` at `-1`, a meter above empty, no entry)
-> with nothing having gone feral at all. The WORD is right in every case; only the cause was a guess,
-> so the sentence states the state and the remedy and asserts nothing about how the rung got there.
+> with nothing having gone feral at all. The FACTS are right in every case; only the cause was a
+> guess, so the sentence states the state and the remedy and asserts nothing about how it got there.
 
 ### `100%` MEANS DONE, SO `HudFormat.progress_percent` FLOORS
 
@@ -758,8 +825,9 @@ including `HERDERS_SHED_FORMAT`, the one line in the client that says animals ar
 >
 > **What renders now is one row and one hover.** The rung row appends a state word —
 > `🌾 Tended 90% ⚠ slipping` (`🐄 Domesticated 100% ⚠ drifting` on the animal web) — and the block's
-> `tooltip_text` carries the remedy alone: *"This ground is slipping — raise this band's Agriculture
-> role."* **No shortfall figure and no countdown appear on this card at all.**
+> `tooltip_text` carries the remedy alone: *"This ground is slipping — add hands to this row's
+> crew."* (it named the Agriculture role until `docs/plan_site_crews.md` retired the keeping pools).
+> **No shortfall figure and no countdown appear on this card at all.**
 >
 > `UPKEEP_RISK_ROW`, `UPKEEP_LOST_SOON_FORMAT`, `UPKEEP_LOST_NOW_FORMAT` and `at_risk_lines` are all
 > retired. Two of those formats were the last player-facing uses of the word **rung**, which the
@@ -800,7 +868,7 @@ The rest of this section records how the row got there, and is superseded by the
   alone, so it covers both sides of the meter without re-deciding which side it is on.
 - **…BUT IT NOW CARRIES A REMEDY SUB-ROW, AND THAT ONE DOES** (§4.6b). `at_risk_lines(src, prefix,
   kind)` appends the work board's own note — `HudWorkVocab.under_kept_note_for_source` — indented
-  under the countdown: *"This ground is slipping — raise this band's Agriculture role."* The row
+  under the countdown: *"This ground is slipping — add hands to this row's crew."* The row
   stated what was being LOST and never where the hands come from, and one surface up the map's `⚠`
   badge could not be interrogated at all: `BandOverlayRenderer._draw_source_badge` paints it with
   `draw_string` into `MapView`'s canvas, so it is not a Control and can hold no `tooltip_text`. **The

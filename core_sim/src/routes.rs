@@ -203,6 +203,11 @@ pub struct Road {
     /// handed straight to [`crate::intensification::RungDef::upkeep_decay`], which owns both the rate
     /// and the *strictly greater than the grace* comparison, so all three webs count in one unit.
     pub neglect_turns: u16,
+    /// **THE HIGHEST RUNG ACHIEVED SINCE THE POSITION LAST STOOD AT ITS BASE** — raised the turn a
+    /// rung completes, lowered when that rung is lost. A loss is announced only for a rung at or
+    /// below it: a part-built meter rotting to empty was never had, so it is not "lost"
+    /// (`intensification::settle_achieved_losses`). `None` = nothing above the branch's root.
+    pub peak_rung: Option<crate::intensification::RungKey>,
     /// **Work units earned from traffic this turn**, banked into [`Self::position`] by the accrual
     /// pass and then cleared. A within-turn accumulator across the several journeys that may cross
     /// one tile, not persisted state in its own right.
@@ -306,6 +311,7 @@ impl Road {
             upkeep_demanded: None,
             upkeep_supplied: NO_UPKEEP_DEMAND,
             neglect_turns: NEGLECT_NONE,
+            peak_rung: None,
             traffic_work: NO_TRAFFIC,
             idle_turns: NEGLECT_NONE,
             herd_idle_turns: NO_HERD_HAS_CROSSED,
@@ -339,8 +345,14 @@ impl Road {
     /// a fresh `grade` leaves — keeper set, first work not yet banked — and clearing it there would
     /// undo the command on the turn it was typed.
     pub fn set_position(&mut self, position: f32, ladder: &LadderConfig) {
+        let was = self.standing.held;
         self.position = position.max(RUNG_UNSTARTED);
         self.standing = road_standing_at(ladder, self.position, self.keeper_remoteness);
+        // **A FINISHED RUNG STARTS WITH ITS FULL GRACE** ([`crate::intensification::rung_rose`]).
+        if crate::intensification::rung_rose(was, self.standing.held) {
+            self.neglect_turns = NEGLECT_NONE;
+            crate::intensification::raise_peak(&mut self.peak_rung, self.standing.held);
+        }
         self.payoff = road_payoff_at(ladder, self.position, self.keeper_remoteness);
         if self.position < traffic_ceiling(ladder) {
             self.release_keeper();
@@ -1254,6 +1266,10 @@ pub fn advance_roads(
     ladder: Res<crate::intensification::LadderConfigHandle>,
     sim_config: Res<crate::resources::SimulationConfig>,
     tile_registry: Res<TileRegistry>,
+    // **The feed a kept road's slip or loss is announced on** — `Option`, like every optional
+    // resource a hand-built harness may not install; with none, the decay still runs, unannounced.
+    mut event_log: Option<ResMut<crate::resources::CommandEventLog>>,
+    tick: Option<Res<crate::resources::SimulationTick>>,
 ) {
     let ladder = ladder.get();
     let (width, height) = (tile_registry.width, tile_registry.height);
@@ -1306,8 +1322,35 @@ pub fn advance_roads(
             .rung(at_risk)
             .upkeep_decay(shortfall_fraction, road.neglect_turns);
         if decay > NO_UPKEEP_DECAY {
-            let bled = road.position() - decay;
+            let was = road.position();
+            let remoteness = road.keeper_remoteness;
+            let keeper = road.keeper;
+            let bled = was - decay;
             road.set_position(bled, &ladder);
+            // **TWO EDGES, TWO IMPORTANCES** (`intensification::rung_decay_edges`), told to the
+            // keeper's people — read before the bleed, since a road falling into the free floor
+            // releases its keeper.
+            let mut edges = crate::intensification::rung_decay_edges(
+                RungBranch::Route,
+                was,
+                road.position(),
+                |rung| road_rung_span(rung, &ladder, remoteness),
+            );
+            crate::intensification::settle_achieved_losses(&mut edges, &mut road.peak_rung);
+            if let (Some(keeper), Some(log)) = (keeper, event_log.as_deref_mut()) {
+                if !edges.is_empty() {
+                    crate::intensification::announce_rung_decay(
+                        log,
+                        tick.as_deref().map_or(0, |tick| tick.0),
+                        keeper.faction,
+                        Some(keeper.band),
+                        |_| crate::resources::CommandEventKind::Road,
+                        road.tile,
+                        road.position(),
+                        &edges,
+                    );
+                }
+            }
         }
         // **3 — the bill and this turn's payment, cleared on the one-turn cycle.** The BUILD's
         // material pair and its blocked cause clear with them and for the same reason: each is a
@@ -1571,6 +1614,113 @@ pub fn credit_route_lessons(
 mod tests {
     use super::*;
     use crate::intensification::UpkeepScale;
+
+    /// ⛔ **A KEPT ROAD SLIPPING IS ONE INFO LINE; LOSING ITS RUNG IS ONE ALERT** — the route twin of
+    /// the plant pair, told to the keeper's people. A paved road whose keeping goes wholly unpaid
+    /// slips the turn its position leaves the paved rung's top (`status=slipping`), says nothing more
+    /// while it bleeds, and is announced lost once (`status=feral`, `… lost — back to a road`) the
+    /// turn the position reaches the dirt road's top.
+    #[test]
+    fn a_kept_road_slipping_is_one_info_line_and_losing_its_rung_one_alert() {
+        use crate::resources::{CommandEventLog, SimulationTick};
+        use bevy::ecs::system::RunSystemOnce;
+        /// A bound on the bleed, far past what the paved rung's own rot takes to empty it.
+        const TURNS_ENOUGH: u32 = 10_000;
+        /// The tile the road stands on.
+        const TILE: UVec2 = UVec2::new(1, 1);
+        /// The keeper's people.
+        const KEEPERS: FactionId = FactionId(0);
+        let ladder = LadderConfig::builtin();
+        let (base, width) = road_rung_span(RungKey::RoutePavedRoad, &ladder, NEAR_ENOUGH_TO_KEEP);
+        let mut world = World::default();
+        world.insert_resource(crate::intensification::LadderConfigHandle::default());
+        world.insert_resource(crate::resources::SimulationConfig::builtin());
+        world.insert_resource(TileRegistry {
+            tiles: Vec::new(),
+            width: TILE.x + 1,
+            height: TILE.y + 1,
+        });
+        world.insert_resource(RouteTrafficLog::default());
+        world.insert_resource(CommandEventLog::default());
+        world.insert_resource(SimulationTick::default());
+        let mut registry = RoadRegistry::default();
+        {
+            let road = registry.road_or_trail(TILE, &ladder);
+            road.set_position(base + width, &ladder);
+            road.take_keeper(
+                RoadKeeper {
+                    faction: KEEPERS,
+                    band: crate::components::BandId(1),
+                },
+                NEAR_ENOUGH_TO_KEEP,
+                &ladder,
+            );
+        }
+        world.insert_resource(registry);
+        let lines = |world: &World, status: &str| {
+            let (status, rung) = (
+                format!("status={status}"),
+                format!("rung={}", RungKey::RoutePavedRoad.wire_key()),
+            );
+            world
+                .resource::<CommandEventLog>()
+                .iter()
+                .filter(|entry| entry.faction == KEEPERS)
+                .filter(|entry| {
+                    entry
+                        .detail
+                        .as_deref()
+                        .is_some_and(|detail| detail.contains(&status) && detail.contains(&rung))
+                })
+                .count()
+        };
+        let mut slipped_on = None;
+        for turn in 0..TURNS_ENOUGH {
+            // **The keeping goes wholly unpaid every turn** — the bill restated, nothing supplied.
+            {
+                let mut registry = world.resource_mut::<RoadRegistry>();
+                let road = registry.road_mut(TILE).expect("the road");
+                if road.position() <= base {
+                    break;
+                }
+                let bill = road_upkeep_demand(
+                    road,
+                    road_upkeep_measure(TerrainType::AlluvialPlain, NEAR_ENOUGH_TO_KEEP),
+                    &ladder,
+                );
+                road.upkeep_demanded = Some(bill);
+                road.upkeep_supplied = NO_UPKEEP_DEMAND;
+            }
+            world.run_system_once(advance_roads);
+            if slipped_on.is_none() && lines(&world, "slipping") > 0 {
+                slipped_on = Some(turn);
+            }
+        }
+        assert!(slipped_on.is_some(), "the paved road slipped");
+        assert_eq!(
+            lines(&world, "slipping"),
+            1,
+            "one slip line, never repeated through the bleed"
+        );
+        assert_eq!(
+            lines(&world, "feral"),
+            1,
+            "one Alert the turn the paved rung's last work is gone"
+        );
+        let lost = world
+            .resource::<CommandEventLog>()
+            .iter()
+            .find(|entry| entry.label.contains(" lost — back to "))
+            .expect("the loss line")
+            .clone();
+        assert!(
+            lost.label
+                .starts_with("Paved road at (1, 1) lost — back to a road"),
+            "the loss names the rung left standing: {}",
+            lost.label
+        );
+        assert_eq!(lost.kind, crate::resources::CommandEventKind::Road);
+    }
 
     /// The four route rungs, bottom to top.
     const ROUTE_RUNGS: [RungKey; 4] = [

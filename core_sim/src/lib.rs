@@ -87,6 +87,7 @@ pub mod starting_loadout;
 mod supply;
 mod supply_network_config;
 mod systems;
+pub mod take_claims;
 pub mod telling;
 mod terrain;
 mod turn_pipeline_config;
@@ -126,10 +127,10 @@ pub use components::{
     BandBench, BandEquipment, BandId, BandName, BandTravel, BandWorkforce, BatchGrade, BuildJob,
     BuildQueueEntry, BuildSource, DeathCause, DemographicFlowAccumulator, DrawnInputs,
     DrawnMaterial, ElementKind, EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase,
-    Improvement, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
-    MaterialBatch, MaterialDraw, MoraleCause, PopulationCohort, PowerNode, ResidentBand,
-    Settlement, ShedCrew, ShedFacts, ShedStep, ShedSubject, SourcePriority, SourceShedFacts,
-    SourceYield, StartingUnit, TakeSelection, Tile, TownCenter, TransferCause,
+    Improvement, KeepingToolLine, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget,
+    LocalStore, MaterialBatch, MaterialDraw, MoraleCause, PopulationCohort, PowerNode,
+    ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep, ShedSubject, SourcePriority,
+    SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile, TownCenter, TransferCause,
     TransferCounterparty, TransferCrossing, TransferDirection, TransferLedger, TransferLink,
     YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR,
     STRIP_IT_BARE,
@@ -208,31 +209,33 @@ pub use faction_names::{
 pub use fauna::{
     advance_herd_grazing, advance_herds, advance_husbandry, advance_predation, animals_affordable,
     animals_engaged, animals_sparable, animals_that_stay, animals_that_stay_at_rate,
-    build_prey_index, cancel_dropped_rings, carnivore_k_at, drop_holding_and_cancel_ring,
-    escapement_ceiling, expected_kill_over_retreat, expected_stayers, forecast_expected_take,
-    forecast_take_range, herd_build_verb, herd_capacity, herd_carry_rate, herd_default_hunt_kit,
-    herd_density_gain, herd_destination_capacity, herd_ecology, herd_engage_rate, herd_fight_stage,
-    herd_head_count, herd_herded_fraction, herd_herders_needed, herd_hunt_yield, herd_keeper_load,
+    build_prey_index, cancel_dropped_rings, carnivore_k_at, crew_keep_hands,
+    crew_needed_with_keeping, drop_holding_and_cancel_ring, escapement_ceiling,
+    expected_kill_over_retreat, expected_stayers, forecast_expected_take, forecast_take_range,
+    herd_build_verb, herd_capacity, herd_carry_rate, herd_claims_keeping, herd_crew_keeping,
+    herd_crew_keeping_next_turn, herd_default_hunt_kit, herd_density_gain,
+    herd_destination_capacity, herd_ecology, herd_engage_rate, herd_fight_stage, herd_head_count,
+    herd_herded_fraction, herd_herders_needed, herd_hunt_yield, herd_keeper_load,
     herd_keeper_loads, herd_keeping_basis, herd_meter_rot, herd_past_recovery, herd_quarry_fight,
     herd_rung_already_built, herd_rung_key, herd_space_capacity, herd_standing_provisions,
     herd_standing_rung_share, herd_standing_scale, herd_take_room, herd_upkeep_demand,
     herd_upkeep_shortfall, herd_upkeep_supply, herd_upkeep_workers_needed, herd_wariness,
-    hunt_armed_crew, hunt_crew_take_curve, hunt_engage_workers, hunt_escapement_ceiling,
-    hunt_haul_workers, hunt_source_yield_preview, hunt_take_bound, hunt_take_overdraws,
-    hunt_take_workers, hunt_useful_crew, kill_over_retreat, migratory_corridor_tiles,
-    next_turns_quarry, per_hunter_take_biomass, project_arrivals_hunt, project_realized_hunt,
-    quantise_animal_take, quarry_default_hunt_kit, regrow_biomass, regrowth_delta_at,
-    repopulate_fauna, resolve_hunt_engagement, resolve_hunt_fight, retreat_band_edge, retreat_mean,
-    retreat_seed, spawn_initial_herds, species_requires_denial, stamp_migratory_game_trails,
-    stay_fraction, sustainable_yield, unqueue_build_and_cancel_ring, would_be_herders_needed,
-    AnimalTake, CarcassKept, EcologyPhase, EngagementQuantum, EngagementStop, FightCasualties,
-    Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, HerdTelemetryEntry, HuntCrew,
-    HuntCrewCurveInputs, HuntCrewTake, HuntDraw, HuntEngagement, HuntFight, HuntProjection,
-    HuntTakeBound, HuntingParty, OutcomeKills, PartyResolution, PreyDatum, ProjectedHuntTurn,
-    ProjectionStart, QuarryFight, RetreatOutcome, RoamState, SourceYieldForecast, TakeRange,
-    TakeReading, FODDERING_DISCOVERY_ID, FULLY_HERDED, HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION,
-    NO_DEATHS_TO_REPORT, NO_STANDING_COMMITMENT, NO_USEFUL_CREW, ONE_KEEPER_LOAD,
-    PENNING_DISCOVERY_ID,
+    hunt_armed_crew, hunt_crew_needed, hunt_crew_room, hunt_crew_take_curve, hunt_engage_workers,
+    hunt_escapement_ceiling, hunt_haul_workers, hunt_source_yield_preview, hunt_take_bound,
+    hunt_take_overdraws, hunt_take_workers, hunt_useful_crew, kill_over_retreat,
+    migratory_corridor_tiles, next_turns_quarry, per_hunter_take_biomass, project_arrivals_hunt,
+    project_realized_hunt, quantise_animal_take, quarry_default_hunt_kit, regrow_biomass,
+    regrowth_delta_at, repopulate_fauna, resolve_hunt_engagement, resolve_hunt_fight,
+    retreat_band_edge, retreat_mean, retreat_seed, spawn_initial_herds, species_requires_denial,
+    stamp_migratory_game_trails, stay_fraction, sustainable_yield, unqueue_build_and_cancel_ring,
+    would_be_herders_needed, AnimalTake, CarcassKept, CrewKeeping, EcologyPhase, EngagementQuantum,
+    EngagementStop, FightCasualties, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
+    HerdTelemetryEntry, HuntCrew, HuntCrewCurveInputs, HuntCrewTake, HuntDraw, HuntEngagement,
+    HuntFight, HuntProjection, HuntTakeBound, HuntingParty, OutcomeKills, PartyResolution,
+    PreyDatum, ProjectedHuntTurn, ProjectionStart, QuarryFight, RetreatOutcome, RoamState,
+    SourceYieldForecast, TakeRange, TakeReading, FODDERING_DISCOVERY_ID, FULLY_HERDED,
+    HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, NO_DEATHS_TO_REPORT, NO_HANDS,
+    NO_STANDING_COMMITMENT, NO_USEFUL_CREW, ONE_KEEPER_LOAD, PENNING_DISCOVERY_ID,
 };
 pub use fauna_config::{
     load_fauna_config_from_env, Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle,
@@ -250,16 +253,17 @@ pub use food::{
 };
 pub use forage::{
     advance_cultivation, advance_forage_regrowth, commit_fodder_payoff, commit_material_payoff,
-    commit_payoff, commit_yield_ratio, composition_for_rung, crop_field_cost_multiplier,
-    default_species_for_rung, field_cost_multiplier_at_share, forage_per_worker_biomass,
-    forage_provisions, forage_source_yield_preview, forage_take_overdraws, next_turns_stand,
-    patch_build_legs, patch_build_verb, patch_carrying_capacity, patch_claims_keeping,
-    patch_composition, patch_destination_capacity, patch_ecology, patch_field_cost_multiplier,
-    patch_keeping_basis, patch_land_capacity, patch_material_yields, patch_material_yields_taking,
-    patch_meter_rot, patch_provisions_per_biomass, patch_provisions_per_biomass_taking,
-    patch_rung_already_built, patch_rung_span, patch_rung_work_done, patch_tender_loads,
-    patch_unwinding_key, patch_upkeep_demand, patch_upkeep_shortfall, patch_upkeep_workers_needed,
-    plant_rung_span, project_arrivals_forage, project_realized_forage, resolve_committed_species,
+    commit_payoff, commit_yield_ratio, composition_for_rung, crew_take_room,
+    crop_field_cost_multiplier, default_species_for_rung, field_cost_multiplier_at_share,
+    forage_crew_needed, forage_per_worker_biomass, forage_provisions, forage_source_yield_preview,
+    forage_take_overdraws, next_turns_stand, patch_build_legs, patch_build_verb,
+    patch_carrying_capacity, patch_claims_keeping, patch_composition, patch_crew_keeping,
+    patch_destination_capacity, patch_ecology, patch_field_cost_multiplier, patch_keeping_basis,
+    patch_land_capacity, patch_material_yields, patch_material_yields_taking, patch_meter_rot,
+    patch_provisions_per_biomass, patch_provisions_per_biomass_taking, patch_rung_already_built,
+    patch_rung_span, patch_rung_work_done, patch_tender_loads, patch_unwinding_key,
+    patch_upkeep_demand, patch_upkeep_shortfall, patch_upkeep_workers_needed, plant_rung_span,
+    project_arrivals_forage, project_realized_forage, resolve_committed_species,
     resolve_take_selection, rung_material_yields, rung_payoff, rung_site_refusal,
     selected_biomass_share, spawn_initial_forage, species_is_legal_here, species_stands_in,
     tended_take_fodder, tile_flora_composition, tile_forage_capacity, tile_is_fresh_watered,
@@ -442,7 +446,7 @@ pub use systems::{
     bench_material_rate, bench_tiers, bill_and_stock_roads, bring_the_dropped_party_home,
     denial_forecast, expedition_returned_event, expedition_take_provisions, fold_party_into_band,
     hunt_per_worker_provisions, hunt_report_event, hunt_take, hunt_trip_forecast,
-    output_multiplier, party_owes_a_report, publish_turn_transfers, settle_bands_extraction,
+    output_multiplier, party_owes_a_report, prospective_keep_hands, publish_turn_transfers,
     settle_bands_roadwork, settle_scarce_tools, simulate_population, simulate_power,
     source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers, DenialForecast,
     DenialOutcome, HuntOutcome, HuntTripBound, HuntTripForecast, PartySightings, PoolToolPlan,
@@ -1049,9 +1053,13 @@ pub fn build_headless_app() -> App {
                 // share `CommandEventLog` and the order they append in is observable. The plant
                 // pass goes first, matching the order the two webs already read in the Population
                 // stage.
+                //
+                // **And before the supply pass**, which writes the bands' rows the plant pass reads
+                // to name the band a decay line links to (`band=`).
                 advance_cultivation
                     .after(advance_forage_regrowth)
-                    .before(advance_husbandry),
+                    .before(advance_husbandry)
+                    .before(supply::balance_supply_networks),
                 advance_graze_regrowth.after(advance_herd_grazing),
                 supply::balance_supply_networks.after(advance_herds),
                 // ⛔ **AFTER THE POOLING, ALWAYS.** This spends the links that pass recorded, so it
@@ -1059,7 +1067,13 @@ pub fn build_headless_app() -> App {
                 // reading, the same one-turn lag `balance_supply_networks` already accepts against
                 // the connection ledger. Reversing it would let this turn's pooling read a road
                 // this turn's pooling created.
-                routes::advance_roads.after(supply::balance_supply_networks),
+                //
+                // **And after the herd pass**: a kept road's slip or loss is announced on the
+                // `CommandEventLog` the plant and herd passes write, so the order the feed appends
+                // in is declared — plant, herd, road, working.
+                routes::advance_roads
+                    .after(supply::balance_supply_networks)
+                    .after(advance_husbandry),
                 // ⛔ **AFTER THE ROAD PASS, ALWAYS** — declared rather than left to the ambiguity
                 // gate. A connection's lesson is read off the road standing `advance_roads` has just
                 // produced, so this turn's decay, banking and prune are all already in the registry
@@ -1067,14 +1081,20 @@ pub fn build_headless_app() -> App {
                 routes::credit_route_lessons.after(routes::advance_roads),
                 // **THE WORKINGS' DECAY AND THIS TURN'S BILL** — the deposit branches' twin of
                 // `advance_roads`. What it needs of the stage is only to run **before** the
-                // Population stage's `settle_bands_extraction`, which pays against the bill it
+                // Population stage's labour pass, whose `extract` crews keep against the bill it
                 // stamps, and a stage boundary already guarantees that.
                 //
                 // **The one edge it does have is declared** rather than left to the ambiguity gate:
                 // it reads `&Tile` (a working's keeper-load is its ground's capacity) and
                 // `simulate_materials` writes them, which is the identical edge
                 // `advance_forage_regrowth` declares one line up.
-                extraction::advance_deposits.after(systems::simulate_materials),
+                //
+                // **And after the road pass**: a working's slip or loss is announced on the feed the
+                // three passes above write, and it reads the bands' rows the supply pass writes —
+                // both edges reached through `advance_roads`.
+                extraction::advance_deposits
+                    .after(systems::simulate_materials)
+                    .after(routes::advance_roads),
             )
                 .in_set(TurnStage::Logistics)
                 .run_if(capability_enabled(

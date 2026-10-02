@@ -109,6 +109,21 @@ const WIRE_NEUTRAL_DISPERSION: f32 = 1.0;
 /// The compact per-tile pasture-phase code the client reads off `TileState` (`GRAZE_PHASE_*`).
 /// A tile with **no patch** (a biome that carries no pasture: water, ice, bare rock) is
 /// [`GRAZE_PHASE_NONE`] — the zero/default, so an absent pasture can never be misread as a healthy one.
+/// **The keeping line's forecast as the wire states it** — whole workers at completion, and the
+/// game turn the next whole worker is needed ([`sim_runtime::NO_NEXT_KEEPING_WORKER`] where never
+/// within the build). `current_turn` is the tick the frame is captured at, so a forecast
+/// `turns_to_next_worker` turns out lands on `current_turn + turns`.
+pub(crate) fn keeping_forecast_wire(
+    forecast: crate::intensification::KeepingForecast,
+    current_turn: u64,
+) -> (u32, i32) {
+    let next = forecast
+        .turns_to_next_worker
+        .and_then(|turns| i32::try_from(current_turn.saturating_add(u64::from(turns))).ok())
+        .unwrap_or(sim_runtime::NO_NEXT_KEEPING_WORKER);
+    (forecast.workers_at_completion, next)
+}
+
 pub(crate) fn graze_phase_code(patch: Option<&GrazePatch>) -> u8 {
     match patch.map(|patch| patch.ecology_phase) {
         None => GRAZE_PHASE_NONE,
@@ -152,8 +167,8 @@ fn published_build_legs(
 /// pool as `PopulationCohortState.poolToe` — so there is no per-site answer left to state, and a
 /// site that kept stating one would name a tool the pool may not have been issued.
 ///
-/// ⛔ **The FIELDS stay on the wire.** FlatBuffers ids are positional, and #676 retires the
-/// `upkeep_kit` / `build_kit` commands that fed them while #677 retires the client's pickers.
+/// ⛔ **The FIELDS stay on the wire.** FlatBuffers ids are positional. The `upkeep_kit` /
+/// `build_kit` commands that fed them are retired (proto fields 63 and 60, reserved).
 pub(crate) const NO_SITE_KIT_ID: &str = "";
 
 /// **NOTHING IS NAMED, SO NOTHING WAS OVERRIDDEN** — what `upkeepKitNamed` publishes beside
@@ -173,9 +188,9 @@ pub(crate) const NO_SITE_KIT_NAMED: bool = false;
 ///
 /// # ⛔ IT CARRIES NO KIT ANY MORE (`docs/plan_pool_toe.md` §4)
 ///
-/// It was `BuildKitIds`, and each entry's value was the kit that build would be raised with —
-/// `EquipmentConfig::builders_kit_for` over the entry's own named choice, published as `buildKitId`
-/// on both source tables. **A builder's tools follow from the rung the leg in flight stands on
+/// It was `BuildKitIds`, and each entry's value was the kit that build would be raised with — the
+/// entry's own named choice, else the roster's answer for its web, published as `buildKitId` on
+/// both source tables. **A builder's tools follow from the rung the leg in flight stands on
 /// now**, settled band-wide by the player's own row priority and published per pool as
 /// `PopulationCohortState.poolToe`, so there is no per-site kit left to resolve and `buildKitId`
 /// publishes empty on every row.
@@ -451,6 +466,9 @@ pub(crate) struct QuotedParty {
 ///
 /// **The list is FOG-FILTERED for the viewer faction** — see [`HerdSnapshotInputs::herd_is_visible`].
 pub(crate) struct HerdSnapshotInputs<'a> {
+    /// **The tick this frame is captured at** — the base the keeping forecast's next-worker turn is
+    /// dated from ([`keeping_forecast_wire`]).
+    pub(crate) current_turn: u64,
     pub(crate) telemetry: &'a HerdTelemetry,
     pub(crate) registry: &'a HerdRegistry,
     pub(crate) fauna: &'a FaunaConfig,
@@ -550,6 +568,7 @@ impl HerdSnapshotInputs<'_> {
 
 pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdTelemetryState> {
     let HerdSnapshotInputs {
+        current_turn,
         telemetry,
         registry,
         fauna,
@@ -563,6 +582,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
         fallback_party,
         build_kits,
         upkeep_kits,
+        viewer,
         ..
     } = inputs;
     let width = grid_size.x.max(1);
@@ -653,6 +673,30 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
             // counter). A herd the registry cannot resolve has nothing at risk to report.
             let neglect_grace =
                 herd.and_then(|herd| crate::fauna::herd_neglect_grace_remaining(herd, ladder));
+            // **The keeping line's forecast** — off the same (possibly withheld) herd, so a rival's
+            // build pace never reaches the row.
+            let herd_keeping = herd.map_or(
+                (
+                    NO_CREW_ON_THIS_ACTIVITY,
+                    sim_runtime::NO_NEXT_KEEPING_WORKER,
+                ),
+                |herd| {
+                    keeping_forecast_wire(
+                        crate::intensification::keeping_forecast(
+                            crate::fauna::herd_keeping_basis(herd, fauna, ladder),
+                            herd.ladder_position(),
+                            crate::intensification::BuildPace::in_flight(&herd.build_legs),
+                            |position| {
+                                let mut at = herd.clone();
+                                at.upkeep_demanded = None;
+                                at.set_ladder_position(position, ladder);
+                                crate::fauna::herd_keeping_basis(&at, fauna, ladder)
+                            },
+                        ),
+                        current_turn,
+                    )
+                },
+            );
             // **The herd's own ecology — the rung's, not the wild block's.** `herd_ecology` picks
             // wild / pastoral / pen, and it is the seam `refresh_ecology_phase` classifies the
             // `ecology_phase` word with, so the bands below cannot describe a different source than
@@ -1059,12 +1103,13 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     crate::fauna::herd_upkeep_shortfall(herd, fauna, ladder)
                 }),
                 // **HANDS TO MEET THE DEMAND** — and published while the rung is still being
-                // **built** too, where it means exactly the same thing: the keeping pool owes the
-                // rate from the first work banked, so these are the hands that hold a half-tamed herd
-                // as much as a finished one (`docs/plan_standing_upkeep.md` §4.6a). It is **not** a
-                // minimum viable build crew — a build crew supplies nothing toward the rate — and it
-                // read `0` mid-build on the older premise that an unfinished meter owed no keeping.
-                // The take activity's answer rides `SourceYield::workers_needed`.
+                // **built** too, where it means exactly the same thing: the site's own crew owes
+                // the rate from the first work banked, so these are the hands that hold a
+                // half-tamed herd as much as a finished one (`docs/plan_standing_upkeep.md` §4.6a).
+                // It is **not** a minimum viable build crew — a build crew supplies nothing toward
+                // the rate — and it read `0` mid-build on the older premise that an unfinished
+                // meter owed no keeping. The take activity's answer rides
+                // `SourceYield::workers_needed`.
                 //
                 // **⛔ IT IS THE `ceil` OF THE BILL DIRECTLY ABOVE, NOT OF `herders_needed`.** The wire
                 // states the identity `upkeepWorkersNeeded == ceil(upkeepDemand / PER_WORKER_OUTPUT)`
@@ -1078,6 +1123,10 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 upkeep_workers_needed: herd.map_or(NO_CREW_ON_THIS_ACTIVITY, |herd| {
                     crate::fauna::herd_upkeep_workers_needed(herd, fauna, ladder)
                 }),
+                // **THE KEEPING LINE'S TWO FORECASTS** (`docs/plan_site_crews.md`) — the same bill,
+                // projected along the in-flight leg's own pace to the rung's top.
+                upkeep_workers_at_completion: herd_keeping.0,
+                upkeep_next_worker_turn: herd_keeping.1,
                 // **The neglect countdown**, resolved through the *same* `herd_keeping_rung` seam
                 // `advance_husbandry` gates the shed on, so the wire can never count down a grace
                 // against a rung the sim is not applying. `None` = a wild herd: nobody's to keep, so
@@ -1316,11 +1365,21 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // that, and lost it silently on the one crew a compose sheet is *for*: a proposed
                 // one, of a size the sim never resolved.
                 build_work_per_worker_turn: build_work_per_worker_turn(NO_BUILD_GEAR),
-                // **A herd names no kit** — see [`NO_SITE_KIT_ID`]. Its keepers' and its builders'
-                // tools are the pool's, derived from the rung and published as `poolToe`.
+                // **A herd names no kit** — see [`NO_SITE_KIT_ID`]. Its builders' tools are the
+                // builders pool's (`poolToe`); its keeping tools are its own crew's, derived from
+                // the rung and stated below as `upkeep_tools_short`.
                 build_kit_id: NO_SITE_KIT_ID.to_string(),
                 upkeep_kit_id: NO_SITE_KIT_ID.to_string(),
                 upkeep_kit_named: NO_SITE_KIT_NAMED,
+                // **WHAT THE HERD'S OWN CREW SPENT KEEPING IT THIS TURN** (`docs/plan_site_crews.md`
+                // §2.2) — stamped by the labour pass beside `upkeep_supplied`, reported not re-derived.
+                upkeep_hands: herd.map_or(crate::fauna::NO_HANDS, |herd| herd.upkeep_hands),
+                // **Which keeping tools the VIEWER's crews were short of, by name**, and the flag
+                // read off those same lines.
+                upkeep_tools_short: herd
+                    .is_some_and(|herd| viewer_keeping_tools_short(&herd.upkeep_toe, viewer)),
+                upkeep_toe: herd
+                    .map_or_else(Vec::new, |herd| upkeep_toe_lines(&herd.upkeep_toe, viewer)),
             }
         })
         .collect()
@@ -1432,6 +1491,7 @@ impl WildRowMemo {
 /// | the patch has **no owner** | the wild-ground substitution — an unowned patch has no improvement to withhold, so `improvement_is_legible` is true for every viewer |
 /// | it carries **no build estimate** | the withheld-build substitution, which only ever replaces a patch that has one |
 /// | **nobody** has it queued or worked | the two membership indices, which are built from *the viewer's own* bands and reach the build countdown and the withheld build scratch |
+/// | it carries **no keeping-tool lines** | `upkeepToe` / `upkeepToolsShort`, which publish each viewer its own people's lines only |
 ///
 /// The third is asked of **every faction's** allocations rather than of the viewer's, and that is
 /// the whole point of it: a tile a rival queued this turn is a row that differs between viewers
@@ -1444,6 +1504,8 @@ fn patch_row_is_viewer_invariant(
 ) -> bool {
     patch.owner.is_none()
         && !patch.has_build_estimate()
+        // A people's keeping-tool lines are published to that people alone (`upkeep_toe_lines`).
+        && patch.upkeep_toe.is_empty()
         && !queued_by_anyone.patch_is_queued(patch.tile)
         && !worked_by_anyone.patch_is_worked(patch.tile)
 }
@@ -1468,6 +1530,9 @@ pub(crate) fn snapshot_forage_patches(
     // **The live keeping kit per worked source**, on the same rule one account over. See
     // [`WorkedSources`].
     upkeep_kits: &WorkedSources,
+    // **The tick this frame is captured at** — the keeping forecast's next-worker turn is dated
+    // from it ([`keeping_forecast_wire`]).
+    current_turn: u64,
     // ⛔ **WHO IS LOOKING, AND WHAT THEY HAVE SEEN.** A patch row is a fact about a TILE, and tiles
     // are published whole — the client fogs the map from `visibility_raster`. What is *not* a fact
     // about the tile is the improvement standing on it: who tends it and how far along their
@@ -1488,6 +1553,22 @@ pub(crate) fn snapshot_forage_patches(
     // below can wrap it *without* the single-audience path paying for the wrapper: with no memo the
     // call is the whole of the map body, exactly as before.
     let derive_row = |patch: &ForagePatch| -> ForagePatchState {
+        let patch_keeping = |patch: &ForagePatch, tile_capacity: f32| {
+            keeping_forecast_wire(
+                crate::intensification::keeping_forecast(
+                    crate::forage::patch_keeping_basis(patch, ladder, tile_capacity, forage),
+                    patch.ladder_position(),
+                    crate::intensification::BuildPace::in_flight(&patch.build_legs),
+                    |position| {
+                        let mut at = patch.clone();
+                        at.upkeep_demanded = None;
+                        at.set_ladder_position(position, ladder);
+                        crate::forage::patch_keeping_basis(&at, ladder, tile_capacity, forage)
+                    },
+                ),
+                current_turn,
+            )
+        };
         // ⛔ **IS THE IMPROVEMENT ON THIS TILE THE VIEWER'S TO READ?**
         //
         // Yours always is, and an untended patch has no improvement to hide. A *rival's* is
@@ -1513,7 +1594,7 @@ pub(crate) fn snapshot_forage_patches(
         // figure on this row is quoted per tender-load of. Through
         // `forage::patch_land_capacity`, so a patch whose coord is **not on the map** publishes
         // the bill struck against its seeded capacity — the same reading `advance_cultivation`
-        // bleeds against and `maintenance_shares` claims against, which is what keeps the row's
+        // bleeds against and `site_keeping_claims` claims against, which is what keeps the row's
         // `demand − supplied == shortfall` a statement about one number.
         let tile_capacity =
             crate::forage::patch_land_capacity(patch, tile_capacities.get(&patch.tile).copied());
@@ -1834,7 +1915,7 @@ pub(crate) fn snapshot_forage_patches(
             // decay pass will bleed off the at-risk meter, and the term a build's closed form
             // nets (`docs/plan_standing_upkeep.md` §4.6a). See `RungDef::meter_rot` for why the
             // forecast is exact rather than an estimate. It is emphatically not
-            // the two demands above: the keeping pool owes those whatever a build crew does, so
+            // the two demands above: the site's own crew owes those whatever a build crew does, so
             // netting a rate off a build would re-price the wrong thing.
             //
             // **DERIVED here rather than stamped by the labor arm**, unlike
@@ -1895,11 +1976,19 @@ pub(crate) fn snapshot_forage_patches(
                 patch,
                 forage,
             ),
-            // **A patch names no kit** — see [`NO_SITE_KIT_ID`]. Its tenders' and its builders'
-            // tools are the pool's, derived from the rung and published as `poolToe`.
+            // **A patch names no kit** — see [`NO_SITE_KIT_ID`]. Its builders' tools are the
+            // builders pool's (`poolToe`); its keeping tools are its own crew's, derived from the
+            // rung and stated below as `upkeep_tools_short`.
             build_kit_id: NO_SITE_KIT_ID.to_string(),
             upkeep_kit_id: NO_SITE_KIT_ID.to_string(),
             upkeep_kit_named: NO_SITE_KIT_NAMED,
+            // **WHAT THE PATCH'S OWN CREW SPENT KEEPING IT THIS TURN** (`docs/plan_site_crews.md`
+            // §2.1) — stamped by the labour pass beside `upkeep_supplied`, reported not re-derived.
+            upkeep_hands: patch.upkeep_hands,
+            // **Which keeping tools the VIEWER's crews were short of, by name**, and the flag read
+            // off those same lines.
+            upkeep_tools_short: viewer_keeping_tools_short(&patch.upkeep_toe, viewer),
+            upkeep_toe: upkeep_toe_lines(&patch.upkeep_toe, viewer),
             // **WHAT THE GROUND HOLDS** — the tile's own `K` with no rung gain in it, the
             // ungained twin of `carrying_capacity` above and the denominator every upkeep figure
             // on this row is quoted per. **The reading already resolved once above**, never a
@@ -1974,6 +2063,10 @@ pub(crate) fn snapshot_forage_patches(
                 tile_capacity,
                 forage,
             ),
+            // **THE KEEPING LINE'S TWO FORECASTS** (`docs/plan_site_crews.md`) — the same bill,
+            // projected along the in-flight leg's own pace to the rung's top.
+            upkeep_workers_at_completion: patch_keeping(patch, tile_capacity).0,
+            upkeep_next_worker_turn: patch_keeping(patch, tile_capacity).1,
             // **The neglect countdown**, resolved through the *same* `patch_unwinding_rung` seam
             // `advance_cultivation` bleeds through — so the wire counts down against the rung
             // that will actually revert, not one the patch merely stands on. `None` = a wild
@@ -2596,6 +2689,35 @@ fn rung_material_pile(ladder: &LadderConfig, rung: RungKey) -> Vec<MaterialPayof
         .map(|(material_id, amount)| MaterialPayoff {
             material_id: material_id.to_string(),
             amount,
+        })
+        .collect()
+}
+
+/// **`upkeepToolsShort`, read off the viewer's own [`upkeep_toe_lines`]** — exactly *"some line is
+/// short"*, so the flag and the lines cannot disagree and neither speaks for a rival's crew.
+pub(crate) fn viewer_keeping_tools_short(
+    lines: &[crate::components::KeepingToolLine],
+    viewer: FactionId,
+) -> bool {
+    lines
+        .iter()
+        .any(|line| line.faction == viewer && line.is_short())
+}
+
+/// ⛔ **A SOURCE'S KEEPING-TOOL LINES, ON THE WIRE — THE VIEWER'S OWN ONLY** — `upkeepToe`, item
+/// ids only: the client resolves each to its roster display name. A rival's lines would publish its
+/// tool stock, and the mark is a statement about the viewer's own crew, so they are not sent.
+pub(crate) fn upkeep_toe_lines(
+    lines: &[crate::components::KeepingToolLine],
+    viewer: FactionId,
+) -> Vec<sim_schema::KitToeLineState> {
+    lines
+        .iter()
+        .filter(|line| line.faction == viewer)
+        .map(|line| sim_schema::KitToeLineState {
+            item_id: line.item.clone(),
+            required: line.required,
+            filled: line.filled,
         })
         .collect()
 }

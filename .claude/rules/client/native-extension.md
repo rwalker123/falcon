@@ -599,19 +599,29 @@ run out* and `-2` *nobody is cutting it, so there is no rate* (`sim_schema::DEPO
 / `DEPOSIT_RUNWAY_NO_TAKE`) — beside the shared five-negative `build_turns_remaining` family, which a
 working publishes with no dialect of its own.
 
-**THE BAND'S BILL IS NOT A SUM OF THESE ROWS**: `quarrywork_demand` / `quarrywork_supplied` /
-`quarrywork_shortfall` on the cohort dict (`dict/population.rs`, beside the `roadwork` triple) carry
-it, for `roadwork_demand`'s own reason — deposit rows are fog-filtered, so a working out of sight
-drops out of a client-side total the band still owes. **ONE POOL FOR BOTH BRANCHES**: forestry and
-extraction split on knowledge and on nothing a keeper does.
+**A WORKING IS KEPT BY ITS OWN `extract` CREW** (`docs/plan_site_crews.md`). The `quarrywork`
+triple the cohort dict carried (`quarrywork_demand` / `_supplied` / `_shortfall`) is deprecated on
+the wire and publishes `0`, so the decoder no longer inserts it; each deposit row states its own
+keeping instead (`upkeep_demand` / `upkeep_supplied`, and the site-crew pair below).
 
 ## `pool_toe` — where a STANDING POOL's tools are stated, now that its `kit_id` cannot say
 
 `docs/plan_pool_toe.md` §4. `PopulationCohortState.poolToe` → **`pool_toe`** on the band dict
 (`dict/population.rs`), an `Array` of `{pool, item_id, required, filled}` — one row per
-`(pool, item)`, where `pool` is the labor-role token `agriculture` | `husbandry` | `roadwork` |
-`quarrywork` | `builders`, the same spelling `LaborAssignment.kind` publishes, so a surface joins a
-line to its pool card on a string it already holds.
+`(pool, item)`, where `pool` is the labor-role token `roadwork` | `builders` — the two band-wide
+pools left (`docs/plan_site_crews.md` §2.4) — the same spelling `LaborAssignment.kind` publishes, so
+a pool line joins its lines on a string it already holds. `pool_crew` likewise carries `roadwork`
+alone.
+
+**A SITE CARRIES ITS KEEPING-TOOL TABLE, `upkeep_toe`** — the same `{item_id, required, filled}`
+line shape on every patch, herd and deposit dict (`kit_toe_to_array`, shared with `kit_toe`), `[]`
+where the site claims no tool. `MapView` crosses the patch's onto `tile_info` as `patch_upkeep_toe`,
+redacted under fog with the rest of the live keeping state.
+
+**A TAKE ROW CARRIES ITS OWN TABLE, `kit_toe`** — `LaborAssignment.kitToe` decoded onto each labor
+assignment as an `Array` of `{item_id, required, filled}`, one line per item the row's kit CLAIMS,
+always inserted (`[]` when the row claims nothing). It is the row's per-item shortage: short is any
+line with `filled < required`. `required` is never `0`.
 
 **IT SUPERSEDES THE POOL ROW'S `kit_id`, WHICH THE SIM NOW PUBLISHES EMPTY.** A pool's tools follow
 from each SITE's own rung, and a Roadwork pool keeping a dirt road and a paved road wants two of
@@ -634,6 +644,28 @@ re-record is the only fixture step, but the decode golden can say nothing about 
 publishing changes above: it is built from `sim_schema::fixture`'s saturated snapshot, not from a
 sim capture, so `upkeep_kit_id` there still reads `"forage_patches[0].upkeep_kit_id"`. Only
 `core_sim`'s own capture tests witness those.
+
+## The site crew's keeping, and a queued build's own mark (`docs/plan_site_crews.md`)
+
+A patch, a herd and a working are kept by the crew on their own work row. Two keys ride each of the
+three source dicts (`dict/subsistence.rs` for patches and herds, `dict/deposits.rs` for workings):
+
+| key | wire field | reads |
+|---|---|---|
+| `upkeep_hands` | `upkeepHands:float` | how many of this site's crew the keeping took this turn; the take is the crew less these |
+| `upkeep_tools_short` | `upkeepToolsShort:bool` | whether that keeping crew's tool claim was filled less than in full |
+| `upkeep_workers_at_completion` | `upkeepWorkersAtCompletion:uint` | whole workers the keeping takes once the in-flight rung is done (patch, herd and deposit dicts) |
+| `upkeep_next_worker_turn` | `upkeepNextWorkerTurn:int` | the ABSOLUTE game turn the keeping first needs one more whole worker; `-1` = never within the build |
+
+`MapView._tile_info_at` crosses the patch pair as `patch_upkeep_hands` / `patch_upkeep_tools_short`,
+and the two tending forecasts as `patch_upkeep_workers_at_completion` / `patch_upkeep_next_worker_turn`
+(all redacted with the rest of the live patch payload; `HudWorkVocab.tending_of` reads them), and `SourceForecast.upkeep_hands` /
+`upkeep_tools_short` are the one reader of each. Each build-queue entry carries **`build_priority`**
+(`BuildQueueEntryState.buildPriority`, `high` | `normal` | `low`), read through
+`HudBandLaborState.build_priority_for_key`, which normalises an unwritten value to `normal`. It also
+carries its site halves, **`material`** (`BuildQueueEntryState.material`, `""` unless the entry is a
+working) and **`road`** (`.road`, true for a road build), which `HudBandLaborState.queue_entry_key`
+keys on — the tile alone cannot tell two workings, or a road and a patch, on one hex apart.
 
 ## The `connections` section, and the cohort fields the shipment arc appended
 

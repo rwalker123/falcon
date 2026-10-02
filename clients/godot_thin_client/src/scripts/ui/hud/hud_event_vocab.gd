@@ -432,6 +432,12 @@ static func apply_palette() -> void:
 		"status=trimmed": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN, "rung": RUNG_NOTABLE},
 		"status=pruned": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN, "rung": RUNG_NOTABLE},
 		"status=stalled": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN, "rung": RUNG_NOTABLE},
+		# **A RUNG SLIPPING IS ROUTINE, its loss is the Alert.** The sim's `announce_rung_decay` writes
+		# one Info line per slip (`Field at (44, 24) is slipping — 94%`) and one `status=feral` line
+		# per loss. The slip is a meter moving, still reversible by staffing the keeping, so it takes
+		# the reduced mark in warn amber and stays below the default floor.
+		"status=slipping": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN,
+			"rung": RUNG_ROUTINE},
 		"severity=warn": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN,
 			"rung": RUNG_NOTABLE},
 		"severity=danger": {"glyph": STATUS_SHED_GLYPH, "color": HudStyle.WARN,
@@ -483,6 +489,10 @@ const DETAIL_STATUS_WORK_LINK := {
 	"status=lapsed": true,
 	"status=pruned": true,
 	"status=stalled": true,
+	# **`status=slipping` — the keeping is staffed from the Work tab**, so a rung slipping is a row
+	# the player can go and fix there. Like every entry here it links only where the detail carries
+	# `band=`.
+	"status=slipping": true,
 	# **`status=outrunning` IS HOW THE MATERIAL ALERT NAMES ITS BAND**
 	# (`docs/plan_standing_upkeep.md` §4.9 item 12), and without it the line names none. The sim's
 	# label is *"Hurdles is running out"* — no band in it — so `SIM_BAND_LABEL_FORMAT` has nothing to
@@ -603,6 +613,16 @@ const DETAIL_KEY_HIDDEN := {
 	"side": true,
 }
 
+## **KEYS HIDDEN ONLY ON LINES CARRYING ONE `status=` TOKEN** — the rung-decay pair
+## (`announce_rung_decay`). Their label already says the place and the percent in words (`Field at
+## (44, 24) is slipping — 94%`), so `rung` / `progress` / `x` / `y` / `reason` would say it again
+## as raw tokens. Scoped rather than added to `DETAIL_KEY_HIDDEN`, because `x` / `y` are the only
+## place a forage `trimmed` line names its tile.
+const DETAIL_KEY_HIDDEN_BY_STATUS := {
+	"status=slipping": {"rung": true, "progress": true, "x": true, "y": true, "reason": true},
+	"status=feral": {"rung": true, "progress": true, "x": true, "y": true, "reason": true},
+}
+
 ## Bare words that are grammar, not content. The ` · ` join supplies the separation `at` was doing.
 const DETAIL_FILLER_WORDS := {
 	"at": true,
@@ -640,6 +660,7 @@ const DETAIL_VALUE_LABELS := {
 	"trimmed": "trimmed",
 	"pruned": "pruned",
 	"untended": "untended",
+	"slipping": "slipping",
 }
 
 ## Fragment separator. A middot rather than a comma: the fragments are peers, not a list.

@@ -255,18 +255,24 @@ static func route_gates_for(gates: Dictionary, rung: String) -> Array[Dictionary
 ## carries: a gate added without a priority entry must degrade to *stating something* rather than to
 ## a blank half-face.
 static func route_row_refusal(refusals: Array[Dictionary]) -> String:
-    for kind in HudRouteVocab.GATE_ROW_PRIORITY:
+    return String(route_row_refusal_record(refusals).get(HudRouteVocab.GATE_SHORT_KEY, ""))
+
+## …the RECORD that pick lands on, `{}` where none carries a short form — so a locked rung can state
+## the craft's own NAME and its own sentence off the same refusal the row chose.
+static func route_row_refusal_record(refusals: Array[Dictionary]) -> Dictionary:
+    return _row_refusal_record(refusals, HudRouteVocab.GATE_ROW_PRIORITY)
+
+static func _row_refusal_record(refusals: Array[Dictionary], priority: Array) -> Dictionary:
+    for kind in priority:
         for refusal in refusals:
             if String(refusal.get(HudRouteVocab.GATE_KIND_KEY, "")) != kind:
                 continue
-            var short := String(refusal.get(HudRouteVocab.GATE_SHORT_KEY, ""))
-            if short != "":
-                return short
+            if String(refusal.get(HudRouteVocab.GATE_SHORT_KEY, "")) != "":
+                return refusal
     for refusal in refusals:
-        var fallback := String(refusal.get(HudRouteVocab.GATE_SHORT_KEY, ""))
-        if fallback != "":
-            return fallback
-    return ""
+        if String(refusal.get(HudRouteVocab.GATE_SHORT_KEY, "")) != "":
+            return refusal
+    return {}
 
 ## …and ALL of them, as sentences for the hover, in the order the gate layer appended them. `[]` for a
 ## ready rung, which leaves the tooltip with its price and payoff lines alone.
@@ -317,7 +323,9 @@ static func _route_craft_refusal(unlock: String, progress: float, labels: Dictio
         else HudRouteVocab.GATE_LONG_ROAD_KNOWLEDGE_HEAD_FORMAT % [name, percent]
     if teaches.strip_edges() != "":
         long += HudRouteVocab.GATE_LONG_ROAD_KNOWLEDGE_REMEDY_FORMAT % teaches.to_lower()
-    return _route_refusal(HudRouteVocab.GATE_KIND_CRAFT, short, long)
+    var record := _route_refusal(HudRouteVocab.GATE_KIND_CRAFT, short, long)
+    record[HudRouteVocab.GATE_NAME_KEY] = name
+    return record
 
 ## **WILL THE HAY THIS CREW GATHERS ACTUALLY BE BANKED?** — `""` when it will, the reason when it will
 ## not. The plant twin in shape of the rung gates above, and a deliberate BROADENING of this file's
@@ -894,20 +902,13 @@ static func _deposit_refused_apart_from_crew(refusals: Array[Dictionary]) -> boo
 ## order. `""` for a ready rung, and for the free floor, whose only refusal carries no short form
 ## because the row's own state word says it.
 static func deposit_row_refusal(refusals: Array[Dictionary]) -> String:
-    for kind in HudDepositVocab.GATE_ROW_PRIORITY:
-        for refusal in refusals:
-            if String(refusal.get(HudRouteVocab.GATE_KIND_KEY, "")) != kind:
-                continue
-            var short := String(refusal.get(HudRouteVocab.GATE_SHORT_KEY, ""))
-            if short != "":
-                return short
     # **A refusal of an unlisted kind still answers**, the route pick's own rule: a gate added without
     # a priority entry must degrade to stating SOMETHING rather than to a blank half-face.
-    for refusal in refusals:
-        var fallback := String(refusal.get(HudRouteVocab.GATE_SHORT_KEY, ""))
-        if fallback != "":
-            return fallback
-    return ""
+    return String(deposit_row_refusal_record(refusals).get(HudRouteVocab.GATE_SHORT_KEY, ""))
+
+## …the RECORD that pick lands on — `route_row_refusal_record`'s twin.
+static func deposit_row_refusal_record(refusals: Array[Dictionary]) -> Dictionary:
+    return _row_refusal_record(refusals, HudDepositVocab.GATE_ROW_PRIORITY)
 
 ## …and ALL of them, as sentences for the hover, in the order the gate layer appended them. The record
 ## shape is shared, so this is the route joiner verbatim.
@@ -944,4 +945,6 @@ static func _deposit_craft_refusal(unlock: String, progress: float, labels: Dict
         else HudDepositVocab.GATE_LONG_KNOWLEDGE_HEAD_FORMAT % [name, percent]
     if teaches.strip_edges() != "":
         long += HudDepositVocab.GATE_LONG_KNOWLEDGE_REMEDY_FORMAT % teaches.to_lower()
-    return _route_refusal(HudDepositVocab.GATE_KIND_CRAFT, short, long)
+    var record := _route_refusal(HudDepositVocab.GATE_KIND_CRAFT, short, long)
+    record[HudRouteVocab.GATE_NAME_KEY] = name
+    return record

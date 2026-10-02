@@ -2979,6 +2979,15 @@ pub fn capture_snapshot(
                 .and_then(|entity| tiles.get(entity).ok())
                 .map(|(_, tile, _)| tile.clone())
         };
+        // **A tile's gathering season**, off the sweep's own map — what a forage row's take-kit claim
+        // is planned at, exactly as the turn reads it ([`crate::take_claims`]).
+        let season_of = |pos: UVec2| {
+            seasonal_weights
+                .get(&pos)
+                .map_or(crate::forage::NO_FORAGE_SEASON, |weight| {
+                    weight.max(crate::forage::NO_FORAGE_SEASON)
+                })
+        };
         let mut population_states: Vec<PopulationCohortState> = populations
             .iter()
             .filter_map(
@@ -3136,6 +3145,7 @@ pub fn capture_snapshot(
                             // The bare carry rate a **corralled** row's collection curve is resolved
                             // against; a stalked row's kill curve never reads it.
                             baseline_haul_rate: labor_config.hunt.per_worker_biomass_capacity,
+                            ladder: &ladder_config,
                         },
                         bench,
                         // **This band's outfitting window**, or `None` when it has nothing to outfit.
@@ -3174,6 +3184,9 @@ pub fn capture_snapshot(
                             materials: &materials_config,
                             ladder: &ladder_config,
                             ground_of: &ground_of,
+                            season_of: &season_of,
+                            map_seed: config.map_seed,
+                            flora: &flora_config,
                         },
                     }))
                 },
@@ -3586,6 +3599,7 @@ pub fn capture_snapshot(
                 .filter_map(|(_, _, allocation, ..)| allocation),
         );
         let herd_states = herd_snapshot_entries(HerdSnapshotInputs {
+            current_turn: tick.0,
             telemetry: &herds,
             registry: &herd_registry,
             fauna: &fauna_config,
@@ -3666,6 +3680,7 @@ pub fn capture_snapshot(
             &extraction_config,
             &equipment_config,
             &build_kit_ids,
+            tick.0,
             deposit_tiles.iter().copied(),
         );
         let demographics_state = snapshot_demographics(&population_states);
@@ -3689,6 +3704,7 @@ pub fn capture_snapshot(
             &flora_quotes,
             &build_kit_ids,
             &upkeep_kit_ids,
+            tick.0,
             viewer,
             &visibility_ledger,
             config.fog_enabled,

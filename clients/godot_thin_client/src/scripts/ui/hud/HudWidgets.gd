@@ -383,11 +383,17 @@ static func build_marker_icon(texture: Texture2D, glyph: String, box_px: float, 
 ## The shared −/+ stepper controls (minus, centered count, plus) appended to a row's HBox, so the
 ## one-line and two-line forms compose the same stepper. `on_change` fires with the new count.
 ##
-## **THE METRIC IS A PARAMETER SINCE FOUR POOL CARDS HAD TO SHARE ONE ROW** (arc #532). `metric` is
-## `{button_width, value_width, padding_h}`; anything it omits falls back to the shared
-## `WORKER_STEPPER_*` widths, so every existing caller renders byte-identically. The pool cards hand
-## `HudWorkVocab.POOL_STEPPER_*` — see that block for why the WORK zone had no row to give instead.
-static func add_stepper_controls(row: HBoxContainer, count: int, plus_enabled: bool, on_change: Callable, compact_chrome: bool = false, metric: Dictionary = {}) -> void:
+## **THE METRIC IS A PARAMETER** for a surface short of width (the starting-loadout picker's rows).
+## `metric` is `{button_width, value_width, padding_h}`; anything it omits falls back to the shared
+## `WORKER_STEPPER_*` widths. The Work tab's pool rows and site rows all take the defaults, which is what
+## puts every stepper on that tab in one column.
+##
+## **A GREYED `+` SAYS WHY** (`selection-card.md` → "A DISABLED CONTROL SAYS WHY"): `plus_blocked_reason`
+## is the caller's sentence for the condition that made `plus_enabled` false, and becomes the `+`'s
+## hover. A greyed `−` is always the same fact — there is nobody on it — so it needs no argument.
+static func add_stepper_controls(row: HBoxContainer, count: int, plus_enabled: bool,
+        on_change: Callable, compact_chrome: bool = false, metric: Dictionary = {},
+        plus_blocked_reason: String = "") -> void:
     var button_width := float(metric.get(STEPPER_METRIC_BUTTON_WIDTH,
         HudWorkVocab.WORKER_STEPPER_BUTTON_WIDTH))
     var value_width := float(metric.get(STEPPER_METRIC_VALUE_WIDTH,
@@ -398,6 +404,8 @@ static func add_stepper_controls(row: HBoxContainer, count: int, plus_enabled: b
     minus.custom_minimum_size = Vector2(button_width, 0)
     HudStyle.apply_button(minus, "ghost")
     minus.disabled = count <= 0
+    if minus.disabled:
+        minus.tooltip_text = HudWorkVocab.STEPPER_MINUS_AT_ZERO_REASON
     minus.pressed.connect(func() -> void: on_change.call(count - HudConst.WORKER_STEP))
     row.add_child(minus)
     var value := Label.new()
@@ -411,6 +419,8 @@ static func add_stepper_controls(row: HBoxContainer, count: int, plus_enabled: b
     plus.custom_minimum_size = Vector2(button_width, 0)
     HudStyle.apply_button(plus, "ghost")
     plus.disabled = not plus_enabled
+    if plus.disabled:
+        plus.tooltip_text = plus_blocked_reason
     plus.pressed.connect(func() -> void: on_change.call(count + HudConst.WORKER_STEP))
     row.add_child(plus)
     if compact_chrome:
@@ -872,12 +882,25 @@ static func fill_menu_popup(popup: PopupMenu, entries: Array) -> void:
 ## the honest thing to compare a chart's `HarvestFloorChart.crew()` against.
 const PARTY_STEPPER_COUNT_META := "party_stepper_count"
 
+## **A DISABLED CONTROL'S HOVER: THE REASONS FIRST, THEN WHAT THE CONTROL IS.** `reasons` empty is the
+## enabled face — `tooltip` alone, unchanged — so a caller hands the gate's list over without
+## branching. Every reason is its own line (`HudWorkVocab.DISABLED_REASON_SEPARATOR`): fixing one
+## must not hide that another still stands. See `selection-card.md` → "A DISABLED CONTROL SAYS WHY".
+static func disabled_tooltip(reasons: PackedStringArray, tooltip: String) -> String:
+    if reasons.is_empty():
+        return tooltip
+    var lead := HudWorkVocab.DISABLED_REASON_SEPARATOR.join(reasons)
+    return lead if tooltip == "" \
+        else HudWorkVocab.DISABLED_REASON_SEPARATOR.join(PackedStringArray([lead, tooltip]))
+
 ## The party stepper row, shared by both missions so they cannot drift apart in shape.
 ## `key_text` defaults to the word the three EXPEDITION sheets want. The split sheet passes its own,
 ## because a sheet whose whole thesis is *this is not a party* must not label its one input `Party` —
 ## the wrong word there teaches the wrong model more effectively than any amount of prose fixes.
+## `at_max_reason` is the greyed `+`'s hover — the party is every hand the sheet may spend.
 static func build_party_stepper_row(count: int, party_max: int, on_change: Callable,
-        key_text: String = HudComposeVocab.COMPOSE_FIELD_PARTY) -> HBoxContainer:
+        key_text: String = HudComposeVocab.COMPOSE_FIELD_PARTY,
+        at_max_reason: String = HudComposeVocab.PARTY_AT_MAX_REASON) -> HBoxContainer:
     var row := HBoxContainer.new()
     row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     row.set_meta(PARTY_STEPPER_COUNT_META, count)
@@ -885,7 +908,7 @@ static func build_party_stepper_row(count: int, party_max: int, on_change: Calla
     key.text = key_text
     key.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_child(key)
-    add_stepper_controls(row, count, count < party_max, on_change)
+    add_stepper_controls(row, count, count < party_max, on_change, false, {}, at_max_reason)
     return row
 
 ## The rung a policy-picker Button stands for, as `Button` meta. THE ONE STABLE HANDLE on a rung: the
@@ -993,6 +1016,11 @@ const CARGO_CONTROL_MINUS := "minus"
 const CARGO_CONTROL_FIELD := "field"
 const CARGO_CONTROL_PLUS := "plus"
 const CARGO_CONTROL_MAX := "max"
+## A cargo GOOD's main line (the material's own row, over its grade lines) — `CARGO_ROW_KEY_META`
+## is on it too, valued the good's key; a grade line carries that meta alone, valued its pile's key.
+const CARGO_GOOD_ROW_META := "cargo_good_row"
+## The grade disclosure on a cargo good, valued the good's key.
+const CARGO_GRADES_TOGGLE_META := "cargo_grades_toggle"
 
 ## The "send a shipment" CONFIRM button, as `Button` meta (arc #527) — its own handle rather than the
 ## hunt one's, because the shipment form reaches it from FIVE branches (no ties, no destination
@@ -2102,6 +2130,9 @@ const SPECIES_CHIP_ROW_META := "species_chip_row"
 ## Build the chip row. Each `entries` element is `{species, face, state}`; `on_toggle` fires with the
 ## species key. WHICH chips are lit is the caller's answer, since only it knows whether the ground is
 ## being committed — and a chip carries no tooltip, its face already being the whole of what it knows.
+## The chip entry key carrying why the chip is disabled — `""` (absent) for a live chip.
+const SPECIES_CHIP_DISABLED_REASON_KEY := "disabled_reason"
+
 static func build_species_chips(entries: Array, on_toggle: Callable) -> HFlowContainer:
     var row := HFlowContainer.new()
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -2128,6 +2159,12 @@ static func _species_chip(entry: Dictionary, species: String,
     btn.set_meta(SPECIES_CHIP_STATE_META, state)
     HudStyle.apply_pill_toggle(btn, selected)
     btn.pressed.connect(func() -> void: on_toggle.call(species))
+    # **A CHIP THAT CAN DO NOTHING IS DISABLED AND SAYS WHY** (`selection-card.md` → "A DISABLED
+    # CONTROL SAYS WHY") — the entry's `disabled_reason`, `""` on every live chip.
+    var reason := String(entry.get(SPECIES_CHIP_DISABLED_REASON_KEY, ""))
+    if reason != "":
+        btn.disabled = true
+        btn.tooltip_text = disabled_tooltip(PackedStringArray([reason]), "")
     var face := Label.new()
     face.text = String(entry.get("face", ""))
     face.mouse_filter = Control.MOUSE_FILTER_IGNORE

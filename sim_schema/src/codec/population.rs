@@ -10,7 +10,7 @@ use crate::state::population::{
     AccessibleStockpileEntryState, AccessibleStockpileState, BandKitCrewState, BandKitTiersState,
     BandLoadoutSupplyRowState, BandLoadoutWindowState, BenchState, BuildQueueEntryState,
     CharacteristicReadingState, CohortStoreState, CraftOfferState, DrawnInputState,
-    EquipmentBatchState, GenerationState, HarvestTaskState, KitItemConditionState,
+    EquipmentBatchState, GenerationState, HarvestTaskState, KitItemConditionState, KitToeLineState,
     LaborAssignmentState, MaterialBatchState, MaterialShortfallState, PoolCrewLineState,
     PoolToeLineState, PoolingLinkState, PopulationCohortState, PopulationDemographicsState,
     ScoutTaskState, SettlementStageViewState, SourcePriorityState, TransferCrossingState,
@@ -319,6 +319,28 @@ fn create_populations<'a>(
                                 .collect();
                             Some(builder.create_vector(&keys))
                         };
+                        // **WHICH KIT ITEMS ARE SHORT, BY NAME** — absent rather than an empty
+                        // vector when the row claims nothing, the `take_species` convention.
+                        let kit_toe = if assignment.kit_toe.is_empty() {
+                            None
+                        } else {
+                            let lines: Vec<_> = assignment
+                                .kit_toe
+                                .iter()
+                                .map(|line| {
+                                    let item_id = builder.create_string(&line.item_id);
+                                    fb::KitToeLine::create(
+                                        builder,
+                                        &fb::KitToeLineArgs {
+                                            itemId: Some(item_id),
+                                            required: line.required,
+                                            filled: line.filled,
+                                        },
+                                    )
+                                })
+                                .collect();
+                            Some(builder.create_vector(&lines))
+                        };
                         fb::LaborAssignment::create(
                             builder,
                             &fb::LaborAssignmentArgs {
@@ -412,6 +434,11 @@ fn create_populations<'a>(
                                 // **HOW MANY CUTTERS THIS WORKING CAN USE, GEAR INCLUDED** — the
                                 // deposit crew curve's plateau. Appended last.
                                 usefulCutters: assignment.useful_cutters,
+                                // **WHICH KIT ITEMS ARE SHORT, BY NAME** — the row's claim and
+                                // its settled units per item. Appended last.
+                                kitToe: kit_toe,
+                                // **THIS ROW'S OWN KEEPING HANDS**. Appended last.
+                                keepHands: assignment.keep_hands,
                             },
                         )
                     })
@@ -445,6 +472,15 @@ fn create_populations<'a>(
                         } else {
                             Some(builder.create_string(&entry.fauna_id))
                         };
+                        // **THE ENTRY'S BUILD MARK** (`docs/plan_site_crews.md` §2.4).
+                        let build_priority = builder.create_string(&entry.build_priority);
+                        // **WHICH SITE ON THE TILE** — a working's material, absent off a working,
+                        // `faunaId`'s reading.
+                        let material = if entry.material.is_empty() {
+                            None
+                        } else {
+                            Some(builder.create_string(&entry.material))
+                        };
                         fb::BuildQueueEntryState::create(
                             builder,
                             &fb::BuildQueueEntryStateArgs {
@@ -452,6 +488,9 @@ fn create_populations<'a>(
                                 targetX: entry.target_x,
                                 targetY: entry.target_y,
                                 faunaId: fauna_id,
+                                buildPriority: Some(build_priority),
+                                material,
+                                road: entry.road,
                             },
                         )
                     })
@@ -1259,6 +1298,12 @@ fn decode_labor_assignment(
         next_load_home_in: assignment.nextLoadHomeIn(),
         net_rate_home: assignment.netRateHome(),
         useful_cutters: assignment.usefulCutters(),
+        kit_toe: map_rows(assignment.kitToe(), |line| KitToeLineState {
+            item_id: text(line.itemId()),
+            required: line.required(),
+            filled: line.filled(),
+        }),
+        keep_hands: assignment.keepHands(),
     })
 }
 
@@ -1535,6 +1580,9 @@ fn decode_population(
             target_x: entry.targetX(),
             target_y: entry.targetY(),
             fauna_id: text(entry.faunaId()),
+            build_priority: text(entry.buildPriority()),
+            material: text(entry.material()),
+            road: entry.road(),
         }),
         fodder_need: cohort.fodderNeed(),
         fodder_income: cohort.fodderIncome(),
@@ -1545,7 +1593,8 @@ fn decode_population(
         roadwork_demand: cohort.roadworkDemand(),
         roadwork_supplied: cohort.roadworkSupplied(),
         roadwork_shortfall: cohort.roadworkShortfall(),
-        // The GROUNDWORK pool, the deposit branches' twin of the three above (arc #583).
+        // **DEPRECATED — always 0** (`docs/plan_site_crews.md` §4): the retired Groundwork pool's
+        // triple, decoded because the wire is positional.
         quarrywork_demand: cohort.quarryworkDemand(),
         quarrywork_supplied: cohort.quarryworkSupplied(),
         quarrywork_shortfall: cohort.quarryworkShortfall(),

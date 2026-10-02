@@ -3,6 +3,13 @@
 **Status:** design. Filed under issue #532 (the route ladder), because the route ladder is what
 exposed the gap — but the mechanism is general and the routes are its last consumer, not its first.
 
+> **WHO PAYS THE KEEPING MOVED — `docs/plan_site_crews.md` (#751).** A site's own take crew now keeps
+> it before collecting from it, and the Agriculture, Husbandry and Quarrywork keeping pools retire.
+> **Builders and Roadwork stay pools**, and the fund mode survives for Roadwork only. What this plan
+> says about *what* is owed — the rate, the rot, the grace, the retention bar, materials, the scale
+> term, the build queue — stands. Where it says a keeping **pool** pays, read the site's own crew.
+> §4's landed slices are the record of how the pools shipped and are not rewritten.
+
 ## 0. The gap, in one line
 
 **Every cost on the intensification ladder today is a *job* — a fixed pile of work you finish once.
@@ -70,16 +77,17 @@ An improvement may declare up to three things. The **work** term of each is in w
 building the term against routes, because an architecture that assumes every improvement produces
 something breaks on the first one that does not.
 
-### 2.2 The PLAYER allocates workers per activity — ONE on the source, THREE on the band
+### 2.2 The PLAYER allocates workers per activity — ONE crew on the source, TWO pools on the band
 
-**A source carries exactly one worker allocation from a band: the crew that TAKES from it.** The
-other two activities are band-level standing roles, because neither of them divides sensibly at the
-tile (§2.5).
+**A source carries exactly one worker allocation from a band: its site crew.** That crew keeps the
+source first and collects from it with whatever is left (`docs/plan_site_crews.md` §2.1). Building
+is a band-level role, and so is keeping a **road**, because neither divides sensibly at the tile
+(§2.5).
 
 | Activity | Where the hands stand | Set by |
 |---|---|---|
-| **take** | on the **source** | `assign_labor` — unchanged; its `workers` is the take crew |
-| **keeping** | a **band** role, one per food web | `assign_labor <faction> <band> agriculture\|husbandry <workers>` |
+| **keep, then take** | on the **source** | `assign_labor` — its `workers` is the site crew |
+| **keeping a road** | a **band** role | `assign_labor <faction> <band> roadwork <workers>` |
 | **building** | a **band** role, one for the whole band | `assign_labor <faction> <band> builders <workers>` |
 
 **A verb therefore names no crew.** `cultivate` / `sow` / `tame` / `corral` — and `extend_pen` — say
@@ -103,11 +111,12 @@ and the coverage behind it is resolved over the pool.
 The arithmetic is then trivial:
 
 ```text
-keeping_supply   = this source's share of the band's keeping POOL for its web (§2.5)
+keep_hands       = min(crew, upkeep_demand / keep_rate)     // the site crew, keeping first
+kept             = keep_hands × keep_rate
 rot              = the shortfall against upkeep_demand, at the rung's own rate (§2.4)
 build_work       = the band's BUILDER pool — on the HEAD of its queue and nowhere else (§2.5)
 net              = build_work − rot
-take             = min(take_workers × per_worker_capacity, source_offer)
+take             = min((crew − keep_hands) × per_worker_capacity, source_offer)
 ```
 
 > #### THE RATE IS NOT A TAX ON BUILDING, and reversing that is what made the pools coherent
@@ -202,11 +211,11 @@ carry-over would now be the sim quietly moving hands between two roles the playe
 
 ### 2.4 KEEPING HOLDS, BUILDING ADDS — and a rung is not lost on the first dip
 
-Two pools, two questions, and **no test that moves a source from one to the other**:
+Two payers, two questions, and **no test that moves a source from one to the other**:
 
-| pool | owes | for how long |
+| payer | owes | for how long |
 |---|---|---|
-| the web's **keeping** (`agriculture` / `husbandry`) | the rung's rate, to hold what is on the meter | from the **first work banked** until the last |
+| the source's own **site crew** (Roadwork, for a road) | the rung's rate, to hold what is on the meter | from the **first work banked** until the last |
 | the band's **builders** | nothing — its whole output is **progress** | while the source is the **head of the queue** |
 
 ```text
@@ -217,7 +226,7 @@ net = build_work − rot
   net < 0  →  the meter LOSES GROUND — work already bought, bleeding
 ```
 
-**A source at 10% and a source at 100% are billed the same and billed to the same pool.** Nothing about
+**A source at 10% and a source at 100% are billed the same and billed to the same crew.** Nothing about
 how full the meter is decides who pays.
 
 > #### WHY THE FULLNESS TEST HAD TO GO
@@ -253,13 +262,13 @@ than stalled**. What the meters no longer do is *create* an entry nobody asked f
 | **at its cost** | there is nothing left to raise — **the entry leaves the queue** |
 
 **A rung that erodes back below its cost is NOT re-adopted.** It is held — or, unstaffed, lost — by the
-keeping pool, and repairing it is a fresh decision the player makes by putting it back in the queue.
+site's own crew, and repairing it is a fresh decision the player makes by putting it back in the queue.
 The earlier cut adopted it automatically, which was right when adoption cost nothing and is wrong now
 that it costs the head of a queue.
 
 **`abandon_improvement` stays retired; what came back is disposal, not arbitration.** §2.5's
 `abandon` drops a band's *holding* of a source outright — the row, its declaration and its queue entry
-— because a half-built meter the player has lost interest in otherwise draws keepers forever. It is one
+— because taking a site's crew to 0 stops the keeping but leaves the declaration standing. It is one
 bit per source, never a number, so it smuggles no per-source staffing back in.
 
 **A meter at exactly zero clears back to "the player must declare"** together with everything else
@@ -269,7 +278,7 @@ stamped cost goes with them. One notion of empty, not three.
 There is no third concept: an earlier cut gave an unfinished meter its *own* demand
 (`meter_raising_demand`), which was the same rate under a second name. Deleted then, and the rule that
 replaced it — *you cannot be billed to hold something you have not finished building* — is deleted now
-too. **You can.** From the first work banked, holding it is what the keeping pool is for; what you
+too. **You can.** From the first work banked, holding it is what the site crew pays first; what you
 cannot be billed for is ground with nothing on it at all.
 
 **Both webs answer identically.** An under-supplied meter decays, which is a **meter bleed** on plants
@@ -320,7 +329,7 @@ test rather than a rate**.
   decides what the ground pays out. A patch at 99% is **still tended** and is **also** short of its
   cost. Folding the two would make a rung's loss and a rung's repair the same edge.
   > **It used to be orthogonal to a third thing — the who-pays test — and that test is gone** (§2.4).
-  > Note what does *not* follow from a dipped meter any more: it does not change which pool is
+  > Note what does *not* follow from a dipped meter any more: it does not change who is
   > billed, and it does not put the source back in the build queue. It is a fact about the ground, and
   > acting on it is the player's.
 - **No animal rung needs a bar**: `domestication_progress` is monotone-up and a pen is held by a
@@ -331,26 +340,28 @@ test rather than a rate**.
 `grace_turns` survives unchanged in meaning: consecutive turns of shortfall forgiven before decay
 begins.
 
-### 2.5 KEEPING AND BUILDING ARE BOTH BAND-LEVEL ROLES, and neither is a crew on the tile
+### 2.5 BUILDING AND ROAD-KEEPING ARE BAND-LEVEL ROLES; a site's own crew keeps the site
 
-**Three standing roles on the band**, in the same family as the local scout and warrior dials:
-`agriculture` keeps the plant web, `husbandry` the animal one, and `builders` raises whatever the band
-has queued — each staffed with `assign_labor <faction> <band> agriculture|husbandry|builders <workers>`.
+> **This section first made keeping a band pool per food web.** `docs/plan_site_crews.md` moved it
+> back onto each site's own crew, which keeps first and collects the rest. What survives here is the
+> Builders pool and its queue, `abandon`, and the Roadwork pool with its fund mode.
 
-- **One keeping role per WEB, because the two webs are already separate ladders.** This is their
-  existing split, not a new axis. **The builders are ONE pool for both**, because a build is a job
-  rather than a standing charge and the queue already says which one is being worked.
-- **The keeping demand is the SUM** over everything the band holds on that web that carries work on a
-  meter — at any fullness (§2.4).
-- **`0` is still how you say "stop"** — for a whole role rather than for one source.
+**Two standing roles on the band**, in the same family as the local scout and warrior dials:
+`builders` raises whatever the band has queued, and `roadwork` keeps the roads it holds — each
+staffed with `assign_labor <faction> <band> builders|roadwork <workers>`.
+
+- **The builders are ONE pool for both webs**, because a build is a job rather than a standing charge
+  and the queue already says which one is being worked.
+- **Roadwork's demand is the SUM** over every road the band keeps (§4.13).
+- **`0` is still how you say "stop"** — for a whole role, or, on a site, for that one site.
 
 #### THE BUILDERS FUND ONE ENTRY: the HEAD of the band's queue
 
 A band holds an **ordered queue** of the builds it has declared, and the **whole** Builders pool goes
 on the first entry until its meter fills, then on the next. **Spread is not offered here, and the
-asymmetry with keeping is honest rather than an omission:** *keeping has something to ride out and
-building does not.* An under-kept improvement degrades toward a threshold you can stay above, so
-spreading a short keeping pool loses nothing while you recover; splitting a builder pool across three
+asymmetry with Roadwork is honest rather than an omission:** *keeping has something to ride out and
+building does not.* An under-kept road degrades toward a threshold you can stay above, so
+spreading a short Roadwork pool loses nothing while you recover; splitting a builder pool across three
 jobs just means nothing finishes. A queue removes the choice rather than offering a bad one.
 
 - **A verb declares; it does not staff.** `cultivate` / `sow` / `tame` / `corral` / `extend_pen` append
@@ -358,7 +369,7 @@ jobs just means nothing finishes. A queue removes the choice rather than offerin
   stepper cannot.
 - **Membership is the player's too** (§2.4) — nothing enrols itself, and completion retires the entry.
 - **An entry that is waiting costs nothing and loses nothing**, because its meter is held by the
-  keeping pool like everything else. That is what makes a queue safe to fill.
+  site's own crew like everything else. That is what makes a queue safe to fill.
 - **"Builders with nothing to do" needs no warning.** A build demand ends when its meter fills, unlike
   a keeping demand, so an empty queue beside a staffed pool says that by itself.
 
@@ -369,73 +380,57 @@ queue entry go together. The ground keeps whatever is on its meter and, with nob
 back down at the rung's own rate over the following turns exactly as an unkept improvement already
 does.
 
-It exists because §2.4 bills a meter from the first work banked, so a half-built patch the player has
-lost interest in otherwise draws keepers forever. **It is one bit per source, never a number** — the
-per-source *funding* lever stays deleted, and this is a disposal rather than a smaller share. Nothing
-is destroyed on the spot, so it needs no confirmation and no second destruction path: the player stops
-paying and the land goes back to what it was.
+It exists because taking a site's crew to 0 stops paying for it but leaves its row, declaration and
+queue entry in place. **It is one bit per source, never a number** — a disposal rather than a smaller
+share. Nothing is destroyed on the spot, so it needs no confirmation and no second destruction path:
+the player stops paying and the land goes back to what it was.
 
-#### WHY IT LEFT THE TILE: an indivisible supplier WASTES what it does not spend
+#### WHY KEEPING LEFT THE TILE, AND WHY IT CAME BACK
 
-A per-source keeper crew has to round a fractional demand up to whole workers and throws the remainder
-away, **once per source** — and the waste grows as gear makes a hand worth more. A pool has no
-leftover by construction: every unit either meets a demand or is still in the pool.
+It left because a per-source **keeper** crew has to round a fractional demand up to whole workers and
+throws the remainder away, once per source. A pool has no leftover by construction.
 
-#### The shortfall split is a per-band PLAYER OPTION, and both modes ship
+**A site crew that keeps AND collects has no leftover either** — whatever the keeping does not need
+is collected (`docs/plan_site_crews.md` §1). So keeping came back to the site, and the pool survives
+only where there is nothing to collect: **roads**.
 
-When the pool cannot cover the sum, there are two defensible answers and the choice is the player's
-(`upkeep_mode <faction> <band> spread|priority`):
+#### Roadwork's shortfall split is a per-band PLAYER OPTION, and both modes ship
+
+When the Roadwork pool cannot cover the sum, there are two defensible answers and the choice is the
+player's (`upkeep_mode <faction> <band> spread|priority`):
 
 - **Spread** — proportional to demand, so everything degrades a little. The **default**: it is what an
   unstated policy means, since nobody is singled out.
-- **Priority** — fund sources completely until the pool runs out, **most-invested first**, so the
+- **Priority** — fund roads completely until the pool runs out, **most-invested first**, so the
   biggest investments stay safe and the marginal ones rot. Ordered on the at-risk meter's **stored
-  cost** (not its live progress, which would slide a source down the order exactly as it started to
-  need the hands), tie-broken on a stable per-source key so the ordering is **total and
+  cost** (not its live progress, which would slide a road down the order exactly as it started to
+  need the hands), tie-broken on a stable per-tile key so the ordering is **total and
   deterministic** — a checkpoint restores the same allocation.
 
 The mode rides the band's allocation, so it is `SimState` and survives a rollback.
 
-#### THE POOL IS WORKERS AND GOODS; THE TOOL IS THE WORK SITE'S
+#### THE TOOL IS THE WORK SITE'S
 
-The band is what a site draws **from** — it does not decide what the hands it lends carry. So the
-keeping **kit** is a property of the worked row (`upkeep_kit <faction> <source…> [kit <id>]`,
-`LaborAssignment::upkeep_kit`), while the keepers and the store stay one pool per band. There is no
-tension between the two: the pool decides how many hands each site gets, the site decides what those
-hands carry.
+Keeping tools are derived from the site's own branch and rung and settled by Priority
+(`docs/plan_pool_toe.md`, narrowed by `docs/plan_site_crews.md` §2.3). The player picks no keeping
+kit.
 
-It was one stored id on the band's `agriculture` / `husbandry` **role row** until this note, which
-could not say *hoes on the Field, bare hands on the scrub patch beside it* — one pick put the same
-tool on every site that band kept, with no way back, and the wear of that one tool was charged
-against the work of all of them. It is the identical argument §4.7a ② makes for the builders' kit
-being per **queue entry**, and the take kit was already per row; keeping was the last one still
-band-scoped.
+#### The per-source readouts STAY
 
-**What that changes in the split**: with one rate per web, dividing the work pool in proportion to
-demand and dividing the worker pool in proportion to worker-need are the same arithmetic. With a tool
-per site they are not — two sites owing the same work but worked with different tools ask for
-**different numbers of hands** — so what is split is the **head count**, in units of `demand ÷ what
-one of that site's own keepers delivers`, under the same two modes above. Where the rates agree, which
-is every branch on the shipped roster, the answer does not move by a bit.
+`upkeepDemand` / `upkeepSupplied` / `upkeepShortfall` remain per patch, herd and working, with
+`supplied` meaning **what that site's own crew kept**.
 
-**And sites naming the same kit share its scarcity.** A band's three hoes cannot arm two keepers on
-one patch *and* three on another, so the coverage read is taken once per distinct kit rather than once
-per site. Sites naming different kits do not compete; sites naming the same one degrade together,
-exactly as the single band-wide pool did.
-
-#### The per-source readouts STAY, and they answer a better question
-
-`upkeepDemand` / `upkeepSupplied` / `upkeepShortfall` remain per patch and per herd, with `supplied`
-becoming that source's **share of the pool**. They stop answering *"did you staff this one"* and start
-answering *"where is my pooled shortfall landing"*, which is more useful, not less.
-
-#### What this replaced, and the trap it removed
+#### What this replaced, and why its trap does not come back
 
 The predecessor was a per-source `maintain` command with a hard-coded priority *inside* one crew's
 turn: a pen needing 5 work a turn, staffed for 2, spent both on upkeep, was still 3 short, decayed
-anyway, and the crew had spent itself for nothing. **The pool removes that by construction** — a band
-that cannot cover its web decides *how* it falls short rather than paying into a losing position it
-could not see.
+anyway, and the crew had spent itself for nothing. A site crew also keeps first, so the shape looks
+the same. **Two things make it different:**
+
+- **The work is not spent for nothing.** Rot is now `(shortfall / demand) × rate` (§2.4), so 2 of 5
+  slows the decay by two-fifths. The old test was binary.
+- **The row says it.** `keeps 2 of 5` with `⚠` sits beside the crew stepper that fixes it, so the
+  losing position is visible rather than inferred.
 
 **Routes need the "stop" more than anything else does.** The ladder's central claim is that you pave
 where traffic pays the upkeep and let it be a trail elsewhere. Without the ability to unstaff the
@@ -635,7 +630,7 @@ that names a staffed row, then re-runs for the next hand.
 
 1. A **scout**.
 2. A **warrior**, if nothing threatens the band.
-3. A **keeper above the keeping demand** — Agriculture first, then Husbandry.
+3. A **Roadwork keeper above the keeping demand**.
 4. A **builder the pool is not spending** — with something queued, every builder **above the
    last one**; with **nothing queued, every builder there is**, the last included, because an
    idle pool builds nothing. The queue decides *how many* builders are spare, never *whether*
@@ -647,13 +642,15 @@ that names a staffed row, then re-runs for the next hand.
 
 5. **Thin the least-productive worked source that has two or more hands** — least yield **per
    worker**, passing over a source still accruing knowledge if another candidate exists. This never
-   empties a row.
+   empties a row, and it takes only a hand **above that site's keeping need**, so it never causes
+   rot (`docs/plan_site_crews.md` §2.6).
 
 **Something ends**
 
 6. **Empty the least-productive source carrying no improvement and no queued build.**
 7. A **warrior, unconditionally.**
-8. A **keeper below the demand** — improvements begin to rot.
+8. A **keeper below the demand** — a Roadwork keeper first, then a site hand below its keeping
+   need, least-productive improved site first. Improvements begin to rot.
 9. **Empty the least-productive improved source with no queued build.**
 10. **Empty a source carrying a queued build** — the row drops and the declaration goes with it
     (§3.2: an entry requires a row).
@@ -683,8 +680,9 @@ still keeps its people on food and drops the tobacco. Level 1 decides only the t
 **Thinning beats emptying, and that is the sharp line.** Since §2.5 the builders are a band-level
 pool, so taking a hand off a source mid-build does not slow the build at all — only **emptying** the
 row does, because an entry requires a row and dropping the row drops the entry. The cliff is
-emptying, never building. **9 is worse than 8** because an improved source with no take crew still
-owes its upkeep and now pays nothing, where rot is gradual and recoverable; **7 sits after 6** because
+emptying, never building. **9 is worse than 8** because an emptied improved source is not kept at
+all and pays nothing, where one hand less below the keeping line is rot that is gradual and
+recoverable; **7 sits after 6** because
 pulling the guard under a real threat can cost people, which is worse than losing a row that had
 nothing invested in it.
 
@@ -707,9 +705,9 @@ again.
 | `decay_fraction_per_turn` as an independent dial | `upkeep.meter_decay.per_turn` — the rung's own rot rate, scaled by **how short** you are rather than being the shortfall itself |
 | `tended_this_turn` / `tamed_this_turn` binary flags | retired — shortfall is continuous |
 | `RungBuild::crew_needed` (a staffing floor) | retired — a build is staffed by the band's Builders pool, and there is no per-source crew for a floor to raise |
-| the `maintain` command + `LaborAssignment::maintain_workers` | the **band-level** `agriculture` / `husbandry` roles and `upkeep_mode` (§2.5) |
+| the `maintain` command + `LaborAssignment::maintain_workers` | the site's own crew, keeping before it collects (`docs/plan_site_crews.md`); `upkeep_mode` survives for Roadwork (§2.5) |
 | `LaborAssignment::improvement_workers` (the build's own crew) | the **band-level** `builders` role and its **ordered queue** (§2.5) |
-| the meter's FULLNESS as the who-pays test | retired — the keeping pool holds every meter carrying work, at any fullness; the builders only ever add (§2.4) |
+| the meter's FULLNESS as the who-pays test | retired — the site's own crew holds every meter carrying work, at any fullness; the builders only ever add (§2.4) |
 | build completion handing its crew to the keeping role | retired — there is no per-source crew to hand, and the keeping bill already started at the first work banked (§2.3) |
 | `progress >= cost` as the LOSS test | `upkeep.meter_decay.retain_fraction` — a rung is earned at its cost and held to a stated fraction of it (§2.4) |
 | `abandon_improvement` + the "nothing left to build" test | retired — completion retires the queue entry, so there is no stale authority to clear. **`abandon` is a different command**: it puts a whole source down (§2.5) |
@@ -722,6 +720,11 @@ again.
 ---
 
 ## 4. Sequencing
+
+> **The slices below are the record of what shipped, and they describe keeping as band pools because
+> that is how it shipped.** Where one of them states a keeping pool, a pool card, a keeping kit or
+> the fund mode as the design, `docs/plan_site_crews.md` supersedes it; Builders and Roadwork are
+> unaffected.
 
 The ordering constraint that is **not** negotiable is that the client readout lands before any
 tuning — `plan_unit_costed_work.md` §11 learned this: *a cost spread with no readout change is
@@ -2224,6 +2227,11 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > a crew that **stays**."* So the upkeep half draws on a band-level standing pool exactly as
     > agriculture and husbandry do — **`LaborTarget::Roadwork`, a third role.**
     >
+    > > **Roadwork is now the ONLY keeping pool, and the reason changed.** `docs/plan_site_crews.md`
+    > > moved the food webs' keeping onto each site's own crew, because a crew that keeps and collects
+    > > wastes nothing. A road collects nothing, so a crew on it would waste its leftover — which is the
+    > > argument for a pool that the food webs no longer need.
+    >
     > **That is the existing rule, not a new axis.** §2.5: *"One role per **WEB** because the two webs
     > are already separate ladders — this is their existing split."* A third branch is a third ladder,
     > so it takes a third role by the same argument that gave the first two theirs. It needs the
@@ -2888,8 +2896,10 @@ it into the build, round the demands — patches a mismatch that should not exis
 supplier** meeting a **per-source demand** wastes whatever it does not spend, and the waste grows as
 gear improves.
 
-Pooling maintenance (§2) fixes it for one activity. The general form is to stop allocating at the
-tile at all: the player states **role pools** and **tile priorities**, and the sim assigns. That is
+**A crew that keeps AND collects dissolves it at the tile** (`docs/plan_site_crews.md`): what the
+keeping does not use is collected, so there is no leftover to waste. Pooling (§2) remains the answer
+only where nothing is collected — roads. The general form considered here was to stop allocating at
+the tile at all: the player states **role pools** and **tile priorities**, and the sim assigns. That is
 not a rewrite — the sim already resolves everything off per-source assignments, so an assigner that
 *produces* those each turn leaves accrual, take, upkeep, decay, forecasts and the wire untouched. The
 assignment layer stops being **authored** and becomes **derived**, which is *"turns are the output"*
@@ -2938,14 +2948,9 @@ cheap answer is to make reassignment observable so it would be noticed rather th
   key stays** for §4.13's `length × terrain` (`infrastructure_cost`), which is the one remaining
   candidate and is genuinely a different shape: it reads the improvement's own geometry rather than
   the source it sits on.
-- **Whether the two keeping pools should split further.** Agriculture and husbandry split because the
-  webs do. A finer split — a herd keeper's kit versus a field tender's — is only meaningful once a kit
-  declares a maintenance contribution, which none does today, so splitting now would invent a
-  distinction nothing can express. It becomes a config-shaped change the moment §4's gear-as-
-  productivity lands.
 - **AN UNKEPT ANIMAL BUILD STALLS PERMANENTLY, and §4.6b's queue has to answer for it.** Measured:
-  a half-tamed herd with an empty `husbandry` role advances for three turns and then freezes — the
-  hunters draw the flock to their floor, the unmet keeping suppresses its regrowth, the escapement
+  a half-tamed herd with an empty `husbandry` role (now: a hunt row too thin to keep it) advances
+  for three turns and then freezes — the hunters draw the flock to their floor, the unmet keeping suppresses its regrowth, the escapement
   room never returns and the `Tame`'s own gate closes. It is not self-correcting and the only remedy
   is staffing the keeping, which nothing on the build line points at. **The plant web does not have
   it** (an ungathered patch regrows, so its gate stays open and it publishes an honest `-3`), and the
@@ -2958,7 +2963,7 @@ cheap answer is to make reassignment observable so it would be noticed rather th
   > never finishes, nothing below it does either, so the chained date is telling the truth rather than
   > taking a special case. **Passing over an ineligible head was the rejected alternative**: it would
   > silently re-order the one list whose order is the player's own input, and it would hide the stall
-  > that the remedy depends on being visible. The remedy — staff the keeping — is named on the row,
+  > that the remedy depends on being visible. The remedy — staff the keeping, which is now the herd row's own crew — is named on the row,
   > and gated on the keeping actually being short so it cannot fire on a rung stalled for some other
   > reason.
 - **Whether ALL-HANDS-ON-THE-HEAD is the right funding rule** (§4.6b). Ray: *"that is logical, we
@@ -2991,10 +2996,9 @@ cheap answer is to make reassignment observable so it would be noticed rather th
   part left, and it belongs with the transport rather than with any gameplay arc.
 
 > **Three items were retired rather than answered, and all three are worth recording as such.**
-> *"What the maintain toggle does to a build in flight"* went with the toggle itself — keeping is a
-> band-level pool, so *"stop maintaining this one thing"* is no longer expressible, and that is
-> deliberate; **`abandon` is not that lever coming back**, it puts the whole source down rather than
-> tuning its share. *"A building crew takes nothing"* was true only of the one-budget model it was
+> *"What the maintain toggle does to a build in flight"* went with the toggle itself. *"Stop maintaining this one thing"* is
+> expressible again since `docs/plan_site_crews.md`: take that site's crew to 0. **`abandon` is still
+> not that lever**, it puts the whole source down, row and queue entry with it. *"A building crew takes nothing"* was true only of the one-budget model it was
 > written under: with the crews separate, the gatherers beside a build carry exactly what gatherers
 > carry. And *"a crew at or below the maintenance rate never finishes"* went with the fullness test
 > in §4.6a — a build crew supplies no rate now, so the threshold it names does not exist. **The `∞`

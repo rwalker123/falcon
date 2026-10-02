@@ -190,7 +190,6 @@ fn keeper_row(herd_id: &str) -> LaborAssignment {
         workers: KEEPERS,
         kit: None,
         priority: SourcePriority::default(),
-        upkeep_kit: None,
     }
 }
 
@@ -266,9 +265,31 @@ fn learn_foddering(app: &mut App) {
         .add_progress(FACTION, FODDERING_DISCOVERY_ID, scalar_one());
 }
 
+/// **The keeping scratch cleared, and nothing else** — the fields the Logistics decay passes clear
+/// at the top of a real turn. A pen's own hunt crew keeps it (`docs/plan_site_crews.md` §2.1), so
+/// every labour pass stamps a supply the next one must not read as its own, and a Field's own
+/// crew keeps it the same way; driving `advance_husbandry` instead would also shed and re-stabilise
+/// the pens, which is a different fixture.
+fn clear_the_keeping_scratch(app: &mut App) {
+    for herd in &mut app.world.resource_mut::<HerdRegistry>().herds {
+        herd.upkeep_supplied = core_sim::NO_UPKEEP_DEMAND;
+        herd.upkeep_hands = core_sim::NO_HANDS;
+        herd.upkeep_toe.clear();
+        herd.upkeep_demanded = None;
+    }
+    let mut patches = app.world.resource_mut::<core_sim::ForageRegistry>();
+    for patch in patches.patches.values_mut() {
+        patch.upkeep_supplied = core_sim::NO_UPKEEP_DEMAND;
+        patch.upkeep_hands = core_sim::NO_HANDS;
+        patch.upkeep_toe.clear();
+        patch.upkeep_demanded = None;
+    }
+}
+
 /// Resolve the turn's labor pass and publish a frame off the live components — the two steps every
 /// assertion in this file reads through.
 fn resolve_and_publish(app: &mut App) {
+    clear_the_keeping_scratch(app);
     app.world.run_system_once(advance_labor_allocation);
     // **The published herd list is the display telemetry, not the registry** — `advance_herds`
     // rebuilds it at the end of its own pass, so a fixture that seats herds and captures without
@@ -438,6 +459,52 @@ fn a_pens_published_need_is_the_gap_its_footprint_leaves() {
     assert!(
         part > 0.0 && barren > part,
         "the fixture must produce three distinct needs (barren {barren}, part {part}, fed {fed})"
+    );
+}
+
+/// ⛔ **A PEN'S OWN CREW STATES ITS KEEPING HANDS ON THE WIRE** (`docs/plan_site_crews.md` §4) —
+/// `upkeepHands` on the encoded herd row is the crew's keeping share, the same number the sim
+/// stamped on the herd, and a pen nobody keeps publishes none. `upkeepToolsShort` rides beside it
+/// and reads `false` for a crew the band's ledger arms.
+#[test]
+fn a_pens_crew_publishes_its_keeping_hands() {
+    let mut app = a_world();
+    let tile = pen_tile(&app);
+    seat_pens(
+        &mut app,
+        tile,
+        &[(FED_PEN, FED_BIOMASS), (BARREN_PEN, BARREN_BIOMASS)],
+    );
+    pose_intake(&mut app, FED_PEN, gross_demand(FED_BIOMASS));
+    pose_intake(&mut app, BARREN_PEN, BARREN);
+    // One pen kept by its crew; the other held by nobody.
+    spawn_band(&mut app, tile, vec![keeper_row(FED_PEN)]);
+    resolve_and_publish(&mut app);
+
+    let stamped = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(FED_PEN)
+        .expect("the kept pen")
+        .upkeep_hands;
+    let published = published_herd_field(&app, FED_PEN, |row| row.upkeepHands());
+    assert!(
+        stamped > 0.0 && stamped <= KEEPERS as f32,
+        "fixture: the pen's crew keeps it with some of its hands, got {stamped}"
+    );
+    assert!(
+        (published - stamped).abs() < EPSILON,
+        "the wire carries the keeping hands the sim stamped: published {published}, stamped \
+         {stamped}"
+    );
+    assert!(
+        !published_herd_field(&app, FED_PEN, |row| row.upkeepToolsShort()),
+        "…and a crew the ledger arms is not tool-short"
+    );
+    assert_eq!(
+        published_herd_field(&app, BARREN_PEN, |row| row.upkeepHands()),
+        0.0,
+        "a pen nobody works publishes no keeping hands"
     );
 }
 
@@ -1217,7 +1284,6 @@ fn forager_row(patch: UVec2) -> LaborAssignment {
         workers: KEEPERS,
         kit: None,
         priority: SourcePriority::default(),
-        upkeep_kit: None,
     }
 }
 

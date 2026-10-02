@@ -251,7 +251,7 @@ with that sentence rather than mutely breaking the arithmetic.
 | `died` | `band= count= bracket={child\|working\|elder} cause={hunger\|cold\|age}` |
 | `migrated` | `band= count= direction={out\|in}` |
 | `hunt_report` | `engaged= fled= killed= carried_biomass= wasted_biomass= hunters_killed= hunters_wounded= bound={engagement\|floor\|carry\|fight} species=` |
-| a shed crew | `status={trimmed\|lapsed} reason=too_few_workers kind={forage\|hunt\|scout\|warrior\|agriculture\|husbandry\|builders} [x= y=\|herd=] workers= lost= band=` |
+| a shed crew | `status={trimmed\|lapsed} reason=too_few_workers kind={forage\|hunt\|extract\|scout\|warrior\|builders\|roadwork} [x= y=\|herd=] workers= lost= band=` |
 | a lapsed source row | `status=lapsed reason=herd_gone …source terms… band=` — `out_of_range` is retired: a far deposit posts a work party like every other source (`work-party.md`), and `out_of_leash` went with the hunt leash |
 | a narrowed take | `status=pruned reason=not_here role= band= dropped=` |
 
@@ -353,6 +353,48 @@ side a row describes rides its detail:
   can substitute its real name, and carries `band=/count=/from=<faction>/side=gained`. Pinned by
   `defection::a_party_accrues_pull_and_goes_whole_once_it_reaches_the_threshold`, which asserts the
   losing line carries none of `band= to= from= x= y=`.
+
+## A rung's decay is two edges — a slip (Info) and a loss (Alert)
+
+Every branch whose rungs decay announces through one seam: `intensification::rung_decay_edges`
+names what a falling position crossed, and `intensification::announce_rung_decay` writes the lines.
+
+| Edge | When | Label | Detail | Dock importance |
+|---|---|---|---|---|
+| **slip** | the position leaves a rung's TOP (`was >= top && now < top`) | `Field at (44, 24) is slipping — 94%` | `status=slipping rung=<wire key> x= y= progress=<whole %> band=<BandId>` | the lowest rung (`routine`) |
+| **loss** | the position falls to the rung's BASE — the top of the rung beneath | `Field at (44, 24) lost — back to a tended patch` | `status=feral reason=untended rung=<wire key> x= y= band=<BandId>` | Alert |
+
+- **Both are EDGES**, so a position staying below re-announces nothing, and a rung that climbs
+  back to its top and slips again is announced again. A loss subsumes a slip crossed in the same
+  decay.
+- **A loss is only of something HAD.** Each source carries `peak_rung` (`ForagePatch`, `Road`,
+  `DepositSource`; checkpointed with its registry): the highest rung achieved since the position
+  last stood at its base — raised in the position mutator the turn a rung completes
+  (`intensification::raise_peak`), lowered beneath every loss announced
+  (`intensification::settle_achieved_losses`). A part-built meter rotting to empty was never had,
+  so it gets no loss line (the row already reads *not queued, losing ground*), and it never stood at
+  its top, so no slip line either. Pinned by
+  `forage_field::a_part_built_field_rotting_to_empty_is_not_announced_lost`.
+- **Spans are read BEFORE the decay** — a plant patch's Field price lapses with its meter.
+- **Every value is one word**; the prose (`RungKey::feed_name` / `feed_fallback`) lives in the label.
+- **`band=` links the line to the Work row** — for each people told, its band with a row on the
+  site carrying the largest crew, ties to the lowest `BandId` (`intensification::site_band_for`); a
+  road's keeping band. Absent where no band of that people has a row on the site. Pinned by
+  `server::tests::a_slip_line_names_the_band_with_the_largest_crew_on_the_site`. The plant pass reads
+  the bands' rows, so it runs **before** `balance_supply_networks`, which writes them.
+- **Who hears it, per branch:** a plant patch's `owner`, on `Cultivate`/`Sow`; a road's keeper
+  people (read before the bleed, since a road falling into the free floor releases its keeper), on
+  `Road`; a working's — which has no owner — every people with a band holding an `extract` row on
+  it, on `Extraction`. **The animal web has no decay** (no animal rung declares a `meter_decay`;
+  neglect sheds animals instead), so it has no slip line. Road **disuse** on the free floor is
+  nobody's to hear and stays silent.
+- The three Logistics passes append in a declared order — plant, herd, road, working
+  (`advance_roads.after(advance_husbandry)`, `advance_deposits.after(advance_roads)`).
+
+Pinned by `forage_cultivation::{a_tended_patch_slipping_is_one_info_line_and_losing_it_one_alert,
+a_tended_patch_that_recovers_and_slips_again_is_announced_twice}`,
+`forage_field::losing_a_field_pushes_one_slip_and_one_loss_on_the_sow_channel` and
+`routes::tests::a_kept_road_slipping_is_one_info_line_and_losing_its_rung_one_alert`.
 
 ## What is NOT here
 

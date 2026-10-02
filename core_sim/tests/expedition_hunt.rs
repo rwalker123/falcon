@@ -559,7 +559,7 @@ fn a_raid_and_a_resident_band_reach_the_same_animals() {
         let mut quarry = herd.clone();
         hunt_take(
             &mut quarry,
-            PARITY_PARTY,
+            PARITY_PARTY as f32,
             PEAK_FLOOR,
             per_worker,
             &hunting_party(),
@@ -1344,6 +1344,7 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
                         &hunting_party(),
                         output_multiplier,
                         workers,
+                        core_sim::NO_HANDS,
                         policy,
                         labor.yield_average_horizon_turns,
                         labor.arrivals_horizon_turns,
@@ -1368,7 +1369,7 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
                 };
                 let take = hunt_take(
                     &mut herd,
-                    workers,
+                    workers as f32,
                     policy,
                     equipped_haul_rate(),
                     &hunting_party(),

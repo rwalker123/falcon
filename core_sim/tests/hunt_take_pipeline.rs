@@ -83,7 +83,7 @@ fn sustained_take(species: &str, workers: u32) -> (f32, u32) {
     for tick in 0..u64::from(SUSTAINED_TURNS) {
         let outcome = hunt_take(
             &mut herd,
-            workers,
+            workers as f32,
             STRIP_IT_BARE,
             equipped_haul_rate(),
             &party,
@@ -230,7 +230,7 @@ fn the_floor_stops_the_engagement_so_a_herd_at_it_yields_nothing() {
     let mut spare = herd.clone();
     let taken = hunt_take(
         &mut spare,
-        8,
+        8.0,
         STRIP_IT_BARE,
         equipped_haul_rate(),
         &party,
@@ -245,7 +245,7 @@ fn the_floor_stops_the_engagement_so_a_herd_at_it_yields_nothing() {
 
     let outcome = hunt_take(
         &mut herd,
-        8,
+        8.0,
         LEAVE_IT_ALL,
         equipped_haul_rate(),
         &party,
@@ -276,5 +276,5 @@ fn the_floor_stops_the_engagement_so_a_herd_at_it_yields_nothing() {
 #[test]
 fn an_unstaffed_row_engages_nothing() {
     let fauna = FaunaConfig::builtin();
-    assert_eq!(animals_engaged(0, fauna.engage_rate_for(BOAR)), 0.0);
+    assert_eq!(animals_engaged(0.0, fauna.engage_rate_for(BOAR)), 0.0);
 }

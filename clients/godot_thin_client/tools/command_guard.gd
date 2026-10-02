@@ -256,8 +256,11 @@ func _ready() -> void:
 	await _drive_far_herd_assign_labor()
 	await _drive_send_denial_raid()
 	await _drive_assign_labor_kits()
-	await _drive_build_kit()
 	await _drive_build_order()
+	await _drive_build_priority()
+	await _drive_work_priority()
+	await _drive_unqueue()
+	_assert_retired_kit_verbs()
 	await _drive_send_trade_expedition()
 	_drive_road_verbs()
 	_drive_deposit_verbs()
@@ -485,7 +488,7 @@ func _drive_assign_labor_kits() -> void:
 	# drive names no kit, so the tail closes after the worker count; the kit-tailed shape is driven
 	# third, below.
 	_hud._emit_assign_labor(band, HudConst.LABOR_KIND_EXTRACT, PARTY_WORKERS,
-		TARGET_X, TARGET_Y, "", SourceForecast.DEFAULT_HARVEST_FLOOR, EXTRACT_MATERIAL,
+		TARGET_X, TARGET_Y, "", SourceForecast.DEFAULT_HARVEST_FLOOR, DEPOSIT_MATERIAL,
 		SourceForecast.IMPROVEMENT_NONE, KitRoster.NO_KIT_ID)
 	await _settle()
 	# ⛔ **…AND THE SAME GRAMMAR WITH THE FLOOR OMITTED, which is what a FINITE working sends** (PR
@@ -496,7 +499,7 @@ func _drive_assign_labor_kits() -> void:
 	# the token where a floor WAS named would put the floor in the worker slot, and one that kept it
 	# where none was named would parse perfectly and store a choice nobody made.
 	_hud._emit_assign_labor(band, HudConst.LABOR_KIND_EXTRACT, PARTY_WORKERS,
-		TARGET_X, TARGET_Y, "", SourceForecast.FLOOR_UNNAMED, EXTRACT_MATERIAL,
+		TARGET_X, TARGET_Y, "", SourceForecast.FLOOR_UNNAMED, DEPOSIT_MATERIAL,
 		SourceForecast.IMPROVEMENT_NONE, KitRoster.NO_KIT_ID)
 	await _settle()
 	# **…AND WITH THE KIT TOKEN** (issue #663). The roster's `extract` job lists the Sled, Woodcutting and
@@ -505,7 +508,7 @@ func _drive_assign_labor_kits() -> void:
 	# `[floor] <workers>` is read. `none` is the pick because it is the one an omitted token would get
 	# wrong: an absent token means the working's own derived kit, so a bare-handed crew MUST name it.
 	_hud._emit_assign_labor(band, HudConst.LABOR_KIND_EXTRACT, PARTY_WORKERS,
-		TARGET_X, TARGET_Y, "", SourceForecast.DEFAULT_HARVEST_FLOOR, EXTRACT_MATERIAL,
+		TARGET_X, TARGET_Y, "", SourceForecast.DEFAULT_HARVEST_FLOOR, DEPOSIT_MATERIAL,
 		SourceForecast.IMPROVEMENT_NONE, BandFx.KIT_ID_NONE)
 	await _settle()
 	# **THE THIRD GRAMMAR — A BAND-WIDE ROLE, AND EVERY ROLE, NOT A REPRESENTATIVE ONE.**
@@ -531,7 +534,7 @@ func _drive_assign_labor_kits() -> void:
 		# §4.7a ②). The builders' kit is a property of the queue ENTRY, and `handle_assign_labor`
 		# REFUSES a `kit` token on this role by name — it parses and is then rejected, which is a
 		# state this parser-level guard cannot see. So the role is swept BARE, and the per-entry
-		# override is driven by `_drive_build_kit` below, which is where it now lives.
+		# override is retired with `build_kit` itself (`docs/plan_site_crews.md`).
 		var kit := KitRoster.NO_KIT_ID if role == HudConst.LABOR_KIND_BUILDERS \
 			else BandFx.KIT_ID_NONE
 		_hud._emit_assign_labor(band, String(role), PARTY_WORKERS, -1, -1, "",
@@ -546,50 +549,27 @@ func _drive_assign_labor_kits() -> void:
 		KitRoster.NO_KIT_ID)
 	await _settle()
 
-## **`build_kit` — THE PER-ENTRY BUILDERS KIT** (`docs/plan_standing_upkeep.md` §4.7a ②), driven on
-## BOTH source forms, because a tile and a herd are two different grammars of one verb and a builder
-## that gets the pair backwards passes either alone.
-##
-## **IT IS THE VERB THAT REPLACED A `kit` TOKEN ON THE `builders` ROW**, and it is band-addressed only
-## in the sense that the SOURCE is: the line names no band at all, because every band holding that
-## source holds the same entry. That is exactly the kind of thing this guard exists to pin — the
-## grammar is the one place a client can be well-formed and mean something else.
-##
-## **A NON-DEFAULT KIT, DELIBERATELY.** A payload whose kit equals the DERIVED one emits no `kit`
-## token (that is how the override was cleared), and `_record` treats an expectation equal to the
-## default as a fixture error — rightly, since the assertion could never fail there.
-##
-## ⛔ **THIS IS THE VERB'S ONLY LIVE DRIVER NOW, and nothing in the UI emits it.**
-## `docs/plan_pool_toe.md` §3 retired the queue row's kit picker — a build's tools follow from the
-## RUNG it raises — so `band_panel_preview`'s live-picker claim (which carried the clearing case) is
-## retired with it and this drive reaches `_emit_build_kit` directly. Leaving the seam unreachable
-## from the UI is the expected state until the command retires end to end in a later slice.
-func _drive_build_kit() -> void:
-	var band: Dictionary = _hud._band_labor.panel_band()
-	# **`BUILD_RUNG_ANY` IS STATED, NOT DEFAULTED** — no plant or animal kit binds a rung, so the
-	# unqualified ask is the right one here; the lookup takes no default so that a caller which
-	# cannot name a rung has to say so rather than arrive at the refusal by omission.
-	var derived := KitRoster.build_kit_for_branch(_hud._band_labor.kits(),
-		KitRoster.BUILD_BRANCH_PLANT, KitRoster.BUILD_RUNG_ANY)
-	_hud._bandpanel._emit_build_kit(band, {
-		"kind": SourceForecast.LABOR_KIND_FORAGE, "x": TARGET_X, "y": TARGET_Y, "herd_id": "",
-	}, BandFx.KIT_ID_NONE, derived)
-	await _settle()
-	_hud._bandpanel._emit_build_kit(band, {
-		"kind": SourceForecast.LABOR_KIND_HUNT, "x": -1, "y": -1, "herd_id": NEAR_HERD_ID,
-	}, BandFx.KIT_ID_NONE, KitRoster.build_kit_for_branch(_hud._band_labor.kits(),
-		KitRoster.BUILD_BRANCH_ANIMAL, KitRoster.BUILD_RUNG_ANY))
-	await _settle()
-
 ## **`build_order` — THE QUEUE'S REORDER** (`docs/plan_standing_upkeep.md` §4.7b ③), both source
 ## forms again.
 ##
-## **THIS ONE DOES NAME A BAND, where `build_kit` and `unqueue` do not** — a queue belongs to a band —
+## **THIS ONE DOES NAME A BAND, where `unqueue` does not** — a queue belongs to a band —
 ## so it is squarely what this guard's handle assertion is for: the fixture's `entity` and `band_id`
 ## are deliberately different numbers, and a client sending entity bits down the reorder would produce
 ## a line that parses and moves someone else's queue.
 func _drive_build_order() -> void:
 	var band: Dictionary = _hud._band_labor.panel_band()
+	# ⛔ **A WORKING IS `<x> <y> <material>` AND A ROAD IS `road <x> <y>`** (`docs/plan_site_crews.md`
+	# §2.4) — the bare tile is the PATCH on that hex, so a queue row addressing either the old way
+	# would reorder somebody else's entry.
+	_hud._bandpanel._emit_build_order(band, {
+		"kind": HudConst.LABOR_KIND_EXTRACT, "x": TARGET_X, "y": TARGET_Y, "herd_id": "",
+		"material": DEPOSIT_MATERIAL,
+	}, BUILD_ORDER_POSITION)
+	await _settle()
+	_hud._bandpanel._emit_build_order(band, {
+		"kind": HudConst.LABOR_KIND_ROADWORK, "x": TARGET_X, "y": TARGET_Y, "herd_id": "", "road": true,
+	}, BUILD_ORDER_POSITION)
+	await _settle()
 	_hud._bandpanel._emit_build_order(band, {
 		"kind": SourceForecast.LABOR_KIND_FORAGE, "key": "forage:%d,%d" % [TARGET_X, TARGET_Y],
 		"x": TARGET_X, "y": TARGET_Y, "herd_id": "",
@@ -600,6 +580,78 @@ func _drive_build_order() -> void:
 		"x": -1, "y": -1, "herd_id": NEAR_HERD_ID,
 	}, SourceForecast.BUILD_QUEUE_HEAD)
 	await _settle()
+
+## **`build_priority` — A QUEUED BUILD'S OWN MARK** (`docs/plan_site_crews.md` §2.4), both source
+## forms, driven through the `Build` pill's own commit. It names a BAND, so the handle assertion is what
+## proves the client does not send entity bits down it.
+func _drive_build_priority() -> void:
+	var band: Dictionary = _hud._band_labor.panel_band()
+	_hud._bandpanel._commit_build_priority(band, {
+		"x": TARGET_X, "y": TARGET_Y, "herd_id": "",
+	}, HudWorkVocab.WORK_PRIORITY_HIGH)
+	await _settle()
+	_hud._bandpanel._commit_build_priority(band, {
+		"x": -1, "y": -1, "herd_id": NEAR_HERD_ID,
+	}, HudWorkVocab.WORK_PRIORITY_LOW)
+	await _settle()
+	# …and the two site forms the queue now draws rows for: a working's and a road's.
+	_hud._bandpanel._commit_build_priority(band, {
+		"kind": HudConst.LABOR_KIND_EXTRACT, "x": TARGET_X, "y": TARGET_Y, "herd_id": "",
+		"material": DEPOSIT_MATERIAL,
+	}, HudWorkVocab.WORK_PRIORITY_HIGH)
+	await _settle()
+	_hud._bandpanel._commit_build_priority(band, {
+		"kind": HudConst.LABOR_KIND_ROADWORK, "x": TARGET_X, "y": TARGET_Y, "herd_id": "", "road": true,
+	}, HudWorkVocab.WORK_PRIORITY_LOW)
+	await _settle()
+
+## **`work_priority` — A SITE CREW'S MARK**, in its three forms: the patch, the herd and the working.
+## ⛔ **NO ROAD FORM**: a road has no crew to rank and the server refuses it by name, so the client
+## must build NO line for one — asserted, beside the three that must parse.
+func _drive_work_priority() -> void:
+	var band: Dictionary = _hud._band_labor.panel_band()
+	for model in [
+			{"x": TARGET_X, "y": TARGET_Y, "herd_id": ""},
+			{"x": -1, "y": -1, "herd_id": NEAR_HERD_ID},
+			{"kind": HudConst.LABOR_KIND_EXTRACT, "x": TARGET_X, "y": TARGET_Y, "herd_id": "",
+				"material": DEPOSIT_MATERIAL}]:
+		_hud._bandpanel._commit_work_priority(band, model, HudWorkVocab.WORK_PRIORITY_HIGH)
+		await _settle()
+	if not MAIN_SCRIPT.format_work_priority({
+			"faction": HudConst.PLAYER_FACTION_ID, "band_id": BAND_ID,
+			"x": TARGET_X, "y": TARGET_Y, "road": true, "level": HudWorkVocab.WORK_PRIORITY_HIGH,
+		}).is_empty():
+		_fail("work_priority: a line was built for a ROAD, which has no crew to rank")
+
+## **`unqueue` — THE WITHDRAWAL**, in the four forms a queue row can name: patch, herd, working, road.
+func _drive_unqueue() -> void:
+	var band: Dictionary = _hud._band_labor.panel_band()
+	for model in [
+			{"kind": SourceForecast.LABOR_KIND_FORAGE, "x": TARGET_X, "y": TARGET_Y, "herd_id": ""},
+			{"kind": SourceForecast.LABOR_KIND_HUNT, "x": -1, "y": -1, "herd_id": NEAR_HERD_ID},
+			{"kind": HudConst.LABOR_KIND_EXTRACT, "x": TARGET_X, "y": TARGET_Y, "herd_id": "",
+				"material": DEPOSIT_MATERIAL},
+			{"kind": HudConst.LABOR_KIND_ROADWORK, "x": TARGET_X, "y": TARGET_Y, "herd_id": "", "road": true}]:
+		_hud._bandpanel._emit_unqueue(band, model)
+		await _settle()
+	_hud._band_labor._pending_labor.clear()
+
+## ⛔ **`build_kit` AND `upkeep_kit` ARE RETIRED END TO END** (`docs/plan_site_crews.md`) — the server's
+## parser refuses both, so the client must build no line for either and emit neither signal.
+func _assert_retired_kit_verbs() -> void:
+	for method in ["format_build_kit", "format_upkeep_kit"]:
+		if _main_has_static(method):
+			_fail("the retired `%s` builder still exists on Main" % method)
+	for sig in ["build_kit_requested", "upkeep_kit_requested"]:
+		if _hud.has_signal(sig):
+			_fail("the HUD still declares the retired `%s` signal" % sig)
+
+func _main_has_static(method: String) -> bool:
+	var script: Script = MAIN_SCRIPT
+	for entry in script.get_script_method_list():
+		if String((entry as Dictionary).get("name", "")) == method:
+			return true
+	return false
 
 ## The position the plant drive moves its entry to. **Not the head**, because 0 is what an
 ## uninitialised int and a dropped field both look like.
@@ -614,7 +666,7 @@ const BUILD_ORDER_POSITION := 2
 ## whole-unit step cannot reach. What is under test is the AMOUNT the client then spells, so a drive
 ## that wrote the manifest directly would test its own arithmetic instead of the sheet's.
 ##
-## The destination is the click the sheet's send arms — on where the tie last saw the band, the only
+## The destination is the map click the open sheet rings — on where the tie last saw the band, the only
 ## position the client holds for a band it is tied to but does not command.
 func _drive_send_trade_expedition() -> void:
 	_hud._selection.clear()
@@ -646,9 +698,11 @@ func _drive_send_trade_expedition() -> void:
 	# formatter off an exact holding, and one already floored by the sheet.
 	await _load_pile_with_max(HudComposeVocab.COMPOSE_CARGO_FODDER_LABEL)
 	await _load_whole_pile(TRADE_HIDE_MATERIAL)
-	_press_meta_button(_hud.allocation_panel, HudWidgets.SEND_TRADE_CONFIRM_META, "trade verb sheet")
-	await _settle()
+	# **THE DESTINATION IS PICKED ON THE MAP FIRST, AND THE SEND IS THE ORDER.** The open sheet rings
+	# every live tie's band, a click on one sets the destination, and only then is the Send live.
 	_hud.notify_targeting_click({"x": DESTINATION_LAST_SEEN_X, "y": DESTINATION_LAST_SEEN_Y})
+	await _settle()
+	_press_meta_button(_hud.allocation_panel, HudWidgets.SEND_TRADE_CONFIRM_META, "trade verb sheet")
 	await _settle()
 
 ## Press one cargo row's `+` until the pile is loaded whole — the button DISABLES at the ceiling, which
@@ -696,20 +750,30 @@ func _load_pile_with_max(needle: String) -> void:
 ## what a fourth control broke** (issue #620): the walk found the new `Max` button and pressed it
 ## believing it was the `+`, which loads a whole pile per press and reports nothing. A meta is the
 ## only handle that survives a control joining the row.
+##
+## The match is a GOOD's main line (`CARGO_GOOD_ROW_META`) whose name contains `needle`, case
+## insensitively — a material good is named `Hide` where its id is `hide`.
 func _cargo_control(root: Node, needle: String, control: String) -> Button:
-	if root is HBoxContainer and (root as HBoxContainer).has_meta(HudWidgets.CARGO_ROW_KEY_META):
-		var row := root as HBoxContainer
-		if row.get_child_count() > 0 and row.get_child(0) is Label \
-				and (row.get_child(0) as Label).text.contains(needle):
-			for child in row.get_children():
-				if child is Button and String(child.get_meta(
-						HudWidgets.CARGO_CONTROL_META, "")) == control:
-					return child as Button
+	if root is HBoxContainer and (root as HBoxContainer).has_meta(HudWidgets.CARGO_GOOD_ROW_META) \
+			and _names_good(root, needle):
+		for child in root.get_children():
+			if child is Button and String(child.get_meta(
+					HudWidgets.CARGO_CONTROL_META, "")) == control:
+				return child as Button
 	for child in root.get_children():
 		var found := _cargo_control(child, needle, control)
 		if found != null:
 			return found
 	return null
+
+## Does a good's main line carry a Label naming `needle`?
+func _names_good(root: Node, needle: String) -> bool:
+	for child in root.get_children():
+		if child is Label and (child as Label).text.findn(needle) >= 0:
+			return true
+		if not (child is Button) and _names_good(child, needle):
+			return true
+	return false
 
 ## Push the band through a REAL MapView and click its hex, so the HUD's selected unit is the marker
 ## `_rebuild_unit_markers` built — not the cohort dict the snapshot path holds.
@@ -777,6 +841,16 @@ func _find_button_by_text(node: Node, face: String) -> Button:
 			return found
 	return null
 
+## The first Control under `node` carrying `meta` — a row, not a button.
+func _find_meta_control_in(node: Node, meta: String) -> Control:
+	if node is Control and node.has_meta(meta):
+		return node as Control
+	for child in node.get_children():
+		var found := _find_meta_control_in(child, meta)
+		if found != null:
+			return found
+	return null
+
 func _find_meta_button(node: Node, meta: String) -> Button:
 	if node is Button and node.has_meta(meta):
 		return node
@@ -801,10 +875,14 @@ func _connect_recorders() -> void:
 		_record("recall_expedition", p, MAIN_SCRIPT.format_recall_expedition(p)))
 	_hud.split_band_requested.connect(func(p: Dictionary) -> void:
 		_record("split_band", p, MAIN_SCRIPT.format_split_band(p)))
-	_hud.build_kit_requested.connect(func(p: Dictionary) -> void:
-		_record("build_kit", p, MAIN_SCRIPT.format_build_kit(p)))
 	_hud.build_order_requested.connect(func(p: Dictionary) -> void:
 		_record("build_order", p, MAIN_SCRIPT.format_build_order(p)))
+	_hud.work_priority_requested.connect(func(p: Dictionary) -> void:
+		_record("work_priority", p, MAIN_SCRIPT.format_work_priority(p)))
+	_hud.unqueue_requested.connect(func(p: Dictionary) -> void:
+		_record("unqueue", p, MAIN_SCRIPT.format_unqueue(p)))
+	_hud.build_priority_requested.connect(func(p: Dictionary) -> void:
+		_record("build_priority", p, MAIN_SCRIPT.format_build_priority(p)))
 	_hud.cancel_order_requested.connect(func(band: Dictionary, scope: String) -> void:
 		_record("cancel_order", band, MAIN_SCRIPT.format_cancel_order(band, scope)))
 	_hud.abandon_requested.connect(func(p: Dictionary) -> void:
@@ -972,10 +1050,19 @@ func _drive_road_abandon() -> void:
 	_panel.set_active_tab(BandCityPanel.ZONE_WORK)
 	_hud._bandpanel.rerender()
 	await _settle()
-	var drop := _find_meta_button(_panel, HudWorkVocab.ROADWORK_ROSTER_ABANDON_META)
+	# The put-down is the road row's INSPECTOR action: a click on the row opens the card.
+	var road_row := _find_meta_control_in(_panel, HudWorkVocab.ROADWORK_ROSTER_ROW_META)
+	if road_row == null:
+		_fail("abandon: the roadwork roster drew no row for a road this band keeps, so the verb has no emitter to drive")
+		return
+	var click := InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	road_row.gui_input.emit(click)
+	await _settle()
+	var drop := _find_meta_button(_hud, HudWorkVocab.ROADWORK_ROSTER_ABANDON_META)
 	if drop == null:
-		_fail("abandon: the roadwork roster drew no `%s` for a road this band keeps, so the verb has no emitter to drive"
-			% HudWorkVocab.ROADWORK_ROSTER_ABANDON_GLYPH)
+		_fail("abandon: a click on the road row opened no inspector put-down, so the verb has no emitter to drive")
 		return
 	drop.pressed.emit()
 	await _settle()
@@ -992,9 +1079,6 @@ const KIT_BEARING_KINDS := {
 	# The SCOUTING party's kit — the `expedition` job's, not the hunt one's. It joined this list when
 	# a ranging party stopped inheriting the hunt default and got a kit the player picks.
 	"send_expedition": true,
-	# The per-entry builders kit. It rides the SAME `_kit_token` rule as the other three, which is the
-	# whole reason *"pick the default"* clears the override rather than needing a literal of its own.
-	"build_kit": true,
 }
 
 ## Record one emitted command. A builder that DECLINES (empty dict) is itself a failure here: every
@@ -1043,16 +1127,15 @@ func _record(kind: String, payload: Dictionary, formatted: Dictionary,
 const ASSIGN_LABOR_ROLES := [
 	HudConst.LABOR_KIND_SCOUT,
 	HudConst.LABOR_KIND_WARRIOR,
-	HudConst.LABOR_KIND_AGRICULTURE,
-	HudConst.LABOR_KIND_HUSBANDRY,
 	HudConst.LABOR_KIND_ROADWORK,
-	HudConst.LABOR_KIND_QUARRYWORK,
 	HudConst.LABOR_KIND_BUILDERS,
 ]
 
-## The material the `extract` drive names. A real shipped material, so the line this guard parses is
-## the line the client emits rather than one built out of a placeholder.
-const EXTRACT_MATERIAL := "wood"
+## **THE THREE RETIRED KEEPING POOLS** (`docs/plan_site_crews.md` §1) — a patch, a herd and a working
+## are kept by their own crews, and the sim refuses these tokens by name. Spelled here rather than
+## reached through `HudConst`, whose constants retired with the pools: an ABSENCE claim still needs a
+## needle, and the builder must build NOTHING for any of them.
+const RETIRED_ASSIGN_LABOR_ROLES := ["agriculture", "husbandry", "quarrywork"]
 
 ## A role name no builder knows, for the negative below.
 const ASSIGN_LABOR_UNKNOWN_ROLE := "stonemason"
@@ -1074,7 +1157,7 @@ const ASSIGN_LABOR_BARE_DRIVES := 2
 
 ## What `EXPECTED_KINDS` must say for `assign_labor`. Spelled here because a `const` initializer
 ## cannot call `Array.size()`, and re-derived at runtime so the two cannot drift.
-const ASSIGN_LABOR_EXPECTED := 15
+const ASSIGN_LABOR_EXPECTED := 12
 
 ## **THE LIST ABOVE IS THE WHOLE OF WHAT THE CLIENT CAN SAY, ASSERTED RATHER THAN TRUSTED.**
 ##
@@ -1110,6 +1193,13 @@ func _assert_every_role_is_emittable() -> void:
 		}).get("line", "")) != "":
 		_fail("`%s` built an assign_labor line, so the role list is not a list"
 			% ASSIGN_LABOR_UNKNOWN_ROLE)
+	for retired in RETIRED_ASSIGN_LABOR_ROLES:
+		if String(MAIN_SCRIPT.format_assign_labor({
+				"faction": HudConst.PLAYER_FACTION_ID,
+				"band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
+				"kind": String(retired), "workers": PARTY_WORKERS,
+			}).get("line", "")) != "":
+			_fail("the retired keeping pool `%s` still builds an assign_labor line" % String(retired))
 	# **AND THE EXPECTED COUNT IS RE-DERIVED FROM THE LIST**, because `EXPECTED_KINDS` has to spell it
 	# as a literal: a role added to the sweep without bumping that number would leave the emit count
 	# short and the failure would name the COUNT rather than the role, which is a worse error message
@@ -1140,10 +1230,15 @@ const EXPECTED_KINDS := {
 	# Fission's own verb. It names a BAND rather than a party, so the handle assertion is what proves
 	# the client does not send entity bits down the split either.
 	"split_band": 1,
-	# TWO each — the tile form and the herd form, which are two grammars of one verb and the pair a
-	# builder can get backwards (`docs/plan_standing_upkeep.md` §4.7a ②, §4.7b ③).
-	"build_kit": 2,
-	"build_order": 2,
+	# FOUR — the tile, herd, working and road forms, the one site grammar a builder can get backwards
+	# (`docs/plan_standing_upkeep.md` §4.7b ③, `docs/plan_site_crews.md` §2.4).
+	"build_order": 4,
+	# TWO — a queued build's own mark, tile form and herd form (`docs/plan_site_crews.md` §2.4).
+	"build_priority": 4,
+	# THREE — the patch, the herd and the working; the road form is asserted to build NO line.
+	"work_priority": 3,
+	# FOUR — every form a queue row can withdraw.
+	"unqueue": 4,
 	# ONE — the Deny verb's sheet, opened on the herd its pick landed on, is the raid's only launch site.
 	"send_denial_raid": 1,
 	# ONE — the Trade verb's sheet is the shipment's only launch site, and one line carries every pile.

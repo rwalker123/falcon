@@ -601,6 +601,17 @@ pub(crate) fn herds_to_array(
             "upkeep_workers_needed",
             i64::from(herd.upkeepWorkersNeeded()),
         );
+        // THE KEEPING LINE'S TWO FORECASTS (`docs/plan_site_crews.md`), whole workers like the count
+        // above: the workers once the in-flight rung is done, and the ABSOLUTE game turn the keeping
+        // first needs one more whole worker (`-1` = never within the build).
+        let _ = dict.insert(
+            "upkeep_workers_at_completion",
+            i64::from(herd.upkeepWorkersAtCompletion()),
+        );
+        let _ = dict.insert(
+            "upkeep_next_worker_turn",
+            i64::from(herd.upkeepNextWorkerTurn()),
+        );
         // **THE STANDING PRICE, PER RUNG** — what holding THAT rung will cost per turn once it stands,
         // published unconditionally exactly as the `*_work_cost` beside it is. `upkeep_demand` above
         // answers *"what is this herd billed right now"*, which is `0` on a herd with nothing started,
@@ -736,6 +747,22 @@ pub(crate) fn herds_to_array(
         // second client-side derivation. Decoded on both webs so one reader serves a herd and a
         // patch alike.
         let _ = dict.insert("upkeep_kit_named", herd.upkeepKitNamed());
+        // **WHAT THIS HERD'S OWN CREW SPENT KEEPING IT** (`docs/plan_site_crews.md` §2.1). A site's
+        // crew keeps it first and takes with the rest, so the work row's second line reads
+        // `keeps <upkeep_supplied> of <upkeep_demand> · <workers - upkeep_hands> hunting`.
+        //   `upkeep_hands`       = crew hands spent keeping this turn, fractional, summed across
+        //                          every band keeping it; `0` on a herd that owes nothing.
+        //   `upkeep_tools_short` = the band-wide settlement filled less than this site's
+        //                          keeping-tool claim, so its crew kept with more of its own hands —
+        //                          the row's `ⓘ` where the work is still covered.
+        let _ = dict.insert("upkeep_hands", f64::from(herd.upkeepHands()));
+        let _ = dict.insert("upkeep_tools_short", herd.upkeepToolsShort());
+        // **…AND WHICH TOOLS** — the site's keeping-tool table, the lines `upkeep_tools_short` is
+        // derived from, so the hover can NAME the short tool.
+        let _ = dict.insert(
+            "upkeep_toe",
+            &crate::dict::population::kit_toe_to_array(herd.upkeepToe()),
+        );
         array.push(&dict.to_variant());
     }
     array
@@ -1335,6 +1362,17 @@ pub(crate) fn forage_patches_to_array(
             "upkeep_workers_needed",
             i64::from(patch.upkeepWorkersNeeded()),
         );
+        // THE KEEPING LINE'S TWO FORECASTS (`docs/plan_site_crews.md`), whole workers like the count
+        // above: the workers once the in-flight rung is done, and the ABSOLUTE game turn the keeping
+        // first needs one more whole worker (`-1` = never within the build).
+        let _ = dict.insert(
+            "upkeep_workers_at_completion",
+            i64::from(patch.upkeepWorkersAtCompletion()),
+        );
+        let _ = dict.insert(
+            "upkeep_next_worker_turn",
+            i64::from(patch.upkeepNextWorkerTurn()),
+        );
         // **THE STANDING PRICE, PER RUNG** — the plant twin of the herd block's pair; see there for
         // why `upkeep_demand` cannot price a rung nobody has started, and why this is a price rather
         // than a threshold. Both plant rungs declare `scaled_by: source_load` and quote their rate
@@ -1384,6 +1422,13 @@ pub(crate) fn forage_patches_to_array(
         // rather than the band. Newest slot on `ForagePatchState`.
         let _ = dict.insert("upkeep_kit_id", patch.upkeepKitId().unwrap_or(""));
         let _ = dict.insert("upkeep_kit_named", patch.upkeepKitNamed());
+        // **WHAT THIS PATCH'S OWN CREW SPENT KEEPING IT** — the herd block's pair; see there.
+        let _ = dict.insert("upkeep_hands", f64::from(patch.upkeepHands()));
+        let _ = dict.insert("upkeep_tools_short", patch.upkeepToolsShort());
+        let _ = dict.insert(
+            "upkeep_toe",
+            &crate::dict::population::kit_toe_to_array(patch.upkeepToe()),
+        );
         // THE BUILD CREWS ARE RETIRED with `crew_needed` (docs/plan_standing_upkeep.md section
         // 2.2). They floored the compose sheet's worker cap because that cap was inverted out of the
         // TAKE and a building crew was paid a dipped take, so a 25-turn improvement asked for FEWER
