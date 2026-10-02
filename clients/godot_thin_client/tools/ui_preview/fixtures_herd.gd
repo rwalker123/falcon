@@ -603,7 +603,7 @@ static func herd_fixture() -> Dictionary:
 		"pastoral_yield": 1.20,
 		"corral_progress": 0.0,
 		# EVERY ceiling — the four extractive rungs plus the Tame/Corral DIPS — rides this ONE list;
-		# the herd has no flat `ceiling*` scalars on the wire any more (deprecated schema slots). The
+		# the herd has no flat `ceiling*` scalars on the wire. The
 		# sim exports a row for every one of the six `FollowPolicy::HUNT_POLICIES`, so this is the
 		# shape the decoder produces and where `SourceForecast.forecast_inputs` reads every herd ceiling.
 		"hunt_policy_ceilings": {

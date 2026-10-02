@@ -1155,7 +1155,7 @@ mod tests {
 
     /// ⛔ **THERE IS NO SUM CHECK ON THE KIT SIDE, AND THAT IS DELIBERATE.** The budget is the
     /// spawned band's head count, which does not exist at load; an over-allocating pre-fill parses
-    /// and is clamped at publish time instead
+    /// and is clamped when it is applied to a band instead
     /// ([`crate::starting_loadout::clamped_kit_defaults`]).
     #[test]
     fn a_kit_pre_fill_over_any_plausible_budget_still_parses() {

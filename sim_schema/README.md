@@ -16,7 +16,7 @@ item is still reachable as `sim_schema::Foo` — consumers never name a submodul
 | Path | Contents |
 |---|---|
 | `src/state/map.rs` | `TileState`, `TerrainType`/`TerrainTags`/`TerrainSample`, `MountainKind`, terrain & elevation overlays, `ClimateBandsState`, `TemperatureSurvivabilityState`, `StartMarkerState`, `RiverClass`/`RiverChannel`, `ScalarRasterState`/`FloatRasterState` |
-| `src/state/economy.rs` | faction inventories, `KnownTechFragment` (the logistics/trade-link states were demolished in arc #527 — `docs/plan_contact_and_logistics.md` §As-built; their `.fbs` tables survive as `(deprecated)` slots) |
+| `src/state/economy.rs` | faction inventories, `KnownTechFragment` (the logistics/trade-link states were demolished in arc #527 — `docs/plan_contact_and_logistics.md` §As-built; their `.fbs` tables were deleted from the schema) |
 | `src/state/population.rs` | cohorts, demographics, generations, labor assignments, harvest/scout tasks, stockpiles |
 | `src/state/subsistence.rs` | herds + herd telemetry, forage/graze registries, forage patches, food modules, sedentarization, intensification knowledge, `GRAZE_PHASE_*` |
 | `src/state/knowledge.rs` | the leak ledger + countermeasures/infiltrations/modifiers, knowledge timeline & metrics, great discoveries, discovered sites |
@@ -33,8 +33,8 @@ item is still reachable as `sim_schema::Foo` — consumers never name a submodul
 **The rule when you add a snapshot field:** append it to your section's
 `state/` file *and* that section's `codec/` file — serializer **and** decoder, which
 the exhaustive decode literal will insist on (and to your section table in
-`schemas/snapshot.fbs`, which is append-only — see the FlatBuffers slot-order
-discipline). If it is a `Vec`, seed it in `fixture.rs` or the fixture refuses to
+`schemas/snapshot.fbs`, where a new field goes at the END of its table — see
+"Field order and retiring a field" below). If it is a `Vec`, seed it in `fixture.rs` or the fixture refuses to
 build. Nothing else should need to change. If a codec helper gains a second
 section as a consumer, hoist it to `codec/mod.rs` rather than duplicating it.
 
@@ -49,6 +49,25 @@ value is its own wire path. Two things will stop you first if you skip it: a new
 one of the state structs without a `Default` fails to compile
 (`src/fixture.rs` holds exhaustive literals for those on purpose, and every decoder
 literal in `codec/` is exhaustive for the same reason).
+
+## Field order and retiring a field
+
+**A new field is appended at the end of its table.** FlatBuffers assigns a field's vtable slot by
+declaration order, so a field inserted mid-table re-seats every field after it, and two branches
+that both appended to one table do not merge order-free — keep each append contiguous and
+resolve such a merge by hand.
+
+**A retired field is DELETED from `snapshot.fbs`, never kept as a `(deprecated)` slot.** Deleting
+it shifts every later field's slot, and that is safe here for one reason: nothing has shipped. There
+are no saves or external clients holding an old vtable, and every reader — `core_sim`, the client's
+native extension, `sim_ai` — regenerates its bindings from this one schema at build time. Delete the
+field together with the comment that explained it, and let the compiler find any straggler (a
+deleted field has no accessor and no `Args` member, so a leftover reader or writer fails to build).
+
+**The one hazard is a STALE BUILD.** A binary built against the old schema reading frames from one
+built against the new misreads every shifted field silently rather than failing. After a schema
+change, rebuild both halves — the sim and the native extension (`cargo xtask decode-guard` rebuilds
+the extension and proves the decode path against the golden).
 
 ## Terrain Overlay Channel
 - `WorldSnapshot` now carries a `terrainOverlay` table (width, height, packed
@@ -86,11 +105,8 @@ new enums and tables so downstream code can rely on stable contracts:
 - `CultureTraitAxis` enumerates the 15 culture axes captured in the game manual
   (passive↔aggressive, open↔closed, … , pluralistic↔monocultural). Tooling can
   drive overlays without hard-coded strings.
-- `CultureTraitEntry` bundles baseline, modifier, and resolved values (scaled
-  `long`) for each axis so clients can separate inherited weight from local
-  adjustments.
-- `CultureLayerState` carries the serialized layer (id/owner/parent/scope,
-  trait vector, divergence metrics, last update tick).
+- `CultureLayerState` carries the layer's topology (id/owner/parent/scope); its
+  trait vector and divergence metrics stay sim-side and do not cross the wire.
 - `CultureTensionState` records pending drift events surfaced to the Cultural
   Inspector (layer id, scope, severity, timer, tension kind).
 - `WorldSnapshot`/`WorldDelta` will export `cultureLayers`,

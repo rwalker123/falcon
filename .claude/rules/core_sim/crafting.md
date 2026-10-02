@@ -1007,9 +1007,7 @@ The ledger is **one row per thing made** — an item, or a material for a stock 
 heads, **Kit · Bench tools · Materials**, with the columns **Item · Owned · Costs · action**. There is
 no Tier column and there are no tier heads: an item with two recipes carries both of its tiers in one
 row, so there is nothing to sort it under. **The sim publishes no tier word on an offer.**
-`CraftOffer.outputTierName`, `outputTierRank` and `ownedNote` are `(deprecated)` slots in
-`snapshot.fbs` — kept so the fields appended after them keep their ids — and nothing writes or reads
-them.
+`CraftOffer` carries no `outputTierName`, `outputTierRank` or `ownedNote`.
 
 **What the tier still decides is every number an offer quotes.** `makes`, `lasts`, `ownedAtTier` and
 the invitation's unlock band are all read at the tier **this offer's own recipe** makes

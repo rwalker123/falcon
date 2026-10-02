@@ -278,16 +278,16 @@ seeing a larger number or `repelled`. Three things stopped that being part of th
 
 1. **It is a wire-shape decision, not a repricing.** A per-(band, herd) answer has nowhere to live
    today: `HerdTelemetryState` is per herd and `PopulationCohortState` is per band, so it needs a new
-   repeated field on the cohort keyed by `faunaId` — and the retired `denialEstimates` becomes a
-   `(deprecated)` slot the sim stops writing, since `snapshot.fbs` is append-only.
+   repeated field on the cohort keyed by `faunaId` — and the retired `denialEstimates` leaves the
+   wire.
 
    > **Resolved differently, and better: it does not live on the snapshot at all.** The premise was
    > that an answer has to be *published*. It does not — the client asks
    > (`DenialRaidForecastQuery { faction, band, herd, kit, party_workers, max_party_workers }`) and
    > is answered on the same socket. There is no per-(band, herd) cross product on the wire because
    > there is no wire field: the sim answers the one question in front of it. `denialEstimates`,
-   > `denialPartyNeeded`, `huntTripEstimates` and the two `*_kit_id` disclaimers are `(deprecated)`
-   > slots, exactly as predicted.
+   > `denialPartyNeeded`, `huntTripEstimates` and the two `*_kit_id` disclaimers are off the wire,
+   > exactly as predicted.
 
 2. **It is also a UI decision.** The sheet has a party *stepper*, and the rows are what give a
    stepped-off size any verdict at all. Publishing only the requirement's row means the stepper

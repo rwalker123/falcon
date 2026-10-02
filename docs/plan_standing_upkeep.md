@@ -506,7 +506,7 @@ generalises to nothing.
 > was short-circuiting the starvation path this section's own model depends on: when the land and the
 > hay fall short the answer is an underfed herd, never people going hungry to feed livestock. Retired
 > with `pen.upkeep_per_biomass`, the food-unit lever that expressed it; `penFeedUpkeep`, `penUpkeep`,
-> `penLarderBill` and `penHayFood` are deprecated slots. **A material upkeep must not reintroduce a
+> `penLarderBill` and `penHayFood` are off the wire. **A material upkeep must not reintroduce a
 > human-food path** — and under the model above it cannot, because feed is not upkeep at all.
 
 **What is NOT upkeep**, and all three were reached for during design:

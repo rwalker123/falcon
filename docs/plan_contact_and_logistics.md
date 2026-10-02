@@ -383,7 +383,7 @@ substrate is in better shape for it than the scalar ever was.
 >
 > **And the WILD gather, fourth — which is where the pattern was finally named.** Three surfaces had
 > been closed one bug report at a time, each scoped to the reported symptom rather than to the
-> *account*. An audit of every `(deprecated)` trade field then found the rest at once:
+> *account*. An audit of every retired trade field then found the rest at once:
 > `ForagePatchState.materialPerBiomass` / `perWorkerMaterial` (rung 1, which had nothing at all),
 > `HerdTelemetryState.corralMaterial` / `pastoralMaterial` (an inedible quarry's Tame and Corral rungs
 > quoted nothing), and `DenialRow.deliveredMaterial`. The audit table lives in
@@ -476,10 +476,9 @@ without anyone deleting it.
 `simulate_materials` (`systems/trade.rs:44`) shares the module and owns `tile.temperature`, which
 population cold-morale, sites and power genuinely read. **Its temperature half stays; its mass half
 goes with the rest of the mass economy** — `Tile.mass` is written by that system and by
-`simulate_logistics`, and read by nothing but the metrics total. Its wire slot
-(`snapshot.fbs` `TileState.mass`) was already retired from the client stream in #386 and stays
-`(deprecated)` rather than being freed: this repo is worked by concurrent sessions that append to
-these tables, and a freed field id is exactly how two branches collide.
+`simulate_logistics`, and read by nothing but the metrics total. Its wire field
+(`snapshot.fbs` `TileState.mass`) was already retired from the client stream in #386 and is
+deleted from the schema.
 
 ---
 

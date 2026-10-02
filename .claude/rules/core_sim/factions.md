@@ -1028,12 +1028,9 @@ foreign band's row already withholds. So `buildTurnsRemaining`, `buildQueuePosit
 Both source tables carry it, plants and herds alike; a per-web asymmetry here would be a second
 model.
 
-> **`buildKitId` and `upkeepKitId` / `upkeepKitNamed` were the first three names on that list and are
-> no longer on it.** They publish empty on **every** row since `docs/plan_pool_toe.md` §4 — a site's
-> tools follow from its own rung and are published per pool on the cohort — so there is nothing left
-> for the rule to withhold, and an assertion that a rival's row states no kit would hold whatever the
-> redaction did. `core_sim/tests/patch_row_is_viewer_scoped.rs` asserts their emptiness on the
-> **viewer's own** row for exactly that reason, and the redaction cases no longer mention them.
+> **The per-site build and keeping kits were the first three names on that list and are no longer
+> on the wire.** A site's tools follow from its own rung and are published per pool on the cohort
+> (`docs/plan_pool_toe.md` §4), so there is nothing left for the rule to withhold.
 
 > #### ⛔ RULE ① IS AN ALLOW-LIST ON THE **SOURCE**, NOT A LIST OF FIELDS
 >

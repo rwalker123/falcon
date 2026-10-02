@@ -341,23 +341,23 @@ never lands on a non-terminating share.
 ## The default is fitted to WHICHEVER budget it is drawn against
 
 `clamped_kit_defaults` keeps its rule unchanged: proportional, floored, remainder unspent. What moved
-is which budget it is fitted to, and there are now three readers of it:
+is which budget it is fitted to, and there are two readers of it:
 
 | reader | the budget it fits to | what it does with the answer |
 |---|---|---|
 | `outfit_band_with_defaults` | **that band's own** `kit_budget` / `material_budget` | **applies** it — the opening band at Startup, a grant splinter at its split |
-| `snapshot::campaign::opening_kit_budget` | the lowest-id band still holding a grant | publishes `CampaignSection.openingLoadout.kitDefaults`, the campaign-wide statement of what the defaults *are* |
 | `stamp_starting_loadout` | the opening band's | warns once per world when the config over-allocates, which is the only moment that fault is observable |
 
 **A TAKE splinter is not outfitted from the defaults.** What it opens on is the **default take**, the
 kit allocation the split just moved, which is a statement about what the band already holds — and its
 two budgets are `0`, so the defaults would clamp to nothing anyway.
 
-**The campaign-wide rows are a STATEMENT, not a second grant.** `CampaignSection.openingLoadout`
-publishes the profile's declared defaults so a client can name them; nothing about a band's holdings
-comes from there. What a band holds comes from the apply — pinned by
+**The kit default is NOT published campaign-wide.** What a band holds comes from the apply, and the
+applied, clamped rows arrive on that band's `loadoutWindow.kits` — pinned by
 `starting_loadout::a_band_is_created_already_holding_its_default_outfit`, which sends no command at
-all.
+all. The campaign-wide `materialDefaults` is a STATEMENT, not a second grant: its one reader is the AI
+seat's grant-window material pre-fill (`sim_ai`'s `ConstantStance::prefill_over`), and no client
+seeds from it.
 
 ## On the wire
 
@@ -374,12 +374,8 @@ The window is **per band**, so it rides the cohort beside the two things a picke
   blank against a live budget. `parentItemSupply` lists only items some kit carries, so a bench tool
   never appears as a claimable cap.
 - **`CampaignSection.openingLoadout`** keeps only the campaign-wide facts: `pickableMaterials`,
-  `materialDefaults`, `kitDefaults`, `craftableRecipeIds`.
-
-> **`open`, `kitBudget` and `materialBudget` were DELETED from `OpeningLoadoutState`, not deprecated in
-> place** — the same narrow exception `foundingRefusals` took (`fission.md`), and safe for the same one
-> reason: this repo has no shipped saves or clients and both halves build from one tree, so no reader
-> can hold the old vtable. The general append-only rule stands.
+  `materialDefaults`, `craftableRecipeIds`. Whether a window is open, its budgets and its kit rows
+  are all per-band, on `loadoutWindow`.
 
 **`loadoutWindow.open` is NOT the client's success signal** — it reads `true` after a refusal and after
 a success alike, because a commit never closes a window. What a client reads is the band's own

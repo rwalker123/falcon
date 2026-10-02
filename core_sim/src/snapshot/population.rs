@@ -433,11 +433,6 @@ pub(crate) enum MealOrder {
 /// the income term instead.
 const NO_STANDING_NET: f32 = 0.0;
 
-/// **WHAT A RETIRED POOL'S BAND-LEVEL READING PUBLISHES** — the `quarrywork` triple's zero
-/// (`docs/plan_site_crews.md` §4). The pool is gone, and a positional FlatBuffers field cannot be, so
-/// it states nothing owed and nothing paid rather than disappearing.
-const RETIRED_POOL_READING: f32 = 0.0;
-
 /// **A ROW THAT CLAIMS NONE OF AN ITEM WRITES NO `kitToe` LINE FOR IT** — `required` is never `0` on
 /// the wire, so a reader may divide by it.
 const NOTHING_CLAIMED: f32 = 0.0;
@@ -1715,8 +1710,8 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // `round(children + working + elders)`, which can exceed the whole people that exist).
         size: age_brackets.head_count(),
         // The raw fixed-point brackets stay on the struct — `food_demand`, the fission split and the
-        // JSON map export all read masses — but their FlatBuffers slots are `(deprecated)`: what the
-        // wire carries is `children_count` / `working_age` / `elders_count`.
+        // JSON map export all read masses — but they have no FlatBuffers field: what the wire
+        // carries is `children_count` / `working_age` / `elders_count`.
         children: cohort.children.raw(),
         working: cohort.working.raw(),
         elders: cohort.elders.raw(),
@@ -1923,7 +1918,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // source cannot carry two bands' ranks; this list is per band and carries each.
         //
         // **Captured LIVE off the allocation, never turn-written** — the same discipline as
-        // `build_kit_id` on the source rows. A `build_order` / `unqueue` / declaration mutates the
+        // `is_queued` on a working's row. A `build_order` / `unqueue` / declaration mutates the
         // allocation at command time and `recapture_snapshot_in_place` re-reads it, so the new order
         // ships on that command's own frame and the client needs no optimistic ordering overlay.
         //
@@ -2006,13 +2001,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             roadwork_demand,
             roadwork_supplied,
         ),
-        // **THE RETIRED QUARRYWORK TRIPLE PUBLISHES ZERO** (`docs/plan_site_crews.md` §4). The
-        // `quarrywork` pool retired: each working is kept by its own `extract` crew and states
-        // what it kept on its own `DepositState` row. The fields stay because the wire is
-        // positional.
-        quarrywork_demand: RETIRED_POOL_READING,
-        quarrywork_supplied: RETIRED_POOL_READING,
-        quarrywork_shortfall: RETIRED_POOL_READING,
         // **THE TWO POOLS' TABLES OF EQUIPMENT** (`docs/plan_pool_toe.md` §4, narrowed by
         // `docs/plan_site_crews.md` §4: Roadwork and Builders only) — what each pool's
         // own sites required this turn and what the band's settlement gave them, published **as the

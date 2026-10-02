@@ -204,7 +204,7 @@ which is a property of the tier and not of the merge.
   (FODDER, a separate store that never converts to FOOD), and what those two leave uncovered makes the
   pen **UNDERFED** rather than billing the people. The larder draw was short-circuiting exactly that
   starvation path — a pen whose pasture failed took food out of its keepers' mouths instead of
-  withering. So the wire field is `(deprecated)`, the decoder publishes no `pen_feed_upkeep` key, and
+  withering. So the wire field is gone, the decoder publishes no `pen_feed_upkeep` key, and
   the `🐄 Pen feed (animals)` breakdown row is gone with `DetailFormat.band_pen_feed`. **Do not
   reintroduce any of it**, and do not re-derive one client-side by summing herds.
 

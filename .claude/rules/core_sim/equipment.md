@@ -861,14 +861,16 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 > `filled == required`. The distinction is the readout: a surface shows no tool line when every line
 > is filled, and it cannot tell *satisfied* from *not applicable* off an absent row.
 >
-> **Three fields stop carrying meaning, and publish their absence rather than being deleted** —
-> FlatBuffers ids are positional, so the slots stay:
+> **Two fields publish a neutral reading on a POOL row** — both stay live on every other row, which
+> is why they are not deleted:
 >
 > | field | now publishes | because |
 > |---|---|---|
 > | a **pool row's** `LaborAssignment.kitId` | `""` | the capture resolves `EquipmentConfig::no_kit` for a `LaborTarget::is_standing_pool` row. One kit id has room for one tool, and a Roadwork pool keeping a dirt road and a paved road wants two |
 > | a **pool row's** `kitWorkersHolding` | `== workers` | the *nothing to be short of* reading, and it **falls out** of the empty kit rather than being special-cased: `KitCoverage::workers_holding_whole_kit` folds a `min` over the kit's items and an empty kit has none. No existing reader sees a shortfall on a pool row; the shortfall is `poolToe`'s |
-> | per-site `buildKitId` / `upkeepKitId` / `upkeepKitNamed` on patches, herds and workings | `""` / `""` / `false` | `snapshot::subsistence::NO_SITE_KIT_ID` and its named twin. A site's tools follow from its own rung, so there is no per-site answer left to state — and with no pick to state there is no override for the flag to report |
+>
+> **No patch, herd or working carries a per-site build or keeping kit.** A site's tools follow from
+> its own rung, so there is no per-site answer left to state.
 >
 > **The two capture-side indexes lost their values and kept their MEMBERSHIP.** `BuildKitIds` and
 > `UpkeepKitIds` were maps from a source to a kit id; they are `QueuedBuildSources` and
@@ -899,8 +901,7 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 > site's keeping tools follow from the rung, so the two overrides that used to pick them —
 > `BuildQueueEntry::kit` (set by `build_kit`) and `LaborAssignment::upkeep_kit` (set by
 > `upkeep_kit`) — are gone with their commands, their resolvers and their proto fields (60 and 63,
-> reserved; `command_text` refuses both verbs). `buildKitId` / `upkeepKitId` / `upkeepKitNamed` stay
-> on the wire only because FlatBuffers ids are positional, and publish empty.
+> reserved; `command_text` refuses both verbs), and so are the wire fields that published them.
 >
 > **The arguments they made are still live one level down**: *a queue item is one job*, *a single
 > stored id per band cannot be right for both webs*, and *wear follows the work actually done* —
@@ -2658,7 +2659,7 @@ one place):
 
 | Field | Meaning |
 |---|---|
-| `kitItemConditions:[KitItemCondition]` | **One row per item the config carries** — `itemId` + `remaining` on the 0–100 scale, `0` = dry. It replaced three fixed floats (`huntingKitDurability` / `sledKitDurability` / `basketKitDurability`), which are **`(deprecated)` in the schema rather than deleted**: FlatBuffers field ids are positional, so removing one renumbers every field after it. **Driven by the CONFIG's item table, not the band's sparse ledger**, so an item is never missing from the list — but since the count slice an item the band does not **own** reads `0`, not full, and `remaining` is the condition left on the **serving batch** (the most-worn live one), which is what makes it a fuel gauge for the unit actually in hand. **`count` rides beside it** since the crafting wire stage, and it is what stops a client inferring ownership from a condition of zero: `remaining == 0` means *owns none*, never *"owns one that is dry"* — a batch with no units left is removed. Which of *worn out* / *never made* a zero is, is `equipmentBatches`' answer (`crafting.md` → "On the wire"). **`workersHolding` / `workersOnQuotedJob` ride beside both** since the partly-equipped slice, and they are ONE SENTENCE — *"`workersHolding` of `workersOnQuotedJob`"*. `count` is UNITS owned, the numerator is PEOPLE reached (the two differ whenever the band is short or holds the spawn's reserve), and the denominator is the head count of the rows the item is quoted over. **Quoted over every assignment whose resolved kit carries it**, summed — see below |
+| `kitItemConditions:[KitItemCondition]` | **One row per item the config carries** — `itemId` + `remaining` on the 0–100 scale, `0` = dry. It replaced three fixed floats (`huntingKitDurability` / `sledKitDurability` / `basketKitDurability`), which are off the wire. **Driven by the CONFIG's item table, not the band's sparse ledger**, so an item is never missing from the list — but since the count slice an item the band does not **own** reads `0`, not full, and `remaining` is the condition left on the **serving batch** (the most-worn live one), which is what makes it a fuel gauge for the unit actually in hand. **`count` rides beside it** since the crafting wire stage, and it is what stops a client inferring ownership from a condition of zero: `remaining == 0` means *owns none*, never *"owns one that is dry"* — a batch with no units left is removed. Which of *worn out* / *never made* a zero is, is `equipmentBatches`' answer (`crafting.md` → "On the wire"). **`workersHolding` / `workersOnQuotedJob` ride beside both** since the partly-equipped slice, and they are ONE SENTENCE — *"`workersHolding` of `workersOnQuotedJob`"*. `count` is UNITS owned, the numerator is PEOPLE reached (the two differ whenever the band is short or holds the spawn's reserve), and the denominator is the head count of the rows the item is quoted over. **Quoted over every assignment whose resolved kit carries it**, summed — see below |
 | `equipmentBatches:[EquipmentBatchState]` | **One row per BATCH**, plus one `count: 0` row per config item the band owns none of — `itemId`, `tierId`, `grade`, `count`, `remaining`, and the **life wording in use quanta, never percent**. It is the crafting arc's field; the rationale, the `Worn out` / `Never made` split and the `BandEquipment::retired` tally it needed are in `crafting.md` → "On the wire" |
 | `hunterAttack:float` | The band's resolved per-hunter `attack` (1 bare / 20 kitted) — the left side of the fight's gate against a herd's `HerdTelemetryState.defense`. **It is the BEST-EQUIPPED crew's tier, not the whole band's**, and `huntCrews` is the rest of the party — see below |
 | `huntCrews:[BandKitCrew]` | **How this band's gear divides its HUNT workers** — `workers` + that run's own `hunterAttack` + the `itemIds` it holds, best-equipped first, `Σ workers ==` the hunt head count. **Never empty**: a uniform band is one row |
@@ -2681,9 +2682,9 @@ picker could quote a fresh kit's numbers while no readout could state a scout's 
 warrior's actual tier, or the cliff when either runs dry.
 
 
-The kit selection adds the slots below, all append-only. The two retired ones —
-`HerdTelemetryState.huntTripEstimatesKitId` / `denialEstimatesKitId` — are `(deprecated)` in the
-schema; they disclaimed the estimate tables, which are gone.
+The kit selection adds the fields below, all append-only. `HerdTelemetryState` carries no
+`huntTripEstimatesKitId` / `denialEstimatesKitId`: such fields would only disclaim the estimate
+tables, which are gone.
 
 | Field | Meaning |
 |---|---|

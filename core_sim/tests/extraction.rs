@@ -2635,17 +2635,8 @@ mod wire {
         build_turns_remaining: i32,
         build_blocked_reason: String,
         is_queued: bool,
-        upkeep_kit_id: String,
         upkeep_hands: f32,
         upkeep_tools_short: bool,
-    }
-
-    /// The band's `quarrywork*` trio, read off the encoded envelope.
-    #[derive(Debug, Clone, Copy)]
-    struct PublishedQuarrywork {
-        demand: f32,
-        supplied: f32,
-        shortfall: f32,
     }
 
     /// One published `extract` labor row.
@@ -2720,10 +2711,6 @@ mod wire {
                     .expect("the cause is published, empty or not")
                     .to_string(),
                 is_queued: row.isQueued(),
-                upkeep_kit_id: row
-                    .upkeepKitId()
-                    .expect("the keeping kit is published")
-                    .to_string(),
                 upkeep_hands: row.upkeepHands(),
                 upkeep_tools_short: row.upkeepToolsShort(),
             })
@@ -2739,9 +2726,9 @@ mod wire {
             })
     }
 
-    /// The band's `quarrywork*` trio and its `extract` rows, off one decode of the envelope. The
-    /// campaign runs one cohort per test, so the sole published row is the band's.
-    fn published_band(app: &App) -> (PublishedQuarrywork, Vec<PublishedExtractRow>) {
+    /// The band's `extract` rows, off one decode of the envelope. The campaign runs one cohort per
+    /// test, so the sole published row is the band's.
+    fn published_band(app: &App) -> Vec<PublishedExtractRow> {
         use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
         let bytes = encoded(app);
@@ -2757,8 +2744,7 @@ mod wire {
             .iter()
             .next()
             .expect("the campaign publishes at least one cohort");
-        let rows = row
-            .laborAssignments()
+        row.laborAssignments()
             .expect("the cohort publishes its labor rows")
             .iter()
             .filter(|assignment| assignment.kind().is_some_and(|kind| kind == "extract"))
@@ -2770,15 +2756,7 @@ mod wire {
                     .to_string(),
                 overdraws: assignment.overdraws(),
             })
-            .collect();
-        (
-            PublishedQuarrywork {
-                demand: row.quarryworkDemand(),
-                supplied: row.quarryworkSupplied(),
-                shortfall: row.quarryworkShortfall(),
-            },
-            rows,
-        )
+            .collect()
     }
 
     /// The campaign's first resident band, with the viewer pinned to its faction so what is
@@ -3079,7 +3057,7 @@ mod wire {
                 floor,
             );
             app.update();
-            let (_, rows) = published_band(&app);
+            let rows = published_band(&app);
             rows.into_iter()
                 .find(|row| row.tile == home && row.material == WOOD)
                 .expect("the band publishes its wood row")
@@ -3123,7 +3101,7 @@ mod wire {
             "**LIVENESS**: the quarry crew must actually have cut, or the ⚠ below is absent because \
              nothing happened rather than because the fork held: {working_row:?}"
         );
-        let (_, rows) = published_band(&app);
+        let rows = published_band(&app);
         let rock = rows
             .into_iter()
             .find(|row| row.tile == home && row.material == STONE)
@@ -3480,14 +3458,6 @@ mod wire {
             sim_schema::NO_BUILD_TURNS_ESTIMATE,
             "a rung nobody ordered has no quote, and never a 0 that renders as finished: {rock:?}"
         );
-        // **A WORKING NAMES NO KEEPING KIT** (`docs/plan_pool_toe.md` §4). A site's keeping tools
-        // follow from its own rung and are settled band-wide by priority for its own crew
-        // (`docs/plan_site_crews.md` §2.3); whether that claim was filled is `upkeepToolsShort`.
-        assert!(
-            rock.upkeep_kit_id.is_empty(),
-            "a working names no keeping kit; its crew's keeping tools follow from its rung: \
-             {rock:?}"
-        );
         assert!(
             rock.upkeep_hands > 0.0 && rock.upkeep_hands < A_QUARRY_CREW as f32,
             "**THE NEW FIELD PUBLISHES**: the crew kept with part of its hands and cut with the \
@@ -3495,18 +3465,16 @@ mod wire {
         );
     }
 
-    /// ⛔ **`demand − supplied == shortfall` HOLDS VERBATIM ON BOTH QUADS**, and all three numbers
-    /// are different — a quad of zeros would pass this identity while saying nothing.
+    /// ⛔ **`demand − supplied == shortfall` HOLDS VERBATIM ON THE WORKING'S QUAD**, and all three
+    /// numbers are different — a quad of zeros would pass this identity while saying nothing.
     ///
     /// **The crew is short of its bill, so every hand of it keeps** (`docs/plan_site_crews.md`
-    /// §2.1): `upkeepHands` is the whole crew, the take is nothing, and the retired band-level
-    /// `quarrywork` triple publishes `0` (§4).
+    /// §2.1): `upkeepHands` is the whole crew, and the take is nothing.
     #[test]
-    fn the_standing_bill_holds_its_identity_on_the_working_and_on_the_band() {
+    fn the_standing_bill_holds_its_identity_on_the_working() {
         let (app, wood_tile, rock_tile) =
             a_wood_and_a_quarry_crewed(A_CREW_SHORT_OF_THE_QUARRY_BILL);
         let rock = published_working(&app, rock_tile, STONE);
-        let (quarrywork, _) = published_band(&app);
 
         assert!(
             rock.demand > 0.0 && rock.supplied > 0.0 && rock.shortfall > 0.0,
@@ -3537,12 +3505,6 @@ mod wire {
             "a built rung has a meter to lose, so there is a countdown here: {rock:?}"
         );
 
-        assert_eq!(
-            (quarrywork.demand, quarrywork.supplied, quarrywork.shortfall),
-            (0.0, 0.0, 0.0),
-            "the retired band-level quarrywork triple publishes nothing: {quarrywork:?}"
-        );
-
         // **The free floor owes nothing, and that is what makes it free.**
         let wood = published_working(&app, wood_tile, WOOD);
         assert_eq!(
@@ -3560,7 +3522,7 @@ mod wire {
     #[test]
     fn an_extract_labor_row_publishes_the_material_it_works() {
         let (app, wood_tile, rock_tile) = a_wood_and_a_quarry();
-        let (_, rows) = published_band(&app);
+        let rows = published_band(&app);
 
         // Sorted on the wire spelling of the key, because `UVec2` carries no `Ord` and the row
         // order is the allocation's rather than anything this test may assume.
@@ -3650,12 +3612,6 @@ mod wire {
             wood.build_turns_remaining,
             sim_schema::NO_BUILD_TURNS_ESTIMATE,
             "a rung nobody ordered has no quote: {wood:?}"
-        );
-        // **The kit passes are keyed `(tile, material)` and simply find nothing here** — the empty
-        // answer rather than a fabricated tool, and never a panic on a missing key.
-        assert_eq!(
-            wood.upkeep_kit_id, "",
-            "nobody is keeping this ground, so no keeping kit resolves: {wood:?}"
         );
 
         // **THE TWO §7 READOUTS ON AN UNOPENED ROW**, published as the seams compute them with no

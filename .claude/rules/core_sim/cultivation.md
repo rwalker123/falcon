@@ -527,8 +527,8 @@ the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoin
   its own row there is no blended count for a floor to raise — `workers_needed` is the **take**'s own
   count, `upkeepWorkersNeeded` is the **keeping**'s, and the builders are the band's own pool.
   `RungDef::build_crew_needed`, `LadderConfig::build_crew`, `source_crew_needed`
-  and the `cultivateCrewNeeded` / `sowCrewNeeded` wire slots went with it (the slots stay
-  `(deprecated)` — FlatBuffers field ids are positional). **The crew is still the throughput**: a
+  and the `cultivateCrewNeeded` / `sowCrewNeeded` wire fields went with it. **The crew is still the
+  throughput**: a
   Cultivate run by a pool of one takes 50 turns, by two 25, by ten **5**, with no cap beyond the
   band's own head count (`docs/plan_unit_costed_work.md` §1.2). The declared cost was priced against two hands, which
   is why 25 turns is still the reference reading.
@@ -875,12 +875,10 @@ herd has one appetite).
 - **On the wire (slice 6a — append-only, slots 36–44):** `ForagePatchState` carries
   `fieldProgress:float` + `isField:bool` (the rung-3 meter and the completed rung — read the *bool*,
   never infer a rung from the float) beside the already-shipped `cultivationProgress`/`isCultivated`,
-  so the client has **both** plant meters for the §4.1 two-meter split; `ceilingSow:float` +
-  `fieldYield:float` (Sow's payoff, the twin of `tendedYield`; the `sowBuildFraction` that briefly
-  carried its **dip** is `(deprecated)` with the dip itself — a building crew takes nothing, so there
-  is no factor left to publish — and `ceilingSow`/`ceilingCultivate`
-  are retired `(deprecated)` slots — two rungs still keep two numbers, so a retune of one cannot move
-  the other); and **`sowSiteRefusal:string`** — `""` when the ground takes seed, else
+  so the client has **both** plant meters for the §4.1 two-meter split; `fieldYield:float` (Sow's
+  payoff, the twin of `tendedYield`; no field carries Sow's **dip**, which went with the dip itself —
+  a building crew takes nothing, so there is no factor left to publish — and two rungs still keep two
+  numbers, so a retune of one cannot move the other); and **`sowSiteRefusal:string`** — `""` when the ground takes seed, else
   **`"not_gathering_site"`** / `"too_dry"` / `"too_poor"` / `"too_poor_and_too_dry"`
   ([`SiteRefusal::as_str`], free-form per the `species`/`ecologyPhase` convention). That last one
   ships **the answer, not a bool**: sowable ground is scarce by design, so *"why can't I sow here?"*

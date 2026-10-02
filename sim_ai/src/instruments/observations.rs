@@ -104,7 +104,6 @@ pub struct SourceBuild {
     pub queue_position: i32,
     pub turns_remaining: i32,
     pub blocked_reason: Option<String>,
-    pub kit_id: Option<String>,
 }
 
 /// **The standing upkeep an improved source charges** — the `upkeep_*` fields the patch and the
@@ -115,7 +114,6 @@ pub struct SourceUpkeep {
     pub supplied: f32,
     pub shortfall: f32,
     pub workers_needed: u32,
-    pub kit_id: Option<String>,
 }
 
 /// One entry of a band's build queue: the web and the source, as the wire names them.
@@ -614,7 +612,6 @@ fn patch_build(patch: &ForagePatchState) -> Option<SourceBuild> {
         patch.build_queue_position,
         patch.build_turns_remaining,
         &patch.build_blocked_reason,
-        &patch.build_kit_id,
     )
 }
 
@@ -624,7 +621,6 @@ fn herd_build(herd: &HerdTelemetryState) -> Option<SourceBuild> {
         herd.build_queue_position,
         herd.build_turns_remaining,
         &herd.build_blocked_reason,
-        &herd.build_kit_id,
     )
 }
 
@@ -633,14 +629,12 @@ fn source_build(
     queue_position: i32,
     turns_remaining: i32,
     blocked_reason: &str,
-    kit_id: &str,
 ) -> Option<SourceBuild> {
     non_empty(destination_rung).map(|destination_rung| SourceBuild {
         destination_rung,
         queue_position,
         turns_remaining,
         blocked_reason: non_empty(blocked_reason),
-        kit_id: non_empty(kit_id),
     })
 }
 
@@ -651,7 +645,6 @@ fn patch_upkeep(patch: &ForagePatchState) -> Option<SourceUpkeep> {
         patch.upkeep_supplied,
         patch.upkeep_shortfall,
         patch.upkeep_workers_needed,
-        &patch.upkeep_kit_id,
     )
 }
 
@@ -661,7 +654,6 @@ fn herd_upkeep(herd: &HerdTelemetryState) -> Option<SourceUpkeep> {
         herd.upkeep_supplied,
         herd.upkeep_shortfall,
         herd.upkeep_workers_needed,
-        &herd.upkeep_kit_id,
     )
 }
 
@@ -670,14 +662,12 @@ fn source_upkeep(
     supplied: f32,
     shortfall: f32,
     workers_needed: u32,
-    kit_id: &str,
 ) -> Option<SourceUpkeep> {
-    (demand > 0.0).then(|| SourceUpkeep {
+    (demand > 0.0).then_some(SourceUpkeep {
         demand,
         supplied,
         shortfall,
         workers_needed,
-        kit_id: non_empty(kit_id),
     })
 }
 
@@ -767,7 +757,6 @@ mod tests {
             patch.cultivation_progress = 0.25;
             patch.build_destination_rung = "tended".into();
             patch.build_turns_remaining = 3;
-            patch.build_kit_id = "digging_stick".into();
             patch.upkeep_demand = 1.5;
             patch.upkeep_supplied = 1.0;
             patch.upkeep_shortfall = 0.5;
@@ -1165,12 +1154,10 @@ mod tests {
         let build = worked.build.as_ref().expect("a climb is declared");
         assert_eq!(build.destination_rung, "tended");
         assert_eq!(build.turns_remaining, 3);
-        assert_eq!(build.kit_id.as_deref(), Some("digging_stick"));
         assert_eq!(build.blocked_reason, None);
         let upkeep = worked.upkeep.as_ref().expect("the source charges upkeep");
         assert_eq!(upkeep.shortfall, 0.5);
         assert_eq!(upkeep.workers_needed, 2);
-        assert_eq!(upkeep.kit_id, None);
         let unworked = observation
             .neighborhood
             .iter()

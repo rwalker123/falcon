@@ -4,7 +4,7 @@ use flatbuffers::{ForwardsUOffset, Vector};
 use godot::prelude::*;
 use shadow_scale_flatbuffers::shadow_scale::sim as fb;
 
-use crate::dict::campaign::{opening_kit_defaults_to_array, opening_material_defaults_to_array};
+use crate::dict::campaign::{kit_allocations_to_array, material_allocations_to_array};
 use crate::dict::economy::fragment_to_dict;
 use crate::dict::fixed64_to_f64;
 
@@ -177,7 +177,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // independently-computed number that could drift from them. The cohort-level `foodIncomeAverage`
     // that briefly existed for this was redundant and is retired.
     let _ = dict.insert("food_consumption", cohort.foodConsumption() as f64);
-    // THE LEDGER HAS NO PEN TERM. `penFeedUpkeep` is retired (schema `(deprecated)`): human food is
+    // THE LEDGER HAS NO PEN TERM. `penFeedUpkeep` is retired (off the wire): human food is
     // not animal feed, so a pen never touches the FOOD larder — it eats the grass its fenced
     // footprint grows plus the hay its keeper carries in, and what those two leave uncovered makes it
     // UNDERFED (`pen_fed_fraction` < 1) instead of billing the people. The identity is now
@@ -377,7 +377,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // is FLAT until expiry**, so no client readout may scale anything by what is left here.
     //
     // **ONE ROW PER ITEM, driven by the server's config** — the three fixed
-    // `hunting`/`sled`/`basket` floats this replaced are deprecated on the wire. Render whatever rows
+    // `hunting`/`sled`/`basket` floats this replaced are off the wire. Render whatever rows
     // arrive rather than looking for known ids: the item table is config, so the trapping kit's
     // `traps` (and the next item after it) appears here with no client change.
     let mut kit_item_conditions = VarArray::new();
@@ -684,8 +684,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // standing role now and arrives as its own row of this very list, with
             // `kind == "builders"` / `"roadwork"` and its hands in `workers`. The site's keeping is
             // its own take crew's (`docs/plan_site_crews.md`), stated on the source row.
-            // The wire slots stay `(deprecated)` because FlatBuffers field ids are positional, and
-            // this reader stops inserting the keys — a client that still read one would be showing
+            // Neither field is on the wire, so this reader inserts no key — a client that read one
+            // would be showing
             // a per-source crew the sim has stopped having.
             //
             // What survives per source is `improvement`, which the sim **derives** from that band's
@@ -714,8 +714,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // `actual_yield`. Headlines the Band panel row + map label so they don't swing turn-to-turn.
             let _ = entry.insert("realized_yield", assignment.realizedYield() as f64);
             // **RETIRED: `trade_yield` / `realized_trade_yield` / `trade_yield_low` /
-            // `trade_yield_high`** (arc #527), with the trade-goods yield axis they decoded. The
-            // wire slots are `(deprecated)` and the sim writes nothing to them. What a take pays
+            // `trade_yield_high`** (arc #527), with the trade-goods yield axis they decoded, and off
+            // the wire. What a take pays
             // beyond food is MATERIALS, which ride `material_batches` on the cohort dict.
             //
             // **The GDScript that reads these keys is a separate pass** — they simply stop appearing
@@ -833,9 +833,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             }
             // **WHERE THIS CREW STOPS, as a fraction of the source's carrying capacity** — THE
             // authority on harvest pressure (`docs/plan_harvest_floor.md`), and since 2b the ONLY
-            // statement of it: the four-value `policy` label that used to ride beside it is a
-            // retired wire slot the sim can no longer write. Always inserted, so the entry shape is
-            // stable.
+            // statement of it: no stance label rides beside it. Always inserted, so the entry shape
+            // is stable.
             let _ = entry.insert("floor", assignment.floor());
             // THE SECOND AXIS (issue #442). This is what the crew is BUILDING on the source,
             // independent of how hard it pulls: "" | "cultivate" | "sow" | "tame" | "corral". Always
@@ -1045,8 +1044,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // band came to render "17" in the PEOPLE bar beside "0 idle of 16" in the WORKFORCE header.
     //
     // The fraction the sim keeps internally is a GROWTH ACCUMULATOR, not a fact about people, and
-    // the deprecated `children`/`working`/`elders` Scalar slots that once published it are gone
-    // from the bindings. Nothing here rounds; the rounding happened once, in the sim.
+    // the raw `children`/`working`/`elders` Scalars are off the wire. Nothing here rounds; the rounding happened once, in the sim.
     let _ = dict.insert("children", cohort.childrenCount() as i64);
     let _ = dict.insert("working_age", cohort.workingAge() as i64);
     let _ = dict.insert("elders", cohort.eldersCount() as i64);
@@ -1472,8 +1470,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let _ = row.insert("shortfalls", &shortfalls_to_array(offer.shortfalls()));
             let _ = row.insert("output_grade", offer.outputGrade().unwrap_or(""));
             let _ = row.insert("on_bench", offer.onBench());
-            // `outputTierName` / `outputTierRank` and `ownedNote` are deprecated on the wire and not
-            // decoded: the ledger groups by group and item, never by tier, its Owned cell carries no
+            // No `outputTierName` / `outputTierRank` / `ownedNote` is on the wire: the ledger groups by group and item, never by tier, its Owned cell carries no
             // tier word, and which tier the band holds is the recipe popup's `owned_at_tier`.
             // **ONE LEDGER ROW PER ITEM, ITS RECIPES BEHIND A LINK.** Several offers share one
             // `output_item_id`; the client groups them into one row and these five are what that
@@ -1556,9 +1553,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("roadwork_supplied", cohort.roadworkSupplied() as f64);
     let _ = dict.insert("roadwork_shortfall", cohort.roadworkShortfall() as f64);
 
-    // ⛔ **THE `quarrywork` TRIPLE IS RETIRED** (`docs/plan_site_crews.md` §4): a working is kept by
-    // its own `extract` crew, and its bill rides the `deposits` row. The wire slots stay and publish
-    // 0; this reader no longer inserts them.
+    // ⛔ **THERE IS NO `quarrywork` TRIPLE** (`docs/plan_site_crews.md` §4): a working is kept by its
+    // own `extract` crew, and its bill rides the `deposits` row.
     // --- THE TWO STANDING POOLS' TABLES OF EQUIPMENT (`docs/plan_pool_toe.md` §4) -----------------
     // One row per `(pool, item)`: what a pool's OWN SITES require this turn, and what the band's
     // band-wide settlement handed it. **This is where a pool's gear is stated now** — a pool row's
@@ -1767,10 +1763,10 @@ fn loadout_window_to_dict(window: fb::BandLoadoutWindowState<'_>) -> VarDictiona
     // published here, so re-sending it unchanged is an exact no-op. While these were empty on a
     // splinter, an untouched commit ordered *take nothing* and handed the band's dowry back to its
     // parent, an apply being a replacement.
-    let _ = dict.insert("kits", &opening_kit_defaults_to_array(window.kits()));
+    let _ = dict.insert("kits", &kit_allocations_to_array(window.kits()));
     let _ = dict.insert(
         "materials",
-        &opening_material_defaults_to_array(window.materials()),
+        &material_allocations_to_array(window.materials()),
     );
     // `0` = a grant. Non-zero is the band a take is drawn from, and the client says so on the card.
     let _ = dict.insert("parent_band_id", window.parentBandId() as i64);

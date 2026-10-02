@@ -698,17 +698,18 @@ fn the_opening_loadout_reaches_the_client() {
         "the pre-fill names only pickable materials: {defaults:?}"
     );
 
-    // **The kit column's pre-fill, published at the shipped 4/4/4** — the picker opens on a
-    // plausible band rather than a column of zeros. Twelve against ~17 hands, so the clamp does not
-    // bind here and these are the profile's numbers verbatim (the clamp has its own test).
-    let kit_defaults: Vec<(String, u32)> = published
-        .kitDefaults()
-        .expect("the kit pre-fill is published")
+    // **The kit column's rows, applied at the shipped 4/4/4 and published on the band's own window**
+    // — the picker opens on a plausible band rather than a column of zeros. Twelve against ~17
+    // hands, so the clamp does not bind here and these are the profile's numbers verbatim (the clamp
+    // has its own test; a splinter's binding one is asserted in `split_loadout.rs`).
+    let kit_rows: Vec<(String, u32)> = cohort_window
+        .kits()
+        .expect("the band's applied kit rows are published")
         .iter()
         .map(|entry| (entry.kitId().unwrap_or_default().to_string(), entry.count()))
         .collect();
     assert_eq!(
-        kit_defaults,
+        kit_rows,
         vec![
             (BIG_GAME.to_string(), 4),
             (GATHERING.to_string(), 4),
@@ -716,8 +717,8 @@ fn the_opening_loadout_reaches_the_client() {
         ]
     );
     assert!(
-        kit_defaults.iter().map(|(_, count)| count).sum::<u32>() <= kit_budget,
-        "a published pre-fill always fits the budget it is drawn against"
+        kit_rows.iter().map(|(_, count)| count).sum::<u32>() <= kit_budget,
+        "a published kit allocation always fits the budget it is drawn against"
     );
 
     let craftable: Vec<String> = published
@@ -908,58 +909,4 @@ fn an_over_allocating_kit_pre_fill_is_clamped_proportionally() {
     let (rows, clamped) = core_sim::clamped_kit_defaults(&declared, 0);
     assert!(clamped);
     assert!(rows.is_empty());
-}
-
-/// The clamp is wired into the **publish** path, not merely available beside it — asserted through
-/// the live capture, with a band whose budget has been forced below what the profile pre-fills.
-#[test]
-fn the_published_pre_fill_is_the_clamped_one() {
-    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
-
-    const FORCED_BUDGET: u32 = 6;
-    let (mut app, _, band_id) = open_window();
-    // Force the spawned band's grant below what the profile pre-fills, so the clamp binds.
-    match &mut app
-        .world
-        .resource_mut::<StartingLoadout>()
-        .window_mut(band_id)
-        .expect("the spawned band has a window")
-        .supply
-    {
-        LoadoutSupply::Grant { kit_budget, .. } => *kit_budget = FORCED_BUDGET,
-        other => panic!("the spawned band's window must carry a grant, got {other:?}"),
-    }
-    core_sim::recapture_snapshot_in_place(&mut app.world);
-    let snapshot = app
-        .world
-        .resource::<core_sim::SnapshotHistory>()
-        .latest_entry()
-        .expect("a snapshot was captured")
-        .snapshot;
-    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
-    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
-    let published = envelope
-        .payload_as_snapshot()
-        .expect("the envelope carries a snapshot")
-        .campaign()
-        .expect("the envelope carries a campaign section")
-        .openingLoadout()
-        .expect("the campaign section carries the opening loadout");
-
-    let total: u32 = published
-        .kitDefaults()
-        .expect("the kit pre-fill is published")
-        .iter()
-        .map(|entry| entry.count())
-        .sum();
-    assert!(
-        total <= FORCED_BUDGET,
-        "the shipped 4/4/4 pre-fills 12 kits; against a budget of {FORCED_BUDGET} the PUBLISHED \
-         rows must already be fitted to it, and they sum to {total}"
-    );
-    assert!(
-        total > 0,
-        "**LIVENESS**: a clamp that published nothing would satisfy the bound above for the wrong \
-         reason"
-    );
 }

@@ -653,9 +653,9 @@ The *ordering* is the design working — a mammoth raid is one hunting turn plus
 > **What went with it:** `ExpeditionMission::Hunt::fill_target`, `RaidOrders::fill_target`,
 > `NO_FILL_TARGET`, `HuntTripBound::FillTarget` (the raid's stops are now pack-full, floor,
 > herd-lost, horizon), the `send_hunt_expedition` grammar's second positional tail, and the
-> `fill_target` parameters on `hunt_trip_forecast` / `expedition_delivery`. The wire slots
-> (`snapshot.fbs`'s `expeditionFillTarget`, `command.proto`'s `fill_target = 7`) are **deprecated in
-> place, never deleted** — a shipped slot is immutable.
+> `fill_target` parameters on `hunt_trip_forecast` / `expedition_delivery`. `snapshot.fbs`'s
+> `expeditionFillTarget` is deleted; `command.proto`'s `fill_target = 7` stays reserved — a protobuf
+> field number is immutable.
 >
 > **What survives from §10's validation list:** the party-size invariance (it is now the *reason*
 > rather than the thing being escaped) and the bound-naming cases for the four remaining stops.

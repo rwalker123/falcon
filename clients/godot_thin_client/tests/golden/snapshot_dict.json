@@ -563,7 +563,6 @@
       "branch": "deposits[0].branch",
       "build_blocked_reason": "deposits[0].build_blocked_reason",
       "build_fraction": 54.860001,
-      "build_kit_id": "deposits[0].build_kit_id",
       "build_turns_remaining": 51,
       "capacity": 92.010002,
       "default_kit_id": "deposits[0].default_kit_id",
@@ -586,8 +585,6 @@
       "turns_remaining": 10,
       "upkeep_demand": 8.58,
       "upkeep_hands": 40.82,
-      "upkeep_kit_id": "deposits[0].upkeep_kit_id",
-      "upkeep_kit_named": false,
       "upkeep_next_worker_turn": 26,
       "upkeep_shortfall": 109.129997,
       "upkeep_supplied": 40.529999,
@@ -603,7 +600,7 @@
           "required": 110.779999
         }
       ],
-      "upkeep_tools_short": true,
+      "upkeep_tools_short": false,
       "upkeep_workers_at_completion": 34,
       "upkeep_workers_needed": 83
     },
@@ -612,7 +609,6 @@
       "branch": "deposits[1].branch",
       "build_blocked_reason": "deposits[1].build_blocked_reason",
       "build_fraction": 41.509998,
-      "build_kit_id": "deposits[1].build_kit_id",
       "build_turns_remaining": 180,
       "capacity": 56.279999,
       "default_kit_id": "deposits[1].default_kit_id",
@@ -635,8 +631,6 @@
       "turns_remaining": 113,
       "upkeep_demand": 18.440001,
       "upkeep_hands": 96.720001,
-      "upkeep_kit_id": "deposits[1].upkeep_kit_id",
-      "upkeep_kit_named": true,
       "upkeep_next_worker_turn": 121,
       "upkeep_shortfall": 73.75,
       "upkeep_supplied": 45.66,
@@ -652,7 +646,7 @@
           "required": 15.93
         }
       ],
-      "upkeep_tools_short": false,
+      "upkeep_tools_short": true,
       "upkeep_workers_at_completion": 171,
       "upkeep_workers_needed": 112
     },
@@ -661,7 +655,6 @@
       "branch": "deposits[2].branch",
       "build_blocked_reason": "deposits[2].build_blocked_reason",
       "build_fraction": 38.169998,
-      "build_kit_id": "deposits[2].build_kit_id",
       "build_turns_remaining": 85,
       "capacity": 74.269997,
       "default_kit_id": "deposits[2].default_kit_id",
@@ -684,8 +677,6 @@
       "turns_remaining": 12,
       "upkeep_demand": 21.76,
       "upkeep_hands": 82.980003,
-      "upkeep_kit_id": "deposits[2].upkeep_kit_id",
-      "upkeep_kit_named": false,
       "upkeep_next_worker_turn": 92,
       "upkeep_shortfall": 11.28,
       "upkeep_supplied": 78.470001,
@@ -701,7 +692,7 @@
           "required": 34.529999
         }
       ],
-      "upkeep_tools_short": true,
+      "upkeep_tools_short": false,
       "upkeep_workers_at_completion": 128,
       "upkeep_workers_needed": 125
     }
@@ -927,7 +918,6 @@
       "build_blocked_reason": "forage_patches[0].build_blocked_reason",
       "build_destination_capacity": 32.709999,
       "build_destination_rung": "forage_patches[0].build_destination_rung",
-      "build_kit_id": "forage_patches[0].build_kit_id",
       "build_legs": [
         {
           "rung": "forage_patches[0].build_legs[0].rung",
@@ -1236,8 +1226,6 @@
       "tile_capacity": 74.75,
       "upkeep_demand": 46.18,
       "upkeep_hands": 52.389999,
-      "upkeep_kit_id": "forage_patches[0].upkeep_kit_id",
-      "upkeep_kit_named": true,
       "upkeep_material_demand": [
         {
           "amount": 64.879997,
@@ -1292,7 +1280,6 @@
       "build_blocked_reason": "forage_patches[1].build_blocked_reason",
       "build_destination_capacity": -1.0,
       "build_destination_rung": "forage_patches[1].build_destination_rung",
-      "build_kit_id": "forage_patches[1].build_kit_id",
       "build_legs": [
         {
           "rung": "forage_patches[1].build_legs[0].rung",
@@ -1601,8 +1588,6 @@
       "tile_capacity": 2.22,
       "upkeep_demand": 10.09,
       "upkeep_hands": 17.91,
-      "upkeep_kit_id": "forage_patches[1].upkeep_kit_id",
-      "upkeep_kit_named": false,
       "upkeep_material_demand": [
         {
           "amount": 99.330002,
@@ -1646,7 +1631,7 @@
           "required": 35.0
         }
       ],
-      "upkeep_tools_short": true,
+      "upkeep_tools_short": false,
       "upkeep_workers_at_completion": 51,
       "upkeep_workers_needed": 48,
       "x": 1,
@@ -1657,7 +1642,6 @@
       "build_blocked_reason": "forage_patches[2].build_blocked_reason",
       "build_destination_capacity": 11.63,
       "build_destination_rung": "forage_patches[2].build_destination_rung",
-      "build_kit_id": "forage_patches[2].build_kit_id",
       "build_legs": [
         {
           "rung": "forage_patches[2].build_legs[0].rung",
@@ -1966,8 +1950,6 @@
       "tile_capacity": 28.540001,
       "upkeep_demand": 62.389999,
       "upkeep_hands": 60.970001,
-      "upkeep_kit_id": "forage_patches[2].upkeep_kit_id",
-      "upkeep_kit_named": true,
       "upkeep_material_demand": [
         {
           "amount": 9.2,
@@ -2011,7 +1993,7 @@
           "required": 95.160004
         }
       ],
-      "upkeep_tools_short": false,
+      "upkeep_tools_short": true,
       "upkeep_workers_at_completion": 48,
       "upkeep_workers_needed": 133,
       "x": 2,
@@ -2231,7 +2213,6 @@
       "build_blocked_reason": "herds[0].build_blocked_reason",
       "build_destination_capacity": 79.830002,
       "build_destination_rung": "herds[0].build_destination_rung",
-      "build_kit_id": "herds[0].build_kit_id",
       "build_legs": [
         {
           "rung": "herds[0].build_legs[0].rung",
@@ -2420,8 +2401,6 @@
       "tame_work_done": 60.59,
       "upkeep_demand": 43.459999,
       "upkeep_hands": 78.230003,
-      "upkeep_kit_id": "herds[0].upkeep_kit_id",
-      "upkeep_kit_named": true,
       "upkeep_material_demand": [
         {
           "amount": 100.720001,
@@ -2479,7 +2458,6 @@
       "build_blocked_reason": "herds[1].build_blocked_reason",
       "build_destination_capacity": -1.0,
       "build_destination_rung": "herds[1].build_destination_rung",
-      "build_kit_id": "herds[1].build_kit_id",
       "build_legs": [
         {
           "rung": "herds[1].build_legs[0].rung",
@@ -2668,8 +2646,6 @@
       "tame_work_done": 10.41,
       "upkeep_demand": 25.92,
       "upkeep_hands": 82.889999,
-      "upkeep_kit_id": "herds[1].upkeep_kit_id",
-      "upkeep_kit_named": false,
       "upkeep_material_demand": [
         {
           "amount": 87.059998,
@@ -2713,7 +2689,7 @@
           "required": 39.720001
         }
       ],
-      "upkeep_tools_short": true,
+      "upkeep_tools_short": false,
       "upkeep_workers_at_completion": 102,
       "upkeep_workers_needed": 119,
       "x": 1,
@@ -2727,7 +2703,6 @@
       "build_blocked_reason": "herds[2].build_blocked_reason",
       "build_destination_capacity": 38.110001,
       "build_destination_rung": "herds[2].build_destination_rung",
-      "build_kit_id": "herds[2].build_kit_id",
       "build_legs": [
         {
           "rung": "herds[2].build_legs[0].rung",
@@ -2916,8 +2891,6 @@
       "tame_work_done": 32.84,
       "upkeep_demand": 38.830002,
       "upkeep_hands": 57.720001,
-      "upkeep_kit_id": "herds[2].upkeep_kit_id",
-      "upkeep_kit_named": true,
       "upkeep_material_demand": [
         {
           "amount": 30.469999,
@@ -2961,7 +2934,7 @@
           "required": 93.360001
         }
       ],
-      "upkeep_tools_short": false,
+      "upkeep_tools_short": true,
       "upkeep_workers_at_completion": 37,
       "upkeep_workers_needed": 134,
       "x": 2,
@@ -3339,20 +3312,6 @@
       "opening_loadout.craftable_recipe_ids[0]",
       "opening_loadout.craftable_recipe_ids[1]",
       "opening_loadout.craftable_recipe_ids[2]"
-    ],
-    "kit_defaults": [
-      {
-        "count": 173,
-        "kit_id": "opening_loadout.kit_defaults[0].kit_id"
-      },
-      {
-        "count": 166,
-        "kit_id": "opening_loadout.kit_defaults[1].kit_id"
-      },
-      {
-        "count": 131,
-        "kit_id": "opening_loadout.kit_defaults[2].kit_id"
-      }
     ],
     "material_defaults": [
       {

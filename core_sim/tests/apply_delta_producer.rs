@@ -118,7 +118,7 @@ fn captured_for(app: &App, seat: FactionId) -> WorldSnapshot {
 /// The server's capture holds four things no frame can deliver, so a client cannot be expected to
 /// hold them either (the codec round trip in `sim_schema` lists the same set): a culture layer's
 /// traits and divergence fields (#386 — topology only goes out), a cohort's raw fixed-point age
-/// brackets (`(deprecated)` slots), `start_marker` (no FlatBuffers field at all), and a full
+/// brackets (no FlatBuffers field), `start_marker` (no FlatBuffers field either), and a full
 /// snapshot's `base_frame_seq`, which the capture leaves at `0` while the applied header is the
 /// delta's and names its base.
 fn off_wire_fields_zeroed(snapshot: &WorldSnapshot) -> WorldSnapshot {

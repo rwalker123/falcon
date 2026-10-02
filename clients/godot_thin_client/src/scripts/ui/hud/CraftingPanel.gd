@@ -32,7 +32,7 @@ class_name CraftingPanel
 ## a tier any more: a row carrying both a plain and a flint recipe has no one tier to be sorted under.
 ##
 ## **NO TIER WORD REACHES THE OWNED CELL AT ALL.** It states count and grade, nothing else: no
-## `tier_id` (the schema's `ownedNote` is deprecated and unpublished). Which tier the band
+## `tier_id` (the schema has no `ownedNote`). Which tier the band
 ## holds is answered in the recipe popup's Owned column, on an item whose recipes make different tiers,
 ## and a recipe's own tier is named by its `recipeLabel` there and in the picker.
 ##
