@@ -88,7 +88,7 @@ const UNCROSSED_KEYS := {
 	"x": "the tile the patch sits on — it IS the lookup key, and `tile_info` carries its own x/y",
 	"y": "as x",
 	"trade_per_biomass":
-		"a retired `(deprecated)` wire slot (arc #527 took the trade account); nothing reads it",
+		"retired from the wire with the trade account (arc #527); nothing reads it",
 	"tended_trade": "as trade_per_biomass — the rung-2 payoff in the retired account",
 	"field_trade": "as trade_per_biomass — the rung-3 payoff in the retired account",
 }

@@ -3527,8 +3527,8 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# `patch_carrying_capacity` above — the PATCH's ceiling, since the floor is a fraction of the
 		# stand actually standing here — the client composes the ceiling at ANY floor
 		# (`SourceForecast.escapement_room`). The six per-policy row dicts it replaced — and the six
-		# flat `patch_ceiling_*` scalars before them — are retired `(deprecated)` wire slots, so nothing
-		# can read one representation while the sim pays the other. The vector's PRESENCE is what tells
+		# flat `patch_ceiling_*` scalars before them — are not on the wire, so nothing can read one
+		# representation while the sim pays the other. The vector's PRESENCE is what tells
 		# `SourceForecast` "the wire describes this source" apart from "the source pays nothing at this
 		# floor" — the #426 distinction, now answered by a rate rather than a row.
 		info["patch_provisions_per_biomass"] = float(patch.get("provisions_per_biomass", 0.0))

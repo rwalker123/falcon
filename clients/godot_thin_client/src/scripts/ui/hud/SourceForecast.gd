@@ -1066,17 +1066,16 @@ const FORECAST_PAYOFF_MATERIAL_KEYS := {
 # entry, `corral -> pen_upkeep`, so a pre-commit Corral row could read `+5.40/turn − 2.40/turn feed`.
 # There is no such cost: HUMAN FOOD IS NOT ANIMAL FEED. A pen eats the grass its fenced footprint
 # grows and the hay its keeper carries in — both FODDER — and a shortfall STARVES the herd
-# (`pen_fed_fraction` < 1) rather than billing the people's larder. `pen_upkeep` is a `(deprecated)`
-# wire slot the native reader no longer publishes.
+# (`pen_fed_fraction` < 1) rather than billing the people's larder, and the wire carries no
+# `pen_upkeep`.
 #
 # So `corral_yield` STANDS ALONE, and no rung on either web quotes a food-unit running cost. The
 # rung's real standing price is in WORK, and it is already stated where every rung's is — the work
 # row's `⌃` tooltip, via `FORECAST_BUILD_UPKEEP_DEMAND_KEYS`. Do not mint a second feed term here to
 # put the subtraction back.
 # **THE DURING-BUILD DIP IS RETIRED, and so is the build's `crew_needed`**
-# (`docs/plan_standing_upkeep.md` §2.2). `<rung>BuildFraction` and `<rung>CrewNeeded` are deprecated
-# wire slots the native reader no longer publishes, so nothing here reads them and nothing composes
-# a fraction from them.
+# (`docs/plan_standing_upkeep.md` §2.2). The wire carries no `<rung>BuildFraction` or
+# `<rung>CrewNeeded`, so nothing here composes a fraction from them.
 #
 # The dip said *"this crew is preparing ground, not gathering"*, which is a statement about a SHARED
 # crew and about nothing else. A source carries three independent allocations now — take, build,
@@ -3973,8 +3972,7 @@ static func forecast_is_known(src: Dictionary, kind: String, prefix: String) -> 
 ## which case callers show no row and apply no cap.
 ##
 ## **`floor` REPLACED THE STANCE STRING, and the ceiling is COMPOSED rather than looked up.** There is
-## no per-stance row on either web any more (`foragePolicyCeilings` / `huntPolicyCeilings` are retired
-## `(deprecated)` slots that read zero), because four rows cannot answer a continuous dial. The client
+## no per-stance row on either web, because four rows cannot answer a continuous dial. The client
 ## evaluates `max(0, B − floor·K) × <account>PerBiomass` — see `escapement_room` for why that is a
 ## sound exception to "the sim exports the answer", and where the exception stops.
 ##

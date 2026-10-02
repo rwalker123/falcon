@@ -4,7 +4,7 @@ use flatbuffers::{ForwardsUOffset, Vector};
 use godot::prelude::*;
 use shadow_scale_flatbuffers::shadow_scale::sim as fb;
 
-use crate::dict::campaign::{opening_kit_defaults_to_array, opening_material_defaults_to_array};
+use crate::dict::campaign::{kit_allocations_to_array, material_allocations_to_array};
 use crate::dict::economy::fragment_to_dict;
 use crate::dict::fixed64_to_f64;
 
@@ -833,9 +833,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             }
             // **WHERE THIS CREW STOPS, as a fraction of the source's carrying capacity** — THE
             // authority on harvest pressure (`docs/plan_harvest_floor.md`), and since 2b the ONLY
-            // statement of it: the four-value `policy` label that used to ride beside it is a
-            // retired wire slot the sim can no longer write. Always inserted, so the entry shape is
-            // stable.
+            // statement of it: no stance label rides beside it. Always inserted, so the entry shape
+            // is stable.
             let _ = entry.insert("floor", assignment.floor());
             // THE SECOND AXIS (issue #442). This is what the crew is BUILDING on the source,
             // independent of how hard it pulls: "" | "cultivate" | "sow" | "tame" | "corral". Always
@@ -1764,10 +1763,10 @@ fn loadout_window_to_dict(window: fb::BandLoadoutWindowState<'_>) -> VarDictiona
     // published here, so re-sending it unchanged is an exact no-op. While these were empty on a
     // splinter, an untouched commit ordered *take nothing* and handed the band's dowry back to its
     // parent, an apply being a replacement.
-    let _ = dict.insert("kits", &opening_kit_defaults_to_array(window.kits()));
+    let _ = dict.insert("kits", &kit_allocations_to_array(window.kits()));
     let _ = dict.insert(
         "materials",
-        &opening_material_defaults_to_array(window.materials()),
+        &material_allocations_to_array(window.materials()),
     );
     // `0` = a grant. Non-zero is the band a take is drawn from, and the client says so on the card.
     let _ = dict.insert("parent_band_id", window.parentBandId() as i64);

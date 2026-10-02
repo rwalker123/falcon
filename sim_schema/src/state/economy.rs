@@ -2,8 +2,8 @@
 //! path carries.
 //!
 //! The logistics- and trade-link states that used to live here went with the dead trade slice
-//! (`docs/plan_contact_and_logistics.md` §As-built). Their `.fbs` tables survive, carried by no
-//! section.
+//! (`docs/plan_contact_and_logistics.md` §As-built), and their `.fbs` tables are deleted from the
+//! schema.
 
 use serde::{Deserialize, Serialize};
 

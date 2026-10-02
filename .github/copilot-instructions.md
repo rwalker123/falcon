@@ -45,7 +45,7 @@ The schema in `sim_schema/schemas/snapshot.fbs` is the authoritative contract be
 
 - After editing a `.fbs`, regenerate: `cargo build -p shadow_scale_flatbuffers`, then `rustfmt shadow_scale_flatbuffers/src/generated/snapshot_generated.rs`, and rebuild the Godot native extension with `cargo xtask godot-build` so the client decoder matches.
 - The generated bindings are **not committed** — `shadow_scale_flatbuffers/src/generated/snapshot_generated.rs` is gitignored (`.gitignore`) and regenerated from the schema by `build.rs` (`cargo:rerun-if-changed` on the `.fbs`). CI rebuilds and rustfmts it, then fails if it ends up missing or unformatted. Do not add the generated file to a commit, and do not treat its absence from the checkout as a defect.
-- Schema evolution should be additive and back-compatible where possible (append new fields/tables; don't renumber or repurpose existing fields). Flag breaking reorderings.
+- A new field is appended at the end of its table; flag one inserted mid-table or a field repurposed to mean something else. A **retired field is deleted**, not kept as a `(deprecated)` slot — nothing has shipped and every reader regenerates from this one schema, so the slot shift is intended (`sim_schema/README.md` → "Field order and retiring a field"). Do not flag a deletion as a breaking renumbering; do flag a new `(deprecated)` marker.
 
 ## 4. `core_sim` — Simulation Engine (Bevy ECS)
 

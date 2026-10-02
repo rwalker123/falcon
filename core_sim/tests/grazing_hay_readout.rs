@@ -17,7 +17,7 @@
 //! | `turnsOfFodder` | the cohort row | the runway, in the larder runway's own idiom and sentinel |
 //!
 //! **The per-pen gap is not among them.** It rode the herd row as `penHayNeed` and nothing rendered
-//! it, because what a pen row states is how much MORE it needs; the field is `(deprecated)` and the
+//! it, because what a pen row states is how much MORE it needs; the field is off the wire and the
 //! quantity survives only as the band roll-up and as the shortfall's own first term. So a fixture
 //! that wants to read one pen's gap carries **nothing in** and reads the shortfall
 //! ([`published_hay_need_with_nothing_carried_in`], which pins the draw at zero as it goes).

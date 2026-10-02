@@ -833,13 +833,9 @@ table PopulationCohortState {
   // resolves through ITS OWN job's default; on an in-flight party they all resolve through the one
   // kit the party carries.
   //
-  // A THIRD FIELD, penCarryPerWorkerBiomass, RODE HERE AND IS DELETED (issue #543). It said "this
-  // band's per-KEEPER pen collection rate, which is NOT huntCarryPerWorkerBiomass — a band on the
-  // stalking kit collects a pen at the bare rate rather than the sledded 40". THAT IS FALSE: carry
-  // is a fact about the people and their gear, blind to whether the animal is penned or wild, so a
-  // keeper's rate IS huntCarryPerWorkerBiomass and a second field could only republish it under a
-  // second name. Slots after it renumbered; nothing persists a snapshot buffer, so the field went
-  // rather than being deprecated in place.
+  // THERE IS NO PER-KEEPER PEN CARRY FIELD (issue #543). Carry is a fact about the people and their
+  // gear, blind to whether the animal is penned or wild, so a keeper's rate IS
+  // huntCarryPerWorkerBiomass and a second field could only republish it under a second name.
   //
   //   - scoutVantageRange: the sight range each posted scout vantage reveals at. How far the
   //     vantages are POSTED is not a kit axis (three labor_config dials); this is only how far each

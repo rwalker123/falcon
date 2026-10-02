@@ -47,8 +47,8 @@ const CRAFTABLE_RECIPE_IDS_KEY := "craftable_recipe_ids"
 # ---- the wire's own keys: ONE BAND'S WINDOW ------------------------------------------------------
 # `PopulationCohortState.loadoutWindow`, decoded onto each cohort dict as `loadout_window`
 # (`native/src/dict/population.rs`). **EVERY BAND GETS ONE** — the spawned band's, and one on every
-# splinter a split makes — so the budgets and the open flag are facts about a BAND and were deleted
-# from the campaign section above rather than deprecated in it.
+# splinter a split makes — so the budgets and the open flag are facts about a BAND and the campaign
+# section above does not carry them.
 
 ## The window, on the cohort dict. Absent means this band has nothing to outfit.
 const WINDOW_KEY := "loadout_window"

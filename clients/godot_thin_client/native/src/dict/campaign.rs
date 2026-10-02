@@ -425,7 +425,7 @@ pub(crate) fn opening_loadout_to_dict(state: fb::OpeningLoadoutState<'_>) -> Var
     );
     let _ = dict.insert(
         "material_defaults",
-        &opening_material_defaults_to_array(state.materialDefaults()),
+        &material_allocations_to_array(state.materialDefaults()),
     );
     // Published as IDS so the client never has to sniff a craft offer's refusal SENTENCE to work out
     // which bench tools are still knowledge-gated.
@@ -439,17 +439,16 @@ pub(crate) fn opening_loadout_to_dict(state: fb::OpeningLoadoutState<'_>) -> Var
     dict
 }
 
-/// The KIT column's pre-fill, the material one's twin — **and the same row shape a band's window
-/// publishes its ACCEPTED kit allocation in**, which is why this is `pub(crate)`:
-/// `dict::population::loadout_window_to_dict` decodes `BandLoadoutWindowState.kits` through it
-/// rather than through a second copy that could drift from this one.
+/// **A band window's kit allocation** — `BandLoadoutWindowState.kits`, the rows the band actually
+/// holds, decoded by `dict::population::loadout_window_to_dict`. The material twin is
+/// [`material_allocations_to_array`].
 ///
-/// **ALREADY CLAMPED to the spawned band's `loadoutWindow.kitBudget` sim-side** — that budget is
-/// that band's working-age head count rather than a config number, so the profile cannot sum-check
-/// its own pre-fill and the sim scales it proportionally at publish time. The client draws these
-/// counts as-is; re-fitting them against the budget here would be a second clamp to disagree with
-/// the first.
-pub(crate) fn opening_kit_defaults_to_array(
+/// **ALREADY CLAMPED to that band's `kitBudget` sim-side**, when the sim applied the default outfit
+/// (`outfit_band_with_defaults`): the budget is the band's working-age head count rather than a
+/// config number, so the profile cannot sum-check its own pre-fill. The client draws these counts
+/// as-is; re-fitting them against the budget here would be a second clamp to disagree with the
+/// first.
+pub(crate) fn kit_allocations_to_array(
     defaults: Option<Vector<'_, ForwardsUOffset<fb::OpeningKitDefault<'_>>>>,
 ) -> VarArray {
     let mut array = VarArray::new();
@@ -465,10 +464,10 @@ pub(crate) fn opening_kit_defaults_to_array(
     array
 }
 
-/// The allocation the window OPENS on — a suggestion, never a grant. Nothing is deposited until a
-/// `set_starting_loadout` arrives. `pub(crate)` for its kit twin's reason: a band window's accepted
-/// material allocation is this same row shape and is decoded through this same function.
-pub(crate) fn opening_material_defaults_to_array(
+/// **A material allocation** in the `OpeningMaterialDefault` row shape. Two readers decode through
+/// it: a band window's `materials` (the rows the band actually holds) and the campaign section's
+/// `materialDefaults` (the AI seat's pre-fill, which no client surface reads).
+pub(crate) fn material_allocations_to_array(
     defaults: Option<Vector<'_, ForwardsUOffset<fb::OpeningMaterialDefault<'_>>>>,
 ) -> VarArray {
     let mut array = VarArray::new();

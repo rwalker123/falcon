@@ -698,8 +698,8 @@ func _hunt_take_cadence(rate: float) -> String:
 ##
 ## The metric is the herd's worker-independent CEILING at that preset's floor — `max(0, B - f*K) x the
 ## species' per-biomass vector`, composed by `SourceForecast.forecast_inputs`. Composed, not looked up:
-## the per-stance ceiling rows are retired `(deprecated)` wire slots that read zero, and four rows
-## could not answer a continuous dial anyway.
+## the wire carries no per-stance ceiling rows, and four rows could not answer a continuous dial
+## anyway.
 ##
 ## **THE HUNT SIDE ALSO FILLS THE PAIR'S OPTIONAL `note`** — the averaging-window disclaimer
 ## (`HudComposeVocab.HUNT_AVG_WINDOW_FORMAT`), which the picker appends under the preset's tooltip
