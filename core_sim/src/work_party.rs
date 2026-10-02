@@ -41,8 +41,20 @@
 //! hunters land the first load sooner, because the first pack fills at the whole party's rate.
 //!
 //! **This replaced a porter fraction and a friction term**, both of which were numbers somebody
-//! picked. Distance is paid in walking now, so nothing is lost in transit on top — that would count
-//! it twice. Friction still governs band-to-band pooling, untouched.
+//! picked. Distance is paid in walking now, so no FRACTION is lost in transit on top — that would
+//! count it twice. Friction still governs band-to-band pooling, untouched.
+//!
+//! # WHAT THE WALK DOES COST: FOOD THAT DOES NOT KEEP THAT LONG (#706)
+//!
+//! **A pack rots by its walk.** Every pack carries the keeping classes of the food in it
+//! ([`CargoClasses`]), and when it lands any class whose shelf life is shorter than the walk the
+//! porter set out on is lost on the way — entirely, not as a share (`crate::spoilage::rots_in_transit`).
+//! That is not friction under another name: it is a property of the *food* (flesh, greens, grain),
+//! so the same walk costs a meat hunt everything and a nut gather nothing, and it gives a far hunt a
+//! natural range that preservation extends. The landed pack is credited as income in full and the
+//! rotten share debited as spoilage the same turn, so the take's one producer stays the row's
+//! `actual` and the loss is the ledger's one `spoiled` term. A posting that ENDS (an unassign, a
+//! lapse) hands its load and road home at once, as a route crossing, and nothing rots on that path.
 //!
 //! # NOTHING ABOUT FEEDING IS MODELLED AT THE SOURCE
 //!
@@ -91,6 +103,40 @@ pub const NO_LOAD_WITHIN_HORIZON: u32 = 0;
 /// An empty load, or a walker who has handed over what they carried.
 pub const NOTHING_CARRIED: f32 = 0.0;
 
+/// **What a load or a pack is MADE OF, by keeping class** (#706) — cargo per class, in the cargo's
+/// own unit. The caravan's arithmetic runs on the scalar `cargo`; this rides beside it as the
+/// composition that cargo lands as, split in the same proportion every time a pack leaves the load.
+/// Empty on the deposit web, whose cargo is a material and keeps for ever.
+pub type CargoClasses = std::collections::BTreeMap<String, f32>;
+
+/// **One pack that reached home this turn**, with the walk it was carried on — the two facts the
+/// transit rot reads.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LandedPack {
+    /// The one-way walk the porter set out on, in turns. [`NO_WALK`] for a pack landed without
+    /// being walked (a local load, or a road the whole way).
+    pub walk_turns: u32,
+    /// The cargo it carried.
+    pub cargo: f32,
+    /// What that cargo is made of.
+    pub classes: CargoClasses,
+}
+
+/// `classes × share`, the part of a composition a fraction of its cargo carries.
+fn scaled_classes(classes: &CargoClasses, share: f32) -> CargoClasses {
+    classes
+        .iter()
+        .map(|(class, amount)| (class.clone(), amount * share))
+        .collect()
+}
+
+/// Add `from` into `into`, class by class.
+fn merge_classes(into: &mut CargoClasses, from: &CargoClasses) {
+    for (class, amount) in from {
+        *into.entry(class.clone()).or_insert(NOTHING_CARRIED) += amount;
+    }
+}
+
 /// **ONE HUNTER ON THE ROAD** — out with a pack, or on the way back without one.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Walker {
@@ -103,6 +149,8 @@ pub struct Walker {
     /// the deposit web. Handed to the home band when `turns_out` reaches `walk_turns`, and
     /// [`NOTHING_CARRIED`] on the way back.
     pub cargo: f32,
+    /// **What the pack is made of, by keeping class** — split off the load with the cargo.
+    pub classes: CargoClasses,
 }
 
 impl Walker {
@@ -150,6 +198,9 @@ pub struct WorkParty {
     /// deposit web, where cargo and bulk are one number), riding alongside it so a pack carries its
     /// own share of it home.
     pub load_cargo: f32,
+    /// **What [`Self::load_cargo`] is made of, by keeping class** (#706) — what each take added,
+    /// split off with every pack in the cargo's own proportion.
+    pub load_classes: CargoClasses,
     /// **THE HUNTERS ON THE ROAD** — at most the party, in the order they left.
     pub on_the_road: Vec<Walker>,
     /// **THE PER-TURN RATE ARRIVING AT THE HOME BAND** — the cargo home per turn over the forecast
@@ -169,10 +220,13 @@ pub struct SourceTake {
 }
 
 /// **The top of a caravan turn** ([`WorkParty::open_turn`]): what walked in, and who is left to work.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TurnOpen {
     /// Cargo the walkers handed to the home band this turn.
     pub delivered: f32,
+    /// **Each pack those walkers handed over**, with the walk it came on — what the transit rot
+    /// reads. Their cargo sums to [`Self::delivered`].
+    pub packs: Vec<LandedPack>,
     /// **The hunters at the source** — the crew the take is priced at. `0` while the party is still
     /// walking out.
     pub present: u32,
@@ -237,10 +291,17 @@ impl WorkParty {
     /// 2. A party still walking out counts one turn of it off and has nobody at the source.
     pub fn open_turn(&mut self) -> TurnOpen {
         let mut delivered = NOTHING_CARRIED;
+        let mut packs = Vec::new();
         for walker in self.on_the_road.iter_mut() {
             walker.turns_out += 1;
             if walker.turns_out == walker.walk_turns {
-                delivered += std::mem::replace(&mut walker.cargo, NOTHING_CARRIED);
+                let cargo = std::mem::replace(&mut walker.cargo, NOTHING_CARRIED);
+                delivered += cargo;
+                packs.push(LandedPack {
+                    walk_turns: walker.walk_turns,
+                    cargo,
+                    classes: std::mem::take(&mut walker.classes),
+                });
             }
         }
         self.on_the_road.retain(|walker| !walker.rejoined());
@@ -248,11 +309,13 @@ impl WorkParty {
             self.walk_out_remaining -= 1;
             return TurnOpen {
                 delivered,
+                packs,
                 present: NOBODY_ON_THE_ROAD,
             };
         }
         TurnOpen {
             delivered,
+            packs,
             present: self.hunters_present(),
         }
     }
@@ -273,34 +336,67 @@ impl WorkParty {
     /// pack cannot hold stays in the load for the next porter — nobody walks away from it, so
     /// nothing a resident band would waste is wasted here. An unbounded carry takes the whole load.
     pub fn close_turn(&mut self, take: SourceTake, pack_bulk: f32) -> f32 {
+        self.close_turn_classed(take, &CargoClasses::new(), pack_bulk)
+            .map_or(NOTHING_CARRIED, |pack| pack.cargo)
+    }
+
+    /// **[`Self::close_turn`] with the take's keeping classes** (#706) — the take site's form. The
+    /// take's `classes` join the load's, and every pack that leaves carries its share of them. The
+    /// pack landed without a walk (if any) comes back whole, classes and all, so the take site can
+    /// credit it by class; its cargo is exactly what [`Self::close_turn`] returns.
+    pub fn close_turn_classed(
+        &mut self,
+        take: SourceTake,
+        classes: &CargoClasses,
+        pack_bulk: f32,
+    ) -> Option<LandedPack> {
         // A take worth no cargo at all (an inedible quarry, a fibre crop) still loads its bulk —
         // the porters walk it whatever it is worth.
         self.load_bulk += take.bulk.max(NOTHING_CARRIED);
         self.load_cargo += take.cargo.max(NOTHING_CARRIED);
+        merge_classes(&mut self.load_classes, classes);
 
         let mut delivered = NOTHING_CARRIED;
+        let mut delivered_classes = CargoClasses::new();
         let mut present = self.hunters_present();
         let loads_a_pack =
             |load: f32| load > NOTHING_CARRIED && (!pack_bulk.is_finite() || load >= pack_bulk);
         if pack_bulk > NOTHING_CARRIED {
             while present > NOBODY_ON_THE_ROAD && loads_a_pack(self.load_bulk) {
                 let carried = self.load_bulk.min(pack_bulk);
-                let cargo = self.load_cargo * (carried / self.load_bulk);
+                let share = carried / self.load_bulk;
+                let cargo = self.load_cargo * share;
+                let pack_classes = scaled_classes(&self.load_classes, share);
                 self.load_bulk = (self.load_bulk - carried).max(NOTHING_CARRIED);
                 self.load_cargo = (self.load_cargo - cargo).max(NOTHING_CARRIED);
+                if self.load_cargo <= NOTHING_CARRIED {
+                    self.load_classes.clear();
+                } else {
+                    for (class, amount) in &pack_classes {
+                        if let Some(held) = self.load_classes.get_mut(class) {
+                            *held = (*held - amount).max(NOTHING_CARRIED);
+                        }
+                    }
+                }
                 if self.walk_turns == NO_WALK {
                     delivered += cargo;
+                    merge_classes(&mut delivered_classes, &pack_classes);
                     continue;
                 }
                 self.on_the_road.push(Walker {
                     walk_turns: self.walk_turns,
                     turns_out: 0,
                     cargo,
+                    classes: pack_classes,
                 });
                 present -= 1;
             }
         }
-        delivered
+        (delivered > NOTHING_CARRIED).then_some(LandedPack {
+            walk_turns: NO_WALK,
+            cargo: delivered,
+            classes: delivered_classes,
+        })
     }
 
     /// **ONE WHOLE CARAVAN TURN around a take `take` prices at the hunters present** — the forecast's
@@ -318,11 +414,22 @@ impl WorkParty {
     /// and the load emptied. What an unassign, an abandon and a row lapsing under its party all
     /// settle into the band: a caravan that ends early must not lose what is on the road.
     pub fn hand_over_everything(&mut self) -> f32 {
+        self.hand_over_everything_classed().0
+    }
+
+    /// **[`Self::hand_over_everything`] with what it is made of** (#706) — the load's classes and
+    /// every walker's, summed. A posting that ends hands its cargo over at once, so nothing rots on
+    /// this path; the classes say where it lands.
+    pub fn hand_over_everything_classed(&mut self) -> (f32, CargoClasses) {
         let on_the_road: f32 = self.on_the_road.iter().map(|walker| walker.cargo).sum();
+        let mut classes = std::mem::take(&mut self.load_classes);
+        for walker in &self.on_the_road {
+            merge_classes(&mut classes, &walker.classes);
+        }
         let load = std::mem::replace(&mut self.load_cargo, NOTHING_CARRIED);
         self.load_bulk = NOTHING_CARRIED;
         self.on_the_road.clear();
-        load + on_the_road
+        (load + on_the_road, classes)
     }
 }
 
@@ -1070,6 +1177,62 @@ mod tests {
             back_on,
             Some(2 * walk + 1),
             "absent for the whole round trip"
+        );
+    }
+
+    /// **A pack carries what its load was made of, and lands with the walk it came on** (#706) —
+    /// the two facts the transit rot reads. A load of flesh and grain splits into packs in its own
+    /// proportions, each pack is handed over with its porter's walk, and the classes of every pack
+    /// home sum to what was loaded.
+    #[test]
+    fn a_pack_carries_its_loads_classes_home_with_its_walk() {
+        const WALK: u32 = 6;
+        const PACK: f32 = 10.0;
+        const LOAD: f32 = 20.0;
+        const FLESH_SHARE: f32 = 0.75;
+        let mut party = WorkParty::posted(UVec2::ZERO, WALK, WALK);
+        party.workers = 4;
+        party.walk_out_remaining = NO_WALK;
+        party.open_turn();
+        let classes: CargoClasses = [
+            ("flesh".to_string(), LOAD * FLESH_SHARE),
+            ("dry".to_string(), LOAD * (1.0 - FLESH_SHARE)),
+        ]
+        .into_iter()
+        .collect();
+        let landed_now = party.close_turn_classed(
+            SourceTake {
+                cargo: LOAD,
+                bulk: LOAD,
+            },
+            &classes,
+            PACK,
+        );
+        assert!(
+            landed_now.is_none(),
+            "a walked pack does not land the turn it leaves"
+        );
+        assert_eq!(
+            party.hunters_on_the_road(),
+            2,
+            "two packs of ten off twenty"
+        );
+        let mut packs = Vec::new();
+        for _ in 0..WALK {
+            packs.extend(party.open_turn().packs);
+        }
+        assert_eq!(packs.len(), 2, "both porters reach home after the walk");
+        for pack in &packs {
+            assert_eq!(pack.walk_turns, WALK, "each pack lands with its walk");
+            assert!(
+                (pack.classes["flesh"] / pack.cargo - FLESH_SHARE).abs() < 1e-5,
+                "each pack is three-quarters flesh, as the load was"
+            );
+        }
+        let home: f32 = packs.iter().flat_map(|pack| pack.classes.values()).sum();
+        assert!(
+            (home - LOAD).abs() < 1e-4,
+            "every class of the load came home: {home}"
         );
     }
 }

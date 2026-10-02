@@ -720,7 +720,7 @@ it shed. The two penalties are orthogonal and a pen can take both in one turn.
 > Folding the feed into the `upkeep` block would still be wrong, for the original reason: food and
 > labour in one number. What changed is that the feed account is denominated in fodder, so it does not
 > appear in the food ledger at all —
-> `larder_delta == foodIncome − foodConsumption − raidForfeit`.
+> `larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled`.
 
 > ### ⛔ EVERY FOOD FIGURE BELOW WAS MEASURED WITH A **STOCKED** BAND, AND A SPAWN NO LONGER IS ONE
 >

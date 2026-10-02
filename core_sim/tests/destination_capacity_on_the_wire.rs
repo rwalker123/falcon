@@ -281,6 +281,7 @@ fn spawn_the_farming_band(
             morale: scalar_one(),
             last_food_consumption: 0.0,
             last_food_need: 0.0,
+            last_food_spoiled: 0.0,
             last_turn_food_transfers: Default::default(),
             last_turn_fodder_transfers: Default::default(),
             last_turn_transfer_crossings: Vec::new(),
@@ -661,6 +662,7 @@ fn spawn_the_herding_band(
             morale: scalar_one(),
             last_food_consumption: 0.0,
             last_food_need: 0.0,
+            last_food_spoiled: 0.0,
             last_turn_food_transfers: Default::default(),
             last_turn_fodder_transfers: Default::default(),
             last_turn_transfer_crossings: Vec::new(),
@@ -737,7 +739,7 @@ fn keep_the_band_alive(app: &mut App) {
         }
         cohort
             .stores
-            .set(core_sim::FOOD, scalar_from_f32(A_FULL_LARDER));
+            .reset_food("dry", scalar_from_f32(A_FULL_LARDER));
         cohort.morale = scalar_one();
         cohort.size = cohort.size.max(A_BAND_THAT_AFFORDS_ITS_CREWS);
         cohort.working = scalar_from_f32(A_BAND_THAT_AFFORDS_ITS_CREWS as f32);

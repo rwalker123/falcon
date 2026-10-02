@@ -180,7 +180,7 @@ fn stock_the_parent(app: &mut App, parent: Entity) -> (f32, f32, f32) {
     cohort.children = Scalar::from_f32(9.0);
     cohort.working = Scalar::from_f32(16.5);
     cohort.elders = Scalar::from_f32(4.5);
-    cohort.stores.set(FOOD, Scalar::from_f32(96.0));
+    cohort.stores.reset_food("dry", Scalar::from_f32(96.0));
     cohort.stores.set(FODDER, Scalar::from_f32(8.0));
     cohort.sync_size();
     (9.0, 16.5, 4.5)
@@ -313,6 +313,56 @@ fn stores_divide_on_the_same_share_and_conserve() {
         (split.provisions.to_f32() - 96.0 * share).abs() < EPSILON,
         "the reported provisions are the ones actually handed over"
     );
+}
+
+/// **The larder divides CLASS BY CLASS** (#706): the splinter's flesh, greens and grain are the
+/// parent's in miniature, and each class is conserved across the pair — a split must not turn the
+/// parent's grain into the splinter's meat.
+#[test]
+fn the_larder_divides_class_by_class_and_conserves_each() {
+    const CLASSES: [(&str, f32); 3] = [("flesh", 12.0), ("fresh_plant", 20.0), ("dry", 64.0)];
+    let mut app = spawn_world();
+    let (parent, _, _) = home_band(&mut app);
+    let (_, working, _) = stock_the_parent(&mut app, parent);
+    {
+        let mut cohort = app
+            .world
+            .get_mut::<PopulationCohort>(parent)
+            .expect("parent");
+        cohort
+            .stores
+            .reset_food(CLASSES[0].0, Scalar::from_f32(CLASSES[0].1));
+        for (class, amount) in &CLASSES[1..] {
+            cohort.stores.add_food(class, Scalar::from_f32(*amount));
+        }
+    }
+
+    let asked = 6;
+    let split = split_band_from_parent(&mut app.world, parent, asked, &permissive_settle())
+        .expect("the split is admitted");
+    let share = asked as f32 / working;
+    let child_entity = entity_for_band(&mut app, split.band);
+    let food = |entity: Entity| {
+        app.world
+            .get::<PopulationCohort>(entity)
+            .expect("band")
+            .stores
+            .food()
+            .clone()
+    };
+    let (kept, taken) = (food(parent), food(child_entity));
+    for (class, whole) in CLASSES {
+        let (k, t) = (kept.get(class).to_f32(), taken.get(class).to_f32());
+        assert!(
+            (t - whole * share).abs() < EPSILON,
+            "{class} divides on the share: {t} vs {}",
+            whole * share
+        );
+        assert!(
+            (k + t - whole).abs() < EPSILON,
+            "{class} is conserved across the split: {k} + {t} vs {whole}"
+        );
+    }
 }
 
 // -------------------------------------------------------------------------------------------

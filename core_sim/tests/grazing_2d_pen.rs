@@ -241,6 +241,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
                 last_food_need: 0.0,
+                last_food_spoiled: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),
@@ -286,7 +287,7 @@ fn run_pen_turn(app: &mut App, keeper: Entity) {
         .get_mut::<PopulationCohort>(keeper)
         .expect("keeper")
         .stores
-        .set(FOOD, scalar_from_f32(RESTOCK));
+        .reset_food("dry", scalar_from_f32(RESTOCK));
     app.world.run_system_once(advance_herds);
     app.world.run_system_once(advance_herd_grazing);
     app.world.run_system_once(advance_graze_regrowth);
@@ -528,7 +529,7 @@ fn a_lush_pen_feeds_itself_for_free_while_a_barren_pen_starves_and_neither_touch
         .get_mut::<PopulationCohort>(keeper)
         .unwrap()
         .stores
-        .set(FOOD, scalar_from_f32(RESTOCK));
+        .reset_food("dry", scalar_from_f32(RESTOCK));
     app.world.run_system_once(advance_herds);
     app.world.run_system_once(advance_herd_grazing);
     app.world.run_system_once(advance_graze_regrowth);

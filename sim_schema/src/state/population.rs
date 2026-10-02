@@ -1064,7 +1064,7 @@ pub struct PopulationCohortState {
     /// ledger identity to
     ///
     /// ```text
-    /// larder_delta == food_income − food_consumption − raid_forfeit
+    /// larder_delta == food_income − food_consumption − raid_forfeit − food_spoiled
     /// ```
     ///
     /// (pinned by `integration_tests/tests/raid_food_ledger.rs`). It is a **past-turn** stochastic
@@ -1323,7 +1323,7 @@ pub struct PopulationCohortState {
     /// With [`Self::transfer_sent`] it completes the food-ledger identity
     ///
     /// ```text
-    /// larder_delta == food_income − food_consumption − raid_forfeit
+    /// larder_delta == food_income − food_consumption − raid_forfeit − food_spoiled
     ///                 + transfer_received − transfer_sent
     /// ```
     ///
@@ -1696,6 +1696,10 @@ pub struct PopulationCohortState {
     /// time goes short even when its income beats its need on average. Appended last.
     #[serde(default)]
     pub food_shortfall: f32,
+    /// **The food that rotted this turn** (#706) — the larder rot plus any caravan pack's transit
+    /// rot; one term of the larder ledger identity (`snapshot.fbs` → `foodSpoiled`). Appended last.
+    #[serde(default)]
+    pub food_spoiled: f32,
 }
 
 /// **ONE GOOD THAT CROSSED A BAND'S STORE, BY CAUSE** — a row of

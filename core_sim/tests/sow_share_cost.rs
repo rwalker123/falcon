@@ -185,7 +185,7 @@ fn a_two_leg_sow() -> (App, UVec2) {
 /// A resident band gathering `source`, holding it, and standing a builders pool on a queued `Sow`.
 fn spawn_the_farming_band(app: &mut App, tile: bevy::prelude::Entity, source: UVec2) {
     let mut stores = LocalStore::new();
-    stores.add(core_sim::FOOD, scalar_from_f32(A_FULL_LARDER));
+    stores.add_food("dry", scalar_from_f32(A_FULL_LARDER));
     app.world.spawn((
         PopulationCohort {
             home: tile,
@@ -200,6 +200,7 @@ fn spawn_the_farming_band(app: &mut App, tile: bevy::prelude::Entity, source: UV
             morale: scalar_one(),
             last_food_consumption: 0.0,
             last_food_need: 0.0,
+            last_food_spoiled: 0.0,
             last_turn_food_transfers: Default::default(),
             last_turn_fodder_transfers: Default::default(),
             last_turn_transfer_crossings: Vec::new(),

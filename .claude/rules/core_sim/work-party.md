@@ -99,7 +99,41 @@ the first load sooner, because the first pack fills at the whole party's rate.
 > friction then charged the walk **a second time**: distance paid in walking already is the cost, and
 > a loss in transit on top counts it twice. Both are deleted, and the lever with them. **Friction
 > still governs band-to-band pooling in `balance_supply_networks`, untouched.** Meat going off on a
-> long walk is spoilage, which is the storage arc's term, not this one.
+> long walk is a different cost — a property of the *food*, not a fraction of the walk — and it is
+> the one below.
+
+### A pack rots by its walk (#706)
+
+**Every pack carries the keeping classes of the food in it, and a class whose shelf life is shorter
+than the porter's walk is lost on the way — entirely, not as a share** (`spoilage::rots_in_transit`;
+the classes and their shelf lives are `campaign.md` → "Food spoils by keeping class"). So the same
+walk costs a meat hunt everything and a nut gather nothing: a boar is `flesh`, which keeps four
+turns, so a herd eight hexes out (a six-turn walk) lands nothing it keeps, and one five hexes out
+(three turns) loses nothing. That is the natural range a far hunt has, and a longer shelf life —
+drying — is what extends it.
+
+- **The composition rides the caravan beside its scalar cargo.** `WorkParty::load_classes` and each
+  `Walker::classes` are cargo per class (`work_party::CargoClasses`), split off the load in the same
+  proportion as the cargo every time a pack leaves; the caravan's arithmetic still runs on the scalar
+  `cargo`, so the forecast — which steps scalars — is untouched. A take site hands its take's classes
+  in with `WorkParty::close_turn_classed`; `open_turn` hands each landed pack back as a
+  `LandedPack { walk_turns, cargo, classes }`. The deposit web's cargo is a material and carries no
+  classes.
+- **One spoilage term, booked at the landing.** `systems::labor`'s `land_food_home` is the one place a
+  take's food enters the larder: the whole delivery is **credited as income** (by class), then every
+  class of every pack whose walk exceeded that class's shelf life is **debited the same turn** and
+  added to `PopulationCohort::last_food_spoiled`. Income therefore stays the row's `actual` and the
+  forecast's `netRateHome` (what *lands*), and the loss is the ledger identity's single `spoiled`
+  term. A pack landed without a walk (a local row) never rots.
+- **A posting that ENDS does not rot what it hands over.** The stand-down settle
+  (`WorkParty::hand_over_everything_classed` → `CargoHome::land`) brings the load and the road home at
+  once as a route crossing; it carries the classes so the cargo lands as what it was, and nothing on
+  that path is walked.
+
+Pinned by `work_party::tests::a_pack_carries_its_loads_classes_home_with_its_walk` (the composition
+and the walk ride the pack), `systems::labor::transit_rot_tests` (the landing rule), and
+`work_party_caravan::a_walk_longer_than_flesh_keeps_loses_the_pack_and_a_shorter_one_does_not` (a real
+far hunt at both distances, each with a liveness assertion that food landed).
 
 ### No individual hunters
 
@@ -379,7 +413,8 @@ ends a posting routes through it:
 >
 > It is not this turn's income — a row that is ending publishes no telemetry to count it in — and food
 > that reached the larder through neither `food_income` nor a transfer would break the pinned identity
-> `larder_delta == food_income − food_consumption − raid_forfeit + transfer_received − transfer_sent`.
+> `larder_delta == food_income − food_consumption − raid_forfeit − spoiled + transfer_received −
+> transfer_sent`.
 > A party carrying goods home is exactly what `TransferLink::Route` is for, so `bring_the_party_home`
 > books it there — through `LaborAllocation::book_crossing` as `TransferCause::PartyHome`, the one way
 > a crossing is written, so the route arm and the cause-keyed crossings row agree and the band's own

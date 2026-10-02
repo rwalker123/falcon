@@ -70,6 +70,9 @@ pub struct ExpeditionConfigs<'w> {
     /// converts to food is its tile's realized basket. In the bundle rather than at top level for
     /// the reason the bundle exists: the system is at Bevy's 16-parameter ceiling.
     pub flora: Res<'w, FloraConfigHandle>,
+    /// **How food keeps** (#706) — a party eats its pack fastest-rotting first, and what it gathers
+    /// or kills on the road lands in a keeping class. In the bundle for the 16-parameter reason.
+    pub demographics: Option<Res<'w, DemographicsConfigHandle>>,
 }
 
 /// Advance any `move_band` order one step toward its target. The band travels at
@@ -488,6 +491,8 @@ pub fn advance_expeditions(
     let combat_tuning = combat_config.expedition_tuning();
     let materials_cfg = configs.materials.get();
     let flora = configs.flora.get();
+    let demographics_cfg = demographics_or_builtin(configs.demographics.as_deref());
+    let keeping = &demographics_cfg.keeping;
     let person_profile = configs.creatures.get().person();
     // **The minimal TOE** — the two-tier table and the durability dials, resolved once. What varies
     // per party is only its `BandEquipment` *wear*.
@@ -832,7 +837,8 @@ pub fn advance_expeditions(
             // c. Provisions depletion (a raid lives off its kills instead). Non-fatal.
             let upkeep = scalar_from_f32(workers as f32 * cfg.provision_upkeep_per_worker);
             if upkeep > scalar_zero() {
-                cohort.stores.take(FOOD, upkeep);
+                // The party eats its pack fastest-rotting class first, as a band does (#706).
+                cohort.stores.eat_food(upkeep, &keeping.eat_order());
             }
 
             // ---- Opportunistic replenish: GATHER FIRST, THEN HUNT ---------------------------
@@ -941,7 +947,17 @@ pub fn advance_expeditions(
                     );
                     let gathered_biomass = standing_before - patch.biomass;
                     if gathered > scalar_zero() {
-                        cohort.stores.add(FOOD, gathered);
+                        // **By keeping class, off the stand's own basket** (#706) — the same
+                        // decomposition the resident gather credits through.
+                        cohort.stores.add_food_mix(&crate::forage::patch_food_mix(
+                            patch,
+                            &composition,
+                            &flora,
+                            &labor.forage,
+                            &TakeSelection::EVERYTHING,
+                            gathered,
+                            keeping,
+                        ));
                     }
                     // **The BASKETS are charged per USE, never per turn** — the biomass this crew
                     // actually took off the stand, the same quantum the resident Forage arm
@@ -1074,7 +1090,11 @@ pub fn advance_expeditions(
                     let provisions = scalar_from_f32(landed.provisions);
                     let added = provisions.min(room);
                     if added > scalar_zero() {
-                        cohort.stores.add(FOOD, added);
+                        // Into the quarry's own keeping class (#706).
+                        let class = fauna
+                            .keeping_for(&herds.herds[idx].species)
+                            .unwrap_or(&keeping.kill_fallback_class);
+                        cohort.stores.add_food(class, added);
                     }
                     // **The MATERIAL account of the same roadside kill** — a scout's kill is skinned
                     // as well as butchered. Off `take.carried`, like the food above it and like
@@ -1135,10 +1155,11 @@ pub fn advance_expeditions(
                             home_band_id.map(|band| TransferCounterparty { band, faction });
                         let landed = bands.get_mut(host_entity).ok().map(
                             |(_, mut host, _, _, allocation)| {
-                                let moved = expedition.cargo.take(FOOD, carried_food);
-                                if moved > scalar_zero() {
-                                    host.stores.add(FOOD, moved);
-                                }
+                                // The shipment lands class by class (#706): the host receives the
+                                // flesh, greens and grain that were loaded, not a classless total.
+                                let moved_mix = expedition.cargo.take_food_mix(carried_food);
+                                host.stores.add_food_mix(&moved_mix);
+                                let moved = moved_mix.total();
                                 // **The hay lands in the host's OWN hay account** — `FODDER` is a
                                 // second key on the same store, so the hand-over is the food
                                 // hand-over verbatim and the two never convert on the way in.
@@ -1345,6 +1366,12 @@ pub fn advance_expeditions(
                         let standing_surplus =
                             (herd_biomass_before - floor * carrying_capacity.max(0.0)).max(0.0);
                         let quarry_yield = herd_hunt_yield(&herds.herds[idx], &fauna);
+                        // The keeping class the raid's meat lands in (#706), read while the herd
+                        // is still borrowed only immutably.
+                        let quarry_class = fauna
+                            .keeping_for(&herds.herds[idx].species)
+                            .unwrap_or(&keeping.kill_fallback_class)
+                            .to_string();
                         // A party carrying food home can only take the biomass it has room for. The
                         // room bounds the party's **collection** (invert the species' own
                         // `provisions_per_biomass`), so a nearly-full pack kills fewer animals rather
@@ -1485,7 +1512,7 @@ pub fn advance_expeditions(
                             let provisions = scalar_from_f32(landed.provisions);
                             let added = provisions.min(room);
                             if added > scalar_zero() {
-                                cohort.stores.add(FOOD, added);
+                                cohort.stores.add_food(&quarry_class, added);
                             }
                             // **The MATERIAL account of the raid** — and, on an inedible quarry, the
                             // whole of what a raid brings home. Credited on the SAME `take.carried`
@@ -1710,19 +1737,18 @@ pub fn advance_expeditions(
                     commands.entity(entity).insert(BandTravel { target: home });
                 }
                 if near_home {
-                    let delivered = {
+                    let delivered_mix = {
                         let carried = cohort.stores.get(FOOD);
-                        cohort.stores.take(FOOD, carried)
+                        cohort.stores.take_food_mix(carried)
                     };
+                    let delivered = delivered_mix.total();
                     // The trip's hides settle with its meat — one delivery, both accounts into the
                     // one band store, so the credit matches the raid forecast this trip was quoted
                     // against.
                     let mut banked_materials = 0.0;
                     if let Ok((_, mut home, _, _, allocation)) = bands.get_mut(expedition.home_band)
                     {
-                        if delivered > scalar_zero() {
-                            home.stores.add(FOOD, delivered);
-                        }
+                        home.stores.add_food_mix(&delivered_mix);
                         // **The materials ride the same delivery**, batch by batch so a mammoth
                         // hide is never averaged into a hare pelt on the walk home.
                         banked_materials = materials_carried(&cohort.stores);
@@ -1879,16 +1905,15 @@ pub fn fold_party_into_band(
     home: &mut PopulationCohort,
 ) -> FoldBack {
     home.working += party.working;
-    let leftover = party.stores.get(FOOD);
-    if leftover > scalar_zero() {
-        home.stores.add(FOOD, leftover);
-    }
+    // The pack lands class by class (#706) — read, not emptied, for the reason above.
+    let leftover_mix = party.stores.food().clone();
+    home.stores.add_food_mix(&leftover_mix);
+    let leftover = leftover_mix.total();
     // The cargo's food is genuinely taken rather than read: unlike the pack, the caller may hold the
     // party a moment longer, and a shipment counted twice is a shipment invented.
-    let undelivered = cargo.take(FOOD, cargo.get(FOOD));
-    if undelivered > scalar_zero() {
-        home.stores.add(FOOD, undelivered);
-    }
+    let undelivered_mix = cargo.take_food_mix(cargo.get(FOOD));
+    home.stores.add_food_mix(&undelivered_mix);
+    let undelivered = undelivered_mix.total();
     // And the hay, on the same take-don't-read rule. The party's own pack is deliberately NOT read
     // for fodder: a pack is a walking larder for people, and only the shipment can hold hay.
     let undelivered_fodder = cargo.take(FODDER, cargo.get(FODDER));

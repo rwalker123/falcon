@@ -139,17 +139,24 @@ const FOOD_LABEL_CONSUMED := "Consumed"
 # to the headline rate (income − need).
 const FOOD_LABEL_WENT_HUNGRY_FORMAT := "Went hungry — needed %s"
 
-# The RAID debit (Predators Phase 3): food this band lost to predator raids this turn — the ledger's
-# only debit beyond consumption. The sim answers it as `PopulationCohortState.raidForfeit` (the
-# client never re-derives it), and it is the third term of the larder identity
-# `larder_delta == income − consumption − raid_forfeit`. Crossed-swords glyph so the row
+# The RAID debit (Predators Phase 3): food this band lost to predator raids this turn — one of the
+# ledger's two loss terms beyond consumption (the other is spoilage, below). The sim answers it as
+# `PopulationCohortState.raidForfeit` (the client never re-derives it), and it is the third term of
+# the larder identity `larder_delta == income − consumption − raid_forfeit − …`. Crossed-swords glyph so the row
 # reads as a loss to an attacker, matching the command feed's `predator_raid` alert.
 const RAID_GLYPH := "⚔"
 const FOOD_LABEL_RAID_FORFEIT := "%s Lost to raids" % RAID_GLYPH
 
+# The SPOILAGE debit (#706): food that rotted this turn — the larder's food past its keeping class's
+# shelf life plus any caravan pack that rotted on the walk home. The sim answers it as
+# `PopulationCohortState.foodSpoiled` (the client never re-derives it), and it is a loss term of the
+# larder identity exactly as the raid debit is:
+# `larder_delta == income − consumption − raid_forfeit − food_spoiled + received − sent`.
+const FOOD_LABEL_SPOILED := "Spoiled"
+
 # The TRANSFER glyph (arc #527): food that crossed between bands, in or out. Those crossings are the
 # fifth and sixth terms of the larder identity
-#   larder_delta == income − consumption − raid_forfeit + received − sent
+#   larder_delta == income − consumption − raid_forfeit − food_spoiled + received − sent
 # and they close a hole that was NEVER about trade alone: `balance_supply_networks` has been pooling
 # food between neighbouring larders every turn since turn one, so any two co-networked bands had a
 # Food line that silently did not add up — by the whole transfer, not a rounding drift.
@@ -2644,8 +2651,8 @@ static func morale_is_concerning(unit_data: Dictionary) -> bool:
 ## Positive → the larder is growing. `raid_forfeit` is the sim's own answer for the third term
 ## (`PopulationCohortState.raidForfeit`, Predators Phase 3 — food lost to raids this turn); the
 ## client must NOT re-derive it, and the full identity
-## `larder_delta == income − consumption − raid_forfeit + transfers` is pinned sim-side
-## (`integration_tests/tests/{pen_food_ledger,raid_food_ledger,transfer_food_ledger}.rs`) — the
+## `larder_delta == income − consumption − raid_forfeit − food_spoiled + transfers` is pinned sim-side
+## (`integration_tests/tests/{pen_food_ledger,raid_food_ledger,spoilage_food_ledger,transfer_food_ledger}.rs`) — the
 ## BREAKDOWN is what states it in full, this headline being the steady rate rather than the ledger.
 ## Raids are EPISODIC, so this net can swing the turn one lands — the forward food-outlook chart
 ## deliberately does NOT project raid_forfeit forward (a past loss is not a steady drain).
@@ -2659,7 +2666,8 @@ static func morale_is_concerning(unit_data: Dictionary) -> bool:
 static func band_net_food(band: Dictionary) -> float:
     return band_food_income(band) \
         - band_food_need(band) \
-        - band_raid_forfeit(band)
+        - band_raid_forfeit(band) \
+        - band_food_spoiled(band)
 
 ## What the band NEEDED to eat this turn (`food_need`). Its `food_consumption` is what it ATE —
 ## `min(need, larder)` — and the gap between them is `band_food_shortfall`.
@@ -2688,7 +2696,7 @@ static func food_starving_line(band: Dictionary) -> String:
     return FOOD_STARVING_LINE_FORMAT % SourceForecast.format_magnitude(band_food_shortfall(band))
 
 ## **THE BAND PANEL'S FOOD HEADLINE RATE** — `band_net_food` plus this turn's POOLED food net, so the
-## Food popover's rows (Gathered, Hunted, Consumed, Lost to raids, `⇄ Local exchange`) sum to the
+## Food popover's rows (Gathered, Hunted, Consumed, Lost to raids, Spoiled, `⇄ Local exchange`) sum to the
 ## headline on a turn when nothing else crossed. Only `pooled`: pooling happens most turns, so it
 ## belongs in a rate; a shipment, a party's haul or rations and a split's dowry are one-off events
 ## and stay out of it.
@@ -2707,8 +2715,8 @@ static func band_pooled_food_net(band: Dictionary) -> float:
 ## The STEADY total food income = Gathered + Hunted (Σ per-source realized average across the band's
 ## forage + hunt assignments). Summed from the SAME per-source realized values as the breakdown rows, so
 ## it equals Gathered + Hunted exactly — the honest long-run average of the lumpy per-turn take, so it
-## does NOT swing. It feeds the headline net (`band_net_food` = income − Consumed − Lost to raids) and the
-## `food_is_concerning` gate. **Deliberately summed from the rows rather than read off a band-level
+## does NOT swing. It feeds the headline net (`band_net_food` = income − Consumed − Lost to raids −
+## Spoiled) and the `food_is_concerning` gate. **Deliberately summed from the rows rather than read off a band-level
 ## wire field** — a separately-computed total could drift from the Gathered/Hunted rows it sits above,
 ## and this way the headline equals them by construction. (A cohort-level `foodIncomeAverage` existed
 ## for one commit and was retired as redundant; do not reintroduce it.)
@@ -2720,6 +2728,12 @@ static func band_food_income(band: Dictionary) -> float:
 ## 0 when no raid landed — the ledger then omits the row entirely.
 static func band_raid_forfeit(band: Dictionary) -> float:
     return float(band.get("raid_forfeit", 0.0))
+
+## What rotted off this band this turn (food, `PopulationCohortState.foodSpoiled`) — larder food past
+## its shelf life plus caravan packs that spoiled on the walk home. 0 when nothing rotted — the
+## ledger then omits the row entirely.
+static func band_food_spoiled(band: Dictionary) -> float:
+    return float(band.get("food_spoiled", 0.0))
 
 ## Food that CROSSED IN from another band over the snapshot window
 ## (`PopulationCohortState.transferReceived`) — a supply-network pooling, a shipment landing, a
@@ -2862,6 +2876,7 @@ static func band_has_food_flow(band: Dictionary) -> bool:
         or float(band.get("food_consumption", 0.0)) >= SourceForecast.FOOD_FLOW_MIN \
         or band_food_need(band) >= SourceForecast.FOOD_FLOW_MIN \
         or band_raid_forfeit(band) >= SourceForecast.FOOD_FLOW_MIN \
+        or band_food_spoiled(band) >= SourceForecast.FOOD_FLOW_MIN \
         or band_transfer_received_turn(band) >= SourceForecast.FOOD_FLOW_MIN \
         or band_transfer_sent_turn(band) >= SourceForecast.FOOD_FLOW_MIN
 

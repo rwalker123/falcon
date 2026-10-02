@@ -26,7 +26,7 @@ paths:
 | File | Purpose |
 |------|---------|
 | `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population), and saturation `references` |
-| `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), `births` (`birth_rate` + the `reserve` stock factor (`bonus`/`saturation_turns`) + the `trend` flow factor (`surplus_gain`/`surplus_saturation`/`deficit_penalty`/`deficit_saturation`); morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` and `heat` (the two temperature tails — `onset_temp` / `mortality_scale` / `max_mortality` plus each tail's own `child_vulnerability` 1.25 / `working_vulnerability` 1.0 / `elder_vulnerability` 1.5, a different ordering from `scarcity`'s; see “The cold/heat death model is PUBLISHED” below for why the two tails differ in all three parameters and why both are calibrated ahead of the map's current range). **This file is the SOLE source of demographics tuning** (#350): `demographics_config.rs` has no hand-written `Default` impls — `DemographicsConfig::default()` parses the builtin JSON, and every field is required with `deny_unknown_fields`, so a missing or unknown key is a parse error rather than a silent fallback to a second set of numbers that can drift (it did: `per_capita_draw` was 0.03 in Rust against 0.16 here). Do not re-add `#[serde(default)]` — the root `Default` parses through serde, so a container-level default would make it recurse. **The loader is strict to match**, and that strictness is no longer demographics-specific: it now lives in the shared `config_load.rs` seam and applies to every boot config (see `.claude/rules/core_sim/config-loading.md`). Strictness without a loud loader would only move the silent substitution one layer out — the whole file instead of one key |
+| `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), **`keeping`** (how food keeps, #706 — `classes`, each `{ id, shelf_life_turns }`: **`flesh` 4.0**, **`fresh_plant` 8.0**, **`dry` 60.0**; `startup_class` **`dry`**, the class the opening reserve is seeded into; `plant_fallback_class` **`fresh_plant`** / `kill_fallback_class` **`flesh`**, where a take's food lands when no species says. Validated at parse — unique ids, finite positive shelf lives, every named class present — and every fauna/flora species' `keeping` is reconciled against it at boot; see "Food spoils by keeping class" below), `births` (`birth_rate` + the `reserve` stock factor (`bonus`/`saturation_turns`) + the `trend` flow factor (`surplus_gain`/`surplus_saturation`/`deficit_penalty`/`deficit_saturation`); morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` and `heat` (the two temperature tails — `onset_temp` / `mortality_scale` / `max_mortality` plus each tail's own `child_vulnerability` 1.25 / `working_vulnerability` 1.0 / `elder_vulnerability` 1.5, a different ordering from `scarcity`'s; see “The cold/heat death model is PUBLISHED” below for why the two tails differ in all three parameters and why both are calibrated ahead of the map's current range). **This file is the SOLE source of demographics tuning** (#350): `demographics_config.rs` has no hand-written `Default` impls — `DemographicsConfig::default()` parses the builtin JSON, and every field is required with `deny_unknown_fields`, so a missing or unknown key is a parse error rather than a silent fallback to a second set of numbers that can drift (it did: `per_capita_draw` was 0.03 in Rust against 0.16 here). Do not re-add `#[serde(default)]` — the root `Default` parses through serde, so a container-level default would make it recurse. **The loader is strict to match**, and that strictness is no longer demographics-specific: it now lives in the shared `config_load.rs` seam and applies to every boot config (see `.claude/rules/core_sim/config-loading.md`). Strictness without a loud loader would only move the silent substitution one layer out — the whole file instead of one key |
 | `src/data/start_profiles.json` | Campaign initialization. Per profile: `starting_units` (`kind`/`count`/`band_size`), `starting_knowledge_tags`, `inventory`, `food_modules`, `victory_modes_enabled` (AI tuning is per seat and lives in `sim_ai/data/ai_profiles.json`, not here) — plus the **required** `opening_loadout` block (see "The opening loadout" below): `material_points` (**30**, one point buys one unit), `pickable_materials` (`bone`, `fibre`, `hide`, `wood`, `stone` — the picker's list, in the order it is drawn), `material_defaults` (`bone 3` / `fibre 17` / `hide 8`, serde-defaulting to empty — the **default outfit** the sim applies to every band at creation), and **`kit_defaults`** (`big_game 4` / `trapping 4` / `gathering 4`, same optionality — its kit twin, opening on Stalking / Trapping / Harvesting so a band stands in a plausible outfit rather than a column of zeros, with hands still left to spend). ⛔ **These are APPLIED, not suggested** — see `starting-loadout.md`; the window's accepted rows are set by that apply, so they describe gear the band really holds. **There is deliberately no kit budget here.** `validate` rejects a `material_points` of `0`, an empty or duplicated `pickable_materials`, a `material_defaults` key outside the pick list, defaults summing above the budget, and a `kit_defaults` count of `0`; `StartProfiles::validate_against_materials` rejects a pickable or default naming a material the roster does not carry, and `validate_against_equipment` rejects a `kit_defaults` key the equipment roster does not carry **or one whose `uses` is empty** — both run from `build_headless_app`, the one place all three tables are in scope. ⛔ **There is no sum check on `kit_defaults` and there cannot be**, because the kit budget is the spawned band's head count rather than a number in this file; an over-allocation is clamped at publish time instead (see "The opening loadout") |
 | `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius, in **hex steps**), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer_fraction` (the dead-band, as a fraction of the node's own per-capita fair share of that commodity — see "The dead-band is RELATIVE, because one balancer serves food and a bone pile" below) |
 | `src/data/wellbeing_config.json` | Civilization Wellbeing tuning: `discontent` (`content_morale`/`floor_morale` productivity curve, `grievance_gain`/`grievance_decay`/`trapped_multiplier`), `productivity` (`floor_mult`, `discontent_weight`), `migration` (own morale-scaled onset: `morale_threshold`, `max_rate`, `base_reach`, `attractive_morale`, `min_morale_gap`, `dependent_weight`) |
@@ -362,12 +362,77 @@ provisions grant to distribute. Bands **share** via the supply network (below); 
 distribution is a later addition. Starvation is deficit-capped (a 10% shortfall kills at most 10%)
 so a dry larder bleeds down over several turns rather than in one.
 
-Each band's goods live in a `LocalStore` (`components.rs`) — a commodity-keyed bag (food under the
-`FOOD` = `"provisions"` key) held on `PopulationCohort.stores`, so the same store carries any future
-good. Brackets + store ride the client wire as `PopulationCohortState.stores` so the HUD can render
+Each band's goods live in a `LocalStore` (`components.rs`) — a commodity-keyed bag held on
+`PopulationCohort.stores`, so the same store carries any future good. **Food is the exception: it is
+held by keeping class** in its own `FoodMix` (see "Food spoils by keeping class" below), and
+`get(FOOD)` reads its total, so every read-only site sees one `"provisions"` number. Brackets + store ride the client wire as `PopulationCohortState.stores` so the HUD can render
 the exact larder. A per-faction age-structure + dependency-ratio HUD readout ships as
 `PopulationDemographicsState` (new `.fbs` table aggregated at capture, wired through
 sim_schema/snapshot/native/`Hud.gd` exactly like `SedentarizationState`).
+
+### Food spoils by keeping class (#706)
+
+Design of record: `docs/plan_civilization_steps.md` §Step 5 → "Only food the band cannot eat in time
+rots". **A band eats its fastest-rotting food first, so a unit waits about *larder ÷ need* turns to be
+eaten, and it rots only if that wait is longer than its shelf life.** No per-unit age is tracked: the
+rule is a line, not a share. Engine: `core_sim/src/spoilage.rs`.
+
+- **A keeping class has one property, `shelf_life_turns`** (`demographics_config.json` → `keeping`).
+  Every fauna and flora species names its class (`keeping`, required): all game — meat, milk and eggs
+  — is `flesh`; the aquatic plants (`kelp`, `shellfish_beds`, `river_fish`) are `flesh`; plainly dry
+  nuts, seeds, grains and pods (`wild_emmer`, `seed_grasses`, `hazel`, `oak_mast`, `pine_nut`,
+  `wild_rice`, `chestnut`, `sunflower`, `wild_pulses`, `mesquite`) are `dry`; everything else is
+  `fresh_plant`. Preservation is a longer shelf life, nothing else.
+- **The larder holds food per class** — `LocalStore`'s `FoodMix`, a `class → amount` map. The generic
+  `add` / `set` / `take` **panic on `FOOD`**, so no site can make classless food: food enters through
+  `add_food` / `add_food_mix`, is eaten through `eat_food` (fastest-first, the classes' order by
+  ascending shelf life), and **moves through `take_food_mix`** — a proportional take, exact to the
+  micro-unit, so the composition that leaves is the composition that was there. `reset_food` replaces
+  the whole larder and is for the opening reserve and fixtures only.
+- **The meal draws fastest-first** (`simulate_population`): flesh, then greens, then grain.
+- **The larder rot runs once a turn, right after the meal and before the turn's take lands**
+  (`spoilage::rot_band_larders`, next in the Population chain after `simulate_population`).
+  Walking the classes in shelf-life order with a running cumulative of post-rot stock, class *k*
+  loses `min(stock_k, max(0, cumulative_k − need × shelf_life_k))`, where `need` is the turn's
+  `last_food_need`. A band with a small surplus stays under every line and never sees rot; the line
+  scales with the band, so sixty people hold twice what thirty hold before anything spoils. A band
+  that needs nothing has every line at zero.
+- **A take lands in the class of what was taken.** A hunt (wild, pen, a party's roadside kill or a
+  raid) lands in the herd species' class; a gather lands in each class in proportion to that class's
+  share of the basket's conversion rate (`forage::patch_food_mix` — the same `rung_rate` the rate
+  itself is, restricted to the species of that class). Where no species is known the
+  `plant_fallback_class` / `kill_fallback_class` answer.
+- **The opening reserve is seeded into `startup_class`** (`dry`, 60 turns), which outlasts the
+  20-turn reserve, so a new band does not lose it on turn one.
+- **Composition is conserved through every move**: a fission dowry divides the larder class by class
+  on the worker share; supply pooling sends each sender's proportional mix and pays each receiver the
+  proportional mix of what its network's senders gave (friction is a share of that pot, so it takes
+  every class alike); a party's launch larder, trade cargo, a delivery, a fold-back, a raid's forfeit
+  and a provision cost all move a proportional mix.
+- **A detached party's pack carries its composition but does not rot in this slice.** The larder
+  rot is `With<ResidentBand>`; the pack lands home in the band's larder and rots there by the line.
+
+#### `foodSpoiled` is one term, and the ledger identity carries it
+
+`PopulationCohort::last_food_spoiled` is the turn's whole rot — the larder rot (which also resets it
+each turn) plus any caravan pack's **transit rot** (`work-party.md` → "A pack rots by its walk"). On
+the wire as `PopulationCohortState.foodSpoiled`, appended last:
+
+```text
+larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled + transferReceived − transferSent
+```
+
+A rotten caravan pack is **credited as income when it lands and debited as spoilage the same turn**,
+so `foodIncome` stays `Σ actual` — the one producer the rows report — and the loss is this one term.
+Pinned with a live, non-zero rot by `integration_tests/tests/spoilage_food_ledger.rs`.
+
+#### The runway reads the larder after one turn of rot — a first-turn correction
+
+`turnsOfFood` passes a resident band's larder through **one application** of the larder rot
+(`spoilage::larder_after_rot`, at the forward `demand`) before projecting. A larder above its lines
+loses the excess on the next turn whatever the band does, so counting that food as runway would
+promise turns the store cannot keep. It is a correction for the first turn, not a model of rot over
+the whole runway: the turns after are walked as before. A detached party reads its pack whole.
 
 > #### THE WIRE CARRIES WHOLE PEOPLE — the fraction is an accumulator, and it stays sim-side
 >
@@ -725,7 +790,7 @@ negligible-take floor that ends the loop). Reuses the shared model helpers (`reg
 (append-only). **The `actual` value and the ledger identity are unchanged — `realized` is a parallel
 steady value, never a replacement.** `PopulationCohortState.foodIncome` = Σ `actual` stays exactly as
 it is: it is the real arrivals and is load-bearing for the
-`larder_delta == foodIncome − foodConsumption − raidForfeit + transferReceived −
+`larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled + transferReceived −
 transferSent` ledger identity.
 
 > **The last two terms are the food that CROSSED BETWEEN BANDS** —
@@ -904,8 +969,8 @@ transferSent` ledger identity.
 > `PopulationCohortState.raidForfeit` (`LaborAllocation::last_raid_forfeit`) is the food a
 > casualty-causing predator raid forfeits — `predators.raid_yield_forfeit_fraction` of that turn's
 > income, a real `LocalStore::take` debit that lands in **neither** `foodIncome` nor `foodConsumption`.
-> The identity is `larder_delta == foodIncome − foodConsumption − raidForfeit` (the transfer pair above
-> is the next two terms), pinned through a real raid turn by
+> The identity is `larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled` (the
+> transfer pair above is the next two terms; `foodSpoiled` is "Food spoils by keeping class" below), pinned through a real raid turn by
 > `integration_tests/tests/raid_food_ledger.rs`. **It is a PAST-turn stochastic debit, not a recurring
 > cost, so it does NOT enter the `turnsOfFood` forward-runway drain** (the runway drains only by
 > `consumption`; see the runway callout above).

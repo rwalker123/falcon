@@ -2236,6 +2236,55 @@ pub fn patch_provisions_per_biomass_taking(
     })
 }
 
+/// A species whose food keeps as another class pays nothing into this one — the rate's value for
+/// it, and the fallback for a basket that names nothing.
+const NOT_THIS_CLASS: f32 = 0.0;
+
+/// **What a gather of `provisions` off this patch IS, by keeping class** (#706) — the take's food
+/// split across classes in proportion to each class's share of the basket's conversion rate: the
+/// same [`rung_rate`] [`patch_provisions_per_biomass_taking`] resolves, with the rate restricted to
+/// the species whose `keeping` names that class. So a riverbank basket of catfish and reeds lands as
+/// flesh and greens in the proportions its food was made of, through the one basket arithmetic.
+///
+/// A basket the roster cannot decompose (empty, or naming no known species — the rate's own
+/// fallback case) lands whole in `keeping.plant_fallback_class`.
+pub fn patch_food_mix(
+    patch: &ForagePatch,
+    tile_composition: &[FloraShare],
+    flora: &FloraConfig,
+    forage: &ForageLaborConfig,
+    take: &TakeSelection,
+    provisions: crate::scalar::Scalar,
+    keeping: &crate::demographics_config::KeepingConfig,
+) -> crate::components::FoodMix {
+    let weights: Vec<(&str, f32)> = keeping
+        .classes
+        .iter()
+        .map(|class| {
+            let weight = patch_interpolate(patch, |rung| {
+                rung_rate(
+                    patch,
+                    tile_composition,
+                    flora,
+                    forage,
+                    rung,
+                    take,
+                    |def| {
+                        if def.keeping == class.id {
+                            def.yield_.provisions_per_biomass
+                        } else {
+                            NOT_THIS_CLASS
+                        }
+                    },
+                    NOT_THIS_CLASS,
+                )
+            });
+            (class.id.as_str(), weight)
+        })
+        .collect();
+    crate::components::FoodMix::from_weights(provisions, weights, &keeping.plant_fallback_class)
+}
+
 /// The conversion rate this patch's crop would reach **on `rung`** —
 /// [`patch_provisions_per_biomass`] asked about a rung the patch may not stand on yet (or may
 /// already have passed). Its two callers each name a rung: [`tended_provisions`] asks

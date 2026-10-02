@@ -120,6 +120,7 @@ fn spawn_camp_band(app: &mut App, target: LaborTarget, kit: Option<KitChoice>) -
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
                 last_food_need: 0.0,
+                last_food_spoiled: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),
@@ -487,6 +488,70 @@ fn larder(app: &App, band: Entity) -> f32 {
         .stores
         .get(FOOD)
         .to_f32()
+}
+
+/// What `turns` of a far hunt credited as income, what rotted on the road, and what the larder ends
+/// holding. The harness runs the labor pass alone, so the band eats nothing and the larder rot
+/// never runs: `last_food_spoiled` is the transit rot alone, accumulated over the run.
+fn run_a_caravan(app: &mut App, band: Entity, turns: usize) -> (f32, f32, f32) {
+    let mut income = 0.0_f32;
+    for _ in 0..turns {
+        resolve_a_turn(app);
+        income += app
+            .world
+            .get::<LaborAllocation>(band)
+            .expect("the band keeps its allocation")
+            .last_yields
+            .iter()
+            .map(|row| row.actual)
+            .sum::<f32>();
+    }
+    let spoiled = app
+        .world
+        .get::<PopulationCohort>(band)
+        .expect("the band keeps its cohort")
+        .last_food_spoiled;
+    (income, spoiled, larder(app, band))
+}
+
+/// ⛔ **A PACK ROTS BY ITS WALK** (#706) — a boar is flesh, which keeps four turns: a herd eight
+/// hexes out walks six each way, so every pack is credited as it lands and lost the same turn, and
+/// the larder gains nothing; a herd five hexes out walks three, inside the shelf life, so every pack
+/// keeps. Both runs must actually land food (liveness), or "nothing rotted" would be trivially true.
+#[test]
+fn a_walk_longer_than_flesh_keeps_loses_the_pack_and_a_shorter_one_does_not() {
+    const TURNS: usize = 40;
+    const LEDGER_EPSILON: f32 = 0.01;
+
+    let (mut far, far_band) = world_hunting_at(8);
+    let (far_income, far_spoiled, far_larder) = run_a_caravan(&mut far, far_band, TURNS);
+    assert!(
+        far_income > 0.0,
+        "liveness: the far party lands packs within {TURNS} turns"
+    );
+    assert!(
+        (far_spoiled - far_income).abs() < LEDGER_EPSILON,
+        "every flesh pack on a six-turn walk rots: spoiled {far_spoiled} vs landed {far_income}"
+    );
+    assert!(
+        far_larder < LEDGER_EPSILON,
+        "the larder gains nothing from a rotten caravan: {far_larder}"
+    );
+
+    let (mut near, near_band) = world_hunting_at(5);
+    let (near_income, near_spoiled, near_larder) = run_a_caravan(&mut near, near_band, TURNS);
+    assert!(
+        near_income > 0.0,
+        "liveness: the near party lands packs within {TURNS} turns"
+    );
+    assert_eq!(
+        near_spoiled, 0.0,
+        "a three-turn walk keeps flesh — nothing rots"
+    );
+    assert!(
+        (near_larder - near_income).abs() < LEDGER_EPSILON,
+        "every pack that kept is in the larder: {near_larder} vs {near_income}"
+    );
 }
 
 /// ⛔ **RAY'S FORMULA, ON THE WIRE** — a source 8 hexes out walks `8 − 2 = 6` each way with no road.

@@ -1130,6 +1130,8 @@ fn create_populations<'a>(
                     supplyNetworkSpanTiles: cohort.supply_network_span_tiles,
                     foodNeed: cohort.food_need,
                     foodShortfall: cohort.food_shortfall,
+                    // THE FOOD THAT ROTTED THIS TURN — appended last (#706).
+                    foodSpoiled: cohort.food_spoiled,
                 },
             )
         })
@@ -1648,6 +1650,7 @@ fn decode_population(
         supply_network_span_tiles: cohort.supplyNetworkSpanTiles(),
         food_need: cohort.foodNeed(),
         food_shortfall: cohort.foodShortfall(),
+        food_spoiled: cohort.foodSpoiled(),
     })
 }
 

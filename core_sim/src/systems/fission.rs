@@ -254,9 +254,18 @@ pub fn split_band_from_parent(
     // Every good, on the same share. The new band starts stocked because its people were already
     // sitting on that food — there is no reserve calculation and no second consumption rate.
     let mut child_stores = LocalStore::new();
+    // **Food goes on the same share, BY CLASS** (#706): the splinter's larder is the parent's in
+    // miniature — its flesh, greens and grain in the parent's own proportions — and the parent keeps
+    // the rest of each. The scalar goods beside it walk the commodity bag as before.
+    let taken_food = cohort
+        .stores
+        .food()
+        .proportional(cohort.stores.get(crate::components::FOOD) * share);
+    child_stores.add_food_mix(&taken_food);
     let taken: Vec<(String, Scalar)> = cohort
         .stores
         .iter()
+        .filter(|(item, _)| *item != crate::components::FOOD)
         .map(|(item, amount)| (item.to_string(), amount * share))
         .collect();
     for (item, amount) in &taken {
@@ -282,6 +291,7 @@ pub fn split_band_from_parent(
     // turn, but a split publishes a frame before then, and the new band would open by narrating
     // somebody else's morale swing, meal and migration.
     child.last_food_consumption = 0.0;
+    child.last_food_spoiled = 0.0;
     // The dowry is booked on the *allocation's* accumulator below, which is what the next turn
     // capture copies here; carrying the parent's published pair over would have the new band open by
     // reporting a transfer it was not party to.
@@ -309,6 +319,9 @@ pub fn split_band_from_parent(
         parent_cohort.elders -= taken_elders;
         for (item, amount) in &taken {
             parent_cohort.stores.take(item, *amount);
+        }
+        for (class, amount) in taken_food.iter() {
+            parent_cohort.stores.take_food_class(class, amount);
         }
         parent_cohort.sync_size();
     }

@@ -8,7 +8,7 @@
 use core_sim::{
     build_test_app, run_turn, scalar_zero, BandId, CommandEventEntry, CommandEventKind,
     CommandEventLog, DemographicFlowAccumulator, PopulationCohort, ResidentBand, SimulationConfig,
-    SimulationTick, FOOD,
+    SimulationTick,
 };
 
 use bevy::prelude::{Entity, With};
@@ -207,7 +207,7 @@ fn a_starving_band_reports_its_dead_and_names_hunger() {
                 .world
                 .query_filtered::<&mut PopulationCohort, With<ResidentBand>>();
             for mut cohort in query.iter_mut(&mut app.world) {
-                cohort.stores.set(FOOD, scalar_zero());
+                cohort.stores.reset_food("dry", scalar_zero());
             }
         }
         run_turn(&mut app);

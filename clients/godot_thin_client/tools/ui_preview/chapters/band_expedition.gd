@@ -415,11 +415,14 @@ func _band_alert_fixture() -> Array:
 ##     → the Warrior card's live crimson "⚠ Predator nearby — N on guard" alert.
 ##   • `raid_forfeit` 1.20 (`PopulationCohortState.raidForfeit`, food lost to raids THIS turn) → the
 ##     "⚔ Lost to raids −1.20" food-ledger row and a net dragged negative the turn the raid landed.
+##   • `food_spoiled` 0.45 (`PopulationCohortState.foodSpoiled`, food that rotted THIS turn, #706) → the
+##     "Spoiled −0.45" row right under the raid row — the ledger's other loss term, lit beside it.
 ## Reuses entity 904, so `BAND_DISCLOSURE_FOOD` opens its ledger popover.
 func _raided_band_fixture() -> Dictionary:
 	var band := BandFx.band_fixture()
 	band["raid_radius"] = 3
 	band["raid_forfeit"] = 1.20
+	band["food_spoiled"] = 0.45
 	return band
 
 ## The VISIBLE predator the raided band can see: one tile off its [71,18] (hex distance 1, well inside
@@ -556,7 +559,7 @@ func run(harness) -> void:
 	# reappears — or a headline that stops equalling the rows beneath it — is invisible in a PNG, and
 	# this is the fixture with a pen on it, so it is the one where a resurrected `🐄 Pen feed (animals)`
 	# row would show. Both halves are claimed: the ARITHMETIC identity
-	# `net == income − consumption − raid_forfeit`, evaluated against the fixture's own numbers rather
+	# `net == income − consumption − raid_forfeit − food_spoiled`, evaluated against the fixture's own numbers rather
 	# than against a re-run of the code under test, and the ABSENCE of any animal-feed row from the
 	# breakdown the popover above just drew.
 	var pen_band := _pen_keeper_band_fixture()
@@ -885,6 +888,19 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("predator_band_raided")
 	_click_disclosure(BAND_DISCLOSURE_FOOD)
+	# Both loss terms land in the ledger: the breakdown carries a Spoiled row, and the net drops by the
+	# rot as it does by the raid — the same band minus its spoilage reads exactly that much higher.
+	var raided_breakdown: Array[String] = h._hud._disclosures.food_breakdown_lines(raided_band)
+	var spoiled_row_found := false
+	for line in raided_breakdown:
+		if String(line).contains(DetailFormat.FOOD_LABEL_SPOILED):
+			spoiled_row_found = true
+	var unspoiled_band := raided_band.duplicate()
+	unspoiled_band["food_spoiled"] = 0.0
+	h._assert_hud("a band whose food rotted itemizes a Spoiled row, and its net carries the loss",
+		spoiled_row_found and absf(DetailFormat.band_net_food(unspoiled_band)
+			- DetailFormat.band_net_food(raided_band)
+			- DetailFormat.band_food_spoiled(raided_band)) < LEDGER_EPSILON)
 	h._set_world_herds(HerdFx.world_herds_fixture())   # restore the shared world-herd list
 
 	# **HAND THE REFERENCE BAND BACK, exactly as the retired FILL-TARGET block did on its way out.**

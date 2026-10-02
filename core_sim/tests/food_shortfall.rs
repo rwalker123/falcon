@@ -21,7 +21,7 @@ mod faction_support;
 use core_sim::{
     publish_baseline_snapshot, scalar_from_f32, simulate_population, BandId, LaborAllocation,
     LaborAssignment, LaborTarget, PopulationCohort, ResidentBand, SnapshotHistory, SourcePriority,
-    SourceYield, FOOD, NOT_FOOD_LIMITED_TURNS,
+    SourceYield, NOT_FOOD_LIMITED_TURNS,
 };
 use faction_support::{one_faction_world, HOME};
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
@@ -71,7 +71,7 @@ fn eat_and_publish(larder_in_meals: f32) -> Published {
             .get_mut::<PopulationCohort>(probe_band)
             .unwrap()
             .stores
-            .set(FOOD, scalar_from_f32(1.0e6));
+            .reset_food("dry", scalar_from_f32(1.0e6));
         probe.world.run_system_once(simulate_population);
         probe
             .world
@@ -84,7 +84,7 @@ fn eat_and_publish(larder_in_meals: f32) -> Published {
         .get_mut::<PopulationCohort>(band)
         .unwrap()
         .stores
-        .set(FOOD, scalar_from_f32(need * larder_in_meals));
+        .reset_food("dry", scalar_from_f32(need * larder_in_meals));
 
     app.world.run_system_once(simulate_population);
 

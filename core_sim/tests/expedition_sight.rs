@@ -174,6 +174,7 @@ fn cohort(tile: bevy::prelude::Entity, working: u32) -> PopulationCohort {
         morale: scalar_one(),
         last_food_consumption: 0.0,
         last_food_need: 0.0,
+        last_food_spoiled: 0.0,
         last_turn_food_transfers: Default::default(),
         last_turn_fodder_transfers: Default::default(),
         last_turn_transfer_crossings: Vec::new(),
@@ -232,7 +233,7 @@ fn spawn_scout_party(
 ) -> bevy::prelude::Entity {
     let tile = tile_at(app, pos);
     let mut party = cohort(tile, PARTY_WORKERS);
-    party.stores.add(core_sim::FOOD, scalar_from_f32(WELL_FED));
+    party.stores.add_food("dry", scalar_from_f32(WELL_FED));
     let equipment = BandEquipment::start_stocked_for(&equipment_config(app), PARTY_WORKERS as f32);
     app.world
         .spawn((

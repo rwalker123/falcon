@@ -1030,7 +1030,11 @@ fn seed_cohort_demographics(
             cohort.elders,
             &config.consumption,
         );
-        cohort.stores.set(FOOD, demand * reserve_days);
+        // Into the long-keeping startup class (#706), so a new band does not lose its reserve to
+        // the larder rot on turn one.
+        cohort
+            .stores
+            .reset_food(&config.keeping.startup_class, demand * reserve_days);
         cohort.morale = (cohort.morale + morale_bonus).clamp(scalar_zero(), scalar_one());
     }
 }
@@ -3461,6 +3465,7 @@ fn spawn_population_entity(
         morale: scalar_from_f32(0.6),
         last_food_consumption: 0.0,
         last_food_need: 0.0,
+        last_food_spoiled: 0.0,
         last_turn_food_transfers: Default::default(),
         last_turn_fodder_transfers: Default::default(),
         last_turn_transfer_crossings: Vec::new(),

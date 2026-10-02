@@ -2,10 +2,10 @@
 //!
 //! A penned herd eats the grass its fenced footprint grows and the hay its keeper carries in. Both are
 //! `FODDER`, a store that never converts to `FOOD`. **Human food is not animal feed**, so no food
-//! crosses from the people's larder to the animals and the identity has three terms, not four:
+//! crosses from the people's larder to the animals and the identity carries no pen term:
 //!
 //! ```text
-//! larder_delta == foodIncome − foodConsumption − raidForfeit
+//! larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled
 //! ```
 //!
 //! asserted against a **real turn** through the real systems and the real snapshot export, not a
@@ -46,7 +46,8 @@ const SUSTAIN: f32 = 0.5;
 const NO_HAY: f32 = 0.0;
 
 /// Stand a band up with a **penned herd it keeps**, seed its larder, run one real turn, and return
-/// `(larder_before, larder_after, food_income, food_consumption, pen_fed_fraction)`.
+/// `(larder_before, larder_after, food_income, food_consumption, pen_fed_fraction, food_spoiled)`
+/// — the last the turn's rot (#706), the identity's `spoiled` term.
 /// `pen_fed_fraction` (grass + hay ÷ demand, read off the live herd) is the feeding witness: `1.0` =
 /// fully fed, `< 1.0` = the pen went short and the herd starves for the rest.
 ///
@@ -54,7 +55,7 @@ const NO_HAY: f32 = 0.0;
 /// much hay, which is the only way a pen on a barren footprint can be fed. The ledger identity is over
 /// the FOOD store alone and must read the same either way, because `FODDER` is a separate store that
 /// never converts to `FOOD`.
-fn run_one_turn_with_a_pen(larder: f32, hay: f32, floor: f32) -> (f32, f32, f32, f32, f32) {
+fn run_one_turn_with_a_pen(larder: f32, hay: f32, floor: f32) -> (f32, f32, f32, f32, f32, f32) {
     let mut app = build_test_app();
     app.world.resource_mut::<SimulationConfig>().map_seed = SEED;
     app.update();
@@ -144,7 +145,7 @@ fn run_one_turn_with_a_pen(larder: f32, hay: f32, floor: f32) -> (f32, f32, f32,
         .get_mut::<PopulationCohort>(band)
         .expect("band")
         .stores
-        .set(FOOD, scalar_from_f32(larder));
+        .reset_food("dry", scalar_from_f32(larder));
 
     // F3: a hayed pen. Grant Foddering and seed the FODDER store — hay is the pen's only feed here.
     if hay > 0.0 {
@@ -205,6 +206,7 @@ fn run_one_turn_with_a_pen(larder: f32, hay: f32, floor: f32) -> (f32, f32, f32,
         cohort.food_income,
         cohort.food_consumption,
         pen_fed_fraction,
+        cohort.food_spoiled,
     )
 }
 
@@ -214,7 +216,7 @@ fn run_one_turn_with_a_pen(larder: f32, hay: f32, floor: f32) -> (f32, f32, f32,
 /// exactly, so **no third flow touched the FOOD store**.
 #[test]
 fn a_hungry_pen_takes_nothing_from_the_larder_and_the_ledger_reconciles() {
-    let (before, after, income, consumption, pen_fed_fraction) =
+    let (before, after, income, consumption, pen_fed_fraction, spoiled) =
         run_one_turn_with_a_pen(AMPLE_LARDER, NO_HAY, SUSTAIN);
 
     // **Not vacuous**: the pen genuinely went hungry, so there was a real feed shortfall to (wrongly)
@@ -232,11 +234,12 @@ fn a_hungry_pen_takes_nothing_from_the_larder_and_the_ledger_reconciles() {
     );
 
     let delta = after - before;
-    let ledger = income - consumption;
+    let ledger = income - consumption - spoiled;
     assert!(
         (delta - ledger).abs() < EPSILON,
-        "larder_delta must equal foodIncome − foodConsumption with NO pen term: \
-         delta={delta} vs ledger={ledger} (income={income} consumption={consumption})"
+        "larder_delta must equal foodIncome − foodConsumption − foodSpoiled with NO pen term: \
+         delta={delta} vs ledger={ledger} (income={income} consumption={consumption} \
+         spoiled={spoiled})"
     );
 }
 
@@ -250,10 +253,10 @@ fn a_hungry_pen_takes_nothing_from_the_larder_and_the_ledger_reconciles() {
 fn hay_feeds_the_pen_while_the_food_ledger_reads_the_same() {
     const AMPLE_HAY: f32 = 10_000.0;
 
-    let (hay_before, hay_after, hay_income, hay_consumption, hay_fed) =
+    let (hay_before, hay_after, hay_income, hay_consumption, hay_fed, hay_spoiled) =
         run_one_turn_with_a_pen(AMPLE_LARDER, AMPLE_HAY, SUSTAIN);
     // The same pen with NO hay, for contrast: it starves.
-    let (_, _, _, _, hungry_fed) = run_one_turn_with_a_pen(AMPLE_LARDER, NO_HAY, SUSTAIN);
+    let (_, _, _, _, hungry_fed, _) = run_one_turn_with_a_pen(AMPLE_LARDER, NO_HAY, SUSTAIN);
 
     assert!(
         (hay_fed - 1.0).abs() < EPSILON,
@@ -267,7 +270,7 @@ fn hay_feeds_the_pen_while_the_food_ledger_reads_the_same() {
 
     // The identity still holds — hay is off-ledger (a separate store), FODDER never became FOOD.
     let delta = hay_after - hay_before;
-    let ledger = hay_income - hay_consumption;
+    let ledger = hay_income - hay_consumption - hay_spoiled;
     assert!(
         (delta - ledger).abs() < EPSILON,
         "the identity must hold for a HAY-fed pen too — FODDER is a separate store, never converted \
@@ -286,9 +289,9 @@ fn hay_feeds_the_pen_while_the_food_ledger_reads_the_same() {
 fn a_fed_pen_and_a_starving_pen_move_their_keepers_larder_identically() {
     const AMPLE_HAY: f32 = 10_000.0;
 
-    let (fed_before, fed_after, _, _, fed_fraction) =
+    let (fed_before, fed_after, _, _, fed_fraction, _) =
         run_one_turn_with_a_pen(AMPLE_LARDER, AMPLE_HAY, SUSTAIN);
-    let (hungry_before, hungry_after, _, _, hungry_fraction) =
+    let (hungry_before, hungry_after, _, _, hungry_fraction, _) =
         run_one_turn_with_a_pen(AMPLE_LARDER, NO_HAY, SUSTAIN);
 
     assert!(

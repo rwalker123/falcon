@@ -6989,7 +6989,8 @@ one, and the fodder sibling is what survives of it: a band that grows hay heads 
 the food figure and chips `🌿 1 · 0.40 fodder`, under the same non-zero gate. **A sibling, never a
 summand** — fodder credits the band's FODDER store and never the larder, so folding it into the food
 figure would break the identity the Food line is denominated in
-(`larder_delta == income − consumption − pen_feed − raid_forfeit`). Details in `band-city-panel.md`.
+(`larder_delta == income − consumption − raid_forfeit − food_spoiled + received − sent`). Details in
+`band-city-panel.md`.
 
 **When you add an aggregate, ask which KIND it is** — a *larder* figure (food alone, by the identity
 above) or a *productivity* figure (**every** account the sources pay, each when non-zero). Nothing else

@@ -35,7 +35,7 @@ use core_sim::{
     BandBench, BandEquipment, BandTravel, BandWorkforce, BeatCatalogHandle, BeatConfigHandle,
     BeatLedger, BuildJob, BuildSource, CampaignLabel, CombatConfigHandle, CreaturesConfigHandle,
     Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, ExtractionConfigHandle,
-    FloraConfigHandle, FoodModuleTag, ForkAnswerError, HuntingParty, KitChoice, KitJob,
+    FloraConfigHandle, FoodMix, FoodModuleTag, ForkAnswerError, HuntingParty, KitChoice, KitJob,
     LaborAllocation, LaborTarget, LadderConfigHandle, LocalStore, MaterialDraw,
     MaterialsConfigHandle, RecipesConfigHandle, ResidentBand, RungKey, SiteRefusal, SourcePriority,
     SpeciesRefusal, StartProfile, StartProfileOverrides, TakeSelection, TransferCause,
@@ -5534,7 +5534,8 @@ fn handle_send_expedition(
         let Some(mut band_cohort) = app.world.get_mut::<PopulationCohort>(band.entity) else {
             return;
         };
-        let drawn = band_cohort.stores.take(FOOD, requested);
+        // The launch larder leaves in the band's own proportions (#706).
+        let drawn = band_cohort.stores.take_food_mix(requested);
         band_cohort.working -= party_scalar;
         band_cohort.sync_size();
         drawn
@@ -5544,9 +5545,8 @@ fn handle_send_expedition(
     expedition_cohort.working = party_scalar;
     expedition_cohort.elders = Scalar::from_i64(0);
     expedition_cohort.stores = LocalStore::new();
-    if drawn > Scalar::from_i64(0) {
-        expedition_cohort.stores.add(FOOD, drawn);
-    }
+    expedition_cohort.stores.add_food_mix(&drawn);
+    let drawn = drawn.total();
     expedition_cohort.age_turns = 0;
     expedition_cohort.grievance = Scalar::from_i64(0);
     expedition_cohort.sync_size();
@@ -6051,7 +6051,7 @@ fn launch_detached_party(
         LaunchOrders {
             phase: ExpeditionPhase::Hunting,
             target: herd_pos,
-            provisions: Scalar::from_i64(0),
+            provisions: FoodMix::default(),
             cargo: LocalStore::new(),
         },
         kit,
@@ -6066,9 +6066,9 @@ fn launch_detached_party(
 struct LaunchOrders {
     phase: ExpeditionPhase,
     target: UVec2,
-    /// Provisions **already drawn** from the home band and handed to the party's own pack. A raid
-    /// draws none.
-    provisions: Scalar,
+    /// Provisions **already drawn** from the home band and handed to the party's own pack, by keeping
+    /// class (#706). A raid draws none.
+    provisions: FoodMix,
     /// The shipment the party is carrying, a store of its own — never merged into the pack above,
     /// or a hungry party would eat what it was sent to deliver.
     cargo: LocalStore,
@@ -6109,9 +6109,7 @@ fn launch_party_from_band(
     cohort.working = party_scalar;
     cohort.elders = Scalar::from_i64(0);
     cohort.stores = LocalStore::new();
-    if orders.provisions > Scalar::from_i64(0) {
-        cohort.stores.add(FOOD, orders.provisions);
-    }
+    cohort.stores.add_food_mix(&orders.provisions);
     cohort.age_turns = 0;
     cohort.grievance = Scalar::from_i64(0);
     cohort.sync_size();
@@ -6955,10 +6953,9 @@ fn handle_send_trade_expedition(
             return;
         };
         let mut loaded = LocalStore::new();
-        let food = band_cohort.stores.take(FOOD, shipment.food);
-        if food > Scalar::from_i64(0) {
-            loaded.add(FOOD, food);
-        }
+        // The cargo leaves in the band's own proportions (#706).
+        let food = band_cohort.stores.take_food_mix(shipment.food);
+        loaded.add_food_mix(&food);
         // **Hay is drawn from the SAME store and kept in a DIFFERENT account** — `FODDER` is an
         // ordinary second key on the band's `LocalStore`, so the draw is the food draw verbatim, and
         // the two never meet in the party's cargo either.
@@ -6980,9 +6977,10 @@ fn handle_send_trade_expedition(
                 loaded_materials.push((material.clone(), draw));
             }
         }
-        let provisions = band_cohort.stores.take(FOOD, requested_provisions);
+        let provisions = band_cohort.stores.take_food_mix(requested_provisions);
         (provisions, loaded)
     };
+    let provisions_total = provisions.total();
     let band_label = outfit.band.label.clone();
     let mission = ExpeditionMission::Trade {
         destination_band: shipment.destination_band,
@@ -7073,7 +7071,7 @@ fn handle_send_trade_expedition(
                 FOOD,
                 TransferDirection::Out,
                 TransferCause::PartyProvisions,
-                provisions.to_f32(),
+                provisions_total.to_f32(),
             )
             .with_party(party_band),
         );
@@ -11342,7 +11340,7 @@ fn consume_faction_provisions(
             break;
         }
         if let Some(mut cohort) = app.world.get_mut::<PopulationCohort>(entity) {
-            remaining -= cohort.stores.take(FOOD, remaining);
+            remaining -= cohort.stores.take_food_mix(remaining).total();
         }
     }
     true
@@ -13007,6 +13005,7 @@ mod tests {
                     morale: core_sim::scalar_one(),
                     last_food_consumption: 0.0,
                     last_food_need: 0.0,
+                    last_food_spoiled: 0.0,
                     last_turn_food_transfers: Default::default(),
                     last_turn_fodder_transfers: Default::default(),
                     last_turn_transfer_crossings: Vec::new(),
@@ -21322,7 +21321,7 @@ mod tests {
         cohort.sync_size();
         cohort
             .stores
-            .set(FOOD, scalar_from_f32(TRADE_FIXTURE_LARDER));
+            .reset_food("dry", scalar_from_f32(TRADE_FIXTURE_LARDER));
     }
 
     fn food_cargo(amount: f32) -> Vec<TradeCargoItem> {
@@ -22076,8 +22075,11 @@ mod tests {
             "the band's own pack names nobody"
         );
 
-        // The food identity over the launch and the cancel: nothing was produced or eaten, so the
-        // larder moved by exactly received − sent on the ledger — and both are zero net.
+        // The food identity over the launch and the cancel: nothing was produced, eaten or left to
+        // rot, so the larder moved by exactly received − sent on the ledger — and both are zero
+        // net. No turn resolves inside this window, so the per-turn terms (income, consumption,
+        // raid forfeit and the `spoiled` rot, #706) are all absent from it: the cohort's
+        // `last_food_spoiled` still describes the fixture's last turn, not this command window.
         let ledger = &allocation.last_food_transfers;
         let larder_delta = band_food(&app, sender) - larder_before;
         assert!(

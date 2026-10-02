@@ -270,6 +270,7 @@ fn cohort(tile: bevy::prelude::Entity, working: u32) -> PopulationCohort {
         morale: scalar_one(),
         last_food_consumption: 0.0,
         last_food_need: 0.0,
+        last_food_spoiled: 0.0,
         last_turn_food_transfers: Default::default(),
         last_turn_fodder_transfers: Default::default(),
         last_turn_transfer_crossings: Vec::new(),
@@ -542,7 +543,7 @@ fn a_denial_raid_reaches_collapse_where_a_hunt_does_not() {
             }
             if let Some(mut cohort) = app.world.get_mut::<PopulationCohort>(party) {
                 let carried = cohort.stores.get(FOOD);
-                cohort.stores.take(FOOD, carried);
+                cohort.stores.take_food_mix(carried).total();
             }
         }
         // **Liveness.** A hunt that took nothing would also "never cross the line", and would pass

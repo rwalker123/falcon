@@ -105,6 +105,17 @@ const LOW_FOOD_SITE_PENALTY: i32 = 6;
 
 // --- cross-cutting helpers shared by multiple submodules (hoisted per decomposition plan) ---
 
+/// **The demographics config, or the builtin where the world has none** — the `StartKitHandles`
+/// idiom: `build_headless_app` always installs the handle, so the shipped path always reads it,
+/// while a hand-built test world that never mentions demographics still runs the labor and
+/// expedition passes on the shipped keeping classes (#706). The builtin *is* the shipped JSON, so
+/// nothing a configured world reads can differ from it.
+fn demographics_or_builtin(
+    handle: Option<&DemographicsConfigHandle>,
+) -> std::sync::Arc<DemographicsConfig> {
+    handle.map_or_else(DemographicsConfig::builtin, DemographicsConfigHandle::get)
+}
+
 fn corruption_multiplier(
     ledgers: &CorruptionLedgers,
     subsystem: CorruptionSubsystem,

@@ -452,7 +452,9 @@ fn spawn_party(app: &mut App, home: Entity, at: Entity) -> (Entity, BandId) {
     party.children = Scalar::zero();
     party.elders = Scalar::zero();
     party.stores = LocalStore::new();
-    party.stores.add(FOOD, scalar_from_f32(PARTY_PACK_FOOD));
+    party
+        .stores
+        .add_food("dry", scalar_from_f32(PARTY_PACK_FOOD));
     party.sync_size();
     let id = app.world.resource_mut::<BandIdAllocator>().allocate();
     let entity = app

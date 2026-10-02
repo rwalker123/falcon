@@ -14,8 +14,10 @@
   "_comment_animals_per_herder": "STANDING HERDER LABOR, PER SPECIES (intensification ladder slice 8): how many ANIMALS one herder can mind. herders_needed = ceil((biomass / body_mass) / animals_per_herder), owed EVERY TURN by a pastoral or penned herd — including wait turns when the herd cannot spare an animal. Just because you aren't killing an animal doesn't mean you aren't tending them, keeping them from running off, repairing fences. Before this a pen of 2 and a pen of 200 needed the same single keeper and only the FEED scaled. HERDING IS HEADS, NOT TONNES — the denominator is the whole design: a shepherd minds ~300 sheep, a cowherd ~80 cattle; you watch INDIVIDUALS (chase strays, check each animal) and a heavier beast is not proportionally more work. An earlier cut used a single global biomass_per_herder, which says 'one herder per 100 fowl but one herder per 2 boar' and invented a 45-herder steppe megaherd that was a pure artifact of the unit (4,560 biomass of Steppe Runner is only 38 ANIMALS = ~3 herders). Per-species for the same reason body_mass / taming_cost_multiplier / husbandry_ceiling are. ONE NEED, NOT TWO: the same herders mind the herd AND slaughter it, so a managed rung has no separate harvest-side worker need. A WILD hunt is the opposite model and must stay apart — no maintenance (the herd isn't yours) but it keeps its carry cap: hunt = reach + carry, harvest = maintain + take. UNDERSTAFFING IS PROPORTIONAL, NEVER BINARY: herded_fraction = min(1, assigned/needed) scales growth and decays the rung's meter, floored and recoverable (the pen_fed_fraction -> starve_shrink_rate pattern). Binary escape survives ONLY for total abandonment (zero herders) — a threshold that destroys a 25-turn investment on rounding, as biomass breathes across it, is not a decision but an accident. THESE ARE UNASSISTED NUMBERS — pre-dog and pre-horse. Historically a couple of herders mind a large herd; the constraint is walking, watching and gathering strays on foot. Dogs and riding horses are future herding GEAR, and gear is PRODUCTIVITY — it raises how many animals one herder handles — so these values deliberately leave that headroom rather than pricing it in. SMALL STOCK IS KEPT AS A PLACE, NOT HERDED AS HEADS: heads is the right denominator because a shepherd chases individual strays, but a coop or a hutch is kept as ONE job — feed it, shut it in, collect from it — so a keeper of small stock minds far more animals than any herder. Snow hare sits below rabbit because hares are solitary and skittish and were never domesticated (the Romans held them in walled leporaria, not hutches): a hare takes more handling per animal than a rabbit. Roster: fowl 1000, rabbit 500, snow_hare 250 (coop and hutch stock), reindeer 150, crag_goat 100, wild_sheep 100, steppe_runner/marsh_grazer/wild_horse 50 (herded, not fenced), aurochs 40 and boar 40 (big, ornery, fewer per herder). HISTORY, kept as history: the first roster was aurochs 12, boar 15, steppe_runner/marsh_grazer 15, wild_horse 25, wild_sheep 50, crag_goat 80, reindeer 100, with fowl/rabbit/snow_hare at 200 (priced as a flock, which a coop is not) — cowherd-scale numbers that priced every herder as if minding cattle on foot with no help, so a pastoral herd of any size needed a crowd of keepers. deer/mammoth omit it: a wild husbandry_ceiling is never herded. Defaults to 25 when omitted. Resolved LIVE by display name (FaunaConfig::animals_per_herder_for), not cached on the Herd, so a retune reaches herds already on the map. PLAYTEST DIALS — ship these, measure, then tune.",
   "_comment_pastoral_overrides": "A SPECIES MAY OVERRIDE THE HUSBANDRY RUNG GAINS, AND ABSENT MEANS \u0027use the global\u0027. Optional per-species pastoral_engage_gain / pastoral_resistance / pen_engage_gain shadow husbandry.pastoral_engage_gain / husbandry.pastoral_resistance (fauna::herd_engage_rate and fauna::herd_resistance read them through FaunaConfig::pastoral_engage_gain_for / pastoral_resistance_for). WHY A RUNG GAIN NEEDED A PER-SPECIES ARM: every husbandry gain was ONE global number applied to every animal, while each species carries its own engage_rate, durability, wariness and body_mass \u2014 so there was no way to say \u0027a rabbit gets more out of being herded\u0027 without also changing wild rabbits. Measured, the pastoral take runs into TWO CEILINGS IN SERIES and which one binds is a property of body mass: the heavy-bodied half is REACH-bound (only pastoral_engage_gain moves it) and the small-bodied half is FIGHT-bound (only pastoral_resistance moves it, by exactly 1/resistance, because the party\u0027s kill throughput sits at almost the height their reach ceiling did). No global pair lifts both halves without inflating the first: at global (4.0, 0.5) the pastoral rung overshot its plant partner and pinned to the pen\u0027s own carry ceiling; at (4.0, 1.0) rabbit, fowl and snow hare did not move a single decimal. THE SHIPPED ALLOCATION, at the 3-worker reference crew (wild -> pastoral food/worker/turn): rabbit / fowl / snow_hare resistance 0.5 \u2014 fight-bound small game, reach is inert on them, and 0.5 doubles them exactly (0.054->0.108, 0.026->0.052, 0.080->0.160). marsh_grazer / steppe_runner resistance 0.75 \u2014 fight-bound at durability 60, the toughest of the nomads, AND pastoral is their TOP rung (husbandry_ceiling pastoral, never penned), so the rung has to pay (0.227->0.368, 0.203->0.415). aurochs engage 4.0 AND resistance 0.75 \u2014 the archetypal domesticate, and the only species that needed BOTH arms: at engage_rate 0.17 it is the lowest-reach tameable on the roster so x2 barely clears one animal, and at durability 150 / defense 6 it is the toughest, so unlocking reach alone just handed it to the fight (0.160->0.320). Its resistance is 0.75 rather than 0.5 because at (4.0, 0.5) it reached the carry ceiling and became the best pastoral row in the game at 0.52, past its plant partner. wild_sheep / crag_goat resistance 0.5 \u2014 sheep and goats were the FIRST herded animals (~11,000 BP) precisely because they are docile, flock-following and small, so a tame flock resists handling LESS than a tame aurochs, not more; they inherited the global 1.0 before, which ranked them tougher to handle than the aurochs they were domesticated two thousand years ahead of. EVERYTHING ELSE USES THE GLOBAL \u2014 only the exceptions carry a row, so a reader can see at a glance which animals are special. It is deliberately EXPLICIT PER ANIMAL rather than a body-mass formula, which a reader would have to reverse-engineer from the roster. Validated exactly as the globals are: a pastoral engage gain finite and > 1.0, a pen engage gain finite and >= 1.0, resistance finite and in (0, 1] \u2014 plus the ladder ordering (pen engage gain > pastoral engage gain) checked on THIS SPECIES' EFFECTIVE PAIR, since either arm may be overridden and comparing an override against the global it does not belong beside would let a fence handle worse than a halter on exactly the animal carrying a row. PEN_ENGAGE_GAIN IS OVERRIDABLE TOO, AND IT IS WHAT SETS HOW MANY KEEPERS A PEN WANTS. The take at W keepers is bounded by reach = W x engage_rate x pen_engage_gain animals, so this dial does NOT move a pen's maximum (that is r x K / 4, set by pen_density) \u2014 it moves the CREW SIZE at which the maximum is reached. EVERY PENNED SPECIES EXCEPT RABBIT IS TUNED TO REACH ITS LINE AT EXACTLY 5 KEEPERS: aurochs 4.2, wild_sheep 5.1 and crag_goat 5.266667 (8.5 and 7.9 until their wild engage_rate rose to 2.5 and 2.25 \u2014 re-expressed to hold the same 12.75 and 11.85 animals per keeper, see _comment_engage_rate), snow_hare 9.4, boar 6.6 (the global 20.0 at its old engage_rate 0.33, re-expressed when engage_rate went to 1.0 so the pen still handles 0.33 x 20 = 1.0 x 6.6 = 6.6 animals per keeper — the boar's danger lives in ferocity and attack, not in the reach term), fowl 44.0; rabbit is 12.5 and tops out at 8, deliberately the one pen that still pays for a sixth keeper. A pen_density RETUNE ALWAYS OWES A pen_engage_gain RETUNE: lowering K lowers the room (r x K / 4), so the same reach clears it a keeper sooner - scaling the densities to a 7.0 roster top silently slipped every pen from 5 keepers to 4 and the rabbit from 8 to 5, and each value here is its predecessor (6.0 / 10.6 / 9.9 / 11.8 / 25.0 / 55.0) times that same scale, then MEASURED against the sim. The maxima are identical under either set. MOST OF THESE ARE BELOW THE GLOBAL, NOT ABOVE IT, and that is the fix: at the global one keeper worked nearly the whole herd (an aurochs pen delivered 7.14 of its 8.19 line at a SINGLE keeper), which made a pen worth ~2.5x a Field per head. Fowl is the exception in the other direction \u2014 10 x 20 = 200 birds per keeper is a cattle number wearing a chicken's engage_rate, so its flock could not be worked at all without a large override. DERIVED, THEN MEASURED: the bracket is reach >= affordable at 5 and < affordable at 4, i.e. G in [affordable/(5 x engage_rate), affordable/(4 x engage_rate)) \u2014 but the 40-turn drive's effective room exceeds the static r x K / 4 (biomass accumulates on wait turns), so every value here was measured against the sim rather than taken from the static bracket. The AUROCHS is the tight one: its bracket's lower edge sits below its own pastoral_engage_gain of 4.0, and the per-species ordering check (pen > pastoral, a fence handles better than a halter) correctly rejected the first value tried. PLAYTEST LEVERS.",
   "_comment_husbandry_density": "PER-SPECIES HUSBANDRY DENSITY (K) MULTIPLIER, PER RUNG — domestication makes the LAND hold more animals, and by how much is species-specific and NON-LINEAR up the ladder (wild x1, pastoral modest, pen big). pastoral_density scales a mobile-tamed herd's carrying capacity, pen_density a penned herd's; both default to 1.0 (neutral — a wild/untagged species is unchanged and byte-identical). This is DISTINCT from the global r-gains (husbandry.pastoral_gain / pen_gain): those scale a herd's breeding RATE, this scales its CEILING. Without it a species on marginal range (a goat penned at K≈24) stays tiny even penned, and a fast wild breeder (rabbit) out-yields the prime domesticates (goat/aurochs) at every rung — because taming touched only r. Applied at the ONE K seam (fauna::ecological_carrying_capacity, via herd_density_gain) to the final range/footprint-derived K, resolved LIVE by display name so a retune reaches herds already on the map. ⛔ PEN_DENSITY WAS BACKWARDS FROM THE FICTION AND WAS RETUNED. It shipped cattle at 5.0 and fowl/rabbit at 1.5 — a hex packing MORE cattle than poultry, when small stock packs far tighter than cattle. Because a penned herd's take is r x K / 4 and K is base_K x pen_density, that one dial sets the whole rung: food/turn = r x base_K x pen_density x hunt.provisions_per_biomass / 4. It is why the big animals clustered near a Field's 12.48 food/turn sustainable line while the small ones sat ten times below. RETUNED AGAINST THAT SAME 12.48 LINE so every pen landed in one band beneath it — A CALIBRATION MADE AT THE MEAT RATE OF 0.02 (hunt.provisions_per_biomass). The meat rate has since moved to 0.06 and pen_gain to 1.5 (from 4.0), and pen_density was deliberately NOT retuned with them, so the food/turn figures that follow are the 0.02-era history, not today's lines (today's are 0.06/0.02 x 1.5/4.0 = 1.125 times them wherever the old regrowth cap did not bind; it bound rabbit, snow hare and fowl at pen_gain 4.0): aurochs 5.0 -> 3.85 (9.01 food/turn), wild_sheep 5.0 -> 2.86 (8.01), crag_goat 5.0 -> 4.55 (8.01), fowl 1.5 -> 8.0 (6.40), rabbit 1.5 -> 6.0 (6.00), snow_hare 1.5 -> 6.0 (6.00); boar 4.0 (8.00) was already in band and is UNCHANGED. Those are the SUSTAINABLE lines each pen reproduces; what a crew actually takes is that or less, and on the two smallest bodies the keepers' handling rate binds first (see .claude/rules/core_sim/husbandry.md). IT IS A PACKAGE WITH husbandry.pen_is_a_larder: while a pen was carry-bound it paid the sled's own ceiling whatever K said, so these densities did nothing. Roster now: crag_goat 2.0/5.0 and aurochs 2.0/3.5 (the prime grazer domesticates), wild_sheep 2.0/3.2, boar 1.5/4.0 (a dense sty), rabbit/snow_hare 1.1/6.0 and fowl 1.1/8.0 (small stock packs tightest — a hutch or a coop, not a pasture), steppe_runner/marsh_grazer 1.5/1.0 (nomadic pastoral only — never penned, so pen_density is inert). deer/mammoth omit both (wild ceiling — never domesticated, always x1). PLAYTEST DIALS. Validated finite & >= 1.0 (a gain below 1 would make domestication REDUCE capacity).",
+  "_comment_keeping": "KEEPING (#706) — every species names the keeping class its food goes into (demographics_config.json keeping.classes; a misspelt class is a boot panic). All game is flesh: meat, and the milk and eggs a kept herd gives, keep the four turns flesh keeps, so a band's surplus meat rots first and a hunting party's pack rots on any walk home longer than that.",
   "species": {
     "mammoth": {
+      "keeping": "flesh",
       "display_name": "Thunder Mammoths",
       "plural": "mammoths",
       "adjective": "mammoth",
@@ -43,6 +45,7 @@
       }
     },
     "steppe_runner": {
+      "keeping": "flesh",
       "display_name": "Steppe Runners",
       "combat": { "attack": 2.5, "defense": 3.0, "durability": 60, "wariness": 0.60 },
       "ferocity": 0.4,
@@ -77,6 +80,7 @@
       "standing_yield": { "provisions_per_head": 0.016218 }
     },
     "marsh_grazer": {
+      "keeping": "flesh",
       "display_name": "Marsh Grazers",
       "combat": { "attack": 2.5, "defense": 3.0, "durability": 60, "wariness": 0.50 },
       "ferocity": 0.4,
@@ -111,6 +115,7 @@
       "standing_yield": { "provisions_per_head": 0.014382 }
     },
     "deer": {
+      "keeping": "flesh",
       "display_name": "Red Deer",
       "combat": { "attack": 0.8, "defense": 1.0, "durability": 25, "wariness": 0.65 },
       "ferocity": 0.15,
@@ -136,6 +141,7 @@
       }
     },
     "boar": {
+      "keeping": "flesh",
       "display_name": "Wild Boar",
       "combat": { "attack": 1.5, "defense": 2.0, "durability": 20, "wariness": 0.25 },
       "ferocity": 0.6,
@@ -166,6 +172,7 @@
       }
     },
     "rabbit": {
+      "keeping": "flesh",
       "display_name": "Rabbit Warren",
       "plural": "rabbits",
       "adjective": "rabbit",
@@ -195,6 +202,7 @@
       }
     },
     "fowl": {
+      "keeping": "flesh",
       "display_name": "Wild Fowl",
       "plural": "fowl",
       "adjective": "fowl",
@@ -230,6 +238,7 @@
       }
     },
     "aurochs": {
+      "keeping": "flesh",
       "display_name": "Wild Aurochs",
       "plural": "aurochs",
       "adjective": "aurochs",
@@ -264,6 +273,7 @@
       "standing_yield": { "provisions_per_head": 0.11934 }
     },
     "crag_goat": {
+      "keeping": "flesh",
       "display_name": "Crag Goats",
       "combat": { "attack": 0.6, "defense": 1.0, "durability": 12, "wariness": 0.60 },
       "ferocity": 0.2,
@@ -301,6 +311,7 @@
       }
     },
     "wild_sheep": {
+      "keeping": "flesh",
       "display_name": "Wild Sheep",
       "combat": { "attack": 0.4, "defense": 1.0, "durability": 12, "wariness": 0.50 },
       "ferocity": 0.1,
@@ -338,6 +349,7 @@
       }
     },
     "reindeer": {
+      "keeping": "flesh",
       "display_name": "Wild Reindeer",
       "combat": { "attack": 0.6, "defense": 1.0, "durability": 25, "wariness": 0.45 },
       "ferocity": 0.15,
@@ -369,6 +381,7 @@
       }
     },
     "wild_horse": {
+      "keeping": "flesh",
       "display_name": "Wild Horses",
       "combat": { "attack": 2.0, "defense": 2.0, "durability": 35, "wariness": 0.55 },
       "ferocity": 0.3,
@@ -400,6 +413,7 @@
       }
     },
     "seal": {
+      "keeping": "flesh",
       "display_name": "Grey Seals",
       "combat": { "attack": 1.0, "defense": 2.0, "durability": 12, "wariness": 0.35 },
       "ferocity": 0.3,
@@ -425,6 +439,7 @@
       }
     },
     "wild_elk": {
+      "keeping": "flesh",
       "display_name": "Wild Elk",
       "combat": { "attack": 2.0, "defense": 3.0, "durability": 60, "wariness": 0.50 },
       "ferocity": 0.4,
@@ -451,6 +466,7 @@
       }
     },
     "alpine_ibex": {
+      "keeping": "flesh",
       "display_name": "Alpine Ibex",
       "combat": { "attack": 0.6, "defense": 1.0, "durability": 15, "wariness": 0.70 },
       "ferocity": 0.2,
@@ -476,6 +492,7 @@
       }
     },
     "gazelle": {
+      "keeping": "flesh",
       "display_name": "Desert Gazelle",
       "combat": { "attack": 0.3, "defense": 1.0, "durability": 8, "wariness": 0.85 },
       "ferocity": 0.05,
@@ -500,6 +517,7 @@
       }
     },
     "forest_grouse": {
+      "keeping": "flesh",
       "display_name": "Forest Grouse",
       "plural": "grouse",
       "adjective": "grouse",
@@ -523,6 +541,7 @@
       }
     },
     "river_fish": {
+      "keeping": "flesh",
       "display_name": "Silt Catfish",
       "plural": "catfish",
       "adjective": "catfish",
@@ -545,6 +564,7 @@
       }
     },
     "snow_hare": {
+      "keeping": "flesh",
       "display_name": "Snow Hare Warren",
       "plural": "hares",
       "adjective": "hare",
@@ -574,6 +594,7 @@
       }
     },
     "wolf": {
+      "keeping": "flesh",
       "display_name": "Grey Wolf Pack",
       "plural": "wolf packs",
       "adjective": "wolf",

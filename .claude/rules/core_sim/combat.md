@@ -571,7 +571,8 @@ costs a fraction of **that turn's food income** — a real larder debit, capped 
     crosses from the people's larder to the animals and `raidForfeit` is the ledger's only third term.
 - **The ledger identity gains a term** (see `campaign.md`): the forfeit is a real larder debit in
   neither `foodIncome` nor `foodConsumption`, so
-  `larder_delta == foodIncome − foodConsumption − raidForfeit`, pinned through a real raid turn by
+  `larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled` (+ the transfer pair),
+  pinned through a real raid turn by
   `integration_tests/tests/raid_food_ledger.rs`. **`raidForfeit` is a PAST-turn stochastic debit, NOT a
   recurring cost** — it is deliberately **absent** from the `turnsOfFood` forward-runway drain
   (`larder_runway_turns`), which drains only by `consumption`.

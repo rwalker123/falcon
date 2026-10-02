@@ -114,7 +114,7 @@ fn the_published_runway_is_the_turn_the_larder_really_empties() {
         .get_mut::<PopulationCohort>(band)
         .expect("band")
         .stores
-        .set(FOOD, scalar_from_f32(TEST_LARDER));
+        .reset_food("dry", scalar_from_f32(TEST_LARDER));
     run_turn(&mut app);
 
     let (runway, consumption) = exported(&app);

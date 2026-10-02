@@ -41,7 +41,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     components::{
-        BandId, LaborAllocation, MaterialBatch, PopulationCohort, ResidentBand, Tile,
+        BandId, FoodMix, LaborAllocation, MaterialBatch, PopulationCohort, ResidentBand, Tile,
         TransferCause, TransferCrossing, TransferDirection, FODDER, FOOD,
     },
     connections::ConnectionLedger,
@@ -192,8 +192,13 @@ struct Node {
     pos: UVec2,
     /// Per-capita balancing weight = population.
     weight: Scalar,
-    /// Opening goods store (commodity → quantity), sorted for determinism.
+    /// Opening goods store (commodity → quantity), sorted for determinism. Food is one `FOOD` row
+    /// carrying the larder's total — the balancer moves a quantity; [`Self::food`] says what it is.
     stores: Vec<(String, Scalar)>,
+    /// **Opening larder by keeping class** (#706) — what a send is made of: a sender gives the
+    /// proportional mix of what it holds, and a receiver gets the proportional mix of what its
+    /// network's senders gave.
+    food: FoodMix,
     /// Opening **material** batches, keyed by rating. Sorted for determinism, exactly as `stores` is.
     materials: BTreeMap<MaterialKey, MaterialBatch>,
 }
@@ -535,6 +540,7 @@ pub fn balance_supply_networks(
                 .iter()
                 .map(|(k, v)| (k.to_string(), v))
                 .collect(),
+            food: cohort.stores.food().clone(),
             materials: cohort
                 .stores
                 .materials()
@@ -723,7 +729,9 @@ pub fn balance_supply_networks(
     }
 
     // Compute all transfers against the opening snapshot, then apply them once at the end.
-    let mut applied: Vec<(Entity, String, Scalar)> = Vec::new();
+    /// `(band, commodity, signed amount, what a RECEIVED food amount is made of)`.
+    type CommodityTransfer = (Entity, String, Scalar, Option<FoodMix>);
+    let mut applied: Vec<CommodityTransfer> = Vec::new();
     /// `(band, rating, signed amount, the reading a RECEIVED amount arrives at)`.
     type MaterialTransfer = (Entity, MaterialKey, Scalar, BTreeMap<String, f32>);
     let mut applied_materials: Vec<MaterialTransfer> = Vec::new();
@@ -756,9 +764,28 @@ pub fn balance_supply_networks(
                 friction,
                 min_transfer_fraction,
             );
+            // **What this network's food sends are MADE OF** (#706) — each sender gives the
+            // proportional mix of its own opening larder, and the pot they make is what every
+            // receiver is paid out of, in proportion. Friction is a share of the pot, so it takes
+            // every class alike and the composition survives the trip.
+            let shipped_food = if commodity == FOOD {
+                let mut pot = FoodMix::default();
+                for (k, &m) in members.iter().enumerate() {
+                    if deltas[k] < scalar_zero() {
+                        pot.merge(&nodes[m].food.proportional(-deltas[k]));
+                    }
+                }
+                Some(pot)
+            } else {
+                None
+            };
             for (k, &m) in members.iter().enumerate() {
                 if deltas[k] != scalar_zero() {
-                    applied.push((nodes[m].entity, commodity.to_string(), deltas[k]));
+                    let receipt = shipped_food
+                        .as_ref()
+                        .filter(|_| deltas[k] > scalar_zero())
+                        .map(|pot| pot.split(deltas[k]));
+                    applied.push((nodes[m].entity, commodity.to_string(), deltas[k], receipt));
                 }
             }
         }
@@ -823,9 +850,21 @@ pub fn balance_supply_networks(
         }
     }
 
-    for (entity, commodity, delta) in applied {
+    for (entity, commodity, delta, food_receipt) in applied {
         if let Ok((_, mut cohort, _, allocation)) = cohorts.get_mut(entity) {
-            cohort.stores.add(&commodity, delta);
+            if commodity == FOOD {
+                // A send leaves in the sender's own proportions — the live larder IS the opening
+                // snapshot the pot was priced against, since nothing else moves it in this pass.
+                // A receipt lands as its share of the pot.
+                match food_receipt {
+                    Some(receipt) => cohort.stores.add_food_mix(&receipt),
+                    None => {
+                        cohort.stores.take_food_mix(-delta);
+                    }
+                }
+            } else {
+                cohort.stores.add(&commodity, delta);
+            }
             // **TWO KEYS ARE COUNTED, AND THEY EACH HAVE THEIR OWN ACCOUNT.** `FOOD` closes the
             // larder identity; `FODDER` closes nothing but is what the hay rows and the fodder
             // runway read (`snapshot::population`), and a pooled store that nothing counted is

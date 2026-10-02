@@ -1453,8 +1453,8 @@ band.
   deliberately two bands of DIFFERENT size (30 and 12), so a page that had stopped summing renders a
   number distinguishable from either band's own.
 - **THE NET IS SUMMED FROM EACH BAND'S OWN `band_net_food`**, never recomposed from the three totals
-  above it. `raid_forfeit` is a fourth, EPISODIC term of that identity and belongs in the net without
-  earning a standing row, so a recomposed net would quietly disagree with the band pages.
+  above it. `raid_forfeit` and `food_spoiled` are EPISODIC loss terms of that identity and belong in
+  the net without earning a standing row, so a recomposed net would quietly disagree with the band pages.
 - **BOTH LISTS ARE CAPPED, AND THE CAP IS STATED.** The zones clip and neither list pages (the work
   board's pager belongs to a band's own sources), so a bounded list ends in `+N more`. A truncated
   list with nothing under it reads as the whole roster — the one way a rollup can lie about a total
@@ -5371,7 +5371,7 @@ applied one level up: a second total beside the first, shown only when non-zero.
 
 **FODDER IS THAT SIBLING** (issue #449), and it credits the band's `FODDER` store and never the larder,
 so folding it into the food figure would break the identity
-`larder_delta == income − consumption − pen_feed − raid_forfeit`. The head reads `2 sources +0.20
+`larder_delta == income − consumption − raid_forfeit − food_spoiled + received − sent`. The head reads `2 sources +0.20
 /turn +0.40 fodder` (`WORK_FODDER_TOTAL_TOOLTIP` making the beside-not-in point) and a chip covering
 only hay-bearing patches reads `🌿 1 · 0.40 fodder` — via `SourceForecast.magnitude_components`, the
 bare-magnitude twin of `yield_components` (a chip states levels, not deltas, so no `+`). A kind whose

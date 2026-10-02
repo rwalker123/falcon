@@ -181,7 +181,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // not animal feed, so a pen never touches the FOOD larder — it eats the grass its fenced
     // footprint grows plus the hay its keeper carries in, and what those two leave uncovered makes it
     // UNDERFED (`pen_fed_fraction` < 1) instead of billing the people. The identity is now
-    //     larder_delta == food_income − food_consumption − raid_forfeit
+    //     larder_delta == food_income − food_consumption − raid_forfeit − food_spoiled
     //                     + transfer_received − transfer_sent
     // (pinned sim-side by `integration_tests/tests/pen_food_ledger.rs`).
     // The band's FODDER store (Flora roster F3): hay this band has stockpiled to feed its pens, a second
@@ -259,15 +259,17 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     //                  range and to raise the live "Predator nearby" Warrior-card alert. The
     //                  `work_range` idiom above (a plain `uint` reach) — decoded the same way.
     let _ = dict.insert("raid_radius", cohort.raidRadius() as i64);
-    //   raid_forfeit — food this band lost to predator raids THIS turn: the ledger's ONLY negative
-    //                  line beyond consumption, a figure the sim answers and the client never
-    //                  re-derives. 0 when no raid landed → the ledger omits the row.
-    //                  Full net is larder_delta == food_income − food_consumption − raid_forfeit.
+    //   raid_forfeit — food this band lost to predator raids THIS turn: one of the ledger's two
+    //                  loss lines beyond consumption (the other is `food_spoiled`), a figure the sim
+    //                  answers and the client never re-derives. 0 when no raid landed → the ledger
+    //                  omits the row.
+    //                  Full net is larder_delta == food_income − food_consumption − raid_forfeit
+    //                  − food_spoiled (+ the transfer pair below).
     let _ = dict.insert("raid_forfeit", cohort.raidForfeit() as f64);
     //   transfer_received / transfer_sent — FOOD THAT CROSSED BETWEEN BANDS (arc #527), the last two
     //                  terms of the ledger identity
     //                    larder_delta == food_income − food_consumption − raid_forfeit
-    //                                    + transfer_received − transfer_sent
+    //                                    − food_spoiled + transfer_received − transfer_sent
     //                  Food moving from one larder to another passes through NEITHER income (what
     //                  THIS band's workers produced) nor consumption (what its people ate) — the
     //                  same hole raid_forfeit was minted for. TWO NAMED
@@ -1720,6 +1722,13 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // the band starves. `food_shortfall > 0` is this turn's hunger.
     let _ = dict.insert("food_need", cohort.foodNeed() as f64);
     let _ = dict.insert("food_shortfall", cohort.foodShortfall() as f64);
+    // THE FOOD THAT ROTTED THIS TURN (#706): the larder's food past its keeping class's shelf life
+    // plus any caravan pack that rotted on the walk home. A loss term of the ledger, read exactly as
+    // `raid_forfeit` is — the sim's answer, never re-derived. 0 on a turn nothing rotted → the Food
+    // breakdown omits the row. The full identity is now
+    //     larder_delta == food_income − food_consumption − raid_forfeit − food_spoiled
+    //                     + transfer_received − transfer_sent
+    let _ = dict.insert("food_spoiled", cohort.foodSpoiled() as f64);
 
     // **THIS BAND'S OUTFITTING WINDOW**, and it is a fact about ONE band rather than about the world
     // — which is the whole shape of the per-band loadout arc. `open`, `kitBudget` and

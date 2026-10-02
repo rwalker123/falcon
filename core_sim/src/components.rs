@@ -299,6 +299,171 @@ pub struct MaterialDraw {
     pub characteristics: BTreeMap<String, f32>,
 }
 
+/// **Food, by keeping class** (#706) — `class id → amount`. The class is how the food keeps
+/// (`demographics_config.json` → `keeping.classes`); a larder, a party's pack, a shipment and every
+/// move between them carry it, so a band's flesh stays flesh wherever it travels.
+///
+/// A `BTreeMap` for the reason [`LocalStore`] uses one (deterministic iteration); a zero class is
+/// pruned, so two mixes holding the same food compare equal.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct FoodMix {
+    classes: BTreeMap<String, Scalar>,
+}
+
+impl FoodMix {
+    /// `amount` of one class.
+    pub fn single(class: &str, amount: Scalar) -> Self {
+        let mut mix = Self::default();
+        mix.add(class, amount);
+        mix
+    }
+
+    /// **`total` split across classes in proportion to `weights`** — how a scalar take whose
+    /// composition is known only as weights (a basket's per-species shares, a pack's carried classes)
+    /// becomes food. The parts sum to `total` exactly. Weights that sum to nothing put the whole
+    /// total in `fallback`.
+    pub fn from_weights<'a>(
+        total: Scalar,
+        weights: impl IntoIterator<Item = (&'a str, f32)>,
+        fallback: &str,
+    ) -> Self {
+        let mut stocks = Self::default();
+        for (class, weight) in weights {
+            if weight.is_finite() && weight > 0.0 {
+                stocks.add(class, Scalar::from_f32(weight));
+            }
+        }
+        if stocks.total() <= scalar_zero() {
+            return Self::single(fallback, total);
+        }
+        stocks.split(total)
+    }
+
+    /// Add `amount` of `class`. A non-positive amount is a no-op.
+    pub fn add(&mut self, class: &str, amount: Scalar) {
+        if amount <= scalar_zero() {
+            return;
+        }
+        *self
+            .classes
+            .entry(class.to_string())
+            .or_insert_with(scalar_zero) += amount;
+    }
+
+    /// Add every class of `other`.
+    pub fn merge(&mut self, other: &FoodMix) {
+        for (class, amount) in other.iter() {
+            self.add(class, amount);
+        }
+    }
+
+    /// Remove up to `amount` of `class`, returning what was removed; an emptied class is pruned.
+    pub fn remove(&mut self, class: &str, amount: Scalar) -> Scalar {
+        let Some(held) = self.classes.get_mut(class) else {
+            return scalar_zero();
+        };
+        let taken = min(amount.max(scalar_zero()), *held);
+        *held -= taken;
+        if *held <= scalar_zero() {
+            self.classes.remove(class);
+        }
+        taken
+    }
+
+    /// The amount of one class (zero if absent).
+    pub fn get(&self, class: &str) -> Scalar {
+        self.classes.get(class).copied().unwrap_or_else(scalar_zero)
+    }
+
+    /// Every class's amount summed.
+    pub fn total(&self) -> Scalar {
+        self.classes
+            .values()
+            .fold(scalar_zero(), |total, amount| total + *amount)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.classes.is_empty()
+    }
+
+    /// `(class, amount)` in class-id order.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, Scalar)> {
+        self.classes.iter().map(|(k, v)| (k.as_str(), *v))
+    }
+
+    /// **The share of this mix `amount` would be, taken in proportion** — without taking it.
+    /// `min(amount, total)` split by each class's share, in exact fixed-point: each part floors, and
+    /// the few micro-units the floors drop go one at a time to the classes with room, in id order, so
+    /// the parts sum to the requested amount and no class gives more than it holds.
+    pub fn proportional(&self, amount: Scalar) -> FoodMix {
+        let total = self.total();
+        let want = min(amount.max(scalar_zero()), total);
+        if want <= scalar_zero() {
+            return FoodMix::default();
+        }
+        if want == total {
+            return self.clone();
+        }
+        let (total_raw, want_raw) = (i128::from(total.raw()), i128::from(want.raw()));
+        let mut parts: Vec<(String, i64, i64)> = self
+            .classes
+            .iter()
+            .map(|(class, held)| {
+                let share = (i128::from(held.raw()) * want_raw / total_raw) as i64;
+                (class.clone(), share, held.raw())
+            })
+            .collect();
+        let mut short = want.raw() - parts.iter().map(|(_, share, _)| share).sum::<i64>();
+        while short > 0 {
+            let before = short;
+            for (_, share, held) in parts.iter_mut() {
+                if short > 0 && *share < *held {
+                    *share += 1;
+                    short -= 1;
+                }
+            }
+            if short == before {
+                break;
+            }
+        }
+        let mut taken = FoodMix::default();
+        for (class, share, _) in parts {
+            taken.add(&class, Scalar::from_raw(share));
+        }
+        taken
+    }
+
+    /// **`total` in this mix's proportions** — the same split [`Self::proportional`] makes, scaled
+    /// to an arbitrary total (which may exceed what this mix holds): what a pooled receipt is made of
+    /// when its senders shipped this mix.
+    pub fn split(&self, total: Scalar) -> FoodMix {
+        let held = self.total();
+        if total <= scalar_zero() || held <= scalar_zero() {
+            return FoodMix::default();
+        }
+        let (held_raw, total_raw) = (i128::from(held.raw()), i128::from(total.raw()));
+        let mut parts: Vec<(String, i64)> = self
+            .classes
+            .iter()
+            .map(|(class, amount)| {
+                let share = (i128::from(amount.raw()) * total_raw / held_raw) as i64;
+                (class.clone(), share)
+            })
+            .collect();
+        let short = total.raw() - parts.iter().map(|(_, share)| share).sum::<i64>();
+        // The floors drop at most one micro-unit per class; they land on the largest part, which
+        // can always carry them.
+        if let Some(largest) = parts.iter_mut().max_by_key(|(_, share)| *share) {
+            largest.1 += short;
+        }
+        let mut mix = FoodMix::default();
+        for (class, share) in parts {
+            mix.add(&class, Scalar::from_raw(share));
+        }
+        mix
+    }
+}
+
 /// A location-local store of goods held by a band (and, later, a populated tile or storage pit).
 /// Keyed by commodity so the supply network can balance *any* good; a `BTreeMap` keeps iteration
 /// deterministic for balancing and snapshotting. Quantities are fixed-point (`Scalar`) so small
@@ -318,7 +483,13 @@ pub struct MaterialDraw {
 /// already resolved.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct LocalStore {
+    /// Every commodity **except food** — fodder and any future scalar good. Food is held by keeping
+    /// class in [`Self::food`], and the generic [`Self::add`] / [`Self::set`] / [`Self::take`] refuse
+    /// the [`FOOD`] key so no site can put food back in here.
     goods: BTreeMap<String, Scalar>,
+    /// **The larder, by keeping class** (#706). [`Self::get`]`(FOOD)` reads its total, so every
+    /// read-only site is unchanged; every write goes through the class API.
+    food: FoodMix,
     /// `material id → band key → batch`. `BTreeMap` on both levels so the checkpoint and any
     /// published readout iterate in a stable order — the same reason `BandEquipment` is one.
     materials: BTreeMap<String, BTreeMap<crate::materials_config::BandKey, MaterialBatch>>,
@@ -329,19 +500,37 @@ impl LocalStore {
         Self::default()
     }
 
-    /// Current quantity of `item` (zero if absent).
+    /// Current quantity of `item` (zero if absent). **[`FOOD`] reads the larder's total** across
+    /// every keeping class.
     pub fn get(&self, item: &str) -> Scalar {
+        if item == FOOD {
+            return self.food.total();
+        }
         self.goods.get(item).copied().unwrap_or_else(scalar_zero)
     }
 
-    /// Add `amount` (may be negative) to `item`, flooring the result at zero.
+    /// ⛔ **Food is not a scalar good.** It moves by keeping class, so a generic write naming
+    /// [`FOOD`] is a site that forgot what kind of food it is moving — and that is a panic, never a
+    /// silent pile of classless food. Use [`Self::add_food`], [`Self::add_food_mix`],
+    /// [`Self::eat_food`] or [`Self::take_food_mix`].
+    fn refuse_food(item: &str) {
+        assert!(
+            item != FOOD,
+            "LocalStore: '{FOOD}' moves by keeping class — use add_food / add_food_mix / \
+             eat_food / take_food_mix, never the generic add/set/take"
+        );
+    }
+
+    /// Add `amount` (may be negative) to `item`, flooring the result at zero. Panics on [`FOOD`].
     pub fn add(&mut self, item: &str, amount: Scalar) {
+        Self::refuse_food(item);
         let updated = self.get(item) + amount;
         self.set(item, updated);
     }
 
-    /// Set `item` to `amount` (floored at zero; a zero value prunes the key).
+    /// Set `item` to `amount` (floored at zero; a zero value prunes the key). Panics on [`FOOD`].
     pub fn set(&mut self, item: &str, amount: Scalar) {
+        Self::refuse_food(item);
         if amount > scalar_zero() {
             self.goods.insert(item.to_string(), amount);
         } else {
@@ -349,16 +538,91 @@ impl LocalStore {
         }
     }
 
-    /// Remove up to `amount` of `item`, returning how much was actually taken.
+    /// Remove up to `amount` of `item`, returning how much was actually taken. Panics on [`FOOD`].
     pub fn take(&mut self, item: &str, amount: Scalar) -> Scalar {
+        Self::refuse_food(item);
         let taken = min(amount.max(scalar_zero()), self.get(item));
         self.add(item, -taken);
         taken
     }
 
-    /// `(item, quantity)` pairs in deterministic (sorted-key) order.
+    /// `(item, quantity)` pairs in deterministic (sorted-key) order — **food included, as one
+    /// [`FOOD`] row carrying the larder's total**, so a read-only walk (the snapshot's `stores`
+    /// list) sees provisions as it always did. A site that MOVES what it walks must not feed a food
+    /// row back through [`Self::add`] (it panics): food moves through [`Self::take_food_mix`].
     pub fn iter(&self) -> impl Iterator<Item = (&str, Scalar)> {
-        self.goods.iter().map(|(k, v)| (k.as_str(), *v))
+        let food = self.food.total();
+        let mut rows: Vec<(&str, Scalar)> = self
+            .goods
+            .iter()
+            .map(|(k, v)| (k.as_str(), *v))
+            .chain((food > scalar_zero()).then_some((FOOD, food)))
+            .collect();
+        rows.sort_by(|a, b| a.0.cmp(b.0));
+        rows.into_iter()
+    }
+
+    /// **The larder, by keeping class** — read-only.
+    pub fn food(&self) -> &FoodMix {
+        &self.food
+    }
+
+    /// Put `amount` of food of keeping class `class` in the larder. A non-positive amount is a no-op.
+    pub fn add_food(&mut self, class: &str, amount: Scalar) {
+        self.food.add(class, amount);
+    }
+
+    /// Put every class of `mix` in the larder.
+    pub fn add_food_mix(&mut self, mix: &FoodMix) {
+        self.food.merge(mix);
+    }
+
+    /// **The meal** — eat up to `amount`, **fastest-rotting class first** (`order` is the class ids
+    /// by ascending shelf life, [`crate::demographics_config::KeepingConfig::eat_order`]). A class
+    /// the order does not name is eaten last, in id order. Returns what was eaten.
+    pub fn eat_food(&mut self, amount: Scalar, order: &[String]) -> Scalar {
+        let mut remaining = amount.max(scalar_zero());
+        let mut eaten = scalar_zero();
+        let unnamed: Vec<String> = self
+            .food
+            .classes
+            .keys()
+            .filter(|class| !order.contains(class))
+            .cloned()
+            .collect();
+        for class in order.iter().chain(unnamed.iter()) {
+            if remaining <= scalar_zero() {
+                break;
+            }
+            let taken = self.food.remove(class, remaining);
+            remaining -= taken;
+            eaten += taken;
+        }
+        eaten
+    }
+
+    /// **Take up to `amount` of food IN PROPORTION TO WHAT THE LARDER HOLDS** — the move every food
+    /// transfer makes (a fission dowry, pooling, a party's launch larder, trade cargo, a raid's
+    /// forfeit), so the composition that leaves is the composition that was there and what stays
+    /// keeps its own. Returns the mix taken; its total is `min(amount, held)` exactly.
+    pub fn take_food_mix(&mut self, amount: Scalar) -> FoodMix {
+        let taken = self.food.proportional(amount);
+        for (class, qty) in taken.iter() {
+            self.food.remove(class, qty);
+        }
+        taken
+    }
+
+    /// Remove up to `amount` of one class — the rot's debit. Returns what was removed.
+    pub fn take_food_class(&mut self, class: &str, amount: Scalar) -> Scalar {
+        self.food.remove(class, amount)
+    }
+
+    /// **Replace the whole larder with `amount` of one class** — a band's opening reserve, and the
+    /// fixture seam for a test that states a larder. Never a transfer: it discards what was held.
+    pub fn reset_food(&mut self, class: &str, amount: Scalar) {
+        self.food = FoodMix::default();
+        self.food.add(class, amount);
     }
 
     /// **THE MERGE RULE.** Add `amount` of `material` at `band`, merging into the batch already
@@ -1113,8 +1377,8 @@ pub struct PopulationCohort {
     /// turn's *opening* brackets — the real `stores` debit `advance_demographics` took, before the
     /// same turn's births/aging change the head-count). This — not a re-derived `food_demand` on the
     /// *post*-turn brackets — is the consumption term of the larder ledger identity
-    /// `larder_delta == food_income − food_consumption − raid_forfeit`, so it holds by
-    /// construction whether the band is fully fed or starving. Recomputed each turn
+    /// `larder_delta == food_income − food_consumption − raid_forfeit − spoiled + received − sent`,
+    /// so it holds by construction whether the band is fully fed or starving. Recomputed each turn
     /// by `simulate_population`; on the client wire as `PopulationCohortState.food_consumption`.
     pub last_food_consumption: f32,
     /// **What the band's people NEEDED to eat this turn** — the `food_demand` `advance_demographics`
@@ -1125,6 +1389,14 @@ pub struct PopulationCohort {
     /// hand-to-mouth hits every turn even when its income covers its need on average. Set each turn
     /// by `simulate_population`; `0.0` before a band's first turn. On the wire as `foodNeed`.
     pub last_food_need: f32,
+    /// **The food that ROTTED this turn** (#706) — the larder rot `systems::rot_band_larders` struck
+    /// right after the meal (which also resets it each turn), plus the transit rot of any caravan
+    /// pack that landed home after a walk longer than its class keeps (`systems::labor`). One term,
+    /// the ledger identity's `spoiled`:
+    /// `larder_delta == income − consumption − raid_forfeit − spoiled + received − sent`. A rotten
+    /// pack is credited as income when it lands and debited here the same turn, so income stays the
+    /// one producer it always was. On the wire as `PopulationCohortState.foodSpoiled`.
+    pub last_food_spoiled: f32,
     /// **THE FOOD THAT CROSSED BETWEEN THIS BAND AND ANOTHER, AS OF THIS TURN'S FRAME** — the
     /// per-turn twin of the accumulator [`LaborAllocation::last_food_transfers`], split by
     /// [`TransferLink`], and the reading a client renders.
@@ -1141,7 +1413,7 @@ pub struct PopulationCohort {
     /// **It neither replaces the accumulator nor changes its window.** At the moment it is copied
     /// the accumulator holds *(command-time draws since the last turn capture) + (this turn's
     /// transfers)* — exactly the interval the ledger identity
-    /// `larder_delta == income − consumption − raid_forfeit + received − sent` measures —
+    /// `larder_delta == income − consumption − raid_forfeit − spoiled + received − sent` measures —
     /// so the two readings cannot disagree on a turn frame. On the wire as
     /// `PopulationCohortState.transfer_{local,route}_{received,sent}_turn`, beside the accumulator's
     /// own summed `transfer_received` / `transfer_sent`.
@@ -3201,7 +3473,7 @@ pub struct SourceYield {
     /// **It is NOT food income.** `PopulationCohortState.food_income` stays `Σ actual` and must never
     /// include this — fodder credits the band's `FODDER` store and never touches the larder, so
     /// folding it in would break the larder identity
-    /// `larder_delta == food_income − food_consumption − raid_forfeit`.
+    /// `larder_delta == food_income − food_consumption − raid_forfeit − spoiled + received − sent`.
     ///
     /// **There is deliberately NO `realized_fodder` twin.** The plant web's forward projection is
     /// food-only (`forage::plant_food_only`) and fodder is paid by the plant web **alone**,
@@ -4254,8 +4526,10 @@ pub struct LaborAllocation {
     /// forward runway drain:
     ///
     /// ```text
-    /// larder_delta == food_income − food_consumption − raid_forfeit
+    /// larder_delta == food_income − food_consumption − raid_forfeit − spoiled
     /// ```
+    ///
+    /// (plus the transfer pair below; `spoiled` is [`PopulationCohort::last_food_spoiled`], #706).
     ///
     /// Same treatment as `last_yields`: reset then re-levied each turn by `advance_predator_raids`,
     /// and **excluded from equality** below.
@@ -4274,7 +4548,7 @@ pub struct LaborAllocation {
     /// therefore
     ///
     /// ```text
-    /// larder_delta == food_income − food_consumption − raid_forfeit
+    /// larder_delta == food_income − food_consumption − raid_forfeit − spoiled
     ///                 + transfer_received − transfer_sent
     /// ```
     ///
@@ -6569,6 +6843,96 @@ impl Default for Tile {
             river_inflow: 0,
             river_channel: 0,
         }
+    }
+}
+
+#[cfg(test)]
+mod food_mix_tests {
+    use super::*;
+
+    const FLESH: &str = "flesh";
+    const DRY: &str = "dry";
+
+    fn mix(rows: &[(&str, f32)]) -> FoodMix {
+        let mut mix = FoodMix::default();
+        for (class, amount) in rows {
+            mix.add(class, Scalar::from_f32(*amount));
+        }
+        mix
+    }
+
+    /// **A proportional take is exact to the micro-unit and never over-draws a class** — the move
+    /// every transfer makes, so a remainder lost here would be food lost on every pooling pass.
+    #[test]
+    fn a_proportional_take_is_exact_and_keeps_the_composition() {
+        let mut store = LocalStore::new();
+        store.add_food_mix(&mix(&[(FLESH, 3.0), (DRY, 7.0)]));
+        let taken = store.take_food_mix(Scalar::from_f32(3.333_333));
+        assert_eq!(
+            taken.total(),
+            Scalar::from_f32(3.333_333),
+            "exactly what was asked"
+        );
+        assert_eq!(
+            taken.total() + store.food().total(),
+            Scalar::from_f32(10.0),
+            "nothing minted, nothing lost"
+        );
+        let flesh_share = taken.get(FLESH).to_f32() / taken.total().to_f32();
+        assert!(
+            (flesh_share - 0.3).abs() < 1e-4,
+            "the take carries the larder's own proportions, got {flesh_share}"
+        );
+    }
+
+    #[test]
+    fn a_take_larger_than_the_larder_takes_the_larder() {
+        let mut store = LocalStore::new();
+        store.add_food_mix(&mix(&[(FLESH, 2.0), (DRY, 1.0)]));
+        let taken = store.take_food_mix(Scalar::from_f32(50.0));
+        assert_eq!(taken, mix(&[(FLESH, 2.0), (DRY, 1.0)]));
+        assert!(store.food().is_empty());
+    }
+
+    /// **A split to an arbitrary total keeps the proportions and sums exactly** — what a pooled
+    /// receipt is made of.
+    #[test]
+    fn a_split_scales_a_composition_to_any_total_exactly() {
+        let pot = mix(&[(FLESH, 1.0), (DRY, 2.0)]);
+        let receipt = pot.split(Scalar::from_f32(0.9));
+        assert_eq!(receipt.total(), Scalar::from_f32(0.9));
+        assert!((receipt.get(DRY).to_f32() - 0.6).abs() < 1e-5);
+    }
+
+    #[test]
+    fn weights_that_name_nothing_land_in_the_fallback() {
+        let landed = FoodMix::from_weights(Scalar::from_f32(4.0), [(FLESH, 0.0)], DRY);
+        assert_eq!(landed, mix(&[(DRY, 4.0)]));
+    }
+
+    /// The larder total still reads through `get(FOOD)`, and still publishes as one row.
+    #[test]
+    fn the_larder_total_reads_and_iterates_as_one_food_row() {
+        let mut store = LocalStore::new();
+        store.add_food_mix(&mix(&[(FLESH, 1.5), (DRY, 2.5)]));
+        store.add(FODDER, Scalar::from_f32(1.0));
+        assert_eq!(store.get(FOOD), Scalar::from_f32(4.0));
+        let rows: Vec<(&str, Scalar)> = store.iter().collect();
+        assert_eq!(
+            rows,
+            vec![
+                (FODDER, Scalar::from_f32(1.0)),
+                (FOOD, Scalar::from_f32(4.0))
+            ]
+        );
+    }
+
+    /// ⛔ **The generic writes refuse food** — a site that forgot what kind of food it moves fails
+    /// loudly instead of making classless food.
+    #[test]
+    #[should_panic(expected = "moves by keeping class")]
+    fn a_generic_food_write_is_refused() {
+        LocalStore::new().add(FOOD, Scalar::from_f32(1.0));
     }
 }
 

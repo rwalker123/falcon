@@ -774,7 +774,7 @@ table PopulationCohortState {
   // redundant. Kept as (deprecated) rather than deleted so the field id/slot stays reserved: this repo
   // is worked by concurrent sessions that append to these tables, and a freed slot is how two branches
   // collide on one id. foodIncome above stays — it is the real arrivals and is load-bearing for the
-  // larder_delta == foodIncome − foodConsumption − raidForfeit ledger identity.
+  // larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled ledger identity.
   foodIncomeAverage:float = 0 (deprecated);
   // In-flight hunt-party delivery forecast (the client's "Next delivery: ~X food in ~N turns" drawer
   // line) — the in-flight twin of the pre-launch `huntTripEstimates`. Computed at capture by
@@ -815,8 +815,8 @@ table PopulationCohortState {
   // line. A casualty-causing raid costs the band a fraction of that
   // turn's food income (the people were defending/fleeing, not gathering), debited from the larder and
   // capped at what it held. Extends the ledger identity to
-  //   larder_delta == foodIncome − foodConsumption − raidForfeit
-  //                   + transferReceived − transferSent            (see those two fields below)
+  //   larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled
+  //                   + transferReceived − transferSent            (see those fields below)
   // It is a PAST-turn stochastic debit, NOT a recurring cost — do not add it to the turnsOfFood runway
   // drain. Append-only.
   raidForfeit:float = 0;
@@ -1113,7 +1113,7 @@ table PopulationCohortState {
   //
   // The last two terms of the food-ledger identity, which now reads
   //
-  //   larder_delta == foodIncome − foodConsumption − raidForfeit
+  //   larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled
   //                   + transferReceived − transferSent
   //
   // pinned against real turns by integration_tests/tests/transfer_food_ledger.rs.
@@ -1560,6 +1560,13 @@ table PopulationCohortState {
   // foodNeed - foodConsumption, never negative; 0 on a fed turn.
   foodNeed:float = 0;
   foodShortfall:float = 0;
+  // THE FOOD THAT ROTTED THIS TURN (#706, appended last) - the larder rot (food the band could not
+  // eat before its keeping class's shelf life ran out, struck right after the meal) plus the transit
+  // rot of any caravan pack that landed after a walk longer than its class keeps. A rotten pack is
+  // credited in foodIncome when it lands and debited here the same turn, so it is ONE term of the
+  // larder ledger identity: larder_delta == foodIncome - foodConsumption - raidForfeit - foodSpoiled
+  // + transferReceived - transferSent. 0 on a turn nothing rotted.
+  foodSpoiled:float = 0;
 }
 
 // One band's outfitting window. THE TWO SUPPLIES ARE MUTUALLY EXCLUSIVE and `parentBandId` says which
@@ -1884,7 +1891,7 @@ table LaborAssignment {
   //
   // NEITHER IS FOOD INCOME: `PopulationCohortState.foodIncome` stays Sum(actualYield) and must never
   // include these, because that sum is one side of the pinned larder identity
-  //   larder_delta == foodIncome - foodConsumption - raidForfeit
+  //   larder_delta == foodIncome - foodConsumption - raidForfeit - foodSpoiled
   // and trade goods never touch the larder (they credit the faction stockpile). Render a trade line
   // ONLY when the value is > 0, the rule flora's cash-crop line already uses.
   //

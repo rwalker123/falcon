@@ -41,7 +41,7 @@ use core_sim::{
     MaterialsConfig, MoraleCause, PopulationCohort, SimulationConfig, SimulationTick, SizeClass,
     SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SourcePriority, StartLocation,
     StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry,
-    WellbeingConfigHandle, FOOD,
+    WellbeingConfigHandle,
 };
 use core_sim::{recapture_snapshot_in_place, SnapshotHistory};
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
@@ -297,6 +297,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
                 last_food_need: 0.0,
+                last_food_spoiled: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),
@@ -365,7 +366,7 @@ fn run_turn(app: &mut App, keeper: Entity) {
         .get_mut::<PopulationCohort>(keeper)
         .expect("the fixture keeper exists")
         .stores
-        .set(FOOD, scalar_from_f32(RESTOCK));
+        .reset_food("dry", scalar_from_f32(RESTOCK));
     app.world.run_system_once(advance_herds);
     app.world.run_system_once(advance_herd_grazing);
     app.world.run_system_once(advance_graze_regrowth);
@@ -392,7 +393,7 @@ fn publishing_turn(app: &mut App, keeper: Entity) {
         .get_mut::<PopulationCohort>(keeper)
         .expect("the fixture keeper exists")
         .stores
-        .set(FOOD, scalar_from_f32(RESTOCK));
+        .reset_food("dry", scalar_from_f32(RESTOCK));
     core_sim::run_turn(app);
 }
 
@@ -1183,7 +1184,7 @@ fn the_seeded_row_equals_the_first_resolved_row_at_every_commitment() {
             .get_mut::<PopulationCohort>(keeper)
             .expect("the fixture keeper exists")
             .stores
-            .set(FOOD, scalar_from_f32(RESTOCK));
+            .reset_food("dry", scalar_from_f32(RESTOCK));
         app.world.run_system_once(advance_labor_allocation);
         let resolved = published_hunt_row(&mut app);
 

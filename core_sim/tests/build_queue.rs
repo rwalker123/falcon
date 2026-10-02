@@ -231,6 +231,7 @@ fn world_with_a_queue_knowing(
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
                 last_food_need: 0.0,
+                last_food_spoiled: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),
@@ -981,6 +982,7 @@ fn world_with_a_half_tamed_herd(crew: u32, floor: f32) -> (App, Entity, String) 
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
                 last_food_need: 0.0,
+                last_food_spoiled: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),
@@ -1036,7 +1038,7 @@ const WORKFORCE_HEADROOM: u32 = 6;
 /// A larder deep enough that a dozen resolved turns cannot starve the fixture band.
 fn well_fed() -> LocalStore {
     let mut stores = LocalStore::new();
-    stores.add(core_sim::FOOD, scalar_from_f32(50_000.0));
+    stores.add_food("dry", scalar_from_f32(50_000.0));
     stores
 }
 
@@ -1839,12 +1841,13 @@ fn fixture_cohort(tile: Entity, staffed: u32) -> PopulationCohort {
         elders: scalar_zero(),
         stores: {
             let mut stores = LocalStore::new();
-            stores.add(core_sim::FOOD, scalar_from_f32(FIXTURE_LARDER));
+            stores.add_food("dry", scalar_from_f32(FIXTURE_LARDER));
             stores
         },
         morale: scalar_one(),
         last_food_consumption: 0.0,
         last_food_need: 0.0,
+        last_food_spoiled: 0.0,
         last_turn_food_transfers: Default::default(),
         last_turn_fodder_transfers: Default::default(),
         last_turn_transfer_crossings: Vec::new(),

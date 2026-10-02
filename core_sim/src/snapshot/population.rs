@@ -1483,11 +1483,27 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // that would swing the runway for the one turn it lands. It is the same basis the client's Food
     // headline rate adds (`DetailFormat.band_headline_food_rate`), so the rate and the runway beside
     // it agree. Read off the per-turn twin on the cohort, so a recapture republishes the same runway.
+    //
+    // ⛔ **A RESIDENT BAND'S LARDER IS READ AFTER ONE TURN OF ROT** (#706,
+    // `crate::spoilage::larder_after_rot`) — a FIRST-TURN CORRECTION, not a model of spoilage over
+    // the whole runway. A larder above its keeping lines loses the excess on the next turn whatever
+    // the band does, so counting that food as runway would promise turns the store cannot keep; the
+    // turns after are walked as before. A detached party's pack does not rot in this slice, so it
+    // reads its pack whole.
+    let runway_larder = if expedition.is_some() {
+        cohort.stores.get(FOOD)
+    } else {
+        crate::spoilage::larder_after_rot(
+            cohort.stores.food(),
+            demand.to_f32(),
+            &demographics.keeping,
+        )
+    };
     let turns_of_food = if demand.raw() <= 0 {
         NOT_FOOD_LIMITED_TURNS
     } else {
         larder_runway_turns(
-            cohort.stores.get(FOOD).to_f32(),
+            runway_larder.to_f32(),
             demand.to_f32(),
             steady_food_income,
             pooled_food_net(cohort),
@@ -2093,6 +2109,9 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // Never negative: eaten is `min(need, larder)`, so this is the part of the meal the larder
         // could not cover.
         food_shortfall: (cohort.last_food_need - cohort.last_food_consumption).max(0.0),
+        // **What rotted this turn** (#706) — the ledger identity's `spoiled` term, set by the larder
+        // rot and added to by any caravan pack's transit rot.
+        food_spoiled: cohort.last_food_spoiled,
     }
 }
 
@@ -2510,7 +2529,7 @@ mod tests {
     /// A minimal content cohort with `larder` food and a working-age bracket that eats.
     fn cohort(larder: f32) -> PopulationCohort {
         let mut stores = LocalStore::new();
-        stores.set(FOOD, scalar_from_f32(larder));
+        stores.reset_food("dry", scalar_from_f32(larder));
         PopulationCohort {
             home: Entity::from_raw(1),
             current_tile: Entity::from_raw(1),
@@ -2522,6 +2541,7 @@ mod tests {
             morale: scalar_one(),
             last_food_consumption: 0.0,
             last_food_need: 0.0,
+            last_food_spoiled: 0.0,
             last_turn_food_transfers: Default::default(),
             last_turn_fodder_transfers: Default::default(),
             last_turn_transfer_crossings: Vec::new(),

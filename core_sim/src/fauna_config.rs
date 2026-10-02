@@ -196,6 +196,11 @@ pub struct SpeciesDef {
     /// Player-facing name; also the snapshot `species` string. Must embed the
     /// client icon keyword (e.g. "deer", "boar") so `FoodIcons.for_herd` resolves.
     pub display_name: String,
+    /// **The keeping class this species' food goes into** (#706) — one of
+    /// `demographics_config.json`'s `keeping.classes` ids, and the shelf life its meat, milk and
+    /// eggs rot on in a larder or a caravan's pack. Required, and reconciled against the class table
+    /// at boot ([`FaunaConfig::validate_keeping`]).
+    pub keeping: String,
     #[serde(default)]
     pub size_class: SizeClass,
     #[serde(default)]
@@ -2800,6 +2805,35 @@ impl FaunaConfig {
             .unwrap_or_default()
     }
 
+    /// **The keeping class a herd's food goes into** ([`SpeciesDef::keeping`]), resolved by the
+    /// display name a `Herd` carries. `None` for a species the table cannot resolve (an isolated
+    /// test fixture) — the caller falls back to the kill class
+    /// ([`crate::demographics_config::KeepingConfig::kill_fallback_class`]).
+    pub fn keeping_for(&self, display: &str) -> Option<&str> {
+        self.species_by_display(display)
+            .map(|def| def.keeping.as_str())
+    }
+
+    /// **Every species names a configured keeping class** (#706) — the cross-config half of the
+    /// keeping field, run at boot against the demographics config's class table. A misspelt class
+    /// would otherwise put the species' meat into a class nothing rots or eats in order.
+    pub fn validate_keeping(
+        &self,
+        keeping: &crate::demographics_config::KeepingConfig,
+    ) -> Result<(), String> {
+        let mut keys: Vec<&String> = self.species.keys().collect();
+        keys.sort_unstable();
+        for key in keys {
+            let class = &self.species[key].keeping;
+            if !keeping.has_class(class) {
+                return Err(format!(
+                    "fauna species.{key}.keeping names unknown keeping class '{class}'"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// **The species' resolved STANDING-yield vector** ([`SpeciesDef::standing_yield`]) — what one
     /// *live* head pays per turn. **THE single seam**, the twin of [`Self::hunt_yield_for`]: the
     /// *"this species has no renewable option"* answer is stated exactly once, so a herd cannot pay
@@ -3401,7 +3435,7 @@ mod tests {
         // `body_mass` is REQUIRED (slice 8) — a species with no quantum is not a species, so it must
         // fail to parse rather than default to something.
         let def: SpeciesDef = serde_json::from_str(
-            r#"{"display_name":"X","route_len":[1,1],"biomass":[1,1],"body_mass":1,"engage_rate":1}"#,
+            r#"{"display_name":"X","keeping":"flesh","route_len":[1,1],"biomass":[1,1],"body_mass":1,"engage_rate":1}"#,
         )
         .unwrap();
         assert_eq!(def.husbandry_ceiling, HusbandryCeiling::Pen);
@@ -3452,7 +3486,7 @@ mod tests {
         // `body_mass` is REQUIRED (slice 8) — a species with no quantum is not a species, so it must
         // fail to parse rather than default to something.
         let def: SpeciesDef = serde_json::from_str(
-            r#"{"display_name":"X","route_len":[1,1],"biomass":[1,1],"body_mass":1,"engage_rate":1}"#,
+            r#"{"display_name":"X","keeping":"flesh","route_len":[1,1],"biomass":[1,1],"body_mass":1,"engage_rate":1}"#,
         )
         .unwrap();
         assert_eq!(def.taming_cost_multiplier, DEFAULT_TAMING_COST_MULTIPLIER);
@@ -3504,7 +3538,7 @@ mod tests {
         let config = FaunaConfig::builtin();
         // A row that omits both dials reads the neutral gain.
         let def: SpeciesDef = serde_json::from_str(
-            r#"{"display_name":"X","route_len":[1,1],"biomass":[1,1],"body_mass":1,"engage_rate":1}"#,
+            r#"{"display_name":"X","keeping":"flesh","route_len":[1,1],"biomass":[1,1],"body_mass":1,"engage_rate":1}"#,
         )
         .unwrap();
         assert_eq!(def.pastoral_density, DEFAULT_HUSBANDRY_DENSITY);

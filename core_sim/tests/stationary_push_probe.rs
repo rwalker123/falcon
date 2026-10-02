@@ -467,6 +467,8 @@ struct TurnReading {
     income: f32,
     consumption: f32,
     raid_forfeit: f32,
+    /// The food that rotted this turn (#706).
+    spoiled: f32,
     larder: f32,
     runway: f32,
     rows: Vec<Option<RowReading>>,
@@ -474,9 +476,9 @@ struct TurnReading {
 
 impl TurnReading {
     /// The published ledger's own identity: `larder_delta == foodIncome − foodConsumption −
-    /// raidForfeit`.
+    /// raidForfeit − foodSpoiled`.
     fn net(&self) -> f32 {
-        self.income - self.consumption - self.raid_forfeit
+        self.income - self.consumption - self.raid_forfeit - self.spoiled
     }
 }
 
@@ -631,6 +633,7 @@ fn run(seed: u64, biome: &'static str, staffing: Staffing, out: &mut String) -> 
                 income: band.foodIncome(),
                 consumption: band.foodConsumption(),
                 raid_forfeit: band.raidForfeit(),
+                spoiled: band.foodSpoiled(),
                 larder: larder_of(band),
                 runway: band.turnsOfFood(),
                 rows: sources

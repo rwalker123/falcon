@@ -98,7 +98,7 @@ floor — see "THE CEILING LISTS ARE RETIRED" below.
 > people eat"* — a question with a consumption clock. Nothing consumes the fodder store on that
 > clock, so a fodder timetable would answer a question nobody asks. **And `food_income` stays
 > `Σ actual` and must never include `fodder`**: that sum is one side of the pinned larder identity
-> `larder_delta == food_income − food_consumption − raid_forfeit`, and fodder never touches the
+> `larder_delta == food_income − food_consumption − raid_forfeit − spoiled`, and fodder never touches the
 > larder.
 >
 > **THE PLANT SIDE'S FODDER COMPONENT IS `0.0` — a known gap, not a claim.** `forage_forecast` fills
