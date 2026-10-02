@@ -4194,7 +4194,8 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     _mount_readout(target, live_hosts, chart_model, _compose.forage_count(),
         func(floor_value: float, crew: int, reaches: bool) -> Dictionary:
             return _with_home_rate(_forage_yield_model(band, take_tile, floor_value, crew,
-                composed_improvement, reaches, take_state), party_view),
+                composed_improvement, reaches, take_state), party_view,
+                SourceForecast.YIELD_ACCOUNT_FOOD, true),
         SourceForecast.LABOR_KIND_FORAGE,
         _improvement_deal_row(SourceForecast.LABOR_KIND_FORAGE, tile_info,
             HudComposeVocab.FORAGE_FORECAST_PREFIX, band, deal_rung, deal_payoff), split_sentence)
@@ -4362,8 +4363,16 @@ func _mount_work_party_section(target: VBoxContainer, view: Dictionary) -> void:
 ## account is its id (`SourceForecast.yield_rows`), so the headline reads `+1.4 wood` under the same
 ## `once running · per turn` caption and never as food. Nothing else forks: one caravan, one
 ## substitution, whatever the far job carries home.
+##
+## **A FAR FORAGE PARTY'S PACKS CARRY ITS FODDER AND MATERIALS HOME TOO** (#706), so on that sheet
+## (`carries_by_products`) the fodder and material rows read the reply's `fodder_rate_home` /
+## `materials_rate_home` — the rates the committed row will publish — rather than the take at the
+## source. A row the home rates no longer pay leaves; a muted (unbankable) fodder row keeps its glyph.
+## The hunt sheet publishes no home by-product rates, and a deposit's account IS its material, so
+## both pass `false` and keep their other rows as they were.
 func _with_home_rate(model: Dictionary, party_view: Dictionary,
-        account: String = SourceForecast.YIELD_ACCOUNT_FOOD) -> Dictionary:
+        account: String = SourceForecast.YIELD_ACCOUNT_FOOD,
+        carries_by_products: bool = false) -> Dictionary:
     if party_view.is_empty() or model.is_empty() \
             or String(party_view.get("state", "")) != ForecastQuery.STATE_READY:
         return model
@@ -4383,6 +4392,8 @@ func _with_home_rate(model: Dictionary, party_view: Dictionary,
     if not found and SourceForecast.has_component(rate_home):
         rows.push_front({SourceForecast.YIELD_ROW_ACCOUNT: account,
             SourceForecast.YIELD_ROW_VALUE: rate_home})
+    if carries_by_products:
+        rows = _with_home_by_products(rows, account, answer)
     out[YIELD_MODEL_ROWS] = rows
     # **AND THE WASTE NOTE GOES WITH THE AT-SOURCE FIGURE.** It is the resident take's
     # whole-animal overflow — meat a crew too small to haul leaves where it fell — and a caravan walks
@@ -4395,6 +4406,35 @@ func _with_home_rate(model: Dictionary, party_view: Dictionary,
     # bullet `_fill_yields_host` mounts. `""` when nothing rots.
     out[YIELD_MODEL_ROT] = HudWorkVocab.rot_line(float(answer.get("spoiled_rate_home", 0.0)),
         rate_home)
+    return out
+
+## The by-product rows of a far forage sheet, re-read off the reply's home rates (`_with_home_rate`).
+## Every row but `account`'s is either the fodder row or a material row keyed by its id; each takes its
+## home figure (0 where the reply carries none) and loses its `now → after`, a row left at nothing is
+## dropped unless it is muted, and a home rate with no row yet gets one.
+static func _with_home_by_products(rows: Array, account: String, answer: Dictionary) -> Array:
+    var home := {SourceForecast.YIELD_ACCOUNT_FODDER: float(answer.get("fodder_rate_home", 0.0))}
+    for material in SourceForecast.material_payoff_rows(answer.get("materials_rate_home", [])):
+        home[String(material[SourceForecast.MATERIAL_PAYOFF_ID_KEY])] = \
+            float(material[SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY])
+    var out: Array = []
+    var seen := {}
+    for row_variant in rows:
+        var row: Dictionary = row_variant
+        var row_account := String(row.get(SourceForecast.YIELD_ROW_ACCOUNT, ""))
+        if row_account == account:
+            out.append(row)
+            continue
+        var value := float(home.get(row_account, 0.0))
+        seen[row_account] = true
+        row[SourceForecast.YIELD_ROW_VALUE] = value
+        row.erase(SourceForecast.YIELD_ROW_AFTER)
+        if SourceForecast.has_component(value) or bool(row.get(HudWidgets.YIELD_ROW_MUTED, false)):
+            out.append(row)
+    for home_account in home:
+        if not seen.has(home_account) and SourceForecast.has_component(float(home[home_account])):
+            out.append({SourceForecast.YIELD_ROW_ACCOUNT: String(home_account),
+                SourceForecast.YIELD_ROW_VALUE: float(home[home_account])})
     return out
 
 ## The section's ONE line, as text, off a READY reply — split out so the harness drives every branch

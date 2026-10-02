@@ -621,6 +621,14 @@ fn answer_to_dict(answer: &QueryAnswer) -> VarDictionary {
             let _ = dict.insert("rate_home", f64::from(reply.rate_home));
             let _ = dict.insert("spoiled_rate_home", f64::from(reply.spoiled_rate_home));
             let _ = dict.insert("transit_keeps_turns", f64::from(reply.transit_keeps_turns));
+            // What else the packs carry home per turn (#706) — a far forage row's fodder and its
+            // materials, at the rates the committed row will publish as `fodderRateHome` /
+            // `materialsRateHome`. `0` / empty on a hunt, a deposit and inside the apron.
+            let _ = dict.insert("fodder_rate_home", f64::from(reply.fodder_rate_home));
+            let _ = dict.insert(
+                "materials_rate_home",
+                &material_payoffs_to_array(&reply.materials_rate_home),
+            );
             let _ = dict.insert("walk_tiles", i64::from(reply.walk_tiles));
             let _ = dict.insert("walk_turns", i64::from(reply.walk_turns));
             // A MEAN over the horizon, so fractional — the sheet rounds it for the sentence.

@@ -230,7 +230,11 @@ it, the band's stood-down-party walk home (#706): `homeward_workers` / `homeward
 `homeward_all_home_in` (`uint`, `as i64`) and `homeward_food` / `homeward_food_spoils` (`float`,
 `f64`), all 0 while nobody walks home. Each work row carries `spoiled_rate_home` and
 `transit_keeps_turns` (`float`) beside `net_rate_home`, which is NET of that rot; the
-`WorkPartyForecastReply` decode (`bridge/query.rs`) carries the same pair beside `rate_home`. Both are consumed client-side by the band panel:
+`WorkPartyForecastReply` decode (`bridge/query.rs`) carries the same pair beside `rate_home`. Each
+row also carries `fodder_rate_home` (`float`) and `materials_rate_home` (`material_yield`'s
+`{material_id, amount}` array, via `subsistence::material_payoffs_to_array`) — a far forage row's
+by-products arriving home per turn, 0 / empty elsewhere; the forecast reply carries the same two
+(proto 11 / 12, via `query.rs`'s `material_payoffs_to_array`). Both are consumed client-side by the band panel:
 `raid_radius` derives the "Predator nearby" Warrior alert (the DANGER itself is derived on the client
 from visible-herd telemetry, never a wire flag), `raid_forfeit` is the "Lost to raids" food-ledger row.
 

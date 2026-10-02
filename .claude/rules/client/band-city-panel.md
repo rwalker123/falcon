@@ -7512,6 +7512,14 @@ count, so a line added to the block is paid for without a second edit anywhere.
    (`WORK_ROW_PARTY_SPOILS_LEAD`, the row's rates being signed). The rate line above is already NET of
    it. So a running posting reads at most two block lines (crew, next load) plus this one.
 
+**A FAR FORAGE ROW'S FODDER AND MATERIALS ARE ITS HOME RATES** (#706). Its accounts line reads
+`SourceForecast.fodder_rate_of` / `material_rows_of`, which on a party row return `fodderRateHome` /
+`materialsRateHome` — the per-turn `fodderYield` / `materialYield` there are only what landed this
+turn, 0 between packs. So the row reads `+0.30 /turn · +0.40 fodder · +0.10 fibre`, and the zone
+head's fodder total, the filter chips, the sort and the map's worked-source panel
+(`BandOverlayRenderer._entry_fodder` / `_entry_materials`) follow it. `band_panel_work_party_spoils`
+carries a far forage row between packs and asserts the line.
+
 Every line is the row's quiet `INK_DIM` **except the spoil line, which wears `WARN`** — the amber of
 the Food line's `Spoiled` row — keyed by `HudWorkVocab.is_party_spoils_line` (the all-rots text, or
 the `WORK_ROW_PARTY_SPOILS_LEAD`). `_work_row_party_lines_text` still returns plain strings.

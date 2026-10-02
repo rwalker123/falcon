@@ -25719,6 +25719,16 @@ const HOMEWARD_FOOD := 2.4
 const HOMEWARD_FOOD_SPOILS := 0.8
 const HOMEWARD_NEXT_LOAD_IN := 1
 const HOMEWARD_ALL_HOME_IN := 3
+## A FAR FORAGE row whose packs carry hay and fibre home with the food (#706). Between packs its
+## `fodder_yield` / `material_yield` read nothing landed, and its row must state the HOME rates.
+const FAR_FORAGE_WORKERS := 2
+const FAR_FORAGE_X := 78
+const FAR_FORAGE_Y := 20
+const FAR_FORAGE_WALK_TILES := 7
+const FAR_FORAGE_RATE_HOME := 0.3
+const FAR_FORAGE_FODDER_RATE_HOME := 0.4
+const FAR_FORAGE_FIBRE_RATE_HOME := 0.1
+const FAR_FORAGE_FIBRE_ID := "fibre"
 
 ## The party band with its RUNNING posting's walk rotting part of its take, and its pelt posting stood
 ## down — those three hands now walk home (`homeward_*`), on no row and out of the idle pool, so the
@@ -25733,7 +25743,24 @@ func _work_party_spoil_band_fixture() -> Dictionary:
 		if String(row.get("fauna_id", "")) == PARTY_FAR_HERD_ID:
 			row[SourceForecast.ASSIGNMENT_SPOILED_RATE_HOME_KEY] = SPOIL_RATE_HOME
 		rows.append(row)
+	rows.append({
+		"kind": "forage", "workers": FAR_FORAGE_WORKERS, "workers_needed": FAR_FORAGE_WORKERS,
+		"floor": 0.5, "target_x": FAR_FORAGE_X, "target_y": FAR_FORAGE_Y,
+		"actual_yield": FAR_FORAGE_RATE_HOME, "sustainable_yield": FAR_FORAGE_RATE_HOME,
+		"realized_yield": FAR_FORAGE_RATE_HOME, "kit_id": BandFx.KIT_DEFAULT_FORAGE,
+		# Between packs: nothing landed this turn.
+		"fodder_yield": 0.0, "material_yield": [],
+		"party_x": FAR_FORAGE_X, "party_y": FAR_FORAGE_Y, "party_workers": FAR_FORAGE_WORKERS,
+		"hunters_on_the_road": 0, "walk_tiles": FAR_FORAGE_WALK_TILES, "walk_out_remaining": 0,
+		"next_load_home_in": 2, "net_rate_home": FAR_FORAGE_RATE_HOME,
+		SourceForecast.ASSIGNMENT_FODDER_RATE_HOME_KEY: FAR_FORAGE_FODDER_RATE_HOME,
+		SourceForecast.ASSIGNMENT_MATERIALS_RATE_HOME_KEY: [{
+			"material_id": FAR_FORAGE_FIBRE_ID, "amount": FAR_FORAGE_FIBRE_RATE_HOME}],
+	})
 	band["labor_assignments"] = rows
+	# The far forage crew are working-age hands too: the bracket grows by them and so does the band.
+	band["working_age"] = int(band["working_age"]) + FAR_FORAGE_WORKERS
+	band["size"] = int(band["size"]) + FAR_FORAGE_WORKERS
 	band["idle_workers"] = 0
 	band[HudWorkVocab.HOMEWARD_WORKERS_KEY] = HOMEWARD_WORKERS
 	band[HudWorkVocab.HOMEWARD_FOOD_KEY] = HOMEWARD_FOOD
@@ -25770,6 +25797,16 @@ func _render_work_party_spoil_states() -> void:
 				spoil_ink_ok = (control as Label).get_theme_color(FONT_COLOR_THEME_KEY) \
 					.is_equal_approx(HudStyle.WARN)
 	_assert_band_panel("…in the Spoiled row's amber", spoil_ink_ok)
+	# **A FAR FORAGE ROW STATES ITS HOME-ARRIVING HAY AND FIBRE** (#706), not the nothing that landed
+	# between packs.
+	var forage_accounts := _work_row_accounts_text(_work_row_labelled(
+		HudWorkVocab.WORK_ROW_PLANT_FORMAT % [FAR_FORAGE_X, FAR_FORAGE_Y]))
+	var want_forage := SourceForecast.yield_components(FAR_FORAGE_RATE_HOME,
+		FAR_FORAGE_FODDER_RATE_HOME, SourceForecast.YIELD_ACCOUNT_FOOD,
+		[{"material_id": FAR_FORAGE_FIBRE_ID, "amount": FAR_FORAGE_FIBRE_RATE_HOME}])
+	_assert_band_panel("a far forage row prints its HOME fodder and fibre rates — want %s, got %s"
+			% [want_forage, forage_accounts],
+		forage_accounts.contains(want_forage))
 	var near := _work_party_lines(_work_row_for_herd(PARTY_NEAR_HERD_ID))
 	_assert_band_panel("…while a posting whose walk rots nothing grows no spoil line (%s)" % str(near),
 		near.size() == 2 and not HudWorkVocab.is_party_spoils_line(near[near.size() - 1]))

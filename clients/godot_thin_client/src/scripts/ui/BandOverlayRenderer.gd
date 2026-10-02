@@ -1564,10 +1564,11 @@ func _entry_realized_yield(entry: Dictionary) -> float:
 
 ## Its FODDER twin (issue #449) — and there is deliberately NO realized fallback to make: only the
 ## animal web projects a steady rate, and fodder is paid by the plant web alone, so the actual IS the
-## honest rate (`SourceForecast.fodder_rate_of` is the one definition and says why at length). 0 on
+## honest rate (`SourceForecast.fodder_rate_of` is the one definition, the home rate on a far row, and
+## says why at length). 0 on
 ## every hunt entry and on any patch growing no feed, which is what suppresses the component.
 func _entry_fodder(entry: Dictionary) -> float:
-	return float(entry.get("fodder_yield", 0.0))
+	return SourceForecast.fodder_rate_of(entry)
 
 ## Its MATERIAL twin, a VECTOR (arc #527 follow-up) — what this source actually credited to the band's
 ## `MaterialStore` this turn, per material. Same "no realized fallback" reasoning: it is a resolved

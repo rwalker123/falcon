@@ -28,6 +28,11 @@ const FAR_PATCH_ON_ROAD := 0.7
 ## Part of the far patch's carried take rots on its 19-turn walk home (#706) — the partial register
 ## of the PER TURN box's rot bullet; `FAR_PATCH_RATE_HOME` is already net of it.
 const FAR_PATCH_SPOILED_RATE := 0.05
+## What else the far patch's packs carry home per turn (#706) — its hay and its fibre, at the reply's
+## HOME rates. The box must read these, never the take at the source.
+const FAR_PATCH_FODDER_RATE_HOME := 0.4
+const FAR_PATCH_FIBRE_RATE_HOME := 0.1
+const FAR_PATCH_FIBRE_ID := "fibre"
 const FAR_PATCH_RATE_HOME := 0.12
 const FAR_PATCH_FIRST_LOAD := 42
 
@@ -158,6 +163,9 @@ func run(harness) -> void:
 		"walk_tiles": FAR_PATCH_WALK_TILES, "walk_turns": FAR_PATCH_WALK_TURNS,
 		"hunters_on_the_road": FAR_PATCH_ON_ROAD, "first_load_turn": FAR_PATCH_FIRST_LOAD,
 		"spoiled_rate_home": FAR_PATCH_SPOILED_RATE,
+		"fodder_rate_home": FAR_PATCH_FODDER_RATE_HOME,
+		"materials_rate_home": [{"material_id": FAR_PATCH_FIBRE_ID,
+			"amount": FAR_PATCH_FIBRE_RATE_HOME}],
 	}
 	h._show_tile(far_patch)
 	h._compose_forage(far_patch)
@@ -185,6 +193,14 @@ func run(harness) -> void:
 	h._assert_hud("…and an amber bullet saying what rots on the way home — want %s, got %s"
 			% [want_patch_rot, str(patch_rot)],
 		patch_rot[0] == want_patch_rot and patch_rot[1] == SourceForecast.VERDICT_SLOW)
+	# **ITS HAY AND FIBRE ARE THE HOME-ARRIVING RATES** (#706) — the packs carry them with the food.
+	var patch_fodder := Readout.yields_account_number(patch_sheet, SourceForecast.YIELD_ACCOUNT_FODDER)
+	var patch_fibre := Readout.yields_account_number(patch_sheet, FAR_PATCH_FIBRE_ID)
+	h._assert_hud("…and its fodder and fibre read the reply's HOME rates (want %s / %s, got %s / %s)"
+			% [SourceForecast.format_magnitude(FAR_PATCH_FODDER_RATE_HOME),
+				SourceForecast.format_magnitude(FAR_PATCH_FIBRE_RATE_HOME), patch_fodder, patch_fibre],
+		patch_fodder == SourceForecast.format_magnitude(FAR_PATCH_FODDER_RATE_HOME)
+			and patch_fibre == SourceForecast.format_magnitude(FAR_PATCH_FIBRE_RATE_HOME))
 	# **AND ITS FOOD HEADLINE IS THE FIGURE THE COMMITTED ROW PRINTS**, the plant web's half of the
 	# one-number rule.
 	var patch_food := Readout.yields_account_number(patch_sheet, SourceForecast.YIELD_ACCOUNT_FOOD)

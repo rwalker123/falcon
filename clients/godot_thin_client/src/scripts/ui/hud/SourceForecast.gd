@@ -909,6 +909,12 @@ const ASSIGNMENT_NET_RATE_HOME_KEY := "net_rate_home"
 # **WHAT THE WALK HOME LOSES TO ROT** (#706). `net_rate_home` is already NET of it; this is the
 # per-turn cargo lost on the walk, `0` when nothing rots — the zero drops the readout's line.
 const ASSIGNMENT_SPOILED_RATE_HOME_KEY := "spoiled_rate_home"
+# **WHAT ELSE THE PACKS CARRY HOME, PER TURN** (#706). A far forage row's fodder and materials ride
+# the packs, so its `fodder_yield` / `material_yield` read only what LANDED this turn (0 between
+# packs); these are their home-arriving RATES. 0 / empty on a local row, a hunt and an extract row.
+# `fodder_rate_of` / `material_rows_of` are the readers, and they pick these on a party row.
+const ASSIGNMENT_FODDER_RATE_HOME_KEY := "fodder_rate_home"
+const ASSIGNMENT_MATERIALS_RATE_HOME_KEY := "materials_rate_home"
 
 ## Every party key in one list, so the work-row map copies them as a SET rather than as eight
 ## hand-listed lines that a ninth field could be forgotten out of. Each is a plain scalar, so
@@ -918,6 +924,7 @@ const ASSIGNMENT_PARTY_KEYS: Array[String] = [
 	ASSIGNMENT_HUNTERS_ON_THE_ROAD_KEY, ASSIGNMENT_WALK_TILES_KEY,
 	ASSIGNMENT_WALK_OUT_REMAINING_KEY, ASSIGNMENT_NEXT_LOAD_HOME_IN_KEY,
 	ASSIGNMENT_NET_RATE_HOME_KEY, ASSIGNMENT_SPOILED_RATE_HOME_KEY,
+	ASSIGNMENT_FODDER_RATE_HOME_KEY, ASSIGNMENT_MATERIALS_RATE_HOME_KEY,
 ]
 
 # **WHAT A WHOLE TRIP LANDS, PER MATERIAL** — on each row of the `HuntTripForecast` reply (the
@@ -2161,8 +2168,18 @@ const HERD_DURABILITY_KEY := "durability"
 ##
 ## Its retired sibling was `trade_rate_of`, which had a `realized_trade_yield` sentinel to dodge; both
 ## the reader and the wire fields went with the trade axis (arc #527).
+##
+## ⛔ **ON A FAR ROW IT IS THE HOME-ARRIVING RATE** (#706): the fodder rides the packs, so the row's
+## `fodder_yield` is what landed THIS turn (0 between packs) and `fodder_rate_home` is the rate.
 static func fodder_rate_of(source: Dictionary) -> float:
+    if row_posts_party(source):
+        return float(source.get(ASSIGNMENT_FODDER_RATE_HOME_KEY, 0.0))
     return float(source.get("fodder_yield", 0.0))
+
+## Is this work row a far posting? The wire's own `party_workers > 0`, the one gate `party_readout`
+## asks — exposed for the per-turn readers that switch to the home rates on a far row.
+static func row_posts_party(row: Dictionary) -> bool:
+    return int(row.get(ASSIGNMENT_PARTY_WORKERS_KEY, NO_PARTY_WORKERS)) > NO_PARTY_WORKERS
 
 ## THE RENDER-ONLY-WHEN-NON-ZERO JOINER for a per-turn readout: `+0.31 /turn` (food only),
 ## `+0.08 /turn · +0.40 fodder` (a hay meadow), `+0.40 fodder` (a hay-only one), `+0.22 hide` (an
@@ -6799,6 +6816,10 @@ static func material_payoff_rows(raw: Variant) -> Array[Dictionary]:
 ##
 ## **NEVER SUM THE ROWS.** One materials/turn figure is the retired trade axis under a new name.
 static func material_rows_of(source: Dictionary) -> Array[Dictionary]:
+    # On a far row the materials ride the packs: `material_yield` is what landed this turn and
+    # `materials_rate_home` the rate (#706) — `fodder_rate_of`'s rule.
+    if row_posts_party(source):
+        return material_payoff_rows(source.get(ASSIGNMENT_MATERIALS_RATE_HOME_KEY, []))
     return material_payoff_rows(source.get(ASSIGNMENT_MATERIAL_YIELD_KEY, []))
 
 ## **THE MATERIAL ARM OF A PER-TURN READOUT** — every material this source pays, SIGNED, joined in the

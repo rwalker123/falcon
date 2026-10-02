@@ -1001,6 +1001,19 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                 "transit_keeps_turns",
                 f64::from(assignment.transitKeepsTurns()),
             );
+            // **WHAT ELSE THE PACKS CARRY HOME, PER TURN** (#706). A far forage row's fodder and
+            // materials ride the packs with the food, so `fodder_yield` / `material_yield` above
+            // read only what LANDED this turn (0 between packs); these are their `net_rate_home` —
+            // the caravan forecast's steady landing per turn. `material_yield`'s shape and
+            // conversion, one row per material id, never summed. 0 / empty on a local row, a hunt
+            // and an extract row.
+            let _ = entry.insert("fodder_rate_home", f64::from(assignment.fodderRateHome()));
+            let _ = entry.insert(
+                "materials_rate_home",
+                &crate::dict::subsistence::material_payoffs_to_array(
+                    assignment.materialsRateHome(),
+                ),
+            );
             array.push(&entry.to_variant());
         }
     }

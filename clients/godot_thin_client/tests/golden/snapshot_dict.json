@@ -4882,6 +4882,7 @@
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [53.360001, 85.860001, 62.110001, 89.209999]},
           "fauna_id": "populations[0].labor_assignments[0].fauna_id",
           "floor": 110.599998,
+          "fodder_rate_home": 27.309999,
           "fodder_yield": 46.790001,
           "hunt_useful_workers": 43,
           "hunters_on_the_road": 119,
@@ -4945,6 +4946,20 @@
               "material_id": "populations[0].labor_assignments[0].material_yield[2].material_id"
             }
           ],
+          "materials_rate_home": [
+            {
+              "amount": 66.800003,
+              "material_id": "populations[0].labor_assignments[0].materials_rate_home[0].material_id"
+            },
+            {
+              "amount": 16.82,
+              "material_id": "populations[0].labor_assignments[0].materials_rate_home[1].material_id"
+            },
+            {
+              "amount": 31.620001,
+              "material_id": "populations[0].labor_assignments[0].materials_rate_home[2].material_id"
+            }
+          ],
           "net_rate_home": 11.27,
           "next_load_home_in": 21,
           "overdraws": true,
@@ -4977,6 +4992,7 @@
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [24.74, 44.759998, 71.209999, 53.509998]},
           "fauna_id": "populations[0].labor_assignments[1].fauna_id",
           "floor": 48.369999,
+          "fodder_rate_home": 107.879997,
           "fodder_yield": 0.25,
           "hunt_useful_workers": 144,
           "hunters_on_the_road": 12,
@@ -5040,6 +5056,20 @@
               "material_id": "populations[0].labor_assignments[1].material_yield[2].material_id"
             }
           ],
+          "materials_rate_home": [
+            {
+              "amount": 63.150002,
+              "material_id": "populations[0].labor_assignments[1].materials_rate_home[0].material_id"
+            },
+            {
+              "amount": 27.940001,
+              "material_id": "populations[0].labor_assignments[1].materials_rate_home[1].material_id"
+            },
+            {
+              "amount": 93.199997,
+              "material_id": "populations[0].labor_assignments[1].materials_rate_home[2].material_id"
+            }
+          ],
           "net_rate_home": 14.17,
           "next_load_home_in": 78,
           "overdraws": false,
@@ -5072,6 +5102,7 @@
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [57.700001, 101.660004, 22.690001, 98.309998]},
           "fauna_id": "populations[0].labor_assignments[2].fauna_id",
           "floor": 97.739998,
+          "fodder_rate_home": 71.980003,
           "fodder_yield": 99.410004,
           "hunt_useful_workers": 121,
           "hunters_on_the_road": 121,
@@ -5133,6 +5164,20 @@
             {
               "amount": 8.21,
               "material_id": "populations[0].labor_assignments[2].material_yield[2].material_id"
+            }
+          ],
+          "materials_rate_home": [
+            {
+              "amount": 26.49,
+              "material_id": "populations[0].labor_assignments[2].materials_rate_home[0].material_id"
+            },
+            {
+              "amount": 75.059998,
+              "material_id": "populations[0].labor_assignments[2].materials_rate_home[1].material_id"
+            },
+            {
+              "amount": 72.230003,
+              "material_id": "populations[0].labor_assignments[2].materials_rate_home[2].material_id"
             }
           ],
           "net_rate_home": 20.030001,
@@ -5981,6 +6026,7 @@
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [14.59, 109.389999, 80.620003, 100.639999]},
           "fauna_id": "populations[1].labor_assignments[0].fauna_id",
           "floor": 71.43,
+          "fodder_rate_home": 48.48,
           "fodder_yield": 0.66,
           "hunt_useful_workers": 30,
           "hunters_on_the_road": 118,
@@ -6044,6 +6090,20 @@
               "material_id": "populations[1].labor_assignments[0].material_yield[2].material_id"
             }
           ],
+          "materials_rate_home": [
+            {
+              "amount": 80.449997,
+              "material_id": "populations[1].labor_assignments[0].materials_rate_home[0].material_id"
+            },
+            {
+              "amount": 65.190002,
+              "material_id": "populations[1].labor_assignments[0].materials_rate_home[1].material_id"
+            },
+            {
+              "amount": 5.23,
+              "material_id": "populations[1].labor_assignments[0].materials_rate_home[2].material_id"
+            }
+          ],
           "net_rate_home": 99.919998,
           "next_load_home_in": 188,
           "overdraws": true,
@@ -6076,6 +6136,7 @@
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [35.360001, 53.060001, 26.610001, 75.970001]},
           "fauna_id": "populations[1].labor_assignments[1].fauna_id",
           "floor": 95.239998,
+          "fodder_rate_home": 47.799999,
           "fodder_yield": 2.93,
           "hunt_useful_workers": 41,
           "hunters_on_the_road": 1,
@@ -6139,6 +6200,20 @@
               "material_id": "populations[1].labor_assignments[1].material_yield[2].material_id"
             }
           ],
+          "materials_rate_home": [
+            {
+              "amount": 75.510002,
+              "material_id": "populations[1].labor_assignments[1].materials_rate_home[0].material_id"
+            },
+            {
+              "amount": 26.5,
+              "material_id": "populations[1].labor_assignments[1].materials_rate_home[1].material_id"
+            },
+            {
+              "amount": 22.370001,
+              "material_id": "populations[1].labor_assignments[1].materials_rate_home[2].material_id"
+            }
+          ],
           "net_rate_home": 72.489998,
           "next_load_home_in": 163,
           "overdraws": false,
@@ -6171,6 +6246,7 @@
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [50.82, 70.839996, 97.290001, 53.330002]},
           "fauna_id": "populations[1].labor_assignments[2].fauna_id",
           "floor": 20.67,
+          "fodder_rate_home": 36.439999,
           "fodder_yield": 59.09,
           "hunt_useful_workers": 184,
           "hunters_on_the_road": 68,
@@ -6232,6 +6308,20 @@
             {
               "amount": 25.76,
               "material_id": "populations[1].labor_assignments[2].material_yield[2].material_id"
+            }
+          ],
+          "materials_rate_home": [
+            {
+              "amount": 13.95,
+              "material_id": "populations[1].labor_assignments[2].materials_rate_home[0].material_id"
+            },
+            {
+              "amount": 52.759998,
+              "material_id": "populations[1].labor_assignments[2].materials_rate_home[1].material_id"
+            },
+            {
+              "amount": 14.54,
+              "material_id": "populations[1].labor_assignments[2].materials_rate_home[2].material_id"
             }
           ],
           "net_rate_home": 56.73,
@@ -7043,6 +7133,7 @@
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [92.720001, 7.32, 83.970001, 3.97]},
           "fauna_id": "populations[2].labor_assignments[0].fauna_id",
           "floor": 7.88,
+          "fodder_rate_home": 28.66,
           "fodder_yield": 102.470001,
           "hunt_useful_workers": 17,
           "hunters_on_the_road": 153,
@@ -7106,6 +7197,20 @@
               "material_id": "populations[2].labor_assignments[0].material_yield[2].material_id"
             }
           ],
+          "materials_rate_home": [
+            {
+              "amount": 5.81,
+              "material_id": "populations[2].labor_assignments[0].materials_rate_home[0].material_id"
+            },
+            {
+              "amount": 0.66,
+              "material_id": "populations[2].labor_assignments[0].materials_rate_home[1].material_id"
+            },
+            {
+              "amount": 99.169998,
+              "material_id": "populations[2].labor_assignments[0].materials_rate_home[2].material_id"
+            }
+          ],
           "net_rate_home": 19.51,
           "next_load_home_in": 67,
           "overdraws": true,
@@ -7138,6 +7243,7 @@
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [9.69, 95.089996, 6.34, 86.339996]},
           "fauna_id": "populations[2].labor_assignments[1].fauna_id",
           "floor": 26.209999,
+          "fodder_rate_home": 112.059998,
           "fodder_yield": 20.6,
           "hunt_useful_workers": 102,
           "hunters_on_the_road": 22,
@@ -7201,6 +7307,20 @@
               "material_id": "populations[2].labor_assignments[1].material_yield[2].material_id"
             }
           ],
+          "materials_rate_home": [
+            {
+              "amount": 2.16,
+              "material_id": "populations[2].labor_assignments[1].materials_rate_home[0].material_id"
+            },
+            {
+              "amount": 53.41,
+              "material_id": "populations[2].labor_assignments[1].materials_rate_home[1].material_id"
+            },
+            {
+              "amount": 5.35,
+              "material_id": "populations[2].labor_assignments[1].materials_rate_home[2].material_id"
+            }
+          ],
           "net_rate_home": 24.16,
           "next_load_home_in": 148,
           "overdraws": false,
@@ -7233,6 +7353,7 @@
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [85.400002, 5.4, 94.150002, 51.869999]},
           "fauna_id": "populations[2].labor_assignments[2].fauna_id",
           "floor": 94.800003,
+          "fodder_rate_home": 71.290001,
           "fodder_yield": 96.949997,
           "hunt_useful_workers": 51,
           "hunters_on_the_road": 23,
@@ -7294,6 +7415,20 @@
             {
               "amount": 105.459999,
               "material_id": "populations[2].labor_assignments[2].material_yield[2].material_id"
+            }
+          ],
+          "materials_rate_home": [
+            {
+              "amount": 96.400002,
+              "material_id": "populations[2].labor_assignments[2].materials_rate_home[0].material_id"
+            },
+            {
+              "amount": 20.780001,
+              "material_id": "populations[2].labor_assignments[2].materials_rate_home[1].material_id"
+            },
+            {
+              "amount": 25.440001,
+              "material_id": "populations[2].labor_assignments[2].materials_rate_home[2].material_id"
             }
           ],
           "net_rate_home": 3.01,

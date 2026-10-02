@@ -6871,6 +6871,10 @@ a material; fodder still beats a material).
   work board only because `fodder_yield` is in `HudBandLaborState.OPTIONAL_YIELD_KEYS`** — a key not
   copied through `effective_worker_map` does not exist as far as the board, its chips and its header
   totals are concerned, whatever the decoder published.
+  ⛔ **On a FAR row (`row_posts_party`, the wire's `party_workers > 0`) it reads `fodder_rate_home`
+  instead** (#706): a far forage row's hay rides the packs, so its `fodder_yield` is only what LANDED
+  this turn (0 between packs) and the home rate is the rate. `material_rows_of` makes the same switch
+  to `materials_rate_home`. Both home keys ride `ASSIGNMENT_PARTY_KEYS` into the work-row map.
 - **`MATERIAL_PAYOFF_ID_KEY` / `MATERIAL_PAYOFF_AMOUNT_KEY` + `material_payoff_rows`** — the two keys
   of one per-material row and the normalizer every material vector runs through. A row naming no
   material is dropped: an id is what a row is FOR, and a nameless amount could only be rendered as the
@@ -8608,6 +8612,15 @@ tagged `HudWidgets.WORK_PARTY_ROT_META`. Two registers, present only when `spoil
 The food is named generically — the wire carries no keeping class. `transit_keeps_turns` is decoded
 but no client surface reads it. `ui_preview`'s `herd_hunt_far_party_spoils` renders the
 everything-rots register on a hunt; `food_forage_far_party` renders the partial one on a forage sheet.
+
+**A FAR FORAGE SHEET'S FODDER AND MATERIAL ROWS ARE THE HOME RATES TOO** (#706). The packs carry the
+hay and the fibre with the food, so on the forage sheet `_with_home_rate(…, carries_by_products =
+true)` re-reads every non-food row off the reply's `fodder_rate_home` / `materials_rate_home`
+(`_with_home_by_products`): each row takes its home figure and drops its `now → after`, a row left at
+nothing leaves unless it is muted (the unbankable-fodder glyph), and a home rate with no row gets one.
+The hunt sheet (the wire publishes no home by-products for a hunt) and the deposit sheet (whose
+account IS its material) keep their other rows. `food_forage_far_party` asserts `0.40 FODDER` and
+`0.10 FIBRE` off the reply.
 
 - ⛔ **IT IS A STANDING ASSIGNMENT, NOT A TRIP, and the copy is in that register.** No *this trip*, no
   *away N turns*, no *Send Anyway*, no one-shot totals — the party walks out once and the source is
