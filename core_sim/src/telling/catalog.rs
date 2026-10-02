@@ -917,16 +917,26 @@ mod tests {
         assert_eq!(site.remembers[0].slot, "place");
     }
 
+    /// The shipped site beat — the one whose `place` slot the thread tests mutate. Found by id, so
+    /// adding a beat ahead of it in the catalog does not repoint these tests at another beat.
+    fn site_beat(j: &mut serde_json::Value) -> &mut serde_json::Value {
+        j.as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|beat| beat["id"] == "discovery.site_found")
+            .expect("the shipped catalog has the site beat")
+    }
+
     /// Registration is **generic over kind**: a brand-new kind declared by content registers its
     /// resolvers with no engine change.
     #[test]
     fn a_new_thread_kind_registers_its_resolvers_without_an_engine_change() {
         let catalog = mutate(|j| {
-            j[1]["remembers"]
+            site_beat(j)["remembers"]
                 .as_array_mut()
                 .unwrap()
                 .push(serde_json::json!({ "slot": "place", "kind": "hearth" }));
-            j[1]["nouns"]["place"]["fallback"] = "thread.hearth.recent".into();
+            site_beat(j)["nouns"]["place"]["fallback"] = "thread.hearth.recent".into();
         })
         .expect("a content-defined kind is enough to register thread.hearth.*");
         assert!(catalog.thread_kinds().contains("hearth"));
@@ -934,22 +944,24 @@ mod tests {
 
     #[test]
     fn validate_rejects_a_thread_resolver_for_a_kind_nothing_remembers() {
-        let err = mutate(|j| j[1]["nouns"]["place"]["fallback"] = "thread.ghost.oldest".into())
-            .unwrap_err();
+        let err =
+            mutate(|j| site_beat(j)["nouns"]["place"]["fallback"] = "thread.ghost.oldest".into())
+                .unwrap_err();
         assert!(err.to_string().contains("unknown resolver"), "{err}");
     }
 
     #[test]
     fn validate_rejects_an_unknown_thread_selector() {
-        let err = mutate(|j| j[1]["nouns"]["place"]["fallback"] = "thread.place.middling".into())
-            .unwrap_err();
+        let err =
+            mutate(|j| site_beat(j)["nouns"]["place"]["fallback"] = "thread.place.middling".into())
+                .unwrap_err();
         assert!(err.to_string().contains("unknown resolver"), "{err}");
     }
 
     #[test]
     fn validate_rejects_remembering_an_undeclared_slot() {
         let err = mutate(|j| {
-            j[1]["remembers"] = serde_json::json!([{ "slot": "ghost", "kind": "place" }]);
+            site_beat(j)["remembers"] = serde_json::json!([{ "slot": "ghost", "kind": "place" }]);
         })
         .unwrap_err();
         assert!(err.to_string().contains("undeclared noun slot"), "{err}");

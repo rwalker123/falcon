@@ -57,6 +57,34 @@ fn turn_zero_fires_the_cold_open_with_the_band_count_interpolated() {
     );
 }
 
+/// Right after the cold open, the opening guidance tells the player that food comes from the ground
+/// around a band and that Split is the answer to outgrowing it — once, with the numbers behind it.
+#[test]
+fn the_opening_guidance_points_at_food_and_the_split_once() {
+    let mut app = spawn_world();
+    spawn_band(&mut app, FactionId(0), 31);
+    for _ in 0..12 {
+        run_turn(&mut app);
+    }
+
+    let is_guidance = |label: &str| label.contains("split the band");
+    let fired: Vec<_> = beats(&app)
+        .into_iter()
+        .filter(|e| is_guidance(&e.label))
+        .collect();
+    assert_eq!(fired.len(), 1, "the guidance is a `once` beat: {fired:?}");
+    let entry = &fired[0];
+    assert_eq!(entry.tick, 1, "it lands the turn after the cold open");
+    let detail = entry.detail.as_deref().expect("gloss present");
+    assert!(detail.contains("provisions.total="), "{detail}");
+    assert!(detail.contains("band.count="), "{detail}");
+    assert!(detail.contains("tier=ambient"), "{detail}");
+    assert!(app
+        .world
+        .resource::<BeatLedger>()
+        .has_fired("guidance.food_and_the_split"));
+}
+
 /// Same seed, same world, same run → identical beat *and* wardrobe selection.
 #[test]
 fn selection_is_reproducible_across_two_runs_of_the_same_seed() {

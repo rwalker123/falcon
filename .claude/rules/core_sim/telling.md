@@ -180,6 +180,28 @@ it must show the actual numbers. Analytics mirror:
 > a count of surviving rows, or it fails the moment the run outlasts the window. See
 > `event-feed.md`.
 
+### Guidance — beats that name the next move
+
+Some beats point the player at what to do, in the same voice: `guidance.food_and_the_split` (a
+band eats only from the ground around it; Split when it outgrows that ground) and the closing
+sentence of every `knowledge.cultivation_learned` dressing (sow the ground you already gather;
+bone hoes make the work faster). They are ordinary catalog content — no engine path, no tier of
+their own.
+
+- **Advice is a claim about the sim, so pillar 2 binds it too.** A guidance line names a real verb
+  and says only what that verb does today. The hoe line says *faster*, never *needed*, because
+  hoes are build **productivity** on the `plant` branch (`equipment.md`), and it can say "make
+  hoes" at all because the `hoes` recipe carries no `requires_knowledge`. Change either and the
+  line is wrong. A hint whose mechanic is unbuilt is not authored: nothing in the sim yet ties
+  growth to contact, so no beat says it does.
+- **Guidance rides the `ambient` tier, never `beat`.** A `beat`-tier line spends that tier's
+  `global_cooldown_turns` (2), and a `crosses`-gated beat whose crossing turn falls inside that
+  window is **lost for good** — the edge is committed whether or not the beat could fire. A beat-tier
+  opening guidance on turn 2 swallowed `voice.medium_painted`'s crossing in
+  `telling_memory::crossing_a_medium_threshold_…`. Ambient has no tier cooldown, so advice costs no
+  story beat its turn. The opening guidance is `turn.index gte 1` + `once`, landing on turn 1, the
+  turn after the cold open. Pinned by `telling::the_opening_guidance_points_at_food_and_the_split_once`.
+
 ### Validation — content typos fail at LOAD, not at render
 
 `validate()` runs inside `from_json_str` for **both** files, so every load path (builtin, default
