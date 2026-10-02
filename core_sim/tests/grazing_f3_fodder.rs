@@ -217,6 +217,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2, policy: f32) -> Entit
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
                 last_food_need: 0.0,
+                last_food_spoiled: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),
@@ -276,7 +277,7 @@ fn run_fodder_logistics(app: &mut App, keeper: Entity, id: &str, hay_to_store: f
             .get_mut::<PopulationCohort>(keeper)
             .expect("keeper");
         cohort.stores.add(FODDER, scalar_from_f32(hay_to_store));
-        cohort.stores.set(FOOD, scalar_from_f32(RESTOCK));
+        cohort.stores.reset_food("dry", scalar_from_f32(RESTOCK));
     }
     if let Some(herd) = app
         .world
@@ -581,7 +582,7 @@ fn feed_split_terms(
     let keeper = spawn_keeper(&mut app, &id, tile, policy);
     {
         let mut cohort = app.world.get_mut::<PopulationCohort>(keeper).unwrap();
-        cohort.stores.set(FOOD, scalar_from_f32(RESTOCK));
+        cohort.stores.reset_food("dry", scalar_from_f32(RESTOCK));
         cohort.stores.set(FODDER, scalar_from_f32(hay_in_store));
     }
     // Pose the grazed footprint directly (skip `advance_herd_grazing`) so `pasture` is exact and the

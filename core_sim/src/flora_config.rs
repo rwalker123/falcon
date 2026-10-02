@@ -199,6 +199,12 @@ impl YieldVector {
 pub struct FloraDef {
     /// Player-facing name (also the wire `displayName`).
     pub display_name: String,
+    /// **The keeping class this species' food goes into** (#706) — one of
+    /// `demographics_config.json`'s `keeping.classes` ids, which sets how long a gathered basket of
+    /// it lasts in a larder or a caravan's pack. Required, and reconciled against the class table at
+    /// boot ([`FloraConfig::validate_keeping`]). A species that pays no food still names one: the
+    /// field says what its food *would* keep as, and the class table is the one place that decides.
+    pub keeping: String,
     /// **Plural form**, lowercase, reading naturally mid-sentence. Data rather than a heuristic, for
     /// the same reason `SpeciesDef::plural` is: many of these are already collective ("oak mast",
     /// "hazel") and a naive `+s` would produce "hazels".
@@ -741,6 +747,32 @@ impl FloraConfig {
         Ok(())
     }
 
+    /// **Every species names a configured keeping class** (#706) — the plant twin of
+    /// [`crate::fauna_config::FaunaConfig::validate_keeping`], run at boot against the demographics
+    /// config's class table.
+    pub fn validate_keeping(
+        &self,
+        keeping: &crate::demographics_config::KeepingConfig,
+    ) -> Result<(), String> {
+        let mut keys: Vec<&String> = self.species.keys().collect();
+        keys.sort_unstable();
+        for key in keys {
+            let class = &self.species[key].keeping;
+            if !keeping.has_class(class) {
+                return Err(format!(
+                    "flora species.{key}.keeping names unknown keeping class '{class}'"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// **The keeping class a species' food goes into** ([`FloraDef::keeping`]), `None` for a
+    /// species the roster does not name (a synthetic fixture).
+    pub fn keeping_for(&self, species: &str) -> Option<&str> {
+        self.species.get(species).map(|def| def.keeping.as_str())
+    }
+
     /// Reconcile every species' material yield with the materials table — the plant twin of
     /// [`crate::fauna_config::FaunaConfig::validate_against_materials`], and the *same* check, since
     /// the yield edge is the same type on both configs. Run by [`load_flora_config_from_env`] with
@@ -1085,6 +1117,7 @@ mod tests {
 
     const VALID_BODY: &str = r#"{
         "display_name": "Probe",
+        "keeping": "fresh_plant",
         "plural": "probes",
         "adjective": "probe",
         "role": "staple",

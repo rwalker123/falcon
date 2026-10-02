@@ -41,8 +41,29 @@
 //! hunters land the first load sooner, because the first pack fills at the whole party's rate.
 //!
 //! **This replaced a porter fraction and a friction term**, both of which were numbers somebody
-//! picked. Distance is paid in walking now, so nothing is lost in transit on top — that would count
-//! it twice. Friction still governs band-to-band pooling, untouched.
+//! picked. Distance is paid in walking now, so no FRACTION is lost in transit on top — that would
+//! count it twice. Friction still governs band-to-band pooling, untouched.
+//!
+//! # WHAT THE WALK DOES COST: FOOD THAT DOES NOT KEEP THAT LONG (#706)
+//!
+//! **A pack rots by its walk.** Every pack carries the keeping classes of the food in it
+//! ([`CargoClasses`]), and when it lands any class whose shelf life is shorter than the walk the
+//! porter set out on is lost on the way — entirely, not as a share (`crate::spoilage::rots_in_transit`).
+//! That is not friction under another name: it is a property of the *food* (flesh, greens, grain),
+//! so the same walk costs a meat hunt everything and a nut gather nothing, and it gives a far hunt a
+//! natural range that preservation extends. The landed pack is credited as income in full and the
+//! rotten share debited as spoilage the same turn, so the take's one producer stays the row's
+//! `actual` and the loss is the ledger's one `spoiled` term.
+//!
+//! # A POSTING THAT ENDS WALKS HOME — NOTHING ARRIVES AT ONCE
+//!
+//! **A stood-down party** (an unassign, a lapse, a herd gone or back inside the apron, a shed row,
+//! `cancel_order`) becomes the band's [`HomewardWalk`]s ([`WorkParty::walk_home`]): every porter
+//! carrying a pack finishes its walk, the hands at the source carry the load home over the whole
+//! walk, a porter heading back out turns round, and a party still walking out walks back what it
+//! has covered. Each lands when its walk ends and rots by that walk exactly as a live pack does,
+//! and its hands are **away from the band until they arrive** — the list rides
+//! `LaborAllocation::homeward`, outliving the row.
 //!
 //! # NOTHING ABOUT FEEDING IS MODELLED AT THE SOURCE
 //!
@@ -61,8 +82,8 @@
 //!
 //! [`WorkParty::open_turn`] and [`WorkParty::close_turn`] are the caravan's whole per-turn rule. The
 //! turn calls them around its own inline take; [`forecast_caravan`] calls them around a projected
-//! take ([`WorkParty::step`]). They are the same two functions, so the forecast runs the turn's own
-//! code.
+//! take, striking each landing pack for transit rot as the turn does. They are the same two
+//! functions, so the forecast runs the turn's own code.
 
 use bevy::math::UVec2;
 use serde::{Deserialize, Serialize};
@@ -91,6 +112,114 @@ pub const NO_LOAD_WITHIN_HORIZON: u32 = 0;
 /// An empty load, or a walker who has handed over what they carried.
 pub const NOTHING_CARRIED: f32 = 0.0;
 
+/// **What a load or a pack is MADE OF, by keeping class** (#706) — cargo per class, in the cargo's
+/// own unit. The caravan's arithmetic runs on the scalar `cargo`; this rides beside it as the
+/// composition that cargo lands as, split in the same proportion every time a pack leaves the load.
+/// Empty on the deposit web, whose cargo is a material and keeps for ever.
+pub type CargoClasses = std::collections::BTreeMap<String, f32>;
+
+/// **One pack that reached home this turn**, with the walk it was carried on — the two facts the
+/// transit rot reads.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LandedPack {
+    /// The one-way walk the porter set out on, in turns. [`NO_WALK`] for a pack landed without
+    /// being walked (a local load, or a road the whole way).
+    pub walk_turns: u32,
+    /// The cargo it carried.
+    pub cargo: f32,
+    /// What that cargo is made of.
+    pub classes: CargoClasses,
+    /// **The pack's bulk** — what it weighed in the carry's unit, whatever its cargo is worth.
+    pub bulk: f32,
+    /// **Its fodder and materials** (#706) — landed with it, never rotted.
+    pub goods: CarriedGoods,
+}
+
+/// `classes × share`, the part of a composition a fraction of its cargo carries.
+fn scaled_classes(classes: &CargoClasses, share: f32) -> CargoClasses {
+    classes
+        .iter()
+        .map(|(class, amount)| (class.clone(), amount * share))
+        .collect()
+}
+
+/// Add `from` into `into`, class by class.
+fn merge_classes(into: &mut CargoClasses, from: &CargoClasses) {
+    for (class, amount) in from {
+        *into.entry(class.clone()).or_insert(NOTHING_CARRIED) += amount;
+    }
+}
+
+/// ⛔ **WHAT A PACK CARRIES BESIDES FOOD** (#706) — a forage take's fodder and flora materials, a
+/// hunt's or pen's hide, bone, sinew and fleece, riding the load and every pack in the same
+/// proportion as the food, and landing at home when the pack does. They do not rot. The deposit
+/// web's material is the pack's cargo itself and never rides here.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CarriedGoods {
+    /// Fodder (hay) — what lands in the band's `FODDER` store.
+    pub fodder: f32,
+    /// Each material at its exact reading — what lands through `LocalStore::deposit_material`, the
+    /// one deposit a caravan's material makes.
+    pub materials: Vec<CarriedMaterial>,
+}
+
+/// **One material in a pack, at one reading** — the arguments `LocalStore::deposit_material` takes,
+/// carried until the pack lands.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CarriedMaterial {
+    pub material: String,
+    pub band: crate::materials_config::BandKey,
+    pub characteristics: std::collections::BTreeMap<String, f32>,
+    pub amount: f32,
+}
+
+impl CarriedGoods {
+    /// Nothing in it.
+    pub fn is_empty(&self) -> bool {
+        self.fodder <= NOTHING_CARRIED
+            && self
+                .materials
+                .iter()
+                .all(|carried| carried.amount <= NOTHING_CARRIED)
+    }
+
+    /// Add `other` in — one entry per material at one reading, so a load filled turn after turn off
+    /// one basket holds one entry per material it yields.
+    pub fn merge(&mut self, other: &CarriedGoods) {
+        self.fodder += other.fodder;
+        for carried in &other.materials {
+            match self.materials.iter_mut().find(|held| {
+                held.material == carried.material
+                    && held.band == carried.band
+                    && held.characteristics == carried.characteristics
+            }) {
+                Some(held) => held.amount += carried.amount,
+                None => self.materials.push(carried.clone()),
+            }
+        }
+    }
+
+    /// **Take `share` of everything out**, for one pack — the same split the food's classes get.
+    pub fn take_share(&mut self, share: f32) -> CarriedGoods {
+        let fodder = self.fodder * share;
+        self.fodder = (self.fodder - fodder).max(NOTHING_CARRIED);
+        let mut materials = Vec::new();
+        for held in &mut self.materials {
+            let amount = held.amount * share;
+            held.amount = (held.amount - amount).max(NOTHING_CARRIED);
+            materials.push(CarriedMaterial {
+                amount,
+                ..held.clone()
+            });
+        }
+        self.materials.retain(|held| held.amount > NOTHING_CARRIED);
+        CarriedGoods { fodder, materials }
+    }
+}
+
+/// The whole of a load or pack — [`CarriedGoods::take_share`] of this takes all of it.
+const WHOLE_LOAD: f32 = 1.0;
+
 /// **ONE HUNTER ON THE ROAD** — out with a pack, or on the way back without one.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Walker {
@@ -103,6 +232,12 @@ pub struct Walker {
     /// the deposit web. Handed to the home band when `turns_out` reaches `walk_turns`, and
     /// [`NOTHING_CARRIED`] on the way back.
     pub cargo: f32,
+    /// **What the pack is made of, by keeping class** — split off the load with the cargo.
+    pub classes: CargoClasses,
+    /// The pack's bulk, in the carry's unit.
+    pub bulk: f32,
+    /// **Its fodder and materials** (#706) — split off the load with the cargo.
+    pub goods: CarriedGoods,
 }
 
 impl Walker {
@@ -150,13 +285,92 @@ pub struct WorkParty {
     /// deposit web, where cargo and bulk are one number), riding alongside it so a pack carries its
     /// own share of it home.
     pub load_cargo: f32,
+    /// **What [`Self::load_cargo`] is made of, by keeping class** (#706) — what each take added,
+    /// split off with every pack in the cargo's own proportion.
+    pub load_classes: CargoClasses,
+    /// **The load's fodder and materials** (#706) — what each forage take added beside its food,
+    /// split off with every pack in the same proportion.
+    pub load_goods: CarriedGoods,
     /// **THE HUNTERS ON THE ROAD** — at most the party, in the order they left.
     pub on_the_road: Vec<Walker>,
     /// **THE PER-TURN RATE ARRIVING AT THE HOME BAND** — the cargo home per turn over the forecast
     /// horizon, stepped from this party's state ([`forecast_caravan`]). The number the work row
-    /// prints, so a near row and a far row are comparable figures on one board.
+    /// prints, so a near row and a far row are comparable figures on one board. **Net of transit
+    /// rot** (#706): a pack whose class rots on the walk lands nothing here.
     pub net_rate_home: f32,
+    /// **THE PER-TURN RATE LOST ON THE WALK HOME** (#706) — what the same forecast's landing packs
+    /// lose to transit rot, averaged over the same turns. `net_rate_home + spoiled_rate_home` is
+    /// what the porters carry in.
+    pub spoiled_rate_home: f32,
+    /// **The shortest shelf life among the classes this row's cargo is made of that rot on this
+    /// walk**, in turns — `0` when nothing rots. The number a "keeps N turns, walk is M" line reads.
+    pub transit_keeps_turns: f32,
+    /// **THE FODDER PER TURN ARRIVING HOME** (#706) — `net_rate_home`'s twin for a far forage row's
+    /// hay, off the same forecast ([`CaravanForecast::fodder_rate_home`]): smoothed, where the row's
+    /// per-turn `fodder` reads only what landed.
+    pub fodder_rate_home: f32,
+    /// **THE MATERIALS PER TURN ARRIVING HOME**, one row per material id, off the same forecast — a
+    /// basket's, or a hunt's hide, bone and sinew.
+    pub materials_rate_home: Vec<crate::materials_config::MaterialPayoff>,
 }
+
+/// **What a caravan's cargo is made of, and how long each part keeps** (#706) — what the forecast
+/// needs to strike transit rot on every landing pack. `shares` are fractions of the cargo by keeping
+/// class (summing to 1); the deposit web carries none and is forecast with no rot at all.
+#[derive(Debug, Clone)]
+pub struct TransitRot<'a> {
+    pub keeping: &'a crate::demographics_config::KeepingConfig,
+    pub shares: CargoClasses,
+}
+
+/// No transit rot — the deposit web's cargo is a material, and a material keeps.
+pub const NO_TRANSIT_ROT: Option<&TransitRot<'static>> = None;
+
+impl TransitRot<'_> {
+    /// One class, the whole cargo.
+    pub fn single<'a>(
+        keeping: &'a crate::demographics_config::KeepingConfig,
+        class: &str,
+    ) -> TransitRot<'a> {
+        TransitRot {
+            keeping,
+            shares: std::iter::once((class.to_string(), WHOLE_CARGO)).collect(),
+        }
+    }
+
+    /// The share of a pack's cargo that rots on a walk of `walk_turns` —
+    /// [`crate::spoilage::rots_in_transit`] per class, the rule the turn's landing applies.
+    pub fn rotten_share(&self, walk_turns: u32) -> f32 {
+        self.shares
+            .iter()
+            .filter(|(class, _)| crate::spoilage::rots_in_transit(class, walk_turns, self.keeping))
+            .map(|(_, share)| *share)
+            .sum::<f32>()
+            .min(WHOLE_CARGO)
+    }
+
+    /// The shortest shelf life among the classes that rot on a walk of `walk_turns`, or
+    /// [`NOTHING_ROTS_ON_THE_WALK`].
+    pub fn keeps_turns(&self, walk_turns: u32) -> f32 {
+        self.shares
+            .iter()
+            .filter(|(class, share)| {
+                **share > NOTHING_CARRIED
+                    && crate::spoilage::rots_in_transit(class, walk_turns, self.keeping)
+            })
+            .filter_map(|(class, _)| self.keeping.shelf_life(class))
+            .fold(None, |shortest: Option<f32>, life| {
+                Some(shortest.map_or(life, |s| s.min(life)))
+            })
+            .unwrap_or(NOTHING_ROTS_ON_THE_WALK)
+    }
+}
+
+/// The whole of a cargo, as a share.
+const WHOLE_CARGO: f32 = 1.0;
+
+/// [`WorkParty::transit_keeps_turns`] when no class of the cargo rots on the walk.
+pub const NOTHING_ROTS_ON_THE_WALK: f32 = 0.0;
 
 /// **WHAT THE SOURCE GAVE UP THIS TURN** — the take of the hunters present, in the two units the
 /// caravan reads: **cargo** (what goes home — food on the two food webs, material units on the
@@ -169,10 +383,13 @@ pub struct SourceTake {
 }
 
 /// **The top of a caravan turn** ([`WorkParty::open_turn`]): what walked in, and who is left to work.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TurnOpen {
     /// Cargo the walkers handed to the home band this turn.
     pub delivered: f32,
+    /// **Each pack those walkers handed over**, with the walk it came on — what the transit rot
+    /// reads. Their cargo sums to [`Self::delivered`].
+    pub packs: Vec<LandedPack>,
     /// **The hunters at the source** — the crew the take is priced at. `0` while the party is still
     /// walking out.
     pub present: u32,
@@ -237,10 +454,19 @@ impl WorkParty {
     /// 2. A party still walking out counts one turn of it off and has nobody at the source.
     pub fn open_turn(&mut self) -> TurnOpen {
         let mut delivered = NOTHING_CARRIED;
+        let mut packs = Vec::new();
         for walker in self.on_the_road.iter_mut() {
             walker.turns_out += 1;
             if walker.turns_out == walker.walk_turns {
-                delivered += std::mem::replace(&mut walker.cargo, NOTHING_CARRIED);
+                let cargo = std::mem::replace(&mut walker.cargo, NOTHING_CARRIED);
+                delivered += cargo;
+                packs.push(LandedPack {
+                    walk_turns: walker.walk_turns,
+                    cargo,
+                    classes: std::mem::take(&mut walker.classes),
+                    bulk: std::mem::replace(&mut walker.bulk, NOTHING_CARRIED),
+                    goods: std::mem::take(&mut walker.goods),
+                });
             }
         }
         self.on_the_road.retain(|walker| !walker.rejoined());
@@ -248,11 +474,13 @@ impl WorkParty {
             self.walk_out_remaining -= 1;
             return TurnOpen {
                 delivered,
+                packs,
                 present: NOBODY_ON_THE_ROAD,
             };
         }
         TurnOpen {
             delivered,
+            packs,
             present: self.hunters_present(),
         }
     }
@@ -273,38 +501,98 @@ impl WorkParty {
     /// pack cannot hold stays in the load for the next porter — nobody walks away from it, so
     /// nothing a resident band would waste is wasted here. An unbounded carry takes the whole load.
     pub fn close_turn(&mut self, take: SourceTake, pack_bulk: f32) -> f32 {
+        self.close_turn_classed(
+            take,
+            &CargoClasses::new(),
+            &CarriedGoods::default(),
+            pack_bulk,
+        )
+        .map_or(NOTHING_CARRIED, |pack| pack.cargo)
+    }
+
+    /// **[`Self::close_turn`] with the take's keeping classes** (#706) — the take site's form. The
+    /// take's `classes` join the load's, and every pack that leaves carries its share of them. The
+    /// pack landed without a walk (if any) comes back whole, classes and all, so the take site can
+    /// credit it by class; its cargo is exactly what [`Self::close_turn`] returns.
+    ///
+    /// `goods` are the take's fodder and materials (#706): they join the load and leave in every
+    /// pack in the same proportion as its bulk, so they land when the pack does.
+    pub fn close_turn_classed(
+        &mut self,
+        take: SourceTake,
+        classes: &CargoClasses,
+        goods: &CarriedGoods,
+        pack_bulk: f32,
+    ) -> Option<LandedPack> {
         // A take worth no cargo at all (an inedible quarry, a fibre crop) still loads its bulk —
         // the porters walk it whatever it is worth.
         self.load_bulk += take.bulk.max(NOTHING_CARRIED);
         self.load_cargo += take.cargo.max(NOTHING_CARRIED);
+        merge_classes(&mut self.load_classes, classes);
+        self.load_goods.merge(goods);
 
         let mut delivered = NOTHING_CARRIED;
+        let mut delivered_classes = CargoClasses::new();
+        let mut delivered_bulk = NOTHING_CARRIED;
+        let mut delivered_goods = CarriedGoods::default();
+        let mut landed_now = false;
         let mut present = self.hunters_present();
         let loads_a_pack =
             |load: f32| load > NOTHING_CARRIED && (!pack_bulk.is_finite() || load >= pack_bulk);
         if pack_bulk > NOTHING_CARRIED {
             while present > NOBODY_ON_THE_ROAD && loads_a_pack(self.load_bulk) {
                 let carried = self.load_bulk.min(pack_bulk);
-                let cargo = self.load_cargo * (carried / self.load_bulk);
+                let share = carried / self.load_bulk;
+                let cargo = self.load_cargo * share;
+                let pack_classes = scaled_classes(&self.load_classes, share);
+                let pack_goods = if share >= WHOLE_LOAD {
+                    std::mem::take(&mut self.load_goods)
+                } else {
+                    self.load_goods.take_share(share)
+                };
                 self.load_bulk = (self.load_bulk - carried).max(NOTHING_CARRIED);
                 self.load_cargo = (self.load_cargo - cargo).max(NOTHING_CARRIED);
+                if self.load_cargo <= NOTHING_CARRIED {
+                    self.load_classes.clear();
+                } else {
+                    for (class, amount) in &pack_classes {
+                        if let Some(held) = self.load_classes.get_mut(class) {
+                            *held = (*held - amount).max(NOTHING_CARRIED);
+                        }
+                    }
+                }
+                if self.load_bulk <= NOTHING_CARRIED {
+                    self.load_goods = CarriedGoods::default();
+                }
                 if self.walk_turns == NO_WALK {
                     delivered += cargo;
+                    merge_classes(&mut delivered_classes, &pack_classes);
+                    delivered_bulk += carried;
+                    delivered_goods.merge(&pack_goods);
+                    landed_now = true;
                     continue;
                 }
                 self.on_the_road.push(Walker {
                     walk_turns: self.walk_turns,
                     turns_out: 0,
                     cargo,
+                    classes: pack_classes,
+                    bulk: carried,
+                    goods: pack_goods,
                 });
                 present -= 1;
             }
         }
-        delivered
+        landed_now.then_some(LandedPack {
+            walk_turns: NO_WALK,
+            cargo: delivered,
+            classes: delivered_classes,
+            bulk: delivered_bulk,
+            goods: delivered_goods,
+        })
     }
 
-    /// **ONE WHOLE CARAVAN TURN around a take `take` prices at the hunters present** — the forecast's
-    /// entry point, and exactly [`Self::open_turn`] → the take → [`Self::close_turn`], which is the
+    /// **ONE WHOLE CARAVAN TURN around a take `take` prices at the hunters present** — exactly [`Self::open_turn`] → the take → [`Self::close_turn`], which is the
     /// turn's own sequence. Returns everything credited home this turn and whether a load landed.
     pub fn step(&mut self, pack_bulk: f32, take: impl FnOnce(u32) -> SourceTake) -> (f32, bool) {
         let open = self.open_turn();
@@ -314,15 +602,227 @@ impl WorkParty {
         (home, home > NOTHING_CARRIED)
     }
 
-    /// **EVERYTHING THE PARTY HAS, BROUGHT HOME** — the load and every walker's pack, with the road
-    /// and the load emptied. What an unassign, an abandon and a row lapsing under its party all
-    /// settle into the band: a caravan that ends early must not lose what is on the road.
-    pub fn hand_over_everything(&mut self) -> f32 {
-        let on_the_road: f32 = self.on_the_road.iter().map(|walker| walker.cargo).sum();
-        let load = std::mem::replace(&mut self.load_cargo, NOTHING_CARRIED);
-        self.load_bulk = NOTHING_CARRIED;
-        self.on_the_road.clear();
-        load + on_the_road
+    /// ⛔ **THE PARTY, STOOD DOWN, WALKING HOME** — what an unassign, an abandon, a lapse, a shed
+    /// and `cancel_order` all turn a posting into. Nothing arrives at once:
+    ///
+    /// - **a porter carrying a pack** finishes its walk (`walk_turns − turns_out` turns) and lands
+    ///   it, rotting by the walk it set out on;
+    /// - **a porter heading back out empty** turns round and walks back the way it has come
+    ///   (`turns_out − walk_turns` turns);
+    /// - **the hands at the source** carry the load home over the whole walk, and it rots by that
+    ///   walk. **A load with no hand at the source (every porter on the road) is ABANDONED there** —
+    ///   nobody carries it, so it never lands. It was never income nor in the larder, so no ledger
+    ///   term (and no spoilage) answers for it;
+    /// - **a party still walking out** turns round and walks back the turns it has covered, empty.
+    ///
+    /// Every hand is away from the band until its walk ends. A group already home (a porter that
+    /// landed this very turn, a party posted and stood down before it took a step) is not listed:
+    /// it is back now.
+    pub fn walk_home(self, target: &crate::components::LaborTarget) -> Vec<HomewardWalk> {
+        let mut walks = Vec::new();
+        if self.is_walking_out() {
+            walks.push(HomewardWalk::empty_handed(
+                target,
+                self.workers,
+                self.walk_turns.saturating_sub(self.walk_out_remaining),
+            ));
+        } else {
+            let at_the_source = self.hunters_present();
+            for walker in self.on_the_road {
+                walks.push(HomewardWalk::of_porter(target, walker));
+            }
+            // Cargo walks only with a carrier: no hand at the source, no source group, and the
+            // leftover load — food, fodder and materials alike — stays where it is.
+            if at_the_source > NOBODY_ON_THE_ROAD {
+                walks.push(HomewardWalk {
+                    target: target.clone(),
+                    workers: at_the_source,
+                    turns_left: self.walk_turns,
+                    walk_turns: self.walk_turns,
+                    cargo: self.load_cargo,
+                    classes: self.load_classes,
+                    goods: self.load_goods,
+                });
+            }
+        }
+        walks.retain(HomewardWalk::is_on_the_road);
+        walks
+    }
+
+    /// ⛔ **A CREW CUT SHORT OF ZERO SENDS THE DROPPED HANDS WALKING HOME** — `workers → to`, `to`
+    /// above zero (zero is a stand-down, [`Self::walk_home`]). Nobody is back in the band at once:
+    ///
+    /// - **the hands at the source go first**, each walking the whole walk home carrying nothing —
+    ///   the load stays with those who remain;
+    /// - past them, **porters on the road**, nearest home first: one carrying a pack finishes its
+    ///   walk and lands it but does not walk back out; one heading back out empty turns round;
+    /// - a party **still walking out** sends the dropped hands back the turns it has covered.
+    ///
+    /// Answers the walks home; the party keeps `to` hands. A crew raise is not a cut and returns
+    /// nothing.
+    pub fn cut_crew(
+        &mut self,
+        to: u32,
+        target: &crate::components::LaborTarget,
+    ) -> Vec<HomewardWalk> {
+        if to >= self.workers {
+            return Vec::new();
+        }
+        let dropped = self.workers - to;
+        let mut walks = Vec::new();
+        if self.is_walking_out() {
+            walks.push(HomewardWalk::empty_handed(
+                target,
+                dropped,
+                self.walk_turns.saturating_sub(self.walk_out_remaining),
+            ));
+        } else {
+            let from_the_source = dropped.min(self.hunters_present());
+            walks.push(HomewardWalk::empty_handed(
+                target,
+                from_the_source,
+                self.walk_turns,
+            ));
+            let mut from_the_road = (dropped - from_the_source) as usize;
+            // Nearest home first: a pack about to land, or a porter just out of the door.
+            let mut order: Vec<usize> = (0..self.on_the_road.len()).collect();
+            order.sort_by_key(|&i| HomewardWalk::turns_home_of(&self.on_the_road[i]));
+            let mut leaving: Vec<usize> = order.into_iter().take(from_the_road).collect();
+            from_the_road -= leaving.len();
+            debug_assert_eq!(from_the_road, 0, "a cut never exceeds the party");
+            leaving.sort_unstable_by(|a, b| b.cmp(a));
+            for i in leaving {
+                let walker = self.on_the_road.remove(i);
+                walks.push(HomewardWalk::of_porter(target, walker));
+            }
+        }
+        self.workers = to;
+        walks.retain(HomewardWalk::is_on_the_road);
+        walks
+    }
+}
+
+/// One porter — a [`Walker`] is one hand.
+const ONE_PORTER: u32 = 1;
+
+/// ⛔ **ONE GROUP OF A STOOD-DOWN PARTY, WALKING HOME** ([`WorkParty::walk_home`]) — on the band's
+/// `LaborAllocation::homeward`, because the row that posted it is gone (or holds no party) and the
+/// walk is not over. Its hands are away from the band's pool until it lands; its cargo lands where
+/// `target`'s cargo always does, and rots by `walk_turns` exactly as a live pack does.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HomewardWalk {
+    /// **The source it was working** — what decides where its cargo lands (the larder, or a
+    /// deposit's material store at the ground's characteristics), read when it arrives.
+    pub target: crate::components::LaborTarget,
+    /// The hands walking in this group — away from the band until it arrives.
+    pub workers: u32,
+    /// **Turns of walking still to go.** It lands on the turn this reaches zero.
+    pub turns_left: u32,
+    /// **The walk its cargo is carried over**, in turns — what the transit rot reads. A porter's own
+    /// walk; the whole walk for the load the source hands carry.
+    pub walk_turns: u32,
+    /// The cargo it carries — food, or a deposit's material units.
+    pub cargo: f32,
+    /// What that cargo is made of, by keeping class.
+    pub classes: CargoClasses,
+    /// **Its fodder and materials** (#706) — landed with it, never rotted.
+    pub goods: CarriedGoods,
+}
+
+impl HomewardWalk {
+    /// **Hands walking home with nothing** over `turns_left` turns.
+    fn empty_handed(
+        target: &crate::components::LaborTarget,
+        workers: u32,
+        turns_left: u32,
+    ) -> Self {
+        Self {
+            target: target.clone(),
+            workers,
+            turns_left,
+            walk_turns: NO_WALK,
+            cargo: NOTHING_CARRIED,
+            classes: CargoClasses::new(),
+            goods: CarriedGoods::default(),
+        }
+    }
+
+    /// **The turns a porter is from home** — the rest of its walk with a pack, or the way back it
+    /// has come heading out empty.
+    fn turns_home_of(walker: &Walker) -> u32 {
+        if walker.carrying() {
+            walker.walk_turns - walker.turns_out
+        } else {
+            walker.turns_out - walker.walk_turns
+        }
+    }
+
+    /// **One porter, sent home** — with its pack it finishes its walk and lands it, rotting by the
+    /// walk it set out on; empty it turns round.
+    fn of_porter(target: &crate::components::LaborTarget, walker: Walker) -> Self {
+        Self {
+            target: target.clone(),
+            workers: ONE_PORTER,
+            turns_left: Self::turns_home_of(&walker),
+            walk_turns: walker.walk_turns,
+            cargo: walker.cargo,
+            classes: walker.classes,
+            goods: walker.goods,
+        }
+    }
+
+    /// **Still has a walk or a load** — a group already home with nothing to land is not listed.
+    fn is_on_the_road(&self) -> bool {
+        self.workers > NOBODY_ON_THE_ROAD
+            && (self.cargo > NOTHING_CARRIED || !self.goods.is_empty() || self.turns_left > NO_WALK)
+    }
+
+    /// **One turn of the walk.** Answers whether the group is home now.
+    pub fn step(&mut self) -> bool {
+        self.turns_left = self.turns_left.saturating_sub(1);
+        self.turns_left == NO_WALK
+    }
+
+    /// **Is its cargo food?** A deposit's material goes to the store; everything else to the larder.
+    pub fn carries_food(&self) -> bool {
+        !matches!(self.target, crate::components::LaborTarget::Extract { .. })
+    }
+
+    /// **The food it carries that will rot before it lands** — every class whose shelf life is
+    /// shorter than its walk ([`crate::spoilage::rots_in_transit`]), the rule its landing applies.
+    /// A pack naming no class reads as its web's fallback class, as the larder lands it.
+    pub fn food_that_rots(&self, keeping: &crate::demographics_config::KeepingConfig) -> f32 {
+        if !self.carries_food() {
+            return NOTHING_CARRIED;
+        }
+        let rots = |class: &str| crate::spoilage::rots_in_transit(class, self.walk_turns, keeping);
+        if self.classes.is_empty() {
+            let fallback = match self.target {
+                crate::components::LaborTarget::Hunt { .. } => &keeping.kill_fallback_class,
+                _ => &keeping.plant_fallback_class,
+            };
+            return if rots(fallback) {
+                self.cargo
+            } else {
+                NOTHING_CARRIED
+            };
+        }
+        self.classes
+            .iter()
+            .filter(|(class, _)| rots(class))
+            .map(|(_, amount)| amount)
+            .sum()
+    }
+
+    /// The pack it lands as — its cargo and classes, carried over its walk.
+    pub fn landed_pack(&self) -> LandedPack {
+        LandedPack {
+            walk_turns: self.walk_turns,
+            cargo: self.cargo,
+            classes: self.classes.clone(),
+            bulk: NOTHING_CARRIED,
+            goods: self.goods.clone(),
+        }
     }
 }
 
@@ -550,14 +1050,31 @@ pub fn publish_caravan_projection(
 /// **WHAT A CARAVAN DELIVERS, STEPPED FORWARD** — [`forecast_caravan`]'s answer.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct CaravanForecast {
-    /// **Cargo arriving home per turn** (food, or material units on the deposit web), averaged over
-    /// the turns stepped — the row's `netRateHome`.
+    /// **Cargo arriving home AND KEEPING per turn** (food, or material units on the deposit web),
+    /// averaged over the turns stepped — the row's `netRateHome`. Net of transit rot (#706).
     pub rate_home: f32,
-    /// What lands home on each stepped turn, `[0]` being next turn.
+    /// **Cargo lost on the walk home per turn**, averaged over the same turns — the row's
+    /// `spoiledRateHome`.
+    pub spoiled_rate_home: f32,
+    /// [`TransitRot::keeps_turns`] at the party's walk — the row's `transitKeepsTurns`.
+    pub transit_keeps_turns: f32,
+    /// What lands home and keeps on each stepped turn, `[0]` being next turn.
     pub home_by_turn: Vec<f32>,
     /// The average number of hunters on the road across the turns stepped.
     pub mean_on_the_road: f32,
-    /// **The 1-based turn the first load lands**, or [`NO_LOAD_WITHIN_HORIZON`].
+    /// **The bulk arriving home per turn**, averaged over the turns stepped — what every account a
+    /// forage pack carries besides food (fodder, materials) arrives at, through the basket's own
+    /// per-biomass rates. Not struck for rot: fodder and materials keep.
+    pub bulk_rate_home: f32,
+    /// **A far forage row's fodder per turn arriving home** (#706) — [`Self::bulk_rate_home`] through
+    /// the basket's fodder rate, behind the credit's own Foddering gate. Filled by
+    /// [`forecast_forage_caravan`]; `0` on every other web.
+    pub fodder_rate_home: f32,
+    /// **Its materials per turn arriving home**, one row per material id — filled by
+    /// [`forecast_forage_caravan`] and [`forecast_hunt_caravan`]; empty on the deposit web.
+    pub materials_rate_home: Vec<crate::materials_config::MaterialPayoff>,
+    /// **The 1-based turn the first pack lands** — whatever its cargo is worth, so a basket that
+    /// carries no food still reports when its first load walks in — or [`NO_LOAD_WITHIN_HORIZON`].
     pub first_load_turn: u32,
 }
 
@@ -569,24 +1086,69 @@ pub struct CaravanForecast {
 /// run stops once the source is spent **and** nothing is left on the road or in the load, and the
 /// average divides by the turns actually stepped — the rule the smooth `realized` headline follows,
 /// so a spent source is not diluted by dead turns after it is gone.
+///
+/// ⛔ **EVERY LANDING PACK IS STRUCK FOR TRANSIT ROT BY THE TURN'S OWN RULE** (#706): a walked pack
+/// loses [`TransitRot::rotten_share`] of its cargo at the walk it set out on, so `rate_home` and
+/// `home_by_turn` are what arrives AND keeps — the larder's real gain — and what was lost rides
+/// `spoiled_rate_home`. A pack landed without a walk never rots. `rot` is `None` for a material.
 pub fn forecast_caravan(
     start: &WorkParty,
     horizon: u32,
     pack_bulk: f32,
+    rot: Option<&TransitRot<'_>>,
     mut take: impl FnMut(u32) -> Option<SourceTake>,
+) -> CaravanForecast {
+    forecast_caravan_carrying(start, horizon, pack_bulk, rot, |present| {
+        take(present).map(|taken| (taken, CarriedGoods::default()))
+    })
+}
+
+/// **[`forecast_caravan`] with the by-products each projected take packs** (#706) — they ride the
+/// load and every pack exactly as the turn's do, and what LANDS is averaged into
+/// [`CaravanForecast::fodder_rate_home`] / [`CaravanForecast::materials_rate_home`]. The hunt web
+/// steps it, because a pen's standing fleece is not proportional to the carcass bulk a per-biomass
+/// rate could convert.
+pub fn forecast_caravan_carrying(
+    start: &WorkParty,
+    horizon: u32,
+    pack_bulk: f32,
+    rot: Option<&TransitRot<'_>>,
+    mut take: impl FnMut(u32) -> Option<(SourceTake, CarriedGoods)>,
 ) -> CaravanForecast {
     let mut party = start.clone();
     let mut forecast = CaravanForecast::default();
     let mut on_the_road = 0u32;
+    let mut spoiled = NOTHING_CARRIED;
+    let mut bulk_home = NOTHING_CARRIED;
+    let mut goods_home = CarriedGoods::default();
     for turn in 1..=horizon {
         let mut spent = false;
-        let (home, load_landed) = party.step(pack_bulk, |present| {
-            take(present).unwrap_or_else(|| {
-                spent = true;
-                SourceTake::default()
-            })
+        let open = party.open_turn();
+        let (taken, goods) = take(open.present).unwrap_or_else(|| {
+            spent = true;
+            (SourceTake::default(), CarriedGoods::default())
         });
-        forecast.home_by_turn.push(home);
+        let now = party.close_turn_classed(taken, &CargoClasses::new(), &goods, pack_bulk);
+        let landed_now = now.as_ref().map_or(NOTHING_CARRIED, |pack| pack.cargo);
+        bulk_home += open.packs.iter().map(|pack| pack.bulk).sum::<f32>()
+            + now.as_ref().map_or(NOTHING_CARRIED, |pack| pack.bulk);
+        for pack in open.packs.iter().chain(now.iter()) {
+            goods_home.merge(&pack.goods);
+        }
+        let lost: f32 = rot.map_or(NOTHING_CARRIED, |rot| {
+            open.packs
+                .iter()
+                .map(|pack| pack.cargo * rot.rotten_share(pack.walk_turns))
+                .sum()
+        });
+        let home = open.delivered + landed_now;
+        // ⛔ **A LOAD LANDS WHEN A PACK LANDS, WHATEVER IT IS WORTH AS CARGO.** Packs fill by
+        // BULK — everything the crew cut — so a basket of hay, fibre or tobacco fills and walks
+        // packs exactly as a food basket does, but its `cargo` (food) is zero. Reading the landing
+        // off `home > 0` published no first load at all for such a basket.
+        let load_landed = !open.packs.is_empty() || now.is_some();
+        spoiled += lost;
+        forecast.home_by_turn.push(home - lost);
         on_the_road += party.hunters_on_the_road();
         if load_landed && forecast.first_load_turn == NO_LOAD_WITHIN_HORIZON {
             forecast.first_load_turn = turn;
@@ -598,8 +1160,21 @@ pub fn forecast_caravan(
     let turns = forecast.home_by_turn.len();
     if turns > 0 {
         forecast.rate_home = forecast.home_by_turn.iter().sum::<f32>() / turns as f32;
+        forecast.spoiled_rate_home = spoiled / turns as f32;
         forecast.mean_on_the_road = on_the_road as f32 / turns as f32;
+        forecast.bulk_rate_home = bulk_home / turns as f32;
+        forecast.fodder_rate_home = goods_home.fodder / turns as f32;
+        forecast.materials_rate_home =
+            crate::materials_config::merge_material_payoffs(goods_home.materials.iter().map(
+                |carried| crate::materials_config::MaterialPayoff {
+                    material: carried.material.clone(),
+                    amount: carried.amount / turns as f32,
+                },
+            ));
     }
+    forecast.transit_keeps_turns = rot.map_or(NOTHING_ROTS_ON_THE_WALK, |rot| {
+        rot.keeps_turns(start.walk_turns)
+    });
     forecast
 }
 
@@ -622,26 +1197,137 @@ pub fn forecast_hunt_caravan(
     // ([`take_hands_present`]).
     keep_hands: f32,
     horizon: u32,
+    // **How food keeps** (#706) — a herd's take is its species' one class.
+    keeping: &crate::demographics_config::KeepingConfig,
+    // **What a material weighs** — the bulk a pen's fleece fills a pack with ([`standing_stream`]).
+    materials: &crate::materials_config::MaterialsConfig,
 ) -> CaravanForecast {
     let pack = hunt_pack_biomass(herd, fauna, carry_per_worker);
     let mut projection = HuntProjection::new(herd, fauna);
-    forecast_caravan(party, horizon, pack, |present| {
-        projection
-            .step(
-                fauna,
-                carry_per_worker,
-                hunters,
-                output_multiplier,
-                take_hands_present(present, keep_hands),
-                floor,
-                // A party's load waits at the source for the next porter — it keeps every carcass.
-                crate::fauna::CarcassKept::Whole,
-            )
-            .map(|turn| SourceTake {
-                cargo: turn.yields.provisions,
-                bulk: turn.biomass,
+    let class = fauna
+        .keeping_for(&herd.species)
+        .unwrap_or(&keeping.kill_fallback_class);
+    let rot = TransitRot::single(keeping, class);
+    // ⛔ **WHAT THE CARCASS AND THE STANDING HERD SEND HOME, EVERY STEPPED TURN** (#706). The cull's
+    // meat and the standing food (milk, eggs — `HuntProjection::step` counts both in the turn's
+    // provisions, so `rate_home` carries the milk net of the walk's rot, by the herd's one keeping
+    // class, as the turn lands it); the carcass's hide, bone and sinew through the species'
+    // per-biomass rows off the carcass bulk; and a kept herd's per-head fleece and the BULK its milk
+    // and fleece fill packs by ([`standing_stream`]) — without that bulk a pen that culls nothing
+    // never fills a pack and its standing yield never leaves. A wild herd's stream is empty. A hunt
+    // yields no fodder; materials never rot.
+    let carcass_rows = fauna.hunt_materials_for(&herd.species);
+    let mut forecast = forecast_caravan_carrying(party, horizon, pack, Some(&rot), |present| {
+        let culled = projection.step(
+            fauna,
+            carry_per_worker,
+            hunters,
+            output_multiplier,
+            take_hands_present(present, keep_hands),
+            floor,
+            // A party's load waits at the source for the next porter — it keeps every carcass.
+            crate::fauna::CarcassKept::Whole,
+        );
+        let (food, carcass) = match culled {
+            Some(turn) => (turn.yields.provisions, turn.biomass),
+            // The projection ends only when there is nothing to cull AND no standing yield.
+            None => return None,
+        };
+        // At the PROJECTED head count, as the standing food in the step is.
+        let standing = standing_stream(projection.herd(), fauna, materials, output_multiplier);
+        let mut goods = CarriedGoods {
+            fodder: NOTHING_CARRIED,
+            materials: carcass_rows
+                .iter()
+                .map(|row| CarriedMaterial {
+                    material: row.material.clone(),
+                    band: crate::materials_config::BandKey::default(),
+                    characteristics: Default::default(),
+                    amount: carcass * row.per_biomass * output_multiplier,
+                })
+                .collect(),
+        };
+        goods.merge(&standing.goods);
+        Some((
+            SourceTake {
+                // `HuntProjection::step` already counts the standing food (milk, eggs) in the turn's
+                // provisions, at the projected head count — only its bulk and fleece are added here.
+                cargo: food,
+                bulk: carcass + standing.bulk,
+            },
+            goods,
+        ))
+    });
+    forecast
+        .materials_rate_home
+        .retain(|payoff| payoff.amount > NOTHING_CARRIED);
+    forecast
+}
+
+/// **A KEPT HERD'S STANDING YIELD, AS A CARAVAN STREAM** (#706) — what it pays per turn for standing
+/// there (`fauna::herd_standing_provisions`, `FaunaConfig::standing_materials_for` at
+/// `fauna::herd_standing_scale`, times the band's output multiplier — the arithmetic the take site
+/// credits by), and the **bulk** it fills a pack with: the milk's biomass-equivalent at the herd's
+/// own meat rate, and each fleece at its material's `weight` (biomass-equivalent mass per unit). The
+/// turn loads the same bulk, so a pen that culls nothing still fills packs and sends its milk and
+/// fleece home. Empty for a wild herd.
+pub struct StandingStream {
+    pub provisions: f32,
+    pub bulk: f32,
+    pub goods: CarriedGoods,
+}
+
+impl StandingStream {
+    /// Pays nothing.
+    pub fn is_empty(&self) -> bool {
+        self.provisions <= NOTHING_CARRIED && self.goods.is_empty()
+    }
+}
+
+/// See [`StandingStream`].
+pub fn standing_stream(
+    herd: &crate::fauna::Herd,
+    fauna: &FaunaConfig,
+    materials: &crate::materials_config::MaterialsConfig,
+    output_multiplier: f32,
+) -> StandingStream {
+    let scale = crate::fauna::herd_standing_scale(herd, fauna);
+    let provisions = crate::fauna::herd_standing_provisions(herd, fauna) * output_multiplier;
+    let per_biomass = crate::fauna::herd_hunt_yield(herd, fauna).provisions_per_biomass;
+    let food_bulk = if per_biomass > NOTHING_CARRIED {
+        provisions / per_biomass
+    } else {
+        NOTHING_CARRIED
+    };
+    let goods = CarriedGoods {
+        fodder: NOTHING_CARRIED,
+        materials: fauna
+            .standing_materials_for(&herd.species)
+            .iter()
+            .map(|row| CarriedMaterial {
+                material: row.material.clone(),
+                band: crate::materials_config::BandKey::default(),
+                characteristics: Default::default(),
+                amount: scale * row.per_biomass * output_multiplier,
             })
-    })
+            .filter(|carried| carried.amount > NOTHING_CARRIED)
+            .collect(),
+    };
+    let material_bulk: f32 = goods
+        .materials
+        .iter()
+        .map(|carried| {
+            carried.amount
+                * materials
+                    .material(&carried.material)
+                    .map_or(NOTHING_CARRIED, |def| def.weight)
+        })
+        .sum();
+    StandingStream {
+        provisions,
+        bulk: food_bulk + material_bulk,
+        goods,
+    }
 }
 
 /// ⛔ **ONE PORTER'S PACK OF A MATERIAL, IN THE MATERIAL'S OWN UNITS** — the haul carry
@@ -685,7 +1371,7 @@ pub fn forecast_extract_caravan(
     horizon: u32,
 ) -> CaravanForecast {
     let mut projection = crate::extraction::DepositProjection::new(working);
-    forecast_caravan(party, horizon, pack, |present| {
+    forecast_caravan(party, horizon, pack, NO_TRANSIT_ROT, |present| {
         let cutters = take_hands_present(present, keep_hands);
         projection
             .step(
@@ -750,9 +1436,30 @@ pub fn forecast_forage_caravan(
     // ([`take_hands_present`]).
     keep_hands: f32,
     horizon: u32,
+    // **How food keeps** (#706) — the basket's classes, decomposed as the take site credits them.
+    keeping: &crate::demographics_config::KeepingConfig,
+    // **Does this faction bank the basket's fodder?** — the credit site's own gate (a fodder-crop
+    // commitment, or Foddering), so the fodder rate home is what would actually be credited.
+    fodder_credited: bool,
 ) -> CaravanForecast {
     let mut projection = ForageProjection::new(patch);
-    forecast_caravan(party, horizon, carry_per_worker, |present| {
+    let one_unit = crate::scalar::scalar_one();
+    let rot = TransitRot {
+        keeping,
+        shares: crate::forage::patch_food_mix(
+            patch,
+            tile_composition,
+            flora,
+            forage,
+            take_species,
+            one_unit,
+            keeping,
+        )
+        .iter()
+        .map(|(class, share)| (class.to_string(), share.to_f32()))
+        .collect(),
+    };
+    let mut forecast = forecast_caravan(party, horizon, carry_per_worker, Some(&rot), |present| {
         let gatherers = take_hands_present(present, keep_hands);
         match projection.step(
             tile_composition,
@@ -774,7 +1481,36 @@ pub fn forecast_forage_caravan(
             None if gatherers <= crate::fauna::NO_HANDS => Some(SourceTake::default()),
             None => None,
         }
-    })
+    });
+    // ⛔ **THE BASKET'S OTHER ACCOUNTS ARRIVE WITH ITS PACKS** (#706) — the bulk landing per turn
+    // through the basket's own per-biomass rates, the arithmetic the take site packs them by. Never
+    // struck for rot: fodder and materials keep.
+    if fodder_credited {
+        forecast.fodder_rate_home = crate::forage::tended_take_fodder(
+            forecast.bulk_rate_home,
+            patch,
+            tile_composition,
+            flora,
+            forage,
+            output_multiplier,
+            take_species,
+        );
+    }
+    forecast.materials_rate_home = crate::materials_config::merge_material_payoffs(
+        crate::forage::patch_material_yields_taking(
+            patch,
+            tile_composition,
+            flora,
+            forage,
+            take_species,
+        )
+        .into_iter()
+        .map(|row| crate::materials_config::MaterialPayoff {
+            amount: forecast.bulk_rate_home * row.per_biomass * output_multiplier,
+            material: row.material,
+        }),
+    );
+    forecast
 }
 
 #[cfg(test)]
@@ -855,7 +1591,7 @@ mod tests {
         let first = |workers: u32| {
             let mut party = WorkParty::posted(UVec2::ZERO, 4, 4);
             party.workers = workers;
-            forecast_caravan(&party, 60, 12.0, crew_linear(0.5)).first_load_turn
+            forecast_caravan(&party, 60, 12.0, NO_TRANSIT_ROT, crew_linear(0.5)).first_load_turn
         };
         let (few, many) = (first(2), first(8));
         assert_ne!(
@@ -896,9 +1632,10 @@ mod tests {
         );
     }
 
-    /// ⛔ **A posting that ends brings the road home** — every walker's pack and the load.
+    /// ⛔ **A posting that ends WALKS home** — every porter finishes its walk with its pack, the hands
+    /// at the source carry the load over the whole walk, and nothing is handed over at once.
     #[test]
-    fn handing_over_brings_every_walker_and_the_load_home() {
+    fn a_stood_down_party_walks_every_pack_and_the_load_home() {
         let mut party = WorkParty::posted(UVec2::ZERO, 6, 6);
         party.workers = 4;
         party.walk_out_remaining = NO_WALK;
@@ -910,14 +1647,187 @@ mod tests {
             },
             10.0,
         );
+        party.open_turn();
         assert_eq!(
             party.hunters_on_the_road(),
             2,
-            "fixture: two packs on the road"
+            "fixture: two packs on the road, one step out"
         );
-        assert_eq!(party.hand_over_everything(), 25.0);
-        assert_eq!(party.hunters_on_the_road(), NOBODY_ON_THE_ROAD);
-        assert_eq!(party.load_cargo, NOTHING_CARRIED);
+        let target = crate::components::LaborTarget::Hunt {
+            fauna_id: "boar".to_string(),
+            floor: 0.0,
+        };
+        let walks = party.walk_home(&target);
+        let porters: Vec<_> = walks.iter().filter(|w| w.workers == ONE_PORTER).collect();
+        assert_eq!(porters.len(), 2);
+        assert!(porters
+            .iter()
+            .all(|w| w.turns_left == 5 && w.walk_turns == 6 && w.cargo == 10.0));
+        let source = walks
+            .iter()
+            .find(|w| w.workers == 2)
+            .expect("the two hands at the source walk the load home");
+        assert_eq!((source.turns_left, source.walk_turns), (6, 6));
+        assert!((source.cargo - 5.0).abs() < 1e-4);
+        let carried: f32 = walks.iter().map(|w| w.cargo).sum();
+        assert!(
+            (carried - 25.0).abs() < 1e-4,
+            "nothing on the posting is lost"
+        );
+    }
+
+    /// ⛔ **A load nobody is at the source to carry is LEFT BEHIND** — no group walks without a
+    /// hand, so only the porters' packs go home.
+    #[test]
+    fn a_load_with_no_hand_at_the_source_is_left_behind() {
+        let mut party = WorkParty::posted(UVec2::ZERO, 6, 6);
+        party.workers = 2;
+        party.walk_out_remaining = NO_WALK;
+        party.open_turn();
+        party.close_turn(
+            SourceTake {
+                cargo: 25.0,
+                bulk: 25.0,
+            },
+            10.0,
+        );
+        assert_eq!(
+            party.hunters_present(),
+            0,
+            "fixture: every hand is on the road"
+        );
+        assert!(
+            party.load_cargo > NOTHING_CARRIED,
+            "fixture: a leftover load"
+        );
+        let walks = party.walk_home(&crate::components::LaborTarget::Scout);
+        assert!(walks.iter().all(|w| w.workers == ONE_PORTER));
+        let carried: f32 = walks.iter().map(|w| w.cargo).sum();
+        assert!(
+            (carried - 20.0).abs() < 1e-4,
+            "only the two packs walk home: {carried}"
+        );
+    }
+
+    /// ⛔ **A cut deeper than the hands at the source takes porters, nearest home first** — a
+    /// carrying porter finishes its walk with its pack (and lands it by its walk), an empty one turns
+    /// round; the hands at the source go first and walk the whole walk with nothing.
+    #[test]
+    fn a_deep_cut_turns_porters_round_nearest_home_first() {
+        let target = crate::components::LaborTarget::Scout;
+        let porter = |turns_out: u32, cargo: f32| Walker {
+            walk_turns: 6,
+            turns_out,
+            cargo,
+            bulk: cargo,
+            ..Walker::default()
+        };
+        let party_with = |road: Vec<Walker>| {
+            let mut party = WorkParty::posted(UVec2::ZERO, 6, 6);
+            party.walk_out_remaining = NO_WALK;
+            party.workers = 5;
+            party.on_the_road = road;
+            party.load_cargo = 5.0;
+            party
+        };
+        // Three at the source; an empty porter two turns from home; a carrying one four out.
+        let mut party = party_with(vec![porter(2, 10.0), porter(8, 0.0)]);
+        let walks = party.cut_crew(1, &target);
+        let source = walks
+            .iter()
+            .find(|w| w.workers == 3)
+            .expect("the source hands go first");
+        assert_eq!((source.turns_left, source.cargo), (6, NOTHING_CARRIED));
+        let turned = walks
+            .iter()
+            .find(|w| w.workers == ONE_PORTER)
+            .expect("one porter too");
+        assert_eq!(
+            (turned.turns_left, turned.cargo),
+            (2, NOTHING_CARRIED),
+            "the empty one turns round"
+        );
+        assert_eq!(party.workers, 1);
+        assert_eq!(
+            party.hunters_on_the_road(),
+            1,
+            "the carrying porter stays on"
+        );
+        assert_eq!(
+            party.load_cargo, 5.0,
+            "the load stays with those who remain"
+        );
+
+        // Now the carrying porter is the nearer: it finishes its walk home with its pack.
+        let mut party = party_with(vec![porter(5, 10.0), porter(9, 0.0)]);
+        let walks = party.cut_crew(1, &target);
+        let carried = walks
+            .iter()
+            .find(|w| w.workers == ONE_PORTER)
+            .expect("a porter");
+        assert_eq!(
+            (carried.turns_left, carried.walk_turns, carried.cargo),
+            (1, 6, 10.0),
+            "it lands its pack on its own walk, and does not walk back out"
+        );
+        assert_eq!(party.on_the_road.len(), 1);
+        assert!(
+            party.on_the_road[0].turns_out == 9,
+            "the empty porter stays on"
+        );
+    }
+
+    /// A load / walker split carries the fodder and materials in the bulk's proportion, and a pack
+    /// that lands hands them over.
+    #[test]
+    fn a_pack_carries_its_share_of_the_loads_goods() {
+        let mut party = WorkParty::posted(UVec2::ZERO, 6, 6);
+        party.workers = 2;
+        party.walk_out_remaining = NO_WALK;
+        party.open_turn();
+        let goods = CarriedGoods {
+            fodder: 4.0,
+            materials: vec![CarriedMaterial {
+                material: "fibre".to_string(),
+                band: crate::materials_config::BandKey::default(),
+                characteristics: Default::default(),
+                amount: 2.0,
+            }],
+        };
+        party.close_turn_classed(
+            SourceTake {
+                cargo: NOTHING_CARRIED,
+                bulk: 20.0,
+            },
+            &CargoClasses::new(),
+            &goods,
+            10.0,
+        );
+        assert_eq!(party.hunters_on_the_road(), 2);
+        for walker in &party.on_the_road {
+            assert!((walker.goods.fodder - 2.0).abs() < 1e-5);
+            assert!((walker.goods.materials[0].amount - 1.0).abs() < 1e-5);
+        }
+        assert!(party.load_goods.is_empty(), "the whole load left");
+        let mut landed = Vec::new();
+        for _ in 0..6 {
+            landed.extend(party.open_turn().packs);
+        }
+        let fodder: f32 = landed.iter().map(|pack| pack.goods.fodder).sum();
+        assert!((fodder - 4.0).abs() < 1e-5, "both packs land their hay");
+    }
+
+    /// A party still walking out turns round and walks back what it covered, carrying nothing.
+    #[test]
+    fn a_party_walking_out_walks_back_what_it_covered() {
+        let mut party = WorkParty::posted(UVec2::ZERO, 6, 6);
+        party.workers = 3;
+        party.open_turn();
+        party.open_turn();
+        let walks = party.walk_home(&crate::components::LaborTarget::Scout);
+        assert_eq!(walks.len(), 1);
+        assert_eq!((walks[0].workers, walks[0].turns_left), (3, 2));
+        assert_eq!(walks[0].cargo, NOTHING_CARRIED);
     }
 
     /// A walk of no length — a road covering the run — lands every pack the turn it fills and never
@@ -1070,6 +1980,63 @@ mod tests {
             back_on,
             Some(2 * walk + 1),
             "absent for the whole round trip"
+        );
+    }
+
+    /// **A pack carries what its load was made of, and lands with the walk it came on** (#706) —
+    /// the two facts the transit rot reads. A load of flesh and grain splits into packs in its own
+    /// proportions, each pack is handed over with its porter's walk, and the classes of every pack
+    /// home sum to what was loaded.
+    #[test]
+    fn a_pack_carries_its_loads_classes_home_with_its_walk() {
+        const WALK: u32 = 6;
+        const PACK: f32 = 10.0;
+        const LOAD: f32 = 20.0;
+        const FLESH_SHARE: f32 = 0.75;
+        let mut party = WorkParty::posted(UVec2::ZERO, WALK, WALK);
+        party.workers = 4;
+        party.walk_out_remaining = NO_WALK;
+        party.open_turn();
+        let classes: CargoClasses = [
+            ("flesh".to_string(), LOAD * FLESH_SHARE),
+            ("dry".to_string(), LOAD * (1.0 - FLESH_SHARE)),
+        ]
+        .into_iter()
+        .collect();
+        let landed_now = party.close_turn_classed(
+            SourceTake {
+                cargo: LOAD,
+                bulk: LOAD,
+            },
+            &classes,
+            &CarriedGoods::default(),
+            PACK,
+        );
+        assert!(
+            landed_now.is_none(),
+            "a walked pack does not land the turn it leaves"
+        );
+        assert_eq!(
+            party.hunters_on_the_road(),
+            2,
+            "two packs of ten off twenty"
+        );
+        let mut packs = Vec::new();
+        for _ in 0..WALK {
+            packs.extend(party.open_turn().packs);
+        }
+        assert_eq!(packs.len(), 2, "both porters reach home after the walk");
+        for pack in &packs {
+            assert_eq!(pack.walk_turns, WALK, "each pack lands with its walk");
+            assert!(
+                (pack.classes["flesh"] / pack.cargo - FLESH_SHARE).abs() < 1e-5,
+                "each pack is three-quarters flesh, as the load was"
+            );
+        }
+        let home: f32 = packs.iter().flat_map(|pack| pack.classes.values()).sum();
+        assert!(
+            (home - LOAD).abs() < 1e-4,
+            "every class of the load came home: {home}"
         );
     }
 }

@@ -1162,20 +1162,16 @@ func run(harness) -> void:
 			% ("" if far_commit == null else far_commit.text),
 		far_commit != null and not far_commit.disabled
 			and far_commit.text == HudDepositVocab.commit_verb(HudDepositVocab.BRANCH_FORESTRY))
-	# **THE SECTION, BY EQUALITY, THROUGH THE SHIPPED FORMATS** — the hunt and forage sheets' own
-	# three lines, with the forester noun in the on-the-road sentence.
+	# **THE SECTION, BY EQUALITY, THROUGH THE SHIPPED FORMATS** — the hunt and forage sheets' own one
+	# line: the distance and the first load.
 	var far_lines := Readout.work_party_lines(far_sheet)
 	var want_far := [
-		HudComposeVocab.WORK_PARTY_WALK_FORMAT % [
-			HudComposeVocab.WORK_PARTY_TILES_FORMAT % FAR_WORKING_WALK_TILES,
-			HudComposeVocab.WORK_PARTY_TURNS_FORMAT % FAR_WORKING_WALK_TILES,
-			FAR_WORKING_WALK_TILES],
-		HudComposeVocab.WORK_PARTY_ON_ROAD_FORMAT % [FAR_WORKING_ON_ROAD_ROUNDED,
-			HudDepositVocab.FORESTRY_CREW_NOUN.to_lower()],
-		HudComposeVocab.WORK_PARTY_FIRST_LOAD_FORMAT
+		HudComposeVocab.WORK_PARTY_AWAY_FORMAT
+			% (HudComposeVocab.WORK_PARTY_TILES_FORMAT % FAR_WORKING_WALK_TILES)
+			+ HudComposeVocab.WORK_PARTY_FIRST_LOAD_CLAUSE_FORMAT
 			% (HudComposeVocab.WORK_PARTY_TURNS_FORMAT % FAR_WORKING_FIRST_LOAD),
 	]
-	h._assert_hud("the far working's party section states the walk, the road and the first load — want %s, got %s"
+	h._assert_hud("the far working's party section states its distance and first load — want %s, got %s"
 			% [str(want_far), str(far_lines)],
 		far_lines == want_far)
 	# ⛔ **ONE NUMBER, IN WOOD — NEVER FOOD.** The headline is the reply's `rate_home`, which is in the
@@ -1203,7 +1199,7 @@ func run(harness) -> void:
 			and at_source != null and at_source.text == want_at_source)
 	# ⛔ **AND THE ROCK BESIDE IT POSTS THE SAME CARAVAN** — one builder serves both branches, so a
 	# section wired on one arm would be the same defect one branch over. The finite seam has no dial,
-	# so its headline is the only reading that changes; the digger noun is the other.
+	# so its headline is the only reading that changes; the digger's commit verb is the other.
 	h._hud._drawercompose.open_deposit_compose(_far_stone_working())
 	await h._settle()
 	await h._settle()
@@ -1213,8 +1209,9 @@ func run(harness) -> void:
 	var digger_lines := Readout.work_party_lines(far_digger)
 	h._assert_hud("…and the DIGGER sheet on the same hex posts a party in stone, commit live (lines %s, stone %s)"
 			% [str(digger_lines), Readout.yields_account_number(far_digger, "stone")],
-		digger_lines.size() == want_far.size()
-			and str(digger_lines).contains(HudDepositVocab.EXTRACTION_CREW_NOUN.to_lower())
+		digger_lines == want_far
+			and far_digger_commit != null
+			and far_digger_commit.text == HudDepositVocab.commit_verb(HudDepositVocab.BRANCH_EXTRACTION)
 			and Readout.yields_account_number(far_digger, "stone")
 				== SourceForecast.format_magnitude(FAR_STONE_RATE_HOME)
 			and far_digger_commit != null and not far_digger_commit.disabled)
@@ -2170,7 +2167,6 @@ const RETIRED_RANGE_REFUSAL_NEEDLE := "beyond this band's work range"
 ## in the working's OWN material, which is the claim: `rate_home` on an extract ask is never food.
 const FAR_WORKING_WALK_TILES := 50
 const FAR_WORKING_ON_ROAD := 1.6
-const FAR_WORKING_ON_ROAD_ROUNDED := 2
 const FAR_WORKING_FIRST_LOAD := 58
 const FAR_WOOD_RATE_HOME := 1.4
 const FAR_STONE_RATE_HOME := 0.9

@@ -904,6 +904,19 @@ pub struct WorkPartyForecastReply {
     /// **The hands the asked crew spends keeping the site**, fractional — `workers − keep_hands`
     /// gather, hunt or cut.
     pub keep_hands: f32,
+    /// **Cargo per turn lost on the walk home to transit rot** (#706), over the same horizon as
+    /// `rate_home` (which is net of it). `0` inside the apron and on any walk everything survives.
+    pub spoiled_rate_home: f32,
+    /// **The shortest shelf life among the cargo's classes that rot on this walk**, in turns; `0`
+    /// when nothing rots.
+    pub transit_keeps_turns: f32,
+    /// **A far forage row's fodder per turn ARRIVING home** (#706) — it rides the packs, so a
+    /// delivered rate over `rate_home`'s horizon; the credited figure. `0` inside the apron and on a
+    /// hunt, which yields none.
+    pub fodder_rate_home: f32,
+    /// **A far row's materials per turn arriving home** — a basket's, or a hunt's hide, bone and
+    /// sinew — one row per material. Empty inside the apron and on a deposit.
+    pub materials_rate_home: Vec<MaterialPayoff>,
 }
 
 /// The grid the player is **configuring**, not the one the server is running: the ceiling is a
@@ -3112,6 +3125,17 @@ impl QueryReplyEnvelope {
                     first_load_turn: answer.first_load_turn,
                     take_next_turn: answer.take_next_turn,
                     keep_hands: answer.keep_hands,
+                    spoiled_rate_home: answer.spoiled_rate_home,
+                    transit_keeps_turns: answer.transit_keeps_turns,
+                    fodder_rate_home: answer.fodder_rate_home,
+                    materials_rate_home: answer
+                        .materials_rate_home
+                        .iter()
+                        .map(|payoff| pb::MaterialPayoff {
+                            material_id: payoff.material_id.clone(),
+                            amount: payoff.amount,
+                        })
+                        .collect(),
                 })
             }
             QueryReply::SaveOp(reply) => {
@@ -3239,6 +3263,17 @@ impl QueryReplyEnvelope {
                     first_load_turn: answer.first_load_turn,
                     take_next_turn: answer.take_next_turn,
                     keep_hands: answer.keep_hands,
+                    spoiled_rate_home: answer.spoiled_rate_home,
+                    transit_keeps_turns: answer.transit_keeps_turns,
+                    fodder_rate_home: answer.fodder_rate_home,
+                    materials_rate_home: answer
+                        .materials_rate_home
+                        .into_iter()
+                        .map(|payoff| MaterialPayoff {
+                            material_id: payoff.material_id,
+                            amount: payoff.amount,
+                        })
+                        .collect(),
                 })
             }
             pb::query_reply_envelope::Reply::ListSaves(reply) => QueryReply::ListSaves(
@@ -3716,6 +3751,13 @@ mod tests {
                 first_load_turn: 11,
                 take_next_turn: 12.5,
                 keep_hands: 1.25,
+                spoiled_rate_home: 0.75,
+                transit_keeps_turns: 4.0,
+                fodder_rate_home: 0.5,
+                materials_rate_home: vec![MaterialPayoff {
+                    material_id: "tobacco".to_string(),
+                    amount: 0.25,
+                }],
             }),
         };
         let bytes = reply.encode_to_vec().expect("encode");

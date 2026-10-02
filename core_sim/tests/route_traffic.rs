@@ -110,7 +110,7 @@ fn spawn_band(app: &mut App, (x, y): (u32, u32), food: i64) -> Entity {
         .index(x, y)
         .expect("tile coords resolve");
     let mut stores = LocalStore::new();
-    stores.set(FOOD, Scalar::from_i64(food));
+    stores.reset_food("dry", Scalar::from_i64(food));
     app.world
         .spawn((
             PopulationCohort {
@@ -124,6 +124,7 @@ fn spawn_band(app: &mut App, (x, y): (u32, u32), food: i64) -> Entity {
                 morale: scalar_zero(),
                 last_food_consumption: 0.0,
                 last_food_need: 0.0,
+                last_food_spoiled: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),
@@ -194,7 +195,7 @@ fn set_food(app: &mut App, band: Entity, food: i64) {
         .get_mut::<PopulationCohort>(band)
         .expect("the band exists")
         .stores
-        .set(FOOD, Scalar::from_i64(food));
+        .reset_food("dry", Scalar::from_i64(food));
 }
 
 /// **THE ROADWORK PAYMENT, DRIVEN BY HAND — this harness does not run the labour pass.**

@@ -347,9 +347,28 @@ population cap, storage the way past it — is **stale**: this doc replaced what
 the lineage/cohesion ladder, and the carry capacity that shipped is what a *worker carries back*
 (`forage_carry`), not a bound on the larder.
 
-**Spoilage comes first.** Every food stock loses a share per turn; storage lowers that rate. Spoilage
-is what turns a surplus into a problem instead of a number going up, and nothing below works without
-it.
+**Spoilage comes first.** Food that sits past its shelf life rots; storage lengthens the shelf life.
+Spoilage is what turns a surplus into a problem instead of a number going up, and nothing below works
+without it.
+
+**Only food the band cannot eat in time rots (decided, #706).** A band eats its oldest food first, so
+a unit waits about *larder ÷ consumption* turns before it is eaten, and rots only if that wait is
+longer than its shelf life. No per-unit age is tracked; the rule is a line, not a share:
+
+- Each **keeping class** (config) has one property, `shelf_life_turns`. The first classes are
+  `flesh` (meat and fish — short), `fresh_plant` (greens, roots, fruit — longer) and `dry` (nuts,
+  seeds, later grain — long). Every fauna and flora species names the class its yield goes into, so
+  a gathered shellfish bed and a hunted catfish are both `flesh`.
+- The band **eats the fastest-rotting class first**. Sorting the classes by shelf life, class *k*
+  rots by however much the stock of it and every faster class runs past *need × shelf life of k* —
+  one pass over a handful of numbers per turn.
+- A band with a small surplus stays under every line and never sees rot. The line scales with the
+  band: sixty people hold twice what thirty hold before anything spoils.
+- **Preservation is a longer shelf life, nothing else.** A drying rack lifts `flesh`'s line, a pit
+  lifts `dry`'s; "build storage" means exactly "hold more before it rots".
+- **A work party's pack rots by its walk.** Cargo whose walk home is longer than its class's shelf
+  life rots on the way, which gives a far hunt a natural range that drying extends.
+- The rot is its own term on the Food line (`Spoiled`) and in the larder ledger identity.
 
 **Rot teaches storage — one signal, not two.** The intensification ladder's knowledge ledger already
 teaches the next rung by practice, over ~20-turn lessons (`.claude/rules/core_sim/intensification.md`).
@@ -407,16 +426,17 @@ first raises a band's income past its consumption.
 a band carries, so that a fixed store would be the only way to hold more. Spoilage is enough: food
 carried spoils at the base rate, food in a fixed store spoils slower, and walking away from your
 store leaves its contents behind. The bound on a nomad's larder is **emergent** — steady state is
-surplus per turn ÷ spoilage rate — and no separate carry rule exists.
+*need × shelf life* per class, the fastest classes first — and no separate carry rule exists. It
+moves with band size and with technique, which is what makes it not a carry cap.
 
 **"Away from your storage" needs no distance rule.** Two things already decided give it: food
 spoils at the rate of *where it is* (carried, or in a store), and **the granary is a supply-network
 node** — the same rule as the work party. A band within `reach_tiles` of its store draws from it
 through pooling; a band beyond reach is cut off from it, and the contents stay on the tile spoiling
 slowly. The only thing a store adds to the network is that it is a node with no people in it. With
-no carry cap, the first turns differ from today only in that the larder shrinks a little each turn —
-which is the signal that teaches the storage lesson — so base rates should stay slow enough that a
-well-fed band still sees its runway grow, and the rot should show on the Food line as its own term.
+no carry cap, the first turns differ from today only in that food above a class's line rots — which
+is the signal that teaches the storage lesson — while a well-fed band's runway still grows up to its
+shelf lives, and the rot shows on the Food line as its own term.
 
 ## The improvement catalog is the intensification ladder (decided)
 

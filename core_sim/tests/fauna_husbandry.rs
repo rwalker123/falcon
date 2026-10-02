@@ -1060,6 +1060,7 @@ fn spawn_crew_of(
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
                 last_food_need: 0.0,
+                last_food_spoiled: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),
@@ -1335,7 +1336,7 @@ fn stock_larder(app: &mut App, band: bevy::prelude::Entity, amount: f32) {
         .world
         .get_mut::<PopulationCohort>(band)
         .expect("band exists");
-    cohort.stores.set(FOOD, scalar_from_f32(amount));
+    cohort.stores.reset_food("dry", scalar_from_f32(amount));
 }
 
 // **RETIRED: `drain_larder`.** It emptied the band's `FOOD` store so a keeper *could not pay* its
@@ -5205,6 +5206,7 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
                 last_food_need: 0.0,
+                last_food_spoiled: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),

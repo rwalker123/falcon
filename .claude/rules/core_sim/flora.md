@@ -497,8 +497,8 @@ and the two stores **never convert**.
   that cannot hay leave the pen **unfed**, and it shrinks. That also retires the pen's net-positive
   floor, which compared a food-unit upkeep against a food-unit yield. The pen-food ledger identity
   (`pen_food_ledger.rs`) holds for a hayed pen and a starving one **identically** — hay is off-ledger,
-  and so is the feed it replaced, so `larder_delta == foodIncome − foodConsumption − raidForfeit`
-  reconciles either way.
+  and so is the feed it replaced, so
+  `larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled` reconciles either way.
 - **Wire (append-only):** `PopulationCohortState.fodderStore` — plus the band's hay **ledger**
   `fodderNeed` / `fodderIncome` / `turnsOfFodder`, which is where `band_fodder_inflow` finally
   reaches the client (`yield-forecast.md` → "The band's hay ledger", whose runway counts down the

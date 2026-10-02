@@ -24,7 +24,7 @@ use core_sim::{
     MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, Scalar,
     SedentarizationConfigHandle, SedentarizationScore, SimulationConfig, SimulationTick,
     SitesConfigHandle, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
-    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, FOOD,
+    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
 };
 
 /// Pinned so selection (seeded from `map_seed`) is reproducible run to run.
@@ -111,6 +111,7 @@ pub fn spawn_band(app: &mut App, faction: FactionId, size: u32) {
             morale: scalar_one(),
             last_food_consumption: 0.0,
             last_food_need: 0.0,
+            last_food_spoiled: 0.0,
             last_turn_food_transfers: Default::default(),
             last_turn_fodder_transfers: Default::default(),
             last_turn_transfer_crossings: Vec::new(),
@@ -142,7 +143,7 @@ pub fn set_surplus(app: &mut App, faction: FactionId, amount: u32) {
     let mut query = app.world.query::<&mut PopulationCohort>();
     for mut cohort in query.iter_mut(&mut app.world) {
         if cohort.faction == faction {
-            cohort.stores.set(FOOD, Scalar::from_u32(amount));
+            cohort.stores.reset_food("dry", Scalar::from_u32(amount));
         }
     }
 }

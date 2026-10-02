@@ -274,6 +274,13 @@ fn create_populations<'a>(
                             builder,
                             &assignment.material_yield,
                         );
+                        // **A far forage row's materials home rate** (#706), built before the
+                        // parent table opens.
+                        let materials_rate_home =
+                            crate::codec::subsistence::create_material_payoffs(
+                                builder,
+                                &assignment.materials_rate_home,
+                            );
                         // **THE GOOD-SIDE SHORTFALL PAIR**, built here for the same reason: the
                         // child vectors have to close before the parent table opens.
                         let material_upkeep_demand =
@@ -438,6 +445,12 @@ fn create_populations<'a>(
                                 kitToe: kit_toe,
                                 // **THIS ROW'S OWN KEEPING HANDS**. Appended last.
                                 keepHands: assignment.keep_hands,
+                                // **WHAT THE WALK HOME LOSES** (#706). Appended last.
+                                spoiledRateHome: assignment.spoiled_rate_home,
+                                transitKeepsTurns: assignment.transit_keeps_turns,
+                                // **A FAR FORAGE ROW'S OTHER ACCOUNTS, HOME** (#706). Appended last.
+                                fodderRateHome: assignment.fodder_rate_home,
+                                materialsRateHome: Some(materials_rate_home),
                             },
                         )
                     })
@@ -1120,6 +1133,14 @@ fn create_populations<'a>(
                     foodNeed: cohort.food_need,
                     foodShortfall: cohort.food_shortfall,
                     foundingLines: cohort.founding_lines,
+                    // THE FOOD THAT ROTTED THIS TURN — appended last (#706).
+                    foodSpoiled: cohort.food_spoiled,
+                    // THE BAND'S STOOD-DOWN PARTIES, WALKING HOME — appended last (#706).
+                    homewardWorkers: cohort.homeward_workers,
+                    homewardFood: cohort.homeward_food,
+                    homewardFoodSpoils: cohort.homeward_food_spoils,
+                    homewardNextLoadIn: cohort.homeward_next_load_in,
+                    homewardAllHomeIn: cohort.homeward_all_home_in,
                 },
             )
         })
@@ -1294,6 +1315,10 @@ fn decode_labor_assignment(
             filled: line.filled(),
         }),
         keep_hands: assignment.keepHands(),
+        spoiled_rate_home: assignment.spoiledRateHome(),
+        transit_keeps_turns: assignment.transitKeepsTurns(),
+        fodder_rate_home: assignment.fodderRateHome(),
+        materials_rate_home: decode_material_payoffs(assignment.materialsRateHome()),
     })
 }
 
@@ -1634,6 +1659,12 @@ fn decode_population(
         food_need: cohort.foodNeed(),
         food_shortfall: cohort.foodShortfall(),
         founding_lines: cohort.foundingLines(),
+        food_spoiled: cohort.foodSpoiled(),
+        homeward_workers: cohort.homewardWorkers(),
+        homeward_food: cohort.homewardFood(),
+        homeward_food_spoils: cohort.homewardFoodSpoils(),
+        homeward_next_load_in: cohort.homewardNextLoadIn(),
+        homeward_all_home_in: cohort.homewardAllHomeIn(),
     })
 }
 

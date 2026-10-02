@@ -8,8 +8,11 @@
 //! extending the pen ledger identity by one term:
 //!
 //! ```text
-//! larder_delta == foodIncome − foodConsumption − raidForfeit
+//! larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled
 //! ```
+//!
+//! (`foodSpoiled` is the turn's rot, #706 — the ample larder seeded below sits above its keeping
+//! line, so it is a live term here rather than a zero.)
 //!
 //! Pinned against a **real turn** through the real systems and the real snapshot export — a foraging
 //! band with a wolf on its camp — so `raidForfeit` is genuinely non-zero.
@@ -100,7 +103,7 @@ fn the_food_ledger_reconciles_with_a_predator_raid() {
         .get_mut::<PopulationCohort>(band)
         .expect("band")
         .stores
-        .set(FOOD, scalar_from_f32(AMPLE_LARDER));
+        .reset_food("dry", scalar_from_f32(AMPLE_LARDER));
 
     let working_before = app
         .world
@@ -157,19 +160,21 @@ fn the_food_ledger_reconciles_with_a_predator_raid() {
     );
     // The extended identity holds against the real larder movement.
     let delta = after - before;
-    let ledger = cohort.food_income - cohort.food_consumption - cohort.raid_forfeit;
+    let ledger =
+        cohort.food_income - cohort.food_consumption - cohort.raid_forfeit - cohort.food_spoiled;
     assert!(
         (delta - ledger).abs() < EPSILON,
-        "larder_delta must equal foodIncome − foodConsumption − raidForfeit: \
-         delta={delta} vs ledger={ledger} (income={} consumption={} raidForfeit={})",
+        "larder_delta must equal foodIncome − foodConsumption − raidForfeit − foodSpoiled: \
+         delta={delta} vs ledger={ledger} (income={} consumption={} raidForfeit={} spoiled={})",
         cohort.food_income,
         cohort.food_consumption,
         cohort.raid_forfeit,
+        cohort.food_spoiled,
     );
 
     // The bug the field exists to kill: the pre-fix net-food row (income − consumption) overstates the
     // true larder change by exactly the forfeit.
-    let naive_net = cohort.food_income - cohort.food_consumption;
+    let naive_net = cohort.food_income - cohort.food_consumption - cohort.food_spoiled;
     assert!(
         (naive_net - delta - cohort.raid_forfeit).abs() < EPSILON,
         "the pre-fix readout overstates the true change by exactly the raid forfeit"

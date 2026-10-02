@@ -221,8 +221,19 @@ party with nothing left to deliver.
 the schema): `raid_radius` ← `cohort.raidRadius()` (a plain `uint` reach, `as i64` — like `work_range`,
 NOT a Scalar), the odd-r hex distance within which an aggressive carnivore herd raids this band's
 larder; and `raid_forfeit` ← `cohort.raidForfeit()` (`float`, `as f64`), the food this band lost to
-raids THIS turn — the ledger's only debit beyond consumption, `pen_feed_upkeep` having been retired
-(human food is not animal feed; see `band-readouts.md`). Both are consumed client-side by the band panel:
+raids THIS turn — one of the ledger's two loss terms beyond consumption, `pen_feed_upkeep` having been
+retired (human food is not animal feed; see `band-readouts.md`). The other is `food_spoiled` ←
+`cohort.foodSpoiled()` (`float`, `as f64`, #706, decoded beside `food_shortfall`): food that rotted
+this turn in the larder or in a caravan pack on the walk home, the "Spoiled" food-ledger row. Beside
+it, the band's stood-down-party walk home (#706): `homeward_workers` / `homeward_next_load_in` /
+`homeward_all_home_in` (`uint`, `as i64`) and `homeward_food` / `homeward_food_spoils` (`float`,
+`f64`), all 0 while nobody walks home. Each work row carries `spoiled_rate_home` and
+`transit_keeps_turns` (`float`) beside `net_rate_home`, which is NET of that rot; the
+`WorkPartyForecastReply` decode (`bridge/query.rs`) carries the same pair beside `rate_home`. Each
+row also carries `fodder_rate_home` (`float`) and `materials_rate_home` (`material_yield`'s
+`{material_id, amount}` array, via `subsistence::material_payoffs_to_array`) — a far forage row's
+by-products arriving home per turn, 0 / empty elsewhere; the forecast reply carries the same two
+(proto 11 / 12, via `query.rs`'s `material_payoffs_to_array`). Both are consumed client-side by the band panel:
 `raid_radius` derives the "Predator nearby" Warrior alert (the DANGER itself is derived on the client
 from visible-herd telemetry, never a wire flag), `raid_forfeit` is the "Lost to raids" food-ledger row.
 

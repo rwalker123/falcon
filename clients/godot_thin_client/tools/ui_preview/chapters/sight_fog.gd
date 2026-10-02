@@ -25,7 +25,14 @@ const Readout := preload("res://tools/ui_preview/readouts.gd")
 const FAR_PATCH_WALK_TILES := 19
 const FAR_PATCH_WALK_TURNS := 19
 const FAR_PATCH_ON_ROAD := 0.7
-const FAR_PATCH_ON_ROAD_ROUNDED := 1
+## Part of the far patch's carried take rots on its 19-turn walk home (#706) — the partial register
+## of the PER TURN box's rot bullet; `FAR_PATCH_RATE_HOME` is already net of it.
+const FAR_PATCH_SPOILED_RATE := 0.05
+## What else the far patch's packs carry home per turn (#706) — its hay and its fibre, at the reply's
+## HOME rates. The box must read these, never the take at the source.
+const FAR_PATCH_FODDER_RATE_HOME := 0.4
+const FAR_PATCH_FIBRE_RATE_HOME := 0.1
+const FAR_PATCH_FIBRE_ID := "fibre"
 const FAR_PATCH_RATE_HOME := 0.12
 const FAR_PATCH_FIRST_LOAD := 42
 
@@ -155,6 +162,10 @@ func run(harness) -> void:
 		"posts_a_party": true, "rate_home": FAR_PATCH_RATE_HOME,
 		"walk_tiles": FAR_PATCH_WALK_TILES, "walk_turns": FAR_PATCH_WALK_TURNS,
 		"hunters_on_the_road": FAR_PATCH_ON_ROAD, "first_load_turn": FAR_PATCH_FIRST_LOAD,
+		"spoiled_rate_home": FAR_PATCH_SPOILED_RATE,
+		"fodder_rate_home": FAR_PATCH_FODDER_RATE_HOME,
+		"materials_rate_home": [{"material_id": FAR_PATCH_FIBRE_ID,
+			"amount": FAR_PATCH_FIBRE_RATE_HOME}],
 	}
 	h._show_tile(far_patch)
 	h._compose_forage(far_patch)
@@ -166,18 +177,30 @@ func run(harness) -> void:
 		patch_commit != null and not patch_commit.disabled
 			and not Q.has_label_containing(patch_sheet, RETIRED_RANGE_REFUSAL_NEEDLE))
 	var want_patch := [
-		HudComposeVocab.WORK_PARTY_WALK_FORMAT % [
-			HudComposeVocab.WORK_PARTY_TILES_FORMAT % FAR_PATCH_WALK_TILES,
-			HudComposeVocab.WORK_PARTY_TURNS_FORMAT % FAR_PATCH_WALK_TURNS, FAR_PATCH_WALK_TURNS],
-		HudComposeVocab.WORK_PARTY_ON_ROAD_FORMAT % [FAR_PATCH_ON_ROAD_ROUNDED,
-			HudComposeVocab.WORK_PARTY_CREW_SINGULAR[HudComposeVocab.HARVEST_CREW_LABEL]],
-		HudComposeVocab.WORK_PARTY_FIRST_LOAD_FORMAT
+		HudComposeVocab.WORK_PARTY_AWAY_FORMAT
+			% (HudComposeVocab.WORK_PARTY_TILES_FORMAT % FAR_PATCH_WALK_TILES)
+			+ HudComposeVocab.WORK_PARTY_FIRST_LOAD_CLAUSE_FORMAT
 			% (HudComposeVocab.WORK_PARTY_TURNS_FORMAT % FAR_PATCH_FIRST_LOAD),
 	]
 	var got_patch := Readout.work_party_lines(patch_sheet)
-	h._assert_hud("…and it states the party's walk, road and first load in the harvesters' own noun — want %s, got %s"
+	h._assert_hud("…and it states the party's distance and first load in one line — want %s, got %s"
 			% [str(want_patch), str(got_patch)],
 		got_patch == want_patch)
+	# **WHAT ROTS ON THE WALK, UNDER THE NUMBER IT IS ALREADY NET OF** (#706) — the partial register.
+	var patch_rot := Readout.work_party_rot(patch_sheet)
+	var want_patch_rot := HudWorkVocab.ROT_RATE_FORMAT % SourceForecast.format_magnitude(
+		FAR_PATCH_SPOILED_RATE)
+	h._assert_hud("…and an amber bullet saying what rots on the way home — want %s, got %s"
+			% [want_patch_rot, str(patch_rot)],
+		patch_rot[0] == want_patch_rot and patch_rot[1] == SourceForecast.VERDICT_SLOW)
+	# **ITS HAY AND FIBRE ARE THE HOME-ARRIVING RATES** (#706) — the packs carry them with the food.
+	var patch_fodder := Readout.yields_account_number(patch_sheet, SourceForecast.YIELD_ACCOUNT_FODDER)
+	var patch_fibre := Readout.yields_account_number(patch_sheet, FAR_PATCH_FIBRE_ID)
+	h._assert_hud("…and its fodder and fibre read the reply's HOME rates (want %s / %s, got %s / %s)"
+			% [SourceForecast.format_magnitude(FAR_PATCH_FODDER_RATE_HOME),
+				SourceForecast.format_magnitude(FAR_PATCH_FIBRE_RATE_HOME), patch_fodder, patch_fibre],
+		patch_fodder == SourceForecast.format_magnitude(FAR_PATCH_FODDER_RATE_HOME)
+			and patch_fibre == SourceForecast.format_magnitude(FAR_PATCH_FIBRE_RATE_HOME))
 	# **AND ITS FOOD HEADLINE IS THE FIGURE THE COMMITTED ROW PRINTS**, the plant web's half of the
 	# one-number rule.
 	var patch_food := Readout.yields_account_number(patch_sheet, SourceForecast.YIELD_ACCOUNT_FOOD)
@@ -187,19 +210,6 @@ func run(harness) -> void:
 	h._assert_hud("…under the caravan's neutral `once running · per turn` caption (got \"%s\")"
 			% Readout.yields_header(patch_sheet),
 		Readout.yields_header(patch_sheet) == HudComposeVocab.YIELD_HEADER_ONCE_RUNNING.to_upper())
-	# **THE FORAGE TWIN OF THE SLOW-FILL LINE** (`hunt.gd`'s producer edges), PNG-less through the one
-	# producer: a gather too thin to fill a pack soon says so in the GATHER verb — a forage party never
-	# reads as a hunt. Pinned by the WORD, since an equality against the constant alone is satisfied
-	# by a swapped pair.
-	var slow := DrawerComposeController.work_party_section_lines({
-		"posts_a_party": true, "walk_tiles": FAR_PATCH_WALK_TILES, "walk_turns": FAR_PATCH_WALK_TURNS,
-		"hunters_on_the_road": FAR_PATCH_ON_ROAD, "rate_home": FAR_PATCH_RATE_HOME,
-		"first_load_turn": 0},
-		HudComposeVocab.HARVEST_CREW_LABEL, ForecastQuery.WORK_PARTY_SOURCE_FORAGE)
-	h._assert_hud("a gather too thin to fill a pack soon says so in the gather verb — got %s" % str(slow),
-		slow.has(HudComposeVocab.WORK_PARTY_SLOW_FILL_FORAGE)
-			and str(slow).contains("gather") and not str(slow).contains("catch"))
-
 	# State 2c — TWO bands at DIFFERENT distances from ONE food tile, NEAR band selected (821, 1 tile
 	# away ≤ range 2): an ordinary gather with no party section. The band-picker selection — not the
 	# tile — drives it.

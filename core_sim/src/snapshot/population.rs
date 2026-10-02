@@ -142,6 +142,32 @@ pub(crate) fn labor_assignment_to_state(
             .as_ref()
             .map_or(0, |p| p.next_load_home_in()),
         net_rate_home: assignment.party.as_ref().map_or(0.0, |p| p.net_rate_home),
+        spoiled_rate_home: assignment
+            .party
+            .as_ref()
+            .map_or(0.0, |p| p.spoiled_rate_home),
+        transit_keeps_turns: assignment
+            .party
+            .as_ref()
+            .map_or(0.0, |p| p.transit_keeps_turns),
+        // **A far forage row's fodder and materials, home** (#706) — smoothed off the forecast.
+        fodder_rate_home: assignment
+            .party
+            .as_ref()
+            .map_or(0.0, |p| p.fodder_rate_home),
+        materials_rate_home: assignment
+            .party
+            .as_ref()
+            .map(|p| {
+                p.materials_rate_home
+                    .iter()
+                    .map(|payoff| sim_runtime::MaterialPayoff {
+                        material_id: payoff.material.clone(),
+                        amount: payoff.amount,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
         ..Default::default()
     };
     match &assignment.target {
@@ -946,6 +972,8 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         build_sources,
         loadout_window,
     } = inputs;
+    let homeward: &[crate::work_party::HomewardWalk] =
+        allocation.map_or(&[], |allocation| allocation.homeward.as_slice());
     // **The minimal TOE, resolved for the wire.** An absent component means the ledger was never
     // built, which reads as **start-stocked** — the same fallback `advance_labor_allocation`,
     // `advance_expeditions` and the party-wear site in `capture.rs` take, and it has to be, or this
@@ -1478,11 +1506,27 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // that would swing the runway for the one turn it lands. It is the same basis the client's Food
     // headline rate adds (`DetailFormat.band_headline_food_rate`), so the rate and the runway beside
     // it agree. Read off the per-turn twin on the cohort, so a recapture republishes the same runway.
+    //
+    // ⛔ **A RESIDENT BAND'S LARDER IS READ AFTER ONE TURN OF ROT** (#706,
+    // `crate::spoilage::larder_after_rot`) — a FIRST-TURN CORRECTION, not a model of spoilage over
+    // the whole runway. A larder above its keeping lines loses the excess on the next turn whatever
+    // the band does, so counting that food as runway would promise turns the store cannot keep; the
+    // turns after are walked as before. A detached party's pack does not rot in this slice, so it
+    // reads its pack whole.
+    let runway_larder = if expedition.is_some() {
+        cohort.stores.get(FOOD)
+    } else {
+        crate::spoilage::larder_after_rot(
+            cohort.stores.food(),
+            demand.to_f32(),
+            &demographics.keeping,
+        )
+    };
     let turns_of_food = if demand.raw() <= 0 {
         NOT_FOOD_LIMITED_TURNS
     } else {
         larder_runway_turns(
-            cohort.stores.get(FOOD).to_f32(),
+            runway_larder.to_f32(),
             demand.to_f32(),
             steady_food_income,
             pooled_food_net(cohort),
@@ -2085,6 +2129,33 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // set operations (contact merge, the split partition); a reader wants how many.
         // A set minted from a `u16` count and only ever partitioned cannot outgrow `u32`.
         founding_lines: cohort.founding_lines.len() as u32,
+        // **What rotted this turn** (#706) — the ledger identity's `spoiled` term, set by the larder
+        // rot and added to by any caravan pack's transit rot.
+        food_spoiled: cohort.last_food_spoiled,
+        // **The band's stood-down parties, walking home** (#706) — read off the allocation, since
+        // they outlive the rows that posted them.
+        homeward_workers: homeward.iter().map(|walk| walk.workers).sum(),
+        homeward_food: homeward
+            .iter()
+            .filter(|walk| walk.carries_food())
+            .map(|walk| walk.cargo)
+            .sum(),
+        homeward_food_spoils: homeward
+            .iter()
+            .map(|walk| walk.food_that_rots(&demographics.keeping))
+            .sum(),
+        homeward_next_load_in: homeward
+            .iter()
+            .filter(|walk| walk.cargo > crate::work_party::NOTHING_CARRIED)
+            .map(|walk| walk.turns_left)
+            .min()
+            .unwrap_or(crate::work_party::NO_LOAD_ON_THE_ROAD),
+        homeward_all_home_in: homeward
+            .iter()
+            .filter(|walk| walk.workers > crate::work_party::NOBODY_ON_THE_ROAD)
+            .map(|walk| walk.turns_left)
+            .max()
+            .unwrap_or(crate::work_party::NO_WALK),
     }
 }
 
@@ -2502,7 +2573,7 @@ mod tests {
     /// A minimal content cohort with `larder` food and a working-age bracket that eats.
     fn cohort(larder: f32) -> PopulationCohort {
         let mut stores = LocalStore::new();
-        stores.set(FOOD, scalar_from_f32(larder));
+        stores.reset_food("dry", scalar_from_f32(larder));
         PopulationCohort {
             home: Entity::from_raw(1),
             current_tile: Entity::from_raw(1),
@@ -2514,6 +2585,7 @@ mod tests {
             morale: scalar_one(),
             last_food_consumption: 0.0,
             last_food_need: 0.0,
+            last_food_spoiled: 0.0,
             last_turn_food_transfers: Default::default(),
             last_turn_fodder_transfers: Default::default(),
             last_turn_transfer_crossings: Vec::new(),

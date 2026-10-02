@@ -1453,8 +1453,8 @@ band.
   deliberately two bands of DIFFERENT size (30 and 12), so a page that had stopped summing renders a
   number distinguishable from either band's own.
 - **THE NET IS SUMMED FROM EACH BAND'S OWN `band_net_food`**, never recomposed from the three totals
-  above it. `raid_forfeit` is a fourth, EPISODIC term of that identity and belongs in the net without
-  earning a standing row, so a recomposed net would quietly disagree with the band pages.
+  above it. `raid_forfeit` and `food_spoiled` are EPISODIC loss terms of that identity and belong in
+  the net without earning a standing row, so a recomposed net would quietly disagree with the band pages.
 - **BOTH LISTS ARE CAPPED, AND THE CAP IS STATED.** The zones clip and neither list pages (the work
   board's pager belongs to a band's own sources), so a bounded list ends in `+N more`. A truncated
   list with nothing under it reads as the whole roster — the one way a rollup can lie about a total
@@ -3134,6 +3134,15 @@ the same `_build_role_card`; nothing about the keeping is a parallel surface.
   a THIRD row**, alone: it is neither expeditionary nor keeping — it RAISES what the keeping then
   holds — and a builder pushed up beside Husbandry would read as a third kind of keeper. Its own row
   also costs nothing that pairing it would save, the row height being the card's either way.
+- **HANDS WALKING HOME ARE A SEGMENT AND TWO OR THREE LINES** (#706). A stood-down far party's hands
+  walk home (`homeward_*`, the band's keys): inside `working_age`, netted out of idle, so the bar
+  carries a `Walking home` segment (`WORKFORCE_KEY_HOMEWARD`, `INK_DIM`) or it stops partitioning.
+  Under the key, `HudWorkVocab.homeward_lines`: `3 walking home with 2.40 food — all home in 3 turns`
+  (`homeward_all_home_in`; the food clause only when they carry any), then `First load lands in 1 turn`
+  only when `homeward_next_load_in` is sooner than all-home — its own line, because one long line
+  elides in the left dock. `homeward_spoils_line` adds `0.80 of it will spoil on the way` in `WARN`
+  when `homeward_food_spoils` is non-zero. All absent while `homeward_workers` is 0.
+  `band_panel_preview`'s `band_panel_homeward` asserts the segment, idle, and the drawn lines.
 - **The keeping roles are in the WORKFORCE bar's `Roles` SEGMENT even though their cards are not in
   that block.** The segments partition `working_age`, `effective_idle` already nets these hands out
   of Idle, and a segment that omitted them would stop the key adding up to the head the zone states.
@@ -5374,7 +5383,7 @@ applied one level up: a second total beside the first, shown only when non-zero.
 
 **FODDER IS THAT SIBLING** (issue #449), and it credits the band's `FODDER` store and never the larder,
 so folding it into the food figure would break the identity
-`larder_delta == income − consumption − pen_feed − raid_forfeit`. The head reads `2 sources +0.20
+`larder_delta == income − consumption − raid_forfeit − food_spoiled + received − sent`. The head reads `2 sources +0.20
 /turn +0.40 fodder` (`WORK_FODDER_TOTAL_TOOLTIP` making the beside-not-in point) and a chip covering
 only hay-bearing patches reads `🌿 1 · 0.40 fodder` — via `SourceForecast.magnitude_components`, the
 bare-magnitude twin of `yield_components` (a chip states levels, not deltas, so no `+`). A kind whose
@@ -7500,8 +7509,26 @@ count, so a line added to the block is paid for without a second edit anywhere.
    the rest of the posting's life, and it drops the line.
 4. `Next load home in <N> turns` (`in 1 turn` at one) — **only while `nextLoadHomeIn > 0`.** `0` is
    *"nobody is carrying a load home"*, never *"lands this turn"*.
+5. The rot line (#706, `HudWorkVocab.rot_line`, shared with the compose sheet's PER TURN bullet) —
+   **only while `spoiledRateHome` clears `has_component`**: `Every pack rots before it gets home`
+   where the row's `netRateHome` rounds to nothing, else `−0.35 food a turn rots on the way home`
+   (`WORK_ROW_PARTY_SPOILS_LEAD`, the row's rates being signed). The rate line above is already NET of
+   it. So a running posting reads at most two block lines (crew, next load) plus this one.
 
-Every line is the row's quiet `INK_DIM`, and `_work_row_party_lines_text` returns plain strings.
+**A FAR ROW'S FODDER AND MATERIALS ARE ITS HOME RATES** (#706) — forage, hunt or pen alike, the
+readers making no kind check. Its accounts line reads
+`SourceForecast.fodder_rate_of` / `material_rows_of`, which on a party row return `fodderRateHome` /
+`materialsRateHome` — the per-turn `fodderYield` / `materialYield` there are only what landed this
+turn, 0 between packs. So the row reads `+0.30 /turn · +0.40 fodder · +0.10 fibre`, and the zone
+head's fodder total, the filter chips, the sort and the map's worked-source panel
+(`BandOverlayRenderer._entry_fodder` / `_entry_materials`) follow it. `band_panel_work_party_spoils`
+carries a far forage row and a far hunt row (hide only) between packs and asserts both lines.
+
+Every line is the row's quiet `INK_DIM` **except the spoil line, which wears `WARN`** — the amber of
+the Food line's `Spoiled` row — keyed by `HudWorkVocab.is_party_spoils_line` (the all-rots text, or
+the `WORK_ROW_PARTY_SPOILS_LEAD`). `_work_row_party_lines_text` still returns plain strings.
+`band_panel_preview`'s `band_panel_work_party_spoils` asserts the line, its ink, and its absence on a
+posting whose walk rots nothing.
 
 > #### ⛔ THE EAT-FIRST RULE'S LINES ARE RETIRED WITH IT
 >
@@ -7546,7 +7573,7 @@ whose whole balance argument is stated in rows. **The parameter's DEFAULT is the
 so every board without a posting pages exactly as it did and the layout probes measure what they
 always measured.
 
-### The wire's eight keys are read in ONE place
+### The wire's party keys are read in ONE place
 
 `SourceForecast.party_readout` is the only reader, and `party_is_posted` the only gate.
 ⛔ **`party_workers == 0` IS the sim's own "there is no party"** and every other key reads 0 with it,

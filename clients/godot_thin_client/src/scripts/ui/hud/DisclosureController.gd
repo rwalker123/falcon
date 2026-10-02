@@ -203,9 +203,15 @@ func food_breakdown_lines(band: Dictionary) -> Array[String]:
     var raid_forfeit := DetailFormat.band_raid_forfeit(band)
     if raid_forfeit >= SourceForecast.FOOD_FLOW_MIN:
         lines.append(DetailFormat.food_breakdown_row(-raid_forfeit, DetailFormat.FOOD_LABEL_RAID_FORFEIT))
+    # The spoilage debit (#706): food that rotted this turn — larder food past its shelf life plus
+    # caravan packs that spoiled on the walk home. Another loss with its own story (eat or store it
+    # sooner, haul it shorter), so its own row, shown only on a turn something rotted (0 → omitted).
+    var spoiled := DetailFormat.band_food_spoiled(band)
+    if spoiled >= SourceForecast.FOOD_FLOW_MIN:
+        lines.append(DetailFormat.food_breakdown_row(-spoiled, DetailFormat.FOOD_LABEL_SPOILED))
     # **THE TRANSFER ROWS** (arc #527) — food that crossed between bands, which passes through NEITHER
     # of the income rows above (what THIS band's workers produced) nor either debit (what its own
-    # people ate, what a raid took). A FOURTH kind of row, and not a trade feature:
+    # people ate, what a raid took, what rotted). A FOURTH kind of row, and not a trade feature:
     # `balance_supply_networks` moves goods between neighboring camps every turn, so before these rows
     # a player watching two linked bands saw both larders move for no stated reason.
     #

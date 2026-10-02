@@ -26,9 +26,11 @@
 //! fact — *food that crossed between bands outside income and consumption* — and the identity is now
 //!
 //! ```text
-//! larder_delta == foodIncome − foodConsumption − raidForfeit
+//! larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled
 //!                 + transferReceived − transferSent
 //! ```
+//!
+//! (`foodSpoiled`, #706, is the turn's rot — the larder's and any caravan pack's.)
 //!
 //! Asserted against **real turns through the real systems and the real exported snapshot**, the
 //! shape `pen_food_ledger.rs` and `raid_food_ledger.rs` already use — never against a
@@ -78,6 +80,8 @@ struct Ledger {
     income: f32,
     consumption: f32,
     raid_forfeit: f32,
+    /// The food that rotted this turn (#706) — the identity's `spoiled` term.
+    spoiled: f32,
     received: f32,
     sent: f32,
 }
@@ -85,13 +89,14 @@ struct Ledger {
 impl Ledger {
     /// The identity's right-hand side, with the two new terms.
     fn expected_delta(&self) -> f32 {
-        self.income - self.consumption - self.raid_forfeit + self.received - self.sent
+        self.income - self.consumption - self.raid_forfeit - self.spoiled + self.received
+            - self.sent
     }
 
     /// The right-hand side **as it read before the transfer terms existed** — what a client
     /// computing the documented identity would have got.
     fn pre_transfer_delta(&self) -> f32 {
-        self.income - self.consumption - self.raid_forfeit
+        self.income - self.consumption - self.raid_forfeit - self.spoiled
     }
 }
 
@@ -111,6 +116,7 @@ fn ledger_of(app: &bevy::prelude::App, band: BandId) -> Ledger {
         income: cohort.food_income,
         consumption: cohort.food_consumption,
         raid_forfeit: cohort.raid_forfeit,
+        spoiled: cohort.food_spoiled,
         received: cohort.transfer_received,
         sent: cohort.transfer_sent,
     }
@@ -134,7 +140,7 @@ fn set_larder(app: &mut bevy::prelude::App, band: Entity, food: f32) {
         .get_mut::<PopulationCohort>(band)
         .expect("the band exists")
         .stores
-        .set(FOOD, scalar_from_f32(food));
+        .reset_food("dry", scalar_from_f32(food));
 }
 
 fn first_band(app: &mut bevy::prelude::App) -> Entity {
@@ -438,7 +444,7 @@ fn spawn_shipment(
     cohort.stores = LocalStore::new();
     cohort.sync_size();
     let mut cargo = LocalStore::new();
-    cargo.add(FOOD, scalar_from_f32(food));
+    cargo.add_food("dry", scalar_from_f32(food));
     let id = app
         .world
         .resource_mut::<core_sim::BandIdAllocator>()

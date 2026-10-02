@@ -1342,9 +1342,10 @@ message WorkPartyForecastReply {
   // FALSE INSIDE THE BAND'S WORK RANGE: no party is posted, nobody walks, and `rate_home` is the
   // ordinary local row's steady rate. Every walk field below reads 0 with it.
   bool posts_a_party = 1;
-  // THE STEADY CARGO PER TURN ARRIVING AT THE HOME BAND - food off a herd or a patch, the material's
-  // own units off a deposit - the number the assigned row will publish as `netRateHome`: every pack
-  // that lands, averaged over the forecast horizon. Comparable across a near source and a far one.
+  // THE STEADY CARGO PER TURN ARRIVING AT THE HOME BAND AND KEEPING - food off a herd or a patch,
+  // the material's own units off a deposit - the number the assigned row will publish as
+  // `netRateHome`: every pack that lands, NET OF WHAT ROTTED ON THE WALK HOME (#706), averaged over
+  // the forecast horizon. Comparable across a near source and a far one.
   float rate_home = 2;
   // The ONE-WAY walk in tiles, measured from the band's apron and shortened by any road.
   uint32 walk_tiles = 3;
@@ -1362,6 +1363,22 @@ message WorkPartyForecastReply {
   float take_next_turn = 7;
   // The hands the asked crew spends keeping the site, fractional - `workers - keep_hands` take.
   float keep_hands = 8;
+  // THE PER-TURN CARGO LOST ON THE WALK HOME (#706) - what the landing packs lose to transit rot (a
+  // keeping class whose shelf life is shorter than the walk rots entirely), averaged over the same
+  // horizon as `rate_home`. `rate_home + spoiled_rate_home` is what the porters carry in. 0 inside
+  // the apron, on a deposit, and on any walk every class survives.
+  float spoiled_rate_home = 9;
+  // The SHORTEST shelf life, in turns, among the keeping classes of this source's cargo that rot on
+  // this walk - the number a "keeps N turns, the walk is M" line reads. 0 when nothing rots.
+  float transit_keeps_turns = 10;
+  // A FAR ROW'S BY-PRODUCTS, PER TURN, ARRIVING HOME (#706) - a forage basket's fodder and
+  // materials, a hunt's or pen's hide, bone and sinew. They ride the packs with the food, so these
+  // are delivered rates over the same horizon as `rate_home` (they never rot). Fodder is the
+  // CREDITED figure (0 without Foddering unless the patch is committed to a fodder crop); a hunt
+  // yields none. 0 / empty inside the apron (nothing walks: the take-site figures apply) and on a
+  // deposit, whose material is `rate_home` itself.
+  float fodder_rate_home = 11;
+  repeated MaterialPayoff materials_rate_home = 12;
 }
 
 // A query the server declined to answer. `reason` is a machine-readable snake_case token

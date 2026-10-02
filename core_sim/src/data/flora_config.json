@@ -20,8 +20,10 @@
   "realized_species_min": 2,
   "realized_species_max": 4,
 
+  "_comment_keeping": "KEEPING (#706) — every species names the keeping class its food goes into (demographics_config.json keeping.classes; a misspelt class is a boot panic). The aquatic members (kelp, shellfish_beds, river_fish) are flesh; plainly dry nuts, seeds, grains and pods (wild_emmer, seed_grasses, hazel, oak_mast, pine_nut, wild_rice, chestnut, sunflower, wild_pulses, mesquite) are dry; everything else is fresh_plant. A species that pays no food still names one. A mixed basket's food lands in each class in proportion to that class's share of the basket's conversion rate.",
   "species": {
     "shellfish_beds": {
+      "keeping": "flesh",
       "display_name": "Shellfish Beds",
       "plural": "shellfish beds",
       "adjective": "shellfish",
@@ -42,6 +44,7 @@
       "regrowth_rate": 0.25
     },
     "reed_and_root": {
+      "keeping": "fresh_plant",
       "display_name": "Reeds & Water Roots",
       "plural": "reeds and water roots",
       "adjective": "reed",
@@ -64,6 +67,7 @@
       "regrowth_rate": 0.25
     },
     "wild_emmer": {
+      "keeping": "dry",
       "display_name": "Wild Emmer",
       "plural": "wild emmer",
       "adjective": "emmer",
@@ -83,6 +87,7 @@
       "regrowth_rate": 0.25
     },
     "seed_grasses": {
+      "keeping": "dry",
       "display_name": "Seed Grasses",
       "plural": "seed grasses",
       "adjective": "seed-grass",
@@ -104,6 +109,7 @@
       "regrowth_rate": 0.25
     },
     "hazel": {
+      "keeping": "dry",
       "display_name": "Hazel",
       "plural": "hazel",
       "adjective": "hazel",
@@ -124,6 +130,7 @@
       "regrowth_rate": 0.25
     },
     "oak_mast": {
+      "keeping": "dry",
       "display_name": "Oak Mast",
       "plural": "oak mast",
       "adjective": "oak",
@@ -139,6 +146,7 @@
       "regrowth_rate": 0.25
     },
     "berry_scrub": {
+      "keeping": "fresh_plant",
       "display_name": "Berry Scrub",
       "plural": "berry scrub",
       "adjective": "berry",
@@ -159,6 +167,7 @@
       "regrowth_rate": 0.25
     },
     "pine_nut": {
+      "keeping": "dry",
       "display_name": "Pine Nut",
       "plural": "pine nuts",
       "adjective": "pine-nut",
@@ -178,6 +187,7 @@
       "regrowth_rate": 0.25
     },
     "wild_tubers": {
+      "keeping": "fresh_plant",
       "display_name": "Wild Tubers",
       "plural": "wild tubers",
       "adjective": "tuber",
@@ -199,6 +209,7 @@
       "regrowth_rate": 0.25
     },
     "date_palm": {
+      "keeping": "fresh_plant",
       "display_name": "Date Palm",
       "plural": "date palms",
       "adjective": "date",
@@ -219,6 +230,7 @@
       "regrowth_rate": 0.25
     },
     "desert_gourd": {
+      "keeping": "fresh_plant",
       "display_name": "Desert Gourd",
       "plural": "desert gourds",
       "adjective": "gourd",
@@ -237,6 +249,7 @@
       "regrowth_rate": 0.25
     },
     "arctic_greens": {
+      "keeping": "fresh_plant",
       "display_name": "Arctic Greens",
       "plural": "arctic greens",
       "adjective": "arctic-green",
@@ -256,6 +269,7 @@
       "regrowth_rate": 0.25
     },
     "river_fish": {
+      "keeping": "flesh",
       "display_name": "River Fish & Mussels",
       "plural": "river fish and mussels",
       "adjective": "river-fish",
@@ -272,6 +286,7 @@
       "regrowth_rate": 0.25
     },
     "hay_grass": {
+      "keeping": "fresh_plant",
       "_comment": "THE FODDER CROP (Flora Roster F3, docs/plan_flora_roster.md §5). A fodder-DOMINANT species: its yield vector pays into the fodder account, NOT provisions (hay feeds animals, not people). `role: fodder` is a DISPLAY TAG derived from that dominance — the sim never branches on it; the vector does the routing (a hay Field's harvest credits the band's FODDER store, a grain Field's the FOOD store, through the SAME commodity-generic code). `cultivation_ceiling: field` because you SOW it — it is an ordinary rung-3 Field in every other respect (site rule, build, feral-if-abandoned). It hosts exactly the good sowable farmland (AlluvialPlain/Floodplain/RiverDelta/PrairieSteppe/RollingHills) so it COMPETES WITH GRAIN for the same scarce sowable tiles: calories OR herd-ceiling from one river-valley tile, the §4.3 land-use tension extended to the animal web. Adding it DILUTES the existing staple shares on those five biomes (the F1 normalization) — economy-neutral at the wild rung by construction (shares still sum to 1). SINCE #433 A WILD TILE READS THIS VECTOR TOO — a hay-bearing wild stand converts at its share of the 0.20, exactly as it does for provisions (see _comment_yield above); the older 'only a COMMITTED patch ever reads its vector' claim is superseded and was contradicting this file's own top-level comment. What an uncommitted patch does not get is the CREDIT: wild fodder is gated at the CONSUMER on the faction knowing Foddering (2007), at the credit site in systems/labor.rs and never in the rate seam, because crediting hay to a band with nowhere to put it hands out animal feed nobody bid for (docs/plan_flora_roster.md §4.3). `fodder_per_biomass` (0.20) is a PLAYTEST DIAL: it sets how much delivered graze-flow one unit of hay biomass is worth to a pen, and thereby how big a herd one hay field can carry (via the K_pen fodder term). Raise it for bigger fed pens, lower it if hay makes fodder the dominant strategy.",
       "display_name": "Hay Grass",
       "plural": "hay grass",
@@ -295,6 +310,7 @@
       "regrowth_rate": 0.25
     },
     "cotton": {
+      "keeping": "fresh_plant",
       "_comment": "A CASH CROP (Flora Roster F4, docs/plan_flora_roster.md 6). Paid in MATERIALS and nothing else: provisions_per_biomass is a SAFE, intended 0.0 (cotton is worthless as food - AND THE FOOD PATH ONLY EVER MULTIPLIES BY A SPECIES RATE, NEVER DIVIDES BY ONE: `basket_rate` sums `share x rate x gain` over the patch's basket and `forage_provisions` multiplies that into the take, so a 0.0 here is a factor that makes the food account exactly 0 and cannot make a 0/0. Its share-weighted average also still names the roster, so `basket_rate`'s empty-basket fallback to the wild rate - the ONLY place the wild rate would substitute - never fires for it. The one quantity that would need the reciprocal, a gatherer's biomass throughput, is SHIPPED on the wire as `perWorkerBiomass` precisely so nobody computes `perWorkerYield / provisions_per_biomass` and gets 0/0 on cotton - see snapshot/subsistence.rs. DO NOT 'FIX' THIS TO A SMALL POSITIVE RATE: it would make cotton pay calories, not make anything safer), fodder likewise 0.0, and the `materials` block below is the whole payoff. IT IS THE MATERIALS ROWS THAT KEEP YieldVector::pays_something() TRUE - the trade_goods scalar that used to do that is retired (arc #527), so a cash crop with no material rows would be rejected at load rather than silently producing nothing. `role: cash` is a DISPLAY TAG derived from that shape - the sim never branches on it; the vector does the routing (a cotton Field's harvest credits the band's material batches, a grain Field's the FOOD store, a hay Field's the FODDER store, through the SAME commodity-generic code). `cultivation_ceiling: field` because you SOW it - an ordinary rung-3 Field in every other respect. It hosts warm river-valley farmland (AlluvialPlain/Floodplain/RiverDelta) plus SemiAridScrub - HOSTED HONESTLY now that PER-TILE REALIZATION (10) dissolved the F4 dilution bind: some alluvial tiles realize as cotton while others realize as wheat. It COMPETES WITH GRAIN AND HAY for the scarce sowable tiles: calories OR herd-ceiling OR fibre from one river-valley tile, the sharp 'pays no calories' land-use tension. The fibre rate (0.07) is a PLAYTEST DIAL.",
       "display_name": "Cotton Fields",
       "plural": "cotton",
@@ -317,6 +333,7 @@
       "regrowth_rate": 0.25
     },
     "flax": {
+      "keeping": "fresh_plant",
       "_comment": "A CASH CROP (Flora Roster F4, docs/plan_flora_roster.md 6) - the cool-temperate-loam twin of cotton. Paid in MATERIALS: 0 food (SAFE - see the cotton comment), 0 fodder, and a fibre row that is the whole payoff. `role: cash` is a DISPLAY TAG; the vector routes, no role branch. `cultivation_ceiling: field` - a sown rung-3 Field competing with grain and hay for the scarce sowable tiles. Hosts AlluvialPlain/Floodplain (sowable) + RollingHills - honest hosting under per-tile realization (10). Flax fibre is 0.88 fineness / 0.80 strength against cotton's 0.92 / 0.35: THE PAIR IS THE POINT, not a rung ladder. PLAYTEST DIALS.",
       "display_name": "Flax Fields",
       "plural": "flax",
@@ -338,6 +355,7 @@
       "regrowth_rate": 0.25
     },
     "tobacco": {
+      "keeping": "fresh_plant",
       "_comment": "A CASH CROP (Flora Roster F4, docs/plan_flora_roster.md 6) - temperate, fertile, well-drained. Paid in MATERIALS: 0 food (SAFE, and for the same reason as cotton's - the plant food path multiplies a species rate into the take and never divides by one, so 0.0 is an exact zero and not a 0/0; see cotton's _comment for the full seam), 0 fodder, and the UNCRAFTED material `tobacco` (arc #527). It paid the retired trade scalar and nothing else before that, so without this row it would produce literally nothing. `role: cash` is a DISPLAY TAG; the vector routes, no role branch. `cultivation_ceiling: field` - a sown rung-3 Field competing with grain and hay for the scarce sowable tiles. Hosts AlluvialPlain/Floodplain (sowable river-deposit ground, so the land-use tension lands) plus RollingHills/MixedWoodland. THE RATE (0.07) SITS WITH COTTON'S 0.07 AND FLAX'S 0.06 rather than with a byproduct like hazel bast's 0.010, because on a cash crop the harvested plant IS the product. The potency/keeping readings are PROVISIONAL PLACEHOLDERS for a luxury system that does not exist - see materials.json's _comment_roster.",
       "display_name": "Tobacco Fields",
       "plural": "tobacco",
@@ -360,6 +378,7 @@
       "regrowth_rate": 0.25
     },
     "tea": {
+      "keeping": "fresh_plant",
       "_comment": "A CASH CROP (Flora Roster F4, docs/plan_flora_roster.md 6) - a HILL/HIGHLAND crop, NOT lowland. Paid in MATERIALS: 0 food (SAFE), 0 fodder, and the UNCRAFTED material `tea` (arc #527), which is the whole payoff. `role: cash` is a DISPLAY TAG; the vector routes, no role branch. `cultivation_ceiling: field` - a sown rung-3 Field. Hosts RollingHills/MixedWoodland/HighPlateau - the upland/woodland baskets cotton and the grains do not reach, so tea is the cash crop of ground that grows little else. It is deliberately kept off the river valleys (no AlluvialPlain/Floodplain) so it is a genuinely different siting decision. The rate (0.06) matches flax's; the potency/keeping readings are PROVISIONAL PLACEHOLDERS - see materials.json's _comment_roster.",
       "display_name": "Tea Gardens",
       "plural": "tea",
@@ -381,6 +400,7 @@
       "regrowth_rate": 0.25
     },
     "kelp": {
+      "keeping": "flesh",
       "_comment": "Kelp beds & sea forests on the open shelf (Flora Roster F5, docs/plan_flora_roster.md §8). A wild-ceiling coastal gather at the baseline rate — you harvest a kelp bed, you do not farm it — so it thickens the shelf/coral baskets rather than adding a crop. Starting affinity/playtest dial.",
       "display_name": "Kelp Beds",
       "plural": "kelp",
@@ -403,6 +423,7 @@
       "regrowth_rate": 0.25
     },
     "sea_kale": {
+      "keeping": "fresh_plant",
       "_comment": "Sea kale & samphire — the salt-marsh greens of the tidal fringe (Flora Roster F5). Wild-ceiling: a shore gather at the baseline rate, breadth for the tidal/mangrove/shelf baskets. Starting affinity/playtest dial.",
       "display_name": "Sea Kale & Samphire",
       "plural": "sea kale",
@@ -422,6 +443,7 @@
       "regrowth_rate": 0.25
     },
     "wild_rice": {
+      "keeping": "dry",
       "_comment": "Wild rice standing in the marsh & delta shallows (Flora Roster F5). A field-ceiling grain — the archetypal sown wetland crop, strongest on the freshwater marsh where it can dominate a small basket. Starting affinity/playtest dial.",
       "display_name": "Wild Rice",
       "plural": "wild rice",
@@ -445,6 +467,7 @@
       "regrowth_rate": 0.25
     },
     "cattail": {
+      "keeping": "fresh_plant",
       "_comment": "Cattail & bulrush rhizomes of the reedbeds and peat pools (Flora Roster F5). Tended-ceiling: a managed marsh stand. Rate lifted from the table's starting 0.055 to 0.069 to clear the per-realization commit bar: reed/berry/shellfish dominate all four of cattail's crowded wetland baskets, so its best realized share caps at ~0.5 and (share x tended_gain 1.5) x rate must still beat the wild 0.05 — needs rate > 0.0667. Starting affinity/playtest dial.",
       "display_name": "Cattail & Bulrush",
       "plural": "cattail",
@@ -467,6 +490,7 @@
       "regrowth_rate": 0.25
     },
     "chestnut": {
+      "keeping": "dry",
       "_comment": "Sweet chestnut groves of the temperate woods and karst uplands (Flora Roster F5). Tended-ceiling mast crop — the woodland flagship's companion to hazel. Starting affinity/playtest dial.",
       "display_name": "Sweet Chestnut",
       "plural": "chestnut",
@@ -485,6 +509,7 @@
       "regrowth_rate": 0.25
     },
     "wild_orchard": {
+      "keeping": "fresh_plant",
       "_comment": "Wild orchard fruit — crab-apple, plum, pear thickets of the woodland edge and hills (Flora Roster F5). Tended-ceiling. Rate lifted 0.060 -> 0.069 to clear the commit bar: both its baskets (MixedWoodland, RollingHills) are crowded, so its best realized share caps ~0.5. Starting affinity/playtest dial.",
       "display_name": "Wild Orchard",
       "plural": "orchard fruit",
@@ -502,6 +527,7 @@
       "regrowth_rate": 0.25
     },
     "sunflower": {
+      "keeping": "dry",
       "_comment": "Sunflower & seedheads of the steppe and scrub (Flora Roster F5). Tended-ceiling oilseed gather. Starting affinity/playtest dial.",
       "display_name": "Sunflower & Seedheads",
       "plural": "sunflower",
@@ -520,6 +546,7 @@
       "regrowth_rate": 0.25
     },
     "wild_pulses": {
+      "keeping": "dry",
       "_comment": "Wild pulses — vetch, lentil, chickpea ancestors of the grassland and silt (Flora Roster F5). Field-ceiling legume, the companion sown crop to wild emmer. Starting affinity/playtest dial.",
       "display_name": "Wild Pulses",
       "plural": "wild pulses",
@@ -538,6 +565,7 @@
       "regrowth_rate": 0.25
     },
     "mesquite": {
+      "keeping": "dry",
       "_comment": "Mesquite & acacia pods of the desert and badlands (Flora Roster F5). Wild-ceiling desert gather at the baseline rate — the arid biomes' own basket breadth. Starting affinity/playtest dial.",
       "display_name": "Mesquite & Acacia",
       "plural": "mesquite",
@@ -560,6 +588,7 @@
       "regrowth_rate": 0.25
     },
     "wild_fig": {
+      "keeping": "fresh_plant",
       "_comment": "Wild fig of the oasis and desert seeps (Flora Roster F5). Tended-ceiling. Rate lifted 0.060 -> 0.064 to clear the commit bar (best realized share ~0.55 against date_palm's dominance of the oasis). Starting affinity/playtest dial.",
       "display_name": "Wild Fig",
       "plural": "figs",
@@ -577,6 +606,7 @@
       "regrowth_rate": 0.25
     },
     "cloudberry": {
+      "keeping": "fresh_plant",
       "_comment": "Cloudberry & crowberry of the peat, tundra and taiga (Flora Roster F5). Wild-ceiling cold gather at the baseline rate — northern basket breadth. Starting affinity/playtest dial.",
       "display_name": "Cloudberry & Crowberry",
       "plural": "cloudberry",
@@ -596,6 +626,7 @@
       "regrowth_rate": 0.25
     },
     "rock_tripe": {
+      "keeping": "fresh_plant",
       "_comment": "Rock tripe & lichen scraped from cold and stony ground (Flora Roster F5). Wild-ceiling famine gather at the LOWEST rate — the sparse cover of tundra, alpine, badlands and crater fields, what you eat when nothing else grows. Starting affinity/playtest dial.",
       "display_name": "Rock Tripe & Lichen",
       "plural": "rock tripe",
@@ -619,6 +650,7 @@
       "regrowth_rate": 0.25
     },
     "alpine_herbs": {
+      "keeping": "fresh_plant",
       "_comment": "Alpine herbs & roseroot of the high meadows and plateaus (Flora Roster F5). Tended-ceiling highland gather. Rate lifted 0.055 -> 0.069 to clear the commit bar: pine_nut/seed_grasses dominate its highland baskets, so its best realized share caps ~0.5. Starting affinity/playtest dial.",
       "display_name": "Alpine Herbs & Roseroot",
       "plural": "alpine herbs",
@@ -637,6 +669,7 @@
       "regrowth_rate": 0.25
     },
     "cave_fungi": {
+      "keeping": "fresh_plant",
       "_comment": "Cave fungi cultivated in the cavern mouths and sinkhole shade (Flora Roster F5). Tended-ceiling — the subterranean anomaly biomes' own tended crop. Starting affinity/playtest dial.",
       "display_name": "Cave Fungi",
       "plural": "cave fungi",
@@ -656,6 +689,7 @@
       "regrowth_rate": 0.25
     },
     "grapevine": {
+      "keeping": "fresh_plant",
       "_comment": "Wild grapevine of the river valleys, oasis and hills (Flora Roster F5) - a CASH crop, the exact twin of cotton/flax: 0 food (worthless as food, and SAFE for cotton's reason - the food path multiplies by a species rate and never divides by one, so this is an exact zero with no divide-by-zero; see cotton's _comment), 0 fodder, paid in the UNCRAFTED material `grape` (arc #527), which is the whole payoff. Field-ceiling; contests grain on sowable valley ground. GRAPE IS CURRENTLY DOMINATED ON BOTH ITS AXES by tobacco and tea, which sits badly against 'there is no best material' - recorded honestly rather than resolved, because a grape's value is entirely on the far side of a craft (fermenting) that does not exist. See materials.json's _comment_roster. Starting affinity/playtest dial.",
       "display_name": "Wild Grapevine",
       "plural": "wild grapes",

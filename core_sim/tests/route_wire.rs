@@ -810,7 +810,7 @@ fn keep_the_band_fed(app: &mut App, band: Entity) {
         .get_mut::<PopulationCohort>(band)
         .expect("the fixture band")
         .stores
-        .set(core_sim::FOOD, core_sim::Scalar::from_i64(A_FULL_LARDER));
+        .reset_food("dry", core_sim::Scalar::from_i64(A_FULL_LARDER));
 }
 
 /// **THE HANDS THIS BAND HAS TO GIVE**, read off its own cohort — what

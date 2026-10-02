@@ -197,6 +197,104 @@ pub struct DemographicsTemperatureTail {
     pub elder_vulnerability: f32,
 }
 
+/// **One keeping class** (#706) — a kind of food by how it keeps. Its one property is how many
+/// turns a unit of it lasts before it rots; a species names its class (`fauna_config` /
+/// `flora_config` `keeping`), and preservation is a longer shelf life, nothing else.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KeepingClass {
+    /// The id a species' `keeping` field names, and the key a larder holds the class under.
+    pub id: String,
+    /// **Turns a unit of this class lasts.** A band eats its fastest-rotting food first, so a unit
+    /// waits about `larder ÷ need` turns to be eaten; past this many it rots
+    /// (`crate::spoilage::larder_rot`). A caravan pack whose walk home is longer than this rots
+    /// on the way (`crate::spoilage::transit_rot`).
+    pub shelf_life_turns: f32,
+}
+
+/// **How food keeps** (#706, `docs/plan_civilization_steps.md` §Step 5 → "Only food the band cannot
+/// eat in time rots"). The class table, plus the three classes the sim names where no species says.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KeepingConfig {
+    /// Every keeping class. Ids unique, shelf lives positive.
+    pub classes: Vec<KeepingClass>,
+    /// The class a new band's opening larder is seeded into — long-keeping, so the reserve it
+    /// starts with is not lost on turn one.
+    pub startup_class: String,
+    /// The class a **plant** take lands in where no species is known (an empty basket, a ranging
+    /// party's roadside gather of a stand the roster cannot decompose).
+    pub plant_fallback_class: String,
+    /// The class a **kill** lands in where no species is known (a herd the fauna table cannot
+    /// resolve — an isolated fixture).
+    pub kill_fallback_class: String,
+}
+
+impl KeepingConfig {
+    /// Is `id` a configured class?
+    pub fn has_class(&self, id: &str) -> bool {
+        self.classes.iter().any(|class| class.id == id)
+    }
+
+    /// The class's shelf life, `None` for an id the table does not carry.
+    pub fn shelf_life(&self, id: &str) -> Option<f32> {
+        self.classes
+            .iter()
+            .find(|class| class.id == id)
+            .map(|class| class.shelf_life_turns)
+    }
+
+    /// **The classes fastest-rotting first** — the order a band eats in and the order the rot rule
+    /// walks. Ties break on the id so the order is total.
+    pub fn by_shelf_life(&self) -> Vec<&KeepingClass> {
+        let mut classes: Vec<&KeepingClass> = self.classes.iter().collect();
+        classes.sort_by(|a, b| {
+            a.shelf_life_turns
+                .total_cmp(&b.shelf_life_turns)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        classes
+    }
+
+    /// The class ids in eating order ([`Self::by_shelf_life`]).
+    pub fn eat_order(&self) -> Vec<String> {
+        self.by_shelf_life()
+            .into_iter()
+            .map(|class| class.id.clone())
+            .collect()
+    }
+
+    /// **The table is coherent**: at least one class, unique ids, finite positive shelf lives, and
+    /// every named class (startup and the two fallbacks) present.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.classes.is_empty() {
+            return Err("keeping.classes must name at least one class".to_string());
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for class in &self.classes {
+            if !seen.insert(class.id.as_str()) {
+                return Err(format!("keeping class '{}' is declared twice", class.id));
+            }
+            if !(class.shelf_life_turns.is_finite() && class.shelf_life_turns > 0.0) {
+                return Err(format!(
+                    "keeping class '{}' needs a finite positive shelf_life_turns, got {}",
+                    class.id, class.shelf_life_turns
+                ));
+            }
+        }
+        for (key, id) in [
+            ("startup_class", &self.startup_class),
+            ("plant_fallback_class", &self.plant_fallback_class),
+            ("kill_fallback_class", &self.kill_fallback_class),
+        ] {
+            if !self.has_class(id) {
+                return Err(format!("keeping.{key} names unknown class '{id}'"));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// **Founding lines** — the relatedness proxy (`crate::lineage`, issue #687).
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -215,6 +313,8 @@ pub struct DemographicsConfig {
     pub initial_distribution: DemographicsDistribution,
     pub consumption: DemographicsConsumption,
     pub startup: DemographicsStartup,
+    /// How food keeps — the keeping classes and their shelf lives (#706).
+    pub keeping: KeepingConfig,
     pub births: DemographicsBirths,
     /// Fraction of children that mature into the working bracket each turn.
     pub maturation_rate: f32,
@@ -240,8 +340,8 @@ pub struct DemographicsConfig {
 /// missing or unknown key fails loudly instead of falling back to a second set of numbers.
 impl Default for DemographicsConfig {
     fn default() -> Self {
-        serde_json::from_str(BUILTIN_DEMOGRAPHICS_CONFIG)
-            .expect("builtin demographics config should parse")
+        Self::from_json_str(BUILTIN_DEMOGRAPHICS_CONFIG)
+            .expect("builtin demographics config should parse and validate")
     }
 }
 
@@ -250,8 +350,15 @@ impl DemographicsConfig {
         Arc::new(Self::default())
     }
 
-    pub fn from_json_str(json: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(json)
+    /// Parse **and validate** — every load path (builtin, file, override, staged patch) runs the
+    /// keeping table's coherence check here, so a broken class table cannot load anywhere.
+    pub fn from_json_str(json: &str) -> Result<Self, DemographicsConfigError> {
+        let config: Self = serde_json::from_str(json)?;
+        config
+            .keeping
+            .validate()
+            .map_err(DemographicsConfigError::Invalid)?;
+        Ok(config)
     }
 
     pub fn from_file(path: &Path) -> Result<Self, DemographicsConfigError> {
@@ -260,7 +367,7 @@ impl DemographicsConfig {
                 path: path.to_path_buf(),
                 source,
             })?;
-        Ok(DemographicsConfig::from_json_str(&contents)?)
+        DemographicsConfig::from_json_str(&contents)
     }
 }
 
@@ -274,6 +381,8 @@ pub enum DemographicsConfigError {
     },
     #[error("failed to parse demographics config: {0}")]
     Parse(#[from] serde_json::Error),
+    #[error("invalid demographics config: {0}")]
+    Invalid(String),
 }
 
 impl ConfigLoadError for DemographicsConfigError {
@@ -283,7 +392,7 @@ impl ConfigLoadError for DemographicsConfigError {
     fn is_not_found(&self) -> bool {
         match self {
             Self::Read { source, .. } => source.kind() == io::ErrorKind::NotFound,
-            Self::Parse(_) => false,
+            Self::Parse(_) | Self::Invalid(_) => false,
         }
     }
 }
@@ -434,6 +543,78 @@ mod tests {
             births.trend.deficit_penalty
         );
         assert!(births.trend.surplus_gain >= 0.0);
+
+        // How food keeps (#706): unique ids, positive shelf lives, and every named class present.
+        let keeping = &config.keeping;
+        let mut ids = std::collections::BTreeSet::new();
+        for class in &keeping.classes {
+            assert!(
+                ids.insert(class.id.as_str()),
+                "class {} declared twice",
+                class.id
+            );
+            assert!(
+                class.shelf_life_turns > 0.0,
+                "class {} must keep for some turns",
+                class.id
+            );
+        }
+        for named in [
+            &keeping.startup_class,
+            &keeping.plant_fallback_class,
+            &keeping.kill_fallback_class,
+        ] {
+            assert!(
+                keeping.has_class(named),
+                "{named} is not a configured class"
+            );
+        }
+        // The opening reserve must outlast the reserve itself, or a new band loses it on turn one.
+        assert!(
+            keeping
+                .shelf_life(&keeping.startup_class)
+                .expect("startup class is configured")
+                > config.startup.food_reserve_days,
+            "the startup class must keep longer than the reserve it holds"
+        );
+    }
+
+    /// **Both food webs' rosters name configured keeping classes** — the boot reconciliation, run
+    /// on the shipped tables.
+    #[test]
+    fn every_shipped_species_names_a_configured_keeping_class() {
+        let keeping = &DemographicsConfig::builtin().keeping;
+        crate::fauna_config::FaunaConfig::builtin()
+            .validate_keeping(keeping)
+            .expect("every fauna species names a configured class");
+        crate::flora_config::FloraConfig::builtin()
+            .validate_keeping(keeping)
+            .expect("every flora species names a configured class");
+    }
+
+    /// A broken keeping table is refused at load, not discovered at the first meal.
+    #[test]
+    fn a_broken_keeping_table_is_rejected() {
+        let breakers: [fn(&mut serde_json::Value); 3] = [
+            |v| v["keeping"]["startup_class"] = serde_json::json!("ambrosia"),
+            |v| v["keeping"]["classes"][0]["shelf_life_turns"] = serde_json::json!(0.0),
+            |v| {
+                let first = v["keeping"]["classes"][0].clone();
+                v["keeping"]["classes"]
+                    .as_array_mut()
+                    .expect("classes is an array")
+                    .push(first);
+            },
+        ];
+        for breaker in breakers {
+            let mut value = builtin_value();
+            breaker(&mut value);
+            assert!(
+                DemographicsConfig::from_json_str(&value.to_string()).is_err(),
+                "a broken keeping table must fail to load: {}",
+                value["keeping"]
+            );
+        }
     }
 
     /// The JSON is the sole source (#350): `default()` **is** the shipped tuning, so a test that

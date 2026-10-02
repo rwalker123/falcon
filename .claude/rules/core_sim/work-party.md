@@ -99,7 +99,50 @@ the first load sooner, because the first pack fills at the whole party's rate.
 > friction then charged the walk **a second time**: distance paid in walking already is the cost, and
 > a loss in transit on top counts it twice. Both are deleted, and the lever with them. **Friction
 > still governs band-to-band pooling in `balance_supply_networks`, untouched.** Meat going off on a
-> long walk is spoilage, which is the storage arc's term, not this one.
+> long walk is a different cost — a property of the *food*, not a fraction of the walk — and it is
+> the one below.
+
+### A pack rots by its walk (#706)
+
+**Every pack carries the keeping classes of the food in it, and a class whose shelf life is shorter
+than the porter's walk is lost on the way — entirely, not as a share** (`spoilage::rots_in_transit`;
+the classes and their shelf lives are `campaign.md` → "Food spoils by keeping class"). So the same
+walk costs a meat hunt everything and a nut gather nothing: a boar is `flesh`, which keeps four
+turns, so a herd eight hexes out (a six-turn walk) lands nothing it keeps, and one five hexes out
+(three turns) loses nothing. That is the natural range a far hunt has, and a longer shelf life —
+drying — is what extends it.
+
+- **The composition rides the caravan beside its scalar cargo.** `WorkParty::load_classes` and each
+  `Walker::classes` are cargo per class (`work_party::CargoClasses`), split off the load in the same
+  proportion as the cargo every time a pack leaves; the caravan's arithmetic still runs on the scalar
+  `cargo`. A take site hands its take's classes
+  in with `WorkParty::close_turn_classed`; `open_turn` hands each landed pack back as a
+  `LandedPack { walk_turns, cargo, classes }`. The deposit web's cargo is a material and carries no
+  classes.
+- **One spoilage term, booked at the landing.** `systems::labor`'s `land_food_home` is the one place a
+  take's food enters the larder: the whole delivery is **credited as income** (by class), then every
+  class of every pack whose walk exceeded that class's shelf life is **debited the same turn** and
+  added to `PopulationCohort::last_food_spoiled`. Income therefore stays the row's `actual` (what
+  *lands*), and the loss is the ledger identity's single `spoiled` term. A pack landed without a walk
+  (a local row) never rots.
+- **The forecast strikes the same rot on every landing pack, so `netRateHome` is what arrives AND
+  keeps.** `forecast_caravan` takes a `TransitRot` — the row's cargo shares by class (a herd's one
+  class; a basket's `forage::patch_food_mix` shares) plus the keeping table — and each projected pack
+  loses `TransitRot::rotten_share(walk)` of its cargo. `rate_home`, the arrival schedule and
+  `realized` are therefore the larder's real gain, and the loss rides `spoiled_rate_home`; the
+  shortest shelf life that rots on the walk is `transit_keeps_turns` (`0` when nothing does). The
+  deposit web passes no rot (`NO_TRANSIT_ROT`). The turn, the seed and the query all step this one
+  function, so the row and the compose-sheet quote state the same three numbers — the hunt panel can
+  say *before the order is committed* that a far take will spoil.
+- **A posting that ENDS rots by the same rule.** Its packs and load walk home
+  (`WorkParty::walk_home`, below) and land through `bring_the_party_home`, which credits the route
+  arm and then strikes every class whose shelf life is shorter than the walk the cargo was carried
+  over — the porter's own walk, or the whole walk for the load the source hands carry.
+
+Pinned by `work_party::tests::a_pack_carries_its_loads_classes_home_with_its_walk` (the composition
+and the walk ride the pack), `systems::labor::transit_rot_tests` (the landing rule), and
+`work_party_caravan::a_walk_longer_than_flesh_keeps_loses_the_pack_and_a_shorter_one_does_not` (a real
+far hunt at both distances, each with a liveness assertion that food landed).
 
 ### No individual hunters
 
@@ -132,7 +175,7 @@ modelled.
 ## The caravan, per turn — one rule, two halves
 
 `WorkParty::open_turn` is steps 1–2 and `WorkParty::close_turn` steps 4–5; the turn runs them around
-its own inline take, the forecast around a projected one (`WorkParty::step`). Order:
+its own inline take, the forecast around a projected one (`forecast_caravan`). Order:
 
 1. **Advance the road.** Each walker takes a step; one reaching home hands over its pack; one back
    from the whole round trip rejoins (absent for exactly `2 · w` takes).
@@ -177,10 +220,83 @@ the remainder stays in the load for the next porter. So a far hunt's take is `ta
 not `take.carried`, and its row's `wasted` is `0`. An unbounded carry (a pen that is a larder) takes
 the whole load in one pack.
 
-**On the two food webs only the FOOD account travels.** Fodder and the hide, bone and fibre a take
-yields are credited to the band as they always were: a batch carries a characteristic vector and a
-band key, and a pipe over those is the storage arc's. Standing yield (milk) is food with no biomass:
-it rides the load with the next pack. **On the deposit web the material IS the cargo** — see below.
+**A pack is filled by BULK — everything the crew cut — and lands whatever it is worth as food.** A
+basket of a cash or fodder crop (tobacco, cotton, hay: `provisions_per_biomass == 0`) cuts biomass
+every turn and walks it home in packs exactly as a food basket does; its packs carry zero food
+cargo. Two readings had to say so: `forage::ForageProjection::step` calls the stand spent only when
+**no biomass** was taken (`REALIZED_PROJECTION_BIOMASS_EPSILON`), not when the take was worth no
+food — read off provisions alone it ended every no-food projection on its first turn — and
+`forecast_caravan`'s `first_load_turn` is the first turn a **pack** lands, not the first turn food
+does. Together they made a far no-food basket quote the `0` sentinel, and the compose sheet drop its
+*first load home in N turns* clause. Pinned by
+`forage_cultivation::a_far_basket_with_no_food_quotes_its_first_load_turn` (one harvester, six
+tiles out: first load turn 14).
+
+**A far FORAGE row's fodder and materials ride the packs with its food** (#706). The take site packs
+them instead of crediting them: the fodder at the credit's own gate (`fodder_permitted`) and each
+material through `materials_config::material_yield_batches` — the batches `credit_material_yield`
+deposits, so a far pack carries exactly what a local take would have credited. They join the load
+as `WorkParty::load_goods` (`work_party::CarriedGoods`: fodder plus `CarriedMaterial`s at their exact
+reading and band key), leave in every pack in the bulk's proportion (`CarriedGoods::take_share`, the
+food classes' split), and land when the pack does — fodder into the `FODDER` store, each material
+through `LocalStore::deposit_material`, the one deposit a caravan's material makes. **They do not
+rot**; the transit rot strikes food classes only.
+
+- **On a live row they are that turn's income at landing** (`land_delivered_goods`): the row's
+  `fodder` and `materials` read what landed, and `fodderInflow` is the hay that arrived — so
+  `Δ FODDER == fodderInflow + Δ received − draws` closes with the delay.
+- **Off a live row they land on the route arm** (`land_goods_off_the_row`): a stood-down walk, a
+  lapsing row's last packs and an arm that never reached its take site book the fodder on the fodder
+  ledger and each material as its own `PartyHome` crossing.
+- A homeward walk carries the same mix, and **a load abandoned with nobody at the source abandons
+  all of it**.
+- **The forecast carries them as bulk**: `CaravanForecast::bulk_rate_home` is the bulk landing per
+  turn, and `forecast_forage_caravan` turns it into `CaravanForecast::fodder_rate_home` /
+  `materials_rate_home` through the basket's own per-biomass rates, behind the credit's Foddering gate
+  (passed in as `fodder_credited`; `forecast_query::forage_fodder_credited` for the seed and the
+  query). The turn writes them onto the party beside `net_rate_home`, so the row publishes
+  `fodderRateHome` / `materialsRateHome` — **the smoothed rates the work row prints**, because its
+  per-turn `fodderYield` / `materialYield` are lumpy on a far row. The work-party reply carries the
+  same two as `fodder_rate_home` / `materials_rate_home` (proto 11 / 12). `0` / empty inside the
+  apron, where the take-site figures apply. Pinned on the encoded row by
+  `work_party_caravan::a_far_hay_row_publishes_smoothed_fodder_and_materials_rates_home` (non-zero on
+  turns no pack landed).
+- **A local row is unchanged**: it credits its fodder and materials the turn it cuts them.
+
+**A far HUNT's or PEN's by-products ride the packs by the same rule** (#706). At the kill a far row
+packs every material its carcass yields — off `loaded`, the whole carcass the party keeps, through
+the species' `hunt_materials_for` rows — plus a pen's standing rows (fleece) off the head count
+(`systems::labor::hunt_goods_cut`, the same `material_yield_batches` → `CarriedGoods` path the forage
+arm takes), instead of crediting them; they land with the pack through the same landings above. A
+hunt yields no fodder. A pen can be far: it stands where its herd does, so it posts a party like any
+other row. A local hunt or pen still credits at the kill, off `take.carried`. The deposit web's
+material is not a side good but the cargo itself (below).
+
+**A far pen's standing yield walks home and is in its forecast.** Its milk or eggs ride the pack's
+food cargo (the pen arm loads meat and standing food as one delivery, in the herd's one keeping
+class, so they rot by the walk as its flesh does) and its fleece rides the goods. Both now carry
+**bulk** (`work_party::standing_stream`): the milk's biomass-equivalent at the herd's own meat rate,
+each fleece at its material's `weight`. The pen and hunt arms load it beside the carcass, so a pen
+that culls nothing still fills packs — without it, its milk and fleece sat in the load and never
+left. `forecast_hunt_caravan` steps the same thing through `forecast_caravan_carrying`: each
+projected turn's food is `HuntProjection::step`'s (which already counts the standing food at the
+projected head count), its bulk adds the stream's, and its goods are the carcass rows off the cull
+plus the fleece — the stream read off `HuntProjection::herd`, so fleece follows the projected head
+count as milk does. So `netRateHome` / `rate_home` carry the milk net of the walk's rot (and
+`spoiledRateHome` / `transitKeepsTurns` when the walk outlasts its class), and `materialsRateHome` /
+`materials_rate_home` carry the hides and the fleece, averaged over what lands. Pinned by
+`pen_standing_yield::a_far_pens_milk_and_fleece_are_in_its_caravan_forecast` (a culling-free sheep
+pen at 5 and 8 hexes, on the encoded row and the compose reply: the milk carried is at least half the
+standing stream and spoils on the long walk, the fleece likewise, and the reply quotes the row).
+Pinned for the carcass by
+`work_party_caravan::a_far_hunt_lands_its_hides_with_its_packs_and_prints_a_smoothed_rate_home`
+(on the encoded row: hide lands exactly on the turns food does, none before the first pack, and a
+no-landing turn prints a non-zero hide `materialsRateHome` the compose reply quotes too), and for
+the forage web by `forage_cultivation::a_far_hay_row_lands_its_fodder_and_fibre_only_when_a_pack_lands` (nothing lands
+before the walk allows; the fodder ledger closes every turn) and
+`work_party::tests::a_pack_carries_its_share_of_the_loads_goods`.
+
+**On the deposit web the material IS the cargo** — see below.
 
 **A crew at the source is what earns a lesson** (`crew_at_the_source`, the hunters present), while
 the holding test asks what the player **staffed** (`take_crew_present`). Read the holding test off the
@@ -245,14 +361,14 @@ stand regrows.
 **Where it lands is `systems::CargoHome`**, resolved from the row's target in one place
 (`CargoHome::of`): the larder for a food web, the material store — at the deposit ground's
 characteristics and `materials_cfg.band_key` — for a deposit. Every settlement reads it: the foot of
-the pass, the unassign, a lapsing row, the unposted sweep, the shed, `bring_the_dropped_party_home`.
+the pass and every homeward walk's arrival (`bring_the_party_home`, off the walk's own `target`).
 **The row's food projections are not written for a material cargo** (`CargoHome::is_food` gates
 `publish_caravan_projection`): its rate home rides `netRateHome` alone, in material units per turn.
 
 ## ⛔ One function, stepped — shared by the turn, the seed and the query
 
 `work_party::forecast_caravan` steps a party forward `yield_average_horizon_turns` from a state,
-through `WorkParty::step` and a projected take at whatever crew is present each turn. The projected
+through `open_turn` → a projected take at whatever crew is present → `close_turn` each turn. The projected
 take is the smooth headline's own step — `fauna::HuntProjection::step` and
 `forage::ForageProjection::step`, which `project_realized_hunt` / `project_realized_forage` are loops
 over — so the forecast runs the hunt's and the gather's own projection, not a second copy.
@@ -306,7 +422,11 @@ Every party field on `LaborAssignment` (`snapshot.fbs`) reads `0` on a local row
 | `walkTiles` | the one-way walk, from the apron, shortened by any road |
 | `walkOutRemaining` | `> 0` while the whole party is still walking out; `0` for the rest of the posting |
 | `nextLoadHomeIn` | turns until the soonest pack lands; `0` = nobody is carrying a load home |
-| `netRateHome` | cargo per turn arriving home — the number the row prints: food on a hunt or forage row, the material's own units on an extract row (the row's `kind` says which) |
+| `netRateHome` | cargo per turn arriving home **and keeping** — net of transit rot — the number the row prints: food on a hunt or forage row, the material's own units on an extract row (the row's `kind` says which) |
+| `spoiledRateHome` | cargo per turn lost on the walk home to transit rot, over the same forecast (#706); `netRateHome + spoiledRateHome` is what the porters carry in. `0` on a local row, an extract row and any walk every class survives |
+| `transitKeepsTurns` | the shortest shelf life among the row's cargo classes that rot on this walk, in turns; `0` when nothing rots |
+| `fodderRateHome` | a far forage row's fodder per turn arriving home (a hunt yields none) — `netRateHome`'s twin, smoothed off the same forecast, where the row's `fodderYield` reads only what landed that turn; the credited figure (Foddering gate). `0` on a local row, a hunt and an extract row |
+| `materialsRateHome` | a far forage row's, hunt's or pen's materials per turn arriving home (a hunt's hide, bone and sinew), one `MaterialPayoff` per material id, never summed; absent on a local row and an extract row. `materialYield` beside it reads only what landed |
 
 The query is `QueryPayload::WorkPartyForecast` (`sim_runtime`, proto query field 7, reply field 10),
 seat-gated like the other faction-bearing questions: band, `Hunt { herd_id }`, `Forage { x, y,
@@ -320,7 +440,10 @@ units per turn.
 mean, so a float) and `first_load_turn` (1-based, `0` = none within the horizon) — every walk field
 reads `0` inside the apron — plus **`take_next_turn`** (next turn's take AT THE SOURCE by the asked
 crew, struck on the hands its keeping leaves, before any walk) and **`keep_hands`** (the fractional
-hands it spends keeping), appended (proto 7 / 8). They are what the compose sheet previews a crew of
+hands it spends keeping), appended (proto 7 / 8), and **`spoiled_rate_home`** / **`transit_keeps_turns`**
+(proto 9 / 10) — the row's `spoiledRateHome` / `transitKeepsTurns`, answered by the same forecast, so
+`rate_home` is net of transit rot. Pinned on the encoded row and the answer together by
+`work_party_caravan::a_far_hunt_publishes_and_quotes_the_take_its_walk_spoils`. They are what the compose sheet previews a crew of
 `n` on every web, rather than pricing every worker as a taker; pinned on a patch by
 `forage_cultivation::a_kept_patchs_next_turn_take_is_quoted_on_the_hands_its_keeping_leaves`.
 
@@ -351,35 +474,105 @@ gate). Materials are one row per material and never summed. The ask carries `cro
 `forage::default_species_for_rung` for that rung; a committed patch ignores it. Pinned by
 `server::tests::an_uncommitted_patchs_once_tended_is_priced_for_the_picked_crop_in_every_account`.
 
-## Every exit brings everything home, through ONE settle step
+## Every exit walks everything home, through ONE stand-down step
 
-**A caravan that ends early must not lose what is on the road.** `systems::stand_down_party` is the
-one settle step — `WorkParty::hand_over_everything` into `bring_the_party_home` — and every path that
-ends a posting routes through it:
+**A caravan that ends early loses nothing on the road, and hands nothing over at once** (#706).
+`systems::stand_down_party` is the one stand-down step: it turns the party into the band's
+`HomewardWalk`s (`WorkParty::walk_home`) on `LaborAllocation::homeward`, which outlives the row —
 
-- **A lapsing row** — a holding with nothing left to hold; the row ends with `status=lapsed` and its
-  caravan comes home before the row is removed.
+- **a porter carrying a pack** finishes its walk (`walk_turns − turns_out` turns) and lands it;
+- **a porter heading back out empty** turns round and walks back the way it came
+  (`turns_out − walk_turns` turns);
+- **the hands at the source** carry the load over the whole walk. **When nobody is at the source**
+  (every porter on the road) **the leftover load is left behind** — no group walks without a hand, so
+  it never lands. It was never income nor in the larder, so no ledger term or spoilage answers for it;
+- **a party still walking out** walks back the turns it has covered, carrying nothing;
+- a group already home (a porter that landed that very turn, a party stood down before its first
+  step) is not listed.
+
+**Each walk takes one step at the top of its band's labor pass** (before the starvation shed, so a
+group arriving this turn is back in the pool the shed reads), and lands when `turns_left` reaches
+zero through `bring_the_party_home` — the route arm, then the transit rot by its walk, added to
+`last_food_spoiled`. A stand-down in the command window (unassign, abandon, `cancel_order`) is
+stepped first on the next turn, so a porter one turn out lands then, as it would have on the live
+row. A stand-down the labor pass makes **before** the party's turn opened (the shed, the unposted
+sweep) goes through `stand_down_unopened_party`, which takes the party's step for this turn first
+(`open_turn`, landing whatever it lands) — without it those walkers would lose a turn the
+command-window paths do not cost.
+
+**A player's cut walks its dropped hands home FROM THE COMMAND** — `LaborAllocation::set_assignment`,
+the one place a crew is cut: a far row cut short of zero through `WorkParty::cut_crew`, one held at
+zero through `WorkParty::walk_home`, onto `homeward` in the command itself (as `abandon`'s
+`bring_the_dropped_party_home` already did). `walking_home` therefore covers them at once, so
+`idleWorkers` and `BandWorkforce::assignable` never offer a hand still days from home, and a second
+`assign_labor` cannot give them to another row. In `cut_crew` the hands at the source go first and
+walk the whole walk carrying nothing — the load stays with those who remain; past them, porters on
+the road nearest home first: one carrying a pack finishes its walk and lands it (rotting by its walk)
+but does not walk back out, one heading back out empty turns round. A party still walking out sends
+the dropped hands back the turns it has covered. A raise cuts nothing: new hands are at the source
+at once, as they always were. Pinned by
+`work_party_caravan::cutting_a_far_crew_walks_the_dropped_hands_home` (before any turn: the four on
+the wire as walking home, `idleWorkers` unchanged, `assignable` without them, a second row refused
+them; they rejoin only as they arrive) and `work_party::tests::a_deep_cut_turns_porters_round_nearest_home_first`.
+
+> #### ⛔ THE STARVATION SHED'S HANDS LEAVE WITHOUT WALKING HOME
+>
+> The shed (`LaborAllocation::normalize`) drives the band's committed hands — `walking_home`
+> included — down to the people it still has, so every hand it removes is one the band **no longer
+> has**. Sending those hands home would list them on `homeward`, count them against the pool next
+> turn and fire the shed again on the hands it had just shed: a far row of six losing two people
+> would go 6 → 4 → 2 → 0. So a row the shed **trims** reaches `post_a_party` below its party's crew
+> (the only way it can, a player's cut having already matched them), and the party sheds the
+> difference through `cut_crew`'s own order — the hands at the source first, then porters nearest
+> home, whose packs go with them — with its walks discarded. A row the shed **drops** goes through
+> `shed_unopened_party`: the party takes this turn's step (what lands now lands) and nothing walks
+> home. Pinned by `work_party_caravan::a_far_row_the_shed_trims_sheds_once_and_nobody_walks_home`.
+
+**The hands are away until they arrive.** `LaborAllocation::walking_home` sums the walks' workers;
+`BandWorkforce::walking_home` nets it out of `idle`, `assignable` and `benchable`, and
+`LaborAllocation::normalize` counts it beside the bench in the total it drives down (nothing in the
+shed can shed a walker, so a pool below them strips every row and stops). It rides `SimState` with
+the allocation (save v18) and sits outside the allocation's intent `PartialEq`, as a row's party
+does.
+
+Every path that ends a posting routes through the one step:
+
+- **A lapsing row** — a holding with nothing left to hold; the row ends with `status=lapsed`. The
+  packs its turn already landed land off the row (rotting by their walk), and its caravan is stood
+  down before the row is removed.
 - **A source that stopped posting** — the herd drifted back inside `band_work_range` (or the band
   moved up to it), or the herd **left the registry** (`status=lapsed reason=herd_gone`). Neither turn
   posts a party, so neither reaches the per-posting settlement; the foot of the pass sweeps every row
-  still carrying a party that posted nothing this turn, settles it, and clears `party` — **before**
+  still carrying a party that posted nothing this turn, stands it down, and clears `party` — **before**
   the `lapsed` removal, which would otherwise drop the row with its caravan on the road. A re-entered
   row is plainly local afterwards and publishes no party field.
-- **Unassign** — a row held at zero hands has nobody at the source and nobody to send, so the caravan
-  is brought home and the party stood down (the row survives as a holding if it holds anything). A
-  zero-crew row that posts nothing is caught by the sweep above.
+- **Unassign** — `set_assignment` at zero stands the party down in the command (above); the row
+  survives as a holding if it holds anything, with no party. A row the shed trims to zero walks
+  home whatever its shed left.
 - **Abandon / a zero-crew drop** — `LaborAllocation::drop_source_row` returns the row it removed, and
-  `systems::bring_the_dropped_party_home` settles its party.
-- **The starvation shed** — `LaborAllocation::normalize` holds no larder, so the labor pass reads the
-  parties off the rows before the walk and settles the party of every row the shed drops outright.
-- **`cancel_order`** — `clear_kinds` holds no larder either, so `handle_cancel_order` reads the rows it
-  is about to clear and brings each one's party home through `bring_the_dropped_party_home`.
+  `systems::bring_the_dropped_party_home` stands its party down.
+- **The starvation shed** is the one exit that does **not** walk its hands home — see the callout
+  above.
+- **`cancel_order`** — `clear_kinds` drops rows with their parties too, so `handle_cancel_order` reads
+  the rows it is about to clear and stands each one's party down through
+  `bring_the_dropped_party_home`.
 
-> #### ⛔ CARGO HANDED OVER ON THE WAY OUT GOES ON THE LEDGER'S ROUTE ARM
+**The wire carries the walks on the band, not a row** (`PopulationCohortState`, appended):
+
+| field | what it is |
+|---|---|
+| `homewardWorkers` | hands walking home — not idle, on no row; `idleWorkers` already excludes them |
+| `homewardFood` | the food they carry, gross of the walk's rot (a deposit's material is not counted) |
+| `homewardFoodSpoils` | of `homewardFood`, what rots before it lands (`HomewardWalk::food_that_rots`) |
+| `homewardNextLoadIn` | turns until the soonest homeward load lands; `0` = none — the row's `nextLoadHomeIn`, carried past the row's end |
+| `homewardAllHomeIn` | turns until the last homeward hand is back; `0` = nobody walking home |
+
+> #### ⛔ CARGO A STOOD-DOWN PARTY BRINGS HOME GOES ON THE LEDGER'S ROUTE ARM
 >
-> It is not this turn's income — a row that is ending publishes no telemetry to count it in — and food
+> It is not any live row's income — a walk outlives its row, so no telemetry counts it in — and food
 > that reached the larder through neither `food_income` nor a transfer would break the pinned identity
-> `larder_delta == food_income − food_consumption − raid_forfeit + transfer_received − transfer_sent`.
+> `larder_delta == food_income − food_consumption − raid_forfeit − spoiled + transfer_received −
+> transfer_sent`.
 > A party carrying goods home is exactly what `TransferLink::Route` is for, so `bring_the_party_home`
 > books it there — through `LaborAllocation::book_crossing` as `TransferCause::PartyHome`, the one way
 > a crossing is written, so the route arm and the cause-keyed crossings row agree and the band's own
@@ -391,10 +584,9 @@ ends a posting routes through it:
 > the same `PartyHome` cause — the material route arm, which is the crossings list itself. Which of
 > the two a party's cargo is comes from `CargoHome::of`, never from a check at the settle site.
 
-Pinned by `work_party_caravan::unassigning_a_caravan_mid_walk_brings_every_pack_home`,
-`::a_herd_back_inside_the_apron_brings_its_caravan_home_once` and
-`::a_vanished_herd_brings_its_caravan_home_as_the_row_lapses`, each on both the larder and the route
-arm.
+Pinned by `work_party_caravan::a_cancelled_far_hunt_walks_every_pack_home_and_rots_it_by_its_walk`,
+`::a_herd_back_inside_the_apron_walks_its_caravan_home_once` and
+`::a_vanished_herd_walks_its_caravan_home_as_the_row_lapses`, each on the route arm.
 
 ## `BandReach` no longer asks about distance
 
@@ -414,15 +606,16 @@ the arm reach this row"* is the question the settlements must go on asking.
 | `work_party::tests::a_road_shortens_the_walk_and_one_covering_the_run_takes_it_to_zero` | over a real road registry, through `free_pooling_reach_tiles` |
 | `work_party::tests::departures_never_exceed_the_hunters_present` | a take wanting more packs than hunters leaves the rest in the load |
 | `work_party::tests::a_carcass_heavier_than_one_pack_goes_home_over_several_porters` | the big carcass: nothing wasted that the resident take would waste |
-| `work_party_caravan::unassigning_a_caravan_mid_walk_brings_every_pack_home` | the road comes home, on the larder and the route arm |
-| `work_party_caravan::a_herd_back_inside_the_apron_brings_its_caravan_home_once` | a re-entered source settles its caravan once, clears `party` and publishes none |
-| `work_party_caravan::a_vanished_herd_brings_its_caravan_home_as_the_row_lapses` | a vanished herd's caravan comes home once, before the row lapses |
+| `work_party::tests::a_stood_down_party_walks_every_pack_and_the_load_home`, `…::a_party_walking_out_walks_back_what_it_covered` | `walk_home`'s groups: each porter's remaining walk, the load on the whole walk, and a load nobody is at the source to carry left behind |
+| `work_party_caravan::a_cancelled_far_hunt_walks_every_pack_home_and_rots_it_by_its_walk` | the cancel lands nothing; the wire's homeward fields; hands rejoin `idleWorkers` only as their group arrives; last home after the whole walk; a 3-turn walk keeps, a 6-turn walk rots every flesh pack into `spoiled` |
+| `work_party_caravan::a_herd_back_inside_the_apron_walks_its_caravan_home_once` | a re-entered source stands its caravan down once, clears `party`, publishes none on the row and the walk on the band |
+| `work_party_caravan::a_vanished_herd_walks_its_caravan_home_as_the_row_lapses` | the row lapses that turn; its caravan outlives it and lands over the walk, booked `PartyHome`, once |
 | `work_party_caravan::the_query_quotes_exactly_the_rate_the_row_publishes` | forecast == actual on the encoded snapshot |
 | `work_party_caravan::a_far_kept_herds_caravan_forecast_is_what_its_party_lands_after_keeping` | a far kept herd: query == `netRateHome`, what lands over the horizon is that rate to within one landing, and the unkept price overshoots |
 | `work_party_caravan::a_deposit_eight_hexes_out_posts_a_party_that_walks_six_each_way` | a far working posts a party on the wire, and nothing lands while it walks out |
 | `work_party_caravan::a_local_working_takes_no_party_and_its_numbers_are_unchanged` | the deposit web's local identity: the take seam's own figure |
 | `work_party_caravan::the_query_quotes_exactly_the_rate_an_extract_row_publishes` | forecast == actual on the deposit web, in material units |
-| `work_party_caravan::unassigning_a_deposit_caravan_mid_walk_brings_every_pack_home_as_material` | every pack lands in the store as wood, booked `PartyHome`, and nothing on the larder or the food route arm |
+| `work_party_caravan::unassigning_a_deposit_caravan_mid_walk_walks_every_pack_home_as_material` | every pack walks home into the store as wood, booked `PartyHome`; nothing on the larder, the food route arm or `homewardFood` |
 | `work_party_caravan::a_woodcutting_crew_on_the_deadfall_floor_carries_a_larger_pack_than_bare_hands` | the first porter's pack is the pricing's haul carry over the weight — larger than bare hands |
 | `work_party_caravan::a_far_felling_crew_with_the_woodcutting_kit_carries_the_sled_pack` | the kit is claimed whole, so a felling party's pack is the sled's haul over the weight, larger than bare |
 | `work_party_caravan::a_local_extract_take_is_capped_by_carry_over_weight` | on a material heavy enough, a bare crew's cut is exactly its carry over the weight, and the sled raises it |

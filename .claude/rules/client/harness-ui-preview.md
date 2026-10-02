@@ -3330,7 +3330,8 @@ is held to the same rule (19 tiles / 19 turns, one harvester, first load at 42).
 |---|---|
 | the commit is `Hunt Here` and live | the sheet commits `assign_labor`, not a raid |
 | no `Detach a party` / `Away ` on the sheet | the retired expedition sheet's words did not survive under the ordinary one |
-| the section's three lines, by EQUALITY through the shipped formats | the walk (`6 tiles` each way, `6 turns` out), the rounded road (`0.8` → one hunter, singular noun) and the first load — and NO rate line |
+| the section's ONE line, by EQUALITY through the shipped formats | `6 tiles away · first load home in 19 turns` — and NO rate line |
+| no rot bullet in the PER TURN box | a walk nothing rots on draws none |
 | the PER TURN food headline EQUALS the reply's `rate_home` | one food number per source: the sheet promises the `netRateHome` the committed row prints |
 | …with no `now → after` and no waste note | a steady rate home has no walk to the floor, and a caravan walks away from nothing |
 | the caption reads `ONCE RUNNING · PER TURN`, with no likely-take suffix | the caption fits the number shown — `next turn` a far party delivers nothing |
@@ -3338,10 +3339,17 @@ is held to the same rule (19 tiles / 19 turns, one harvester, first load at 42).
 | (on `herd_hunt_band_near` / `food_forage_band_near`) the caption still begins `NEXT TURN` | inside the apron the caption is untouched |
 | (PNG-less, on `herd_hunt_band_far`) `_with_home_rate` is the identity on an empty view and on a no-party reply | inside the apron nothing changes |
 | the recorded ASK carries the stepper's crew and `source_kind: hunt` | the section is priced at the crew being composed — the fixture's reply ignores the crew, so the rendered lines cannot say this |
-| the section speaks no `trip` / `away` / `Send` | the standing-assignment register |
-| the producer's edges (PNG-less, `work_party_section_lines`) | a road covering the run, a rarely-walked road, a first load at one turn, a one-tile walk, a plural road, and no first load reading the hunt's SLOW-FILL line — the WORD `catch`, not `gather`, and no `forecast` |
+| the section speaks no `trip` / `turns away` / `Send` | the standing-assignment register |
+| the producer's edges (PNG-less, `work_party_section_lines`) | a road covering the run is the no-walk line alone; a one-tile walk with a one-turn first load reads singular; no first load is the distance alone |
 | the section mounts | the liveness companion to the two absences below |
 | the far spine EQUALS the local hunt's | the far sheet is the same sheet plus a section, never a second grammar |
+
+**`herd_hunt_far_party_spoils` (#706)** follows `herd_hunt_far_party_small`: the far boar with a
+reply whose whole carried take rots (`rate_home` 0, `spoiled_rate_home` 0.08). Claims: the PER TURN
+box's rot bullet (`HudWidgets.WORK_PARTY_ROT_META`, read by `Readout.work_party_rot`) is
+`HudWorkVocab.ROT_ALL_TEXT` at `VERDICT_SLOW`, and the WORK PARTY section stays one line. The partial
+register is `food_forage_far_party`'s. The compose sheet keeps the taller state's height into
+`herd_hunt_band_near`, so that frame's sheet bottom edge moved when this state was inserted.
 
 **`herd_hunt_far_party_small` is Ray's playtest case, re-staged for the model that ships**: three
 hunters (`SMALL_PARTY_*`) on a thin boar take, 4 hexes out from an apron of 2. Under the retired
@@ -3354,15 +3362,14 @@ the road (one hunter), and a first load at turn 8 — a 2-turn walk out, about 4
 
 | claim | what only IT can say |
 |---|---|
-| the section's three lines by EQUALITY: the walk, the road, the first load | the small caravan reads as an ordinary one |
+| the section's one line by EQUALITY: the distance and the first load | the small caravan reads as an ordinary one |
 | no retired eating text ANYWHERE on the rendered sheet | this is the frame the eat-first rule told Ray his party was starving on — a retired line surviving anywhere on it is exactly the failure |
 | the ask carries the three hunters | the frame is priced at Ray's crew |
 | the headline is `0.17` under `ONCE RUNNING · PER TURN` | the headline is the whole catch arriving home, the committed row's figure |
 
-**The slow-fill line's forage twin is PNG-less** (`chapters/sight_fog.gd`, after
-`food_forage_far_party`'s caption claim): `work_party_section_lines` driven on the forage web with no
-first load must carry `WORK_PARTY_SLOW_FILL_FORAGE`, with `gather` and no `catch`.
-`sight_fog.gd`'s checkpoints 19 → **20**.
+**`food_forage_far_party` carries the PARTIAL rot register** (#706): its patch reply rots 0.05 a turn
+of the take on the walk, so the PER TURN box shows `0.05 food a turn rots on the way home` as an amber
+bullet under the `0.12` headline (`ROT_RATE_FORMAT`, `VERDICT_SLOW`).
 
 **The absences ride the two-band pair**: `herd_hunt_band_near` (the band on the herd, inside its
 apron) mounts NO section, and `herd_hunt_band_far` (a far band whose herd authors no reply — the sim's
@@ -3370,8 +3377,8 @@ apron) mounts NO section, and `herd_hunt_band_far` (a far band whose herd author
 
 **`chapters/sight_fog.gd`'s `food_forage_out_of_range` IS `food_forage_far_party` now** — the same far
 band and tile, re-aimed from the refusal to the party section: the commit is live, the retired
-refusal's words are absent, and the section's four lines match the tile's authored reply in the
-harvesters' own noun, and its PER TURN food headline reads the reply's rate home under the
+refusal's words are absent, and the section's one line matches the tile's authored reply, and its PER TURN food headline reads the
+reply's rate home under the
 `ONCE RUNNING · PER TURN` caption.
 `food_forage_band_far` keeps its frame as the unauthored twin. **The deposit refusal went the same
 way**: `chapters/workings.gd`'s `workings_out_of_range` is `workings_far_party` /
@@ -3404,9 +3411,6 @@ subtracted.
   no-transition claim and the no-waste claim (`⚠ 60% WASTED` back); the identity claim stays green;
 - the caption forced back to the default past the apron → **EXIT=1, exactly 2 failures**, both webs'
   caption claims reading `NEXT TURN`; the two inside-the-apron caption claims stay green;
-- the two `WORK_PARTY_SLOW_FILL_*` values swapped → **EXIT=1, exactly 2 failures**: the forage
-  producer check and the hunt producer edge — both pinned by the WORD, since an equality against the
-  constant alone is satisfied by a swap;
 - a retired `They eat everything they catch` label mounted on the sheet OUTSIDE the party section →
   **EXIT=1, exactly 2 failures**: the whole-sheet eating claims on `herd_hunt_far_party` and
   `herd_hunt_far_party_small`; every section-equality claim stays green, which is why the claim reads

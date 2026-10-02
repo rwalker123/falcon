@@ -109,7 +109,7 @@ fn spawn_band_of(app: &mut App, x: u32, y: u32, food: i64, faction: FactionId) -
         .index(x, y)
         .expect("tile coords resolve");
     let mut stores = LocalStore::new();
-    stores.set(FOOD, Scalar::from_i64(food));
+    stores.reset_food("dry", Scalar::from_i64(food));
     app.world
         .spawn((
             PopulationCohort {
@@ -123,6 +123,7 @@ fn spawn_band_of(app: &mut App, x: u32, y: u32, food: i64, faction: FactionId) -
                 morale: scalar_zero(),
                 last_food_consumption: 0.0,
                 last_food_need: 0.0,
+                last_food_spoiled: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),
@@ -254,6 +255,62 @@ fn nearby_bands_share_food() {
         fed_net,
         membership.network_of(empty),
         "bands that share food should carry the same supply-network id"
+    );
+}
+
+/// **Pooled food keeps its keeping classes** (#706). The sender gives the proportional mix of what
+/// it holds, the receiver gets that mix, and friction takes every class alike — so each class's
+/// share of what arrived is its share of what was sent, and the sender's remaining larder keeps its
+/// own proportions.
+#[test]
+fn pooled_food_keeps_its_composition() {
+    const FLESH: &str = "flesh";
+    const DRY: &str = "dry";
+    const FLESH_HELD: i64 = 300;
+    const DRY_HELD: i64 = 700;
+    let mut app = spawn_world();
+    let (w, h) = {
+        let reg = app.world.resource::<TileRegistry>();
+        (reg.width, reg.height)
+    };
+    let (cx, cy) = (w / 4, h / 2);
+    let fed = spawn_band(&mut app, cx, cy, 0);
+    let empty = spawn_band(&mut app, cx + 2, cy, 0);
+    {
+        let mut cohort = app.world.get_mut::<PopulationCohort>(fed).expect("band");
+        cohort
+            .stores
+            .reset_food(FLESH, Scalar::from_i64(FLESH_HELD));
+        cohort.stores.add_food(DRY, Scalar::from_i64(DRY_HELD));
+    }
+    seed_mutual_tie(&mut app, fed, empty);
+
+    app.world.run_system_once(balance_supply_networks);
+
+    let food = |band: Entity| {
+        app.world
+            .get::<PopulationCohort>(band)
+            .expect("band")
+            .stores
+            .food()
+            .clone()
+    };
+    let (sent_from, arrived) = (food(fed), food(empty));
+    assert!(
+        arrived.total() > scalar_zero(),
+        "liveness: food must actually pool"
+    );
+    let share = |mix: &core_sim::FoodMix| mix.get(FLESH).to_f32() / mix.total().to_f32();
+    let held_share = FLESH_HELD as f32 / (FLESH_HELD + DRY_HELD) as f32;
+    assert!(
+        (share(&arrived) - held_share).abs() < 1e-4,
+        "the receipt is the sender's mix: {} flesh against {held_share}",
+        share(&arrived)
+    );
+    assert!(
+        (share(&sent_from) - held_share).abs() < 1e-4,
+        "the sender keeps its own proportions: {}",
+        share(&sent_from)
     );
 }
 

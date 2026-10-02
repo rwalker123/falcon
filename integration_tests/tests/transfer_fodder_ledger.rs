@@ -9,7 +9,8 @@
 //! ⛔ **THE HAY IS BOOKED ON ITS OWN LEDGER AND NOWHERE IN THE FOOD ONE.** The food identity
 //!
 //! ```text
-//! larder_delta == foodIncome − foodConsumption − raidForfeit + transferReceived − transferSent
+//! larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled
+//!                 + transferReceived − transferSent
 //! ```
 //!
 //! closes over the **food larder**, which a bale never enters, so a delivery of hay that touched
@@ -79,6 +80,8 @@ struct Rows {
     food_income: f32,
     food_consumption: f32,
     raid_forfeit: f32,
+    /// `foodSpoiled` — the food that rotted this turn (#706), the identity's `spoiled` term.
+    food_spoiled: f32,
     food_received: f32,
     food_sent: f32,
     /// `expeditionCargoFodder` — the hay an in-flight party is carrying, on its own wire field.
@@ -88,7 +91,8 @@ struct Rows {
 impl Rows {
     /// The food identity's right-hand side. Hay appears nowhere in it, which is the point.
     fn food_delta(&self) -> f32 {
-        self.food_income - self.food_consumption - self.raid_forfeit + self.food_received
+        self.food_income - self.food_consumption - self.raid_forfeit - self.food_spoiled
+            + self.food_received
             - self.food_sent
     }
 }
@@ -121,6 +125,7 @@ fn rows_of(app: &bevy::prelude::App, band: BandId) -> Rows {
         food_income: row.foodIncome(),
         food_consumption: row.foodConsumption(),
         raid_forfeit: row.raidForfeit(),
+        food_spoiled: row.foodSpoiled(),
         food_received: row.transferReceived(),
         food_sent: row.transferSent(),
         cargo_fodder: row.expeditionCargoFodder(),
@@ -222,7 +227,9 @@ fn a_sender_and_a_foreign_destination(app: &mut bevy::prelude::App) -> (Entity, 
             .world
             .get_mut::<PopulationCohort>(parent)
             .expect("the band exists");
-        cohort.stores.set(FOOD, scalar_from_f32(SENDER_LARDER));
+        cohort
+            .stores
+            .reset_food("dry", scalar_from_f32(SENDER_LARDER));
         cohort.stores.set(FODDER, scalar_from_f32(SENDER_HAYLOFT));
     }
     (parent, child)

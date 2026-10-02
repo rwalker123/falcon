@@ -979,7 +979,14 @@ pub fn simulate_population(
         cohort.children = outcome.state.children;
         cohort.working = outcome.state.working;
         cohort.elders = outcome.state.elders;
-        cohort.stores.set(FOOD, outcome.state.food_store);
+        // **The meal draws the fastest-rotting class first** (#706): the band eats its flesh before
+        // its greens and its greens before its grain, which is what makes the larder rot a line
+        // rather than a share (`crate::spoilage`). `advance_demographics` says how much; the store
+        // says which.
+        cohort.stores.eat_food(
+            food_before - outcome.state.food_store,
+            &demo.keeping.eat_order(),
+        );
         // The three factors behind this turn's births, parked for the snapshot exactly as
         // `last_morale_contributions` is: the player sees the inputs (larder, Food /turn) and the
         // effect (population), and this is the attribution between them.
@@ -2103,6 +2110,7 @@ mod food_flow_tests {
             last_transfer_crossings: Vec::new(),
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
             build_queue: Vec::new(),
+            homeward: Vec::new(),
         };
         assert!(
             band_food_flow(Some(&labor)).is_none(),
@@ -2154,6 +2162,7 @@ mod food_flow_tests {
             last_transfer_crossings: Vec::new(),
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
             build_queue: Vec::new(),
+            homeward: Vec::new(),
         };
         let flow = band_food_flow(Some(&labor)).expect("projected telemetry is real data");
         assert!(
@@ -2510,6 +2519,7 @@ mod wellbeing_tests {
             morale: m,
             last_food_consumption: 0.0,
             last_food_need: 0.0,
+            last_food_spoiled: 0.0,
             last_turn_food_transfers: Default::default(),
             last_turn_fodder_transfers: Default::default(),
             last_turn_transfer_crossings: Vec::new(),

@@ -258,7 +258,7 @@ fn band_fodder(app: &App, band: Entity) -> f32 {
 
 fn food_cargo(amount: f32) -> LocalStore {
     let mut store = LocalStore::new();
-    store.add(FOOD, scalar_from_f32(amount));
+    store.add_food("dry", scalar_from_f32(amount));
     store
 }
 
@@ -697,7 +697,9 @@ fn cargo_survives_a_checkpoint_round_trip() {
     let party = launch_shipment(&mut app, sender, destination_id, far, two_rating_cargo());
     {
         let mut expedition = app.world.get_mut::<Expedition>(party).expect("the party");
-        expedition.cargo.add(FOOD, scalar_from_f32(CARGO_FOOD));
+        expedition
+            .cargo
+            .add_food("dry", scalar_from_f32(CARGO_FOOD));
         expedition.cargo.add(FODDER, scalar_from_f32(CARGO_FODDER));
     }
 
@@ -708,7 +710,7 @@ fn cargo_survives_a_checkpoint_round_trip() {
     {
         let mut expedition = app.world.get_mut::<Expedition>(party).expect("the party");
         let carried = expedition.cargo.get(FOOD);
-        expedition.cargo.take(FOOD, carried);
+        expedition.cargo.take_food_mix(carried).total();
         let hay = expedition.cargo.get(FODDER);
         expedition.cargo.take(FODDER, hay);
         let mut sink = LocalStore::new();
@@ -925,7 +927,7 @@ fn a_shipment_publishes_its_destination_and_its_cargo_on_the_wire() {
     let sender_pos = band_position(&app, sender);
     let far = walk_away(&mut app, destination, sender_pos);
     let mut cargo = two_rating_cargo();
-    cargo.add(FOOD, scalar_from_f32(CARGO_FOOD));
+    cargo.add_food("dry", scalar_from_f32(CARGO_FOOD));
     cargo.add(FODDER, scalar_from_f32(CARGO_FODDER));
     let party = launch_shipment(&mut app, sender, destination_id, far, cargo);
     let party_band = *app.world.get::<BandId>(party).expect("the party has an id");

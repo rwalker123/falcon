@@ -4667,6 +4667,7 @@
       "food_income": 88.889999,
       "food_need": 22.969999,
       "food_shortfall": 99.949997,
+      "food_spoiled": 82.919998,
       "forage_carry_per_worker_biomass": 80.459999,
       "founding_min_workers": 13,
       "founding_parent_min_workers": 132,
@@ -4674,6 +4675,11 @@
       "grievance": 0.000154,
       "home": 193,
       "home_band_entity": 133,
+      "homeward_all_home_in": 27,
+      "homeward_food": 69.940002,
+      "homeward_food_spoils": 34.919998,
+      "homeward_next_load_in": 196,
+      "homeward_workers": 179,
       "hunt_carry_per_worker_biomass": 26.93,
       "hunt_crews": [
         {
@@ -4835,6 +4841,7 @@
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [53.360001, 85.860001, 62.110001, 89.209999]},
           "fauna_id": "populations[0].labor_assignments[0].fauna_id",
           "floor": 110.599998,
+          "fodder_rate_home": 27.309999,
           "fodder_yield": 46.790001,
           "hunt_useful_workers": 43,
           "hunters_on_the_road": 119,
@@ -4898,6 +4905,20 @@
               "material_id": "populations[0].labor_assignments[0].material_yield[2].material_id"
             }
           ],
+          "materials_rate_home": [
+            {
+              "amount": 66.800003,
+              "material_id": "populations[0].labor_assignments[0].materials_rate_home[0].material_id"
+            },
+            {
+              "amount": 16.82,
+              "material_id": "populations[0].labor_assignments[0].materials_rate_home[1].material_id"
+            },
+            {
+              "amount": 31.620001,
+              "material_id": "populations[0].labor_assignments[0].materials_rate_home[2].material_id"
+            }
+          ],
           "net_rate_home": 11.27,
           "next_load_home_in": 21,
           "overdraws": true,
@@ -4907,6 +4928,7 @@
           "priority": "normal",
           "realized_yield": 50.82,
           "species": "populations[0].labor_assignments[0].species",
+          "spoiled_rate_home": 62.150002,
           "sustainable_yield": 16.4,
           "take_species": [
             "flax",
@@ -4914,6 +4936,7 @@
           ],
           "target_x": 117,
           "target_y": 128,
+          "transit_keeps_turns": 97.370003,
           "useful_cutters": 184,
           "walk_out_remaining": 28,
           "walk_tiles": 90,
@@ -4928,6 +4951,7 @@
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [24.74, 44.759998, 71.209999, 53.509998]},
           "fauna_id": "populations[0].labor_assignments[1].fauna_id",
           "floor": 48.369999,
+          "fodder_rate_home": 107.879997,
           "fodder_yield": 0.25,
           "hunt_useful_workers": 144,
           "hunters_on_the_road": 12,
@@ -4991,6 +5015,20 @@
               "material_id": "populations[0].labor_assignments[1].material_yield[2].material_id"
             }
           ],
+          "materials_rate_home": [
+            {
+              "amount": 63.150002,
+              "material_id": "populations[0].labor_assignments[1].materials_rate_home[0].material_id"
+            },
+            {
+              "amount": 27.940001,
+              "material_id": "populations[0].labor_assignments[1].materials_rate_home[1].material_id"
+            },
+            {
+              "amount": 93.199997,
+              "material_id": "populations[0].labor_assignments[1].materials_rate_home[2].material_id"
+            }
+          ],
           "net_rate_home": 14.17,
           "next_load_home_in": 78,
           "overdraws": false,
@@ -5000,6 +5038,7 @@
           "priority": "high",
           "realized_yield": 67.830002,
           "species": "populations[0].labor_assignments[1].species",
+          "spoiled_rate_home": 1.6,
           "sustainable_yield": 35.830002,
           "take_species": [
             "flax",
@@ -5007,6 +5046,7 @@
           ],
           "target_x": 44,
           "target_y": 33,
+          "transit_keeps_turns": 107.940002,
           "useful_cutters": 197,
           "walk_out_remaining": 89,
           "walk_tiles": 27,
@@ -5021,6 +5061,7 @@
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [57.700001, 101.660004, 22.690001, 98.309998]},
           "fauna_id": "populations[0].labor_assignments[2].fauna_id",
           "floor": 97.739998,
+          "fodder_rate_home": 71.980003,
           "fodder_yield": 99.410004,
           "hunt_useful_workers": 121,
           "hunters_on_the_road": 121,
@@ -5084,6 +5125,20 @@
               "material_id": "populations[0].labor_assignments[2].material_yield[2].material_id"
             }
           ],
+          "materials_rate_home": [
+            {
+              "amount": 26.49,
+              "material_id": "populations[0].labor_assignments[2].materials_rate_home[0].material_id"
+            },
+            {
+              "amount": 75.059998,
+              "material_id": "populations[0].labor_assignments[2].materials_rate_home[1].material_id"
+            },
+            {
+              "amount": 72.230003,
+              "material_id": "populations[0].labor_assignments[2].materials_rate_home[2].material_id"
+            }
+          ],
           "net_rate_home": 20.030001,
           "next_load_home_in": 123,
           "overdraws": false,
@@ -5093,6 +5148,7 @@
           "priority": "low",
           "realized_yield": 40.889999,
           "species": "populations[0].labor_assignments[2].species",
+          "spoiled_rate_home": 30.200001,
           "sustainable_yield": 68.709999,
           "take_species": [
             "flax",
@@ -5100,6 +5156,7 @@
           ],
           "target_x": 167,
           "target_y": 178,
+          "transit_keeps_turns": 24.950001,
           "useful_cutters": 70,
           "walk_out_remaining": 158,
           "walk_tiles": 72,
@@ -5754,6 +5811,7 @@
       "food_income": 52.610001,
       "food_need": 62.349998,
       "food_shortfall": 104.449997,
+      "food_spoiled": 90.110001,
       "forage_carry_per_worker_biomass": 90.010002,
       "founding_min_workers": 168,
       "founding_parent_min_workers": 115,
@@ -5761,6 +5819,11 @@
       "grievance": 0.000053,
       "home": 148,
       "home_band_entity": 32,
+      "homeward_all_home_in": 18,
+      "homeward_food": 111.160004,
+      "homeward_food_spoils": 112.18,
+      "homeward_next_load_in": 187,
+      "homeward_workers": 158,
       "hunt_carry_per_worker_biomass": 111.440002,
       "hunt_crews": [
         {
@@ -5922,6 +5985,7 @@
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [14.59, 109.389999, 80.620003, 100.639999]},
           "fauna_id": "populations[1].labor_assignments[0].fauna_id",
           "floor": 71.43,
+          "fodder_rate_home": 48.48,
           "fodder_yield": 0.66,
           "hunt_useful_workers": 30,
           "hunters_on_the_road": 118,
@@ -5985,6 +6049,20 @@
               "material_id": "populations[1].labor_assignments[0].material_yield[2].material_id"
             }
           ],
+          "materials_rate_home": [
+            {
+              "amount": 80.449997,
+              "material_id": "populations[1].labor_assignments[0].materials_rate_home[0].material_id"
+            },
+            {
+              "amount": 65.190002,
+              "material_id": "populations[1].labor_assignments[0].materials_rate_home[1].material_id"
+            },
+            {
+              "amount": 5.23,
+              "material_id": "populations[1].labor_assignments[0].materials_rate_home[2].material_id"
+            }
+          ],
           "net_rate_home": 99.919998,
           "next_load_home_in": 188,
           "overdraws": true,
@@ -5994,6 +6072,7 @@
           "priority": "normal",
           "realized_yield": 31.379999,
           "species": "populations[1].labor_assignments[0].species",
+          "spoiled_rate_home": 57.459999,
           "sustainable_yield": 23.76,
           "take_species": [
             "flax",
@@ -6001,6 +6080,7 @@
           ],
           "target_x": 62,
           "target_y": 51,
+          "transit_keeps_turns": 95.139999,
           "useful_cutters": 91,
           "walk_out_remaining": 171,
           "walk_tiles": 105,
@@ -6015,6 +6095,7 @@
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [35.360001, 53.060001, 26.610001, 75.970001]},
           "fauna_id": "populations[1].labor_assignments[1].fauna_id",
           "floor": 95.239998,
+          "fodder_rate_home": 47.799999,
           "fodder_yield": 2.93,
           "hunt_useful_workers": 41,
           "hunters_on_the_road": 1,
@@ -6078,6 +6159,20 @@
               "material_id": "populations[1].labor_assignments[1].material_yield[2].material_id"
             }
           ],
+          "materials_rate_home": [
+            {
+              "amount": 75.510002,
+              "material_id": "populations[1].labor_assignments[1].materials_rate_home[0].material_id"
+            },
+            {
+              "amount": 26.5,
+              "material_id": "populations[1].labor_assignments[1].materials_rate_home[1].material_id"
+            },
+            {
+              "amount": 22.370001,
+              "material_id": "populations[1].labor_assignments[1].materials_rate_home[2].material_id"
+            }
+          ],
           "net_rate_home": 72.489998,
           "next_load_home_in": 163,
           "overdraws": false,
@@ -6087,6 +6182,7 @@
           "priority": "high",
           "realized_yield": 16.93,
           "species": "populations[1].labor_assignments[1].species",
+          "spoiled_rate_home": 9.36,
           "sustainable_yield": 31.49,
           "take_species": [
             "flax",
@@ -6094,6 +6190,7 @@
           ],
           "target_x": 135,
           "target_y": 146,
+          "transit_keeps_turns": 81.07,
           "useful_cutters": 158,
           "walk_out_remaining": 190,
           "walk_tiles": 32,
@@ -6108,6 +6205,7 @@
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [50.82, 70.839996, 97.290001, 53.330002]},
           "fauna_id": "populations[1].labor_assignments[2].fauna_id",
           "floor": 20.67,
+          "fodder_rate_home": 36.439999,
           "fodder_yield": 59.09,
           "hunt_useful_workers": 184,
           "hunters_on_the_road": 68,
@@ -6171,6 +6269,20 @@
               "material_id": "populations[1].labor_assignments[2].material_yield[2].material_id"
             }
           ],
+          "materials_rate_home": [
+            {
+              "amount": 13.95,
+              "material_id": "populations[1].labor_assignments[2].materials_rate_home[0].material_id"
+            },
+            {
+              "amount": 52.759998,
+              "material_id": "populations[1].labor_assignments[2].materials_rate_home[1].material_id"
+            },
+            {
+              "amount": 14.54,
+              "material_id": "populations[1].labor_assignments[2].materials_rate_home[2].material_id"
+            }
+          ],
           "net_rate_home": 56.73,
           "next_load_home_in": 78,
           "overdraws": false,
@@ -6180,6 +6292,7 @@
           "priority": "low",
           "realized_yield": 33.75,
           "species": "populations[1].labor_assignments[2].species",
+          "spoiled_rate_home": 49.360001,
           "sustainable_yield": 65.809998,
           "take_species": [
             "flax",
@@ -6187,6 +6300,7 @@
           ],
           "target_x": 148,
           "target_y": 137,
+          "transit_keeps_turns": 55.080002,
           "useful_cutters": 13,
           "walk_out_remaining": 33,
           "walk_tiles": 147,
@@ -6804,6 +6918,7 @@
       "food_income": 11.58,
       "food_need": 0.05,
       "food_shortfall": 97.199997,
+      "food_spoiled": 5.14,
       "forage_carry_per_worker_biomass": 56.990002,
       "founding_min_workers": 87,
       "founding_parent_min_workers": 118,
@@ -6811,6 +6926,11 @@
       "grievance": 0.00018,
       "home": 95,
       "home_band_entity": 143,
+      "homeward_all_home_in": 125,
+      "homeward_food": 105.389999,
+      "homeward_food_spoils": 94.879997,
+      "homeward_next_load_in": 182,
+      "homeward_workers": 165,
       "hunt_carry_per_worker_biomass": 7.09,
       "hunt_crews": [
         {
@@ -6972,6 +7092,7 @@
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [92.720001, 7.32, 83.970001, 3.97]},
           "fauna_id": "populations[2].labor_assignments[0].fauna_id",
           "floor": 7.88,
+          "fodder_rate_home": 28.66,
           "fodder_yield": 102.470001,
           "hunt_useful_workers": 17,
           "hunters_on_the_road": 153,
@@ -7035,6 +7156,20 @@
               "material_id": "populations[2].labor_assignments[0].material_yield[2].material_id"
             }
           ],
+          "materials_rate_home": [
+            {
+              "amount": 5.81,
+              "material_id": "populations[2].labor_assignments[0].materials_rate_home[0].material_id"
+            },
+            {
+              "amount": 0.66,
+              "material_id": "populations[2].labor_assignments[0].materials_rate_home[1].material_id"
+            },
+            {
+              "amount": 99.169998,
+              "material_id": "populations[2].labor_assignments[0].materials_rate_home[2].material_id"
+            }
+          ],
           "net_rate_home": 19.51,
           "next_load_home_in": 67,
           "overdraws": true,
@@ -7044,6 +7179,7 @@
           "priority": "normal",
           "realized_yield": 82.589996,
           "species": "populations[2].labor_assignments[0].species",
+          "spoiled_rate_home": 60.459999,
           "sustainable_yield": 14.97,
           "take_species": [
             "flax",
@@ -7051,6 +7187,7 @@
           ],
           "target_x": 175,
           "target_y": 186,
+          "transit_keeps_turns": 14.11,
           "useful_cutters": 110,
           "walk_out_remaining": 94,
           "walk_tiles": 160,
@@ -7065,6 +7202,7 @@
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [9.69, 95.089996, 6.34, 86.339996]},
           "fauna_id": "populations[2].labor_assignments[1].fauna_id",
           "floor": 26.209999,
+          "fodder_rate_home": 112.059998,
           "fodder_yield": 20.6,
           "hunt_useful_workers": 102,
           "hunters_on_the_road": 22,
@@ -7128,6 +7266,20 @@
               "material_id": "populations[2].labor_assignments[1].material_yield[2].material_id"
             }
           ],
+          "materials_rate_home": [
+            {
+              "amount": 2.16,
+              "material_id": "populations[2].labor_assignments[1].materials_rate_home[0].material_id"
+            },
+            {
+              "amount": 53.41,
+              "material_id": "populations[2].labor_assignments[1].materials_rate_home[1].material_id"
+            },
+            {
+              "amount": 5.35,
+              "material_id": "populations[2].labor_assignments[1].materials_rate_home[2].material_id"
+            }
+          ],
           "net_rate_home": 24.16,
           "next_load_home_in": 148,
           "overdraws": false,
@@ -7137,6 +7289,7 @@
           "priority": "high",
           "realized_yield": 107.459999,
           "species": "populations[2].labor_assignments[1].species",
+          "spoiled_rate_home": 54.16,
           "sustainable_yield": 54.080002,
           "take_species": [
             "flax",
@@ -7144,6 +7297,7 @@
           ],
           "target_x": 198,
           "target_y": 187,
+          "transit_keeps_turns": 35.360001,
           "useful_cutters": 99,
           "walk_out_remaining": 115,
           "walk_tiles": 121,
@@ -7158,6 +7312,7 @@
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [85.400002, 5.4, 94.150002, 51.869999]},
           "fauna_id": "populations[2].labor_assignments[2].fauna_id",
           "floor": 94.800003,
+          "fodder_rate_home": 71.290001,
           "fodder_yield": 96.949997,
           "hunt_useful_workers": 51,
           "hunters_on_the_road": 23,
@@ -7221,6 +7376,20 @@
               "material_id": "populations[2].labor_assignments[2].material_yield[2].material_id"
             }
           ],
+          "materials_rate_home": [
+            {
+              "amount": 96.400002,
+              "material_id": "populations[2].labor_assignments[2].materials_rate_home[0].material_id"
+            },
+            {
+              "amount": 20.780001,
+              "material_id": "populations[2].labor_assignments[2].materials_rate_home[1].material_id"
+            },
+            {
+              "amount": 25.440001,
+              "material_id": "populations[2].labor_assignments[2].materials_rate_home[2].material_id"
+            }
+          ],
           "net_rate_home": 3.01,
           "next_load_home_in": 109,
           "overdraws": false,
@@ -7230,6 +7399,7 @@
           "priority": "low",
           "realized_yield": 75.220001,
           "species": "populations[2].labor_assignments[2].species",
+          "spoiled_rate_home": 40.009998,
           "sustainable_yield": 89.739998,
           "take_species": [
             "flax",
@@ -7237,6 +7407,7 @@
           ],
           "target_x": 69,
           "target_y": 80,
+          "transit_keeps_turns": 108.949997,
           "useful_cutters": 200,
           "walk_out_remaining": 172,
           "walk_tiles": 10,

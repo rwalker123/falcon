@@ -1360,6 +1360,7 @@ mod tests {
             morale: crate::scalar::scalar_one(),
             last_food_consumption: 0.0,
             last_food_need: 0.0,
+            last_food_spoiled: 0.0,
             last_turn_food_transfers: Default::default(),
             last_turn_fodder_transfers: Default::default(),
             last_turn_transfer_crossings: Vec::new(),
@@ -1493,6 +1494,7 @@ mod tests {
                 },
             ],
             build_queue: Vec::new(),
+            homeward: Vec::new(),
             last_yields: vec![
                 SourceYield {
                     keep_hands: crate::fauna::NO_HANDS,
@@ -1563,7 +1565,15 @@ mod tests {
         // the same turn's population growth).
         const CONSUMED: f32 = 4.13;
         cohort.last_food_consumption = CONSUMED;
+        // And what rotted (#706) — the identity's `spoiled` term, echoed verbatim.
+        const SPOILED: f32 = 1.75;
+        cohort.last_food_spoiled = SPOILED;
         let state = capture_food_state(&cohort, &allocation);
+        assert!(
+            (state.food_spoiled - SPOILED).abs() < 1e-5,
+            "food_spoiled == last_food_spoiled: {} vs {SPOILED}",
+            state.food_spoiled
+        );
 
         // food_income = Σ actual (2.5 + 0.5) — the real (lumpy) arrivals, unchanged.
         assert!(
@@ -1598,7 +1608,8 @@ mod tests {
     /// and real fodder, so its row must state that fodder rather than the `+0.00` every compact
     /// readout showed. And it must state it *beside* the ledger, never in it — `food_income` is one
     /// side of the pinned larder identity
-    /// `larder_delta == food_income − food_consumption − raid_forfeit`, and fodder credits the
+    /// `larder_delta == food_income − food_consumption − raid_forfeit − spoiled + …`, and fodder
+    /// credits the
     /// band's `FODDER` store without ever touching the larder, so the income here is the hunt's
     /// alone. The hunt row is the control: no animal pays fodder, so its `0.0` is structural.
     #[test]
@@ -1637,6 +1648,7 @@ mod tests {
                 },
             ],
             build_queue: Vec::new(),
+            homeward: Vec::new(),
             last_yields: vec![
                 SourceYield {
                     fodder: HAY_FODDER,
@@ -1711,6 +1723,7 @@ mod tests {
                 priority: SourcePriority::default(),
             }],
             build_queue: Vec::new(),
+            homeward: Vec::new(),
             last_yields: Vec::new(),
             last_raid_forfeit: 0.0,
             last_roadwork_demand: 0.0,

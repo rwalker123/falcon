@@ -14,6 +14,16 @@
     "food_reserve_days": 20.0,
     "well_fed_morale_bonus": 0.2
   },
+  "keeping": {
+    "classes": [
+      { "id": "flesh", "shelf_life_turns": 4.0 },
+      { "id": "fresh_plant", "shelf_life_turns": 8.0 },
+      { "id": "dry", "shelf_life_turns": 60.0 }
+    ],
+    "startup_class": "dry",
+    "plant_fallback_class": "fresh_plant",
+    "kill_fallback_class": "flesh"
+  },
   "births": {
     "birth_rate": 0.03,
     "reserve": {

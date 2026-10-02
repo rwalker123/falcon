@@ -176,6 +176,7 @@ fn resident_band(app: &mut App, tile: Entity, working: u32, warriors: u32) -> En
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
                 last_food_need: 0.0,
+                last_food_spoiled: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),
@@ -220,7 +221,7 @@ fn working_of(app: &App, band: Entity) -> f32 {
 fn seed_income_and_larder(app: &mut App, band: Entity, income: f32, larder: f32) {
     {
         let mut cohort = app.world.get_mut::<PopulationCohort>(band).unwrap();
-        cohort.stores.set(FOOD, scalar_from_f32(larder));
+        cohort.stores.reset_food("dry", scalar_from_f32(larder));
     }
     let mut alloc = app.world.get_mut::<LaborAllocation>(band).unwrap();
     alloc.last_yields = vec![SourceYield {

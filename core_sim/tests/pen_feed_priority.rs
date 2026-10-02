@@ -238,6 +238,7 @@ fn spawn_keeper(app: &mut App, assignments: Vec<LaborAssignment>, tile: UVec2) -
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
                 last_food_need: 0.0,
+                last_food_spoiled: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),
@@ -293,7 +294,7 @@ fn larder_left(app: &App, keeper: Entity) -> f32 {
 fn stock(app: &mut App, keeper: Entity, hay: f32, larder: f32) {
     let mut cohort = app.world.get_mut::<PopulationCohort>(keeper).unwrap();
     cohort.stores.set(FODDER, scalar_from_f32(hay));
-    cohort.stores.set(FOOD, scalar_from_f32(larder));
+    cohort.stores.reset_food("dry", scalar_from_f32(larder));
 }
 
 /// The share of its own fodder demand a pen actually got — grass plus hay over

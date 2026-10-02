@@ -83,6 +83,7 @@ mod sites;
 mod sites_config;
 mod snapshot;
 mod snapshot_overlays_config;
+mod spoilage;
 mod start_profile;
 pub mod starting_loadout;
 mod supply;
@@ -128,7 +129,7 @@ pub use components::{
     BandBench, BandEquipment, BandId, BandName, BandTravel, BandWorkforce, BatchGrade, BuildJob,
     BuildQueueEntry, BuildSource, DeathCause, DemographicFlowAccumulator, DrawnInputs,
     DrawnMaterial, ElementKind, EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase,
-    FinishedBatch, Improvement, KeepingToolLine, KnowledgeFragment, LaborAllocation,
+    FinishedBatch, FoodMix, Improvement, KeepingToolLine, KnowledgeFragment, LaborAllocation,
     LaborAssignment, LaborTarget, LocalStore, MaterialBatch, MaterialDraw, MoraleCause,
     PopulationCohort, PowerNode, ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep,
     ShedSubject, SourcePriority, SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile,
@@ -183,7 +184,7 @@ pub use culture_corruption_config::{
 };
 pub use demographics_config::{
     load_demographics_config_from_env, DemographicsConfig, DemographicsConfigHandle,
-    DemographicsConfigMetadata,
+    DemographicsConfigMetadata, KeepingClass, KeepingConfig,
 };
 pub use equipment_config::{
     load_equipment_config_from_env, BandItemBudget, Crew, DefaultKitsConfig, EffectTier,
@@ -713,6 +714,21 @@ pub fn build_headless_app() -> App {
     let recipes_handle = recipes_config::RecipesConfigHandle::new(recipes_config);
     let (demographics_config, demographics_metadata) =
         demographics_config::load_demographics_config_from_env();
+    // **Every species names a configured keeping class** (#706) — the two food webs' rosters are
+    // reconciled against the class table here, the one place all three are in scope. A misspelt
+    // class would otherwise land a species' food in a class nothing eats in order or rots.
+    if let Err(err) = fauna_handle
+        .get()
+        .validate_keeping(&demographics_config.keeping)
+    {
+        panic!("fauna config does not reconcile with the keeping classes: {err}");
+    }
+    if let Err(err) = flora_handle
+        .get()
+        .validate_keeping(&demographics_config.keeping)
+    {
+        panic!("flora config does not reconcile with the keeping classes: {err}");
+    }
     let demographics_handle =
         demographics_config::DemographicsConfigHandle::new(demographics_config);
     let (supply_network_config, supply_network_metadata) =
@@ -1167,6 +1183,11 @@ pub fn build_headless_app() -> App {
                 // sync points between them are preserved exactly as before.
                 (
                     systems::simulate_population,
+                    // The larder rots right after the meal and before the turn's take lands
+                    // (#706): what the band could not eat in time is measured against the food it
+                    // carried into the turn, and resets this turn's `last_food_spoiled`, which the
+                    // labor pass's caravan transit rot then adds to.
+                    spoilage::rot_band_larders,
                     // Move first so the band's `current_tile` is current before labor reads its
                     // in-range sources, then resolve per-worker Forage/Hunt/Scout yields.
                     systems::advance_band_movement,

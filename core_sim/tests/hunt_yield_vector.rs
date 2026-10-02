@@ -233,6 +233,7 @@ fn spawn_hunters(
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
                 last_food_need: 0.0,
+                last_food_spoiled: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),
@@ -428,11 +429,11 @@ fn eradicate_pays_a_windfall_and_still_ends_the_herd() {
 /// **5. The larder ledger still closes for a wolf hunt — materials are NOT food income.**
 ///
 /// `foodIncome` is `Σ SourceYield::actual`, and the identity
-/// `larder_delta == food_income − food_consumption − pen_feed_upkeep` is what makes the band's food
-/// panel honest. A hunt that credits a *second* account must not leak it into that sum: a wolf's
-/// take contributes `0` to `food_income` while filling the band's material batches. Run with only
-/// the labor system, so consumption and pen feed are both `0` and the identity reduces to
-/// `larder_delta == Σ actual`.
+/// `larder_delta == food_income − food_consumption − raid_forfeit − spoiled + received − sent` is
+/// what makes the band's food panel honest. A hunt that credits a *second* account must not leak it
+/// into that sum: a wolf's take contributes `0` to `food_income` while filling the band's material
+/// batches. Run with only the labor system, so consumption, raid, rot (a local row walks no pack)
+/// and transfers are all `0` and the identity reduces to `larder_delta == Σ actual`.
 #[test]
 fn the_larder_ledger_excludes_materials_for_a_wolf_hunt() {
     let mut app = spawn_world();
@@ -700,6 +701,7 @@ fn spawn_resident_crew(
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
                 last_food_need: 0.0,
+                last_food_spoiled: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),
@@ -1501,6 +1503,7 @@ fn party_cohort(tile: bevy::prelude::Entity, workers: u32) -> PopulationCohort {
         morale: scalar_one(),
         last_food_consumption: 0.0,
         last_food_need: 0.0,
+        last_food_spoiled: 0.0,
         last_turn_food_transfers: Default::default(),
         last_turn_fodder_transfers: Default::default(),
         last_turn_transfer_crossings: Vec::new(),

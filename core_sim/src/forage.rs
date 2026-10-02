@@ -2236,6 +2236,55 @@ pub fn patch_provisions_per_biomass_taking(
     })
 }
 
+/// A species whose food keeps as another class pays nothing into this one — the rate's value for
+/// it, and the fallback for a basket that names nothing.
+const NOT_THIS_CLASS: f32 = 0.0;
+
+/// **What a gather of `provisions` off this patch IS, by keeping class** (#706) — the take's food
+/// split across classes in proportion to each class's share of the basket's conversion rate: the
+/// same [`rung_rate`] [`patch_provisions_per_biomass_taking`] resolves, with the rate restricted to
+/// the species whose `keeping` names that class. So a riverbank basket of catfish and reeds lands as
+/// flesh and greens in the proportions its food was made of, through the one basket arithmetic.
+///
+/// A basket the roster cannot decompose (empty, or naming no known species — the rate's own
+/// fallback case) lands whole in `keeping.plant_fallback_class`.
+pub fn patch_food_mix(
+    patch: &ForagePatch,
+    tile_composition: &[FloraShare],
+    flora: &FloraConfig,
+    forage: &ForageLaborConfig,
+    take: &TakeSelection,
+    provisions: crate::scalar::Scalar,
+    keeping: &crate::demographics_config::KeepingConfig,
+) -> crate::components::FoodMix {
+    let weights: Vec<(&str, f32)> = keeping
+        .classes
+        .iter()
+        .map(|class| {
+            let weight = patch_interpolate(patch, |rung| {
+                rung_rate(
+                    patch,
+                    tile_composition,
+                    flora,
+                    forage,
+                    rung,
+                    take,
+                    |def| {
+                        if def.keeping == class.id {
+                            def.yield_.provisions_per_biomass
+                        } else {
+                            NOT_THIS_CLASS
+                        }
+                    },
+                    NOT_THIS_CLASS,
+                )
+            });
+            (class.id.as_str(), weight)
+        })
+        .collect();
+    crate::components::FoodMix::from_weights(provisions, weights, &keeping.plant_fallback_class)
+}
+
 /// The conversion rate this patch's crop would reach **on `rung`** —
 /// [`patch_provisions_per_biomass`] asked about a rung the patch may not stand on yet (or may
 /// already have passed). Its two callers each name a rung: [`tended_provisions`] asks
@@ -4524,6 +4573,13 @@ pub(crate) fn forage_forecast_at_rate(
 /// always does.
 const REALIZED_PROJECTION_PROVISIONS_EPSILON: f32 = 1e-4;
 
+/// **Below this much biomass taken in a projected turn, the crew took nothing at all** — the
+/// biomass-scale twin of [`REALIZED_PROJECTION_PROVISIONS_EPSILON`], for a basket that pays **no
+/// food** (a cash or fodder crop: tobacco, cotton, hay). Such a take is worth zero provisions every
+/// turn and is still a real cut the caravan walks home a pack at a time, so "spent" has to be read
+/// off the biomass too. The same four orders of magnitude below a live patch's one-turn cut.
+const REALIZED_PROJECTION_BIOMASS_EPSILON: f32 = 1e-4;
+
 /// **The steady `realized` yield for a forage source — a FORWARD PROJECTION** (the plant twin of
 /// `fauna::project_realized_hunt`). The average food/turn the patch delivers over the next `horizon`
 /// turns, simulated forward from its CURRENT state under `policy` + `workers`, mirroring the real turn
@@ -4665,11 +4721,18 @@ impl ForageProjection {
             seasonal,
         )
         .to_f32();
-        if provisions <= REALIZED_PROJECTION_PROVISIONS_EPSILON {
+        let biomass = (biomass_before - self.sim.biomass).max(0.0);
+        // ⛔ **SPENT MEANS NOTHING WAS TAKEN, NOT NOTHING EDIBLE.** Reading it off provisions alone
+        // ended every projection of a no-food basket on its first turn, so its caravan forecast never
+        // dispatched a pack and quoted no first load (and the query priced its other accounts off a
+        // take of nothing).
+        if provisions <= REALIZED_PROJECTION_PROVISIONS_EPSILON
+            && biomass <= REALIZED_PROJECTION_BIOMASS_EPSILON
+        {
             return None;
         }
         Some(ProjectedForageTurn {
-            biomass: (biomass_before - self.sim.biomass).max(0.0),
+            biomass,
             provisions,
         })
     }

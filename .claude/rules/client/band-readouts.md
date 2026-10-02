@@ -187,7 +187,8 @@ which is a property of the tier and not of the merge.
   decoded as `food_income`/`food_consumption`, flowed onto the
   MapView unit marker + guarded by `marker_field_guard`): for a **player** band with real flow,
   `_band_food_line` appends the **steady net per-turn rate** — `Food 15 (19 turns) · +0.76 /turn` —
-  where **net = `DetailFormat.band_net_food` = income − food_consumption − raid_forfeit**, tinted green (≥0) /
+  where **net = `DetailFormat.band_net_food` = income − food_need − raid_forfeit − food_spoiled**, tinted
+  green (≥0) /
   red (<0). **The income term is the fix:** `_band_food_income = Gathered + Hunted = Σ per-source
   `realized_yield`** (the honest long-run average of the lumpy take, client-summed from the same values
   as the breakdown rows), so the net **no longer swings turn-to-turn** the way the old lumpy
@@ -195,8 +196,8 @@ which is a property of the tier and not of the merge.
   breakdown rows rather than off any band-level wire total, so the net's income half can never disagree
   with the Gathered/Hunted rows beneath it. (A cohort-level `foodIncomeAverage` was added for exactly
   this and then **retired as redundant** — a separately-computed total is a second source of truth that
-  can drift from the rows. Don't reintroduce it; the sum IS the contract.) **The ledger has THREE terms:**
-  income, what the PEOPLE eat, and `raid_forfeit`.
+  can drift from the rows. Don't reintroduce it; the sum IS the contract.) **The ledger has FOUR
+  terms** (beside the transfer pair): income, what the PEOPLE eat, `raid_forfeit`, and `food_spoiled`.
 
   **A PEN IS NOT A TERM, and the row that made it one is retired.** `penFeedUpkeep` was a fourth term —
   the food a band handed its penned herds each turn — and it was a **modelling defect**: human food is
@@ -208,29 +209,38 @@ which is a property of the tier and not of the merge.
   the `🐄 Pen feed (animals)` breakdown row is gone with `DetailFormat.band_pen_feed`. **Do not
   reintroduce any of it**, and do not re-derive one client-side by summing herds.
 
-  **`raid_forfeit`** (Predators Phase 3, `PopulationCohortState.raidForfeit`) is the ledger's only debit
-  beyond consumption: food a predator raided off the larder THIS turn. The client
+  **`raid_forfeit`** (Predators Phase 3, `PopulationCohortState.raidForfeit`) is one of the ledger's two
+  loss terms beyond consumption: food a predator raided off the larder THIS turn. The client
   **must not** re-derive it, and raids are **EPISODIC**, so this term is present only the turn a
   raid lands and the forward FOOD OUTLOOK chart deliberately does NOT project it (a past loss is not a
-  steady drain). The full identity `larder_delta == income − consumption − raid_forfeit` is
-  pinned by `integration_tests/tests/{pen_food_ledger,raid_food_ledger}.rs`, and asserted client-side on
-  a pen-keeping band by `ui_preview`'s `band_pen_keeper` state — arithmetic AND the absence of any
-  animal-feed row, since a resurrected row is invisible in a PNG.
+  steady drain).
+  **`food_spoiled`** (#706, `PopulationCohortState.foodSpoiled`) is the other loss term: food that
+  rotted THIS turn — larder food past its keeping class's shelf life plus any caravan pack that rotted on
+  the walk home (credited in income as it lands, debited here the same turn). Read, never re-derived;
+  it enters `band_net_food` and `band_has_food_flow` exactly as `raid_forfeit` does, so
+  `food_is_concerning` and the faction page's summed Food line carry it through `band_net_food`.
+  The full identity `larder_delta == income − consumption − raid_forfeit − food_spoiled + received −
+  sent` is pinned by
+  `integration_tests/tests/{pen_food_ledger,raid_food_ledger,spoilage_food_ledger,transfer_food_ledger}.rs`,
+  and asserted client-side on a pen-keeping band by `ui_preview`'s `band_pen_keeper` state — arithmetic
+  AND the absence of any animal-feed row, since a resurrected row is invisible in a PNG.
   The turns-to-empty stays only in the `(N turns)` figure; it is not
   repeated. The `Food` label is a **click-to-open disclosure** (a `▸/▾` caret) opening a
   **category breakdown** in a **POPOVER** — indented `▲ +X  Gathered` / `▲ +Y  Hunted` / `▼ −Z  Consumed`
-  / `▼ −V  ⚔ Lost to raids` rows (Gathered/Hunted = Σ per-source `actual_yield`
+  / `▼ −V  ⚔ Lost to raids` / `▼ −S  Spoiled` rows (Gathered/Hunted = Σ per-source `actual_yield`
   by kind, Consumed = `food_consumption` — the label lost its `(people)` qualifier with the animals' row
   it contrasted against;
   **Lost to raids = `raid_forfeit`, shown only the turn a raid landed** (`DisclosureController.food_breakdown_lines` /
   `DetailFormat.FOOD_LABEL_RAID_FORFEIT`, the crossed-swords glyph matching the `predator_raid` command-feed
   alert) — **the people and the raiders draw the same larder but are DIFFERENT stories**, so they are different
-  rows), rendered through the **shared morale-breakdown path** in `DetailFormat.detail_bbcode` (income ▲
+  rows; **Spoiled = `food_spoiled`, right after Lost to raids, shown only on a turn something rotted**
+  (`DetailFormat.FOOD_LABEL_SPOILED`, a third story — eat or haul it sooner)), rendered through the **shared morale-breakdown path** in `DetailFormat.detail_bbcode` (income ▲
   green, debits ▼ amber). ui_preview: `band_pen_keeper` (a pen-keeping band: net +4.73 = 5.88 − 1.15,
   the pen a pure credit and no answering debit anywhere) /
   `band_pen_starving` (the same pen underfed — income collapses to 1.32 with the shrinking herd, and
   that is the ledger's ONLY trace of it; the alarm lives on the herd drawer) / `predator_band_raided` (raided band: the
-  `⚔ Lost to raids −1.20` row + the crimson Warrior "⚠ Predator nearby" alert). No flow → the bare `Food N (N turns)` line,
+  `⚔ Lost to raids −1.20` row, the `Spoiled −0.45` row under it — asserted to move the net by exactly
+  the rot — + the crimson Warrior "⚠ Predator nearby" alert). No flow → the bare `Food N (N turns)` line,
   no net/disclosure.
   **THE BREAKDOWN OPENS IN A POPOVER, NEVER INLINE — and that is a correctness rule, not a style
   one.** Expanding it in place grew the vitals `RichTextLabel` (`fit_content = true`) by several

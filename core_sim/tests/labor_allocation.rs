@@ -149,6 +149,7 @@ fn spawn_band(
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
                 last_food_need: 0.0,
+                last_food_spoiled: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),
@@ -185,7 +186,7 @@ fn stock_the_larder(app: &mut App, band: bevy::prelude::Entity, food: f32) {
         .get_mut::<PopulationCohort>(band)
         .expect("the band keeps its cohort")
         .stores
-        .add(FOOD, scalar_from_f32(food));
+        .add_food("dry", scalar_from_f32(food));
 }
 
 /// ⛔ **THE LOCAL IDENTITY — the single most valuable assertion in the work-party slice.**
