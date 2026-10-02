@@ -557,6 +557,10 @@ fn spawn_camp(world: &mut World, at: UVec2, faction: FactionId) {
             generation: 0 as GenerationId,
             faction,
             knowledge: Vec::new(),
+            founding_lines: core_sim::FoundingLines::founded(
+                core_sim::BandId(0),
+                core_sim::MIN_BAND_LINES,
+            ),
         },
         ResidentBand,
     ));

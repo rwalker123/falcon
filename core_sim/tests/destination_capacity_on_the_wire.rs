@@ -296,6 +296,10 @@ fn spawn_the_farming_band(
             generation: 0 as GenerationId,
             faction: FactionId(0),
             knowledge: Vec::new(),
+            founding_lines: core_sim::FoundingLines::founded(
+                core_sim::BandId(0),
+                core_sim::MIN_BAND_LINES,
+            ),
         },
         StartingUnit {
             kind: "BandForager".to_string(),
@@ -676,6 +680,10 @@ fn spawn_the_herding_band(
             generation: 0 as GenerationId,
             faction: FactionId(0),
             knowledge: Vec::new(),
+            founding_lines: core_sim::FoundingLines::founded(
+                core_sim::BandId(0),
+                core_sim::MIN_BAND_LINES,
+            ),
         },
         StartingUnit {
             kind: "BandHunter".to_string(),

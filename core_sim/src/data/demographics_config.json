@@ -51,5 +51,8 @@
     "child_vulnerability": 1.25,
     "working_vulnerability": 1.0,
     "elder_vulnerability": 1.5
+  },
+  "lineage": {
+    "founding_lines": 8
   }
 }

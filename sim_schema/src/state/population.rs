@@ -1696,6 +1696,11 @@ pub struct PopulationCohortState {
     /// time goes short even when its income beats its need on average. Appended last.
     #[serde(default)]
     pub food_shortfall: f32,
+    /// **How many founding lines this band descends from** — the unrelated families that are the
+    /// sim's relatedness proxy. A starting band holds `lineage.founding_lines`; a split takes a
+    /// proportional share and the parent keeps the rest. Appended last (append-only).
+    #[serde(default)]
+    pub founding_lines: u32,
 }
 
 /// **ONE GOOD THAT CROSSED A BAND'S STORE, BY CAUSE** — a row of
