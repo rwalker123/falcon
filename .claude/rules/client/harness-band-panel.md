@@ -2993,3 +2993,25 @@ FORAGE row, whose site crew (`KIT_BASKET_SHORT_NEEDED` = 2) is one short of its 
 `workers_needed` IS the ceiling, so the row is overstaffed and short of baskets in one frame. It also
 asserts the kit note is non-empty, or the claim would pass on a row that lost it. Measured: exit 0,
 1500 `PASS`.
+
+## The crew split on the Work-tab rows (`_render_work_crew_split_states`)
+
+Two frames and sixteen claims, run after the work-party states:
+`band_panel_work_crew_split` and `band_panel_work_crew_split_big`. The behaviour is
+`band-city-panel.md` → "THE CREW SPLIT".
+
+- **One board holds every case**: a patch whose keeping took 3.2 of 5 hands (the fourth mark
+  part-shaded, the hover `About 3 of 5 …`), a patch all three of whose hands tend (`All 3 are tending
+  the patch — nobody is free to harvest.`), a wild patch with no bill (no marks, the control), and a
+  wood working whose keeping took 0.6 of 2 cutters (the verb `cut`). The hunt web's words are asked of
+  the producer.
+- The claims: marks count the crew; the share is the site's `upkeep_hands`; the hovers by equality;
+  the marks take keyboard focus and a focus floats the same sentence; the marks sit inside their row.
+- **The big crew** (48 hands, 12 tending) shrinks the squares to their floor and counts the rest
+  (`+31` in the frame), and the marks stay inside their row.
+
+**Sabotage-verified in one run, three disjoint mutations**: the row reading the bill instead of the
+hands fails five claims; marks drawn with no bill fails the wild-row claim; no truncation fails the
+overflow claim.
+
+**A clean run is 1516 `PASS`, exit 0.**

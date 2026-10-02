@@ -3533,3 +3533,25 @@ food`).
 
 **A clean run is 463 frames / 2487 `PASS`, exit 0 — RE-MEASURED windowed.** `band_panel_preview`
 1500 `PASS`, exit 0 (a first run failed only the foreign-mouse guard and passed on re-run).
+
+## The crew split under the sheet's stepper (`chapters/forage_accounts.gd`)
+
+Two frames and eight claims, appended last in the chapter: `forage_crew_split_sheet` (crew 3) and
+`forage_crew_split_sheet_stepped` (crew 2). The behaviour is `labor-ui.md` → "THE CREW SPLIT ON THE
+SHEET".
+
+- **The patch authors its curve with a different `keep_hands` at every crew** (half a hand per
+  worker) and a take that rises with every gatherer, so the cap is the pool and a sheet reading the
+  wrong row lands on a figure the claims name.
+- **The crew is dialled on the OPEN sheet.** A close resets the composition, which is how the first
+  cut read crew 1 at every step.
+- **The pending claim** resets the query and reads the sheet with no settle: no marks.
+- The claims: the marks count the stepper's crew; the share is the row's `keep_hands` at that crew;
+  the hover and the sentence under the figure are spelled out by equality (`About 2 of 3 …`, then
+  `1 of 2 …` with no `About`); and stepping to 2 moves both.
+- `EXPECTED_CHECKPOINTS` **234**, re-measured.
+
+**Sabotage-verified**: the sheet reading crew 1's row fails five claims; marks drawn with no bill
+fails the pending claim.
+
+**A clean run is 465 frames / 2495 `PASS`, exit 0 — RE-MEASURED windowed.**

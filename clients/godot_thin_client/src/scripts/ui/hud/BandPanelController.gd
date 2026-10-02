@@ -2760,7 +2760,10 @@ func _build_extract_row(band: Dictionary, model: Dictionary) -> PanelContainer:
             tile.x, tile.y, "", floor, material, SourceForecast.IMPROVEMENT_NONE, kit_id), true, {},
         HudWorkVocab.DISABLED_REASON_SEPARATOR.join(add_blocked))
     col.add_child(_build_site_crew_line(HudWorkVocab.site_crew_line(
-        rung_name if rung_name != "" else HudWorkVocab.SITE_CREW_RUNG_WILD)))
+        rung_name if rung_name != "" else HudWorkVocab.SITE_CREW_RUNG_WILD),
+        HudWorkVocab.SITE_CREW_LINE_META, _crew_split_for_row(cutters,
+            SourceForecast.upkeep_hands(deposit, HudComposeVocab.BARE_FORECAST_PREFIX),
+            HudConst.LABOR_KIND_EXTRACT)))
     col.add_child(_build_working_yield_line(_working_yield_text(band, model, deposit, ladder,
         cutters, useful, floor), value_ink))
     col.add_child(_build_pill_line(band, model, true))
@@ -2847,7 +2850,7 @@ func _build_pill_line(band: Dictionary, model: Dictionary, with_priority: bool) 
 ## **THE ROW'S RUNG LINE** — the rung the site stands on, indented onto the name's column in the
 ## accounts' quiet register. It ELIDES and states its whole self on its hover.
 func _build_site_crew_line(text: String,
-        meta: StringName = HudWorkVocab.SITE_CREW_LINE_META) -> MarginContainer:
+        meta: StringName = HudWorkVocab.SITE_CREW_LINE_META, split: Control = null) -> MarginContainer:
     var margin := MarginContainer.new()
     margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -2867,7 +2870,21 @@ func _build_site_crew_line(text: String,
     label.mouse_filter = Control.MOUSE_FILTER_PASS
     label.set_meta(meta, text)
     line.add_child(label)
+    # **THE CREW SPLIT RIDES THE END OF THIS LINE, under the stepper above it** — one mark per worker,
+    # the tending share off the sim's `upkeep_hands`. It shares the line with the rung word rather than
+    # taking a line of its own, so the row's reserved height does not move; both halves expand, the
+    # marks fitting themselves to the width they are given (`CrewSplitMarks`).
+    if split != null:
+        split.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        line.add_child(split)
     return margin
+
+## **THE CREW SPLIT FOR A WORK-TAB ROW**, or `null` where the site has no tending bill. The tending
+## figure is the site's own `upkeep_hands`, read off the wire and never derived.
+func _crew_split_for_row(crew: int, keep_hands: float, labor_kind: String) -> Control:
+    if not HudWorkVocab.crew_split_shown(crew, keep_hands):
+        return null
+    return CrewSplitMarks.build(crew, keep_hands, labor_kind, false)
 
 ## **THE ROW'S KEEPING MARK** — `⚠` when the site's crew keeps less than it owes, else `ⓘ` where its
 ## keeping tools came up short, else an empty reserved slot. The hover states the tending in whole
@@ -5825,7 +5842,10 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     # **LINE TWO NAMES THE RUNG THE SITE STANDS ON**, and nothing else: covered keeping says nothing,
     # a short one is the `⚠` above, and the accounts line below says what the take produces.
     col.add_child(_build_site_crew_line(HudWorkVocab.site_crew_line(
-        String(model.get("rung_word", HudWorkVocab.SITE_CREW_RUNG_WILD)))))
+        String(model.get("rung_word", HudWorkVocab.SITE_CREW_RUNG_WILD))),
+        HudWorkVocab.SITE_CREW_LINE_META, _crew_split_for_row(int(model.get("workers", 0)),
+            float(model.get("keep_hands", SourceForecast.NO_UPKEEP_DEMAND)),
+            String(model.get("kind", "")))))
     col.add_child(_build_work_row_accounts(model))
     # **TWO PRIORITY MARKS, ON THEIR OWN LINE UNDER THE ROW** (`docs/plan_site_crews.md` §2.4).
     # `Priority` ranks the site crew's claim on scarce tools and goods and is on every row; `Build`

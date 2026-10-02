@@ -29,6 +29,7 @@ paths:
 | `ui/hud/TradeLedger.gd` | **All-`static`** arithmetic for the Trade tab and the Food/Fodder popovers: which crossings are trade, one good's net across its ratings, shipments grouped by party, the network's camps and relays, one good across the network |
 | `ui/hud/TradeHoverCard.gd` | The Trade tab's hover card: a row's rating piles or a shipment's cargo, placed beside the row and never under the list panel |
 | `ui/hud/FactionMark.gd` | **The one faction mark** — a flag glyph in `MapView.faction_color`, on every counterparty; the slot a faction's flag (#647) fills |
+| `ui/hud/CrewSplitMarks.gd` | One small square per worker, **drawn** (a custom-draw `Control`, not glyphs): how a site's crew divides between tending it and taking from it — see "THE CREW SPLIT" below. Mounted on every Work-tab site row and under the forage compose sheet's stepper |
 | `ui/hud/RungLinkIcon.gd` | A pooling link's rung as a glyph (path dotted, trail dashed, dirt road solid pigment, paved road double; open ground a faint dot) |
 | `ui/hud/hud_trade_vocab.gd` | `HudTradeVocab` — the crossing codes (direction / link / cause), the tab's thresholds, words and sizes |
 | `ui/PenStatus.gd` | Single source of truth for **"is this pen's herd starving?"** — `FULLY_FED` / `FED_EPSILON` + `fed_fraction(herd)` / `is_starving(fed)`, reading `HerdTelemetryState.penFedFraction` (`< 1` ⇒ the pen's own pasture plus the fodder carried in did not cover its demand, so the herd is SHRINKING every turn — it is never a bill the keeper failed to pay, human food not being animal feed). Plus `herd_is_starving(herd)` for a caller holding only the herd dict. The ONE test all three surfaces ask — the herd drawer's **`Fed:`** row (`DetailFormat.pen_feed_value`, which carries the mark, the fed share, the pasture/fodder split and the shortfall; the CORRAL row states the rung alone, see `herd-readouts.md`), the map's distress badge (`MapView._draw_herd`) and the turn orb's `starving_pen` producer — so they can never disagree about which pen is dying |
@@ -7739,3 +7740,33 @@ is ADJACENT to its anchor row — one gap under it, or over it when opened upwar
 not merely visible, and that a list which fits its room is drawn at its full content height with
 nothing to scroll (one that does not fills the room and scrolls). `trade_tab_camps_bone` asserts a
 count of one reads singular.
+
+## THE CREW SPLIT — one mark per worker, under the stepper (`CrewSplitMarks`)
+
+A site's crew tends it before it takes, and nothing on the row said how the hands divide. Every
+Work-tab site row whose site has a tending bill now carries one small square per worker at the end of
+its second line, under the stepper: the tending share fills from the left in a muted earth, the takers
+are bright, and a person split between the two is one square shaded in part.
+
+- **The tending figure is the sim's.** A harvest or hunt row reads the model's `keep_hands`, which is
+  the source's own `upkeep_hands`; a groundwork row reads its deposit's `upkeep_hands`. Nothing is
+  derived. The marks cap the share at the row's crew, since `upkeep_hands` sums every band keeping the
+  site.
+- **Only where there is a bill.** `HudWorkVocab.crew_split_shown` (a crew, and at least
+  `CREW_SPLIT_MIN_KEEP_HANDS` tending) gates both surfaces. A wild patch owes nothing and draws nothing.
+- **Information, not an alert.** No warning ink and no ⚠. The two inks are `HudStyle.CREW_TEND` /
+  `CREW_TAKE` (and their `_LINE` edges), DERIVED in `apply_palette` from `VOICE_PIGMENT` darkened and
+  `HEALTHY` lightened, so every theme gets them without a palette entry.
+- **The words are `HudWorkVocab.crew_split_words`**: whole people, `About` where the figure falls more
+  than `CREW_SPLIT_WHOLE_PERSON_SLACK` from a whole person, the verb and the thing kept per web
+  (harvest / hunt / cut; the patch / the herd / the working). All tending reads `All 3 are tending the
+  patch — nobody is free to harvest.` The sentence is the native hover, and a keyboard focus floats the
+  same sentence in a small card under the marks, because Godot shows no tooltip on focus.
+- **It rides the rung line, so the row's reserved height does not move.** The rung word and the marks
+  both expand and share the line; the marks are right-aligned under the stepper.
+- **A wide crew never widens its row.** The control's minimum width is one floor-sized mark plus a
+  `+N`, and at draw time it fits the crew to the width it was actually given: the squares shrink toward
+  `CREW_SPLIT_MARK_SIZE_FLOOR`, then the first N are drawn and the rest counted as `+M`.
+  `layout_for(width)` is that arithmetic, pure, so a harness asks the question the draw answers.
+
+The compose sheet's half is `labor-ui.md` → "THE CREW SPLIT ON THE SHEET".

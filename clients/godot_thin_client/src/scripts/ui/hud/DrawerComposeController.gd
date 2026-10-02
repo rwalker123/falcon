@@ -1515,6 +1515,27 @@ func _curve_next_rung_row(view: Dictionary, crew: int) -> Dictionary:
         return {}
     return row
 
+## **THE TENDING HANDS AT `workers`, OFF THE CREW CURVE** — the row's `keep_hands`, or
+## `SourceForecast.NO_UPKEEP_DEMAND` where there is no figure: an unkept patch, a curve still in
+## flight or refused, or no row for this crew. Never computed here.
+func _forage_sheet_keep_hands(kept: bool, workers: int) -> float:
+    if not kept or String(_forage_live_crew_view.get("state", "")) != ForecastQuery.STATE_READY:
+        return SourceForecast.NO_UPKEEP_DEMAND
+    var row := SourceForecast.forage_crew_row((_forage_live_crew_view.get("answer", {})
+        as Dictionary).get("per_crew", []), workers)
+    return float(row.get(SourceForecast.FORAGE_CREW_KEEP_HANDS_KEY, SourceForecast.NO_UPKEEP_DEMAND))
+
+## Mount the crew split's marks under a sheet's stepper, and answer the sentence the readout states
+## beneath its figure — `""` (and no marks) where the crew owes no tending.
+func _mount_crew_split(target: VBoxContainer, crew: int, keep_hands: float,
+        labor_kind: String) -> String:
+    if not HudWorkVocab.crew_split_shown(crew, keep_hands):
+        return ""
+    var marks := CrewSplitMarks.build(crew, keep_hands, labor_kind, true)
+    marks.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    target.add_child(marks)
+    return marks.words()
+
 ## Does this patch owe keeping? The gate on reading its take off the crew curve.
 func _forage_is_kept(tile_info: Dictionary) -> bool:
     return SourceForecast.has_upkeep(SourceForecast.upkeep_state(tile_info,
@@ -2745,7 +2766,7 @@ func _mount_crew_row(parent: VBoxContainer, hosts: Array, crew_label: String, co
 ## definition apiece.
 func _mount_readout(parent: VBoxContainer, hosts: Array, model: Dictionary, workers: int,
         yields_at: Callable, labor_kind: String,
-        deal_row: Dictionary = {}) -> void:
+        deal_row: Dictionary = {}, crew_split_sentence: String = "") -> void:
     var known := bool(model.get("known", false))
     var floor_value := float(model.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))
     if not known and (yields_at.call(floor_value, workers, false) as Dictionary).is_empty():
@@ -2754,6 +2775,13 @@ func _mount_readout(parent: VBoxContainer, hosts: Array, model: Dictionary, work
     var yields_host := VBoxContainer.new()
     yields_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     column.add_child(yields_host)
+    # **WHO OF THIS CREW TENDS AND WHO TAKES, IN WORDS, UNDER THE FIGURE THEY EXPLAIN** — the crew
+    # split's own sentence, muted. It is a property of the stepper's crew, not of the floor, so it is
+    # outside the live registry: a drag does not move it, a stepper tick rebuilds the sheet.
+    if crew_split_sentence != "":
+        var split_line := HudWidgets.alloc_hint_label(crew_split_sentence)
+        split_line.set_meta(HudWorkVocab.CREW_SPLIT_SENTENCE_META, crew_split_sentence)
+        column.add_child(split_line)
     # **THE `after` READING IS GATED ON THE SAME WALK THE VERDICT READS**, not on a closed form beside
     # it. `reached_turn` is what the sentence one line down says out loud ("Reaches the floor in 3
     # turns"), so a row promising a holding rate under a verdict saying the crew never gets there is
@@ -4010,6 +4038,12 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
             _compose.set_forage_count(clampi(count, 0, cap))
             _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target),
         "", _crew_cap_reason(String(capped["note"]), cap, crew_pool))
+    # **THE CREW SPLIT, UNDER THE STEPPER** — one mark per harvester, the tending share off the crew
+    # curve row's `keep_hands` at the stepper's crew. While the curve is in flight there is no figure,
+    # so there are no marks; an unkept patch owes no tending and carries none either.
+    var sheet_keep := _forage_sheet_keep_hands(kept, _compose.forage_count())
+    var split_sentence := _mount_crew_split(target, _compose.forage_count(), sheet_keep,
+        SourceForecast.LABOR_KIND_FORAGE)
     var cap_note := String(capped["note"])
     if cap_note != "":
         target.add_child(HudWidgets.alloc_hint_label(cap_note))
@@ -4140,7 +4174,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
                 composed_improvement, reaches, take_state), party_view),
         SourceForecast.LABOR_KIND_FORAGE,
         _improvement_deal_row(SourceForecast.LABOR_KIND_FORAGE, tile_info,
-            HudComposeVocab.FORAGE_FORECAST_PREFIX, band, deal_rung, deal_payoff))
+            HudComposeVocab.FORAGE_FORECAST_PREFIX, band, deal_rung, deal_payoff), split_sentence)
     # ⛔ **NO RANGE REFUSAL ON THIS SHEET ANY MORE** (`docs/plan_civilization_steps.md` §One work
     # party). A patch past the SELECTED band's work range used to disable the commit behind the
     # retired `_mount_work_range_refusal`, because the sim lapsed a far forage crew with no warning

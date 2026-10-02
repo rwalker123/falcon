@@ -8,11 +8,12 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 196
+const EXPECTED_CHECKPOINTS := 234
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
+const ForecastFx := preload("res://tools/ui_preview/fixtures_forecast.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
 const Spine := preload("res://tools/ui_preview/compose_vocab.gd")
@@ -2689,6 +2690,114 @@ func run(harness) -> void:
 			% [verdict_want.strip_edges(), verdict_text],
 		String(verdict_text).ends_with(verdict_want))
 	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
+
+	await _crew_split_sheet_states()
+
+## ---- THE CREW SPLIT UNDER THE STEPPER (`CrewSplitMarks`) ----------------------------------------
+##
+## One mark per harvester under the sheet's stepper, the tending share off the crew curve row's
+## `keep_hands` AT THE STEPPER'S CREW, and the same sentence muted under the next-turn figure. The
+## patch authors its curve with a DIFFERENT keep at every crew, so a sheet reading the wrong row — or
+## a constant — lands on a figure the claims name. While the curve is in flight there are no marks.
+func _crew_split_sheet_states() -> void:
+	var tile := BaseFx.food_tile_fixture()
+	tile["patch_upkeep_hands"] = KEPT_CURVE_KEEP_HANDS
+	var rows: Array = []
+	for workers in range(1, CREW_SPLIT_CURVE_ROWS + 1):
+		# A take that rises with every gatherer, so the curve plateaus nowhere inside the rows and the
+		# stepper's cap is the band's pool rather than the curve.
+		var keep := CREW_SPLIT_KEEP_PER_HAND * float(workers)
+		rows.append({"workers": workers,
+			"take": CREW_SPLIT_TAKE_PER_GATHERER * (float(workers) - keep),
+			SourceForecast.FORAGE_CREW_KEEP_HANDS_KEY: keep})
+	tile[ForecastFx.FORAGE_CREW_TAKE_KEY] = {"per_crew": rows}
+	var query: ForecastQuery = h._hud.forecast_query()
+	query.reset()
+	h._hud._drawercompose.close_compose_sheet()
+	h._hud._compose.reset_forage_source()
+	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
+	h._show_tile(tile)
+	await h._settle()
+	h._compose_forage(tile)
+	await h._settle()
+	# Dial the crew on the open sheet (a close would reset the composition), then forget the curve so
+	# the next render is read before the stand-in has answered.
+	h._hud._compose.set_forage_count(CREW_SPLIT_SHEET_CREW)
+	query.reset()
+	h._compose_forage(tile)
+	h._assert_hud("crew split, sheet — while the curve is in flight there are no marks",
+		_crew_split_on_sheet() == null)
+	await h._settle()
+	h._compose_forage(tile)
+	await h._settle()
+	await h._save("forage_crew_split_sheet")
+	h._assert_hud("crew split, sheet — precondition: the stepper stands at %d (got %d)"
+			% [CREW_SPLIT_SHEET_CREW, h._hud._compose.forage_count()],
+		h._hud._compose.forage_count() == CREW_SPLIT_SHEET_CREW)
+	var marks := _crew_split_on_sheet()
+	var want_keep := CREW_SPLIT_KEEP_PER_HAND * float(CREW_SPLIT_SHEET_CREW)
+	h._assert_hud("crew split, sheet — the marks count the stepper's crew (%s)"
+			% ("none" if marks == null else str(marks.crew())),
+		marks != null and marks.crew() == CREW_SPLIT_SHEET_CREW)
+	h._assert_hud("crew split, sheet — the tending share is the curve row's `keep_hands` at that crew (%s, want %.2f)"
+			% [("none" if marks == null else "%.2f" % marks.keep_hands()), want_keep],
+		marks != null and is_equal_approx(marks.keep_hands(), want_keep))
+	h._assert_hud("crew split, sheet — the hover says it in whole people (\"%s\")"
+			% ("" if marks == null else marks.tooltip_text),
+		marks != null and marks.tooltip_text == CREW_SPLIT_SHEET_WORDS)
+	h._assert_hud("crew split, sheet — the same sentence reads under the next-turn figure",
+		_crew_split_sentence() == CREW_SPLIT_SHEET_WORDS)
+	# The stepper moves, and the marks follow it through the curve rather than staying put.
+	h._hud._compose.set_forage_count(CREW_SPLIT_STEPPED_CREW)
+	h._compose_forage(tile)
+	await h._settle()
+	await h._save("forage_crew_split_sheet_stepped")
+	var stepped := _crew_split_on_sheet()
+	var stepped_keep := CREW_SPLIT_KEEP_PER_HAND * float(CREW_SPLIT_STEPPED_CREW)
+	h._assert_hud("crew split, sheet — stepped to %d, the marks follow the crew and its curve row (%s)"
+			% [CREW_SPLIT_STEPPED_CREW, "none" if stepped == null
+				else "%d · %.2f" % [stepped.crew(), stepped.keep_hands()]],
+		stepped != null and stepped.crew() == CREW_SPLIT_STEPPED_CREW
+			and is_equal_approx(stepped.keep_hands(), stepped_keep))
+	h._assert_hud("crew split, sheet — …and the sentence follows, a whole person needing no `About` (\"%s\")"
+			% _crew_split_sentence(),
+		_crew_split_sentence() == CREW_SPLIT_STEPPED_WORDS)
+	h._hud._drawercompose.close_compose_sheet()
+	h._hud._compose.reset_forage_source()
+	query.reset()
+	await h._settle()
+
+## The crew-split marks on the open compose sheet, or `null` where it draws none.
+func _crew_split_on_sheet() -> CrewSplitMarks:
+	var sheet = h._hud._drawercompose._compose_sheet
+	if sheet == null:
+		return null
+	for node in sheet.find_children("*", "Control", true, false):
+		if node is CrewSplitMarks and not (node as Node).is_queued_for_deletion():
+			return node as CrewSplitMarks
+	return null
+
+## The muted sentence under the sheet's next-turn figure, `""` where none is drawn.
+func _crew_split_sentence() -> String:
+	var sheet = h._hud._drawercompose._compose_sheet
+	if sheet == null:
+		return ""
+	for node in sheet.find_children("*", "Label", true, false):
+		if (node as Node).has_meta(HudWorkVocab.CREW_SPLIT_SENTENCE_META) \
+				and not (node as Node).is_queued_for_deletion():
+			return String((node as Node).get_meta(HudWorkVocab.CREW_SPLIT_SENTENCE_META))
+	return ""
+
+## The authored curve's keeping: half a hand per worker, so every crew's row differs.
+const CREW_SPLIT_KEEP_PER_HAND := 0.5
+const CREW_SPLIT_CURVE_ROWS := 8
+## What each gatherer the keeping leaves takes, on the authored curve.
+const CREW_SPLIT_TAKE_PER_GATHERER := 0.2
+## The two crews the sheet is read at, and the sentences each must state — spelled out.
+const CREW_SPLIT_SHEET_CREW := 3
+const CREW_SPLIT_STEPPED_CREW := 2
+const CREW_SPLIT_SHEET_WORDS := "About 2 of 3 are tending the patch; 1 is free to harvest."
+const CREW_SPLIT_STEPPED_WORDS := "1 of 2 is tending the patch; 1 is free to harvest."
 
 ## Any Label or RichTextLabel under `root` whose text contains `needle`.
 func _sheet_has_text(root: Node, needle: String) -> bool:

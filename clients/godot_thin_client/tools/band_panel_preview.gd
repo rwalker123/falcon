@@ -2541,6 +2541,9 @@ func _ready() -> void:
 
 	await _render_work_party_states()
 
+	# The crew-split marks — one square per worker, tending against taking — on every site row.
+	await _render_work_crew_split_states()
+
 	# The band dock's Trade tab (issue #731) — its own file, appended last so no frame above moves.
 	await TRADE_TAB_STATES.new().run(self)
 
@@ -25501,3 +25504,189 @@ func _assert_drawer_fit_survives_an_unsettled_rebuild() -> void:
 
 ## Frames the race guard waits for the drawer to settle — the fit's own frame plus a margin.
 const SPLIT_FIT_SETTLE_FRAMES := 6
+
+
+# ---- THE CREW SPLIT: ONE MARK PER WORKER (`CrewSplitMarks`) --------------------------------------
+#
+# Every Work-tab site row whose site has a tending bill carries one small square per worker under its
+# stepper, the tending share off the site's own `upkeep_hands` filled from the left. One board holds
+# every case the marks have: a split that falls MID-PERSON (3.2 of 5, so the fourth square is
+# part-shaded and the hover says `About`), a crew ALL tending (3 of 3), a WILD patch with no bill (no
+# marks at all — the control), and a groundwork row (the verb is `cut`). A second render puts a crew
+# far wider than its row on the same patch, which is the overflow case.
+
+## The mid-person split: a crew of five on a patch whose keeping took 3.2 hands.
+const CREW_SPLIT_MID_CREW := 5
+const CREW_SPLIT_MID_KEEP := 3.2
+## The all-tending crew: three hands, all three spent keeping.
+const CREW_SPLIT_ALL_CREW := 3
+const CREW_SPLIT_ALL_KEEP := 3.0
+## What the near wood working's keeping took off its two cutters.
+const CREW_SPLIT_WORKING_KEEP := 0.6
+## A crew far wider than its row can draw one square each for, and what it spends keeping.
+const CREW_SPLIT_BIG_CREW := 48
+const CREW_SPLIT_BIG_KEEP := 12.0
+## The hunt web's words are asked of the producer: a crew of four, one and a half of them keeping.
+const CREW_SPLIT_HUNT_CREW := 4
+const CREW_SPLIT_HUNT_KEEP := 1.5
+## The exact sentences the hover must state — spelled out, never recomposed through the vocabulary.
+const CREW_SPLIT_MID_WORDS := "About 3 of 5 are tending the patch; 2 are free to harvest."
+const CREW_SPLIT_ALL_WORDS := "All 3 are tending the patch — nobody is free to harvest."
+const CREW_SPLIT_WORKING_WORDS := "About 1 of 2 is tending the working; 1 is free to cut."
+const CREW_SPLIT_HUNT_WORDS := "About 2 of 4 are tending the herd; 2 are free to hunt."
+
+func _crew_split_patches(mid_keep: float) -> Array:
+	var patches := _sections_patches(false)
+	for i in range(patches.size()):
+		var patch: Dictionary = (patches[i] as Dictionary).duplicate(true)
+		var tile := Vector2i(int(patch.get("x", -1)), int(patch.get("y", -1)))
+		if tile == QUEUE_SECOND_PATCH:
+			patch["upkeep_hands"] = mid_keep
+		elif tile == QUEUE_THIRD_PATCH:
+			patch["upkeep_hands"] = CREW_SPLIT_ALL_KEEP
+		patches[i] = patch
+	return patches
+
+## The wild patch's tile — the one `_sections_patches` leaves without a bill.
+func _crew_split_wild_tile() -> Vector2i:
+	var wild: Dictionary = _build_queue_patches(1)[0]
+	return Vector2i(int(wild.get("x", -1)), int(wild.get("y", -1)))
+
+func _crew_split_band(mid_crew: int) -> Dictionary:
+	var band := _sections_band_fixture()
+	var rows: Array = band["labor_assignments"]
+	for i in range(rows.size()):
+		var row: Dictionary = (rows[i] as Dictionary).duplicate(true)
+		var tile := Vector2i(int(row.get("target_x", -1)), int(row.get("target_y", -1)))
+		if String(row.get("kind", "")) == SourceForecast.LABOR_KIND_FORAGE:
+			if tile == QUEUE_SECOND_PATCH:
+				row["workers"] = mid_crew
+			elif tile == QUEUE_THIRD_PATCH:
+				row["workers"] = CREW_SPLIT_ALL_CREW
+		rows[i] = row
+	rows.append({
+		"kind": HudConst.LABOR_KIND_EXTRACT, "workers": WORKINGS_CUTTERS,
+		"target_x": ROSTER_NEAR_TILE.x, "target_y": ROSTER_NEAR_TILE.y, "fauna_id": "",
+		"material": WORKINGS_WOOD,
+	})
+	return band
+
+func _crew_split_workings() -> Array:
+	var rows := _workings_rows()
+	for i in range(rows.size()):
+		var row: Dictionary = (rows[i] as Dictionary).duplicate(true)
+		if int(row.get("tile_x", -1)) == ROSTER_NEAR_TILE.x \
+				and int(row.get("tile_y", -1)) == ROSTER_NEAR_TILE.y \
+				and String(row.get("material", "")) == WORKINGS_WOOD:
+			row["upkeep_hands"] = CREW_SPLIT_WORKING_KEEP
+		rows[i] = row
+	return rows
+
+func _stage_crew_split_board(mid_crew: int, mid_keep: float) -> void:
+	_hud.update_intensification([_workings_knowledge_row()])
+	_hud.update_deposit_rungs(_deposit_rung_catalog())
+	_hud.update_deposits(_crew_split_workings())
+	_set_world_herds(_herd_fixtures())
+	_set_forage_patches(_crew_split_patches(mid_keep))
+	_push_bands([_crew_split_band(mid_crew)])
+	_hud._bandpanel.rerender()
+	await _settle()
+
+## The marks drawn inside the work row for `tile`, or `null` where the row draws none.
+func _crew_split_marks_for_tile(tile: Vector2i) -> CrewSplitMarks:
+	var row := _sections_row(_work_row_label_for_tile(tile))
+	if row == null:
+		return null
+	return _find_meta_control(row, String(HudWorkVocab.CREW_SPLIT_META)) as CrewSplitMarks
+
+## The marks drawn inside the first groundwork row that carries any.
+func _crew_split_marks_on_working() -> CrewSplitMarks:
+	for row in _workings_rows_drawn():
+		var marks := _find_meta_control(row, String(HudWorkVocab.CREW_SPLIT_META)) as CrewSplitMarks
+		if marks != null:
+			return marks
+	return null
+
+## The marks' drawn rect lies inside the row they ride, so a crew never widens its row.
+func _crew_split_inside_row(marks: CrewSplitMarks, tile: Vector2i) -> bool:
+	var row := _sections_row(_work_row_label_for_tile(tile))
+	return row != null and marks != null \
+		and row.get_global_rect().encloses(marks.get_global_rect())
+
+func _render_work_crew_split_states() -> void:
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	await _stage_crew_split_board(CREW_SPLIT_MID_CREW, CREW_SPLIT_MID_KEEP)
+	await _save("band_panel_work_crew_split")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	var mid := _crew_split_marks_for_tile(QUEUE_SECOND_PATCH)
+	_assert_band_panel("crew split — a patch with a tending bill draws its marks", mid != null)
+	if mid != null:
+		_assert_band_panel("crew split — one mark per worker: the marks count the row's crew (%d, want %d)"
+				% [mid.crew(), CREW_SPLIT_MID_CREW],
+			mid.crew() == CREW_SPLIT_MID_CREW)
+		_assert_band_panel("crew split — the tending share is the site's own `upkeep_hands` (%.2f, want %.2f)"
+				% [mid.keep_hands(), CREW_SPLIT_MID_KEEP],
+			is_equal_approx(mid.keep_hands(), CREW_SPLIT_MID_KEEP))
+		var part := clampf(mid.keep_hands() - floorf(mid.keep_hands()), 0.0, 1.0)
+		_assert_band_panel("crew split — a split that falls mid-person part-shades one mark (%.2f of it tends)"
+				% part,
+			part > 0.0 and part < 1.0)
+		_assert_band_panel("crew split — the hover says it in whole people, `About` mid-person (\"%s\")"
+				% mid.tooltip_text,
+			mid.tooltip_text == CREW_SPLIT_MID_WORDS)
+		_assert_band_panel("crew split — the marks take keyboard focus, so the sentence is reachable without a mouse",
+			mid.focus_mode == Control.FOCUS_ALL)
+		_assert_band_panel("crew split — the marks sit inside their row",
+			_crew_split_inside_row(mid, QUEUE_SECOND_PATCH))
+		mid.grab_focus()
+		await _settle()
+		var card := mid.focus_card()
+		_assert_band_panel("crew split — a keyboard focus floats the same sentence",
+			card != null and _has_label_titled(card, CREW_SPLIT_MID_WORDS))
+		mid.release_focus()
+		await _settle()
+	var all := _crew_split_marks_for_tile(QUEUE_THIRD_PATCH)
+	_assert_band_panel("crew split — an all-tending crew says nobody is free (\"%s\")"
+			% ("" if all == null else all.tooltip_text),
+		all != null and all.tooltip_text == CREW_SPLIT_ALL_WORDS)
+	var wild_row := _sections_row(_work_row_label_for_tile(_crew_split_wild_tile()))
+	_assert_band_panel("crew split — a WILD patch owes no tending and draws no marks (row found: %s)"
+			% str(wild_row != null),
+		wild_row != null and _find_meta_control(wild_row, String(HudWorkVocab.CREW_SPLIT_META)) == null)
+	var working := _crew_split_marks_on_working()
+	_assert_band_panel("crew split — a groundwork row draws its marks, the verb `cut` (\"%s\")"
+			% ("" if working == null else working.tooltip_text),
+		working != null and working.crew() == WORKINGS_CUTTERS
+			and working.tooltip_text == CREW_SPLIT_WORKING_WORDS)
+	var hunt_words := HudWorkVocab.crew_split_words(CREW_SPLIT_HUNT_CREW, CREW_SPLIT_HUNT_KEEP,
+		SourceForecast.LABOR_KIND_HUNT)
+	_assert_band_panel("crew split — the hunt web's words say `the herd` and `hunt` (\"%s\")" % hunt_words,
+		hunt_words == CREW_SPLIT_HUNT_WORDS)
+
+	# A crew far wider than its row: the squares shrink to their floor, then the first N draw and the
+	# rest are counted. The row's width must not move.
+	await _stage_crew_split_board(CREW_SPLIT_BIG_CREW, CREW_SPLIT_BIG_KEEP)
+	await _save("band_panel_work_crew_split_big")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	var big := _crew_split_marks_for_tile(QUEUE_SECOND_PATCH)
+	_assert_band_panel("crew split, big crew — the marks still count the whole crew",
+		big != null and big.crew() == CREW_SPLIT_BIG_CREW)
+	if big != null:
+		var plan := big.layout_for(big.size.x)
+		_assert_band_panel("crew split, big crew — too wide for its row, so the rest are counted (drew %d, +%d)"
+				% [int(plan["drawn"]), int(plan["overflow"])],
+			int(plan["overflow"]) > 0 and int(plan["drawn"]) + int(plan["overflow"]) == CREW_SPLIT_BIG_CREW)
+		_assert_band_panel("crew split, big crew — the squares shrank no smaller than their floor (%.1f)"
+				% float(plan["size"]),
+			float(plan["size"]) >= HudWorkVocab.CREW_SPLIT_MARK_SIZE_FLOOR - 0.001)
+		_assert_band_panel("crew split, big crew — and the marks stay inside their row",
+			_crew_split_inside_row(big, QUEUE_SECOND_PATCH))
+
+	_hud.update_deposits([])
+	_set_forage_patches([])
+	_set_world_herds(_herd_fixtures())
+	_push_bands([_band_fixture()])
+	await _settle()

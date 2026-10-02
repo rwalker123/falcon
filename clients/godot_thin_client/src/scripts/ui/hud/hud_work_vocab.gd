@@ -3924,3 +3924,79 @@ const BUILD_QUEUE_ROW_HEIGHT := WORK_ROW_HEIGHT + BUILD_QUEUE_ROW_TOOLS_LINE_HEI
 ## A queued WORKING build's job face — the rung it is being raised to, the working's material, its
 ## tile: `Quarry · Stone (70, 17)`. The material is half the working's identity, one hex holding two.
 const BUILD_QUEUE_WORKING_FACE_FORMAT := "%s · %s (%d, %d)"
+
+## ---- THE CREW SPLIT: one mark per worker ------------------------------------------------------
+##
+## A site's crew tends it before it takes, and the marks say how the hands on a row divide: one small
+## square per worker, the tending share filled from the left in a muted earth, the takers bright, a
+## person split between the two shaded in part. Information, not an alert — no warning ink, no ⚠. The
+## tending figure is the sim's (`upkeep_hands` on a row, the crew curve's `keep_hands` on the sheet);
+## nothing here derives it. `CrewSplitMarks` draws them.
+
+## Below this many tending hands a site has no tending bill, and the row draws no marks.
+const CREW_SPLIT_MIN_KEEP_HANDS := 0.001
+## A split this close to a whole person is stated as one, without `About`.
+const CREW_SPLIT_WHOLE_PERSON_SLACK := 0.05
+
+## The row's marks — the approved prototype's 9px square, 3px apart, 2px corners.
+const CREW_SPLIT_MARK_SIZE := 9.0
+const CREW_SPLIT_MARK_GAP := 3.0
+const CREW_SPLIT_MARK_RADIUS := 2
+## The sheet's marks, a size up under its bigger stepper.
+const CREW_SPLIT_SHEET_MARK_SIZE := 12.0
+const CREW_SPLIT_SHEET_MARK_GAP := 4.0
+const CREW_SPLIT_SHEET_MARK_RADIUS := 3
+## A crew too wide for its room shrinks its marks to this before it drops any.
+const CREW_SPLIT_MARK_SIZE_FLOOR := 6.0
+## Each mark's outline.
+const CREW_SPLIT_MARK_BORDER := 1
+## The width of the card a keyboard focus floats the sentence in — the prototype's tooltip box.
+const CREW_SPLIT_FOCUS_CARD_WIDTH := 230.0
+## What a crew too wide even at the floor ends on: the count of marks not drawn.
+const CREW_SPLIT_OVERFLOW_FORMAT := "+%d"
+## The marks' handle, valued `{crew, keep}` as handed in.
+const CREW_SPLIT_META := &"crew_split_marks"
+## The sheet's muted sentence under the next-turn figure, valued the sentence.
+const CREW_SPLIT_SENTENCE_META := &"crew_split_sentence"
+
+## The verb the takers do, and the thing the tenders keep, per web.
+const CREW_SPLIT_VERB_HARVEST := "harvest"
+const CREW_SPLIT_VERB_HUNT := "hunt"
+const CREW_SPLIT_VERB_CUT := "cut"
+const CREW_SPLIT_OBJECT_PATCH := "the patch"
+const CREW_SPLIT_OBJECT_HERD := "the herd"
+const CREW_SPLIT_OBJECT_WORKING := "the working"
+const CREW_SPLIT_SOME_FORMAT := "%s%d of %d %s tending %s; %d %s free to %s."
+const CREW_SPLIT_ALL_FORMAT := "All %d are tending %s — nobody is free to %s."
+const CREW_SPLIT_ONE_FORMAT := "The one worker is tending %s — nobody is free to %s."
+const CREW_SPLIT_ABOUT := "About "
+const CREW_SPLIT_IS := "is"
+const CREW_SPLIT_ARE := "are"
+
+## Does a crew carry marks at all? Only where its site has a tending bill.
+static func crew_split_shown(crew: int, keep_hands: float) -> bool:
+    return crew > 0 and keep_hands >= CREW_SPLIT_MIN_KEEP_HANDS
+
+## **THE SPLIT IN WORDS** — whole people, `About` where the sim's figure falls mid-person, the verb and
+## the thing kept per web. Tending is capped at the crew the row names.
+static func crew_split_words(crew: int, keep_hands: float, labor_kind: String) -> String:
+    var verb := CREW_SPLIT_VERB_HARVEST
+    var what := CREW_SPLIT_OBJECT_PATCH
+    if labor_kind == SourceForecast.LABOR_KIND_HUNT:
+        verb = CREW_SPLIT_VERB_HUNT
+        what = CREW_SPLIT_OBJECT_HERD
+    elif labor_kind == HudConst.LABOR_KIND_EXTRACT:
+        verb = CREW_SPLIT_VERB_CUT
+        what = CREW_SPLIT_OBJECT_WORKING
+    var keep := clampf(keep_hands, 0.0, float(crew))
+    var tending := clampi(roundi(keep), 1, crew)
+    var free := crew - tending
+    if float(crew) - keep <= CREW_SPLIT_WHOLE_PERSON_SLACK or free <= 0:
+        if crew == 1:
+            return CREW_SPLIT_ONE_FORMAT % [what, verb]
+        return CREW_SPLIT_ALL_FORMAT % [crew, what, verb]
+    var about := CREW_SPLIT_ABOUT \
+        if absf(keep - float(tending)) > CREW_SPLIT_WHOLE_PERSON_SLACK else ""
+    return CREW_SPLIT_SOME_FORMAT % [about, tending, crew,
+        CREW_SPLIT_IS if tending == 1 else CREW_SPLIT_ARE, what, free,
+        CREW_SPLIT_IS if free == 1 else CREW_SPLIT_ARE, verb]

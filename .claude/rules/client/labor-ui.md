@@ -8645,3 +8645,20 @@ The committed row prints `netRateHome`, so past the apron `_with_home_rate` subs
   move with the drag: the section is not re-asked mid-gesture, and the release rebuilds at the
   committed floor, which asks again.
 
+## THE CREW SPLIT ON THE SHEET — the marks under the stepper, the sentence under the figure
+
+The Work-tab rows' crew-split marks (`band-city-panel.md` → "THE CREW SPLIT") ride the forage compose
+sheet too, under the Harvesters stepper, with the same sentence muted under the next-turn figure.
+
+- **The tending figure is the crew curve row's `keep_hands` at the stepper's crew**
+  (`DrawerComposeController._forage_sheet_keep_hands`). A stepper press rebuilds the sheet, so the
+  marks follow the crew through the curve. Nothing is computed client-side.
+- **No figure, no marks**: an unkept patch (no tending bill), a curve still in flight or refused, or a
+  curve with no row for the crew.
+- **The sentence sits in the readout box under the yields row** (`_mount_readout`'s
+  `crew_split_sentence`, meta `HudWorkVocab.CREW_SPLIT_SENTENCE_META`). It is a property of the crew,
+  not of the floor, so it is outside the live registry.
+- ⛔ **THE HUNT AND DEPOSIT SHEETS DRAW NONE, because their curves carry no tending figure.**
+  `HuntCrewTakeRow` and `DepositCrewTakeRow` publish no `keep_hands` at the asked crew (the hunt row
+  has `next_rung_keep_hands` only), and the client may not compute one. `_mount_crew_split` is the
+  mount the two sheets would call once the sim publishes it.
