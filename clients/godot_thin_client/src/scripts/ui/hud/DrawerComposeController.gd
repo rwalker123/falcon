@@ -3444,7 +3444,8 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     _mount_readout(target, live_hosts, chart_model, _compose.hunt_count(),
         func(floor_value: float, crew: int, reaches: bool) -> Dictionary:
             return _with_home_rate(_hunt_yield_model(band, herd, floor_value, crew,
-                composed_improvement, reaches, _hunt_live_crew_take), party_view),
+                composed_improvement, reaches, _hunt_live_crew_take), party_view,
+                SourceForecast.YIELD_ACCOUNT_FOOD, true),
         SourceForecast.LABOR_KIND_HUNT,
         _improvement_deal_row(SourceForecast.LABOR_KIND_HUNT, herd,
             HudComposeVocab.BARE_FORECAST_PREFIX, band, deal_rung, deal_payoff), hunt_split)
@@ -4364,12 +4365,12 @@ func _mount_work_party_section(target: VBoxContainer, view: Dictionary) -> void:
 ## `once running · per turn` caption and never as food. Nothing else forks: one caravan, one
 ## substitution, whatever the far job carries home.
 ##
-## **A FAR FORAGE PARTY'S PACKS CARRY ITS FODDER AND MATERIALS HOME TOO** (#706), so on that sheet
-## (`carries_by_products`) the fodder and material rows read the reply's `fodder_rate_home` /
-## `materials_rate_home` — the rates the committed row will publish — rather than the take at the
-## source. A row the home rates no longer pay leaves; a muted (unbankable) fodder row keeps its glyph.
-## The hunt sheet publishes no home by-product rates, and a deposit's account IS its material, so
-## both pass `false` and keep their other rows as they were.
+## **A FAR PARTY'S PACKS CARRY ITS BY-PRODUCTS HOME TOO** (#706) — a forage party's hay and fibre, a
+## hunt party's hide, bone and sinew — so on those two sheets (`carries_by_products`) the fodder and
+## material rows read the reply's `fodder_rate_home` / `materials_rate_home`, the rates the committed
+## row will publish, rather than the take at the source. A row the home rates no longer pay leaves; a
+## muted (unbankable) fodder row keeps its glyph. A deposit's account IS its material, so the deposit
+## sheet passes `false` and keeps its rows as they were.
 func _with_home_rate(model: Dictionary, party_view: Dictionary,
         account: String = SourceForecast.YIELD_ACCOUNT_FOOD,
         carries_by_products: bool = false) -> Dictionary:

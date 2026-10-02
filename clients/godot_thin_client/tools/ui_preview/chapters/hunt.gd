@@ -163,6 +163,10 @@ const FAR_PARTY_RATE_HOME := 0.08
 ## The party walks OUT before it hunts, so the first load cannot land before the walk out, plus one
 ## pack's fill, plus the walk home: 6 + ~7 + 6.
 const FAR_PARTY_FIRST_LOAD := 19
+## What else the far boar party's packs carry home per turn (#706): its hide, at the reply's HOME
+## rate — the box must read this, never the hide taken at the source.
+const FAR_PARTY_HIDE_ID := "hide"
+const FAR_PARTY_HIDE_RATE_HOME := 0.03
 ## **RAY'S PLAYTEST CASE (`herd_hunt_far_party_small`): a small, slow caravan.** Three hunters on a
 ## thin boar take, 4 hexes out from an apron of 2 — so 2 tiles and 2 turns each way at the shipped move
 ## rate of 1. The whole catch walks home at 0.17 a turn; a 3-boar pack takes about 4 turns to fill, so
@@ -264,6 +268,8 @@ func _far_boar_herd() -> Dictionary:
 		"posts_a_party": true, "rate_home": FAR_PARTY_RATE_HOME,
 		"walk_tiles": FAR_PARTY_WALK_TILES, "walk_turns": FAR_PARTY_WALK_TURNS,
 		"hunters_on_the_road": FAR_PARTY_ON_ROAD, "first_load_turn": FAR_PARTY_FIRST_LOAD,
+		"materials_rate_home": [{"material_id": FAR_PARTY_HIDE_ID,
+			"amount": FAR_PARTY_HIDE_RATE_HOME}],
 	}
 	return herd
 
@@ -807,6 +813,11 @@ func run(harness) -> void:
 	h._assert_hud("…and the PER TURN food headline IS the rate arriving home (want %s, got %s)"
 			% [SourceForecast.format_magnitude(FAR_PARTY_RATE_HOME), far_food],
 		far_food == SourceForecast.format_magnitude(FAR_PARTY_RATE_HOME))
+	# **ITS HIDE IS THE HOME-ARRIVING RATE** (#706) — the packs carry it with the meat.
+	var far_hide := Readout.yields_account_number(far_sheet, FAR_PARTY_HIDE_ID)
+	h._assert_hud("…and its hide reads the reply's HOME rate (want %s, got %s)"
+			% [SourceForecast.format_magnitude(FAR_PARTY_HIDE_RATE_HOME), far_hide],
+		far_hide == SourceForecast.format_magnitude(FAR_PARTY_HIDE_RATE_HOME))
 	h._assert_hud("…stated once, with no `now → after` walk beside it",
 		not Readout.yields_show_a_transition(far_sheet))
 	# ⛔ **AND THE CAPTION OVER IT IS NEUTRAL: `ONCE RUNNING · PER TURN`.** `next turn` would be false:

@@ -25729,6 +25729,10 @@ const FAR_FORAGE_RATE_HOME := 0.3
 const FAR_FORAGE_FODDER_RATE_HOME := 0.4
 const FAR_FORAGE_FIBRE_RATE_HOME := 0.1
 const FAR_FORAGE_FIBRE_ID := "fibre"
+## The running far HUNT (Roe Deer) between packs: nothing landed this turn (`material_yield` empty),
+## and its hide arrives home at this rate (#706).
+const FAR_HUNT_HIDE_ID := "hide"
+const FAR_HUNT_HIDE_RATE_HOME := 0.12
 
 ## The party band with its RUNNING posting's walk rotting part of its take, and its pelt posting stood
 ## down — those three hands now walk home (`homeward_*`), on no row and out of the idle pool, so the
@@ -25742,6 +25746,9 @@ func _work_party_spoil_band_fixture() -> Dictionary:
 			continue
 		if String(row.get("fauna_id", "")) == PARTY_FAR_HERD_ID:
 			row[SourceForecast.ASSIGNMENT_SPOILED_RATE_HOME_KEY] = SPOIL_RATE_HOME
+			row[SourceForecast.ASSIGNMENT_MATERIAL_YIELD_KEY] = []
+			row[SourceForecast.ASSIGNMENT_MATERIALS_RATE_HOME_KEY] = [{
+				"material_id": FAR_HUNT_HIDE_ID, "amount": FAR_HUNT_HIDE_RATE_HOME}]
 		rows.append(row)
 	rows.append({
 		"kind": "forage", "workers": FAR_FORAGE_WORKERS, "workers_needed": FAR_FORAGE_WORKERS,
@@ -25807,6 +25814,14 @@ func _render_work_party_spoil_states() -> void:
 	_assert_band_panel("a far forage row prints its HOME fodder and fibre rates — want %s, got %s"
 			% [want_forage, forage_accounts],
 		forage_accounts.contains(want_forage))
+	# **AND A FAR HUNT ROW STATES ITS HOME-ARRIVING HIDE** between packs.
+	var hunt_accounts := _work_row_accounts_text(far_row)
+	var want_hunt := SourceForecast.yield_components(PARTY_FAR_RATE, 0.0,
+		SourceForecast.YIELD_ACCOUNT_FOOD,
+		[{"material_id": FAR_HUNT_HIDE_ID, "amount": FAR_HUNT_HIDE_RATE_HOME}])
+	_assert_band_panel("a far hunt row prints its HOME hide rate — want %s, got %s"
+			% [want_hunt, hunt_accounts],
+		hunt_accounts.contains(want_hunt))
 	var near := _work_party_lines(_work_row_for_herd(PARTY_NEAR_HERD_ID))
 	_assert_band_panel("…while a posting whose walk rots nothing grows no spoil line (%s)" % str(near),
 		near.size() == 2 and not HudWorkVocab.is_party_spoils_line(near[near.size() - 1]))
