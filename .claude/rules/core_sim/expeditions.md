@@ -156,9 +156,8 @@ branches on mission:
 > around a config error is not a decision. Removed with it: `RaidOrders::fill_target`,
 > `NO_FILL_TARGET`, `HuntTripBound::FillTarget`, `systems::expeditions::raid_load`/`RaidLoad`, the
 > grammar's second positional tail, and the `fill_target` parameters on `hunt_trip_forecast` /
-> `expedition_delivery`. **The wire slots are deprecated in place, never deleted** —
-> `snapshot.fbs`'s `expeditionFillTarget` (a FlatBuffers vtable slot is positional) and
-> `command.proto`'s `fill_target = 7` (a shipped field number is immutable).
+> `expedition_delivery`. `snapshot.fbs` carries no `expeditionFillTarget`; `command.proto`'s
+> `fill_target = 7` stays reserved, because a protobuf field number is immutable.
 >
 > The invariance itself is pinned by
 > `expedition_hunt::a_raids_length_is_invariant_in_party_size_while_its_payload_is_not` — deliberately
@@ -313,12 +312,11 @@ branches on mission:
     gets a real ETA (it ends when the standing surplus is spent) and its food fields fall out at `0`
     on their own. `animals_taken` remains what `forecast_query::useful_party_cap` scans for its
     plateau — a plateau is a fact about the herd's surplus rather than about a currency.
-  > **THE LIVE SURFACE IS THE QUERY REPLY, NOT THE `.fbs` TABLE.** `HuntTripEstimate` /
-  > `HerdTelemetryState.huntTripEstimates` are `(deprecated)` and nothing writes them — the client
-  > *asks* for a trip forecast (`sim_runtime`'s `QueryCommand` → `forecast_query::hunt_trip_row` →
-  > `HuntTripRow` over `command.proto`). So `delivered_material` was appended to the **proto row**
-  > (field 11, beside a new `MaterialPayoff` message); adding it to the deprecated table would have
-  > shipped a field nobody reads.
+  > **THE LIVE SURFACE IS THE QUERY REPLY, NOT A SNAPSHOT TABLE.** No herd row carries trip
+  > estimates — the client *asks* for a trip forecast (`sim_runtime`'s `QueryCommand` →
+  > `forecast_query::hunt_trip_row` → `HuntTripRow` over `command.proto`). So `delivered_material`
+  > lives on the **proto row** (field 11, beside a `MaterialPayoff` message); a snapshot copy would
+  > be a field nobody reads.
   >
   > **The guard is `hunt_yield_vector::an_inedible_raids_promised_material_is_what_the_trip_banks`**,
   > and a wolf is the subject because its entire payload is material — nothing else on the estimate
@@ -495,9 +493,8 @@ rendered — its display twin `expeditionTargetSpecies` rides beside it, see "A 
 its quarry's NAME, not just its key") /
 **`expeditionFloor:float`** (the raid's escapement floor as a fraction of `K` — the live
 discriminator, defaulting to `1` so an absent floor reads "take nothing" rather than "take
-everything"; `expeditionHuntPolicy` is the retired `(deprecated)` slot it replaced and has no
-accessor; `expeditionFillTarget` is the other retired `(deprecated)` slot, from the fill target —
-the sim never writes it) / **`expeditionTripBound:string`** (which stop will end *this* party's raid —
+everything"; it replaced the retired `expeditionHuntPolicy` stance string) /
+**`expeditionTripBound:string`** (which stop will end *this* party's raid —
 the `HuntTripBound` key, off the same in-flight forward simulation `expeditionEtaTurns` comes from,
 so it answers for the party's **real** orders rather than for the band-agnostic pre-launch table;
 `""` = not raiding — a resident band, a scout, or a party already walking a load home, which is a
@@ -510,11 +507,11 @@ different statement from `"horizon"`) / `expeditionCarryCap` (hunt carry cap =
 re-attaches `ResidentBand` to every non-expedition cohort so the `With<ResidentBand>` systems keep
 running after a rollback.
 
-`PopulationCohortState.maxExpeditionPartySize` is a **retired `(deprecated)` slot**. It echoed the
-last rung of the sampling ladder — where the estimate rows stopped — and it **capped nothing**: the
-stepper always clamped to `idleWorkers` alone. Every client site that read it said so in capitals,
-which is the tell: a field whose name asserts a rule that four comments exist to deny is a field to
-delete. See "A raiding party is bounded by the BAND".
+**`PopulationCohortState` carries no `maxExpeditionPartySize`.** Such a field echoed the last rung
+of the sampling ladder — where the estimate rows stopped — and it **capped nothing**: the stepper
+always clamped to `idleWorkers` alone. Every client site that read it said so in capitals, which is
+the tell: a field whose name asserts a rule that four comments exist to deny is a field to delete.
+See "A raiding party is bounded by the BAND".
 
 **In-flight next-delivery forecast — the twin of the pre-launch estimate, for a party already on the
 map** (`systems::expeditions::expedition_delivery`). The pre-launch query answers "if I
@@ -609,15 +606,14 @@ question asked:
   local-hunt** terms, from which the client composes the ceiling at **any** floor:
   `max(0, B − floor·K) × rate`. **THERE IS NO BUILD TERM ANYWHERE IN IT** — a build is staffed in
   its own right (`docs/plan_standing_upkeep.md` §2.2), so neither this nor the crew term beside it
-  carries one; the `*BuildFraction` fields that used to are `(deprecated)`.
-  `huntPolicyCeilings` is a retired
-  `(deprecated)` slot: four rows cannot answer a continuous dial (`yield-forecast.md` → "the sim
-  exports the answer" and its one narrow exception). A herd below a floor composes `0` for it, which
+  carries one; the `*BuildFraction` fields that used to are retired from the wire.
+  There is no `huntPolicyCeilings` row list: four rows cannot answer a continuous dial
+  (`yield-forecast.md` → "the sim exports the answer" and its one narrow exception). A herd below a floor composes `0` for it, which
   is the escapement rule rather than a special case. **Formerly sourced by
   projecting the herd's `fauna::hunt_forecast`** (`SourceYieldForecast::ceiling_for`) —
   the **only** wire representation of a herd's per-policy ceilings (the scalar
-  `ceilingSustain`/…/`ceilingCorral` twins, which carried literally the same numbers, are now retired
-  `(deprecated)` slots), and the take path pays exactly them
+  `ceilingSustain`/…/`ceilingCorral` twins, which carried literally the same numbers, are retired
+  from the wire), and the take path pays exactly them
   (forecast == actual). That also makes `Corral` **phase-correct for free**: the ordinary hunt
   ceiling while the pen is being built by the keeper band's own `builders` pool, and the **full
   corral yield**
@@ -809,8 +805,8 @@ assert the answer is for its own question instead of trusting position in a list
 #### What the query replaced, and what it cost
 
 `HerdTelemetryState` used to carry `huntTripEstimates` (floors × party sizes), `denialEstimates` (party
-sizes), `denialPartyNeeded` and the two `*_kit_id` disclaimers. All five are `(deprecated)` slots in
-`snapshot.fbs` now. They were pre-computed **for every huntable herd, on every frame**, and they were
+sizes), `denialPartyNeeded` and the two `*_kit_id` disclaimers. None of the five is on the wire.
+They were pre-computed **for every huntable herd, on every frame**, and they were
 wrong for anyone who had worn their gear or picked another kit:
 
 - **One kit for every band** — the hunt job's *default*, over a **fresh** component set. A band whose

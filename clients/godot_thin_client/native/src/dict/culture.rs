@@ -273,7 +273,7 @@ fn culture_resonance_to_array(
 ///
 /// `MapView` reads `id` / `scope` / `owner` / `parent` and walks the tree to resolve a tile's
 /// province. It reads no trait, divergence or threshold — those were consumed only by the
-/// Inspector's Culture tab and are now `(deprecated)` slots that the encoder no longer writes.
+/// Inspector's Culture tab and are off the wire.
 /// See `docs/plan_delta_streaming.md` §3.6 for why they had to go: 45 drifting numbers per layer,
 /// on more layers than there are tiles, meant no quantisation could ever settle one.
 fn culture_layer_to_dict(layer: fb::CultureLayerState<'_>) -> VarDictionary {

@@ -106,7 +106,7 @@ var _panel: StartingLoadoutPanel = null
 
 # --- The CAMPAIGN's half (`opening_loadout`), one per world ---
 ## ⛔ **THE TWO PRE-FILLS ARE GONE FROM HERE, AND NOTHING MAY DRAW THEM AGAIN.** `openingLoadout`
-## still publishes `kitDefaults` / `materialDefaults`, but the SIM has already applied that spread to
+## still publishes `materialDefaults` (for the AI seat), but the SIM has already applied that spread to
 ## the band by the time the window is published — so seeding a card from it a second time would show,
 ## and then order, twice the gear the band holds. What survives is the pick list (a grant's offered
 ## materials, in the profile's own order) and the craftable ids (the third column's filter).

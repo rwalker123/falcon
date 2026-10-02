@@ -200,8 +200,7 @@ pub struct HerdTelemetryState {
     /// per-policy ceiling rows having retired with the four harvest stances.
     #[serde(default)]
     pub per_worker_yield: f32,
-    // **RETIRED: `per_worker_trade`** (arc #527). The wire slot `perWorkerTrade` is `(deprecated)`
-    // in place. A band preview that needs a *crew* number on an inedible species reads
+    // **RETIRED: `per_worker_trade`** (arc #527), and off the wire. A band preview that needs a *crew* number on an inedible species reads
     // [`Self::per_worker_biomass`], which is positive there and always was.
     /// Food/turn the herd will pay **once penned** (the corral's managed harvest at its current
     /// biomass). A crew building the pen takes **nothing** while it works
@@ -210,12 +209,12 @@ pub struct HerdTelemetryState {
     /// subtracted from this in food.
     #[serde(default)]
     pub corral_yield: f32,
-    // **RETIRED: `corral_trade`** (arc #527). The wire slot `corralTrade` is `(deprecated)` in place.
+    // **RETIRED: `corral_trade`** (arc #527), and off the wire.
     // **RETIRED: `pen_upkeep`** — `pen.upkeep_per_biomass × biomass`, the FOOD a pen drew from its
     // keeper's larder, quoted for every herd so a pre-commit `Corral` row could subtract the running
     // cost from the payoff. **Human food is not animal feed**: a pen eats the grass its fenced
     // footprint grows and the hay its keeper carries in, so there is no food-unit running cost left to
-    // quote. The wire slot `penUpkeep` is `(deprecated)` in place. What a pen still demands is
+    // quote, and `penUpkeep` is off the wire. What a pen still demands is
     // fodder, and [`Self::pen_fed_fraction`] says whether it got it.
     /// The fraction of its **fodder** demand this pen's grass and hay actually covered last turn —
     /// `(footprint_intake + fodder_draw) / (fodder_per_biomass × biomass)`. `1.0` = fully fed (also
@@ -282,8 +281,7 @@ pub struct HerdTelemetryState {
     /// unknown.
     #[serde(default)]
     pub food_per_animal: f32,
-    // **RETIRED: `trade_per_animal`** (arc #527). The wire slot `tradePerAnimal` is `(deprecated)`
-    // in place. A kill rhythm on an inedible species divides body mass by the herd's own biomass
+    // **RETIRED: `trade_per_animal`** (arc #527), and off the wire. A kill rhythm on an inedible species divides body mass by the herd's own biomass
     // terms, never by a currency that may be zero.
     /// **How many keepers a flock of this species and this size WANTS** (`fauna::herd_herders_needed`
     /// = `ceil((biomass / body_mass) / animals_per_herder)`) to hold its tameness. `0` for a
@@ -314,8 +312,7 @@ pub struct HerdTelemetryState {
     /// last (append-only).
     #[serde(default)]
     pub pastoral_yield: f32,
-    // **RETIRED: `pastoral_trade`** (arc #527). The wire slot `pastoralTrade` is `(deprecated)` in
-    // place.
+    // **RETIRED: `pastoral_trade`** (arc #527), and off the wire.
     /// The hay this pen drew from its keeper band's FODDER store last turn (Flora Roster F3), in
     /// fodder units. `0` for an unpenned herd, a keeper that has not learned Foddering, or a pen its
     /// own footprint already fed. With [`Self::pen_pasture_fraction`] it is the whole feed split —
@@ -327,7 +324,7 @@ pub struct HerdTelemetryState {
     // biomass − footprint_intake)`. Nothing read it: a pen row states how much MORE the pen needs,
     // which is [`Self::pen_fodder_shortfall`] below, and that is struck sim-side from the same
     // quantity. The sim still computes it (it is what the band-level `fodder_need` roll-up sums), but
-    // it is no longer a per-pen wire field. The wire slot `penHayNeed` is `(deprecated)` in place.
+    // it is not a per-pen wire field.
     /// **How much more fodder this pen needs per turn** — `max(0, hay need − fodder_draw)`, in fodder
     /// units, where the hay need is the gap the pen's own fenced footprint leaves. What the land did
     /// not grow *and* the keeper did not carry in, so a pen row reads *"40% pasture · 7% fodder ·
@@ -348,8 +345,7 @@ pub struct HerdTelemetryState {
     // **RETIRED: `pen_larder_bill` and `pen_hay_food`** — the FOOD-unit third term of the old feed
     // split (`pen_upkeep × pen_pasture_fraction + pen_hay_food + pen_larder_bill == pen_upkeep`) and
     // the conversion that restated hay in the units the *people* eat in so it could share that row.
-    // Both die with the larder feed: the split is grass and hay, in fodder. The wire slots
-    // `penLarderBill` / `penHayFood` are `(deprecated)` in place.
+    // Both die with the larder feed: the split is grass and hay, in fodder. Neither is on the wire.
     /// **The raw combat components of this herd's species** (Predators Phase 0, `docs/plan_predators.md`),
     /// so the client can DERIVE danger itself — it is never stored server-side, because strength ≠
     /// danger (hunt-danger ≈ `attack × ferocity`, camp-threat ≈ `attack × aggression`). `attack` /
@@ -386,7 +382,7 @@ pub struct HerdTelemetryState {
     // `yield_fraction_while_building`. The dip dissolved into the crew's one work budget
     // (`docs/plan_standing_upkeep.md` §2.2): a crew preparing spends its turn on the meter and takes
     // **nothing**, so `preparing(stance, rung)` is `0` from the model rather than from a published
-    // factor. The wire slots `tameBuildFraction` / `corralBuildFraction` stay `(deprecated)`.
+    // factor. Neither `tameBuildFraction` nor `corralBuildFraction` is on the wire.
     // **RETIRED: `maintain`** — a per-source boolean toggle. *"Stop maintaining this"* is
     // `maintain <faction> hunt <herd> 0`: a flag beside a crew count would be a second way to say
     // what the number already says, and the two could disagree.
@@ -446,8 +442,7 @@ pub struct HerdTelemetryState {
     /// same pair and a reader needs one code path. Appended (append-only).
     #[serde(default)]
     pub fodder_per_biomass: f32,
-    // **RETIRED: `trade_per_biomass`** (arc #527). The wire slot `tradePerBiomass` on this table is
-    // `(deprecated)` in place.
+    // **RETIRED: `trade_per_biomass`** (arc #527), and off the wire.
     /// **What ONE hunter moves this turn, in BIOMASS** — the **EQUIPPED REFERENCE** haul rate
     /// (`EquipmentConfig::equipped_reference(HuntCarry)`, the sled's own tier, `40`), the term
     /// `systems::hunt_take`'s collection multiplies by the head-count. **NOT**
@@ -1261,19 +1256,19 @@ pub struct ForagePatchState {
     /// species key. Appended (append-only).
     #[serde(default)]
     pub committed_display_name: String,
-    // **RETIRED: `tended_trade`** (arc #527). The wire slot `tendedTrade` is `(deprecated)` in place.
+    // **RETIRED: `tended_trade`** (arc #527), and off the wire.
     /// Fodder/turn a **completed tended patch** would pay. `0` unless its basket holds a fodder crop.
     #[serde(default)]
     pub tended_fodder: f32,
-    // **RETIRED: `field_trade`** (arc #527). The wire slot `fieldTrade` is `(deprecated)` in place.
+    // **RETIRED: `field_trade`** (arc #527), and off the wire.
     // A cash Field's whole product is **material batches**, which this table cannot quote as a
     // per-turn number — see `MaterialBatchState`, which is what the band actually holds.
     /// Fodder/turn a **completed Field** would pay — the whole yield of a `hay_grass` Field.
     #[serde(default)]
     pub field_fodder: f32,
     // **RETIRED: `cultivate_build_fraction` / `sow_build_fraction`** — the plant twins of the animal
-    // pair; see [`HerdTelemetryState`] for why the dip dissolved into the work budget. The wire slots
-    // `cultivateBuildFraction` / `sowBuildFraction` stay `(deprecated)`.
+    // pair; see [`HerdTelemetryState`] for why the dip dissolved into the work budget. Neither is on
+    // the wire.
     // **RETIRED: `maintain`** — see [`HerdTelemetryState`] for why the toggle became a crew count.
     /// **THE BILL THIS PATCH'S KEEPERS WERE HANDED this turn**, in work units — always meaningful,
     /// `0` on a rung that declares no upkeep and on ground nobody has started.
@@ -1329,8 +1324,8 @@ pub struct ForagePatchState {
     // under the compose sheet's worker cap. The cap was inverted out of the TAKE and a building crew
     // was paid a dipped take, so a 25-turn improvement asked for fewer hands than gathering the same
     // ground. **The player staffs the band's `builders` pool now** (`docs/plan_standing_upkeep.md`
-    // §2.5), so there is no blended count for a rung-level floor to raise. The wire slots
-    // `cultivateCrewNeeded` / `sowCrewNeeded` stay `(deprecated)`.
+    // §2.5), so there is no blended count for a rung-level floor to raise. Neither
+    // `cultivateCrewNeeded` nor `sowCrewNeeded` is on the wire.
     /// **What ONE UNIT of this patch's standing crop is worth**, in each account, at the patch's own
     /// basket-averaged rates (`patch_provisions_per_biomass` and its siblings — the seams
     /// `forage_take` pays with). With [`Self::biomass`], [`Self::carrying_capacity`] and the build-dip
@@ -1344,8 +1339,7 @@ pub struct ForagePatchState {
     /// The fodder half of the same vector — see [`Self::provisions_per_biomass`].
     #[serde(default)]
     pub fodder_per_biomass: f32,
-    // **RETIRED: `trade_per_biomass`** (arc #527). The wire slot `tradePerBiomass` on this table is
-    // `(deprecated)` in place.
+    // **RETIRED: `trade_per_biomass`** (arc #527), and off the wire.
     /// **What ONE gatherer moves this turn, in BIOMASS** — `per_worker_biomass_capacity ×
     /// seasonal_weight` (`forage::forage_per_worker_biomass`), the term `forage_take`'s worker cap
     /// multiplies by the head-count. It folds in the tile's seasonal weight, so it is **`0` in a dead
@@ -2248,8 +2242,7 @@ pub struct FloraShareInfo {
     /// plant that cannot climb to the Field rung here. Appended (append-only).
     #[serde(default)]
     pub sow_fodder_payoff: f32,
-    // **RETIRED: `sow_trade_payoff`** (arc #527). The wire slot `sowTradePayoff` is `(deprecated)`
-    // in place. **The gap it leaves is real:** the crop picker's cash-crop row was the one surface
+    // **RETIRED: `sow_trade_payoff`** (arc #527), and off the wire. **The gap it leaves is real:** the crop picker's cash-crop row was the one surface
     // that told a player what sowing cotton is *for*, and a material yield cannot be quoted as one
     // per-turn number. Replacing it is client-side work with a per-material shape.
     /// The **tended-rung** twin of [`Self::sow_fodder_payoff`] — fodder/turn a completed tended patch
@@ -2260,8 +2253,8 @@ pub struct FloraShareInfo {
     /// (append-only).
     #[serde(default)]
     pub cultivate_fodder_payoff: f32,
-    // **RETIRED: `cultivate_trade_payoff`** (arc #527). The wire slot `cultivateTradePayoff` is
-    // `(deprecated)` in place — see `sow_trade_payoff` above for the gap.
+    // **RETIRED: `cultivate_trade_payoff`** (arc #527), and off the wire — see `sow_trade_payoff`
+    // above for the gap.
     /// **What this plant is for** — the species' own `role` (`flora_config.json` → `species`):
     /// `"staple" | "fodder" | "cash"`. A **display tag**: nothing in the sim branches on it and
     /// nothing on a client may either — the yield vector is the behaviour, and this only names which
@@ -2373,8 +2366,7 @@ pub struct LadderKnowledgeProgress {
 /// what there *is* to learn rides [`LadderKnowledgeState`] instead, precisely so a faction absent
 /// from this list still has a screen to look at.
 ///
-/// ⛔ **THE FIVE NAMED FLOATS ARE RETIRED**, their FlatBuffers ids held and never reused (they are
-/// `(deprecated)` in `snapshot.fbs`). Adding a knowledge used to mean adding a schema field, which is
+/// ⛔ **THE FIVE NAMED FLOATS ARE RETIRED** and off the wire. Adding a knowledge used to mean adding a schema field, which is
 /// why the route branch's two lessons had nowhere to appear; [`Self::knowledges`] is the list that
 /// replaced them and is the only authority on a faction's ladder progress.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -2783,10 +2775,8 @@ pub struct KitOptionState {
     pub item_ids: Vec<String>,
     /// **RETIRED — it publishes [`crate::RETIRED_BUILD_RATE`] and nothing else.** It carried a
     /// *multiplier* on the crew's build output; the stat is now an **additive per-worker contribution
-    /// per equipped worker per turn** ([`Self::build_work_per_worker`] beside it). The slot is held
-    /// at its neutral
-    /// rather than removed because the FlatBuffers `(deprecated)` keyword drops the accessor and a
-    /// client still calls it.
+    /// per equipped worker per turn** ([`Self::build_work_per_worker`] beside it). The field is held
+    /// at its neutral rather than removed because a client still calls its accessor.
     ///
     /// **ITS SUCCESSOR IS WHY A PICKER MUST ASK ACROSS EVERY AXIS**, and that argument transfers
     /// verbatim. The husbandry gear's other axis was read on a corralled herd and nowhere else, so a

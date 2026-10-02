@@ -361,8 +361,8 @@ carrying capacity:
 
 `FollowPolicy` does not exist. `LaborAssignment.policy`, `PopulationCohortState.huntMode`,
 `expeditionHuntPolicy`, `HuntTripEstimate.policy`, `foragePolicyCeilings` and `huntPolicyCeilings` are
-all retired `(deprecated)` wire slots that **read zero or empty** — a client still reading them shows
-the player nothing and looks like a rendering bug rather than a contract break.
+all retired from the wire — a GDScript reader still asking for their dict keys shows the player
+nothing and looks like a rendering bug rather than a contract break.
 
 ### The client COMPOSES the ceiling, and that permission has a boundary
 
@@ -383,9 +383,9 @@ expected(workers)       = min(workers × perWorkerYield, ceiling(floor))
 > likewise), and the hands stand on `assign_labor <faction> <band> builders <n>` — so the gatherers or
 > hunters beside a build carry exactly what they carried before and there is no factor left to
 > multiply anything by. `ForagePatchState.cultivateBuildFraction` / `sowBuildFraction` and
-> `HerdTelemetryState.tameBuildFraction` / `corralBuildFraction` are `(deprecated)` slots the sim no
-> longer writes, and the native reader no longer inserts their dict keys — so **a GDScript expression
-> multiplying by one is reading a key that is not there**. The two `*CrewNeeded` slots went the same
+> `HerdTelemetryState.tameBuildFraction` / `corralBuildFraction` are off the wire, and the native
+> reader inserts no dict keys for them — so **a GDScript expression multiplying by one is reading a
+> key that is not there**. The two `*CrewNeeded` fields went the same
 > way with `crew_needed` (`yield-forecast.md` → "`workers_needed` IS THE TAKE'S OWN COUNT"), and what
 > rides those tables now is the upkeep quartet: `upkeepDemand`, `upkeepSupplied`, `upkeepShortfall`
 > and `upkeepWorkersNeeded` — the **maintain** activity's own `workers_needed`, in keepers, beside the
@@ -3518,10 +3518,8 @@ ENTRY"). Three client consequences, and the first is a defect the sheets shipped
 
 `default_kits.hunt` is one id for the whole job and could not express *which kit this animal wants*,
 so the sim derives a per-herd one and publishes it as `HerdTelemetryState.defaultKitId` — decoded as
-`default_kit_id`, the newest LIVE slot on that table, following the two `(deprecated)` `*EstimatesKitId`
-ones the forecast query retired. On a Rabbit Warren it is the trap: a
-spear party's approach loses three animals in four to the `wariness 0.75` retreat where the trap's
-`dispersion 0` keeps all of them, so a sheet opening on the job's Stalking kit defaulted the player
+`default_kit_id`. On a Rabbit Warren it is the trap: a spear party's approach loses three animals in
+four to the `wariness 0.75` retreat where the trap's `dispersion 0` keeps all of them, so a sheet opening on the job's Stalking kit defaulted the player
 onto a ~4× worse tool on exactly the quarry the roster has a right one for.
 
 **`KitRoster.default_kit_for(job, source, job_default_id)` IS THE ONE PRECEDENCE**, and its whole
@@ -6138,8 +6136,8 @@ spelled and never a raw count.
       `then +5.40 /turn − 1.74 feed`, quoting `penUpkeep` against a GROSS `corralYield` through a
       `FORECAST_FEED_KEYS` table that held exactly one entry. That was a **modelling defect**: human
       food is not animal feed. A pen eats the grass its fenced footprint grows and the hay its keeper
-      carries in (both FODDER), so there is no food-unit bill, `penUpkeep` is a retired `(deprecated)`
-      wire slot, and the table, the `feed_rung`/`feed` deal terms, `IMPROVEMENT_DEAL_FEED_FORMAT` and
+      carries in (both FODDER), so there is no food-unit bill, `penUpkeep` is retired from the wire,
+      and the table, the `feed_rung`/`feed` deal terms, `IMPROVEMENT_DEAL_FEED_FORMAT` and
       the done face's `IMPROVEMENT_DONE_UPKEEP_FORMAT` clause are all gone with it. **The term is
       deleted, not blanked** — no dangling separator, no empty slot, and both webs' done faces are now
       the bare rung. What a built rung really costs to HOLD is WORK, and that is already stated where
@@ -6227,8 +6225,7 @@ spelled and never a raw count.
       (the herd's SOLE ceiling representation — the sim exports one row per
       `FollowPolicy::HUNT_POLICIES`, i.e. the four extractive rungs **plus `tame` and `corral`**, so
       the investment DIPS ride it too; the old per-policy scalars `ceilingSustain` / `ceilingSurplus` /
-      `ceilingDeplete` / `ceilingEradicate` / `ceilingCorral` are retired `(deprecated)` schema slots and
-      are no longer decoded) +
+      `ceilingDeplete` / `ceilingEradicate` / `ceilingCorral` are retired from the schema) +
       **`bodyMass` → `body_mass`** (a real appended field, the 4th drop; BIOMASS, surfaced for
       completeness — it **cannot** drive the rhythm, see below) and **`foodPerAnimal` →
       `food_per_animal`** (slot 72, the food-unit quantity the rhythm actually divides by) and
@@ -6333,9 +6330,9 @@ spelled and never a raw count.
     **BOTH SOURCE KINDS NOW CARRY THEIR CEILINGS AS A PER-POLICY LIST, and the asymmetry that used to
     be load-bearing is gone** (#426). The HERD has `huntPolicyCeilings`; the PATCH has
     `foragePolicyCeilings`, one row per rung carrying BOTH halves of `min(w × per_worker, ceiling)` in
-    all three accounts. The patch's six flat `ceiling*` scalars are retired `(deprecated)` wire slots
-    with no reader — the same treatment the herd's identically-named scalars already had — so a new
-    policy costs neither kind a schema change, and `SourceForecast.FORECAST_CEILING_KEYS` (the table
+    all three accounts. The patch's six flat `ceiling*` scalars are retired from the wire — the same
+    treatment the herd's identically-named scalars already had — so a new policy costs neither kind a
+    schema change, and `SourceForecast.FORECAST_CEILING_KEYS` (the table
     that mapped a forage policy to one of those scalars) is DELETED. **A patch's per-worker term rides
     the row too**, deliberately, and only the FOOD one survives as a patch-level scalar
     (`perWorkerYield`). **The per-policy ceiling arrays this paragraph indexes are themselves retired**

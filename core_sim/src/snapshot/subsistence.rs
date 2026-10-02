@@ -462,7 +462,7 @@ pub(crate) struct QuotedParty {
 ///
 /// The `hunt_policy_ceilings` list is the single wire view of a herd's per-policy ceilings — one
 /// `SourceYieldForecast` per herd, projected once, keyed by a free-form policy name (the old scalar
-/// `ceiling*` fields are retired `(deprecated)` slots).
+/// `ceiling*` fields are retired from the wire).
 ///
 /// **The list is FOG-FILTERED for the viewer faction** — see [`HerdSnapshotInputs::herd_is_visible`].
 pub(crate) struct HerdSnapshotInputs<'a> {

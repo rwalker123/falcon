@@ -383,8 +383,7 @@ fn create_populations<'a>(
                                 // a work-row note can name the missing GOOD. Appended last.
                                 materialUpkeepDemand: Some(material_upkeep_demand),
                                 materialUpkeepSupplied: Some(material_upkeep_supplied),
-                                // `improvementWorkers` and `maintainWorkers` are both `(deprecated)`
-                                // slots and are no longer written: the build and the keeping are
+                                // There is no `improvementWorkers` / `maintainWorkers`: the build and the keeping are
                                 // band-level standing roles (`docs/plan_standing_upkeep.md` §2.5)
                                 // and arrive as ordinary rows of this list. A reader that still
                                 // inserts either key is publishing a per-source crew the sim has
@@ -920,7 +919,6 @@ fn create_populations<'a>(
                     // THE RAID'S FLOOR — replaces the retired `expeditionHuntPolicy`.
                     expeditionFloor: cohort.expedition_floor,
                     // WHICH STOP the in-flight projection says will end this party's raid.
-                    // (`expeditionFillTarget` is a retired `(deprecated)` slot — see `snapshot.fbs`.)
                     expeditionTripBound: expedition_trip_bound,
                     entity: cohort.entity,
                     home: cohort.home,
@@ -981,8 +979,6 @@ fn create_populations<'a>(
                     expeditionEtaTurns: cohort.expedition_eta_turns,
                     expeditionProjectedDelivery: cohort.expedition_projected_delivery,
                     expeditionRecurring: cohort.expedition_recurring,
-                    // (`foodIncomeAverage` sits earlier on the wire but is `(deprecated)`, so flatc
-                    // omits it from the generated Args — nothing to set.)
                     // The band's hay reserve (F3) — appended (append-only wire) after #165's trio.
                     fodderStore: cohort.fodder_store,
                     // The birth path's itemized breakdown, the parallel of the morale contributions
@@ -993,9 +989,8 @@ fn create_populations<'a>(
                     // Predators Phase 3 — the raid legibility pair, appended after fodderStore.
                     raidRadius: cohort.raid_radius,
                     raidForfeit: cohort.raid_forfeit,
-                    // The TOE's resolved tiers. The three fixed durability floats that used to sit
-                    // here are DEPRECATED in the schema and replaced by `kitItemConditions` below —
-                    // one row per item, so a config that adds an item needs no schema edit.
+                    // The TOE's resolved tiers. Kit condition rides `kitItemConditions` below — one
+                    // row per item, so a config that adds an item needs no schema edit.
                     hunterAttack: cohort.hunter_attack,
                     huntCarryPerWorkerBiomass: cohort.hunt_carry_per_worker_biomass,
                     forageCarryPerWorkerBiomass: cohort.forage_carry_per_worker_biomass,
@@ -1026,8 +1021,8 @@ fn create_populations<'a>(
                     craftOffers: Some(craft_offers),
                     equipmentBatches: Some(equipment_batches),
                     // **The age brackets in WHOLE PEOPLE** — appended last, and the only reading of
-                    // them that crosses. The raw fixed-point `children`/`working`/`elders` slots are
-                    // `(deprecated)` in the schema and are not written: the fraction is an internal
+                    // them that crosses. The raw fixed-point `children`/`working`/`elders` have no
+                    // wire field: the fraction is an internal
                     // growth accumulator, so a client rounding it invented a second answer beside
                     // `workingAge`. `childrenCount + workingAge + eldersCount == size`.
                     childrenCount: cohort.children_count,
@@ -1369,8 +1364,8 @@ fn decode_population(
         current_y: cohort.currentY(),
         is_traveling: cohort.isTraveling(),
         size: cohort.size(),
-        // The raw fixed-point brackets are `(deprecated)` slots the serializer no longer writes
-        // (see `childrenCount` / `eldersCount` in `create_populations`); nothing was sent.
+        // The raw fixed-point brackets have no wire field (see `childrenCount` / `eldersCount` in
+        // `create_populations`); nothing was sent.
         children: 0,
         working: 0,
         elders: 0,

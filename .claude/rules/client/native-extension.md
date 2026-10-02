@@ -172,8 +172,7 @@ inline divide — and a new `Scalar` **cohort** field belongs in `CohortScalars`
 beside it. This decoder used to carry both: `working_age` (the assignable workers) and an `age_*`
 trio decoded from `PopulationCohortState.children/working/elders`, which were raw `Scalar`s. The
 `age_*` prefix existed to keep the two apart, and the naming trap it guarded is gone with the second
-number — the deprecated Scalar slots are no longer written and their accessors are gone from the
-generated bindings. Two names for one number is how a band came to render "17" in the panel's PEOPLE
+number — the raw Scalars are off the wire. Two names for one number is how a band came to render "17" in the panel's PEOPLE
 bar beside "0 idle of 16" in the WORKFORCE header on the same frame.
 
 The fraction the sim keeps internally is a growth accumulator, not a fact about people. It rounds
@@ -250,7 +249,7 @@ the slow trap the field surfaces before an animal dies of it.
 
 **THE GAP ITSELF IS NOT DECODED, BECAUSE IT IS NOT PUBLISHED.** It rode this row as `penHayNeed` until
 it turned out nothing rendered it — the pen row states how much more is needed, not the gross gap —
-and the wire slot is now `(deprecated)`. The sim owns that subtraction and publishes only its result,
+and the wire field is gone. The sim owns that subtraction and publishes only its result,
 which is what makes it impossible for the difference to describe a different turn from its terms; a
 decoder that re-derived the gap from `pen_fodder_shortfall + fodder_draw` would be minting a wire
 field client-side.
@@ -353,8 +352,7 @@ without a stamp; `marker_field_guard` carries it so the copy stays honest.
 
 **THE PRE-LAUNCH RAID FORECASTS ARE NOT ON THE SNAPSHOT, SO `herds_to_array` DECODES NO ESTIMATE
 TABLE.** `HerdTelemetryState`'s `huntTripEstimates` / `denialEstimates` / `denialPartyNeeded` and the
-two `*EstimatesKitId` fields are `(deprecated)` slots in `snapshot.fbs` that the sim no longer
-writes: a herd row is a fact about a *herd*, and a raid's numbers depend on the asking band's kit and
+two `*EstimatesKitId` fields are not in `snapshot.fbs`: a herd row is a fact about a *herd*, and a raid's numbers depend on the asking band's kit and
 live equipment wear, which no per-herd row can carry. The client **asks** instead — see
 `.claude/rules/core_sim/expeditions.md` → "The forecast is ASKED FOR".
 

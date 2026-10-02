@@ -2730,9 +2730,8 @@ pub struct HuntTripForecast {
     // what replaced it** — [`Self::delivered_material`] below states the amount per material, which
     // answers *"does it give a material"* and *"how much of what"* in one reading, so a separate flag
     // would be a second statement of the first half. (`HuntYield::yields_materials` remains the
-    // species-level predicate the picker rule reads; it is not a trip fact.) The wire slot
-    // `HuntTripEstimate.deliversTrade` is deprecated in place — and that whole table is deprecated
-    // too: the live surface is the query reply's `HuntTripRow`.
+    // species-level predicate the picker rule reads; it is not a trip fact.) No snapshot section
+    // carries a `HuntTripEstimate`: the live surface is the query reply's `HuntTripRow`.
     /// Provisions landed on the **first** hunting turn — the trip's opening rate, and (with
     /// `animals_taken`) a "can this herd give me anything at all?" signal.
     pub first_turn_provisions: f32,

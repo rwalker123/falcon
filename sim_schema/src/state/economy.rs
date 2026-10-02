@@ -2,9 +2,8 @@
 //! path carries.
 //!
 //! The logistics- and trade-link states that used to live here went with the dead trade slice
-//! (`docs/plan_contact_and_logistics.md` §As-built). Their `.fbs` tables and the two vector fields
-//! that held them survive as `(deprecated)` slots — a freed field id is how two concurrent branches
-//! collide on one position.
+//! (`docs/plan_contact_and_logistics.md` §As-built). Their `.fbs` tables survive, carried by no
+//! section.
 
 use serde::{Deserialize, Serialize};
 

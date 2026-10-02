@@ -378,9 +378,9 @@ sim_schema/snapshot/native/`Hud.gd` exactly like `SedentarizationState`).
 > has exactly **one** correct resolution into people — so the resolution belongs to the sim and the
 > raw Scalars do not cross.
 >
-> `PopulationCohortState.children` / `working` / `elders` are therefore `(deprecated)` FlatBuffers
-> slots (the `i64`s survive on the Rust struct — `food_demand`, the fission split and the JSON map
-> export all read masses). What a client reads is the whole triple **`childrenCount` / `workingAge`
+> `PopulationCohortState` therefore carries no raw `children` / `working` / `elders` (the `i64`s
+> survive on the Rust struct — `food_demand`, the fission split and the JSON map export all read
+> masses). What a client reads is the whole triple **`childrenCount` / `workingAge`
 > / `eldersCount`**, with `childrenCount + workingAge + eldersCount == size` guaranteed because
 > `size` is *written* as that sum.
 >
@@ -918,10 +918,8 @@ transferSent` ledger identity.
 > sums the Food line's income half **itself**, from the per-source `realizedYield` of the breakdown
 > rows it renders, so the headline equals the Gathered + Hunted rows it sits above **by construction**
 > rather than being a second, independently-computed total that could drift from them. That made a
-> band-level duplicate redundant, and it was read by nobody. Marked `(deprecated)` in `snapshot.fbs`
-> rather than deleted — deleting frees the field id for the next appender, and this repo is worked by
-> concurrent sessions that append to these tables, so a freed slot is exactly how two branches collide
-> on one id. **Do not re-add it**: if a band-level steady income is ever wanted again, sum the rows.
+> band-level duplicate redundant, and it was read by nobody, so it is off the wire. **Do not re-add
+> it**: if a band-level steady income is ever wanted again, sum the rows.
 > The Σ `realized` value still exists as a *local* in `snapshot::population`, because
 > `larder_runway_turns` needs a steady income term; it is simply not exported.
 

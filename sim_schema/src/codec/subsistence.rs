@@ -590,7 +590,7 @@ fn create_herds<'a>(
                 // **How much more fodder the pen still needs** — appended last (append-only wire).
                 // `max(0, hay need − fodderDraw)`, struck sim-side on the same pass as both its terms
                 // so the difference can never describe a different turn from them. The gap it is
-                // taken from rode this row as `penHayNeed` and is `(deprecated)`: nothing read it.
+                // taken from is not a wire field: nothing read it.
                 penFodderShortfall: herd.pen_fodder_shortfall,
                 // The render-ready feed split (F3) — appended last (append-only wire).
                 // Raw combat components (Predators Phase 0) — the client derives danger itself.
@@ -604,8 +604,6 @@ fn create_herds<'a>(
                 preySenseRadius: herd.prey_sense_radius,
                 // Ownership-independent would-be herder count (taming-startup-lag fix) — appended last.
                 herdersNeededIfManaged: herd.herders_needed_if_managed,
-                // The two build dips are RETIRED: `tameBuildFraction`/`corralBuildFraction` are
-                // `(deprecated)` slots and flatc emits no `Args` field for them.
                 // The neglect grace — appended last.
                 hasNeglectGrace: herd.has_neglect_grace,
                 neglectGraceRemaining: herd.neglect_grace_remaining,
@@ -852,9 +850,7 @@ fn create_forage_patches<'a>(
                 fodderPerBiomass: patch.fodder_per_biomass,
                 tendedFodder: patch.tended_fodder,
                 fieldFodder: patch.field_fodder,
-                // The two build dips are RETIRED — `(deprecated)` slots, no `Args` field.
-                // The neglect grace — appended last. The two build-crew slots retired with
-                // `crew_needed`; they are `(deprecated)` and flatc emits no `Args` field for them.
+                // The neglect grace — appended last.
                 hasNeglectGrace: patch.has_neglect_grace,
                 neglectGraceRemaining: patch.neglect_grace_remaining,
                 // One gatherer's BIOMASS throughput, seasonal weight folded in — appended last

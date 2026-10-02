@@ -405,13 +405,10 @@ pub(crate) fn herds_to_array(
         // Read by Hud's %HerdAssignControls to show the expected yield live and to cap the hunter
         // stepper at what the herd can actually absorb. `ceiling(floor)` is composed from the
         // per-biomass vector above — `hunt_policy_ceilings` and the older per-policy scalars
-        // (ceilingSustain/Surplus/Deplete/Eradicate/Corral) are ALL retired `(deprecated)` slots the
-        // sim no longer writes, and are no longer decoded.
+        // (ceilingSustain/Surplus/Deplete/Eradicate/Corral) are ALL retired from the wire.
         let _ = dict.insert("per_worker_yield", herd.perWorkerYield());
-        // **RETIRED with the trade-goods yield axis** (arc #527): the wire slot is
-        // `(deprecated)` and the sim writes nothing to it. What a source pays beyond food is
-        // MATERIALS, which ride the cohort's `material_batches`. The GDScript that read the
-        // key it used to insert is a separate pass — the key simply stops appearing.
+        // **RETIRED with the trade-goods yield axis** (arc #527), and off the wire. What a source
+        // pays beyond food is MATERIALS, which ride the cohort's `material_batches`.
         // `corral_yield` is the Corral rung's PAYOFF — what the herd pays once penned; its
         // during-building dip is `corral_build_fraction` on the CREW, so together they drive the
         // pre-commit "+X → +Y while building → +Z" deal on %HerdAssignControls.
@@ -422,12 +419,10 @@ pub(crate) fn herds_to_array(
         // fed by its fenced footprint's grass and by hay (both FODDER), never from the FOOD larder, so
         // the pre-commit Corral row quotes the payoff with nothing beside it.
         let _ = dict.insert("corral_yield", herd.corralYield());
-        // **RETIRED with the trade-goods yield axis** (arc #527): the wire slot is
-        // `(deprecated)` and the sim writes nothing to it. What a source pays beyond food is
-        // MATERIALS, which ride the cohort's `material_batches`. The GDScript that read the
-        // key it used to insert is a separate pass — the key simply stops appearing.
+        // **RETIRED with the trade-goods yield axis** (arc #527), and off the wire. What a source
+        // pays beyond food is MATERIALS, which ride the cohort's `material_batches`.
         // The pen as a managed POPULATION (docs/plan_corral_managed_population.md). `pen_upkeep` — the
-        // pen's food-unit feed demand — IS RETIRED (schema `(deprecated)`, no accessor): human food is
+        // pen's food-unit feed demand — IS RETIRED (off the wire): human food is
         // not animal feed. What remains is the outcome of the pen's FODDER budget:
         //   `pen_fed_fraction` = the share of the pen's fodder demand its footprint's grass plus the hay
         //                        carried in actually covered last turn — i.e. exactly what
@@ -502,8 +497,7 @@ pub(crate) fn herds_to_array(
         // fenced footprint leaves uncovered. It is the READOUT number the `Fed:` row ends on
         // ("… · needs 11.3 more/turn"): what the fenced footprint does not grow AND the keeper did
         // not carry in. **THE SIM OWNS THE ARITHMETIC, AND THIS IS THE ONLY TERM ON THE WIRE** — the
-        // gap it is taken from is not published (it rode this row as `penHayNeed`, which nothing ever
-        // read and is now `(deprecated)`), so there is no second figure a client could difference
+        // gap it is taken from is not published (nothing ever read it), so there is no second figure a client could difference
         // into a number describing a different turn from its own terms. It is struck on the same pass
         // as `fodder_draw`.
         //
@@ -547,10 +541,8 @@ pub(crate) fn herds_to_array(
         // kill-rhythm divides the per-turn food rate by (`Hud._hunt_kill_rhythm`: food ÷ food →
         // animals/turn), so a mammoth reads "≈1 / 7 turns" not the biomass-÷-food 333. 0 if unknown.
         let _ = dict.insert("food_per_animal", herd.foodPerAnimal());
-        // **RETIRED with the trade-goods yield axis** (arc #527): the wire slot is
-        // `(deprecated)` and the sim writes nothing to it. What a source pays beyond food is
-        // MATERIALS, which ride the cohort's `material_batches`. The GDScript that read the
-        // key it used to insert is a separate pass — the key simply stops appearing.
+        // **RETIRED with the trade-goods yield axis** (arc #527), and off the wire. What a source
+        // pays beyond food is MATERIALS, which ride the cohort's `material_batches`.
         // Staffing of a MANAGED herd (intensification ladder). A domesticated herd needs
         // `herders_needed` herders every turn to HOLD its tameness; `herded_fraction` = min(1,
         // assigned / needed) is how well that demand is met. Understaffed (< 1) means the herd's
@@ -573,16 +565,12 @@ pub(crate) fn herds_to_array(
         // `→ +pastoral_yield` (like Cultivate/Sow/Corral) instead of quoting only the dip. Sustain <
         // Tame < Corral. Appended-field audit: this is the newest slot on HerdTelemetryState.
         let _ = dict.insert("pastoral_yield", herd.pastoralYield());
-        // **RETIRED with the trade-goods yield axis** (arc #527): the wire slot is
-        // `(deprecated)` and the sim writes nothing to it. What a source pays beyond food is
-        // MATERIALS, which ride the cohort's `material_batches`. The GDScript that read the
-        // key it used to insert is a separate pass — the key simply stops appearing.
+        // **RETIRED with the trade-goods yield axis** (arc #527), and off the wire. What a source
+        // pays beyond food is MATERIALS, which ride the cohort's `material_batches`.
         // THE BUILD DIPS ARE RETIRED (docs/plan_standing_upkeep.md section 2.2). A crew's turn is
         // one work budget, so a crew building takes NOTHING and `preparing(stance, rung)` is `0`
-        // from the model rather than from a published factor. The `tameBuildFraction` /
-        // `corralBuildFraction` wire slots stay `(deprecated)` and flatc no longer emits an
-        // accessor, so the `tame_build_fraction` / `corral_build_fraction` dict keys simply stop
-        // appearing — the GDScript that reads them is a separate pass.
+        // from the model rather than from a published factor, so there is no
+        // `tame_build_fraction` / `corral_build_fraction` dict key.
         //
         // THE STANDING UPKEEP (same doc, section 2) — what it costs to HOLD this herd's rung, per
         // turn, in work units. All three terms ship so the client subtracts nothing, and
@@ -726,8 +714,6 @@ pub(crate) fn herds_to_array(
         //
         // `""` means the roster could not resolve the species; the client reads that as "no herd
         // answer" and falls back to `SubsistenceSection.defaultHuntKitId`, exactly as the sim does.
-        // It follows the two retired `*EstimatesKitId` slots the forecast query replaced — those
-        // are `(deprecated)` and are decoded nowhere.
         let _ = dict.insert("default_kit_id", herd.defaultKitId().unwrap_or(""));
         // **WHAT THIS HERD'S KEEPERS ARE CARRYING** — the animal twin of the plant web's pair
         // below, set per WORK SITE by `upkeep_kit <faction> <herd_id> [kit <id>]`
@@ -1434,8 +1420,7 @@ pub(crate) fn forage_patches_to_array(
         // TAKE and a building crew was paid a dipped take, so a 25-turn improvement asked for FEWER
         // hands than gathering the same ground. THE PLAYER STATES THE BUILD'S CREW NOW —
         // `cultivate|sow <faction> <x> <y> <workers>` — so there is no blended count for a
-        // rung-level floor to raise. The `cultivateCrewNeeded` / `sowCrewNeeded` wire slots stay
-        // `(deprecated)` and flatc emits no accessor, so those dict keys simply stop appearing.
+        // rung-level floor to raise, and no `cultivate_crew_needed` / `sow_crew_needed` key.
         array.push(&dict.to_variant());
     }
     array

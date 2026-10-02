@@ -478,8 +478,8 @@ and the two stores **never convert**.
   band that cannot hay a herd still has a herd that is short. Per pen what rides the herd row is what
   the shortfall leaves once `fodder_draw` is counted — `HerdTelemetryState.penFodderShortfall`,
   ungated on the same rule, stamped on the same pass, and the only term of that subtraction on the
-  wire (the gap's own `penHayNeed` is `(deprecated)`: nothing read it). See `graze.md` → "The hay bill
-  is published as the GAP".
+  wire (the gap itself has no per-pen field: nothing read one). See `graze.md` → "The hay bill is
+  published as the GAP".
 - **The ceiling (§5.3) — `K_pen = (footprint_graze_flow + fodder_delivery_rate) / fodder_per_biomass`**,
   the fodder term added inside the one `K` seam `ecological_carrying_capacity`. **Critical for
   convergence: it reads the sustained FLOW, not the store stock** — `Herd::fodder_delivery_rate` is the
@@ -503,12 +503,11 @@ and the two stores **never convert**.
   `fodderNeed` / `fodderIncome` / `turnsOfFodder`, which is where `band_fodder_inflow` finally
   reaches the client (`yield-forecast.md` → "The band's hay ledger", whose runway counts down the
   **Foddering-gated** drain rather than that ungated need) — `HerdTelemetryState.fodderDraw` and its
-  `penFodderShortfall` twin (`penHayNeed` rode beside them until it turned out nothing read it, and
-  is `(deprecated)` in place),
+  `penFodderShortfall` twin (the un-differenced gap is not published — nothing read it),
   `FloraShareInfo.sowFodderPayoff` (the crop picker's hay payoff, so hay reads its fodder value instead of
   a bare `0×` provisions ratio). **`HerdTelemetryState.penLarderBill` / `penHayFood` are retired**
-  (slots `(deprecated)`) with the food-unit split they belonged to: the feed row is `penPastureFraction`
-  + `fodderDraw`, both fodder against one fodder demand — see "Corral" → "Display snapshot".
+  with the food-unit split they belonged to: the feed row is `penPastureFraction` + `fodderDraw`, both
+  fodder against one fodder demand — see "Corral" → "Display snapshot".
 
 ### Cash crops — the F4 coupling (a cash crop is paid in MATERIALS)
 
@@ -762,7 +761,7 @@ becomes a real decision beside **how hard do I press** (the harvest floor).
 ### A WILD gather's material rate is on the wire too — the rung-1 half (arc #527)
 
 The crop picker's quotes above answer *a commitment* at rungs 2 and 3. **Rung 1 had nothing**, and
-`ForagePatchState.tradePerBiomass` sat `(deprecated)` with no replacement — so a tile whose realized
+the retired `ForagePatchState.tradePerBiomass` had no replacement — so a tile whose realized
 basket is 32% cotton and 26% tobacco composed a forage sheet reading `0.24 → 0.18 FOOD · — FODDER`
 while the turn banked its fibre and leaf. The sim credited them correctly the whole time
 (`systems/labor.rs`, decomposed per species); the wire had nowhere to say so.
@@ -843,10 +842,10 @@ a restoration.
   (`patch_material_yields` decomposes rather than averaging). It is the same fact the food account
   already records from the other side, where a rung-2 cash crop pays non-zero calories.
 - **Wire (append-only, last on `FloraShareInfo`):** `sowMaterialPayoff` /
-  `cultivateMaterialPayoff`, each `[MaterialPayoff { materialId, amount }]`. **A new table with a new
-  id** — the freed `sowTradePayoff`/`cultivateTradePayoff` slots stay `(deprecated)` and are not
-  reused. Two fields for one account, for `cultivatePayoff`/`sowPayoff`'s reason: the rungs differ in
-  basket, conversion gain *and* the shape of the harvest.
+  `cultivateMaterialPayoff`, each `[MaterialPayoff { materialId, amount }]` — a new table rather than
+  a reuse of the retired scalar `sowTradePayoff`/`cultivateTradePayoff`. Two fields for one account,
+  for `cultivatePayoff`/`sowPayoff`'s reason: the rungs differ in basket, conversion gain *and* the
+  shape of the harvest.
 - **Guarded at three levels, because the failure modes differ.**
   `flora_f4_cash::the_picker_material_quote_is_the_material_the_sim_credits` runs a real turn and
   asserts the quote against `LocalStore::material_total` — *a quote that disagrees with what lands in

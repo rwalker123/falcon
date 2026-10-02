@@ -1715,8 +1715,8 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // `round(children + working + elders)`, which can exceed the whole people that exist).
         size: age_brackets.head_count(),
         // The raw fixed-point brackets stay on the struct — `food_demand`, the fission split and the
-        // JSON map export all read masses — but their FlatBuffers slots are `(deprecated)`: what the
-        // wire carries is `children_count` / `working_age` / `elders_count`.
+        // JSON map export all read masses — but they have no FlatBuffers field: what the wire
+        // carries is `children_count` / `working_age` / `elders_count`.
         children: cohort.children.raw(),
         working: cohort.working.raw(),
         elders: cohort.elders.raw(),

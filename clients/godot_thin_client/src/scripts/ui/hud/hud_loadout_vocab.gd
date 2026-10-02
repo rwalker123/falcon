@@ -28,8 +28,8 @@ const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 ## The pick list, in the order the profile declares it — **and that order is also the draw order**,
 ## shared by the resources column and the legend, so the two cannot disagree.
 const PICKABLE_MATERIALS_KEY := "pickable_materials"
-## ⛔ **THE TWO PRE-FILLS HAVE NO CLIENT READER, AND MUST NOT GROW ONE.** `openingLoadout` still
-## publishes `materialDefaults` / `kitDefaults`, and the SIM is what applies that spread — at the
+## ⛔ **THE PRE-FILL HAS NO CLIENT READER, AND MUST NOT GROW ONE.** `openingLoadout` still
+## publishes `materialDefaults` (for the AI seat), and the SIM is what applies that spread — at the
 ## band's creation, down the same path a player's `set_starting_loadout` takes — so it is already in
 ## `WINDOW_KITS_KEY` / `WINDOW_MATERIALS_KEY` by the time a card is drawn. A client that seeded from
 ## the campaign section as well would draw, and then order, twice the gear the band holds. The keys

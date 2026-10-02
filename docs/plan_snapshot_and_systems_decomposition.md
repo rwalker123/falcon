@@ -49,13 +49,13 @@ touch different tables and never collide on slot order.
 | Section table | Fields (from `WorldSnapshot`) | Delta `removed*` lists |
 |---|---|---|
 | `MapSection` | tiles, terrainOverlay, elevationOverlay, moistureRaster | removedTiles |
-| `EconomySection` | factionInventory (`logistics` / `tradeLinks` / `logisticsRaster` / `removedLogistics` / `removedTradeLinks` are all retired `(deprecated)` slots — arc #527, `docs/plan_contact_and_logistics.md` §As-built; the raster was deprecated once the arc deleted its last decode site, so nothing reads it and nothing writes it) | — |
+| `EconomySection` | factionInventory (`logistics` / `tradeLinks` / `logisticsRaster` / `removedLogistics` / `removedTradeLinks` are retired and deleted from the schema — arc #527, `docs/plan_contact_and_logistics.md` §As-built) | — |
 | `PopulationSection` | populations, demographics, generations | removedPopulations, removedGenerations |
 | `SubsistenceSection` | herds, foragePatches, sedentarization, intensificationKnowledge, foodModules | — |
 | `KnowledgeSection` | greatDiscoveryDefinitions, greatDiscoveries, greatDiscoveryProgress, greatDiscoveryTelemetry, knowledgeLedger, knowledgeTimeline, knowledgeMetrics, discoveredSites, discoveryProgress | removedKnowledgeLedger |
 | `GovernanceSection` | power, powerMetrics, corruption, corruptionRaster, crisisTelemetry, crisisOverlay | removedPower |
 | `CultureSection` | cultureLayers, cultureTensions, cultureRaster, influencers, axisBias, sentiment, sentimentRaster | removedInfluencers, removedCultureLayers |
-| `VisionSection` | visibilityRaster, militaryRaster (`fogRaster` is a retired `(deprecated)` slot) | — |
+| `VisionSection` | visibilityRaster, militaryRaster (`fogRaster` is retired and deleted from the schema) | — |
 | `CampaignSection` | campaignProfiles, commandEvents, victory | — |
 
 `header:SnapshotHeader` and `capabilityFlags:uint` stay at the root of both

@@ -427,10 +427,6 @@ pub(crate) fn opening_loadout_to_dict(state: fb::OpeningLoadoutState<'_>) -> Var
         "material_defaults",
         &opening_material_defaults_to_array(state.materialDefaults()),
     );
-    let _ = dict.insert(
-        "kit_defaults",
-        &opening_kit_defaults_to_array(state.kitDefaults()),
-    );
     // Published as IDS so the client never has to sniff a craft offer's refusal SENTENCE to work out
     // which bench tools are still knowledge-gated.
     let _ = dict.insert(

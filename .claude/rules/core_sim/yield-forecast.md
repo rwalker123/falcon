@@ -30,17 +30,10 @@ show a live **"Expected yield: +X.XX /turn"** and **cap its worker stepper at th
 while the player is composing an assignment**.
 
 **Wire fields** (append-only, on both `WorldSnapshot` and `WorldDelta`): `perWorkerYield:float` on
-both `ForagePatchState` (per tile) and `HerdTelemetryState` (per herd), plus the per-policy ceilings
-(**food/turn**, at the source's CURRENT biomass) — which are carried **differently on the two sides**:
-a patch keeps the scalars `ceilingSustain` / `ceilingSurplus` / `ceilingDeplete` / `ceilingEradicate`,
-while a **herd carries them only as the `huntPolicyCeilings` list** (its scalar twins are retired
-`(deprecated)` slots — a free-form `policy` string means a new policy needs no schema change, and the
-list and the scalars were provably the same numbers). **Plus the investment rung**:
-
-**`ceilingMarket` → `ceilingDeplete`** was a name change on the *same* FlatBuffers slot; **every one
-of those scalars, and the per-policy row lists that replaced them, are now retired
-`(deprecated)` slots.** A stance ceiling cannot be enumerated once the player drags a continuous
-floor — see "THE CEILING LISTS ARE RETIRED" below.
+both `ForagePatchState` (per tile) and `HerdTelemetryState` (per herd). **No per-policy ceiling is on
+the wire** — neither the `ceiling*` scalars nor the per-policy row lists that once replaced them. A
+stance ceiling cannot be enumerated once the player drags a continuous floor — see "THE CEILING
+LISTS ARE RETIRED" below. **Plus the investment rung**:
 
 > ### THE FORECAST IS A VECTOR, not a food scalar (issue #337) — and its trade half is RETIRED
 >
@@ -86,7 +79,7 @@ floor — see "THE CEILING LISTS ARE RETIRED" below.
 > >   one pruning rule (`fauna::species_requires_denial`) would have collapsed a wolf to floor `0`
 > >   alone — a real gameplay regression hiding inside a data removal.
 > >
-> > Retired wire slots, all `(deprecated)` in place and none deleted:
+> > Retired wire fields, none on the wire:
 > > `LaborAssignment.tradeYield` / `realizedTradeYield` / `tradeYieldLow` / `tradeYieldHigh` ·
 > > `HerdTelemetryState.perWorkerTrade` / `tradePerAnimal` / `pastoralTrade` / `corralTrade` /
 > > `tradePerBiomass` · `ForagePatchState.tradePerBiomass` / `tendedTrade` / `fieldTrade` ·
@@ -165,8 +158,8 @@ floor — see "THE CEILING LISTS ARE RETIRED" below.
 
 > ### THE CEILING LISTS ARE RETIRED; THE CLIENT COMPOSES THE CURVE (`docs/plan_harvest_floor.md` §5)
 >
-> `foragePolicyCeilings` and `huntPolicyCeilings` are `(deprecated)` slots the sim no longer writes,
-> and so are the scalar `ceiling*` fields before them. **Four rows can answer four questions; a player
+> `foragePolicyCeilings` and `huntPolicyCeilings` are off the wire, and so are the scalar `ceiling*`
+> fields before them. **Four rows can answer four questions; a player
 > dragging a continuous floor asks a different one every frame.**
 >
 > What ships instead is the **terms**: `biomass`, `carryingCapacity`, and the
@@ -218,11 +211,10 @@ floor — see "THE CEILING LISTS ARE RETIRED" below.
 > the sim states the take**: `SourceYield.actual` for the *committed* assignment is still the sim's
 > answer, quantisation and all, and the chart is a projection rather than a promise.
 >
-> **The four `*BuildFraction` slots are `(deprecated)` and no longer written**
+> **The four `*BuildFraction` fields are off the wire**
 > (`ForagePatchState.cultivateBuildFraction` / `sowBuildFraction`,
 > `HerdTelemetryState.tameBuildFraction` / `corralBuildFraction`). They carried the rung's
-> `yield_fraction_while_building`, which retired with the dip; the slots stay because FlatBuffers
-> field ids are positional. What rides those tables now is the upkeep quartet — see "The standing
+> `yield_fraction_while_building`, which retired with the dip. What rides those tables now is the upkeep quartet — see "The standing
 > upkeep on the wire" in `intensification.md`.
 >
 > ### THE BOUNDARY, stated once — it is the thing a future reader will get wrong
@@ -332,8 +324,8 @@ out-yields wild hunting. `0` on a source that never
 offers Tame (a forage patch, or a herd already penned/forage-tended).
 
 **`pastoralTrade` / `corralTrade` were the trade halves of the very same
-`SourceYieldForecast::pastoral_yield` / `managed_yield` vectors, and are `(deprecated)` slots since
-arc #527** — with the axis gone, an inedible species' investment rungs quote `0`, exactly as its
+`SourceYieldForecast::pastoral_yield` / `managed_yield` vectors, and are off the wire since arc
+#527** — with the axis gone, an inedible species' investment rungs quote `0`, exactly as its
 extractive ones do. **Both `pastoralYield` and the
 un-penned `corralYield` projection (`managed_yield`) are the SUSTAINED MSY on the improved ecology** —
 `HuntYield::apply(sustainable_yield(biomass_before_regrowth, carrying_capacity, &{pastoral,pen}_ecology_for(..)))`,
@@ -403,7 +395,7 @@ rather than being two shapes. Pinned by
   floor: `workers_needed` is the **take**'s own hands, `upkeepWorkersNeeded` is the **keeping**'s, and
   the builders are the band's own pool.
   `intensification::source_crew_needed`, `LadderConfig::build_crew` and the `cultivateCrewNeeded` /
-  `sowCrewNeeded` wire slots are gone (the slots `(deprecated)`). **`herdersNeeded` /
+  `sowCrewNeeded` wire fields are gone. **`herdersNeeded` /
   `herdersNeededIfManaged` keep their own fields** — a herd's keeper count is a fact about the herd,
   not about a build — and no longer fold into `workers_needed`.
 - A **corralled herd** is *yours*, so **the floor axis collapses**: `ceiling_at` returns its
@@ -589,7 +581,7 @@ rather than being two shapes. Pinned by
 > Pinned by `forage::tests::a_patch_held_at_its_floor_projects_the_gather_it_pays`.
 >
 > Wire: `LaborAssignment.actualYieldLow` / `actualYieldHigh` (append-only, after `floor`; their
-> `tradeYield*` siblings are `(deprecated)` slots since arc #527). Guarded by
+> `tradeYield*` siblings are off the wire since arc #527). Guarded by
 > `core_sim/tests/hunt_forecast_range.rs` on the exported snapshot: the
 > degenerate identity (bit-for-bit, animal web × a defaulting and an inedible species × the floor),
 > the plant web's structural point-ness at an absurd width, a resolved row's collapse under a **live**
@@ -1076,10 +1068,10 @@ Foddering — from an **absent** one, and composes an account the sim will disca
 > construction rather than by remembering to list a sixth name. Pinned by
 > `snapshot_intensification_knowledge_reports_foddering_on_its_own`.
 
-⛔ **THE FIVE NAMED FLOAT FIELDS ARE RETIRED**, `(deprecated)` in `snapshot.fbs` with their ids held
-and never reused. Adding a knowledge meant adding a schema field, which is why the route branch's two
-lessons had nowhere to appear and a client's knowledge screen had to hard-code its node list;
-`knowledges` is the list that replaced them and is the only authority on a faction's progress.
+⛔ **THE FIVE NAMED FLOAT FIELDS ARE RETIRED** and off the wire. Adding a knowledge meant adding a
+schema field, which is why the route branch's two lessons had nowhere to appear and a client's
+knowledge screen had to hard-code its node list; `knowledges` is the list that replaced them and is
+the only authority on a faction's progress.
 `sim_schema/src/lib.rs`'s roundtrip asserts on the **decoded** rows rather than the in-process struct,
 because a field that never reached the codec still passes an in-process assertion.
 

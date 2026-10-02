@@ -159,7 +159,7 @@ pub struct LaborAssignmentState {
     #[serde(default)]
     pub arrival_schedule: Vec<f32>,
     // **RETIRED: `trade_yield` / `realized_trade_yield`** (arc #527), with the trade-goods axis they
-    // reported. The wire slots `tradeYield` / `realizedTradeYield` are `(deprecated)` in place.
+    // reported. Neither is on the wire.
     /// **Fodder this source produced this turn** — the second account beside [`Self::actual_yield`]
     /// (issue #449), and exactly the `min(production, collection)` the
     /// band's `FODDER` store was credited with, the wild credit's *Foddering* knowledge gate
@@ -198,8 +198,7 @@ pub struct LaborAssignmentState {
     /// The optimistic bound — see [`Self::actual_yield_low`].
     #[serde(default)]
     pub actual_yield_high: f32,
-    // **RETIRED: `trade_yield_low` / `trade_yield_high`** (arc #527). The wire slots
-    // `tradeYieldLow` / `tradeYieldHigh` are `(deprecated)` in place.
+    // **RETIRED: `trade_yield_low` / `trade_yield_high`** (arc #527). Neither is on the wire.
     /// **What this crew is BUILDING on the source** — the second, independent axis of an assignment
     /// (issue #442, `docs/plan_investment_rung_toggle.md`): `""` | `"cultivate"` | `"sow"` |
     /// `"tame"` | `"corral"`.
@@ -259,8 +258,7 @@ pub struct LaborAssignmentState {
     // **The build left the tile too.** A verb names no crew now — it appends an entry to the band's
     // ordered **build queue** — and the hands stand on the band-level `builders` role, which arrives
     // as an ordinary **row in this very list** with its head count in [`Self::workers`], exactly as
-    // `agriculture` and `husbandry` do. The wire slot `improvementWorkers` is `(deprecated)` in
-    // place; FlatBuffers field ids are positional.
+    // `agriculture` and `husbandry` do. `improvementWorkers` is off the wire.
     //
     // What survives per source is [`Self::improvement`], which the sim **derives** from that band's
     // queue entry at capture — so a client still reads *what is being raised here* off the row, and
@@ -269,7 +267,7 @@ pub struct LaborAssignmentState {
     // (`docs/plan_standing_upkeep.md` §2.5): it is a band-level standing role now
     // (`agriculture` / `husbandry`), which arrives as an ordinary **row in this very list** with its
     // hands in [`Self::workers`], so a client reads it exactly as it reads Scout and Warrior. The
-    // wire slot `maintainWorkers` is `(deprecated)` in place — FlatBuffers field ids are positional.
+    // wire field `maintainWorkers` is gone.
     //
     // What survives per source is the *readout* — `upkeepDemand` / `upkeepSupplied` /
     // `upkeepShortfall` — whose `supplied` is now this source's **share of the pool**. It stopped
@@ -587,8 +585,8 @@ pub struct BandKitTiersState {
     /// job** ([`Self::build_work_per_worker`] beside it), because a multiplier cancels the job's cost
     /// and so saves the same *percentage* of turns whatever the job's size.
     ///
-    /// The slot is held at its neutral rather than removed because the FlatBuffers `(deprecated)`
-    /// keyword drops the accessor and a client still calls it. A consumer rendering a build axis must
+    /// The field is held at its neutral rather than removed because a client still calls its
+    /// accessor. A consumer rendering a build axis must
     /// switch to the successor.
     ///
     /// **There is still no flat [`PopulationCohortState`] twin, deliberately.** The flat per-band
@@ -714,8 +712,8 @@ fn kit_multiplier_neutral() -> f32 {
 /// close. Its successor is `build_work_per_worker` beside it — extra work **delivered per equipped
 /// worker per turn** (`docs/plan_standing_upkeep.md` §4.8 re-cut it out of the retired subtraction).
 ///
-/// **The slot is held at the neutral rather than `(deprecated)`**, because the FlatBuffers keyword
-/// drops the accessor and the client's native reader still calls `buildRate()`. Publishing the
+/// **The field is held at the neutral rather than removed**, because the client's native reader
+/// still calls `buildRate()`. Publishing the
 /// successor's number under the old name would be worse than publishing nothing: the client renders
 /// it as a factor, so the successor's `0.5` would read as *"×0.5 build speed"* — a kit that HALVED
 /// the crew's output.
@@ -774,8 +772,8 @@ pub struct PopulationCohortState {
     /// Age brackets (fixed-point raw, `Scalar::SCALE` = 1.0) — persisted so a rollback restores
     /// the exact demographic structure. `children + working + elders` rounds to `size`.
     ///
-    /// **Sim-internal: these three do NOT cross the wire.** Their FlatBuffers slots are
-    /// `(deprecated)`; what a client reads is the whole-people triple
+    /// **Sim-internal: these three do NOT cross the wire** — they have no FlatBuffers field. What a
+    /// client reads is the whole-people triple
     /// [`Self::children_count`] / [`Self::working_age`] / [`Self::elders_count`]. The fraction is a
     /// growth accumulator, and a client rounding it for itself disagreed with the sim's rounding.
     #[serde(default)]
@@ -1000,7 +998,7 @@ pub struct PopulationCohortState {
     // ```
     //
     // pinned by `core_sim/tests/fauna_husbandry.rs` and `integration_tests/tests/pen_food_ledger.rs`.
-    // The wire slot `penFeedUpkeep` is `(deprecated)` in place.
+    // `penFeedUpkeep` is off the wire.
     /// One worker's carry contribution to a hunt expedition's haul
     /// (`expedition_config.hunt.per_worker_carry`). Global config echoed per-cohort (same idiom as
     /// [`Self::expedition_viability_warn_turns`] / [`Self::hunt_per_worker_provisions`]), populated
@@ -1031,8 +1029,7 @@ pub struct PopulationCohortState {
     /// The band's FODDER larder — the hay it has stored (Flora Roster F3). A second commodity key on
     /// the same `LocalStore` as provisions; a hay Field harvests into it, a pen that knows Foddering
     /// draws it, and it never converts to provisions. Appended (append-only) after #165's expedition
-    /// trio. (The deprecated `foodIncomeAverage` slot sits earlier on the wire but is not carried on
-    /// the Rust side.)
+    /// trio.
     #[serde(default)]
     pub fodder_store: f32,
     /// The three named fertility factors behind this turn's births — the `birth_rate` multiplier

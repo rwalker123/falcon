@@ -386,7 +386,7 @@ Each lands on its own PR.
 
    **2b** — `FollowPolicy` deleted. The expedition mission carries a floor
    (`send_hunt_expedition … [floor]`, `raid_is_recurring(floor)`); the per-stance ceiling rows are
-   retired `(deprecated)` wire slots, replaced by the source's **per-biomass yield vector** so the
+   retired from the wire, replaced by the source's **per-biomass yield vector** so the
    client composes the curve at any floor; the raid table **samples** the continuum at
    `RAID_FORECAST_FLOOR_SAMPLES`; and the dead config goes — `forage.{surplus_multiplier, market,
    eradicate}` and `hunt.{surplus_multiplier, deplete_multiplier, surplus_escapement_fraction}`.

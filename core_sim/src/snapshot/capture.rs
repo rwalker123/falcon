@@ -3780,8 +3780,7 @@ pub fn capture_snapshot(
         // **The opening loadout picker's row.** A world with no chosen campaign publishes the default —
         // a shut window with no budget — which is exactly what such a world has.
         let opening_loadout_state = match (starting_loadout.as_deref(), active_profile.as_deref()) {
-            (Some(window), Some(profile)) => crate::snapshot::campaign::snapshot_opening_loadout(
-                window,
+            (Some(_), Some(profile)) => crate::snapshot::campaign::snapshot_opening_loadout(
                 profile.profile(),
                 &recipes_config,
                 &crate::snapshot::crafting::known_crafts(

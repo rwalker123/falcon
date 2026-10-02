@@ -197,8 +197,9 @@ card.
 Neither the kit roster nor a recipe's input costs is copied into the loadout section, and neither
 should be:
 
-- ⛔ **`openingLoadout.kitDefaults` / `.materialDefaults` HAVE NO CLIENT READER, AND MUST NOT GROW
-  ONE.** The wire still carries both; the SIM applies that spread when it makes the band, so it is
+- ⛔ **THE CAMPAIGN SECTION CARRIES NO KIT PRE-FILL, AND `openingLoadout.materialDefaults` HAS NO
+  CLIENT READER AND MUST NOT GROW ONE.** `materialDefaults` stays on the wire for the AI seat's
+  grant-window pre-fill alone; the SIM applies the default spread when it makes the band, so it is
   already in `loadout_window.kits` / `.materials` by the time a card is drawn, and a client seeding
   from the campaign section as well would draw — and then ORDER — twice the gear the band holds. What
   the client still reads out of that section is the **pick list** (a grant's offered materials, in the
@@ -542,6 +543,6 @@ went 0.20 → 0.25 and 0.17 → 0.25 against their own `SIGNAL`).
 
 | direction | contract |
 |---|---|
-| in, per world | `CampaignSection.openingLoadout` → `opening_loadout` on the snapshot dict (`native/src/dict/campaign.rs`) — the pick list, the two pre-fills, the craftable recipe ids. ⛔ **`open`, `kitBudget` and `materialBudget` were DELETED from it**, not deprecated in place: a window is a fact about one band |
+| in, per world | `CampaignSection.openingLoadout` → `opening_loadout` on the snapshot dict (`native/src/dict/campaign.rs`) — the pick list, the material pre-fill (for the AI seat, never read here), the craftable recipe ids. ⛔ **No `open`, `kitBudget`, `materialBudget` or kit pre-fill**: a window is a fact about one band |
 | in, per band | `PopulationCohortState.loadoutWindow` → `loadout_window` on each cohort dict (`native/src/dict/population.rs`). **`kits` / `materials` are what the band HOLDS — the sim applies a band's default outfit at its creation, so they are NON-EMPTY on a fresh band of either kind** — they carry the split's kit-denominated default take, which is what the card opens on; `parentItemSupply` lists only items some kit carries, so a bench tool is never offered as claimable. Decoded inside `population_to_dict`, so the full and delta paths get it from one place — the sim whole-diffs these tables and the change that matters is `open` going false on the turn advance. It reaches the picker through `HudLayer.update_band_alerts` → `set_bands`, off the roster that method already filters to the player's own bands (parties excluded: a detached party is those same people walking somewhere, not a band to outfit) |
 | out | `set_starting_loadout <faction> <band> [kit <id> <n>]... [material <id> <n>]...`, built by `Main.format_set_starting_loadout` and emitted on **every stepper press**. **The band is positional and required**, and it is the durable `band_id` rather than the ECS `entity` — asserted by `cargo xtask command-guard`, which drives the card's real commit control. **The whole allocation every time, never a diff** — the verb fails closed and whole. An EMPTY tail is a real order (*spend nothing*), which is the one place that formatter departs from its neighbours and returns a line rather than `{}` |

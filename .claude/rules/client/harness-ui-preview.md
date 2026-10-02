@@ -1766,9 +1766,10 @@ rather than an empty roster: the bands are still there, it is their windows that
 >   the order and republishes the band — and a fixture re-stating a stale allocation would be a server
 >   that ignored the player, which the card would rightly (and confusingly) adopt. **A REFUSED order is
 >   popped off that record** in the rollback state, because no server saw it.
-> - **The campaign fixture states NEITHER pre-fill.** They are on the wire and read by nothing, so a
->   client that still drew `openingLoadout.kitDefaults` renders an EMPTY kit column here rather than a
->   doubled one — which the held-counts claims catch at `got 0`.
+> - **The campaign fixture states no material pre-fill.** No client reads one (the wire carries no
+>   kit pre-fill at all), so a client that seeded from the campaign section rather than the band's
+>   window renders an EMPTY column here rather than a doubled one — which the held-counts claims catch
+>   at `got 0`.
 
 **MOST OF IT IS ASSERTIONS, AND THAT IS THE POINT.** Every claim the third column makes renders as a
 plausible picture whatever it says — a row reading `×3`, a dash on a row that should read `×1`, a
@@ -2471,7 +2472,7 @@ positive half is the popup's per-tier Owned column above (`×6` / `—` on Spear
 rendering each batch's `tier_id` in the Owned cell: exactly **three** claims fail — the tier-word
 negative on both bands and the nothing-beside-its-grades claim — while the popup's `×6` / `—` column
 stays green. The fixture offers carry no `output_tier_name` / `output_tier_rank`: those fields are
-deprecated and the sim publishes neither.
+not on the wire.
 
 ### …and a material is a thing made
 

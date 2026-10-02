@@ -320,7 +320,7 @@ mod tests {
     /// starving) rides beside the **gross** `corralYield` on `HerdTelemetryState`. Encode → decode
     /// with the generated reader, so a field that silently failed to serialize cannot pass.
     ///
-    /// **`penUpkeep` is retired** (the slot is `(deprecated)`): it was the FOOD the pen demanded per
+    /// **`penUpkeep` is retired** (off the wire): it was the FOOD the pen demanded per
     /// turn, drawn as a negative row against `corralYield`. A pen eats grass and hay, so there is no
     /// food-unit running cost to draw and the fed fraction carries the whole of the feeding story.
     #[test]
@@ -381,8 +381,7 @@ mod tests {
     ///
     /// A labor assignment carries a `floor` and a hunt expedition carries an `expeditionFloor` — the
     /// whole of what the player decides about pressure (`docs/plan_harvest_floor.md`). The four-value
-    /// `policy` label that used to ride beside them is a `(deprecated)` slot the encoder can no
-    /// longer write to at all, which is the append-only discipline enforcing itself.
+    /// `policy` label that used to ride beside them has no field the encoder could write to at all.
     ///
     /// Encode → decode with the generated reader, so a field that silently failed to serialize cannot
     /// pass — the hazard when the authority is appended *behind* the label that used to be it.

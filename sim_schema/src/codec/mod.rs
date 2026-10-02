@@ -23,8 +23,8 @@
 //! What the decoder gives back is what the encoder was given, with the losses the wire itself
 //! imposes: a delta's `Option` fields come back `None` exactly when the encoder left the slot
 //! absent (or, for the two scalars whose absent encoding *is* `0`, when it wrote `0`), and a
-//! field the encoder never writes at all — a `(deprecated)` slot, `start_marker` — comes back at
-//! its zero value.
+//! field the wire does not carry at all — `start_marker`, a cohort's raw age brackets — comes back
+//! at its zero value.
 
 // ---------------------------------------------------------------------------
 // Per-section FlatBuffers serializers (docs/plan_snapshot_and_systems_decomposition.md §1).
@@ -1021,8 +1021,8 @@ mod round_trip_tests {
     ///   come back;
     /// - `start_marker` has no FlatBuffers field at all (captured and diffed in `core_sim`, sent
     ///   nowhere);
-    /// - a cohort's raw fixed-point `children`/`working`/`elders` are `(deprecated)` slots the
-    ///   serializer stopped writing when the whole-people counts replaced them;
+    /// - a cohort's raw fixed-point `children`/`working`/`elders` have no FlatBuffers field: the
+    ///   whole-people counts replaced them;
     /// - a culture layer's traits and divergence fields are not published (#386 — topology only).
     ///
     /// Everything else the saturated fixture populates goes through untouched.

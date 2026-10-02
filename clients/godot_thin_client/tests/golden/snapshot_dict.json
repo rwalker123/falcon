@@ -3340,20 +3340,6 @@
       "opening_loadout.craftable_recipe_ids[1]",
       "opening_loadout.craftable_recipe_ids[2]"
     ],
-    "kit_defaults": [
-      {
-        "count": 173,
-        "kit_id": "opening_loadout.kit_defaults[0].kit_id"
-      },
-      {
-        "count": 166,
-        "kit_id": "opening_loadout.kit_defaults[1].kit_id"
-      },
-      {
-        "count": 131,
-        "kit_id": "opening_loadout.kit_defaults[2].kit_id"
-      }
-    ],
     "material_defaults": [
       {
         "material_id": "opening_loadout.material_defaults[0].material_id",
