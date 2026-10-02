@@ -270,7 +270,7 @@ fn assigned_hunt_useful_crew(
             floor: *floor,
             baseline_haul_rate: hunt_crew_levers.baseline_haul_rate,
             max_workers: crew_pool,
-            keeping: crate::fauna::herd_crew_keeping(
+            keeping: crate::fauna::herd_crew_keeping_next_turn(
                 herd,
                 hunt_crew_levers.fauna,
                 hunt_crew_levers.ladder,

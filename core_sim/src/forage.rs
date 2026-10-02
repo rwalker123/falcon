@@ -345,7 +345,6 @@ pub struct ForagePatch {
     /// rung completes, lowered when that rung is lost. A loss is announced only for a rung at or
     /// below it: a part-built meter rotting to empty was never had, so it is not "lost"
     /// (`intensification::settle_achieved_losses`). `None` = nothing above the branch's root.
-    #[serde(default)]
     pub peak_rung: Option<crate::intensification::RungKey>,
     /// **WHAT THE AT-RISK METER'S OWN CREW SUPPLIED THIS TURN**, in work units — the **keepers**
     /// once that rung is built and the **builders** while it is not
@@ -3040,6 +3039,12 @@ pub fn patch_upkeep_demand(
 /// own tender-load, or `None` when the patch claims no keeping. The one reading the seed and the
 /// compose-sheet query strike a prospective crew's keeping hands from (`docs/plan_site_crews.md`
 /// §2.1).
+///
+/// ⛔ **THE DEMAND IS THE LIVE ONE, AT THE STATE THE NEXT TURN WILL FIND** — never the stamped bill
+/// (`upkeep_demanded`). The stamp is struck before a turn's build accrual and stands until the next
+/// turn's Logistics clears it, so between turns it describes the position the LAST turn started
+/// from: a Cultivate in flight, or a pen that has just completed, would be quoted the old rung's bill
+/// while the next turn bills the risen one. A quote is always about the next turn.
 pub fn patch_crew_keeping(
     patch: &ForagePatch,
     ladder: &LadderConfig,
@@ -3050,7 +3055,7 @@ pub fn patch_crew_keeping(
     patch_claims_keeping(patch, patch_build_verb(patch, declared)).then(|| {
         crate::fauna::CrewKeeping {
             rung: patch.standing().held,
-            demand: patch_keeping_basis(
+            demand: patch_upkeep_demand(
                 patch,
                 ladder,
                 patch_land_capacity(patch, tile_capacity),

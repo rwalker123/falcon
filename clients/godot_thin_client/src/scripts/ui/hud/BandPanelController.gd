@@ -269,13 +269,13 @@ var _queue_open_key: String = ""
 ## exists to prevent.
 var _queue_expanded: bool = false
 ## **WHICH ROSTER IS DRAWN OVER THE WHOLE WORK ZONE** — `&""` for none, else that roster's own kind key
-## (`HudConst.LABOR_KIND_ROADWORK` / `LABOR_KIND_QUARRYWORK`). The build queue's door, generalized over
-## the zone's two rosters (the roster door, `.claude/rules/client/band-city-panel.md`).
+## (`HudConst.LABOR_KIND_ROADWORK`, the zone's one roster since the workings roster's `quarrywork` pool
+## retired). The build queue's door, generalized (the roster door,
+## `.claude/rules/client/band-city-panel.md`).
 ##
-## ⛔ **ONE FLAG NAMING WHICH, RATHER THAN A BOOL EACH, BECAUSE THE TWO ROSTERS MUST EXCLUDE EACH OTHER
-## TOO.** The one-expansion rule is about the ZONE — a board row, a queue row and a roster row are
-## three different subjects, and expanding two states neither clearly — so one flag makes the exclusion
-## structural instead of a pair of tests free to drift. It excludes with `_queue_expanded`,
+## ⛔ **ONE FLAG NAMING WHICH, RATHER THAN A BOOL.** The one-expansion rule is about the ZONE — a board
+## row, a queue row and a roster row are three different subjects, and expanding two states neither
+## clearly — so a kind key keeps the exclusion structural if a second roster ever joins. It excludes with `_queue_expanded`,
 ## `_queue_open_key` and `_work_open_key` through the existing mutators.
 ##
 ## **IT IS ZONE MODE, WHICH IS THE PLAYER'S, so it is NOT reset on a band change**, exactly as
@@ -4139,20 +4139,17 @@ func _make_queue_head_a_toggle(head: HBoxContainer, remaining: int) -> void:
 ## mutator, the Button's own press being what a `Button` consumes rather than passing to `gui_input`.
 ##
 ## ⛔ **THE BUTTON SIZES THE HEAD ROW IT SITS IN**, an `HBoxContainer` growing to its tallest child —
-## so `BUILD_QUEUE_HEAD_HEIGHT` / `ROADWORK_ROSTER_HEAD_HEIGHT` / `WORKINGS_ROSTER_HEAD_HEIGHT` are
-## MEASURED against it and not derived. It declares no `custom_minimum_size` of its own: a floor here
-## would be a second opinion about a height those three constants record.
+## so `BUILD_QUEUE_HEAD_HEIGHT` / `ROADWORK_ROSTER_HEAD_HEIGHT` are MEASURED against it and not
+## derived. It declares no `custom_minimum_size` of its own: a floor here would be a second opinion
+## about a height those constants record.
 ##
-## > ⛔ **THE WORKINGS HEAD HAS BUTTONS IN IT AND THE QUEUE'S DOES NOT.**
-## > `_build_workings_roster_head` mounts the `quarrywork` pool's STEPPER on this row. A `Button`
-## > consumes its own click and does not propagate to the parent's `gui_input`, so the stepper keeps
-## > working and does not toggle the expansion — **asserted with a real `push_input` press rather than
-## > assumed**, this being a condition the helper had never met before the rosters took it.
+## A `Button` on a head consumes its own click and does not propagate to the parent's `gui_input`, so
+## it keeps working and does not toggle the expansion.
 ##
 ## **THE `Label` → `MOUSE_FILTER_PASS` SWEEP IS KEPT AND IS LOAD-BEARING.** A readout Label takes
 ## `STOP` for its own tooltip (`HudWidgets.set_label_tooltip`) and would otherwise swallow a press
 ## landing on it; `PASS` keeps the hover and lets the event carry on up to the row. It is scoped to
-## Labels precisely so the stepper's Buttons keep consuming their own clicks.
+## Labels precisely so a head's Buttons keep consuming their own clicks.
 ##
 ## ⛔ **IT FIRES ON THE RELEASE, INSIDE THE ROW.** Every one of these toggles ends in
 ## `_repage_work_zone`, which frees every node in the zone — and *any press handler that rebuilds its

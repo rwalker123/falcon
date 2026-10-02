@@ -3899,6 +3899,23 @@ pub struct LadderConfig {
 }
 
 impl LadderConfig {
+    /// **THIS LADDER WITH `rung`'s KEEPING RATE SCALED BY `factor`** — the one way to state a
+    /// source's bill now that every quote prices the LIVE bill rather than a stamp: a fixture that
+    /// wants a bill of `B` scales the rung its source holds by `B ÷ live`. A rung declaring no
+    /// `upkeep` is returned unchanged.
+    pub fn with_upkeep_scaled(&self, rung: RungKey, factor: f32) -> LadderConfig {
+        let mut scaled = self.clone();
+        if let Some(upkeep) = scaled
+            .rungs
+            .iter_mut()
+            .find(|def| def.branch == rung.branch() && def.id == rung.id())
+            .and_then(|def| def.upkeep.as_mut())
+        {
+            upkeep.work_per_turn *= factor;
+        }
+        scaled
+    }
+
     pub fn builtin() -> Arc<Self> {
         Arc::new(
             LadderConfig::from_json_str(BUILTIN_INTENSIFICATION_LADDER)

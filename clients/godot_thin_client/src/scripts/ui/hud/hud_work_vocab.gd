@@ -681,9 +681,9 @@ const POOL_COVERAGE_ASKED_KEY := "asked"
 ## different question from the three above and is asked by exactly one reader — the idle mark's
 ## pending gate (`BandPanelController._pool_idle_line`). It is stamped by `_pool_coverage`, which is
 ## the only producer holding both head counts; **absent means `false`**, and that is correct rather
-## than a default: the two pools whose cover is the sim's own published triple (`roadwork`,
-## `quarrywork`) carry a shortfall that does not move with the stepper at all, so no edit can flip
-## them and there is nothing for the gate to catch.
+## than a default: the `roadwork` pool, whose cover is the sim's own published triple, carries a
+## shortfall that does not move with the stepper at all, so no edit can flip it and there is nothing
+## for the gate to catch.
 const POOL_COVERAGE_SETTLED_SHORT_KEY := "settled_short"
 
 ## …and the OPTIONAL third, for a pool whose shortfall the sim states outright (the `roadwork` pool's
@@ -2369,28 +2369,15 @@ static func roadwork_roster_row_height(build_queued: bool) -> float:
     return WORK_ROW_TWO_LINE_HEIGHT + ((float(TWO_LINE_STEPPER_SEPARATION) + WORK_ROW_PILL_LINE_HEIGHT)
         if build_queued else 0.0)
 
-# ---- THE WORKINGS ROSTER — WHICH workings the `Workings` pool is paying for (arc #583) ------------
+# ---- THE WORKINGS ROSTER — the GROUNDWORK rows, WHICH workings this band holds (arc #583) ----------
 #
-# ⛔ **THE ROADWORK ROSTER'S TWIN, AND EVERY RULE ABOVE APPLIES UNCHANGED.** The pool card one line up
-# says `Workings 2` and nothing else in the client would say WHICH two; a player cannot choose among
-# things they cannot see, and the per-working choice is the take crew on the working's own card.
+# ⛔ **THE ROADWORK ROSTER'S TWIN.** Nothing else in the client says WHICH workings the band holds;
+# a player cannot choose among things they cannot see, and the per-working choice is the crew on the
+# working's own row.
 #
-# ⛔ **THE `quarrywork` POOL'S STEPPER IS ON THIS BLOCK'S HEAD, AND THAT IS NOT THE ROSTER RULE BEING
-# BROKEN.** roads.md's rule reads *"IT IS A ROSTER, NOT A WORK BOARD: no stepper, no crew count, no
-# kit picker"*, and its stated REASON is that **A ROW** offering a worker count would re-introduce the
-# per-tile work row `docs/plan_standing_upkeep.md` §4.13b retired. The prohibition is on ROWS. A pool
-# stepper on the block HEAD is the BAND-WIDE pool itself — the same control that would otherwise be a
-# fifth card in the POOLS block one line up, which does not fit (`pools_block_height`) — so it names
-# no working and staffs no crew on one.
-#
-# ⛔ **THE PER-ROW RULE IS UNCHANGED AND STAYS ENFORCED: no stepper, no crew count, no kit picker on
-# any ROW.** The hands that CUT a working are on the tile card's `Workings ▸`, and
-# `band_panel_preview` asserts that absence on the stepper's own `−`/`+` faces, scoped to the rows.
-#
-# **AND THE HEAD STATES THE BILL, NOT JUST THE COUNT** — the shortfall mark and the coverage sentence
-# the retired card carried, read off the cohort's three published fields with NO client-side
-# arithmetic. The `deposits` rows are fog-filtered, so a working out of sight would drop out of any
-# total taken here while the band still owes its keeping.
+# ⛔ **THE `quarrywork` POOL AND ITS HEAD STEPPER ARE RETIRED** (`docs/plan_site_crews.md` §0). A
+# working is kept by the crew cutting it, staffed on its own GROUNDWORK row, so the keeping is that
+# row's crew and the row states it (the crew-split marks under its stepper).
 #
 # ⛔ **AND ITS `✕` IS `abandon_working`, NEVER `abandon`** (issue #650). The road roster's drop is
 # `abandon <faction> <x> <y>`, whose target resolves to a FORAGE source sim-side
@@ -3076,8 +3063,7 @@ static func zone_disclosure_face(expanded: bool, remaining: int) -> String:
 
 ## **THE CONTROL SITS IMMEDIATELY AFTER THE TITLE, and that placement is load-bearing.** It takes its
 ## width out of the head's EXPANDING spacer rather than off the right-hand readout, which states the
-## builders count and their kit (or, on the workings head, mounts the `quarrywork` stepper) and may
-## not give up a character. So the head reads `BUILD QUEUE  +2 more ▾` and everything on the right of
+## builders count and their kit and may not give up a character. So the head reads `BUILD QUEUE  +2 more ▾` and everything on the right of
 ## the spacer keeps the width it had.
 const ZONE_DISCLOSURE_AFTER_TITLE_INDEX := 1
 
@@ -3930,8 +3916,8 @@ const BUILD_QUEUE_WORKING_FACE_FORMAT := "%s · %s (%d, %d)"
 ## A site's crew tends it before it takes, and the marks say how the hands on a row divide: one small
 ## square per worker, the tending share filled from the left in a muted earth, the takers bright, a
 ## person split between the two shaded in part. Information, not an alert — no warning ink, no ⚠. The
-## tending figure is the sim's (`upkeep_hands` on a row, the crew curve's `keep_hands` on the sheet);
-## nothing here derives it. `CrewSplitMarks` draws them.
+## tending figure is the sim's (the row's own `keep_hands` on a row, never the site's summed
+## `upkeep_hands`; the crew curve's `keep_hands` on the sheet); nothing here derives it. `CrewSplitMarks` draws them.
 
 ## Below this many tending hands a site has no tending bill, and the row draws no marks.
 const CREW_SPLIT_MIN_KEEP_HANDS := 0.001

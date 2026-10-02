@@ -5496,8 +5496,8 @@ func _ensure_road_ladder() -> PopupPanel:
 #
 # ⛔ **THE WORD "QUARRY" APPEARS ON NOTHING HERE.** `Quarry` is ONE RUNG of ONE branch, and a sheet
 # that opens on any working of either would be naming a coppice after a pit — so the crew nouns are
-# `Foresters` and `Diggers` and the material names the thing being worked. `quarrywork` survives only
-# as the server's command token.
+# `Foresters` and `Diggers` and the material names the thing being worked. `quarrywork` was the
+# retired keeping pool's token.
 
 ## The tile-card key the working rows travel under, stamped by `MapView._tile_info_at` off
 ## `deposit_tile_lookup`. Spelled once here because a typo is a silently absent action.

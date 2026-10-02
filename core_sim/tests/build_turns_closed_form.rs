@@ -956,6 +956,112 @@ fn a_herds_published_build_meters_agree_with_their_work_pairs_on_the_turn_they_c
     );
 }
 
+/// **WHAT A QUOTE BETWEEN TURNS SAYS THE KEEPERS' CREW WILL SPEND KEEPING** — the seam every
+/// forecast reads (`fauna::herd_crew_keeping_next_turn` → `fauna::crew_keep_hands`), at the band's own ledger
+/// and its queue's declared verb.
+fn quoted_keep_hands(app: &mut App, band: bevy::prelude::Entity, fauna_id: &str) -> f32 {
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let equipment = app
+        .world
+        .resource::<core_sim::EquipmentConfigHandle>()
+        .get();
+    let allocation = app
+        .world
+        .get::<LaborAllocation>(band)
+        .expect("the keeper band")
+        .clone();
+    let wear = app
+        .world
+        .get::<BandEquipment>(band)
+        .cloned()
+        .unwrap_or_default();
+    let target = allocation
+        .assignments
+        .iter()
+        .find(|row| matches!(&row.target, LaborTarget::Hunt { fauna_id: id, .. } if id == fauna_id))
+        .expect("the keeper band hunts the herd")
+        .target
+        .clone();
+    let declared = core_sim::take_claims::declared_on(&allocation, &target);
+    let registry = app.world.resource::<HerdRegistry>();
+    let herd = registry.find(fauna_id).expect("the herd");
+    core_sim::crew_keep_hands(
+        core_sim::herd_crew_keeping_next_turn(herd, &fauna, &ladder, declared),
+        &equipment,
+        &wear,
+        KEEPERS,
+    )
+}
+
+/// ⛔ **A QUOTE BETWEEN TURNS IS THE KEEPING THE NEXT TURN SETTLES** — on every turn of a Tame in
+/// flight, and on the turn after the pen completes. The bill a quote reads is the LIVE one at the
+/// state the next turn will find, never the stamp the last turn left: that stamp was struck before
+/// the last turn's accrual, so on a rising meter — and on a freshly finished pen, whose rung bills
+/// the pen's rate — it quoted the old position's bill while the turn billed the new one.
+#[test]
+fn a_between_turns_quote_keeps_with_the_hands_the_next_turn_settles() {
+    /// Float slack on hand counts struck through one arithmetic.
+    const HANDS_EPSILON: f32 = 1e-3;
+    let (mut app, id, pos) = world_with_a_tameable_herd();
+    app.world
+        .resource_mut::<DiscoveryProgressLedger>()
+        .add_progress(FactionId(0), PENNING_DISCOVERY_ID, scalar_one());
+    let keepers = spawn_taming_keepers(&mut app, pos, &id, GearHeld::APartysWorth, KEEPERS);
+    let mut compared_mid_tame = false;
+    let mut compared_after_pen = false;
+    let mut penned_turn = None;
+    for turn in 1..=MAX_BUILD_TURNS {
+        let quote = quoted_keep_hands(&mut app, keepers, &id);
+        let corralled_before = app
+            .world
+            .resource::<HerdRegistry>()
+            .find(&id)
+            .is_some_and(|herd| herd.is_corralled());
+        app.world.run_system_once(advance_herds);
+        app.world.run_system_once(advance_husbandry);
+        app.world.run_system_once(advance_labor_allocation);
+        let (settled, tamed, corralled, position) = {
+            let registry = app.world.resource::<HerdRegistry>();
+            let herd = registry.find(&id).expect("the herd");
+            (
+                herd.upkeep_hands,
+                herd.is_domesticated(),
+                herd.is_corralled(),
+                herd.ladder_position(),
+            )
+        };
+        if turn > 1 {
+            assert!(
+                (quote - settled).abs() < HANDS_EPSILON,
+                "turn {turn} (position {position}): the quote before the turn keeps with {quote} \
+                 hands, the turn settled {settled}"
+            );
+            if !tamed && settled > 0.0 {
+                compared_mid_tame = true;
+            }
+            if corralled_before {
+                compared_after_pen = true;
+            }
+        }
+        if tamed && penned_turn.is_none() && !corralled {
+            set_improvement(&mut app, keepers, Improvement::Corral);
+            penned_turn = Some(turn);
+        }
+        if corralled && corralled_before {
+            break;
+        }
+    }
+    assert!(
+        compared_mid_tame,
+        "fixture: a turn of the Tame in flight was compared"
+    );
+    assert!(
+        compared_after_pen,
+        "fixture: the turn after the pen completed was compared"
+    );
+}
+
 /// **The client's food-peak constant is the sim's, and nothing else says so.** The form divides the
 /// assignment's floor by it (`learn_multiplier(floor) = floor / MSY_BIOMASS_FRACTION`), and the
 /// client holds its own literal because no config crosses the wire — so a retune of the sim's peak

@@ -57,10 +57,10 @@ words on two surfaces.
 `ONCE QUARRIED` all say it. That is the sim naming a rung, not the client naming this branch, and it
 appears only where a rung is the subject.
 
-`quarrywork` survives as the server's command token and as `HudConst.LABOR_KIND_QUARRYWORK`. That is
-grammar, not copy: it appears on no label, no hint and no tooltip. `HudWorkVocab.ROLE_NAME_QUARRYWORK`
-is `"Groundwork"`, and the pool card, its hint, its coverage sentence and the roster head all read it.
-**`Workings` was the earlier spelling and Ray overruled it**: *working* is the SIM's noun for an
+The Quarrywork keeping pool retired with `docs/plan_site_crews.md`: the server refuses the
+`quarrywork` token and the client carries no constant for it. `Groundwork` now names the Work tab's
+section (`HudWorkVocab.WORK_SECTION_GROUNDWORK`), whose rows are the band's extract rows, each kept by
+its own crew. **`Workings` was the earlier spelling and Ray overruled it**: *working* is the SIM's noun for an
 opened deposit, which is what recommended it and what was wrong with it. The rationale is on the
 const's own header in `hud_work_vocab.gd`; the identifiers still spell `QUARRYWORK` /
 `WORKINGS_ROSTER_*`, which appear on no label.
@@ -386,7 +386,7 @@ holds no band roster. Three answers:
 |---|---|---|
 | `CUTTERS_UNSTATED` | none | a caller with no band roster must not announce a crew of nobody — `deposit_row_value`'s idle-clause rule |
 | `> 0` | `⚒N`, **even where the wire still reads the working as unopened** | a crew put here this turn has taken nothing yet off a full seam, which is field-for-field `is_unopened`; suppressing the mark there would mute it at the one moment the player is looking for it |
-| `0`, on a working someone HAS opened | `⚒0` | the STATED ZERO, `HudSelectionVocab.LAND_META_WORKERS_FORMAT`'s own rule: the zero form is parallel to the staffed one, so *nobody is on this* reads at a glance instead of needing a comparison. On a HELD working it is also the state the sim charges for — the bill goes on coming out of `quarrywork` |
+| `0`, on a working someone HAS opened | `⚒0` | the STATED ZERO, `HudSelectionVocab.LAND_META_WORKERS_FORMAT`'s own rule: the zero form is parallel to the staffed one, so *nobody is on this* reads at a glance instead of needing a comparison. On a working that owes keeping, a crew of zero keeps nothing, so its meter rots |
 | `0`, on untouched ground | none | `deposit_row_value`'s rule that every clause about a working being worked is, there, a reading of an event that has not happened |
 
 ⛔ **TWO WORKINGS ON ONE HEX CANNOT COLLAPSE INTO ONE MARK.** The clause rides the per-MATERIAL row,

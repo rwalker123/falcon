@@ -1128,6 +1128,15 @@ take_hands = crew − keep_hands                     // systems::labor::take_han
 upkeep_supplied += keep_hands × keep_rate          // stamped on the source, summed across bands
 ```
 
+`keep_rate` there is shorthand: the hands are **walked best-equipped first**
+(`systems::labor::KeepingSplit`). Each hand holding a unit the settlement issued keeps at that
+tool's rate, **every other hand bare**, until the bill is met or the crew runs out. So `kept` is the
+work actually delivered, and `armed_kept` (the tool-holding hands' share) is the only work the
+keeping tools wear on. It replaced a coverage-mixed rate over the planned hands, which paid every
+extra unarmed hand that mixed rate. With hoe rate 2, bare 1, bill 4 and one hoe, it is **3 hands**
+(1 armed + 2 bare), not 2.67. A crew of 2.67 keeps 3.67 and the site reads short. Pinned by
+`systems::labor::keeping_split_tests::a_tool_short_site_keeps_with_its_armed_hands_at_the_tool_rate_and_the_rest_bare`.
+
 - **Zero crew is unkept.** A row at `0` workers survives as the band's holding (see "A SOURCE ROW IS
   THE BAND'S HOLDING"), but it keeps nothing: the meter rots past its grace, and the remedy is the
   row's own crew stepper. The builders pay none of the bill (§4.6a), so a build fixture that wants a
@@ -1145,16 +1154,31 @@ upkeep_supplied += keep_hands × keep_rate          // stamped on the source, su
   `keep_hands` at the rung's `fully_equipped_keeper_rate` — and claims one of each tool the rung
   requires per planned keeping hand, as a `ToolClaimStage::Keeping` claim at the **row's** priority.
   `settle_scarce_tools` settles it with each site as its own group, beside the roadwork and builders
-  pools; the coverage it issues sets the real `keep_rate`, and `keep_hands` is re-struck from it
+  pools; the units it issues arm that many hands, and `keep_hands` is re-struck from the walk above
   (`systems::labor::site_keeping`). A site short of its tools keeps with **more** hands and takes
   with fewer — `upkeepToolsShort` says so on the wire. What was issued is parked on
   `LaborAllocation::last_keeping_issued` (`KeepingIssue { source, item, units }`) so a seed or a
   quote reserves it exactly as the turn did (`LaborAllocation::issued_excluding_site`).
-- **Wear is charged on the work kept** (`charge_keeping_wear`, `upkeep_work`), from the tools the
-  keeping was issued.
+- **Wear is charged on the ARMED work kept** (`charge_keeping_wear` on `SiteKeeping::armed_kept`,
+  `upkeep_work`), from the tools the keeping was issued. Bare hands wear nothing.
 - **A forecast reads the same split** — `systems::prospective_keep_hands(equipment, band_kit, rung,
   demand, crew)` is the pre-settlement reading the seed and the previews use, so a quote on the
-  hands the keeping leaves is the take the turn pays. ⛔ **It is the turn's own split, uncontended**:
+  hands the keeping leaves is the take the turn pays. ⛔ **A quote prices the LIVE bill at the state
+  the next turn will find, never the stamp.** `forage::patch_crew_keeping`,
+  `fauna::herd_crew_keeping` and `extraction::crew_keep_hands` / `crew_keeping_issue` read
+  `patch_upkeep_demand` / `herd_upkeep_demand` / `deposit_upkeep_demand`. The stamp is struck
+  before a turn's build accrual and stands until the next Logistics clears it, so between turns it
+  is the LAST turn's starting position: a Cultivate in flight, or a pen just completed, was quoted
+  the old bill while the turn billed the new one. A herd's bill rides its head count, so a
+  between-turns quote reads the herd after the next turn's regrowth:
+  `fauna::herd_crew_keeping_next_turn` (`next_turns_quarry`). The take claims read
+  `ClaimSources::patch` / `herd`, which step the source the same way when the reading is between
+  turns. Pinned by
+  `forage_cultivation::a_between_turns_quote_on_a_cultivate_in_flight_keeps_with_the_hands_the_next_turn_settles`
+  and `build_turns_closed_form::a_between_turns_quote_keeps_with_the_hands_the_next_turn_settles`
+  (a Tame in flight, and the turn after the pen completes).
+  The published shortfall and rot still read the stamp (`*_keeping_basis`), because they judge the
+  turn that ran. ⛔ **It is the turn's own split, uncontended**:
   the hands planned as if equipped, issued the tools the band holds for them
   (`prospective_keeping_issue`), the keeping struck at the rate those units give
   (`keeping_rate_from`). It was the shed's all-or-nothing reading (`keeping_need_the_band_can_arm`),

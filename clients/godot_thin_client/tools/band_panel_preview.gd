@@ -4176,15 +4176,6 @@ const POOL_TOE_HUSBANDRY_FILLED := 0.0
 const POOL_TOE_ROADWORK_ITEM := "earthmoving"
 const POOL_TOE_ROADWORK_REQUIRED := 6.0
 const POOL_TOE_ROADWORK_FILLED := 4.0
-## **THE SHARED ITEM.** Roadwork and Quarrywork both want stone-dressing tools, and a pool card states
-## **its own share** — never the other gang's numbers and never the two added up. The three readings
-## are pairwise distinct on purpose (roadwork `0 of 2`, quarrywork `3 of 5`, their sum `3 of 7`), so a
-## card that joined on the ITEM instead of on the POOL fails on the figures rather than coinciding.
-const POOL_TOE_SHARED_ITEM := "stone_dressing"
-const POOL_TOE_ROADWORK_SHARED_REQUIRED := 2.0
-const POOL_TOE_ROADWORK_SHARED_FILLED := 0.0
-const POOL_TOE_QUARRYWORK_SHARED_REQUIRED := 5.0
-const POOL_TOE_QUARRYWORK_SHARED_FILLED := 3.0
 
 ## One wire row of that vector.
 func _pool_toe_row(pool: String, item_id: String, required: float, filled: float) -> Dictionary:
@@ -18182,10 +18173,8 @@ func _assert_a_crewless_working_says_so() -> void:
 ##
 ## **THE LEAK THIS STATE STANDS UP.** A working raised above its free floor is a HOLDING, so pulling
 ## the cutters off is *"stop cutting"* and never *"this band has nothing here"*: the row stays, the
-## bill stays, and the meter takes about a hundred turns to rot back to the free floor. Under the
-## shipped funding rule that bill comes out of the same one `quarrywork` pool the workings the band
-## still wants are held out of — **a working you walked away from degrades a working you did not** —
-## and until this verb existed there was no command that could stop it.
+## bill stays, and with nobody cutting it nobody keeps it, so the meter rots back toward the free floor
+## — and until this verb existed there was no command that could stop it.
 ##
 ## **The board is the roster's own, with ONE working walked away from**: the near wood, held at
 ## `felling` with a real bill, a real shortfall and NOBODY on its `extract` row. Every other row is
@@ -18550,12 +18539,8 @@ const WORKINGS_WOOD_TAKE := 7.2
 const WORKINGS_STONE_TAKE := 4.4
 const WORKINGS_STONE_RUNWAY := 75
 
-## The bill the band owes, through the cohort's own published trio — `demand - supplied == shortfall`
-## holds verbatim on the wire (`HudBandLaborState.quarrywork_pool_state`), so the fixture states three
-## numbers the sim can produce rather than a flag.
+## A non-zero bill, which is `_workings_band_fixture`'s gate for staging the band's `extract` rows.
 const WORKINGS_DEMAND := 2.10
-const WORKINGS_SUPPLIED := 1.40
-const WORKINGS_SHORTFALL := 0.70
 
 ## Hands on the pool. Stated for `ROSTER_ROADWORK_WORKERS`' reason: the pool card renders whatever the
 ## roster does, and a card reading `0` beside a roster of three is a different frame.
@@ -18729,19 +18714,11 @@ func _workings_rows() -> Array:
 		_unopened_workings_row(ROSTER_MID_TILE, WORKINGS_STONE, false),
 	]
 
-## The band, carrying the workings bill, a real `quarrywork` ROLE row (band-wide, no tile — the only
-## shape the wire carries for a pool) and one `extract` row per working it holds.
+## The band, carrying one `extract` row per working it holds — each working kept by its own crew.
 ##
 ## ⛔ **EACH `extract` ROW NAMES ITS MATERIAL.** That field is half the row's identity, and a fixture
 ## omitting it stages an assignment `LaborTarget::Extract` cannot produce — the roster would then find
 ## no working at all and every claim below would pass as an absence.
-## …and the same band with its bill PAID IN FULL and a worker left standing (issue #715) — the
-## `quarrywork` pool's own version of the pool cards' info-mark state, which is the only shape this
-## pool can report it in because it has no card.
-##
-## **FRACTIONAL ON THE WIRE, FLOORED ON THE HEAD.** `1.7` is an ordinary reading of a continuous
-## share, and what the head may promise is the whole worker a stepper press can actually free.
-const WORKINGS_IDLE_KEEPERS := 1.7
 
 func _workings_band_fixture(demand: float) -> Dictionary:
 	var band := _band_fixture()
@@ -19138,8 +19115,7 @@ func _assert_the_workings_roster_names_its_workings() -> void:
 		_workings_block() == null)
 	# ⛔ **AND CASE 1 SURVIVES A WIRE FULL OF GROUND** (issue #650) — the same band with every
 	# untouched row published. This is the ordinary state of a fresh world: a section of thousands of
-	# rows and a band that has opened none of them, which must still draw no block and so no
-	# `quarrywork` stepper. Without it, case 1 is only ever asked of an EMPTY section and a roster
+	# rows and a band that has opened none of them, which must still draw no block. Without it, case 1 is only ever asked of an EMPTY section and a roster
 	# reading the deposit list passes it for free.
 	_hud.update_deposits([_unopened_workings_row(ROSTER_FAR_TILE, WORKINGS_WOOD, true),
 		_unopened_workings_row(ROSTER_MID_TILE, WORKINGS_STONE, false),
@@ -19230,8 +19206,7 @@ func _workings_row_value_color(row: Control) -> Color:
 ## ⛔ **RESERVED >= DRAWN ON A ZONE BLOCK'S HEAD, PRINTED — for all three of them.** Each block
 ## declares its own minimum from its own height function, and the HEAD term of that expression is a
 ## MEASURED constant rather than `ZONE_HEAD_HEIGHT`: an `HBoxContainer` grows to its tallest child,
-## and every one of these heads now carries the disclosure BUTTON (the workings head carries the
-## `quarrywork` stepper besides). The zone `clip_contents`, so a head drawing taller than its block
+## and every one of these heads now carries the disclosure BUTTON. The zone `clip_contents`, so a head drawing taller than its block
 ## reserved takes the difference off the bottom of the BOARD in silence — which is why the figure is
 ## printed rather than merely asserted: the print is what the constant is corrected from.
 ## A queue or road block's HEAD. On the collapsed path it is the Work tab's SECTION head, a sibling
@@ -19274,8 +19249,8 @@ func _assert_zone_head_reserves(where: String, block: Control, reserved: float) 
 # ⛔ **THERE WAS NO FIXTURE WITH MORE THAN THREE WORKINGS, WHICH IS EXACTLY WHY NOTHING CAUGHT THE
 # DEFECT.** `_open_deposit_track` — the `⌃` that opens a working's rung ladder — has ONE caller, and
 # it is a roster ROW; the ladder card is also where the second `abandon_working` button lives. So a
-# band's fourth working could be neither climbed nor put down while its keeping was still billed
-# against the `quarrywork` pool, and every roster frame in this file staged exactly three rows.
+# band's fourth working could be neither climbed nor put down while its keeping was still billed,
+# and every roster frame in this file staged exactly three rows.
 
 ## FIVE workings across the roster's three tiles, so the collapsed block draws 3 and states `+2 more`.
 ## **The pairs are `(tile, material)`**, which is a working's whole identity: the near hex and the mid

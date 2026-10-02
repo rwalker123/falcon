@@ -226,6 +226,28 @@ fn ask_the_socket(app: &mut App) -> WorkPartyForecastReply {
     }
 }
 
+/// **STATE THE TAMED HERD'S LIVE KEEPING BILL** — every quote prices the live bill (one regrowth
+/// on), never a stamp, so a fixture states a bill by scaling the rung the herd holds.
+fn set_live_herd_bill(app: &mut App, bill: f32) {
+    let ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
+    let fauna = app.world.resource::<core_sim::FaunaConfigHandle>().get();
+    let (held, live) = {
+        let herd = &app.world.resource::<HerdRegistry>().herds[0];
+        (
+            herd.standing().held,
+            core_sim::herd_upkeep_demand(
+                &core_sim::next_turns_quarry(herd, &fauna),
+                &fauna,
+                &ladder,
+            ),
+        )
+    };
+    let scaled = ladder.with_upkeep_scaled(held, bill / live);
+    app.world
+        .resource_mut::<core_sim::LadderConfigHandle>()
+        .replace(std::sync::Arc::new(scaled));
+}
+
 /// ⛔ **A KEPT SITE'S LOCAL RATE IS WHAT ITS CREW COLLECTS AFTER KEEPING** (`docs/plan_site_crews.md`
 /// §2.1, §2.2) — the compose sheet nets the keeping exactly as the deposit curve and the turn do.
 /// On a tamed herd inside the apron, a crew of [`CREW`] whose bill costs [`KEEPING_HANDS`] whole
@@ -246,8 +268,8 @@ fn a_kept_herd_inside_the_apron_is_quoted_what_its_crew_takes_after_keeping() {
             let mut registry = app.world.resource_mut::<HerdRegistry>();
             let herd = &mut registry.herds[0];
             herd.tame_outright(FACTION, &ladder);
-            herd.upkeep_demanded = Some(bill);
         }
+        set_live_herd_bill(&mut app, bill);
         let reply = core_sim::forecast_query::answer_forecast_query(
             &mut app.world,
             &QueryPayload::WorkPartyForecast(WorkPartyForecastQuery {
@@ -378,18 +400,25 @@ fn a_far_kept_herds_caravan_forecast_is_what_its_party_lands_after_keeping() {
         };
         KEEPING_HANDS * PROBE_BILL / core_sim::crew_keep_hands(Some(keeping), &stocked, &wear, CREW)
     };
-    // The keeping scratch the Logistics pass would clear, with the bill pinned — this fixture
+    // The keeping scratch the Logistics pass would clear — this fixture
     // drives the labor pass alone.
-    let pin_the_bill = |app: &mut App, bill: f32| {
+    // **The bill is stated through the ladder, once** — the turn and the forecast both read it live.
+    set_live_herd_bill(&mut app, bill);
+    // **And the herd regrows between turns, as Logistics would** — the forecast is struck one
+    // regrowth on (`fauna::herd_crew_keeping_next_turn`), so a fixture that skipped it would drift
+    // from its own forecast by the regrowth's keeping.
+    let between_turns = |app: &mut App| {
+        let fauna = app.world.resource::<core_sim::FaunaConfigHandle>().get();
         let herd = &mut app.world.resource_mut::<HerdRegistry>().herds[0];
+        *herd = core_sim::next_turns_quarry(herd, &fauna);
         herd.upkeep_supplied = core_sim::NO_UPKEEP_DEMAND;
         herd.upkeep_hands = core_sim::NO_HANDS;
         herd.upkeep_toe.clear();
-        herd.upkeep_demanded = Some(bill);
+        herd.upkeep_demanded = None;
     };
     let mut saw_the_road = false;
     for _ in 0..TURNS_TO_SEE_A_PORTER {
-        pin_the_bill(&mut app, bill);
+        between_turns(&mut app);
         resolve_a_turn(&mut app);
         if published_party(&app).hunters_on_the_road > 0 {
             saw_the_road = true;
@@ -411,9 +440,12 @@ fn a_far_kept_herds_caravan_forecast_is_what_its_party_lands_after_keeping() {
         "the sheet and the row quote one number for a far kept herd"
     );
     let unkept = {
-        pin_the_bill(&mut app, NO_BILL);
+        let kept_ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
+        set_live_herd_bill(&mut app, NO_BILL);
         let unkept = ask_the_socket(&mut app).rate_home;
-        pin_the_bill(&mut app, bill);
+        app.world
+            .resource_mut::<core_sim::LadderConfigHandle>()
+            .replace(kept_ladder);
         unkept
     };
     let horizon = app
@@ -425,7 +457,7 @@ fn a_far_kept_herds_caravan_forecast_is_what_its_party_lands_after_keeping() {
     let mut one_landing: f32 = 0.0;
     for _ in 0..horizon {
         let before = larder(&app, band);
-        pin_the_bill(&mut app, bill);
+        between_turns(&mut app);
         resolve_a_turn(&mut app);
         one_landing = one_landing.max(larder(&app, band) - before);
     }

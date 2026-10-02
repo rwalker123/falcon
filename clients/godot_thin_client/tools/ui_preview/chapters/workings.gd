@@ -298,7 +298,7 @@ func run(harness) -> void:
 	# GROUND, so what is standing here comes first and what stands on it follows.
 	# ⛔ **AND THE CREW SITS BETWEEN THEM, AT THE STATED ZERO** (issue #650). This band holds the
 	# working and has taken its hands off it, which is a different fact from untouched ground and the
-	# one the sim charges for: the bill goes on coming out of `quarrywork` either way. The zero form
+	# one the sim charges for: with nobody cutting it nobody keeps it, and the rung slides. The zero form
 	# is parallel to the staffed one for the forage land row's own reason — *nobody is on this* reads
 	# at a glance instead of needing a comparison with a row that has a number.
 	h._assert_hud("…the wood row reads `stock of capacity · rung · crew · hazard` (%s)"

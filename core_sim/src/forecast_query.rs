@@ -751,7 +751,7 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
         max_workers: ask.max_workers,
         // **Each row is what its crew collects after keeping** (`docs/plan_site_crews.md` §2.2) —
         // the deposit curve's rule ([`crate::extraction::deposit_crew_quote`]).
-        keeping: crate::fauna::herd_crew_keeping(
+        keeping: crate::fauna::herd_crew_keeping_next_turn(
             &herd,
             &fauna,
             &world
@@ -769,9 +769,9 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
         .resource::<crate::intensification::LadderConfigHandle>()
         .get();
     let raised = herd_once_raised(&herd, &ladder, FactionId(ask.faction_id));
-    let raised_keeping = raised
-        .as_ref()
-        .and_then(|raised| crate::fauna::herd_crew_keeping(raised, &fauna, &ladder, None));
+    let raised_keeping = raised.as_ref().and_then(|raised| {
+        crate::fauna::herd_crew_keeping_next_turn(raised, &fauna, &ladder, None)
+    });
     let raised_curve = raised.as_ref().map(|raised| {
         crate::fauna::hunt_crew_take_curve(&crate::fauna::HuntCrewCurveInputs {
             herd: raised,
@@ -1481,7 +1481,9 @@ fn answer_work_party_forecast(
             | crate::components::BuildJob::SetHerdOutput(_) => None,
         });
     let keeping = match &asked {
-        Asked::Hunt(herd) => crate::fauna::herd_crew_keeping(herd, &fauna, &ladder, declared),
+        Asked::Hunt(herd) => {
+            crate::fauna::herd_crew_keeping_next_turn(herd, &fauna, &ladder, declared)
+        }
         Asked::Forage { patch, tile, .. } => crate::forage::patch_crew_keeping(
             patch,
             &ladder,
@@ -3576,6 +3578,35 @@ mod tests {
     /// `w − keep_hands`: the same herd with its bill stated at nothing is the unkept curve, and a
     /// bill of exactly [`KEEPING_HANDS`] shifts every row by that many hands — nothing while the
     /// crew is all keeping, then the unkept curve's row `w − KEEPING_HANDS`.
+    /// **TAME THE WORLD'S HERD AND STATE ITS LIVE KEEPING BILL** — a quote prices the live bill at
+    /// the state the next turn will find, never a stamp, so a test stating a bill states it through
+    /// the ladder: the pastoral rung's `work_per_turn` scaled until the tamed herd's live
+    /// `herd_upkeep_demand`, one regrowth on, reads `bill`.
+    fn tame_with_live_bill(world: &mut World, bill: f32) {
+        let ladder = world
+            .resource::<crate::intensification::LadderConfigHandle>()
+            .get();
+        let fauna = world.resource::<FaunaConfigHandle>().get();
+        let current = {
+            let mut registry = world.resource_mut::<HerdRegistry>();
+            let herd = &mut registry.herds[0];
+            herd.tame_outright(FACTION, &ladder);
+            // **Read where the quote reads it** — the herd as the next turn's take finds it.
+            crate::fauna::herd_upkeep_demand(
+                &crate::fauna::next_turns_quarry(herd, &fauna),
+                &fauna,
+                &ladder,
+            )
+        };
+        let scaled = ladder.with_upkeep_scaled(
+            crate::intensification::RungKey::AnimalPastoral,
+            bill / current,
+        );
+        world
+            .resource_mut::<crate::intensification::LadderConfigHandle>()
+            .replace(std::sync::Arc::new(scaled));
+    }
+
     #[test]
     fn a_kept_herds_curve_nets_the_hands_its_crew_keeps_with() {
         /// Whole hands the stated bill costs.
@@ -3588,15 +3619,7 @@ mod tests {
         const TOLERANCE: f32 = 1e-3;
         let curve_at = |bill: Option<f32>| {
             let mut world = world_hunting(DEER, DEER_BODY);
-            let ladder = world
-                .resource::<crate::intensification::LadderConfigHandle>()
-                .get();
-            {
-                let mut registry = world.resource_mut::<HerdRegistry>();
-                let herd = &mut registry.herds[0];
-                herd.tame_outright(FACTION, &ladder);
-                herd.upkeep_demanded = bill;
-            }
+            tame_with_live_bill(&mut world, bill.unwrap_or(NO_BILL));
             crew_curve(
                 &mut world,
                 &crew_ask(SWEEP_CREW, crate::components::DEFAULT_ESCAPEMENT_FLOOR),
@@ -3646,7 +3669,7 @@ mod tests {
     }
 
     /// ⛔ **THE HUNT CURVE STATES THE HANDS EACH CREW KEEPS WITH, AND THEY RISE WITH THE BILL.**
-    /// The same tamed herd at two stamped bills: each row's `keep_hands` is the split its take is
+    /// The same tamed herd at two live bills: each row's `keep_hands` is the split its take is
     /// struck on, so the dearer bill keeps with more hands wherever the crew is not all keeping.
     #[test]
     fn a_hunt_curves_keep_hands_rise_with_the_bill() {
@@ -3656,15 +3679,7 @@ mod tests {
         const HEAVY_BILL: f32 = 2.0;
         let curve_at = |bill: f32| {
             let mut world = world_hunting(DEER, DEER_BODY);
-            let ladder = world
-                .resource::<crate::intensification::LadderConfigHandle>()
-                .get();
-            {
-                let mut registry = world.resource_mut::<HerdRegistry>();
-                let herd = &mut registry.herds[0];
-                herd.tame_outright(FACTION, &ladder);
-                herd.upkeep_demanded = Some(bill);
-            }
+            tame_with_live_bill(&mut world, bill);
             crew_curve(
                 &mut world,
                 &crew_ask(SWEEP_CREW, crate::components::DEFAULT_ESCAPEMENT_FLOOR),

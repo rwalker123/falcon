@@ -71,8 +71,9 @@ Shipped kits: **`sledding`** (`sled`), **`woodcutting`** (`sled` + `axe`) and **
 > are `big_game` and `trapping`** — a decisive pair, rather than a real kit and a dominated one.
 >
 > **The JOB survives and deleting it would break the animal web silently**: `KitJob::Husbandry` is
-> the keeping role `keeping_kit_for_branch` maps `RungBranch::Animal` to, the `hurdling` kit lists
-> it, `default_kits.husbandry` is `none`, and `LaborTarget::Husbandry` is a labor row.
+> the keeping job `keeping_kit_for_branch` maps `RungBranch::Animal` to, the `hurdling` kit lists
+> it, and `default_kits.husbandry` is `none`. It is vocabulary only: the `husbandry` LABOR row retired
+> with `docs/plan_site_crews.md`, and a herd is kept by its own hunt row.
 
 > ### ⛔ `hurdles` LEFT THE ROSTER — THEY ARE A MATERIAL NOW
 >

@@ -1082,8 +1082,8 @@ func update_road_network(roads_variant: Variant) -> void:
     _band_labor.set_roads(roads_variant)
 
 ## THE LIVE WORKINGS ON THE GROUND, into the shared labor model (arc #583) — the deposit twin of
-## `update_road_network`, and it exists for one reader: the WORKINGS ROSTER, which names WHICH
-## workings the band's `quarrywork` pool is paying for. `Main` reaches this BY NAME through
+## `update_road_network`, and it exists for one reader: the WORKINGS ROSTER (the Work tab's GROUNDWORK
+## rows), which names WHICH workings this band holds — each kept by its own crew. `Main` reaches this BY NAME through
 ## `_hud_invoke`, so it stays a thin `HudLayer` delegator.
 func update_deposits(deposits_variant: Variant) -> void:
     _band_labor.set_deposits(deposits_variant)

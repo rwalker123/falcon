@@ -874,6 +874,96 @@ fn keeping_rate_from(
     }
 }
 
+/// **ONE RUN OF A SITE'S KEEPING HANDS** — how many hands kept at one rate, and whether they held
+/// a keeping tool. [`KeepingSplit::segments`] walks them best-equipped first.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct KeepingSegment {
+    hands: f32,
+    per_worker: f32,
+    armed: bool,
+}
+
+/// **WHAT A SITE'S CREW KEEPS WITH, HAND BY HAND** (`docs/plan_site_crews.md` §2.3) — the crew's
+/// hands walked **best-equipped first**: each hand holding the units the settlement issued works at
+/// its tool's rate, and **every other hand works bare**. The keeping takes hands until the demand is
+/// met or the crew runs out, so `kept` is the work actually delivered and `armed_kept` the part of it
+/// the tool-holding hands did — the only work the keeping tools are worn on.
+///
+/// ⛔ **IT REPLACED A COVERAGE-MIXED RATE.** The rate was the coverage-weighted average over the
+/// PLANNED hands, and every hand past them was paid that same mixed rate — so a hoe-short site
+/// overstated what its extra, unarmed hands kept. Hoe rate 2, bare 1, demand 4, one hoe: the mixed
+/// rate over the 2 planned hands is 1.5, so it kept the bill with 2.67 hands; the honest split is
+/// one armed hand (2) and two bare (2), **3 hands**.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct KeepingSplit {
+    keep_hands: f32,
+    kept: f32,
+    armed_kept: f32,
+    segments: Vec<KeepingSegment>,
+}
+
+impl KeepingSplit {
+    /// The split walked over `crew` hands: the coverage of the issued units across them,
+    /// best-equipped first, each run at its own rate, until `demand` is met.
+    #[allow(clippy::too_many_arguments)] // the walk's whole context: the gear, the units, the bill
+    fn walk(
+        equipment: &crate::equipment_config::EquipmentConfig,
+        band_kit: &BandEquipment,
+        kit: &crate::equipment_config::KitChoice,
+        units: impl Fn(&str) -> f32,
+        branch: crate::intensification::RungBranch,
+        rung: Option<&str>,
+        crew: f32,
+        demand: f32,
+    ) -> Self {
+        let coverage = equipment.coverage_from_units(kit, crew, band_kit, units);
+        let bare = bare_keeper_rate();
+        let runs = coverage.crews().iter().map(|run| {
+            let per_worker = crate::intensification::build_work_per_worker_turn(
+                equipment.build_work_per_worker(&run.kit, band_kit, branch, rung),
+            );
+            KeepingSegment {
+                hands: run.workers,
+                per_worker,
+                armed: per_worker > bare,
+            }
+        });
+        Self::walk_runs(runs, demand)
+    }
+
+    /// The walk itself, over runs already ordered best-equipped first.
+    fn walk_runs(runs: impl Iterator<Item = KeepingSegment>, demand: f32) -> Self {
+        let mut split = KeepingSplit::default();
+        let mut left = demand.max(NO_UPKEEP_DEMAND);
+        for run in runs {
+            if left <= NO_UPKEEP_DEMAND || run.per_worker <= NO_UPKEEP_DEMAND {
+                break;
+            }
+            let hands = (left / run.per_worker).min(run.hands);
+            let work = hands * run.per_worker;
+            split.keep_hands += hands;
+            split.kept += work;
+            if run.armed {
+                split.armed_kept += work;
+            }
+            left -= work;
+            split.segments.push(KeepingSegment { hands, ..run });
+        }
+        split
+    }
+
+    /// **The keeping the hands PRESENT can do** — the same walk, cut off at `present` hands.
+    fn at_most(&self, present: f32) -> Self {
+        let mut left = present.max(fauna::NO_HANDS);
+        let runs = self.segments.iter().map(|run| {
+            let hands = run.hands.min(left);
+            left -= hands;
+            KeepingSegment { hands, ..*run }
+        });
+        Self::walk_runs(runs, self.kept)
+    }
+}
+
 /// **THE HANDS A SITE'S CREW HAS LEFT TO COLLECT WITH** — the crew at the source less the hands its
 /// keeping took, never below none (`docs/plan_site_crews.md` §2.1). Fractional, and never rounded:
 /// the take is linear in hands, and rounding is the waste a site crew exists to remove.
@@ -2281,9 +2371,13 @@ struct SiteKeeping {
     /// **The crew's hands spent keeping** — `min(crew, demand ÷ keep_rate)`, fractional. What the
     /// take is struck less, and what the row publishes as `upkeepHands`.
     keep_hands: f32,
-    /// **The work those hands delivered** — `keep_hands × keep_rate`, stamped into the source's
-    /// `upkeep_supplied`.
+    /// **The work those hands delivered** — the armed hands at the tool's rate and the rest bare
+    /// ([`KeepingSplit`]), stamped into the source's `upkeep_supplied`.
     kept: f32,
+    /// **The part of `kept` the tool-holding hands did** — the only work the keeping tools wear on.
+    armed_kept: f32,
+    /// The walk `kept` came from, so a far row's party can be cut to the hands present.
+    split: KeepingSplit,
     /// The keeping tools those hands carried, narrowed to the ones serving this site — what the
     /// keeping wear is billed against, on `kept` and nothing else.
     wear_kit: Option<crate::equipment_config::KitChoice>,
@@ -2302,10 +2396,12 @@ impl SiteKeeping {
         if self.keep_hands <= present {
             return self;
         }
-        let share = present / self.keep_hands;
+        let split = self.split.at_most(present);
         SiteKeeping {
-            keep_hands: present,
-            kept: self.kept * share,
+            keep_hands: split.keep_hands,
+            kept: split.kept,
+            armed_kept: split.armed_kept,
+            split,
             ..self
         }
     }
@@ -2313,10 +2409,10 @@ impl SiteKeeping {
 
 /// **STEP 4 AND THE SPLIT, FOR EVERY SITE** (`docs/plan_site_crews.md` §2.1, §2.3).
 ///
-/// `keep_rate` is the coverage-weighted rate of the units the settlement gave the site
-/// ([`keeping_rate_from`]), and the crew keeps **first**: `keep_hands = min(crew, demand ÷
-/// keep_rate)`. A site short of tools therefore spends **more of its own hands** keeping and
-/// collects less; a crew short of the demand keeps what it can and collects nothing.
+/// The crew keeps **first**, walked hand by hand ([`KeepingSplit`]): the hands holding the units the
+/// settlement gave the site keep at the tool's rate, every other hand bare, until the demand is met
+/// or the crew runs out. A site short of tools therefore spends **more of its own hands** keeping
+/// and collects less; a crew short of the demand keeps what it can and collects nothing.
 ///
 /// ⛔ **NO HAND IS ROUNDED.** `keep_hands` is fractional and the take runs on `crew − keep_hands`,
 /// because rounding to whole keepers is the waste a site crew exists to remove (§1).
@@ -2342,7 +2438,16 @@ fn site_keeping(
             ask.claim.branch,
             rung_key.as_deref(),
         );
-        let keep_hands = toe_worker_need(rate.per_worker, ask.claim.demand).min(ask.crew as f32);
+        let split = KeepingSplit::walk(
+            equipment,
+            band_kit,
+            &fill.kit,
+            |item| fill.units_of(item),
+            ask.claim.branch,
+            rung_key.as_deref(),
+            ask.crew as f32,
+            ask.claim.demand,
+        );
         let tool_lines = fill
             .required
             .iter()
@@ -2357,8 +2462,10 @@ fn site_keeping(
             .collect();
         if let Some(slot) = keeping.get_mut(ask.claim.index) {
             *slot = SiteKeeping {
-                keep_hands,
-                kept: keep_hands * rate.per_worker,
+                keep_hands: split.keep_hands,
+                kept: split.kept,
+                armed_kept: split.armed_kept,
+                split,
                 wear_kit: Some(rate.wear_kit),
                 tool_lines,
             };
@@ -2438,8 +2545,17 @@ pub fn prospective_keep_hands(
             .map(|(item, units)| (std::sync::Arc::from(item.as_str()), units))
             .collect(),
     };
-    let rate = keeping_rate_from(equipment, band_kit, &fill, branch, Some(&key));
-    toe_worker_need(rate.per_worker, demand).min(crew as f32)
+    KeepingSplit::walk(
+        equipment,
+        band_kit,
+        &fill.kit,
+        |item| fill.units_of(item),
+        branch,
+        Some(&key),
+        crew as f32,
+        demand,
+    )
+    .keep_hands
 }
 
 /// **THE KEEPING TOOLS A CREW OF `crew` WOULD BE ISSUED ON ONE SITE** — per tool its rung serves,
@@ -6038,14 +6154,14 @@ pub fn advance_labor_allocation(
                         &mut patch.upkeep_materials_supplied,
                     );
                     // **AND THE KEEPER'S TOOLS ARE SPENT ON EXACTLY THAT WORK** — the
-                    // `WearQuantum::UpkeepWork` charge, billed on what this crew's keeping hands
-                    // delivered and not on what the rung demanded, so a short crew wears only the
+                    // `WearQuantum::UpkeepWork` charge, billed on what this crew's TOOL-HOLDING hands
+                    // delivered (`SiteKeeping::armed_kept`) and not on what the rung demanded, so a short crew wears only the
                     // hours it worked and a patch with nothing at risk wears nothing.
                     charge_keeping_wear(
                         band_equipment.as_deref_mut(),
                         &equipment_cfg,
                         keeping.wear_kit.as_ref(),
-                        keeping_supplied,
+                        crate::forage::patch_upkeep_supply(patch, improvement, keeping.armed_kept),
                     );
                     // **WHAT THE GROUND WILL LOSE UNDER THE BUILDERS** — exactly what the next
                     // `advance_cultivation` will bleed off the at-risk meter, resolved once here off
@@ -6966,7 +7082,7 @@ pub fn advance_labor_allocation(
                         band_equipment.as_deref_mut(),
                         &equipment_cfg,
                         keeping.wear_kit.as_ref(),
-                        keeping_supplied,
+                        fauna::herd_upkeep_supply(herd, improvement, keeping.armed_kept),
                     );
                     // **WHAT THE METER IS LOSING** — the plant twin's seam, and on the shipped
                     // ladder always `0`: neither animal rung declares a `meter_decay`, because an
@@ -7302,7 +7418,9 @@ pub fn advance_labor_allocation(
                             // The herd's keeping, planned at the staffed crew off the herd as it
                             // stands — see the Forage arm.
                             let keep_hands = crate::fauna::crew_keep_hands(
-                                crate::fauna::herd_crew_keeping(herd, &fauna, &ladder, declared),
+                                crate::fauna::herd_crew_keeping_next_turn(
+                                    herd, &fauna, &ladder, declared,
+                                ),
                                 &equipment_cfg,
                                 &band_kit,
                                 assignment.workers,
@@ -8164,7 +8282,9 @@ pub fn advance_labor_allocation(
                         // The herd's keeping, planned at the staffed crew off the herd as it
                         // stands — see the Forage arm.
                         let keep_hands = crate::fauna::crew_keep_hands(
-                            crate::fauna::herd_crew_keeping(herd, &fauna, &ladder, declared),
+                            crate::fauna::herd_crew_keeping_next_turn(
+                                herd, &fauna, &ladder, declared,
+                            ),
                             &equipment_cfg,
                             &band_kit,
                             assignment.workers,
@@ -8545,7 +8665,7 @@ pub fn advance_labor_allocation(
                         band_equipment.as_deref_mut(),
                         &equipment_cfg,
                         keeping.wear_kit.as_ref(),
-                        keeping.kept,
+                        keeping.armed_kept,
                     );
                     let take_hands = take_hands_after_keeping(workers, keep_hands);
                     // **The working's own facts, read out before the build touches it** — the
@@ -12271,6 +12391,63 @@ mod keeping_split_tests {
     //! (`docs/plan_pool_toe.md` §2.1).
 
     use super::*;
+
+    /// ⛔ **ARMED HANDS AT THE TOOL'S RATE, EVERY OTHER HAND BARE** — hoe rate 2, bare 1, demand 4,
+    /// one hoe. The hoe's hand keeps 2 and two bare hands the other 2: **3 hands**, not the 2.67 a
+    /// coverage-mixed rate paid. A crew of only 2.67 keeps 3.67 and leaves the site short; the tools
+    /// are worn on the armed hand's 2 alone.
+    #[test]
+    fn a_tool_short_site_keeps_with_its_armed_hands_at_the_tool_rate_and_the_rest_bare() {
+        /// The hoe's per-hand rate in the example.
+        const HOE_RATE: f32 = 2.0;
+        /// The bare hand's rate.
+        const BARE_RATE: f32 = 1.0;
+        /// The site's bill.
+        const DEMAND: f32 = 4.0;
+        /// One hoe arms one hand.
+        const ONE_ARMED_HAND: f32 = 1.0;
+        /// Float slack.
+        const EPSILON: f32 = 1e-5;
+        let runs = |crew: f32| {
+            vec![
+                KeepingSegment {
+                    hands: ONE_ARMED_HAND,
+                    per_worker: HOE_RATE,
+                    armed: true,
+                },
+                KeepingSegment {
+                    hands: crew - ONE_ARMED_HAND,
+                    per_worker: BARE_RATE,
+                    armed: false,
+                },
+            ]
+        };
+        let full = KeepingSplit::walk_runs(runs(3.0).into_iter(), DEMAND);
+        assert!(
+            (full.keep_hands - 3.0).abs() < EPSILON && (full.kept - DEMAND).abs() < EPSILON,
+            "one armed hand and two bare keep the bill: {full:?}"
+        );
+        assert!(
+            (full.armed_kept - HOE_RATE).abs() < EPSILON,
+            "the tools wear on the armed hand's work alone: {full:?}"
+        );
+        let roomy = KeepingSplit::walk_runs(runs(5.0).into_iter(), DEMAND);
+        assert!(
+            (roomy.keep_hands - 3.0).abs() < EPSILON,
+            "a larger crew spends no more hands than the bill takes: {roomy:?}"
+        );
+        let short = KeepingSplit::walk_runs(runs(2.67).into_iter(), DEMAND);
+        assert!(
+            (short.keep_hands - 2.67).abs() < EPSILON && (short.kept - 3.67).abs() < EPSILON,
+            "a crew of 2.67 keeps 3.67 and leaves the site short: {short:?}"
+        );
+        let present = full.at_most(2.67);
+        assert!(
+            (present.kept - 3.67).abs() < EPSILON
+                && (present.armed_kept - HOE_RATE).abs() < EPSILON,
+            "cut to the hands present, the armed hand still keeps first: {present:?}"
+        );
+    }
 
     /// A claim on `demand`, standing on `rung` — the shape [`keeping_claims`] builds and the split
     /// consumes. **The tools follow from the rung**, so a fixture states the ground and never a kit.

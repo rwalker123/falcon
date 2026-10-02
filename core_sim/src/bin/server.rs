@@ -3633,7 +3633,7 @@ fn seed_source_yield(
             // **THE HUNT ROW IS THE HERD'S CREW AND KEEPS IT FIRST** (`docs/plan_site_crews.md`
             // §2.2) — the seed quotes the cull on the hands its keeping leaves.
             let keep_hands = core_sim::crew_keep_hands(
-                core_sim::herd_crew_keeping(
+                core_sim::herd_crew_keeping_next_turn(
                     herd,
                     &fauna,
                     &app.world.resource::<LadderConfigHandle>().get(),
@@ -8217,19 +8217,16 @@ fn handle_deposit_verb(
 /// at the rung's own rate over the following turns — the same decay an unkept working already takes.
 /// Nothing is destroyed on the spot, so it needs no confirmation.
 ///
-/// # ⛔ IT EXISTS BECAUSE THE ROW OUTLIVES ITS CREW, AND THE ROW IS WHAT IS BILLED
+/// # ⛔ IT EXISTS BECAUSE THE ROW OUTLIVES ITS CREW
 ///
 /// A working raised above its free floor is a **holding** (`source_has_a_meter_at_risk`), so
-/// `assign_labor … extract … 0` is *"stop cutting"* and keeps the row — and
-/// `extraction_keeping_claims` reads the **row**, so the band goes on owing that working's
-/// `quarrywork` bill for as long as it stands. Measured on a seated `extraction:quarry` at
-/// `AlpineMountain` with the crew and the keepers both at zero: the bill runs from **2.10** work a
-/// turn down to **0.06** over the 104 turns the meter takes to reach `extraction:gathering`, and only
-/// then does the row prune itself and the billing stop. That is not a rot the player can wait out
-/// quietly: under the default `UpkeepFundMode::Spread` the abandoned working takes its share of the
-/// **same pool** the live ones draw from, so a band with one keeper holding one felling working
-/// (steady at position 60.0 alone) slides to **49.96 in 40 turns** the moment a walked-away sibling
-/// sits beside it. Before this verb there was no command that could drop the sibling.
+/// `assign_labor … extract … 0` is *"stop cutting"* and keeps the row. Under site crews
+/// (`docs/plan_site_crews.md`) a row's own crew is the only thing that keeps its working, so a
+/// zero-crew row bills nobody — but it stays on the band's Work board, keeps its build-queue entry
+/// in line for the band's builders, and keeps announcing the working's decay to that band until the
+/// meter walks back to the free floor and the row prunes itself. This verb is how a player says
+/// *"I am done with this working"* outright: it drops the row and the queue entry on every band of
+/// the faction holding it, and the working decays unheld.
 ///
 /// # ⛔ A BARE-TILE `abandon` NEVER REACHES A WORKING, AND ITS MATERIAL FORM IS THIS VERB
 ///
@@ -26378,7 +26375,7 @@ mod tests {
     /// above the floor (`extraction::useful_cutters`), crew-independent: above one, the same at crew
     /// 1, 2 and 1 again, and the compose sheet's curve rises at every crew below it.
     /// ⛔ **THE DEPOSIT CURVE STATES THE HANDS EACH CREW KEEPS WITH, AND THEY RISE WITH THE BILL.**
-    /// A felling working owes keeping; doubling its stamped bill must raise every row's
+    /// A felling working owes keeping; doubling its live bill must raise every row's
     /// `keep_hands` wherever the crew is not all keeping already.
     #[test]
     fn a_deposit_curves_keep_hands_rise_with_the_bill() {
@@ -26388,17 +26385,17 @@ mod tests {
             let mut app = build_test_app();
             let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::MixedWoodland);
             seat_a_felling_working(&mut app, tile);
+            // **The live bill, scaled through the ladder** — a quote prices the live bill, never
+            // the stamp, so a dearer bill is a dearer rung.
             if let Some(scale) = bill_scale {
-                let ladder = app.world.resource::<LadderConfigHandle>().get();
-                let extraction = app.world.resource::<ExtractionConfigHandle>().get();
-                let ground = app.world.get::<Tile>(tile).cloned().expect("the tile");
-                let mut deposits = app.world.resource_mut::<core_sim::DepositRegistry>();
-                let working = deposits
-                    .source_mut(WORKING, "wood")
-                    .expect("the seated working");
-                let measure = core_sim::extraction::deposit_measure(working, &ground, &extraction);
-                let bill = core_sim::extraction::deposit_keeping_basis(working, measure, &ladder);
-                working.upkeep_demanded = Some(bill * scale);
+                let dearer = app
+                    .world
+                    .resource::<LadderConfigHandle>()
+                    .get()
+                    .with_upkeep_scaled(RungKey::ForestryFelling, scale);
+                app.world
+                    .resource_mut::<LadderConfigHandle>()
+                    .replace(std::sync::Arc::new(dearer));
             }
             deposit_band_holding(&mut app, tile, BandEquipment::default());
             deposit_crew_curve(

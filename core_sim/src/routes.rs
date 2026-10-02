@@ -207,7 +207,6 @@ pub struct Road {
     /// rung completes, lowered when that rung is lost. A loss is announced only for a rung at or
     /// below it: a part-built meter rotting to empty was never had, so it is not "lost"
     /// (`intensification::settle_achieved_losses`). `None` = nothing above the branch's root.
-    #[serde(default)]
     pub peak_rung: Option<crate::intensification::RungKey>,
     /// **Work units earned from traffic this turn**, banked into [`Self::position`] by the accrual
     /// pass and then cleared. A within-turn accumulator across the several journeys that may cross

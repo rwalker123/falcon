@@ -1450,11 +1450,29 @@ fn a_kept_patchs_next_turn_take_is_quoted_on_the_hands_its_keeping_leaves() {
                 CREW,
             );
         let demand = bill.unwrap_or(KEEPING_HANDS as f32 * rate);
+        // **The bill is stated through the ladder** — a quote prices the LIVE bill, never a stamp.
+        let live = {
+            let ladder = app.world.resource::<LadderConfigHandle>().get();
+            let labor = app.world.resource::<LaborConfigHandle>().get();
+            let ground = app.world.get::<Tile>(tile).expect("the tile");
+            core_sim::patch_upkeep_demand(
+                app.world
+                    .resource::<core_sim::ForageRegistry>()
+                    .patch(coord)
+                    .expect("the seated patch"),
+                &ladder,
+                tile_forage_capacity(&labor.forage, ground),
+                &labor.forage,
+            )
+        };
+        let scaled = app
+            .world
+            .resource::<LadderConfigHandle>()
+            .get()
+            .with_upkeep_scaled(held, demand / live);
         app.world
-            .resource_mut::<core_sim::ForageRegistry>()
-            .patch_mut(coord)
-            .expect("the seated patch")
-            .upkeep_demanded = Some(demand);
+            .resource_mut::<LadderConfigHandle>()
+            .replace(std::sync::Arc::new(scaled));
         let reply = core_sim::forecast_query::answer_forecast_query(
             &mut app.world,
             &QueryPayload::WorkPartyForecast(WorkPartyForecastQuery {
@@ -2806,6 +2824,81 @@ fn probe_the_price_of_holding_a_plant_rung() {
             );
         }
     }
+}
+
+/// ⛔ **A QUOTE BETWEEN TURNS ON A CULTIVATE IN FLIGHT IS THE KEEPING THE NEXT TURN SETTLES.**
+/// The bill a quote reads is the live one at the state the next turn will find
+/// (`forage::patch_crew_keeping`), never the stamp the last turn left: that stamp was struck before
+/// the last turn's accrual, so on a rising meter it quoted the old position's bill while the turn
+/// billed the new one.
+#[test]
+fn a_between_turns_quote_on_a_cultivate_in_flight_keeps_with_the_hands_the_next_turn_settles() {
+    /// Float slack on hand counts struck through one arithmetic.
+    const HANDS_EPSILON: f32 = 1e-3;
+    /// Turns of the build compared — few enough that it is still in flight.
+    const TURNS: u32 = 4;
+    let mut app = spawn_world();
+    let (tile, coord) = prime_thriving_patch(&mut app);
+    grant_cultivation_knowledge(&mut app, FactionId(0));
+    let band = spawn_builder(&mut app, tile, coord, Improvement::Cultivate);
+    let crew = app
+        .world
+        .get::<LaborAllocation>(band)
+        .expect("the band")
+        .assignments
+        .iter()
+        .find(|row| matches!(row.target, LaborTarget::Forage { .. }))
+        .expect("the forage row")
+        .workers;
+    let mut compared = 0;
+    for turn in 1..=TURNS {
+        let quote = {
+            let ladder = app.world.resource::<LadderConfigHandle>().get();
+            let labor = app.world.resource::<LaborConfigHandle>().get();
+            let equipment = app
+                .world
+                .resource::<core_sim::EquipmentConfigHandle>()
+                .get();
+            let ground = app.world.get::<Tile>(tile).expect("the tile").clone();
+            let wear = app
+                .world
+                .get::<core_sim::BandEquipment>(band)
+                .cloned()
+                .unwrap_or_default();
+            let registry = app.world.resource::<ForageRegistry>();
+            let patch = registry.patch(coord).expect("the patch");
+            core_sim::crew_keep_hands(
+                core_sim::patch_crew_keeping(
+                    patch,
+                    &ladder,
+                    &labor.forage,
+                    Some(tile_forage_capacity(&labor.forage, &ground)),
+                    Some(Improvement::Cultivate),
+                ),
+                &equipment,
+                &wear,
+                crew,
+            )
+        };
+        run_turns_with_forage(&mut app, 1);
+        let (settled, built) = {
+            let registry = app.world.resource::<ForageRegistry>();
+            let patch = registry.patch(coord).expect("the patch");
+            (patch.upkeep_hands, patch.is_cultivated())
+        };
+        if turn > 1 && !built {
+            assert!(
+                (quote - settled).abs() < HANDS_EPSILON,
+                "turn {turn}: the quote before the turn keeps with {quote} hands, the turn settled \
+                 {settled}"
+            );
+            compared += 1;
+        }
+    }
+    assert!(
+        compared > 0,
+        "fixture: the Cultivate was still in flight on a compared turn"
+    );
 }
 
 /// Feed lines about the tended rung carrying `status=<status>` — `slipping` (Info) or `feral`

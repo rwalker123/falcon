@@ -6658,6 +6658,12 @@ pub struct CrewKeeping {
 }
 
 /// [`CrewKeeping`] for `herd`, the verb resolved off `declared` exactly as the turn resolves it.
+///
+/// ⛔ **THE DEMAND IS THE LIVE ONE, AT THE STATE THE NEXT TURN WILL FIND** — never the stamped bill
+/// (`upkeep_demanded`). The stamp is struck before a turn's build accrual and stands until the next
+/// turn's Logistics clears it, so between turns it describes the position the LAST turn started
+/// from: a Cultivate in flight, or a pen that has just completed, would be quoted the old rung's bill
+/// while the next turn bills the risen one. A quote is always about the next turn.
 pub fn herd_crew_keeping(
     herd: &Herd,
     fauna: &FaunaConfig,
@@ -6666,8 +6672,22 @@ pub fn herd_crew_keeping(
 ) -> Option<CrewKeeping> {
     herd_claims_keeping(herd, herd_build_verb(herd, declared)).then(|| CrewKeeping {
         rung: herd.standing().held,
-        demand: herd_keeping_basis(herd, fauna, ladder),
+        demand: herd_upkeep_demand(herd, fauna, ladder),
     })
+}
+
+/// **[`herd_crew_keeping`] FOR A QUOTE BETWEEN TURNS** — read off the herd as the next turn's take
+/// will find it ([`next_turns_quarry`]): a herd's bill rides its head count
+/// ([`herd_keeper_load`]), so the Logistics regrowth the next turn runs first moves the bill the
+/// turn settles. Every surface that quotes a crew before its turn reads this; the turn's own claim,
+/// already past its regrowth, reads [`herd_crew_keeping`] directly.
+pub fn herd_crew_keeping_next_turn(
+    herd: &Herd,
+    fauna: &FaunaConfig,
+    ladder: &LadderConfig,
+    declared: Option<crate::components::Improvement>,
+) -> Option<CrewKeeping> {
+    herd_crew_keeping(&next_turns_quarry(herd, fauna), fauna, ladder, declared)
 }
 
 /// **The hands a crew of `crew` spends keeping first** — `NO_HANDS` with nothing to keep.

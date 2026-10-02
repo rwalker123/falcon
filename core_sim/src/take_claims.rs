@@ -321,12 +321,11 @@ pub fn planned_keep_hands(
     match target {
         LaborTarget::Forage { tile, .. } => {
             sources
-                .forage
                 .patch(*tile)
                 .map_or(crate::fauna::NO_HANDS, |patch| {
                     crate::fauna::crew_keep_hands(
                         crate::forage::patch_crew_keeping(
-                            patch,
+                            &patch,
                             sources.ladder,
                             &sources.labor.forage,
                             (sources.ground_of)(*tile).map(|ground| {
@@ -342,12 +341,11 @@ pub fn planned_keep_hands(
         }
         LaborTarget::Hunt { fauna_id, .. } => {
             sources
-                .herds
-                .find(fauna_id)
+                .herd(fauna_id)
                 .map_or(crate::fauna::NO_HANDS, |herd| {
                     crate::fauna::crew_keep_hands(
                         crate::fauna::herd_crew_keeping(
-                            herd,
+                            &herd,
                             sources.fauna,
                             sources.ladder,
                             declared,

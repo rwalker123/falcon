@@ -297,9 +297,11 @@ the `status=` token. It is not `DETAIL_KEY_HIDDEN`, because `x` / `y` are the on
 `trimmed` line names its tile.
 
 **It is in `DETAIL_STATUS_WORK_LINK`**, because the keeping is staffed from the Work tab. Like every
-member, it links only where the detail carries `band=`. **The sim's slip writes no `band=`**, so the
-shipped line renders linkless. `chapters/event_dock.gd` (`event_dock_rung_slipping`) stages the
-shipped detail beside a `band=`-bearing one, and claims that only the second offers the jump.
+member, it links only where the detail carries `band=`. **The sim writes `band=` on both decay
+lines** — the faction's band with the largest crew on the site, or a road's keeper — so a slip on a
+band-held site offers the jump; a line with no band of that faction on the site carries none and
+renders linkless. `chapters/event_dock.gd` (`event_dock_rung_slipping`) stages both shapes and claims
+that only the `band=`-bearing one offers it.
 
 ### ⛔ THE GLYPH TRACKS THE RUNG, or the split is filter-only and unreadable
 

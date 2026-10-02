@@ -7,8 +7,9 @@ extends Control
 ## between the two is one square shaded in part (the tending fraction from the left). It is drawn, not
 ## glyphs, so a part-person reads as a fraction rather than as a third kind of mark.
 ##
-## **IT DRAWS; IT DOES NOT MODEL.** The tending figure is the sim's — `upkeep_hands` on a Work-tab row,
-## the crew curve row's `keep_hands` on a compose sheet — and the caller hands it in. Whether a row
+## **IT DRAWS; IT DOES NOT MODEL.** The tending figure is the sim's — the row's own `keep_hands` on a
+## Work-tab row, the crew curve row's `keep_hands` on a compose sheet — and the caller hands it in.
+## ⛔ Never the site's `upkeep_hands`: that sums every band keeping the site, so it is no row's figure. Whether a row
 ## carries marks at all is `HudWorkVocab.crew_split_shown`, and the words on its hover are
 ## `HudWorkVocab.crew_split_words`, so the picture and the sentence are about one figure.
 ##

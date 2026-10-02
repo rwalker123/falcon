@@ -285,7 +285,6 @@ pub struct DepositSource {
     /// rung completes, lowered when that rung is lost. A loss is announced only for a rung at or
     /// below it: a part-built meter rotting to empty was never had, so it is not "lost"
     /// (`intensification::settle_achieved_losses`). `None` = nothing above the branch's root.
-    #[serde(default)]
     pub peak_rung: Option<crate::intensification::RungKey>,
     /// **WHAT EVERY CREW TOOK OUT OF THIS WORKING THIS TURN**, in the material's own units.
     ///
@@ -934,7 +933,8 @@ pub fn crew_keeping_issue(
     ladder: &LadderConfig,
     workers: u32,
 ) -> Vec<(String, f32)> {
-    let demand = deposit_keeping_basis(working, deposit_measure(working, ground, config), ladder);
+    // The LIVE bill at the state the next turn will find, never the stamp (`fauna::herd_crew_keeping`).
+    let demand = deposit_upkeep_demand(working, deposit_measure(working, ground, config), ladder);
     if demand <= NO_UPKEEP_DEMAND {
         return Vec::new();
     }
@@ -956,7 +956,8 @@ pub fn crew_keep_hands(
     ladder: &LadderConfig,
     workers: u32,
 ) -> f32 {
-    let demand = deposit_keeping_basis(working, deposit_measure(working, ground, config), ladder);
+    // The LIVE bill at the state the next turn will find, never the stamp (`fauna::herd_crew_keeping`).
+    let demand = deposit_upkeep_demand(working, deposit_measure(working, ground, config), ladder);
     if demand <= NO_UPKEEP_DEMAND {
         return NO_HANDS_ON_THE_DEPOSIT;
     }

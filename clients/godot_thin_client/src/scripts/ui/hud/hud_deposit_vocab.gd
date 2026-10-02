@@ -7,7 +7,7 @@ class_name HudDepositVocab
 ## ⛔ **THE PLAYER-FACING NOUN IS "WORKING", NEVER "QUARRY".** `Quarry` is ONE RUNG on ONE of the two
 ## branches (`RUNG_KEY_QUARRY`), so the word names a coppice, a woodlot and a flint scatter after a
 ## thing none of them is. The sim's own word for a live deposit a band has opened is a **working**,
-## and `quarrywork` survives only as the server's command token, which no player reads.
+## and `quarrywork` was the retired keeping pool's token, which no player read.
 ##
 ## The hunt's own vocabulary no longer competes for the word: a herd pick's banner reads `PREY`
 ## (issue #650, `TargetingController.PICK_PREY_COMMAND`), which is what leaves `quarry` free to mean the
@@ -350,8 +350,8 @@ static func actual_take_of(deposit: Dictionary) -> float:
 static func turns_remaining_of(deposit: Dictionary) -> int:
 	return int(deposit.get("turns_remaining", RUNWAY_NO_TAKE))
 
-## **THE STANDING BILL — the patch / herd / road quad, verbatim**, drawn from the band's `quarrywork`
-## pool. `0` on both free floors, which declare no upkeep at all: nobody built them, so there is
+## **THE STANDING BILL — the patch / herd / road quad, verbatim**, paid by the working's own crew
+## before it cuts (`docs/plan_site_crews.md`). `0` on both free floors, which declare no upkeep at all: nobody built them, so there is
 ## nothing to hold, and that is the whole of what makes a floor free.
 static func upkeep_demand_of(deposit: Dictionary) -> float:
 	return float(deposit.get("upkeep_demand", 0.0))
@@ -365,7 +365,7 @@ static func upkeep_supplied_of(deposit: Dictionary) -> float:
 static func upkeep_shortfall_of(deposit: Dictionary) -> float:
 	return float(deposit.get("upkeep_shortfall", 0.0))
 
-## The whole `quarrywork` keepers the bill wants — the readout that makes a standing cost legible
+## The whole keepers (of the working's own crew) the bill wants — the readout that makes a standing cost legible
 ## (*"wants 2, you have 0"*). Published, so nothing here divides a demand by a rate.
 static func upkeep_workers_needed_of(deposit: Dictionary) -> int:
 	return int(deposit.get("upkeep_workers_needed", 0))
@@ -419,7 +419,7 @@ static func queue_position_of(deposit: Dictionary) -> int:
 static func owes_keeping(deposit: Dictionary) -> bool:
 	return upkeep_demand_of(deposit) >= SourceForecast.UPKEEP_WORK_MIN
 
-## Is the `quarrywork` pool failing to cover this working? — **the sim's own shortfall and no
+## Is the working's own crew failing to cover its keeping? — **the sim's own shortfall and no
 ## subtraction here.**
 static func is_short(deposit: Dictionary) -> bool:
 	return upkeep_shortfall_of(deposit) >= SourceForecast.UPKEEP_WORK_MIN
@@ -446,7 +446,7 @@ static func is_at_risk(deposit: Dictionary) -> bool:
 ## whole fingerprint of `DepositSource::opening`, every term of which a live working moves the moment
 ## anybody does anything to it:
 ##
-## - **it owes no keeping** — every rung above a free floor bills `quarrywork` every turn;
+## - **it owes no keeping** — every rung above a free floor bills its keeping every turn;
 ## - **nothing is banked on its ladder** — raising a rung moves `ladder_position` and cutting cannot;
 ## - **its seam is FULL** — a crew that has taken anything leaves `stock` below `capacity` until the
 ##   ground has grown every unit of it back;
@@ -1300,9 +1300,8 @@ const DEPOSIT_UPKEEP_TIP_FORMAT := "Holding it: %s"
 ##
 ## ⛔ **A CREW OF ZERO IS NOT AN ABSENCE OF NEWS, AND THAT IS THE WHOLE OF THIS LINE** (issue #650). A
 ## working raised above its free floor is a HOLDING, so pulling the cutters off is *"stop cutting"* and
-## never *"this band has nothing here"*: the row stays, the bill stays, and under the shipped funding
-## rule that bill comes out of the same `quarrywork` pool the workings the band still wants are held
-## out of. **A working walked away from degrades a working that was not.** Composed only where the
+## never *"this band has nothing here"*: the row stays, the bill stays, and with nobody cutting it
+## nobody keeps it, so the rung slides back toward its free floor. Composed only where the
 ## working actually owes a bill — on either free floor there is nothing to spend and nothing to say.
 ##
 ## `cutters` is `CUTTERS_UNSTATED` for a caller with no band in hand; see `deposit_row_value`.
