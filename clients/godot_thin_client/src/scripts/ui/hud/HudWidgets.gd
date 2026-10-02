@@ -1837,6 +1837,10 @@ const VERDICT_DOT_FONT_SIZE := 9
 ## the sentence the whole redesign exists to make sayable: the four-stance picker let a player select
 ## Eradicate with one worker and never eradicate anything, because nothing compared the intent with
 ## the hands. `verdict` is `SourceForecast.harvest_verdict`'s `{severity, text}`.
+## The compose sheet's rot bullet (#706) carries this meta with its own text, so a harness reads what
+## was drawn under the PER TURN numbers.
+const WORK_PARTY_ROT_META := &"work_party_rot"
+
 static func build_verdict_line(verdict: Dictionary) -> HBoxContainer:
     var severity := String(verdict.get("severity", SourceForecast.VERDICT_OK))
     var tint: Color = VERDICT_SEVERITY_COLORS.get(severity, HudStyle.INK_DIM)

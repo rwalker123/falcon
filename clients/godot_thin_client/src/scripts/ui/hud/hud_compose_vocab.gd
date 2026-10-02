@@ -2104,16 +2104,18 @@ const YIELD_HEADER_ONCE_RUNNING := "once running · per turn"
 #
 # ⛔ **IT IS A STANDING ASSIGNMENT, NOT A TRIP, AND THE COPY IS WRITTEN IN THAT REGISTER.** No *this
 # trip*, no *away N turns*, no *Send Anyway*, no one-shot totals: the party walks out once and then
-# the source is worked every turn, with one hunter at a time walking a full pack home and back. Each
-# line states one fact the player cannot read anywhere else on the sheet, and none argues.
+# the source is worked every turn, with one hunter at a time walking a full pack home and back. The
+# section is ONE line and states only what the sheet says nowhere else: distance and the first load.
 
 ## The section's header, in the allocation panel's dim uppercase section treatment.
 const WORK_PARTY_SECTION_LABEL := "Work party"
 
-## **THE WALK** — one-way tiles, then the turns out and the turns back. The two `%s` are the counted
-## phrases below, so the singular forks with the number rather than with the sentence; the trailing
-## `%d` is the same count again, unitless, because the unit has just been said.
-const WORK_PARTY_WALK_FORMAT := "Walks %s each way — %s out, %d back"
+## **THE WHOLE SECTION IS ONE LINE**: how far the source is, and — once the forecast lands a load —
+## when the first one gets home. `6 tiles away · first load home in 20 turns`; just `6 tiles away` when
+## no load lands soon. The walk's turns, the road and the rot are said nowhere here: the walk is the
+## tile count, and a load that rots is the PER TURN box's amber bullet (`_with_home_rate`).
+const WORK_PARTY_AWAY_FORMAT := "%s away"
+const WORK_PARTY_FIRST_LOAD_CLAUSE_FORMAT := " · first load home in %s"
 
 ## A posting whose whole run is covered by road walks nowhere: every pack lands the turn it fills.
 const WORK_PARTY_NO_WALK := "A road covers the walk — each load lands home the turn it fills"
@@ -2124,57 +2126,6 @@ const WORK_PARTY_TILES_ONE := "1 tile"
 const WORK_PARTY_TURNS_FORMAT := "%d turns"
 const WORK_PARTY_TURNS_ONE := "1 turn"
 const WORK_PARTY_COUNT_SINGULAR := 1
-
-## **HOW MANY ARE ON THE ROAD AT A TIME** — the reply's MEAN over the forecast horizon, rounded to a
-## whole person. The live figure on the assigned row moves turn to turn; this is its average, which
-## is why the sentence says *about*.
-const WORK_PARTY_ON_ROAD_FORMAT := "About %d %s on the road at a time"
-
-## …and the singular noun, keyed by the crew label the sheet has ALREADY resolved — the
-## `HUNT_NOOP_HINTS` idiom, so the stepper's noun and this sentence's cannot disagree.
-const WORK_PARTY_CREW_SINGULAR := {
-    HUNT_CREW_LABEL: "hunter",
-    HERD_CREW_LABEL: "herder",
-    HARVEST_CREW_LABEL: "harvester",
-    HudDepositVocab.FORESTRY_CREW_NOUN: "forester",
-    HudDepositVocab.EXTRACTION_CREW_NOUN: "digger",
-}
-
-## Where the mean rounds below one person the packs fill slowly enough that the road is usually empty,
-## and `About 0 hunters` would read as a promise that nobody ever walks.
-const WORK_PARTY_ON_ROAD_RARELY := "Rarely anyone on the road"
-
-## Half a person — the cut at which the mean rounds to one rather than to none.
-const WORK_PARTY_ON_ROAD_ROUNDS_TO_ONE := 0.5
-
-## **WHEN THE FIRST LOAD LANDS** — the reply's 1-based turn.
-const WORK_PARTY_FIRST_LOAD_FORMAT := "First load home in %s"
-
-## **NO LOAD LANDS SOON** — `first_load_turn` `0` on the reply: the take is too thin to fill a pack
-## soon. Stated rather than dropped, because it is the answer that most changes whether this posting
-## is worth making, and stated as its CAUSE — never *within the forecast*, which is the tool talking.
-##
-## **ONE PER WEB, IN THAT WEB'S VERB** — a hunt catches, a gather gathers, a working is cut — picked
-## at the mount off the section's `source_kind`, so a forage party never reads as though it hunted.
-## `cut` serves both deposit branches: a forester cuts timber and a digger cuts stone.
-const WORK_PARTY_SLOW_FILL_HUNT := "Their catch builds up too slowly to fill a pack soon"
-const WORK_PARTY_SLOW_FILL_FORAGE := "What they gather builds up too slowly to fill a pack soon"
-const WORK_PARTY_SLOW_FILL_EXTRACT := "What they cut builds up too slowly to fill a pack soon"
-
-## **THE TAKE SPOILS ON THE WALK HOME** (#706) — the reply's `spoiled_rate_home` > 0: food whose
-## keeping class's shelf life (`transit_keeps_turns`) is shorter than the walk home rots before its
-## pack lands. The headline rate is already NET of it; this says what is lost, and why. TWO REGISTERS:
-##   • **everything rots** (`rate_home` rounds to nothing) — the posting brings home NOTHING, so the
-##     line names the remedy in the section's own verb (`…_REMEDY_HUNT` / `_FORAGE`).
-##     Args: `[keeps phrase, walk phrase, remedy]`.
-##   • **some rots** — the loss per turn beside the two numbers that cause it.
-##     Args: `[magnitude, keeps phrase, walk phrase]`.
-## The wire names no keeping class, so the food is named generically — never a class the client
-## would have to invent.
-const WORK_PARTY_ALL_SPOILS_FORMAT := "Food keeps %s; this walk is %s — every pack rots before it gets home. %s"
-const WORK_PARTY_SPOILS_FORMAT := "Loses %s food a turn to spoilage on the walk home (keeps %s, walk is %s)"
-const WORK_PARTY_SPOILS_REMEDY_HUNT := "Hunt closer."
-const WORK_PARTY_SPOILS_REMEDY_FORAGE := "Gather closer."
 
 ## While the answer is in flight — the raid readout's own treatment.
 const WORK_PARTY_PENDING := "Costing the work party…"

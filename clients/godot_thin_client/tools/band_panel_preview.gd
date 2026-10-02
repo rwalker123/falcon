@@ -25713,7 +25713,6 @@ func _render_work_crew_split_states() -> void:
 ## The running posting's walk loses this much food a turn to rot — its meat keeps fewer turns than
 ## its 8-tile walk takes — and the row's rate is already net of it.
 const SPOIL_RATE_HOME := 0.35
-const SPOIL_KEEPS_TURNS := 4.0
 ## The pelt posting's three hands, stood down: they walk home carrying its load, part of which rots.
 const HOMEWARD_WORKERS := PARTY_PELT_WORKERS
 const HOMEWARD_FOOD := 2.4
@@ -25733,7 +25732,6 @@ func _work_party_spoil_band_fixture() -> Dictionary:
 			continue
 		if String(row.get("fauna_id", "")) == PARTY_FAR_HERD_ID:
 			row[SourceForecast.ASSIGNMENT_SPOILED_RATE_HOME_KEY] = SPOIL_RATE_HOME
-			row[SourceForecast.ASSIGNMENT_TRANSIT_KEEPS_TURNS_KEY] = SPOIL_KEEPS_TURNS
 		rows.append(row)
 	band["labor_assignments"] = rows
 	band["idle_workers"] = 0
@@ -25760,9 +25758,8 @@ func _render_work_party_spoil_states() -> void:
 	_assert_zone_content_fits()
 	var far_row := _work_row_for_herd(PARTY_FAR_HERD_ID)
 	var far := _work_party_lines(far_row)
-	var want_spoil := HudWorkVocab.WORK_ROW_PARTY_SPOILS_FORMAT % [
-		SourceForecast.format_magnitude(SPOIL_RATE_HOME),
-		HudWorkVocab.keeps_turns_phrase(SPOIL_KEEPS_TURNS)]
+	var want_spoil := HudWorkVocab.WORK_ROW_PARTY_SPOILS_LEAD \
+		+ HudWorkVocab.ROT_RATE_FORMAT % SourceForecast.format_magnitude(SPOIL_RATE_HOME)
 	_assert_band_panel("band_panel_work_party_spoils: a far row whose walk rots states the loss last (%s)"
 			% str(far),
 		far.size() == 3 and far[2] == want_spoil)

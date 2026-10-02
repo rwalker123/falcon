@@ -8577,10 +8577,16 @@ take selection.
 
 ```text
 WORK PARTY
-Walks 6 tiles each way — 6 turns out, 6 back
-About 1 hunter on the road at a time
-First load home in 19 turns
+6 tiles away · first load home in 19 turns
 ```
+
+**THE SECTION IS ONE LINE** (`work_party_section_lines(answer)`, `HudComposeVocab.
+WORK_PARTY_AWAY_FORMAT` + `WORK_PARTY_FIRST_LOAD_CLAUSE_FORMAT`): the one-way distance in tiles and,
+once the forecast lands a load (`first_load_turn > 0`), when the first gets home; with no first load it
+is `6 tiles away` alone. A road covering the whole run reads `WORK_PARTY_NO_WALK` instead. The walk's
+turns, the on-the-road count and the slow-fill line are not stated — the sheet shows the distance and
+the first load, and the PER TURN box shows what arrives. It is the same line on a hunt, a forage and a
+far working's sheet.
 
 ⛔ **THE SECTION CARRIES NO FOOD ACCOUNT OF THE PARTY'S OWN.** The home band feeds its party through
 its ordinary consumption, nothing is eaten at the source, and the whole take walks home
@@ -8588,43 +8594,30 @@ its ordinary consumption, nothing is eaten at the source, and the whole take wal
 line, its eats-everything reasons and its `[text, is_shortfall]` pairs went with it:
 `work_party_section_lines` returns plain strings, and no line is a warning.
 
-**THE WALK HOME CAN ROT THE TAKE (#706), and the section says so right under the walk line.** The
-reply's `rate_home` is NET of transit rot; `spoiled_rate_home` is the per-turn food lost on the walk
-and `transit_keeps_turns` the shortest shelf life that loses it (both `0` when nothing rots, and on a
-deposit — a material keeps). The line renders only when `spoiled_rate_home` clears
-`SourceForecast.has_component`, in one of two registers (`HudComposeVocab.WORK_PARTY_*SPOILS*`):
+**THE WALK HOME CAN ROT THE TAKE (#706), and the PER TURN box says so as an amber bullet directly
+under its numbers.** The reply's `rate_home` is NET of transit rot and `spoiled_rate_home` is the
+per-turn food lost on the walk (`0` when nothing rots, and on a deposit — a material keeps).
+`_with_home_rate` stores `HudWorkVocab.rot_line(spoiled, rate_home)` on the model (`YIELD_MODEL_ROT`)
+and `_fill_yields_host` mounts it through `HudWidgets.build_verdict_line` at `VERDICT_SLOW` (amber),
+tagged `HudWidgets.WORK_PARTY_ROT_META`. Two registers, present only when `spoiled_rate_home` clears
+`SourceForecast.has_component`:
 
-- **Everything rots** (`rate_home` rounds to nothing): `Food keeps 4 turns; this walk is 6 turns —
-  every pack rots before it gets home. Hunt closer.` — the remedy in the web's own verb
-  (`…_REMEDY_HUNT` / `_FORAGE`).
-- **Some rots**: `Loses 0.05 food a turn to spoilage on the walk home (keeps 4 turns, walk is 6
-  turns)`.
+- **Everything rots** (`rate_home` rounds to nothing): `Every pack rots before it gets home`.
+- **Some rots**: `0.05 food a turn rots on the way home`.
 
-The walk is the reply's `walk_turns`. **The food is named generically** — the wire carries no keeping
-class, so the line never names one. The shelf life prints through `HudWorkVocab.keeps_turns_phrase`
-(a whole number bare, `1 turn` singular). `ui_preview`'s `herd_hunt_far_party_spoils` renders the
-everything-rots register; the partial one is asserted PNG-less through the same producer.
+The food is named generically — the wire carries no keeping class. `transit_keeps_turns` is decoded
+but no client surface reads it. `ui_preview`'s `herd_hunt_far_party_spoils` renders the
+everything-rots register on a hunt; `food_forage_far_party` renders the partial one on a forage sheet.
 
 - ⛔ **IT IS A STANDING ASSIGNMENT, NOT A TRIP, and the copy is in that register.** No *this trip*, no
   *away N turns*, no *Send Anyway*, no one-shot totals — the party walks out once and the source is
   then worked every turn, one hunter at a time walking a full pack home and back. Asserted, not just
-  written: the far-herd frame refuses `trip` / `away` / `Send` anywhere in the section.
-- **Each line states one fact the sheet has nowhere else, and none argues** — this file's rule for a
-  limit line. The walk; the road; the first load. **There is no rate line**: the rate home is the
-  sheet's PER TURN headline (below), and a section restating it would say one number twice.
-- ⛔ **NO LOAD LANDING SOON IS STATED AS ITS CAUSE, IN THE WEB'S OWN VERB — never *the forecast*.**
-  `first_load_turn` 0 is a take too thin to fill a pack soon: a hunt reads `Their catch builds up too
-  slowly to fill a pack soon`, a forage party `What they gather builds up too slowly to fill a pack
-  soon` (`WORK_PARTY_SLOW_FILL_HUNT` / `_FORAGE`, picked off the `source_kind` the mount is handed).
-  The retired `No load reaches home within the forecast` was the tool talking. The line is stated
-  rather than dropped, being the answer that most changes whether the posting is worth making.
-- **The edges are English.** `1 tile` / `1 turn` fork on the number (`WORK_PARTY_COUNT_SINGULAR`); a
-  road covering the whole run reads `A road covers the walk — each load lands home the turn it fills`
-  rather than a `0-tile` walk; and a mean road below half a person reads `Rarely anyone on the road`
-  rather than `About 0 hunters`. The on-the-road count is the reply's MEAN, rounded, which is why it
-  says *about*.
-- **The crew noun is the sheet's own resolved label** (`Hunters` / `Herders` / `Harvesters`), with its
-  singular off `WORK_PARTY_CREW_SINGULAR`, keyed by that label the `HUNT_NOOP_HINTS` way.
+  written: the far-herd frame refuses `trip` / `turns away` / `Send` anywhere in the section.
+- **There is no rate line**: the rate home is the sheet's PER TURN headline (below), and a section
+  restating it would say one number twice.
+- **The edges are English.** `1 tile` / `1 turn` fork on the number (`WORK_PARTY_COUNT_SINGULAR`), and
+  a road covering the whole run reads `A road covers the walk — each load lands home the turn it fills`
+  rather than a `0`-tile distance.
 - **`posts_a_party: false` renders NOTHING**, even on a source the client measured past the apron — the
   sim's answer outranks the client's geometry. A crew of 0 is `invalid_crew` server-side and is never
   asked; the unassign / no-op commit already says what happens.

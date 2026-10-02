@@ -554,10 +554,9 @@ deposit sheet reuses the forage and hunt sheets' four functions rather than a co
   carry — the dial where one was offered, `FLOOR_MIN` (strip it bare, the sim's reading of an unnamed
   floor on ground that never renews) where none was. `unknown_deposit` comes back through the ordinary
   `error` field and renders as `FORECAST_FAILED_FORMAT`, exactly as `unknown_patch` does.
-- **`_mount_work_party_section`** draws the walk, the road and the first load under the kit row, in
-  the branch's crew noun (`HudComposeVocab.WORK_PARTY_CREW_SINGULAR` carries `forester` / `digger`,
-  keyed by `HudDepositVocab.FORESTRY_CREW_NOUN` / `EXTRACTION_CREW_NOUN`). The slow-fill line is
-  `WORK_PARTY_SLOW_FILL_EXTRACT`, in the web's own verb (*what they cut*).
+- **`_mount_work_party_section`** draws the hunt and forage sheets' one line under the kit row —
+  `50 tiles away · first load home in 58 turns` (`labor-ui.md` → the work party section). A material
+  keeps, so a working's PER TURN box never carries the rot bullet.
 - **`_with_home_rate(model, party_view, material)`** substitutes the reply's `rate_home` into the
   working's MATERIAL row — `rate_home` is in material units on an extract ask — so the headline reads
   `1.40 WOOD` under `ONCE RUNNING · PER TURN`, never food. The substitution is the forage sheet's

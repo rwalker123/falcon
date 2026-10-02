@@ -1239,32 +1239,28 @@ const WORK_ROW_PARTY_NEXT_LOAD_FORMAT := "Next load home in %d turns"
 ## …and its singular, for the walk-out line's reason.
 const WORK_ROW_PARTY_NEXT_LOAD_ONE_FORMAT := "Next load home in 1 turn"
 
-## **WHAT THE WALK HOME LOSES TO ROT** (#706, `spoiledRateHome` / `transitKeepsTurns`) — food whose
-## keeping class's shelf life is shorter than the walk rots before its pack lands. The row's rate is
-## already NET of it; this line says what was lost and why, in the amber the Food line's `Spoiled` row
-## wears, keyed by `WORK_ROW_PARTY_SPOILS_LEAD` so the row's line builder can tint it. Present only
-## when the rate is non-zero. Args: `[magnitude, keeps phrase]`.
+## **WHAT THE WALK HOME LOSES TO ROT** (#706) — food whose keeping class's shelf life is shorter than
+## the walk rots before its pack lands. ONE sentence for both surfaces that state it: the compose
+## sheet's PER TURN box (an amber bullet under the numbers) and a committed far row's party block.
+## Two registers off the same pair — everything rots (the rate home rounds to nothing), or part does.
+## Present only when the lost rate clears `SourceForecast.has_component`.
+const ROT_ALL_TEXT := "Every pack rots before it gets home"
+const ROT_RATE_FORMAT := "%s food a turn rots on the way home"
+## The row's rate line is signed, so the row states the loss as a debit; the sheet's bullet does not.
 const WORK_ROW_PARTY_SPOILS_LEAD := "−"
-const WORK_ROW_PARTY_SPOILS_FORMAT := WORK_ROW_PARTY_SPOILS_LEAD \
-    + "%s food a turn spoils on the walk home (keeps %s)"
 
-## The shelf life's counted phrase. It is a float on the wire: a whole number prints bare and anything
-## else to `KEEPS_TURNS_DECIMALS`, so `4 turns` and `2.5 turns` both read naturally.
-const KEEPS_TURNS_FORMAT := "%s turns"
-const KEEPS_TURNS_ONE := "1 turn"
-const KEEPS_TURNS_DECIMALS := 1
+## The rot sentence for a rate home and the rate lost on the walk, or `""` when nothing rots.
+## `lead` prefixes the partial register's figure (`WORK_ROW_PARTY_SPOILS_LEAD` on the row).
+static func rot_line(spoiled: float, rate_home: float, lead: String = "") -> String:
+    if not SourceForecast.has_component(spoiled):
+        return ""
+    if not SourceForecast.has_component(rate_home):
+        return ROT_ALL_TEXT
+    return lead + ROT_RATE_FORMAT % SourceForecast.format_magnitude(spoiled)
 
-## A shelf life as its counted phrase, singular at one.
-static func keeps_turns_phrase(keeps: float) -> String:
-    var whole := roundi(keeps)
-    var text := str(whole) if is_equal_approx(keeps, float(whole)) \
-        else String.num(keeps, KEEPS_TURNS_DECIMALS)
-    return KEEPS_TURNS_ONE if text == str(WORK_ROW_PARTY_TURNS_SINGULAR) \
-        else KEEPS_TURNS_FORMAT % text
-
-## Is this party line the spoil line? The one test the row's builder tints by.
+## Is this party line the rot line? The one test the row's builder tints by.
 static func is_party_spoils_line(text: String) -> bool:
-    return text.begins_with(WORK_ROW_PARTY_SPOILS_LEAD)
+    return text == ROT_ALL_TEXT or text.begins_with(WORK_ROW_PARTY_SPOILS_LEAD)
 
 ## The count at which both singular forks are taken. Its own const rather than a bare `1`, and
 ## deliberately NOT a read of `DetailFormat.BUILD_TURNS_SINGULAR`: a vocab leaf reaching for a
@@ -1314,11 +1310,11 @@ static func party_block_lines(party: Dictionary, crew_noun: String,
         lines.append(WORK_ROW_PARTY_NEXT_LOAD_ONE_FORMAT)
     elif next_load > 0:
         lines.append(WORK_ROW_PARTY_NEXT_LOAD_FORMAT % next_load)
-    var spoiled := float(party.get(SourceForecast.ASSIGNMENT_SPOILED_RATE_HOME_KEY, 0.0))
-    if SourceForecast.has_component(spoiled):
-        lines.append(WORK_ROW_PARTY_SPOILS_FORMAT % [SourceForecast.format_magnitude(spoiled),
-            keeps_turns_phrase(float(party.get(
-                SourceForecast.ASSIGNMENT_TRANSIT_KEEPS_TURNS_KEY, 0.0)))])
+    var rot := rot_line(float(party.get(SourceForecast.ASSIGNMENT_SPOILED_RATE_HOME_KEY, 0.0)),
+        float(party.get(SourceForecast.ASSIGNMENT_NET_RATE_HOME_KEY, 0.0)),
+        WORK_ROW_PARTY_SPOILS_LEAD)
+    if rot != "":
+        lines.append(rot)
     return lines
 
 ## ⛔ **THE ROW'S GEAR MARK — A MARK OF ITS OWN, NOT A SECOND ⚠.** A row short of GEAR and a row

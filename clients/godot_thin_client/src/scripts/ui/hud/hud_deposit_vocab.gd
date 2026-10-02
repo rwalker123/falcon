@@ -1392,10 +1392,6 @@ const BRANCH_EXTRACTION := "extraction"
 
 ## The crew each branch staffs, and the verb its commit button carries. Two tables rather than one
 ## keyed record, the `IMPROVEMENT_*_LABELS` idiom: each answers one question and a caller reads one.
-##
-## The two nouns are named consts as well as table values because `HudComposeVocab.
-## WORK_PARTY_CREW_SINGULAR` keys its singulars by the resolved crew label, and a far working's party
-## section counts foresters and diggers in the same sentence a hunt party counts hunters.
 const FORESTRY_CREW_NOUN := "Foresters"
 const EXTRACTION_CREW_NOUN := "Diggers"
 const BRANCH_CREW_NOUNS := {

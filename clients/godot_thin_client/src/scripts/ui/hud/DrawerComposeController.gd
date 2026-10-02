@@ -1175,6 +1175,9 @@ const YIELD_MODEL_RENEWS := "renews"
 ## rate home, so the caption can say
 ## so (`HudComposeVocab.YIELD_HEADER_ONCE_RUNNING`) instead of `next turn`. Absent everywhere else.
 const YIELD_MODEL_HOME_RATE := "home_rate"
+## Set by `_with_home_rate` alongside it: the caravan's rot sentence (`HudWorkVocab.rot_line`), or
+## `""`. Rendered as an amber verdict-style bullet directly under the PER TURN numbers.
+const YIELD_MODEL_ROT := "rot"
 
 # ---- WHAT `_hunt_delivered_and_waste` ANSWERS BESIDE THE DELIVERED BIOMASS ----------------------
 ## **THE REPLY HAS NOT LANDED**, told apart from an unavailable take so the caller can state nothing
@@ -2957,6 +2960,12 @@ func _fill_yields_host(host: Container, model: Dictionary, labor_kind: String) -
         # figure is the caravan forecast's mean, not a point of the curve's band.
         HudComposeVocab.YIELD_HEADER_ONCE_RUNNING if home_rate else "",
         HudComposeVocab.YIELD_HEADER_AT_LIKELY_SUFFIX if at_likely and not home_rate else ""))
+    var rot := String(model.get(YIELD_MODEL_ROT, ""))
+    if rot != "":
+        var rot_row := HudWidgets.build_verdict_line({"severity": SourceForecast.VERDICT_SLOW,
+            "text": rot})
+        rot_row.set_meta(HudWidgets.WORK_PARTY_ROT_META, rot)
+        host.add_child(rot_row)
 
 
 ## The herd "Assign hunters" controls (compose a count + policy, then Assign). Shown
@@ -3312,8 +3321,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     if past_apron:
         party_view = _work_party_view(band, ForecastQuery.WORK_PARTY_SOURCE_HUNT, herd_id,
             herd_x, herd_y, [], kit_id, _compose.hunt_count(), _compose.hunt_floor())
-        _mount_work_party_section(target, crew_label, ForecastQuery.WORK_PARTY_SOURCE_HUNT,
-            party_view)
+        _mount_work_party_section(target, party_view)
     # WOULD THIS SUBMIT CHANGE ANYTHING? — the forage sheet's rule, on the hunt web, because
     # `workers == 0` means the SAME two different things here (the sim's `assign_labor` skips validation
     # entirely at 0, so the unassign is always legal). `current` is the pending-aware standing crew on
@@ -4107,8 +4115,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     if _is_past_apron(band, x, y):
         party_view = _work_party_view(band, ForecastQuery.WORK_PARTY_SOURCE_FORAGE, "", x, y,
             take_selection, forage_kit_id, _compose.forage_count(), _compose.forage_floor())
-        _mount_work_party_section(target, crew_label, ForecastQuery.WORK_PARTY_SOURCE_FORAGE,
-            party_view)
+        _mount_work_party_section(target, party_view)
     # WOULD THIS SUBMIT CHANGE ANYTHING? `current` is the pending-aware standing staffing on this tile
     # for THIS band, so the two zero-worker cases are DIFFERENT SUBMITS, and the block below —
     # forecast line and button TOGETHER — has to read coherently for each:
@@ -4302,12 +4309,9 @@ func _work_party_view(band: Dictionary, source_kind: String, herd_id: String, x:
 ## subjects and neither reads the other's reply.
 const WORK_PARTY_DEPOSIT_KEY_FORMAT := "%s:%s"
 
-## **THE WORK PARTY'S SECTION** — what distance costs this crew, as an ONGOING assignment: the walk,
-## how many are on the road at a time, what arrives home once it is running, and when the first load
-## lands. Every figure is the reply's; nothing is re-derived here.
-##
-## `crew_label` is the sheet's own resolved noun (`Hunters` / `Herders` / `Harvesters`), so the
-## on-the-road sentence counts the same people the stepper above does.
+## **THE WORK PARTY'S SECTION** — ONE line: how far the source is and when the first load gets home
+## (`work_party_section_lines`). What arrives per turn is the PER TURN box's headline, and what rots
+## on the walk is that box's amber bullet. Every figure is the reply's; nothing is re-derived here.
 ##
 ## **IT RENDERS NOTHING WHERE THE SIM SAYS THERE IS NO PARTY** (`posts_a_party: false`) even though
 ## the client measured this source past the apron — the sim's answer outranks the client's geometry.
@@ -4315,8 +4319,7 @@ const WORK_PARTY_DEPOSIT_KEY_FORMAT := "%s:%s"
 ##
 ## It carries `HudWidgets.WORK_PARTY_SECTION_META` on its host, and each line
 ## `HudWidgets.WORK_PARTY_LINE_META` with its own text, so a harness reads what was drawn.
-func _mount_work_party_section(target: VBoxContainer, crew_label: String, source_kind: String,
-        view: Dictionary) -> void:
+func _mount_work_party_section(target: VBoxContainer, view: Dictionary) -> void:
     if view.is_empty():
         return
     var state := String(view.get("state", ForecastQuery.STATE_PENDING))
@@ -4333,7 +4336,7 @@ func _mount_work_party_section(target: VBoxContainer, crew_label: String, source
     elif state != ForecastQuery.STATE_READY:
         lines.append(HudComposeVocab.FORECAST_FAILED_FORMAT % String(view.get("error", "")))
     else:
-        lines = work_party_section_lines(answer, crew_label, source_kind)
+        lines = work_party_section_lines(answer)
     for text in lines:
         var line := HudWidgets.alloc_hint_label(text)
         line.set_meta(HudWidgets.WORK_PARTY_LINE_META, text)
@@ -4388,76 +4391,26 @@ func _with_home_rate(model: Dictionary, party_view: Dictionary,
     # committed row will never show.
     out[YIELD_MODEL_WASTE] = ""
     out[YIELD_MODEL_HOME_RATE] = true
+    # **AND WHAT THE WALK ROTS, RIGHT UNDER THE NUMBER IT IS ALREADY NET OF** (#706) — the amber
+    # bullet `_fill_yields_host` mounts. `""` when nothing rots.
+    out[YIELD_MODEL_ROT] = HudWorkVocab.rot_line(float(answer.get("spoiled_rate_home", 0.0)),
+        rate_home)
     return out
 
-## The section's lines, as text, off one READY reply — split out so the harness can drive every
-## branch of the copy without a sheet.
-##
-## `source_kind` is the section's web (`ForecastQuery.WORK_PARTY_SOURCE_*`), and picks the slow-fill
-## line's verb.
-static func work_party_section_lines(answer: Dictionary, crew_label: String,
-        source_kind: String) -> Array[String]:
-    var lines: Array[String] = []
+## The section's ONE line, as text, off a READY reply — split out so the harness drives every branch
+## of the copy without a sheet. How far the source is, and when the first load gets home once the
+## forecast lands one; a road covering the run reads the no-walk line instead.
+static func work_party_section_lines(answer: Dictionary) -> Array[String]:
     var walk_tiles := int(answer.get("walk_tiles", 0))
-    var walk_turns := int(answer.get("walk_turns", 0))
     if walk_tiles <= 0:
-        lines.append(HudComposeVocab.WORK_PARTY_NO_WALK)
-    else:
-        lines.append(HudComposeVocab.WORK_PARTY_WALK_FORMAT % [
-            _counted(walk_tiles, HudComposeVocab.WORK_PARTY_TILES_FORMAT,
-                HudComposeVocab.WORK_PARTY_TILES_ONE),
-            _counted(walk_turns, HudComposeVocab.WORK_PARTY_TURNS_FORMAT,
-                HudComposeVocab.WORK_PARTY_TURNS_ONE), walk_turns])
-    # **WHAT THE WALK HOME ROTS** (#706), right under the walk that causes it. `rate_home` is already
-    # net of it; only the loss and its cause are said here.
-    var spoiled := float(answer.get("spoiled_rate_home", 0.0))
-    if SourceForecast.has_component(spoiled):
-        lines.append(_work_party_spoils_line(answer, spoiled, walk_turns, source_kind))
-    var on_road := float(answer.get("hunters_on_the_road", 0.0))
-    if on_road < HudComposeVocab.WORK_PARTY_ON_ROAD_ROUNDS_TO_ONE:
-        lines.append(HudComposeVocab.WORK_PARTY_ON_ROAD_RARELY)
-    else:
-        var people := maxi(roundi(on_road), HudComposeVocab.WORK_PARTY_COUNT_SINGULAR)
-        var noun := String(HudComposeVocab.WORK_PARTY_CREW_SINGULAR.get(crew_label,
-            crew_label.to_lower())) if people == HudComposeVocab.WORK_PARTY_COUNT_SINGULAR \
-            else crew_label.to_lower()
-        lines.append(HudComposeVocab.WORK_PARTY_ON_ROAD_FORMAT % [people, noun])
-    # ⛔ **NO "Brings home X food a turn" LINE.** The rate home IS the sheet's PER TURN headline past
-    # the apron (`_with_home_rate`); a second statement of it here would say one number twice.
+        return [HudComposeVocab.WORK_PARTY_NO_WALK]
+    var line := HudComposeVocab.WORK_PARTY_AWAY_FORMAT % _counted(walk_tiles,
+        HudComposeVocab.WORK_PARTY_TILES_FORMAT, HudComposeVocab.WORK_PARTY_TILES_ONE)
     var first_load := int(answer.get("first_load_turn", 0))
-    if first_load <= 0:
-        lines.append(_work_party_slow_fill(source_kind))
-    else:
-        lines.append(HudComposeVocab.WORK_PARTY_FIRST_LOAD_FORMAT % _counted(first_load,
-            HudComposeVocab.WORK_PARTY_TURNS_FORMAT, HudComposeVocab.WORK_PARTY_TURNS_ONE))
-    return lines
-
-## The spoil line, in its two registers (`HudComposeVocab.WORK_PARTY_*SPOILS*`): where nothing the
-## party carries survives the walk the rate home rounds to nothing and the line names the remedy;
-## otherwise it states the loss per turn beside the shelf life and the walk that cause it.
-static func _work_party_spoils_line(answer: Dictionary, spoiled: float, walk_turns: int,
-        source_kind: String) -> String:
-    var keeps := HudWorkVocab.keeps_turns_phrase(float(answer.get("transit_keeps_turns", 0.0)))
-    var walk := _counted(walk_turns, HudComposeVocab.WORK_PARTY_TURNS_FORMAT,
-        HudComposeVocab.WORK_PARTY_TURNS_ONE)
-    if not SourceForecast.has_component(float(answer.get("rate_home", 0.0))):
-        var remedy := HudComposeVocab.WORK_PARTY_SPOILS_REMEDY_HUNT \
-            if source_kind == ForecastQuery.WORK_PARTY_SOURCE_HUNT \
-            else HudComposeVocab.WORK_PARTY_SPOILS_REMEDY_FORAGE
-        return HudComposeVocab.WORK_PARTY_ALL_SPOILS_FORMAT % [keeps, walk, remedy]
-    return HudComposeVocab.WORK_PARTY_SPOILS_FORMAT % [SourceForecast.format_magnitude(spoiled),
-        keeps, walk]
-
-## The slow-fill line in the section's own web's verb — a hunt catches, a gather gathers, a working is
-## cut. A forage party must never read as though it hunted, nor a digger as though they gathered.
-static func _work_party_slow_fill(source_kind: String) -> String:
-    match source_kind:
-        ForecastQuery.WORK_PARTY_SOURCE_HUNT:
-            return HudComposeVocab.WORK_PARTY_SLOW_FILL_HUNT
-        ForecastQuery.WORK_PARTY_SOURCE_EXTRACT:
-            return HudComposeVocab.WORK_PARTY_SLOW_FILL_EXTRACT
-        _:
-            return HudComposeVocab.WORK_PARTY_SLOW_FILL_FORAGE
+    if first_load > 0:
+        line += HudComposeVocab.WORK_PARTY_FIRST_LOAD_CLAUSE_FORMAT % _counted(first_load,
+            HudComposeVocab.WORK_PARTY_TURNS_FORMAT, HudComposeVocab.WORK_PARTY_TURNS_ONE)
+    return [line]
 
 ## `n` in its counted phrase, singular at one.
 static func _counted(n: int, plural_format: String, singular: String) -> String:
@@ -5910,8 +5863,7 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
         party_view = _work_party_view(band, ForecastQuery.WORK_PARTY_SOURCE_EXTRACT, "",
             tile.x, tile.y, [], kit_id, _compose.deposit_count(),
             named_floor if offers_floor else SourceForecast.FLOOR_MIN, material)
-        _mount_work_party_section(target, crew_label, ForecastQuery.WORK_PARTY_SOURCE_EXTRACT,
-            party_view)
+        _mount_work_party_section(target, party_view)
     # WOULD THIS SUBMIT CHANGE ANYTHING? — the forage sheet's two zero-crew cases, verbatim: `0` on a
     # working this band does not hold is a no-op (dead button), `0` on one it does is the sim's own
     # unassign (live button, renamed).

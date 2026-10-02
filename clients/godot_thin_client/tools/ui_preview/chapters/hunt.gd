@@ -156,7 +156,6 @@ const FAR_PARTY_WALK_TURNS := 6
 ## exercised: `0.8` of the two reads as one hunter. A long round trip on a slow-filling boar hunt keeps
 ## a hunter on the road a good share of the time.
 const FAR_PARTY_ON_ROAD := 0.8
-const FAR_PARTY_ON_ROAD_ROUNDED := 1
 ## What arrives home — the sheet's PER TURN headline past the apron, and the WHOLE take: nothing is
 ## eaten at the source (the band feeds its party through its ordinary consumption), so the steady
 ## rate home is what two hunters take off a slow-breeding boar.
@@ -173,16 +172,12 @@ const SMALL_PARTY_RATE_HOME := 0.17
 const SMALL_PARTY_WALK_TILES := 2
 const SMALL_PARTY_WALK_TURNS := 2
 const SMALL_PARTY_ON_ROAD := 0.6
-const SMALL_PARTY_ON_ROAD_ROUNDED := 1
 const SMALL_PARTY_FIRST_LOAD := 8
 ## **THE WALK ROTS THE WHOLE TAKE (`herd_hunt_far_party_spoils`, #706).** The far boar again, but its
-## meat keeps 4 turns and the walk home is 6, so every pack rots before it lands: the reply's
+## meat keeps fewer turns than the walk home, so every pack rots before it lands: the reply's
 ## `rate_home` is 0 and the whole carried take is `spoiled_rate_home`.
 const SPOIL_ALL_KEEPS_TURNS := 4.0
 const SPOIL_ALL_RATE := 0.08
-## ...and the partial register, PNG-less: 0.05 of a 0.13 carried take rots, the rest lands.
-const SPOIL_SOME_RATE := 0.05
-const SPOIL_SOME_RATE_HOME := 0.08
 ## **THE RETIRED EAT-FIRST RULE'S WORDS** (`.claude/rules/core_sim/work-party.md` → "RETIRED: an
 ## eat-first rule") — each the needle for a line that must not survive ANYWHERE on a far sheet: the
 ## row's `Party ate`, its `Needs … food a turn from home` deficit, the sheet's two eats-everything
@@ -797,16 +792,12 @@ func run(harness) -> void:
 	# right spelling here.
 	var far_lines := Readout.work_party_lines(far_sheet)
 	var want_far := [
-		HudComposeVocab.WORK_PARTY_WALK_FORMAT % [
-			HudComposeVocab.WORK_PARTY_TILES_FORMAT % FAR_PARTY_WALK_TILES,
-			HudComposeVocab.WORK_PARTY_TURNS_FORMAT % FAR_PARTY_WALK_TURNS,
-			FAR_PARTY_WALK_TURNS],
-		HudComposeVocab.WORK_PARTY_ON_ROAD_FORMAT % [FAR_PARTY_ON_ROAD_ROUNDED,
-			HudComposeVocab.WORK_PARTY_CREW_SINGULAR[HudComposeVocab.HUNT_CREW_LABEL]],
-		HudComposeVocab.WORK_PARTY_FIRST_LOAD_FORMAT
+		HudComposeVocab.WORK_PARTY_AWAY_FORMAT
+			% (HudComposeVocab.WORK_PARTY_TILES_FORMAT % FAR_PARTY_WALK_TILES)
+			+ HudComposeVocab.WORK_PARTY_FIRST_LOAD_CLAUSE_FORMAT
 			% (HudComposeVocab.WORK_PARTY_TURNS_FORMAT % FAR_PARTY_FIRST_LOAD),
 	]
-	h._assert_hud("the party section states the walk, the road and the first load — want %s, got %s"
+	h._assert_hud("the party section is ONE line: the distance and the first load — want %s, got %s"
 			% [str(want_far), str(far_lines)],
 		far_lines == want_far)
 	# ⛔ **ONE FOOD NUMBER: THE HEADLINE IS THE RATE ARRIVING HOME** — the `netRateHome` the committed
@@ -837,43 +828,36 @@ func run(harness) -> void:
 			and String(_last_work_party_ask.get("source_kind", "")) \
 				== ForecastQuery.WORK_PARTY_SOURCE_HUNT)
 	# ⛔ **THE REGISTER IS A STANDING ASSIGNMENT.** None of the lines may speak of a trip.
-	h._assert_hud("…and in a standing assignment's register — no trip, no away, no Send",
+	h._assert_hud("…and in a standing assignment's register — no trip, no turns away, no Send",
 		not str(far_lines).to_lower().contains("trip")
-			and not str(far_lines).to_lower().contains("away")
+			and not str(far_lines).to_lower().contains("turns away")
 			and not str(far_lines).contains("Send"))
+	h._assert_hud("…and a walk nothing rots on draws no rot bullet",
+		Readout.work_party_rot(far_sheet)[0] == "")
 	# ⛔ **NO FOOD ACCOUNT OF THE PARTY'S OWN, ANYWHERE ON THE SHEET** — the retired eat-first rule's
 	# lines, searched over every label, not just the section.
 	h._assert_hud("…and no retired eating line survives anywhere on the sheet — found %s"
 			% str(_retired_eating_text(far_sheet)),
 		_retired_eating_text(far_sheet).is_empty())
 	# **THE BRANCHES OF THE COPY THE FRAME CANNOT REACH**, driven through the one producer: a road
-	# covering the run, a road that is rarely walked, a first load at one turn, and none within the
-	# horizon. Each is the sentence the section renders for that reply, and each was a separate way
-	# to write a line that lies (`in 1 turns`, `About 0 hunters`, a walk of `0 tiles`).
+	# covering the run, a one-tile walk with a first load at one turn, and no first load at all.
 	var road_lines := DrawerComposeController.work_party_section_lines({
 		"posts_a_party": true, "walk_tiles": 0, "walk_turns": 0,
-		"hunters_on_the_road": 0.2, "rate_home": FAR_PARTY_RATE_HOME, "first_load_turn": 1},
-		HudComposeVocab.HUNT_CREW_LABEL, ForecastQuery.WORK_PARTY_SOURCE_HUNT)
-	h._assert_hud("a road covering the run states no walk, and the rest of the copy's edges hold — got %s"
-			% str(road_lines),
-		road_lines == [HudComposeVocab.WORK_PARTY_NO_WALK, HudComposeVocab.WORK_PARTY_ON_ROAD_RARELY,
-			HudComposeVocab.WORK_PARTY_FIRST_LOAD_FORMAT % HudComposeVocab.WORK_PARTY_TURNS_ONE])
-	var never_lines := DrawerComposeController.work_party_section_lines({
+		"hunters_on_the_road": 0.2, "rate_home": FAR_PARTY_RATE_HOME, "first_load_turn": 1})
+	h._assert_hud("a road covering the run states the no-walk line alone — got %s" % str(road_lines),
+		road_lines == [HudComposeVocab.WORK_PARTY_NO_WALK])
+	var one_lines := DrawerComposeController.work_party_section_lines({
 		"posts_a_party": true, "walk_tiles": 1, "walk_turns": 1,
-		"hunters_on_the_road": 2.4, "rate_home": 0.0, "first_load_turn": 0},
-		HudComposeVocab.HUNT_CREW_LABEL, ForecastQuery.WORK_PARTY_SOURCE_HUNT)
-	# No first load is a take too thin to fill a pack soon — the slow-fill reason in the HUNT's verb,
-	# never the developer's *within the forecast*. The verb is pinned by its WORD, not only by the
-	# constant: an equality against `WORK_PARTY_SLOW_FILL_HUNT` alone is satisfied by a swapped pair.
-	h._assert_hud("…and a one-tile walk, a plural road and a slow fill read as English, in the hunt verb — got %s"
-			% str(never_lines),
-		never_lines == [
-			HudComposeVocab.WORK_PARTY_WALK_FORMAT % [
-				HudComposeVocab.WORK_PARTY_TILES_ONE, HudComposeVocab.WORK_PARTY_TURNS_ONE, 1],
-			HudComposeVocab.WORK_PARTY_ON_ROAD_FORMAT % [2, "hunters"],
-			HudComposeVocab.WORK_PARTY_SLOW_FILL_HUNT]
-			and str(never_lines).contains("catch") and not str(never_lines).contains("gather")
-			and not str(never_lines).to_lower().contains("forecast"))
+		"hunters_on_the_road": 2.4, "rate_home": FAR_PARTY_RATE_HOME, "first_load_turn": 1})
+	h._assert_hud("…a one-tile walk and a one-turn first load read as English — got %s" % str(one_lines),
+		one_lines == [HudComposeVocab.WORK_PARTY_AWAY_FORMAT % HudComposeVocab.WORK_PARTY_TILES_ONE
+			+ HudComposeVocab.WORK_PARTY_FIRST_LOAD_CLAUSE_FORMAT % HudComposeVocab.WORK_PARTY_TURNS_ONE])
+	var never_lines := DrawerComposeController.work_party_section_lines({
+		"posts_a_party": true, "walk_tiles": FAR_PARTY_WALK_TILES, "walk_turns": FAR_PARTY_WALK_TURNS,
+		"hunters_on_the_road": 2.4, "rate_home": 0.0, "first_load_turn": 0})
+	h._assert_hud("…and with no first load the line is the distance alone — got %s" % str(never_lines),
+		never_lines == [HudComposeVocab.WORK_PARTY_AWAY_FORMAT
+			% (HudComposeVocab.WORK_PARTY_TILES_FORMAT % FAR_PARTY_WALK_TILES)])
 	# **WHERE THE SIM SAYS THERE IS NO PARTY, THERE IS NO SECTION** — even on a source the client
 	# measured past the apron. `herd_hunt_band_far` below is a far band with an unauthored reply
 	# (`posts_a_party: false`) and carries that claim; this one is its liveness companion.
@@ -893,16 +877,12 @@ func run(harness) -> void:
 	var small_sheet: Control = h._hud._drawercompose._compose_sheet
 	var small_lines := Readout.work_party_lines(small_sheet)
 	var want_small := [
-		HudComposeVocab.WORK_PARTY_WALK_FORMAT % [
-			HudComposeVocab.WORK_PARTY_TILES_FORMAT % SMALL_PARTY_WALK_TILES,
-			HudComposeVocab.WORK_PARTY_TURNS_FORMAT % SMALL_PARTY_WALK_TURNS,
-			SMALL_PARTY_WALK_TURNS],
-		HudComposeVocab.WORK_PARTY_ON_ROAD_FORMAT % [SMALL_PARTY_ON_ROAD_ROUNDED,
-			HudComposeVocab.WORK_PARTY_CREW_SINGULAR[HudComposeVocab.HUNT_CREW_LABEL]],
-		HudComposeVocab.WORK_PARTY_FIRST_LOAD_FORMAT
+		HudComposeVocab.WORK_PARTY_AWAY_FORMAT
+			% (HudComposeVocab.WORK_PARTY_TILES_FORMAT % SMALL_PARTY_WALK_TILES)
+			+ HudComposeVocab.WORK_PARTY_FIRST_LOAD_CLAUSE_FORMAT
 			% (HudComposeVocab.WORK_PARTY_TURNS_FORMAT % SMALL_PARTY_FIRST_LOAD),
 	]
-	h._assert_hud("a small, slow caravan states the walk, the road and the first load — want %s, got %s"
+	h._assert_hud("a small, slow caravan states its distance and first load — want %s, got %s"
 			% [str(want_small), str(small_lines)],
 		small_lines == want_small)
 	# ⛔ **THE WHOLE RENDERED SHEET, NOT THE SECTION.** This is the frame the eat-first rule told Ray his
@@ -922,35 +902,21 @@ func run(harness) -> void:
 			and Readout.yields_header(small_sheet)
 				== HudComposeVocab.YIELD_HEADER_ONCE_RUNNING.to_upper())
 
-	# State 3h'' - **THE WALK ROTS EVERY PACK** (#706). Meat that keeps 4 turns on a 6-turn walk home:
-	# the sheet says so, and names the remedy, before the player commits a posting that feeds nobody.
+	# State 3h'' - **THE WALK ROTS EVERY PACK** (#706). The sheet says so as an amber bullet right
+	# under the PER TURN numbers, before the player commits a posting that feeds nobody.
 	var spoil_boar := _far_boar_spoiling_herd()
 	h._show_herd(spoil_boar)
 	h._compose_herd(spoil_boar, FAR_PARTY_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
 	await h._settle()
 	await h._save("herd_hunt_far_party_spoils")
-	var spoil_lines := Readout.work_party_lines(h._hud._drawercompose._compose_sheet)
-	var want_all_spoils := HudComposeVocab.WORK_PARTY_ALL_SPOILS_FORMAT % [
-		HudWorkVocab.keeps_turns_phrase(SPOIL_ALL_KEEPS_TURNS),
-		HudComposeVocab.WORK_PARTY_TURNS_FORMAT % FAR_PARTY_WALK_TURNS,
-		HudComposeVocab.WORK_PARTY_SPOILS_REMEDY_HUNT]
-	h._assert_hud("a walk that rots every pack says so, with the remedy, under the walk - want %s, got %s"
-			% [want_all_spoils, str(spoil_lines)],
-		spoil_lines.size() > 1 and spoil_lines[1] == want_all_spoils)
-	# The partial register, PNG-less through the one producer: the loss per turn beside its cause.
-	var some_lines := DrawerComposeController.work_party_section_lines({
-		"posts_a_party": true, "walk_tiles": FAR_PARTY_WALK_TILES, "walk_turns": FAR_PARTY_WALK_TURNS,
-		"hunters_on_the_road": FAR_PARTY_ON_ROAD, "rate_home": SPOIL_SOME_RATE_HOME,
-		"first_load_turn": FAR_PARTY_FIRST_LOAD, "spoiled_rate_home": SPOIL_SOME_RATE,
-		"transit_keeps_turns": SPOIL_ALL_KEEPS_TURNS},
-		HudComposeVocab.HUNT_CREW_LABEL, ForecastQuery.WORK_PARTY_SOURCE_HUNT)
-	var want_some := HudComposeVocab.WORK_PARTY_SPOILS_FORMAT % [
-		SourceForecast.format_magnitude(SPOIL_SOME_RATE),
-		HudWorkVocab.keeps_turns_phrase(SPOIL_ALL_KEEPS_TURNS),
-		HudComposeVocab.WORK_PARTY_TURNS_FORMAT % FAR_PARTY_WALK_TURNS]
-	h._assert_hud("...while a walk that rots only part of the take states the loss a turn - want %s, got %s"
-			% [want_some, str(some_lines)],
-		some_lines.size() > 1 and some_lines[1] == want_some)
+	var spoil_sheet: Control = h._hud._drawercompose._compose_sheet
+	var spoil_rot := Readout.work_party_rot(spoil_sheet)
+	h._assert_hud("a walk that rots every pack states it as an amber bullet under the numbers - got %s"
+			% str(spoil_rot),
+		spoil_rot[0] == HudWorkVocab.ROT_ALL_TEXT and spoil_rot[1] == SourceForecast.VERDICT_SLOW)
+	h._assert_hud("...and the WORK PARTY section stays one line - got %s"
+			% str(Readout.work_party_lines(spoil_sheet)),
+		Readout.work_party_lines(spoil_sheet).size() == 1)
 	ForecastFx.install(h._hud)
 	h._hud._compose.reset_hunt_source()
 

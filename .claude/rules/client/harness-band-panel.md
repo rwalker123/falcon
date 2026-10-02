@@ -2771,9 +2771,9 @@ DRAWN rows against the zone with a liveness guard ahead of it. Measured: **4 row
 
 **`band_panel_work_party_spoils` / `band_panel_homeward` (#706)** run after the crew-split states, on
 `_work_party_spoil_band_fixture`: the party band with its running posting's walk rotting 0.35 a turn
-(keeps 4 turns) and its pelt posting stood down — those three hands walk home with 2.40 food, 0.80 of
+and its pelt posting stood down — those three hands walk home with 2.40 food, 0.80 of
 it rotting, first load in 1, all home in 3. Claims: the far row's third party line equals
-`WORK_ROW_PARTY_SPOILS_FORMAT` and is drawn in `WARN`; the walking-out posting grows no spoil line;
+`WORK_ROW_PARTY_SPOILS_LEAD + ROT_RATE_FORMAT` and is drawn in `WARN`; the walking-out posting grows no spoil line;
 on the band tab the partition guard holds with a `Walking home` segment of 3, `effective_idle` is 0,
 and the WORKFORCE zone's `HOMEWARD_LINE_META` lines equal the three expected strings. They hand the
 reference band back, and no earlier frame moves.

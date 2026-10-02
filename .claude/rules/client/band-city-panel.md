@@ -7506,13 +7506,15 @@ count, so a line added to the block is paid for without a second edit anywhere.
    the rest of the posting's life, and it drops the line.
 4. `Next load home in <N> turns` (`in 1 turn` at one) — **only while `nextLoadHomeIn > 0`.** `0` is
    *"nobody is carrying a load home"*, never *"lands this turn"*.
-5. `−<X> food a turn spoils on the walk home (keeps <N> turns)` (#706) — **only while
-   `spoiledRateHome` clears `has_component`.** The rate line above is already NET of it; this is the
-   loss and its cause (`transitKeepsTurns`), the walk's tile count being on line 2.
+5. The rot line (#706, `HudWorkVocab.rot_line`, shared with the compose sheet's PER TURN bullet) —
+   **only while `spoiledRateHome` clears `has_component`**: `Every pack rots before it gets home`
+   where the row's `netRateHome` rounds to nothing, else `−0.35 food a turn rots on the way home`
+   (`WORK_ROW_PARTY_SPOILS_LEAD`, the row's rates being signed). The rate line above is already NET of
+   it. So a running posting reads at most two block lines (crew, next load) plus this one.
 
 Every line is the row's quiet `INK_DIM` **except the spoil line, which wears `WARN`** — the amber of
-the Food line's `Spoiled` row — keyed by its `WORK_ROW_PARTY_SPOILS_LEAD` (`HudWorkVocab.
-is_party_spoils_line`). `_work_row_party_lines_text` still returns plain strings.
+the Food line's `Spoiled` row — keyed by `HudWorkVocab.is_party_spoils_line` (the all-rots text, or
+the `WORK_ROW_PARTY_SPOILS_LEAD`). `_work_row_party_lines_text` still returns plain strings.
 `band_panel_preview`'s `band_panel_work_party_spoils` asserts the line, its ink, and its absence on a
 posting whose walk rots nothing.
 

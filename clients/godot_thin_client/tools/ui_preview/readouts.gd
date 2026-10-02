@@ -485,3 +485,18 @@ static func crew_split_sentence(sheet: Node) -> String:
 				and not (node as Node).is_queued_for_deletion():
 			return String((node as Node).get_meta(HudWorkVocab.CREW_SPLIT_SENTENCE_META))
 	return ""
+
+
+## The compose sheet's rot bullet under the PER TURN numbers (`HudWidgets.WORK_PARTY_ROT_META`), as
+## `[text, severity]`, or `["", ""]` when none is drawn.
+static func work_party_rot(root: Node) -> Array:
+	if root == null:
+		return ["", ""]
+	if root is Control and (root as Control).has_meta(HudWidgets.WORK_PARTY_ROT_META):
+		return [String(root.get_meta(HudWidgets.WORK_PARTY_ROT_META)),
+			String(root.get_meta(HudWidgets.VERDICT_META, ""))]
+	for child in root.get_children():
+		var found := work_party_rot(child)
+		if found[0] != "":
+			return found
+	return ["", ""]
