@@ -46,6 +46,37 @@
     "once": true
   },
   {
+    "id": "guidance.food_and_the_split",
+    "tier": "ambient",
+    "soul": {
+      "question": "Food is the first thing. A band eats only from the ground around it."
+    },
+    "when": {
+      "all": [
+        {
+          "signal": "turn.index",
+          "gte": 0
+        }
+      ]
+    },
+    "nouns": {},
+    "wardrobe": [
+      {
+        "id": "food_and_the_split.ground_around_us",
+        "fit": {},
+        "voice": {
+          "mythic": "Food is the first thing. A band eats only from the ground around it, and when that ground thins, the band goes hungry. If we grow too many for one place, split the band and let the new one walk to fresh ground. But first, before we walk: choose what we carry.",
+          "warm": "Food comes first. A band can only eat from the land around it, and when that runs thin, people go hungry. If there get to be too many of us for one spot, split the band and send the new one off to fresh ground. First things first, though — pick what we're taking with us."
+        }
+      }
+    ],
+    "gloss": [
+      "provisions.total",
+      "band.count"
+    ],
+    "once": true
+  },
+  {
     "id": "discovery.site_found",
     "tier": "ambient",
     "soul": {
@@ -138,16 +169,16 @@
         "id": "cultivation.mud_answered",
         "fit": {},
         "voice": {
-          "mythic": "A woman pressed seed into the mud to see what it would do. The mud answered. We know a new thing.",
-          "warm": "One of the women pushed a seed into the mud just to see. The mud answered her. That's something we know now that we didn't."
+          "mythic": "A woman pressed seed into the mud to see what it would do. The mud answered. We know a new thing. Now we may sow the ground we already gather. Make hoes of bone and fibre, and the sowing goes quicker.",
+          "warm": "One of the women pushed a seed into the mud just to see. The mud answered her. That's something we know now that we didn't. We can start sowing the patches we already gather from. Make some bone hoes first and the work goes a lot faster."
         }
       },
       {
         "id": "cultivation.same_place_twice",
         "fit": {},
         "voice": {
-          "mythic": "We have learned that a thing put in the ground comes back to the same place. It sounds small. It is not small.",
-          "warm": "Turns out if you put something in the ground, it comes back — and it comes back where you left it. Sounds like nothing. It isn't nothing."
+          "mythic": "We have learned that a thing put in the ground comes back to the same place. It sounds small. It is not small. Now we may sow the ground we already gather. Make hoes of bone and fibre, and the sowing goes quicker.",
+          "warm": "Turns out if you put something in the ground, it comes back — and it comes back where you left it. Sounds like nothing. It isn't nothing. We can start sowing the patches we already gather from. Make some bone hoes first and the work goes a lot faster."
         }
       },
       {
@@ -160,8 +191,8 @@
           ]
         },
         "voice": {
-          "mythic": "The {ground.adjective} ground has always fed us by accident. This season we made it do so on purpose.",
-          "warm": "The {ground.adjective} ground's always fed us by luck. This year we made it do it on purpose."
+          "mythic": "The {ground.adjective} ground has always fed us by accident. This season we made it do so on purpose. Now we may sow the ground we already gather. Make hoes of bone and fibre, and the sowing goes quicker.",
+          "warm": "The {ground.adjective} ground's always fed us by luck. This year we made it do it on purpose. We can start sowing the patches we already gather from. Make some bone hoes first and the work goes a lot faster."
         }
       }
     ],

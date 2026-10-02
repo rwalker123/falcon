@@ -490,6 +490,9 @@ var _knowledge: KnowledgePanelController = null
 # advertise a screen that does not exist for 99% of a campaign. It comes back through its own reopen
 # pill and through the turn orb's row.
 var _loadout: StartingLoadoutController = null
+# The OPENING CARD: the Telling's tick-0 lines on a modal card, once per world, in place of the
+# outfitting card's first auto-open — and handing off to it. See `OpeningCardController`.
+var _opening: OpeningCardController = null
 var _inset_left: float = 0.0
 var _inset_right: float = 0.0
 var _inset_top: float = 0.0
@@ -607,6 +610,19 @@ func is_knowledge_detail_open() -> bool:
 func close_knowledge_detail() -> void:
     if _knowledge != null:
         _knowledge.close_detail()
+
+## Is the opening card up? `Main.escape_claimant` asks BY NAME (a `has_method` probe).
+func is_opening_card_open() -> bool:
+    return _opening != null and _opening.is_open()
+
+## ESC on the opening card — the same hand-off to the outfitting card as its button.
+func dismiss_opening_card() -> void:
+    if _opening != null:
+        _opening.dismiss()
+
+## The opening card's controller, for the harnesses' assertions.
+func opening_card() -> OpeningCardController:
+    return _opening
 
 func _ready() -> void:
     # FIRST, before any controller is constructed: each is handed `self` as its host and reads
@@ -829,6 +845,12 @@ func _ready() -> void:
     # A band verb opening puts the outfitting card away, as its own Done/✕ would, so the verb's sheet
     # is never under it. The Band panel announces the verb; it does not reach the card itself.
     _bandpanel.band_verb_opened.connect(func(_mission: String) -> void: _loadout.collapse_for_verb())
+    # The OPENING CARD takes the outfitting card's first auto-open of a world, says the Telling's
+    # opening lines, and hands back to it. The loadout controller announces the hold; this one decides.
+    _opening = OpeningCardController.new()
+    _opening.setup(self, _loadout)
+    _loadout.yield_opening_grant = true
+    _loadout.opening_grant_held.connect(_opening.hold_opening_grant)
     # The band/expedition attention producers + orb jump-routing. Constructed AFTER `_bandpanel` (its
     # expedition/pen jumps reuse the panel's own focus paths) and handed the ONE retained helper,
     # `_herd_label_for_id`. It emits its OWN `alert_focus_requested`, relayed onto the HudLayer signal
@@ -2019,6 +2041,8 @@ func reset_world_state() -> void:
     # frame later, so the surface and every pick go now — including `_auto_opened`, or the new world's
     # picker would never open itself.
     _loadout.reset_world_state()
+    # …and the opening card with it, so the new world's opening is said again.
+    _opening.reset_world_state()
 func show_tile_selection(tile_info: Dictionary) -> void:
     # A selection change invalidates the subject being composed (§15) — and a pending band verb's
     # sheet, unless the new tile is its band's. A targeting click never lands here: MapView hands it to
@@ -2326,6 +2350,8 @@ func _load_ui_balance_config() -> void:
 ## `commandEvents` ring, so a player opening the client mid-session sees recent history.
 func ingest_command_events(events_variant: Variant) -> void:
     _telling.ingest_events(events_variant)
+    # The opening card reads the same beats — only tick 0's, once per world.
+    _opening.ingest_command_events(events_variant)
     # **AND THE ATTENTION MODEL TAKES THE BUILD HAND-OFFS OFF THE SAME ARRAY**
     # (`docs/plan_standing_upkeep.md` §2.3). A finished build's crew moves — onto the new rung's
     # keeping, or back to the idle pool — and the player has to re-task around it BEFORE ending the

@@ -221,6 +221,12 @@ const DISMISS_TOOLTIP := "Look around first. The picker stays available until th
 const REOPEN_LABEL := "⚑  Outfit the band"
 const REOPEN_TOOLTIP := "Finish outfitting the band before the turn advances."
 
+## **THE OPENING CARD'S ONE BUTTON** (`OpeningCardPanel`). The world's opening lines end by telling
+## the player to choose what to carry, and this is the control that does it: it closes the card and
+## opens the opening band's outfitting card. A dismissal does exactly the same, so this face names the
+## ONE thing that happens next rather than offering a choice.
+const OPENING_HANDOFF_LABEL := "Choose what we carry"
+
 ## What the panel says while it is open on a world that published no pick list and no kit roster —
 ## a frame between the section arriving and the catalogues arriving, not an error.
 const EMPTY_NOTICE := "Waiting for the world's kit roster."

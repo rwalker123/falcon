@@ -18,8 +18,17 @@ fn turn_zero_fires_the_cold_open_with_the_band_count_interpolated() {
     let people = resident_people(&mut app, FactionId(0));
     run_turn(&mut app);
 
-    let fired = beats(&app);
-    assert_eq!(fired.len(), 1, "exactly the opening beat fires on turn 0");
+    // The opening guidance shares turn 0 on the ambient tier; the cold open is the beat that
+    // glosses `turn.index`.
+    let fired: Vec<_> = beats(&app)
+        .into_iter()
+        .filter(|e| {
+            e.detail
+                .as_deref()
+                .is_some_and(|d| d.contains("turn.index="))
+        })
+        .collect();
+    assert_eq!(fired.len(), 1, "exactly one opening beat fires on turn 0");
     let entry = &fired[0];
     assert!(
         entry.label.contains(&people.to_string()),
@@ -55,6 +64,37 @@ fn turn_zero_fires_the_cold_open_with_the_band_count_interpolated() {
         1,
         "the cold open is a `once` beat"
     );
+}
+
+/// Right after the cold open, the opening guidance tells the player that food comes from the ground
+/// around a band and that Split is the answer to outgrowing it — once, with the numbers behind it.
+#[test]
+fn the_opening_guidance_points_at_food_and_the_split_once() {
+    let mut app = spawn_world();
+    spawn_band(&mut app, FactionId(0), 31);
+    for _ in 0..12 {
+        run_turn(&mut app);
+    }
+
+    let is_guidance = |label: &str| label.contains("split the band");
+    let fired: Vec<_> = beats(&app)
+        .into_iter()
+        .filter(|e| is_guidance(&e.label))
+        .collect();
+    assert_eq!(fired.len(), 1, "the guidance is a `once` beat: {fired:?}");
+    let entry = &fired[0];
+    assert_eq!(
+        entry.tick, 0,
+        "it lands beside the cold open, so the game-start card can show it"
+    );
+    let detail = entry.detail.as_deref().expect("gloss present");
+    assert!(detail.contains("provisions.total="), "{detail}");
+    assert!(detail.contains("band.count="), "{detail}");
+    assert!(detail.contains("tier=ambient"), "{detail}");
+    assert!(app
+        .world
+        .resource::<BeatLedger>()
+        .has_fired("guidance.food_and_the_split"));
 }
 
 /// Same seed, same world, same run → identical beat *and* wardrobe selection.
