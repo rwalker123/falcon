@@ -4104,11 +4104,6 @@ func _keeping_pool_band_fixture(mode: String) -> Dictionary:
 
 ## The tended patch that band works, short of its keeping. Keys are BARE — this is a patch dict from
 ## the forage lookup, not a `patch_`-prefixed tile_info.
-## The keeping kits a live wire states for a kept source on each web — the derivation
-## `EquipmentConfig::keeping_kit_for` lands on, spelled from the shared roster's own ids so a config
-## rename moves the fixture with it. The PLANT one is agriculture's, the ANIMAL one husbandry's.
-const KEEPING_POOL_PATCH_UPKEEP_KIT := BandFx.KIT_ID_TILLAGE
-const KEEPING_POOL_HERD_UPKEEP_KIT := BandFx.KIT_ID_HURDLING
 
 func _keeping_pool_patch_fixtures() -> Array:
 	return RUNG_FX.stamp_patches([{
@@ -4118,13 +4113,6 @@ func _keeping_pool_patch_fixtures() -> Array:
 		"upkeep_supplied": KEEPING_POOL_PATCH_SUPPLIED,
 		"upkeep_shortfall": KEEPING_POOL_PATCH_DEMAND - KEEPING_POOL_PATCH_SUPPLIED,
 		"upkeep_workers_needed": int(KEEPING_POOL_PATCH_DEMAND),
-		# **THE KEEPING KIT THE SIM RESOLVES FOR A WORKED SOURCE, which every live one carries.**
-		# `resolve_upkeep_kits` walks the bands' labor rows and `keeping_kit_for` always answers a
-		# real roster id, so a kept source this band works publishes one — a fixture that omitted it
-		# described a site no server can produce and left the Upkeep picker resolving through its
-		# FALL-THROUGH on every frame in this file. `upkeep_kit_named` stays false: nobody overrode
-		# it, which is what makes the entry wear the `(default)` mark.
-		"upkeep_kit_id": KEEPING_POOL_PATCH_UPKEEP_KIT, "upkeep_kit_named": false,
 		"has_neglect_grace": true, "neglect_grace_remaining": 2,
 		# …and the queue entry that makes this the work zone's WORST case: a band that both holds
 		# something short of keepers AND has a build on the list carries the fund-mode row and the
@@ -4504,8 +4492,6 @@ func _material_short_herd_fixtures() -> Array:
 			{"material_id": MATERIAL_SHORT_GOOD, "amount": MATERIAL_SHORT_DEMAND}],
 		"upkeep_material_supplied": [
 			{"material_id": MATERIAL_SHORT_GOOD, "amount": MATERIAL_SHORT_SUPPLIED}],
-		# …and the resolved keeping kit every worked source carries — see the patch fixture's note.
-		"upkeep_kit_id": KEEPING_POOL_HERD_UPKEEP_KIT, "upkeep_kit_named": false,
 	}
 	_set_managed_herders(penned, 1)
 	return _under_herded_work_herd_fixtures() + RUNG_FX.stamp_herds([penned])
@@ -11994,9 +11980,6 @@ func _under_herded_work_herd_fixtures(pool_share: int = KEEPER_POOL_UNFUNDED) ->
 	# says more than the source's card does.
 	penned["has_neglect_grace"] = true
 	penned["neglect_grace_remaining"] = UNDER_HERDED_WORK_GRACE_TURNS
-	# …and the resolved keeping kit every worked source carries — see the patch fixture's own note.
-	penned["upkeep_kit_id"] = KEEPING_POOL_HERD_UPKEEP_KIT
-	penned["upkeep_kit_named"] = false
 	return RUNG_FX.stamp_herds([penned])
 
 ## The turns of grace the under-kept herd has left — enough that the hover reads the COUNTDOWN form
@@ -18586,7 +18569,6 @@ func _workings_row(tile: Vector2i, material: String, renews: bool,
 		"has_neglect_grace": false, "neglect_grace_remaining": 0,
 		"build_turns_remaining": SourceForecast.BUILD_TURNS_NO_ESTIMATE,
 		"build_blocked_reason": "", "is_queued": false,
-		"build_kit_id": "", "upkeep_kit_id": "", "upkeep_kit_named": false,
 	}
 	return row
 

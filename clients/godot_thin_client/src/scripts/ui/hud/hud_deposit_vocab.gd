@@ -398,9 +398,6 @@ static func build_blocked_reason_of(deposit: Dictionary) -> String:
 
 ## Is this working in some band's build queue right now? — the MEMBERSHIP flag, and the term
 ## `build_turns_remaining`'s `-5` is separated from `-1` by.
-##
-## ⛔ **IT CANNOT BE REPLACED BY A `build_kit_id != ""` TEST**: a resolved builders kit is never
-## empty, the bare-handed kit being a roster entry like any other.
 static func is_queued(deposit: Dictionary) -> bool:
 	return bool(deposit.get("is_queued", false))
 

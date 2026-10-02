@@ -158,24 +158,6 @@ fn published_build_legs(
         .collect()
 }
 
-/// **A WORK SITE NAMES NO KIT** — what `buildKitId` and `upkeepKitId` publish on every patch, herd
-/// and working since `docs/plan_pool_toe.md` §4.
-///
-/// Both fields carried a kit id resolved per site: the entry's build kit, and the keepers' kit off
-/// the player's own `upkeep_kit` pick. **A standing pool's tools follow from the rung each of its
-/// sites stands on now**, are settled band-wide by the player's row priority, and are published per
-/// pool as `PopulationCohortState.poolToe` — so there is no per-site answer left to state, and a
-/// site that kept stating one would name a tool the pool may not have been issued.
-///
-/// ⛔ **The FIELDS stay on the wire.** FlatBuffers ids are positional. The `upkeep_kit` /
-/// `build_kit` commands that fed them are retired (proto fields 63 and 60, reserved).
-pub(crate) const NO_SITE_KIT_ID: &str = "";
-
-/// **NOTHING IS NAMED, SO NOTHING WAS OVERRIDDEN** — what `upkeepKitNamed` publishes beside
-/// [`NO_SITE_KIT_ID`]. The flag's whole job was to say whether an id was the player's stated pick
-/// or the web's derivation, and with no pick to state there is no override to report.
-pub(crate) const NO_SITE_KIT_NAMED: bool = false;
-
 /// **WHICH SOURCES SOME BAND HAS IN ITS LIVE BUILD QUEUE**, keyed the four ways a source is named —
 /// the `queued_live` term of [`published_build_countdown`] and the wire's `isQueued` on a working.
 ///
@@ -189,11 +171,10 @@ pub(crate) const NO_SITE_KIT_NAMED: bool = false;
 /// # ⛔ IT CARRIES NO KIT ANY MORE (`docs/plan_pool_toe.md` §4)
 ///
 /// It was `BuildKitIds`, and each entry's value was the kit that build would be raised with — the
-/// entry's own named choice, else the roster's answer for its web, published as `buildKitId` on
-/// both source tables. **A builder's tools follow from the rung the leg in flight stands on
-/// now**, settled band-wide by the player's own row priority and published per pool as
-/// `PopulationCohortState.poolToe`, so there is no per-site kit left to resolve and `buildKitId`
-/// publishes empty on every row.
+/// entry's own named choice, else the roster's answer for its web. **A builder's tools follow from
+/// the rung the leg in flight stands on now**, settled band-wide by the player's own row priority
+/// and published per pool as `PopulationCohortState.poolToe`, so there is no per-site kit left to
+/// resolve and no source row carries one.
 ///
 /// **The membership survives because it was never about the kit.** This is the one place the bands'
 /// live queues are read, and two published states depend on it.
@@ -282,9 +263,9 @@ pub(crate) fn resolve_queued_build_sources<'a>(
 /// # ⛔ IT CARRIES NO KIT ANY MORE (`docs/plan_pool_toe.md` §4)
 ///
 /// It was `UpkeepKitIds`, and each entry's value was the kit that site's keepers carried —
-/// `EquipmentConfig::keeping_kit_for` over the player's per-site `upkeep_kit` pick, published as
-/// `upkeepKitId` / `upkeepKitNamed`. **A site's keeping tools follow from its own rung now**, so
-/// there is nothing per site left to name and both fields publish empty. The *"a stated override
+/// `EquipmentConfig::keeping_kit_for` over the player's per-site `upkeep_kit` pick. **A site's
+/// keeping tools follow from its own rung now**, so there is nothing per site left to name and no
+/// source row carries a keeping kit. The *"a stated override
 /// beats a derivation, and the first stated one wins"* arbitration went with them: it existed only
 /// to decide which of several bands' picks a shared site should publish.
 #[derive(Default)]
@@ -1365,12 +1346,6 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // that, and lost it silently on the one crew a compose sheet is *for*: a proposed
                 // one, of a size the sim never resolved.
                 build_work_per_worker_turn: build_work_per_worker_turn(NO_BUILD_GEAR),
-                // **A herd names no kit** — see [`NO_SITE_KIT_ID`]. Its builders' tools are the
-                // builders pool's (`poolToe`); its keeping tools are its own crew's, derived from
-                // the rung and stated below as `upkeep_tools_short`.
-                build_kit_id: NO_SITE_KIT_ID.to_string(),
-                upkeep_kit_id: NO_SITE_KIT_ID.to_string(),
-                upkeep_kit_named: NO_SITE_KIT_NAMED,
                 // **WHAT THE HERD'S OWN CREW SPENT KEEPING IT THIS TURN** (`docs/plan_site_crews.md`
                 // §2.2) — stamped by the labour pass beside `upkeep_supplied`, reported not re-derived.
                 upkeep_hands: herd.map_or(crate::fauna::NO_HANDS, |herd| herd.upkeep_hands),
@@ -1976,12 +1951,6 @@ pub(crate) fn snapshot_forage_patches(
                 patch,
                 forage,
             ),
-            // **A patch names no kit** — see [`NO_SITE_KIT_ID`]. Its builders' tools are the
-            // builders pool's (`poolToe`); its keeping tools are its own crew's, derived from the
-            // rung and stated below as `upkeep_tools_short`.
-            build_kit_id: NO_SITE_KIT_ID.to_string(),
-            upkeep_kit_id: NO_SITE_KIT_ID.to_string(),
-            upkeep_kit_named: NO_SITE_KIT_NAMED,
             // **WHAT THE PATCH'S OWN CREW SPENT KEEPING IT THIS TURN** (`docs/plan_site_crews.md`
             // §2.1) — stamped by the labour pass beside `upkeep_supplied`, reported not re-derived.
             upkeep_hands: patch.upkeep_hands,

@@ -309,13 +309,6 @@ fn deposit_row(
         // decay pass on the one-turn cycle, so it describes the turn just resolved.
         build_blocked_reason: source.build_blocked_reason.key().to_string(),
         is_queued: build_kits.deposit_is_queued(tile, &source.material),
-        // **A working names no kit** — see
-        // [`crate::snapshot::subsistence::NO_SITE_KIT_ID`]. Its builders' tools are the builders
-        // pool's (`poolToe`); its keeping tools are its own `extract` crew's, derived from the rung
-        // it stands on and stated below as `upkeep_tools_short`.
-        build_kit_id: crate::snapshot::subsistence::NO_SITE_KIT_ID.to_string(),
-        upkeep_kit_id: crate::snapshot::subsistence::NO_SITE_KIT_ID.to_string(),
-        upkeep_kit_named: crate::snapshot::subsistence::NO_SITE_KIT_NAMED,
         // **WHAT THE WORKING'S OWN `extract` CREW SPENT KEEPING IT THIS TURN**
         // (`docs/plan_site_crews.md` §2.5) — stamped by the labour pass beside `upkeep_supplied`.
         upkeep_hands: source.upkeep_hands,

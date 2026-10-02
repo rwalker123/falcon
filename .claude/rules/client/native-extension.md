@@ -597,10 +597,9 @@ run out* and `-2` *nobody is cutting it, so there is no rate* (`sim_schema::DEPO
 / `DEPOSIT_RUNWAY_NO_TAKE`) — beside the shared five-negative `build_turns_remaining` family, which a
 working publishes with no dialect of its own.
 
-**A WORKING IS KEPT BY ITS OWN `extract` CREW** (`docs/plan_site_crews.md`). The `quarrywork`
-triple the cohort dict carried (`quarrywork_demand` / `_supplied` / `_shortfall`) is deprecated on
-the wire and publishes `0`, so the decoder no longer inserts it; each deposit row states its own
-keeping instead (`upkeep_demand` / `upkeep_supplied`, and the site-crew pair below).
+**A WORKING IS KEPT BY ITS OWN `extract` CREW** (`docs/plan_site_crews.md`). There is no band-level
+`quarrywork` triple on the wire or the cohort dict; each deposit row states its own keeping instead
+(`upkeep_demand` / `upkeep_supplied`, and the site-crew pair below).
 
 ## `pool_toe` — where a STANDING POOL's tools are stated, now that its `kit_id` cannot say
 
@@ -625,9 +624,8 @@ line with `filled < required`. `required` is never `0`.
 from each SITE's own rung, and a Roadwork pool keeping a dirt road and a paved road wants two of
 them at once — one more than a kit id has room for. So a pool row's `kit_id` is `""` and its
 `kit_workers_holding` equals its `workers` (the *nothing to be short of* reading, so no existing
-reader reports a shortfall it cannot see the terms of), and the gear is here instead. The per-site
-`build_kit_id` / `upkeep_kit_id` publish `""` with `upkeep_kit_named` `false` for the same reason,
-on every patch, herd and working.
+reader reports a shortfall it cannot see the terms of), and the gear is here instead. For the same
+reason no patch, herd or working carries a per-site build or keeping kit.
 
 ⛔ **AN ABSENT LINE AND A FILLED LINE ARE DIFFERENT SENTENCES**, and the decoder filters neither. A
 line exists only where `required > 0`; a pool whose requirement was met KEEPS its line with
@@ -638,10 +636,10 @@ because the band-wide settlement divides a tier proportionally, and `0` is a poo
 reached with nothing.
 
 **A VECTOR FIELD, so the `material_yield` treatment applies** — saturation reaches it and a golden
-re-record is the only fixture step, but the decode golden can say nothing about the three
-publishing changes above: it is built from `sim_schema::fixture`'s saturated snapshot, not from a
-sim capture, so `upkeep_kit_id` there still reads `"forage_patches[0].upkeep_kit_id"`. Only
-`core_sim`'s own capture tests witness those.
+re-record is the only fixture step, but the decode golden can say nothing about the publishing
+changes above: it is built from `sim_schema::fixture`'s saturated snapshot, not from a sim capture,
+so a pool row's `kit_id` there still reads its own wire path. Only `core_sim`'s own capture tests
+witness those.
 
 ## The site crew's keeping, and a queued build's own mark (`docs/plan_site_crews.md`)
 

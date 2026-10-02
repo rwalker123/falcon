@@ -39,15 +39,9 @@ fn deterministic_snapshots_match() {
     // Nothing else was ever under that mask. Do not reintroduce a per-field exclusion here: the
     // point of hashing the whole payload is that a new nondeterministic field fails loudly instead
     // of arriving inside an exemption someone added years ago for an unrelated reason.
-    let mut normalized_a = snapshot_a.clone();
-    normalized_a.header.hash = 0;
-
-    let mut normalized_b = snapshot_b.clone();
-    normalized_b.header.hash = 0;
-
     assert_eq!(
-        sim_runtime::hash_snapshot(&normalized_a),
-        sim_runtime::hash_snapshot(&normalized_b)
+        sim_runtime::hash_snapshot(&snapshot_a),
+        sim_runtime::hash_snapshot(&snapshot_b)
     );
 
     assert_eq!(

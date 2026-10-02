@@ -263,9 +263,8 @@ pub struct LaborConfigs<'w> {
 ///
 /// ⛔ **A KIT NAMED ON THE ENTRY IS NOT AN INPUT, AND CANNOT BE NAMED.** The entry's stored kit and
 /// the `build_kit` command are retired (proto field 60 reserved): *"which tools does this job want"*
-/// follows from the job, and a source row's `buildKitId` publishes empty
-/// (`snapshot::subsistence::NO_SITE_KIT_ID`). The `builders` **row's** kit was never an input and
-/// still is not.
+/// follows from the job, and no source row carries a build kit. The `builders` **row's** kit was
+/// never an input and still is not.
 ///
 /// # The head is FUNDED and everything below it is DATED
 ///

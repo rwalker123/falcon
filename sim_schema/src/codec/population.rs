@@ -1105,12 +1105,6 @@ fn create_populations<'a>(
                     // THIS BAND'S OUTFITTING WINDOW — appended last. `None` is the ordinary state:
                     // a window shuts on the turn advance, so most frames carry none at all.
                     loadoutWindow: loadout_window,
-                    // The band's QUARRYWORK bill — appended last, always written, and summed by the
-                    // sim for the roadwork triple's reason: deposit rows are fog-filtered, so a
-                    // working out of sight would drop out of any client-side total the band owes.
-                    quarryworkDemand: cohort.quarrywork_demand,
-                    quarryworkSupplied: cohort.quarrywork_supplied,
-                    quarryworkShortfall: cohort.quarrywork_shortfall,
                     // THE FIVE STANDING POOLS' TABLES OF EQUIPMENT — appended last. A pool row's
                     // `kitId` publishes empty and this is where its tools are stated instead; a
                     // line exists only where the pool requires something.
@@ -1588,11 +1582,6 @@ fn decode_population(
         roadwork_demand: cohort.roadworkDemand(),
         roadwork_supplied: cohort.roadworkSupplied(),
         roadwork_shortfall: cohort.roadworkShortfall(),
-        // **DEPRECATED — always 0** (`docs/plan_site_crews.md` §4): the retired Groundwork pool's
-        // triple, decoded because the wire is positional.
-        quarrywork_demand: cohort.quarryworkDemand(),
-        quarrywork_supplied: cohort.quarryworkSupplied(),
-        quarrywork_shortfall: cohort.quarryworkShortfall(),
         pool_toe: map_rows(cohort.poolToe(), |line| PoolToeLineState {
             pool: text(line.pool()),
             item_id: text(line.itemId()),

@@ -861,14 +861,16 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 > `filled == required`. The distinction is the readout: a surface shows no tool line when every line
 > is filled, and it cannot tell *satisfied* from *not applicable* off an absent row.
 >
-> **Three fields stop carrying meaning, and publish their absence rather than being deleted** —
-> FlatBuffers ids are positional, so the slots stay:
+> **Two fields publish a neutral reading on a POOL row** — both stay live on every other row, which
+> is why they are not deleted:
 >
 > | field | now publishes | because |
 > |---|---|---|
 > | a **pool row's** `LaborAssignment.kitId` | `""` | the capture resolves `EquipmentConfig::no_kit` for a `LaborTarget::is_standing_pool` row. One kit id has room for one tool, and a Roadwork pool keeping a dirt road and a paved road wants two |
 > | a **pool row's** `kitWorkersHolding` | `== workers` | the *nothing to be short of* reading, and it **falls out** of the empty kit rather than being special-cased: `KitCoverage::workers_holding_whole_kit` folds a `min` over the kit's items and an empty kit has none. No existing reader sees a shortfall on a pool row; the shortfall is `poolToe`'s |
-> | per-site `buildKitId` / `upkeepKitId` / `upkeepKitNamed` on patches, herds and workings | `""` / `""` / `false` | `snapshot::subsistence::NO_SITE_KIT_ID` and its named twin. A site's tools follow from its own rung, so there is no per-site answer left to state — and with no pick to state there is no override for the flag to report |
+>
+> **No patch, herd or working carries a per-site build or keeping kit.** A site's tools follow from
+> its own rung, so there is no per-site answer left to state.
 >
 > **The two capture-side indexes lost their values and kept their MEMBERSHIP.** `BuildKitIds` and
 > `UpkeepKitIds` were maps from a source to a kit id; they are `QueuedBuildSources` and
@@ -899,8 +901,7 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 > site's keeping tools follow from the rung, so the two overrides that used to pick them —
 > `BuildQueueEntry::kit` (set by `build_kit`) and `LaborAssignment::upkeep_kit` (set by
 > `upkeep_kit`) — are gone with their commands, their resolvers and their proto fields (60 and 63,
-> reserved; `command_text` refuses both verbs). `buildKitId` / `upkeepKitId` / `upkeepKitNamed` stay
-> on the wire only because FlatBuffers ids are positional, and publish empty.
+> reserved; `command_text` refuses both verbs), and so are the wire fields that published them.
 >
 > **The arguments they made are still live one level down**: *a queue item is one job*, *a single
 > stored id per band cannot be right for both webs*, and *wear follows the work actually done* —

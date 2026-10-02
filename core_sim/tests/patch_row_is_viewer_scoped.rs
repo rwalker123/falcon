@@ -127,9 +127,6 @@ fn fingerprint(row: &fb::ForagePatchState<'_>) -> PatchFingerprint {
             "buildDestinationCapacity",
             format!("{}", row.buildDestinationCapacity()),
         ),
-        ("buildKitId", row.buildKitId().unwrap_or("").to_string()),
-        ("upkeepKitId", row.upkeepKitId().unwrap_or("").to_string()),
-        ("upkeepKitNamed", format!("{}", row.upkeepKitNamed())),
         (
             "buildTurnsRemaining",
             format!("{}", row.buildTurnsRemaining()),
@@ -340,8 +337,8 @@ fn a_world_where_both_peoples_farm() -> (App, StagedTiles) {
         }
     }
 
-    // **Each faction's own band queues its own builds**, which is what makes `buildKitId` a live
-    // reading rather than an index that happens to be empty.
+    // **Each faction's own band queues its own builds**, which is what makes the build date and
+    // queue position live readings rather than indexes that happen to be empty.
     {
         let mut bands = app
             .world
@@ -410,24 +407,6 @@ fn the_viewers_own_field_reads_through_in_every_field() {
     assert_eq!(
         field_of(own, "buildWorkFromGear"),
         STAGED_BUILD_GEAR.to_string()
-    );
-    // ⛔ **THE THREE KIT FIELDS ARE RETIRED, AND THEY ARE ASSERTED HERE RATHER THAN BELOW**
-    // (`docs/plan_pool_toe.md` §4). This used to be the liveness half of the redaction: the
-    // viewer's own row *had* to resolve a builders kit, or the "a rival publishes no kit" assertions
-    // would have passed on an index that was simply empty. A site names no kit at all now — its
-    // tools follow from its own rung and are published per pool as `PopulationCohortState.poolToe`
-    // — so the viewer's own row reads empty too, and the redaction tests below therefore assert
-    // nothing about them. What still carries the builder's state, and is still staged live above, is
-    // the date, the place and the gear figure.
-    assert_eq!(
-        (
-            field_of(own, "buildKitId"),
-            field_of(own, "upkeepKitId"),
-            field_of(own, "upkeepKitNamed"),
-        ),
-        ("", "", "false"),
-        "a site names no kit on ANY row, the viewer's own included — which is why the redaction \
-         tests below cannot be written against these three"
     );
 }
 

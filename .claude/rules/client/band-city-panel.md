@@ -4948,7 +4948,7 @@ picker it had no bill for, and a KEPT row measured **300** while that picker sti
 > The KITS section drew a second control line, `Upkeep [Tillage kit ▾]`, over the bill.
 > `docs/plan_pool_toe.md` §3 retired it: **a site's keeping tools follow from its own rung**, so there
 > is no per-site choice to offer. It was also **actively wrong by then** — its `(default)` mark came
-> off `upkeepKitNamed`, which §4 publishes `false` on every source, so EVERY entry wore the mark
+> off `upkeepKitNamed`, which §4 left `false` on every source, so EVERY entry wore the mark
 > including one the player had just picked.
 >
 > **The two were ONE term and are now one term less a line.** The section's conditional half reserved
@@ -4962,8 +4962,8 @@ picker it had no bill for, and a KEPT row measured **300** while that picker sti
 > leaves the card** — a margin of **324**. The retired figure was **394**; see the correction under
 > the table above for why both had been written 20 low.
 >
-> **What outlived the control is the fall-through's REASON, and it is still true**: `upkeepKitId` is
-> `""` on every source, so the face the picker showed was the CLIENT's own
+> **What outlived the control is the fall-through's REASON, and it is still true**: no source states
+> a keeping kit, so the face the picker showed was the CLIENT's own
 > `KitRoster.keeping_kit_for` derivation, and the mark could never be re-derived client-side — with
 > nothing stated, the derivation IS both the selection and the default, which is exactly what an
 > UNNAMED row means. Nothing sim-side resolves a keeping kit per site any more, so nothing on the
@@ -5359,7 +5359,7 @@ by `Main.site_address` like every other site verb (below).
 
 **⛔ NO OPTIMISTIC OVERLAY, AND THEREFORE NO ROLLBACK HANDLE.** `LaborAssignment.priority` is captured
 LIVE off the allocation the command mutates and the server re-captures after every command, so the
-new mark arrives on this command's own recapture — `buildKitId`'s rule and item 9a's `buildQueue`'s.
+new mark arrives on this command's own recapture — `isQueued`'s rule and item 9a's `buildQueue`'s.
 A local pending copy would be a second statement of one value, which is the drift §4.9 forbids, and a
 send that does not go leaves nothing behind to undo. The pick CLOSES the picker, exactly as a floor
 pick does.
@@ -7379,8 +7379,8 @@ perfectly useless control that photographs as an ordinary card.
   > works yet was absent from that map and published `""`, and a brand-new PENDING assignment on a
   > kept source drew the row blank. **That map is gone too** (§4): its successor
   > `resolve_worked_sources` is a membership SET carrying no kit, and every patch, herd and working
-  > publishes `upkeep_kit_id` `""` with `upkeep_kit_named` `false` — so by the end EVERY row took the
-  > fall-through and read as UNNAMED.
+  > published `upkeep_kit_id` `""` with `upkeep_kit_named` `false` — so by the end EVERY row took the
+  > fall-through and read as UNNAMED. Neither field is on the wire now.
   >
   > **The control was therefore ACTIVELY WRONG when it went**, which is the half worth remembering:
   > its `(default)` mark came off `upkeep_kit_named`, so every entry wore the mark including one the

@@ -1619,18 +1619,6 @@ pub struct PopulationCohortState {
     /// beside it — [`Self::equipment_batches`] and [`Self::material_batches`] — are already here.
     #[serde(default)]
     pub loadout_window: Option<BandLoadoutWindowState>,
-    /// ⛔ **DEPRECATED — ALWAYS `0`** (`docs/plan_site_crews.md` §4). The retired `quarrywork`
-    /// keeping pool's bill: each working is kept first by its own `extract` crew and states what it
-    /// kept on its own [`crate::state::subsistence::DepositState`] row. Kept because the wire is
-    /// positional; nothing reads it. Appended last (append-only).
-    #[serde(default)]
-    pub quarrywork_demand: f32,
-    /// ⛔ **DEPRECATED — ALWAYS `0`.** See [`Self::quarrywork_demand`].
-    #[serde(default)]
-    pub quarrywork_supplied: f32,
-    /// ⛔ **DEPRECATED — ALWAYS `0`.** See [`Self::quarrywork_demand`].
-    #[serde(default)]
-    pub quarrywork_shortfall: f32,
     /// **WHAT EACH STANDING POOL'S OWN SITES REQUIRE THIS TURN, AND WHAT THE BAND GAVE THEM** —
     /// one row per `(pool, item)` (`docs/plan_pool_toe.md` §4), for **`roadwork` and `builders`
     /// only** (`docs/plan_site_crews.md` §4): a site crew is not a pool, and its keeping-tool claim is

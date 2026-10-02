@@ -1012,9 +1012,9 @@ impl SeatPublishState {
         kind: Publication,
     ) -> Option<Arc<Vec<u8>>> {
         // No content hash is stamped. `WorldSnapshot::finalize` used to run here and bincode-encode
-        // the whole world to produce `header.hash` — ~1.0 ms a frame for a value nothing read (see
-        // `SnapshotHeader::hash`). Retired in #393 rather than merely moved off the turn thread,
-        // because moving dead work still pays for it.
+        // the whole world to produce a header stamp — ~1.0 ms a frame for a value nothing read.
+        // Retired in #393 rather than merely moved off the turn thread, because moving dead work
+        // still pays for it.
 
         // ⛔ **A SEAT'S FIRST PUBLICATION IS ITS BASELINE, WHATEVER THE [`Publication`] KIND.**
         //

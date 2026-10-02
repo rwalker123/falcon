@@ -105,11 +105,8 @@ new enums and tables so downstream code can rely on stable contracts:
 - `CultureTraitAxis` enumerates the 15 culture axes captured in the game manual
   (passive↔aggressive, open↔closed, … , pluralistic↔monocultural). Tooling can
   drive overlays without hard-coded strings.
-- `CultureTraitEntry` bundles baseline, modifier, and resolved values (scaled
-  `long`) for each axis so clients can separate inherited weight from local
-  adjustments.
-- `CultureLayerState` carries the serialized layer (id/owner/parent/scope,
-  trait vector, divergence metrics, last update tick).
+- `CultureLayerState` carries the layer's topology (id/owner/parent/scope); its
+  trait vector and divergence metrics stay sim-side and do not cross the wire.
 - `CultureTensionState` records pending drift events surfaced to the Cultural
   Inspector (layer id, scope, severity, timer, tension kind).
 - `WorldSnapshot`/`WorldDelta` will export `cultureLayers`,

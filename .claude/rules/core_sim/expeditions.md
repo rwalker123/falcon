@@ -581,7 +581,7 @@ question asked:
   `huntPerWorkerProvisions` / `expeditionPerWorkerCarry`. Every horizon-relative sentinel this
   subsystem publishes shipped without it, so the client could only word an unbounded forecast as
   *"away many turns"* — which is not a bound a player can compare anything against:
-  `HuntTripEstimate.turnsToFill == 0`, `DenialEstimate.turnsToCollapse{,Low,High} == 0`, and
+  `HuntTripRow.turns_to_fill == 0`, `DenialRow.turns_to_collapse{,_low,_high} == 0`, and
   `PopulationCohortState.expeditionTripBound == "horizon"`.
   **ONE lever serves the hunt table and the denial table** — `denial_projection_at` and
   `hunt_trip_forecast_seeded` both read `hunt.forecast_horizon_turns`, so there is deliberately no

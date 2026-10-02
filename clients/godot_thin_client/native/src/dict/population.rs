@@ -1554,9 +1554,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("roadwork_supplied", cohort.roadworkSupplied() as f64);
     let _ = dict.insert("roadwork_shortfall", cohort.roadworkShortfall() as f64);
 
-    // ⛔ **THE `quarrywork` TRIPLE IS RETIRED** (`docs/plan_site_crews.md` §4): a working is kept by
-    // its own `extract` crew, and its bill rides the `deposits` row. The wire slots stay and publish
-    // 0; this reader no longer inserts them.
+    // ⛔ **THERE IS NO `quarrywork` TRIPLE** (`docs/plan_site_crews.md` §4): a working is kept by its
+    // own `extract` crew, and its bill rides the `deposits` row.
     // --- THE TWO STANDING POOLS' TABLES OF EQUIPMENT (`docs/plan_pool_toe.md` §4) -----------------
     // One row per `(pool, item)`: what a pool's OWN SITES require this turn, and what the band's
     // band-wide settlement handed it. **This is where a pool's gear is stated now** — a pool row's

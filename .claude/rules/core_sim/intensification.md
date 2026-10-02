@@ -820,7 +820,7 @@ first *rate*** (`docs/plan_standing_upkeep.md`).
 > > source-addressed and keep the winner rule above, and they agree across every holder by
 > > construction (one `cultivate` enqueues the same declaration on every band working the source).
 > > It is **captured live** off `LaborAllocation::build_queue`
-> > rather than turn-written — `buildKitId`'s discipline — so `build_order` / `unqueue` / a
+> > rather than turn-written — `isQueued`'s discipline — so `build_order` / `unqueue` / a
 > > declaration land on the command's own recapture and the client keeps **no optimistic ordering
 > > overlay**, an overlay being the second ordering this rule exists to forbid.
 > >
@@ -1307,8 +1307,8 @@ holds no hoes publishes `hoes required 1.8 filled 0`; the paid control reads fil
   elsewhere), a road's carries `road = true`. Two workings queued on one hex are two
   distinguishable entries (`source_crews_on_the_wire::
   two_workings_and_a_road_on_one_tile_publish_distinguishable_entries`).
-- **`poolCrew` / `poolToe` state `roadwork` and `builders` only**, and the `quarrywork*` triple on
-  `PopulationCohortState` is `(deprecated)` and publishes `0`.
+- **`poolCrew` / `poolToe` state `roadwork` and `builders` only**, and `PopulationCohortState`
+  carries no `quarrywork*` triple.
 - **The four `*BuildFraction` fields and the two `*CrewNeeded` fields are off the wire.**
 
 ### THE MATERIAL HALF — a rung costs WORK **and** GOODS, on both terms

@@ -263,16 +263,6 @@ pub(crate) fn herds_to_array(
         // `build_turns_remaining` and `build_work_from_gear`: several bands may work one source, the
         // sooner estimate wins, and all three come from that band, so the three are read as one set.
         let _ = dict.insert("build_queue_position", herd.buildQueuePosition() as i64);
-        // **WHAT THIS HERD'S BUILD IS BEING RAISED WITH** — the kit id the winning band's queue
-        // entry RESOLVES to, `""` when no band has it queued
-        // (`docs/plan_standing_upkeep.md` §4.7a ②). It states the RESOLVED kit, never *"the player
-        // named none"*: the builders' default is derived per entry from that entry's own food web,
-        // so an entry naming nothing would otherwise read empty while the pool was out with hurdles.
-        // The `(default)` mark beside it is the client's own — `KitRoster.build_kit_for_branch`
-        // mirrors the same roster derivation, exactly as the hunt row's per-quarry default works.
-        if let Some(build_kit_id) = herd.buildKitId() {
-            let _ = dict.insert("build_kit_id", build_kit_id);
-        }
         // **WHY THAT QUEUE IS BLOCKED HERE** — `""` whenever this herd is not a blocked build, else a
         // short lowercase cause key (`escapement`, `knowledge`, `rung_below`, `species_ceiling`,
         // `owned_by_other`, `ring_idle`, `undeclared`, `unworked`; the `.fbs` comment on
@@ -715,24 +705,6 @@ pub(crate) fn herds_to_array(
         // `""` means the roster could not resolve the species; the client reads that as "no herd
         // answer" and falls back to `SubsistenceSection.defaultHuntKitId`, exactly as the sim does.
         let _ = dict.insert("default_kit_id", herd.defaultKitId().unwrap_or(""));
-        // **WHAT THIS HERD'S KEEPERS ARE CARRYING** — the animal twin of the plant web's pair
-        // below, set per WORK SITE by `upkeep_kit <faction> <herd_id> [kit <id>]`
-        // (`docs/plan_standing_upkeep.md` §2.7). The band is the pool of hands and goods to draw
-        // from; it does not decide which tool a given herd is kept with, so this rides the herd row
-        // exactly as `build_kit_id` above rides the queue entry.
-        //
-        // It states the **RESOLVED** kit, never *"the player named none"*: the default is derived
-        // from this site's own food web, so a row that named nothing would otherwise read empty
-        // while the keepers were out with hurdling. `""` means NO band of the viewing faction works
-        // this herd at all — an explicit bare-handed pick crosses as the roster's own bare kit id,
-        // which is a real selection and reads differently. Newest slot on `HerdTelemetryState`.
-        let _ = dict.insert("upkeep_kit_id", herd.upkeepKitId().unwrap_or(""));
-        // **WHETHER THAT ID IS THE PLAYER'S WORD OR THE WEB'S DERIVATION** — not recoverable from
-        // the id alone, because a player may name the very kit the derivation would have picked. A
-        // picker draws its `(default)` mark and offers "back to default" off this and not off a
-        // second client-side derivation. Decoded on both webs so one reader serves a herd and a
-        // patch alike.
-        let _ = dict.insert("upkeep_kit_named", herd.upkeepKitNamed());
         // **WHAT THIS HERD'S OWN CREW SPENT KEEPING IT** (`docs/plan_site_crews.md` §2.1). A site's
         // crew keeps it first and takes with the rest, so the work row's second line reads
         // `keeps <upkeep_supplied> of <upkeep_demand> · <workers - upkeep_hands> hunting`.
@@ -995,12 +967,6 @@ pub(crate) fn forage_patches_to_array(
         // there for why the countdown beside it is a CHAINED date and why the three build fields are
         // read as one set off one winning band.
         let _ = dict.insert("build_queue_position", patch.buildQueuePosition() as i64);
-        // The plant twin of the herd row's — the RESOLVED builders kit of the winning band's queue
-        // entry, `""` when nobody has it queued. See there for why the wire states the resolved kit
-        // and why the `(default)` mark is the client's own derivation.
-        if let Some(build_kit_id) = patch.buildKitId() {
-            let _ = dict.insert("build_kit_id", build_kit_id);
-        }
         // The plant twin of the herd row's blocked CAUSE — `""` when this patch is not a blocked
         // build, else the key naming the conjunct that refused (`escapement`, `knowledge`, `no_crop`,
         // `site`, `owned_by_other`, `undeclared`, `unworked`). See the herd block for why it is read
@@ -1401,13 +1367,6 @@ pub(crate) fn forage_patches_to_array(
             "neglect_grace_remaining",
             i64::from(patch.neglectGraceRemaining()),
         );
-        // **WHAT THIS PATCH'S KEEPERS ARE CARRYING** — the plant twin of the herd block's pair; see
-        // there for why the wire states the RESOLVED kit, why `""` means no band of the viewing
-        // faction works this source at all, and why the "named" flag is not recoverable from the id.
-        // Set per WORK SITE by `upkeep_kit <faction> <x> <y> [kit <id>]`, so it rides the worked row
-        // rather than the band. Newest slot on `ForagePatchState`.
-        let _ = dict.insert("upkeep_kit_id", patch.upkeepKitId().unwrap_or(""));
-        let _ = dict.insert("upkeep_kit_named", patch.upkeepKitNamed());
         // **WHAT THIS PATCH'S OWN CREW SPENT KEEPING IT** — the herd block's pair; see there.
         let _ = dict.insert("upkeep_hands", f64::from(patch.upkeepHands()));
         let _ = dict.insert("upkeep_tools_short", patch.upkeepToolsShort());

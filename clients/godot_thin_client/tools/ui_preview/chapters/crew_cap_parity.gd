@@ -341,7 +341,6 @@ func _parity_wood() -> Dictionary:
 		"has_neglect_grace": false, "neglect_grace_remaining": 0,
 		"build_turns_remaining": SourceForecast.BUILD_TURNS_NO_ESTIMATE,
 		"build_blocked_reason": "", "is_queued": false,
-		"build_kit_id": "", "upkeep_kit_id": "", "upkeep_kit_named": false,
 		"offered_kit_ids": [], "default_kit_id": "",
 		"rung_floor_fraction": 0.0, "per_worker_biomass": WOOD_PER_WORKER,
 		"regrowth_samples": PackedFloat32Array(),

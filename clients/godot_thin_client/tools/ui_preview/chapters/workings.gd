@@ -2256,9 +2256,6 @@ func _wood_working(actual_take: float) -> Dictionary:
 		"build_turns_remaining": BUILD_NO_ESTIMATE,
 		"build_blocked_reason": "",
 		"is_queued": false,
-		"build_kit_id": "",
-		"upkeep_kit_id": "",
-		"upkeep_kit_named": false,
 		# The kits this working offers and the one its rung wants — `dict/deposits.rs`'
 		# `offered_kit_ids` / `default_kit_id`. Felling is not a floor rung, so the axe is wanted.
 		"offered_kit_ids": WOOD_OFFERED_KITS,
@@ -2332,9 +2329,6 @@ func _stone_working(actual_take: float) -> Dictionary:
 		"build_turns_remaining": BUILD_NO_ESTIMATE,
 		"build_blocked_reason": "",
 		"is_queued": false,
-		"build_kit_id": "",
-		"upkeep_kit_id": "",
-		"upkeep_kit_named": false,
 		# Gathering is the extraction branch's floor rung — the stone is picked up, so the Sled kit.
 		"offered_kit_ids": STONE_OFFERED_KITS,
 		"default_kit_id": _default_kit_for_rung(HudDepositVocab.RUNG_KEY_GATHERING),

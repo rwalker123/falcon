@@ -406,11 +406,11 @@ tr.band-row.focus td { background: color-mix(in srgb, var(--focus) 18%, transpar
   }
   function buildText(b) {
     if (!b) return "none";
-    return "→ " + b.destination_rung + (b.turns_remaining >= 0 ? ", " + b.turns_remaining + " turn" + (b.turns_remaining === 1 ? "" : "s") + " left" : "") + (b.queue_position >= 0 ? ", queue #" + b.queue_position : "") + (b.kit_id ? ", kit " + b.kit_id : "") + (b.blocked_reason ? " — blocked: " + b.blocked_reason : "");
+    return "→ " + b.destination_rung + (b.turns_remaining >= 0 ? ", " + b.turns_remaining + " turn" + (b.turns_remaining === 1 ? "" : "s") + " left" : "") + (b.queue_position >= 0 ? ", queue #" + b.queue_position : "") + (b.blocked_reason ? " — blocked: " + b.blocked_reason : "");
   }
   function upkeepText(u) {
     if (!u) return "none";
-    return num(u.supplied) + " of " + num(u.demand) + " supplied" + (u.shortfall > 0 ? ", short " + num(u.shortfall) : "") + ", needs " + u.workers_needed + " worker" + (u.workers_needed === 1 ? "" : "s") + (u.kit_id ? ", kit " + u.kit_id : "");
+    return num(u.supplied) + " of " + num(u.demand) + " supplied" + (u.shortfall > 0 ? ", short " + num(u.shortfall) : "") + ", needs " + u.workers_needed + " worker" + (u.workers_needed === 1 ? "" : "s");
   }
   // One worked row, as the client's Forage / Hunt readout states it: crew, yields, staffing
   // signals, and what the player stated on it. A line is shown only when the frame carries it.
