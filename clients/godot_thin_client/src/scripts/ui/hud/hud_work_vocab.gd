@@ -3978,7 +3978,7 @@ static func crew_split_shown(crew: int, keep_hands: float) -> bool:
     return crew > 0 and keep_hands >= CREW_SPLIT_MIN_KEEP_HANDS
 
 ## **THE SPLIT IN WORDS** — whole people, `About` where the sim's figure falls mid-person, the verb and
-## the thing kept per web. Tending is capped at the crew the row names.
+## the thing kept per web. The figure is the row's own, so it never exceeds the crew.
 static func crew_split_words(crew: int, keep_hands: float, labor_kind: String) -> String:
     var verb := CREW_SPLIT_VERB_HARVEST
     var what := CREW_SPLIT_OBJECT_PATCH
@@ -3988,7 +3988,7 @@ static func crew_split_words(crew: int, keep_hands: float, labor_kind: String) -
     elif labor_kind == HudConst.LABOR_KIND_EXTRACT:
         verb = CREW_SPLIT_VERB_CUT
         what = CREW_SPLIT_OBJECT_WORKING
-    var keep := clampf(keep_hands, 0.0, float(crew))
+    var keep := maxf(keep_hands, 0.0)
     var tending := clampi(roundi(keep), 1, crew)
     var free := crew - tending
     if float(crew) - keep <= CREW_SPLIT_WHOLE_PERSON_SLACK or free <= 0:

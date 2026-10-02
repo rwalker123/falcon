@@ -38,7 +38,7 @@ const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 159
+const EXPECTED_CHECKPOINTS := 179
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -1610,6 +1610,7 @@ func _authored_curve(in_range: bool, whole_kits: int = CURVE_WHOLE_KITS) -> Dict
 			HudDepositVocab.CURVE_TAKE_KEY: CURVE_TAKES[i],
 			CURVE_ARMED_WORKERS_KEY: float(mini(whole_kits, i + 1)),
 			HudDepositVocab.CURVE_NEXT_RUNG_TAKE_KEY: CURVE_NEXT_RUNG_TAKES[i],
+			SourceForecast.CREW_CURVE_KEEP_HANDS_KEY: CURVE_KEEP_PER_HAND * float(i + 1),
 		})
 	return {
 		HudDepositVocab.CURVE_PER_CREW_KEY: rows,
@@ -1617,6 +1618,26 @@ func _authored_curve(in_range: bool, whole_kits: int = CURVE_WHOLE_KITS) -> Dict
 		HudDepositVocab.CURVE_NEXT_RUNG_KEY: CURVE_NEXT_RUNG,
 		CURVE_IN_RANGE_FLAG_KEY: in_range,
 	}
+
+## **THE CREW SPLIT FOLLOWS THE STEPPER THROUGH THE CURVE** — the marks count the crew, their share
+## is the authored row's `keep_hands` at that crew, and the hover and the sentence under the figure
+## say it in words.
+func _assert_crew_split_on_sheet(sheet: Node, crew: int, words: String) -> void:
+	var marks := Readout.crew_split_marks(sheet)
+	var want := CURVE_KEEP_PER_HAND * float(crew)
+	h._assert_hud("crew split, working sheet at %d — the marks are the curve row's (%s, want %d · %.2f)"
+			% [crew, "none" if marks == null else "%d · %.2f" % [marks.crew(), marks.keep_hands()],
+				crew, want],
+		marks != null and marks.crew() == crew and is_equal_approx(marks.keep_hands(), want))
+	h._assert_hud("…and the hover and the sentence under the figure both read \"%s\" (%s | %s)"
+			% [words, "" if marks == null else marks.tooltip_text, Readout.crew_split_sentence(sheet)],
+		marks != null and marks.tooltip_text == words and Readout.crew_split_sentence(sheet) == words)
+
+## The authored curve's keeping: half a hand per cutter, so every crew's row differs.
+const CURVE_KEEP_PER_HAND := 0.5
+## The two crews' sentences, spelled out.
+const CURVE_SPLIT_WORDS := "About 2 of 3 are tending the working; 1 is free to cut."
+const CURVE_SPLIT_STEPPED_WORDS := "1 of 2 is tending the working; 1 is free to cut."
 
 ## The wood fixture carrying an authored curve reply — what the stand-in server answers the sheet's
 ## question with (`fixtures_forecast.gd` → `DEPOSIT_CREW_TAKE_KEY`).
@@ -1703,11 +1724,13 @@ func _crew_curve_states() -> void:
 				% h._hud._compose.deposit_count(),
 			h._hud._compose.deposit_count() == SHEET_CREW)
 		_assert_curve_row_on_sheet(sheet, SHEET_CREW)
+		_assert_crew_split_on_sheet(sheet, SHEET_CREW, CURVE_SPLIT_WORDS)
 		_assert_draw_reads_the_curve(sheet, wood, SHEET_CREW)
 		await h._save("workings_forestry_kit_curve")
 		# **THE STEPPER MOVES, THE FIGURES MOVE WITH IT — to the next row, off the same answer.**
 		sheet = await _open_curve_sheet(wood, CURVE_STEPPED_CREW)
 		_assert_curve_row_on_sheet(sheet, CURVE_STEPPED_CREW)
+		_assert_crew_split_on_sheet(sheet, CURVE_STEPPED_CREW, CURVE_SPLIT_STEPPED_WORDS)
 		# ⛔ **SLEDS ALONE ARE NO WOODCUTTING KIT.** The kit is a sled AND an axe on every rung, so a
 		# band holding three sleds and no axe fields zero whole kits — the line says so, where the
 		# retired held-rung narrowing counted the sleds on a deadfall and read the crew as outfitted.

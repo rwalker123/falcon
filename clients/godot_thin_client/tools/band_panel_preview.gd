@@ -25508,12 +25508,16 @@ const SPLIT_FIT_SETTLE_FRAMES := 6
 
 # ---- THE CREW SPLIT: ONE MARK PER WORKER (`CrewSplitMarks`) --------------------------------------
 #
-# Every Work-tab site row whose site has a tending bill carries one small square per worker under its
-# stepper, the tending share off the site's own `upkeep_hands` filled from the left. One board holds
+# Every Work-tab site row whose crew keeps its site carries one small square per worker under its
+# stepper, the tending share off the ROW's own `keep_hands` filled from the left. One board holds
 # every case the marks have: a split that falls MID-PERSON (3.2 of 5, so the fourth square is
 # part-shaded and the hover says `About`), a crew ALL tending (3 of 3), a WILD patch with no bill (no
 # marks at all — the control), and a groundwork row (the verb is `cut`). A second render puts a crew
 # far wider than its row on the same patch, which is the overflow case.
+#
+# ⛔ **EVERY SITE'S `upkeep_hands` IS THE SUM OF TWO BANDS' KEEPING**, the second band's share
+# (`CREW_SPLIT_OTHER_BAND_KEEP`) added on top, so a row that read the site figure lands on a number
+# the claims name. A second band works the mid patch too, and its own row must read its own split.
 
 ## The mid-person split: a crew of five on a patch whose keeping took 3.2 hands.
 const CREW_SPLIT_MID_CREW := 5
@@ -25523,6 +25527,11 @@ const CREW_SPLIT_ALL_CREW := 3
 const CREW_SPLIT_ALL_KEEP := 3.0
 ## What the near wood working's keeping took off its two cutters.
 const CREW_SPLIT_WORKING_KEEP := 0.6
+## The second band on the mid patch: its crew, what its own keeping took, and its sentence.
+const CREW_SPLIT_OTHER_BAND_ENTITY := 9061
+const CREW_SPLIT_OTHER_BAND_CREW := 2
+const CREW_SPLIT_OTHER_BAND_KEEP := 1.0
+const CREW_SPLIT_OTHER_WORDS := "1 of 2 is tending the patch; 1 is free to harvest."
 ## A crew far wider than its row can draw one square each for, and what it spends keeping.
 const CREW_SPLIT_BIG_CREW := 48
 const CREW_SPLIT_BIG_KEEP := 12.0
@@ -25540,10 +25549,11 @@ func _crew_split_patches(mid_keep: float) -> Array:
 	for i in range(patches.size()):
 		var patch: Dictionary = (patches[i] as Dictionary).duplicate(true)
 		var tile := Vector2i(int(patch.get("x", -1)), int(patch.get("y", -1)))
+		# The SITE's figure sums every band keeping it, so it is never any one row's answer.
 		if tile == QUEUE_SECOND_PATCH:
-			patch["upkeep_hands"] = mid_keep
+			patch["upkeep_hands"] = mid_keep + CREW_SPLIT_OTHER_BAND_KEEP
 		elif tile == QUEUE_THIRD_PATCH:
-			patch["upkeep_hands"] = CREW_SPLIT_ALL_KEEP
+			patch["upkeep_hands"] = CREW_SPLIT_ALL_KEEP + CREW_SPLIT_OTHER_BAND_KEEP
 		patches[i] = patch
 	return patches
 
@@ -25552,7 +25562,7 @@ func _crew_split_wild_tile() -> Vector2i:
 	var wild: Dictionary = _build_queue_patches(1)[0]
 	return Vector2i(int(wild.get("x", -1)), int(wild.get("y", -1)))
 
-func _crew_split_band(mid_crew: int) -> Dictionary:
+func _crew_split_band(mid_crew: int, mid_keep: float) -> Dictionary:
 	var band := _sections_band_fixture()
 	var rows: Array = band["labor_assignments"]
 	for i in range(rows.size()):
@@ -25561,14 +25571,28 @@ func _crew_split_band(mid_crew: int) -> Dictionary:
 		if String(row.get("kind", "")) == SourceForecast.LABOR_KIND_FORAGE:
 			if tile == QUEUE_SECOND_PATCH:
 				row["workers"] = mid_crew
+				row[SourceForecast.ASSIGNMENT_KEEP_HANDS_KEY] = mid_keep
 			elif tile == QUEUE_THIRD_PATCH:
 				row["workers"] = CREW_SPLIT_ALL_CREW
+				row[SourceForecast.ASSIGNMENT_KEEP_HANDS_KEY] = CREW_SPLIT_ALL_KEEP
 		rows[i] = row
 	rows.append({
 		"kind": HudConst.LABOR_KIND_EXTRACT, "workers": WORKINGS_CUTTERS,
 		"target_x": ROSTER_NEAR_TILE.x, "target_y": ROSTER_NEAR_TILE.y, "fauna_id": "",
 		"material": WORKINGS_WOOD,
+		SourceForecast.ASSIGNMENT_KEEP_HANDS_KEY: CREW_SPLIT_WORKING_KEEP,
 	})
+	return band
+
+## A second band working the mid patch beside the first, with its own crew and its own keeping.
+func _crew_split_other_band() -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = CREW_SPLIT_OTHER_BAND_ENTITY
+	band["labor_assignments"] = [{
+		"kind": SourceForecast.LABOR_KIND_FORAGE, "workers": CREW_SPLIT_OTHER_BAND_CREW,
+		"target_x": QUEUE_SECOND_PATCH.x, "target_y": QUEUE_SECOND_PATCH.y, "fauna_id": "",
+		"floor": 0.5, SourceForecast.ASSIGNMENT_KEEP_HANDS_KEY: CREW_SPLIT_OTHER_BAND_KEEP,
+	}]
 	return band
 
 func _crew_split_workings() -> Array:
@@ -25578,7 +25602,7 @@ func _crew_split_workings() -> Array:
 		if int(row.get("tile_x", -1)) == ROSTER_NEAR_TILE.x \
 				and int(row.get("tile_y", -1)) == ROSTER_NEAR_TILE.y \
 				and String(row.get("material", "")) == WORKINGS_WOOD:
-			row["upkeep_hands"] = CREW_SPLIT_WORKING_KEEP
+			row["upkeep_hands"] = CREW_SPLIT_WORKING_KEEP + CREW_SPLIT_OTHER_BAND_KEEP
 		rows[i] = row
 	return rows
 
@@ -25588,7 +25612,7 @@ func _stage_crew_split_board(mid_crew: int, mid_keep: float) -> void:
 	_hud.update_deposits(_crew_split_workings())
 	_set_world_herds(_herd_fixtures())
 	_set_forage_patches(_crew_split_patches(mid_keep))
-	_push_bands([_crew_split_band(mid_crew)])
+	_push_bands([_crew_split_band(mid_crew, mid_keep), _crew_split_other_band()])
 	_hud._bandpanel.rerender()
 	await _settle()
 
@@ -25626,7 +25650,7 @@ func _render_work_crew_split_states() -> void:
 		_assert_band_panel("crew split — one mark per worker: the marks count the row's crew (%d, want %d)"
 				% [mid.crew(), CREW_SPLIT_MID_CREW],
 			mid.crew() == CREW_SPLIT_MID_CREW)
-		_assert_band_panel("crew split — the tending share is the site's own `upkeep_hands` (%.2f, want %.2f)"
+		_assert_band_panel("crew split — the tending share is the ROW's own `keep_hands`, not the site's sum (%.2f, want %.2f)"
 				% [mid.keep_hands(), CREW_SPLIT_MID_KEEP],
 			is_equal_approx(mid.keep_hands(), CREW_SPLIT_MID_KEEP))
 		var part := clampf(mid.keep_hands() - floorf(mid.keep_hands()), 0.0, 1.0)
@@ -25660,6 +25684,21 @@ func _render_work_crew_split_states() -> void:
 			% ("" if working == null else working.tooltip_text),
 		working != null and working.crew() == WORKINGS_CUTTERS
 			and working.tooltip_text == CREW_SPLIT_WORKING_WORDS)
+	# **TWO BANDS ON ONE SITE EACH DRAW THEIR OWN SPLIT** — the second band's board, same patch.
+	var first_entity := int(_hud._band_labor.panel_band().get("entity", -1))
+	_hud._bandpanel.jump_to_band_entity(CREW_SPLIT_OTHER_BAND_ENTITY)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	var other := _crew_split_marks_for_tile(QUEUE_SECOND_PATCH)
+	_assert_band_panel("crew split — the OTHER band on the same patch draws its own crew and keeping (%s)"
+			% ("none" if other == null else "%d · %.2f" % [other.crew(), other.keep_hands()]),
+		other != null and other.crew() == CREW_SPLIT_OTHER_BAND_CREW
+			and is_equal_approx(other.keep_hands(), CREW_SPLIT_OTHER_BAND_KEEP))
+	_assert_band_panel("…and says its own sentence (\"%s\")" % ("" if other == null else other.tooltip_text),
+		other != null and other.tooltip_text == CREW_SPLIT_OTHER_WORDS)
+	_hud._bandpanel.jump_to_band_entity(first_entity)
+	_panel.set_active_tab(&"work")
+	await _settle()
 	var hunt_words := HudWorkVocab.crew_split_words(CREW_SPLIT_HUNT_CREW, CREW_SPLIT_HUNT_KEEP,
 		SourceForecast.LABOR_KIND_HUNT)
 	_assert_band_panel("crew split — the hunt web's words say `the herd` and `hunt` (\"%s\")" % hunt_words,

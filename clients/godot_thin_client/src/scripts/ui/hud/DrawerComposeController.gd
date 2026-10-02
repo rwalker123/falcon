@@ -1525,6 +1525,21 @@ func _forage_sheet_keep_hands(kept: bool, workers: int) -> float:
         as Dictionary).get("per_crew", []), workers)
     return float(row.get(SourceForecast.FORAGE_CREW_KEEP_HANDS_KEY, SourceForecast.NO_UPKEEP_DEMAND))
 
+## The crew split's sentence, muted, under a readout's yields row — nothing where it is `""`.
+func _mount_crew_split_sentence(column: Container, sentence: String) -> void:
+    if sentence == "":
+        return
+    var split_line := HudWidgets.alloc_hint_label(sentence)
+    split_line.set_meta(HudWorkVocab.CREW_SPLIT_SENTENCE_META, sentence)
+    column.add_child(split_line)
+
+## **THE TENDING HANDS A CREW-CURVE ROW STATES** — `SourceForecast.NO_UPKEEP_DEMAND` while the view
+## has no answer, or where it has no row for the crew. Never computed here.
+func _curve_row_keep_hands(view: Dictionary, row: Dictionary) -> float:
+    if String(view.get("state", "")) != ForecastQuery.STATE_READY:
+        return SourceForecast.NO_UPKEEP_DEMAND
+    return float(row.get(SourceForecast.CREW_CURVE_KEEP_HANDS_KEY, SourceForecast.NO_UPKEEP_DEMAND))
+
 ## Mount the crew split's marks under a sheet's stepper, and answer the sentence the readout states
 ## beneath its figure — `""` (and no marks) where the crew owes no tending.
 func _mount_crew_split(target: VBoxContainer, crew: int, keep_hands: float,
@@ -2778,10 +2793,7 @@ func _mount_readout(parent: VBoxContainer, hosts: Array, model: Dictionary, work
     # **WHO OF THIS CREW TENDS AND WHO TAKES, IN WORDS, UNDER THE FIGURE THEY EXPLAIN** — the crew
     # split's own sentence, muted. It is a property of the stepper's crew, not of the floor, so it is
     # outside the live registry: a drag does not move it, a stepper tick rebuilds the sheet.
-    if crew_split_sentence != "":
-        var split_line := HudWidgets.alloc_hint_label(crew_split_sentence)
-        split_line.set_meta(HudWorkVocab.CREW_SPLIT_SENTENCE_META, crew_split_sentence)
-        column.add_child(split_line)
+    _mount_crew_split_sentence(column, crew_split_sentence)
     # **THE `after` READING IS GATED ON THE SAME WALK THE VERDICT READS**, not on a closed form beside
     # it. `reached_turn` is what the sentence one line down says out loud ("Reaches the floor in 3
     # turns"), so a row promising a holding rate under a verdict saying the crew never gets there is
@@ -3205,6 +3217,10 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
             _compose.set_hunt_count(clampi(count, 0, cap))
             _build_herd_assign_controls(_live_herd(herd_id, herd), target),
         "", _crew_cap_reason(String(capped["note"]), cap, assignable))
+    # **THE CREW SPLIT, UNDER THE STEPPER** — the hunt curve row's `keep_hands` at the stepper's crew.
+    var hunt_split := _mount_crew_split(target, _compose.hunt_count(), _curve_row_keep_hands(
+        crew_take_view, SourceForecast.hunt_crew_take_row(crew_take, _compose.hunt_count())),
+        SourceForecast.LABOR_KIND_HUNT)
     var cap_note := String(capped["note"])
     if cap_note != "":
         target.add_child(HudWidgets.alloc_hint_label(cap_note))
@@ -3423,7 +3439,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
                 composed_improvement, reaches, _hunt_live_crew_take), party_view),
         SourceForecast.LABOR_KIND_HUNT,
         _improvement_deal_row(SourceForecast.LABOR_KIND_HUNT, herd,
-            HudComposeVocab.BARE_FORECAST_PREFIX, band, deal_rung, deal_payoff))
+            HudComposeVocab.BARE_FORECAST_PREFIX, band, deal_rung, deal_payoff), hunt_split)
     # **NO KEEPING ROW** (`docs/plan_standing_upkeep.md` §2.5) — a managed herd is held by the
     # band's `husbandry` role, not by a crew on this sheet, so there is no stepper here to point
     # at it. What this herd's share of that pool covers, and where it falls short, is stated on
@@ -5825,6 +5841,10 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
             _compose.set_deposit_count(clampi(count, 0, cap))
             _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target),
         HudDepositVocab.CARD_CREW_HINT, _crew_cap_reason(seam_note, cap, crew_pool))
+    # **THE CREW SPLIT, UNDER THE STEPPER** — the deposit curve row's `keep_hands` at the stepper's crew.
+    var deposit_split := _mount_crew_split(target, _compose.deposit_count(), _curve_row_keep_hands(
+        curve_view, HudDepositVocab.curve_row(curve_reply, _compose.deposit_count())),
+        HudConst.LABOR_KIND_EXTRACT)
     if capped_by_seam:
         target.add_child(HudWidgets.alloc_hint_label(seam_note))
     # **THE KIT ROW** (issue #663). The roster's `extract` job lists the Woodcutting kit (sled + axe)
@@ -5889,7 +5909,7 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     # reaches the floor), what the next rung would pay once it stands, the verdict the branch turns
     # on, and the runway under the dashed rule.
     _mount_deposit_readout(target, live_hosts, deposit, ladder, next_entry, chart_model,
-        _compose.deposit_count(), curve_reply, curve_row_at_crew, party_view)
+        _compose.deposit_count(), curve_reply, curve_row_at_crew, party_view, deposit_split)
     # ⛔ **NO RANGE REFUSAL** — the forage sheet's retirement, one web over. A working past the picked
     # band's work range posts a work party (the section above) rather than lapsing its crew, so a
     # refusal would forbid the very assignment the caravan exists to make.
@@ -6099,7 +6119,7 @@ func _fill_deposit_yields(host: Container, model: Dictionary, party_view: Dictio
 func _mount_deposit_readout(target: VBoxContainer, hosts: Array, deposit: Dictionary,
         ladder: Array[Dictionary], next_entry: Dictionary, model: Dictionary, crew: int,
         curve_reply: Dictionary, curve_row_at_crew: Dictionary,
-        party_view: Dictionary = {}) -> void:
+        party_view: Dictionary = {}, crew_split_sentence: String = "") -> void:
     var column := HudWidgets.build_readout_box(target)
     var known := bool(model.get("known", false))
     var tile := HudDepositVocab.tile_of(deposit)
@@ -6114,6 +6134,7 @@ func _mount_deposit_readout(target: VBoxContainer, hosts: Array, deposit: Dictio
     var yields_host := VBoxContainer.new()
     yields_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     column.add_child(yields_host)
+    _mount_crew_split_sentence(column, crew_split_sentence)
     if known:
         # **THE VIEW IS READ OFF THE LIVE MEMBER, NOT CAPTURED** — a drag re-asks at the dragged
         # floor and writes `_deposit_live_crew_view`, so the refill states that floor's take (or that

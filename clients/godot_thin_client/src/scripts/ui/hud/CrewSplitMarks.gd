@@ -41,7 +41,7 @@ static func build(crew: int, keep_hands: float, labor_kind: String, sheet: bool)
 
 func setup(crew: int, keep_hands: float, labor_kind: String, sheet: bool) -> void:
     _crew = maxi(crew, 0)
-    _keep = clampf(keep_hands, 0.0, float(_crew))
+    _keep = maxf(keep_hands, 0.0)
     if sheet:
         _mark_size = HudWorkVocab.CREW_SPLIT_SHEET_MARK_SIZE
         _gap = HudWorkVocab.CREW_SPLIT_SHEET_MARK_GAP

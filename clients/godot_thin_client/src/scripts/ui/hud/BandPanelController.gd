@@ -2762,7 +2762,8 @@ func _build_extract_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     col.add_child(_build_site_crew_line(HudWorkVocab.site_crew_line(
         rung_name if rung_name != "" else HudWorkVocab.SITE_CREW_RUNG_WILD),
         HudWorkVocab.SITE_CREW_LINE_META, _crew_split_for_row(cutters,
-            SourceForecast.upkeep_hands(deposit, HudComposeVocab.BARE_FORECAST_PREFIX),
+            float(assignment.get(SourceForecast.ASSIGNMENT_KEEP_HANDS_KEY,
+                SourceForecast.NO_UPKEEP_DEMAND)),
             HudConst.LABOR_KIND_EXTRACT)))
     col.add_child(_build_working_yield_line(_working_yield_text(band, model, deposit, ladder,
         cutters, useful, floor), value_ink))
@@ -2871,7 +2872,7 @@ func _build_site_crew_line(text: String,
     label.set_meta(meta, text)
     line.add_child(label)
     # **THE CREW SPLIT RIDES THE END OF THIS LINE, under the stepper above it** — one mark per worker,
-    # the tending share off the sim's `upkeep_hands`. It shares the line with the rung word rather than
+    # the tending share off the row's own `keep_hands`. It shares the line with the rung word rather than
     # taking a line of its own, so the row's reserved height does not move; both halves expand, the
     # marks fitting themselves to the width they are given (`CrewSplitMarks`).
     if split != null:
@@ -2880,7 +2881,7 @@ func _build_site_crew_line(text: String,
     return margin
 
 ## **THE CREW SPLIT FOR A WORK-TAB ROW**, or `null` where the site has no tending bill. The tending
-## figure is the site's own `upkeep_hands`, read off the wire and never derived.
+## figure is the row's own `keep_hands`, read off the wire and never derived.
 func _crew_split_for_row(crew: int, keep_hands: float, labor_kind: String) -> Control:
     if not HudWorkVocab.crew_split_shown(crew, keep_hands):
         return null
@@ -7074,8 +7075,10 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             HudComposeVocab.BARE_FORECAST_PREFIX)
         var keep_kept := float(keep_state.get("supplied", SourceForecast.NO_UPKEEP_DEMAND))
         var keep_demand := float(keep_state.get("demand", SourceForecast.NO_UPKEEP_DEMAND))
-        var keep_hands := SourceForecast.upkeep_hands(rung_source,
-            HudComposeVocab.BARE_FORECAST_PREFIX)
+        # **THIS ROW'S OWN keeping hands**, not the site's `upkeep_hands` — that sums every band
+        # keeping the site, so two bands on one patch would each draw the other's tenders.
+        var keep_hands := float(m.get(SourceForecast.ASSIGNMENT_KEEP_HANDS_KEY,
+            SourceForecast.NO_UPKEEP_DEMAND))
         var site_short := HudWorkVocab.site_keeping_is_short(keep_kept, keep_demand)
         var standing := SourceForecast.standing_improvement(rung_source,
             HudComposeVocab.BARE_FORECAST_PREFIX)

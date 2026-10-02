@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 349
+const EXPECTED_CHECKPOINTS := 354
 
 ## The countdown verdict's opening, as a needle — the precondition every claim about that sentence
 ## rests on ("this model reached the reaching branch at all").
@@ -1693,6 +1693,8 @@ func run(harness) -> void:
 
 	await _tame_deal_reads_the_curve()
 
+	await _hunt_crew_split_follows_the_stepper()
+
 
 # =====================================================================================
 #  THE PRE-LAUNCH FIGHT (`docs/plan_hunt_through_combat.md` §2.1, §4.2, §6.5)
@@ -1785,6 +1787,57 @@ func _tame_deal_reads_the_curve() -> void:
 	query.reset()
 	h._hud._drawercompose.close_compose_sheet()
 	h._hud._compose.reset_hunt_source()
+
+## **THE HUNT SHEET'S CREW SPLIT IS THE CURVE ROW'S `keep_hands` AT THE STEPPER'S CREW.** A sender
+## authors half a hand of keeping per hunter on every row, so a sheet reading the wrong row lands on a
+## figure the claims name; the stepper then moves and the marks and the sentence must follow.
+func _hunt_crew_split_follows_the_stepper() -> void:
+	var query: ForecastQuery = h._hud.forecast_query()
+	query.set_sender(func(request_id: int, ask: Dictionary) -> bool:
+		var reply := ForecastFx.answer(h._hud, request_id, ask)
+		if String(ask.get("kind", "")) == ForecastQuery.KIND_HUNT_CREW_TAKE:
+			for row in reply.get("per_crew", []):
+				(row as Dictionary)[SourceForecast.CREW_CURVE_KEEP_HANDS_KEY] = \
+					HUNT_SPLIT_KEEP_PER_HAND * float((row as Dictionary).get(
+						SourceForecast.CREW_TAKE_WORKERS_KEY, 0))
+		query.deliver.call_deferred([reply])
+		return true)
+	query.reset()
+	var boar := HerdFx.investment_pair_boar_herd()
+	h._hud._compose.reset_hunt_source()
+	h._hud._compose.set_hunt_band(-1)
+	h._show_herd(boar)
+	for crew in [HUNT_SPLIT_CREW, HUNT_SPLIT_STEPPED_CREW]:
+		h._compose_herd(boar, crew)
+		await h._settle()
+		h._compose_herd(boar, crew)
+		await h._settle()
+		if crew == HUNT_SPLIT_CREW:
+			await h._save("herd_crew_split_sheet")
+		var sheet = h._hud._drawercompose._compose_sheet
+		var marks := Readout.crew_split_marks(sheet)
+		var want := HUNT_SPLIT_KEEP_PER_HAND * float(crew)
+		var words := HUNT_SPLIT_WORDS if crew == HUNT_SPLIT_CREW else HUNT_SPLIT_STEPPED_WORDS
+		h._assert_hud("crew split, hunt sheet at %d — the marks are the curve row's (%s, want %d · %.2f)"
+				% [crew, "none" if marks == null else "%d · %.2f" % [marks.crew(), marks.keep_hands()],
+					crew, want],
+			marks != null and marks.crew() == crew and is_equal_approx(marks.keep_hands(), want))
+		h._assert_hud("…and the hover and the sentence under the figure both read \"%s\" (%s | %s)"
+				% [words, "" if marks == null else marks.tooltip_text,
+					Readout.crew_split_sentence(sheet)],
+			marks != null and marks.tooltip_text == words
+				and Readout.crew_split_sentence(sheet) == words)
+	ForecastFx.install(h._hud)
+	query.reset()
+	h._hud._drawercompose.close_compose_sheet()
+	h._hud._compose.reset_hunt_source()
+
+## The authored keeping on the hunt curve, and the two crews the sheet is read at, with their words.
+const HUNT_SPLIT_KEEP_PER_HAND := 0.5
+const HUNT_SPLIT_CREW := 3
+const HUNT_SPLIT_STEPPED_CREW := 2
+const HUNT_SPLIT_WORDS := "About 2 of 3 are tending the herd; 1 is free to hunt."
+const HUNT_SPLIT_STEPPED_WORDS := "1 of 2 is tending the herd; 1 is free to hunt."
 
 ## The authored hunt curve's next-rung take, animals a turn per hunter on the row — distinct at every
 ## crew, so a deal reading the wrong row cannot land on the right figure.

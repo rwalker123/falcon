@@ -767,6 +767,8 @@ fn crew_row_to_dict(row: &sim_runtime::HuntCrewTakeRow) -> VarDictionary {
         f64::from(row.next_rung_animals_likely),
     );
     let _ = dict.insert("next_rung_keep_hands", f64::from(row.next_rung_keep_hands));
+    // The hands this crew spends keeping the herd, fractional — the sheet's crew-split marks.
+    let _ = dict.insert("keep_hands", f64::from(row.keep_hands));
     dict
 }
 
@@ -780,6 +782,8 @@ fn deposit_crew_row_to_dict(row: &sim_runtime::DepositCrewTakeRow) -> VarDiction
     let _ = dict.insert("workers", i64::from(row.workers));
     let _ = dict.insert("take", f64::from(row.take));
     let _ = dict.insert("armed_workers", f64::from(row.armed_workers));
+    // The hands this crew spends keeping the working, fractional — the sheet's crew-split marks.
+    let _ = dict.insert("keep_hands", f64::from(row.keep_hands));
     let _ = dict.insert("next_rung_take", f64::from(row.next_rung_take));
     dict
 }

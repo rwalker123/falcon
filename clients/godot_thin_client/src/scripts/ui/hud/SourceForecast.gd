@@ -1348,6 +1348,12 @@ const FORECAST_UPKEEP_SHORTFALL_KEY := "upkeep_shortfall"
 # site; `crew − upkeep_hands` is what collected. `upkeep_tools_short` is the band-wide settlement
 # filling less than this site's keeping-tool claim — the row's `ⓘ` where the work is still covered.
 const FORECAST_UPKEEP_HANDS_KEY := "upkeep_hands"
+## **THE HANDS ONE LABOR ROW'S OWN CREW SPENT KEEPING ITS SITE** (`LaborAssignment.keepHands`) — this
+## band's share of the site's summed `upkeep_hands`, which is what a row's crew-split marks draw.
+const ASSIGNMENT_KEEP_HANDS_KEY := "keep_hands"
+## **THE HANDS A CREW-CURVE ROW'S CREW SPENDS KEEPING ITS SOURCE** — the same field on all three
+## curves (forage, hunt, deposit), which is what the compose sheets' crew-split marks read.
+const CREW_CURVE_KEEP_HANDS_KEY := "keep_hands"
 const FORECAST_UPKEEP_TOOLS_SHORT_KEY := "upkeep_tools_short"
 ## …and the SITE's keeping-tool table, `[{item_id, required, filled}]` (`[]` where the site claims no
 ## tool) — the lines `upkeep_tools_short` is derived from, read to NAME the short tool.

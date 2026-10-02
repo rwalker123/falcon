@@ -7748,10 +7748,15 @@ Work-tab site row whose site has a tending bill now carries one small square per
 its second line, under the stepper: the tending share fills from the left in a muted earth, the takers
 are bright, and a person split between the two is one square shaded in part.
 
-- **The tending figure is the sim's.** A harvest or hunt row reads the model's `keep_hands`, which is
-  the source's own `upkeep_hands`; a groundwork row reads its deposit's `upkeep_hands`. Nothing is
-  derived. The marks cap the share at the row's crew, since `upkeep_hands` sums every band keeping the
-  site.
+- **The tending figure is the ROW's own `keep_hands`** (`LaborAssignment.keepHands`), the hands this
+  band's crew spent keeping the site. Every row reads it, harvest, hunt and groundwork alike. Nothing
+  is derived.
+- ⛔ **NEVER the site's `upkeep_hands`.** That figure sums every band keeping the site, so with two
+  bands on one patch each row would draw the other band's tenders as its own.
+- **The key must be on the merged row.** `keep_hands` is in `HudBandLaborState.OPTIONAL_YIELD_KEYS`.
+  A key missing from that allowlist never reaches the Work tab.
+- **A pending row draws no marks.** The pending overlay replaces the merged row and carries no
+  `keep_hands`, so the marks appear with the next snapshot.
 - **Only where there is a bill.** `HudWorkVocab.crew_split_shown` (a crew, and at least
   `CREW_SPLIT_MIN_KEEP_HANDS` tending) gates both surfaces. A wild patch owes nothing and draws nothing.
 - **Information, not an alert.** No warning ink and no ⚠. The two inks are `HudStyle.CREW_TEND` /

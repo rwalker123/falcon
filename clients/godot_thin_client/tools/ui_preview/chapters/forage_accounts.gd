@@ -2769,24 +2769,11 @@ func _crew_split_sheet_states() -> void:
 
 ## The crew-split marks on the open compose sheet, or `null` where it draws none.
 func _crew_split_on_sheet() -> CrewSplitMarks:
-	var sheet = h._hud._drawercompose._compose_sheet
-	if sheet == null:
-		return null
-	for node in sheet.find_children("*", "Control", true, false):
-		if node is CrewSplitMarks and not (node as Node).is_queued_for_deletion():
-			return node as CrewSplitMarks
-	return null
+	return Readout.crew_split_marks(h._hud._drawercompose._compose_sheet)
 
 ## The muted sentence under the sheet's next-turn figure, `""` where none is drawn.
 func _crew_split_sentence() -> String:
-	var sheet = h._hud._drawercompose._compose_sheet
-	if sheet == null:
-		return ""
-	for node in sheet.find_children("*", "Label", true, false):
-		if (node as Node).has_meta(HudWorkVocab.CREW_SPLIT_SENTENCE_META) \
-				and not (node as Node).is_queued_for_deletion():
-			return String((node as Node).get_meta(HudWorkVocab.CREW_SPLIT_SENTENCE_META))
-	return ""
+	return Readout.crew_split_sentence(h._hud._drawercompose._compose_sheet)
 
 ## The authored curve's keeping: half a hand per worker, so every crew's row differs.
 const CREW_SPLIT_KEEP_PER_HAND := 0.5

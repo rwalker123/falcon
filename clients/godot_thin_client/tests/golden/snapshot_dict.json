@@ -4880,6 +4880,7 @@
           "hunt_useful_workers": 43,
           "hunters_on_the_road": 119,
           "improvement": "populations[0].labor_assignments[0].improvement",
+          "keep_hands": 98.620003,
           "kind": "populations[0].labor_assignments[0].kind",
           "kit_id": "populations[0].labor_assignments[0].kit_id",
           "kit_toe": [
@@ -4972,6 +4973,7 @@
           "hunt_useful_workers": 144,
           "hunters_on_the_road": 12,
           "improvement": "populations[0].labor_assignments[1].improvement",
+          "keep_hands": 3.33,
           "kind": "populations[0].labor_assignments[1].kind",
           "kit_id": "populations[0].labor_assignments[1].kit_id",
           "kit_toe": [
@@ -5064,6 +5066,7 @@
           "hunt_useful_workers": 121,
           "hunters_on_the_road": 121,
           "improvement": "populations[0].labor_assignments[2].improvement",
+          "keep_hands": 103.919998,
           "kind": "populations[0].labor_assignments[2].kind",
           "kit_id": "populations[0].labor_assignments[2].kit_id",
           "kit_toe": [
@@ -5964,6 +5967,7 @@
           "hunt_useful_workers": 30,
           "hunters_on_the_road": 118,
           "improvement": "populations[1].labor_assignments[0].improvement",
+          "keep_hands": 55.380001,
           "kind": "populations[1].labor_assignments[0].kind",
           "kit_id": "populations[1].labor_assignments[0].kit_id",
           "kit_toe": [
@@ -6056,6 +6060,7 @@
           "hunt_useful_workers": 41,
           "hunters_on_the_road": 1,
           "improvement": "populations[1].labor_assignments[1].improvement",
+          "keep_hands": 57.48,
           "kind": "populations[1].labor_assignments[1].kind",
           "kit_id": "populations[1].labor_assignments[1].kit_id",
           "kit_toe": [
@@ -6148,6 +6153,7 @@
           "hunt_useful_workers": 184,
           "hunters_on_the_road": 68,
           "improvement": "populations[1].labor_assignments[2].improvement",
+          "keep_hands": 26.209999,
           "kind": "populations[1].labor_assignments[2].kind",
           "kit_id": "populations[1].labor_assignments[2].kit_id",
           "kit_toe": [
@@ -7011,6 +7017,7 @@
           "hunt_useful_workers": 17,
           "hunters_on_the_road": 153,
           "improvement": "populations[2].labor_assignments[0].improvement",
+          "keep_hands": 84.419998,
           "kind": "populations[2].labor_assignments[0].kind",
           "kit_id": "populations[2].labor_assignments[0].kit_id",
           "kit_toe": [
@@ -7103,6 +7110,7 @@
           "hunt_useful_workers": 102,
           "hunters_on_the_road": 22,
           "improvement": "populations[2].labor_assignments[1].improvement",
+          "keep_hands": 63.639999,
           "kind": "populations[2].labor_assignments[1].kind",
           "kit_id": "populations[2].labor_assignments[1].kit_id",
           "kit_toe": [
@@ -7195,6 +7203,7 @@
           "hunt_useful_workers": 51,
           "hunters_on_the_road": 23,
           "improvement": "populations[2].labor_assignments[2].improvement",
+          "keep_hands": 45.779999,
           "kind": "populations[2].labor_assignments[2].kind",
           "kit_id": "populations[2].labor_assignments[2].kit_id",
           "kit_toe": [

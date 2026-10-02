@@ -465,3 +465,23 @@ static func _collect_work_party_lines(node: Node, lines: Array) -> void:
 		lines.append(String((node as Control).get_meta(HudWidgets.WORK_PARTY_LINE_META)))
 	for child in node.get_children():
 		_collect_work_party_lines(child, lines)
+
+## **THE CREW-SPLIT MARKS ON A COMPOSE SHEET**, or `null` where it draws none. A node queued for
+## deletion is the previous render's and is skipped.
+static func crew_split_marks(sheet: Node) -> CrewSplitMarks:
+	if sheet == null:
+		return null
+	for node in sheet.find_children("*", "Control", true, false):
+		if node is CrewSplitMarks and not (node as Node).is_queued_for_deletion():
+			return node as CrewSplitMarks
+	return null
+
+## The crew split's muted sentence under the readout's figure, `""` where none is drawn.
+static func crew_split_sentence(sheet: Node) -> String:
+	if sheet == null:
+		return ""
+	for node in sheet.find_children("*", "Label", true, false):
+		if (node as Node).has_meta(HudWorkVocab.CREW_SPLIT_SENTENCE_META) \
+				and not (node as Node).is_queued_for_deletion():
+			return String((node as Node).get_meta(HudWorkVocab.CREW_SPLIT_SENTENCE_META))
+	return ""

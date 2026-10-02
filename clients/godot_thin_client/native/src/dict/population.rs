@@ -801,6 +801,10 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // `actual > sustainable`, which false-positives on a hunt's kill turn (banked animal spikes
             // actual above the steady sustainable even under Sustain).
             let _ = entry.insert("overdraws", assignment.overdraws());
+            // **THE HANDS THIS ROW'S OWN CREW SPENT KEEPING ITS SITE THIS TURN**, fractional. The
+            // source's `upkeep_hands` sums every band keeping the site; this is this band's share of
+            // it, which is what the Work row's crew-split marks draw.
+            let _ = entry.insert("keep_hands", assignment.keepHands() as f64);
             // **WHERE THE PLAYER PUT THIS ROW WHEN THE BAND RUNS SHORT** — the mark
             // `work_priority <faction> <band> <source…> high|normal|low` sets
             // (`docs/plan_standing_upkeep.md` §4.9 item 9b), inserted as the LOWERCASE WORD rather

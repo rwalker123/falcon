@@ -912,6 +912,9 @@ const OPTIONAL_YIELD_KEYS: Array[String] = [
 	# published zero are the same reading (`SourceForecast.fodder_rate_of` says why at length).
 	"realized_yield", "fodder_yield",
 	SourceForecast.YIELD_RANGE_LOW_KEY, SourceForecast.YIELD_RANGE_HIGH_KEY,
+	# The row's own keeping hands, for the same reason: the Work row's crew-split marks read it off
+	# the merged row, and a key not copied here does not exist for them.
+	SourceForecast.ASSIGNMENT_KEEP_HANDS_KEY,
 ]
 
 ## **THE HANDS ONE MERGED ROW SPENDS**, the client's transcription of

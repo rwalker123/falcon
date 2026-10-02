@@ -3554,4 +3554,21 @@ SHEET".
 **Sabotage-verified**: the sheet reading crew 1's row fails five claims; marks drawn with no bill
 fails the pending claim.
 
-**A clean run is 465 frames / 2495 `PASS`, exit 0 — RE-MEASURED windowed.**
+## The crew split on the hunt and Groundwork sheets (`chapters/hunt.gd`, `chapters/workings.gd`)
+
+The hunt chapter appends one frame and four claims: `herd_crew_split_sheet`. The workings chapter
+has four claims inside `_crew_curve_states`. The behaviour is `labor-ui.md` → "THE CREW SPLIT ON THE
+SHEET".
+
+- **Each curve authors half a hand of keeping per worker**, so every crew's row differs. Hunt uses a
+  wrapping `set_sender` over `ForecastFx.answer`, and the wood uses the authored curve's rows.
+  `ForecastFx.install` restores the stock sender afterwards.
+- The claims, at crews 3 and 2 on each sheet: the marks count the stepper's crew, the share is the
+  row's `keep_hands` at that crew, and the hover and the sentence are spelled out by equality.
+- **The finders are shared.** `Readout.crew_split_marks` / `crew_split_sentence` (`readouts.gd`)
+  serve all three chapters.
+- `EXPECTED_CHECKPOINTS`: hunt **354**, workings **179**, both re-measured.
+
+**Sabotage-verified**: either sheet reading crew 1's row fails its four claims.
+
+**A clean run is 466 frames / 2503 `PASS`, exit 0 — RE-MEASURED windowed.**

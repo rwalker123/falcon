@@ -2996,7 +2996,7 @@ asserts the kit note is non-empty, or the claim would pass on a row that lost it
 
 ## The crew split on the Work-tab rows (`_render_work_crew_split_states`)
 
-Two frames and sixteen claims, run after the work-party states:
+Two frames and eighteen claims, run after the work-party states:
 `band_panel_work_crew_split` and `band_panel_work_crew_split_big`. The behaviour is
 `band-city-panel.md` → "THE CREW SPLIT".
 
@@ -3005,13 +3005,21 @@ Two frames and sixteen claims, run after the work-party states:
   the patch — nobody is free to harvest.`), a wild patch with no bill (no marks, the control), and a
   wood working whose keeping took 0.6 of 2 cutters (the verb `cut`). The hunt web's words are asked of
   the producer.
-- The claims: marks count the crew; the share is the site's `upkeep_hands`; the hovers by equality;
-  the marks take keyboard focus and a focus floats the same sentence; the marks sit inside their row.
+- **Each site's `upkeep_hands` is the sum of two bands' keeping.** A second band
+  (`CREW_SPLIT_OTHER_BAND_ENTITY`) adds its share on top. A row that read the site figure would land on
+  a number the claims name.
+- The claims:
+  - marks count the crew, and the share is the ROW's own `keep_hands`;
+  - the hovers, by equality;
+  - the marks take keyboard focus, and a focus floats the same sentence;
+  - the marks sit inside their row;
+  - the second band, jumped to on the same patch, draws its own crew, keeping and sentence.
 - **The big crew** (48 hands, 12 tending) shrinks the squares to their floor and counts the rest
   (`+31` in the frame), and the marks stay inside their row.
 
 **Sabotage-verified in one run, three disjoint mutations**: the row reading the bill instead of the
 hands fails five claims; marks drawn with no bill fails the wild-row claim; no truncation fails the
-overflow claim.
+overflow claim. A later run tried a fourth: the row reading the site's `upkeep_hands` fails five
+claims, both two-band claims among them.
 
-**A clean run is 1516 `PASS`, exit 0.**
+**A clean run is 1518 `PASS`, exit 0.**
