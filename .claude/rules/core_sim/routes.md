@@ -879,7 +879,8 @@ per turn by `advance_roads`.
 ### `advance_roads` is five phases, and the order is the whole of it
 
 1. **judge last turn's keeping** — `upkeep_shortfall_fraction` off the **stamped** basis arms or wipes
-   `Road::neglect_turns` (consecutive turns, never a lifetime budget);
+   `Road::neglect_turns` (consecutive turns, never a lifetime budget; `Road::set_position` resets it
+   the turn a rung completes — `intensification.md` → "A COMPLETED RUNG RESETS THE COUNTER");
 2. **bleed the rung at risk** at `shortfall_fraction × meter_decay.per_turn`, past that rung's own
    `grace_turns`. `RungDef::upkeep_decay` owns both the rate and the strictly-greater comparison;
 3. **clear** `upkeep_demanded` / `upkeep_supplied` for the coming turn's stamp;

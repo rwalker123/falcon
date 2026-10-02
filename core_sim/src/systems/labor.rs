@@ -1553,7 +1553,7 @@ fn plant_field_gate(
 ///
 /// It answers only *whether* the fodder component is banked. **How much** is untouched: a committed
 /// patch still converts at the share-weighted average of its own basket.
-fn committed_to_a_fodder_crop(
+pub(crate) fn committed_to_a_fodder_crop(
     species: Option<&str>,
     flora: &crate::flora_config::FloraConfig,
 ) -> bool {

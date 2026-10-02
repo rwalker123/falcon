@@ -1059,6 +1059,10 @@ message ForageCrewTakeQuery {
   float floor = 7;
   // The stepper's cap: one row per crew size `1..=max_workers`; 0 asks for nothing.
   uint32 max_workers = 8;
+  // THE CROP THE GROUND WOULD BE COMMITTED TO, for the rows' `next_rung_*` - the sheet's picked crop
+  // on an uncommitted patch. "" = the plant the sim would settle on for that rung; a plant that does
+  // not grow here is treated the same. Ignored on a committed patch.
+  string crop = 9;
 }
 
 // ONE CREW SIZE ON THE PATCH COMPOSE SHEET - see `ForageCrewTakeQuery`.
@@ -1076,6 +1080,12 @@ message ForageCrewTakeRow {
   float next_rung_take = 4;
   // The hands this crew would spend keeping the finished rung, fractional.
   float next_rung_keep_hands = 5;
+  // The same take's FODDER once the rung is finished, CREDITED - 0 where the sim would refuse the
+  // credit (no Foddering, and no commitment to a fodder-bearing plant).
+  float next_rung_fodder = 6;
+  // The same take's MATERIALS once the rung is finished, one row per material, keeping netted.
+  // Never summed across materials.
+  repeated MaterialPayoff next_rung_materials = 7;
 }
 
 // The answer to `ForageCrewTakeQuery`.
@@ -1522,6 +1532,13 @@ message HuntCrewTakeRow {
   float animals_low = 2;
   float animals_likely = 3;
   float animals_high = 4;
+  // THE SAME CREW'S LIKELY TAKE ONCE THE RUNG IN FLIGHT IS FINISHED (or the next rung up where
+  // nothing is in flight), animals a turn, ITS KEEPING NETTED at that rung's bill. 0 where the herd
+  // has no rung left to climb or its species cannot climb it. The "once tamed / once corralled"
+  // figure; the forage twin is ForageCrewTakeRow.next_rung_take.
+  float next_rung_animals_likely = 5;
+  // The hands this crew would spend keeping the finished rung, fractional.
+  float next_rung_keep_hands = 6;
 }
 
 // THE HUNT TAKE CURVE - what each crew size actually brings down, so a pre-commit panel can move its

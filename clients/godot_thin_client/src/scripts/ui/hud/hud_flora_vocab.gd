@@ -621,6 +621,10 @@ const TAKE_NOTE_CULTIVATE_DEFAULT_FORMAT := "Nothing picked — this ground woul
 # `%s` the crop's display name, `%s` the rung's participle (lowercased), `%d` the rung's meter.
 const TAKE_NOTE_COMMITTED_FORMAT := "Committed to %s — %s %d%%"
 
+# …and every chip on that ground is DISABLED, with this as its hover: the composition sends no crop
+# there, so a press could only move a pill that changes nothing. `%s` the committed crop's name.
+const TAKE_CHIP_COMMITTED_REASON_FORMAT := "This ground is committed to %s."
+
 # **THE NUMBERS FOR A NARROWED CREW ARE COMPOSED FROM THE WIRE'S PER-SPECIES RATES.**
 # `provisionsPerBiomass` on the patch is the BASKET AVERAGE, which is why this sheet once sat still
 # when a chip was ticked; `compositionProvisionsPerBiomass` and its fodder twin state the same

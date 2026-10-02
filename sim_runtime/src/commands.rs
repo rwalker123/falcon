@@ -765,6 +765,10 @@ pub struct ForageCrewTakeQuery {
     pub floor: f32,
     /// The stepper's cap: one row per crew size `1..=max_workers`.
     pub max_workers: u32,
+    /// **The crop the ground WOULD be committed to**, for the rows' `next_rung_*` — the sheet's
+    /// picked crop on an uncommitted patch. `""` = the plant the sim would settle on for the rung;
+    /// a plant that does not grow here is treated the same. Ignored on a committed patch.
+    pub crop: String,
 }
 
 /// **ONE CREW SIZE ON THE PATCH COMPOSE SHEET** — see [`ForageCrewTakeQuery`].
@@ -782,6 +786,12 @@ pub struct ForageCrewTakeRow {
     pub next_rung_take: f32,
     /// **The hands this crew would spend keeping the finished rung**, fractional.
     pub next_rung_keep_hands: f32,
+    /// **The same take's fodder once the rung is finished**, credited — `0` where the sim would
+    /// refuse the credit (no Foddering, and no commitment to a fodder-bearing plant).
+    pub next_rung_fodder: f32,
+    /// **The same take's materials once the rung is finished**, one row per material, keeping
+    /// netted. Never summed across materials.
+    pub next_rung_materials: Vec<MaterialPayoff>,
 }
 
 /// The answer to [`ForageCrewTakeQuery`].
@@ -1390,6 +1400,14 @@ pub struct HuntCrewTakeRow {
     pub animals_low: f32,
     pub animals_likely: f32,
     pub animals_high: f32,
+    /// **The same crew's likely take once the rung in flight is finished** — or the next rung up
+    /// where nothing is in flight — in animals a turn, **its keeping netted** at that rung's bill.
+    /// `0` where the herd has no rung left to climb or its species cannot climb it. The compose
+    /// sheet's *once tamed / once corralled* figure; the forage twin is
+    /// [`ForageCrewTakeRow::next_rung_take`].
+    pub next_rung_animals_likely: f32,
+    /// **The hands this crew would spend keeping the finished rung**, fractional.
+    pub next_rung_keep_hands: f32,
 }
 
 /// **The hunt take curve** — what each crew size actually brings down, so a pre-commit panel can
@@ -2338,6 +2356,7 @@ impl CommandEnvelope {
                                 kit_id: ask.kit_id.clone(),
                                 floor: ask.floor,
                                 max_workers: ask.max_workers,
+                                crop: ask.crop.clone(),
                             })
                         }
                         QueryPayload::DepositCrewTake(ask) => {
@@ -2863,6 +2882,7 @@ impl CommandEnvelope {
                             kit_id: ask.kit_id,
                             floor: ask.floor,
                             max_workers: ask.max_workers,
+                            crop: ask.crop,
                         })
                     }
                     pb::query_command::Query::DepositCrewTake(ask) => {
@@ -3021,6 +3041,8 @@ impl QueryReplyEnvelope {
                             animals_low: row.animals_low,
                             animals_likely: row.animals_likely,
                             animals_high: row.animals_high,
+                            next_rung_animals_likely: row.next_rung_animals_likely,
+                            next_rung_keep_hands: row.next_rung_keep_hands,
                         })
                         .collect(),
                     armed_crew: answer.armed_crew,
@@ -3043,6 +3065,15 @@ impl QueryReplyEnvelope {
                             keep_hands: row.keep_hands,
                             next_rung_take: row.next_rung_take,
                             next_rung_keep_hands: row.next_rung_keep_hands,
+                            next_rung_fodder: row.next_rung_fodder,
+                            next_rung_materials: row
+                                .next_rung_materials
+                                .iter()
+                                .map(|payoff| pb::MaterialPayoff {
+                                    material_id: payoff.material_id.clone(),
+                                    amount: payoff.amount,
+                                })
+                                .collect(),
                         })
                         .collect(),
                 })
@@ -3140,6 +3171,8 @@ impl QueryReplyEnvelope {
                             animals_low: row.animals_low,
                             animals_likely: row.animals_likely,
                             animals_high: row.animals_high,
+                            next_rung_animals_likely: row.next_rung_animals_likely,
+                            next_rung_keep_hands: row.next_rung_keep_hands,
                         })
                         .collect(),
                     armed_crew: answer.armed_crew,
@@ -3157,6 +3190,15 @@ impl QueryReplyEnvelope {
                             keep_hands: row.keep_hands,
                             next_rung_take: row.next_rung_take,
                             next_rung_keep_hands: row.next_rung_keep_hands,
+                            next_rung_fodder: row.next_rung_fodder,
+                            next_rung_materials: row
+                                .next_rung_materials
+                                .into_iter()
+                                .map(|payoff| MaterialPayoff {
+                                    material_id: payoff.material_id,
+                                    amount: payoff.amount,
+                                })
+                                .collect(),
                         })
                         .collect(),
                 })
@@ -3572,6 +3614,7 @@ mod tests {
             kit_id: "gathering".to_string(),
             floor: 0.35,
             max_workers: 6,
+            crop: "flax".to_string(),
         });
         let envelope = CommandEnvelope {
             payload: CommandPayload::Query {
@@ -3598,6 +3641,11 @@ mod tests {
                     keep_hands: 0.5,
                     next_rung_take: 0.6,
                     next_rung_keep_hands: 2.25,
+                    next_rung_fodder: 0.4,
+                    next_rung_materials: vec![MaterialPayoff {
+                        material_id: "fibre".to_string(),
+                        amount: 0.3,
+                    }],
                 }],
             }),
         };
@@ -3701,6 +3749,8 @@ mod tests {
                         animals_low: workers as f32 * 0.25,
                         animals_likely: workers as f32 * 0.5,
                         animals_high: workers as f32 * 0.75,
+                        next_rung_animals_likely: workers as f32 * 0.4,
+                        next_rung_keep_hands: 1.5,
                     })
                     .collect(),
                 // **Short of the crew asked about, and named** — the shape the sheet's

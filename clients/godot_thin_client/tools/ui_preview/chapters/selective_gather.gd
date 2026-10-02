@@ -27,7 +27,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 72
+const EXPECTED_CHECKPOINTS := 82
 
 ## **NEEDLES FOR RETIRED STRINGS, KEPT SO THEY STAY RETIRED.** The forage side of the chip row's
 ## consequence line is gone, all three sentences of it: two restated the selection the chips directly
@@ -45,6 +45,7 @@ const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
 const RungFx := preload("res://tools/ui_preview/fixtures_rung.gd")
+const ForecastFx := preload("res://tools/ui_preview/fixtures_forecast.gd")
 
 ## **THE SOW IN FLIGHT ON COMMITTED GROUND** — the playtest sheet (Rushford, Harvest at (44,24)): a
 ## Tended Patch already committed to Wild Emmer, its Field meter at 94%.
@@ -57,6 +58,23 @@ const COMMITTED_CROP_LINE := "Committed to Wild Emmer — sowing 94%"
 ## The two halves of the shipped defect, asserted absent: the false claim and the blank crop name.
 const RETIRED_NOTHING_PICKED := "Nothing picked"
 const BLANK_NAME_TAIL := "committed to ."
+## The hover every chip on committed ground carries, spelled out.
+const COMMITTED_CHIP_REASON := "This ground is committed to Wild Emmer."
+## The crew the sheet carries (the band's whole pool here), and the curve's ONCE-SOWN figure at that crew —
+## Rushford's own number. The crew-blind `field_yield` (`SOW_PATCH_FIELD_YIELD`) overstated it.
+const SOW_SHEET_CREW := 3
+const SOW_ONCE_SOWN_AT_CREW := 0.85
+## The authored curve's rows: `next_rung_take` per crew 1.. — distinct at every crew, so a sheet
+## reading the wrong row cannot land on the right figure.
+const SOW_NEXT_RUNG_TAKES: Array[float] = [0.30, 0.55, 0.85, 0.95, 1.02, 1.07, 1.10, 1.12]
+## The tile's crew-blind Field payoff (`sowable_tile_fixture`'s `patch_field_yield`).
+const SOW_PATCH_FIELD_YIELD := 2.40
+## The whole-deal curve's figures at `SOW_SHEET_CREW` — none of them a figure the crop quote carries.
+const CURVE_DEAL_FOOD := 0.66
+const CURVE_DEAL_FODDER := 0.40
+const CURVE_DEAL_MATERIAL := 0.15
+const CURVE_DEAL_MATERIAL_ID := "fibre"
+const CURVE_DEAL_ROWS := 8
 const InputProbe := preload("res://tools/ui_preview/input_probe.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
@@ -371,7 +389,6 @@ func _sheet() -> Node:
 	return h._hud._drawercompose._compose_sheet
 
 
-## Every species chip on the open sheet, in render order.
 ## ⛔ **A SOW IN FLIGHT ON COMMITTED GROUND NAMES ITS CROP.** The crop row read *"Nothing picked —
 ## this ground would be committed to ."*: the ground was already committed, so the composition sends
 ## no crop and the resolver answers `""`, and the default line formatted that blank. "Nothing picked"
@@ -386,12 +403,41 @@ func _assert_committed_ground_names_its_crop() -> void:
 		{"species": COMMITTED_CROP_SPECIES, "role": "staple", "display_name": COMMITTED_CROP_NAME,
 			"share": 1.0, "can_cultivate": true, "can_sow": true}]
 	tile = RungFx.stamp_patch(BaseFx.price_plant_build(tile), HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	tile[ForecastFx.FORAGE_CREW_TAKE_KEY] = {"per_crew": _sow_curve_rows()}
 	h._hud._drawercompose.close_compose_sheet()
 	h._hud._compose.reset_forage_source()
+	h._hud.forecast_query().reset()
 	h._show_tile(tile)
+	await h._settle()
+	# **WHILE THE CURVE IS IN FLIGHT THE DEAL STATES NO FIGURE** — read with no settle after the open,
+	# the stand-in answering deferred exactly as the socket does.
+	h._compose_forage(tile)
+	h._assert_hud("committed ground — while the curve is pending the ONCE SOWN row states no figure (%s)"
+			% Readout.improvement_deal_value(_sheet()),
+		Readout.improvement_deal_value(_sheet()) == Readout.DEAL_ROW_ABSENT)
+	await h._settle()
+	h._hud._compose.set_forage_count(SOW_SHEET_CREW)
 	h._compose_forage(tile)
 	await h._settle()
 	await h._save("forage_take_sow_committed")
+	var once_sown := Readout.improvement_deal_value(_sheet())
+	h._assert_hud("committed ground — premise: the sheet carries the playtest crew (%d)"
+			% h._hud._compose.forage_count(),
+		h._hud._compose.forage_count() == SOW_SHEET_CREW)
+	h._assert_hud("…and ONCE SOWN is the curve's next_rung_take at that crew (got \"%s\")" % once_sown,
+		once_sown.contains(SourceForecast.format_magnitude(SOW_ONCE_SOWN_AT_CREW)))
+	h._assert_hud("…and not the crew-blind field yield (%s)"
+			% SourceForecast.format_magnitude(SOW_PATCH_FIELD_YIELD),
+		not once_sown.contains(SourceForecast.format_magnitude(SOW_PATCH_FIELD_YIELD)))
+	# THE CHIPS DO NOTHING ON THIS GROUND, so each is disabled and its hover says why.
+	var chip_reasons: Array[String] = []
+	var all_disabled := not _chips().is_empty()
+	for chip in _chips():
+		all_disabled = all_disabled and (chip as Button).disabled
+		chip_reasons.append((chip as Button).tooltip_text)
+	h._assert_hud("…and every crop chip is disabled with the reason on its hover (%s)" % str(chip_reasons),
+		all_disabled and chip_reasons.all(func(t: String) -> bool:
+			return t == COMMITTED_CHIP_REASON))
 	h._assert_hud("committed ground — the crop line names the crop and the Sow's progress (\"%s\")"
 			% COMMITTED_CROP_LINE,
 		_sheet_says(COMMITTED_CROP_LINE))
@@ -406,6 +452,65 @@ func _assert_committed_ground_names_its_crop() -> void:
 			HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_SOW))
 			== SOW_IN_FLIGHT_PERCENT)
 
+## ⛔ **ON A RAISING PATCH THE WHOLE `ONCE SOWN` LINE IS THE CURVE ROW'S** — food, fodder AND
+## materials. An uncommitted patch mid-Sow, a curve authored with a fodder and a material figure the
+## crop quote does not carry, and the sheet at crew 3: every one of the three must be the row's.
+func _assert_curve_states_the_whole_deal() -> void:
+	var tile := ForageFx.sowing_tile_fixture()
+	tile[ForecastFx.FORAGE_CREW_TAKE_KEY] = {"per_crew": _whole_deal_curve_rows()}
+	h._hud._drawercompose.close_compose_sheet()
+	h._hud._compose.reset_forage_source()
+	h._hud.forecast_query().reset()
+	h._show_tile(tile)
+	await h._settle()
+	h._compose_forage(tile)
+	await h._settle()
+	h._hud._compose.set_forage_count(SOW_SHEET_CREW)
+	h._compose_forage(tile)
+	await h._settle()
+	await h._save("forage_take_sow_curve_deal")
+	var deal := Readout.improvement_deal_value(_sheet())
+	var fodder_term := SourceForecast.PICKER_FODDER_PRODUCT_FORMAT \
+		% SourceForecast.format_magnitude(CURVE_DEAL_FODDER)
+	var material_term := HudFloraVocab.FLORA_CROP_MATERIAL_CLAUSE_FORMAT \
+		% [CURVE_DEAL_MATERIAL, CURVE_DEAL_MATERIAL_ID]
+	# PRECONDITION: the crop quote would say none of it, or the claims cannot tell the two apart.
+	var band: Dictionary = h._hud._band_labor.player_band()
+	var quote: String = h._hud._drawercompose._crop_payoff_terms(tile,
+		SourceForecast.flora_basket_entries(tile.get("patch_composition", [])),
+		h._hud._compose.forage_species(), band, SourceForecast.IMPROVEMENT_SOW)
+	h._assert_hud("raising patch — precondition: the crop quote carries none of the curve's terms (%s)"
+			% quote,
+		not quote.contains(fodder_term) and not quote.contains(material_term))
+	h._assert_hud("…and ONCE SOWN's food is the curve row's at crew %d (\"%s\")" % [SOW_SHEET_CREW, deal],
+		deal.begins_with(SourceForecast.PICKER_FOOD_PRODUCT_FORMAT
+			% SourceForecast.format_magnitude(CURVE_DEAL_FOOD)))
+	h._assert_hud("…its fodder is the curve row's (%s)" % fodder_term, deal.contains(fodder_term))
+	h._assert_hud("…and its material is the curve row's (%s)" % material_term.strip_edges(),
+		deal.contains(material_term))
+
+## The whole-deal curve: each crew's row distinct, crew 3 carrying the `CURVE_DEAL_*` figures.
+func _whole_deal_curve_rows() -> Array:
+	var rows: Array = []
+	for workers in range(1, CURVE_DEAL_ROWS + 1):
+		var scale := float(workers) / float(SOW_SHEET_CREW)
+		rows.append({"workers": workers, "keep_hands": 0.0, "take": 0.0,
+			SourceForecast.FORAGE_CREW_NEXT_RUNG_TAKE_KEY: CURVE_DEAL_FOOD * scale,
+			SourceForecast.FORAGE_CREW_NEXT_RUNG_FODDER_KEY: CURVE_DEAL_FODDER * scale,
+			SourceForecast.FORAGE_CREW_NEXT_RUNG_MATERIALS_KEY: [{
+				SourceForecast.MATERIAL_PAYOFF_ID_KEY: CURVE_DEAL_MATERIAL_ID,
+				SourceForecast.MATERIAL_PAYOFF_AMOUNT_KEY: CURVE_DEAL_MATERIAL * scale}]})
+	return rows
+
+## The authored patch curve, one row per crew, each carrying `next_rung_take`.
+func _sow_curve_rows() -> Array:
+	var rows: Array = []
+	for i in SOW_NEXT_RUNG_TAKES.size():
+		rows.append({"workers": i + 1, "keep_hands": 0.0, "take": 0.0,
+			SourceForecast.FORAGE_CREW_NEXT_RUNG_TAKE_KEY: SOW_NEXT_RUNG_TAKES[i]})
+	return rows
+
+## Every species chip on the open sheet, in render order.
 func _chips() -> Array:
 	var sheet: Node = _sheet()
 	if sheet == null:
@@ -864,6 +969,7 @@ func run(harness) -> void:
 				== HudFloraVocab.TAKE_STATE_UNSELECTED)
 
 	await _assert_committed_ground_names_its_crop()
+	await _assert_curve_states_the_whole_deal()
 
 	# Hand the reference band back, so a chapter appended after this starts where every other one does.
 	h._hud._drawercompose.close_compose_sheet()

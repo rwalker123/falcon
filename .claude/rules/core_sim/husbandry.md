@@ -536,7 +536,9 @@ exactly the keepers it always asked for (`every_species_asks_for_the_keepers_it_
 ### The shed waits out a NEGLECT GRACE, and the notice does not
 
 `Herd::neglect_turns` counts **consecutive** turns the keeping went unmet, reset outright by any turn
-it was met — and by a herd not being managed at all, since a wild herd is nobody's to neglect.
+it was met — by a herd not being managed at all, since a wild herd is nobody's to neglect — and by
+the turn a Tame or a pen completes, so a rung finished short of its bill keeps its full grace
+(`intensification.md` → "A COMPLETED RUNG RESETS THE COUNTER").
 **Animals leave only while that counter exceeds the herd's rung's `upkeep.grace_turns`**
 (`RungDef::upkeep_grace_turns`), resolved through **`fauna::herd_keeping_rung`**: `animal:pen` once
 there is any pen progress, `animal:pastoral` for any other managed herd.

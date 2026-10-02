@@ -1546,6 +1546,57 @@ fn one_kept_turn(app: &mut App, band: Entity, coord: UVec2) -> KeptTurn {
     }
 }
 
+/// ⛔ **A FIELD FINISHED BY A CREW SHORT OF ITS BILL KEEPS THE RUNG FOR ITS FULL GRACE, THEN
+/// DECAYS.** The neglect counter counts consecutive short turns and the keeping is billed while a
+/// meter is still being raised, so a Sow staffed short of its bill used to finish with its grace
+/// already spent — and the Field was revoked on the very next turn (reported from play: sown on
+/// tick 133, "gone feral" on 134). The turn a rung completes, its counter resets.
+///
+/// The completion is driven through the ONE position mutator every accrual ends in, from just under
+/// the Field's top with a counter run up past any grace, so the reset has something to undo.
+#[test]
+fn a_field_finished_short_of_its_bill_keeps_the_rung_for_its_full_grace() {
+    /// One bare hand against a four-hand bill — short every turn.
+    const SHORT_CREW: u32 = 1;
+    /// How far under the Field's top the build stands the turn before it finishes.
+    const LAST_STEP: f32 = 1.0;
+    let (mut app, _, coord) = a_field_worked_by(SHORT_CREW, core_sim::BandEquipment::default());
+    {
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        let (base, width) = core_sim::plant_rung_span(RungKey::PlantField, &ladder);
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry.patch_mut(coord).expect("the fixture patch");
+        patch.set_ladder_position(base + width - LAST_STEP, &ladder);
+        patch.neglect_turns = WELL_PAST_ANY_GRACE;
+        patch.set_ladder_position(base + width, &ladder);
+        assert!(
+            patch.standing().held == RungKey::PlantField,
+            "fixture: the Field is finished"
+        );
+    }
+    let held_field = |app: &App| {
+        app.world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .expect("the fixture patch")
+            .standing()
+            .held
+            == RungKey::PlantField
+    };
+    for turn in 1..=field_grace(&app) {
+        run_turns_with_forage(&mut app, 1);
+        assert!(
+            held_field(&app),
+            "turn {turn} after completion is inside the Field's grace — the rung holds"
+        );
+    }
+    run_turns_with_forage(&mut app, 1);
+    assert!(
+        !held_field(&app),
+        "past the grace a short crew's Field decays — the reset bought the grace, not immunity"
+    );
+}
+
 /// ⛔ **A FIELD'S CREW OF FOUR BARE HANDS KEEPS IT AND HARVESTS NOTHING; FIVE HARVEST ONE HAND'S
 /// WORTH** (`docs/plan_site_crews.md` §5). The row keeps before it takes: `keep_hands =
 /// min(crew, bill ÷ keep_rate)` and the take runs on what is left — so a crew exactly the size of

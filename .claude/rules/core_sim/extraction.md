@@ -761,6 +761,9 @@ as `capacity_per_tender` is `AlluvialPlain`'s `K`.
 `extraction::advance_deposits` (Logistics) is the deposit branches' `routes::advance_roads`: how
 short → the bleed at the at-risk rung's own rate past its own grace → clear the payment and
 **re-stamp the bill at the post-decay position** → **renew the stock**, at that same position.
+The grace counter (`DepositSource::neglect_turns`) resets the turn a rung completes
+(`DepositSource::set_ladder_position`), so a working raised by a crew short of its bill keeps its
+full grace — `intensification.md` → "A COMPLETED RUNG RESETS THE COUNTER".
 
 **The slide shrinks its own penalty.** The position falls, the interpolated demand falls with it, and
 an abandoned working decays toward costing nothing rather than bleeding a band's roster for ever

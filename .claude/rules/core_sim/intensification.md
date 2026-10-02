@@ -363,6 +363,16 @@ call them instead of reaching for their own bespoke accrue/cost/decay levers, so
   *completed* and would give a source mid-investment the least forgiveness on the ladder) — and **the
   wire's countdown reads the same seam**, so a published "lapses in N turns" cannot describe a rung
   the sim is not acting on.
+  ⛔ **A COMPLETED RUNG RESETS THE COUNTER.** The keeping is billed while a meter is still being
+  raised, so a build staffed short of its bill used to finish with its grace already spent and lose
+  the rung on the very next turn (a Field sown on tick 133 went feral on 134). Every branch's one
+  position mutator — `ForagePatch::set_ladder_position`, `Herd::set_ladder_position`,
+  `DepositSource::set_ladder_position`, `Road::set_position` — now resets `neglect_turns` to
+  `NEGLECT_NONE` when the held rung rises (`intensification::rung_rose`), so a just-finished rung
+  starts with its full grace. A fall, or a move inside one rung, resets nothing. A pen RING is not a
+  rung and does not reset it. Pinned by
+  `forage_field::a_field_finished_short_of_its_bill_keeps_the_rung_for_its_full_grace` and
+  `fauna::tests::a_completed_tame_resets_the_neglect_counter`.
   `intensification::neglect_grace_remaining` owns the arithmetic: `(grace + 1) − neglect`, floored at
   zero, so **`0` means the penalty is biting now** and the client subtracts nothing.
 - **The COST MULTIPLIER — the rung owns the mechanic, the source is priced.** It prices the **job**

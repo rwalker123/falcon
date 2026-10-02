@@ -718,11 +718,16 @@ impl ForagePatch {
     /// tended rung's top and is the ladder's own, never this patch's — the multiplier scales
     /// `plant:field` alone, so nothing below it can move.
     pub fn set_ladder_position(&mut self, position: f32, ladder: &LadderConfig) {
+        let was = self.standing.held;
         self.ladder_position = position.max(RUNG_UNSTARTED);
         if self.ladder_position <= plant_rung_span(RungKey::PlantField, ladder).0 {
             self.field_cost_multiplier = None;
         }
         self.standing = plant_standing(self.ladder_position, ladder, self.field_cost_in_force());
+        // **A FINISHED RUNG STARTS WITH ITS FULL GRACE** ([`crate::intensification::rung_rose`]).
+        if crate::intensification::rung_rose(was, self.standing.held) {
+            self.neglect_turns = crate::intensification::NEGLECT_NONE;
+        }
         self.reconcile_owner();
     }
 

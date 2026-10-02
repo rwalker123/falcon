@@ -5706,6 +5706,14 @@ const FORECAST_SITE_CREW_KEY := "published_site_crew"
 ## the sim knows how many hands that is at each crew.
 const FORAGE_CREW_TAKE_KEY := "take"
 const FORAGE_CREW_KEEP_HANDS_KEY := "keep_hands"
+## The same crew's take ONCE the rung in flight is finished (or the next rung up where none is), its
+## keeping netted at that rung's bill — the sheet's `ONCE SOWN` / `ONCE TENDED` figure. Provisions.
+const FORAGE_CREW_NEXT_RUNG_TAKE_KEY := "next_rung_take"
+## …and that take's credited FODDER and its MATERIALS (`{material_id, amount}` rows, never summed).
+const FORAGE_CREW_NEXT_RUNG_FODDER_KEY := "next_rung_fodder"
+const FORAGE_CREW_NEXT_RUNG_MATERIALS_KEY := "next_rung_materials"
+## The hunt curve's twin: the same crew's likely take once the next rung stands, animals a turn.
+const HUNT_CREW_NEXT_RUNG_ANIMALS_KEY := "next_rung_animals_likely"
 
 ## The row for `workers`, `{}` where the curve has none.
 static func forage_crew_row(per_crew: Array, workers: int) -> Dictionary:

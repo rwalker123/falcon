@@ -165,6 +165,16 @@ pub fn neglect_grace_remaining(neglect_turns: u16, grace_turns: u32) -> u32 {
 /// the patch; the herd's keepers can hold its animals).
 pub const NEGLECT_NONE: u16 = 0;
 
+/// **DID THE HELD RUNG JUST RISE?** — `now` is a higher rung than `was` on the same branch: a build
+/// completed. Every branch's one position mutator asks this and, on `true`, resets the source's
+/// neglect counter to [`NEGLECT_NONE`], so **a just-finished rung starts with its full grace**
+/// rather than inheriting the shortfall turns its build ran up (the maintainer's decision: a Field
+/// completed by a crew short of its bill was revoked the very next turn, its one grace turn spent
+/// while it was still being sown). A fall, or no move, answers `false`.
+pub fn rung_rose(was: RungKey, now: RungKey) -> bool {
+    now != was && now.is_at_or_above(was)
+}
+
 /// **HOW FAST A CREW WORKING A SOURCE AT `floor` LEARNS AND BUILDS** — `floor / MSY_BIOMASS_FRACTION`,
 /// normalised so the **food peak is ×1.0** (`docs/plan_harvest_floor.md` §3).
 ///

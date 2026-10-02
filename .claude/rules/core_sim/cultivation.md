@@ -379,7 +379,9 @@ the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoin
   > `intensification.md` → "A SOURCE ROW IS THE BAND'S HOLDING" owns the seam and the retirement rule
   > that bounds it.
   - **The grace.** `ForagePatch::neglect_turns` counts **consecutive turns of shortfall** (a single
-    turn whose demand was met wipes it — it is not a lifetime budget), and the bleed applies only
+    turn whose demand was met wipes it — it is not a lifetime budget; **so does the turn a rung
+    completes**, so a Field finished by a crew short of its bill keeps its full grace —
+    `intensification.md` → "A COMPLETED RUNG RESETS THE COUNTER"), and the bleed applies only
     while it **exceeds** the at-risk rung's `upkeep.grace_turns` (`RungDef::upkeep_grace_turns`; the
     build's own grace is `null` on both plant rungs, because this branch no longer counts un-worked
     turns at all). A crew re-tasked for a turn or two, a band that walked to answer a raid: none of

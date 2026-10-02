@@ -2130,6 +2130,9 @@ const SPECIES_CHIP_ROW_META := "species_chip_row"
 ## Build the chip row. Each `entries` element is `{species, face, state}`; `on_toggle` fires with the
 ## species key. WHICH chips are lit is the caller's answer, since only it knows whether the ground is
 ## being committed — and a chip carries no tooltip, its face already being the whole of what it knows.
+## The chip entry key carrying why the chip is disabled — `""` (absent) for a live chip.
+const SPECIES_CHIP_DISABLED_REASON_KEY := "disabled_reason"
+
 static func build_species_chips(entries: Array, on_toggle: Callable) -> HFlowContainer:
     var row := HFlowContainer.new()
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -2156,6 +2159,12 @@ static func _species_chip(entry: Dictionary, species: String,
     btn.set_meta(SPECIES_CHIP_STATE_META, state)
     HudStyle.apply_pill_toggle(btn, selected)
     btn.pressed.connect(func() -> void: on_toggle.call(species))
+    # **A CHIP THAT CAN DO NOTHING IS DISABLED AND SAYS WHY** (`selection-card.md` → "A DISABLED
+    # CONTROL SAYS WHY") — the entry's `disabled_reason`, `""` on every live chip.
+    var reason := String(entry.get(SPECIES_CHIP_DISABLED_REASON_KEY, ""))
+    if reason != "":
+        btn.disabled = true
+        btn.tooltip_text = disabled_tooltip(PackedStringArray([reason]), "")
     var face := Label.new()
     face.text = String(entry.get("face", ""))
     face.mouse_filter = Control.MOUSE_FILTER_IGNORE

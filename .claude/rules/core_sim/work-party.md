@@ -341,6 +341,16 @@ they are the rung's crew-blind payoff (`forage::rung_payoff`), so a crew too sma
 read `12.48` beside a sheet whose own keeping left it nothing. Pinned beside the next-turn quote by
 `server::tests::a_lapsed_fields_quote_is_what_the_turn_pays_and_once_sown_nets_the_fields_keeping`.
 
+**The next-rung half states every account and is priced for a CROP.** Each row also carries
+`next_rung_fodder` (proto 6) and `next_rung_materials:[MaterialPayoff]` (proto 7) — the same take's
+fodder and per-material vector, off one projected turn's biomass through the patch's own rates, as
+the labor arm credits them. Fodder is the **credited** figure: `0` without Foddering unless the
+commitment is to a fodder-bearing plant (`systems::committed_to_a_fodder_crop`, the credit site's own
+gate). Materials are one row per material and never summed. The ask carries `crop` (proto 9): an
+**uncommitted** patch is priced as committed to it when it grows in the tile's basket, else to
+`forage::default_species_for_rung` for that rung; a committed patch ignores it. Pinned by
+`server::tests::an_uncommitted_patchs_once_tended_is_priced_for_the_picked_crop_in_every_account`.
+
 ## Every exit brings everything home, through ONE settle step
 
 **A caravan that ends early must not lose what is on the road.** `systems::stand_down_party` is the

@@ -283,6 +283,7 @@ pub(crate) fn dispatch(
             kit_id: dict_string(ask, "kit_id"),
             floor: dict_f32(ask, "floor"),
             max_workers: dict_u32(ask, "max_workers"),
+            crop: dict_string(ask, "crop"),
         }),
         QUERY_KIND_WORK_PARTY => {
             let source = match dict_string(ask, "source_kind").as_str() {
@@ -759,6 +760,13 @@ fn crew_row_to_dict(row: &sim_runtime::HuntCrewTakeRow) -> VarDictionary {
     let _ = dict.insert("animals_low", f64::from(row.animals_low));
     let _ = dict.insert("animals_likely", f64::from(row.animals_likely));
     let _ = dict.insert("animals_high", f64::from(row.animals_high));
+    // The same crew's likely take once the next rung stands, animals a turn, its keeping netted —
+    // the sheet's `ONCE TAMED` / `ONCE CORRALLED` figure. `0` where no rung is left to climb.
+    let _ = dict.insert(
+        "next_rung_animals_likely",
+        f64::from(row.next_rung_animals_likely),
+    );
+    let _ = dict.insert("next_rung_keep_hands", f64::from(row.next_rung_keep_hands));
     dict
 }
 
@@ -784,7 +792,30 @@ fn forage_crew_row_to_dict(row: &sim_runtime::ForageCrewTakeRow) -> VarDictionar
     let _ = dict.insert("workers", i64::from(row.workers));
     let _ = dict.insert("take", f64::from(row.take));
     let _ = dict.insert("keep_hands", f64::from(row.keep_hands));
+    // The same crew on the finished rung — the sheet's `ONCE SOWN` / `ONCE TENDED` figure, its
+    // keeping netted at that rung's bill. `0` at the top of the branch.
+    let _ = dict.insert("next_rung_take", f64::from(row.next_rung_take));
+    let _ = dict.insert("next_rung_keep_hands", f64::from(row.next_rung_keep_hands));
+    // That take's FODDER, credited (`0` where the sim refuses the credit), and its MATERIALS as an
+    // ARRAY of `{ material_id, amount }` dicts — EMPTY means "no row", and never summed.
+    let _ = dict.insert("next_rung_fodder", f64::from(row.next_rung_fodder));
+    let _ = dict.insert(
+        "next_rung_materials",
+        &material_payoffs_to_array(&row.next_rung_materials),
+    );
     dict
+}
+
+/// `{ material_id, amount }` per row, in wire order.
+fn material_payoffs_to_array(rows: &[sim_runtime::commands::MaterialPayoff]) -> VarArray {
+    let mut materials = VarArray::new();
+    for payoff in rows {
+        let mut entry = VarDictionary::new();
+        let _ = entry.insert("material_id", payoff.material_id.as_str());
+        let _ = entry.insert("amount", f64::from(payoff.amount));
+        materials.push(&entry.to_variant());
+    }
+    materials
 }
 
 fn denial_row_to_dict(row: &sim_runtime::DenialRow) -> VarDictionary {
@@ -964,6 +995,7 @@ mod tests {
                 kit_id: String::new(),
                 floor: 0.0,
                 max_workers: 0,
+                crop: String::new(),
             }),
         ] {
             assert!(names_a_faction(&query));

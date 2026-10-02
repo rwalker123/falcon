@@ -953,8 +953,14 @@ impl Herd {
     /// herd's owner lapses when it sheds its last animal (`advance_husbandry`), never when its
     /// position moves, because taming is monotone-up — neglect sheds *animals*, not tameness.
     pub fn set_ladder_position(&mut self, position: f32, ladder: &LadderConfig) {
+        let was = self.standing.held;
         self.ladder_position = position.max(RUNG_UNSTARTED);
         self.standing = self.standing_at(self.ladder_position, ladder);
+        // **A FINISHED RUNG STARTS WITH ITS FULL GRACE** ([`crate::intensification::rung_rose`]) —
+        // a Tame or a pen completed by keepers short of the bill does not shed on the next turn.
+        if crate::intensification::rung_rose(was, self.standing.held) {
+            self.neglect_turns = crate::intensification::NEGLECT_NONE;
+        }
     }
 
     /// [`RungStanding::at`] with **this herd's own prices** — the species' taming multiplier on the
@@ -993,7 +999,7 @@ impl Herd {
     }
 
     /// `(base, width)` of `rung` on this herd's own price list.
-    fn rung_span(&self, rung: RungKey, ladder: &LadderConfig) -> (f32, f32) {
+    pub(crate) fn rung_span(&self, rung: RungKey, ladder: &LadderConfig) -> (f32, f32) {
         let multiplier = self.taming_cost_multiplier;
         crate::intensification::rung_span(rung, &|key| {
             ladder.rung(key).build_cost(match key {
@@ -13399,6 +13405,51 @@ mod tests {
     /// load-bearing: the animal take lands in whole bodies, and an aurochs' growth share at this
     /// squeeze is a fraction of its 120-unit body, so both sides would agree on a quantised zero and
     /// the test would pass against the defect. The precondition below states it.
+    /// ⛔ **A JUST-FINISHED RUNG STARTS WITH ITS FULL GRACE, on the animal web too.** A herd whose
+    /// keepers ran short through its Tame carries a neglect counter well past the grace; the turn
+    /// the Tame completes, that counter resets, so the tamed herd is not shed on its first short turn.
+    /// A position that FALLS resets nothing.
+    #[test]
+    fn a_completed_tame_resets_the_neglect_counter() {
+        const BOAR: &str = "Wild Boar";
+        const WILD_CEILING: f32 = 2_000.0;
+        /// A shortfall run longer than any rung's grace.
+        const NEGLECTED_THROUGH_THE_BUILD: u16 = 9;
+        let fauna = FaunaConfig::builtin();
+        let ladder = LadderConfig::builtin();
+        let def = fauna
+            .species_by_display(BOAR)
+            .expect("the fixture names a shipped species");
+        let mut herd = Herd::new(
+            "game_grace".to_string(),
+            BOAR.to_string(),
+            SizeClass::Big,
+            vec![UVec2::new(1, 1)],
+            WILD_CEILING,
+            WILD_CEILING,
+            def.fodder_per_biomass,
+            def.regrowth_rate.expect("a tameable species breeds"),
+            def.body_mass,
+        );
+        herd.taming_cost_multiplier = fauna.taming_cost_multiplier_for(BOAR);
+        herd.neglect_turns = NEGLECTED_THROUGH_THE_BUILD;
+        assert!(
+            herd.tame_outright(FactionId(0), &ladder),
+            "fixture: the species must be tameable"
+        );
+        assert_eq!(
+            herd.neglect_turns, NEGLECT_NONE,
+            "the turn the Tame completes, the herd's neglect counter resets"
+        );
+        herd.neglect_turns = NEGLECTED_THROUGH_THE_BUILD;
+        let position = herd.ladder_position();
+        herd.set_ladder_position(position, &ladder);
+        assert_eq!(
+            herd.neglect_turns, NEGLECTED_THROUGH_THE_BUILD,
+            "a position that does not rise a rung resets nothing"
+        );
+    }
+
     #[test]
     fn a_herd_below_its_climbing_floor_publishes_the_take_it_will_hand_over() {
         /// The shipped species whose body is light enough that a squeezed herd's growth share is

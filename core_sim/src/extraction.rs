@@ -424,8 +424,13 @@ impl DepositSource {
         ladder: &LadderConfig,
         branch: RungBranch,
     ) {
+        let was = self.standing.held;
         self.ladder_position = position.max(RUNG_UNSTARTED);
         self.standing = deposit_standing(self.ladder_position, ladder, branch);
+        // **A FINISHED RUNG STARTS WITH ITS FULL GRACE** ([`crate::intensification::rung_rose`]).
+        if crate::intensification::rung_rose(was, self.standing.held) {
+            self.neglect_turns = crate::intensification::NEGLECT_NONE;
+        }
     }
 }
 

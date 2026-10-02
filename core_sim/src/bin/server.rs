@@ -19184,6 +19184,120 @@ mod tests {
         );
     }
 
+    /// A steppe tile whose realized basket is emmer, pulses and hay grass under the harness seed —
+    /// two staples that convert at different rates and a fodder crop that also pays fibre.
+    const MIXED_STEPPE: UVec2 = UVec2::new(1, 0);
+    /// The crew the uncommitted-patch quotes are read at, and the curve's length.
+    const UNCOMMITTED_CREW: u32 = 4;
+
+    /// A WILD, uncommitted patch at [`MIXED_STEPPE`] standing at its capacity, worked by a stocked
+    /// band (no Foddering learned) — the state a crop picked on the compose sheet prices.
+    fn uncommitted_patch_scene() -> bevy::prelude::App {
+        let mut app = build_test_app();
+        let faction = FactionId(0);
+        let tile = seed_tile_grid(&mut app, MIXED_STEPPE);
+        let land = forage_carrying_capacity(&app);
+        seed_patch_with_biomass(&mut app, MIXED_STEPPE, land, EcologyPhase::Thriving);
+        let band = spawn_idle_band(&mut app, faction, tile);
+        app.world.entity_mut(band).insert(BandId(LAPSED_BAND_ID));
+        assign_forage(
+            &mut app,
+            faction,
+            MIXED_STEPPE,
+            SUSTAIN_FLOOR,
+            UNCOMMITTED_CREW,
+        );
+        app
+    }
+
+    /// The forage crew curve at [`MIXED_STEPPE`], its next-rung half priced for `crop`.
+    fn uncommitted_curve(
+        app: &mut bevy::prelude::App,
+        crop: &str,
+    ) -> Vec<sim_runtime::ForageCrewTakeRow> {
+        match core_sim::forecast_query::answer_forecast_query(
+            &mut app.world,
+            &QueryPayload::ForageCrewTake(sim_runtime::ForageCrewTakeQuery {
+                faction_id: 0,
+                band_id: LAPSED_BAND_ID,
+                x: MIXED_STEPPE.x,
+                y: MIXED_STEPPE.y,
+                take_species: Vec::new(),
+                kit_id: GATHERING_KIT.to_string(),
+                floor: SUSTAIN_FLOOR,
+                max_workers: UNCOMMITTED_CREW,
+                crop: crop.to_string(),
+            }),
+        ) {
+            QueryReply::ForageCrewTake(reply) => reply.per_crew,
+            other => panic!("the forage crew ask must be answered with a curve: {other:?}"),
+        }
+    }
+
+    /// ⛔ **ONCE TENDED IS PRICED FOR THE CROP THE SHEET PICKED, IN EVERY ACCOUNT, KEEPING NETTED.**
+    /// An uncommitted patch has no crop yet, so the next-rung half of the curve is priced for the
+    /// one the ask names — committing reweights the basket — and states the fodder and the materials
+    /// of that take beside its food:
+    ///
+    /// - emmer and pulses convert at different rates, so the two picks quote different takes;
+    /// - hay grass is a fodder crop, so committing to it is the bid for hay: its fodder is credited
+    ///   with no Foddering learned, and its fibre rides beside it; emmer is not, so the same ground
+    ///   quotes no fodder once tended to emmer;
+    /// - the accounts are struck on the hands the keeping leaves: per take hand they are constant
+    ///   across crews, where per WORKER they would not be.
+    #[test]
+    fn an_uncommitted_patchs_once_tended_is_priced_for_the_picked_crop_in_every_account() {
+        /// Float slack on rates struck through one arithmetic.
+        const TOLERANCE: f32 = 1e-4;
+        let crew = UNCOMMITTED_CREW as usize - 1;
+        let mut app = uncommitted_patch_scene();
+        let emmer = uncommitted_curve(&mut app, "wild_emmer");
+        let pulses = uncommitted_curve(&mut app, "wild_pulses");
+        let hay = uncommitted_curve(&mut app, "hay_grass");
+        assert!(
+            emmer[crew].next_rung_take > 0.0 && pulses[crew].next_rung_take > 0.0,
+            "liveness: both staples are quoted a take once tended"
+        );
+        assert!(
+            (emmer[crew].next_rung_take - pulses[crew].next_rung_take).abs() > TOLERANCE,
+            "two crops quote two takes: emmer {} against pulses {}",
+            emmer[crew].next_rung_take,
+            pulses[crew].next_rung_take
+        );
+        assert_eq!(
+            emmer[crew].next_rung_fodder, 0.0,
+            "a grain commitment is no bid for hay, and Foddering is unlearned: {:?}",
+            emmer[crew]
+        );
+        let fibre = |row: &sim_runtime::ForageCrewTakeRow| {
+            row.next_rung_materials
+                .iter()
+                .find(|payoff| payoff.material_id == "fibre")
+                .map_or(0.0, |payoff| payoff.amount)
+        };
+        assert!(
+            hay[crew].next_rung_fodder > 0.0 && fibre(&hay[crew]) > 0.0,
+            "a hay commitment is quoted its credited fodder and its fibre: {:?}",
+            hay[crew]
+        );
+        let per_take_hand = |row: &sim_runtime::ForageCrewTakeRow| {
+            row.next_rung_fodder / (row.workers as f32 - row.next_rung_keep_hands)
+        };
+        let deeper = &hay[crew];
+        let smaller = &hay[crew - 1];
+        assert!(
+            smaller.next_rung_keep_hands > 0.0
+                && (per_take_hand(deeper) - per_take_hand(smaller)).abs()
+                    < TOLERANCE * per_take_hand(deeper).max(1.0),
+            "the fodder is struck on the hands the keeping leaves — per take hand it is the same at \
+             crew {} and {}: {:?} against {:?}",
+            smaller.workers,
+            deeper.workers,
+            smaller,
+            deeper
+        );
+    }
+
     /// How far along the Field leg the reported patch's meter stood — `94%` on the tile card.
     const LAPSED_FIELD_FRACTION: f32 = 0.94;
     /// A Field leg seated at its top: the finished rung the once-sown figure is quoted at.
@@ -19196,6 +19310,8 @@ mod tests {
     const LAPSED_BAND_ID: u64 = 7;
     /// The kit the forage row resolves when the command names none.
     const GATHERING_KIT: &str = "gathering";
+    /// The crop the lapsed Field is committed to — a staple in the harness tile's basket.
+    const LAPSED_FIELD_CROP: &str = "sunflower";
 
     /// **A TENDED PATCH CARRYING A FIELD LEG AT `fraction`, NO QUEUE ENTRY, WORKED BY A BAND WITH ONE
     /// HOE** — the Rushford scene: the Field was sown and went feral, so its meter stands part-built
@@ -19231,6 +19347,9 @@ mod tests {
             let (base, width) = core_sim::patch_rung_span(patch, RungKey::PlantField, &ladder);
             patch.set_ladder_position(base + width * fraction, &ladder);
             patch.owner = Some(faction);
+            // **A Field is always committed to its crop** — the reported patch was; this tile's basket
+            // carries sunflower, so the once-sown quote and the finished Field price one basket.
+            patch.species = Some(LAPSED_FIELD_CROP.to_string());
             patch.carrying_capacity = core_sim::patch_carrying_capacity(land, patch, &forage);
         }
         let band = spawn_idle_band(&mut app, faction, tile);
@@ -19270,6 +19389,7 @@ mod tests {
                 kit_id: GATHERING_KIT.to_string(),
                 floor: SUSTAIN_FLOOR,
                 max_workers: LAPSED_CREW,
+                crop: String::new(),
             }),
         ) {
             QueryReply::ForageCrewTake(reply) => reply.per_crew,

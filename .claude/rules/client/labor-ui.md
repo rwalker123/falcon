@@ -1607,7 +1607,8 @@ own flags contradict — which is also why the retired repair fixture could not 
 A site's crew keeps it before it collects, and only the sim knows how many hands that is at each crew,
 so the forage sheet composes NO take of its own on a kept patch (`_forage_is_kept`: the patch owes
 keeping). It asks `forage_crew_take` (`{faction_id, band_id, x, y, take_species, kit_id, floor,
-max_workers}` → `per_crew[{workers, take, keep_hands}]`) through `_forage_crew_take_view` — the deposit
+max_workers, crop}` → `per_crew[{workers, take, keep_hands, next_rung_take, next_rung_fodder,
+next_rung_materials, next_rung_keep_hands}]`) through `_forage_crew_take_view` — the deposit
 curve's request/caching pattern, keyed on the band's POOL plus the patch's biomass, keeping bill and
 keeping hands, so a new turn is a new question — and `_drag_forage_crew_take` re-asks on a floor drag.
 
@@ -1635,6 +1636,35 @@ keeping hands, so a new turn is a new question — and `_drag_forage_crew_take` 
 - `ui_preview`'s stand-in (`fixtures_forecast.forage_crew_take_answer`) takes the tile's own
   `patch_upkeep_hands` off the crew; `forage_kept_curve` is its frame and
   `forage_kept_curve_verdict` the verdict's whole-crew count.
+
+#### ⛔ `ONCE SOWN` / `ONCE TENDED` / `ONCE TAMED` IS THE CREW CURVE'S ROW, NOT A CREW-BLIND QUOTE
+
+`patch_field_yield` / `patch_tended_yield` / `pastoral_yield` / `corral_yield` are crew-blind: what
+the finished rung pays a crew big enough to take all of it. A four-hand crew on a committed Harvest
+read `ONCE SOWN 12.48` where those four hands take 0.85. So the deal row reads the curve row at the
+stepper's crew.
+
+- **Forage rows carry the whole next-rung line**: `next_rung_take` (food), `next_rung_fodder`
+  (credited, 0 when the faction cannot bank fodder) and `next_rung_materials` (`[{material_id,
+  amount}]`), keeping netted, plus `next_rung_keep_hands`. `_crop_payoff_terms` takes the row and
+  states all three accounts from it. A refused fodder account keeps the lock glyph and states no figure.
+- **Scope on the plant web: a kept or raising patch, or ground already committed** (`curve_deal` in
+  the forage builder). Only a WILD patch merely offered a rung keeps the crop quote. The sheet asks the
+  curve itself when no kept view is live.
+- **The picked crop rides the ask.** `forage_crew_take` carries `crop` (the composed species on
+  uncommitted ground, `""` on committed ground, where the sim reads the commitment), and the crop is a
+  term of the cache key, so picking a different crop is a new question and a new line.
+- **Hunt rows carry `next_rung_animals_likely`** and `next_rung_keep_hands`. `_hunt_curve_payoff_terms`
+  turns the animals into the herd's own accounts through the body quantum
+  (`rescaled_from_biomass(herd, "", animals × body_quantum)`), so `ONCE TAMED` / `ONCE CORRALLED`
+  states the row at the sheet's crew in food, hide or both.
+- **The hunt curve's key carries the herd's state** (`_hunt_curve_herd_terms`: rung, domestication,
+  biomass), because the rows price the rung above the one the herd stands on. Without it a herd that
+  climbed a rung reused the previous rung's answer.
+- **`next_rung_keep_hands` is decoded and not displayed**: the figures are already net of keeping.
+- **While the curve is pending, refused, or has no row for the crew, the deal row is absent**, never
+  a crew-blind fallback (`_curve_next_rung_row` answers `{}`). A crew of zero has no row, so a kept,
+  raising or committed patch at zero states no deal.
 
 ### THE HEADLINE IS **NEXT TURN'S** TAKE, NOT THIS INSTANT'S ROOM (§4.7)
 
@@ -7931,6 +7961,13 @@ picked — this ground would be committed to ."* on a Tended Patch of Wild Emmer
 play; "Nothing picked" was false as well as blank. `_mount_take_chips` takes the ground's crop
 (`ground_committed`), so the lit chip is that crop too, and `_take_consequence_note` answers `""` for
 any branch with no name to format — a crop sentence never ends on a blank.
+
+⛔ **AND EVERY CHIP ON THAT GROUND IS DISABLED, ITS HOVER SAYING WHY.** The composition sends no crop
+on committed ground, so a press could only move a pill that changes nothing. Each chip entry carries
+`HudWidgets.SPECIES_CHIP_DISABLED_REASON_KEY`, and `_species_chip` disables it and routes the reason
+through `disabled_tooltip` (`HudFloraVocab.TAKE_CHIP_COMMITTED_REASON_FORMAT` — *This ground is
+committed to Wild Emmer.*). This is the "a disabled control says why" rule; the "a chip carries no
+tooltip" rule above covers a LIVE chip.
 
 **WHETHER THE CROP WAS CHOSEN OR SETTLED IS THE MODEL'S TO REMEMBER.** `resolve_forage_species`
 writes its answer back every render, so from the second render on the player's pick and the game's

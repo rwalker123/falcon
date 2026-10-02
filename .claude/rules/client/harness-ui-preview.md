@@ -3480,10 +3480,56 @@ rotting readings are a pair, since a face that always or never marks passes one 
 committed to Wild Emmer with its Sow at 94%. The crop line must read `Committed to Wild Emmer — sowing
 94%`, spelled out in the chapter. It must not say `Nothing picked` or leave the name blank, the
 committed crop's chip must be the lit one, and the meter is asserted mid-Sow as a precondition.
-`EXPECTED_CHECKPOINTS` is **72**, re-measured.
+
+**The same frame carries the curve deal and the disabled chips.** The tile authors a forage crew
+curve (`_sow_curve_rows`, a distinct `next_rung_take` at every crew) and the sheet is composed at
+crew 3 (`SOW_SHEET_CREW`, the band pool's cap). Its claims:
+
+- while the curve is pending, read with no settle after the open, the `ONCE SOWN` row is absent;
+- once answered, `ONCE SOWN` quotes `0.85`, the row at crew 3, and not the tile's crew-blind
+  `2.40` field yield;
+- every crop chip is disabled, its hover exactly `This ground is committed to Wild Emmer.`
+
+`EXPECTED_CHECKPOINTS` is **77**, re-measured.
 
 **Sabotage-verified.** Passing `""` as the ground's crop fails the line and the lit-chip claims. The
 blank-name negative stays green, because an empty name now draws no line at all. Marking every
-unqueued rung fails the neutral-ink and no-mark claims.
+unqueued rung fails the neutral-ink and no-mark claims. Reverting the deal's food to the crew-blind
+quote fails both `ONCE SOWN` claims; never setting the chips' reason fails the chip claim; answering a
+figure while the curve is pending fails the pending claim.
 
-**A clean run is 461 frames / 2474 `PASS`, exit 0 — RE-MEASURED windowed.**
+**A clean run is 461 frames / 2479 `PASS`, exit 0 — RE-MEASURED windowed.**
+
+## The deal row reads the curve on every web
+
+The behaviour is `labor-ui.md`'s → "`ONCE SOWN` / `ONCE TENDED` / `ONCE TAMED` IS THE CREW CURVE'S
+ROW". The stand-ins answer the new fields: `fixtures_forecast.gd` gives every forage row
+`next_rung_take` / `_fodder` / `_materials` off the asked crop's rung quote, scaled by the band's
+output and the crew's share, and every hunt row `next_rung_animals_likely` off the rung payoff turned
+back into animals.
+
+- **`forage_take_sow_curve_deal`** (`selective_gather.gd`): an UNCOMMITTED patch mid-Sow with an
+  authored curve whose crew-3 row carries `0.66 food · 0.40 fodder · 0.15 fibre`. A precondition says
+  the crop quote carries none of those terms; then food, fodder and material are each asserted against
+  the row. `EXPECTED_CHECKPOINTS` **82**.
+- **The crop rides the ask** (`forage_crop.gd`, the emmer/groundnut block): every forage ask is
+  recorded through `set_sender` after `query.reset()`, and the curve must be asked with `wild_emmer`
+  and, after the pick changes, last with `wild_tubers`. The reset is load-bearing: a cached emmer
+  answer sends no ask.
+- **`forage_unstaffed`'s deal claims INVERTED**: a crew of none quotes NO payoff row, and a liveness
+  claim at the end of the block reads the row back at one forager. `EXPECTED_CHECKPOINTS` **71**.
+- **`herd_tame_curve_deal`** (`hunt.gd`): the boar composed with Tame at two hunters, against a sender
+  authoring `0.05 × workers` animals on every row. The deal must equal those animals through the body
+  quantum (`0.20 food`), with a precondition that it differs from the crew-blind
+  `BOAR_TAME_PAYOFF_FACE`. `EXPECTED_CHECKPOINTS` **349**.
+
+**The hunt curve's key had to carry the herd's state** for the existing corral frames to stay right:
+without it `herd_corral_depleted` and the corral offer reused the tame frame's cached answer.
+
+**Sabotage-verified in one run, three disjoint mutations**: the crop dropped from the ask fails the
+two ask claims and the selected-crop payoff claim; the fodder read off the crop quote fails the fodder
+claim alone; the hunt deal back on `_improvement_payoff_terms` fails the curve claim alone (`1.48
+food`).
+
+**A clean run is 463 frames / 2487 `PASS`, exit 0 — RE-MEASURED windowed.** `band_panel_preview`
+1500 `PASS`, exit 0 (a first run failed only the foreign-mouse guard and passed on re-run).

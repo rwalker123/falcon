@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 346
+const EXPECTED_CHECKPOINTS := 349
 
 ## The countdown verdict's opening, as a needle — the precondition every claim about that sentence
 ## rests on ("this model reached the reaching branch at all").
@@ -1691,6 +1691,8 @@ func run(harness) -> void:
 	# ---- …AND WHERE THE CURVE STOPPED FOR WANT OF WEAPONS, THE CAP SAYS SO ------------------------
 	await _armed_crew_note_states()
 
+	await _tame_deal_reads_the_curve()
+
 
 # =====================================================================================
 #  THE PRE-LAUNCH FIGHT (`docs/plan_hunt_through_combat.md` §2.1, §4.2, §6.5)
@@ -1743,6 +1745,51 @@ const GATE_MAMMOTH_ENGAGE_RATE := 0.05
 ## whether either line is spoken at all. Built on the deadly-herd mammoth, which already carries the
 ## `defense 12` the refusal is judged on, so this fixture adds the two fields the arc appended and
 ## changes nothing else about the animal.
+## ⛔ **ONCE TAMED IS THE CREW CURVE ROW'S `next_rung_animals_likely`, AT THE SHEET'S CREW** — not the
+## crew-blind `pastoral_yield`. The boar mid-Tame, a curve whose every row carries a DISTINCT next-rung
+## figure, and the deal must state the row at the composed crew in the herd's own food.
+func _tame_deal_reads_the_curve() -> void:
+	var query: ForecastQuery = h._hud.forecast_query()
+	query.set_sender(func(request_id: int, ask: Dictionary) -> bool:
+		var reply := ForecastFx.answer(h._hud, request_id, ask)
+		if String(ask.get("kind", "")) == ForecastQuery.KIND_HUNT_CREW_TAKE:
+			for row in reply.get("per_crew", []):
+				(row as Dictionary)[SourceForecast.HUNT_CREW_NEXT_RUNG_ANIMALS_KEY] = \
+					TAME_CURVE_ANIMALS_PER_HUNTER * float((row as Dictionary).get(
+						SourceForecast.CREW_TAKE_WORKERS_KEY, 0))
+		query.deliver.call_deferred([reply])
+		return true)
+	query.reset()
+	var boar := HerdFx.investment_pair_boar_herd()
+	h._hud._compose.reset_hunt_source()
+	h._hud._compose.set_hunt_band(-1)
+	h._show_herd(boar)
+	h._compose_herd(boar, PELT_FRAME_HUNTERS, ForageFx.COMPOSE_FLOOR_UNSET, "tame")
+	await h._settle()
+	h._compose_herd(boar, PELT_FRAME_HUNTERS, ForageFx.COMPOSE_FLOOR_UNSET, "tame")
+	await h._settle()
+	await h._save("herd_tame_curve_deal")
+	var live: Dictionary = h._hud._selection.herd()
+	var animals := TAME_CURVE_ANIMALS_PER_HUNTER * float(h._hud._compose.hunt_count())
+	var food := animals * SourceForecast.body_quantum(live, "") \
+		* float(live.get(SourceForecast.FORECAST_PROVISIONS_PER_BIOMASS_KEY, 0.0))
+	var deal := Readout.improvement_deal_value(h._hud._drawercompose._compose_sheet)
+	h._assert_hud("once tamed — precondition: the curve's food differs from the crew-blind quote (%s)"
+			% SourceForecast.format_magnitude(food),
+		food > 0.0 and SourceForecast.PICKER_FOOD_PRODUCT_FORMAT
+			% SourceForecast.format_magnitude(food) != BOAR_TAME_PAYOFF_FACE)
+	h._assert_hud("…and ONCE TAMED is the curve row at crew %d (\"%s\")"
+			% [h._hud._compose.hunt_count(), deal],
+		deal == SourceForecast.PICKER_FOOD_PRODUCT_FORMAT % SourceForecast.format_magnitude(food))
+	ForecastFx.install(h._hud)
+	query.reset()
+	h._hud._drawercompose.close_compose_sheet()
+	h._hud._compose.reset_hunt_source()
+
+## The authored hunt curve's next-rung take, animals a turn per hunter on the row — distinct at every
+## crew, so a deal reading the wrong row cannot land on the right figure.
+const TAME_CURVE_ANIMALS_PER_HUNTER := 0.05
+
 func _combat_gate_mammoth() -> Dictionary:
 	var herd := HerdFx.deadly_herd_fixture()
 	herd["defense"] = GATE_MAMMOTH_DEFENSE

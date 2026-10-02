@@ -339,8 +339,13 @@ impl Road {
     /// a fresh `grade` leaves — keeper set, first work not yet banked — and clearing it there would
     /// undo the command on the turn it was typed.
     pub fn set_position(&mut self, position: f32, ladder: &LadderConfig) {
+        let was = self.standing.held;
         self.position = position.max(RUNG_UNSTARTED);
         self.standing = road_standing_at(ladder, self.position, self.keeper_remoteness);
+        // **A FINISHED RUNG STARTS WITH ITS FULL GRACE** ([`crate::intensification::rung_rose`]).
+        if crate::intensification::rung_rose(was, self.standing.held) {
+            self.neglect_turns = NEGLECT_NONE;
+        }
         self.payoff = road_payoff_at(ladder, self.position, self.keeper_remoteness);
         if self.position < traffic_ceiling(ladder) {
             self.release_keeper();

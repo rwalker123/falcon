@@ -1542,6 +1542,7 @@ fn a_patchs_crew_curve_is_the_single_crew_answer_at_every_size() {
             kit_id: kit_id.clone(),
             floor: core_sim::DEFAULT_ESCAPEMENT_FLOOR,
             max_workers: MAX_CREW,
+            crop: String::new(),
         }),
     ) {
         QueryReply::ForageCrewTake(reply) => reply,

@@ -1503,6 +1503,18 @@ func _kept_take_crew(kept: bool, workers: int) -> float:
         return SourceForecast.WHOLE_CREW_TAKES
     return maxf(float(workers) - float(row.get(SourceForecast.FORAGE_CREW_KEEP_HANDS_KEY, 0.0)), 0.0)
 
+## **THE DEAL OFF THE CREW CURVE** — the row at `crew`, whose `next_rung_*` fields are the whole
+## `ONCE SOWN` / `ONCE TENDED` line. `{}` while the curve is pending or refused, and where it has no
+## row for this crew, so the deal row is not drawn rather than drawn with a crew-blind number.
+func _curve_next_rung_row(view: Dictionary, crew: int) -> Dictionary:
+    if String(view.get("state", "")) != ForecastQuery.STATE_READY:
+        return {}
+    var row := SourceForecast.forage_crew_row((view.get("answer", {}) as Dictionary).get(
+        "per_crew", []), crew)
+    if row.is_empty() or not row.has(SourceForecast.FORAGE_CREW_NEXT_RUNG_TAKE_KEY):
+        return {}
+    return row
+
 ## Does this patch owe keeping? The gate on reading its take off the crew curve.
 func _forage_is_kept(tile_info: Dictionary) -> bool:
     return SourceForecast.has_upkeep(SourceForecast.upkeep_state(tile_info,
@@ -1544,7 +1556,7 @@ func _kept_forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: fl
 ## the key adds the kit, the floor, the take selection, the band's gear and the POOL, so a stepper tick
 ## re-reads rows the seam already holds. Read exactly, for the deposit curve's reason.
 func _forage_crew_take_ask(band: Dictionary, tile_info: Dictionary, take_species: Array,
-        kit_id: String, floor: float, max_workers: int) -> Dictionary:
+        kit_id: String, floor: float, max_workers: int, crop: String) -> Dictionary:
     var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
     var workers := _crew_take_workers(max_workers)
     var x := int(tile_info.get("x", -1))
@@ -1554,6 +1566,9 @@ func _forage_crew_take_ask(band: Dictionary, tile_info: Dictionary, take_species
     var key := ForecastQuery.key_of(subject, kit_id, workers, floor, band, _band_labor.kits())
     if not take_species.is_empty():
         key += ":" + ",".join(PackedStringArray(take_species))
+    # **THE PICKED CROP IS A TERM OF THE QUESTION** — the rows' `next_rung_*` are priced on it, so a
+    # different pick is a different answer and must be asked again.
+    key += ":crop=" + crop
     # **THE STAND AND ITS BILL ARE TERMS OF THE QUESTION** — every row is bounded by next turn's room
     # above the floor and starts by taking the keeping out of the crew, so a turn that moves the
     # patch's biomass or its keeping is a new question rather than the previous turn's answer.
@@ -1568,15 +1583,16 @@ func _forage_crew_take_ask(band: Dictionary, tile_info: Dictionary, take_species
             "faction_id": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
             "band_id": band_id, "x": x, "y": y,
             "take_species": take_species, "kit_id": kit_id, "floor": floor,
-            "max_workers": workers,
+            "max_workers": workers, "crop": crop,
         },
     }
 
 func _forage_crew_take_view(band: Dictionary, tile_info: Dictionary, take_species: Array,
-        kit_id: String, floor: float, max_workers: int) -> Dictionary:
+        kit_id: String, floor: float, max_workers: int, crop: String) -> Dictionary:
     if _forecast_query == null:
         return {"state": ForecastQuery.STATE_PENDING, "answer": {}, "error": ""}
-    var ask := _forage_crew_take_ask(band, tile_info, take_species, kit_id, floor, max_workers)
+    var ask := _forage_crew_take_ask(band, tile_info, take_species, kit_id, floor, max_workers,
+        crop)
     if not bool(ask["askable"]):
         return {"state": ForecastQuery.STATE_READY, "answer": {}, "error": ""}
     _forecast_query.ask(ForecastQuery.KIND_FORAGE_CREW_TAKE, String(ask["subject"]),
@@ -1586,10 +1602,11 @@ func _forage_crew_take_view(band: Dictionary, tile_info: Dictionary, take_specie
 ## The same question while the floor is moving — `_drag_deposit_crew_take`'s twin, on the same rate
 ## limit and members.
 func _drag_forage_crew_take(band: Dictionary, tile_info: Dictionary, take_species: Array,
-        kit_id: String, floor: float, max_workers: int) -> void:
+        kit_id: String, floor: float, max_workers: int, crop: String) -> void:
     if _forecast_query == null:
         return
-    var ask := _forage_crew_take_ask(band, tile_info, take_species, kit_id, floor, max_workers)
+    var ask := _forage_crew_take_ask(band, tile_info, take_species, kit_id, floor, max_workers,
+        crop)
     if not bool(ask["askable"]):
         _forage_live_crew_view = {"state": ForecastQuery.STATE_READY, "answer": {}, "error": ""}
         return
@@ -1643,8 +1660,13 @@ func _mount_take_chips(target: VBoxContainer, basket: Array[Dictionary],
     block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     block.add_child(HudWidgets.alloc_section_label(
         HudFloraVocab.TAKE_ROW_LABEL_SINGLE if single_pick else HudFloraVocab.TAKE_ROW_LABEL))
-    block.add_child(HudWidgets.build_species_chips(
-        _take_chip_entries(basket, selection, single_pick, committed),
+    var chip_entries := _take_chip_entries(basket, selection, single_pick, committed)
+    if ground_committed != "":
+        var reason := HudFloraVocab.TAKE_CHIP_COMMITTED_REASON_FORMAT % _take_display_name(
+            ground_committed, basket)
+        for chip_entry in chip_entries:
+            (chip_entry as Dictionary)[HudWidgets.SPECIES_CHIP_DISABLED_REASON_KEY] = reason
+    block.add_child(HudWidgets.build_species_chips(chip_entries,
         func(species: String) -> void:
             if single_pick:
                 # A commit crop is one plant, so a chip WRITES it rather than toggling a set —
@@ -2527,6 +2549,25 @@ func _improvement_payoff_terms(source: Dictionary, kind: String, prefix: String,
         SourceForecast.source_kind_for_labor(kind), prefix, SourceForecast.FLOOR_FOOD_PEAK, rung),
         band)
 
+## **THE HUNT DEAL OFF THE CREW CURVE** — the row's `next_rung_animals_likely` at `crew`, valued in
+## the herd's own accounts through the one biomass crossing the readout's take uses
+## (`rescaled_from_biomass` over the body quantum), so the deal and the take above it are one
+## register. `""` while the curve is pending or refused, or where it has no row for this crew.
+func _hunt_curve_payoff_terms(herd: Dictionary, view: Dictionary, crew: int) -> String:
+    if String(view.get("state", "")) != ForecastQuery.STATE_READY:
+        return ""
+    var row := SourceForecast.hunt_crew_take_row((view.get("answer", {}) as Dictionary).get(
+        "per_crew", []), crew)
+    if row.is_empty() or not row.has(SourceForecast.HUNT_CREW_NEXT_RUNG_ANIMALS_KEY):
+        return ""
+    var prefix := HudComposeVocab.BARE_FORECAST_PREFIX
+    var accounts := SourceForecast.rescaled_from_biomass(herd, prefix,
+        float(row[SourceForecast.HUNT_CREW_NEXT_RUNG_ANIMALS_KEY])
+            * SourceForecast.body_quantum(herd, prefix))
+    return SourceForecast.picker_products(float(accounts[SourceForecast.YIELD_ACCOUNT_FOOD]),
+        float(accounts[SourceForecast.YIELD_ACCOUNT_FODDER]), SourceForecast.YIELD_ACCOUNT_FOOD,
+        accounts[SourceForecast.RESCALED_MATERIALS_KEY])
+
 ## An already-resolved deal's payoff VECTOR as products, scaled by the acting band's output
 ## multiplier — "" for a deal the wire does not quote. Reached through `_improvement_payoff_terms`
 ## (which resolves the deal itself), so one payoff is composed one way whichever rung is being asked
@@ -3298,9 +3339,12 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     var deal_rung := "" if is_unassign else _improvement_deal_rung(
         SourceForecast.LABOR_KIND_HUNT, herd, HudComposeVocab.BARE_FORECAST_PREFIX,
         composed_improvement)
-    var deal_payoff := "" if deal_rung == "" else _improvement_payoff_terms(
-        herd, SourceForecast.LABOR_KIND_HUNT, HudComposeVocab.BARE_FORECAST_PREFIX,
-        deal_rung, band)
+    # ⛔ **THE DEAL IS THE CREW CURVE'S, AT THE SHEET'S CREW** — the hunt twin of the forage sheet's
+    # `ONCE SOWN`. `pastoral_yield` / `corral_yield` are crew-blind (what the finished rung pays a crew
+    # big enough to take all of it); the curve row's `next_rung_animals_likely` is THIS crew's take on
+    # the finished rung, its keeping netted. Pending, refused, or no row for the crew → no deal row.
+    var deal_payoff := "" if deal_rung == "" else _hunt_curve_payoff_terms(herd,
+        _hunt_live_crew_view, _compose.hunt_count())
     # The averaging-window disclaimer USED TO STAND HERE, as a wrapped body line under the hint: the
     # delivered rate is a long-run average of lumpy whole-animal delivery. It is a caveat on ONE
     # number, so it now rides the RUNG's tooltip beside the metric it qualifies (`_hunt_floor_takes`
@@ -3579,8 +3623,12 @@ func _flora_entry_payoff(entry: Dictionary, policy: String) -> float:
 ## is 100% its crop, so a cash crop's `sow_payoff` is exactly `0`. Zero is the honest answer there and
 ## the line must say so; quoting a different crop is the one thing it must never do. Every account is
 ## substituted TOGETHER, so the face can never mix one crop's food with another's fodder.
+##
+## `curve_row`, where given, is the crew curve's row at the sheet's crew, and its `next_rung_take` /
+## `next_rung_fodder` / `next_rung_materials` REPLACE every account (the sim's own figures at this
+## crew, output already applied). The crop quote then only names a refused fodder account.
 func _crop_payoff_terms(tile_info: Dictionary, entries: Array[Dictionary], species: String,
-        band: Dictionary, rung: String) -> String:
+        band: Dictionary, rung: String, curve_row: Dictionary = {}) -> String:
     var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
     var deal := SourceForecast.improvement_forecast(tile_info, SourceForecast.SOURCE_KIND_FORAGE,
         HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK, rung)
@@ -3617,7 +3665,17 @@ func _crop_payoff_terms(tile_info: Dictionary, entries: Array[Dictionary], speci
     # **THE FOOD ZERO SURVIVES BESIDE A MATERIAL CLAUSE, AND THAT IS THE READING.** A sown Field of
     # cotton pays exactly `0.00 food`, and stating it next to `0.29 fibre` is the whole land-use
     # bargain in one row — which is what the retired trade scalar was standing in for.
-    var terms := SourceForecast.picker_products(payoff * output, fodder * output,
+    var food := payoff * output
+    fodder *= output
+    if not curve_row.is_empty():
+        food = float(curve_row[SourceForecast.FORAGE_CREW_NEXT_RUNG_TAKE_KEY])
+        # The curve CREDITS its fodder, so a refused account arrives as `0`; the land's figure is
+        # kept only to NAME it under the lock, never to state it.
+        if not fodder_refused:
+            fodder = float(curve_row.get(SourceForecast.FORAGE_CREW_NEXT_RUNG_FODDER_KEY, 0.0))
+        materials = curve_row.get(SourceForecast.FORAGE_CREW_NEXT_RUNG_MATERIALS_KEY, [])
+        output = SourceForecast.OUTPUT_FULL
+    var terms := SourceForecast.picker_products(food, fodder,
         SourceForecast.YIELD_ACCOUNT_FOOD, [],
         HudComposeVocab.YIELD_LOCKED_GLYPH if fodder_refused else "")
     for row_variant in materials:
@@ -3839,12 +3897,16 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # that still help, keeping included. The kit is resolved here for the ask exactly as the kit row
     # below resolves it, so the two cannot name different kits.
     var kept := _forage_is_kept(take_tile)
+    # **THE CROP THE CURVE PRICES ITS `next_rung_*` ON** — the sheet's picked (or settled) crop on
+    # uncommitted ground; committed ground names none, the sim ignoring it there.
+    var ask_crop := "" if is_committed else _compose.forage_species()
     var capped := {}
     if kept:
         var ask_kit := KitRoster.resolve_selection(_band_labor.kits(), KitRoster.JOB_FORAGE,
             _band_labor.default_kit_id(KitRoster.JOB_FORAGE), _compose.forage_kit_id())
         _forage_live_crew_view = _forage_crew_take_view(band, take_tile,
-            Array(_compose.forage_take_species()), ask_kit, _compose.forage_floor(), crew_pool)
+            Array(_compose.forage_take_species()), ask_kit, _compose.forage_floor(), crew_pool,
+            ask_crop)
         # **THE CAP IS THE CREW WHOSE GATHERERS REACH THE TAKE'S USEFUL HANDS** — the take's own
         # count, plus the keeping hands the sim says that crew spends first. While the reply is in
         # flight, or no row gets there, only the pool caps the stepper.
@@ -3916,7 +3978,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
             # sheet's rate-limited drag ask; the refill then reads what the seam holds for that floor.
             if kept:
                 _drag_forage_crew_take(band, take_tile, Array(_compose.forage_take_species()),
-                    _compose.forage_kit_id(), floor, crew_pool)
+                    _compose.forage_kit_id(), floor, crew_pool, ask_crop)
             _refresh_floor_live(live_hosts, _kept_crew_targets(SourceForecast.floor_chart_model(
                 _forage_priced_patch(_forage_take_source(
                     _live_tile_info(subject_key, tile_info), take_state), band),
@@ -4045,8 +4107,30 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     var deal_rung := "" if is_unassign else _improvement_deal_rung(
         SourceForecast.LABOR_KIND_FORAGE, tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX,
         composed_improvement)
-    var deal_payoff := "" if deal_rung == "" else _crop_payoff_terms(
-        tile_info, basket, _compose.forage_species(), band, deal_rung)
+    # ⛔ **ON A KEPT OR RAISING PATCH THE WHOLE DEAL LINE IS THE CREW CURVE'S, AT THE SHEET'S CREW.**
+    # `field_yield` / `tended_yield` are crew-blind — what the finished rung pays a crew big enough to
+    # take all of it — so a four-hand crew on Rushford's Harvest read `ONCE SOWN 12.48` where the same
+    # four hands, keeping netted, take 0.85. The curve row's `next_rung_take` / `next_rung_fodder` /
+    # `next_rung_materials` are that crew's figures, priced on the crop the ask names (the picked one
+    # on uncommitted ground), so the line follows the pick. While the curve is in flight the row
+    # states no figure. A crew of zero has no curve row, so it states no deal. A wild patch merely
+    # OFFERED a rung, with nothing kept and nothing being raised, keeps the crop quote.
+    var curve_deal := kept or is_committed \
+        or composed_improvement != SourceForecast.IMPROVEMENT_NONE
+    var deal_payoff := ""
+    if deal_rung != "" and curve_deal:
+        var deal_view := _forage_live_crew_view
+        if not kept:
+            deal_view = _forage_crew_take_view(band, take_tile,
+                Array(_compose.forage_take_species()), forage_kit_id, _compose.forage_floor(),
+                crew_pool, ask_crop)
+        var curve_row := _curve_next_rung_row(deal_view, _compose.forage_count())
+        if not curve_row.is_empty():
+            deal_payoff = _crop_payoff_terms(tile_info, basket, _compose.forage_species(), band,
+                deal_rung, curve_row)
+    elif deal_rung != "":
+        deal_payoff = _crop_payoff_terms(tile_info, basket, _compose.forage_species(), band,
+            deal_rung)
     # **THE READOUT** — the take, the rung's payoff, the verdict, and the idle-crew
     # note + teaching line, in one bounded box (§7.1, §7.2). The take is recomposed from the LIVE
     # floor, which is what lets the numbers the player is dragging toward move while the drag runs.
@@ -4541,6 +4625,16 @@ func _crew_take_workers(max_workers: int) -> int:
 ## `STATE_PENDING`, which is what puts `HudComposeVocab.HUNT_TAKE_PENDING` on the sheet until the real
 ## curve lands. The stepper itself is unaffected either way — the key carries the POOL, not the
 ## composed crew, so a `+` press re-reads an answer the seam already holds.
+## **THE HERD'S STATE IS A TERM OF THE QUESTION** — the rows are bounded by the stock above the floor
+## and their `next_rung_*` price the rung ABOVE the one the herd stands on, so a herd that grew, shrank
+## or climbed a rung is a new question rather than the previous one's answer (the patch curve's
+## stand terms, on the animal web).
+func _hunt_curve_herd_terms(herd_id: String) -> String:
+    var herd := _live_herd(herd_id, _band_labor.find_world_herd(herd_id))
+    return ":%s:%f:%f" % [
+        String(herd.get(SourceForecast.FORECAST_CURRENT_RUNG_KEY, "")),
+        float(herd.get("domestication", 0.0)), float(herd.get("biomass", 0.0))]
+
 func _crew_take_view(band: Dictionary, herd_id: String, kit_id: String, floor: float,
         max_workers: int) -> Dictionary:
     if _forecast_query == null:
@@ -4549,7 +4643,7 @@ func _crew_take_view(band: Dictionary, herd_id: String, kit_id: String, floor: f
     var workers := _crew_take_workers(max_workers)
     var subject := ForecastQuery.subject_of(ForecastQuery.KIND_HUNT_CREW_TAKE, band_id, herd_id)
     var key := ForecastQuery.key_of(subject, kit_id, workers, floor, band,
-        _band_labor.kits())
+        _band_labor.kits()) + _hunt_curve_herd_terms(herd_id)
     if workers > 0 and band_id != HudConst.NO_BAND_ID and herd_id != "":
         _forecast_query.ask(ForecastQuery.KIND_HUNT_CREW_TAKE, subject, key, {
             "faction_id": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
@@ -4591,7 +4685,7 @@ func _drag_crew_take(band: Dictionary, herd_id: String, kit_id: String, floor: f
     var workers := _crew_take_workers(max_workers)
     var subject := ForecastQuery.subject_of(ForecastQuery.KIND_HUNT_CREW_TAKE, band_id, herd_id)
     var key := ForecastQuery.key_of(subject, kit_id, workers, floor, band,
-        _band_labor.kits())
+        _band_labor.kits()) + _hunt_curve_herd_terms(herd_id)
     var now := Time.get_ticks_msec()
     if key != _crew_take_drag_asked_key \
             and now - _crew_take_drag_asked_at_msec \
