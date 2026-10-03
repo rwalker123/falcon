@@ -1034,6 +1034,10 @@ func update_overlay(turn: int, metrics: Dictionary) -> void:
     # in the same snapshot cycle).
     _band_labor.set_turn(turn)
     _turnorb.set_turn(turn)
+    # **THE SNAPSHOT BOUNDARY the outfitting card needs.** `Main` calls this first in every snapshot,
+    # before populations and command_events, so the card can tell a refusal read in the SAME snapshot
+    # as a newer published state (no line) from one read later (a line).
+    _loadout.begin_snapshot()
 
 ## Top-bar faction readouts — thin delegators to the FactionReadouts controller (`_topbar`), which owns
 ## the Sedentarization / demographics / discoveries / intensification rendering. These
@@ -1256,11 +1260,14 @@ func update_herds(herds_variant: Variant) -> void:
     _targeting.refresh_live_targets()
 
 ## Ingests the viewer's CONTACT TIES (arc #527) — one directed row per edge, already filtered
-## sim-side to this faction's observing bands. The trade compose sheet's destination picker is their
-## one consumer: a tie is what gates a shipment, so the picker lists a band's ties and nothing else.
+## sim-side to this faction's observing bands. Two readers: the band page's Peoples tab
+## (`ConnectionsRoster`) and the trade compose sheet's destination picker, a tie being what gates a
+## shipment. The open band page's roster and the Peoples tab badge are re-filled in place on the same
+## frame (`BandPanelController.refresh_connections`), since a frame may move the ties and no population.
 func update_connections(connections_variant: Variant) -> void:
     _band_labor.set_connections(connections_variant)
     _targeting.refresh_live_targets()
+    _bandpanel.refresh_connections()
 
 ## Ingests MapView's terrain-stamped food sites (x/y/module/kind + terrain_id) into the per-tile map
 ## the Forage row reads, so its glyph matches the map marker (riverine split included). The per-tile
@@ -2357,6 +2364,9 @@ func ingest_command_events(events_variant: Variant) -> void:
     # rather than a fourth surface: the row it produces lands in the turn orb's registry beside every
     # other demand on the player.
     _attention.ingest_command_events(events_variant, _band_labor.current_turn())
+    # …and the outfitting card takes its REFUSALS off it: a refused `set_starting_loadout` moves no
+    # band row, so this row is the only word the card gets that its optimistic picks were turned down.
+    _loadout.ingest_command_events(events_variant, _band_labor.current_turn())
 func update_band_alerts(populations_variant: Variant) -> void:
     if not (populations_variant is Array):
         return

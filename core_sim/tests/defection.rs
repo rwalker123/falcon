@@ -24,7 +24,7 @@ use core_sim::{
     DiscoveryProgressLedger, Expedition, ExpeditionConfigHandle, ExpeditionMission,
     ExpeditionPhase, FactionBorderPolicies, FactionId, ForageRegistry, HerdRegistry,
     LaborAllocation, LaborAssignment, LaborTarget, LadderConfigHandle, LocalStore, PartySightings,
-    PopulationCohort, ResidentBand, RoadKeeper, RoadRegistry, Scalar, SettleConfig,
+    PopulationCohort, ResidentBand, RoadKeeper, RoadRegistry, Scalar, SettleConfig, Sighting,
     SimulationConfig, SourcePriority, StartingUnit, TakeSelection, Tile, TileRegistry,
     TransferCause, WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR, FOOD,
 };
@@ -112,7 +112,12 @@ fn tie(app: &mut App, a: BandId, b: BandId) {
     let config = app.world.resource::<ConnectionsConfigHandle>().get();
     let mut ledger = app.world.resource_mut::<ConnectionLedger>();
     for key in [ConnectionKey::new(a, b), ConnectionKey::new(b, a)] {
-        ledger.record_contact(key, UVec2::ZERO, SIGHTING_TURN, SIGHTING_TURN, &config);
+        ledger.record_contact(
+            key,
+            &Sighting::new(UVec2::ZERO, SIGHTING_TURN, ""),
+            SIGHTING_TURN,
+            &config,
+        );
     }
 }
 

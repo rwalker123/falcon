@@ -494,6 +494,10 @@ table TileState {
   // `terrain`. Navigability is still signaled by `terrain == NavigableRiver` (unchanged). Appended
   // after all shipped fields (append-only) — default matches enum default so old readers are unaffected.
   underlyingTerrain:TerrainType;
+  // BELIEF — docs/plan_civilization_steps.md §"Belief is a property of a place". A per-PLACE stock
+  // (not per faction) in dead-equivalents: deaths while a band stands on this tile add to it, and
+  // nothing ever decays it — an abandoned place keeps its dead. 0 = no belief here.
+  belief:float = 0;
 }
 
 // A band's resolved settlement-progression stage — how rooted-in-place its dwelling has become.
@@ -4390,6 +4394,10 @@ table CommandEventState {
   // makes the event feed append-only on the wire instead of re-shipping the whole retained ring
   // every turn. Appended last — field slots are positional.
   seq:ulong;
+  // The one band this event is about (`BandId`), or 0 when it is not about a single band — no real
+  // band holds 0. Lets the client file a line against its band without parsing `detail` (a refused
+  // `starting_loadout` names the band it refused). Appended last.
+  band:ulong;
 }
 
 table CampaignStartingUnit {
@@ -5683,6 +5691,12 @@ table ConnectionState {
   lastContactTurn:ulong;
   // The turn the tie first formed. Never changes.
   firstContactTurn:ulong;
+  // Clock 1, with lastSeenX/Y/Turn: the name the subject answered to at `lastSeenTurn` — what they
+  // were called when you last saw them, NOT a live lookup. It is how a subject the viewer's own
+  // roster cannot resolve (a foreign band, or one dead or split while the tie lingers) is still
+  // named. Not refreshed without sight, so a rename you have not seen does not reach you. Never
+  // expected empty for a live band; empty means "unknown".
+  subjectName:string;
 }
 
 table ConnectionSection {

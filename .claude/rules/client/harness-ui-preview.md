@@ -1214,6 +1214,28 @@ a sentence is a string — a frame shows a plausible verdict whichever clock it 
 > good's main line also carries `CARGO_GOOD_ROW_META`. **Sabotage-verified** by reversing the grade
 > order: the four best-first claims fail, and the pack-clamp claims after them cascade.
 
+> #### …AND IT RENDERS THE BAND PAGE'S PEOPLES TAB (issue #549)
+>
+> `EXPECTED_CHECKPOINTS` **180**, RE-MEASURED. Four frames on the 380px right dock's Peoples tab,
+> after the Food-ledger states and before the panel is released: `connections_roster` (thirty
+> ties — growing, fading named by its remembered `subject_name`, fading named by its tile, 26 more
+> fading, parked), `connections_roster_scrolled` (the list scrolled to its end, the parked tie in
+> view), `connections_roster_ties_only` (only `update_connections` pushed: the neighbour's tie at 50%
+> and fading, one more tie met, no population push) and `connections_roster_empty` (the neighbour,
+> which knows nobody). The claims: the tab is its own zone and the band zone has no roster; every tie
+> has a row; the badge counts the ties; the rows sit in the sanctioned `HudConnectionsVocab.LIST_NAME`
+> scroll and overflow it; every row ends clear of the scrollbar's left edge (the gutter); the order
+> is the roster's own sort (the ties are pushed out of order); on
+> the ties-only frame the row reads the new strength and state, the tab and its scroll are the same
+> nodes, and the badge reads the new count; the empty band has no badge. The chapter sets the turn
+> to `ROSTER_TURN` and hands back the prior turn, ties and roster. Two more frames once the panel is
+> released, on the no-dock drawer: `connections_roster_drawer` and
+> `connections_roster_drawer_scrolled`, asserting the drawer carries the Trade section and then the
+> roster, siblings in that order after Parties, with every tie, and that the drawer's own scroll
+> reaches the roster.
+> **Sabotage-verified**: dropping the `refresh_connections` call fails exactly the update claim
+> (`75% · growing`) and the badge claim (`30, want 31`).
+
 **Sits after `crafting_bench` in `CHAPTERS`** — it was appended last when it landed, and
 `selective_gather`, `knowledge_panel` and `supply_network` have followed it since, which is exactly
 the case the release note at the end of this paragraph exists for. **Seventeen frames and one hundred
@@ -1724,8 +1746,8 @@ refusal).
 
 ## `chapters/starting_loadout.gd` — the outfitting picker (issue #629)
 
-**Appended LAST in `CHAPTERS`**, after `supply_network`, so no existing frame moves. Thirteen frames
-and one hundred and twenty-three assertions (`EXPECTED_CHECKPOINTS` **136**, RE-MEASURED by raising
+**Appended LAST in `CHAPTERS`**, after `supply_network`, so no existing frame moves. Sixteen frames
+and one hundred and forty-three assertions (`EXPECTED_CHECKPOINTS` **159**, RE-MEASURED by raising
 the const to an impossible number and reading `reached` back — frames count too). It ends by
 publishing SHUT windows, so the surface it stands up is gone before anything appended after it could
 inherit it.
@@ -1770,6 +1792,26 @@ meta, never by scraping a subtree's text) and the frames carry the layout.
 | `starting_loadout_reopened` | ⛔ **the footer control closes the card and SENDS NOTHING**, and nothing is lost by pressing it: the still-open frame the sim really sends, reopened, with every kit intact and no refusal and no forfeiture claim. The pair is the claim — a control that still ordered would double every press's send, and a card that came back empty would be the old defect in new words |
 | `starting_loadout_orb_unspent` | the orb AMBER with one unit still to pick, its popover row reading `Band not fully outfitted` / `1 resource unspent` and wearing `Open ▸` |
 | `starting_loadout_orb_ready` | the same orb BLUE with everything picked, reading `Band outfitted` / `everything is picked` — **still present, still `Open ▸`**, which is what says a dismissed card is reachable right up to the advance |
+
+### The REFUSED pair runs last, after the flicker pair
+
+A refused order moves no band row, so the card is put back by a `starting_loadout` `command_events`
+row alone (`starting-loadout.md` → "A REFUSED ORDER IS AN EVENT ROW"). The block presses a `−` (the
+flicker pair leaves the adopt band's kit budget spent, so a `+` would be clamped to nothing and send
+nothing), pops that order off `_orders` because no server holds it, and feeds rows through
+`HudLayer.ingest_command_events` — the seam `Main` uses. Its `seq` starts one above the card's own
+cursor, since earlier chapters have already fed the HUD sequenced rows. **Every simulated snapshot
+opens with `_next_snapshot()`** (`HudLayer.update_overlay`, which `Main` calls first in every
+snapshot): the card treats a refusal read in the same snapshot as a newer published state as the
+older fact, so a block that skipped the boundary would see its refusal swallowed by the previous
+block's echo.
+
+| frame | what only IT can say |
+|---|---|
+| `starting_loadout_refused` | the pick back on what the band holds, and the amber line under the head — `Not taken: <detail>. Picks reset to what the band holds.` — quoting the fixture's reason verbatim. Asserted around it: an EARLIER turn's row moves nothing; the next press clears the line; the same row re-sent (a full snapshot's ring) does not reset that press |
+| `starting_loadout_refused_long` | a reason too long for two lines held to TWO with an ellipsis, the whole text on the tooltip and a trailing full stop not doubled — the claim asks the label's `get_line_count` (above two) against `get_visible_line_count` (exactly two), so a reason that merely happened to fit cannot pass it |
+| `starting_loadout_refused_in_flight` | ⛔ **A refused while B is still in flight: only A is forgotten.** The line shows as `Not taken: <detail>.` — without the word "reset", since nothing was — B's pick STAYS on screen and `BAND_UNECHOED` holds only B; B's own echo then clears the line and keeps B. A card that reset every in-flight order fails at B's pick |
+| — (PNG-less, after it) | **B's echo and A's refusal in ONE snapshot**, in `Main`'s order (band first): no line over B's accepted picks, and nothing left in flight |
 
 ### The TAKE arc is APPENDED, never interleaved
 

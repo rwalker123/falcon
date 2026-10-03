@@ -16,6 +16,8 @@ pub(crate) const BUILD_ID: &str = match option_env!("CORE_SIM_BUILD_ID") {
 };
 
 mod band_names;
+pub mod belief;
+mod belief_config;
 mod biome_palette;
 pub mod climate;
 pub mod combat;
@@ -114,6 +116,11 @@ pub use band_names::{
     load_band_names_from_env, BandNameCatalog, BandNameCatalogHandle, BandNameCatalogMetadata,
     BandNamesError, BAND_NAME_SALT, BUILTIN_BAND_NAMES,
 };
+pub use belief::{BeliefRegistry, NO_BELIEF};
+pub use belief_config::{
+    load_belief_config_from_env, BeliefConfig, BeliefConfigHandle, BeliefConfigMetadata,
+    BUILTIN_BELIEF_CONFIG,
+};
 pub use combat::{
     attacks_landed_at, landed_strikes_seeded, resolve_fight, strike_damage, units_brought_down,
     CombatStats, CombatTuning, Contingent, ContingentId, ContingentResult, DamageLedger,
@@ -145,8 +152,8 @@ pub use config_override::{
     ConfigKindSpec, ConfigOverrideError, InstalledOverride,
 };
 pub use connections::{
-    advance_connections, Connection, ConnectionKey, ConnectionLedger, ContactsThisTurn, FULL_TIE,
-    NO_TIE,
+    advance_connections, Connection, ConnectionKey, ConnectionLedger, ContactsThisTurn, Sighting,
+    FULL_TIE, NO_TIE,
 };
 pub use connections_config::{
     load_connections_config_from_env, ConnectionStrengthConfig, ConnectionsConfig,
@@ -613,6 +620,9 @@ pub fn build_headless_app() -> App {
     let (connections_config, connections_metadata) =
         connections_config::load_connections_config_from_env();
     let connections_handle = connections_config::ConnectionsConfigHandle::new(connections_config);
+    // Belief on a place — what each source adds to a tile's stock (`belief::BeliefRegistry`).
+    let (belief_config, belief_metadata) = belief_config::load_belief_config_from_env();
+    let belief_handle = belief_config::BeliefConfigHandle::new(belief_config);
     // The pool a band's name is drawn from. Content rather than tuning, but it loads on the same
     // boot seam as everything else so an operator can point a campaign at a different name list.
     let (band_names_catalog, band_names_metadata) = band_names::load_band_names_from_env();
@@ -809,6 +819,8 @@ pub fn build_headless_app() -> App {
         .insert_resource(visibility_metadata)
         .insert_resource(connections_handle)
         .insert_resource(connections_metadata)
+        .insert_resource(belief_handle)
+        .insert_resource(belief_metadata)
         .insert_resource(materials_handle)
         .insert_resource(extraction_handle)
         .insert_resource(extraction_metadata)
@@ -883,6 +895,9 @@ pub fn build_headless_app() -> App {
         .insert_resource(HerdDensityMap::default())
         .insert_resource(ForageRegistry::default())
         .insert_resource(GrazeRegistry::default())
+        // **Belief on every place** (`docs/plan_civilization_steps.md` §"Belief is a property of a
+        // place"). World state that only ever grows — an abandoned place keeps its dead.
+        .insert_resource(belief::BeliefRegistry::default())
         .insert_resource(command_event_log)
         .insert_resource(FoodSiteRegistry::default())
         .init_resource::<FoodSiteWaterBiasReport>()

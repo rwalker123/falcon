@@ -11,9 +11,9 @@ class_name BandCityPanel
 ## tab persistence.
 ##
 ## THE BODY IS **AN ORDERED LIST OF NAMED ZONES AT A FIXED CROSS-AXIS SIZE**, declared by the SUBJECT
-## (`set_zone_layout`) and filled by it (`set_zones`). A band declares four — `band` (vitals), `work`
-## (the paged work board), `parties` and `trade`, the last NARROW-ONLY (`ZONE_SPEC_NARROW_ONLY`), so the
-## wide shell lays out three; the faction page declares three. Nothing is
+## (`set_zone_layout`) and filled by it (`set_zones`). A band declares five — `band` (vitals), `work`
+## (the paged work board), `parties`, `trade` and `peoples`, the last two NARROW-ONLY
+## (`ZONE_SPEC_NARROW_ONLY`), so the wide shell lays out three; the faction page declares three. Nothing is
 ## balanced, so no content can migrate between zones; nothing is fitted to
 ## content, so the reservation this panel reports changes ONLY on dock / collapse
 ## / hide / viewport-resize — never on a content edit. That is the whole point of
@@ -385,13 +385,16 @@ const ZONE_PARTIES := &"parties"
 ## The band page's Trade zone (issue #731). A band declares it `ZONE_SPEC_NARROW_ONLY`: a tab in the
 ## narrow shell, and no flank of its own in the wide one.
 const ZONE_TRADE := &"trade"
+## The band page's Peoples zone (issue #549) — the ties the band holds. NARROW-ONLY like Trade: a tab in
+## the narrow shell, a section under Parties (after Trade's) in the wide one.
+const ZONE_PEOPLES := &"peoples"
 ## Every zone key the panel knows. **The persisted tab is validated against THIS rather than against
 ## the live layout**, because prefs load before any subject has declared one — the only layout
 ## standing at that moment is the bootstrap `DEFAULT_ZONE_LAYOUT`, and a player who left on the
 ## faction page's `parties` tab must have that selection survive a check against a layout no subject
 ## has authored yet. A key the live layout lacks is handled by `_effective_tab`, which falls back to
 ## the first zone that has content.
-const ZONE_KEYS: Array[StringName] = [ZONE_BAND, ZONE_WORK, ZONE_PARTIES, ZONE_TRADE]
+const ZONE_KEYS: Array[StringName] = [ZONE_BAND, ZONE_WORK, ZONE_PARTIES, ZONE_TRADE, ZONE_PEOPLES]
 ## A zone descriptor's fields (`set_zone_layout`). Named consts rather than bare strings, the
 ## `HudWidgets.MENU_ENTRY_*` idiom: a mistyped key in a Dictionary literal is silent.
 const ZONE_SPEC_KEY := "key"

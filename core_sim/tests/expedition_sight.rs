@@ -119,6 +119,11 @@ fn spawn_world() -> App {
     // first turn a crew stands on it, so a harness with no `extract` row has none.
     app.world
         .insert_resource(core_sim::extraction::DepositRegistry::default());
+    // Belief on a place — a hunt or a raid credits its dead to the tile the band stands on.
+    app.world
+        .insert_resource(core_sim::BeliefRegistry::default());
+    app.world
+        .insert_resource(core_sim::BeliefConfigHandle::default());
     app.world.insert_resource(ExpeditionConfigHandle::default());
     app.world
         .insert_resource(VisibilityConfigHandle::new(VisibilityConfig::builtin()));

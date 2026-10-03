@@ -42,7 +42,7 @@
 //!
 //! | What decays | Speed | What it means |
 //! |---|---|---|
-//! | [`Connection::last_seen_position`] | immediately on losing sight | you know where they *were*. Same as a herd. |
+//! | [`Connection::last_seen_position`] / [`Connection::subject_name`] | immediately on losing sight | you know where they *were*, and what they were called. Same as a herd. |
 //! | [`Connection::strength`] | over turns without contact, down to zero | the currency of what you know. **At zero nothing flows.** |
 //! | the edge itself | very slowly, but not never | eventually you have simply forgotten there was such a people |
 //!
@@ -89,8 +89,36 @@ impl ConnectionKey {
     }
 }
 
+/// **One observation of a subject** — where it stood, on which turn, and the name it answered to.
+///
+/// The three travel together because they are one sighting: whoever saw the band saw all three at
+/// once, so every place a contact is carried (the turn's [`ContactsThisTurn`], an expedition's
+/// unreported `pending_contacts`) carries this whole, and [`ConnectionLedger::record_contact`]
+/// takes all three or none of them. Splitting the name off would let a fresher position sit beside
+/// a staler name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Sighting {
+    pub position: UVec2,
+    /// The turn the subject was **observed** — not when the report arrived. See
+    /// [`ConnectionLedger::record_contact`].
+    pub observed_turn: u64,
+    /// The subject's [`crate::components::BandName`] at `observed_turn`; empty when the subject
+    /// carried none.
+    pub subject_name: String,
+}
+
+impl Sighting {
+    pub fn new(position: UVec2, observed_turn: u64, subject_name: impl Into<String>) -> Self {
+        Self {
+            position,
+            observed_turn,
+            subject_name: subject_name.into(),
+        }
+    }
+}
+
 /// One directed tie and its three clocks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Connection {
     /// **Clock 2.** `0..=1`, as a fixed-point [`Scalar`] rather than an `f32` — this is
     /// checkpointed state, and a float would put replay determinism at risk. Raised on contact,
@@ -105,6 +133,11 @@ pub struct Connection {
     /// `last_seen_turn < first_contact_turn` is reachable and correct: a party saw them on turn 40
     /// and the tie formed when the report landed home on turn 60.
     pub last_seen_turn: u64,
+    /// …and the name they answered to then. **Clock 1, not a live lookup**: it is what lets a
+    /// subject the observer cannot resolve from its own roster — a foreign band, or one that has
+    /// since died or split while the tie lingers — still be named. A rename the observer has not
+    /// seen does not reach it; a connection never grants live knowledge. Empty means unknown.
+    pub subject_name: String,
     /// The turn the tie was last refreshed by a contact event — when the report *reached* the
     /// observer, which for a live sighting is the same turn it was observed. Drives clocks 2 and 3.
     pub last_contact_turn: u64,
@@ -161,16 +194,17 @@ impl ConnectionLedger {
             })
     }
 
-    /// Refresh (or form) the tie `key` from a report that the subject was at `position` on
-    /// `observed_turn`, which reached the observer on `contact_turn`.
+    /// Refresh (or form) the tie `key` from a report that the subject was at `sighting.position`
+    /// under `sighting.subject_name` on `sighting.observed_turn`, which reached the observer on
+    /// `contact_turn`.
     ///
     /// **The two turns are separate because a report can be old.** A live sighting is observed and
     /// received on the same turn, so passing the same value for both is bit-identical to stamping
     /// one turn everywhere; an expedition's comm flush is what makes them differ, reporting on turn
     /// 60 what it saw on turn 40.
     ///
-    /// Clock 1 (`last_seen_position` / `last_seen_turn`) therefore moves **only when this
-    /// observation is at least as fresh as the one already held**. A party flushing a stale sighting
+    /// Clock 1 (`last_seen_position` / `last_seen_turn` / `subject_name`) therefore moves **only
+    /// when this observation is at least as fresh as the one already held**. A party flushing a stale sighting
     /// still refreshes clocks 2 and 3 — the news arrived, so the tie is live — but it cannot drag
     /// the remembered position backwards to somewhere the subject has since left.
     ///
@@ -179,8 +213,7 @@ impl ConnectionLedger {
     pub fn record_contact(
         &mut self,
         key: ConnectionKey,
-        position: UVec2,
-        observed_turn: u64,
+        sighting: &Sighting,
         contact_turn: u64,
         cfg: &ConnectionsConfig,
     ) -> bool {
@@ -189,9 +222,10 @@ impl ConnectionLedger {
             Some(connection) => {
                 connection.strength = (connection.strength + gain).min(FULL_TIE);
                 connection.last_contact_turn = contact_turn;
-                if observed_turn >= connection.last_seen_turn {
-                    connection.last_seen_position = position;
-                    connection.last_seen_turn = observed_turn;
+                if sighting.observed_turn >= connection.last_seen_turn {
+                    connection.last_seen_position = sighting.position;
+                    connection.last_seen_turn = sighting.observed_turn;
+                    connection.subject_name.clone_from(&sighting.subject_name);
                 }
                 false
             }
@@ -200,8 +234,9 @@ impl ConnectionLedger {
                     key,
                     Connection {
                         strength: gain.min(FULL_TIE),
-                        last_seen_position: position,
-                        last_seen_turn: observed_turn,
+                        last_seen_position: sighting.position,
+                        last_seen_turn: sighting.observed_turn,
+                        subject_name: sighting.subject_name.clone(),
                         last_contact_turn: contact_turn,
                         first_contact_turn: contact_turn,
                     },
@@ -218,8 +253,8 @@ impl ConnectionLedger {
     /// already stamped — so this needs no second copy of the turn's contact set, and cannot
     /// disagree with one.
     ///
-    /// `last_seen_position` / `last_seen_turn` are deliberately **not** touched: clock 1 is exactly
-    /// the memory of where they were.
+    /// `last_seen_position` / `last_seen_turn` / `subject_name` are deliberately **not** touched:
+    /// clock 1 is exactly the memory of where they were.
     pub fn decay_all(&mut self, turn: u64, cfg: &ConnectionsConfig) -> usize {
         let drain = Scalar::from_f32(cfg.strength.decay_per_turn);
         let before = self.edges.len();
@@ -243,34 +278,31 @@ impl ConnectionLedger {
 /// [`advance_connections`] consumes and clears it.
 ///
 /// A [`BTreeMap`] keyed by the edge rather than a set of triples, for two reasons: the key space is
-/// the ledger's own, and a subject stands in exactly one place, so the position is a value and not
-/// part of the identity. The `u64` beside it is **the turn the position was observed**, which is
-/// not always this turn — an expedition's report is what the party saw on the march. When two
-/// reports name the same edge, the **fresher observation wins**.
+/// the ledger's own, and a subject stands in exactly one place, so the [`Sighting`] is a value and
+/// not part of the identity. Its turn is **when the subject was observed**, which is not always this
+/// turn — an expedition's report is what the party saw on the march. When two reports name the same
+/// edge, the **fresher observation wins**, and it wins whole: position and name together.
 #[derive(Resource, Default, Debug, Clone)]
-pub struct ContactsThisTurn(BTreeMap<ConnectionKey, (UVec2, u64)>);
+pub struct ContactsThisTurn(BTreeMap<ConnectionKey, Sighting>);
 
 impl ContactsThisTurn {
-    /// Record `observer` finding `subject` at `position`, observed on `observed_turn`. A staler
-    /// observation of an edge already recorded this turn is dropped rather than overwriting it.
-    pub fn record(
-        &mut self,
-        observer: BandId,
-        subject: BandId,
-        position: UVec2,
-        observed_turn: u64,
-    ) {
-        let entry = self
-            .0
-            .entry(ConnectionKey::new(observer, subject))
-            .or_insert((position, observed_turn));
-        if observed_turn >= entry.1 {
-            *entry = (position, observed_turn);
+    /// Record `observer` finding `subject` as `sighting` describes. A staler observation of an edge
+    /// already recorded this turn is dropped rather than overwriting it.
+    pub fn record(&mut self, observer: BandId, subject: BandId, sighting: Sighting) {
+        match self.0.entry(ConnectionKey::new(observer, subject)) {
+            std::collections::btree_map::Entry::Vacant(slot) => {
+                slot.insert(sighting);
+            }
+            std::collections::btree_map::Entry::Occupied(mut slot) => {
+                if sighting.observed_turn >= slot.get().observed_turn {
+                    slot.insert(sighting);
+                }
+            }
         }
     }
 
     /// Every contact, in key order.
-    pub fn iter(&self) -> impl Iterator<Item = (&ConnectionKey, &(UVec2, u64))> {
+    pub fn iter(&self) -> impl Iterator<Item = (&ConnectionKey, &Sighting)> {
         self.0.iter()
     }
 
@@ -304,11 +336,11 @@ pub fn advance_connections(
     let turn = tick.0;
 
     let mut formed = 0u32;
-    for (key, (position, observed_turn)) in contacts.iter() {
+    for (key, sighting) in contacts.iter() {
         // **Observed then, received now.** A sight-sweep contact observed this very turn passes the
         // same value twice, so direct sight behaves exactly as it did before the two turns split;
         // an expedition's flush is what makes them differ.
-        if ledger.record_contact(*key, *position, *observed_turn, turn, &cfg) {
+        if ledger.record_contact(*key, sighting, turn, &cfg) {
             formed += 1;
         }
     }
@@ -337,6 +369,13 @@ mod tests {
         ConnectionsConfig::default()
     }
 
+    const SUBJECT_NAME: &str = "Reed People";
+    const RENAMED: &str = "Ash People";
+
+    fn seen(position: UVec2, observed_turn: u64) -> Sighting {
+        Sighting::new(position, observed_turn, SUBJECT_NAME)
+    }
+
     #[test]
     fn a_tie_climbs_on_consecutive_contact_and_stops_at_a_full_tie() {
         let cfg = config();
@@ -344,7 +383,7 @@ mod tests {
         let mut previous = NO_TIE;
         // Four turns at the shipped gain is exactly a full tie; a fifth must not overshoot.
         for turn in 0..5 {
-            ledger.record_contact(edge(), SOMEWHERE, turn, turn, &cfg);
+            ledger.record_contact(edge(), &seen(SOMEWHERE, turn), turn, &cfg);
             let strength = ledger.get(&edge()).expect("the edge formed").strength;
             assert!(strength > previous || strength == FULL_TIE);
             assert!(strength <= FULL_TIE, "strength is a 0..=1 fraction");
@@ -357,7 +396,7 @@ mod tests {
     fn losing_sight_drains_the_tie_to_zero_and_parks_it_there() {
         let cfg = config();
         let mut ledger = ConnectionLedger::default();
-        ledger.record_contact(edge(), SOMEWHERE, 0, 0, &cfg);
+        ledger.record_contact(edge(), &seen(SOMEWHERE, 0), 0, &cfg);
         // Long enough to drain a full tie several times over, but well inside `forget_turns`.
         for turn in 1..100 {
             ledger.decay_all(turn, &cfg);
@@ -377,7 +416,7 @@ mod tests {
     fn the_fact_of_them_is_forgotten_after_forget_turns() {
         let cfg = config();
         let mut ledger = ConnectionLedger::default();
-        ledger.record_contact(edge(), SOMEWHERE, 0, 0, &cfg);
+        ledger.record_contact(edge(), &seen(SOMEWHERE, 0), 0, &cfg);
         assert_eq!(ledger.decay_all(cfg.forget_turns - 1, &cfg), 0);
         assert_eq!(ledger.len(), 1);
         assert_eq!(ledger.decay_all(cfg.forget_turns, &cfg), 1);
@@ -388,8 +427,8 @@ mod tests {
     fn a_contact_moves_the_remembered_position_and_a_quiet_turn_does_not() {
         let cfg = config();
         let mut ledger = ConnectionLedger::default();
-        ledger.record_contact(edge(), SOMEWHERE, 0, 0, &cfg);
-        ledger.record_contact(edge(), ELSEWHERE, 1, 1, &cfg);
+        ledger.record_contact(edge(), &seen(SOMEWHERE, 0), 0, &cfg);
+        ledger.record_contact(edge(), &seen(ELSEWHERE, 1), 1, &cfg);
         ledger.decay_all(2, &cfg);
         let connection = ledger.get(&edge()).expect("the edge");
         assert_eq!(connection.last_seen_position, ELSEWHERE);
@@ -411,10 +450,10 @@ mod tests {
 
         let cfg = config();
         let mut ledger = ConnectionLedger::default();
-        ledger.record_contact(edge(), SOMEWHERE, SEEN_TURN, SEEN_TURN, &cfg);
+        ledger.record_contact(edge(), &seen(SOMEWHERE, SEEN_TURN), SEEN_TURN, &cfg);
         let direct = ledger.get(&edge()).expect("the edge formed").strength;
 
-        ledger.record_contact(edge(), ELSEWHERE, MARCH_TURN, FLUSH_TURN, &cfg);
+        ledger.record_contact(edge(), &seen(ELSEWHERE, MARCH_TURN), FLUSH_TURN, &cfg);
 
         let connection = ledger.get(&edge()).expect("the edge");
         assert_eq!(
@@ -442,7 +481,7 @@ mod tests {
 
         let cfg = config();
         let mut ledger = ConnectionLedger::default();
-        assert!(ledger.record_contact(edge(), SOMEWHERE, MARCH_TURN, FLUSH_TURN, &cfg));
+        assert!(ledger.record_contact(edge(), &seen(SOMEWHERE, MARCH_TURN), FLUSH_TURN, &cfg));
 
         let connection = ledger.get(&edge()).expect("the edge formed");
         assert_eq!(connection.last_seen_turn, MARCH_TURN);
@@ -454,12 +493,11 @@ mod tests {
     fn the_reverse_edge_is_a_separate_entry() {
         let cfg = config();
         let mut ledger = ConnectionLedger::default();
-        assert!(ledger.record_contact(edge(), SOMEWHERE, 0, 0, &cfg));
+        assert!(ledger.record_contact(edge(), &seen(SOMEWHERE, 0), 0, &cfg));
         assert_eq!(ledger.len(), 1);
         assert!(ledger.record_contact(
             ConnectionKey::new(SUBJECT, OBSERVER),
-            SOMEWHERE,
-            0,
+            &seen(SOMEWHERE, 0),
             0,
             &cfg
         ));
@@ -469,11 +507,48 @@ mod tests {
     #[test]
     fn a_fresher_observation_of_the_same_edge_wins() {
         let mut contacts = ContactsThisTurn::default();
-        contacts.record(OBSERVER, SUBJECT, SOMEWHERE, 12);
-        contacts.record(OBSERVER, SUBJECT, ELSEWHERE, 3);
+        contacts.record(OBSERVER, SUBJECT, seen(SOMEWHERE, 12));
+        contacts.record(OBSERVER, SUBJECT, Sighting::new(ELSEWHERE, 3, RENAMED));
         assert_eq!(contacts.len(), 1);
-        assert_eq!(contacts.iter().next().expect("one contact").1 .0, SOMEWHERE);
-        contacts.record(OBSERVER, SUBJECT, ELSEWHERE, 20);
-        assert_eq!(contacts.iter().next().expect("one contact").1 .0, ELSEWHERE);
+        let held = contacts.iter().next().expect("one contact").1;
+        assert_eq!(held.position, SOMEWHERE);
+        assert_eq!(
+            held.subject_name, SUBJECT_NAME,
+            "a staler observation loses whole — its name with its position"
+        );
+        contacts.record(OBSERVER, SUBJECT, Sighting::new(ELSEWHERE, 20, RENAMED));
+        let held = contacts.iter().next().expect("one contact").1;
+        assert_eq!(held.position, ELSEWHERE);
+        assert_eq!(held.subject_name, RENAMED);
+    }
+
+    /// **The name is clock 1**: a stale report under a different name cannot overwrite the name the
+    /// observer last saw them under, and a fresher one does.
+    #[test]
+    fn the_remembered_name_moves_with_the_remembered_position() {
+        const SEEN_TURN: u64 = 50;
+        const MARCH_TURN: u64 = 40;
+        const LATER_TURN: u64 = 55;
+
+        let cfg = config();
+        let mut ledger = ConnectionLedger::default();
+        ledger.record_contact(edge(), &seen(SOMEWHERE, SEEN_TURN), SEEN_TURN, &cfg);
+        ledger.record_contact(
+            edge(),
+            &Sighting::new(ELSEWHERE, MARCH_TURN, RENAMED),
+            LATER_TURN,
+            &cfg,
+        );
+        assert_eq!(
+            ledger.get(&edge()).expect("the edge").subject_name,
+            SUBJECT_NAME
+        );
+        ledger.record_contact(
+            edge(),
+            &Sighting::new(ELSEWHERE, LATER_TURN, RENAMED),
+            LATER_TURN,
+            &cfg,
+        );
+        assert_eq!(ledger.get(&edge()).expect("the edge").subject_name, RENAMED);
     }
 }

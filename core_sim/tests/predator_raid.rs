@@ -97,6 +97,11 @@ fn arena() -> (App, UVec2, Entity) {
     // first turn a crew stands on it, so a harness with no `extract` row has none.
     app.world
         .insert_resource(core_sim::extraction::DepositRegistry::default());
+    // Belief on a place — a hunt or a raid credits its dead to the tile the band stands on.
+    app.world
+        .insert_resource(core_sim::BeliefRegistry::default());
+    app.world
+        .insert_resource(core_sim::BeliefConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.run_system_once(spawn_initial_herds);
     app.world.run_system_once(spawn_initial_forage);
@@ -273,6 +278,46 @@ fn an_unguarded_band_bleeds_and_narrates() {
     assert!(
         has_raid_line(&app),
         "a casualty-causing raid must push a predator_raid feed line"
+    );
+}
+
+/// **A raid's dead are buried where the band stands** (`core_sim::belief`, issue #697). The pack
+/// comes to the band, so the people it kills die on the tile the band is standing on — credited
+/// there, one dead-equivalent each at the shipped `belief_per_death`, and never to the band's home.
+#[test]
+fn a_raids_dead_credit_belief_to_the_tile_the_band_stands_on() {
+    /// f32 tolerance between the head-count lost and the belief credited.
+    const EPSILON: f32 = 1e-4;
+    let (mut app, pos, tile) = arena();
+    seat(&mut app, "pred_wolf", WOLF, pos);
+    let band = resident_band(&mut app, tile, 30, 0);
+    // The band's HOME is elsewhere; it is standing on the raided tile.
+    let home = *app
+        .world
+        .resource::<TileRegistry>()
+        .tiles
+        .iter()
+        .find(|entity| **entity != tile)
+        .expect("the map has a second tile");
+    let home_pos = app.world.get::<core_sim::Tile>(home).unwrap().position;
+    app.world.get_mut::<PopulationCohort>(band).unwrap().home = home;
+
+    let before = working_of(&app, band);
+    app.world.run_system_once(advance_predator_raids);
+    let lost = before - working_of(&app, band);
+
+    assert!(lost > 0.0, "fixture: the raid must kill someone");
+    let belief = app.world.resource::<core_sim::BeliefRegistry>();
+    let per_death = core_sim::BeliefConfig::default().belief_per_death;
+    assert!(
+        (belief.get(pos) - lost * per_death).abs() < EPSILON,
+        "the raid's dead credit the tile the band stands on: {} vs {lost}",
+        belief.get(pos)
+    );
+    assert_eq!(
+        belief.get(home_pos),
+        core_sim::NO_BELIEF,
+        "the band's home is not where they died"
     );
 }
 

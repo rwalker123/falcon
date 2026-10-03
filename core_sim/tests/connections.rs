@@ -15,11 +15,11 @@ use bevy::math::UVec2;
 use bevy::prelude::{Entity, With};
 
 use core_sim::{
-    build_test_app, split_band_from_parent, BandId, Connection, ConnectionKey, ConnectionLedger,
-    ConnectionsConfig, ConnectionsConfigHandle, Expedition, ExpeditionMission, ExpeditionPhase,
-    FactionId, LaborAllocation, PopulationCohort, ResidentBand, Scalar, SettleConfig,
-    SimulationConfig, SimulationMetrics, SimulationTick, SnapshotHistory, StartingUnit, Tile,
-    TileRegistry, ViewerFaction, VisibilityLedger, VisibilityState,
+    build_test_app, split_band_from_parent, BandId, BandName, Connection, ConnectionKey,
+    ConnectionLedger, ConnectionsConfig, ConnectionsConfigHandle, Expedition, ExpeditionMission,
+    ExpeditionPhase, FactionId, LaborAllocation, PopulationCohort, ResidentBand, Scalar,
+    SettleConfig, Sighting, SimulationConfig, SimulationMetrics, SimulationTick, SnapshotHistory,
+    StartingUnit, Tile, TileRegistry, ViewerFaction, VisibilityLedger, VisibilityState,
 };
 
 /// A pinned earthlike world, so the terrain under every fixture is the same one every run.
@@ -133,12 +133,30 @@ fn ledger(app: &App) -> &ConnectionLedger {
 fn edge(app: &App, observer: BandId, subject: BandId) -> Option<Connection> {
     ledger(app)
         .get(&ConnectionKey::new(observer, subject))
-        .copied()
+        .cloned()
+}
+
+/// The name `band` answers to — what every sighting of it must record.
+fn band_name(app: &App, band: Entity) -> String {
+    app.world
+        .get::<BandName>(band)
+        .expect("a founded band carries a name")
+        .0
+        .clone()
+}
+
+/// One published `ConnectionState`, as a client reads it off the encoded envelope.
+#[derive(Debug)]
+struct PublishedTie {
+    observer: u64,
+    subject: u64,
+    strength: f32,
+    subject_name: String,
 }
 
 /// The `connections` section read off the **encoded envelope**, through the accessor chain a client
 /// would use. A field that never reached the codec still passes an in-process assertion.
-fn published_connections(app: &App) -> Vec<(u64, u64, f32, u32, u32)> {
+fn published_connections(app: &App) -> Vec<PublishedTie> {
     use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
     let snapshot = app
@@ -158,14 +176,14 @@ fn published_connections(app: &App) -> Vec<(u64, u64, f32, u32, u32)> {
         .expect("the connection section is published");
     section
         .iter()
-        .map(|row| {
-            (
-                row.observerBandId(),
-                row.subjectBandId(),
-                row.strength(),
-                row.lastSeenX(),
-                row.lastSeenY(),
-            )
+        .map(|row| PublishedTie {
+            observer: row.observerBandId(),
+            subject: row.subjectBandId(),
+            strength: row.strength(),
+            subject_name: row
+                .subjectName()
+                .expect("subjectName is always written")
+                .to_string(),
         })
         .collect()
 }
@@ -187,7 +205,7 @@ fn config(app: &App) -> std::sync::Arc<ConnectionsConfig> {
 fn two_bands_in_sight_of_each_other_form_ties_that_reach_the_wire() {
     let mut app = spawn_world();
     let (parent, parent_id, faction, _) = first_band(&mut app);
-    let (_, child_id) = split_off(&mut app, parent);
+    let (child, child_id) = split_off(&mut app, parent);
     app.world.insert_resource(ViewerFaction(faction));
 
     app.update();
@@ -206,13 +224,24 @@ fn two_bands_in_sight_of_each_other_form_ties_that_reach_the_wire() {
         !published.is_empty(),
         "the viewer's own ties must reach the wire section"
     );
+    let tie = published
+        .iter()
+        .find(|tie| tie.observer == parent_id.0 && tie.subject == child_id.0)
+        .unwrap_or_else(|| {
+            panic!("the parent's tie to the band beside it is published: {published:?}")
+        });
+    assert!(tie.strength > 0.0, "published at a real strength: {tie:?}");
+    // **The tie names its subject**, as last seen — the band's own `BandName`, so a client can name
+    // a subject its roster cannot resolve. Non-empty is asserted too: equality alone would pass on
+    // a band that carried no name and a wire that dropped it.
+    let child_name = band_name(&app, child);
     assert!(
-        published.iter().any(
-            |(observer, subject, strength, _, _)| *observer == parent_id.0
-                && *subject == child_id.0
-                && *strength > 0.0
-        ),
-        "the parent's tie to the band beside it is published, at a real strength: {published:?}"
+        !child_name.is_empty(),
+        "the fixture's band must carry a name"
+    );
+    assert_eq!(
+        tie.subject_name, child_name,
+        "subjectName on the wire is the name the subject answered to when seen"
     );
 
     let metrics = app.world.resource::<SimulationMetrics>();
@@ -404,7 +433,12 @@ fn a_connection_grants_no_active_tile() {
         let subject = BandId(u64::MAX - index as u64);
         // Four turns of contact is a FULL tie, so the seeded edges are as strong as they can get.
         for _ in 0..4 {
-            ties.record_contact(ConnectionKey::new(band_id, subject), *position, 0, 0, &cfg);
+            ties.record_contact(
+                ConnectionKey::new(band_id, subject),
+                &Sighting::new(*position, 0, ""),
+                0,
+                &cfg,
+            );
         }
     }
     let seeded_len = ties.len();
@@ -521,15 +555,19 @@ fn an_expedition_reports_a_people_only_when_it_comes_within_comm_range() {
         .expect("the party is alive")
         .pending_contacts
         .clone();
+    let held = buffered
+        .get(&child_id)
+        .expect("the party is holding the finding");
     assert_eq!(
-        buffered.get(&child_id).map(|(pos, _)| *pos),
-        Some(far),
+        held.position, far,
         "the party is holding the finding, with the position it saw it at: {buffered:?}"
     );
-    let observed_turn = buffered
-        .get(&child_id)
-        .map(|(_, turn)| *turn)
-        .expect("the party is holding the finding");
+    let observed_turn = held.observed_turn;
+    let child_name = band_name(&app, child);
+    assert_eq!(
+        held.subject_name, child_name,
+        "the party records the name it saw them under, at the moment it saw them"
+    );
 
     // …and now it walks home.
     {
@@ -553,6 +591,10 @@ fn an_expedition_reports_a_people_only_when_it_comes_within_comm_range() {
     assert_eq!(
         reported.last_seen_position, far,
         "the report names where the party saw them, not where it handed the report in"
+    );
+    assert_eq!(
+        reported.subject_name, child_name,
+        "and the name it saw them under rides the report into the tie"
     );
     // **Seen then, told now.** The two turns are separate fields because the report is old by the
     // time it lands: clock 1 dates the sighting on the march, clocks 2 and 3 date the telling.
@@ -601,7 +643,13 @@ fn an_older_report_refreshes_the_tie_without_rewriting_where_they_were() {
     let seen = edge(&app, parent_id, child_id).expect("the co-located band is seen directly");
     let seen_at = seen.last_seen_position;
     let seen_turn = seen.last_seen_turn;
+    let seen_name = seen.subject_name.clone();
     assert_eq!(seen_at, home, "they were seen where they stood");
+    assert_eq!(
+        seen_name,
+        band_name(&app, child),
+        "direct sight records the subject's own name"
+    );
 
     // 2. They walk out of sight, so nothing the parent can see refreshes clock 1 again.
     let gone_to = walk_away(&mut app, child, home);
@@ -610,6 +658,12 @@ fn an_older_report_refreshes_the_tie_without_rewriting_where_they_were() {
     // 3. A party turns up at home carrying an older sighting of that same band, somewhere else.
     //    Hand-seeded rather than marched, so the staleness is exact rather than incidental.
     const STALE_OBSERVATION_TURN: u64 = 0;
+    // A name the band did not carry when the observer last saw it, so a regression is visible.
+    const STALE_NAME: &str = "an older name";
+    assert_ne!(
+        seen_name, STALE_NAME,
+        "the stale name must differ to prove anything"
+    );
     assert!(
         STALE_OBSERVATION_TURN < seen_turn,
         "the seeded report must predate what the band saw itself"
@@ -631,7 +685,10 @@ fn an_older_report_refreshes_the_tie_without_rewriting_where_they_were() {
         cohort.working = Scalar::from_f32(3.0);
         cohort.sync_size();
         let mut pending_contacts = std::collections::BTreeMap::new();
-        pending_contacts.insert(child_id, (gone_to, STALE_OBSERVATION_TURN));
+        pending_contacts.insert(
+            child_id,
+            Sighting::new(gone_to, STALE_OBSERVATION_TURN, STALE_NAME),
+        );
         app.world.spawn((
             cohort,
             LaborAllocation::default(),
@@ -667,6 +724,10 @@ fn an_older_report_refreshes_the_tie_without_rewriting_where_they_were() {
         after.last_seen_turn, seen_turn,
         "and it cannot re-stamp an older sighting as the fresher one"
     );
+    assert_eq!(
+        after.subject_name, seen_name,
+        "nor rename them to what an older report called them — the name is clock 1 too"
+    );
     assert!(
         after.strength > before_flush,
         "the news still arrived, so the tie is refreshed: {before_flush:?} -> {:?}",
@@ -675,5 +736,122 @@ fn an_older_report_refreshes_the_tie_without_rewriting_where_they_were() {
     assert_eq!(
         after.last_contact_turn, flush_turn,
         "clocks 2 and 3 run off the turn the report landed"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// The remembered name rides the checkpoint
+// ---------------------------------------------------------------------------------------------
+
+/// **A checkpoint round trip keeps the name a tie and an unreported party remember.**
+///
+/// Both are `SimState`: the ledger is restored whole, and a party's `pending_contacts` rides its
+/// `ExpeditionRecord`. The in-world copies are scribbled over between capture and restore, so a
+/// restore that left either alone (or rebuilt it from live `BandName`s) fails here.
+#[test]
+fn the_remembered_name_survives_a_checkpoint_round_trip() {
+    use core_sim::sim_state::{capture_sim_state, restore_sim_state};
+
+    const SCRIBBLE: &str = "not what the checkpoint holds";
+    const PENDING_NAME: &str = "a name a party is still carrying";
+    const PENDING_SUBJECT: BandId = BandId(u64::MAX);
+    // A checkpoint records a cohort only under its `BandId`, so the party carries one of its own.
+    const PARTY_ID: BandId = BandId(u64::MAX - 1);
+
+    let mut app = spawn_world();
+    let (parent, parent_id, faction, home) = first_band(&mut app);
+    let (child, child_id) = split_off(&mut app, parent);
+    app.update();
+    let name = band_name(&app, child);
+    assert_eq!(
+        edge(&app, parent_id, child_id)
+            .expect("the tie formed")
+            .subject_name,
+        name,
+        "the fixture must hold a named tie before the checkpoint"
+    );
+
+    // A party standing away from home, still carrying an unreported sighting.
+    let far_tile = {
+        let registry = app.world.resource::<TileRegistry>();
+        let target = UVec2::new(
+            (home.x + OUT_OF_SIGHT_TILES) % registry.width.max(1),
+            home.y,
+        );
+        registry
+            .index(target.x, target.y)
+            .expect("the far tile is on the map")
+    };
+    {
+        let mut cohort = app
+            .world
+            .get::<PopulationCohort>(parent)
+            .expect("the home band is alive")
+            .clone();
+        cohort.faction = faction;
+        cohort.home = far_tile;
+        cohort.current_tile = far_tile;
+        cohort.working = Scalar::from_f32(3.0);
+        cohort.sync_size();
+        let mut pending_contacts = std::collections::BTreeMap::new();
+        pending_contacts.insert(PENDING_SUBJECT, Sighting::new(home, 0, PENDING_NAME));
+        app.world.spawn((
+            cohort,
+            LaborAllocation::default(),
+            StartingUnit::new("expedition".to_string(), Vec::new()),
+            PARTY_ID,
+            Expedition {
+                home_band: parent,
+                mission: ExpeditionMission::Scout,
+                phase: ExpeditionPhase::AwaitingOrders,
+                announced: true,
+                pending_reveal: Vec::new(),
+                pending_contacts,
+                kit: core_sim::EquipmentConfig::builtin().default_kit(core_sim::KitJob::Scout),
+                cargo: core_sim::LocalStore::new(),
+                defection_pull: core_sim::Scalar::zero(),
+            },
+        ));
+    }
+
+    let checkpoint = capture_sim_state(&app.world);
+
+    // Scribble over both in-world copies.
+    let mut scribbled = ConnectionLedger::default();
+    scribbled.record_contact(
+        ConnectionKey::new(parent_id, child_id),
+        &Sighting::new(home, 0, SCRIBBLE),
+        0,
+        &ConnectionsConfig::default(),
+    );
+    app.world.insert_resource(scribbled);
+    {
+        let mut parties = app.world.query::<&mut Expedition>();
+        for mut expedition in parties.iter_mut(&mut app.world) {
+            for sighting in expedition.pending_contacts.values_mut() {
+                sighting.subject_name = SCRIBBLE.to_string();
+            }
+        }
+    }
+
+    restore_sim_state(&mut app.world, &checkpoint);
+
+    assert_eq!(
+        edge(&app, parent_id, child_id)
+            .expect("the restored ledger holds the tie")
+            .subject_name,
+        name,
+        "the tie's remembered name comes back from the checkpoint"
+    );
+    let mut parties = app.world.query::<&Expedition>();
+    let restored: Vec<String> = parties
+        .iter(&app.world)
+        .filter_map(|expedition| expedition.pending_contacts.get(&PENDING_SUBJECT))
+        .map(|sighting| sighting.subject_name.clone())
+        .collect();
+    assert_eq!(
+        restored,
+        vec![PENDING_NAME.to_string()],
+        "the party's unreported sighting keeps its name through the checkpoint"
     );
 }

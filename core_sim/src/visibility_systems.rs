@@ -43,10 +43,10 @@ use sim_runtime::TerrainTags;
 
 use crate::{
     components::{
-        BandEquipment, BandId, Expedition, LaborAllocation, LaborTarget, PopulationCohort,
-        ResidentBand, Settlement, StartingUnit, Tile, TownCenter,
+        BandEquipment, BandId, BandName, Expedition, LaborAllocation, LaborTarget,
+        PopulationCohort, ResidentBand, Settlement, StartingUnit, Tile, TownCenter,
     },
-    connections::ContactsThisTurn,
+    connections::{ContactsThisTurn, Sighting},
     equipment_config::EquipmentConfigHandle,
     fauna::HerdRegistry,
     grid_utils::{
@@ -147,10 +147,10 @@ struct VisionSource {
 /// would drift from this one silently.
 struct ContactSink<'a> {
     observer: BandId,
-    /// Which resident bands stand on which tile. **Probed, never iterated**, so a hash map's order
-    /// is not observable — the deterministic ordering that matters is
-    /// [`crate::connections::ContactsThisTurn`]'s, which is keyed.
-    occupancy: &'a HashMap<UVec2, Vec<BandId>>,
+    /// Which resident bands stand on which tile, each with the name it answers to. **Probed, never
+    /// iterated**, so a hash map's order is not observable — the deterministic ordering that
+    /// matters is [`crate::connections::ContactsThisTurn`]'s, which is keyed.
+    occupancy: &'a HashMap<UVec2, Vec<(BandId, &'a str)>>,
     contacts: &'a mut ContactsThisTurn,
     /// The turn the sighting happened on, which for a live reveal is always *now*.
     turn: u64,
@@ -162,27 +162,36 @@ impl ContactSink<'_> {
         let Some(occupants) = self.occupancy.get(&pos) else {
             return;
         };
-        for subject in occupants {
+        for (subject, name) in occupants {
             if *subject != self.observer {
-                self.contacts
-                    .record(self.observer, *subject, pos, self.turn);
+                self.contacts.record(
+                    self.observer,
+                    *subject,
+                    Sighting::new(pos, self.turn, *name),
+                );
             }
         }
     }
 }
 
-/// Which resident bands stand on which tile, built **once** per sweep.
+/// Which resident bands stand on which tile, built **once** per sweep — each beside the
+/// [`BandName`] a sighting of it records (empty when the band carries none), borrowed from the
+/// query rather than cloned per band.
 ///
 /// **Subjects are resident bands only.** A detached expedition is not a subject — seeing someone's
 /// scouts is a different beat, and out of scope for the primitive.
-fn resident_band_occupancy(
-    residents: &Query<(&BandId, &PopulationCohort), With<ResidentBand>>,
+fn resident_band_occupancy<'a>(
+    residents: &'a Query<(&BandId, &PopulationCohort, Option<&BandName>), With<ResidentBand>>,
     tiles: &Query<&Tile>,
-) -> HashMap<UVec2, Vec<BandId>> {
-    let mut occupancy: HashMap<UVec2, Vec<BandId>> = HashMap::new();
-    for (band, cohort) in residents.iter() {
+) -> HashMap<UVec2, Vec<(BandId, &'a str)>> {
+    let mut occupancy: HashMap<UVec2, Vec<(BandId, &'a str)>> = HashMap::new();
+    for (band, cohort, name) in residents.iter() {
         if let Ok(tile) = tiles.get(cohort.current_tile) {
-            occupancy.entry(tile.position).or_default().push(*band);
+            let name = name.map_or("", |name| name.0.as_str());
+            occupancy
+                .entry(tile.position)
+                .or_default()
+                .push((*band, name));
         }
     }
     occupancy
@@ -216,7 +225,7 @@ pub fn calculate_visibility(
     settlements: Query<(&Settlement, &TownCenter)>,
     // **The subjects of contact** — every resident band and where it stands. Read-only and disjoint
     // from `cohorts`' `&mut BandEquipment`, so the two queries coexist. See `resident_band_occupancy`.
-    residents: Query<(&BandId, &PopulationCohort), With<ResidentBand>>,
+    residents: Query<(&BandId, &PopulationCohort, Option<&BandName>), With<ResidentBand>>,
     // Filled here and consumed by `connections::advance_connections`, chained right after this
     // system. Contact is found INSIDE the sight sweep rather than beside it: one map lookup per
     // revealed tile, and no new geometry.

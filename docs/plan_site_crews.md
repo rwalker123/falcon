@@ -87,10 +87,11 @@ row pays the herd's keeping first (head count ÷ `animals_per_herder`), then cul
 
 ### 2.3 Tools
 
-**Keeping tools and take kits never overlap.** Keeping tools (hoes, crook, stone-dressing,
+**Keeping tools raise work; take kits raise the take.** Keeping tools (hoes, crook, stone-dressing,
 earthmoving) raise **work** through `build_work`; take kits (baskets, spears, sled, wedges, axe on its
-take side) raise the **take**. `EquipmentConfig::validate` already refuses an item with `build_work`
-in a take kit.
+take side) raise the **take**. **One item can sit on both lines:** the axe is in the Woodcutting take
+kit and also declares `build_work` on the forestry branch. No validate guard keeps the two apart,
+because both lines draw on one band stock and settle by the same row Priority below.
 
 So a site's requirement is **two independent lines**:
 

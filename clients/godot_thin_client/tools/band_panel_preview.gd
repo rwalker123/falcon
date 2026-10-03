@@ -8111,6 +8111,7 @@ const SANCTIONED_SCROLLS := [
 	[HudWorkVocab.BUILD_QUEUE_EXPANDED_SCROLL_NAME, BandCityPanel.ZONE_WORK],
 	[HudWorkVocab.ROSTER_EXPANDED_SCROLL_NAME, BandCityPanel.ZONE_WORK],
 	[HudWorkVocab.WORK_SECTIONS_SCROLL_NAME, BandCityPanel.ZONE_WORK],
+	[HudConnectionsVocab.LIST_NAME, BandCityPanel.ZONE_PEOPLES],
 ]
 
 ## GUARD: the zone model is NO-SCROLL by construction, with **exactly two sanctioned exceptions** —
@@ -8183,6 +8184,13 @@ func _assert_scroll_only_where_sanctioned() -> void:
 		_assert_band_panel("…and the band zone scrolls its block stack, so no tier can delete a block instead (%d sanctioned)"
 			% int(counts[HudWorkVocab.BAND_ZONE_SCROLL_NAME]),
 			int(counts[HudWorkVocab.BAND_ZONE_SCROLL_NAME]) == 1)
+	# The Peoples tab (issue #549) scrolls its roster IFF the tab's zone is mounted — the narrow shell
+	# on a band page. On a wide shell the roster rides inside the parties list and owns no scroll.
+	var peoples_zone: Variant = _panel._zones.get(BandCityPanel.ZONE_PEOPLES)
+	var peoples_mounted := peoples_zone is Node and _panel.is_ancestor_of(peoples_zone as Node)
+	_assert_band_panel("…and the PEOPLES tab scrolls its roster IFF it is mounted (mounted %s, %d found)"
+			% [str(peoples_mounted), int(counts[HudConnectionsVocab.LIST_NAME])],
+		int(counts[HudConnectionsVocab.LIST_NAME]) == (1 if peoples_mounted else 0))
 	var work_zone: Variant = _panel._zones.get(BandCityPanel.ZONE_WORK)
 	var work_mounted := work_zone is Node and _panel.is_ancestor_of(work_zone as Node)
 	var wants_list := _hud._bandpanel._queue_expanded and work_mounted

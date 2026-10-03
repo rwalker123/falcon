@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 /// One directed tie: `observer_band_id` knows `subject_band_id`. The reverse edge is a separate row.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct ConnectionState {
     pub observer_band_id: u64,
     pub subject_band_id: u64,
@@ -23,4 +23,7 @@ pub struct ConnectionState {
     pub last_contact_turn: u64,
     /// The turn the tie first formed. Never changes.
     pub first_contact_turn: u64,
+    /// Clock 1 — the name the subject answered to at `last_seen_turn`, not a live lookup. Empty
+    /// means unknown.
+    pub subject_name: String,
 }

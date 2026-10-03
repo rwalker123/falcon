@@ -42,8 +42,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Mutated across turns, and a later turn reads it. A checkpoint that omits any of these produces
 /// a world that diverges from the one it claims to restore.
-const SIM_STATE_RESOURCES: [&str; 46] = [
+const SIM_STATE_RESOURCES: [&str; 47] = [
     "ActiveCrisisLedger",
+    // Belief on every place. Only ever grows and outlives the bands whose dead put it there, so
+    // nothing rebuilds it — the roads' reason exactly.
+    "BeliefRegistry",
     // The band-id counter. Restoring the bands without it re-issues a live id after a rollback.
     "BandIdAllocator",
     // The per-faction band-NAME counters, on the same rule: restore the bands without them and the
@@ -311,7 +314,9 @@ const CONFIG_RESOURCES: [&str; 46] = [
 
 /// The remaining config handles, split out only because Rust array consts need a fixed length and
 /// one 50-entry literal reads worse than two.
-const CONFIG_RESOURCES_CONT: [&str; 23] = [
+const CONFIG_RESOURCES_CONT: [&str; 25] = [
+    "BeliefConfigHandle",
+    "BeliefConfigMetadata",
     "ConnectionsConfigHandle",
     "ConnectionsConfigMetadata",
     "EquipmentConfigHandle",

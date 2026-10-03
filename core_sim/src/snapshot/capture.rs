@@ -40,6 +40,9 @@ pub struct SnapshotContext<'w> {
     /// (graze is on nearly every land tile, so a per-patch list would be the wrong shape — see
     /// `graze.rs`). Not published as a registry; the checkpoint carries it.
     pub graze_registry: Res<'w, GrazeRegistry>,
+    /// Belief on every place — read for the per-tile `TileState.belief` readout (graze's per-tile
+    /// shape, for graze's reason). Not published as a registry; the checkpoint carries it.
+    pub belief: Res<'w, crate::belief::BeliefRegistry>,
     /// The Telling's narrative memory — read for the client-facing fork tier, stance and voice
     /// readouts. The ledger itself is not published; the checkpoint carries it.
     pub beat_ledger: Res<'w, BeatLedger>,
@@ -2563,6 +2566,7 @@ pub fn capture_snapshot(
         herd_registry,
         forage_registry,
         graze_registry,
+        belief,
         beat_ledger,
         elevation,
         moisture,
@@ -2657,6 +2661,7 @@ pub fn capture_snapshot(
                 &morale_pressure_cfg,
                 graze_registry.patch(tile.position),
                 &labor_config.forage,
+                belief.get(tile.position),
             ));
             tile_tags.set(tile.position, tile.terrain_tags);
             if let Some(module) = food_module {

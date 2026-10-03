@@ -657,6 +657,7 @@ mod tests {
             label: format!("event {seq}"),
             detail: None,
             seq,
+            band: 0,
         }
     }
 

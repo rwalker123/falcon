@@ -523,6 +523,12 @@ pub struct TileState {
     /// `Tile::resource_terrain()`.
     #[serde(default)]
     pub underlying_terrain: TerrainType,
+    /// **Belief on this place** (`docs/plan_civilization_steps.md` §"Belief is a property of a
+    /// place"), in dead-equivalents. A per-tile stock, not a faction's: deaths while a band stands
+    /// here add to it and nothing ever decays it, so an abandoned place keeps its dead. `0` where no
+    /// belief has ever accrued. Read from `core_sim`'s `BeliefRegistry`.
+    #[serde(default)]
+    pub belief: f32,
 }
 
 impl TileState {
@@ -563,6 +569,7 @@ impl TileState {
             && same_to_hundredths_f32(self.graze_biomass, other.graze_biomass)
             && same_to_hundredths_f32(self.graze_capacity, other.graze_capacity)
             && same_to_hundredths_f32(self.forage_capacity, other.forage_capacity)
+            && same_to_hundredths_f32(self.belief, other.belief)
     }
 }
 
@@ -591,6 +598,7 @@ mod published_state_tests {
             graze_ecology_phase: 0,
             forage_capacity: 0.0,
             underlying_terrain: TerrainType::DeepOcean,
+            belief: 0.0,
         }
     }
 
@@ -610,6 +618,18 @@ mod published_state_tests {
         let before = tile();
         let mut after = before.clone();
         after.graze_biomass = 0.02;
+        assert!(!before.same_published_state(&after));
+    }
+
+    /// **Belief rides the delta.** A field left out of [`TileState::same_published_state`] never
+    /// marks its tile dirty, so a place whose belief grew would never be re-sent to the client.
+    #[test]
+    fn belief_accruing_on_a_tile_is_a_change() {
+        /// One death's worth of belief at the shipped `belief_per_death`.
+        const ONE_DEATH_OF_BELIEF: f32 = 1.0;
+        let before = tile();
+        let mut after = before.clone();
+        after.belief = ONE_DEATH_OF_BELIEF;
         assert!(!before.same_published_state(&after));
     }
 

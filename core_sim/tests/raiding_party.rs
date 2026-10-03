@@ -117,6 +117,11 @@ fn spawn_world() -> App {
     // first turn a crew stands on it, so a harness with no `extract` row has none.
     app.world
         .insert_resource(core_sim::extraction::DepositRegistry::default());
+    // Belief on a place — a hunt or a raid credits its dead to the tile the band stands on.
+    app.world
+        .insert_resource(core_sim::BeliefRegistry::default());
+    app.world
+        .insert_resource(core_sim::BeliefConfigHandle::default());
     app.world.insert_resource(ExpeditionConfigHandle::default());
     app.world
         .insert_resource(VisibilityConfigHandle::new(VisibilityConfig::builtin()));
@@ -407,6 +412,30 @@ fn a_raiding_party_takes_casualties_against_a_mammoth() {
         .iter()
         .any(|e| e.kind.as_str() == "hunt_danger");
     assert!(narrated, "a dangerous raid pushes a hunt_danger feed line");
+}
+
+/// **A detached party's dead are not where the band stands** (`core_sim::belief`, issue #697). The
+/// same lethal mammoth raid as above costs the party people, and credits **no** place with belief:
+/// the deaths source is the band's own tile, and a raiding party died somewhere else.
+#[test]
+fn a_raiding_partys_dead_credit_no_belief() {
+    let mut app = spawn_world();
+    let id = retag_herd(&mut app, MAMMOTH);
+    let (pos, _b, _cap) = seed_herd(&mut app, &id, 1.0);
+    let home = spawn_home_band(&mut app, pos);
+    let party = spawn_raid_party(&mut app, home, pos, &id);
+    let belief_before = app.world.resource::<core_sim::BeliefRegistry>().clone();
+    let before = party_working(&app, party);
+    app.world.run_system_once(advance_expeditions);
+    assert!(
+        party_working(&app, party) < before,
+        "fixture: the raiding party must lose people, or this proves nothing"
+    );
+    assert_eq!(
+        *app.world.resource::<core_sim::BeliefRegistry>(),
+        belief_before,
+        "a raiding party's casualties must not add belief anywhere"
+    );
 }
 
 /// The `expedition_danger_multiplier` makes the fight bloodier — a direct `resolve_fight` comparison
