@@ -63,7 +63,8 @@ So the reveal loop carries the contact half:
 
 - `VisionSource` names what each source is, including `observer_band` — *whose people are standing
   here*. A settlement and a cohort with no `BandId` reveal fog exactly as before and observe nobody.
-- `resident_band_occupancy` is built **once** per sweep: which resident bands stand on which tile.
+- `resident_band_occupancy` is built **once** per sweep: which resident bands stand on which tile,
+  each beside its `BandName` (borrowed from the query, empty when a band carries none).
 - `ContactSink` rides the existing per-tile reveal closure in `reveal_tiles_in_range`. One map probe
   per revealed tile, **no new geometry**.
 
@@ -101,7 +102,13 @@ dead field at its only consumption point while `lastSeenTurn` published the flus
 For a live sighting the two turns are equal, so direct sight is unaffected either way — which is
 exactly why the expedition path is the one that has to be tested for it.
 
-The field rides the existing checkpoint path unchanged — `capture_sim_state` clones the whole
+What a party buffers per subject is a `connections::Sighting` — position, observed turn **and the
+subject's `BandName` read at the moment of sight**. `advance_expeditions` reads names off the
+resident-band query it already walks (`ExpeditionHomeBands` carries `Option<&BandName>`), cloning
+them into a per-turn map because `bands` is re-borrowed mutably later in the system. The name is
+captured on the march, not at the flush, so a report says what the party saw.
+
+The buffer rides the existing checkpoint path unchanged — `capture_sim_state` clones the whole
 `Expedition` into `ExpeditionRecord` and restore clones it back.
 
 ## The three clocks
@@ -110,7 +117,7 @@ They decay at genuinely different speeds and are three separate levers.
 
 | What decays | Speed | What it means |
 |---|---|---|
-| `last_seen_position` / `last_seen_turn` | immediately on losing sight | you know where they *were*. Same as a remembered herd. |
+| `last_seen_position` / `last_seen_turn` / `subject_name` | immediately on losing sight | you know where they *were*, and what they were called. Same as a remembered herd. |
 | `strength` | over turns without contact, down to zero | the currency of what you know. **At zero nothing flows.** |
 | the edge itself | very slowly, but not never | eventually you have forgotten there was such a people |
 
@@ -118,12 +125,22 @@ They decay at genuinely different speeds and are three separate levers.
 have no current tie"*. That is what keeps the third clock a genuinely separate lever instead of a
 duplicate of the second — delete on zero and `forget_turns` would have nothing left to reap.
 
+**The name is part of clock 1, not a live lookup.** A connection remembers what its subject was
+called when last seen, the same way it remembers where. Two cases make that necessary rather than
+convenient: a **foreign** subject (#513) is never in the viewer's own roster, so a client has
+nothing to resolve its id against; and a subject that **died or split** drops out of every roster
+while the tie lingers up to `forget_turns`. It also fixes what a rename means: a band renamed (#635)
+since you last saw it is still known to you by the old name until you see it again — a connection
+never grants live knowledge, which is the keystone below applied to identity. Empty means unknown;
+it is only reachable for a subject that carries no `BandName`, which no founding site produces.
+
 **Clock 1 is untouched by decay, and its being untouched is the whole feature.** `decay_all` moves
 `strength` and nothing else, so where they were survives a tie bleeding out entirely.
 
 **Clock 1 also never moves BACKWARDS.** `record_contact` advances `last_seen_position` /
-`last_seen_turn` only when the incoming `observed_turn >= last_seen_turn`; a contact that loses that
-test still raises strength and refreshes `last_contact_turn`, it simply does not rewrite the memory.
+`last_seen_turn` / `subject_name` only when the incoming `observed_turn >= last_seen_turn`; a contact
+that loses that test still raises strength and refreshes `last_contact_turn`, it simply does not
+rewrite the memory — so a stale report cannot rename a band back to what it used to be called.
 The guard is not decoration: `ContactsThisTurn`'s fresher-wins rule resolves collisions *within* one
 turn and never compares an incoming report against the ledger, so without it a party flushing an old
 sighting would drag a band's remembered position back to where it used to be **and stamp it as the
@@ -148,9 +165,10 @@ order is observed by the snapshot and the checkpoint, so it has to be an order a
 The occupancy index inside the sweep is a `HashMap` because it is *probed and never iterated*.
 
 `ContactsThisTurn` is keyed by the edge rather than a set of triples: a subject stands in exactly one
-place, so its position is a value and not part of the identity. The turn stored beside it is **when
-the position was observed**, which is not always this turn — an expedition's report is what the party
-saw on the march — and when two reports name the same edge the **fresher observation wins**.
+place, so its `Sighting` is a value and not part of the identity. The sighting's turn is **when the
+subject was observed**, which is not always this turn — an expedition's report is what the party saw
+on the march — and when two reports name the same edge the **fresher observation wins, whole**:
+position and name are one observation, so they never come from two different reports.
 
 ## THE KEYSTONE — a connection can only ever grant `Discovered`
 
@@ -185,6 +203,11 @@ this turn) is skipped rather than published against a guess.
 
 Order is the ledger's `BTreeMap` order, so the section is stable frame to frame and diffs out when
 nothing moved.
+
+`subjectName` is appended last on `ConnectionState` and always written: it is clock 1's name, what
+the subject was called at `lastSeenTurn`. The native decoder publishes it as the dict key
+`subject_name` beside `subject_band_id`; empty is "unknown", which a client renders as its
+`Band #<id>` fallback, the cohort rule in `band-names.md` → "On the wire".
 
 **The tests assert on the encoded envelope**, through `root_as_envelope` and the accessor chain a
 client uses — not on the in-process ledger. A section that never reaches the codec still passes an
@@ -263,7 +286,7 @@ play-test.
 
 The other live surface is **`export_map`**, whose JSON carries the whole `WorldSnapshot` — including
 `snapshot.connections` for the viewer faction, with each edge's strength, remembered position and
-three turn stamps.
+name, and three turn stamps.
 
 ## See Also
 

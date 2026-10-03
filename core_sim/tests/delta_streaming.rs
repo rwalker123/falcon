@@ -21,6 +21,8 @@ const GUARD_SUBJECT_BAND: u64 = 9;
 const GUARD_TIE_STRENGTH: f32 = 0.5;
 /// Where the guard's subject was last seen, `(x, y)`. Non-zero for the same reason.
 const GUARD_SEEN_TILE: (u32, u32) = (4, 11);
+/// The name the guard's subject was last seen under. Non-empty for the same reason.
+const GUARD_SUBJECT_NAME: &str = "Guardfen";
 /// The turn the reconstruction guard's sections change on — partway through the run, so a delta
 /// that carries nothing is distinguishable from a baseline that was right all along.
 const GUARD_MUTATION_TICK: u64 = 3;
@@ -169,6 +171,7 @@ fn a_baseline_plus_its_deltas_reconstructs_the_world() {
                 last_seen_turn: GUARD_MUTATION_TICK,
                 last_contact_turn: GUARD_MUTATION_TICK,
                 first_contact_turn: GUARD_MUTATION_TICK,
+                subject_name: GUARD_SUBJECT_NAME.to_string(),
             }];
         }
         // The event log grows on two separate turns, so the reconstruction has to have ACCUMULATED

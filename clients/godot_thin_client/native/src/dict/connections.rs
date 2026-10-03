@@ -9,7 +9,8 @@
 //! **The remembered position is CLOCK 1, not a live one.** `last_seen_{x,y}` is where the subject
 //! stood the last time the observer actually saw them, and `last_seen_turn` says when. A consumer
 //! that renders it as a current position is claiming a sighting the tie never granted — a connection
-//! can only ever grant `Discovered`.
+//! can only ever grant `Discovered`. `subject_name` is clock 1 too: the name they answered to on
+//! `last_seen_turn`, not their name now.
 //!
 //! **Strength `0` is a PARKED tie, not an absent one** ("we know such a people exist and have no
 //! current dealings"), so the row is published and must be rendered, disabled, rather than dropped.
@@ -34,6 +35,10 @@ pub(crate) fn connections_to_array(
         let _ = dict.insert("last_seen_turn", connection.lastSeenTurn() as i64);
         let _ = dict.insert("last_contact_turn", connection.lastContactTurn() as i64);
         let _ = dict.insert("first_contact_turn", connection.firstContactTurn() as i64);
+        // Clock 1 like the position above: what the subject was called when last SEEN, which is
+        // how a subject absent from the viewer's own roster (foreign, dead, split) is still named.
+        // Empty is "unknown" — fall back to `Band #<id>`, never to a row count.
+        let _ = dict.insert("subject_name", connection.subjectName().unwrap_or_default());
         array.push(&dict.to_variant());
     }
     array
