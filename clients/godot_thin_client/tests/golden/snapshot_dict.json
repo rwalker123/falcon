@@ -227,7 +227,8 @@
       "last_seen_y": 69,
       "observer_band_id": 139,
       "strength": 34.299999,
-      "subject_band_id": 197
+      "subject_band_id": 197,
+      "subject_name": "connections[0].subject_name"
     },
     {
       "first_contact_turn": 33,
@@ -237,7 +238,8 @@
       "last_seen_y": 182,
       "observer_band_id": 26,
       "strength": 48.959999,
-      "subject_band_id": 10
+      "subject_band_id": 10,
+      "subject_name": "connections[1].subject_name"
     },
     {
       "first_contact_turn": 86,
@@ -247,7 +249,8 @@
       "last_seen_y": 139,
       "observer_band_id": 169,
       "strength": 99.010002,
-      "subject_band_id": 87
+      "subject_band_id": 87,
+      "subject_name": "connections[2].subject_name"
     }
   ],
   "corruption": {

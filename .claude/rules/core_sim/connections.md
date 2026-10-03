@@ -206,12 +206,14 @@ nothing moved.
 
 `subjectName` is appended last on `ConnectionState` and always written: it is clock 1's name, what
 the subject was called at `lastSeenTurn`. The native decoder publishes it as the dict key
-`subject_name` beside `subject_band_id`; empty is "unknown", which a client renders as its
-`Band #<id>` fallback, the cohort rule in `band-names.md` → "On the wire".
+`subject_name` beside `subject_band_id`; empty is "unknown". The client names a subject by its
+own roster label, else `subject_name`, else `Band near (x, y)` at the last-seen position
+(`ConnectionsRoster.subject_label`, `.claude/rules/client/band-city-panel.md` → "The Peoples tab").
+A raw `BandId` never reaches a player-facing label.
 
 **The tests assert on the encoded envelope**, through `root_as_envelope` and the accessor chain a
 client uses — not on the in-process ledger. A section that never reaches the codec still passes an
-in-process assertion, and this one has no client reader yet to notice.
+in-process assertion, and a client reader only notices a missing field once it renders the tab.
 
 ## The first rider exists, and it is an expedition
 

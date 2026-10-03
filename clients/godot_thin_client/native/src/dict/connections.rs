@@ -37,7 +37,8 @@ pub(crate) fn connections_to_array(
         let _ = dict.insert("first_contact_turn", connection.firstContactTurn() as i64);
         // Clock 1 like the position above: what the subject was called when last SEEN, which is
         // how a subject absent from the viewer's own roster (foreign, dead, split) is still named.
-        // Empty is "unknown" — fall back to `Band #<id>`, never to a row count.
+        // Empty is "unknown" — the client falls back to `Band near (x, y)` at the last-seen
+        // position (`ConnectionsRoster.subject_label`); a raw id never reaches a label.
         let _ = dict.insert("subject_name", connection.subjectName().unwrap_or_default());
         array.push(&dict.to_variant());
     }
