@@ -5738,6 +5738,12 @@ table ConnectionState {
   lastContactTurn:ulong;
   // The turn the tie first formed. Never changes.
   firstContactTurn:ulong;
+  // Clock 1, with lastSeenX/Y/Turn: the name the subject answered to at `lastSeenTurn` — what they
+  // were called when you last saw them, NOT a live lookup. It is how a subject the viewer's own
+  // roster cannot resolve (a foreign band, or one dead or split while the tie lingers) is still
+  // named. Not refreshed without sight, so a rename you have not seen does not reach you. Never
+  // expected empty for a live band; empty means "unknown".
+  subjectName:string;
 }
 
 table ConnectionSection {

@@ -853,6 +853,7 @@ mod tests {
             last_seen_turn: 1,
             last_contact_turn: 1,
             first_contact_turn: 1,
+            subject_name: "Reedmarsh".to_string(),
         }
     }
 

@@ -1,5 +1,6 @@
 use super::*;
-use crate::components::RaidOrders;
+use crate::components::{BandName, RaidOrders};
+use crate::connections::Sighting;
 use crate::fauna::AnimalTake;
 
 /// **The reason token for a HUNTING party whose quarry vanished under it** — the herd went extinct,
@@ -47,6 +48,9 @@ type ExpeditionHomeBands = (
     // `LaborAllocation::last_food_transfers`. `Option`, matching how the sibling ledger terms
     // are read at capture.
     Option<&'static mut LaborAllocation>,
+    // **The name a contact report records the band under** — read at the moment a party sees it,
+    // so the report carries what the band was called then (clock 1 of the connection it founds).
+    Option<&'static BandName>,
 );
 
 /// The config handles [`advance_expeditions`] reads, bundled into one `SystemParam` so the system
@@ -271,7 +275,7 @@ pub fn advance_party_defection(
     }
     let candidates: BTreeMap<BandId, Candidate> = bands
         .iter()
-        .filter_map(|(entity, cohort, band_id, resident, _)| {
+        .filter_map(|(entity, cohort, band_id, resident, _, _)| {
             resident?;
             let pos = tiles.get(cohort.current_tile).ok()?.position;
             Some((
@@ -298,7 +302,7 @@ pub fn advance_party_defection(
         let home_morale = bands
             .get(expedition.home_band)
             .ok()
-            .map(|(_, home, _, _, _)| home.morale);
+            .map(|(_, home, _, _, _, _)| home.morale);
         let rate = home_morale
             .map(|morale| migration_move_fraction(morale, mig_cfg))
             .unwrap_or(scalar_zero());
@@ -364,12 +368,12 @@ pub fn advance_party_defection(
         let origin = bands
             .get(expedition.home_band)
             .ok()
-            .and_then(|(_, _, band_id, _, _)| band_id.copied())
+            .and_then(|(_, _, band_id, _, _, _)| band_id.copied())
             .map(|band| TransferCounterparty {
                 band,
                 faction: lost_people,
             });
-        let Ok((_, mut destination, _, _, allocation)) = bands.get_mut(defection.destination)
+        let Ok((_, mut destination, _, _, allocation, _)) = bands.get_mut(defection.destination)
         else {
             continue;
         };
@@ -532,13 +536,18 @@ pub fn advance_expeditions(
     // A trade party retargets its destination's LIVE tile every turn, because bands are nomadic and a
     // shipment aimed at where a people used to camp arrives nowhere.
     let mut resident_positions: HashMap<BandId, (Entity, UVec2)> = HashMap::new();
-    for (band_entity, cohort, band_id, resident, _) in bands.iter() {
+    // **What each resident band is called**, for the contact a party records on sighting it. Owned
+    // rather than borrowed, because `bands` is re-borrowed mutably below; a band with no
+    // `BandName` is recorded under the empty name, which the wire reads as "unknown".
+    let mut resident_names: HashMap<BandId, String> = HashMap::new();
+    for (band_entity, cohort, band_id, resident, _, name) in bands.iter() {
         let (Some(id), Some(_)) = (band_id, resident) else {
             continue;
         };
         if let Ok(tile) = tiles.get(cohort.current_tile) {
             occupancy.entry(tile.position).or_default().push(*id);
             resident_positions.insert(*id, (band_entity, tile.position));
+            resident_names.insert(*id, name.map(|name| name.0.clone()).unwrap_or_default());
         }
     }
 
@@ -620,14 +629,14 @@ pub fn advance_expeditions(
         let home_pos = bands
             .get(expedition.home_band)
             .ok()
-            .and_then(|(_, band, _, _, _)| tiles.get(band.current_tile).ok())
+            .and_then(|(_, band, _, _, _, _)| tiles.get(band.current_tile).ok())
             .map(|tile| tile.position);
         // **Who a contact report is filed under.** A party's findings belong to the band that
         // outfitted it, never to the party — the party is a detached crew and owns nothing.
         let home_band_id = bands
             .get(expedition.home_band)
             .ok()
-            .and_then(|(_, _, band_id, _, _)| band_id.copied());
+            .and_then(|(_, _, band_id, _, _, _)| band_id.copied());
         // "Near enough to run home" — the shared proximity for the scout fold-back, hunt delivery,
         // and comm-range flush.
         let near_home = home_pos
@@ -763,9 +772,10 @@ pub fn advance_expeditions(
                     // The party's own home band is not a stranger. Without this a party camped
                     // beside home would report its own band as a people it had found.
                     if Some(*subject) != home_band_id {
+                        let name = resident_names.get(subject).cloned().unwrap_or_default();
                         expedition
                             .pending_contacts
-                            .insert(*subject, (pos, current_turn));
+                            .insert(*subject, Sighting::new(pos, current_turn, name));
                         sightings.record(entity, *subject);
                     }
                 }
@@ -815,8 +825,8 @@ pub fn advance_expeditions(
             // lost, exactly as its carried food is.
             let reports = std::mem::take(&mut expedition.pending_contacts);
             if let Some(observer) = home_band_id {
-                for (subject, (position, observed_turn)) in reports {
-                    contacts.record(observer, subject, position, observed_turn);
+                for (subject, sighting) in reports {
+                    contacts.record(observer, subject, sighting);
                 }
             }
         }
@@ -1154,7 +1164,7 @@ pub fn advance_expeditions(
                         let sender =
                             home_band_id.map(|band| TransferCounterparty { band, faction });
                         let landed = bands.get_mut(host_entity).ok().map(
-                            |(_, mut host, _, _, allocation)| {
+                            |(_, mut host, _, _, allocation, _)| {
                                 // The shipment lands class by class (#706): the host receives the
                                 // flesh, greens and grain that were loaded, not a classless total.
                                 let moved_mix = expedition.cargo.take_food_mix(carried_food);
@@ -1279,7 +1289,8 @@ pub fn advance_expeditions(
                     // before the party despawns and its pack goes with it. No home band left to
                     // receive them means the haul is simply lost, exactly as the carried food is.
                     let mut banked_materials = 0.0;
-                    if let Ok((_, mut home, _, _, allocation)) = bands.get_mut(expedition.home_band)
+                    if let Ok((_, mut home, _, _, allocation, _)) =
+                        bands.get_mut(expedition.home_band)
                     {
                         // **The undelivered shipment comes home too** — a party that turned back
                         // because its destination could not be resolved is still carrying real
@@ -1746,7 +1757,8 @@ pub fn advance_expeditions(
                     // one band store, so the credit matches the raid forecast this trip was quoted
                     // against.
                     let mut banked_materials = 0.0;
-                    if let Ok((_, mut home, _, _, allocation)) = bands.get_mut(expedition.home_band)
+                    if let Ok((_, mut home, _, _, allocation, _)) =
+                        bands.get_mut(expedition.home_band)
                     {
                         home.stores.add_food_mix(&delivered_mix);
                         // **The materials ride the same delivery**, batch by batch so a mammoth

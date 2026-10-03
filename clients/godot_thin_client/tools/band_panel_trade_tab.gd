@@ -96,6 +96,11 @@ const WIDE_RESIZE_CANVAS := Vector2i(2000, 1080)
 const NARROW_BOTTOM_CANVAS := Vector2i(1100, 800)
 ## The three-zone threshold (issue #731 option iii leaves it here), asserted against the panel's own.
 const THREE_ZONE_SHELL_MIN_WIDTH := 1190.0
+## The wide-shell Peoples section's fixture: this many ties on Ashfell, to bands no roster holds.
+const PEOPLES_WIDE_TIES := 3
+const PEOPLES_WIDE_ENTITY_BASE := 950
+const PEOPLES_WIDE_NAME := "Reedfolk"
+const PEOPLES_WIDE_STRENGTH := 0.5
 ## How far a popover's edge may sit from where its row puts it — rounding to whole pixels, not slack.
 const ADJACENCY_TOLERANCE := 1.5
 
@@ -328,6 +333,7 @@ func run(harness) -> void:
 	h._assert_band_panel("…in the SHORT tier: the full tab does not fit the strip's body",
 		trade.is_short_tier() and _find_named(parties, TradeZoneController.SHORT_TIER_NAME) != null)
 	h._assert_scroll_only_where_sanctioned()
+	await _assert_peoples_rides_under_parties(panel)
 	trade.open_list(TradeZoneController.KIND_ROUTE_BOTH)
 	await h._settle()
 	await h._settle()
@@ -543,6 +549,39 @@ func _assert_hangs_from_its_row(where: String, trade: TradeZoneController, want_
 		h._assert_band_panel("%s: the content exceeds its room (%.0f of %.0f), so the card fills the room (%.0f) and scrolls"
 				% [where, content, room, popover.size.y],
 			absf(popover.size.y - room) <= ADJACENCY_TOLERANCE and overflow > 0.0)
+
+## **THE PEOPLES ROSTER ON A WIDE SHELL** (issue #549) — narrow-only like Trade: no Peoples flank,
+## the threshold still the three flanks' 1190, and the roster rendered as a section AFTER Trade's at the
+## foot of the Parties list, with no scroll of its own. The ties are pushed through the real
+## `update_connections` and cleared afterwards, so the frames after this one are the frames before it.
+func _assert_peoples_rides_under_parties(panel: BandCityPanel) -> void:
+	var ties: Array = []
+	for i in PEOPLES_WIDE_TIES:
+		ties.append({"observer_band_id": _id(ASHFELL),
+			"subject_band_id": _id(PEOPLES_WIDE_ENTITY_BASE + i),
+			"subject_name": "%s %d" % [PEOPLES_WIDE_NAME, i + 1],
+			"strength": PEOPLES_WIDE_STRENGTH, "first_contact_turn": 1, "last_contact_turn": 1,
+			"last_seen_x": POS[ASHFELL].x, "last_seen_y": POS[ASHFELL].y, "last_seen_turn": 1})
+	h._hud.update_connections(ties)
+	await h._settle()
+	await h._save("peoples_wide")
+	var parties: Control = panel._zones.get(BandCityPanel.ZONE_PARTIES)
+	var section := _find_named(parties, HudConnectionsVocab.BLOCK_NAME)
+	var trade_section := _find_named(parties, "TradeSection")
+	h._assert_band_panel("no Peoples flank on the wide shell, the threshold still %.0f (got %.0f)"
+			% [THREE_ZONE_SHELL_MIN_WIDTH, panel.wide_shell_min_width()],
+		not panel._wide_zone_hosts.has(BandCityPanel.ZONE_PEOPLES)
+			and is_equal_approx(panel.wide_shell_min_width(), THREE_ZONE_SHELL_MIN_WIDTH))
+	h._assert_band_panel("…and the roster rides under Parties, after Trade's section, with every tie (%d)"
+			% PEOPLES_WIDE_TIES,
+		section != null and trade_section != null and section.get_parent() == trade_section.get_parent()
+			and section.get_index() > trade_section.get_index()
+			and _metas(section, HudConnectionsVocab.ROW_META).size() == PEOPLES_WIDE_TIES)
+	h._assert_band_panel("…and owns no scroll of its own on the wide shell",
+		_find_named(panel, HudConnectionsVocab.LIST_NAME) == null)
+	h._assert_scroll_only_where_sanctioned()
+	h._hud.update_connections([])
+	await h._settle()
 
 # ---- FIXTURES ------------------------------------------------------------------------------------
 

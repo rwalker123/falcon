@@ -676,11 +676,12 @@ keys on — the tile alone cannot tell two workings, or a road and a patch, on o
 
 ## The `connections` section, and the cohort fields the shipment arc appended
 
-Arc #527. `dict/connections.rs` → `connections_to_array` is the client's FIRST reader of the contact
-ties (#538 shipped the section with none), and it is a **whole-section replace** — decoded on BOTH
-paths through `insert_changed` on the delta, exactly like `culture_tensions` and the crafting
-catalogues. Present-and-EMPTY means *"you hold no ties now"*, which is why there is no emptiness gate
-here: adding one is the defect that blanked the culture tensions on every first delta.
+Arc #527. `dict/connections.rs` → `connections_to_array` decodes the contact ties for their two
+client readers, the band page's Peoples tab and the shipment picker (#538 shipped the section with
+none), and it is a **whole-section replace** — decoded on BOTH paths through `insert_changed` on the
+delta, exactly like `culture_tensions` and the crafting catalogues. Present-and-EMPTY means *"you
+hold no ties now"*, which is why there is no emptiness gate here: adding one is the defect that
+blanked the culture tensions on every first delta.
 
 **No faction column, and the decoder must not invent one.** Faction is a property of the endpoint
 (`.claude/rules/core_sim/connections.md`), and the section is already filtered sim-side to the
@@ -688,6 +689,8 @@ viewer's observing bands — a client-side re-filter would be the first place th
 broke. **`strength == 0` is a PARKED tie, not an absent one**, so the row is published and the picker
 renders it disabled; **`last_seen_{x,y}` is CLOCK 1** — where the subject was, not where they are —
 and a consumer that renders it as a live position claims a sighting the tie never granted.
+`subject_name` (issue #549) is clock 1's remembered name, empty when unknown; the client's fallback
+order lives in `ConnectionsRoster.subject_label`, and a raw id never reaches a label.
 
 `dict/population.rs` gained ten cohort keys in that arc, in four groups, and two more when hay
 became a shipment cargo (issue #590):

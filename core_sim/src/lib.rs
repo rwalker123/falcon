@@ -153,8 +153,8 @@ pub use config_override::{
     ConfigKindSpec, ConfigOverrideError, InstalledOverride,
 };
 pub use connections::{
-    advance_connections, Connection, ConnectionKey, ConnectionLedger, ContactsThisTurn, FULL_TIE,
-    NO_TIE,
+    advance_connections, Connection, ConnectionKey, ConnectionLedger, ContactsThisTurn, Sighting,
+    FULL_TIE, NO_TIE,
 };
 pub use connections_config::{
     load_connections_config_from_env, ConnectionStrengthConfig, ConnectionsConfig,

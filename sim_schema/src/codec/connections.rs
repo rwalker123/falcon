@@ -13,6 +13,7 @@ fn create_connections<'a>(
     let offsets: Vec<_> = connections
         .iter()
         .map(|connection| {
+            let subject_name = builder.create_string(&connection.subject_name);
             fb::ConnectionState::create(
                 builder,
                 &fb::ConnectionStateArgs {
@@ -24,6 +25,7 @@ fn create_connections<'a>(
                     lastSeenTurn: connection.last_seen_turn,
                     lastContactTurn: connection.last_contact_turn,
                     firstContactTurn: connection.first_contact_turn,
+                    subjectName: Some(subject_name),
                 },
             )
         })
@@ -86,5 +88,6 @@ fn decode_connection(connection: fb::ConnectionState<'_>) -> ConnectionState {
         last_seen_turn: connection.lastSeenTurn(),
         last_contact_turn: connection.lastContactTurn(),
         first_contact_turn: connection.firstContactTurn(),
+        subject_name: connection.subjectName().unwrap_or_default().to_string(),
     }
 }
