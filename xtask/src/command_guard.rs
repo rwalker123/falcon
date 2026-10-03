@@ -359,13 +359,10 @@ fn band_handle(payload: &CommandPayload) -> BandHandle {
         | CommandPayload::CancelOrder { band_id, .. }
         | CommandPayload::FollowHerd { band_id, .. }
         | CommandPayload::ForageTile { band_id, .. }
-        | CommandPayload::HuntFauna { band_id, .. }
-        | CommandPayload::HuntGame { band_id, .. }
         | CommandPayload::MoveBand { band_id, .. }
         | CommandPayload::ScoutArea { band_id, .. }
         | CommandPayload::SendExpedition { band_id, .. }
         | CommandPayload::SendDenialRaid { band_id, .. }
-        | CommandPayload::SendHuntExpedition { band_id, .. }
         | CommandPayload::SendTradeExpedition { band_id, .. }
         | CommandPayload::SplitBand { band_id, .. } => *band_id,
         // ⛔ **THE ROUTE BRANCH'S TWO TILE VERBS NAME A BAND, and no other tile verb does** (arc
@@ -461,7 +458,6 @@ fn kit_token(payload: &CommandPayload) -> KitToken {
     let optional = match payload {
         CommandPayload::AssignLabor { kit_id, .. }
         | CommandPayload::SendDenialRaid { kit_id, .. }
-        | CommandPayload::SendHuntExpedition { kit_id, .. }
         | CommandPayload::SendTradeExpedition { kit_id, .. }
         | CommandPayload::SendExpedition { kit_id, .. } => kit_id.clone(),
         _ => return KitToken::NotKitBearing,
@@ -585,7 +581,6 @@ mod tests {
         for untailed in [
             "assign_labor 0 71204 hunt game_deer_07 0.5 2",
             "assign_labor 0 71204 forage 44 23 0.5 2",
-            "send_hunt_expedition 0 71204 1 game_boar_04 0.5",
             "send_denial_raid 0 71204 1 game_boar_04",
         ] {
             let failure = kit_failure("drive", untailed, &parse(untailed), COMPOSED_KIT)
@@ -608,7 +603,6 @@ mod tests {
         for tailed in [
             "assign_labor 0 71204 hunt game_deer_07 0.5 2 kit none",
             "assign_labor 0 71204 forage 44 23 0.5 2 kit none",
-            "send_hunt_expedition 0 71204 1 game_boar_04 0.5 kit none",
             "send_denial_raid 0 71204 1 game_boar_04 kit none",
         ] {
             assert!(

@@ -829,8 +829,7 @@ impl HomewardWalk {
 /// ⛔ **THE DISTANCE PAST WHICH A ROW POSTS A PARTY — `band_work_range`, THE SAME FOR EVERY JOB.**
 ///
 /// It is the band's apron: the distance its own hands reach without anybody walking goods. Hunt does
-/// not get its own, longer threshold — the retired `hunt_reach` was a patch over the wrong model, and
-/// a party that follows its herd never roams out of range.
+/// not get its own, longer threshold — a party that follows its herd never roams out of range.
 pub fn party_begins_past(labor: &LaborConfig) -> u32 {
     labor.band_work_range
 }

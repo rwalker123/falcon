@@ -240,9 +240,8 @@ func run(harness) -> void:
 	h._hud._compose.reset_forage_source()
 	h._hud._compose.set_forage_band(-1)
 
-	# `band_alerts` (`chapters/band_expedition.gd`) overwrote _player_band with alert-fixture bands
-	# (which carry no hunt_reach);
-	# re-seed the reference band so the herd assign controls resolve a proper band with a hunt reach.
+	# `band_alerts` (`chapters/band_expedition.gd`) overwrote _player_band with alert-fixture bands;
+	# re-seed the reference band so the herd assign controls resolve a proper band.
 	h._hud._band_labor._player_band = BandFx.band_fixture()
 	h._hud._band_labor._player_bands = []
 	h._hud._compose.reset_hunt_source()

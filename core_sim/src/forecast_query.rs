@@ -3,9 +3,8 @@
 //!
 //! # Why a query at all, when the snapshot already ships estimate tables
 //!
-//! It ships the wrong ones. `snapshot::hunt_trip_estimate_entries` and
-//! `snapshot::denial_estimate_entries` sample **floors × party sizes**, per herd, every frame — and
-//! they can only do that by fixing everything else:
+//! It shipped the wrong ones. The retired per-herd estimate tables sampled **floors × party
+//! sizes**, per herd, every frame — and they could only do that by fixing everything else:
 //!
 //! - **One kit for every band**: the hunt job's *default*. A player who picked the trapping kit is
 //!   reading rows priced for spears, and the error is total rather than marginal — a mass-bounded
@@ -46,8 +45,8 @@ use bevy::prelude::World;
 use sim_runtime::commands::{
     query_error, DenialRaidForecastQuery, DenialRaidForecastReply, DenialRow, DepositCrewTakeQuery,
     DepositCrewTakeReply, DepositCrewTakeRow, HuntCrewTakeQuery, HuntCrewTakeReply,
-    HuntCrewTakeRow, HuntTripForecastQuery, HuntTripForecastReply, HuntTripRow, QueryPayload,
-    QueryReply, WorkPartyForecastQuery, WorkPartyForecastReply, WorkPartySource,
+    HuntCrewTakeRow, QueryPayload, QueryReply, WorkPartyForecastQuery, WorkPartyForecastReply,
+    WorkPartySource,
 };
 
 use crate::combat_config::CombatConfigHandle;
@@ -59,7 +58,7 @@ use crate::fauna::{Herd, HerdRegistry, HuntingParty};
 use crate::fauna_config::{FaunaConfig, FaunaConfigHandle};
 use crate::labor_config::LaborConfigHandle;
 use crate::orders::FactionId;
-use crate::systems::{denial_forecast, hunt_trip_forecast};
+use crate::systems::denial_forecast;
 use crate::PopulationCohort;
 
 /// **The whole query surface**: resolve what the ask names, or refuse with a token.
@@ -67,7 +66,6 @@ use crate::PopulationCohort;
 /// `&mut World` is a Bevy artefact, not an intent — see the module docs.
 pub fn answer_forecast_query(world: &mut World, query: &QueryPayload) -> QueryReply {
     match query {
-        QueryPayload::HuntTripForecast(ask) => answer_hunt_trip_forecast(world, ask),
         QueryPayload::DenialRaidForecast(ask) => answer_denial_raid_forecast(world, ask),
         QueryPayload::HuntCrewTake(ask) => answer_hunt_crew_take(world, ask),
         QueryPayload::WorkPartyForecast(ask) => answer_work_party_forecast(
@@ -92,9 +90,9 @@ pub fn answer_forecast_query(world: &mut World, query: &QueryPayload) -> QueryRe
     }
 }
 
-/// Everything an answer is computed from, resolved once out of the live world. Both verbs resolve
-/// the *same* four things — herd, band wear, kit, party — so they resolve them through one function
-/// and cannot drift into two readings of "which band is asking".
+/// Everything a raid answer is computed from, resolved once out of the live world — herd, band
+/// wear, kit, party — through one function, so it cannot drift into a second reading of "which band
+/// is asking".
 struct ResolvedAsk {
     herd: Herd,
     party: HuntingParty,
@@ -314,11 +312,10 @@ fn band_gear(
 /// `combat.expedition_danger_multiplier` when it resolves a live raid, and both the launch line and
 /// the in-flight ETA scale it too, explicitly so the ETA and the turn agree.
 ///
-/// The per-herd estimate tables did **not**: they priced a detached raid at *resident-hunt*
-/// lethality. That under-states casualties, and therefore over-states the take and under-states the
-/// fill time, on every expedition and every denial raid quoted. It is not a second defensible
-/// reading — [`hunt_trip_forecast`] is only ever consumed on expedition branches, so there is no
-/// caller for which the base tuning is correct.
+/// The retired per-herd estimate tables did **not**: they priced a detached raid at
+/// *resident-hunt* lethality. That under-states casualties, and therefore over-states the take, on
+/// every raid quoted. It is not a second defensible reading — [`denial_forecast`] is only ever
+/// consumed for a detached party, so there is no caller for which the base tuning is correct.
 ///
 /// Applied here **the same way `advance_expeditions` applies it** (scale `lethality` on the config's
 /// own `tuning()`), so a retune moves the forecast and the turn together. The pairing is held by a
@@ -362,170 +359,6 @@ fn query_per_worker_haul(
     coverage
         .weighted_rate(|kit| equipment.hunt_per_worker_biomass_capacity(equipped_rate, kit, wear))
 }
-
-/// Answer a hunt-trip forecast: the composed floor, then every preset floor, at the same party.
-///
-/// **Every floor is validated before any is answered**, so a bad preset cannot come back as a
-/// half-filled reply whose row order no longer matches the presets that were asked for.
-fn answer_hunt_trip_forecast(world: &mut World, ask: &HuntTripForecastQuery) -> QueryReply {
-    if !floor_is_valid(ask.floor) || !ask.preset_floors.iter().copied().all(floor_is_valid) {
-        return query_failure(query_error::INVALID_FLOOR);
-    }
-    let resolved = match resolve_ask(
-        world,
-        ask.faction_id,
-        ask.band_id,
-        &ask.herd_id,
-        &ask.kit_id,
-        ask.party_workers,
-    ) {
-        Ok(resolved) => resolved,
-        Err(failure) => return failure,
-    };
-
-    let fauna = world.resource::<FaunaConfigHandle>().get();
-    let expedition = world.resource::<ExpeditionConfigHandle>().get();
-    let row = |floor: f32| hunt_trip_row(floor, ask.party_workers, &resolved, &fauna, &expedition);
-    QueryReply::HuntTripForecast(HuntTripForecastReply {
-        at_composed: row(ask.floor),
-        per_preset: ask.preset_floors.iter().copied().map(row).collect(),
-        useful_cap: useful_party_cap(
-            ask.floor,
-            ask.max_party_workers,
-            &resolved,
-            &fauna,
-            &expedition,
-        ),
-    })
-}
-
-/// One [`hunt_trip_forecast`] call, shaped for the wire. The `floor` / `party_workers` echo is
-/// deliberate: it makes the row self-describing, so a client asserts the answer is for what it asked
-/// instead of trusting its position in a list.
-fn hunt_trip_row(
-    floor: f32,
-    party_workers: u32,
-    resolved: &ResolvedAsk,
-    fauna: &crate::fauna_config::FaunaConfig,
-    expedition: &ExpeditionConfig,
-) -> HuntTripRow {
-    let forecast = hunt_trip_forecast(
-        party_workers,
-        &resolved.herd,
-        floor,
-        fauna,
-        resolved.per_worker_haul,
-        expedition,
-        &resolved.party,
-    );
-    HuntTripRow {
-        floor,
-        party_workers,
-        turns_to_fill: forecast.turns_to_fill.unwrap_or(NEVER_FILLED),
-        bound: forecast.bound.as_str().to_string(),
-        delivers_food: forecast.delivers_food,
-        animals_taken: forecast.animals_taken,
-        delivered_food: forecast.delivered_food,
-        wasted_food: forecast.wasted_food,
-        // **What the trip lands, per material** — the whole payload on an inedible quarry, whose
-        // `delivered_food` is honestly `0`. Transcribed, never re-projected.
-        delivered_material: forecast
-            .delivered_material
-            .iter()
-            .map(|payoff| sim_runtime::commands::MaterialPayoff {
-                material_id: payoff.material.clone(),
-                amount: payoff.amount,
-            })
-            .collect(),
-    }
-}
-
-/// **The max-useful party plateau**, ported from the client's `SourceForecast.expedition_useful_cap`
-/// table scan — which cannot survive the table it scanned.
-///
-/// The delivered payload **plateaus** with party size once the standing surplus (rather than the
-/// pack) binds, so past the plateau extra hunters raise the take by nothing. Walk the sampled party
-/// ladder ascending at the composed floor and return the last size at which the payload was still
-/// rising.
-///
-/// Three properties of the original are load-bearing and are kept:
-///
-/// - **It scans the DELIVERED payload, not `animals_taken`.** The whole-animal count sits at `1`
-///   across every small party on big game, and that leading-zeros plateau capped the sheet at one
-///   hunter; delivered payload rises smoothly because a party too small to haul its kill whole still
-///   lands a partial.
-/// - **It scans the measure this QUARRY pays in.** An inedible species delivers `0` food at every
-///   size, so a food-only scan finds no plateau at all on exactly the quarry whose whole payload is
-///   hides — which this reply cannot carry, so the scan counts its ANIMALS instead.
-/// - **A payload that never rises above zero is not a plateau.** A raid every quoted party comes home
-///   empty from is *flat at zero*, and reading that flatness as "the first size was enough" is how
-///   the sheet came to say *"max 1 worker useful"* about a party that kills nothing.
-///
-/// # It walks `1..=max_party_workers` CONTIGUOUSLY, and that is the point
-///
-/// The scan used to walk `expedition_config.estimate_party_sizes`, a **sampled ladder**
-/// (`1, 2, 3, 4, 8, 16, 32, 64` as shipped) — and a sampled scan finds a sampled plateau. It could
-/// only ever answer *"the rung after which the payload stopped rising"*: a herd whose true plateau
-/// was 6 reported 4, and the sheet told the player six hunters were three too many.
-///
-/// **The ladder existed to make a pre-computed TABLE affordable, and nothing else.** Every rung was
-/// a row the capture paid for on every huntable herd on every frame, so the axis was sparse where it
-/// was expensive. A query answers one herd for one band when a player asks, so the sampling that
-/// bought that affordability buys nothing — and the ladder is gone with it.
-///
-/// The bound is the **band's own idle workers**, which the client already knows and already caps its
-/// stepper at. That is the honest ceiling: a plateau above what the band could field is not a fact
-/// the player can act on, and scanning past it would be work spent to report a party that cannot be
-/// sent. `0` scans nothing.
-///
-/// Returns the SCAN only. The engagement-crew floor the client maxes into it is derived from fields
-/// the herd row already carries, so it stays client-side with the prose that explains it. `0` = no
-/// plateau found, which the client reads as "no usefulness cap to name".
-fn useful_party_cap(
-    floor: f32,
-    max_party_workers: u32,
-    resolved: &ResolvedAsk,
-    fauna: &crate::fauna_config::FaunaConfig,
-    expedition: &ExpeditionConfig,
-) -> u32 {
-    let mut previous = NO_PAYLOAD_YET;
-    let mut plateau = NO_USEFUL_CAP;
-    for party_workers in 1..=max_party_workers {
-        let row = hunt_trip_row(floor, party_workers, resolved, fauna, expedition);
-        // **An INEDIBLE quarry's payload is counted in ANIMALS**, not in food it does not pay.
-        // It used to be counted in the retired trade scalar; what such a raid really brings home is
-        // material batches, which this reply does not carry — but the *plateau* is a fact about the
-        // herd's surplus rather than about a currency, and the kill count reaches it at exactly the
-        // party size any payload measure would. Without this arm a wolf raid's `useful_cap` would be
-        // `0` (*"no party is worth sending"*) for a raid the sim will happily pay in pelts.
-        let delivered = if row.delivers_food {
-            row.delivered_food
-        } else {
-            row.animals_taken as f32
-        };
-        if delivered > previous {
-            previous = delivered;
-            if delivered > 0.0 {
-                plateau = party_workers;
-            }
-        } else {
-            break;
-        }
-    }
-    plateau
-}
-
-/// **The wire's "no usefulness cap to name"** on `HuntTripForecastReply::useful_cap` — the scan found
-/// no plateau, because the payload never rose above zero, or was still rising at the band's last
-/// fieldable worker, or no scan was asked for. Named because a bare `0` beside a party count reads
-/// as *"send nobody"*, which it is not.
-const NO_USEFUL_CAP: u32 = 0;
-
-/// The plateau scan's seed: **below any payload a raid can deliver**, including a delivered `0`, so
-/// the first party is compared against "nothing has been seen yet" rather than against a real
-/// reading. A `0.0` seed would make an all-empty scan's first party fail the rise test and break the
-/// walk before it starts.
-const NO_PAYLOAD_YET: f32 = -1.0;
 
 /// Answer a denial-raid forecast: the exact party the query names, plus the party the sheet opens on.
 ///
@@ -672,11 +505,11 @@ fn answer_denial_raid_forecast(world: &mut World, ask: &DenialRaidForecastQuery)
 ///
 /// # It is the RESIDENT band's answer, at the base tuning
 ///
-/// [`answer_hunt_trip_forecast`] prices a **detached** party at
+/// [`answer_denial_raid_forecast`] prices a **detached** party at
 /// [`crate::combat_config::CombatConfig::expedition_tuning`] (1.5× lethality as shipped), because a
 /// raid far from home is bloodier. A band hunting its own range is not on a raid, so the party here
 /// resolves at the base tuning — the same one `advance_labor_allocation`'s Hunt arm fights at. The
-/// two differ by half again in the fight term; borrowing the trip sheet's rows for this panel would
+/// two differ by half again in the fight term; borrowing the raid sheet's rows for this panel would
 /// have been wrong by that much.
 ///
 /// # The party is re-resolved per crew size, and that is a term rather than an accident
@@ -1783,17 +1616,6 @@ fn query_failure(reason: &str) -> QueryReply {
 // is a bound on the search and not the answer. So the search still runs; it just runs once, for one
 // herd, when a player asks, instead of 128 times a turn for nobody.
 
-/// **The wire's "this raid never fills the pack"** — the `0` sentinel on
-/// [`sim_runtime::commands::HuntTripRow::turns_to_fill`]. Named for the reason its denial twin
-/// [`NEVER_PAST_RECOVERY`] is: a bare `0` beside a turn count reads as *"immediately"*, which is the
-/// opposite of what it means; the row's `bound` carries the reason.
-///
-/// **It is horizon-relative, and the scale it is relative to rides the wire** as
-/// `PopulationCohortState::expedition_forecast_horizon_turns` — so a client can say *"more than N
-/// turns"* rather than *"many"*. Read that field's doc before quoting it: the horizon bounds the
-/// **hunting** only, and the trip's floor is `horizon + round-trip travel`.
-const NEVER_FILLED: u32 = 0;
-
 /// **The party the launch sheet opens on** — the smallest party that genuinely drives this herd past
 /// recovery, found by walking `1..=max_party_workers` and stopping at the first one that
 /// **succeeds** (`docs/plan_denial_raid.md` §3.1).
@@ -1902,11 +1724,9 @@ const NO_VIABLE_DENIAL_PARTY: u32 = 0;
 /// a turn count reads as *"immediately"*, which is the opposite of what it means; the row's `outcome`
 /// carries the reason.
 ///
-/// **The denial forecast runs over the SAME horizon the hunt forecast does** —
-/// `denial_projection_at` and `hunt_trip_forecast_seeded` both read
-/// `expedition_config.hunt.forecast_horizon_turns` — so the one published lever
-/// `PopulationCohortState::expedition_forecast_horizon_turns` is the scale for this sentinel and for
-/// [`NEVER_FILLED`] alike, and no second horizon belongs on the wire.
+/// **It is horizon-relative** — `denial_projection_at` reads
+/// `expedition_config.hunt.forecast_horizon_turns` — and the one published lever
+/// `PopulationCohortState::expedition_forecast_horizon_turns` is the scale for this sentinel.
 const NEVER_PAST_RECOVERY: u32 = 0;
 
 #[cfg(test)]
@@ -1926,7 +1746,7 @@ mod tests {
     /// The hunt job's shipped default — the kit both retired estimate tables were quoted at, so it
     /// is the kit the port-fidelity comparison has to use.
     const DEFAULT_HUNT_KIT: &str = "big_game";
-    /// A **forage-only** roster entry, so naming it on a hunt query is `kit_wrong_job` rather than
+    /// A **forage-only** roster entry, so naming it on a raid query is `kit_wrong_job` rather than
     /// `unknown_kit`. The two failures are different facts and the client renders them differently.
     const FORAGE_ONLY_KIT: &str = "gathering";
     const PARTY: u32 = 4;
@@ -2036,17 +1856,14 @@ mod tests {
         world
     }
 
-    fn hunt_ask() -> HuntTripForecastQuery {
-        HuntTripForecastQuery {
+    fn denial_ask() -> DenialRaidForecastQuery {
+        DenialRaidForecastQuery {
             faction_id: FACTION.0,
             band_id: BAND,
             herd_id: HERD.to_string(),
             kit_id: DEFAULT_HUNT_KIT.to_string(),
             party_workers: PARTY,
-            floor: A_FLOOR,
-            preset_floors: Vec::new(),
-            // No plateau scan unless a test asks for one — it costs a projection per party.
-            max_party_workers: 0,
+            max_party_workers: PARTY,
         }
     }
 
@@ -2063,7 +1880,7 @@ mod tests {
     /// the boxed closure's type is what a `Vec` of these needs, and spelling it at the binding is
     /// noise around the only thing the table is about — which field is broken, and which token that
     /// must produce.
-    type Perturbation = Box<dyn Fn(&mut HuntTripForecastQuery)>;
+    type Perturbation = Box<dyn Fn(&mut DenialRaidForecastQuery)>;
 
     /// **Every refusal path, one table.** They are cheap individually and worth having together:
     /// each is a distinct fact the client renders differently, and the failure mode this guards is a
@@ -2074,35 +1891,31 @@ mod tests {
         let cases: Vec<(&str, Perturbation)> = vec![
             (
                 query_error::UNKNOWN_HERD,
-                Box::new(|ask: &mut HuntTripForecastQuery| ask.herd_id = "no_such_herd".into()),
+                Box::new(|ask: &mut DenialRaidForecastQuery| ask.herd_id = "no_such_herd".into()),
             ),
             (
                 query_error::UNKNOWN_BAND,
-                Box::new(|ask: &mut HuntTripForecastQuery| ask.band_id = BAND + 1),
+                Box::new(|ask: &mut DenialRaidForecastQuery| ask.band_id = BAND + 1),
             ),
             (
                 query_error::UNKNOWN_KIT,
-                Box::new(|ask: &mut HuntTripForecastQuery| ask.kit_id = "no_such_kit".into()),
+                Box::new(|ask: &mut DenialRaidForecastQuery| ask.kit_id = "no_such_kit".into()),
             ),
             (
                 query_error::KIT_WRONG_JOB,
-                Box::new(|ask: &mut HuntTripForecastQuery| ask.kit_id = FORAGE_ONLY_KIT.into()),
-            ),
-            (
-                query_error::INVALID_FLOOR,
-                Box::new(|ask: &mut HuntTripForecastQuery| ask.floor = 1.5),
+                Box::new(|ask: &mut DenialRaidForecastQuery| ask.kit_id = FORAGE_ONLY_KIT.into()),
             ),
             (
                 query_error::INVALID_PARTY,
-                Box::new(|ask: &mut HuntTripForecastQuery| ask.party_workers = 0),
+                Box::new(|ask: &mut DenialRaidForecastQuery| ask.party_workers = 0),
             ),
         ];
 
         for (expected, perturb) in cases {
             let mut world = world_with_band();
-            let mut ask = hunt_ask();
+            let mut ask = denial_ask();
             perturb(&mut ask);
-            let reply = answer_forecast_query(&mut world, &QueryPayload::HuntTripForecast(ask));
+            let reply = answer_forecast_query(&mut world, &QueryPayload::DenialRaidForecast(ask));
             assert_eq!(
                 error_token(&reply),
                 expected,
@@ -2117,67 +1930,9 @@ mod tests {
     fn a_band_of_another_faction_does_not_resolve() {
         let mut world = test_world();
         spawn_band(&mut world, FactionId(FACTION.0 + 1), BAND);
-        let reply = answer_forecast_query(&mut world, &QueryPayload::HuntTripForecast(hunt_ask()));
+        let reply =
+            answer_forecast_query(&mut world, &QueryPayload::DenialRaidForecast(denial_ask()));
         assert_eq!(error_token(&reply), query_error::UNKNOWN_BAND);
-    }
-
-    /// **A bad PRESET floor refuses the whole reply**, rather than answering a short `per_preset`
-    /// list whose positions no longer line up with what was asked. The rows are correlated by
-    /// position, so a partial answer is a silently mislabelled one.
-    #[test]
-    fn one_bad_preset_floor_refuses_the_whole_query() {
-        let mut world = world_with_band();
-        let mut ask = hunt_ask();
-        ask.preset_floors = vec![0.0, 1.5, 0.5];
-        let reply = answer_forecast_query(&mut world, &QueryPayload::HuntTripForecast(ask));
-        assert_eq!(error_token(&reply), query_error::INVALID_FLOOR);
-    }
-
-    /// The denial verb resolves through the *same* seam, so it refuses on the same terms. Worth one
-    /// case rather than six: what is being checked is that it shares the resolution, not that the
-    /// tokens exist twice.
-    #[test]
-    fn the_denial_verb_refuses_an_unknown_kit_too() {
-        let mut world = world_with_band();
-        let reply = answer_forecast_query(
-            &mut world,
-            &QueryPayload::DenialRaidForecast(DenialRaidForecastQuery {
-                faction_id: FACTION.0,
-                band_id: BAND,
-                herd_id: HERD.to_string(),
-                kit_id: "no_such_kit".to_string(),
-                party_workers: PARTY,
-                max_party_workers: PARTY,
-            }),
-        );
-        assert_eq!(error_token(&reply), query_error::UNKNOWN_KIT);
-    }
-
-    // --- the answers ------------------------------------------------------------------------
-
-    /// **A query echoes what it was asked**, on the composed row and on every preset row, in order.
-    /// That echo is the client's assertion that the answer it is rendering is the answer to its own
-    /// question — the thing a sampled table could never offer, because it always answered the
-    /// nearest rung instead.
-    #[test]
-    fn every_row_echoes_the_floor_and_party_it_was_asked_for() {
-        let mut world = world_with_band();
-        let mut ask = hunt_ask();
-        let presets = vec![0.0, 0.25, 0.5];
-        ask.preset_floors = presets.clone();
-
-        let QueryReply::HuntTripForecast(answer) =
-            answer_forecast_query(&mut world, &QueryPayload::HuntTripForecast(ask))
-        else {
-            panic!("a well-formed hunt query is answered");
-        };
-        assert_eq!(answer.at_composed.floor, A_FLOOR);
-        assert_eq!(answer.at_composed.party_workers, PARTY);
-        assert_eq!(answer.per_preset.len(), presets.len());
-        for (row, floor) in answer.per_preset.iter().zip(presets) {
-            assert_eq!(row.floor, floor);
-            assert_eq!(row.party_workers, PARTY);
-        }
     }
 
     /// **The denial answer carries the party it was asked for and the party the sheet should open
@@ -2185,17 +1940,9 @@ mod tests {
     #[test]
     fn a_denial_answer_carries_both_the_asked_party_and_the_seeded_one() {
         let mut world = world_with_band();
-        let QueryReply::DenialRaidForecast(answer) = answer_forecast_query(
-            &mut world,
-            &QueryPayload::DenialRaidForecast(DenialRaidForecastQuery {
-                faction_id: FACTION.0,
-                band_id: BAND,
-                herd_id: HERD.to_string(),
-                kit_id: DEFAULT_HUNT_KIT.to_string(),
-                party_workers: PARTY,
-                max_party_workers: PARTY,
-            }),
-        ) else {
+        let QueryReply::DenialRaidForecast(answer) =
+            answer_forecast_query(&mut world, &QueryPayload::DenialRaidForecast(denial_ask()))
+        else {
             panic!("a well-formed denial query is answered");
         };
         assert_eq!(answer.at_composed.party_workers, PARTY);
@@ -2203,97 +1950,6 @@ mod tests {
             !answer.at_composed.outcome.is_empty(),
             "every projection names its outcome — a blank verdict is the one thing the sheet \
              cannot render"
-        );
-    }
-
-    // --- the row mapping --------------------------------------------------------------------
-
-    /// **The wire row is `hunt_trip_forecast`'s answer, transcribed — never a second computation of
-    /// it.**
-    ///
-    /// This is what the port-fidelity test became. While the estimate tables still existed it
-    /// compared the query's rows against `hunt_trip_estimate_entries` cell for cell, which proved the
-    /// port had not approximated anything. The table is gone, so comparing against it would mean
-    /// keeping a fossil implementation alive purely to be compared against — the exact second copy
-    /// of the model this arc exists to remove.
-    ///
-    /// What is durable, and what this keeps, is the half that can still break: the **mapping**.
-    /// `hunt_trip_row` transcribes a `HuntTripForecast` into a wire row, and every field is a place
-    /// a rename or a reorder could silently swap two numbers of the same type — `delivered_food`
-    /// for `wasted_food`. Those are all `f32` and `bool`; nothing but an assertion catches a
-    /// transposition.
-    ///
-    /// It also pins the two sentinels, which are the only values the row does not carry verbatim:
-    /// `turns_to_fill` collapses `None` to [`NEVER_FILLED`], and `bound` is the enum's own key.
-    #[test]
-    fn the_wire_row_transcribes_the_forecast_field_for_field() {
-        let world = world_with_band();
-        let herd = test_herd();
-        let equipment = world.resource::<EquipmentConfigHandle>().get();
-        let fauna = world.resource::<FaunaConfigHandle>().get();
-        let expedition = world.resource::<ExpeditionConfigHandle>().get();
-        let kit = equipment
-            .resolve_kit_for_job(Some(DEFAULT_HUNT_KIT), KitJob::Hunt)
-            .expect("the shipped default hunt kit resolves");
-        let fresh = BandEquipment::start_stocked(&EquipmentConfig::builtin());
-        let party = query_hunting_party(
-            &world,
-            &equipment,
-            &fully_armed(&equipment, &kit, &fresh),
-            &fresh,
-            herd.body_mass,
-        );
-        let per_worker_haul = query_per_worker_haul(
-            &world,
-            &equipment,
-            &fully_armed(&equipment, &kit, &fresh),
-            &fresh,
-        );
-        let resolved = ResolvedAsk {
-            herd: herd.clone(),
-            party,
-            per_worker_haul,
-        };
-
-        // Several floors and several party sizes, because a transposition can hide behind a row
-        // where the two swapped fields happen to be equal (a raid that wastes nothing, say).
-        let mut saw_a_payload = false;
-        for floor in [0.0_f32, 0.3, 0.5, 0.8] {
-            for party_workers in [1_u32, 4, 12] {
-                let row = hunt_trip_row(floor, party_workers, &resolved, &fauna, &expedition);
-                let direct = crate::systems::hunt_trip_forecast(
-                    party_workers,
-                    &herd,
-                    floor,
-                    &fauna,
-                    per_worker_haul,
-                    &expedition,
-                    &resolved.party,
-                );
-
-                assert_eq!(
-                    row.floor, floor,
-                    "the row echoes the floor it was asked for"
-                );
-                assert_eq!(row.party_workers, party_workers);
-                assert_eq!(
-                    row.turns_to_fill,
-                    direct.turns_to_fill.unwrap_or(NEVER_FILLED),
-                    "a raid that never completes reports the NEVER_FILLED sentinel, not a blank"
-                );
-                assert_eq!(row.bound, direct.bound.as_str());
-                assert_eq!(row.delivers_food, direct.delivers_food);
-                assert_eq!(row.animals_taken, direct.animals_taken);
-                assert_eq!(row.delivered_food, direct.delivered_food);
-                assert_eq!(row.wasted_food, direct.wasted_food);
-
-                saw_a_payload |= row.delivered_food > 0.0 || row.animals_taken > 0;
-            }
-        }
-        assert!(
-            saw_a_payload,
-            "the fixture must land a real payload somewhere, or every field compared was zero and \
-             a transposition would pass"
         );
     }
 
@@ -3204,7 +2860,7 @@ mod tests {
         );
     }
 
-    /// **A curve is answered at the RESIDENT tuning, never the expedition's.** The trip sheet beside
+    /// **A curve is answered at the RESIDENT tuning, never the expedition's.** The raid sheet beside
     /// it prices a detached raid at `expedition_danger_multiplier` (1.5x lethality as shipped), and
     /// borrowing those rows for the Assign Herders panel would over-quote the fight by half again.
     #[test]
@@ -3987,121 +3643,6 @@ mod tests {
     }
 
     // --- the contiguous useful cap -------------------------------------------------------------
-
-    /// **`useful_cap` walks every party, so the plateau is the real one.**
-    ///
-    /// The scan used to walk `expedition_config.estimate_party_sizes` — `1, 2, 3, 4, 8, 16, 32, 64`
-    /// as shipped — so it could only ever report a *rung*. This asserts the property that buys:
-    /// the answer is allowed to be a party the retired ladder did not carry.
-    ///
-    /// Asserted as an invariant rather than a pinned number: the cap must be a party at which the
-    /// payload is still rising, and the party **above** it must not raise the payload further. That
-    /// is what "plateau" means, and it holds for any herd and any kit.
-    #[test]
-    fn the_useful_cap_is_the_real_plateau_not_a_sampled_rung() {
-        /// Wide enough to run past the fixture boar's plateau. The raid's pack is measured in FOOD,
-        /// so a richer meat rate seats fewer animals per worker and pushes the plateau out: `30`
-        /// cleared it at `hunt.provisions_per_biomass` 0.02 and not at 0.06.
-        const BAND_CAN_FIELD: u32 = 90;
-
-        let world = world_with_band();
-        let herd = test_herd();
-        let equipment = world.resource::<EquipmentConfigHandle>().get();
-        let fauna = world.resource::<FaunaConfigHandle>().get();
-        let expedition = world.resource::<ExpeditionConfigHandle>().get();
-        let kit = equipment
-            .resolve_kit_for_job(Some(DEFAULT_HUNT_KIT), KitJob::Hunt)
-            .expect("the shipped default hunt kit resolves");
-        let fresh = BandEquipment::start_stocked(&EquipmentConfig::builtin());
-        let resolved = ResolvedAsk {
-            herd: herd.clone(),
-            party: query_hunting_party(
-                &world,
-                &equipment,
-                &fully_armed(&equipment, &kit, &fresh),
-                &fresh,
-                herd.body_mass,
-            ),
-            per_worker_haul: query_per_worker_haul(
-                &world,
-                &equipment,
-                &fully_armed(&equipment, &kit, &fresh),
-                &fresh,
-            ),
-        };
-
-        let delivered = |party_workers: u32| {
-            let row = hunt_trip_row(A_FLOOR, party_workers, &resolved, &fauna, &expedition);
-            if row.delivers_food {
-                row.delivered_food
-            } else {
-                row.animals_taken as f32
-            }
-        };
-
-        let cap = useful_party_cap(A_FLOOR, BAND_CAN_FIELD, &resolved, &fauna, &expedition);
-        assert_ne!(
-            cap, NO_USEFUL_CAP,
-            "the fixture must actually plateau inside {BAND_CAN_FIELD} workers, or this test \
-             asserts nothing"
-        );
-        assert!(
-            delivered(cap) > 0.0,
-            "a cap must land a payload — a raid that comes home empty at every size is flat at \
-             zero, which is not a plateau"
-        );
-        if cap > 1 {
-            assert!(
-                delivered(cap) > delivered(cap - 1),
-                "the payload must still be RISING at the cap ({} vs {} one worker below)",
-                delivered(cap),
-                delivered(cap - 1)
-            );
-        }
-        assert!(
-            delivered(cap + 1) <= delivered(cap),
-            "…and the party above the cap must add nothing ({} at {} vs {} at {})",
-            delivered(cap + 1),
-            cap + 1,
-            delivered(cap),
-            cap
-        );
-    }
-
-    /// **A band that can field nobody gets no cap**, rather than a cap of one it cannot staff.
-    #[test]
-    fn a_band_that_can_field_nobody_gets_no_useful_cap() {
-        let world = world_with_band();
-        let herd = test_herd();
-        let equipment = world.resource::<EquipmentConfigHandle>().get();
-        let fauna = world.resource::<FaunaConfigHandle>().get();
-        let expedition = world.resource::<ExpeditionConfigHandle>().get();
-        let kit = equipment
-            .resolve_kit_for_job(Some(DEFAULT_HUNT_KIT), KitJob::Hunt)
-            .expect("the shipped default hunt kit resolves");
-        let fresh = BandEquipment::start_stocked(&EquipmentConfig::builtin());
-        let resolved = ResolvedAsk {
-            herd: herd.clone(),
-            party: query_hunting_party(
-                &world,
-                &equipment,
-                &fully_armed(&equipment, &kit, &fresh),
-                &fresh,
-                herd.body_mass,
-            ),
-            per_worker_haul: query_per_worker_haul(
-                &world,
-                &equipment,
-                &fully_armed(&equipment, &kit, &fresh),
-                &fresh,
-            ),
-        };
-
-        assert_eq!(
-            useful_party_cap(A_FLOOR, 0, &resolved, &fauna, &expedition),
-            NO_USEFUL_CAP
-        );
-    }
 
     /// **THE SEEDED ROW'S BAND IS MADE OF OUTCOMES THE TAKE CAN PRODUCE** —
     /// `fauna::forecast_take_range`, the band the assign-time row publishes, over the whole roster,

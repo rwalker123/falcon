@@ -1182,23 +1182,7 @@ played defect — while the default claims stay green; returning `_resolve_assig
 on a source with a standing crew, plus `herd_band_picker_b`, whose switched band now re-seeds to the
 `WORKER_STEP` floor instead of being hand-clamped by the chapter.
 
-## The UNBOUNDED-RAID floor: one frame, three equalities, and a driven denial pair
-
-`ui_preview` **`herd_hunt_horizon_travel`** (`chapters/hunt.gd`, appended last in the hunt chapter) is
-the only state that can tell the fix from the bug. Its pairing half `herd_hunt_forecast_horizon`
-structurally cannot: that band carries no `band_move_tiles_per_turn`, so its trip is all hunting and
-`horizon` and `horizon + travel` are the SAME number — a client quoting the bare horizon renders it
-identically. The travel frame raids the same never-completing Steppe Bison from the 8-tiles-out band,
-so the two answers differ by the whole walk.
-
-`_assert_horizon_floor_is_the_whole_trip` asserts all three surfaces by **EQUALITY** — the trip
-verdict, the Send button's face and the one-line form's head through the travel split — against
-sentences spelled out in the chapter rather than re-composed through `SourceForecast`'s own formats,
-since a copy claim that borrows the copy under test can only agree with itself. A `contains` would not
-do either: the two candidate lines share every word and differ only in a number. Each message names
-BOTH the wanted and the found string, so a failure reads as `68` against `60` rather than as a bare
-mismatch. Sabotage-verified by returning the bare horizon as `turns_floor` — exactly those three fail
-and nothing else in the run does.
+## The UNBOUNDED-RAID floor: a driven denial pair
 
 **Every band fixture in both preview harnesses now states `expedition_forecast_horizon_turns`**, from
 the one named `BandFx.FORECAST_HORIZON_TURNS`; a fixture without it takes the `*_NO_HORIZON_*` fallback
@@ -3392,7 +3376,7 @@ failure-class guards are about the seam's bookkeeping, not about any one questio
 the hunting raid's; the plateau-direction guard (`expedition_useful_cap`) is retired with the cap it
 tested. `EXPECTED_CHECKPOINTS` 16 → 14.
 
-**Checkpoints**: `hunt.gd` 374 → 338 → **346** (the small-caravan frame and its claims), `band_expedition.gd` 127 → **125**, `sight_fog.gd` 14 →
+**Checkpoints**: `hunt.gd` 374 → 338 → **346** (the small-caravan frame and its claims), `band_expedition.gd` 127 → 125 → **119**, `sight_fog.gd` 14 →
 **19**, `forecast_seam.gd` 16 → **14** — each RE-MEASURED off the harness's own `reached N` rather than
 subtracted.
 

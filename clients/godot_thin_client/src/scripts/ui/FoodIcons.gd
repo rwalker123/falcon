@@ -293,13 +293,12 @@ static func for_flora_species(species: String, icon_px: int = 0) -> String:
 # tooltip). TWO ORTHOGONAL LAYERS ride the same vocabulary and must stay separate:
 #   • STATUS — what the action IS DOING. A confirmed local forage/hunt row has no sim phase: it is
 #     simply `working`. An expedition's status is the sim's `ExpeditionPhase` (`outbound` /
-#     `awaiting` / `hunting` / `delivering` / `returning`) — the same keys the wire sends, so
+#     `awaiting` / `hunting` / `returning`) — the same keys the wire sends, so
 #     `for_status` maps a phase string straight through.
 #   • `pending` — a state of the ORDER, not of the action: composed locally, not yet acknowledged by
 #     the sim, resolves on turn advance. It rides on ANY row and is a MODIFIER, never a phase member.
-# `hunting` deliberately shares `working`'s glyph — a hunt party in its hunting phase IS just working
-# — and `delivering` shares `returning`'s: both are "coming home", and the tooltip is what
-# distinguishes them.
+# `hunting` deliberately shares `working`'s glyph — a raiding party in its hunting phase IS just
+# working, and the tooltip is what distinguishes them.
 # Legibility (the 🪙/💰 lesson): these are drawn at HUD label size (~13px), where pictographic emoji
 # collapse into a grey blob. Only BOLD LINE ART survives, so every glyph here is a geometric shape
 # (◌ ● ➤ ▮▮ ◄) — verified at true size in `band_panel_status_glyphs.png`. ⏸ (U+23F8) was rejected for
@@ -316,7 +315,6 @@ const STATUS_ICONS := {
 	"outbound": "➤",
 	STATUS_AWAITING: "▮▮",
 	"hunting": "●",
-	"delivering": "◄",
 	"returning": "◄",
 }
 

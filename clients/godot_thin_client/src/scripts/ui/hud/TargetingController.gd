@@ -57,28 +57,14 @@ signal send_expedition_requested(payload: Dictionary)
 signal verb_pick_cancelled
 
 # --- The quarry rule's own vocabulary -------------------------------------------------------------
-## The quarry pick's `min_distance` — and since the hunting party retired, the ONLY one: the one
-## mission left that picks a herd (denial) has no beyond-reach rule. `-1` rather than `0`, because the
+## The quarry pick's `min_distance`: the one mission that picks a herd (denial) has no beyond-reach
+## rule. `-1` rather than `0`, because the
 ## test every surface applies is "strictly farther than this": at `0` a herd standing ON the band's own
 ## tile would fail it, and that herd is a legal denial target. At `-1` every KNOWN distance passes and
 ## the unknown one (`-1`) still fails, which is the "an unknown distance is never a quarry" half of the
 ## rule falling out of the same comparison instead of needing a second clause.
-##
-## ⛔ **THE HUNT'S BOUND WAS `hunt_reach`, AND IT IS GONE WITH THE HUNT VERB.** A hunting party existed
-## for game past that reach; every herd is an ordinary hunt now (`docs/plan_civilization_steps.md` §One
-## work party), so nothing here reads `hunt_reach` and the per-mission fork that did is deleted.
 const QUARRY_NO_REACH_BOUND := -1
 
-
-## **THE TARGETING MODE'S OWN TOKEN, AND THE PLAYER READS IT UPPERCASED.** `_targeting_banner_bbcode`
-## prints the `command` it is handed as the banner's lead word, so this string is not plumbing — it is
-## the banner (`PREY  Band 1 — click on a herd to hunt`). It is a CLIENT token: no command by this
-## name is ever sent, the pick adopts a quarry and nothing more, and MapView keys its halo off
-## `need` rather than off this.
-##
-## ⛔ **`prey`, NOT `quarry` (issue #650)** — the sim's `quarry` verb opens a stone working, so the
-## old spelling put the same banner word on hunting a herd and on digging a pit.
-const PICK_PREY_COMMAND := "prey"
 
 ## The three pick kinds `_disarm_other_picks` keeps apart.
 const PICK_KIND_MOVE := &"move"
@@ -86,7 +72,9 @@ const PICK_KIND_VERB := &"verb"
 const PICK_KIND_QUARRY := &"quarry"
 
 # --- The verb picks' banners (issue #529) ---------------------------------------------------------
-## Each banner's lead word is the verb, and every banner names the band by its NAME
+## Each banner's lead word is the verb, and the player reads it UPPERCASED: `_targeting_banner_bbcode`
+## prints the `command` it is handed as the banner's lead word, so these strings are not plumbing.
+## MapView keys its halo off `need` rather than off them. Every banner names the band by its NAME
 ## (`HudFormat.band_name`) — never `Band <id>`, which is a handle, not something a player calls a band.
 const DENY_PICK_COMMAND := "deny"
 const VERB_PICK_COMMAND_SCOUT := "scout"
@@ -98,7 +86,6 @@ const BANNER_INSTRUCTIONS := {
 	VERB_PICK_COMMAND_SCOUT: "click a tile to scout toward",
 	VERB_PICK_COMMAND_TRADE: "click a band to trade with",
 	DENY_PICK_COMMAND: "click a herd to deny",
-	PICK_PREY_COMMAND: "click on a herd to hunt",
 }
 ## A verb pick's pending-dict keys.
 const VERB_PICK_BAND_KEY := "band"
@@ -696,10 +683,8 @@ func send_expedition_to(band: Dictionary, party_workers: int, tile: Vector2i,
 ## Quarry PICK: enter HERD-targeting so the next map click names the herd the armed sheet commits to.
 ## `commit` / `hover` are the sheet's (see `begin_verb_pick`, whose re-capture rule this shares).
 ##
-## **THE QUARRY PICK IS THE DENIAL PICK.** The mission no longer rides with it: it did while
-## eligibility was a function of it — a hunt's quarry had to lie beyond the band's `hunt_reach` — and
-## the hunting party is retired, so the one mission left that picks a herd is denial, whose rule admits
-## every herd the band can see.
+## **THE QUARRY PICK IS THE DENIAL PICK.** The one mission that picks a herd is denial, whose rule
+## admits every herd the band can see, so the pick carries no mission.
 func begin_pick_quarry(band: Dictionary, commit: Callable = Callable(),
 		hover: Callable = Callable()) -> void:
 	if band.is_empty():

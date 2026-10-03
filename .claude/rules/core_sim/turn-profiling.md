@@ -849,7 +849,7 @@ hash probe per entry, no extra allocation, nothing new on the map-sized sections
 **The wrapper is the guard.** A new keyed section takes the set from its field's type rather than
 from a convention someone has to remember, exactly as `Whole` does for a whole section.
 
-**The worked example is the one that found it, and it reached a player.** `send_hunt_expedition`
+**The worked example is the one that found it, and it reached a player.** A raid launch
 spawns a detached party — published on the launch command's held frame — and `recall_expedition`
 cancels it **in camp** and despawns it in the same tick, on the next held frame. The client kept the
 party row on its Band panel indefinitely; its ✕ kept sending the `BandId` the row still carried; and

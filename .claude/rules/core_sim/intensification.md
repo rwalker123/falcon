@@ -158,10 +158,8 @@ live in two slots:
   have defaulted a new verb to legal on **both**.
 - **The stance-set predicates `EXTRACTIVE` / `is_investment()` are deleted.** A set-membership predicate over one
   enum is unnecessary once the sets are different types. Its doc recorded two hand-written lists that
-  had rotted (`send_hunt_expedition`'s launch gate silently accepted `tame`, and
-  `hunt_expedition_floor`'s `matches!` was missing it too); **both guarantees are now type-level** —
-  `ExpeditionMission::Hunt` carries a **floor** (an `f32`), which cannot *name* a build verb, so the launch
-  gate rejects one through the ordinary parse and the unreachable-arm `debug_assert!` is gone.
+  had rotted (a raid launch gate that silently accepted `tame`, and a `matches!` that was missing it
+  too); **the guarantee is now type-level** — no `ExpeditionMission` variant can *name* a build verb.
 - **Commands.** `assign_labor … [floor] <workers>` sets the FLOOR — a `0.0..=1.0` fraction of `K`, not
   a stance word (the four are refused at parse with `CommandParseError::RetiredStanceToken`) — and
   **never touches the improvement** — which is what makes a *paused* build re-staffable (`validate_labor_policy` no longer

@@ -44,7 +44,6 @@ use crate::{
         available_workers, fragments_to_contract, BandEquipment, BandId, BandName, BandTravel,
         BuildSource, Expedition, ExpeditionMission, LaborAllocation, LaborAssignment, LaborTarget,
         PopulationCohort, PowerNode, SourcePriority, SourceYield, Tile, FODDER, FOOD,
-        NO_RAID_FLOOR,
     },
     culture::{
         CultureLayer, CultureLayerScope as SimCultureLayerScope, CultureManager, CultureOwner,
@@ -1422,7 +1421,6 @@ mod tests {
             trade_material_carry_weight: 0.0,
             trade_fodder_carry_weight: 0.0,
             hunt_per_worker_provisions: 0.0,
-            hunt_viability_warn_turns: 0,
             hunt_forecast_horizon_turns: 0,
             band_move_tiles_per_turn: 0,
             settle_min_founding_workers: 0,
@@ -1450,8 +1448,6 @@ mod tests {
             expedition_levers: &levers,
             settlement_stage_config: &stages,
             travel_target: None,
-            hunt_reach: 0,
-            expedition_delivery: None,
             // This fixture asserts on the food ledger, not the TOE.
             equipment: None,
             kit_levers: &kit_levers,

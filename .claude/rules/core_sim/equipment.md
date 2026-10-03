@@ -2464,12 +2464,11 @@ rates to two herds in the same turn; only the *mask* varies per assignment.
 | verb | grammar |
 |---|---|
 | `assign_labor` | `… forage <x> <y> [floor] [species] <workers> [kit <id>]` / `… hunt <herd> [floor] <workers> [kit <id>]` |
-| `send_hunt_expedition` | `… <party_workers> <fauna_id> [floor] [kit <id>]` |
 | `send_denial_raid` | `… <party_workers> <fauna_id> [kit <id>]` |
 
 **`kit <id>` is a NAMED token, order-independent within the tail.** Named rather than positional
-because `send_hunt_expedition` already carries an optional positional tail and a second would make
-`floor` un-omittable; the space-separated `name value` shape is the repo's existing one
+because `assign_labor`'s per-role tails already carry optional positionals (`hunt <herd> [floor]
+<workers>`) and another would make one of them un-omittable; the space-separated `name value` shape is the repo's existing one
 (`queue_espionage_mission … owner 1 target 2 tier 2`, `counterintel_budget … reserve 40`) rather than
 an invented `kit=<id>`. It is also **the one token the denial raid's otherwise closed grammar
 admits** — a kit is a property of the *party*, not of the mission, so it is the only order a raid
@@ -2624,12 +2623,12 @@ failure, never a silent fall back"* exists to prevent, arriving through the **ab
 The named path is untouched and is still the only validated one. `LaborAssignment` stores the
 *resolved* choice, so a replayed command is unaffected.
 
-**The two raiding verbs resolve through the SAME seam** — `resolve_raid_kit` builds a
+**The raiding verb resolves through the SAME seam** — `resolve_raid_kit` builds a
 `LaborTarget::Hunt` naming the raid's herd and hands it to `default_kit_for_target`, rather than
-carrying a second resolution. `send_hunt_expedition` and `send_denial_raid` took `default_kits.hunt`
-on the absent token while the herd published its own, and that is the launch-sheet form of the same
-defect: the client's sheet reads `defaultKitId` and both estimate tables beside it are priced at
-that id, so the forecast the player committed from was **not** the one the party went out on. The
+carrying a second resolution. A raid that took `default_kits.hunt` on the absent token while the herd
+published its own is the launch-sheet form of the same defect: the client's sheet reads
+`defaultKitId` and asks its forecast at that id, so the forecast the player committed from would
+**not** be the one the party went out on. The
 kit is still resolved before the party is drawn off the band, so a bad id refuses the launch outright.
 
 `Expedition` stores the *resolved* choice and prices its whole life from it, so a raid launched on
@@ -2649,7 +2648,7 @@ re-derivation, because the claim is that two surfaces agree and a re-derivation 
 | `kit_selection::a_warren_defaults_to_the_trap_and_a_deer_to_the_spear_on_the_wire` | the score, off the **encoded** envelope, with an `assert_ne!` liveness half |
 | `kit_selection::a_corralled_herd_defaults_to_the_pen_kit_and_a_wild_one_of_the_same_species_does_not` | the source axis — the same species, penned and ranging, compared **to each other**, so a constant fails |
 | `server::tests::a_hunt_row_with_no_kit_named_stores_the_kit_the_wire_published_for_that_herd` | `assign_labor`'s absent-token path |
-| `server::tests::a_raid_with_no_kit_named_launches_on_the_kit_the_wire_published_for_that_herd` | `send_hunt_expedition`'s, with the same `assert_ne!` against the job default |
+| `server::tests::a_raid_with_no_kit_named_launches_on_the_kit_the_wire_published_for_that_herd` | `send_denial_raid`'s, with the same `assert_ne!` against the job default |
 
 ## On the wire
 

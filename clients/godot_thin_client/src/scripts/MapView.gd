@@ -689,33 +689,15 @@ const EXPEDITION_AWAITING_PULSE_AMPLITUDE := 0.22
 const EXPEDITION_AWAITING_PULSE_SPEED := 3.2
 
 const EXPEDITION_AWAITING_RING_WIDTH := 2.5
-# --- Hunting-expedition marker (PR 2, docs/plan_exploration_and_sites.md §2b) ---
-# A hunt party (`expedition_mission == "hunt"`) reads as a bow disc — a clearly different motif from
-# the scout's flag — so scout vs hunt parties are distinguishable at a glance.
-const EXPEDITION_HUNT_MISSION := "hunt"
-const EXPEDITION_HUNT_GLYPH := "🏹"              # bow motif = a hunting party following game
-# DENIAL raid (docs/plan_denial_raid.md) — a third mission, and a third marker: it engages like a hunt
-# party but brings nothing home, so wearing the bow would read as a hunt on the map. 💀 is the mark it
-# wears everywhere else (the Deny verb, the parties row), so the three surfaces agree.
+# DENIAL raid (docs/plan_denial_raid.md) — its own marker, distinct from the scout's flag. 💀 is the
+# mark it wears everywhere else (the Deny verb, the parties row), so the three surfaces agree.
 const EXPEDITION_DENY_MISSION := "deny"
 const EXPEDITION_DENY_GLYPH := "💀"
-# TRADE shipment (arc #527) — a fourth mission and a fourth marker. It carries goods to another band
-# and comes home empty, so neither the bow nor the skull says what it is: 📦 is the mark it wears on
-# its Trade verb and its parties row too, so the three surfaces agree. Its phase decorations stay
-# OFF (`is_hunt` gates those) — the green pip is a HAUL cue, and a shipment's haul is going the other
-# way.
+# TRADE shipment (arc #527) — its own marker. It carries goods to another band and comes home empty,
+# so the skull would misdescribe it: 📦 is the mark it wears on its Trade verb and its parties row
+# too, so the three surfaces agree.
 const EXPEDITION_TRADE_MISSION := "trade"
 const EXPEDITION_TRADE_GLYPH := "📦"
-# Hunt phase read: HUNTING (gathering at the herd) shows a small red "working" cue ring; DELIVERING
-# and RETURNING (hauling a haul home) show a green food pip. So gathering vs hauling read at a glance.
-const EXPEDITION_PHASE_HUNTING := "hunting"
-const EXPEDITION_PHASE_DELIVERING := "delivering"
-const EXPEDITION_PHASE_RETURNING := "returning"
-const EXPEDITION_DELIVER_PIP_FACTOR := 0.34      # green food-pip radius, of marker radius
-const EXPEDITION_DELIVER_PIP_OFFSET := 0.85      # pip offset down-right from marker center, of marker radius
-const EXPEDITION_GATHER_CUE_FACTOR := 0.30       # red gathering-cue ring radius, of marker radius
-const EXPEDITION_GATHER_CUE_OFFSET := 0.85       # cue offset down-right from marker center, of marker radius
-const EXPEDITION_GATHER_CUE_WIDTH := 2.0
 
 ## Channel key -> the tint its ramp climbs to. BUILT IN `apply_palette`, not here: every value in it is
 ## a themed colour, and a dictionary initializer runs at script load, before any theme is installed —

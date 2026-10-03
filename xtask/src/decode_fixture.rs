@@ -512,7 +512,7 @@ fn build_planned_delta(
 // The PARTY-REMOVAL pair (`tools/party_removal_guard.gd`)
 // ---------------------------------------------------------------------------
 //
-// A party that a `send_hunt_expedition` spawned and an in-camp `recall_expedition` despawned inside
+// A party that a `send_denial_raid` spawned and an in-camp `recall_expedition` despawned inside
 // one tick used to be published on a HELD frame and then never retracted, so the client carried a
 // ghost row the sim refused every order for. The sim sends the removal now; these two deltas are
 // what let the client half be ASSERTED rather than read — arrival on one frame, removal on the
@@ -549,7 +549,7 @@ const PARTY_FIXTURE_PARTY_X: u32 = 2;
 const PARTY_FIXTURE_PARTY_Y: u32 = 1;
 
 /// The band's head-count, its whole assignable workers, and how many of those are unassigned. The
-/// idle count is what the parties zone's footer gates its Scout/Hunt buttons on, so it is non-zero.
+/// idle count is what the band panel's expedition verbs gate on (`verb_enabled`), so it is non-zero.
 const PARTY_FIXTURE_BAND_SIZE: u32 = 30;
 const PARTY_FIXTURE_BAND_WORKING_AGE: u32 = 16;
 const PARTY_FIXTURE_BAND_IDLE_WORKERS: u32 = 6;
@@ -562,7 +562,7 @@ const PARTY_FIXTURE_PARTY_SIZE: u32 = 4;
 /// legal on the wire and misleading in a panel.
 const PARTY_FIXTURE_OUTPUT_MULTIPLIER: i64 = 1_000_000;
 
-/// The herd the party is hunting. A string id, matching `HerdRegistry`'s fauna ids — the panel row
+/// The herd the party is raiding. A string id, matching `HerdRegistry`'s fauna ids — the panel row
 /// resolves it against the (absent) herd roster and falls back to the id, which is fine: what the
 /// guard reads off the row is the party's identity, not its quarry's label.
 const PARTY_FIXTURE_TARGET_HERD: &str = "game_boar_04";
@@ -622,7 +622,7 @@ fn party_fixture_band() -> PopulationCohortState {
     }
 }
 
-/// The detached hunting party, grouped under the band above by `home_band_entity` — which is the
+/// The detached raiding party, grouped under the band above by `home_band_entity` — which is the
 /// key `HudBandLaborState.band_parties` groups on and therefore the field that puts the row in the
 /// parties zone at all.
 fn party_fixture_party() -> PopulationCohortState {
@@ -634,7 +634,7 @@ fn party_fixture_party() -> PopulationCohortState {
         current_x: PARTY_FIXTURE_PARTY_X,
         current_y: PARTY_FIXTURE_PARTY_Y,
         is_expedition: true,
-        expedition_mission: "hunt".to_string(),
+        expedition_mission: "deny".to_string(),
         expedition_phase: "hunting".to_string(),
         expedition_target_herd: PARTY_FIXTURE_TARGET_HERD.to_string(),
         home_band_entity: PARTY_FIXTURE_BAND_ENTITY,

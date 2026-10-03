@@ -448,7 +448,7 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 		var eff_col := _view._band_effective_col(band_col, radius, origin)
 		# The SELECTED band's own sources read louder — selection still wins the eye.
 		var selected := int(band.get("entity", -1)) == _view.selected_unit_id
-		# A HUNTING EXPEDITION IS WORK ON A SOURCE TOO, and its quarry rides the COHORT rather than a
+		# A RAIDING EXPEDITION IS WORK ON A SOURCE TOO, and its quarry rides the COHORT rather than a
 		# `labor_assignments` row — a detached party follows one herd, so the sim carries the target on
 		# the party itself (`expedition_target_herd`). Without this branch a raided herd wore no mark at
 		# all: the map showed the party walking and never said what it was walking to.
@@ -469,10 +469,9 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 						# The party's own people are the crew on that herd, and they SUM with any
 						# resident band hunting it — one source, one number.
 						crew[qkey] = int(crew.get(qkey, 0)) + int(band.get("size", 0))
-						# A DETACHED PARTY BUILDS NOTHING — it follows the herd and hauls food home,
-						# so its improvement axis is structurally empty and its quarry's badge can
-						# only ever show a rung on OFFER, never one under way (issue #442). It carries
-						# an escapement FLOOR (`expedition_floor`), which the rung answers never read.
+						# A DETACHED PARTY BUILDS NOTHING — it follows the herd, so its improvement
+						# axis is structurally empty and its quarry's badge can only ever show a rung
+						# on OFFER, never one under way (issue #442).
 						var qcenter := _view._hex_center(qcol, qrow, radius, origin)
 						# **THE BADGE IS QUEUED BEFORE THE MARK IS DRAWN, at all four call sites**
 						# (issue #650). The queue is where the BUILD STATE is resolved, and the ring
@@ -865,11 +864,9 @@ func _link_spans_seam(a: Vector2, b: Vector2) -> bool:
 ##  - two RANGE BORDERS: a clean perimeter outline of each reach's hex disk (traced
 ##    edge-by-edge via _draw_range_border, using the sim's true **odd-r hex distance** so the
 ##    boundary == actually-in-range) — the band's apron (green, `work_range`) and scout sight
-##    (azure, `scout_reveal_radius`, only when scouts are staffed).
-##  ⛔ **THE RED HUNT-REACH RING IS GONE** (`docs/plan_civilization_steps.md` §One work party). It
-##    outlined `hunt_reach`, a boundary that no longer bounds anything: every job — hunt or gather —
-##    posts a work party past the SAME apron, and a ring drawn at a second, larger radius told the
-##    player hunting stopped somewhere it does not.
+##    (azure, `scout_reveal_radius`, only when scouts are staffed). There is no separate hunt ring:
+##    every job — hunt or gather — posts a work party past the SAME apron
+##    (`docs/plan_civilization_steps.md` §One work party).
 ##  - the SOURCE ROWS (`compute_source_rows`) — the model the docked `BandSourceList` renders and
 ##    the anchors its leader lines run to. The worked RINGS themselves belong to
 ##    `draw_worked_source_marks`, which runs for every player band whatever is selected.

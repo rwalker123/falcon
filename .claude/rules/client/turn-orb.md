@@ -206,8 +206,7 @@ paths:
     per party, not one aggregate** (each is a separate decision with its own destination; idle
     workers genuinely IS one aggregate): label = the phase words from `EXPEDITION_PHASE_LABELS`
     ("Awaiting orders"), detail = `"<mission> · <objective>"` (mission from
-    `EXPEDITION_MISSION_LABELS`; objective = the followed herd for a hunt party, the party's tile for
-    a scout). Capped at `ATTENTION_AWAITING_MAX_ROWS` — the popover is positioned ABOVE the orb, so an
+    `EXPEDITION_MISSION_LABELS`; objective = the party's tile). Capped at `ATTENTION_AWAITING_MAX_ROWS` — the popover is positioned ABOVE the orb, so an
     unbounded list would climb off-screen and take the `Advance ▸` footer with it — with the remainder
     folded into one `"+N more awaiting orders"` row that jumps to the first party past the cap (so
     even the aggregate row is actionable, not a dead `Open ▸` stub). **Its Jump reuses the Band

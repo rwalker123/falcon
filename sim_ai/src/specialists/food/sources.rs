@@ -757,11 +757,12 @@ impl Source {
             .map_or(more, |cap| cap.saturating_sub(existing).min(more))
     }
 
-    /// The reach a band works this source from: `work_range` for a patch, `hunt_reach` for a herd.
-    pub fn reach(&self, band: &PopulationCohortState) -> u32 {
+    /// The reach a band works this source from: `work_range` for a patch, the seat's
+    /// [`SeatMemory::hunt_reach`] for a herd.
+    pub fn reach(&self, band: &PopulationCohortState, memory: &SeatMemory) -> u32 {
         match self.key {
             SourceKey::Patch(_) => band.work_range,
-            SourceKey::Herd(_) => band.hunt_reach,
+            SourceKey::Herd(_) => memory.hunt_reach(band),
         }
     }
 }

@@ -376,12 +376,9 @@ func on_turn_orb_focus(x: int, y: int) -> void:
         return
     alert_focus_requested.emit(x, y)
 
-## The expedition's OBJECTIVE in words — the herd it follows (hunt) or the tile it is parked on
-## (scout) — the "where do I have to go / what is this about" half of an attention row's context.
+## The expedition's OBJECTIVE in words — the tile it is parked on — the "where do I have to go / what
+## is this about" half of an attention row's context.
 func _expedition_objective(exp: Dictionary) -> String:
-    var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
-    if mission == HudExpeditionVocab.EXPEDITION_MISSION_HUNT:
-        return _herd_label_for_id(String(exp.get("expedition_target_herd", "")).strip_edges())
     return HudAttentionVocab.ATTENTION_TILE_FORMAT % [int(exp.get("current_x", -1)), int(exp.get("current_y", -1))]
 
 ## Turn-orb attention items for every expedition parked in `awaiting` (Producer 4). ONE ROW PER

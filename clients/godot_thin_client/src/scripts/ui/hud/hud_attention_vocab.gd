@@ -279,8 +279,8 @@ const ATTENTION_AWAITING_OVERFLOW_LABEL_FORMAT := "+%d more awaiting orders"
 
 const ATTENTION_AWAITING_OVERFLOW_DETAIL := "Jump to the next parked party"
 
-# The row's context line: "<mission> · <objective>" (the objective is the herd for a hunt party, the
-# party's own tile for a scout). Mission words come from HudExpeditionVocab.EXPEDITION_MISSION_LABELS, the demand
+# The row's context line: "<mission> · <objective>" (the objective is the party's own
+# tile). Mission words come from HudExpeditionVocab.EXPEDITION_MISSION_LABELS, the demand
 # headline from HudExpeditionVocab.EXPEDITION_PHASE_LABELS — neither is retyped here.
 const ATTENTION_AWAITING_DETAIL_FORMAT := "%s · %s"
 

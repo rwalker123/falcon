@@ -797,7 +797,7 @@ the average food/turn the source will deliver over the next `labor_config.yield_
 (default **40**) turns, computed by simulating the herd/patch forward from its CURRENT state under the
 assignment's policy + worker count (`fauna::project_realized_hunt` / `forage::project_realized_forage`,
 mirroring the real turn order Logistics-regrow → Population-take, exactly as
-`systems::expeditions::hunt_trip_forecast` does). It is a **pure function of state** — no history, no
+`systems::expeditions::denial_forecast` does). It is a **pure function of state** — no history, no
 persistence. The seed and the resolved row are **not** bit-identical: the seed projects from
 before the next regrowth, the in-turn row from the source this turn already regrew
 (`ProjectionStart`), and the whole-animal take inside the window re-phases by a body as it slides —

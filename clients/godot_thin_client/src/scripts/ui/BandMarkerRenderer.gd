@@ -400,12 +400,6 @@ func _draw_band_task_arrow(unit: Dictionary, center: Vector2, radius: float, ori
 	_view.draw_line(center, dest_center, arrow_color, _view.BAND_TASK_ARROW_WIDTH)
 	_view._draw_arrowhead(center, dest_center, arrow_color)
 
-## Draw an expedition's map body (docs/plan_exploration_and_sites.md §2 / §2b): a hollow,
-## faction-tinted disc — visually distinct from a resident band's solid dot — carrying a mission
-## glyph (scout = ⚑ flag, hunt = 🏹 bow, denial = 💀 skull, trade = 📦 pack). Phase decorations: a scout `awaiting` party pulses an
-## amber ring (needs a command); a hunt `delivering` party shows a green food pip (carrying a haul
-## home). The shared label / travel arrow / selection ring stay in `_draw_unit`.
-
 func _travel_arrow_color(task_kind: String) -> Color:
 	match task_kind:
 		"harvest":
@@ -419,29 +413,19 @@ func _travel_arrow_color(task_kind: String) -> Color:
 
 ## Draw an expedition's map body (docs/plan_exploration_and_sites.md §2 / §2b): a hollow,
 ## faction-tinted disc — visually distinct from a resident band's solid dot — carrying a mission
-## glyph (scout = ⚑ flag, hunt = 🏹 bow, denial = 💀 skull, trade = 📦 pack). Phase decorations: a scout `awaiting` party pulses an
-## amber ring (needs a command); a hunt `delivering` party shows a green food pip (carrying a haul
-## home). The shared label / travel arrow / selection ring stay in `_draw_unit`.
+## glyph (scout = ⚑ flag, denial = 💀 skull, trade = 📦 pack). Phase decoration: an `awaiting` party
+## pulses an amber ring (needs a command). The shared label / travel arrow / selection ring stay in
+## `_draw_unit`.
 func _draw_expedition_body(unit: Dictionary, center: Vector2, marker_radius: float, color: Color) -> void:
 	var mission := String(unit.get("expedition_mission", ""))
-	var is_hunt := mission == _view.EXPEDITION_HUNT_MISSION
-	# A DENIAL raid gets its own mark rather than the bow: it engages like a hunt party and brings
-	# nothing home, so a bow on the map would promise a delivery that is never coming. Its phase
-	# decorations stay OFF (`is_hunt` gates those below) — the green food pip is a haul cue, and a
-	# denial party's haul is a rounding error it should not advertise.
 	var glyph := _view.EXPEDITION_GLYPH
-	# The mission's ART key: a party that is not hunting, denying or trading is a SCOUTING party,
-	# whatever its mission string says, exactly as the glyph default above reads it.
+	# The mission's ART key: a party that is not denying or trading is a SCOUTING party, whatever its
+	# mission string says, exactly as the glyph default above reads it.
 	var art_mission := HudExpeditionVocab.EXPEDITION_MISSION_SCOUT
-	if is_hunt or mission == _view.EXPEDITION_DENY_MISSION or mission == _view.EXPEDITION_TRADE_MISSION:
+	if mission == _view.EXPEDITION_DENY_MISSION or mission == _view.EXPEDITION_TRADE_MISSION:
 		art_mission = mission
-	if is_hunt:
-		glyph = _view.EXPEDITION_HUNT_GLYPH
-	elif mission == _view.EXPEDITION_DENY_MISSION:
+	if mission == _view.EXPEDITION_DENY_MISSION:
 		glyph = _view.EXPEDITION_DENY_GLYPH
-	# A SHIPMENT gets its own mark for the denial raid's reason: it engages nothing and brings nothing
-	# home, so both the bow and the skull would misdescribe it. Its phase decorations stay off too —
-	# the green pip means "carrying a haul HOME", and a shipment's goods are going the other way.
 	elif mission == _view.EXPEDITION_TRADE_MISSION:
 		glyph = _view.EXPEDITION_TRADE_GLYPH
 	# Dark backing disc keeps the glyph legible over any terrain (mirrors the site/herd markers).
@@ -450,12 +434,12 @@ func _draw_expedition_body(unit: Dictionary, center: Vector2, marker_radius: flo
 	_view.draw_arc(center, marker_radius * _view.EXPEDITION_RING_FACTOR, 0, TAU, 24, color, _view.EXPEDITION_RING_WIDTH)
 	# Mission ART at the center (`ExpeditionSprites`), drawn the fauna marker's way (`_draw_marker_sprite`,
 	# the same drop shadow, untinted, under the renderer's pinned filter); the glyph is the fallback for
-	# a mission with no art — the hunting party, which keeps its bow.
+	# a mission with no art.
 	var sprite := ExpeditionSprites.for_mission(art_mission)
 	if sprite != null:
 		_view._draw_marker_sprite(center, sprite,
 			int(maxf(_view.EXPEDITION_SPRITE_MIN_SIZE, marker_radius * _view.EXPEDITION_SPRITE_SIZE_FACTOR * 2.0)))
-		_draw_expedition_phase_marks(unit, center, marker_radius, is_hunt)
+		_draw_expedition_phase_marks(unit, center, marker_radius)
 		return
 	var font: Font = ThemeDB.fallback_font
 	if font != null:
@@ -463,26 +447,11 @@ func _draw_expedition_body(unit: Dictionary, center: Vector2, marker_radius: flo
 		var text_size: Vector2 = font.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, glyph_size)
 		var pos := Vector2(center.x - text_size.x * 0.5, center.y + glyph_size * 0.34)
 		_view.draw_string(font, pos, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, glyph_size, _view.EXPEDITION_GLYPH_COLOR)
-	_draw_expedition_phase_marks(unit, center, marker_radius, is_hunt)
+	_draw_expedition_phase_marks(unit, center, marker_radius)
 
-## The expedition marker's PHASE decorations, drawn over its face whichever face it wears (art or
-## glyph): the hunt party's delivering pip / hunting cue, and the awaiting-orders pulse.
-func _draw_expedition_phase_marks(unit: Dictionary, center: Vector2, marker_radius: float,
-		is_hunt: bool) -> void:
-	# Hunt phase decoration: hauling a haul home (delivering/returning) → a solid green food pip;
-	# gathering at the herd (hunting) → a small red "working" cue ring. Mutually exclusive phases.
-	if is_hunt:
-		var hphase := String(unit.get("expedition_phase", ""))
-		if hphase == _view.EXPEDITION_PHASE_DELIVERING or hphase == _view.EXPEDITION_PHASE_RETURNING:
-			var pip_center := center + Vector2(marker_radius, marker_radius) * _view.EXPEDITION_DELIVER_PIP_OFFSET
-			var pip_radius := marker_radius * _view.EXPEDITION_DELIVER_PIP_FACTOR
-			_view.draw_circle(pip_center, pip_radius, HudStyle.HEALTHY)
-			_view.draw_arc(pip_center, pip_radius, 0, TAU, 10, Color(0, 0, 0, 0.5), 1.0)
-		elif hphase == _view.EXPEDITION_PHASE_HUNTING:
-			var cue_center := center + Vector2(marker_radius, marker_radius) * _view.EXPEDITION_GATHER_CUE_OFFSET
-			var cue_radius := marker_radius * _view.EXPEDITION_GATHER_CUE_FACTOR
-			_view.draw_arc(cue_center, cue_radius, 0, TAU, 12, HudStyle.DANGER, _view.EXPEDITION_GATHER_CUE_WIDTH)
-
+## The expedition marker's PHASE decoration, drawn over its face whichever face it wears (art or
+## glyph): the awaiting-orders pulse.
+func _draw_expedition_phase_marks(unit: Dictionary, center: Vector2, marker_radius: float) -> void:
 	# Awaiting-orders idle indicator (scout): a pulsing amber ring (needs a command).
 	if String(unit.get("expedition_phase", "")) == _view.EXPEDITION_PHASE_AWAITING:
 		var pulse: float = 0.5 + 0.5 * sin(_view._expedition_time * _view.EXPEDITION_AWAITING_PULSE_SPEED)

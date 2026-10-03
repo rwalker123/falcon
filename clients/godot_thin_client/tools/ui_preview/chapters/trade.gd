@@ -908,8 +908,8 @@ func _meter_text() -> String:
 ## rather than typed, so a reworded sentence that dropped the mark fails here.
 const TRADE_APPROXIMATE_MARK := "≈"
 
-## The `Orders:` key a HUNT party states and a shipment must not. Spelled here because the assertion
-## is an ABSENCE and there is no producer to read it from on this path.
+## The `Orders:` key a shipment must not state. Spelled here because the assertion is an ABSENCE and
+## there is no producer to read it from on this path.
 const TRADE_ABSENT_ORDERS_KEY := "Orders:"
 
 

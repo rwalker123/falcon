@@ -7,7 +7,7 @@ extends Node
 ##
 ## Reported from play: the parties row's red `✕` did nothing, repeatedly, and the feed answered
 ## `Expedition 2 does not exist in the simulation`. The recall was never broken — the sim was
-## correctly refusing a party the CLIENT was still drawing. A party that a `send_hunt_expedition`
+## correctly refusing a party the CLIENT was still drawing. A party that a launch command
 ## spawned and an in-camp `recall_expedition` despawned inside ONE tick was published on a **held**
 ## frame, which does not store into the baseline, so `diff_removed` had nothing to sweep and every
 ## later frame carried `populations: []` / `removedPopulations: []`. The row never healed.
@@ -26,7 +26,7 @@ extends Node
 ## The claim is *wire → panel*, so the run starts at real FlatBuffers bytes and ends at live nodes:
 ##
 ##   baseline envelope → `SnapshotLoader.poll_stream` → **arrival delta** (appends a player band and
-##   its detached hunting party) → **removal delta** (names the party in `removedPopulations`)
+##   its detached denial party) → **removal delta** (names the party in `removedPopulations`)
 ##
 ## with the real `SnapshotDecoder` in the middle and a real `HudLayer` + `BandCityPanel` + `MapView`
 ## at the end, fanned out the way `Main._apply_snapshot` fans out (see `_apply_frame`). Nothing here
@@ -82,8 +82,8 @@ const BAND_ENTITY := 9001
 const PARTY_ENTITY := 9002
 const PARTY_SIZE := 4
 const PARTY_TILE := Vector2i(2, 1)
-## The party's quarry id — its row and its inspector strip both render it (a hunt party's summary is
-## `🏹 <quarry>…`), so it is the NEEDLE for "some control under the panel still names this party".
+## The party's quarry id — its row and its inspector strip both render it (a denial party's summary is
+## `💀 <quarry>…`), so it is the NEEDLE for "some control under the panel still names this party".
 ## Nothing else in the fixture world carries this string: the baseline's herds are saturated rows
 ## whose ids are path hashes.
 const PARTY_QUARRY_NEEDLE := "game_boar_04"

@@ -401,10 +401,10 @@ verbs — a free-form `species` string means new species need no schema change).
 >   without a reader (`checkpoints.md` → "The client view carries no save state at all any more").
 > - **A hunted herd stays visible for free** — `calculate_visibility` reveals `worked_source_sight_range`
 >   around each worked Hunt herd's tile, so a herd your band is working is always `Active`.
-> - **Known gap:** a hunting **expedition**'s target herd is *not* revealed (an expedition is
+> - **Known gap:** a raiding party's target herd is *not* revealed (an expedition is
 >   `Without<Expedition>`-excluded from live faction reveal; its discoveries are comm-range gated), so
->   a distant target is not published. The in-flight readout is unaffected — `expeditionEtaTurns` /
->   `expeditionProjectedDelivery` ride the *cohort*, not the herd.
+>   a distant target is not published. The party names it anyway — `expeditionTargetSpecies` rides
+>   the *cohort*, not the herd.
 > - **Per-faction snapshots are still a future arc.** The capture has ONE `ViewerFaction`, so this
 >   closes the leak for the single-viewer stream the game ships today; true competitive MP needs a
 >   per-faction capture.
@@ -421,17 +421,9 @@ verbs — a free-form `species` string means new species need no schema change).
 > heading suppression) and `integration_tests/tests/fauna_fog.rs`, which asserts on the **encoded
 > FlatBuffers bytes** the client actually receives, decoded through the client's own accessor chain.
 
-**Hunt (one-shot)** — the `hunt_fauna <faction> <herd_id> [band_id]`
-command (`handle_hunt_fauna`, `server.rs`; full plumbing in `command.proto` /
-`commands.rs` / `command_text.rs`) attaches a `FaunaPursuit` component (`components.rs`)
-to a band (auto-picked when no band id is given). Each turn `advance_fauna_pursuits`
-(`systems.rs`, `TurnStage::Population`) re-reads the herd's **live** position (herds
-already moved in the earlier `Logistics` stage), steps the band up to
-`hunt.pursuit_tiles_per_turn` toward it, and on closing to `hunt.pursuit_radius`
-(=1, Chebyshev) resolves a one-shot take: `hunt.take_from(biomass)` biomass →
-provisions (`hunt.provisions_per_biomass`), drawn from the group and added to
-`FactionInventory`, then removes the component. An elusive herd is abandoned after
-`hunt.max_pursuit_turns`. Config lives in the `hunt` block of `fauna_config.json`.
+**The one-shot hunt commands are gone.** `hunt_fauna` and `hunt_game` (alias `hunt`) are deleted
+from the text grammar, the proto and the server; a hunt is an `assign_labor … hunt` row, and past the
+band's apron that row posts a work party (`work-party.md`).
 
 **Follow (`follow_herd`) is a RETIRED command** — the source-centric `assign_labor` replaced it, and
 the server ignores it if a stale client still sends one. Its proto payload survives (a shipped field
@@ -588,8 +580,7 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 > takes no `improvement` and no ladder, and nothing beside it does either. (It carried none even while
 > the dip was live, when the dip multiplied the CREW; writing it here as `… × build_dip` — as this
 > file did — handed a reader a double discount.) **There is no stance axis** —
-> `FollowPolicy` is deleted, and the floor rides `LaborTarget::Hunt` (a resident band) or
-> `ExpeditionMission::Hunt` (a raid) as an `f32` fraction of `K`.
+> `FollowPolicy` is deleted, and the floor rides `LaborTarget::Hunt` as an `f32` fraction of `K`.
 >
 > | floor | herd |
 > |---|---|
@@ -1139,8 +1130,8 @@ assignment has TWO axes" in `intensification.md`. `advance_labor_allocation`
 (`systems.rs`, Population stage, replacing the three retired systems) resolves per-worker yields each
 turn: Forage = `workers × per_worker_yield × seasonal_weight` from an in-range `FoodModuleTag` tile;
 Hunt take = `min(workers × per_worker_biomass_capacity, policy_ceiling)` (reusing the per-policy ecology
-ceilings — Sustain under-hunting lets a herd grow), tracking a roaming herd out to `band_work_range +
-hunt_leash_tiles` before the assignment lapses (feed entry). Scout extends the band's live sight range
+ceilings — Sustain under-hunting lets a herd grow); a herd past `band_work_range` is worked by a work
+party that follows it (`work-party.md`). Scout extends the band's live sight range
 in `calculate_visibility` by posting forward-observer vantages (`scout.vantage_distance(scouts)` out
 in all 6 hex directions, LOS revealed from each — re-marked Active every turn while scouts are
 staffed, scaling with head-count); Warrior is inert until the predator slice. `move_band <faction> <band> <x> <y>` sets a `BandTravel` component that
