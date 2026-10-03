@@ -7,7 +7,7 @@ extends RefCounted
 ## chapter moved is a set of frames changed. See `.claude/rules/client/test-harnesses.md`.
 ##
 ## **THE TWO HALVES ANSWER DIFFERENT QUESTIONS, so both are here.** The SHEET and its destination
-## pick read the `connections` section (the band page's "Peoples we know" roster is the other
+## pick read the `connections` section (the band page's Peoples tab is the other
 ## reader, rendered near the end of this chapter), and their
 ## whole point is what they refuse: a parked tie cannot be picked, a remembered position is worded as
 ## remembered, and the mass meter moves before the server ever sees a manifest. The PARTY is the readout on the other side of
@@ -18,7 +18,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 164
+const EXPECTED_CHECKPOINTS := 180
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
@@ -516,6 +516,34 @@ func run(harness) -> void:
 	h._hud.set_reserved_inset(&"band_panel", SIDE_RIGHT, 0.0)
 	panel.queue_free()
 	await h.get_tree().process_frame
+	# **THE NO-DOCK DRAWER REACHES BOTH NARROW-ONLY ZONES.** With the panel released the band's
+	# zones stack flat in `%AllocationPanel`, which has no tabs — so Trade and Peoples follow Parties
+	# there, Trade first, in the drawer's own flow.
+	h._hud.update_connections(_roster_ties())
+	h._hud.show_unit_selection(refreshed)
+	await h._settle()
+	await h._save("connections_roster_drawer")
+	var drawer: Node = h._hud.allocation_panel
+	var drawer_trade := drawer.find_child("TradeSection", true, false) if drawer != null else null
+	var drawer_peoples := drawer.find_child(HudConnectionsVocab.BLOCK_NAME, true, false) \
+		if drawer != null else null
+	h._assert_hud("the no-dock drawer carries the Trade section and the Peoples roster",
+		drawer_trade != null and drawer_peoples != null)
+	h._assert_hud("…the roster after Trade's section, after Parties, with every tie (%d of %d)" % [
+		_roster_rows(drawer_peoples).size(), _roster_ties().size()],
+		drawer_trade != null and drawer_peoples != null
+			and drawer_peoples.get_parent() == drawer_trade.get_parent()
+			and drawer_peoples.get_index() > drawer_trade.get_index()
+			and _roster_rows(drawer_peoples).size() == _roster_ties().size())
+	# The drawer's own scroll carries the roster: scrolled to its end, the roster is in view.
+	var drawer_scroll: ScrollContainer = h._hud.subject_scroll
+	drawer_scroll.scroll_vertical = int(drawer_scroll.get_v_scroll_bar().max_value)
+	await h._settle()
+	await h._save("connections_roster_drawer_scrolled")
+	h._assert_hud("…and scrolled to its end, the drawer shows the roster", drawer_peoples != null
+		and drawer_scroll.get_global_rect().intersects((drawer_peoples as Control).get_global_rect()))
+	drawer_scroll.scroll_vertical = 0
+	h._hud.update_connections(_connections())
 	h._hud.show_unit_selection(_trade_party())
 	await h._settle()
 	await h._save("trade_party_panel")
@@ -1349,11 +1377,11 @@ func _render_prototype_scene() -> void:
 	h._hud.update_band_alerts([_shipper_band(), _neighbour_band()])
 	await h._settle()
 
-## **"PEOPLES WE KNOW" ON THE BAND PAGE** (issue #549) — the shipper's ties as a roster on the Band
-## zone of the 380px RIGHT dock, the narrowest band column the panel ships. One tie per state the row
-## can be in: GROWING (contact this turn), FADING (no contact, strength left), PARKED (strength 0),
-## plus a subject absent from the roster named by its remembered `subject_name` and one named by
-## where it was. Then a band that knows nobody, for the empty line.
+## **THE PEOPLES TAB** (issue #549) — the shipper's ties on its own tab of the 380px RIGHT dock, the
+## narrowest band column the panel ships. One tie per state the row can be in: GROWING (contact this
+## turn), FADING (no contact, strength left), PARKED (strength 0), plus a subject absent from the
+## roster named by its remembered `subject_name`, one named by where it was, and enough more that the
+## list must scroll. Then a band that knows nobody, for the empty line.
 ##
 ## The roster ORDER is asserted by `subject_band_id` off each row's meta: live ties by strength,
 ## strongest first, then parked by last contact — and the two fading ties are given strengths that
@@ -1361,14 +1389,14 @@ func _render_prototype_scene() -> void:
 func _render_connections_roster(panel: BandCityPanel, home_band: Dictionary) -> void:
 	var prior_turn: int = h._hud._band_labor.current_turn()
 	h._hud.update_overlay(ROSTER_TURN, {})
-	panel.set_active_tab(BandCityPanel.ZONE_BAND)
+	panel.set_active_tab(BandCityPanel.ZONE_PEOPLES)
 	h._hud.update_connections(_roster_ties())
 	h._hud.update_band_alerts([home_band, _neighbour_band()])
 	h._hud.show_unit_selection(home_band)
 	await h._settle()
 	await h._save("connections_roster")
 	var block := panel.find_child(HudConnectionsVocab.BLOCK_NAME, true, false) as Control
-	h._assert_hud("the band zone carries a \"Peoples we know\" block", block != null)
+	h._assert_hud("the band page carries a Peoples roster", block != null)
 	var rows := _roster_rows(block)
 	var order: Array = rows.map(func(r: Control) -> int:
 		return int(r.get_meta(HudConnectionsVocab.ROW_META)))
@@ -1376,8 +1404,43 @@ func _render_connections_roster(panel: BandCityPanel, home_band: Dictionary) -> 
 		BandFx.FIXTURE_BAND_ID_OFFSET + NEIGHBOUR_ENTITY,
 		BandFx.FIXTURE_BAND_ID_OFFSET + FOREIGN_NAMED_ENTITY,
 		BandFx.FIXTURE_BAND_ID_OFFSET + FOREIGN_UNNAMED_ENTITY,
-		BandFx.FIXTURE_BAND_ID_OFFSET + PARKED_ENTITY,
 	]
+	for i in ROSTER_EXTRA_TIES:
+		want_order.append(BandFx.FIXTURE_BAND_ID_OFFSET + ROSTER_EXTRA_ENTITY_BASE + i)
+	want_order.append(BandFx.FIXTURE_BAND_ID_OFFSET + PARKED_ENTITY)
+	var tie_count := _roster_ties().size()
+	h._assert_hud("the Peoples tab is its own zone, shown on the side dock",
+		panel.shows_zone(BandCityPanel.ZONE_PEOPLES)
+			and panel._zones.get(BandCityPanel.ZONE_PEOPLES) is Node
+			and (panel._zones.get(BandCityPanel.ZONE_PEOPLES) as Node).is_ancestor_of(block))
+	h._assert_hud("the band zone carries no roster any more",
+		panel._zones.get(BandCityPanel.ZONE_BAND) is Node and (panel._zones.get(
+			BandCityPanel.ZONE_BAND) as Node).find_child(HudConnectionsVocab.BLOCK_NAME, true, false)
+			== null)
+	h._assert_hud("every tie has its row, no cap (%d of %d)" % [_roster_rows(block).size(), tie_count],
+		_roster_rows(block).size() == tie_count)
+	h._assert_hud("the tab badge counts the ties (%s)" % _peoples_badge(panel),
+		_peoples_badge(panel) == str(tie_count))
+	var list: ScrollContainer = null
+	if block != null:
+		list = block.find_child(HudConnectionsVocab.LIST_NAME, true, false) as ScrollContainer
+	var rows_box := ConnectionsRoster.rows_box(block)
+	h._assert_hud("the rows sit in the tab's sanctioned scroll (%s)" % HudConnectionsVocab.LIST_NAME,
+		list != null and rows_box != null and list.is_ancestor_of(rows_box))
+	h._assert_hud("…and the list is long enough that it must scroll (%.0f of %.0f)" % [
+		rows_box.get_combined_minimum_size().y if rows_box != null else 0.0,
+		list.size.y if list != null else 0.0],
+		list != null and rows_box != null
+			and rows_box.get_combined_minimum_size().y > list.size.y)
+	# The scrollbar has a gutter of its own: every row ends clear of the bar's left edge.
+	var vbar: VScrollBar = list.get_v_scroll_bar() if list != null else null
+	var bar_left: float = vbar.get_global_rect().position.x if vbar != null else 0.0
+	var widest_right := 0.0
+	for row_variant in rows:
+		widest_right = maxf(widest_right, (row_variant as Control).get_global_rect().end.x)
+	h._assert_hud("…and every row ends clear of the scrollbar (rows end %.0f, bar starts %.0f)" % [
+		widest_right, bar_left], vbar != null and vbar.visible and not rows.is_empty()
+		and widest_right <= bar_left + ROSTER_EDGE_TOLERANCE)
 	h._assert_hud("one row per tie, live by strength then parked (%s, want %s)" % [order, want_order],
 		order == want_order)
 	h._assert_hud("every row is at most two lines", rows.all(func(r: Control) -> bool:
@@ -1399,22 +1462,23 @@ func _render_connections_roster(panel: BandCityPanel, home_band: Dictionary) -> 
 	h._assert_hud("a live row's second line is the remembered sighting, worded as one",
 		_row_text(rows, 0).contains(HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_FORMAT % [
 			NEIGHBOUR_LAST_SEEN.x, NEIGHBOUR_LAST_SEEN.y, ROSTER_TURN]))
-	var parked_word := _label_with_text(rows[3] if rows.size() > 3 else null,
+	var parked_row: Control = rows[rows.size() - 1] if not rows.is_empty() else null
+	var parked_word := _label_with_text(parked_row,
 		String(HudConnectionsVocab.STATE_WORDS[HudConnectionsVocab.STATE_PARKED]))
 	h._assert_hud("the parked tie is SHOWN, its state in amber", parked_word != null
 		and parked_word.get_theme_color("font_color").is_equal_approx(HudStyle.WARN))
-	var parked_hint := _label_with_text(rows[3] if rows.size() > 3 else null,
+	var parked_hint := _label_with_text(parked_row,
 		HudConnectionsVocab.PARKED_HINT_FORMAT % [PARKED_LAST_SEEN.x, PARKED_LAST_SEEN.y,
 			PARKED_LAST_SEEN_TURN])
 	h._assert_hud("…and its second line says what to do, amber beside it", parked_hint != null
 		and parked_hint.get_theme_color("font_color").is_equal_approx(HudStyle.WARN))
-	# The band zone's own scroll is the column the block is laid out in. Its horizontal scroll is
-	# disabled, so a block whose MINIMUM width exceeded it would be clipped rather than scrolled.
-	var scroll := panel.find_child(HudWorkVocab.BAND_ZONE_SCROLL_NAME, true, false) as Control
+	# The tab's own scroll is the column the rows are laid out in. Its horizontal scroll is disabled,
+	# so a block whose MINIMUM width exceeded it would be clipped rather than scrolled.
+	var scroll: Control = list
 	var column_width: float = scroll.size.x if scroll != null else -1.0
 	var min_width: float = block.get_combined_minimum_size().x if block != null else INF
 	var zone_right := block.get_global_rect().end.x if block != null else 0.0
-	h._assert_hud("the block's minimum width fits the narrow dock's band column (%.0f of %.0f)" % [
+	h._assert_hud("the block's minimum width fits the narrow dock's Peoples column (%.0f of %.0f)" % [
 		min_width, column_width], block != null and scroll != null
 		and min_width <= column_width + ROSTER_EDGE_TOLERANCE)
 	h._assert_hud("…and no row runs past the block", block != null
@@ -1422,12 +1486,23 @@ func _render_connections_roster(panel: BandCityPanel, home_band: Dictionary) -> 
 			return r.get_global_rect().end.x <= zone_right + ROSTER_EDGE_TOLERANCE))
 
 	# **A TIES-ONLY FRAME** — the `connections` section moves and populations do not, so nothing
-	# drives `update_band_alerts`. The roster must still read the new ties on this frame, by its block
-	# being rebuilt in place: the zone column's first block is the SAME node before and after, which is
-	# what says no full re-render was taken to get there.
-	var column: Node = block.get_parent() if block != null else null
-	var first_id := column.get_child(0).get_instance_id() if column != null else 0
+	# drives `update_band_alerts`. The roster must still read the new ties on this frame, re-filled in
+	# place: the tab and its scroll are the SAME nodes before and after, which is what says no full
+	# re-render was taken to get there. One more tie is met, so the badge must move too.
+	# The list scrolled to its end, so the parked tie at the foot is on the frame too.
+	if list != null:
+		list.scroll_vertical = int(rows_box.get_combined_minimum_size().y)
+	await h._settle()
+	await h._save("connections_roster_scrolled")
+	h._assert_hud("…and scrolled to its end the parked tie is in view",
+		list != null and parked_row != null and list.get_global_rect().encloses(
+			parked_row.get_global_rect().grow(-ROSTER_EDGE_TOLERANCE)))
+	if list != null:
+		list.scroll_vertical = 0
+	var block_id := block.get_instance_id() if block != null else 0
+	var list_id := list.get_instance_id() if list != null else 0
 	var moved := _roster_ties()
+	moved.append(_tie(ROSTER_NEW_ENTITY, TIE_STRENGTH_LIVE, NEIGHBOUR_LAST_SEEN, ROSTER_TURN))
 	for tie_variant in moved:
 		var tie: Dictionary = tie_variant
 		if int(tie["subject_band_id"]) == BandFx.FIXTURE_BAND_ID_OFFSET + NEIGHBOUR_ENTITY:
@@ -1451,10 +1526,14 @@ func _render_connections_roster(panel: BandCityPanel, home_band: Dictionary) -> 
 			% HudFormat.progress_percent(TIES_ONLY_NEIGHBOUR_STRENGTH))
 		and neighbour_row.contains(String(HudConnectionsVocab.STATE_WORDS[
 			HudConnectionsVocab.STATE_FADING])))
-	h._assert_hud("…by rebuilding the block alone: the zone's first block is the same node",
-		column != null and is_instance_valid(column) and column.get_child_count() > 0
-			and column.get_child(0).get_instance_id() == first_id
-			and refreshed_block != null and refreshed_block.get_parent() == column)
+	h._assert_hud("…by re-filling in place: the tab and its scroll are the same nodes",
+		refreshed_block != null and refreshed_block.get_instance_id() == block_id
+			and refreshed_block.find_child(HudConnectionsVocab.LIST_NAME, true, false) != null
+			and refreshed_block.find_child(HudConnectionsVocab.LIST_NAME, true, false)
+				.get_instance_id() == list_id)
+	h._assert_hud("…and the tab badge follows the new tie count (%s, want %d)" % [
+		_peoples_badge(panel), moved.size()], _peoples_badge(panel) == str(moved.size())
+		and refreshed_rows.size() == moved.size())
 	h._hud.update_connections(_roster_ties())
 	await h._settle()
 
@@ -1466,6 +1545,7 @@ func _render_connections_roster(panel: BandCityPanel, home_band: Dictionary) -> 
 	h._assert_hud("a band that has met nobody says so in one line",
 		empty_block != null and _roster_rows(empty_block).is_empty()
 			and _collect_text(empty_block).contains(HudConnectionsVocab.EMPTY))
+	h._assert_hud("…and its Peoples tab carries no badge", _peoples_badge(panel) == "")
 
 	h._hud.update_overlay(prior_turn, {})
 	h._hud.update_connections(_connections())
@@ -1492,6 +1572,16 @@ const FADING_TURNS_AGO := 3
 const TIES_ONLY_NEIGHBOUR_STRENGTH := 0.5
 ## Sub-pixel slack between a row's rect and its column's, for layout rounding.
 const ROSTER_EDGE_TOLERANCE := 0.5
+## Extra fading ties past the four named states, so the tab holds 30 — more than the 987px right-dock
+## tab shows — and its list must scroll. Their
+## strengths step down from just under the unnamed tie's, so they sort between it and the parked one.
+const ROSTER_EXTRA_TIES := 26
+const ROSTER_EXTRA_ENTITY_BASE := 1000
+const ROSTER_EXTRA_STRENGTH_TOP := 0.19
+const ROSTER_EXTRA_STRENGTH_STEP := 0.005
+const ROSTER_EXTRA_NAME := "Hillfolk"
+## The band first met in the ties-only frame.
+const ROSTER_NEW_ENTITY := 1100
 
 func _roster_ties() -> Array:
 	var growing := _tie(NEIGHBOUR_ENTITY, TIE_STRENGTH_LIVE, NEIGHBOUR_LAST_SEEN, ROSTER_TURN)
@@ -1505,13 +1595,25 @@ func _roster_ties() -> Array:
 	var parked := _tie(PARKED_ENTITY, TIE_STRENGTH_PARKED, PARKED_LAST_SEEN, PARKED_LAST_SEEN_TURN)
 	parked["subject_name"] = "Thornwick"
 	# Listed out of order, so the roster's own sort is what the order claim tests.
-	return [parked, unnamed, growing, named]
+	var ties: Array = [parked, unnamed, growing, named]
+	for i in ROSTER_EXTRA_TIES:
+		var extra := _tie(ROSTER_EXTRA_ENTITY_BASE + i,
+			ROSTER_EXTRA_STRENGTH_TOP - ROSTER_EXTRA_STRENGTH_STEP * float(i), FOREIGN_NAMED_SEEN,
+			ROSTER_TURN - FADING_TURNS_AGO)
+		extra["subject_name"] = "%s %d" % [ROSTER_EXTRA_NAME, i + 1]
+		ties.append(extra)
+	return ties
+
+## The Peoples tab's badge text, as the panel holds it.
+func _peoples_badge(panel: BandCityPanel) -> String:
+	return String((panel._tab_badges.get(BandCityPanel.ZONE_PEOPLES, {}) as Dictionary).get("text", ""))
 
 func _roster_rows(block: Node) -> Array:
 	var rows: Array = []
-	if block == null:
+	var box := ConnectionsRoster.rows_box(block)
+	if box == null:
 		return rows
-	for child in block.get_children():
+	for child in box.get_children():
 		if child is Control and (child as Control).has_meta(HudConnectionsVocab.ROW_META):
 			rows.append(child)
 	return rows

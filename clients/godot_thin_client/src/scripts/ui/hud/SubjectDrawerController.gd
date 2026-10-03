@@ -927,7 +927,7 @@ func _render_occupant_drawer(from_selection: bool = false) -> void:
     elif _herd_assign_controls != null:
         _herd_assign_controls.visible = false
 
-## Stack the three ZONE contents into `target` — the legacy flat host (the Occupants card's
+## Stack the ZONE contents into `target` — the legacy flat host (the Occupants card's
 ## %AllocationPanel, used by the no-dock `ui_preview` harness). It renders exactly what the dock
 ## renders, through the SAME three builders (`BandPanelController.build_*_zone`); there is no second
 ## layout to maintain.
@@ -948,6 +948,11 @@ func _build_allocation_panel(band: Dictionary, target: VBoxContainer = null) -> 
     container.add_child(_bandpanel.build_band_zone(band, false))
     container.add_child(_bandpanel.build_work_zone(band))
     container.add_child(_bandpanel.build_parties_zone(band))
+    # The Trade and Peoples zones are tabs of the dock; this host has no tabs, so both follow Parties,
+    # Trade first — or the flat host could reach neither. They join the drawer's own flow rather than
+    # the Parties list, whose scroll is a few rows tall here.
+    for section in _bandpanel.build_flat_sections(band):
+        container.add_child(section)
     # The docked path offers the verbs from `_build_band_verb_actions`; this host must offer them too,
     # or a selected player band has no way to be ordered at all here (see `_make_band_verb_row`).
     container.add_child(_make_band_verb_row(band))

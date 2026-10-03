@@ -3,7 +3,7 @@ extends RefCounted
 
 ## **"PEOPLES WE KNOW" — THE TIES ONE BAND HOLDS, ON ITS OWN PAGE** (arc #527, issue #549).
 ##
-## All-`static`, stateless: the block builder the Band zone mounts, the tie-state rule it reads, the
+## All-`static`, stateless: the Peoples tab and its wide-shell section, the tie-state rule it reads, the
 ## roster's order, and **the one subject-naming rule** the shipment picker shares
 ## (`subject_label`). The labor model is threaded in as a PARAMETER, never held — the `HudWidgets` /
 ## `SourceForecast` idiom.
@@ -86,21 +86,109 @@ static func remembered_line(tie: Dictionary) -> String:
 	return HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_FORMAT % [
 		x, y, int(tie.get("last_seen_turn", 0))]
 
-## **THE BLOCK** — a zone head counting the ties, then one two-line row per tie in `ordered` order, or
-## the one-line empty state. Built at every tier; the Band zone scrolls when it overflows.
-static func build_block(band_id: int, band_labor: HudBandLaborState) -> VBoxContainer:
+## **THE PEOPLES TAB** — the band page's narrow-shell zone of its own (`BandCityPanel.ZONE_PEOPLES`):
+## the head counting the ties, then EVERY tie in a sanctioned `ScrollContainer`
+## (`HudConnectionsVocab.LIST_NAME`) that fills the tab under the head. No row cap and no `+N more`:
+## the list scrolls. The scroll reports no minimum on its axis; its declared viewport is
+## `list_viewport_height(<the zone's box height>)`, so the list's own height never reaches the panel.
+static func build_tab(band_id: int, band_labor: HudBandLaborState,
+		box_height: float) -> VBoxContainer:
+	var column := HudWidgets.make_zone_column()
+	column.name = HudConnectionsVocab.BLOCK_NAME
+	column.add_theme_constant_override("separation", HudWorkVocab.ZONE_BLOCK_SEPARATION)
 	var ties := ordered(band_labor.connections_for_band(band_id))
+	column.add_child(_build_head(ties.size()))
+	var scroll := ScrollContainer.new()
+	scroll.name = HudConnectionsVocab.LIST_NAME
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.custom_minimum_size = Vector2(0.0, list_viewport_height(box_height))
+	# The rows sit in a gutter the scrollbar's own width wide, reserved whether or not it shows —
+	# Trade's list popover's gutter, the same measure — so the bar never touches a row's state word and
+	# the rows do not jump sideways when the list starts to scroll.
+	var gutter := MarginContainer.new()
+	gutter.name = HudConnectionsVocab.GUTTER_NAME
+	gutter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# A scrolled child must not claim the viewport's height as its own, or a short list would stretch
+	# its rows down the tab; the width still fills, since horizontal scrolling is disabled.
+	gutter.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	gutter.add_theme_constant_override("margin_right",
+		int(scroll.get_v_scroll_bar().get_combined_minimum_size().x))
+	scroll.add_child(gutter)
+	var rows := _make_rows_box()
+	rows.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	gutter.add_child(rows)
+	column.add_child(scroll)
+	_fill_rows(rows, ties, band_labor)
+	return column
+
+## **THE WIDE SHELL'S SECTION** — the same head and rows, with no scroll of its own: it rides at the
+## foot of the Parties zone's sanctioned list, after Trade's section, and that list scrolls.
+static func build_section(band_id: int, band_labor: HudBandLaborState) -> VBoxContainer:
 	var block := HudWidgets.make_zone_block()
 	block.name = HudConnectionsVocab.BLOCK_NAME
-	block.add_child(HudWidgets.zone_head(HudConnectionsVocab.HEAD,
-		HudConnectionsVocab.HEAD_COUNT_FORMAT % ties.size() if not ties.is_empty() else ""))
+	var ties := ordered(band_labor.connections_for_band(band_id))
+	block.add_child(_build_head(ties.size()))
+	var rows := _make_rows_box()
+	block.add_child(rows)
+	_fill_rows(rows, ties, band_labor)
+	return block
+
+## **RE-FILL A BUILT TAB OR SECTION IN PLACE** — the head's count and the rows, nothing else. The
+## tab's scroll and its offset survive, which is what lets a connections-only frame refresh the list
+## without throwing the player back to its top.
+static func refill(block: Control, band_id: int, band_labor: HudBandLaborState) -> void:
+	var rows := rows_box(block)
+	if block == null or rows == null or block.get_child_count() == 0:
+		return
+	var ties := ordered(band_labor.connections_for_band(band_id))
+	var old_head := block.get_child(0)
+	block.remove_child(old_head)
+	old_head.queue_free()
+	var head := _build_head(ties.size())
+	block.add_child(head)
+	block.move_child(head, 0)
+	_fill_rows(rows, ties, band_labor)
+
+## The rows box inside a built tab or section, found by its node name.
+static func rows_box(block: Node) -> VBoxContainer:
+	if block == null:
+		return null
+	return block.find_child(HudConnectionsVocab.ROWS_NAME, true, false) as VBoxContainer
+
+## The tab's badge: how many ties the band holds, parked ones included, and nothing at none — the
+## Trade tab's own convention.
+static func badge_text(band_id: int, band_labor: HudBandLaborState) -> String:
+	var count := band_labor.connections_for_band(band_id).size()
+	return HudConnectionsVocab.HEAD_COUNT_FORMAT % count if count > 0 else ""
+
+## The tab's declared scroll viewport: the zone box less the head and the gap under it, floored at the
+## parties list's own floor (`HudWorkVocab.PARTIES_LIST_MIN_HEIGHT`) so an unknown or tiny box never
+## collapses the list into a bare scrollbar.
+static func list_viewport_height(box_height: float) -> float:
+	return maxf(HudWorkVocab.PARTIES_LIST_MIN_HEIGHT,
+		box_height - HudWorkVocab.ZONE_HEAD_HEIGHT - float(HudWorkVocab.ZONE_BLOCK_SEPARATION))
+
+static func _build_head(count: int) -> Control:
+	return HudWidgets.zone_head(HudConnectionsVocab.HEAD,
+		HudConnectionsVocab.HEAD_COUNT_FORMAT % count if count > 0 else "")
+
+static func _make_rows_box() -> VBoxContainer:
+	var rows := HudWidgets.make_zone_block()
+	rows.name = HudConnectionsVocab.ROWS_NAME
+	return rows
+
+## One two-line row per tie in `ordered` order, or the one-line empty state.
+static func _fill_rows(rows: VBoxContainer, ties: Array, band_labor: HudBandLaborState) -> void:
+	HudWidgets.clear_children(rows)
 	if ties.is_empty():
-		block.add_child(HudWidgets.alloc_hint_label(HudConnectionsVocab.EMPTY))
-		return block
+		rows.add_child(HudWidgets.alloc_hint_label(HudConnectionsVocab.EMPTY))
+		return
 	var turn := band_labor.current_turn()
 	for tie_variant in ties:
-		block.add_child(_build_row(tie_variant as Dictionary, band_labor, turn))
-	return block
+		rows.add_child(_build_row(tie_variant as Dictionary, band_labor, turn))
 
 ## One tie: **line 1** `Name ……… 75% · growing`, **line 2** where they were. Each line is ONE line,
 ## clipped with an ellipsis, so a row is two lines at any width; the row's hover carries the whole

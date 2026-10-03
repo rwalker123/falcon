@@ -383,9 +383,10 @@ var _band_zone_columns: int = 1
 ## without rebuilding the zone. See `_sync_band_zone_scroll` for why a build-time declaration is not
 ## final.
 var _band_zone_scroll: ScrollContainer = null
-## The band zone's live "Peoples we know" block, the band it lists, and what it was built from (the
-## band's ties and the turn), kept so `refresh_connections` can rebuild that one block in place when
-## the `connections` section moves on a frame that re-renders nothing else.
+## The live "Peoples we know" content — the Peoples tab in the narrow shell, its section under Parties
+## in the wide one — the band it lists, and what it was built from (the band's ties and the turn),
+## kept so `refresh_connections` can re-fill it in place when the `connections` section moves on a
+## frame that re-renders nothing else.
 var _connections_block: Control = null
 var _connections_block_band_id: int = HudConst.NO_BAND_ID
 var _connections_block_source: Array = []
@@ -462,6 +463,12 @@ const BAND_ZONE_LAYOUT: Array[Dictionary] = [
     # bottom dock between the two. The width is declared for completeness and summed by nothing.
     {BandCityPanel.ZONE_SPEC_KEY: BandCityPanel.ZONE_TRADE,
         BandCityPanel.ZONE_SPEC_LABEL: HudWorkVocab.ZONE_TAB_TRADE,
+        BandCityPanel.ZONE_SPEC_WIDTH: BandCityPanel.ZONE_PARTY_WIDTH,
+        BandCityPanel.ZONE_SPEC_NARROW_ONLY: true},
+    # **PEOPLES IS NARROW-ONLY TOO** (issue #549), for Trade's reason: a fifth tab on a side dock, and
+    # on a wide shell a section under Parties after Trade's, so the threshold stays 1190.
+    {BandCityPanel.ZONE_SPEC_KEY: BandCityPanel.ZONE_PEOPLES,
+        BandCityPanel.ZONE_SPEC_LABEL: HudWorkVocab.ZONE_TAB_PEOPLES,
         BandCityPanel.ZONE_SPEC_WIDTH: BandCityPanel.ZONE_PARTY_WIDTH,
         BandCityPanel.ZONE_SPEC_NARROW_ONLY: true},
 ]
@@ -961,13 +968,6 @@ func build_band_zone(band: Dictionary, with_vitals: bool = true) -> VBoxContaine
     var outlook: Control = _build_food_outlook_block(band,
         _band_zone_tier != HudWorkVocab.BAND_ZONE_TIER_TALL)
     var workforce := _build_workforce_block(band)
-    # **PEOPLES WE KNOW** (issue #549) — the ties THIS band holds, per observer band. Built by the
-    # all-static `ConnectionsRoster`, which also owns the subject-naming rule the shipment picker reads.
-    var peoples_band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
-    var peoples := ConnectionsRoster.build_block(peoples_band_id, _band_labor)
-    _connections_block = peoples
-    _connections_block_band_id = peoples_band_id
-    _connections_block_source = _connections_source(peoples_band_id)
     # **ONE AUTHORED SPLIT, RE-AUTHORED AND RE-MEASURED WHEN THE KEEPING BLOCK LEFT THIS FLANK**
     # (`docs/plan_standing_upkeep.md` §4.7). The three pool cards and their fund-mode row moved to the
     # WORK tab, so the flank is back to FOUR blocks and the pairing the builders card forced
@@ -1004,10 +1004,6 @@ func build_band_zone(band: Dictionary, with_vitals: bool = true) -> VBoxContaine
     if outlook != null:
         blocks.append({"control": outlook, "column": BAND_COLUMN_LARDER})
     blocks.append({"control": workforce, "column": BAND_COLUMN_PEOPLE})
-    # The roster comes LAST in build order (the flat stack ends on it) and sits in the LEFT column of
-    # a split flank. Measured with the empty state, the only one `band_panel_preview` stages: see
-    # `.claude/rules/client/band-city-panel.md` → "Peoples we know".
-    blocks.append({"control": peoples, "column": BAND_COLUMN_LARDER})
     # BOTH layouts go inside the scroll — the flat stack and the two-column row alike. A widened flank
     # halves what each column carries but does not make either of them unable to overflow, and a rule
     # that scrolled one layout and clipped the other would be the same content loss on a wider monitor.
@@ -1105,28 +1101,44 @@ func _sync_band_zone_scroll() -> void:
         return
     _band_zone_scroll.custom_minimum_size.y = box
 
-## **REBUILD THE "PEOPLES WE KNOW" BLOCK IN PLACE** when the `connections` section moves
+## **RE-FILL THE "PEOPLES WE KNOW" CONTENT IN PLACE** when the `connections` section moves
 ## (`HudLayer.update_connections`). A frame can change the ties and no population, and the band render
-## rides `update_band_alerts` alone, so without this the roster would read a turn stale. Only the one
-## block is swapped, at its own index in its own column, so nothing else in the zone is rebuilt; and
-## a tie set that is unchanged for the shown band (same rows, same turn) rebuilds nothing.
+## rides `update_band_alerts` alone, so without this the roster would read a turn stale. Only the head
+## and the rows are rebuilt (`ConnectionsRoster.refill`) — the tab's scroll keeps its node and its
+## offset, and nothing else in the panel is touched — and the Peoples tab badge is re-pushed. A tie set
+## unchanged for the shown band (same rows, same turn) does nothing at all.
 func refresh_connections() -> void:
     if not is_instance_valid(_connections_block) or _connections_block.is_queued_for_deletion():
-        return
-    var parent := _connections_block.get_parent()
-    if parent == null:
         return
     var source := _connections_source(_connections_block_band_id)
     if source == _connections_block_source:
         return
-    var fresh := ConnectionsRoster.build_block(_connections_block_band_id, _band_labor)
-    var index := _connections_block.get_index()
-    parent.remove_child(_connections_block)
-    _connections_block.queue_free()
-    parent.add_child(fresh)
-    parent.move_child(fresh, index)
-    _connections_block = fresh
+    ConnectionsRoster.refill(_connections_block, _connections_block_band_id, _band_labor)
     _connections_block_source = source
+    if _panel != null and not _panel_is_faction:
+        _panel.set_tab_badge(BandCityPanel.ZONE_PEOPLES,
+            ConnectionsRoster.badge_text(_connections_block_band_id, _band_labor), false)
+
+## Re-declare the Peoples tab's scroll viewport against the zone's current box — the band zone
+## scroll's own correction (`_sync_band_zone_scroll`), for the same reason: a box the panel was still
+## settling at build time, or a resize that kept the shell. The wide section has no scroll of its own.
+func _sync_peoples_scroll() -> void:
+    if _panel == null or _trade_wide or not is_instance_valid(_connections_block):
+        return
+    var scroll := _connections_block.find_child(HudConnectionsVocab.LIST_NAME, true, false) \
+        as ScrollContainer
+    if scroll == null:
+        return
+    var want := ConnectionsRoster.list_viewport_height(_panel.zone_size(BandCityPanel.ZONE_PEOPLES).y)
+    if not is_equal_approx(scroll.custom_minimum_size.y, want):
+        scroll.custom_minimum_size.y = want
+
+## Record the roster content just built for `band`, so `refresh_connections` can re-fill it.
+func _track_connections_block(block: Control, band: Dictionary) -> void:
+    var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
+    _connections_block = block
+    _connections_block_band_id = band_id
+    _connections_block_source = _connections_source(band_id)
 
 ## What the block for `band_id` is built from: its ties and the current turn, the turn deciding
 ## growing against fading.
@@ -1837,6 +1849,7 @@ func _on_zones_resized() -> void:
     # still settling — see `_sync_band_zone_scroll`. Correcting it is one assignment; rebuilding the
     # zone for it would be three.
     _sync_band_zone_scroll()
+    _sync_peoples_scroll()
     _repage_work_zone()
     # The Trade tier is chosen against the box, so a new box may re-author it — in place, after layout.
     _schedule_trade_refill()
@@ -7805,6 +7818,26 @@ func _emit_cancel_order(band: Dictionary, scope: String) -> void:
         return
     emit_signal("cancel_order_requested", band, scope)
 
+## **THE NO-DOCK DRAWER'S TRADE AND PEOPLES SECTIONS**, in that order — the flat host has no tabs, so
+## it mounts both after the Parties zone in its own flow. The roster is tracked like the dock's, so a
+## connections-only frame re-fills it there too.
+func build_flat_sections(band: Dictionary) -> Array[Control]:
+    var peoples := ConnectionsRoster.build_section(int(band.get("band_id", HudConst.NO_BAND_ID)),
+        _band_labor)
+    _track_connections_block(peoples, band)
+    return [_trade.build_section(band, _trade_zone_box()), peoples]
+
+# ---- zone `peoples` ---------------------------------------------------------
+
+## Zone `peoples` (issue #549) — the narrow shell's fifth tab: every tie the band holds, in a sanctioned
+## scroll whose viewport is declared off this zone's own box (`ConnectionsRoster.list_viewport_height`).
+func build_peoples_zone(band: Dictionary) -> VBoxContainer:
+    var box := _panel.zone_size(BandCityPanel.ZONE_PEOPLES) if _panel != null else Vector2.ZERO
+    var tab := ConnectionsRoster.build_tab(int(band.get("band_id", HudConst.NO_BAND_ID)), _band_labor,
+        box.y)
+    _track_connections_block(tab, band)
+    return tab
+
 # ---- zone `trade` -----------------------------------------------------------
 
 ## Zone `trade` (issue #731) — the narrow shell's fourth tab. `TradeZoneController` authors it; this
@@ -7895,7 +7928,8 @@ func _trade_zone_is_on_screen() -> bool:
 ## disclosure that must sit under the row it was opened from.
 ##
 ## The scroll takes `SIZE_EXPAND_FILL`, so the list fills the zone under its head.
-func build_parties_zone(band: Dictionary, with_trade: bool = false) -> VBoxContainer:
+func build_parties_zone(band: Dictionary, with_trade: bool = false,
+        with_peoples: bool = false) -> VBoxContainer:
     var col := HudWidgets.make_zone_column()
     col.add_theme_constant_override("separation", HudWorkVocab.ZONE_BLOCK_SEPARATION)
     # Held for the Trade section's room, measured off this column's laid-out chrome (`_trade_room`).
@@ -7931,10 +7965,18 @@ func build_parties_zone(band: Dictionary, with_trade: bool = false) -> VBoxConta
     # **THE WIDE SHELL'S HOME FOR THE TRADE CONTENT** (issue #731, option iii): a section at the foot of
     # this zone's own scrolling list — one scroll down, no fourth flank, the shell threshold unchanged.
     # Inside the sanctioned scroll, so it adds no `ScrollContainer` of its own. Only the DOCK asks for it
-    # (`with_trade`): the drawer's flat host stacks the zones itself and has no Trade tab to stand in for.
+    # (`with_trade`): the drawer's flat host stacks the same sections after this zone itself
+    # (`build_flat_sections`).
     # Built last, because the room it is tiered against is what the head leaves.
     if with_trade:
         rows.add_child(_trade.build_section(band, _trade_room()))
+    # **…AND FOR THE PEOPLES ROSTER** (issue #549), after Trade's section: every tie, no cap, inside the
+    # same sanctioned scroll — Trade's wide section scrolls rather than capping, and so does this one.
+    if with_peoples:
+        var peoples := ConnectionsRoster.build_section(int(band.get("band_id", HudConst.NO_BAND_ID)),
+            _band_labor)
+        rows.add_child(peoples)
+        _track_connections_block(peoples, band)
     return col
 
 ## The parties zone's scrolling list host — a `ScrollContainer` whose single child is the VBox the rows
@@ -8838,8 +8880,8 @@ func _clear_trade_destination() -> void:
     rerender()
 
 ## **THE `To` ROW, ALWAYS DRAWN** — `To  Brackwater · 8 tiles NE` with a `✕` that clears it, or
-## `To  Pick a band on the map` in WARN ink while nothing is picked. The name is the "Peoples we know"
-## roster's (`ConnectionsRoster.subject_label`); the distance and bearing are to where the tie last
+## `To  Pick a band on the map` in WARN ink while nothing is picked. The name is the Peoples tab's
+## (`ConnectionsRoster.subject_label`); the distance and bearing are to where the tie last
 ## SAW them, and the remembered sighting and its walk ride the value's hover
 ## (`_trade_destination_notes`). Only the picked row carries `READ_ONLY_FIELD_META`, so "is a
 ## destination set" stays one meta lookup.
@@ -10028,6 +10070,9 @@ func _push_zone_badges(band: Dictionary) -> void:
     # counts — it happens most turns whether the player looks or not, so a badge that counted it would
     # never go out.
     _panel.set_tab_badge(BandCityPanel.ZONE_TRADE, TradeZoneController.badge_text(band), false)
+    # Peoples carries how many ties the band holds, parked included, and nothing at none.
+    _panel.set_tab_badge(BandCityPanel.ZONE_PEOPLES,
+        ConnectionsRoster.badge_text(int(band.get("band_id", HudConst.NO_BAND_ID)), _band_labor), false)
 
 ## Recall the selected in-flight expedition (folds it home). Emits recall_expedition_requested;
 ## Main formats the `recall_expedition …` command.
@@ -10103,10 +10148,14 @@ func render_band(unit: Dictionary) -> void:
         BandCityPanel.ZONE_BAND: HudWidgets.wrap_zone(build_band_zone(_band_labor.panel_band())),
         BandCityPanel.ZONE_WORK: HudWidgets.wrap_zone(build_work_zone(_band_labor.panel_band())),
         BandCityPanel.ZONE_PARTIES: HudWidgets.wrap_zone(build_parties_zone(_band_labor.panel_band(),
-            _trade_wide)),
+            _trade_wide, _trade_wide)),
     }
+    # The Peoples roster moves on the same flip and reads the same record: a tab of its own in the
+    # narrow shell, a section after Trade's under Parties in the wide one.
     if not _trade_wide:
         zones[BandCityPanel.ZONE_TRADE] = HudWidgets.wrap_zone(build_trade_zone(_band_labor.panel_band()))
+        zones[BandCityPanel.ZONE_PEOPLES] = HudWidgets.wrap_zone(
+            build_peoples_zone(_band_labor.panel_band()))
     _panel.set_zones(zones)
     _trade_cargo_zones_rebuilding = false
     _push_zone_badges(_band_labor.panel_band())

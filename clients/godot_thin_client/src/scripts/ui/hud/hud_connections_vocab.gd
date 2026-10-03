@@ -10,7 +10,7 @@ extends RefCounted
 ## here — it is `HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_FORMAT`, shared with the shipment
 ## picker so the two surfaces word the same memory the same way.
 
-## The block's head, on the band page's Band zone.
+## The head, on the band page's Peoples tab (or its section under Parties on a wide shell).
 const HEAD := "Peoples we know"
 
 ## The head's readout: how many ties the band holds, parked ones included.
@@ -67,7 +67,15 @@ const ROW_LINE_SEPARATION := 0
 ## The separator between line 1's name and its strength / state cells.
 const ROW_SEPARATOR := "·"
 
-## Metadata the harness identifies a roster row by (value: the subject's `band_id`) and the block's
-## node name.
+## Metadata the harness identifies a roster row by (value: the subject's `band_id`), the tab's (or the
+## wide section's) node name, and the rows box inside it.
 const ROW_META := &"connections_roster_row"
 const BLOCK_NAME := "ConnectionsRoster"
+const ROWS_NAME := "ConnectionsRosterRows"
+
+## The node name of the Peoples tab's scrolling list — one of the Band/City panel's SANCTIONED
+## `ScrollContainer`s, under `BandCityPanel.ZONE_PEOPLES`. The name is how `band_panel_preview` tells a
+## sanctioned scroll from a stray.
+const LIST_NAME := "PeoplesList"
+## The scrollbar gutter between that scroll and the rows box.
+const GUTTER_NAME := "PeoplesListGutter"

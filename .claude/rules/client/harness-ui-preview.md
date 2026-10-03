@@ -1230,22 +1230,27 @@ a sentence is a string — a frame shows a plausible verdict whichever clock it 
 > good's main line also carries `CARGO_GOOD_ROW_META`. **Sabotage-verified** by reversing the grade
 > order: the four best-first claims fail, and the pack-clamp claims after them cascade.
 
-> #### …AND IT RENDERS THE BAND PAGE'S "PEOPLES WE KNOW" ROSTER (issue #549)
+> #### …AND IT RENDERS THE BAND PAGE'S PEOPLES TAB (issue #549)
 >
-> `EXPECTED_CHECKPOINTS` **164**, RE-MEASURED. Three frames, after the Food-ledger states and before
-> the panel is released: `connections_roster` (the shipper's four ties on the Band zone of the 380px
-> right dock — growing, fading named by its remembered `subject_name`, fading named by its tile,
-> parked), `connections_roster_ties_only` (only `update_connections` pushed, the neighbour's tie now
-> 50% and fading, no population push) and `connections_roster_empty` (the neighbour, which knows
-> nobody). The ties-only frame asserts the rendered row reads the new strength and state, and that
-> the zone column's first block is the same node before and after, i.e. the block was rebuilt alone.
-> **Sabotage-verified**: dropping the `refresh_connections` call fails exactly the update claim,
-> which reads the stale `75% · growing`. The ties are pushed out
-> of order and the two fading strengths reverse their id order, so the ORDER claim is the roster's own
-> sort. Rows are found by `HudConnectionsVocab.ROW_META`, the block by its node name. The chapter sets
-> the turn to `ROSTER_TURN` for the growing state and hands back the prior turn, ties and roster.
-> **Sabotage-verified**: drawing `parked` in `INK_DIM` fails exactly the amber-state claim; dropping
-> the sort fails the order claim and every per-row claim after it.
+> `EXPECTED_CHECKPOINTS` **180**, RE-MEASURED. Four frames on the 380px right dock's Peoples tab,
+> after the Food-ledger states and before the panel is released: `connections_roster` (thirty
+> ties — growing, fading named by its remembered `subject_name`, fading named by its tile, 26 more
+> fading, parked), `connections_roster_scrolled` (the list scrolled to its end, the parked tie in
+> view), `connections_roster_ties_only` (only `update_connections` pushed: the neighbour's tie at 50%
+> and fading, one more tie met, no population push) and `connections_roster_empty` (the neighbour,
+> which knows nobody). The claims: the tab is its own zone and the band zone has no roster; every tie
+> has a row; the badge counts the ties; the rows sit in the sanctioned `HudConnectionsVocab.LIST_NAME`
+> scroll and overflow it; every row ends clear of the scrollbar's left edge (the gutter); the order
+> is the roster's own sort (the ties are pushed out of order); on
+> the ties-only frame the row reads the new strength and state, the tab and its scroll are the same
+> nodes, and the badge reads the new count; the empty band has no badge. The chapter sets the turn
+> to `ROSTER_TURN` and hands back the prior turn, ties and roster. Two more frames once the panel is
+> released, on the no-dock drawer: `connections_roster_drawer` and
+> `connections_roster_drawer_scrolled`, asserting the drawer carries the Trade section and then the
+> roster, siblings in that order after Parties, with every tie, and that the drawer's own scroll
+> reaches the roster.
+> **Sabotage-verified**: dropping the `refresh_connections` call fails exactly the update claim
+> (`75% · growing`) and the badge claim (`30, want 31`).
 
 **Sits after `crafting_bench` in `CHAPTERS`** — it was appended last when it landed, and
 `selective_gather`, `knowledge_panel` and `supply_network` have followed it since, which is exactly

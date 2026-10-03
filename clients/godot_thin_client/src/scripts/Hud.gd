@@ -1258,10 +1258,10 @@ func update_herds(herds_variant: Variant) -> void:
     _targeting.refresh_live_targets()
 
 ## Ingests the viewer's CONTACT TIES (arc #527) — one directed row per edge, already filtered
-## sim-side to this faction's observing bands. Two readers: the band page's "Peoples we know" roster
+## sim-side to this faction's observing bands. Two readers: the band page's Peoples tab
 ## (`ConnectionsRoster`) and the trade compose sheet's destination picker, a tie being what gates a
-## shipment. The open band page's roster block is rebuilt in place on the same frame
-## (`BandPanelController.refresh_connections`), since a frame may move the ties and no population.
+## shipment. The open band page's roster and the Peoples tab badge are re-filled in place on the same
+## frame (`BandPanelController.refresh_connections`), since a frame may move the ties and no population.
 func update_connections(connections_variant: Variant) -> void:
     _band_labor.set_connections(connections_variant)
     _targeting.refresh_live_targets()
