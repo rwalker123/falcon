@@ -146,6 +146,11 @@ fn spawn_world() -> App {
     // first turn a crew stands on it, so a harness with no `extract` row has none.
     app.world
         .insert_resource(core_sim::extraction::DepositRegistry::default());
+    // Belief on a place — a hunt or a raid credits its dead to the tile the band stands on.
+    app.world
+        .insert_resource(core_sim::BeliefRegistry::default());
+    app.world
+        .insert_resource(core_sim::BeliefConfigHandle::default());
     app.world.insert_resource(ExpeditionConfigHandle::default());
     app.world
         .insert_resource(VisibilityConfigHandle::new(VisibilityConfig::builtin()));
@@ -1529,6 +1534,30 @@ fn a_hunting_expedition_takes_casualties_against_a_mammoth() {
     assert!(
         narrated,
         "a dangerous expedition hunt pushes a hunt_danger feed line"
+    );
+}
+
+/// **A detached party's dead are not where the band stands** (`core_sim::belief`, issue #697). The
+/// same lethal mammoth hunt as above costs the party people, and credits **no** place with belief:
+/// the deaths source is the band's own tile, and an expedition died somewhere else.
+#[test]
+fn an_expedition_hunts_dead_credit_no_belief() {
+    let mut app = spawn_world();
+    let id = retag_herd(&mut app, MAMMOTH);
+    let (pos, _b, _cap) = seed_herd(&mut app, &id, 1.0);
+    let home = spawn_home_band(&mut app, pos);
+    let party = spawn_hunt_party(&mut app, home, pos, &id, 0.3);
+    let belief_before = app.world.resource::<core_sim::BeliefRegistry>().clone();
+    let before = party_working(&app, party);
+    app.world.run_system_once(advance_expeditions);
+    assert!(
+        party_working(&app, party) < before,
+        "fixture: the expedition must lose people, or this proves nothing"
+    );
+    assert_eq!(
+        *app.world.resource::<core_sim::BeliefRegistry>(),
+        belief_before,
+        "an expedition's casualties must not add belief anywhere"
     );
 }
 

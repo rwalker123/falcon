@@ -620,6 +620,7 @@ mod indexed_diff_tests {
             graze_ecology_phase: 0,
             forage_capacity: 0.0,
             underlying_terrain: TerrainType::AlluvialPlain,
+            belief: crate::belief::NO_BELIEF,
             river_edges: 0,
             river_inflow: 0,
             river_channel: 0,
@@ -1036,6 +1037,7 @@ mod tests {
             graze_ecology_phase: GRAZE_PHASE_NONE,
             forage_capacity: 0.0,
             underlying_terrain: TerrainType::AlluvialPlain,
+            belief: crate::belief::NO_BELIEF,
             river_edges: 0,
             river_inflow: 0,
             river_channel: 0,
@@ -1071,7 +1073,15 @@ mod tests {
         };
         let entity = Entity::from_raw(1);
         let capture = |terrain: TerrainType, graze: Option<&GrazePatch>| {
-            tile_state(entity, &at(terrain), &morale_cfg, graze, forage).forage_capacity
+            tile_state(
+                entity,
+                &at(terrain),
+                &morale_cfg,
+                graze,
+                forage,
+                crate::belief::NO_BELIEF,
+            )
+            .forage_capacity
         };
 
         // (a) A food-module tile that DOES hold a `ForagePatch` — the patch was seeded at
@@ -1946,6 +1956,7 @@ mod tests {
             graze_ecology_phase: GRAZE_PHASE_NONE,
             forage_capacity: 0.0,
             underlying_terrain: TerrainType::AlluvialPlain,
+            belief: crate::belief::NO_BELIEF,
             river_edges: 0,
             river_inflow: 0,
             river_channel: 0,

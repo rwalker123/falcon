@@ -1775,12 +1775,18 @@ impl PopulationCohort {
     /// hunt's `killed` come out of `working` (floored at 0), and `size` is resynced. This is the
     /// `death_fraction` seam's combat twin — a net-new way people die, beside starvation, cold and
     /// elder mortality. Casualties are working-age only in Phase 0.
-    pub fn apply_combat_casualties(&mut self, killed: Scalar) {
+    ///
+    /// Returns the people **actually** removed — `killed` floored at the working-age bracket that
+    /// was there — so a caller crediting the dead elsewhere (belief on the place, `crate::belief`)
+    /// counts the dead the band lost rather than the casualties the fight asked for.
+    pub fn apply_combat_casualties(&mut self, killed: Scalar) -> Scalar {
         if killed <= scalar_zero() {
-            return;
+            return scalar_zero();
         }
+        let before = self.working;
         self.working = (self.working - killed).max(scalar_zero());
         self.sync_size();
+        before - self.working
     }
 }
 

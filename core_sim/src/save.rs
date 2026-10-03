@@ -114,7 +114,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 17 | `PopulationCohort` gained `founding_lines` — the set of unrelated families the band descends from (issue #687, `crate::lineage`), which the wire publishes as `PopulationCohortState.foundingLines`. The cohort rides `BandRecord`, so a version-16 blob has no such field |
 /// | 18 | Food spoilage (#706): `LocalStore` holds food **by keeping class** in its own `food` map (`FoodMix`) instead of a `provisions` scalar among its goods, `PopulationCohort` gained `last_food_spoiled` (the turn's rot, the ledger identity's `spoiled` term), `WorkParty` / `Walker` gained `load_classes` / `classes` (what a caravan's load and each pack are made of) and `WorkParty` its forecast's `spoiled_rate_home` / `transit_keeps_turns`, and `LaborAllocation` gained `homeward` (stood-down parties still walking home, which outlive their rows); `WorkParty` gained `load_goods` and `fodder_rate_home` / `materials_rate_home`, and `Walker` `bulk` / `goods` (a far forage pack's fodder and materials). Every band store, expedition cargo and posting rides `BandRecord` / `ExpeditionRecord`, so a version-17 blob does not decode |
 /// | 19 | `CommandEventEntry` gained `band` — the one band an event is about (`0` = none), which the wire publishes as `CommandEventState.band`; a refused `set_starting_loadout` names its band there (issue #723). The event log rides `SimState.command_events`, so a version-18 blob has no such field |
-pub const SAVE_FORMAT_VERSION: u32 = 19;
+/// | 20 | `SimState` gained `belief` — the `BeliefRegistry`, belief on every place (issue #697, `crate::belief`). A version-19 blob has no such field |
+pub const SAVE_FORMAT_VERSION: u32 = 20;
 
 /// gzip level for the payload document.
 ///
