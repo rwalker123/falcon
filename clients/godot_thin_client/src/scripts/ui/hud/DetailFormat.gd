@@ -1058,7 +1058,7 @@ static func block_tooltip(ctx: Context) -> String:
 ## Habitability / Ecology cases live beside the band's Food / Morale / Growth ones.
 static func _value_hex(key: String, value: String, ctx: Context) -> String:
     if key == HudDisclosureVocab.DETAIL_ROW_FOOD or key == "Provisions" or key == "Carried":
-        # The band larder / expedition provisions / hunt-party carried-food row tints by the
+        # The band larder / expedition provisions / party carried-food row tints by the
         # larder-runway thresholds. It recognizes the row by the SHARED `FOOD_RUNWAY_UNIT` the one
         # renderer (`food_turns_text`) spells the runway with — never a bare literal, which is how
         # this guard silently went dead when the unit changed — or by the ∞ glyph for a band that is
@@ -2561,7 +2561,7 @@ static func pen_feed_value(herd_data: Dictionary) -> String:
 # =====================================================================================
 
 ## Humanize an expedition mission id ("scout" → "Scouting expedition"); falls back to a capitalized
-## token for an unknown/future mission (e.g. PR 2's "hunt").
+## token for a mission the label table does not name.
 static func expedition_mission_label(mission: String) -> String:
     var key := mission.strip_edges().to_lower()
     if HudExpeditionVocab.EXPEDITION_MISSION_LABELS.has(key):

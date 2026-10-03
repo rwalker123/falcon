@@ -483,7 +483,7 @@ func _band_row_sprite(unit: Dictionary) -> Texture2D:
 	return StageSprites.for_stage(String(unit.get("settlement_stage_id", "")).strip_edges())
 
 ## A band row's leading GLYPH — the server's `settlement_stage_icon` (`⛺ 🛖 🏘️`), or a PARTY's
-## mission mark (`HudFormat.expedition_mission_glyph`, the same ⚑/🏹/💀/📦 its parties row and its map
+## mission mark (`HudFormat.expedition_mission_glyph`, the same ⚑/💀/📦 its parties row and its map
 ## marker wear). It is only ever the FALLBACK: `_row_icon` takes the sprite whenever one resolves, the
 ## order `_draw_band_token` resolves in — and there the order is load-bearing, since its empty-glyph
 ## branch returns early and would draw a placeholder square for a sprite-mapped stage whose glyph

@@ -433,7 +433,7 @@ fn a_recapture_advances_the_sequence_without_pushing_a_ring_entry() {
 /// **Nothing in the sim reads those bytes, which is exactly why it was invisible**: the callers are
 /// tests asserting on encoded content, so a wire-level assertion silently read a frame from before its
 /// fixture had finished building. Found while writing
-/// `expedition_hunt::a_party_names_its_quarry_when_the_herd_has_left_the_snapshot`, whose party had
+/// `raiding_party::a_party_names_its_quarry_when_the_herd_has_left_the_snapshot`, whose party had
 /// not been spawned yet in the bytes it was handed.
 #[test]
 fn a_recaptured_entry_encodes_the_world_it_was_refreshed_with() {

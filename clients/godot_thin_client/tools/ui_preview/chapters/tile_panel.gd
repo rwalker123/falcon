@@ -1167,7 +1167,7 @@ func run(harness) -> void:
 
 	# tile_panel_compose_forage — the sheet open over the LAND: the full policy grid + band picker +
 	# stepper + forecast + button, floating beside the selection card. The MAP MUST STILL BE VISIBLE
-	# behind it — an assignment is composed AGAINST the map (work-range ring, hunt reach), so unlike
+	# behind it — an assignment is composed AGAINST the map (work-range ring, herd position), so unlike
 	# NarrativeForkPanel this sheet draws NO scrim.
 	h._hud._band_labor._player_band = BandFx.forage_range_bands()[0]
 	h._hud._band_labor._player_bands = []
@@ -1179,8 +1179,8 @@ func run(harness) -> void:
 	h._assert_hud("the Assign button opens the compose sheet", h._hud.is_compose_sheet_open())
 	await h._save("tile_panel_compose_forage")
 
-	# tile_panel_compose_herd — the herd sheet on the EXPEDITION branch (the band is beyond hunt
-	# reach): the raid forecast + "Send Expedition" must survive the move to the sheet intact.
+	# tile_panel_compose_herd — the herd sheet for a band beyond its apron: the ordinary hunt sheet,
+	# with its work-party section, must survive the move to the sheet intact.
 	h._hud._band_labor._player_bands = [BandFx.hunt_distance_bands()[1]]   # only the FAR band
 	h._hud._band_labor._player_band = h._hud._band_labor._player_bands[0]
 	h._hud._compose.reset_hunt_source()

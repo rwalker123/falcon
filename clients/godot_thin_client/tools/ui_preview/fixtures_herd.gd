@@ -353,8 +353,8 @@ static func world_herds_fixture() -> Array:
 
 # The in-flight denial party's own table — parties 1..8 against the reference Red Deer. **More hands
 # break the herd SOONER and that is the mission's only lever**, so the rows fall monotonically; the
-# band widens where the retreat is chanciest. The party the frames render is `HUNT_EXPEDITION_PARTY`
-# (5), whose row is `4` with a `3–5` band — the plan's own worked example.
+# band widens where the retreat is chanciest. The party the frames render is
+# `band_expedition.gd`'s `DENIAL_PARTY_SIZE` (5), whose row is `4` with a `3–5` band — the plan's own worked example.
 const DENIAL_COLLAPSE_TURNS := [12, 8, 6, 5, 4, 4, 3, 3]
 
 const DENIAL_COLLAPSE_LOW := [10, 7, 5, 4, 3, 3, 2, 2]

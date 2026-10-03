@@ -317,10 +317,9 @@ static func without_builders(band: Dictionary) -> Dictionary:
 	band["labor_assignments"] = kept
 	return band
 
-## The band the herd-panel LOCAL preview states staff: it sits ON the (66,10) herd (distance 0 ≤ reach
-## 7 → local branch) and runs at a REDUCED `output_multiplier` (0.9), so the yield preview visibly
-## applies the band's morale/discontent productivity modifier — the one term that makes a resident
-## hunt's take differ from an expedition's.
+## The band the herd-panel LOCAL preview states staff: it sits ON the (66,10) herd (distance 0, inside
+## its apron) and runs at a REDUCED `output_multiplier` (0.9), so the yield preview visibly applies the
+## band's morale/discontent productivity modifier.
 static func hunt_preview_local_band() -> Dictionary:
 	return with_band_id({
 		"name": "Kestrelwatch", "id": "Kestrelwatch", "entity": 832, "faction": 0, "size": 120,

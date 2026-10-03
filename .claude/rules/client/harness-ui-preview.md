@@ -85,7 +85,7 @@ fitting — is RETIRED with the command feed; there is one growing card in that 
 All twenty-four sabotage-verified, each restored. The original ten, in three runs: deleting the pill's descriptor (6 fail), reverting the Climate chip to the band alone plus dropping the lethality gate (3 fail), and breaking the mirror itself — the `abs()` and the `min` cap out of `death_rate` (3 fail, the heat tail and the cap). The four copy assertions, in three more: removing the below-floor branch so a tiny rate rounds to `0.0%` (2 fail); putting the cut clauses back into the cold template (4 fail, the exact-wording and the absence claims together); and coarsening `CHIP_CLIMATE_FORMAT` to whole degrees (3 fail, every climate-chip claim). The merge's own, in four: restoring the `has_bands()`-only gate (3 fail, the bandless state); treating every tile as lethal (5 fail, every survivable-side claim); dropping the ⚠ prefix and the `DANGER` tint (7 fail); and re-adding a separate `survivability` descriptor (5 fail — the slot-list claims AND both patch-in-place claims, which is what says the flip assertions really are watching the rebuild boundary).
 
 Part 2 (the compose sheet) adds **`tile_panel_compose_forage`** /
-**`tile_panel_compose_herd`** (the expedition branch + raid forecast) /
+**`tile_panel_compose_herd`** (the hunt sheet with its work-party section) /
 **`tile_panel_compose_gated`** (a locked rung greyed AND its gate reasons rendered beside it, inside
 the sheet) — all three must show the map UNDIMMED behind the sheet — and **`tile_panel_standing`**
 (the CLOSED read state on a worked source: `⇊ 4 foragers · +2.74 /turn ⚠ · only 2 of 4 working`, the

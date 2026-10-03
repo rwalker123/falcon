@@ -195,8 +195,8 @@ var _road_ladder_index: int = -1
 ## band's `builders` pool raises it at the head — so there is nothing left to hold between restates.
 
 ## **THE FORECAST QUERY SEAM**, injected by `HudLayer` after construction (`set_forecast_query`).
-## The expedition branch's every number comes through it; the LOCAL hunt branch never touches it,
-## being priced from the herd's own per-biomass vector and the band's ceilings.
+## Every sim-answered figure on the sheets comes through it — the crew-take curves and the work-party
+## forecast.
 var _forecast_query: ForecastQuery = null
 
 # ---- WHAT A LIVE FLOOR DRAG HOLDS (see `_refresh_floor_live` and `_drag_crew_take`) --------------
@@ -3398,8 +3398,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # independent statements is binding, the crew or the floor), then the idle-crew note (§7.2 —
     # reported, never acted on) and the teaching line. The take is recomposed from the LIVE floor,
     # so the numbers the player is dragging toward move while the drag runs.
-    # **NO ANSWER YET, OR NONE COMING** — the expedition branch's rule on the local one, and for
-    # the same reason: the numbers are the sim's, so the sheet says it is waiting rather than
+    # **NO ANSWER YET, OR NONE COMING** — the query seam's rule, and for this reason: the numbers are the sim's, so the sheet says it is waiting rather than
     # composing a take out of the two stages it can see. Everything above this line is client
     # arithmetic over wire terms (the chart, the crew targets, the combat gate) and stands.
     # **AND IT IS IN THE LIVE SET, because the answer it is waiting on is the FLOOR's.** It used

@@ -5876,10 +5876,9 @@ fn launch_forecast_haul(app: &bevy::prelude::App, kit: &KitChoice) -> f32 {
 /// re-armed is the opposite of the comparison the player asked for.
 ///
 /// **Absent = the TARGET HERD's default, not the job's** — the same `default_kit_for_target` seam
-/// `handle_assign_labor` resolves through, keyed on the herd this raid names. Both verbs are quoted
-/// against tables the wire priced at that herd's own kit (`huntTripEstimatesKitId` /
-/// `denialEstimatesKitId`, which are `defaultKitId` by construction), and the client's launch sheet
-/// reads `defaultKitId`; resolving `default_kits.hunt` here would launch a party on a different kit
+/// `handle_assign_labor` resolves through, keyed on the herd this raid names. The client's launch
+/// sheet reads that herd's `defaultKitId` and asks the denial query at it; resolving
+/// `default_kits.hunt` here would launch a party on a different kit
 /// than the forecast the player committed from — the silent substitution the refusal above exists to
 /// prevent, arriving through the absent-token door.
 fn resolve_raid_kit(

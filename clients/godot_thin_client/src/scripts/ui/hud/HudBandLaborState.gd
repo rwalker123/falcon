@@ -50,7 +50,7 @@ var _player_band: Dictionary = {}
 # The band currently shown in the dockable Band/City panel; persists across selection changes and
 # re-resolves by entity each snapshot.
 var _panel_band: Dictionary = {}
-# The player-faction expedition cohorts (detached scout/hunt parties) captured each snapshot.
+# The player-faction expedition cohorts (detached scout, denial and trade parties) captured each snapshot.
 var _player_expeditions: Array = []
 # Every herd in the snapshot — the live position + label source for hunted-herd rows (herds migrate).
 var _world_herds: Array = []

@@ -2119,7 +2119,7 @@ fn expedition_take_biomass(
 /// outputMultiplier`, because every term was linear and factored out of the `min`. `floor()` is not
 /// linear: the client cannot re-derive a whole-animal take from a ceiling and a per-worker rate, so
 /// the sim must **export the answer**. `fauna::hunt_source_yield_preview` (→ `SourceYield`) is that
-/// answer, and `core_sim/tests/expedition_hunt.rs` pins it to this function.
+/// answer, and `core_sim/tests/band_hunt_preview.rs` pins it to this function.
 /// **One turn's hunt, both sides of it** — what came home, and what the fight cost.
 ///
 /// The two used to be resolved by two unrelated code paths that could disagree

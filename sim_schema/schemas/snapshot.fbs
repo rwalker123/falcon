@@ -611,7 +611,7 @@ table PopulationCohortState {
   expeditionCarryCap:float = 0;
   // Denial mission only: the target herd id (`HerdRegistry` fauna_id). Empty for scout/normal bands.
   // A string (not uint) because herd ids are non-numeric (e.g. "herd_3_00") — matches
-  // LaborAssignment.faunaId. Persisted so a rollback reconstructs `Hunt { fauna_id }`. Appended last
+  // LaborAssignment.faunaId. Persisted so a rollback reconstructs `Deny { fauna_id, .. }`. Appended last
   // (append-only schema discipline — must follow every field shipped in earlier PRs).
   expeditionTargetHerd:string;
   // The `move_band`/`BandTravel` destination tile while traveling (`isTraveling` gates it; `0,0`
@@ -4643,8 +4643,9 @@ table BandKitCrew {
 }
 
 table KitOption {
-  // Stable roster id — what `assign_labor kit <id>` / `send_hunt_expedition kit <id>` name, and what
-  // LaborAssignment.kitId / PopulationCohortState.kitId / the estimate-table kit ids carry.
+  // Stable roster id — what `assign_labor kit <id>` / `send_denial_raid kit <id>` /
+  // `send_expedition kit <id>` name, and what LaborAssignment.kitId / PopulationCohortState.kitId
+  // carry.
   id:string;
   displayName:string;
   // Which verbs this kit may be sent on — any of "hunt", "forage", "scout", "warrior",

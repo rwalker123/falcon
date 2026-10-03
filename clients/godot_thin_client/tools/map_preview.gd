@@ -801,7 +801,7 @@ func _ready() -> void:
 
 	# State A — a band working two forage tiles + hunting a distant herd. Shows the
 	# work-range ring (Chebyshev square), two strong-green worked forage tiles, and the
-	# red herd ring + band→herd link (the herd sits OUTSIDE the ring: hunt reach = range + leash).
+	# red herd ring + band→herd link (the herd sits OUTSIDE the ring: a far herd is worked by a work party).
 	_map.display_snapshot(_snapshot_work())
 	_map.selected_unit_id = BAND_ENTITY
 	_map._fit_map_to_view()

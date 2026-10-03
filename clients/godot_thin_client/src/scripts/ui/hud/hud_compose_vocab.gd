@@ -38,13 +38,11 @@ const START_ORDER_PENDING_VERB := "Starting"
 # reaching verdict states a bare countdown and nothing about an aftermath (`VERDICT_REACHES_FORMAT`),
 # so this line is the whole of what says what arriving there costs.
 #
-# **EMPTYING AN ENTRY HERE SILENCES IT ON EVERY CONSUMER — five of them**: the compose readout's
-# aside, the expedition compose sheet, the work-row hint, the send-hunt banner and the expedition
-# tooltip. That is the intent for a line worth nothing anywhere, and it is a REGRESSION for a line
-# worth something somewhere — which is how the peak line was blanked once before, for a reason true of
-# one surface, and left a raid rendering three floor presets with nothing saying what they meant. The
-# expedition sheet is where such a blanking surfaces first: it has no chart, so its readout's aside is
-# the whole of what it says a floor MEANS.
+# **EMPTYING AN ENTRY HERE SILENCES IT ON EVERY CONSUMER**: the compose readout's aside (forage and
+# hunt sheets) and the work-row hint. That is the intent for a line worth nothing anywhere, and it is
+# a REGRESSION for a line worth something somewhere — which is how the peak line was blanked once
+# before, for a reason true of one surface, and left a sheet rendering three floor presets with
+# nothing saying what they meant.
 const FLOOR_ZONE_HINTS := {
     "strip": "Take everything — the crew leaves nothing standing. %s",
     "drawdown": "Below the food peak — more food now, taken out of what this source will grow back. It declines while you hold this.",

@@ -388,18 +388,19 @@ static func expedition_phase_suffix(phase: String) -> String:
         return "%s %s" % [suffix, expedition_phase_label(phase)]
     return suffix
 
-## Compact one-line expedition summary: hunt → `🏹 <herd> · <Policy>  <phase glyph>`;
-## scout → `⚑ → (x, y)  <phase glyph>`. Policy AND phase read as GLYPHS here exactly as they do on the
-## Current-actions rows (one concept, one rendering, in both sections of the same panel); the words
-## live in the tooltip. A scout gets no floor glyph at all (it harvests nothing) → `row_glyph_suffix`
-## emits nothing, so the row carries the phase glyph alone with no orphaned separator. Only `awaiting` keeps
+## Compact one-line expedition summary: deny → `💀 <herd>  <phase glyph>`; trade →
+## `📦 <destination>  <phase glyph>`; scout → `⚑ → (x, y)  <phase glyph>`. The phase reads as a GLYPH
+## here exactly as it does on the Current-actions rows (one concept, one rendering, in both sections
+## of the same panel); the words live in the tooltip. No mission carries a floor glyph (none of them
+## harvests on a floor) → `row_glyph_suffix` emits nothing, so the row carries the phase glyph alone
+## with no orphaned separator. Only `awaiting` keeps
 ## its words (`expedition_phase_suffix`). The next-delivery detail is NOT here — it lives on the
 ## parties inspector strip a row click opens (`_build_parties_inspector` → `BandDetailLines.expedition_summary_lines`).
 ##
 ## `herd_label_for_id` is the herd vocabulary, THREADED IN rather than reached for: resolving a herd id
 ## to a species needs the roster + the current selection + the snapshot herd list, which is HUD state
 ## this stateless layer must not hold (the `HudWidgets.build_worker_stepper` `current_turn` precedent).
-## It is called ONLY on the hunt branch, so a scout row resolves nothing.
+## It is called ONLY on the deny branch, so a scout or trade row resolves nothing.
 ## **WHAT A SHIPMENT'S DESTINATION IS CALLED** — the sim's published name when it has one, else
 ## whatever THIS CLIENT calls that band, joined on `expedition_destination_band`.
 ##

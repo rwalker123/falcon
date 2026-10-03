@@ -55,7 +55,7 @@ const INEDIBLE_SPECIES: &str = "Grey Wolf Pack";
 const TOP_UP_GAP: f32 = 0.05;
 
 /// A world with terrain, herds, patches and every config `advance_expeditions` reads — the same
-/// shape `expedition_hunt.rs` builds, kept local because these fixtures seed the plant web too.
+/// shape `raiding_party.rs` builds, kept local because these fixtures seed the plant web too.
 fn spawn_world() -> App {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);

@@ -188,7 +188,8 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `marker_field_guard` covers `expedition_target_herd` / `expedition_carry_cap`. Recall is the
   unchanged `recall_expedition`, mission-agnostic.
 - **Retired verbs (Early-Game Labor slice 3a):** the server now parses-but-ignores
-  `follow_herd` / `scout` / `forage` / `hunt_fauna` / `hunt_game`. Every client control that
+  `follow_herd` / `scout` / `forage`; `hunt_fauna` / `hunt_game` are deleted outright and no
+  longer parse. Every client control that
   emitted them was removed or repointed so nothing is silently dead: the map double-click
   `scout` shortcut was dropped and `follow` repointed to quick-assign hunters; Main's
   `_issue_*`/`_on_hud_follow_herd`/`_on_hud_unit_scout` builders are gone; the Fauna tab's

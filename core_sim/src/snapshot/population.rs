@@ -559,14 +559,13 @@ pub(crate) struct ExpeditionLevers<'a> {
     pub(crate) hunt_per_worker_provisions: f32,
     /// `expedition_config.hunt.forecast_horizon_turns` — how far *every* raid projection in the
     /// snapshot was simulated before giving up, echoed per-cohort so the client has a scale for the
-    /// horizon-relative `0` sentinels (`turns_to_fill`, `turns_to_collapse*`) and for the
-    /// `"horizon"` trip bound. The same lever drives the hunt and denial forecasts, so this one echo
-    /// answers for both. **Not a trip length** — see
+    /// horizon-relative `0` sentinels (`turns_to_collapse*`) and for the `"horizon"` denial verdict.
+    /// **Not a trip length** — see
     /// [`sim_schema::state::PopulationCohortState::expedition_forecast_horizon_turns`].
     pub(crate) hunt_forecast_horizon_turns: u32,
     /// `labor_config.band_move_tiles_per_turn` — a band's move speed, echoed per-cohort so the client
-    /// can add a raid's round-trip travel (`ceil(2 × hex_distance / this)`) to the band-agnostic
-    /// pre-launch `huntTripEstimates`. Same global-config-surfaced-per-band idiom as the others.
+    /// can add a raid's round-trip travel (`ceil(2 × hex_distance / this)`) to the answered denial
+    /// raid's `turns_to_collapse`. Same global-config-surfaced-per-band idiom as the others.
     pub(crate) band_move_tiles_per_turn: u32,
     /// `expedition_config.settle.min_founding_workers` — the working-age floor the **new** band must
     /// clear, echoed per-cohort so the compose sheet can name the number (and word its own refusal)

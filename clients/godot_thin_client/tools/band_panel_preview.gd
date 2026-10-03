@@ -251,8 +251,8 @@ const DENIAL_CARRY_PER_WORKER := 2.0
 # SAMPLED party axis `expedition_config.estimate_party_sizes` published, which the forecast query
 # retired: a raid is costed for the party that was composed, so there is no rung to round to.
 
-## The quarry fixtures straddle the band's hunt reach: the Wild Boar is a party's job, the Roe Deer
-## one tile out is a local hunt the picker must refuse.
+## The quarry fixtures: the Wild Boar the Deny sheet raids, and a Roe Deer one tile from the band
+## beside it. A denial raid has no reach rule, so neither is refused for its distance.
 const QUARRY_BAND_HUNT_REACH := 2
 const QUARRY_FAR_HERD_ID := "game_boar_04"
 const QUARRY_FAR_X := 75

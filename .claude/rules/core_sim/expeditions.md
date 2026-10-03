@@ -137,7 +137,10 @@ quote a raid the sim does not run. It is **engagement-bounded exactly as a resid
 `RaidRoll` — a per-event seed live, a reading of the distribution in a forecast) and the fight decide
 the kill, and the one quantiser seats it. A `credit` accumulator meters *when* the next whole animal
 is ready (a body heavier than one turn's processing throughput takes `body / throughput` turns) —
-the party's own processing bank, a different quantity from the retired resident one.
+the party's own processing bank, a different quantity from the retired resident one. Pinned by
+`denial_raid::a_denial_raid_and_a_resident_band_reach_the_same_animals`, which holds the fighting
+party fixed (the raid's own kit at its `expedition_tuning`) so the engagement stage is the only thing
+that could differ.
 
 - **Shared take helpers** (`fauna.rs`): **`hunt_escapement_ceiling(floor, biomass,
   carrying_capacity)`** is THE take ceiling on the animal web — `max(0, B − floor·K)` — and
@@ -341,7 +344,14 @@ through.
   `denial_raid::a_denial_raid_hauls_only_its_pack_and_reports_the_waste`.
 - **An INEDIBLE quarry is a legitimate denial target** (a wolf). Nothing on the path divides by a
   food rate it has not established positive: the pack is inert there for a *product* reason, and the
-  raid is paid in pelts.
+  raid is paid in pelts. Pinned by `denial_raid::an_inedible_denial_raid_comes_home_with_pelts_and_no_food`
+  (hides bank into the party's store, no food, the completion line names materials and no provisions,
+  and the `Returning` fold-back drains them into the home band) and
+  `denial_raid::an_inedible_denial_raids_promised_material_is_what_the_trip_banks` (the answered
+  `DenialRow.delivered_material` is what the home band holds, per material, both directions). Both
+  hold the wolf's `ferocity` at `0` and its diet herbivore: the projection resolves the party once and
+  holds the herd and its `K` fixed, and a shipped wolf pack bleeds the party and pursues prey — eight
+  hunters quoted `past_recovery` in 10 turns were still short of the line after 60.
 
 ### A raiding party is bounded by the BAND, not by a config lever
 

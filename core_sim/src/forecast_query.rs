@@ -1750,8 +1750,8 @@ mod tests {
     /// `unknown_kit`. The two failures are different facts and the client renders them differently.
     const FORAGE_ONLY_KIT: &str = "gathering";
     const PARTY: u32 = 4;
-    /// A floor mid-range, deliberately **not** one of `RAID_FORECAST_FLOOR_SAMPLES` in the fidelity
-    /// test's usage — the point of the query is that it answers the floor it is asked for.
+    /// A floor mid-range, deliberately not a round rung — the point of the query is that it answers
+    /// the floor it is asked for.
     const A_FLOOR: f32 = 0.30;
     /// **One worker against the one-unit reference ledger**, which is exactly covered — so the
     /// coverage below is a single fully-armed crew and the party it builds is `uniform`, the shape

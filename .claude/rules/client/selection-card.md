@@ -445,7 +445,7 @@ surfaces stay in the same order so they cannot drift apart.
 
 **A DETACHED PARTY TAKES NO STAGE MARK.** A party is not a settlement and must not read as one — the
 map says so by returning early on `is_expedition` before any stage glyph is reached — so the row wears
-its MISSION's mark instead (`HudFormat.expedition_mission_glyph`: ⚑ scout, 🏹 hunt, 💀 deny, 📦 trade,
+its MISSION's mark instead (`HudFormat.expedition_mission_glyph`: ⚑ scout, 💀 deny, 📦 trade,
 the scout flag for an absent or unrecognised mission). That resolver is the one place the four
 `PANEL_EXPEDITION_*_GLYPH` constants are chosen between, so a party's subject row, its Active-expeditions
 row and its map marker cannot name the same mission three different marks. Parties genuinely reach this

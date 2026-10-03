@@ -28,12 +28,13 @@ use bevy::math::UVec2;
 
 use core_sim::{
     advance_expeditions, advance_herds, advance_tick, build_test_app, denial_forecast,
-    herd_capacity, herd_ecology, herd_hunt_yield, recapture_snapshot_in_place, scalar_from_f32,
-    scalar_one, scalar_zero, BandEquipment, CombatConfigHandle, CommandEventLog, DenialOutcome,
-    EquipmentConfigHandle, Expedition, ExpeditionConfig, ExpeditionConfigHandle, ExpeditionMission,
-    ExpeditionPhase, FactionId, FaunaConfigHandle, GenerationId, HerdRegistry, HerdTelemetry,
-    HuntingParty, LaborAllocation, LocalStore, MoraleCause, PopulationCohort, ResidentBand,
-    SimulationConfig, StartingUnit, TileRegistry, VisibilityLedger, FOOD,
+    herd_capacity, herd_ecology, herd_hunt_yield, hunt_take, recapture_snapshot_in_place,
+    scalar_from_f32, scalar_one, scalar_zero, BandEquipment, CombatConfigHandle, CommandEventLog,
+    DenialOutcome, EquipmentConfigHandle, Expedition, ExpeditionConfig, ExpeditionConfigHandle,
+    ExpeditionMission, ExpeditionPhase, FactionId, FaunaConfigHandle, GenerationId, HerdRegistry,
+    HerdTelemetry, HuntDraw, HuntTakeBound, HuntingParty, LaborAllocation, LocalStore, MoraleCause,
+    PopulationCohort, ResidentBand, SimulationConfig, StartingUnit, TileRegistry, VisibilityLedger,
+    FOOD,
 };
 
 /// The reference denial party — four people, the same crew every fixture in `raiding_party.rs`
@@ -299,7 +300,15 @@ fn spawn_home_band(app: &mut App, herd_pos: UVec2) -> bevy::prelude::Entity {
         (herd_pos.x + width / 3) % width,
         (herd_pos.y + height / 3) % height,
     );
-    let tile = tile_at(app, far);
+    spawn_home_band_at(app, far)
+}
+
+/// The fixture home band standing on `pos` — [`spawn_home_band`]'s body, for the fixtures that want
+/// the raid's homecoming inside the run: a band on the herd's own tile is `near_home` the turn the
+/// party turns back, so the fold-back needs no walk (a denial raid never delivers mid-trip, so a
+/// near home cannot interfere with the raid itself).
+fn spawn_home_band_at(app: &mut App, pos: UVec2) -> bevy::prelude::Entity {
+    let tile = tile_at(app, pos);
     app.world
         .spawn((
             cohort(tile, FIXTURE_BAND_WORKERS),
@@ -319,7 +328,7 @@ fn spawn_home_band(app: &mut App, herd_pos: UVec2) -> bevy::prelude::Entity {
 }
 
 /// A party already in the `Hunting` phase on `mission`, positioned on the herd's tile — the state
-/// `send_denial_raid` / `send_hunt_expedition` spawn into once the walk is done.
+/// `send_denial_raid` spawns into once the walk is done.
 fn spawn_party(
     app: &mut App,
     home_band: bevy::prelude::Entity,
@@ -1821,4 +1830,468 @@ fn detail_token(detail: &str, key: &str) -> Option<String> {
         .split_whitespace()
         .find_map(|token| token.strip_prefix(&format!("{key}=")))
         .map(str::to_string)
+}
+
+// ---------------------------------------------------------------------------------------------------
+// AN INEDIBLE QUARRY — the raid is paid in pelts, and they come home
+// ---------------------------------------------------------------------------------------------------
+
+/// **The inedible quarry, by name** — a wolf pays no provisions and only hide and bone
+/// (`fauna_config.json`), so its whole payload is material and nothing else on a raid's ledger can
+/// cover for the material path being wrong. Its yield vector is resolved off the display name, so the
+/// species *is* the fixture.
+const INEDIBLE_QUARRY: &str = "Grey Wolf Pack";
+
+/// **A wolf pack at full strength, in the roster's own numbers** — the species' `5.3`-unit body, the
+/// top of its `biomass` spawn range as `K`, and its `0.15` regrowth — so a raid on it is a raid on a
+/// wolf pack the map could really seed.
+const WOLF_PACK: RaidQuarry = RaidQuarry {
+    body_mass: 5.3,
+    carrying_capacity: 120.0,
+    biomass_fraction: 1.0,
+    regrowth_rate: 0.15,
+};
+
+/// The wolf's roster key — where [`defang_wolves`] holds its behaviour.
+const INEDIBLE_QUARRY_KEY: &str = "wolf";
+
+/// **A wolf that does not fight back** — `ferocity 0`, the "flees rather than fights" end of the dial,
+/// so the animal side of the fight swings nothing and the party's head count is constant.
+const NO_FEROCITY: f32 = 0.0;
+
+/// **Strip the wolf's PREDATOR behaviour, and leave its yield vector — the subject of these
+/// fixtures — untouched.** Two dials, each for a thing the denial projection does not model:
+///
+/// - **`ferocity` → [`NO_FEROCITY`]**, for the reason [`HARMLESS_QUARRY`] is chosen: a denial raid is
+///   the longest engagement in the game, and a shipped wolf (`attack 3 × ferocity 0.8`) bleeds the
+///   party every turn, while the projection resolves the party once.
+/// - **`diet` → herbivore.** A wild carnivore `Pursue`s prey rather than holding its tile, and its
+///   `K` is re-derived from the prey around it every turn — so [`pin_raid_herd`]'s single-tile route
+///   and fodder-free `K` do not hold it still, and the party (driven without a movement system) loses
+///   contact for turns at a time. The projection holds both the herd and its `K` fixed.
+///
+/// Measured on the shipped wolf: eight hunters quoted `past_recovery` in **10** turns were still short
+/// of the line after **60**. That gap is real for a live predator raid; these fixtures are about the
+/// **material** account, so they hold the quarry to the projection's own assumptions.
+fn defang_wolves(app: &mut App) {
+    let mut handle = app.world.resource_mut::<FaunaConfigHandle>();
+    let mut config = (*handle.get()).clone();
+    let wolf = config
+        .species
+        .get_mut(INEDIBLE_QUARRY_KEY)
+        .expect("the shipped roster carries the Grey Wolf Pack");
+    wolf.ferocity = NO_FEROCITY;
+    wolf.diet = core_sim::Diet::Herbivore;
+    handle.replace(std::sync::Arc::new(config));
+}
+
+/// The party the wolf fixtures field: enough reach (`8 × engage_rate 0.33`) to outpace the pack's
+/// regrowth and drive it past recovery inside the horizon, so the raid really ends and comes home.
+const WOLF_PARTY: u32 = 8;
+
+/// The turns a returning party is allowed to take to fold back: one for the `Returning` arm to settle
+/// a party standing in its band's camp, plus one of slack. Not a tuning — a party still on the map
+/// after this is the defect.
+const FOLD_BACK_TURNS: u32 = 2;
+
+/// **A whole raid's material**, summed raw in the forecast and on the `Scalar` grid in the store,
+/// lands a handful of quanta apart — [`TAKE_EPSILON`] covers one load; a raid's worth of credits
+/// needs a few more.
+const RAID_PAYLOAD_EPSILON: f32 = 8.0 / core_sim::Scalar::SCALE as f32;
+
+/// What a wolf raid did, read off the sim: the party's pack the turn it turned for home, the
+/// completion line it published, and what the fold-back reported.
+struct InedibleRaid {
+    /// Food in the party's pack the turn it left `Hunting`.
+    pack_food: f32,
+    /// Material in the party's pack the turn it left `Hunting`.
+    pack_materials: f32,
+    /// The `"Denial raid drove the … past recovery — returning home with …"` label.
+    completion_label: String,
+    /// `status=` on that line.
+    completion_status: String,
+    /// The `materials=` token of the `ExpeditionReturned` fold-back line.
+    returned_materials: f32,
+    /// The party entity, for asserting it is gone.
+    party: bevy::prelude::Entity,
+    /// The home band the haul drained into.
+    home: bevy::prelude::Entity,
+}
+
+/// **Drive a wolf denial raid end to end** — raid, completion, fold-back — with the home band on the
+/// herd's own tile so the homecoming is inside the run. Panics if the raid never turns for home or
+/// never folds back, because every claim downstream is about a trip that ends.
+fn run_inedible_raid(app: &mut App, id: &str, herd_pos: UVec2) -> InedibleRaid {
+    let home = spawn_home_band_at(app, herd_pos);
+    let party = spawn_party(app, home, herd_pos, WOLF_PARTY, deny(id));
+    let horizon = expedition_cfg(app).hunt.forecast_horizon_turns;
+
+    let mut turned_home = None;
+    for _ in 1..=horizon {
+        drive_turn(app);
+        if phase(app, party) != Some(ExpeditionPhase::Hunting) {
+            turned_home = Some((carried_food(app, party), carried_materials(app, party)));
+            break;
+        }
+    }
+    let (pack_food, pack_materials) =
+        turned_home.expect("a wolf denial raid must drive the pack past recovery and turn home");
+    let completion = app
+        .world
+        .resource::<CommandEventLog>()
+        .iter()
+        .filter(|entry| entry.label.starts_with("Denial raid drove"))
+        .last()
+        .expect("a raid that turned home on its verdict publishes the completion line")
+        .clone();
+    let completion_status = completion
+        .detail
+        .as_deref()
+        .and_then(|detail| detail_token(detail, "status"))
+        .expect("the completion line carries a status");
+
+    for _ in 0..FOLD_BACK_TURNS {
+        if app.world.get_entity(party).is_none() {
+            break;
+        }
+        drive_turn(app);
+    }
+    assert!(
+        app.world.get_entity(party).is_none(),
+        "a party standing in its band's camp folds back and despawns"
+    );
+    let returned_materials = app
+        .world
+        .resource::<CommandEventLog>()
+        .iter()
+        .filter(|entry| entry.kind.as_str() == "expedition_returned")
+        .last()
+        .map(|entry| detail_value(entry.detail.as_deref().unwrap_or_default(), "materials"))
+        .expect("the fold-back publishes its returned line");
+
+    InedibleRaid {
+        pack_food,
+        pack_materials,
+        completion_label: completion.label,
+        completion_status,
+        returned_materials,
+        party,
+        home,
+    }
+}
+
+/// **AN INEDIBLE DENIAL RAID COMES HOME WITH PELTS AND EXACTLY ZERO FOOD.**
+///
+/// A wolf is a legitimate denial target, and the raid is paid in hides: they bank into the party's
+/// own store as it kills, ride the pack home, and the `Returning` fold-back drains them into the home
+/// band — whose larder, food-only, gains nothing. The completion line names the haul as materials and
+/// prints no `0 provisions`, because a wolf pack was never food.
+///
+/// **The liveness half is first-class**: every equality here would hold for a raid that killed
+/// nothing, so the pack must actually hold material and the band must actually end up with it.
+#[test]
+fn an_inedible_denial_raid_comes_home_with_pelts_and_no_food() {
+    let mut app = placid_world();
+    defang_wolves(&mut app);
+    let (id, herd_pos) = pin_raid_herd_of(&mut app, INEDIBLE_QUARRY, WOLF_PACK);
+    {
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        let registry = app.world.resource::<HerdRegistry>();
+        let herd = registry.find(&id).expect("herd present");
+        assert!(
+            !herd_hunt_yield(herd, &fauna).edible(),
+            "the fixture's premise: a wolf pays no provisions"
+        );
+    }
+    let raid = run_inedible_raid(&mut app, &id, herd_pos);
+
+    // Liveness: the raid banked pelts at all.
+    assert!(
+        raid.pack_materials > 0.0,
+        "a wolf raid that drove the pack past recovery must have banked its hides into the party's \
+         store; it carried {}",
+        raid.pack_materials
+    );
+    assert_eq!(
+        raid.pack_food, 0.0,
+        "…and no food — a wolf adds nothing to the pack's food account"
+    );
+
+    // The completion line names the haul — the materials, never an empty pack or "0 provisions".
+    assert_eq!(
+        raid.completion_status,
+        DenialOutcome::PastRecovery.as_str(),
+        "the raid came home on its verdict"
+    );
+    assert!(
+        raid.completion_label.contains("materials")
+            && !raid.completion_label.contains("provisions"),
+        "the haul line names the pelts and only the pelts: {:?}",
+        raid.completion_label
+    );
+
+    // The fold-back drains the pack into the band: what came home is what the pack held, it is now
+    // the band's, and the party that carried it is gone.
+    let home_materials = carried_materials(&app, raid.home);
+    assert!(
+        (home_materials - raid.pack_materials).abs() <= MATERIAL_TOLERANCE,
+        "the pack's {} of material drains into the home band at the fold-back; it holds \
+         {home_materials}",
+        raid.pack_materials
+    );
+    assert!(
+        (raid.returned_materials - raid.pack_materials).abs() <= MATERIAL_TOLERANCE,
+        "the returned line reports the haul it handed over: {} against a pack of {}",
+        raid.returned_materials,
+        raid.pack_materials
+    );
+    assert!(app.world.get_entity(raid.party).is_none());
+    let larder = app
+        .world
+        .get::<PopulationCohort>(raid.home)
+        .expect("the home band survives")
+        .stores
+        .get(FOOD)
+        .to_f32();
+    assert_eq!(
+        larder, 0.0,
+        "a wolf raid adds nothing to the larder — the larder ledger stays food-only"
+    );
+}
+
+/// **THE DENIAL SHEET'S MATERIAL PROMISE IS WHAT THE TRIP BANKS** — the raid twin of the crop
+/// picker's and the herd row's quotes, held to the same property.
+///
+/// `DenialRow.delivered_material` is the sheet's whole statement about a wolf raid: its
+/// `delivered_food` is `0`, so a wrong vector here would leave the sheet promising nothing while the
+/// sim banked real hides (or the reverse). Asserted against what the **home band holds** after a real
+/// driven raid has folded back — not against a re-derivation of the projection — per material, in
+/// both directions: every promised row lands, and nothing lands that was not promised.
+#[test]
+fn an_inedible_denial_raids_promised_material_is_what_the_trip_banks() {
+    let mut app = placid_world();
+    defang_wolves(&mut app);
+    let (id, herd_pos) = pin_raid_herd_of(&mut app, INEDIBLE_QUARRY, WOLF_PACK);
+    reveal_herd(&mut app, herd_pos);
+    recapture_snapshot_in_place(&mut app.world);
+
+    let promised = denial_reply(&mut app, &id, WOLF_PARTY).at_composed;
+    assert_eq!(
+        promised.delivered_food, 0.0,
+        "the fixture's premise: a wolf raid promises no food, so the material vector is all it has"
+    );
+    assert_eq!(
+        promised.outcome,
+        DenialOutcome::PastRecovery.as_str(),
+        "…and it is a raid that ENDS and comes home, or there is no fold-back to compare against"
+    );
+    assert!(
+        !promised.delivered_material.is_empty()
+            && promised
+                .delivered_material
+                .iter()
+                .all(|row| row.amount > 0.0),
+        "a wolf raid must promise the hides it will land, every row one that pays: {:?}",
+        promised.delivered_material
+    );
+
+    let raid = run_inedible_raid(&mut app, &id, herd_pos);
+    assert!(
+        raid.pack_materials > 0.0,
+        "the trip must actually bank something, or every comparison below is against zero"
+    );
+
+    // **THE CLAIM**: what the sheet promised is what the band holds, per material.
+    let cohort = app
+        .world
+        .get::<PopulationCohort>(raid.home)
+        .expect("the home band still exists");
+    for row in &promised.delivered_material {
+        let held = cohort.stores.material_total(&row.material_id).to_f32();
+        assert!(
+            (held - row.amount).abs() <= RAID_PAYLOAD_EPSILON,
+            "the sheet promised {} of {} and the home band holds {held}",
+            row.amount,
+            row.material_id
+        );
+    }
+    // …and nothing came home that was never promised — the other half of "the promise IS the
+    // payload", and what a projection reading the wrong species' rows would fail.
+    for (material, batches) in cohort.stores.materials() {
+        let total: f32 = batches.values().map(|batch| batch.amount.to_f32()).sum();
+        if total <= 0.0 {
+            continue;
+        }
+        assert!(
+            promised
+                .delivered_material
+                .iter()
+                .any(|row| row.material_id == material),
+            "the band holds {total} of {material} the denial sheet never promised"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------
+// A raid and a resident band reach the SAME animals
+// ---------------------------------------------------------------------------------------------------
+
+/// **Red Deer's shipped shape**, at a capacity far above what any party here can clear: a `15`-unit
+/// body a hunter engages **one** of per turn, so a party's *reach* is strictly tighter than its
+/// *carry* — which is what makes the deer the fixture for the engagement bound. At `B == K` regrowth
+/// is zero, so the raid's turn sees exactly the herd the band's would.
+const PARITY_HERD: RaidQuarry = RaidQuarry {
+    body_mass: RED_DEER_BODY_MASS,
+    carrying_capacity: 4000.0,
+    biomass_fraction: 1.0,
+    regrowth_rate: 0.10,
+};
+
+/// The party both halves of the parity test field. Small enough to be a plausible band *and* a legal
+/// party, large enough that carry and reach give visibly different answers.
+const PARITY_PARTY: u32 = 5;
+
+/// The resident band's floor — the food peak, the default a fresh assignment gets. The herd stands at
+/// `K`, so the escapement room (`K / 2`) is far above either party's reach and never binds.
+const PEAK_FLOOR: f32 = 0.5;
+
+/// **One deer engaged per hunter per turn** — the reach the parity fixture was written at. Red Deer
+/// ships `engage_rate 2.0` (a regional staple), where five hunters reach ten deer and the *fight*
+/// binds before the reach does; at `1.0` a party of [`PARITY_PARTY`] reaches five, strictly under the
+/// thirteen its packs seat, so the engagement bound is the one deciding the kill.
+const PARITY_ENGAGE_RATE: f32 = 1.0;
+
+/// Hold Red Deer's reach at [`PARITY_ENGAGE_RATE`] — the parity fixture's world.
+fn pin_red_deer_reach(app: &mut App) {
+    let mut handle = app.world.resource_mut::<FaunaConfigHandle>();
+    let mut config = (*handle.get()).clone();
+    config
+        .species
+        .get_mut(REPORTED_QUARRY_KEY)
+        .expect("the shipped roster carries Red Deer")
+        .engage_rate = PARITY_ENGAGE_RATE;
+    handle.replace(std::sync::Arc::new(config));
+}
+
+/// **The party `party` fights as, handed to the resident take** — its own kit, head count and ledger
+/// through the [`core_sim::PartyResolution`] seam the live raid arm resolves it with, **at the
+/// raid's own combat tuning**.
+///
+/// The tuning is held at the raid's on purpose. A detached party fights at
+/// `CombatConfig::expedition_tuning` (`lethality × expedition_danger_multiplier`), and lethality
+/// scales the party's blows as well as the quarry's: on this herd the same five hunters bring down
+/// five deer at expedition lethality and three at resident lethality. That is a *designed* difference
+/// between the two verbs and a property of the fight, not of the reach — so the parity holds the
+/// fighting party fixed and lets the engagement stage be the only thing that could differ.
+fn resident_party_like(app: &App, party: bevy::prelude::Entity, body_mass: f32) -> HuntingParty {
+    let equipment = app.world.resource::<EquipmentConfigHandle>().get();
+    let combat = app.world.resource::<CombatConfigHandle>().get();
+    let person = app
+        .world
+        .resource::<core_sim::CreaturesConfigHandle>()
+        .get()
+        .person();
+    let wear = app
+        .world
+        .get::<BandEquipment>(party)
+        .expect("the party carries its kit")
+        .clone();
+    let kit = app
+        .world
+        .get::<Expedition>(party)
+        .expect("the party is an expedition")
+        .kit
+        .clone();
+    let coverage = equipment.coverage(&kit, PARITY_PARTY as f32, &wear);
+    core_sim::PartyResolution {
+        equipment: &equipment,
+        coverage: &coverage,
+        wear: &wear,
+        intrinsic: person,
+        tuning: combat.expedition_tuning(),
+        hunt_injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
+    }
+    .party_against(core_sim::Quarry::Mass(body_mass))
+}
+
+/// **A DENIAL RAID AND A RESIDENT BAND REACH THE SAME ANIMALS** — the same party on the same herd
+/// must not take a different number of animals purely by choosing the verb.
+///
+/// `docs/plan_hunt_through_combat.md` §1 states the hunt's stages for *the hunt*; §10 exempts only the
+/// pen. The engagement bound reached `systems::hunt_take` first, and for one commit the raid path
+/// (`expedition_take_biomass`) skipped it: five hunters killed 5 Red Deer a turn from camp and
+/// `floor(5 × 40 / 15) = 13` a turn on a raid, off the same herd.
+///
+/// **Pinned on the denial raid**, the mission that drives `expedition_take_biomass`, and the stronger
+/// fixture for it: a denial raid drops the pack as a bound on what it engages
+/// (`EngagementStop::Never`), so with the engagement bound missing on the raid path nothing at all
+/// would hold its kill down. The raid side is a **live** turn of `advance_expeditions`, read off the
+/// herd's own biomass; the band side is `hunt_take` on the same herd as it stood.
+#[test]
+fn a_denial_raid_and_a_resident_band_reach_the_same_animals() {
+    let mut app = placid_world();
+    pin_red_deer_reach(&mut app);
+    let (id, herd_pos) = pin_raid_herd_of(&mut app, REPORTED_QUARRY, PARITY_HERD);
+    let home = spawn_home_band(&mut app, herd_pos);
+    let party = spawn_party(&mut app, home, herd_pos, PARITY_PARTY, deny(&id));
+
+    // The herd's own turn first, exactly as `drive_turn` orders it, then the herd as the raid meets it.
+    app.world.run_system_once(advance_herds);
+    let herd = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(&id)
+        .expect("herd present")
+        .clone();
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let per_worker = equipped_haul_rate();
+    // **The SAME fighting party on both sides** — see [`resident_party_like`] for why that includes
+    // the raid's combat tuning. Only the take path differs.
+    let same_party = resident_party_like(&app, party, herd.body_mass);
+
+    let band_killed = {
+        let mut quarry = herd.clone();
+        let outcome = hunt_take(
+            &mut quarry,
+            PARITY_PARTY as f32,
+            PEAK_FLOOR,
+            per_worker,
+            &same_party,
+            &fauna,
+            f32::INFINITY,
+            // The world holds the roster's wariness at `0`, which makes the retreat draw an exact
+            // identity — so the seed is unobservable and held fixed.
+            HuntDraw::Seeded(0),
+        );
+        assert_eq!(
+            outcome.bound,
+            HuntTakeBound::Engagement,
+            "the fixture must be reach-bound on the band's side, or the parity below is about some \
+             other stage"
+        );
+        outcome.take.killed
+    };
+
+    app.world.run_system_once(advance_expeditions);
+    let after = herd_biomass(&app, &id).expect("one turn does not erase a full deer herd");
+    let raid_killed = ((herd.biomass - after) / herd.body_mass).round() as u32;
+
+    // Liveness first: the take is real on both paths, or the equality is between two zeroes.
+    assert!(
+        band_killed > 0 && raid_killed > 0,
+        "the fixture must produce an actual take (band {band_killed}, raid {raid_killed})"
+    );
+    assert_eq!(
+        raid_killed, band_killed,
+        "a denial raid and a resident band of {PARITY_PARTY} must take the same deer off the same \
+         herd (raid {raid_killed}, band {band_killed})"
+    );
+    // …and it is the ENGAGEMENT bound that produced it: the party's packs would have seated far more,
+    // so deleting the bound on either path breaks the equality above rather than passing quietly.
+    let carry_allows = (PARITY_PARTY as f32 * per_worker / herd.body_mass).floor() as u32;
+    assert!(
+        carry_allows > band_killed,
+        "the fixture must be reach-bound, not carry-bound: carry seats {carry_allows}, reach took \
+         {band_killed}"
+    );
 }

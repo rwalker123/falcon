@@ -111,9 +111,8 @@ pub struct SnapshotContext<'w> {
     pub flora_quotes: ResMut<'w, FloraQuoteCache>,
     /// Fauna tuning (ecology / hunt / market / husbandry). Read at capture for each herd's
     /// **pre-commit yield forecast** (`fauna::hunt_forecast` — the client's live "Expected yield" +
-    /// worker-stepper cap and the exported per-policy `hunt_policy_ceilings`), the per-cohort hunt
-    /// throughput, and the pre-launch expedition trip estimates (see `core_sim/CLAUDE.md` →
-    /// Scouting & Hunting Expeditions → Snapshot).
+    /// worker-stepper cap and the exported per-policy `hunt_policy_ceilings`) and the per-cohort
+    /// hunt throughput.
     pub fauna: Res<'w, crate::fauna_config::FaunaConfigHandle>,
     pub expedition: Res<'w, crate::expedition_config::ExpeditionConfigHandle>,
     /// The base human's intrinsic combat profile — the **unequipped** attack tier the minimal TOE's

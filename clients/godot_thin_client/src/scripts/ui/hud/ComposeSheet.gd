@@ -25,8 +25,8 @@ class_name ComposeSheet
 ##    compose opens, and a hidden Control's full-rect anchors do not settle, leaving a zero-size rect.
 ##
 ## 3. NO SCRIM. `NarrativeForkPanel` dims because a fork is a story beat demanding attention. An
-##    assignment is a working action composed AGAINST the map — the band's work-range ring, the
-##    herd's position and the hunt reach are all live context you are reading while you dial the
+##    assignment is a working action composed AGAINST the map — the band's work-range ring and the
+##    herd's position are all live context you are reading while you dial the
 ##    party. This is the one place the sheet deliberately departs from the fork panel.
 ##
 ## The sheet knows nothing about foraging or hunting: the caller opens it with a title and fills

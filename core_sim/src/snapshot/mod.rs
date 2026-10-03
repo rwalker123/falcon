@@ -301,8 +301,8 @@ where
 /// learned the entry existed. The client is left holding a row the sim will never mention again.
 ///
 /// **This class does not self-heal**, which is what separates it from the within-tick reverts a
-/// keyed section shrugs off. The worked example is the one that found it: `send_hunt_expedition`
-/// spawns a detached party (published on a held frame), `recall_expedition` cancels it in camp and
+/// keyed section shrugs off. The worked example is the one that found it: a launch verb
+/// (`send_expedition`, `send_denial_raid`) spawns a detached party (published on a held frame), `recall_expedition` cancels it in camp and
 /// despawns it in the same tick (published on the next held frame) — and every frame from then on,
 /// forever, is silent about it. The party row stays on the client's Band panel, its ✕ sends the
 /// `BandId` it still holds, and the sim answers `Expedition N does not exist in the simulation` on

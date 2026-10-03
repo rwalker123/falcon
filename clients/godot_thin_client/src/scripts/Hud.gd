@@ -861,8 +861,8 @@ func _ready() -> void:
     # rather than in `_bandpanel`'s construction because `_attention` takes `_bandpanel` itself, so the
     # two cannot both be constructed with the other in hand.
     _bandpanel.set_attention(_attention)
-    # **THE FORECAST QUERY SEAM, handed to BOTH raid-composing controllers.** One instance: the drawer's
-    # expedition branch and the dock's two sheets ask the same questions of the same sim, and two seams
+    # **THE FORECAST QUERY SEAM, handed to BOTH composing controllers.** One instance: the drawer's
+    # compose sheets and the dock's verb sheets ask the same sim over one socket, and two seams
     # would be two request-id sequences and two staleness rules over one socket. Injected here rather
     # than constructed into either — neither owns it, and `Main` has to reach it to inject the transport
     # (`forecast_query()`), which is the coordinator's job and not a controller's.
@@ -1237,7 +1237,7 @@ func _resolve_assign_band() -> Dictionary:
     return _band_labor.player_band()
 
 ## Map grid dimensions captured each snapshot (Main forwards the snapshot `grid` key). Width + wrap
-## feed the wrap-aware hex distance the herd-hunt affordance keys its local-vs-expedition decision
+## feed the wrap-aware hex distance the compose sheets' apron test (local crew vs work party) keys
 ## off. Grid rides full snapshots only; persists across deltas (fields default to the last value).
 func set_grid_dimensions(grid: Variant) -> void:
     if not (grid is Dictionary):

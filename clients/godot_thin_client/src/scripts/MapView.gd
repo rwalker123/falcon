@@ -3711,7 +3711,7 @@ func _units_on_tile(col: int, row: int) -> Array:
 ## The herds standing on a hex — FOG-GATED through the SAME `_is_tile_visible` test the herd RENDERER
 ## uses (`_draw_herd`), so a herd you cannot see is neither listed nor targetable. This is the single
 ## chokepoint for herd-by-coordinate lookups: the Occupants roster, the herd-selection click, the
-## hunt-target click resolution and the pre-launch trip forecast all read the herds through here (via
+## quarry-pick click resolution and the compose sheets' forecasts all read the herds through here (via
 ## `_tile_info_at` → `tile_info.herds`), so gating HERE makes "you can only hunt/forecast what you can
 ## actually see" true by construction.
 ##

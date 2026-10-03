@@ -171,8 +171,8 @@ const BADGE_UNSTAFFED_FORMAT := "%s⚠ "
 # channel's own subject, and it wears the `HudStyle.WARN` the overdraw and under-herded marks do.
 const BADGE_BORDER_WIDTH := 1.2
 # THE SELECTED BAND'S LINK TO A SOURCE IT WORKS — a thin line from its token to the source's own
-# marker (the source can sit well outside the work-range ring: hunt reach = work_range + leash, and a
-# working is joined to whichever band opened it). ONE alpha and ONE width for every kind, applied to
+# marker (the source can sit well outside the work-range ring: a far source is worked by a work
+# party, and a working is joined to whichever band opened it). ONE alpha and ONE width for every kind, applied to
 # the SOURCE's own ring colour by `_draw_worked_link`, so a link can never be a different weight from
 # web to web — the ring already carries which source this is.
 const WORKED_LINK_ALPHA := 0.60

@@ -8,7 +8,7 @@
 //!
 //! **What is NOT here:** the resolver's own arithmetic (`core_sim/src/combat/mod.rs` unit tests own
 //! the gate, spillover and the binomial at the `Force` level), `forecast == actual` (the existing
-//! `hunt_yield_vector` / `expedition_hunt` suites own it, and they pass unchanged through this slice),
+//! `hunt_yield_vector` / `denial_raid` suites own it),
 //! and the escapement floor's monotonicity (`forage::stance_probe`).
 
 /// **The shipped EQUIPPED haul rate** — what a kitted band drags, off the sled's own tier.
