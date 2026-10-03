@@ -19,7 +19,7 @@ use core_sim::{
     balance_supply_networks, scalar_from_f32, scalar_zero, spawn_initial_world, BandId, BandKey,
     ConnectionKey, ConnectionLedger, ConnectionsConfig, CultureManager, DiscoveryProgressLedger,
     FactionId, FactionInventory, GenerationId, GenerationRegistry, LaborAllocation, LocalStore,
-    MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, Scalar,
+    MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, Scalar, Sighting,
     SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
     StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
     SupplyNetworkConfigHandle, SupplyNetworkMembership, Tile, TileRegistry, TransferCause,
@@ -193,7 +193,12 @@ fn seed_directed_tie(app: &mut App, observer: Entity, subject: Entity) {
     let contacts_to_full = (FULL_TIE.to_f32() / cfg.strength.gain_per_contact).ceil() as u32;
     let mut ledger = app.world.resource_mut::<ConnectionLedger>();
     for _ in 0..contacts_to_full {
-        ledger.record_contact(key, position, SEEDED_ON_TURN, SEEDED_ON_TURN, &cfg);
+        ledger.record_contact(
+            key,
+            &Sighting::new(position, SEEDED_ON_TURN, ""),
+            SEEDED_ON_TURN,
+            &cfg,
+        );
     }
 }
 

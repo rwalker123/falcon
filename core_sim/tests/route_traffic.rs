@@ -31,7 +31,7 @@ use core_sim::{
     EquipmentConfigHandle, FactionId, FactionInventory, GenerationId, GenerationRegistry,
     LaborAllocation, LaborConfigHandle, LaborTarget, LadderConfig, LadderConfigHandle, LocalStore,
     MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, Road, RoadKeeper,
-    RoadRegistry, RouteTrafficLog, RungKey, Scalar, SimulationConfig, SimulationTick,
+    RoadRegistry, RouteTrafficLog, RungKey, Scalar, Sighting, SimulationConfig, SimulationTick,
     SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, SupplyNetworkConfigHandle, SupplyNetworkMembership, Tile,
     TileRegistry, FOOD, FULL_TIE, NEAR_ENOUGH_TO_KEEP, NO_UPKEEP_DEMAND, PAVING_DISCOVERY_ID,
@@ -174,7 +174,12 @@ fn seed_directed_tie(app: &mut App, observer: Entity, subject: Entity) {
     let contacts_to_full = (FULL_TIE.to_f32() / cfg.strength.gain_per_contact).ceil() as u32;
     let mut ledger = app.world.resource_mut::<ConnectionLedger>();
     for _ in 0..contacts_to_full {
-        ledger.record_contact(key, position, SEEDED_ON_TURN, SEEDED_ON_TURN, &cfg);
+        ledger.record_contact(
+            key,
+            &Sighting::new(position, SEEDED_ON_TURN, ""),
+            SEEDED_ON_TURN,
+            &cfg,
+        );
     }
 }
 

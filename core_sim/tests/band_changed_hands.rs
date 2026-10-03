@@ -17,8 +17,8 @@ mod faction_support;
 use core_sim::{
     advance_population_migration, publish_baseline_snapshot, run_turn, scalar_from_f32, BandId,
     ConnectionKey, ConnectionLedger, ConnectionsConfigHandle, ExpeditionConfigHandle, FactionId,
-    PopulationCohort, ResidentBand, Scalar, SimulationConfig, SnapshotHistory, Tile, TileRegistry,
-    ViewerFaction,
+    PopulationCohort, ResidentBand, Scalar, Sighting, SimulationConfig, SnapshotHistory, Tile,
+    TileRegistry, ViewerFaction,
 };
 use faction_support::{world_with, HOME, ONE_RIVAL, RIVAL};
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
@@ -133,7 +133,12 @@ fn stage_a_remnant_handover(app: &mut App) -> (Entity, BandId) {
         ConnectionKey::new(home_id, rival_id),
         ConnectionKey::new(rival_id, home_id),
     ] {
-        ledger.record_contact(key, UVec2::ZERO, SIGHTING_TURN, SIGHTING_TURN, &config);
+        ledger.record_contact(
+            key,
+            &Sighting::new(UVec2::ZERO, SIGHTING_TURN, ""),
+            SIGHTING_TURN,
+            &config,
+        );
     }
     (home, home_id)
 }

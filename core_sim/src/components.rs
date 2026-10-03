@@ -2284,10 +2284,12 @@ pub struct Expedition {
     /// Observed-but-unreported tile coordinates (deduped). Flushed to the faction map as
     /// `Discovered` when the party is within comm range of its home band, then cleared.
     pub pending_reveal: Vec<UVec2>,
-    /// **Peoples the party has found and not yet reported** — subject band → (where it was seen,
-    /// the turn it was seen). Comm-gated exactly like [`Self::pending_reveal`] beside it: a
-    /// scouting party extends its home band's range, and what it finds reaches the faction through
-    /// the same flush.
+    /// **Peoples the party has found and not yet reported** — subject band →
+    /// [`crate::connections::Sighting`]: where it was seen, the turn, and the name it answered to
+    /// then (read off its [`BandName`] at sight, so the report carries what the party saw, not what
+    /// the band is called by the time it lands). Comm-gated exactly like [`Self::pending_reveal`]
+    /// beside it: a scouting party extends its home band's range, and what it finds reaches the
+    /// faction through the same flush.
     ///
     /// **Most-recent observation per subject wins** (re-observing overwrites), and the flush
     /// credits the **home band** with *one* contact per subject however many turns the party
@@ -2296,7 +2298,7 @@ pub struct Expedition {
     ///
     /// A `BTreeMap` for the reason [`crate::connections::ConnectionLedger`] is one: the flush order
     /// reaches a checkpointed ledger, so it must be an order rather than an accident.
-    pub pending_contacts: std::collections::BTreeMap<BandId, (UVec2, u64)>,
+    pub pending_contacts: std::collections::BTreeMap<BandId, crate::connections::Sighting>,
     // **`carried_trade` is RETIRED** (arc #527) with the trade-goods axis it banked. What a raid
     // physically carries home is provisions in `stores[FOOD]` and **material batches** in that same
     // `LocalStore`, moved by `LocalStore::drain_materials_into` batch by batch — so a mammoth hide

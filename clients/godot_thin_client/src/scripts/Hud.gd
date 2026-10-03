@@ -1262,11 +1262,14 @@ func update_herds(herds_variant: Variant) -> void:
     _targeting.refresh_live_targets()
 
 ## Ingests the viewer's CONTACT TIES (arc #527) — one directed row per edge, already filtered
-## sim-side to this faction's observing bands. The trade compose sheet's destination picker is their
-## one consumer: a tie is what gates a shipment, so the picker lists a band's ties and nothing else.
+## sim-side to this faction's observing bands. Two readers: the band page's Peoples tab
+## (`ConnectionsRoster`) and the trade compose sheet's destination picker, a tie being what gates a
+## shipment. The open band page's roster and the Peoples tab badge are re-filled in place on the same
+## frame (`BandPanelController.refresh_connections`), since a frame may move the ties and no population.
 func update_connections(connections_variant: Variant) -> void:
     _band_labor.set_connections(connections_variant)
     _targeting.refresh_live_targets()
+    _bandpanel.refresh_connections()
 
 ## Ingests MapView's terrain-stamped food sites (x/y/module/kind + terrain_id) into the per-tile map
 ## the Forage row reads, so its glyph matches the map marker (riverine split included). The per-tile

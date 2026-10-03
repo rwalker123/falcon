@@ -24,8 +24,8 @@ use bevy::prelude::{Entity, With};
 use core_sim::{
     build_test_app, BandId, ConnectionKey, ConnectionLedger, ConnectionsConfig, FactionId,
     LaborAllocation, LaborTarget, LadderConfig, PopulationCohort, ResidentBand, Road, RoadKeeper,
-    RoadRegistry, RungKey, SimulationConfig, StartingUnit, Tile, TileRegistry, VisibilityLedger,
-    VisibilityState, NEAR_ENOUGH_TO_KEEP, PER_WORKER_OUTPUT,
+    RoadRegistry, RungKey, Sighting, SimulationConfig, StartingUnit, Tile, TileRegistry,
+    VisibilityLedger, VisibilityState, NEAR_ENOUGH_TO_KEEP, PER_WORKER_OUTPUT,
 };
 
 /// A pinned earthlike world, so the terrain under every road below is the same one every run.
@@ -375,7 +375,7 @@ fn a_live_tie_to_a_people_never_travelled_to_grants_no_active_tile() {
         let key = ConnectionKey::new(our_band, stranger_id);
         let mut ledger = app.world.resource_mut::<ConnectionLedger>();
         for _ in 0..((core_sim::FULL_TIE.to_f32() / cfg.strength.gain_per_contact).ceil() as u32) {
-            ledger.record_contact(key, far, 0, 0, &cfg);
+            ledger.record_contact(key, &Sighting::new(far, 0, ""), 0, &cfg);
         }
     }
     app.update();

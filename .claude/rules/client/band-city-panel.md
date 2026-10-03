@@ -25,6 +25,8 @@ paths:
 | `ui/hud/DisclosureTriangle.gd` | The Work tab section head's fold control's MARK — a filled triangle (`▼` open, `▶` folded) DRAWN with `draw_colored_polygon`, its bounding box (`drawn_rect`) centred in its rect by geometry; laid full-rect over the ghost Button that is the hit area. See "THE SECTION HEAD'S TRIANGLE IS DRAWN" |
 | `ui/hud/WorkInspectorDialog.gd` | **The work board's inspector, rehosted OUT of the work zone** (`docs/plan_standing_upkeep.md` §4.9 item 12d) — see "THE WORK INSPECTOR IS A DIALOG" below. An **`AutoSizingPanel`** on its OWN `CanvasLayer` (`HudLayer.work_inspector_host()`, `WORK_INSPECTOR_LAYER_INDEX` = 105), holding the `PanelContainer` `BandPanelController._build_work_inspector` still builds — the head line, the conditional notes, the arrivals strip, and (since item 12d's SECOND pass) the POLICY / PRIORITY / KITS **sections** with their controls drawn, over a two-button actions row. **A `Control` on a layer and never a `Popup`**: `Popup` auto-hides on an outside click and on parent focus loss, which is precisely the dismissal this surface forbids (it RE-TARGETS when another board row is selected, so a stepper press elsewhere is ordinary use). **NON-MODAL — no catcher, no scrim**: every pixel it claims is a pixel of dead map, so it claims only the card. **Centred in the ROOM the dock leaves — one placement for all four dock edges**, no `room_bounds` (it is a surface you WRITE INTO, so it takes a layer above the docked ones rather than dodging them — `panel-framework.md`'s table). `_room()` is the viewport inside `VIEWPORT_MARGIN` cut back to the panel card's MAP-FACING side, read through `BandCityPanel.map_facing_edge`, the one table naming which side of a docked card faces the map. It was centred in the raw viewport for one slice, which held only while the card was ~104–156px tall; the sections took it to 340 and a viewport centre then ran straight through a bottom dock's panel. `mount(strip, reserved, card_rect, map_facing)` is the whole API: `reserved` is `BandPanelController._work_inspector_height`'s answer for the same model and becomes the card's `min_height`, which is how *reserved ≥ drawn* survived the move. Rebuilt per render, never patched (the rung track's rule — every figure on the strip moves per snapshot), and the re-mount IS the re-target |
 | `ui/hud/FactionRollup.gd` | **All-`static`, stateless** builder of the FACTION PAGE's FOUR zones (issue #450) — the all-band rollup the cycler pins first. `build_band_zone` (the summed PEOPLE bar + the band page's own vitals rows — Food / **Fodder** / **Upkeep** / Morale / Growth; a sixth, Trade, went with arc #527's retired account, and the `Kit` row it sat beside went with `docs/plan_standing_upkeep.md` §4.9 item 12 — durabilities never aggregated, so that row was an alert and a drill-down, and the CRAFTING panel's kit ledger already states the items in full. The **`Upkeep`** row is the standing MATERIAL bill, folded PER BAND out of `DetailFormat.band_material_bill` and rendering only where some band on the roster owes a good — see `band-readouts.md` → "THE STANDING MATERIAL BILL". The `Fodder` row is the Food row beat for beat, sums the same way, and has the band row's DORMANT form on the same gate folded across the roster — see `band-readouts.md` → "THE FACTION PAGE'S `Fodder:` ROW". `build_band_zone` took the faction's `{track: progress}` row as a sixth parameter for that row's hover alone, and **takes no knowledge row at all now** — the dormant row's hover was retired (it reached the whole block, not the row), and the parameter went with its one reader. `_build_vitals_label` CLEARS the previous render's carets before building, which this page did not do until a dormant row inherited one), `build_work_zone` (the whole workforce as one bar and the per-band roster), **`build_knowledge_zone`** (SETTLING, the craft tracks, DISCOVERIES — the fourth column the panel's ordered-list body exists to hold, with a `full` HEIGHT TIER that drops the last of the three in a height-capped horizontal dock) and `build_parties_zone` (every party and the band it left, its NAME jumping to that band — see "THE PARTIES ROW NAMES THE HOME BAND" for why `_summary_row` binds a separate `jump_owner`), plus the `_stat_row` leaf they are built from. Its two new inputs are threaded in as PARAMETERS like every other: the player faction's sedentarization entry and its discovered-site array, read off `FactionReadouts` (`faction_sedentarization` / `faction_discovered_sites`), which is where the PLAYER-FACTION FILTER over those two per-faction wire arrays already lives — a second walk looking for `PLAYER_FACTION_ID` is a second chance to disagree about whose faction is being reported. **It is a shared LAYER rather than a controller because the page is a READOUT** — no steppers, no compose sheet, no open row, nothing that survives a snapshot; its one control, the Open Borders toggle, reads its state off the snapshot and emits through a Callable the controller threads in — so it has no per-cluster state to own, which is the whole of what makes a controller one (`hud-modules.md`). The one thing it needs is threaded in as a PARAMETER: the `HudBandLaborState` instance, plus the caller's `herd_label_for_id` Callable (the treatment `HudFormat.panel_expedition_summary` already takes — a stateless layer must not reach for the roster/selection/herd-list state that resolver reads). **IT RE-DERIVES NOTHING**: every total is a SUM over answers the per-band surfaces already give (`DetailFormat.band_net_food` / `band_provisions` / `band_fodder_store` / `band_net_fodder` / `band_material_bill`, `HudBandLaborState.effective_idle` / `effective_worker_map` / `effective_role_workers` / `band_party_workers`, `FactionReadouts.faction_tracks`), so a band's own page and this one cannot disagree about a number — a rollup with its own food ledger would be a second source of truth for the identity `larder_delta == income − consumption − pen_feed − raid_forfeit` the food arc keeps closed. Dependency direction: it reads `HudWidgets` / `HudFormat` / `DetailFormat` / `SourceForecast` / `HudStyle` / the vocab leaves and `FactionReadouts`' track table, and none of them may read it back |
+| `ui/hud/ConnectionsRoster.gd` | **All-`static`** builder of the band page's **Peoples tab** and its wide-shell section under Parties (issue #549), the in-place `refill`, the tab badge, and the ONE subject-naming rule (`subject_label`) the trade shipment picker shares. See "The Peoples tab" |
+| `ui/hud/hud_connections_vocab.gd` | `HudConnectionsVocab` — the roster's head, its three tie states and their words, the parked line, the empty line, and the node names of the tab, its rows box and its sanctioned scroll (`LIST_NAME`). A leaf: reads nothing |
 | `ui/hud/TradeZoneController.gd` | `RefCounted` controller for the band page's **Trade tab** (issue #731) — builds the zone (FULL or SHORT tier, chosen by measurement), owns the list popover and the hover card. See "The Trade tab" |
 | `ui/hud/TradeLedger.gd` | **All-`static`** arithmetic for the Trade tab and the Food/Fodder popovers: which crossings are trade, one good's net across its ratings, shipments grouped by party, the network's camps and relays, one good across the network |
 | `ui/hud/TradeHoverCard.gd` | The Trade tab's hover card: a row's rating piles or a shipment's cargo, placed beside the row and never under the list panel |
@@ -7612,6 +7614,67 @@ nor the Band panel launches a hunting party.
   in the parties strip through `DetailFormat`'s expedition lines and `SourceForecast.trip_bound_clause`
   — the client stopped composing hunting parties, not reading them.
 
+## The Peoples tab (issue #549)
+
+The band page's fifth zone, `peoples` (`BandCityPanel.ZONE_PEOPLES`, labelled
+`HudWorkVocab.ZONE_TAB_PEOPLES`): the ties THIS band holds
+(`HudBandLaborState.connections_for_band(<its band_id>)`). A connection is per observer band, so the
+zone is declared on band pages only (`BAND_ZONE_LAYOUT`); the faction page has none.
+
+- **NARROW-ONLY, exactly as Trade** (see "Narrow-only: a tab on a side dock, a section under Parties
+  on a wide shell" below): a tab on a side dock, and on a wide shell no flank of its own — the same
+  roster is a section at the foot of the Parties zone's scrolling list, after Trade's section
+  (`build_parties_zone(band, with_trade, with_peoples)`). The shell threshold stays 1190. It moves on
+  the same flip and reads the same `_trade_wide` record.
+- **The tab** (`ConnectionsRoster.build_tab`, through `BandPanelController.build_peoples_zone`): the
+  head, then EVERY tie in a sanctioned `ScrollContainer` (`HudConnectionsVocab.LIST_NAME`) that fills
+  the tab. No row cap and no `+N more`. The scroll's declared viewport is
+  `ConnectionsRoster.list_viewport_height(<the zone's box height>)` — the box less the head and its
+  gap, floored at `HudWorkVocab.PARTIES_LIST_MIN_HEIGHT` — and `_on_zones_resized` re-declares it
+  (`_sync_peoples_scroll`). The rows sit in a right gutter the scrollbar's own minimum width wide,
+  reserved whether or not the bar shows — the Trade list popover's gutter, the same measure — so the
+  bar never touches a row's state word.
+- **The wide section** (`ConnectionsRoster.build_section`): the same head and rows with no scroll of
+  its own; it rides inside the Parties list's sanctioned scroll, which is how Trade's wide section
+  overflows too.
+- **The badge** (`ConnectionsRoster.badge_text`): how many ties the band holds, parked ones included;
+  no badge at none, Trade's convention. Pushed with the other tab badges in `_push_zone_badges`.
+- **Head**: `PEOPLES WE KNOW` and the tie count. No ties: the head alone and one line, *This band
+  has met no other people yet.*
+- **A row is two lines.** Line 1: the subject's name · strength as a whole percent · the state word.
+  Line 2: the remembered sighting, `HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_FORMAT` — the
+  shipment picker's own sentence. Both lines are single-line labels that ellipsise, so a row cannot
+  wrap to a third. The row's hover is the whole name, then the first-met and last-contact turns.
+- **The three states** (`ConnectionsRoster.tie_state`): `growing` (HEALTHY) when
+  `last_contact_turn` is the current turn; `fading` (INK_DIM) when there was no contact and strength
+  is above `HudConst.TIE_STRENGTH_NONE`; `parked` (WARN) at that strength.
+- **A parked tie is shown.** Its second line is amber and says what to do and where:
+  `No tie — meet them again. Last seen at (x, y), turn N.` A parked tie with no recorded tile reads
+  `No tie — meet them again before anything can flow.` The full sighting sentence is on that line's
+  hover.
+- **Order**: live ties by strength, strongest first; then parked ties by `last_contact_turn`, most
+  recent first; ties on either key by `subject_band_id`.
+- **The name** (`ConnectionsRoster.subject_label`, also the shipment picker's): the player's own
+  roster label (`band_label_for_id`); else the tie's `subject_name`, the name it answered to when
+  last seen; else `Band near (x, y)`. A raw id never reaches a label.
+- **Refresh**: `Hud.update_connections` calls `BandPanelController.refresh_connections`, which
+  re-fills the live tab or section in place on the same frame (`ConnectionsRoster.refill`: the head
+  and the rows, so the tab's scroll keeps its node and offset) and re-pushes the Peoples badge. The
+  controller keeps the content's handle, its band and what it was built from (the current turn and
+  that band's ties); an unchanged pair does nothing. A frame that also moves populations re-renders
+  every zone through `update_band_alerts` as before.
+- **The drawer's flat no-dock host carries it too**: it has no tabs, so after the Parties zone it
+  mounts `BandPanelController.build_flat_sections` — Trade's section, then the roster section — in
+  the drawer's own scrolling flow (the Parties list's scroll is a few rows tall there). The roster is
+  tracked like the dock's, so a connections-only frame re-fills it.
+
+Frames: `ui_preview`'s `connections_roster` (thirty ties on the 380px right dock's Peoples tab —
+growing, fading named by its remembered `subject_name`, fading named by its tile, and a parked tie
+at the foot), `connections_roster_scrolled`, `connections_roster_ties_only`,
+`connections_roster_empty`, `connections_roster_drawer` and `connections_roster_drawer_scrolled`
+(the no-dock drawer), in `chapters/trade.gd`; `band_panel_preview`'s `peoples_wide` (the
+bottom dock's wide shell, the section under Parties after Trade's), in `band_panel_trade_tab.gd`.
+
 ## The Trade tab (issue #731)
 
 The band page's fourth zone: what crossed this band's store with SOMEBODY ELSE this turn, by the link
@@ -7620,9 +7683,9 @@ it crossed. The spec is `docs/band_trade_tab_ux_proposal.html` (layout C; §08 i
 
 ### Narrow-only: a tab on a side dock, a section under Parties on a wide shell
 
-`BAND_ZONE_LAYOUT` declares `trade` with **`BandCityPanel.ZONE_SPEC_NARROW_ONLY`**. Every wide-shell
-reader walks `BandCityPanel._wide_layout()` — the layout less the narrow-only zones — so the zone has
-no host, no separator and no term in `wide_shell_min_width()`, `_fixed_zone_span()` or
+`BAND_ZONE_LAYOUT` declares two zones with **`BandCityPanel.ZONE_SPEC_NARROW_ONLY`**: `trade` and
+`peoples` (see "The Peoples tab"). Every wide-shell reader walks `BandCityPanel._wide_layout()` — the
+layout less the narrow-only zones — so neither zone has a host, no separator and no term in `wide_shell_min_width()`, `_fixed_zone_span()` or
 `_wide_separator_span()`. **A band's shell threshold stays the three flanks' 1190**; a fourth flank
 would have made it 1569 and tabbed every laptop bottom dock between the two. `shows_zone()` answers
 `false` for a narrow-only zone in the wide shell.
@@ -7632,8 +7695,9 @@ On a wide shell the SAME content is a section at the foot of the Parties zone's 
 sanctioned for — the Trade content adds no `ScrollContainer` in either shell. **The content moves
 between shells**, so `BandPanelController._trade_wide` records which shell a render authored it for,
 read once off `BandCityPanel.is_wide_shell()` before the builders run, and `_on_zones_resized`
-re-renders on a flip rather than re-paging. The drawer's flat host calls `build_parties_zone` without
-`with_trade`, so it never grows a Trade section.
+re-renders on a flip rather than re-paging. The drawer's flat host has no tabs either, so it mounts
+the Trade section (then the Peoples section) after its Parties zone, in the drawer's own scrolling
+flow (`build_flat_sections`).
 
 ### Two tiers, chosen by measurement
 
