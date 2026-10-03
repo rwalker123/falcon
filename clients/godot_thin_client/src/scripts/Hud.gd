@@ -1036,6 +1036,10 @@ func update_overlay(turn: int, metrics: Dictionary) -> void:
     # in the same snapshot cycle).
     _band_labor.set_turn(turn)
     _turnorb.set_turn(turn)
+    # **THE SNAPSHOT BOUNDARY the outfitting card needs.** `Main` calls this first in every snapshot,
+    # before populations and command_events, so the card can tell a refusal read in the SAME snapshot
+    # as a newer published state (no line) from one read later (a line).
+    _loadout.begin_snapshot()
 
 ## Top-bar faction readouts — thin delegators to the FactionReadouts controller (`_topbar`), which owns
 ## the Sedentarization / demographics / discoveries / intensification rendering. These

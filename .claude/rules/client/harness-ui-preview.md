@@ -1740,8 +1740,8 @@ refusal).
 
 ## `chapters/starting_loadout.gd` — the outfitting picker (issue #629)
 
-**Appended LAST in `CHAPTERS`**, after `supply_network`, so no existing frame moves. Fifteen frames
-and one hundred and thirty-five assertions (`EXPECTED_CHECKPOINTS` **150**, RE-MEASURED by raising
+**Appended LAST in `CHAPTERS`**, after `supply_network`, so no existing frame moves. Sixteen frames
+and one hundred and forty-three assertions (`EXPECTED_CHECKPOINTS` **159**, RE-MEASURED by raising
 the const to an impossible number and reading `reached` back — frames count too). It ends by
 publishing SHUT windows, so the surface it stands up is gone before anything appended after it could
 inherit it.
@@ -1794,12 +1794,18 @@ row alone (`starting-loadout.md` → "A REFUSED ORDER IS AN EVENT ROW"). The blo
 flicker pair leaves the adopt band's kit budget spent, so a `+` would be clamped to nothing and send
 nothing), pops that order off `_orders` because no server holds it, and feeds rows through
 `HudLayer.ingest_command_events` — the seam `Main` uses. Its `seq` starts one above the card's own
-cursor, since earlier chapters have already fed the HUD sequenced rows.
+cursor, since earlier chapters have already fed the HUD sequenced rows. **Every simulated snapshot
+opens with `_next_snapshot()`** (`HudLayer.update_overlay`, which `Main` calls first in every
+snapshot): the card treats a refusal read in the same snapshot as a newer published state as the
+older fact, so a block that skipped the boundary would see its refusal swallowed by the previous
+block's echo.
 
 | frame | what only IT can say |
 |---|---|
 | `starting_loadout_refused` | the pick back on what the band holds, and the amber line under the head — `Not taken: <detail>. Picks reset to what the band holds.` — quoting the fixture's reason verbatim. Asserted around it: an EARLIER turn's row moves nothing; the next press clears the line; the same row re-sent (a full snapshot's ring) does not reset that press |
 | `starting_loadout_refused_long` | a reason too long for two lines held to TWO with an ellipsis, the whole text on the tooltip and a trailing full stop not doubled — the claim asks the label's `get_line_count` (above two) against `get_visible_line_count` (exactly two), so a reason that merely happened to fit cannot pass it |
+| `starting_loadout_refused_in_flight` | ⛔ **A refused while B is still in flight: only A is forgotten.** The line shows as `Not taken: <detail>.` — without the word "reset", since nothing was — B's pick STAYS on screen and `BAND_UNECHOED` holds only B; B's own echo then clears the line and keeps B. A card that reset every in-flight order fails at B's pick |
+| — (PNG-less, after it) | **B's echo and A's refusal in ONE snapshot**, in `Main`'s order (band first): no line over B's accepted picks, and nothing left in flight |
 
 ### The TAKE arc is APPENDED, never interleaved
 

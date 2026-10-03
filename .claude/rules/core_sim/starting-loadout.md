@@ -379,9 +379,9 @@ The window is **per band**, so it rides the cohort beside the two things a picke
   are all per-band, on `loadoutWindow`.
 
 **`loadoutWindow.open` is NOT the client's success signal** — it reads `true` after a refusal and after
-a success alike, because a commit never closes a window. What a client reads is the band's own
-published state on the recapture the command triggers: after a success that is exactly the allocation
-it sent, and after a refusal whatever stood before.
+a success alike, because a commit never closes a window. A success is read off the band's own
+published state on the recapture the command triggers, which is exactly the allocation it sent. A
+refusal is read off the event feed (below), because it moves no band row.
 
 ### A refusal is said on the feed
 

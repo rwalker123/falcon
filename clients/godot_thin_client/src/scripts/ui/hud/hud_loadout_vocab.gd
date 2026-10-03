@@ -254,6 +254,9 @@ const EVENT_TICK_NONE := -1
 ## the wire (*"17 kits allocated against a budget of 16"*), and the second sentence says what the card
 ## did about it. Warning ink — the one place this card wears it — and at most two lines.
 const REFUSAL_FORMAT := "Not taken: %s. Picks reset to what the band holds."
+## …and the same line when LATER orders are still in flight. The picks were left alone — the latest
+## order is a whole replacement whose own echo settles them — so the line must not claim a reset.
+const REFUSAL_IN_FLIGHT_FORMAT := "Not taken: %s."
 ## A detail that already ends a sentence must not end it twice.
 const REFUSAL_DETAIL_TRAILING_STOP := "."
 ## Two lines and no more; a longer reason is ellipsized and carried whole on the tooltip.
