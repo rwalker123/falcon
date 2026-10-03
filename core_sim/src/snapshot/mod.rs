@@ -825,6 +825,7 @@ mod indexed_diff_tests {
             label: format!("event {seq}"),
             detail: None,
             seq,
+            band: 0,
         }
     }
 

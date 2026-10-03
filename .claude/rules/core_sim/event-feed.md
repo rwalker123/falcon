@@ -260,9 +260,11 @@ with that sentence rather than mutely breaking the arithmetic.
 The event dock renders a **"Work tab"** link on a `status=trimmed` / `lapsed` / `pruned` row — a jump
 to the band whose crew the sim cut without being asked — and it renders it **only where the detail
 carries a `band=` token**. `CommandEventState` on the wire is `{tick, kind, faction, label, detail,
-seq}` and has no band field, so the detail token is the whole channel; the dock will not recover a
-band by reading the label's prose, because a link that jumped to whatever band the panel happened to
-be showing is worse than no link.
+seq, band}`, but its `band` field is set only where a writer chose `CommandEventEntry::with_band`
+(today the `starting_loadout` refusal); every other row carries `0`, "not about one band", so for
+these lines the detail token is the whole channel. The dock will not recover a band by reading the
+label's prose, because a link that jumped to whatever band the panel happened to be showing is worse
+than no link.
 
 - **`systems::labor::band_detail_token` is the one writer for the labor system's lines** —
   `announce_shed_crew` plus the `herd_gone` lapse — and the

@@ -65,7 +65,7 @@ config — so the hunt seam names one place its dead go rather than taking three
   `TileState::same_published_state` at the hundredths every other float uses, so a tile whose belief
   moved rides the next delta. Belief is not fog-gated, which is graze's arrangement.
 - **`SimState::belief`** carries the registry whole; a restore inserts it back. It is state, not
-  derived, for the road's reason: nothing can rebuild it. `SAVE_FORMAT_VERSION` 19.
+  derived, for the road's reason: nothing can rebuild it. `SAVE_FORMAT_VERSION` 20.
 - Classified in `sim_state_coverage.rs` — `BeliefRegistry` as sim state, the config handle and
   metadata as config resources.
 

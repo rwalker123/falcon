@@ -335,6 +335,9 @@ pub struct CommandEventState {
     /// `core_sim::snapshot::diff_appended`.
     #[serde(default)]
     pub seq: u64,
+    /// The one band this row is about (a `BandId`), or `0` when it is not about a single band —
+    /// the allocator never issues `0`. See `core_sim::resources::CommandEventEntry::band`.
+    pub band: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]

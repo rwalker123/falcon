@@ -40,6 +40,7 @@ fn command_event(seq: u64, tick: u64) -> CommandEventState {
         label: format!("event {seq}"),
         detail: Some(format!("count=1 seq={seq}")),
         seq,
+        band: 0,
     }
 }
 
