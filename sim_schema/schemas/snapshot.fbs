@@ -494,6 +494,10 @@ table TileState {
   // `terrain`. Navigability is still signaled by `terrain == NavigableRiver` (unchanged). Appended
   // after all shipped fields (append-only) — default matches enum default so old readers are unaffected.
   underlyingTerrain:TerrainType;
+  // BELIEF — docs/plan_civilization_steps.md §"Belief is a property of a place". A per-PLACE stock
+  // (not per faction) in dead-equivalents: deaths while a band stands on this tile add to it, and
+  // nothing ever decays it — an abandoned place keeps its dead. 0 = no belief here.
+  belief:float = 0;
 }
 
 // A band's resolved settlement-progression stage — how rooted-in-place its dwelling has become.

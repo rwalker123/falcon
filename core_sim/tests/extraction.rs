@@ -83,6 +83,8 @@ fn world_of(terrain: TerrainType) -> (World, Entity) {
     world.insert_resource(core_sim::RecipesConfigHandle::default());
     world.insert_resource(ExtractionConfigHandle::default());
     world.insert_resource(DepositRegistry::default());
+    world.insert_resource(core_sim::BeliefRegistry::default());
+    world.insert_resource(core_sim::BeliefConfigHandle::default());
     world.insert_resource(FactionInventory::default());
     world.insert_resource(DiscoveryProgressLedger::default());
     world.insert_resource(CommandEventLog::default());
