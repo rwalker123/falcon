@@ -988,8 +988,8 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         # The HUD needs the live herd positions (herds migrate) to jump the map to a hunted herd
         # from the band panel's Current-actions rows, and to name it. Same array MapView renders.
         _hud_invoke("update_herds", [snapshot["herds"]])
-    # The CONTACT TIES (arc #527). Their one consumer is the trade sheet's destination picker, which
-    # renders a band's ties and nothing else — a tie is what gates a shipment. Gated like every other
+    # The CONTACT TIES (arc #527). Read by the band page's "Peoples we know" roster and by the trade
+    # sheet's destination picker — a tie is what gates a shipment. Gated like every other
     # whole section: absence means unchanged, so a quiet turn leaves the ties standing.
     if snapshot.has("connections") and SnapshotSections.changed(snapshot, "connections"):
         _hud_invoke("update_connections", [snapshot["connections"]])

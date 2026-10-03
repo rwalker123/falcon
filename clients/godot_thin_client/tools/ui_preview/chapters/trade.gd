@@ -7,7 +7,8 @@ extends RefCounted
 ## chapter moved is a set of frames changed. See `.claude/rules/client/test-harnesses.md`.
 ##
 ## **THE TWO HALVES ANSWER DIFFERENT QUESTIONS, so both are here.** The SHEET and its destination
-## pick are the only surfaces in the client that read the `connections` section at all, and their
+## pick read the `connections` section (the band page's "Peoples we know" roster is the other
+## reader, rendered near the end of this chapter), and their
 ## whole point is what they refuse: a parked tie cannot be picked, a remembered position is worded as
 ## remembered, and the mass meter moves before the server ever sees a manifest. The PARTY is the readout on the other side of
 ## the send, whose rows are its own — no quarry, no floor, no delivery ETA.
@@ -17,7 +18,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 144
+const EXPECTED_CHECKPOINTS := 164
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
@@ -505,6 +506,8 @@ func run(harness) -> void:
 		refreshed_breakdown.contains(route_out_row))
 	_click_food_breakdown()
 	await h._settle()
+
+	await _render_connections_roster(panel, refreshed)
 
 	# **STATE — A TRADE PARTY IN FLIGHT.** Judged on what it does NOT say as much as on what it does:
 	# a shipment publishes no floor, no delivery ETA and no trip bound, so none of those rows may
@@ -1345,6 +1348,187 @@ func _render_prototype_scene() -> void:
 	h._hud.update_connections(_connections())
 	h._hud.update_band_alerts([_shipper_band(), _neighbour_band()])
 	await h._settle()
+
+## **"PEOPLES WE KNOW" ON THE BAND PAGE** (issue #549) — the shipper's ties as a roster on the Band
+## zone of the 380px RIGHT dock, the narrowest band column the panel ships. One tie per state the row
+## can be in: GROWING (contact this turn), FADING (no contact, strength left), PARKED (strength 0),
+## plus a subject absent from the roster named by its remembered `subject_name` and one named by
+## where it was. Then a band that knows nobody, for the empty line.
+##
+## The roster ORDER is asserted by `subject_band_id` off each row's meta: live ties by strength,
+## strongest first, then parked by last contact — and the two fading ties are given strengths that
+## reverse their id order, so a roster sorted by id alone fails.
+func _render_connections_roster(panel: BandCityPanel, home_band: Dictionary) -> void:
+	var prior_turn: int = h._hud._band_labor.current_turn()
+	h._hud.update_overlay(ROSTER_TURN, {})
+	panel.set_active_tab(BandCityPanel.ZONE_BAND)
+	h._hud.update_connections(_roster_ties())
+	h._hud.update_band_alerts([home_band, _neighbour_band()])
+	h._hud.show_unit_selection(home_band)
+	await h._settle()
+	await h._save("connections_roster")
+	var block := panel.find_child(HudConnectionsVocab.BLOCK_NAME, true, false) as Control
+	h._assert_hud("the band zone carries a \"Peoples we know\" block", block != null)
+	var rows := _roster_rows(block)
+	var order: Array = rows.map(func(r: Control) -> int:
+		return int(r.get_meta(HudConnectionsVocab.ROW_META)))
+	var want_order: Array = [
+		BandFx.FIXTURE_BAND_ID_OFFSET + NEIGHBOUR_ENTITY,
+		BandFx.FIXTURE_BAND_ID_OFFSET + FOREIGN_NAMED_ENTITY,
+		BandFx.FIXTURE_BAND_ID_OFFSET + FOREIGN_UNNAMED_ENTITY,
+		BandFx.FIXTURE_BAND_ID_OFFSET + PARKED_ENTITY,
+	]
+	h._assert_hud("one row per tie, live by strength then parked (%s, want %s)" % [order, want_order],
+		order == want_order)
+	h._assert_hud("every row is at most two lines", rows.all(func(r: Control) -> bool:
+		return r.get_child_count() <= 2))
+	var text := _collect_text(block)
+	h._assert_hud("a roster band is named as the cycler names it (%s)" % NEIGHBOUR_DISPLAY_NAME,
+		_row_text(rows, 0).contains(NEIGHBOUR_DISPLAY_NAME))
+	h._assert_hud("a band absent from the roster is named by the name it answered to (%s)"
+		% FOREIGN_NAME, _row_text(rows, 1).contains(FOREIGN_NAME))
+	h._assert_hud("…and one with no remembered name is named by where it was",
+		_row_text(rows, 2).contains(HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_LABEL_FORMAT % [
+			FOREIGN_UNNAMED_SEEN.x, FOREIGN_UNNAMED_SEEN.y]))
+	h._assert_hud("no raw band id reaches the roster", not text.contains(
+		str(BandFx.FIXTURE_BAND_ID_OFFSET + FOREIGN_NAMED_ENTITY)))
+	h._assert_hud("the tie seen this turn reads growing",
+		_row_text(rows, 0).contains(String(HudConnectionsVocab.STATE_WORDS[HudConnectionsVocab.STATE_GROWING])))
+	h._assert_hud("a tie with strength left and no contact reads fading",
+		_row_text(rows, 1).contains(String(HudConnectionsVocab.STATE_WORDS[HudConnectionsVocab.STATE_FADING])))
+	h._assert_hud("a live row's second line is the remembered sighting, worded as one",
+		_row_text(rows, 0).contains(HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_FORMAT % [
+			NEIGHBOUR_LAST_SEEN.x, NEIGHBOUR_LAST_SEEN.y, ROSTER_TURN]))
+	var parked_word := _label_with_text(rows[3] if rows.size() > 3 else null,
+		String(HudConnectionsVocab.STATE_WORDS[HudConnectionsVocab.STATE_PARKED]))
+	h._assert_hud("the parked tie is SHOWN, its state in amber", parked_word != null
+		and parked_word.get_theme_color("font_color").is_equal_approx(HudStyle.WARN))
+	var parked_hint := _label_with_text(rows[3] if rows.size() > 3 else null,
+		HudConnectionsVocab.PARKED_HINT_FORMAT % [PARKED_LAST_SEEN.x, PARKED_LAST_SEEN.y,
+			PARKED_LAST_SEEN_TURN])
+	h._assert_hud("…and its second line says what to do, amber beside it", parked_hint != null
+		and parked_hint.get_theme_color("font_color").is_equal_approx(HudStyle.WARN))
+	# The band zone's own scroll is the column the block is laid out in. Its horizontal scroll is
+	# disabled, so a block whose MINIMUM width exceeded it would be clipped rather than scrolled.
+	var scroll := panel.find_child(HudWorkVocab.BAND_ZONE_SCROLL_NAME, true, false) as Control
+	var column_width: float = scroll.size.x if scroll != null else -1.0
+	var min_width: float = block.get_combined_minimum_size().x if block != null else INF
+	var zone_right := block.get_global_rect().end.x if block != null else 0.0
+	h._assert_hud("the block's minimum width fits the narrow dock's band column (%.0f of %.0f)" % [
+		min_width, column_width], block != null and scroll != null
+		and min_width <= column_width + ROSTER_EDGE_TOLERANCE)
+	h._assert_hud("…and no row runs past the block", block != null
+		and rows.all(func(r: Control) -> bool:
+			return r.get_global_rect().end.x <= zone_right + ROSTER_EDGE_TOLERANCE))
+
+	# **A TIES-ONLY FRAME** — the `connections` section moves and populations do not, so nothing
+	# drives `update_band_alerts`. The roster must still read the new ties on this frame, by its block
+	# being rebuilt in place: the zone column's first block is the SAME node before and after, which is
+	# what says no full re-render was taken to get there.
+	var column: Node = block.get_parent() if block != null else null
+	var first_id := column.get_child(0).get_instance_id() if column != null else 0
+	var moved := _roster_ties()
+	for tie_variant in moved:
+		var tie: Dictionary = tie_variant
+		if int(tie["subject_band_id"]) == BandFx.FIXTURE_BAND_ID_OFFSET + NEIGHBOUR_ENTITY:
+			tie["strength"] = TIES_ONLY_NEIGHBOUR_STRENGTH
+			tie["last_contact_turn"] = ROSTER_TURN - FADING_TURNS_AGO
+	h._hud.update_connections(moved)
+	await h._settle()
+	await h._save("connections_roster_ties_only")
+	var refreshed_block := panel.find_child(HudConnectionsVocab.BLOCK_NAME, true, false) as Control
+	var refreshed_rows := _roster_rows(refreshed_block)
+	var neighbour_row := ""
+	for row_variant in refreshed_rows:
+		var row: Control = row_variant
+		if int(row.get_meta(HudConnectionsVocab.ROW_META)) \
+				== BandFx.FIXTURE_BAND_ID_OFFSET + NEIGHBOUR_ENTITY:
+			neighbour_row = _collect_text(row)
+	h._assert_hud("a ties-only frame updates the roster: the neighbour reads %s and fading (%s)" % [
+		HudConnectionsVocab.STRENGTH_FORMAT % HudFormat.progress_percent(TIES_ONLY_NEIGHBOUR_STRENGTH),
+		neighbour_row.replace("\n", " ")],
+		neighbour_row.contains(HudConnectionsVocab.STRENGTH_FORMAT
+			% HudFormat.progress_percent(TIES_ONLY_NEIGHBOUR_STRENGTH))
+		and neighbour_row.contains(String(HudConnectionsVocab.STATE_WORDS[
+			HudConnectionsVocab.STATE_FADING])))
+	h._assert_hud("…by rebuilding the block alone: the zone's first block is the same node",
+		column != null and is_instance_valid(column) and column.get_child_count() > 0
+			and column.get_child(0).get_instance_id() == first_id
+			and refreshed_block != null and refreshed_block.get_parent() == column)
+	h._hud.update_connections(_roster_ties())
+	await h._settle()
+
+	# **THE EMPTY STATE** — the neighbour knows nobody: one line, no rows.
+	h._hud.show_unit_selection(_neighbour_band())
+	await h._settle()
+	await h._save("connections_roster_empty")
+	var empty_block := panel.find_child(HudConnectionsVocab.BLOCK_NAME, true, false) as Control
+	h._assert_hud("a band that has met nobody says so in one line",
+		empty_block != null and _roster_rows(empty_block).is_empty()
+			and _collect_text(empty_block).contains(HudConnectionsVocab.EMPTY))
+
+	h._hud.update_overlay(prior_turn, {})
+	h._hud.update_connections(_connections())
+	h._hud.update_band_alerts([home_band, _neighbour_band()])
+	h._hud.show_unit_selection(home_band)
+	await h._settle()
+
+## The turn the roster states are rendered on; the growing tie's last contact is this turn.
+const ROSTER_TURN := 40
+## A subject the player's roster does not hold, remembered by name — and one remembered by nothing
+## but its tile.
+const FOREIGN_NAMED_ENTITY := 986
+const FOREIGN_UNNAMED_ENTITY := 987
+const FOREIGN_NAME := "Saltmarsh"
+const FOREIGN_NAMED_SEEN := Vector2i(55, 30)
+const FOREIGN_UNNAMED_SEEN := Vector2i(48, 14)
+## Strengths for the two fading ties, deliberately in the REVERSE of their id order.
+const FOREIGN_NAMED_STRENGTH := 0.4
+const FOREIGN_UNNAMED_STRENGTH := 0.2
+## How many turns ago the fading ties last saw contact.
+const FADING_TURNS_AGO := 3
+## The neighbour's strength in the ties-only frame, distinct from every other tie's so the claim
+## reads its own row.
+const TIES_ONLY_NEIGHBOUR_STRENGTH := 0.5
+## Sub-pixel slack between a row's rect and its column's, for layout rounding.
+const ROSTER_EDGE_TOLERANCE := 0.5
+
+func _roster_ties() -> Array:
+	var growing := _tie(NEIGHBOUR_ENTITY, TIE_STRENGTH_LIVE, NEIGHBOUR_LAST_SEEN, ROSTER_TURN)
+	growing["subject_name"] = NEIGHBOUR_DISPLAY_NAME
+	var named := _tie(FOREIGN_NAMED_ENTITY, FOREIGN_NAMED_STRENGTH, FOREIGN_NAMED_SEEN,
+		ROSTER_TURN - FADING_TURNS_AGO)
+	named["subject_name"] = FOREIGN_NAME
+	var unnamed := _tie(FOREIGN_UNNAMED_ENTITY, FOREIGN_UNNAMED_STRENGTH, FOREIGN_UNNAMED_SEEN,
+		ROSTER_TURN - FADING_TURNS_AGO)
+	unnamed["subject_name"] = ""
+	var parked := _tie(PARKED_ENTITY, TIE_STRENGTH_PARKED, PARKED_LAST_SEEN, PARKED_LAST_SEEN_TURN)
+	parked["subject_name"] = "Thornwick"
+	# Listed out of order, so the roster's own sort is what the order claim tests.
+	return [parked, unnamed, growing, named]
+
+func _roster_rows(block: Node) -> Array:
+	var rows: Array = []
+	if block == null:
+		return rows
+	for child in block.get_children():
+		if child is Control and (child as Control).has_meta(HudConnectionsVocab.ROW_META):
+			rows.append(child)
+	return rows
+
+func _row_text(rows: Array, index: int) -> String:
+	return _collect_text(rows[index]) if index < rows.size() else ""
+
+func _label_with_text(root: Node, text: String) -> Label:
+	if root == null:
+		return null
+	if root is Label and (root as Label).text == text:
+		return root as Label
+	for child in root.get_children():
+		var found := _label_with_text(child, text)
+		if found != null:
+			return found
+	return null
 
 const PROTOTYPE_BAND_ENTITY := 984
 const PROTOTYPE_DEST_ENTITY := 985

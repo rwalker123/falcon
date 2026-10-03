@@ -383,6 +383,12 @@ var _band_zone_columns: int = 1
 ## without rebuilding the zone. See `_sync_band_zone_scroll` for why a build-time declaration is not
 ## final.
 var _band_zone_scroll: ScrollContainer = null
+## The band zone's live "Peoples we know" block, the band it lists, and what it was built from (the
+## band's ties and the turn), kept so `refresh_connections` can rebuild that one block in place when
+## the `connections` section moves on a frame that re-renders nothing else.
+var _connections_block: Control = null
+var _connections_block_band_id: int = HudConst.NO_BAND_ID
+var _connections_block_source: Array = []
 ## **THE PANEL'S SUBJECT IS THE FACTION PAGE, not a band** (issue #450). The pinned first entry of the
 ## cycler, and the one bit of state that decides which of `render_band` / `render_faction` every
 ## re-entry into this panel resolves to — `refresh_snapshot`, `rerender` and `_on_zones_resized`'s
@@ -955,6 +961,13 @@ func build_band_zone(band: Dictionary, with_vitals: bool = true) -> VBoxContaine
     var outlook: Control = _build_food_outlook_block(band,
         _band_zone_tier != HudWorkVocab.BAND_ZONE_TIER_TALL)
     var workforce := _build_workforce_block(band)
+    # **PEOPLES WE KNOW** (issue #549) — the ties THIS band holds, per observer band. Built by the
+    # all-static `ConnectionsRoster`, which also owns the subject-naming rule the shipment picker reads.
+    var peoples_band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
+    var peoples := ConnectionsRoster.build_block(peoples_band_id, _band_labor)
+    _connections_block = peoples
+    _connections_block_band_id = peoples_band_id
+    _connections_block_source = _connections_source(peoples_band_id)
     # **ONE AUTHORED SPLIT, RE-AUTHORED AND RE-MEASURED WHEN THE KEEPING BLOCK LEFT THIS FLANK**
     # (`docs/plan_standing_upkeep.md` §4.7). The three pool cards and their fund-mode row moved to the
     # WORK tab, so the flank is back to FOUR blocks and the pairing the builders card forced
@@ -991,6 +1004,10 @@ func build_band_zone(band: Dictionary, with_vitals: bool = true) -> VBoxContaine
     if outlook != null:
         blocks.append({"control": outlook, "column": BAND_COLUMN_LARDER})
     blocks.append({"control": workforce, "column": BAND_COLUMN_PEOPLE})
+    # The roster comes LAST in build order (the flat stack ends on it) and sits in the LEFT column of
+    # a split flank. Measured with the empty state, the only one `band_panel_preview` stages: see
+    # `.claude/rules/client/band-city-panel.md` → "Peoples we know".
+    blocks.append({"control": peoples, "column": BAND_COLUMN_LARDER})
     # BOTH layouts go inside the scroll — the flat stack and the two-column row alike. A widened flank
     # halves what each column carries but does not make either of them unable to overflow, and a rule
     # that scrolled one layout and clipped the other would be the same content loss on a wider monitor.
@@ -1087,6 +1104,34 @@ func _sync_band_zone_scroll() -> void:
     if is_equal_approx(_band_zone_scroll.custom_minimum_size.y, box):
         return
     _band_zone_scroll.custom_minimum_size.y = box
+
+## **REBUILD THE "PEOPLES WE KNOW" BLOCK IN PLACE** when the `connections` section moves
+## (`HudLayer.update_connections`). A frame can change the ties and no population, and the band render
+## rides `update_band_alerts` alone, so without this the roster would read a turn stale. Only the one
+## block is swapped, at its own index in its own column, so nothing else in the zone is rebuilt; and
+## a tie set that is unchanged for the shown band (same rows, same turn) rebuilds nothing.
+func refresh_connections() -> void:
+    if not is_instance_valid(_connections_block) or _connections_block.is_queued_for_deletion():
+        return
+    var parent := _connections_block.get_parent()
+    if parent == null:
+        return
+    var source := _connections_source(_connections_block_band_id)
+    if source == _connections_block_source:
+        return
+    var fresh := ConnectionsRoster.build_block(_connections_block_band_id, _band_labor)
+    var index := _connections_block.get_index()
+    parent.remove_child(_connections_block)
+    _connections_block.queue_free()
+    parent.add_child(fresh)
+    parent.move_child(fresh, index)
+    _connections_block = fresh
+    _connections_block_source = source
+
+## What the block for `band_id` is built from: its ties and the current turn, the turn deciding
+## growing against fading.
+func _connections_source(band_id: int) -> Array:
+    return [_band_labor.current_turn(), _band_labor.connections_for_band(band_id)]
 
 ## The two authored columns of a widened band flank, named for what they are ABOUT rather than by
 ## index: what the band has to eat, and who the band is. See `build_band_zone` for the measurement
@@ -8793,10 +8838,11 @@ func _clear_trade_destination() -> void:
     rerender()
 
 ## **THE `To` ROW, ALWAYS DRAWN** — `To  Brackwater · 8 tiles NE` with a `✕` that clears it, or
-## `To  Pick a band on the map` in WARN ink while nothing is picked. The name is the one the cycler
-## uses (`_connection_subject_label`); the distance and bearing are to where the tie last SAW them,
-## and the remembered sighting and its walk ride the value's hover (`_trade_destination_notes`). Only
-## the picked row carries `READ_ONLY_FIELD_META`, so "is a destination set" stays one meta lookup.
+## `To  Pick a band on the map` in WARN ink while nothing is picked. The name is the "Peoples we know"
+## roster's (`ConnectionsRoster.subject_label`); the distance and bearing are to where the tie last
+## SAW them, and the remembered sighting and its walk ride the value's hover
+## (`_trade_destination_notes`). Only the picked row carries `READ_ONLY_FIELD_META`, so "is a
+## destination set" stays one meta lookup.
 func _build_trade_destination_row(band: Dictionary, tie: Dictionary) -> HBoxContainer:
     if tie.is_empty():
         var unset := HBoxContainer.new()
@@ -8809,7 +8855,7 @@ func _build_trade_destination_row(band: Dictionary, tie: Dictionary) -> HBoxCont
         unset.add_child(hint)
         unset.set_meta(TRADE_DESTINATION_UNSET_META, true)
         return unset
-    var label := _connection_subject_label(tie)
+    var label := ConnectionsRoster.subject_label(tie, _band_labor)
     var where := _trade_destination_where(band, tie)
     var row := HudWidgets.build_read_only_field(HudComposeVocab.COMPOSE_FIELD_DESTINATION,
         label if where == "" else HudComposeVocab.TRADE_DESTINATION_FORMAT % [label, where])
@@ -8856,7 +8902,7 @@ func _commit_trade(band: Dictionary, destination: int, workers: int, cargo: Arra
     for tie_variant in _band_labor.connections_for_band(int(band.get("band_id", HudConst.NO_BAND_ID))):
         var tie: Dictionary = tie_variant as Dictionary
         if int(tie.get("subject_band_id", HudConst.NO_BAND_ID)) == destination:
-            label = _connection_subject_label(tie)
+            label = ConnectionsRoster.subject_label(tie, _band_labor)
             break
     emit_signal("send_trade_expedition_requested", {
         "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
@@ -8907,18 +8953,6 @@ func _trade_destination_notes(band: Dictionary, tie: Dictionary) -> Array[String
     if out_turns > 0:
         lines.append(HudComposeVocab.COMPOSE_DESTINATION_ETA_FORMAT % out_turns)
     return lines
-
-## **THE NAME A TIE'S SUBJECT IS SHOWN UNDER.** A band this faction still holds in its roster is named
-## exactly as the cycler, the band picker and the event dock name it — one band, one name across every
-## surface. A subject the roster cannot resolve is a band we only REMEMBER, so it is named by where it
-## was: the raw `BandId` is a database key and never reaches a player-facing label.
-func _connection_subject_label(tie: Dictionary) -> String:
-    var label := _band_labor.band_label_for_id(
-        int(tie.get("subject_band_id", HudConst.NO_BAND_ID)))
-    if label != "":
-        return label
-    return HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_LABEL_FORMAT % [
-        int(tie.get("last_seen_x", -1)), int(tie.get("last_seen_y", -1))]
 
 ## **THE MANIFEST'S ROWS, ONE PER THING THE BAND ACTUALLY HOLDS** — the food larder as one row and the
 ## fodder larder as another (two commodities, two rows), then one row per MATERIAL BATCH, which is one
