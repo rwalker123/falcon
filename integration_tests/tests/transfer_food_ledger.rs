@@ -26,11 +26,13 @@
 //! fact — *food that crossed between bands outside income and consumption* — and the identity is now
 //!
 //! ```text
-//! larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled
+//! larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled − foodLeftBehind
 //!                 + transferReceived − transferSent
 //! ```
 //!
-//! (`foodSpoiled`, #706, is the turn's rot — the larder's and any caravan pack's.)
+//! (`foodSpoiled`, #706, is the turn's rot — the larder's and any caravan pack's; `foodLeftBehind`,
+//! #732, is the food a band dropped on a move farther than it can ferry, pinned across a real move
+//! by `bin/server.rs` → `long_move_tests`, since only the server binary drives `move_band`.)
 //!
 //! Asserted against **real turns through the real systems and the real exported snapshot**, the
 //! shape `pen_food_ledger.rs` and `raid_food_ledger.rs` already use — never against a
@@ -65,7 +67,7 @@ const HUNGRY_LARDER: f32 = 0.0;
 /// The larder a band that published no earlier frame is measured against — a client's `larder_delta`
 /// for a band appearing for the first time runs from nothing.
 const NO_PRIOR_FRAME_LARDER: f32 = 0.0;
-/// Workers a shipment party carries, and the food it hauls — inside `trade.per_worker_carry × 2`.
+/// Workers a shipment party carries, and the food it hauls — inside `carry.per_worker_carry × 2`.
 const PARTY_WORKERS: u32 = 2;
 const CARGO_FOOD: f32 = 8.0;
 /// The faction the *destination* of a shipment belongs to. A different one, deliberately: it is the
@@ -82,6 +84,8 @@ struct Ledger {
     raid_forfeit: f32,
     /// The food that rotted this turn (#706) — the identity's `spoiled` term.
     spoiled: f32,
+    /// The food a long move left behind (#732) — the identity's `left_behind` term.
+    left_behind: f32,
     received: f32,
     sent: f32,
 }
@@ -89,14 +93,15 @@ struct Ledger {
 impl Ledger {
     /// The identity's right-hand side, with the two new terms.
     fn expected_delta(&self) -> f32 {
-        self.income - self.consumption - self.raid_forfeit - self.spoiled + self.received
+        self.income - self.consumption - self.raid_forfeit - self.spoiled - self.left_behind
+            + self.received
             - self.sent
     }
 
     /// The right-hand side **as it read before the transfer terms existed** — what a client
     /// computing the documented identity would have got.
     fn pre_transfer_delta(&self) -> f32 {
-        self.income - self.consumption - self.raid_forfeit - self.spoiled
+        self.income - self.consumption - self.raid_forfeit - self.spoiled - self.left_behind
     }
 }
 
@@ -117,6 +122,7 @@ fn ledger_of(app: &bevy::prelude::App, band: BandId) -> Ledger {
         consumption: cohort.food_consumption,
         raid_forfeit: cohort.raid_forfeit,
         spoiled: cohort.food_spoiled,
+        left_behind: cohort.food_left_behind,
         received: cohort.transfer_received,
         sent: cohort.transfer_sent,
     }
@@ -353,6 +359,87 @@ fn the_food_ledger_reconciles_when_a_band_splits_mid_window() {
         (child_delta - child_ledger.expected_delta()).abs() < EPSILON,
         "the CHILD's ledger must reconcile on its first frame: delta={child_delta} vs {} \
          ({child_ledger:?})",
+        child_ledger.expected_delta()
+    );
+}
+
+/// **The identity holds across a REVISION that moves food back** (#732). A split loads goods first
+/// and its food fills the room they leave, re-resolved on every accepted order: emptying the card
+/// takes the whole share, and loading it with gear hands food back to the parent. Every move is
+/// booked as the dowry, so both bands' ledgers still reconcile over the window.
+#[test]
+fn the_food_ledger_reconciles_when_a_splinters_revision_moves_food_back() {
+    /// Stalking kits loaded onto the card — far more than a five-worker splinter can carry beside
+    /// its whole food share, so the food is pushed back.
+    const HEAVY_TAKE: u32 = 12;
+    let mut app = world();
+    let parent = first_band(&mut app);
+    stock_workers(&mut app, parent);
+    set_larder(&mut app, parent, FED_LARDER);
+    let parent_id = band_id(&app, parent);
+    let faction = app
+        .world
+        .get::<PopulationCohort>(parent)
+        .expect("the band exists")
+        .faction;
+    run_turn(&mut app);
+    let parent_before = larder(&app, parent);
+
+    let split = split_band_from_parent(&mut app.world, parent, SPLIT_WORKERS, &permissive_settle())
+        .expect("a stocked parent can split");
+    let child = entity_for_band(&mut app, split.band).expect("the split allocated this id");
+    core_sim::apply_starting_loadout(&mut app.world, faction, split.band, &[], &[])
+        .expect("an empty card is always honoured");
+    let full = larder(&app, child);
+    let heavy = [core_sim::KitAllocation {
+        kit_id: "big_game".to_string(),
+        count: HEAVY_TAKE,
+    }];
+    // The parent must hold the spears for the take; stock them if the fixture did not.
+    let held = app
+        .world
+        .get::<core_sim::BandEquipment>(parent)
+        .map(|ledger| ledger.count_of("spears").min(ledger.count_of("sled")))
+        .unwrap_or(0);
+    if held < HEAVY_TAKE {
+        let tier = app
+            .world
+            .resource::<core_sim::EquipmentConfigHandle>()
+            .get()
+            .item("spears")
+            .expect("the roster carries spears")
+            .default_tier()
+            .id
+            .clone();
+        let mut ledger = app
+            .world
+            .get_mut::<core_sim::BandEquipment>(parent)
+            .expect("the parent keeps a ledger");
+        ledger.stock("spears", HEAVY_TAKE, &tier, None);
+        ledger.stock("sled", HEAVY_TAKE, &tier, None);
+    }
+    core_sim::apply_starting_loadout(&mut app.world, faction, split.band, &heavy, &[])
+        .expect("the heavy take fits the carry and the parent's stock");
+    assert!(
+        larder(&app, child) < full - EPSILON,
+        "**LIVENESS**: the revision must hand food back, or this tests nothing: {} vs {full}",
+        larder(&app, child)
+    );
+
+    run_turn(&mut app);
+    let parent_ledger = ledger_of(&app, parent_id);
+    let child_ledger = ledger_of(&app, split.band);
+    let parent_delta = larder(&app, parent) - parent_before;
+    assert!(
+        (parent_delta - parent_ledger.expected_delta()).abs() < EPSILON,
+        "the PARENT's ledger reconciles across the revision: delta={parent_delta} vs {} \
+         ({parent_ledger:?})",
+        parent_ledger.expected_delta()
+    );
+    let child_delta = larder(&app, child) - NO_PRIOR_FRAME_LARDER;
+    assert!(
+        (child_delta - child_ledger.expected_delta()).abs() < EPSILON,
+        "and the CHILD's: delta={child_delta} vs {} ({child_ledger:?})",
         child_ledger.expected_delta()
     );
 }

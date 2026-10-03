@@ -32,7 +32,8 @@ extends RefCounted
 ## `kit_condition_face`, `HudBandLaborState.effective_idle` — so a band's own page
 ## and this one can never disagree about a number. A rollup that computed its own food ledger would be
 ## a second source of truth for the identity
-## `larder_delta == income − consumption − raid_forfeit − food_spoiled + received − sent` the whole
+## `larder_delta == income − consumption − raid_forfeit − food_spoiled − food_left_behind + received
+## − sent` the whole
 ## food arc keeps closed.
 ##
 ## **THE PAGE IS READ-ONLY, DELIBERATELY.** The issue's scope is "counts and where they are, not
@@ -215,7 +216,8 @@ static func _food_line(bands: Array, disclosures: DisclosureController) -> Strin
         var band: Dictionary = bands[i]
         larder += DetailFormat.band_provisions(band)
         # Summed from each band's own `band_net_food`, never recomposed — that identity carries the
-        # episodic `raid_forfeit` and `food_spoiled`, and a rebuilt net would drift from the band pages.
+        # episodic `raid_forfeit`, `food_spoiled` and `food_left_behind`, and a rebuilt net would drift
+        # from the band pages.
         net += DetailFormat.band_net_food(band)
         # A band that came SHORT of its meal is starving whatever its runway says — the meal is
         # eaten before the take lands, so a hand-to-mouth band goes hungry on a positive rate.

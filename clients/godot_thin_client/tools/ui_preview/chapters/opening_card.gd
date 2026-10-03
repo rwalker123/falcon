@@ -49,8 +49,14 @@ const SPLINTER_ENTITY := 52
 const BAND_SIZE := 30
 const BAND_X := 44
 const BAND_Y := 9
-const KIT_BUDGET := 17
-const MATERIAL_BUDGET := 30
+## Working hands, and the band's carry — 17 hands × the shipped per-worker carry of 8.
+const WORKING_AGE := 17
+const CARRY_CAPACITY := 136.0
+## A take's TOTAL carry. A splinter's goods load first and food fills what they leave, so this is
+## not net of food.
+const SPLINTER_CARRY_CAPACITY := 24.0
+## The shipped `trade.item_carry_weight` and `trade.material_carry_weight`, both 1.
+const CARRY_WEIGHT := 1.0
 const KIT_STALKING := "big_game"
 const KIT_GATHERING := "gathering"
 const DEFAULT_STALKING := 4
@@ -211,6 +217,8 @@ func _new_world() -> void:
 	h._hud.update_opening_loadout({
 		HudLoadoutVocab.PICKABLE_MATERIALS_KEY: [MATERIAL_HIDE],
 		HudLoadoutVocab.CRAFTABLE_RECIPE_IDS_KEY: [],
+		HudLoadoutVocab.ITEM_CARRY_WEIGHT_KEY: CARRY_WEIGHT,
+		HudLoadoutVocab.MATERIAL_CARRY_WEIGHT_KEY: CARRY_WEIGHT,
 	})
 
 func _opening() -> OpeningCardController:
@@ -266,8 +274,7 @@ func _opening_events() -> Array:
 func _grant_band(open: bool) -> Dictionary:
 	return _band(GRANT_ENTITY, {
 		HudLoadoutVocab.OPEN_KEY: open,
-		HudLoadoutVocab.KIT_BUDGET_KEY: KIT_BUDGET,
-		HudLoadoutVocab.MATERIAL_BUDGET_KEY: MATERIAL_BUDGET,
+		HudLoadoutVocab.CARRY_CAPACITY_KEY: CARRY_CAPACITY,
 		HudLoadoutVocab.PARENT_BAND_ID_KEY: HudLoadoutVocab.GRANT_PARENT_BAND_ID,
 		HudLoadoutVocab.WINDOW_KITS_KEY: [
 			{HudLoadoutVocab.KIT_DEFAULT_ID_KEY: KIT_STALKING,
@@ -285,8 +292,7 @@ func _grant_band(open: bool) -> Dictionary:
 func _splinter_band() -> Dictionary:
 	return _band(SPLINTER_ENTITY, {
 		HudLoadoutVocab.OPEN_KEY: true,
-		HudLoadoutVocab.KIT_BUDGET_KEY: 0,
-		HudLoadoutVocab.MATERIAL_BUDGET_KEY: 0,
+		HudLoadoutVocab.CARRY_CAPACITY_KEY: SPLINTER_CARRY_CAPACITY,
 		HudLoadoutVocab.PARENT_BAND_ID_KEY: _band_id(GRANT_ENTITY),
 		HudLoadoutVocab.WINDOW_KITS_KEY: [],
 		HudLoadoutVocab.WINDOW_MATERIALS_KEY: [],
@@ -297,7 +303,7 @@ func _band(entity: int, window: Dictionary) -> Dictionary:
 		"entity": entity,
 		"faction": HudConst.PLAYER_FACTION_ID,
 		"size": BAND_SIZE,
-		"working_age": KIT_BUDGET,
+		"working_age": WORKING_AGE,
 		"current_x": BAND_X,
 		"current_y": BAND_Y,
 		"idle_workers": 0,

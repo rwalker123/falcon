@@ -219,7 +219,7 @@ which is a property of the tier and not of the merge.
   the walk home (credited in income as it lands, debited here the same turn). Read, never re-derived;
   it enters `band_net_food` and `band_has_food_flow` exactly as `raid_forfeit` does, so
   `food_is_concerning` and the faction page's summed Food line carry it through `band_net_food`.
-  The full identity `larder_delta == income − consumption − raid_forfeit − food_spoiled + received −
+  The full identity `larder_delta == income − consumption − raid_forfeit − food_spoiled − food_left_behind + received −
   sent` is pinned by
   `integration_tests/tests/{pen_food_ledger,raid_food_ledger,spoilage_food_ledger,transfer_food_ledger}.rs`,
   and asserted client-side on a pen-keeping band by `ui_preview`'s `band_pen_keeper` state — arithmetic

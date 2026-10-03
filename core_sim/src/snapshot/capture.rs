@@ -132,6 +132,10 @@ pub struct SnapshotContext<'w> {
     pub recipes: Res<'w, crate::recipes_config::RecipesConfigHandle>,
     pub settlement_stage: Res<'w, crate::settlement_stage_config::SettlementStageConfigHandle>,
     pub supply_membership: Res<'w, SupplyNetworkMembership>,
+    /// The supply-network tuning — read for the base of a band's **ferry reach**
+    /// ([`crate::carry::move_ferry_reach_tiles`]), echoed on every cohort. `Option` so a
+    /// hand-rolled capture world that never installed it reads the builtin.
+    pub supply_network: Option<Res<'w, crate::supply_network_config::SupplyNetworkConfigHandle>>,
     pub pipeline_config: Res<'w, TurnPipelineConfigHandle>,
     /// How to write the capture result: record a new ring entry (turn path) or refresh the latest
     /// broadcast in place (post-command re-capture). Bundled here to keep `capture_snapshot` within
@@ -2605,6 +2609,7 @@ pub fn capture_snapshot(
         recipes,
         settlement_stage,
         supply_membership,
+        supply_network,
         pipeline_config,
         capture_mode,
     } = ctx;
@@ -2833,6 +2838,10 @@ pub fn capture_snapshot(
         // surfaced per-band so the client reads them off the selected band. Populated for EVERY cohort
         // (the outfit UI lives on the resident-band panel, not on the expedition).
         let expedition_cfg = expedition.get();
+        let supply_network_cfg = supply_network
+            .as_deref()
+            .map(|handle| handle.get())
+            .unwrap_or_else(crate::supply_network_config::SupplyNetworkConfig::builtin);
         let fauna_config = fauna.get();
         // **The minimal TOE levers**, resolved once for every cohort: the kit table plus the two
         // *equipped* tiers that live outside `equipment.json` (one home per fact) — the bare-handed
@@ -2896,9 +2905,9 @@ pub fn capture_snapshot(
             // the per-worker echo the outfit UI multiplies, and a live party's own cap — and the row
             // builder runs both, so a term that scales with the party rather than with a worker cannot
             // slip past one of them.
-            trade: &expedition_cfg.trade,
-            trade_material_carry_weight: expedition_cfg.trade.material_carry_weight,
-            trade_fodder_carry_weight: expedition_cfg.trade.fodder_carry_weight,
+            carry: &expedition_cfg.carry,
+            carry_material_weight: expedition_cfg.carry.material_carry_weight,
+            carry_fodder_weight: expedition_cfg.carry.fodder_carry_weight,
             // **The EQUIPPED reference rate, resolved through the item table's default tier** — an
             // outfitting lever is quoted for a party that leaves kitted, and `labor_config`'s key is the
             // sledless baseline now.
@@ -2914,6 +2923,7 @@ pub fn capture_snapshot(
             band_move_tiles_per_turn: labor_config.band_move_tiles_per_turn,
             settle_min_founding_workers: expedition_cfg.settle.min_founding_workers,
             settle_parent_min_workers: expedition_cfg.settle.parent_min_workers,
+            move_ferry_reach_tiles: crate::carry::move_ferry_reach_tiles(&supply_network_cfg),
         };
         // A cohort → live-tile map so an in-flight expedition can find its home band's CURRENT tile
         // (bands are nomadic). The `populations` query is read-only, so iterating it twice is fine.
@@ -2935,6 +2945,7 @@ pub fn capture_snapshot(
                 crate::snapshot::population::band_loadout_windows(
                     windows,
                     &equipment_config,
+                    &expedition_cfg.carry,
                     populations.iter().filter_map(
                         |(_, cohort, _, _, _, band_id, _, equipment, _)| {
                             band_id.map(|band| (*band, equipment, &cohort.stores))
@@ -3789,6 +3800,7 @@ pub fn capture_snapshot(
                     viewer,
                     knowledge_threshold,
                 ),
+                &expedition.get().carry,
             ),
             _ => OpeningLoadoutState::default(),
         };

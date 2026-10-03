@@ -1418,15 +1418,16 @@ mod tests {
             // The shipment-carry rules are resolved off the config rather than quoted, so this
             // fixture borrows the builtin exactly as `kit_levers` above borrows its own. Nothing
             // here asserts on a shipment; the zeros beside it say the rest is irrelevant.
-            trade: &expedition_config.trade,
-            trade_material_carry_weight: 0.0,
-            trade_fodder_carry_weight: 0.0,
+            carry: &expedition_config.carry,
+            carry_material_weight: 0.0,
+            carry_fodder_weight: 0.0,
             hunt_per_worker_provisions: 0.0,
             hunt_viability_warn_turns: 0,
             hunt_forecast_horizon_turns: 0,
             band_move_tiles_per_turn: 0,
             settle_min_founding_workers: 0,
             settle_parent_min_workers: 0,
+            move_ferry_reach_tiles: 0,
         };
         population_state(PopulationStateInputs {
             entity: Entity::from_raw(1),
@@ -1537,6 +1538,7 @@ mod tests {
                 },
             ],
             last_raid_forfeit: 0.0,
+            last_food_left_behind: 0.0,
             last_roadwork_demand: 0.0,
             last_roadwork_supplied: 0.0,
             last_keeping_issued: Default::default(),
@@ -1608,7 +1610,7 @@ mod tests {
     /// and real fodder, so its row must state that fodder rather than the `+0.00` every compact
     /// readout showed. And it must state it *beside* the ledger, never in it — `food_income` is one
     /// side of the pinned larder identity
-    /// `larder_delta == food_income − food_consumption − raid_forfeit − spoiled + …`, and fodder
+    /// `larder_delta == food_income − food_consumption − raid_forfeit − spoiled − left_behind + …`, and fodder
     /// credits the
     /// band's `FODDER` store without ever touching the larder, so the income here is the hunt's
     /// alone. The hunt row is the control: no animal pays fodder, so its `0.0` is structural.
@@ -1660,6 +1662,7 @@ mod tests {
                 },
             ],
             last_raid_forfeit: 0.0,
+            last_food_left_behind: 0.0,
             last_roadwork_demand: 0.0,
             last_roadwork_supplied: 0.0,
             last_keeping_issued: Default::default(),
@@ -1726,6 +1729,7 @@ mod tests {
             homeward: Vec::new(),
             last_yields: Vec::new(),
             last_raid_forfeit: 0.0,
+            last_food_left_behind: 0.0,
             last_roadwork_demand: 0.0,
             last_roadwork_supplied: 0.0,
             last_keeping_issued: Default::default(),

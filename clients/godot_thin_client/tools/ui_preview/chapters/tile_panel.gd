@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 120
+const EXPECTED_CHECKPOINTS := 123
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -27,6 +27,33 @@ const RungFx := preload("res://tools/ui_preview/fixtures_rung.gd")
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
+
+# ---- the long-move warning (#732) ----------------------------------------------------------------
+## The band's ferry reach, and the two hovered columns either side of it on the band's own row (the
+## band stands at column 71): 72 is one step, inside the reach; 79 is eight, past it.
+const LONG_MOVE_REACH := 2
+const LONG_MOVE_NEAR_X := 72
+const LONG_MOVE_FAR_X := 79
+## The sim's forecast of a long move — what it would leave behind right now. Fractional food and
+## materials, so the banner's whole-number rounding is exercised (40.4 → 40, 11.6 → 12).
+const LONG_MOVE_LEAVES_FOOD := 40.4
+const LONG_MOVE_LEAVES_ITEMS := 6
+const LONG_MOVE_LEAVES_MATERIALS := 11.6
+## The banner's warning, spelled out as a LITERAL rather than composed through
+## `HudComposeVocab.MOVE_LEAVES_FORMAT` — an expectation built from the format under test can only
+## agree with itself.
+const LONG_MOVE_WARNING := "Too far to carry it all — leaves 40 food, 6 gear, 12 materials behind"
+
+## A band holding more than it can carry, with the sim's long-move forecast on it.
+func _long_move_band_fixture() -> Dictionary:
+	var band := BandFx.band_fixture()
+	band["carry_capacity"] = 96.0
+	band["carry_load"] = 154.0
+	band["move_ferry_reach_tiles"] = LONG_MOVE_REACH
+	band["long_move_leaves_food"] = LONG_MOVE_LEAVES_FOOD
+	band["long_move_leaves_items"] = LONG_MOVE_LEAVES_ITEMS
+	band["long_move_leaves_materials"] = LONG_MOVE_LEAVES_MATERIALS
+	return band
 
 # The SECOND player band on the crowded hex (`_crowded_bands_fixture()[1]`, "Band Ash"). The Move
 # assertion selects it deliberately: the faction default is the FIRST band, so a Move wired to
@@ -1614,6 +1641,27 @@ func run(harness) -> void:
 	h._hud._targeting.begin_move_band()
 	await h._settle()
 	await h._save("targeting_banner")
+	h._hud.cancel_active_targeting()
+
+	# State 4-long-move (#732) — an armed Move over a hex PAST the band's ferry reach, on a band the
+	# sim says would leave things behind: the banner states the sim's own forecast in amber. Judged as
+	# a PAIR with a hex INSIDE the reach on the same band, where the banner must be the base prompt —
+	# a banner that always warned passes the first half alone.
+	var heavy_band := _long_move_band_fixture()
+	h._hud.show_unit_selection(heavy_band)
+	h._hud._targeting.begin_move_band(heavy_band)
+	h._hud.notify_hex_hovered({"x": LONG_MOVE_NEAR_X, "y": int((heavy_band["pos"] as Array)[1])})
+	await h._settle()
+	h._assert_hud("a Move hovered INSIDE the ferry reach keeps the base prompt (%s)"
+			% h._hud._targeting.banner_text(),
+		not h._hud._targeting.banner_text().contains(LONG_MOVE_WARNING))
+	h._hud.notify_hex_hovered({"x": LONG_MOVE_FAR_X, "y": int((heavy_band["pos"] as Array)[1])})
+	await h._settle()
+	h._assert_hud("a Move hovered PAST the ferry reach states what it leaves behind (%s)"
+			% h._hud._targeting.banner_text(),
+		h._hud._targeting.banner_text().contains(LONG_MOVE_WARNING))
+	await h._save("targeting_banner_long_move")
+	h._hud.notify_hex_hovered({})
 	h._hud.cancel_active_targeting()
 
 	# The old states 4a–4c — the pre-launch raid forecast hanging off the TARGETING BANNER — are

@@ -580,7 +580,7 @@ mod tests {
         let mut view = a_view();
         view.snapshot.populations[0].loadout_window = Some(sim_runtime::BandLoadoutWindowState {
             open: true,
-            kit_budget: 17,
+            carry_capacity: crate::specialists::food::tests::FIXTURE_BAND_CARRY,
             ..Default::default()
         });
         let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);

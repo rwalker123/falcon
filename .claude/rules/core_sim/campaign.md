@@ -420,12 +420,21 @@ each turn) plus any caravan pack's **transit rot** (`work-party.md` → "A pack 
 the wire as `PopulationCohortState.foodSpoiled`, appended last:
 
 ```text
-larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled + transferReceived − transferSent
+larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled − foodLeftBehind + transferReceived − transferSent
 ```
 
 A rotten caravan pack is **credited as income when it lands and debited as spoilage the same turn**,
 so `foodIncome` stays `Σ actual` — the one producer the rows report — and the loss is this one term.
 Pinned with a live, non-zero rot by `integration_tests/tests/spoilage_food_ledger.rs`.
+
+#### `foodLeftBehind` — food a long move could not carry
+
+A `move_band` farther than the ferry reach sheds the band down to its carry
+(`.claude/rules/core_sim/band-carry.md`), and the food it drops is a real debit that is neither
+consumption nor a transfer. `LaborAllocation::last_food_left_behind` holds it from the move command
+until the next turn frame — the `transferReceived` accumulation shape, cleared in
+`reset_transfer_ledger` — and it rides the wire as `PopulationCohortState.foodLeftBehind`. **There is
+no fodder twin**: the fodder ledger has no spoil or forfeit term, so dropped hay is simply gone.
 
 #### The runway reads the larder after one turn of rot — a first-turn correction
 
@@ -823,7 +832,7 @@ negligible-take floor that ends the loop). Reuses the shared model helpers (`reg
 (append-only). **The `actual` value and the ledger identity are unchanged — `realized` is a parallel
 steady value, never a replacement.** `PopulationCohortState.foodIncome` = Σ `actual` stays exactly as
 it is: it is the real arrivals and is load-bearing for the
-`larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled + transferReceived −
+`larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled − foodLeftBehind + transferReceived −
 transferSent` ledger identity.
 
 > **The last two terms are the food that CROSSED BETWEEN BANDS** —

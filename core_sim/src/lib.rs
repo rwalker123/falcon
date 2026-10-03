@@ -17,6 +17,7 @@ pub(crate) const BUILD_ID: &str = match option_env!("CORE_SIM_BUILD_ID") {
 
 mod band_names;
 mod biome_palette;
+pub mod carry;
 pub mod climate;
 pub mod combat;
 mod combat_config;
@@ -114,6 +115,7 @@ pub use band_names::{
     load_band_names_from_env, BandNameCatalog, BandNameCatalogHandle, BandNameCatalogMetadata,
     BandNamesError, BAND_NAME_SALT, BUILTIN_BAND_NAMES,
 };
+pub use carry::{carry_capacity, per_worker_carry, CarryConfig, CarryLoad};
 pub use combat::{
     attacks_landed_at, landed_strikes_seeded, resolve_fight, strike_damage, units_brought_down,
     CombatStats, CombatTuning, Contingent, ContingentId, ContingentResult, DamageLedger,
@@ -199,9 +201,8 @@ pub use espionage::{
     QueueMissionParams, SecurityPolicy,
 };
 pub use expedition_config::{
-    load_expedition_config_from_env, shipment_carry_cap, trade_per_worker_carry, DefectionConfig,
-    ExpeditionConfig, ExpeditionConfigHandle, ExpeditionConfigMetadata, SettleConfig,
-    TradeExpeditionConfig, BUILTIN_EXPEDITION_CONFIG,
+    load_expedition_config_from_env, DefectionConfig, ExpeditionConfig, ExpeditionConfigHandle,
+    ExpeditionConfigMetadata, SettleConfig, BUILTIN_EXPEDITION_CONFIG,
 };
 pub use faction_names::{
     load_faction_names_from_env, FactionNameCatalog, FactionNameCatalogHandle,
@@ -377,8 +378,9 @@ pub use start_profile::{
     StartingUnitSpec,
 };
 pub use starting_loadout::{
-    apply_starting_loadout, clamped_kit_defaults, KitAllocation, LoadoutRejection, LoadoutSupply,
-    LoadoutWindow, MaterialAllocation, StartingLoadout, OPENING_MATERIAL_READING,
+    allocation_load, apply_starting_loadout, fit_to_carry, order_load, split_default_goods_budget,
+    FittedLoadout, KitAllocation, LoadoutRejection, LoadoutSupply, LoadoutWindow,
+    MaterialAllocation, SplitDowry, StartingLoadout, OPENING_MATERIAL_READING,
 };
 pub use supply::{
     balance_supply_networks, free_pooling_reach_tiles, BandSupplyMembership, PoolingLink,

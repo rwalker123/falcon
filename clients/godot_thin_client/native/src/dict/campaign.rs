@@ -396,12 +396,12 @@ fn format_victory_label(raw: &str) -> String {
 /// #629) — the profile's pick list, its two pre-fills, and the recipes the faction could put on a
 /// bench today.
 ///
-/// ⛔ **A WINDOW IS A FACT ABOUT ONE BAND, AND IT IS NOT IN HERE.** `open`, `kitBudget` and
-/// `materialBudget` were DELETED from this table by the per-band loadout arc: every band gets a
-/// window of its own — the spawned band's grant, and a take on the parent for every band a split
-/// hands one to — so they ride `PopulationCohortState.loadoutWindow`
-/// (`dict::population::loadout_window_to_dict`). What is left here is one per WORLD and would be
-/// pure duplication on every cohort.
+/// ⛔ **A WINDOW IS A FACT ABOUT ONE BAND, AND IT IS NOT IN HERE.** Whether it is open and its
+/// `carryCapacity` ride `PopulationCohortState.loadoutWindow`
+/// (`dict::population::loadout_window_to_dict`): every band gets a window of its own — the spawned
+/// band's grant, and a take on the parent for every band a split hands one to. What is left here is
+/// one per WORLD and would be pure duplication on every cohort — including the two WEIGHTS an order
+/// is measured in (`item_carry_weight`, `material_carry_weight`, #732).
 ///
 /// **THE KIT ROSTER AND THE RECIPE COSTS ARE DELIBERATELY NOT IN HERE EITHER.** The roster rides
 /// `SubsistenceSection.equipmentConfigJson` and a recipe's inputs ride `SubsistenceSection.recipes`,
@@ -436,6 +436,14 @@ pub(crate) fn opening_loadout_to_dict(state: fb::OpeningLoadoutState<'_>) -> Var
             .map(strings_to_variant_array)
             .unwrap_or_default(),
     );
+    // THE TWO WEIGHTS AN ORDER IS MEASURED IN (#732): load = item weight × expanded item units +
+    // material weight × material units, against the band window's `carry_capacity`. A kit weighs
+    // the items it expands to.
+    let _ = dict.insert("item_carry_weight", f64::from(state.itemCarryWeight()));
+    let _ = dict.insert(
+        "material_carry_weight",
+        f64::from(state.materialCarryWeight()),
+    );
     dict
 }
 
@@ -443,11 +451,11 @@ pub(crate) fn opening_loadout_to_dict(state: fb::OpeningLoadoutState<'_>) -> Var
 /// holds, decoded by `dict::population::loadout_window_to_dict`. The material twin is
 /// [`material_allocations_to_array`].
 ///
-/// **ALREADY CLAMPED to that band's `kitBudget` sim-side**, when the sim applied the default outfit
-/// (`outfit_band_with_defaults`): the budget is the band's working-age head count rather than a
-/// config number, so the profile cannot sum-check its own pre-fill. The client draws these counts
-/// as-is; re-fitting them against the budget here would be a second clamp to disagree with the
-/// first.
+/// **ALREADY FITTED to that band's `carryCapacity` sim-side**, when the sim applied the default
+/// outfit (`outfit_band_with_defaults`): the capacity is the band's workers × per-worker carry rather
+/// than a config number, so the profile cannot sum-check its own pre-fill. The client draws these
+/// counts as-is; re-fitting them against the capacity here would be a second clamp to disagree with
+/// the first.
 pub(crate) fn kit_allocations_to_array(
     defaults: Option<Vector<'_, ForwardsUOffset<fb::OpeningKitDefault<'_>>>>,
 ) -> VarArray {

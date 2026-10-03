@@ -818,7 +818,7 @@ pub fn road_keeping_range(ladder: &LadderConfig) -> u32 {
 /// **There is no work-range rule and the reason is not complexity.** Ray: *"already forage and
 /// hunting have different work ranges, expeditions are even farther. I don't think it makes sense to
 /// restrict it."* A fourth arbitrary radius would say nothing; what bounds a distant road is that it
-/// is dearer to hold and slower to build — the argument `TradeExpeditionConfig` already makes about
+/// is dearer to hold and slower to build — the argument `CarryConfig` already makes about
 /// friction, *"what a long haul costs is already paid, and paid in the right currency."*
 ///
 /// **A THRESHOLD, NOT A CURVE**, which is what Ray asked for and is simpler to tune: inside

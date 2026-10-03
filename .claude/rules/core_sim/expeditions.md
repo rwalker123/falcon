@@ -1325,7 +1325,7 @@ either of those and this number is stale** — it is derived, so re-derive it ra
 A shipment's hay is booked on `last_fodder_transfers`' `TransferLink::Route` arm — **debited at
 launch, credited on delivery, and credited again on the fold-back** so a recalled shipment leaves no
 phantom sent-but-never-received figure standing. It is never booked on `last_food_transfers`: the
-larder identity `larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled +
+larder identity `larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled − foodLeftBehind +
 transferReceived − transferSent` is about food that entered a *larder*, and hay never enters one. The
 `fodderTransferRoute{Received,Sent}Turn` wire fields were minted dead against exactly this day and
 now read non-zero; the local-pair-is-a-rate / route-pair-is-an-event distinction beside them is

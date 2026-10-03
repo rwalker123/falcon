@@ -151,12 +151,20 @@ const FOOD_LABEL_RAID_FORFEIT := "%s Lost to raids" % RAID_GLYPH
 # shelf life plus any caravan pack that rotted on the walk home. The sim answers it as
 # `PopulationCohortState.foodSpoiled` (the client never re-derives it), and it is a loss term of the
 # larder identity exactly as the raid debit is:
-# `larder_delta == income − consumption − raid_forfeit − food_spoiled + received − sent`.
+# `larder_delta == income − consumption − raid_forfeit − food_spoiled − food_left_behind + received − sent`.
 const FOOD_LABEL_SPOILED := "Spoiled"
+
+# The LEFT-BEHIND debit (#732): food a long move dropped — the band moved farther than its ferry reach
+# and the sim shed it down to what its workers can carry. The sim answers it as
+# `PopulationCohortState.foodLeftBehind` (the client never re-derives it), accumulated from the move
+# command to the next turn frame like the transfer pair, and it is a loss term of the identity:
+# `larder_delta == income − consumption − raid_forfeit − food_spoiled − food_left_behind + received − sent`.
+const FOOD_LABEL_LEFT_BEHIND := "Left behind"
 
 # The TRANSFER glyph (arc #527): food that crossed between bands, in or out. Those crossings are the
 # fifth and sixth terms of the larder identity
-#   larder_delta == income − consumption − raid_forfeit − food_spoiled + received − sent
+#   larder_delta == income − consumption − raid_forfeit − food_spoiled − food_left_behind
+#                   + received − sent
 # and they close a hole that was NEVER about trade alone: `balance_supply_networks` has been pooling
 # food between neighbouring larders every turn since turn one, so any two co-networked bands had a
 # Food line that silently did not add up — by the whole transfer, not a rounding drift.
@@ -914,6 +922,10 @@ class Context extends RefCounted:
     ## larders read. NAN when no bill row was emitted (a band holding nothing that eats a good), which
     ## is what stops the previous band's tint reaching a row that is not there.
     var material_turns: float = NAN
+    ## Whether the band holds more than it can carry (#732), for the `Carry:` row's WARN tint. Reset per
+    ## render by `BandDetailLines.unit_summary_lines`, so a previous band's overload never tints a row
+    ## that is not there.
+    var carry_over: bool = false
     var morale: float = NAN
     ## The band's fertility MULTIPLIER (`hunger x reserve x trend`), 1.0 = its normal birth rate.
     ## NAN when there is no band, or when the sim published no reading yet (the not-projected
@@ -1104,6 +1116,11 @@ static func _value_hex(key: String, value: String, ctx: Context) -> String:
         # answers WARN only on the hazard mark its composer put there — so a band bill that declines
         # the runway tint reads the same plain ink it always did.
         return HudRouteVocab.upkeep_value_hex(value)
+    elif key == HudDisclosureVocab.DETAIL_ROW_CARRY:
+        # A band holding more than it can carry is the one state this row warns about — a long move
+        # would leave the difference behind. Amber rather than red: nothing is lost until it moves.
+        if ctx.carry_over:
+            return HudStyle.WARN_HEX
     elif key == HudDisclosureVocab.DETAIL_ROW_MORALE:
         # The player band's morale row tints by the morale thresholds.
         if not is_nan(ctx.morale):
@@ -2651,7 +2668,8 @@ static func morale_is_concerning(unit_data: Dictionary) -> bool:
 ## Positive → the larder is growing. `raid_forfeit` is the sim's own answer for the third term
 ## (`PopulationCohortState.raidForfeit`, Predators Phase 3 — food lost to raids this turn); the
 ## client must NOT re-derive it, and the full identity
-## `larder_delta == income − consumption − raid_forfeit − food_spoiled + transfers` is pinned sim-side
+## `larder_delta == income − consumption − raid_forfeit − food_spoiled − food_left_behind + transfers`
+## is pinned sim-side
 ## (`integration_tests/tests/{pen_food_ledger,raid_food_ledger,spoilage_food_ledger,transfer_food_ledger}.rs`) — the
 ## BREAKDOWN is what states it in full, this headline being the steady rate rather than the ledger.
 ## Raids are EPISODIC, so this net can swing the turn one lands — the forward food-outlook chart
@@ -2667,7 +2685,8 @@ static func band_net_food(band: Dictionary) -> float:
     return band_food_income(band) \
         - band_food_need(band) \
         - band_raid_forfeit(band) \
-        - band_food_spoiled(band)
+        - band_food_spoiled(band) \
+        - band_food_left_behind(band)
 
 ## What the band NEEDED to eat this turn (`food_need`). Its `food_consumption` is what it ATE —
 ## `min(need, larder)` — and the gap between them is `band_food_shortfall`.
@@ -2716,7 +2735,7 @@ static func band_pooled_food_net(band: Dictionary) -> float:
 ## forage + hunt assignments). Summed from the SAME per-source realized values as the breakdown rows, so
 ## it equals Gathered + Hunted exactly — the honest long-run average of the lumpy per-turn take, so it
 ## does NOT swing. It feeds the headline net (`band_net_food` = income − Consumed − Lost to raids −
-## Spoiled) and the `food_is_concerning` gate. **Deliberately summed from the rows rather than read off a band-level
+## Spoiled − Left behind) and the `food_is_concerning` gate. **Deliberately summed from the rows rather than read off a band-level
 ## wire field** — a separately-computed total could drift from the Gathered/Hunted rows it sits above,
 ## and this way the headline equals them by construction. (A cohort-level `foodIncomeAverage` existed
 ## for one commit and was retired as redundant; do not reintroduce it.)
@@ -2734,6 +2753,12 @@ static func band_raid_forfeit(band: Dictionary) -> float:
 ## ledger then omits the row entirely.
 static func band_food_spoiled(band: Dictionary) -> float:
     return float(band.get("food_spoiled", 0.0))
+
+## What a long move left behind of this band's food (`PopulationCohortState.foodLeftBehind`, #732) —
+## accumulated from the move command to the next turn frame, as the transfer pair is. 0 on a frame no
+## long move preceded — the ledger then omits the row entirely.
+static func band_food_left_behind(band: Dictionary) -> float:
+    return float(band.get("food_left_behind", 0.0))
 
 ## Food that CROSSED IN from another band over the snapshot window
 ## (`PopulationCohortState.transferReceived`) — a supply-network pooling, a shipment landing, a
@@ -2877,6 +2902,7 @@ static func band_has_food_flow(band: Dictionary) -> bool:
         or band_food_need(band) >= SourceForecast.FOOD_FLOW_MIN \
         or band_raid_forfeit(band) >= SourceForecast.FOOD_FLOW_MIN \
         or band_food_spoiled(band) >= SourceForecast.FOOD_FLOW_MIN \
+        or band_food_left_behind(band) >= SourceForecast.FOOD_FLOW_MIN \
         or band_transfer_received_turn(band) >= SourceForecast.FOOD_FLOW_MIN \
         or band_transfer_sent_turn(band) >= SourceForecast.FOOD_FLOW_MIN
 
@@ -2903,8 +2929,8 @@ static func sum_realized_yield(band: Dictionary, kind: String) -> float:
 # =====================================================================================
 
 ## **THE SIM'S OWN MASS EXPRESSION, HELD VERBATIM** — food counts as itself, every unit of hay costs
-## `expedition_trade_fodder_carry_weight` of pack space, and every unit of every material costs
-## `expedition_trade_material_carry_weight`. Both levers are per-cohort echoes of the sim's config, so
+## `carry_fodder_weight` of pack space, and every unit of every material costs
+## `carry_material_weight`. Both levers are per-cohort echoes of the sim's config, so
 ## a tuning change moves both surfaces and the server's refusal together.
 ##
 ## **THREE TERMS, ONE PER ACCOUNT** (issue #590). The accounts do not convert — a shipment's hay and
@@ -2937,9 +2963,9 @@ static func shipment_cargo_mass(unit_data: Dictionary) -> float:
     return shipment_mass(
         float(unit_data.get("expedition_cargo_food", 0.0)),
         shipment_cargo_fodder(unit_data),
-        float(unit_data.get("expedition_trade_fodder_carry_weight", 0.0)),
+        float(unit_data.get("carry_fodder_weight", 0.0)),
         shipment_cargo_material_total(unit_data),
-        float(unit_data.get("expedition_trade_material_carry_weight", 0.0)))
+        float(unit_data.get("carry_material_weight", 0.0)))
 
 ## The HAY an in-flight party is carrying (`expedition_cargo_fodder`, issue #590) — the third cargo
 ## account, in FODDER units against the destination's fodder larder. **Never added to

@@ -169,6 +169,7 @@ pub(crate) fn snapshot_opening_loadout(
     profile: &crate::start_profile::StartProfile,
     recipes: &crate::recipes_config::RecipesConfig,
     known_crafts: &BTreeMap<String, bool>,
+    carry: &crate::carry::CarryConfig,
 ) -> OpeningLoadoutState {
     let loadout = &profile.overrides().opening_loadout;
     OpeningLoadoutState {
@@ -194,5 +195,9 @@ pub(crate) fn snapshot_opening_loadout(
             })
             .map(|(id, _)| id.to_string())
             .collect(),
+        // The two weights an outfitting order is measured in, so a client weighs an order exactly
+        // the way `apply_starting_loadout` refuses on (`starting_loadout::order_load`).
+        item_carry_weight: carry.item_carry_weight,
+        material_carry_weight: carry.material_carry_weight,
     }
 }

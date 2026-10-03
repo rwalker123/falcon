@@ -101,7 +101,11 @@ for which band, anchored on which hex — is shared state on `ComposeState` (`op
     alone runs ~120 characters, and with the take beside it the banner passed 1500px — so a hover may
     answer a Dictionary (`PICK_HOVER_TEXT_KEY` / `PICK_HOVER_TOOLTIP_KEY`) and the banner shows the
     text and carries the tooltip (`banner_tooltip`).
-  - **Scout** and Move state no hover detail. A hex with nothing to state keeps the base prompt.
+  - **Scout** states no hover detail. **Move** states one only for a resident band hovering a hex
+    farther than its `move_ferry_reach_tiles` while any `long_move_leaves_*` field is non-zero: an
+    amber *"Too far to carry it all — leaves … behind"* built from those published fields, the sim's
+    own forecast of the shed (`.claude/rules/core_sim/band-carry.md`). The client mirrors none of
+    the rule. A hex with nothing to state keeps the base prompt.
 - **Every banner names the band by its NAME** (`HudFormat.band_name`), never `Band <id>`. The command
   token and its instruction come from `DENY_PICK_COMMAND` / `VERB_PICK_COMMAND_*` / `MOVE_COMMAND` and
   the `BANNER_INSTRUCTIONS` table.

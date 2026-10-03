@@ -571,7 +571,7 @@ Every path that ends a posting routes through the one step:
 >
 > It is not any live row's income — a walk outlives its row, so no telemetry counts it in — and food
 > that reached the larder through neither `food_income` nor a transfer would break the pinned identity
-> `larder_delta == food_income − food_consumption − raid_forfeit − spoiled + transfer_received −
+> `larder_delta == food_income − food_consumption − raid_forfeit − spoiled − left_behind + transfer_received −
 > transfer_sent`.
 > A party carrying goods home is exactly what `TransferLink::Route` is for, so `bring_the_party_home`
 > books it there — through `LaborAllocation::book_crossing` as `TransferCause::PartyHome`, the one way

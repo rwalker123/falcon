@@ -209,6 +209,12 @@ func food_breakdown_lines(band: Dictionary) -> Array[String]:
     var spoiled := DetailFormat.band_food_spoiled(band)
     if spoiled >= SourceForecast.FOOD_FLOW_MIN:
         lines.append(DetailFormat.food_breakdown_row(-spoiled, DetailFormat.FOOD_LABEL_SPOILED))
+    # The left-behind debit (#732): food a long move dropped because the band could not carry it. Its
+    # own story (move shorter, or carry less), so its own row, only on a frame a long move preceded.
+    var left_behind := DetailFormat.band_food_left_behind(band)
+    if left_behind >= SourceForecast.FOOD_FLOW_MIN:
+        lines.append(DetailFormat.food_breakdown_row(-left_behind,
+            DetailFormat.FOOD_LABEL_LEFT_BEHIND))
     # **THE TRANSFER ROWS** (arc #527) — food that crossed between bands, which passes through NEITHER
     # of the income rows above (what THIS band's workers produced) nor either debit (what its own
     # people ate, what a raid took, what rotted). A FOURTH kind of row, and not a trade feature:

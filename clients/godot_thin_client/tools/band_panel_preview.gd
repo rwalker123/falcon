@@ -15056,6 +15056,11 @@ func _band_fixture() -> Dictionary:
 		"fertility_reserve": 1.5,
 		"fertility_trend": 1.25,
 		"stores": {"provisions": 84.0},
+		# What the band carries against what it can (#732) — every live band publishes both, so the
+		# reference band does too and every band-zone frame measures the `Carry:` row it renders.
+		"carry_capacity": 96.0,
+		"carry_load": 61.4,
+		"move_ferry_reach_tiles": 2,
 		"working_age": 16,
 		"idle_workers": 3,
 		# Age structure — the band zone's PEOPLE bar, in WHOLE PEOPLE as the wire carries it.

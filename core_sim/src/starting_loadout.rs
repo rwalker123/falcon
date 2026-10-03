@@ -2,9 +2,10 @@
 //!
 //! Nothing at the *spawn* grants a band anything: `equipment.json` ships `start_stock_fraction: 0.0`,
 //! and no material declares a start stock (the mechanism that let one is deleted). Everything a band
-//! owns comes through this window — a budget of one kit per working-age hand spread across the kit
-//! roster, and a separate budget of material points spread across the profile's pick list, composed
-//! *after* the generated map is on screen.
+//! owns comes through this window — **one carry budget**, the band's working-age hands × one
+//! worker's pack ([`crate::carry::carry_capacity`]), spent on kits and materials
+//! alike in the one load currency ([`crate::carry::CarryLoad`]), and composed *after*
+//! the generated map is on screen.
 //!
 //! **A band is never bare-handed while it decides.** The sim commits the campaign's **default
 //! outfit** on the band the moment it exists ([`outfit_band_with_defaults`]), so the player's pick is
@@ -16,12 +17,13 @@
 //! ([`crate::systems::split_band_from_parent`]). **Turn one is not special** — only the *parent's
 //! state* differs:
 //!
-//! - The spawned band's window carries a **GRANT**, two budgets it may mint against, and a splinter
-//!   of a band whose grant is still unspent takes a slice of that grant rather than of a ledger.
+//! - The spawned band's window carries a **GRANT**, a carry budget it may mint against, and a
+//!   splinter of a band whose grant is still unspent takes a slice of that grant rather than of a
+//!   ledger.
 //!   Those windows [`LoadoutSupply::Grant`] and their picks **mint**.
 //! - From turn two nobody holds a grant, so a splinter's window is a
 //!   [`LoadoutSupply::Parent`] one: its picks **move** gear and material out of the parent's own
-//!   ledger, and the cap is what the parent can supply.
+//!   ledger, and the cap is what the parent can supply **and** what the splinter can carry.
 //!
 //! **Windows close on the turn advance and on nothing else** — committing a loadout does not close
 //! one, so the whole of a turn is a working surface: the player tries a pick and revises it as often
@@ -35,8 +37,10 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    carry::{carry_capacity, scale_units_by_ratio, CarryConfig, CarryLoad},
     components::{BandEquipment, BandId, PopulationCohort, StartingUnit},
     equipment_config::EquipmentConfigHandle,
+    expedition_config::{ExpeditionConfig, ExpeditionConfigHandle},
     materials_config::MaterialsConfigHandle,
     orders::FactionId,
     recipes_config::RecipesConfigHandle,
@@ -56,24 +60,25 @@ pub const OPENING_MATERIAL_READING: f32 = 0.5;
 /// **Where a window's gear comes from** — the one fact that decides whether a pick *mints* or
 /// *moves*, and therefore what caps it.
 ///
-/// It is an enum rather than a pair of "meaningful only when…" fields because the two cases cap on
-/// different currencies: a grant is bounded by two integers the world handed out, a parent take is
-/// bounded by what another band is standing on right now.
+/// It is an enum rather than a pair of "meaningful only when…" fields because the two cases are
+/// bounded by different things: a grant by a carry budget the world handed out, a parent take by
+/// that **and** by what another band is standing on right now. **Both carry a carry budget** — one
+/// rule on every turn: a departing band may take what its workers can carry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LoadoutSupply {
     /// **MINTED against the world's opening grant.** The spawned band's window, and a splinter of a
     /// band whose own grant is still unspent — that splinter takes a slice of the grant, deducted
-    /// from the parent's, so no point is minted twice or lost.
+    /// from the parent's, so no load unit is minted twice or lost.
     Grant {
-        /// One per working-age hand, stamped at spawn or carved off the parent at a split.
-        /// **Derived, never configured** — see `start_profile::OpeningLoadoutConfig`.
-        kit_budget: u32,
-        /// `start_profiles.json` `opening_loadout.material_points`, or the splinter's share of what
-        /// the parent had left.
-        material_budget: u32,
+        /// **The load this window may mint**, in [`CarryLoad`] units: the spawned band's
+        /// `carry_capacity(workers)` (its larder does NOT count — it has not walked anywhere),
+        /// or a splinter's slice of the parent's remaining grant (its food fills what the minted goods
+        /// leave). **Derived, never configured.**
+        carry_budget: Scalar,
     },
     /// **MOVED out of `parent`'s ledger** — a splinter of a band with no grant left. The cap is what
-    /// the parent can supply, and the standing take is the record of what has already crossed.
+    /// the parent can supply **and** [`Self::carry_budget`], and the standing take is the record of
+    /// what has already crossed.
     Parent {
         /// The band this take is drawn from.
         parent: BandId,
@@ -88,25 +93,21 @@ pub enum LoadoutSupply {
         /// fixed point the store holds. Fractional, because a split's default take is
         /// `share × total` and the store is continuous.
         materials: BTreeMap<String, Scalar>,
+        /// **The splinter's whole carry**, `carry_capacity(asked)` — what the goods of an
+        /// order are checked against. Goods load first; the food fills the room they leave
+        /// ([`SplitDowry`]).
+        carry_budget: Scalar,
     },
 }
 
 impl LoadoutSupply {
-    /// The kit slots this window may mint against — `0` for a take, which mints nothing.
-    pub fn kit_budget(&self) -> u32 {
+    /// **The load this window's order is checked against**, on either arm: the band's whole carry
+    /// (a splinter's food fills what its goods leave). In [`CarryLoad`] units.
+    pub fn carry_budget(&self) -> Scalar {
         match self {
-            LoadoutSupply::Grant { kit_budget, .. } => *kit_budget,
-            LoadoutSupply::Parent { .. } => 0,
-        }
-    }
-
-    /// The material points this window may mint against — `0` for a take.
-    pub fn material_budget(&self) -> u32 {
-        match self {
-            LoadoutSupply::Grant {
-                material_budget, ..
-            } => *material_budget,
-            LoadoutSupply::Parent { .. } => 0,
+            LoadoutSupply::Grant { carry_budget } | LoadoutSupply::Parent { carry_budget, .. } => {
+                *carry_budget
+            }
         }
     }
 
@@ -139,6 +140,76 @@ pub struct LoadoutWindow {
     pub kits: Vec<KitAllocation>,
     /// The material rows the last accepted order named, the twin of [`Self::kits`].
     pub materials: Vec<MaterialAllocation>,
+    /// **A splinter's larder dowry** — `None` on a window opened by no split (the opening band,
+    /// whose larder is not carried anywhere). See [`SplitDowry`].
+    pub dowry: Option<SplitDowry>,
+}
+
+/// **The food a splinter may take, and the food it has taken** (#732).
+///
+/// # A SPLIT LOADS GOODS FIRST, AND FOOD FILLS THE ROOM LEFT
+///
+/// The kits and materials on the card are loaded first; the food that crosses is
+/// `min(share mass, carry − goods load)` — so taking fewer tools brings more food, and that is the
+/// player's food dial without a food row. **Every accepted order re-resolves it**
+/// ([`resolve_split_food`]): raising the goods hands food back to the parent, lowering them takes
+/// more, never past the proportional share recorded here. Food and hay scale together, in the
+/// share's own proportion.
+///
+/// The food is always **physical** — it moves between the parent's larder and the splinter's on
+/// both arms — while a grant's goods are minted; that is still "a grant split pays once".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SplitDowry {
+    /// The band the food comes from and goes back to.
+    pub parent: BandId,
+    /// The splinter's full proportional share of the parent's food at the split — the most it may
+    /// take.
+    pub food_share: Scalar,
+    /// The hay twin of [`Self::food_share`].
+    pub fodder_share: Scalar,
+    /// The food that has actually crossed and stands with the splinter.
+    pub food_taken: Scalar,
+    /// The hay that has actually crossed.
+    pub fodder_taken: Scalar,
+}
+
+impl SplitDowry {
+    /// **`F`** — the mass of the full share, `food + fodder_carry_weight × fodder`: the food tier's
+    /// most.
+    pub fn share_mass(&self, carry_cfg: &CarryConfig) -> Scalar {
+        CarryLoad {
+            food: self.food_share,
+            fodder: self.fodder_share,
+            ..CarryLoad::default()
+        }
+        .food_mass(carry_cfg)
+    }
+
+    /// The mass of the food that has crossed.
+    pub fn carried_mass(&self, carry_cfg: &CarryConfig) -> Scalar {
+        CarryLoad {
+            food: self.food_taken,
+            fodder: self.fodder_taken,
+            ..CarryLoad::default()
+        }
+        .food_mass(carry_cfg)
+    }
+}
+
+/// **The goods budget a split's DEFAULT is fitted to** — so an untouched split takes some of
+/// everything.
+///
+/// With `carry` the splinter's total, `food_share` its full food mass and `goods` the default's
+/// load: everything rides when `food_share + goods ≤ carry`; otherwise both tiers are scaled by
+/// `carry ÷ (food_share + goods)` and the goods are fitted to their part (the food then fills the
+/// room the goods' rounding leaves, [`resolve_split_food`]).
+pub fn split_default_goods_budget(carry: Scalar, food_share: Scalar, goods: Scalar) -> Scalar {
+    let both = food_share + goods;
+    if both <= carry {
+        goods
+    } else {
+        crate::carry::scale_by_ratio(goods, carry, both)
+    }
 }
 
 impl LoadoutWindow {
@@ -149,6 +220,7 @@ impl LoadoutWindow {
             supply,
             kits: Vec::new(),
             materials: Vec::new(),
+            dowry: None,
         }
     }
 
@@ -298,10 +370,10 @@ pub enum LoadoutRejection {
     KitBuysNothing(String),
     #[error("'{0}' is not one of this start profile's pickable materials")]
     UnpickableMaterial(String),
-    #[error("{kits} kits allocated against a budget of {budget}")]
-    OverKitBudget { kits: u32, budget: u32 },
-    #[error("{units} material units allocated against a budget of {budget}")]
-    OverMaterialBudget { units: u32, budget: u32 },
+    /// The whole order — every expanded item and every material unit — weighs more than this window
+    /// may carry. Checked on the **sum**, on both arms.
+    #[error("the order weighs {load} against a carry of {capacity}")]
+    OverCarry { load: Scalar, capacity: Scalar },
     #[error("'{0}' is allocated twice - one line per kit, one line per material")]
     DuplicateAllocation(String),
     #[error("there is no such band to outfit")]
@@ -365,9 +437,12 @@ pub fn close_opening_window(
     }
 }
 
-/// **Stamp each faction's spawned band's window open with the budgets the world just built.** A
-/// Startup system, chained after the spawn, because the kit budget is the *spawned band's* worker
-/// count rather than anything a config states.
+/// **Stamp each faction's spawned band's window open with the carry budget the world just built.**
+/// A Startup system, chained after the spawn, because the budget is the *spawned band's* worker count
+/// × one worker's pack rather than anything a config states.
+///
+/// **The spawned larder does NOT count against it** — the band has not walked anywhere. The budget is
+/// the whole `carry_capacity(workers)` (17 × 8.0 = 136 on the shipped profile).
 ///
 /// A faction with no starting band opens nothing: there is nobody to outfit.
 pub fn stamp_starting_loadout(
@@ -375,6 +450,8 @@ pub fn stamp_starting_loadout(
     profile: Option<Res<ActiveStartProfile>>,
     bands: Query<(&BandId, &PopulationCohort), With<StartingUnit>>,
     demographics: Option<Res<crate::demographics_config::DemographicsConfigHandle>>,
+    expedition: Option<Res<ExpeditionConfigHandle>>,
+    equipment: Option<Res<EquipmentConfigHandle>>,
 ) {
     let Some(profile) = profile else {
         return;
@@ -407,51 +484,53 @@ pub fn stamp_starting_loadout(
                 .initial_distribution
                 .working
         });
-    let material_budget = profile
-        .profile()
-        .overrides()
-        .opening_loadout
-        .material_points;
+    let expedition = expedition
+        .map(|handle| handle.get())
+        .unwrap_or_else(ExpeditionConfig::builtin);
+    let equipment = equipment
+        .map(|handle| handle.get())
+        .unwrap_or_else(crate::equipment_config::EquipmentConfig::builtin);
+    let opening = &profile.profile().overrides().opening_loadout;
     for (faction, (band, size)) in opening_bands {
-        let workers = crate::systems::party_workers(size, working_fraction);
-        let kit_budget = workers as u32;
+        let workers = crate::systems::party_workers(size, working_fraction) as u32;
+        let carry_budget = carry_capacity(workers, &expedition.carry);
         loadout.open(
             band,
-            LoadoutWindow::opened(LoadoutSupply::Grant {
-                kit_budget,
-                material_budget,
-            }),
+            LoadoutWindow::opened(LoadoutSupply::Grant { carry_budget }),
         );
         info!(
             target: "shadow_scale::campaign",
             faction = faction.0,
             band = band.0,
-            kit_budget,
-            material_budget,
+            workers,
+            carry_budget = carry_budget.to_f32(),
             "starting_loadout.window.opened"
         );
-        // **The kit pre-fill's only sanity check, and it happens HERE** — this is the first and only
+        // **The pre-fill's only sanity check, and it happens HERE** — this is the first and only
         // moment a config fault of that shape can be observed (the budget does not exist until the
         // band does), and it happens once per opening band. `outfit_band_with_defaults` runs the
         // same pure helper to apply the value.
-        let (_, clamped) = clamped_kit_defaults(
-            &profile.profile().overrides().opening_loadout.kit_defaults,
-            kit_budget,
+        let fitted = fit_to_carry(
+            &opening.kit_defaults,
+            &opening.material_defaults,
+            carry_budget,
+            &equipment,
+            &expedition.carry,
         );
-        if clamped {
+        if fitted.clamped {
             warn!(
                 target: "shadow_scale::campaign",
                 faction = faction.0,
-                kit_budget,
-                declared = profile
-                    .profile()
-                    .overrides()
-                    .opening_loadout
-                    .kit_defaults
-                    .values()
-                    .sum::<u32>(),
-                "starting_loadout.kit_defaults.clamped=the profile pre-fills more kits than this \
-                 band has hands"
+                carry_budget = carry_budget.to_f32(),
+                declared = allocation_load(
+                    &equipment,
+                    &expedition.carry,
+                    &opening.kit_defaults,
+                    &opening.material_defaults,
+                )
+                .to_f32(),
+                "starting_loadout.defaults.clamped=the profile pre-fills more than this band \
+                 can carry"
             );
         }
     }
@@ -489,7 +568,7 @@ pub fn outfit_opening_bands(world: &mut World) {
     }
 }
 
-/// **Give `band` its default outfit, re-fitted to its OWN budgets, through the ordinary
+/// **Give `band` its default outfit, re-fitted to its OWN carry budget, through the ordinary
 /// accepted-order path.**
 ///
 /// # ⛔ A DEFAULT IS APPLIED, NEVER SUGGESTED
@@ -507,25 +586,24 @@ pub fn outfit_opening_bands(world: &mut World) {
 /// makes the card and the band agree by construction and what makes a later revision a replacement
 /// of something real.
 ///
-/// # The budgets are the BAND's, not the campaign's
+/// # The budget is the BAND's, not the campaign's
 ///
-/// [`clamped_kit_defaults`] fits the kit half to this band's `kit_budget` and [`clamp_allocation`]
-/// fits the material half to its `material_budget` — the same proportional, floored,
-/// remainder-unspent rule for both, because they are the same question. The material half needs the
-/// clamp even though `material_defaults` is config-validated against `material_points`: that
-/// validation is against the *campaign's* budget, and a splinter's is a slice of it.
+/// [`fit_to_carry`] fits the kit and material defaults **together** to this band's own
+/// `carry_budget` — one proportional, floored, remainder-unspent rule on one currency. A splinter's
+/// budget is a slice of the grant net of its food, so the campaign's defaults are routinely clamped
+/// here.
 ///
-/// **Only a grant window is outfitted.** A take window mints nothing, so both its budgets are `0`
-/// and it has a default take of its own already standing; this returns without touching it.
+/// **Only a grant window is outfitted.** A take window mints nothing and it has a default take of
+/// its own already standing; this returns without touching it.
 ///
-/// A refusal is structurally impossible — a clamped allocation fits by construction and its ids come
+/// A refusal is structurally impossible — a fitted allocation fits by construction and its ids come
 /// from a config the boot validated against both rosters — so one is logged rather than handled.
 pub(crate) fn outfit_band_with_defaults(world: &mut World, faction: FactionId, band: BandId) {
-    let Some((kit_budget, material_budget)) = world
+    let Some(carry_budget) = world
         .get_resource::<StartingLoadout>()
         .and_then(|loadout| loadout.window(band))
         .filter(|window| window.grants())
-        .map(|window| (window.supply.kit_budget(), window.supply.material_budget()))
+        .map(|window| window.supply.carry_budget())
     else {
         return;
     };
@@ -533,20 +611,36 @@ pub(crate) fn outfit_band_with_defaults(world: &mut World, faction: FactionId, b
         return;
     };
     let opening = &profile.profile().overrides().opening_loadout;
-    let kits: Vec<KitAllocation> = clamped_kit_defaults(&opening.kit_defaults, kit_budget)
-        .0
-        .into_iter()
-        .map(|(kit_id, count)| KitAllocation { kit_id, count })
-        .collect();
-    let materials: Vec<MaterialAllocation> =
-        clamp_allocation(&opening.material_defaults, material_budget)
-            .0
-            .into_iter()
-            .map(|(material_id, units)| MaterialAllocation { material_id, units })
-            .collect();
+    let equipment = world.resource::<EquipmentConfigHandle>().get();
+    let expedition = carry_config(world);
+    let mut fitted = fit_to_carry(
+        &opening.kit_defaults,
+        &opening.material_defaults,
+        carry_budget,
+        &equipment,
+        &expedition.carry,
+    );
+    // **A splinter's default takes some of everything**: when the fitted defaults and its full food
+    // share do not both fit, the goods are fitted to their proportional part of the carry and the
+    // apply below fills the rest with food ([`split_default_goods_budget`]).
+    let dowry = world
+        .get_resource::<StartingLoadout>()
+        .and_then(|loadout| loadout.window(band))
+        .and_then(|window| window.dowry.clone());
+    if let Some(dowry) = &dowry {
+        let kits: BTreeMap<String, u32> = fitted.kits.iter().cloned().collect();
+        let materials: BTreeMap<String, u32> = fitted.materials.iter().cloned().collect();
+        let goods = allocation_load(&equipment, &expedition.carry, &kits, &materials);
+        let budget =
+            split_default_goods_budget(carry_budget, dowry.share_mass(&expedition.carry), goods);
+        fitted = fit_to_carry(&kits, &materials, budget, &equipment, &expedition.carry);
+    }
+    let kits = kit_rows_from(fitted.kits);
+    let materials = material_rows_from(fitted.materials);
     // Nothing to apply is not the same as applying nothing: an apply is a **replacement**, so
-    // committing an empty order here would rebuild a ledger from empty for no reason.
-    if kits.is_empty() && materials.is_empty() {
+    // committing an empty order here would rebuild a ledger from empty for no reason — unless the
+    // band is a splinter, whose apply is also what loads its food.
+    if kits.is_empty() && materials.is_empty() && dowry.is_none() {
         return;
     }
     if let Err(reason) = apply_starting_loadout(world, faction, band, &kits, &materials) {
@@ -555,84 +649,132 @@ pub(crate) fn outfit_band_with_defaults(world: &mut World, faction: FactionId, b
             faction = faction.0,
             band = band.0,
             %reason,
-            "starting_loadout.defaults.refused=a clamped default must always fit"
+            "starting_loadout.defaults.refused=a fitted default must always fit"
         );
     }
 }
 
-/// **The kit column's pre-fill, scaled to fit the budget this band actually turned out to have.**
-///
-/// Returns the rows to publish, in id order, and whether the clamp bound.
-///
-/// # The rule: PROPORTIONAL, FLOORED, and the remainder is left unspent
-///
-/// `start_profiles.json`'s `kit_defaults` cannot be sum-checked at load, because the kit budget is
-/// the spawned band's working-age head count rather than a number in that file
-/// (`start_profile::OpeningLoadoutConfig::kit_defaults`). So an over-allocating pre-fill is scaled
-/// here: each row becomes `floor(count × budget / declared_total)`, and a row that floors to zero is
-/// **dropped** — a pre-fill of nothing is what an absent row already says.
-///
-/// **Proportional rather than first-come, and the floor's remainder goes nowhere.** The config is a
-/// `BTreeMap`, so there is no author's order to consume in — "declaration order" would really be
-/// *id* order, making `gathering` beat `trapping` because `g` sorts first, which is an arbitrary
-/// winner dressed as a rule. Scaling preserves the shape the designer expressed, and handing the
-/// leftover point or two to whichever id sorts first would put that arbitrary tiebreak back. Leaving
-/// it unspent is strictly better: a pre-fill is a **suggestion**, and a couple of unallocated hands
-/// is exactly the state the player is being invited to resolve.
-///
-/// **A zero budget publishes nothing**, which needs no special case: every scaled row floors to 0.
-pub fn clamped_kit_defaults(
-    declared: &BTreeMap<String, u32>,
-    kit_budget: u32,
-) -> (Vec<(String, u32)>, bool) {
-    clamp_allocation(declared, kit_budget)
+/// The expedition config a carry is measured with — the live handle, or the builtin in a
+/// hand-rolled test `World` that never installed one.
+pub(crate) fn carry_config(world: &World) -> std::sync::Arc<ExpeditionConfig> {
+    world
+        .get_resource::<ExpeditionConfigHandle>()
+        .map(|handle| handle.get())
+        .unwrap_or_else(ExpeditionConfig::builtin)
 }
 
-/// **PROPORTIONAL, FLOORED, remainder unspent — the one implementation of that rule.**
+/// `kit → count` rows as the allocation lines an apply takes.
+pub(crate) fn kit_rows_from(rows: Vec<(String, u32)>) -> Vec<KitAllocation> {
+    rows.into_iter()
+        .map(|(kit_id, count)| KitAllocation { kit_id, count })
+        .collect()
+}
+
+/// `material → units` rows as the allocation lines an apply takes.
+pub(crate) fn material_rows_from(rows: Vec<(String, u32)>) -> Vec<MaterialAllocation> {
+    rows.into_iter()
+        .map(|(material_id, units)| MaterialAllocation { material_id, units })
+        .collect()
+}
+
+/// **What an order weighs** — its expanded items and its material units through the one load
+/// formula ([`CarryLoad`]). An order carries no food.
+pub fn order_load(
+    carry_cfg: &CarryConfig,
+    expanded_items: &BTreeMap<String, u32>,
+    material_units: u32,
+) -> Scalar {
+    let items: u32 = expanded_items.values().copied().sum();
+    CarryLoad::goods(items, Scalar::from_u32(material_units)).load(carry_cfg)
+}
+
+/// **What a `kit → count` / `material → units` allocation weighs** — [`order_load`] on its expanded
+/// items.
+pub fn allocation_load(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    carry_cfg: &CarryConfig,
+    kits: &BTreeMap<String, u32>,
+    materials: &BTreeMap<String, u32>,
+) -> Scalar {
+    let rows: Vec<KitAllocation> = kits
+        .iter()
+        .map(|(kit_id, count)| KitAllocation {
+            kit_id: kit_id.clone(),
+            count: *count,
+        })
+        .collect();
+    order_load(
+        carry_cfg,
+        &expand_kits(equipment, &rows),
+        materials.values().copied().sum(),
+    )
+}
+
+/// An allocation [`fit_to_carry`] fitted to a budget, and whether the fit bound.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FittedLoadout {
+    /// The kit rows kept, in id order. A row that floored to zero is dropped.
+    pub kits: Vec<(String, u32)>,
+    /// The material rows kept, in id order.
+    pub materials: Vec<(String, u32)>,
+    /// Whether the allocation was over the budget and had to be scaled.
+    pub clamped: bool,
+}
+
+/// **PROPORTIONAL, FLOORED, remainder unspent — fitted on ONE currency.** The one fitting rule for
+/// every allocation measured against a carry budget: the profile's defaults on the opening band and
+/// a grant splinter, a grant parent re-fitted to what a split left it, and a take splinter's default
+/// take fitted to its goods allowance.
 ///
-/// Returns the rows to keep, in id order, and whether the clamp bound. A row that floors to zero is
-/// **dropped**: an allocation of nothing is what an absent row already says.
-///
-/// Three callers, all asking the same question — *"this allocation is bigger than the budget it is
-/// measured against; which of it survives?"*:
-///
-/// - [`clamped_kit_defaults`], fitting a profile's kit pre-fill to the spawned band's head count;
-/// - the **parent's** standing allocation, re-fitted to the budget a grant split just reduced;
-/// - the **remainder** that clamp took off the parent, fitted to the splinter's own budget.
+/// If the allocation's load ([`allocation_load`] — its expanded items and its material units) is at
+/// or under `budget` it is kept whole. Otherwise **every kit count and every material unit count is
+/// scaled by `budget ÷ load` and floored** — and re-scaled while the floored result still exceeds
+/// the budget, which only fixed-point rounding on a non-dyadic weight can cause (each pass lowers
+/// every non-zero row by at least one, so it ends).
 ///
 /// **Proportional rather than first-come, and the floor's remainder goes nowhere.** These are
 /// `BTreeMap`s, so there is no author's order to consume in — "declaration order" would really be
 /// *id* order, making `gathering` beat `trapping` because `g` sorts first, which is an arbitrary
 /// winner dressed as a rule. Scaling preserves the shape the allocation expressed, and handing the
-/// leftover point or two to whichever id sorts first would put that arbitrary tiebreak back. Leaving
-/// it unspent is strictly better: the budget is still there and the player can spend it deliberately.
+/// leftover to whichever id sorts first would put that arbitrary tiebreak back. Leaving it unspent
+/// is strictly better: the budget is still there and the player can spend it deliberately.
 ///
 /// **A zero budget keeps nothing**, which needs no special case: every scaled row floors to 0.
-pub(crate) fn clamp_allocation(
-    declared: &BTreeMap<String, u32>,
-    budget: u32,
-) -> (Vec<(String, u32)>, bool) {
-    let total: u32 = declared.values().copied().sum();
-    if total <= budget {
-        return (
-            declared
-                .iter()
-                .filter(|(_, count)| **count > 0)
-                .map(|(id, count)| (id.clone(), *count))
-                .collect(),
-            false,
-        );
-    }
-    let rows = declared
+pub fn fit_to_carry(
+    kits: &BTreeMap<String, u32>,
+    materials: &BTreeMap<String, u32>,
+    budget: Scalar,
+    equipment: &crate::equipment_config::EquipmentConfig,
+    carry_cfg: &CarryConfig,
+) -> FittedLoadout {
+    let mut kept_kits: BTreeMap<String, u32> = kits
         .iter()
-        .filter_map(|(id, count)| {
-            // `u64` because `count × budget` overflows a `u32` for counts a config could plausibly
-            // typo (65_536 × 65_536), and a wrapped product would clamp *upward*.
-            let scaled = (u64::from(*count) * u64::from(budget) / u64::from(total)) as u32;
-            (scaled > 0).then(|| (id.clone(), scaled))
-        })
+        .filter(|(_, count)| **count > 0)
+        .map(|(id, count)| (id.clone(), *count))
         .collect();
-    (rows, true)
+    let mut kept_materials: BTreeMap<String, u32> = materials
+        .iter()
+        .filter(|(_, units)| **units > 0)
+        .map(|(id, units)| (id.clone(), *units))
+        .collect();
+    let mut clamped = false;
+    loop {
+        let load = allocation_load(equipment, carry_cfg, &kept_kits, &kept_materials);
+        if load <= budget {
+            break;
+        }
+        clamped = true;
+        for count in kept_kits.values_mut().chain(kept_materials.values_mut()) {
+            *count = scale_units_by_ratio(*count, budget, load);
+        }
+        kept_kits.retain(|_, count| *count > 0);
+        kept_materials.retain(|_, units| *units > 0);
+    }
+    FittedLoadout {
+        kits: kept_kits.into_iter().collect(),
+        materials: kept_materials.into_iter().collect(),
+        clamped,
+    }
 }
 
 /// The item list one kit allocation buys, expanded and summed across the whole order.
@@ -673,7 +815,10 @@ pub(crate) fn expand_kits(
 /// what `A` describes, however many drafts preceded it. `6 big_game` revised to `4 big_game` must
 /// leave four kits' worth of gear, not ten.
 ///
-/// # The two supplies
+/// # One carry check, then the two supplies
+///
+/// The whole order's load (its expanded items and material units, [`order_load`]) must fit the
+/// window's [`LoadoutSupply::carry_budget`] on **both** arms, or it is refused `OverCarry`.
 ///
 /// - [`LoadoutSupply::Grant`] — both halves are built from **empty** and minted. The material reset
 ///   is account-aware and the store is what makes it so: a band's `LocalStore` holds its food beside
@@ -739,22 +884,19 @@ pub fn apply_starting_loadout(
         return Err(LoadoutRejection::NoStartingBand);
     };
 
+    // **ONE CARRY CHECK, ON BOTH ARMS, ON THE WHOLE ORDER.** The expanded items and the material
+    // units weigh what [`order_load`] says, and a band may take what its workers can carry — a grant
+    // against what it may mint, a take against its goods allowance. On a take it is asked after the
+    // parent-supply and onward-take checks, which name the line the player must change.
+    let wanted_items = expand_kits(&equipment, kits);
+    let load = order_load(&carry_config(world).carry, &wanted_items, material_total);
+    let capacity = window.supply.carry_budget();
+    let over_carry = (load > capacity).then_some(LoadoutRejection::OverCarry { load, capacity });
+
     match &window.supply {
-        LoadoutSupply::Grant {
-            kit_budget,
-            material_budget,
-        } => {
-            if kit_total > *kit_budget {
-                return Err(LoadoutRejection::OverKitBudget {
-                    kits: kit_total,
-                    budget: *kit_budget,
-                });
-            }
-            if material_total > *material_budget {
-                return Err(LoadoutRejection::OverMaterialBudget {
-                    units: material_total,
-                    budget: *material_budget,
-                });
+        LoadoutSupply::Grant { .. } => {
+            if let Some(refusal) = over_carry {
+                return Err(refusal);
             }
             // **The pick list is the GRANT's rule.** It says which materials the world hands out at
             // the start, so it binds exactly the window that mints and deliberately not a take,
@@ -784,12 +926,15 @@ pub fn apply_starting_loadout(
                 &materials_table,
             );
         }
-        LoadoutSupply::Parent { parent, .. } => {
-            let parent = *parent;
+        LoadoutSupply::Parent {
+            parent,
+            carry_budget,
+            ..
+        } => {
+            let (parent, carry_budget) = (*parent, *carry_budget);
             let Some(parent_entity) = band_entity(world, faction, parent) else {
                 return Err(LoadoutRejection::NoStartingBand);
             };
-            let wanted_items = expand_kits(&equipment, kits);
             let plan = plan_take(
                 world,
                 band,
@@ -798,6 +943,9 @@ pub fn apply_starting_loadout(
                 &wanted_items,
                 materials,
             )?;
+            if let Some(refusal) = over_carry {
+                return Err(refusal);
+            }
 
             // --- nothing above this line writes; nothing below it can fail --------------------
             move_take(world, entity, parent_entity, &plan);
@@ -807,6 +955,7 @@ pub fn apply_starting_loadout(
                     parent,
                     items: plan.items,
                     materials: plan.materials,
+                    carry_budget,
                 };
             }
         }
@@ -819,6 +968,8 @@ pub fn apply_starting_loadout(
             open.materials = materials.to_vec();
         }
     }
+    // **A splinter's food fills the room its goods leave** — re-resolved on every accepted order.
+    resolve_split_food(world, band, load);
 
     // **The window is deliberately left OPEN.** The turn advance closes it and nothing else does.
     info!(
@@ -830,6 +981,177 @@ pub fn apply_starting_loadout(
         "starting_loadout.applied"
     );
     Ok(())
+}
+
+/// **Load a splinter's food into the room its goods leave** — `min(share, carry − goods_load)`,
+/// food and hay in the share's own proportion — moving only the **delta** from what has already
+/// crossed, in whichever direction it points, between the splinter's larder and its parent's.
+///
+/// The delta is booked on both bands' food and hay ledgers as the dowry (`DowryOut` / `DowryIn`, each
+/// end naming the other), so the larder identity holds on a revision mid-window. It cannot fail: a
+/// parent that no longer holds the food gives what it has, and what actually crossed is recorded. A
+/// window with no dowry (the opening band) is left alone.
+pub(crate) fn resolve_split_food(world: &mut World, band: BandId, goods_load: Scalar) {
+    let Some((carry, dowry)) = world
+        .get_resource::<StartingLoadout>()
+        .and_then(|loadout| loadout.window(band))
+        .and_then(|window| {
+            window
+                .dowry
+                .clone()
+                .map(|dowry| (window.supply.carry_budget(), dowry))
+        })
+    else {
+        return;
+    };
+    let carry_cfg = carry_config(world).carry.clone();
+    let share = dowry.share_mass(&carry_cfg);
+    let room = (carry - goods_load).max(scalar_zero());
+    let (food_target, fodder_target) = if room >= share {
+        (dowry.food_share, dowry.fodder_share)
+    } else {
+        (
+            crate::carry::scale_by_ratio(dowry.food_share, room, share),
+            crate::carry::scale_by_ratio(dowry.fodder_share, room, share),
+        )
+    };
+    let (Some(child), Some(parent)) = (entity_of(world, band), entity_of(world, dowry.parent))
+    else {
+        return;
+    };
+    let food_moved = move_dowry_good(
+        world,
+        (child, band),
+        (parent, dowry.parent),
+        crate::components::FOOD,
+        food_target - dowry.food_taken,
+    );
+    let fodder_moved = move_dowry_good(
+        world,
+        (child, band),
+        (parent, dowry.parent),
+        crate::components::FODDER,
+        fodder_target - dowry.fodder_taken,
+    );
+    if let Some(window) = world
+        .resource_mut::<StartingLoadout>()
+        .windows
+        .get_mut(&band)
+    {
+        if let Some(standing) = window.dowry.as_mut() {
+            standing.food_taken += food_moved;
+            standing.fodder_taken += fodder_moved;
+        }
+    }
+}
+
+/// The entity carrying `band`, whatever its faction.
+fn entity_of(world: &mut World, band: BandId) -> Option<Entity> {
+    let mut query = world.query::<(Entity, &BandId)>();
+    query
+        .iter(world)
+        .find(|(_, id)| **id == band)
+        .map(|(entity, _)| entity)
+}
+
+/// **Move a signed `delta` of one larder good between a splinter and its parent**, booking it on
+/// both ledgers as the dowry. Positive moves parent → splinter. Returns the signed amount that
+/// actually crossed.
+fn move_dowry_good(
+    world: &mut World,
+    (child, child_band): (Entity, BandId),
+    (parent, parent_band): (Entity, BandId),
+    commodity: &str,
+    delta: Scalar,
+) -> Scalar {
+    use crate::components::{
+        LaborAllocation, TransferCause, TransferCounterparty, TransferCrossing, TransferDirection,
+    };
+    if delta == scalar_zero() {
+        return scalar_zero();
+    }
+    let toward_child = delta > scalar_zero();
+    let (from, to) = if toward_child {
+        (parent, child)
+    } else {
+        (child, parent)
+    };
+    let amount = if toward_child {
+        delta
+    } else {
+        scalar_zero() - delta
+    };
+    let faction_of =
+        |world: &World, entity: Entity| world.get::<PopulationCohort>(entity).map(|c| c.faction);
+    let (Some(from_faction), Some(to_faction)) = (faction_of(world, from), faction_of(world, to))
+    else {
+        return scalar_zero();
+    };
+    let is_food = commodity == crate::components::FOOD;
+    let moved = if is_food {
+        let Some(mix) = world
+            .get_mut::<PopulationCohort>(from)
+            .map(|mut giver| giver.stores.take_food_mix(amount))
+        else {
+            return scalar_zero();
+        };
+        if let Some(mut taker) = world.get_mut::<PopulationCohort>(to) {
+            taker.stores.add_food_mix(&mix);
+        }
+        mix.total()
+    } else {
+        let Some(taken) = world
+            .get_mut::<PopulationCohort>(from)
+            .map(|mut giver| giver.stores.take(commodity, amount))
+        else {
+            return scalar_zero();
+        };
+        if let Some(mut taker) = world.get_mut::<PopulationCohort>(to) {
+            taker.stores.add(commodity, taken);
+        }
+        taken
+    };
+    if moved <= scalar_zero() {
+        return scalar_zero();
+    }
+    let (from_band, to_band) = if toward_child {
+        (parent_band, child_band)
+    } else {
+        (child_band, parent_band)
+    };
+    if let Some(mut allocation) = world.get_mut::<LaborAllocation>(from) {
+        allocation.book_crossing(
+            TransferCrossing::goods(
+                commodity,
+                TransferDirection::Out,
+                TransferCause::DowryOut,
+                moved.to_f32(),
+            )
+            .with_counterparty(Some(TransferCounterparty {
+                band: to_band,
+                faction: to_faction,
+            })),
+        );
+    }
+    if let Some(mut allocation) = world.get_mut::<LaborAllocation>(to) {
+        allocation.book_crossing(
+            TransferCrossing::goods(
+                commodity,
+                TransferDirection::In,
+                TransferCause::DowryIn,
+                moved.to_f32(),
+            )
+            .with_counterparty(Some(TransferCounterparty {
+                band: from_band,
+                faction: from_faction,
+            })),
+        );
+    }
+    if toward_child {
+        moved
+    } else {
+        scalar_zero() - moved
+    }
 }
 
 /// The take a validated order resolves to: the new standing take, and the deltas that carry the
@@ -1120,4 +1442,91 @@ fn band_entity(world: &mut World, faction: FactionId, band: BandId) -> Option<En
         .iter(world)
         .find(|(_, id, cohort)| **id == band && cohort.faction == faction)
         .map(|(entity, _, _)| entity)
+}
+
+#[cfg(test)]
+mod fit_tests {
+    use super::*;
+    use crate::equipment_config::EquipmentConfig;
+
+    fn rows(pairs: &[(&str, u32)]) -> BTreeMap<String, u32> {
+        pairs.iter().map(|(id, n)| (id.to_string(), *n)).collect()
+    }
+
+    /// An allocation inside its budget is kept whole, zero rows dropped, and the fit reports it did
+    /// not bind.
+    #[test]
+    fn an_allocation_that_fits_is_kept_whole() {
+        let equipment = EquipmentConfig::builtin();
+        let carry_cfg = ExpeditionConfig::builtin().carry.clone();
+        let fitted = fit_to_carry(
+            &rows(&[("big_game", 4), ("gathering", 0)]),
+            &rows(&[("hide", 8)]),
+            Scalar::from_u32(102),
+            &equipment,
+            &carry_cfg,
+        );
+        assert!(!fitted.clamped);
+        assert_eq!(fitted.kits, vec![("big_game".to_string(), 4)]);
+        assert_eq!(fitted.materials, vec![("hide".to_string(), 8)]);
+    }
+
+    /// **Over the budget, every kit and every material row scales by `budget ÷ load` and floors** —
+    /// one currency for both halves. `big_game 10` is 20 items and `hide 20` is 20 units, a load of
+    /// 40 at unit weights; against 20 each halves to `5` and `10`.
+    #[test]
+    fn an_allocation_over_its_budget_scales_proportionally_on_one_currency() {
+        let equipment = EquipmentConfig::builtin();
+        let mut carry_cfg = ExpeditionConfig::builtin().carry.clone();
+        carry_cfg.item_carry_weight = 1.0;
+        carry_cfg.material_carry_weight = 1.0;
+        let fitted = fit_to_carry(
+            &rows(&[("big_game", 10)]),
+            &rows(&[("hide", 20)]),
+            Scalar::from_u32(20),
+            &equipment,
+            &carry_cfg,
+        );
+        assert!(fitted.clamped);
+        assert_eq!(fitted.kits, vec![("big_game".to_string(), 5)]);
+        assert_eq!(fitted.materials, vec![("hide".to_string(), 10)]);
+        // Floored, remainder unspent: 21 of budget still keeps 5 and 10 (21/40 × 10 = 5.25).
+        let fitted = fit_to_carry(
+            &rows(&[("big_game", 10)]),
+            &rows(&[("hide", 20)]),
+            Scalar::from_u32(21),
+            &equipment,
+            &carry_cfg,
+        );
+        assert_eq!(fitted.kits, vec![("big_game".to_string(), 5)]);
+        assert_eq!(fitted.materials, vec![("hide".to_string(), 10)]);
+    }
+
+    /// A zero budget keeps nothing, and the result always fits whatever the weights.
+    #[test]
+    fn a_fit_always_fits_and_a_zero_budget_keeps_nothing() {
+        let equipment = EquipmentConfig::builtin();
+        let mut carry_cfg = ExpeditionConfig::builtin().carry.clone();
+        let fitted = fit_to_carry(
+            &rows(&[("big_game", 4), ("gathering", 4)]),
+            &rows(&[("fibre", 17)]),
+            Scalar::zero(),
+            &equipment,
+            &carry_cfg,
+        );
+        assert!(fitted.kits.is_empty() && fitted.materials.is_empty());
+        carry_cfg.item_carry_weight = 0.3;
+        carry_cfg.material_carry_weight = 0.7;
+        let budget = Scalar::from_f32(7.1);
+        let fitted = fit_to_carry(
+            &rows(&[("big_game", 9), ("trapping", 7), ("gathering", 3)]),
+            &rows(&[("fibre", 17), ("bone", 5)]),
+            budget,
+            &equipment,
+            &carry_cfg,
+        );
+        let kits: BTreeMap<String, u32> = fitted.kits.into_iter().collect();
+        let materials: BTreeMap<String, u32> = fitted.materials.into_iter().collect();
+        assert!(allocation_load(&equipment, &carry_cfg, &kits, &materials) <= budget);
+    }
 }

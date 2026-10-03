@@ -1354,7 +1354,7 @@ const PROTOTYPE_BAND_TILE := Vector2i(40, 20)
 const PROTOTYPE_DEST_TILE := Vector2i(42, 18)
 ## What the To row must say of that tile from that band — the prototype's `3 tiles NE`.
 const PROTOTYPE_DEST_WHERE := "3 tiles NE"
-const PROTOTYPE_PER_PORTER := 6.0
+const PROTOTYPE_PER_PORTER := 8.0
 const PROTOTYPE_MATERIAL_WEIGHT := 1.0
 const PROTOTYPE_IDLE := 2
 
@@ -1372,9 +1372,9 @@ func _prototype_band() -> Dictionary:
 	# states a working age equal to the idle it means.
 	band["working_age"] = PROTOTYPE_IDLE
 	band["labor_assignments"] = []
-	band["expedition_trade_per_worker_carry"] = PROTOTYPE_PER_PORTER
-	band["expedition_trade_material_carry_weight"] = PROTOTYPE_MATERIAL_WEIGHT
-	band["expedition_trade_fodder_carry_weight"] = TRADE_FODDER_CARRY_WEIGHT
+	band["carry_per_worker"] = PROTOTYPE_PER_PORTER
+	band["carry_material_weight"] = PROTOTYPE_MATERIAL_WEIGHT
+	band["carry_fodder_weight"] = TRADE_FODDER_CARRY_WEIGHT
 	band["material_batches"] = [
 		_batch("bone", 2.9, [["dense", 0.9, "excellent"]]),
 		_batch("bone", 3.8, [["dense", 0.7, "good"]]),
@@ -1408,9 +1408,9 @@ func _shipper_band() -> Dictionary:
 	band["idle_workers"] = 9
 	band["labor_assignments"] = []
 	band["band_move_tiles_per_turn"] = BAND_MOVE_TILES_PER_TURN
-	band["expedition_trade_per_worker_carry"] = TRADE_PER_WORKER_CARRY
-	band["expedition_trade_material_carry_weight"] = TRADE_MATERIAL_CARRY_WEIGHT
-	band["expedition_trade_fodder_carry_weight"] = TRADE_FODDER_CARRY_WEIGHT
+	band["carry_per_worker"] = TRADE_PER_WORKER_CARRY
+	band["carry_material_weight"] = TRADE_MATERIAL_CARRY_WEIGHT
+	band["carry_fodder_weight"] = TRADE_FODDER_CARRY_WEIGHT
 	band["material_batches"] = _shipper_batches()
 	return band
 
@@ -1516,8 +1516,8 @@ func _trade_party() -> Dictionary:
 		# them onto each one), and the `Carrying:` row needs both: what the cap is checked against is
 		# `food + fodder_weight × hay + material_weight × Σ materials`, so a fixture missing either
 		# would price this pack under what the sim weighs it at.
-		"expedition_trade_material_carry_weight": TRADE_MATERIAL_CARRY_WEIGHT,
-		"expedition_trade_fodder_carry_weight": TRADE_FODDER_CARRY_WEIGHT,
+		"carry_material_weight": TRADE_MATERIAL_CARRY_WEIGHT,
+		"carry_fodder_weight": TRADE_FODDER_CARRY_WEIGHT,
 		"tile_info": {
 			"x": 67, "y": 20,
 			"terrain_label": "Prairie Steppe",

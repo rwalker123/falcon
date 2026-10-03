@@ -39,7 +39,7 @@ const PARENT_WORKERS: f32 = 20.0;
 const SPLIT_WORKERS: u32 = 5;
 /// Workers the shipment party carries. Two is enough pack for every manifest below.
 const PARTY_WORKERS: u32 = 2;
-/// The food a shipment carries. Well inside `core_sim::shipment_carry_cap(PARTY_WORKERS, ..)`.
+/// The food a shipment carries. Well inside `core_sim::carry_capacity(PARTY_WORKERS, ..)`.
 const CARGO_FOOD: f32 = 8.0;
 /// The HAY a shipment carries — the third account, and deliberately a **different number** from
 /// [`CARGO_FOOD`], so an assertion that read the wrong account could not pass by coincidence.
@@ -325,9 +325,9 @@ fn published_packs(app: &App) -> Vec<(u64, f32, f32, f32, f32)> {
             (
                 cohort.bandId(),
                 cohort.expeditionCarryCap(),
-                cohort.expeditionTradePerWorkerCarry(),
-                cohort.expeditionTradeMaterialCarryWeight(),
-                cohort.expeditionTradeFodderCarryWeight(),
+                cohort.carryPerWorker(),
+                cohort.carryMaterialWeight(),
+                cohort.carryFodderWeight(),
             )
         })
         .collect()
@@ -992,9 +992,9 @@ fn a_shipment_publishes_its_destination_and_its_cargo_on_the_wire() {
 ///
 /// ```text
 /// mass = expeditionCargoFood
-///        + expeditionTradeFodderCarryWeight × expeditionCargoFodder
-///        + expeditionTradeMaterialCarryWeight × Σ material amounts
-/// cap  = party_workers × expeditionTradePerWorkerCarry
+///        + carryFodderWeight × expeditionCargoFodder
+///        + carryMaterialWeight × Σ material amounts
+/// cap  = party_workers × carryPerWorker
 /// ```
 ///
 /// This is the set the outfit UI needs, and it must be a *global* echo: the player prices a
@@ -1010,7 +1010,7 @@ fn a_shipment_publishes_its_destination_and_its_cargo_on_the_wire() {
 ///
 /// **And they are arrived at differently.** The two weights are lever echoes — a material's or a
 /// bale's bulk is a property of the goods — so they are pinned against the config fields. The pack
-/// is the sim's **resolved** per-worker carry (`core_sim::trade_per_worker_carry`), so it is pinned
+/// is the sim's **resolved** per-worker carry (`core_sim::per_worker_carry`), so it is pinned
 /// against the resolver, which is where a carrier-side model would attach.
 #[test]
 fn every_cohort_publishes_the_shipment_mass_levers_on_the_wire() {
@@ -1039,9 +1039,9 @@ fn every_cohort_publishes_the_shipment_mass_levers_on_the_wire() {
             .resource::<core_sim::ExpeditionConfigHandle>()
             .get();
         (
-            core_sim::trade_per_worker_carry(&cfg.trade),
-            cfg.trade.material_carry_weight,
-            cfg.trade.fodder_carry_weight,
+            core_sim::per_worker_carry(&cfg.carry),
+            cfg.carry.material_carry_weight,
+            cfg.carry.fodder_carry_weight,
         )
     };
     let packs = published_packs(&app);
@@ -1133,9 +1133,9 @@ fn every_cohort_publishes_the_shipment_mass_levers_on_the_wire() {
 /// The two are different packs arrived at two ways, and `expeditionCarryCap` resolves per mission
 /// between them:
 ///
-/// - the shipment side is `core_sim::shipment_carry_cap` — the sim's own expression, the one
+/// - the shipment side is `core_sim::carry_capacity` — the sim's own expression, the one
 ///   `send_trade_expedition` refuses on — so this pins the published cap against **the resolver**
-///   rather than against `trade.per_worker_carry`. Against the raw lever the assertion would pass
+///   rather than against `carry.per_worker_carry`. Against the raw lever the assertion would pass
 ///   for a carry model that grew server-side and skipped the resolver, and would then fail with a
 ///   message telling its fixer to restore a rule this arc retired.
 /// - the hunt side genuinely **is** still a raw lever (`hunt.per_worker_carry` × the party). That
@@ -1176,7 +1176,7 @@ fn a_trade_partys_carry_cap_is_quoted_at_the_resolved_shipment_carry() {
             .resource::<core_sim::ExpeditionConfigHandle>()
             .get();
         (
-            core_sim::shipment_carry_cap(PARTY_WORKERS, &cfg.trade),
+            core_sim::carry_capacity(PARTY_WORKERS, &cfg.carry).to_f32(),
             cfg.hunt.per_worker_carry,
         )
     };
@@ -1202,7 +1202,7 @@ fn a_trade_partys_carry_cap_is_quoted_at_the_resolved_shipment_carry() {
 
     assert!(
         (party_cap - resolved_trade_cap).abs() < EPSILON,
-        "a shipment party's pack is the sim's own `shipment_carry_cap`, never a lever product of \
+        "a shipment party's pack is the sim's own `carry_capacity`, never a lever product of \
          its own: got {party_cap}, wanted {resolved_trade_cap}"
     );
     assert!(

@@ -587,6 +587,10 @@ pub(crate) mod tests {
     pub const HUNT_KIT_UNITS: u32 = 17;
     /// The roster's gathering kit — a kit whose items are not hunting gear.
     pub const FORAGE_KIT: &str = "gathering";
+    /// The fixture's load weights — the shipped `item_carry_weight` / `material_carry_weight`.
+    pub const FIXTURE_CARRY_WEIGHT: f32 = 1.0;
+    /// A 17-hand band's carry at the shipped 8.0 per worker — the opening window's budget.
+    pub const FIXTURE_BAND_CARRY: f32 = 136.0;
     pub const FORAGE_KIT_ITEM: &str = "baskets";
     /// The roster's item-less kit, offered on every job — the bare hand's reading.
     pub const BARE_KIT: &str = "none";
@@ -703,6 +707,9 @@ pub(crate) mod tests {
             attack,
             ..Default::default()
         };
+        // The shipped load weights: an item and a material unit each weigh one food unit.
+        snapshot.opening_loadout.item_carry_weight = FIXTURE_CARRY_WEIGHT;
+        snapshot.opening_loadout.material_carry_weight = FIXTURE_CARRY_WEIGHT;
         snapshot.kits = vec![
             kit(HUNT_KIT, &[ROLE_HUNT], &[HUNT_KIT_ITEM], ARMED_ATTACK),
             kit(FORAGE_KIT, &[ROLE_FORAGE], &[FORAGE_KIT_ITEM], BARE_ATTACK),

@@ -3027,8 +3027,7 @@ mod tests {
         let mut window = spears(0);
         window.snapshot.populations[0].loadout_window = Some(sim_runtime::BandLoadoutWindowState {
             open: true,
-            kit_budget: 17,
-            material_budget: 30,
+            carry_capacity: crate::specialists::food::tests::FIXTURE_BAND_CARRY,
             ..Default::default()
         });
         window.snapshot.herds[0].regrowth_samples = vec![-1.0, 0.5, 1.0, 1.0, 0.5, 0.0];
@@ -3062,8 +3061,7 @@ mod tests {
             view.snapshot.populations[0].loadout_window =
                 Some(sim_runtime::BandLoadoutWindowState {
                     open: true,
-                    kit_budget: 17,
-                    material_budget: 30,
+                    carry_capacity: crate::specialists::food::tests::FIXTURE_BAND_CARRY,
                     ..Default::default()
                 });
             for patch in &mut view.snapshot.forage_patches {

@@ -3313,6 +3313,8 @@
       "opening_loadout.craftable_recipe_ids[1]",
       "opening_loadout.craftable_recipe_ids[2]"
     ],
+    "item_carry_weight": 9.22,
+    "material_carry_weight": 18.530001,
     "material_defaults": [
       {
         "material_id": "opening_loadout.material_defaults[0].material_id",
@@ -4420,6 +4422,11 @@
           "target_y": 103
         }
       ],
+      "carry_capacity": 24.440001,
+      "carry_fodder_weight": 50.959999,
+      "carry_load": 48.189999,
+      "carry_material_weight": 39.889999,
+      "carry_per_worker": 112.379997,
       "children": 97,
       "craft_offers": [
         {
@@ -4647,9 +4654,6 @@
       "expedition_recurring": false,
       "expedition_target_herd": "populations[0].expedition_target_herd",
       "expedition_target_species": "populations[0].expedition_target_species",
-      "expedition_trade_fodder_carry_weight": 50.959999,
-      "expedition_trade_material_carry_weight": 39.889999,
-      "expedition_trade_per_worker_carry": 78.449997,
       "expedition_trip_bound": "populations[0].expedition_trip_bound",
       "expedition_viability_warn_turns": 89,
       "faction": 182,
@@ -4665,6 +4669,7 @@
       "fodder_transfer_route_sent_turn": 43.43,
       "food_consumption": 106.57,
       "food_income": 88.889999,
+      "food_left_behind": 31.52,
       "food_need": 22.969999,
       "food_shortfall": 99.949997,
       "food_spoiled": 82.919998,
@@ -5168,7 +5173,9 @@
       "last_emigrated": 197,
       "last_immigrated": 170,
       "loadout_window": {
-        "kit_budget": 33,
+        "carry_capacity": 5.95,
+        "food_carried": 43.009998,
+        "food_share": 94.739998,
         "kits": [
           {
             "count": 145,
@@ -5183,7 +5190,6 @@
             "kit_id": "populations[0].loadout_window.kits[2].kit_id"
           }
         ],
-        "material_budget": 192,
         "materials": [
           {
             "material_id": "populations[0].loadout_window.materials[0].material_id",
@@ -5221,6 +5227,9 @@
           }
         ]
       },
+      "long_move_leaves_food": 74.160004,
+      "long_move_leaves_items": 168,
+      "long_move_leaves_materials": 37.939999,
       "material_batches": [
         {
           "amount": 61.650002,
@@ -5323,6 +5332,7 @@
       "morale_settling": 0.000027,
       "morale_terrain": 0.000096,
       "morale_unrest": 0.000088,
+      "move_ferry_reach_tiles": 132,
       "name": "populations[0].name",
       "output_multiplier": 0.000001,
       "pending_reveal_count": 3,
@@ -5564,6 +5574,11 @@
           "target_y": 200
         }
       ],
+      "carry_capacity": 58.130001,
+      "carry_fodder_weight": 12.16,
+      "carry_load": 68.220001,
+      "carry_material_weight": 81.660004,
+      "carry_per_worker": 74.93,
       "children": 148,
       "craft_offers": [
         {
@@ -5791,9 +5806,6 @@
       "expedition_recurring": true,
       "expedition_target_herd": "populations[1].expedition_target_herd",
       "expedition_target_species": "populations[1].expedition_target_species",
-      "expedition_trade_fodder_carry_weight": 12.16,
-      "expedition_trade_material_carry_weight": 81.660004,
-      "expedition_trade_per_worker_carry": 57.099998,
       "expedition_trip_bound": "populations[1].expedition_trip_bound",
       "expedition_viability_warn_turns": 190,
       "faction": 141,
@@ -5809,6 +5821,7 @@
       "fodder_transfer_route_sent_turn": 82.57,
       "food_consumption": 0.92,
       "food_income": 52.610001,
+      "food_left_behind": 39.09,
       "food_need": 62.349998,
       "food_shortfall": 104.449997,
       "food_spoiled": 90.110001,
@@ -6311,6 +6324,9 @@
       ],
       "last_emigrated": 24,
       "last_immigrated": 49,
+      "long_move_leaves_food": 105.839996,
+      "long_move_leaves_items": 93,
+      "long_move_leaves_materials": 9.03,
       "material_batches": [
         {
           "amount": 34.43,
@@ -6413,6 +6429,7 @@
       "morale_settling": 0.00012,
       "morale_terrain": 0.000157,
       "morale_unrest": 0.000139,
+      "move_ferry_reach_tiles": 145,
       "name": "populations[1].name",
       "output_multiplier": 0.000118,
       "pending_reveal_count": 3,
@@ -6671,6 +6688,11 @@
           "target_y": 13
         }
       ],
+      "carry_capacity": 70.75,
+      "carry_fodder_weight": 77.010002,
+      "carry_load": 108.230003,
+      "carry_material_weight": 33.52,
+      "carry_per_worker": 84.809998,
       "children": 39,
       "craft_offers": [
         {
@@ -6898,9 +6920,6 @@
       "expedition_recurring": true,
       "expedition_target_herd": "populations[2].expedition_target_herd",
       "expedition_target_species": "populations[2].expedition_target_species",
-      "expedition_trade_fodder_carry_weight": 77.010002,
-      "expedition_trade_material_carry_weight": 33.52,
-      "expedition_trade_per_worker_carry": 82.18,
       "expedition_trip_bound": "populations[2].expedition_trip_bound",
       "expedition_viability_warn_turns": 51,
       "faction": 124,
@@ -6916,6 +6935,7 @@
       "fodder_transfer_route_sent_turn": 56.830002,
       "food_consumption": 30.870001,
       "food_income": 11.58,
+      "food_left_behind": 19.709999,
       "food_need": 0.05,
       "food_shortfall": 97.199997,
       "food_spoiled": 5.14,
@@ -7419,7 +7439,9 @@
       "last_emigrated": 111,
       "last_immigrated": 128,
       "loadout_window": {
-        "kit_budget": 15,
+        "carry_capacity": 70.830002,
+        "food_carried": 83.400002,
+        "food_share": 6.23,
         "kits": [
           {
             "count": 159,
@@ -7434,7 +7456,6 @@
             "kit_id": "populations[2].loadout_window.kits[2].kit_id"
           }
         ],
-        "material_budget": 122,
         "materials": [
           {
             "material_id": "populations[2].loadout_window.materials[0].material_id",
@@ -7472,6 +7493,9 @@
           }
         ]
       },
+      "long_move_leaves_food": 101.870003,
+      "long_move_leaves_items": 158,
+      "long_move_leaves_materials": 40.389999,
       "material_batches": [
         {
           "amount": 104.919998,
@@ -7574,6 +7598,7 @@
       "morale_settling": 0.000057,
       "morale_terrain": 0.000138,
       "morale_unrest": 0.000198,
+      "move_ferry_reach_tiles": 66,
       "name": "populations[2].name",
       "output_multiplier": 0.000051,
       "pending_reveal_count": 3,

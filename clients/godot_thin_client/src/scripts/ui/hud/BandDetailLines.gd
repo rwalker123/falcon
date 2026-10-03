@@ -129,6 +129,24 @@ const BAND_FOOD_FODDER_CLAUSE_FORMAT := " · [color=#%s]%s fodder[/color]"
 # which is how a short good takes the danger ink without a second severity rule beside it.
 const BAND_MATERIAL_UPKEEP_ROW_FORMAT := HudDisclosureVocab.DETAIL_ROW_UPKEEP + ": %s  (%s)"
 
+# ---- WHAT THE BAND CARRIES AGAINST WHAT IT CAN (#732) — `Carry: 48 / 102`, beneath the stores it
+# weighs. Both terms are the sim's (`carry_load` / `carry_capacity`, in food-unit load: food, weighted
+# hay, items and materials), stated in whole units; the client adds nothing up.
+#
+# **ONE LINE, NO DISCLOSURE.** The row's whole job is the comparison; what a long move would leave
+# behind is the targeting banner's to say, at the moment it is true.
+#
+# **AMBER WHEN THE LOAD EXCEEDS THE CAPACITY, AND ONLY THEN DOES IT CARRY A HOVER.** A detail block is
+# one `RichTextLabel` whose hover answers for every row (`DetailFormat.block_tooltip`), so a sentence
+# registered on every band would greet a cursor resting on Food or Morale too. It is registered where
+# it is news: the band is over its carry, and the sentence says what that costs.
+const BAND_CARRY_ROW_FORMAT := HudDisclosureVocab.DETAIL_ROW_CARRY + ": %d / %d"
+const BAND_CARRY_TOOLTIP_FORMAT := \
+    "A move farther than %d tiles leaves behind what the band can't carry."
+## The cohort keys the row reads, decoded in `native/src/dict/population.rs`.
+const BAND_CARRY_CAPACITY_KEY := "carry_capacity"
+const BAND_CARRY_LOAD_KEY := "carry_load"
+
 ## ONE GOOD'S AMOUNT AND ITS NAME — `2 hurdles`, `0.05 hurdles`. **A material names itself**: the
 ## catalogue ships no display word, so the id IS the noun (`SourceForecast.PICKER_MATERIAL_PRODUCT_FORMAT`'s
 ## rule), and the amount is trimmed so a shelf reads `2` while a mending rate reads `0.05`.
@@ -337,6 +355,7 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
     # …and the standing bill's runway, for exactly the same reason: a band that owes no goods emits no
     # `Upkeep:` row, and last render's tint would colour a row that is not there — or the next band's.
     context.material_turns = NAN
+    context.carry_over = false
     # Food, like Morale below, is our OWN bands' business only. A rival's cohort carries no
     # `turns_of_food`/`stores` on the wire, so rendering the row for one printed a FABRICATED
     # `Food 0 (∞)` in healthy green — the UI claiming we'd counted a larder we cannot see. A foreign
@@ -411,6 +430,14 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
             _disclosures.register(HudDisclosureVocab.DETAIL_ROW_UPKEEP,
                 HudDisclosureVocab.BREAKDOWN_KIND_UPKEEP, unit_data,
                 _disclosures.material_upkeep_breakdown_lines(unit_data))
+        # **WHAT THE BAND CARRIES AGAINST WHAT IT CAN**, beneath the stores it weighs — see
+        # `BAND_CARRY_ROW_FORMAT`. Not in the `compact` tier: that host is short of HEIGHT and already
+        # spends its rows on the two larders and the bill; the over-carry consequence still reaches a
+        # player there through the targeting banner, which is where it bites.
+        if not compact:
+            var carry_line := _band_carry_line(unit_data, context)
+            if carry_line != "":
+                lines.append(carry_line)
     # Morale is our own bands' business only (a non-player band's morale isn't ours
     # to see); morale drives productivity + migration (a harsh tile erodes it until
     # people begin leaving), while deaths stay starvation/cold-driven.
@@ -776,6 +803,20 @@ func _band_fodder_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> Stri
 ## **THE CALLER HAS ALREADY ASKED WHETHER THERE IS A BILL** (`band_has_material_upkeep`), which is why
 ## this reads the worst row without a fallback: an empty answer here would be a row about nothing, and
 ## the gate is what stops it being drawn at all.
+## `Carry: 48 / 102`, or `""` for a band the wire states no capacity for (a frame from before the
+## field, or a fixture) — a `0 / 0` would read as a band that can carry nothing. Flags the context
+## when the load is over, which is what tints the value and registers the hover.
+func _band_carry_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> String:
+    var capacity := float(unit_data.get(BAND_CARRY_CAPACITY_KEY, 0.0))
+    if capacity <= 0.0:
+        return ""
+    var carried := float(unit_data.get(BAND_CARRY_LOAD_KEY, 0.0))
+    ctx.carry_over = carried > capacity
+    if ctx.carry_over:
+        ctx.row_tooltips[HudDisclosureVocab.DETAIL_ROW_CARRY] = BAND_CARRY_TOOLTIP_FORMAT \
+            % int(unit_data.get(HudComposeVocab.MOVE_FERRY_REACH_KEY, 0))
+    return BAND_CARRY_ROW_FORMAT % [roundi(carried), roundi(capacity)]
+
 func _band_material_upkeep_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> String:
     var worst := DetailFormat.band_material_worst(unit_data)
     var turns := float(worst.get(DetailFormat.MATERIAL_BILL_RUNWAY_KEY,

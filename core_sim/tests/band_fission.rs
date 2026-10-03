@@ -66,8 +66,21 @@ fn spawn_world() -> App {
         "fixture: the turn advance must shut every window, or these splits partition a grant \
          instead of moving goods and every assertion below is vacuous"
     );
+    // ⛔ **A PACK NO SHARE CAN FILL.** This suite measures the PROPORTIONAL dowry — that every store
+    // divides on the worker share and the halves conserve. A splinter now takes only what its workers
+    // can carry, food first (#732), and the shipped fixture's larder share alone fills a six-worker
+    // splinter's packs, which would leave every gear and material assertion below measuring an empty
+    // move. The carry cap has its own suite (`split_loadout.rs`), so here it is lifted out of reach.
+    let mut expedition = (*app.world.resource::<ExpeditionConfigHandle>().get()).clone();
+    expedition.carry.per_worker_carry = PROPORTIONAL_FIXTURE_CARRY;
+    app.world
+        .insert_resource(ExpeditionConfigHandle::new(std::sync::Arc::new(expedition)));
     app
 }
+
+/// One worker's pack in this suite — far beyond any share of the fixture's stores, so the carry cap
+/// never binds and the dowry is the proportional one.
+const PROPORTIONAL_FIXTURE_CARRY: f32 = 10_000.0;
 
 /// The first resident band: its entity, faction and the tile it stands on.
 fn home_band(app: &mut App) -> (Entity, FactionId, UVec2) {

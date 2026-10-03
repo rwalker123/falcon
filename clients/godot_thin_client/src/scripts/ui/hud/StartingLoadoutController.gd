@@ -12,15 +12,17 @@ extends RefCounted
 ##
 ## ## ⛔ EVERY BAND GETS A WINDOW, AND THIS HOLDS ONE STATE PER BAND
 ##
-## The spawned band's window GRANTS — its picks MINT gear against two budgets — and a band that
-## splits hands its splinter a window of its own, which on a parent with no grant left is a TAKE:
-## the picks MOVE gear out of the parent's ledger and the cap is what that parent can supply. Both
+## The spawned band's window GRANTS — its picks MINT gear — and a band that splits hands its
+## splinter a window of its own, which on a parent with no grant left is a TAKE: the picks MOVE gear
+## out of the parent's ledger, each row capped by what that parent can supply. **BOTH are capped by
+## the band's CARRY** (#732): an order's load — `item weight × expanded item units + material weight
+## × material units` — must fit `carry_capacity`, the comparison the server refuses on. Both
 ## kinds live in `_bands`, keyed by the durable `band_id`; `_subject` is the one the card is
 ## currently rendering, and the card's own band switcher is what moves it.
 ##
 ## **THE ALLOCATION LIVES HERE AND NOWHERE ELSE.** The panel renders a payload and emits intents;
 ## every clamp, every remainder and every "how many could I make" is computed here. That is what
-## makes a budget un-overspendable and a supply un-overdrawable without the panel knowing what either
+## makes a carry un-overloadable and a supply un-overdrawable without the panel knowing what either
 ## is — and it is why a re-render never loses the player's picks.
 ##
 ## ## ⛔ A TAKE'S KIT CAP CANNOT BE DRAWN PER KIT ROW
@@ -66,7 +68,7 @@ extends RefCounted
 ## what it just ordered. `BAND_UNECHOED` holds the orders this card has SENT and not yet seen come
 ## back: a published allocation found in that list is our own echo and the card is already showing it,
 ## and anything else is the sim having moved this band's outfit for its own reasons (a split re-fitting
-## the parent to its reduced budget) and is adopted whole.
+## the parent to its reduced carry) and is adopted whole.
 ##
 ## **Comparing against what was SENT rather than against what was last SEEN is what stops a second
 ## press flickering back.** Press twice quickly and the first press's echo lands while the card is
@@ -112,6 +114,11 @@ var _panel: StartingLoadoutPanel = null
 ## materials, in the profile's own order) and the craftable ids (the third column's filter).
 var _pickable: Array = []
 var _craftable_recipe_ids: Array = []
+## ⛔ **THE TWO WEIGHTS AN ORDER IS MEASURED IN** — `item_carry_weight` / `material_carry_weight`, one
+## per world. `_order_load` is the ONE place they are applied, so the meter, every `can_add` and every
+## clamp weigh an order exactly the way the server's `OverCarry` refusal does.
+var _item_carry_weight: float = 0.0
+var _material_carry_weight: float = 0.0
 
 # --- The catalogues the picker JOINS onto, both already published for other consumers ---
 ## The parsed `equipment_config_json` — the kit roster's one home.
@@ -147,8 +154,15 @@ const BAND_NAME := "name"
 const BAND_PARENT := "parent"
 ## …and that band's name, for the copy that has to say where the gear comes from.
 const BAND_PARENT_NAME := "parent_name"
-const BAND_KIT_BUDGET := "kit_budget"
-const BAND_MATERIAL_BUDGET := "material_budget"
+## The window's `carry_capacity` — the band's TOTAL carry, in food-unit load, which an order's GOODS
+## load is weighed against. The ONE cap both kinds of window share; it is not net of food.
+const BAND_CARRY := "carry_capacity"
+## A splinter's food, in load: the most it may take, and what the sim says it holds now.
+const BAND_FOOD_SHARE := "food_share"
+const BAND_FOOD_CARRIED := "food_carried"
+## The goods load of the allocation the wire last PUBLISHED — the one `food_carried` was resolved
+## against. While the card's own picks weigh the same, the wire's food is the truth.
+const BAND_PUBLISHED_LOAD := "published_load"
 ## `item_id -> units` / `material_id -> units`, a take's caps. Empty on a grant window.
 const BAND_ITEM_SUPPLY := "item_supply"
 const BAND_MATERIAL_SUPPLY := "material_supply"
@@ -186,6 +200,10 @@ const UNPRICED_RECIPE_COUNT := 0
 ## size as a set.
 const ITEM_UNITS_PER_USE := 1
 
+## A ceiling that does not bind. Reached only when a weight is `0` — legal config, "this is
+## weightless" — so the carry stops capping that row and the other caps (a take's supply) decide.
+const CARRY_UNBOUNDED := 1 << 30
+
 ## ⛔ **THE ROLLBACK HANDLE — the allocation as it stood BEFORE the press, on the payload.** `Main`
 ## reads neither key (`format_set_starting_loadout` ignores them) and hands the whole payload back to
 ## `revert_order` when the line did not go, which is `pending_entity`'s own shape one verb over.
@@ -206,8 +224,9 @@ func setup(host: Node, room_bounds: Control = null) -> void:
 ## ignored — a delta carries a section only when it changed, so absence means unchanged and never
 ## "the world forgot its pick list".
 ##
-## ⛔ **NOTHING HERE OPENS OR SHUTS A WINDOW.** `open` and the two budgets left this section when the
-## window became a fact about one BAND; they arrive on the cohorts, through `set_bands`.
+## ⛔ **NOTHING HERE OPENS OR SHUTS A WINDOW.** `open` and the carry capacity are facts about one BAND;
+## they arrive on the cohorts, through `set_bands`. What this section adds besides the lists is the
+## two carry WEIGHTS, which are one per world.
 ##
 ## ⛔ **AND NOTHING HERE SEEDS A CARD.** The section's two pre-fills are read by nothing: the sim
 ## applies that spread at the band's creation, so a card seeded from it as well would draw — and
@@ -218,6 +237,8 @@ func set_campaign_loadout(state: Variant) -> void:
 	var campaign: Dictionary = state
 	_pickable = campaign.get(HudLoadoutVocab.PICKABLE_MATERIALS_KEY, [])
 	_craftable_recipe_ids = campaign.get(HudLoadoutVocab.CRAFTABLE_RECIPE_IDS_KEY, [])
+	_item_carry_weight = float(campaign.get(HudLoadoutVocab.ITEM_CARRY_WEIGHT_KEY, 0.0))
+	_material_carry_weight = float(campaign.get(HudLoadoutVocab.MATERIAL_CARRY_WEIGHT_KEY, 0.0))
 	if is_expanded():
 		render()
 
@@ -306,8 +327,9 @@ func _ingest_window(band_id: int, window: Dictionary, names: Dictionary) -> void
 	state[BAND_NAME] = String(names.get(band_id, ""))
 	state[BAND_PARENT] = parent
 	state[BAND_PARENT_NAME] = String(names.get(parent, ""))
-	state[BAND_KIT_BUDGET] = int(window.get(HudLoadoutVocab.KIT_BUDGET_KEY, 0))
-	state[BAND_MATERIAL_BUDGET] = int(window.get(HudLoadoutVocab.MATERIAL_BUDGET_KEY, 0))
+	state[BAND_CARRY] = float(window.get(HudLoadoutVocab.CARRY_CAPACITY_KEY, 0.0))
+	state[BAND_FOOD_SHARE] = float(window.get(HudLoadoutVocab.FOOD_SHARE_KEY, 0.0))
+	state[BAND_FOOD_CARRIED] = float(window.get(HudLoadoutVocab.FOOD_CARRIED_KEY, 0.0))
 	var item_supply := _supply_map(window.get(HudLoadoutVocab.PARENT_ITEM_SUPPLY_KEY, []))
 	var material_supply := _supply_map(window.get(HudLoadoutVocab.PARENT_MATERIAL_SUPPLY_KEY, []))
 	state[BAND_ITEM_SUPPLY] = item_supply
@@ -322,6 +344,10 @@ func _ingest_window(band_id: int, window: Dictionary, names: Dictionary) -> void
 			window.get(HudLoadoutVocab.WINDOW_MATERIALS_KEY, []),
 			HudLoadoutVocab.MATERIAL_DEFAULT_ID_KEY, HudLoadoutVocab.MATERIAL_DEFAULT_UNITS_KEY),
 	}
+	state[BAND_PUBLISHED_LOAD] = _order_load({
+		BAND_KIT_PICKS: published[HudLoadoutVocab.WINDOW_KITS_KEY],
+		BAND_MATERIAL_PICKS: published[HudLoadoutVocab.WINDOW_MATERIALS_KEY],
+	})
 	if not state.has(BAND_UNECHOED):
 		state[BAND_KIT_PICKS] = {}
 		state[BAND_MATERIAL_PICKS] = {}
@@ -329,7 +355,7 @@ func _ingest_window(band_id: int, window: Dictionary, names: Dictionary) -> void
 	# ⛔ **THIS CARD'S OWN ECHO, OR THE SIM'S OWN MOVE — there is no third case.** A published
 	# allocation this card SENT is already on screen, so adopting it would be a no-op at best and, with
 	# a second press already made, a step backwards. Anything else is the band's outfit having moved
-	# for the sim's own reasons — a split re-fitting the parent to its reduced budget
+	# for the sim's own reasons — a split re-fitting the parent to its reduced carry
 	# (`fission::rebalance_partitioned_grant`), an order refused whole, or the default the sim applied
 	# when it made the band — and the wire is the authority on what the band holds.
 	var unechoed: Array = state[BAND_UNECHOED]
@@ -343,8 +369,8 @@ func _ingest_window(band_id: int, window: Dictionary, names: Dictionary) -> void
 	_bands[band_id] = state
 
 ## ⛔ **THE PUBLISHED ALLOCATION, WHOLE AND UNCLAMPED.** The sim already fitted this spread to the
-## band's budgets when it accepted it, so a second clamp here would disagree with the first — and a
-## band the sim has genuinely left over its budget must READ as over budget rather than be quietly
+## band's carry when it accepted it, so a second clamp here would disagree with the first — and a
+## band the sim has genuinely left over its carry must READ as over rather than be quietly
 ## trimmed into looking fine (`_over_allowance` is the row that says so).
 ##
 ## A material this window cannot pick is dropped — it could not be spent and would strand part of the
@@ -535,6 +561,8 @@ func reset_world_state() -> void:
 	_recipes = []
 	_pickable = []
 	_craftable_recipe_ids = []
+	_item_carry_weight = 0.0
+	_material_carry_weight = 0.0
 	close()
 	_push_attention()
 
@@ -564,18 +592,47 @@ func render() -> void:
 		StartingLoadoutPanel.PAYLOAD_SUBTITLE: _subtitle(band, take),
 		StartingLoadoutPanel.PAYLOAD_BANDS: _band_tabs(),
 		StartingLoadoutPanel.PAYLOAD_IS_TAKE: take,
-		StartingLoadoutPanel.PAYLOAD_KITS: _kit_rows(band, take),
+		StartingLoadoutPanel.PAYLOAD_KITS: _kit_rows(band),
 		StartingLoadoutPanel.PAYLOAD_MATERIALS: materials,
 		StartingLoadoutPanel.PAYLOAD_RECIPES: _recipe_rows(band, materials),
-		StartingLoadoutPanel.PAYLOAD_KIT_BUDGET: {
-			StartingLoadoutPanel.BUDGET_SPENT: kits_spent(),
-			StartingLoadoutPanel.BUDGET_TOTAL: _kit_total(band, take),
+		StartingLoadoutPanel.PAYLOAD_CARRY: {
+			StartingLoadoutPanel.BUDGET_SPENT: _order_load(band),
+			StartingLoadoutPanel.BUDGET_TOTAL: _carry_of(band),
+			StartingLoadoutPanel.CARRY_KIT_LOAD: _kit_load(band),
 		},
-		StartingLoadoutPanel.PAYLOAD_MATERIAL_BUDGET: {
-			StartingLoadoutPanel.BUDGET_SPENT: materials_spent(),
-			StartingLoadoutPanel.BUDGET_TOTAL: _material_total(band, take),
-		},
+		StartingLoadoutPanel.PAYLOAD_FOOD: _food_payload(band),
 	})
+
+## The split's food, for the line under the meter — `{}` on a window that brings none (the opening
+## band), which draws no line at all.
+func _food_payload(band: Dictionary) -> Dictionary:
+	var share := float(band.get(BAND_FOOD_SHARE, 0.0))
+	if share <= HudLoadoutVocab.CARRY_EPSILON:
+		return {}
+	return {
+		StartingLoadoutPanel.FOOD_BROUGHT: food_brought_of(band),
+		StartingLoadoutPanel.FOOD_SHARE: share,
+	}
+
+## ⛔ **WHAT THE SPLIT BRINGS: THE WIRE'S, EXCEPT WHERE THE CARD IS AHEAD OF IT.** The sim re-resolves
+## the food on every accepted order, and the food is a function of the goods LOAD alone — so while the
+## card's picks weigh what the published allocation weighed, the wire's `food_carried` is the truth.
+## Once a press moves the load the card shows an order the wire has not answered, and the food that
+## order WILL bring is `min(food_share, carry_capacity − goods load)` — the preview, so the line moves
+## on the press rather than a frame later. Never a second rule beside the server's.
+##
+## ⛔ **THE TEST IS THE LOAD, NOT THE UNECHOED LIST** — the press renders BEFORE its order is queued
+## (the optimistic write is on screen before the send), so a list-keyed test answers "nothing out" on
+## the very render the press produces and the line would lag one press behind.
+func food_brought() -> float:
+	return food_brought_of(_subject_state())
+
+func food_brought_of(band: Dictionary) -> float:
+	var share := float(band.get(BAND_FOOD_SHARE, 0.0))
+	var goods := _order_load(band)
+	if absf(goods - float(band.get(BAND_PUBLISHED_LOAD, goods))) <= HudLoadoutVocab.CARRY_EPSILON:
+		return minf(float(band.get(BAND_FOOD_CARRIED, 0.0)), share)
+	return clampf(_carry_of(band) - goods, 0.0, share)
 
 ## **THE CARD NAMES ITS BAND**, because a split can leave two windows open at once and a card headed
 ## only *"the band"* would leave the player composing an order for a band they cannot identify.
@@ -620,16 +677,15 @@ func _band_label(band_id: int, state: Dictionary) -> String:
 ## renamed the carry-nothing entry would still be excluded, and a roster that gave it items would
 ## rightly start offering it.
 ##
-## **`can_add` IS PER ROW, and on a take it has to be.** A grant's rows share one budget, so they all
-## carry the same answer; a take's cap is per ITEM, so `big_game` can be exhausted (no spears left at
-## home) while `gathering` is still free.
-func _kit_rows(band: Dictionary, take: bool) -> Array:
+## **`can_add` IS PER ROW, and it has to be.** Kits weigh what they expand to, so one more `big_game`
+## (two items) can overfill a pack one more `gathering` (one item) still fits; and a take's supply cap
+## is per ITEM, so `big_game` can be exhausted (no spears left at home) while `gathering` is free.
+func _kit_rows(band: Dictionary) -> Array:
 	var rows: Array = []
 	var roster: Variant = _equipment_config.get(HudLoadoutVocab.CONFIG_KITS_KEY, [])
 	if not (roster is Array):
 		return rows
 	var picks: Dictionary = band.get(BAND_KIT_PICKS, {})
-	var budget_left := kits_left()
 	for entry_variant in roster:
 		if not (entry_variant is Dictionary):
 			continue
@@ -641,6 +697,13 @@ func _kit_rows(band: Dictionary, take: bool) -> Array:
 		if kit_id.is_empty():
 			continue
 		var count := int(picks.get(kit_id, 0))
+		var uses_text := _joined_labels(uses, HudLoadoutVocab.KIT_USES_SEPARATOR, true)
+		var unit_load := _kit_unit_load(kit_id)
+		# **WHAT ONE MORE COSTS, where that is not obvious** — rides the uses line, so the row stays
+		# at two lines of copy under its name.
+		if not _carry_cost_is_obvious(unit_load):
+			uses_text = HudLoadoutVocab.KIT_CARRY_COST_FORMAT \
+				% [uses_text, HudLoadoutVocab.amount_text(unit_load)]
 		rows.append({
 			"id": kit_id,
 			"display_name": String(entry.get(HudLoadoutVocab.KIT_DISPLAY_NAME_KEY, kit_id)),
@@ -648,9 +711,9 @@ func _kit_rows(band: Dictionary, take: bool) -> Array:
 			# this client capitalizes such an id, and so does this one.
 			"jobs_text": _joined_labels(entry.get(HudLoadoutVocab.KIT_JOBS_KEY, []),
 				HudLoadoutVocab.KIT_JOBS_SEPARATOR, false),
-			"uses_text": _joined_labels(uses, HudLoadoutVocab.KIT_USES_SEPARATOR, true),
+			"uses_text": uses_text,
 			"count": count,
-			"can_add": _take_kit_ceiling(band, kit_id) > count if take else budget_left > 0,
+			"can_add": _kit_ceiling(band, kit_id) > count,
 		})
 	return rows
 
@@ -684,6 +747,12 @@ func _material_rows(band: Dictionary) -> Array:
 			"label": HudLoadoutVocab.material_label(material_id),
 			"color": HudLoadoutVocab.swatch_color(index),
 			"units": units,
+			# This row's share of the carry bar, and what one more unit costs — said only where that
+			# is not obvious (`""` at the meter's own unit).
+			"load": float(units) * _material_carry_weight,
+			"carry_text": "" if _carry_cost_is_obvious(_material_carry_weight) \
+				else HudLoadoutVocab.MATERIAL_CARRY_COST_FORMAT \
+					% HudLoadoutVocab.amount_text(_material_carry_weight),
 			"can_add": _material_ceiling(band, material_id) > units,
 		})
 	return rows
@@ -755,19 +824,20 @@ func _subject_state() -> Dictionary:
 func _parent_of(band: Dictionary) -> int:
 	return int(band.get(BAND_PARENT, HudLoadoutVocab.GRANT_PARENT_BAND_ID))
 
-## What the KIT meter is spent against. A grant spends KIT SLOTS; **a take spends ITEM UNITS**, since
-## that is the currency its cap is denominated in and the currency the sim refuses on.
+## Kits held — the order's kit COUNT, whatever they weigh. The harnesses' handle on the kit column.
 func kits_spent() -> int:
-	var band := _subject_state()
-	if _parent_of(band) != HudLoadoutVocab.GRANT_PARENT_BAND_ID:
-		var total := 0
-		for units in _expanded_items(band, "").values():
-			total += int(units)
-		return total
-	var slots := 0
-	for count in band.get(BAND_KIT_PICKS, {}).values():
-		slots += int(count)
-	return slots
+	var count := 0
+	for held in _subject_state().get(BAND_KIT_PICKS, {}).values():
+		count += int(held)
+	return count
+
+## The order EXPANDED to item units — the currency a take's supply cap and the carry are both
+## denominated in. `sled` shared by two kits counts twice, as the server counts it.
+func items_spent() -> int:
+	var total := 0
+	for units in _expanded_items(_subject_state(), "").values():
+		total += int(units)
+	return total
 
 func materials_spent() -> int:
 	var total := 0
@@ -775,42 +845,60 @@ func materials_spent() -> int:
 		total += int(units)
 	return total
 
-## What the meter still shows. On a grant that is budget left to MINT; on a take it is supply left AT
-## HOME — which is not forfeited when the turn advances, it simply stays where it is.
-func kits_left() -> int:
-	var band := _subject_state()
-	var take := _parent_of(band) != HudLoadoutVocab.GRANT_PARENT_BAND_ID
-	return maxi(_kit_total(band, take) - kits_spent(), 0)
+## The subject's carry: what its order weighs, what it may weigh, and what is left — the meter's three
+## numbers. `carry_left` is CLAMPED for its callers; the orb asks `_signed_carry`, unclamped.
+func carry_spent() -> float:
+	return _order_load(_subject_state())
 
-func materials_left() -> int:
-	var band := _subject_state()
-	var take := _parent_of(band) != HudLoadoutVocab.GRANT_PARENT_BAND_ID
-	return maxi(_material_total(band, take) - materials_spent(), 0)
+func carry_capacity() -> float:
+	return _carry_of(_subject_state())
 
-## The kit meter's denominator: the band's own working-age head count on a grant, and on a take the
-## WHOLE of `parent_item_supply`.
-##
-## **The sim publishes only items some kit carries**, so the sum is already the pile this column can
-## draw down: the three items no kit `uses` — `bone_awl`, `loom`, `tanning_frame` — are the
-## knowledge-gated bench tools, and shop equipment stays with the workshop that built it rather than
-## walking out with a splinter (`.claude/rules/core_sim/starting-loadout.md`). Re-deriving that filter
-## here off the roster would be a second copy of `EquipmentConfig::item_is_kit_carried`, and a second
-## copy is a second answer the day the two disagree.
-func _kit_total(band: Dictionary, take: bool) -> int:
-	if not take:
-		return int(band.get(BAND_KIT_BUDGET, 0))
-	var total := 0
-	for units in band.get(BAND_ITEM_SUPPLY, {}).values():
-		total += int(units)
-	return total
+func carry_left() -> float:
+	return maxf(_signed_carry(_subject_state()), 0.0)
 
-func _material_total(band: Dictionary, take: bool) -> int:
-	if not take:
-		return int(band.get(BAND_MATERIAL_BUDGET, 0))
-	var total := 0
-	for units in band.get(BAND_MATERIAL_SUPPLY, {}).values():
-		total += int(units)
-	return total
+func _carry_of(band: Dictionary) -> float:
+	return float(band.get(BAND_CARRY, 0.0))
+
+## ⛔ **AN ORDER'S LOAD — the ONE place the two weights are applied.** `item weight × Σ expanded item
+## units + material weight × Σ material units`, the comparison the server refuses on (`OverCarry`).
+## `skip_kit` / `skip_material` leave one row out, so a clamp can price that row against the rest.
+func _order_load(band: Dictionary, skip_kit: String = "", skip_material: String = "") -> float:
+	return _kit_load(band, skip_kit) + _material_load(band, skip_material)
+
+## The kits' share of the load — the kit segment of the carry bar.
+func _kit_load(band: Dictionary, skip_kit: String = "") -> float:
+	var items := 0
+	for units in _expanded_items(band, skip_kit).values():
+		items += int(units)
+	return float(items) * _item_carry_weight
+
+func _material_load(band: Dictionary, skip_material: String = "") -> float:
+	var units := 0
+	var picks: Dictionary = band.get(BAND_MATERIAL_PICKS, {})
+	for material_variant in picks.keys():
+		if String(material_variant) != skip_material:
+			units += int(picks[material_variant])
+	return float(units) * _material_carry_weight
+
+## What ONE more of a kit weighs: the items it expands to × the item weight. `big_game` (spears +
+## sled) weighs 2 at the shipped weight of 1.
+func _kit_unit_load(kit_id: String) -> float:
+	var items := 0
+	for units in _kit_uses(kit_id).values():
+		items += int(units)
+	return float(items) * _item_carry_weight
+
+## Whether a row's per-unit cost goes without saying — it does at the meter's own unit.
+func _carry_cost_is_obvious(unit_load: float) -> bool:
+	return is_equal_approx(unit_load, HudLoadoutVocab.CARRY_OBVIOUS_UNIT_LOAD)
+
+## ⛔ **HOW MANY UNITS FIT IN THE ROOM `rest_load` LEAVES**, each weighing `unit_load` — floored, with
+## the float tolerance so `3 × 0.1` fits `0.3`. A weightless unit never binds (`CARRY_UNBOUNDED`).
+func _carry_fits(band: Dictionary, rest_load: float, unit_load: float) -> int:
+	if unit_load <= 0.0:
+		return CARRY_UNBOUNDED
+	var room := _carry_of(band) - rest_load
+	return maxi(int(floorf((room + HudLoadoutVocab.CARRY_EPSILON) / unit_load)), 0)
 
 ## The units a kit puts in hands, one per `uses` entry and COUNTED rather than de-duplicated: a
 ## roster entry naming an item twice grants two.
@@ -869,24 +957,34 @@ func _take_kit_ceiling(band: Dictionary, kit_id: String) -> int:
 		ceiling = fits if ceiling < 0 else mini(ceiling, fits)
 	return maxi(ceiling, 0)
 
-## How many units of one material this window may hold. A grant is capped by what is LEFT of its
-## budget plus what this row already holds; a take by what the home band can supply, which already
-## includes the units this take is standing on.
-func _material_ceiling(band: Dictionary, material_id: String) -> int:
-	var held := int(band.get(BAND_MATERIAL_PICKS, {}).get(material_id, 0))
+## How many of ONE kit this window may hold: what fits the CARRY beside everything else in the order,
+## and on a take also what the home band can supply (`_take_kit_ceiling`). A kit row is never priced
+## on its own against either cap — both are checked against the rest of the order.
+func _kit_ceiling(band: Dictionary, kit_id: String) -> int:
+	var ceiling := _carry_fits(band, _order_load(band, kit_id), _kit_unit_load(kit_id))
 	if _parent_of(band) != HudLoadoutVocab.GRANT_PARENT_BAND_ID:
-		return int(band.get(BAND_MATERIAL_SUPPLY, {}).get(material_id, 0))
-	return held + materials_left()
+		ceiling = mini(ceiling, _take_kit_ceiling(band, kit_id))
+	return ceiling
+
+## How many units of one material this window may hold: what fits the CARRY beside the rest of the
+## order, and on a take also what the home band can supply — which already includes the units this
+## take is standing on.
+func _material_ceiling(band: Dictionary, material_id: String) -> int:
+	var ceiling := _carry_fits(band, _order_load(band, "", material_id), _material_carry_weight)
+	if _parent_of(band) != HudLoadoutVocab.GRANT_PARENT_BAND_ID:
+		ceiling = mini(ceiling,
+			int(band.get(BAND_MATERIAL_SUPPLY, {}).get(material_id, 0)))
+	return ceiling
 
 # ---- the orb's rows ---------------------------------------------------------
 
 ## Producer — the outfitting windows. **ONE ROW PER BAND WITH ONE OPEN**, spent or not: the card is
 ## dismissible and this row's `Open ▸` is the guaranteed way back to it, so a producer that fell
-## silent once a budget was clear would strand a player who had finished picking, put the card away,
+## silent once the carry was full would strand a player who had finished picking, put the card away,
 ## and then wanted to revise before ending the turn.
 ##
-## **WHAT MOVES IS THE SEVERITY AND THE WORDING.** A grant with both budgets clear ⇒ `ready`, and the
-## row reads as done; anything unspent ⇒ `warn`, naming what is left. `ready` ranks BELOW `info`, so a
+## **WHAT MOVES IS THE SEVERITY AND THE WORDING.** A grant whose carry fits nothing more ⇒ `ready`,
+## and the row reads as done; anything unspent ⇒ `warn`, naming what is left. `ready` ranks BELOW `info`, so a
 ## satisfied loadout never takes the orb's accent off a real warning elsewhere, and it still paints
 ## the orb when it is the highest entry present.
 ##
@@ -908,7 +1006,7 @@ func attention_rows() -> Array:
 	return rows
 
 ## ⛔ **THREE ARMS, AND THE THIRD ONE IS A FLOOR UNDER THE OTHER TWO.** A window whose meter reads
-## NEGATIVE — the band holding more than its budget or its home band's supply allows — is a state
+## NEGATIVE — the band holding more than its carry or its home band's supply allows — is a state
 ## this row has no true wording for, so it must not take the wording that says *done*. It reads
 ## `warn` and says which way it is wrong.
 ##
@@ -918,7 +1016,7 @@ func attention_rows() -> Array:
 func _attention_row(band_id: int, band: Dictionary) -> Dictionary:
 	var take := _parent_of(band) != HudLoadoutVocab.GRANT_PARENT_BAND_ID
 	var over := _over_allowance(band)
-	# A grant is DONE when both budgets are clear — there is nothing left to mint. A take is done as
+	# A grant is DONE when nothing more fits its carry — there is nothing left to mint. A take is done as
 	# soon as an order stands: it forfeits nothing by leaving supply at home, so "everything drawn"
 	# is not a state the player is working towards.
 	var complete := not over and (_take_is_ordered(band) if take else _grant_is_complete(band))
@@ -948,23 +1046,28 @@ func _attention_row(band_id: int, band: Dictionary) -> Dictionary:
 		"y": HudAttentionVocab.ATTENTION_NON_LOCATING,
 	}
 
-## **Is either meter NEGATIVE** — is this band holding more than its window allows? Asked of the
-## SIGNED remainder, because `kits_left` / `materials_left` clamp at zero for the meter's sake and a
-## clamp is precisely what hid this state.
+## **Is this band holding more than its window allows?** Over its CARRY, or — on a take — standing on
+## more of an item or a material than the home band now holds (an onward split shrank the supply).
+## Asked of SIGNED remainders, because `carry_left` clamps at zero for its callers and a clamp is
+## precisely what hid this state.
 func _over_allowance(band: Dictionary) -> bool:
-	return _signed_kits(band) < 0 or _signed_materials(band) < 0
+	return _signed_carry(band) < -HudLoadoutVocab.CARRY_EPSILON \
+		or _items_over_supply(band) > 0 or _materials_over_supply(band) > 0
 
-## …and by how much, in the bare count nouns the take arm already uses. `2 kits, 6 resources over
-## budget`. **A take's "budget" is the home band's supply**, which is the same sentence one currency
-## over: the band is standing on more than the window says it may have.
+## …and by how much: `3 carry over`, plus a take's supply overdraw in the bare count nouns the take
+## arm already uses — `3 carry, 2 kits over`.
 func _over_detail(band: Dictionary) -> String:
 	var parts: Array[String] = []
-	var kits := -_signed_kits(band)
-	if kits == 1:
+	var carry_over := -_signed_carry(band)
+	if carry_over > HudLoadoutVocab.CARRY_EPSILON:
+		parts.append(HudLoadoutVocab.ATTENTION_COUNT_CARRY_FORMAT
+			% HudLoadoutVocab.amount_text(carry_over))
+	var items := _items_over_supply(band)
+	if items == 1:
 		parts.append(HudLoadoutVocab.ATTENTION_COUNT_KITS_ONE)
-	elif kits > 1:
-		parts.append(HudLoadoutVocab.ATTENTION_COUNT_KITS_MANY % kits)
-	var units := -_signed_materials(band)
+	elif items > 1:
+		parts.append(HudLoadoutVocab.ATTENTION_COUNT_KITS_MANY % items)
+	var units := _materials_over_supply(band)
 	if units == 1:
 		parts.append(HudLoadoutVocab.ATTENTION_COUNT_RESOURCES_ONE)
 	elif units > 1:
@@ -972,33 +1075,35 @@ func _over_detail(band: Dictionary) -> String:
 	return HudLoadoutVocab.ATTENTION_DETAIL_OVER_FORMAT \
 		% HudLoadoutVocab.ATTENTION_DETAIL_SEPARATOR.join(parts)
 
+## A grant is DONE when nothing more fits — the remainder is smaller than the cheapest thing the
+## card offers. "Exactly zero" is the wrong test in a float currency with two weights: a 0.5 left over
+## beside one-unit materials is a full pack.
 func _grant_is_complete(band: Dictionary) -> bool:
-	return _remaining_kits(band) <= 0 and _remaining_materials(band) <= 0
+	return _signed_carry(band) < _cheapest_unit_load() - HudLoadoutVocab.CARRY_EPSILON
+
+## The lightest single thing a press can add — a material unit or one item's worth of kit. A weight of
+## `0` costs nothing and so cannot be what fills a pack; with both weightless, any remainder at all is
+## room, and the tolerance is the floor.
+func _cheapest_unit_load() -> float:
+	var cheapest := INF
+	for weight in [_item_carry_weight, _material_carry_weight]:
+		if float(weight) > 0.0:
+			cheapest = minf(cheapest, float(weight))
+	return HudLoadoutVocab.CARRY_EPSILON if is_inf(cheapest) else cheapest
 
 ## A take has an order standing once it names anything at all.
 func _take_is_ordered(band: Dictionary) -> bool:
 	return not band.get(BAND_KIT_PICKS, {}).is_empty() \
 		or not band.get(BAND_MATERIAL_PICKS, {}).is_empty()
 
-## A GRANT's detail: both remainders in one line, a budget already clear dropped rather than printed
-## as a zero. **The remainder is named whatever the control that spends it is named** — the picker's
-## second column is headed `RESOURCES`, and this row read `2 units unspent` beside it until a player
-## asked what a unit was.
+## A GRANT's detail: the carry still to mint, in the meter's own word. **The remainder is named
+## whatever the control that spends it is named** — this row read `2 units unspent` beside a column
+## headed `RESOURCES` until a player asked what a unit was.
 func _grant_detail(band: Dictionary) -> String:
-	var parts: Array[String] = []
-	var kits := _remaining_kits(band)
-	if kits == 1:
-		parts.append(HudLoadoutVocab.ATTENTION_DETAIL_KITS_ONE)
-	elif kits > 1:
-		parts.append(HudLoadoutVocab.ATTENTION_DETAIL_KITS_MANY % kits)
-	var units := _remaining_materials(band)
-	if units == 1:
-		parts.append(HudLoadoutVocab.ATTENTION_DETAIL_UNITS_ONE)
-	elif units > 1:
-		parts.append(HudLoadoutVocab.ATTENTION_DETAIL_UNITS_MANY % units)
-	if parts.is_empty():
+	if _grant_is_complete(band):
 		return HudLoadoutVocab.ATTENTION_DETAIL_READY
-	return HudLoadoutVocab.ATTENTION_DETAIL_SEPARATOR.join(parts)
+	return HudLoadoutVocab.ATTENTION_DETAIL_CARRY_UNSPENT_FORMAT \
+		% HudLoadoutVocab.amount_text(maxf(_signed_carry(band), 0.0))
 
 ## A TAKE's detail: what has been taken. **It named the home band until the row named its OWN**, which
 ## was the only way two identically-worded rows could be told apart; the subject's name does that job
@@ -1023,38 +1128,35 @@ func _take_detail(band: Dictionary) -> String:
 		return HudLoadoutVocab.ATTENTION_DETAIL_TAKE_NONE
 	return HudLoadoutVocab.ATTENTION_DETAIL_SEPARATOR.join(parts)
 
-## The subject's own accessors answer for the SUBJECT; the orb has to ask about every band, so the two
-## remainders are computed per band here rather than through `kits_left` / `materials_left`.
-func _remaining_kits(band: Dictionary) -> int:
-	return maxi(_signed_kits(band), 0)
-
-func _remaining_materials(band: Dictionary) -> int:
-	return maxi(_signed_materials(band), 0)
-
-## ⛔ **THE UNCLAMPED REMAINDERS — what the card's own meter draws, negative included.** Every clamped
-## reader above is written in terms of these, so the one place a negative can be seen is the one place
+## ⛔ **THE UNCLAMPED CARRY REMAINDER — what the card's own meter draws, negative included.** Every
+## clamped reader is written in terms of it, so the one place a negative can be seen is the one place
 ## it is asked about; a clamp applied before the question is what made an over-budget band read as
-## finished.
-##
-## They are the whole window's currency, so they answer for a take as well as a grant: on a take the
-## denominator is the home band's supply rather than a point budget, and the sign means the same
-## thing either way.
-func _signed_kits(band: Dictionary) -> int:
-	var take := _parent_of(band) != HudLoadoutVocab.GRANT_PARENT_BAND_ID
-	var spent := 0
-	if take:
-		for units in _expanded_items(band, "").values():
-			spent += int(units)
-	else:
-		for count in band.get(BAND_KIT_PICKS, {}).values():
-			spent += int(count)
-	return _kit_total(band, take) - spent
+## finished. Per band, because the orb asks about every band and not only the subject.
+func _signed_carry(band: Dictionary) -> float:
+	return _carry_of(band) - _order_load(band)
 
-func _signed_materials(band: Dictionary) -> int:
-	var spent := 0
-	for units in band.get(BAND_MATERIAL_PICKS, {}).values():
-		spent += int(units)
-	return _material_total(band, _parent_of(band) != HudLoadoutVocab.GRANT_PARENT_BAND_ID) - spent
+## A take's supply overdraw, in units — `0` on a grant, which has no supply. The expanded order
+## against `parent_item_supply` per item, so a shared `sled` counts twice as the server counts it.
+func _items_over_supply(band: Dictionary) -> int:
+	if _parent_of(band) == HudLoadoutVocab.GRANT_PARENT_BAND_ID:
+		return 0
+	var supply: Dictionary = band.get(BAND_ITEM_SUPPLY, {})
+	var expanded := _expanded_items(band, "")
+	var over := 0
+	for item_variant in expanded.keys():
+		over += maxi(int(expanded[item_variant]) - int(supply.get(String(item_variant), 0)), 0)
+	return over
+
+func _materials_over_supply(band: Dictionary) -> int:
+	if _parent_of(band) == HudLoadoutVocab.GRANT_PARENT_BAND_ID:
+		return 0
+	var supply: Dictionary = band.get(BAND_MATERIAL_SUPPLY, {})
+	var picks: Dictionary = band.get(BAND_MATERIAL_PICKS, {})
+	var over := 0
+	for material_variant in picks.keys():
+		over += maxi(int(picks[material_variant])
+			- int(supply.get(String(material_variant), 0)), 0)
+	return over
 
 func _push_attention() -> void:
 	var rows := attention_rows()
@@ -1090,28 +1192,30 @@ func _on_reopened() -> void:
 func _on_band_selected(band_id: int) -> void:
 	open_band(band_id)
 
-## **THE CLAMP LIVES HERE, and what it clamps against is the WINDOW's kind.** On a grant it is the
-## budget: a kit's ceiling is whatever is left plus what it already holds, so pressing `+` on a spent
-## budget is a no-op instead of an overspend the sim would reject whole. On a take it is the EXPANDED
-## item supply — the same arithmetic the server refuses on, which is the only form that is right when
-## two kits share an item.
+## **THE CLAMP LIVES HERE.** A kit's ceiling is what fits the band's CARRY beside the rest of the
+## order — and on a take also the EXPANDED item supply, the same arithmetic the server refuses on — so
+## pressing `+` on a full pack is a no-op instead of an overload the sim would reject whole.
 func _on_kit_count_changed(kit_id: String, count: int) -> void:
 	var band := _subject_state()
 	if band.is_empty():
 		return
-	var picks: Dictionary = band[BAND_KIT_PICKS]
-	var current := int(picks.get(kit_id, 0))
-	var ceiling := _take_kit_ceiling(band, kit_id) \
-		if _parent_of(band) != HudLoadoutVocab.GRANT_PARENT_BAND_ID \
-		else current + kits_left()
-	_write_pick(band, BAND_KIT_PICKS, kit_id, clampi(count, 0, ceiling))
+	var current := int((band[BAND_KIT_PICKS] as Dictionary).get(kit_id, 0))
+	_write_pick(band, BAND_KIT_PICKS, kit_id,
+		_clamp_press(count, current, _kit_ceiling(band, kit_id)))
 
 func _on_material_units_changed(material_id: String, units: int) -> void:
 	var band := _subject_state()
 	if band.is_empty():
 		return
+	var current := int((band[BAND_MATERIAL_PICKS] as Dictionary).get(material_id, 0))
 	_write_pick(band, BAND_MATERIAL_PICKS, material_id,
-		clampi(units, 0, _material_ceiling(band, material_id)))
+		_clamp_press(units, current, _material_ceiling(band, material_id)))
+
+## ⛔ **A CEILING BELOW WHAT THE ROW HOLDS REFUSES A RAISE AND NEVER FORCES A DROP.** An adopted band
+## can stand over its carry (the adoption rule takes the wire whole), and there a `−` must take ONE
+## off — clamping to the ceiling would quietly drop several rows' worth on one press.
+func _clamp_press(next: int, current: int, ceiling: int) -> int:
+	return clampi(next, 0, maxi(ceiling, current))
 
 ## ⛔ **ONE ROW MOVES, THE WHOLE ORDER GOES, AND THE TWO HAPPEN TOGETHER.** This is the only writer of
 ## either pick map outside `_adopt_published`, which is what makes the invariant checkable: a local
