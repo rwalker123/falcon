@@ -845,19 +845,18 @@ pub struct PopulationCohortState {
     /// Client-facing (distinct marker glyph/label, awaiting-orders state, Recall affordance).
     #[serde(default)]
     pub is_expedition: bool,
-    /// `"scout"` (PR 2 adds `"hunt"`); empty for normal bands.
+    /// `"scout"` | `"deny"` | `"trade"`; empty for normal bands.
     #[serde(default)]
     pub expedition_mission: String,
-    /// `"outbound"` | `"awaiting"` | `"returning"` | `"hunting"` | `"delivering"`; empty for normal
-    /// bands.
+    /// `"outbound"` | `"awaiting"` | `"returning"` | `"hunting"`; empty for normal bands.
     #[serde(default)]
     pub expedition_phase: String,
-    /// Hunt mission only: target herd id (`HerdRegistry` fauna_id; a non-numeric string, so a
+    /// Denial mission only: target herd id (`HerdRegistry` fauna_id; a non-numeric string, so a
     /// string not a uint). Empty for scout/normal bands. Persisted so a rollback reconstructs
-    /// `Hunt { fauna_id }`; also shown in the client hunt panel.
+    /// `Deny { fauna_id }`.
     #[serde(default)]
     pub expedition_target_herd: String,
-    /// **Hunt/deny mission only: the target herd's species DISPLAY NAME** (`"Red Deer"`), resolved at
+    /// **Denial mission only: the target herd's species DISPLAY NAME** (`"Red Deer"`), resolved at
     /// launch and carried for the party's life. Empty for scout/normal bands.
     ///
     /// It exists because [`Self::expedition_target_herd`] alone is not enough to *name* the quarry:
@@ -874,11 +873,6 @@ pub struct PopulationCohortState {
     pub travel_target_x: u32,
     #[serde(default)]
     pub travel_target_y: u32,
-    /// Band's effective hunt reach = `band_work_range + hunt_leash_tiles` (the leash a Hunt
-    /// assignment lapses past). Echoed per-cohort so the client offers a local hunt vs a hunting
-    /// expedition by the clicked herd's distance. Appended last in the FlatBuffers table.
-    #[serde(default)]
-    pub hunt_reach: u32,
     /// Persistence-only: the real band (entity bits) that outfitted this party — a rollback
     /// re-attaches the expedition and resolves its home band from this.
     #[serde(default)]
@@ -897,9 +891,9 @@ pub struct PopulationCohortState {
     // party banked its pelts on between kills — and a raid's non-food haul is now **material
     // batches** in the party's own `stores`, which the checkpoint carries whole. There is nothing
     // left for a rollback to silently zero.
-    /// Hunt expedition only: the carry cap = `party_workers × expedition_config.hunt.per_worker_carry`
-    /// (the provisions ceiling the party fills to before auto-Delivering). Capture-only, `0` for
-    /// scouts + normal bands. Lets the client render carried/cap + a FULL state.
+    /// This party's pack: `party_workers ×` the per-worker carry of the pack its mission fills (a
+    /// raid's `expedition_config.hunt.per_worker_carry`, a shipment's resolved trade carry).
+    /// Capture-only, `0` for scouts + normal bands. Lets the client render carried/cap + a FULL state.
     #[serde(default)]
     pub expedition_carry_cap: f32,
     /// Which supply network this band belongs to this turn: `0` = not in a multi-band network,
@@ -972,38 +966,17 @@ pub struct PopulationCohortState {
     /// the larder was short at meal time — see [`Self::food_need`] / [`Self::food_shortfall`].
     #[serde(default)]
     pub food_consumption: f32,
-    /// Hunt levers — global config echoed per-cohort (same idiom as
-    /// [`Self::expedition_viability_warn_turns`], and populated for **every** cohort, since the
-    /// outfit/hunt UI lives on the resident-band panel).
-    ///
-    /// The pre-launch **expedition** trip length is **not** computed from these: the client **asks**
-    /// for the sim's simulated answer (`sim_runtime`'s `QueryCommand`, answered by
-    /// `core_sim::forecast_query` for an exact band, kit, party and floor) and flags NOT VIABLE when
-    /// `turns_to_fill > expedition_viability_warn_turns` (or `turns_to_fill == 0` → "won't fill").
-    /// A party after an INEDIBLE quarry gets `delivers_food == false` (a species fact since #337,
-    /// not a denial policy): render "no food delivered", never an ETA.
-    ///
-    /// It used to read that answer out of a `huntTripEstimates` table on the herd row. The table was
-    /// pre-computed for every huntable herd every frame, at one kit over a fresh component set, and
-    /// sampled on both axes — so it could not answer for the band actually asking.
-    ///
-    /// One hunter's per-turn provisions throughput (`labor_config.hunt.per_worker_biomass_capacity ×
-    /// fauna_config.hunt.provisions_per_biomass`).
+    /// Hunt lever — global config echoed per-cohort, populated for **every** cohort, since the hunt
+    /// UI lives on the resident-band panel. One hunter's per-turn provisions throughput
+    /// (`labor_config.hunt.per_worker_biomass_capacity × fauna_config.hunt.provisions_per_biomass`).
     ///
     /// **SPECIES-BLIND — never use it for a per-herd preview** (#337). It is a per-cohort echo of the
     /// GLOBAL `hunt.provisions_per_biomass`; the cohort has no herd, so there is no species to resolve
     /// a hunt-yield vector from. A wolf's per-policy ceilings are all `0` food, and quoting a positive
     /// per-hunter food rate against them is a contradiction. The per-herd, species-aware rates are
     /// `HerdTelemetryState::per_worker_yield` / `per_worker_trade` — clamp a band preview with THOSE.
-    /// This survives as the expedition **outfit** lever (rough carry arithmetic before a target is
-    /// chosen); for a chosen target the client asks for the answer (`sim_runtime`'s `QueryCommand`,
-    /// answered by `core_sim::forecast_query`), exactly as the prose above describes.
     #[serde(default)]
     pub hunt_per_worker_provisions: f32,
-    /// Turns-to-fill past which a trip is flagged NOT VIABLE
-    /// (`expedition_config.hunt.viability_warn_turns`).
-    #[serde(default)]
-    pub expedition_viability_warn_turns: u32,
     // **RETIRED: `pen_feed_upkeep`** — the food a band's pens drew from its larder in a turn, drawn
     // by the client as its own negative row ("my people ate X, my animals ate Y"). **Human food is not
     // animal feed**: a pen eats the grass its fenced footprint grows and the hay its keeper carries in,
@@ -1015,37 +988,16 @@ pub struct PopulationCohortState {
     //
     // pinned by `core_sim/tests/fauna_husbandry.rs` and `integration_tests/tests/pen_food_ledger.rs`.
     // `penFeedUpkeep` is off the wire.
-    /// One worker's carry contribution to a hunt expedition's haul
-    /// (`expedition_config.hunt.per_worker_carry`). Global config echoed per-cohort (same idiom as
-    /// [`Self::expedition_viability_warn_turns`] / [`Self::hunt_per_worker_provisions`]), populated
-    /// for **every** cohort since the outfit UI lives on the resident-band panel. The client computes a hypothetical party's pre-launch HAUL as
-    /// `party_workers × expedition_per_worker_carry` (the carry cap the pack fills to before
-    /// auto-Delivering; a launched party's own echo is [`Self::expedition_carry_cap`]). Appended.
-    #[serde(default)]
-    pub expedition_per_worker_carry: f32,
     /// A band's move speed (`labor_config.band_move_tiles_per_turn`). Global config echoed per-cohort
-    /// (same idiom as the levers above). The client adds a raid's round-trip travel to the queried
+    /// (same idiom as the lever above). The client adds a raid's round-trip travel to the queried
     /// pre-launch forecast as
     /// `ceil(2 × hex_distance(selected_band, herd) / band_move_tiles_per_turn)` — the forecast
-    /// projects the hunting itself, never the walk. Appended.
+    /// projects the raiding itself, never the walk. Appended.
     #[serde(default)]
     pub band_move_tiles_per_turn: f32,
-    /// In-flight hunt-party delivery forecast — the in-flight twin of the queried pre-launch
-    /// forecast. Turns until the carried food reaches the home larder (`0` = unknown /
-    /// n/a). Computed at capture by `systems::expeditions::expedition_delivery`. Appended.
-    #[serde(default)]
-    pub expedition_eta_turns: u32,
-    /// The food that in-flight delivery will contain (carried + still-to-take, pack-capped). `0` for a
-    /// scout, a normal band, or a party whose delivery can't be projected. Appended.
-    #[serde(default)]
-    pub expedition_projected_delivery: f32,
-    /// Whether the party relaunches for repeated trips after delivering (only `Deplete`). Appended.
-    #[serde(default)]
-    pub expedition_recurring: bool,
     /// The band's FODDER larder — the hay it has stored (Flora Roster F3). A second commodity key on
     /// the same `LocalStore` as provisions; a hay Field harvests into it, a pen that knows Foddering
-    /// draws it, and it never converts to provisions. Appended (append-only) after #165's expedition
-    /// trio.
+    /// draws it, and it never converts to provisions.
     #[serde(default)]
     pub fodder_store: f32,
     /// The three named fertility factors behind this turn's births — the `birth_rate` multiplier
@@ -1085,28 +1037,6 @@ pub struct PopulationCohortState {
     /// Derived per-turn by `advance_predator_raids`. Appended.
     #[serde(default)]
     pub raid_forfeit: f32,
-    /// **Where a hunt expedition's raid stops**, as a fraction of the herd's carrying capacity —
-    /// the raid's whole statement of pressure (`docs/plan_harvest_floor.md`). It governs the take
-    /// *and* the trip's shape: a floor below the food peak leaves more standing than one pack holds,
-    /// so the party runs repeated trips (`components::raid_is_recurring`).
-    ///
-    /// **`1.0` on a Scout party and on a resident band** — they harvest no herd, and an absent
-    /// floor must not read as *"take everything"*, which is the one value that would be dangerous
-    /// if a reader acted on it. Replaces the retired `expedition_hunt_policy`. Appended
-    /// (append-only).
-    #[serde(default)]
-    pub expedition_floor: f32,
-    /// **Which stop will end this party's raid** — the `core_sim::HuntTripBound` key
-    /// (`"pack_full"` / `"floor"` / `"herd_lost"` / `"horizon"`), read off the same in-flight
-    /// forward simulation [`Self::expedition_eta_turns`] comes from, so it answers for the party's
-    /// *real* orders (its own floor, against the herd's live stock) rather than for the
-    /// band-agnostic pre-launch table.
-    ///
-    /// **`""` = not raiding** — a resident band, a scout, or a party already walking a load home.
-    /// That is a different statement from `"horizon"`, which means the projection ran and found no
-    /// stop inside `hunt.forecast_horizon_turns`. Appended (append-only).
-    #[serde(default)]
-    pub expedition_trip_bound: String,
     /// **Remaining condition on each item in the band's TOE**, one row per item the config carries
     /// (`docs/plan_hunt_through_combat.md` §4.8, `docs/plan_early_game_labor.md`). On
     /// `equipment.json`'s 0–100 scale; **`0` = dry**, at which point any role resolving through that
@@ -1187,22 +1117,18 @@ pub struct PopulationCohortState {
     pub kit_id: String,
     /// **How far every pre-launch raid projection in this snapshot was simulated before giving up**
     /// (`expedition_config.hunt.forecast_horizon_turns`). Global config echoed per-cohort — same idiom
-    /// as [`Self::expedition_viability_warn_turns`] / [`Self::hunt_per_worker_provisions`] /
-    /// [`Self::expedition_per_worker_carry`] — and populated for **every** cohort, since the
-    /// outfit/hunt UI lives on the resident-band panel.
+    /// as [`Self::hunt_per_worker_provisions`] — and populated for **every** cohort, since the outfit
+    /// UI lives on the resident-band panel.
     ///
-    /// It is the **scale for the projections' "never completed" sentinels**, which are all
-    /// horizon-relative and none of which carried the horizon before this field:
-    /// the query reply's `HuntTripRow::turns_to_fill` `== 0`, its `DenialRow::turns_to_collapse`
-    /// (and its two range ends) `== 0`, and [`Self::expedition_trip_bound`] `== "horizon"`. **One
-    /// lever serves all of them**: the denial forecast and the hunt forecast run over the *same*
-    /// horizon (`core_sim`'s `denial_projection_at` and `hunt_trip_forecast_seeded` both read this
-    /// one config field), so there is deliberately no second horizon on the wire.
+    /// It is the **scale for the projection's "never completed" sentinels**, which are
+    /// horizon-relative and do not carry the horizon: the query reply's
+    /// `DenialRow::turns_to_collapse` (and its two range ends) `== 0` (`core_sim`'s
+    /// `denial_projection_at` reads this one config field).
     ///
     /// **It is NOT the trip length and must never be quoted as one.** A bounded raid reads *"Away
-    /// ≈36 turns — 18 hunting, 18 travel"*; the unbounded case has to be a **lower bound on that
+    /// ≈36 turns — 18 raiding, 18 travel"*; the unbounded case has to be a **lower bound on that
     /// same span** or the two are not comparable and the player is worse off than with *"many"*. The
-    /// hunting alone is at least this many turns and the round-trip travel is a separate,
+    /// raiding alone is at least this many turns and the round-trip travel is a separate,
     /// already-known term (`ceil(2 × hex_distance / band_move_tiles_per_turn)`), so the floor on the
     /// whole trip is
     ///
@@ -1352,10 +1278,10 @@ pub struct PopulationCohortState {
     /// `send_trade_expedition` command debits the larder between two published frames.
     #[serde(default)]
     pub transfer_sent: f32,
-    /// **What one worker on a shipment sent from this band carries, RESOLVED BY THE SIM** — the
-    /// sim's own answer after everything carry depends on has been applied
-    /// (`core_sim::trade_per_worker_carry`), not a config lever quoted onto the wire. Echoed onto
-    /// every cohort in the `expedition_per_worker_carry` / `hunt_per_worker_provisions` idiom.
+    /// **What one worker carries, RESOLVED BY THE SIM, for every carrier** — a shipment, a split, a
+    /// long move — the sim's own answer after everything carry depends on has been applied
+    /// (`core_sim::per_worker_carry`), not a config lever quoted onto the wire. Echoed onto
+    /// every cohort in the `hunt_per_worker_provisions` idiom.
     ///
     /// **The client multiplies it by the party and does nothing else**: `cap = party_workers ×
     /// this`. So when carry grows a carrier-side model — a cart kit's `trade_carry` stat, a tech
@@ -1366,9 +1292,8 @@ pub struct PopulationCohortState {
     /// on the map publishes its own pack as [`Self::expedition_carry_cap`] — the same resolved
     /// carry, already multiplied out.
     ///
-    /// **It is not [`Self::expedition_per_worker_carry`]**, which is the *hunt* pack and a raw
-    /// lever. Two packs arrived at two ways; a client composing a trade cap from the raid's is one
-    /// config edit away from quoting a cap the launch command will refuse.
+    /// **It is not a raid's pack**, which is the raw `hunt.per_worker_carry` lever (a launched raid
+    /// publishes its own as [`Self::expedition_carry_cap`]). Two packs arrived at two ways.
     ///
     /// **Always positive** — an invariant of the resolved value, not merely of the lever under it.
     /// The lever is validated `> 0` at load and every future term has to preserve that, because a

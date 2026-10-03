@@ -8,9 +8,6 @@
   "hunt": {
     "per_worker_carry": 0.8,
     "reach_tiles": 1,
-    "drop_off_within_tiles": 3,
-    "min_deliver_fraction": 0.5,
-    "viability_warn_turns": 20,
     "forecast_horizon_turns": 60
   },
   "carry": {

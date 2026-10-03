@@ -273,6 +273,7 @@ mod tests {
                 "band=1 count={count} bracket=working cause={cause}"
             )),
             seq: 0,
+            band: 0,
         };
         let this_turn = tick - EVENT_TICK_LAG;
         snapshot.command_events = vec![
@@ -390,6 +391,7 @@ mod tests {
             label: format!("Harvest{COMMAND_FAILED_LABEL_SUFFIX}"),
             detail: Some("assign_labor: no gathering site".to_owned()),
             seq: 0,
+            band: 0,
         };
         snapshot.command_events.extend([
             failed(tick - EVENT_TICK_LAG, FACTION),

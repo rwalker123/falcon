@@ -148,6 +148,7 @@ pub fn command_events_to_state(log: &CommandEventLog, viewer: FactionId) -> Vec<
             label: entry.label.clone(),
             detail: entry.detail.clone(),
             seq: entry.seq,
+            band: entry.band,
         })
         .collect()
 }

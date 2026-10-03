@@ -881,13 +881,6 @@ fn create_populations<'a>(
                 builder,
                 &cohort.expedition_cargo_materials,
             );
-            // `""` = "not raiding" (a resident band, a scout, a party walking a load home) — absent
-            // rather than an empty string, the convention every discriminator above follows.
-            let expedition_trip_bound = if cohort.expedition_trip_bound.is_empty() {
-                None
-            } else {
-                Some(builder.create_string(&cohort.expedition_trip_bound))
-            };
             let pending_reveal_x = if cohort.pending_reveal_x.is_empty() {
                 None
             } else {
@@ -930,10 +923,6 @@ fn create_populations<'a>(
                 builder,
                 &fb::PopulationCohortStateArgs {
                     bandId: cohort.band_id,
-                    // THE RAID'S FLOOR — replaces the retired `expeditionHuntPolicy`.
-                    expeditionFloor: cohort.expedition_floor,
-                    // WHICH STOP the in-flight projection says will end this party's raid.
-                    expeditionTripBound: expedition_trip_bound,
                     entity: cohort.entity,
                     home: cohort.home,
                     currentX: cohort.current_x,
@@ -970,7 +959,6 @@ fn create_populations<'a>(
                     expeditionTargetHerd: expedition_target_herd,
                     travelTargetX: cohort.travel_target_x,
                     travelTargetY: cohort.travel_target_y,
-                    huntReach: cohort.hunt_reach,
                     supplyNetworkId: cohort.supply_network_id,
                     moraleDelta: cohort.morale_delta,
                     moraleCause: cohort.morale_cause,
@@ -987,13 +975,7 @@ fn create_populations<'a>(
                     foodIncome: cohort.food_income,
                     foodConsumption: cohort.food_consumption,
                     huntPerWorkerProvisions: cohort.hunt_per_worker_provisions,
-                    expeditionViabilityWarnTurns: cohort.expedition_viability_warn_turns,
-                    expeditionPerWorkerCarry: cohort.expedition_per_worker_carry,
                     bandMoveTilesPerTurn: cohort.band_move_tiles_per_turn,
-                    expeditionEtaTurns: cohort.expedition_eta_turns,
-                    expeditionProjectedDelivery: cohort.expedition_projected_delivery,
-                    expeditionRecurring: cohort.expedition_recurring,
-                    // The band's hay reserve (F3) — appended (append-only wire) after #165's trio.
                     fodderStore: cohort.fodder_store,
                     // The birth path's itemized breakdown, the parallel of the morale contributions
                     // above (append-only wire discipline — these follow every earlier field).
@@ -1417,7 +1399,6 @@ fn decode_population(
         expedition_target_species: text(cohort.expeditionTargetSpecies()),
         travel_target_x: cohort.travelTargetX(),
         travel_target_y: cohort.travelTargetY(),
-        hunt_reach: cohort.huntReach(),
         home_band_entity: cohort.homeBandEntity(),
         expedition_announced: cohort.expeditionAnnounced(),
         pending_reveal_x: decode_scalars(cohort.pendingRevealX()),
@@ -1486,20 +1467,13 @@ fn decode_population(
         food_income: cohort.foodIncome(),
         food_consumption: cohort.foodConsumption(),
         hunt_per_worker_provisions: cohort.huntPerWorkerProvisions(),
-        expedition_viability_warn_turns: cohort.expeditionViabilityWarnTurns(),
-        expedition_per_worker_carry: cohort.expeditionPerWorkerCarry(),
         band_move_tiles_per_turn: cohort.bandMoveTilesPerTurn(),
-        expedition_eta_turns: cohort.expeditionEtaTurns(),
-        expedition_projected_delivery: cohort.expeditionProjectedDelivery(),
-        expedition_recurring: cohort.expeditionRecurring(),
         fodder_store: cohort.fodderStore(),
         fertility_hunger: cohort.fertilityHunger(),
         fertility_reserve: cohort.fertilityReserve(),
         fertility_trend: cohort.fertilityTrend(),
         raid_radius: cohort.raidRadius(),
         raid_forfeit: cohort.raidForfeit(),
-        expedition_floor: cohort.expeditionFloor(),
-        expedition_trip_bound: text(cohort.expeditionTripBound()),
         kit_item_conditions: map_rows(cohort.kitItemConditions(), |condition| {
             KitItemConditionState {
                 item_id: text(condition.itemId()),

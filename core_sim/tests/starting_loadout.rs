@@ -906,10 +906,10 @@ fn a_band_is_created_already_holding_its_default_outfit() {
 ///
 /// The carry is the spawned band's head count × one pack, so `start_profiles.json` cannot sum-check
 /// its own pre-fill and an over-allocation has to be survivable at runtime. The shipped 48-against-136
-/// never binds, which is exactly why the rule needs a case that does. Kits and materials are fitted
-/// TOGETHER, on the one currency.
+/// never binds, which is exactly why the rule needs a case that does. Materials are cut before any
+/// kit, and only a kit load over the carry scales the kits.
 #[test]
-fn an_over_allocating_pre_fill_is_fitted_proportionally_on_one_currency() {
+fn an_over_allocating_pre_fill_cuts_materials_before_tools() {
     let app = open_window().0;
     let equipment = app.world.resource::<EquipmentConfigHandle>().get();
     let mut carry_cfg = carry_cfg(&app);
@@ -943,9 +943,31 @@ fn an_over_allocating_pre_fill_is_fitted_proportionally_on_one_currency() {
     );
     assert_eq!(fitted.materials, vec![(BONE.to_string(), 4)]);
 
-    // Over the budget: every row `floor(count × 12 / 24)` — 3 / 1 / 1 kits and 2 bone, and a row
-    // that floors to zero is DROPPED rather than published as a pre-fill of nothing. The floor's
-    // leftover is deliberately not handed to whichever id sorts first.
+    // Over the budget with room for every kit: the kits are kept WHOLE and the bone is cut into
+    // what they leave — `floor(4 × 2 / 4)` = 2. Tools feed a band; bone can be gathered again.
+    let fitted = fit_to_carry(
+        &declared_kits,
+        &declared_materials,
+        Scalar::from_u32(22),
+        &equipment,
+        &carry_cfg,
+    );
+    assert!(fitted.clamped, "the fit must report that it bound");
+    assert_eq!(
+        fitted.kits,
+        vec![
+            (BIG_GAME.to_string(), 6),
+            (GATHERING.to_string(), 2),
+            (TRAPPING.to_string(), 3),
+        ],
+        "materials are cut before any tool"
+    );
+    assert_eq!(fitted.materials, vec![(BONE.to_string(), 2)]);
+
+    // The kits alone over the budget: every material goes, and every kit row is
+    // `floor(count × 12 / 20)` — 3 / 1 / 1. A row that floors to zero is DROPPED rather than
+    // published as a pre-fill of nothing, and the floor's leftover is not handed to whichever id
+    // sorts first.
     let fitted = fit_to_carry(
         &declared_kits,
         &declared_materials,
@@ -961,9 +983,12 @@ fn an_over_allocating_pre_fill_is_fitted_proportionally_on_one_currency() {
             (GATHERING.to_string(), 1),
             (TRAPPING.to_string(), 1),
         ],
-        "proportional and floored, kits and materials on one currency"
+        "proportional and floored on the kits alone"
     );
-    assert_eq!(fitted.materials, vec![(BONE.to_string(), 2)]);
+    assert!(
+        fitted.materials.is_empty(),
+        "no material rides before a tool"
+    );
 
     // A band with no carry pre-fills nothing, with no special case anywhere.
     let fitted = fit_to_carry(

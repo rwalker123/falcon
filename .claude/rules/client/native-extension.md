@@ -300,10 +300,9 @@ hand-listed allowlist and a key not copied there does not exist as far as the bo
 pair is copied verbatim beside `material_yield` — never into `OPTIONAL_YIELD_KEYS`, whose `float()`
 coercion is what the paragraph above is about.
 
-**THE EXPEDITION HALF ADDS ONE MORE VECTOR AND NEEDED NO NEW DECODER AT ALL.**
-`HuntTripRow.delivered_material` → `delivered_material` on every row of the `HuntTripForecast` QUERY
-reply (`bridge/query.rs`, not the snapshot path) — the trip's whole payload per material, which is
-what makes an inedible quarry's raid legible. Beside it, **`PopulationCohortState.materialBatches` is
+**THE EXPEDITION HALF NEEDED NO NEW DECODER AT ALL.** `DenialRow.delivered_material` →
+`delivered_material` on the `DenialRaidForecast` QUERY reply (`bridge/query.rs`, not the snapshot
+path) carries what a raid salvages per material. Beside it, **`PopulationCohortState.materialBatches` is
 resolved from `cohort.stores` with NO resident-band gate**, so a detached party's carried materials
 were already decoded onto the cohort dict as `material_batches` and had simply never been rendered
 for a party. **That is the failure worth remembering here**: a field the decoder emits correctly and
@@ -352,18 +351,14 @@ corrected sim-side. The golden gives every field a DISTINCT saturated value, whi
 swapped accessor visible in the diff rather than merely different.
 
 It also decodes **`expedition_forecast_horizon_turns`** ← `cohort.expeditionForecastHorizonTurns()`, a
-plain `uint` echoed on every cohort beside `expedition_viability_warn_turns` — the SCALE every "never
-completed" sentinel on this wire is relative to (`turns_to_fill == 0`,
-`turns_to_collapse{,_low,_high} == 0`, `expedition_trip_bound == "horizon"`). **It is not a trip
-length**: it bounds the hunting alone, so a client quoting it as one understates the trip by the whole
-walk — the floor on a hunt's span is `this + round-trip travel` (`labor-ui.md` → "An unbounded raid
-quotes a FLOOR"). Because the MARKER is a structural `duplicate()` of the cohort, it reaches the
+plain `uint` echoed on every cohort — the SCALE the denial forecast's "never completed" sentinel
+(`turns_to_collapse{,_low,_high} == 0`) is relative to. **It is not a trip length**: it bounds the
+raiding alone, so a client quoting it as one understates the trip by the whole walk. Because the MARKER is a structural `duplicate()` of the cohort, it reaches the
 in-flight denial readout — whose caller has no band and reads the horizon off the launched party —
 without a stamp; `marker_field_guard` carries it so the copy stays honest.
 
 **THE PRE-LAUNCH RAID FORECASTS ARE NOT ON THE SNAPSHOT, SO `herds_to_array` DECODES NO ESTIMATE
-TABLE.** `HerdTelemetryState`'s `huntTripEstimates` / `denialEstimates` / `denialPartyNeeded` and the
-two `*EstimatesKitId` fields are not in `snapshot.fbs`: a herd row is a fact about a *herd*, and a raid's numbers depend on the asking band's kit and
+TABLE.** `HerdTelemetryState` carries no `denialEstimates` / `denialPartyNeeded` / `*EstimatesKitId`: a herd row is a fact about a *herd*, and a raid's numbers depend on the asking band's kit and
 live equipment wear, which no per-herd row can carry. The client **asks** instead — see
 `.claude/rules/core_sim/expeditions.md` → "The forecast is ASKED FOR".
 
@@ -676,11 +671,12 @@ keys on — the tile alone cannot tell two workings, or a road and a patch, on o
 
 ## The `connections` section, and the cohort fields the shipment arc appended
 
-Arc #527. `dict/connections.rs` → `connections_to_array` is the client's FIRST reader of the contact
-ties (#538 shipped the section with none), and it is a **whole-section replace** — decoded on BOTH
-paths through `insert_changed` on the delta, exactly like `culture_tensions` and the crafting
-catalogues. Present-and-EMPTY means *"you hold no ties now"*, which is why there is no emptiness gate
-here: adding one is the defect that blanked the culture tensions on every first delta.
+Arc #527. `dict/connections.rs` → `connections_to_array` decodes the contact ties for their two
+client readers, the band page's Peoples tab and the shipment picker (#538 shipped the section with
+none), and it is a **whole-section replace** — decoded on BOTH paths through `insert_changed` on the
+delta, exactly like `culture_tensions` and the crafting catalogues. Present-and-EMPTY means *"you
+hold no ties now"*, which is why there is no emptiness gate here: adding one is the defect that
+blanked the culture tensions on every first delta.
 
 **No faction column, and the decoder must not invent one.** Faction is a property of the endpoint
 (`.claude/rules/core_sim/connections.md`), and the section is already filtered sim-side to the
@@ -688,6 +684,8 @@ viewer's observing bands — a client-side re-filter would be the first place th
 broke. **`strength == 0` is a PARKED tie, not an absent one**, so the row is published and the picker
 renders it disabled; **`last_seen_{x,y}` is CLOCK 1** — where the subject was, not where they are —
 and a consumer that renders it as a live position claims a sighting the tie never granted.
+`subject_name` (issue #549) is clock 1's remembered name, empty when unknown; the client's fallback
+order lives in `ConnectionsRoster.subject_label`, and a raw id never reaches a label.
 
 `dict/population.rs` gained ten cohort keys in that arc, in four groups, and two more when hay
 became a shipment cargo (issue #590):
@@ -696,14 +694,14 @@ became a shipment cargo (issue #590):
 |---|---|
 | `expedition_destination_band` / `expedition_destination_name` | the KEY and its DISPLAY TWIN, the `expedition_target_herd` / `expedition_target_species` rule — the name is resolved at launch and carried, because a party outlives its destination's presence in the viewer's world |
 | `expedition_cargo_food` / `expedition_cargo_materials` | the shipment, the materials reusing `MaterialPayoff` — **never summed**, empty means "no row", the key always present |
-| `expedition_cargo_fodder` / `expedition_trade_fodder_carry_weight` | the THIRD cargo account and its own pack-space lever (issue #590), appended at the END of the cohort table rather than beside their twins because field order is the append-only contract. Hay and food are two keys that NEVER convert — a decoder or readout that adds them has re-minted the retired trade-goods axis. The lever is FINITE AND >= 0, not positive: `0` legitimately means "hay is weightless" |
-| `transfer_received` / `transfer_sent` · `expedition_trade_per_worker_carry` / `expedition_trade_material_carry_weight` | the food-ledger pair, and the two per-cohort numbers the outfit UI prices a manifest with for a party that does not exist yet. **They are not the same KIND of number** (issue #626): the material weight is a config lever echoed verbatim, because what a unit of hide costs in pack space is a property of the GOODS; the carry is the sim's already-RESOLVED answer to *"what does one worker on this shipment carry"*, so a carrier-side model — a cart kit's stat, a tech factor, a road grade — moves the published number and the client's `cap = party_workers × this` needs no edit |
+| `expedition_cargo_fodder` / `carry_fodder_weight` | the THIRD cargo account and its own pack-space lever (issue #590), appended at the END of the cohort table rather than beside their twins because field order is the append-only contract. Hay and food are two keys that NEVER convert — a decoder or readout that adds them has re-minted the retired trade-goods axis. The lever is FINITE AND >= 0, not positive: `0` legitimately means "hay is weightless" |
+| `transfer_received` / `transfer_sent` · `carry_per_worker` / `carry_material_weight` | the food-ledger pair, and the two per-cohort numbers the outfit UI prices a manifest with for a party that does not exist yet. **They are not the same KIND of number** (issue #626): the material weight is a config lever echoed verbatim, because what a unit of hide costs in pack space is a property of the GOODS; the carry is the sim's already-RESOLVED answer to *"what does one worker on this shipment carry"*, so a carrier-side model — a cart kit's stat, a tech factor, a road grade — moves the published number and the client's `cap = party_workers × this` needs no edit |
 | `transfer_received_turn` / `transfer_sent_turn` | the same two facts taken PER TURN, and the pair a readout renders — the accumulating pair above is cleared once the turn's capture reads it, so it is `0` on every command-refreshed frame |
 
 **`expedition_carry_cap` resolves per MISSION, and that is the trap worth naming**: a raid's pack is
 its provisions ceiling, a shipment's is what its people can carry out. They are different numbers on
-different levers, so `expedition_per_worker_carry` (the HUNT lever) must never be used to price a
-shipment — a client doing so is one config edit from quoting a cap the launch command refuses.
+different levers, so a raid's pack lever must never be used to price a shipment — a client doing so is
+one config edit from quoting a cap the launch command refuses.
 
 **`expedition_cargo_materials` is a VECTOR field, so it takes the `material_yield` treatment** rather
 than an appended scalar's: saturation reaches it and the golden re-record is the only step, but a

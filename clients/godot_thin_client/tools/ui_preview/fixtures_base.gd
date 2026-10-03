@@ -40,9 +40,8 @@ const FIXTURE_STOCK_FRACTION := 0.9
 static func fixture_is_herd(src: Dictionary, prefix: String) -> bool:
 	return prefix == "" and src.has("species")
 
-## The FLOOR each retired stance stood for, so a converted raid table lands on the sim's own sampled
-## floors (`snapshot::RAID_FORECAST_FLOOR_SAMPLES` = 0.0, 0.15, 0.30, 0.50, 0.80). Sustain is the food
-## peak; the other three are the successively deeper draws they named.
+## The FLOOR each retired stance stood for. Sustain is the food peak; the other three are the
+## successively deeper draws they named.
 const LEGACY_STANCE_FLOORS := {
 	"sustain": 0.5, "surplus": 0.3, "deplete": 0.15, "eradicate": 0.0,
 }

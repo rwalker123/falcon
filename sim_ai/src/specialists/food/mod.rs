@@ -279,7 +279,9 @@ impl Food {
                 .herds
                 .iter()
                 .filter(|herd| herd.huntable && herd.per_worker_yield > 0.0)
-                .filter(|herd| grid.distance(here, Tile::new(herd.x, herd.y)) <= band.hunt_reach)
+                .filter(|herd| {
+                    grid.distance(here, Tile::new(herd.x, herd.y)) <= memory.hunt_reach(band)
+                })
                 .filter_map(|herd| {
                     let kit = herd_kit_id(view, herd);
                     let units = kit_units_held(view, band, kit)
@@ -305,7 +307,7 @@ impl Food {
             band = band.band_id,
             at = ?here,
             work_range = band.work_range,
-            hunt_reach = band.hunt_reach,
+            hunt_reach = memory.hunt_reach(band),
             hunting_kits_held = kits_held,
             patches_in_frame = view.snapshot.forage_patches.len(),
             visibility_here = view.visibility(here),
@@ -560,7 +562,6 @@ pub(crate) mod tests {
     /// The band stands here; the raster is 8×6, wrapped, everything discovered.
     pub const HERE: Tile = Tile::new(3, 2);
     pub const WORK_RANGE: u32 = 2;
-    pub const HUNT_REACH: u32 = 5;
     pub const NEAR_PATCH: Tile = Tile::new(4, 2);
     pub const RICH_PATCH: Tile = Tile::new(2, 3);
     pub const FAR_PATCH: Tile = Tile::new(7, 5);
@@ -674,7 +675,6 @@ pub(crate) mod tests {
             working_age: 17,
             idle_workers: 17,
             work_range: WORK_RANGE,
-            hunt_reach: HUNT_REACH,
             turns_of_food: 14.0,
             food_income: 0.0,
             food_consumption: CONSUMPTION,

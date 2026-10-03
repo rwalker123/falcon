@@ -486,6 +486,7 @@ fn create_command_events<'a>(
                 label: Some(label),
                 detail,
                 seq: event.seq,
+                band: event.band,
             },
         );
         entries.push(entry);
@@ -702,6 +703,7 @@ fn decode_command_event(event: fb::CommandEventState<'_>) -> CommandEventState {
         label: text(event.label()),
         detail: event.detail().map(str::to_owned),
         seq: event.seq(),
+        band: event.band(),
     }
 }
 

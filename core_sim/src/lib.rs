@@ -16,6 +16,8 @@ pub(crate) const BUILD_ID: &str = match option_env!("CORE_SIM_BUILD_ID") {
 };
 
 mod band_names;
+pub mod belief;
+mod belief_config;
 mod biome_palette;
 pub mod carry;
 pub mod climate;
@@ -115,6 +117,11 @@ pub use band_names::{
     load_band_names_from_env, BandNameCatalog, BandNameCatalogHandle, BandNameCatalogMetadata,
     BandNamesError, BAND_NAME_SALT, BUILTIN_BAND_NAMES,
 };
+pub use belief::{BeliefRegistry, NO_BELIEF};
+pub use belief_config::{
+    load_belief_config_from_env, BeliefConfig, BeliefConfigHandle, BeliefConfigMetadata,
+    BUILTIN_BELIEF_CONFIG,
+};
 pub use carry::{carry_capacity, per_worker_carry, CarryConfig, CarryLoad};
 pub use combat::{
     attacks_landed_at, landed_strikes_seeded, resolve_fight, strike_damage, units_brought_down,
@@ -127,17 +134,16 @@ pub use combat_config::{
     BUILTIN_COMBAT_CONFIG,
 };
 pub use components::{
-    available_workers, floor_is_valid, floor_overdraws, raid_is_recurring, take_overdraws,
-    BandBench, BandEquipment, BandId, BandName, BandTravel, BandWorkforce, BatchGrade, BuildJob,
-    BuildQueueEntry, BuildSource, DeathCause, DemographicFlowAccumulator, DrawnInputs,
-    DrawnMaterial, ElementKind, EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase,
-    FinishedBatch, FoodMix, Improvement, KeepingToolLine, KnowledgeFragment, LaborAllocation,
-    LaborAssignment, LaborTarget, LocalStore, MaterialBatch, MaterialDraw, MoraleCause,
-    PopulationCohort, PowerNode, ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep,
-    ShedSubject, SourcePriority, SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile,
-    TownCenter, TransferCause, TransferCounterparty, TransferCrossing, TransferDirection,
-    TransferLedger, TransferLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD,
-    NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE,
+    available_workers, floor_is_valid, floor_overdraws, take_overdraws, BandBench, BandEquipment,
+    BandId, BandName, BandTravel, BandWorkforce, BatchGrade, BuildJob, BuildQueueEntry,
+    BuildSource, DeathCause, DemographicFlowAccumulator, DrawnInputs, DrawnMaterial, ElementKind,
+    EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase, FinishedBatch, FoodMix,
+    Improvement, KeepingToolLine, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget,
+    LocalStore, MaterialBatch, MaterialDraw, MoraleCause, PopulationCohort, PowerNode,
+    ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep, ShedSubject, SourcePriority,
+    SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile, TownCenter, TransferCause,
+    TransferCounterparty, TransferCrossing, TransferDirection, TransferLedger, TransferLink,
+    YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
 };
 pub use config_fingerprint::{
     current_config_fingerprint, drift_between, ConfigDigest, ConfigFingerprint,
@@ -148,8 +154,8 @@ pub use config_override::{
     ConfigKindSpec, ConfigOverrideError, InstalledOverride,
 };
 pub use connections::{
-    advance_connections, Connection, ConnectionKey, ConnectionLedger, ContactsThisTurn, FULL_TIE,
-    NO_TIE,
+    advance_connections, Connection, ConnectionKey, ConnectionLedger, ContactsThisTurn, Sighting,
+    FULL_TIE, NO_TIE,
 };
 pub use connections_config::{
     load_connections_config_from_env, ConnectionStrengthConfig, ConnectionsConfig,
@@ -449,14 +455,13 @@ pub use systems::{
     advance_band_movement, advance_crafting, advance_expeditions, advance_labor_allocation,
     advance_party_defection, advance_population_migration, advance_predator_raids, advance_tick,
     bench_material_rate, bench_tiers, bill_and_stock_roads, bring_the_dropped_party_home,
-    deliver_bench_output, denial_forecast, expedition_returned_event, expedition_take_provisions,
-    fold_party_into_band, hunt_per_worker_provisions, hunt_report_event, hunt_take,
-    hunt_trip_forecast, output_multiplier, party_owes_a_report, prospective_keep_hands,
-    publish_turn_transfers, settle_bands_roadwork, settle_scarce_tools, simulate_population,
-    simulate_power, source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers,
-    DenialForecast, DenialOutcome, HuntOutcome, HuntTripBound, HuntTripForecast, PartySightings,
-    PoolToolPlan, PowerSimParams, RaidRoll, SplitBand, SplitRefusal, SplitRefusals, ToolClaimStage,
-    TradeDiffusionEvent,
+    deliver_bench_output, denial_forecast, expedition_returned_event, fold_party_into_band,
+    hunt_per_worker_provisions, hunt_report_event, hunt_take, output_multiplier,
+    party_owes_a_report, prospective_keep_hands, publish_turn_transfers, settle_bands_roadwork,
+    settle_scarce_tools, simulate_population, simulate_power, source_has_a_meter_at_risk,
+    split_band_from_parent, split_refusals, BenchTiers, DenialForecast, DenialOutcome, HuntOutcome,
+    PartySightings, PoolToolPlan, PowerSimParams, RaidRoll, SplitBand, SplitRefusal, SplitRefusals,
+    ToolClaimStage, TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,
@@ -617,6 +622,9 @@ pub fn build_headless_app() -> App {
     let (connections_config, connections_metadata) =
         connections_config::load_connections_config_from_env();
     let connections_handle = connections_config::ConnectionsConfigHandle::new(connections_config);
+    // Belief on a place — what each source adds to a tile's stock (`belief::BeliefRegistry`).
+    let (belief_config, belief_metadata) = belief_config::load_belief_config_from_env();
+    let belief_handle = belief_config::BeliefConfigHandle::new(belief_config);
     // The pool a band's name is drawn from. Content rather than tuning, but it loads on the same
     // boot seam as everything else so an operator can point a campaign at a different name list.
     let (band_names_catalog, band_names_metadata) = band_names::load_band_names_from_env();
@@ -813,6 +821,8 @@ pub fn build_headless_app() -> App {
         .insert_resource(visibility_metadata)
         .insert_resource(connections_handle)
         .insert_resource(connections_metadata)
+        .insert_resource(belief_handle)
+        .insert_resource(belief_metadata)
         .insert_resource(materials_handle)
         .insert_resource(extraction_handle)
         .insert_resource(extraction_metadata)
@@ -887,6 +897,9 @@ pub fn build_headless_app() -> App {
         .insert_resource(HerdDensityMap::default())
         .insert_resource(ForageRegistry::default())
         .insert_resource(GrazeRegistry::default())
+        // **Belief on every place** (`docs/plan_civilization_steps.md` §"Belief is a property of a
+        // place"). World state that only ever grows — an abandoned place keeps its dead.
+        .insert_resource(belief::BeliefRegistry::default())
         .insert_resource(command_event_log)
         .insert_resource(FoodSiteRegistry::default())
         .init_resource::<FoodSiteWaterBiasReport>()

@@ -10,7 +10,7 @@ extends Node
 ## band by its durable `BandId`, the client kept sending ECS `entity` bits, and **both are `u64`**.
 ## Nothing failed to compile, nothing failed to parse, nothing failed a test — the server looked up
 ## a band that did not exist and no-op'd. Every band-addressed order (`assign_labor`, `move_band`,
-## `cancel_order`, `send_expedition`, the retired `send_hunt_expedition`, `recall_expedition`) silently stopped
+## `cancel_order`, `send_expedition`, `recall_expedition`) silently stopped
 ## working, and a human found it by playing.
 ##
 ## A grep would not have caught it: `int(band.get("entity", -1))` is perfectly valid GDScript that
@@ -100,7 +100,7 @@ const BAND_ENTITY := 904
 ## The band's durable `PopulationCohortState.bandId`: the ONE handle a command may name.
 const BAND_ID := 71204
 
-## The same pair for a detached hunting party — `recall_expedition` takes its band id too.
+## The same pair for a detached denial party — `recall_expedition` takes its band id too.
 const PARTY_ENTITY := 952
 const PARTY_ID := 71252
 
@@ -120,10 +120,9 @@ const DEPOSIT_MATERIAL := "wood"
 const GRID_W := 80
 const GRID_H := 52
 
-## The band can work a source this far out, and hunt this far out. The quarry sits BEYOND the hunt
-## reach, which is what makes it an expedition's job rather than a local hunt.
+## The band can work a source this far out. The far herd sits BEYOND it, which is what makes its hunt
+## a work party's job.
 const BAND_WORK_RANGE := 2
-const BAND_HUNT_REACH := 3
 const BAND_IDLE_WORKERS := 6
 const BAND_WORKING_AGE := 16
 const BAND_SIZE := 30
@@ -136,13 +135,9 @@ const NEAR_HERD_ID := "game_deer_07"
 const FAR_HERD_ID := "game_boar_04"
 const FAR_HERD_X := 52
 const FAR_HERD_Y := 20
-## One Wild Boar's worth of food — the quantum the raid table is built from.
+## One Wild Boar's worth of food.
 const FOOD_PER_ANIMAL := 4.0
-## The raid table's fixed shape: every party size takes this many animals over this many turns. Flat
-## on purpose — this harness asserts a HANDLE, not a forecast, so the numbers only have to be
-## coherent enough that the compose sheet renders a viable raid with an enabled Send.
-const RAID_ANIMALS := 8
-const RAID_TURNS := 6
+## The band's largest party.
 const RAID_MAX_PARTY := 8
 
 # ---- The SHIPMENT's fixture (arc #527, issue #517) ----------------------------------------------
@@ -440,10 +435,9 @@ func _drive_send_denial_raid() -> void:
 	_hud.notify_targeting_click({"x": FAR_HERD_X, "y": FAR_HERD_Y, "herds": [herd]})
 	await _settle()
 
-## **A HERD PAST THE APRON COMMITS `assign_labor`, NOT `send_hunt_expedition`** — the herd drawer's
-## sheet, pressed on a herd beyond the band's `band_work_range` (`docs/plan_civilization_steps.md` §One
-## work party). That sheet branched into a hunting EXPEDITION here and sent the retired verb; the gate
-## is what proves the far sheet now emits the ordinary hunt line the real parser takes.
+## **A HERD PAST THE APRON COMMITS `assign_labor`** — the herd drawer's sheet, pressed on a herd
+## beyond the band's `band_work_range` (`docs/plan_civilization_steps.md` §One work party). The gate
+## proves the far sheet emits the ordinary hunt line the real parser takes.
 ##
 ## **TWO OPENS**, for the reason the kit drives state: the first is the source change (which drops the
 ## composed kit so the herd's own default stands), the second re-renders so the commit's `pressed`
@@ -1338,7 +1332,6 @@ func _band_fixture() -> Dictionary:
 		"carry_fodder_weight": TRADE_FODDER_CARRY_WEIGHT,
 		"output_multiplier": 1.0,
 		"work_range": BAND_WORK_RANGE,
-		"hunt_reach": BAND_HUNT_REACH,
 		"max_expedition_party_size": RAID_MAX_PARTY,
 		"band_move_tiles_per_turn": 1.0,
 		"hunt_per_worker_provisions": 0.4,
@@ -1378,7 +1371,7 @@ func _connection_fixtures() -> Array:
 func _units(ticks: int) -> float:
 	return float(ticks) / pow(10.0, MAIN_SCRIPT.SIM_SCALAR_DECIMALS)
 
-## A detached hunting party homed on the band above — the `recall_expedition` subject.
+## A detached denial party homed on the band above — the `recall_expedition` subject.
 func _party_fixture() -> Dictionary:
 	return {
 		"id": "Hunters 1",
@@ -1390,17 +1383,16 @@ func _party_fixture() -> Dictionary:
 		"current_y": BAND_Y,
 		"turns_of_food": 8.0,
 		"is_expedition": true,
-		"expedition_mission": "hunt",
+		"expedition_mission": "deny",
 		"expedition_phase": "hunting",
 		"expedition_target_herd": FAR_HERD_ID,
-		"expedition_floor": 0.5,
 		"home_band_entity": BAND_ENTITY,
 	}
 
 func _herd_fixtures() -> Array:
 	return [_near_herd_fixture(), _far_herd_fixture()]
 
-## A herd INSIDE `hunt_reach` — the local-hunt subject the quick-hunt shortcut assigns to.
+## A herd INSIDE the band's apron — the local-hunt subject the quick-hunt shortcut assigns to.
 func _near_herd_fixture() -> Dictionary:
 	return {
 		"id": NEAR_HERD_ID, "species": "Red Deer",
@@ -1413,10 +1405,10 @@ func _near_herd_fixture() -> Dictionary:
 		"biomass": 90.0, "carrying_capacity": 100.0, "provisions_per_biomass": 0.0125,
 	}
 
-## A herd BEYOND `hunt_reach` — so the herd drawer's compose takes its expedition branch and offers
-## an enabled Send, and the Deny verb's pick has a quarry to land on.
+## A herd BEYOND the band's apron — so the herd drawer's compose posts a work party, and the Deny
+## verb's pick has a quarry to land on.
 func _far_herd_fixture() -> Dictionary:
-	var herd := {
+	return {
 		"id": FAR_HERD_ID, "species": "Wild Boar",
 		"x": FAR_HERD_X, "y": FAR_HERD_Y,
 		"population": 140, "ecology_phase": "thriving", "huntable": true,
@@ -1424,30 +1416,6 @@ func _far_herd_fixture() -> Dictionary:
 		"biomass": 90.0, "carrying_capacity": 100.0,
 		"provisions_per_biomass": 0.0075,
 	}
-	herd["hunt_trip_estimates"] = _raid_table()
-	return herd
-
-## A flat raid table — one cell per SAMPLED FLOOR × party size, mirroring the sim's own
-## `RAID_FORECAST_FLOOR_SAMPLES`. Every cell delivers, so the Send button takes its ordinary enabled
-## treatment and the drive is never blocked by a verdict.
-##
-## The row carries `floor` and `party_workers` as FIELDS: the client scans the rows rather than
-## rebuilding the `"<floor>:<party>"` key, because the real key renders the floor with Rust's float
-## Display and a GDScript-side near-miss would find nothing at all — silently.
-func _raid_table() -> Dictionary:
-	var table := {}
-	for floor_value in [0.0, 0.15, 0.30, 0.50, 0.80]:
-		for workers in range(1, RAID_MAX_PARTY + 1):
-			table["%s:%d" % [str(floor_value), workers]] = {
-				"floor": floor_value,
-				"party_workers": workers,
-				"turns_to_fill": RAID_TURNS,
-				"delivers_food": true,
-				"animals_taken": RAID_ANIMALS,
-				"delivered_food": float(RAID_ANIMALS) * FOOD_PER_ANIMAL,
-				"wasted_food": 0.0,
-			}
-	return table
 
 # ---- Plumbing -----------------------------------------------------------------------------------
 

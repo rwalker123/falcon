@@ -311,11 +311,25 @@ pub struct SplitBirth {
     pub target: Tile,
 }
 
+/// **The seat's hunting search radius beyond a band's work range** — `tuning.hunt_search_beyond_work_range`
+/// (`data/ai_profiles.json`). Its default is the shipped lever, so a memory built without a profile
+/// searches as a seat does.
+#[derive(Debug, Clone, Copy)]
+struct HuntSearch(u32);
+
+impl Default for HuntSearch {
+    fn default() -> Self {
+        Self(crate::profile::builtin_tuning().hunt_search_beyond_work_range)
+    }
+}
+
 /// What the frame no longer says (module docs).
 #[derive(Debug, Default)]
 pub struct SeatMemory {
     /// The difficulty's `memory_horizon_turns`; [`NO_MEMORY_DECAY`] never forgets.
     horizon: u64,
+    /// The profile file's `tuning.hunt_search_beyond_work_range` ([`Self::hunt_reach`]).
+    hunt_search: HuntSearch,
     /// The profile's `food.split_settle_turns`: how long a pending split waits for its child.
     split_settle_turns: u32,
     /// The profile's `food.dead_row_turns`: the window a patch row is judged over
@@ -375,6 +389,20 @@ impl SeatMemory {
             patch_window_turns,
             ..Default::default()
         }
+    }
+
+    /// The memory searching `tiles` beyond each band's work range for herds — the profile file's
+    /// `tuning.hunt_search_beyond_work_range`.
+    pub fn with_hunt_search(mut self, tiles: u32) -> Self {
+        self.hunt_search = HuntSearch(tiles);
+        self
+    }
+
+    /// **How far from `band` a herd is one this seat hunts**: its work range plus the seat's own
+    /// search radius beyond it. The seat's horizon, not a sim rule — past the work range the sim
+    /// posts a work party that follows the herd anywhere.
+    pub fn hunt_reach(&self, band: &PopulationCohortState) -> u32 {
+        band.work_range + self.hunt_search.0
     }
 
     /// Fold one frame in: sightings, arrivals at move targets, the children of accepted splits,
@@ -511,7 +539,7 @@ impl SeatMemory {
     }
 
     /// **Ask the oracle for the crew-take curve of every herd an own band could hunt**, within
-    /// the tick's budget. A herd within `hunt_reach` of a band is due a question when the band
+    /// the tick's budget. A herd within [`Self::hunt_reach`] of a band is due a question when the band
     /// has no curve for it, when its key ([`CrewTakeKey`]: the kit, the band's attack under it,
     /// the units held, the biomass bucket) has changed, or when the one it has is
     /// [`CREW_TAKE_REFRESH_TURNS`] old. The herds never asked about come first, then the nearest;
@@ -538,7 +566,7 @@ impl SeatMemory {
                 .filter(|herd| herd.huntable && herd.food_per_animal > 0.0)
             {
                 let distance = grid.distance(band_tile(band), Tile::new(herd.x, herd.y));
-                if distance > band.hunt_reach {
+                if distance > self.hunt_reach(band) {
                     continue;
                 }
                 let key = crew_take_key(view, band, herd);
@@ -1938,7 +1966,6 @@ mod tests {
             current_x: 4,
             current_y: 4,
             working_age: 12,
-            hunt_reach: 3,
             ..Default::default()
         });
         let herd = |id: &str, x: u32, biomass: f32| HerdTelemetryState {

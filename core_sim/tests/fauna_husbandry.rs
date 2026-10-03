@@ -105,6 +105,11 @@ fn spawn_world() -> App {
     // first turn a crew stands on it, so a harness with no `extract` row has none.
     app.world
         .insert_resource(core_sim::extraction::DepositRegistry::default());
+    // Belief on a place — a hunt or a raid credits its dead to the tile the band stands on.
+    app.world
+        .insert_resource(core_sim::BeliefRegistry::default());
+    app.world
+        .insert_resource(core_sim::BeliefConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.run_system_once(spawn_initial_herds);
     app
@@ -5054,10 +5059,15 @@ fn animal_keeper_supply(keepers: u32) -> f32 {
     core_sim::pool_work_supply(keepers, per_worker)
 }
 
-/// **A SECOND HERD THE SAME BAND CAN WORK** — inside `band_work_range + hunt_leash_tiles` of
-/// `near`, and tameable, so it can stand as the band's real pastoral holding beside a blocked head.
+/// **How far from the anchor herd the second one may stand.** A band works a herd at any distance —
+/// past its apron the row posts a work party — so this is only the fixture's search radius: close
+/// enough that the two herds are plausibly one band's holdings.
+const SECOND_HERD_SEARCH_TILES: u32 = 5;
+
+/// **A SECOND HERD THE SAME BAND CAN WORK** — within [`SECOND_HERD_SEARCH_TILES`] of `near`, and
+/// tameable, so it can stand as the band's real pastoral holding beside a blocked head.
 fn second_tameable_herd_in_reach(app: &App, near: &str) -> String {
-    let reach = app.world.resource::<LaborConfigHandle>().get().hunt_reach();
+    let reach = SECOND_HERD_SEARCH_TILES;
     let sim = app.world.resource::<SimulationConfig>();
     let (width, wrap) = (sim.grid_size.x, sim.map_topology.wrap_horizontal);
     let registry = app.world.resource::<HerdRegistry>();

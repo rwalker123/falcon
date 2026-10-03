@@ -356,7 +356,6 @@ func _gather_band(take_species: Array, workers: int) -> Dictionary:
 		"working_age": 12,
 		"idle_workers": 6,
 		"work_range": 3,
-		"hunt_reach": 6,
 		"scout_reveal_radius": 2,
 		"activity": "forage",
 		"food_income": 0.4,

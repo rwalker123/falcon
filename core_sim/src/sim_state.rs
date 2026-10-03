@@ -51,6 +51,7 @@ use bevy::utils::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    belief::BeliefRegistry,
     components::{
         BandBench, BandEquipment, BandId, BandName, BandTravel, DemographicFlowAccumulator,
         Expedition, LaborAllocation, PopulationCohort, PowerNode, ResidentBand, Settlement,
@@ -227,6 +228,11 @@ pub struct SimState {
     pub deposits: DepositRegistry,
     pub forage: ForageRegistry,
     pub graze: GrazeRegistry,
+    /// Belief on every place. **State, not derived**, for the road's reason: belief is in the
+    /// ground and outlives the bands whose dead put it there, and it only ever grows — so there is
+    /// nothing to rebuild it **from**. A checkpoint that dropped it would restore a world whose
+    /// places had never buried anyone.
+    pub belief: BeliefRegistry,
     pub great_discoveries: GreatDiscoveryLedger,
     pub great_discovery_readiness: GreatDiscoveryReadiness,
     pub great_discovery_telemetry: GreatDiscoveryTelemetry,
@@ -435,6 +441,7 @@ pub fn capture_sim_state(world: &World) -> SimState {
         deposits: world.resource::<DepositRegistry>().clone(),
         forage: world.resource::<ForageRegistry>().clone(),
         graze: world.resource::<GrazeRegistry>().clone(),
+        belief: world.resource::<BeliefRegistry>().clone(),
         great_discoveries: world.resource::<GreatDiscoveryLedger>().clone(),
         great_discovery_readiness: world.resource::<GreatDiscoveryReadiness>().clone(),
         great_discovery_telemetry: world.resource::<GreatDiscoveryTelemetry>().clone(),
@@ -634,6 +641,7 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     world.insert_resource(state.deposits.clone());
     world.insert_resource(state.forage.clone());
     world.insert_resource(state.graze.clone());
+    world.insert_resource(state.belief.clone());
     world.insert_resource(state.great_discoveries.clone());
     world.insert_resource(state.great_discovery_readiness.clone());
     world.insert_resource(state.great_discovery_telemetry.clone());

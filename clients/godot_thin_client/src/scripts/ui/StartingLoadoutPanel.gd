@@ -30,8 +30,9 @@ class_name StartingLoadoutPanel
 ## back through its own reopen pill and through the turn orb's row. `End Turn` is untouched.
 ##
 ## **`open` IS NOT A SUCCESS SIGNAL.** An apply is a REPLACEMENT, so an accepted order leaves the
-## window open and a refusal is not visible on this card at all. `StartingLoadoutController`'s ⛔
-## block is the contract — nothing here may infer an outcome from `open`.
+## window open. A refusal reaches the card as an event row the controller reads and hands down as
+## `PAYLOAD_REFUSAL`; `StartingLoadoutController`'s ⛔ blocks are the contract — nothing here may infer
+## an outcome from `open`.
 ##
 ## **THIS IS THE FREE-FLOATING CASE, hence `AutoSizingPanel`**
 ## (`.claude/rules/client/panel-framework.md`): the card is measured against the ROOM — the viewport
@@ -98,6 +99,9 @@ const PAYLOAD_RECIPES := "recipes"
 ## weighs, the window's `carry_capacity`, and the kits' share of `spent` (the bar's kit segment; each
 ## material row carries its own `load`). It replaced the kit meter and the material meter.
 const PAYLOAD_CARRY := "carry"
+## The line saying this band's last order was REFUSED, already composed — or `""`, which draws nothing.
+## The controller owns when it shows and when it clears; the panel only puts it under the band's head.
+const PAYLOAD_REFUSAL := "refusal"
 const BUDGET_SPENT := "spent"
 const BUDGET_TOTAL := "total"
 const CARRY_KIT_LOAD := "kit_load"
@@ -120,8 +124,6 @@ var _header: VBoxContainer = null
 var _columns: HBoxContainer = null
 var _footer: HBoxContainer = null
 var _fit_pending: bool = false
-## A refit asked for while one was in flight — honoured by one re-run when it finishes.
-var _fit_requested: bool = false
 
 ## The last payload rendered, so a re-fit after a room change has something to measure.
 var _payload: Dictionary = {}
@@ -295,42 +297,25 @@ func reopen_pill() -> Button:
 ##
 ## `_fit_pending` spans BOTH frames, so a re-entrant `refit()` cannot interleave halves; every exit
 ## path clears it.
-##
-## ⛔ **A REFIT ASKED FOR WHILE ONE IS IN FLIGHT IS DEFERRED, NEVER DISCARDED** — `_fit_requested`, and
-## one coalesced re-run when the running fit finishes (`ComposeSheet`'s and `WorkInspectorDialog`'s
-## rule). A render landing between the in-flight fit's width pass and its height read rebuilds the
-## header under it; the fit then sizes the card to the previous content and, with the re-render's own
-## refit dropped, nothing ever measures the new one. A split's food lines make the header of one
-## band's card two lines taller than another's, so a switch between them is that render — measured as
-## 42px of dead space under the columns until the next unrelated re-render.
 func refit() -> void:
-	if not visible or _body == null:
-		return
-	if _fit_pending:
-		_fit_requested = true
+	if not visible or _fit_pending or _body == null:
 		return
 	_fit_pending = true
-	await _run_fit()
-	while _fit_requested and visible and _body != null:
-		await _run_fit()
-	_fit_requested = false
-	_fit_pending = false
-
-## One two-frame fit. The caller holds `_fit_pending` across it.
-func _run_fit() -> void:
-	_fit_requested = false
 	await get_tree().process_frame
 	if not visible or _body == null:
+		_fit_pending = false
 		return
 	if _fit_collapsed():
+		_fit_pending = false
 		return
 	_fit_expanded_width()
 	await get_tree().process_frame
+	_fit_pending = false
 	if not visible or _body == null:
 		return
 	# **RE-CHECKED, because the card can be dismissed BETWEEN the two frames** — the collapse's own
-	# `refit()` was deferred behind this one, so this is the call that has to notice first. Without it
-	# the pill would be left wearing a 900px panel, which is the state the collapsed branch exists to
+	# `refit()` was dropped by `_fit_pending`, so this is the call that has to notice. Without it the
+	# pill would be left wearing a 900px panel, which is the state the collapsed branch exists to
 	# prevent.
 	if _fit_collapsed():
 		return
@@ -373,6 +358,18 @@ func _fit_expanded_height() -> void:
 	max_height = room.size.y
 	fit_to_content(_body.get_combined_minimum_size().y + _chrome_height(),
 		HudStyle.card_stylebox().get_minimum_size().y, _scroll)
+	# ⛔ **RE-SORT THE CARD, OR ITS COLUMN KEEPS A HEIGHT FROM A FRAME THAT NO LONGER EXISTS.** A render
+	# rebuilds every autowrapping label, and on the frame they are mounted they report their minimum
+	# height at a width of nothing — measured, the header asks 712px where it settles at 199 and the
+	# body 1083 where it settles at 556. If the card sorts on that frame it hands its column that
+	# inflated height (1857px in an 839px card). When the labels settle the column's minimum falls
+	# back, but the card is not re-sorted: its own size has not changed, so no resize reaches it, and a
+	# shrinking child minimum does not do it either. The column keeps 1857px, the scroll's expand flag
+	# takes the excess (1596px) and the footer is laid out past the card's bottom edge, for good. It
+	# happens when a render lands on the very frame the previous fit finished — the press-settle-press
+	# cadence of a player clicking a stepper. The height read here is the settled one, so this is the
+	# point to have the card lay its column out against it.
+	_card.queue_sort()
 	_place()
 
 # ---- header -----------------------------------------------------------------
@@ -407,6 +404,7 @@ func _build_header() -> void:
 	_header.add_child(_carry_meter(_payload.get(PAYLOAD_CARRY, {}),
 		_payload.get(PAYLOAD_MATERIALS, [])))
 	_build_food_lines(_payload.get(PAYLOAD_FOOD, {}))
+	_build_refusal_line()
 
 ## The food a split brings, under the meter. Nothing at all on a window that brings none.
 func _build_food_lines(food: Dictionary) -> void:
@@ -424,6 +422,23 @@ func _build_food_lines(food: Dictionary) -> void:
 			HudLoadoutVocab.BUDGET_FONT_SIZE)
 		hint.set_meta(HudLoadoutVocab.FOOD_HINT_META, true)
 		_header.add_child(hint)
+
+## **THE SIM REFUSED THIS BAND'S LAST ORDER, AND THE CARD SAYS SO** — the last thing in the head, so it
+## sits directly above the columns whose picks it has just reset. Drawn in warning ink.
+##
+## ⛔ **TWO LINES AT MOST.** The reason is the sim's own sentence and its length is not this card's to
+## choose, so a longer one is ellipsized on its second line and carried WHOLE on the tooltip — the
+## text is truncated, never lost.
+func _build_refusal_line() -> void:
+	var text := String(_payload.get(PAYLOAD_REFUSAL, ""))
+	if text.is_empty():
+		return
+	var line := _caption(text, HudStyle.WARN, HudLoadoutVocab.REFUSAL_FONT_SIZE, true)
+	line.max_lines_visible = HudLoadoutVocab.REFUSAL_MAX_LINES
+	line.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	line.set_meta(HudLoadoutVocab.REFUSAL_LINE_META, true)
+	HudWidgets.set_label_tooltip(line, text)
+	_header.add_child(line)
 
 ## **THE SWITCHER — one of the two ways to a second band's card**, the other being that band's own turn
 ## orb row, which carries its subject and opens on it

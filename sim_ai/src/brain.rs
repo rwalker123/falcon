@@ -29,7 +29,7 @@ use crate::instruments::scoreboard::{COMMAND_FAILED_LABEL_SUFFIX, EVENT_TICK_LAG
 use crate::oracle::{CrewTakeOracle, Unasked};
 use crate::orchestrator::constant::ConstantStance;
 use crate::orchestrator::{Alarm, Orchestrator, Plan, INTENT_OUTFIT, ORCHESTRATOR_ID};
-use crate::profile::{AiProfile, AiProfiles, Difficulty, ProfileError};
+use crate::profile::{AiProfile, AiProfiles, Difficulty, ProfileError, Tuning};
 use crate::specialists::food::Food;
 use crate::specialists::land::Land;
 use crate::specialists::scripted::{ScriptError, Scripted};
@@ -149,6 +149,7 @@ impl Composite {
         faction: u32,
         profile: AiProfile,
         difficulty: Difficulty,
+        tuning: &Tuning,
         orchestrator: Option<Box<dyn Orchestrator>>,
         specialists: Vec<Box<dyn Specialist>>,
         arbiter: Arbiter,
@@ -157,7 +158,8 @@ impl Composite {
             difficulty.memory_horizon_turns,
             profile.food.split_settle_turns,
             profile.food.dead_row_turns,
-        );
+        )
+        .with_hunt_search(tuning.hunt_search_beyond_work_range);
         Self {
             faction,
             profile,
@@ -460,6 +462,7 @@ impl ScriptedBrain {
             faction,
             profile,
             difficulty,
+            &profiles.tuning,
             None,
             vec![Box::new(scripted)],
             Arbiter::PassThrough,
@@ -519,6 +522,7 @@ impl UtilityBrain {
             faction,
             profile,
             difficulty,
+            &profiles.tuning,
             Some(Box::new(orchestrator)),
             specialists,
             Arbiter::Weighing,

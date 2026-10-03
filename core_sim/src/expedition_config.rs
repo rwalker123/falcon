@@ -57,9 +57,11 @@ pub struct ExpeditionConfig {
     /// this`.
     pub provision_draw_per_worker_per_tile: f32,
     /// Provisions the party consumes per turn = `party × this`. Non-fatal at zero in v1
-    /// (deterministic success). Scouts only — a hunting party lives off its own kills.
+    /// (deterministic success). Scouts and shipments only — a raiding party lives off its own kills.
     pub provision_upkeep_per_worker: f32,
-    /// Hunting-expedition (PR 2) tuning — how a party follows a herd, harvests, and delivers.
+    /// Raiding-party tuning — the pack a denial raid hauls home in, how close it must stand to its
+    /// herd, and how far its forecast looks. The block keeps its `hunt` name: it is the hunt *job's*
+    /// party, whichever mission sends it.
     pub hunt: HuntExpeditionConfig,
     /// **THE pack** — what one person carries and what each kind of good weighs in it, for every
     /// carrier: a band split, a long move, a trade shipment ([`crate::carry`]).
@@ -74,49 +76,21 @@ pub struct ExpeditionConfig {
     pub defection: DefectionConfig,
 }
 
-/// Hunting-expedition levers (`docs/plan_exploration_and_sites.md` §2b). A hunt party follows a
-/// migratory herd and takes the herd's **standing surplus above the floor its mission names** as
-/// fast as its own throughput (`workers × per_worker_biomass_capacity`) can carry it — one
-/// expression, `fauna::hunt_escapement_ceiling`, the same constant-escapement rule a resident band's
-/// Hunt arm resolves (`docs/plan_harvest_floor.md` §1). What still separates the two is *pace*, not
-/// shape: a raid works one herd with its whole party until the surplus is gone, a resident band a
-/// turn at a time. It accumulates food up to a carry cap and delivers it.
-///
-/// **The take axis is a FLOOR, an `f32` on `ExpeditionMission::Hunt` chosen at launch** — not a
-/// policy, and not tunable here. The per-policy split this doc once described (a Sustain *flow*
-/// ceiling against the depleting stances' *stock* headroom) went with the stances; `hunt_expedition_
-/// ceiling` and `hunt_expedition_floor` no longer exist.
+/// Raiding-party levers — the detached party a denial raid sends (`docs/plan_denial_raid.md`). The
+/// party follows its herd, works it, and carries home what fits in its pack. A far *hunt* is not an
+/// expedition at all: it is a work party (`crate::work_party`), tuned in `labor_config.json`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct HuntExpeditionConfig {
-    /// Carry cap = `party_workers × this` (provisions). Tuned so a party fills a cap in ~4–6 active
-    /// turns at the productive take rate (`party × per_worker_biomass_capacity × provisions_per_biomass`).
+    /// Carry cap = `party_workers × this` (provisions) — a **carry** bound on what a raid hauls
+    /// home, never a stop: a denial party keeps engaging with a full pack.
     pub per_worker_carry: f32,
     /// How close (hex distance) the party must be to the herd to take food this turn.
     pub reach_tiles: u32,
-    /// When the herd's circuit brings it within this hex distance of the home band, the party may
-    /// flip to deliver early — but only with a worthwhile load (see `min_deliver_fraction`).
-    pub drop_off_within_tiles: u32,
-    /// Early-delivery gate: with the herd near the band (`drop_off_within_tiles`), only flip to
-    /// deliver once `carried ≥ this × cap` (default 0.5) — fixes the empty-larder flip-flop.
-    pub min_deliver_fraction: f32,
-    /// Viability threshold for the **launch forecast** (`hunt_trip_forecast`): a trip whose
-    /// estimated turns-to-fill exceeds this is flagged NOT VIABLE in the `ExpeditionSent` feed line
-    /// (it still launches — the player's call). Default **20** = 4× the throughput-implied trip
-    /// length, where that length is `per_worker_carry / (per_worker_biomass_capacity ×
-    /// provisions_per_biomass)` = `4.0 / (40 × 0.02)` = 5 turns — the turns any floor needs to fill
-    /// a pack at *full* hunter throughput. Beyond 4× that, the herd's sustainable yield (not the
-    /// hunters) is the binding constraint by a wide margin, and the trip is a trap. **That 4× was
-    /// calibrated at the meat rate of `0.02`**; at `0.06` the throughput trip is `4.0 / (40 × 0.06)`
-    /// ≈ 1.7 turns, so the shipped `20` now sits at ~12× it.
-    pub viability_warn_turns: u32,
-    /// How far forward the launch forecast (`hunt_trip_forecast`) simulates the trip before giving
-    /// up and reporting "won't fill". Default **60**. Two reasons for a bound:
-    /// - *Information*: `viability_warn_turns` is 20, so a trip past ~3× that is emphatically not
-    ///   viable and the exact turn count carries no information a player can act on — "won't fill"
-    ///   says everything.
-    /// - *Cost*: the forecast is exported per herd × **sampled floor** × party size every snapshot
-    ///   (the floor is continuous, so the wire carries `RAID_FORECAST_FLOOR_SAMPLES` of it), so the
-    ///   horizon bounds the per-snapshot work (`samples × max_party_size × this` turn-steps/herd).
+    /// How far forward the denial forecast (`denial_forecast`) simulates the raid before giving up
+    /// and reporting `horizon` (or `repelled`). Default **60**. It bounds query time — each
+    /// projection costs `3 × this` turn-steps — and past it the exact turn count carries no
+    /// information a player can act on. **Echoed onto every cohort** as
+    /// `expeditionForecastHorizonTurns`, the scale the forecast's `0` sentinels are relative to.
     pub forecast_horizon_turns: u32,
 }
 
@@ -172,15 +146,10 @@ pub struct DefectionConfig {
 
 /// The smallest meaningful value for a **counted** lever (turns or tiles). At `0` the behaviour the
 /// lever gates does not run *at all* rather than running weakly: a `0` forecast horizon simulates
-/// **zero** turns (so every trip reports "won't fill" and the client disables every send button), a
+/// **zero** turns (so every raid reports a verdict it never ran), a
 /// `0` reach can never be satisfied against a roaming herd, a `0` `low_turns` never triggers a
 /// replenish. That is a silently disabled feature, not a tuning — so these levers are bounded here.
 const MIN_COUNTED_LEVER: u32 = 1;
-
-/// Upper bound for a lever expressed as a **fraction** of something (today only
-/// `hunt.min_deliver_fraction`, a fraction of the carry cap): a gate above a full pack could never
-/// open.
-const MAX_FRACTION: f32 = 1.0;
 
 impl ExpeditionConfig {
     pub fn builtin() -> Arc<Self> {
@@ -211,9 +180,8 @@ impl ExpeditionConfig {
     ///
     /// Deliberately **unbounded** (they have coherent meanings at their extremes, so bounding them
     /// would be inventing policy): `comm_range_tiles` (`0` = "the party must physically walk back
-    /// into camp to report"), `hunt.drop_off_within_tiles` (`0` = no early drop-off; a full pack
-    /// still delivers), and the upper end of `hunt.forecast_horizon_turns` (it costs query time, on
-    /// demand, which is an operator's call rather than an invariant).
+    /// into camp to report") and the upper end of `hunt.forecast_horizon_turns` (it costs query
+    /// time, on demand, which is an operator's call rather than an invariant).
     pub fn validate(&self) -> Result<(), ExpeditionConfigError> {
         // Negative/NaN would saturate to `0` in `effective_comm_range`'s `as u32` cast, silently
         // zeroing the comm range whatever `comm_range_tiles` says.
@@ -235,38 +203,18 @@ impl ExpeditionConfig {
             self.provision_upkeep_per_worker,
         )?;
 
-        // Carry cap = `party × per_worker_carry`. At `0` the pack is full the instant it is empty:
-        // every trip "completes" immediately with nothing aboard.
+        // Carry cap = `party × per_worker_carry`. At `0` a raid can haul nothing home: every
+        // carcass is waste, and an edible quarry's raid banks no food at all.
         require_positive_finite("hunt.per_worker_carry", self.hunt.per_worker_carry)?;
         // The take *and* the trip-completion decision both live inside the reach guard; `0` demands
         // the party stand on the herd's exact tile, which a roaming herd may never allow.
         require_at_least("hunt.reach_tiles", self.hunt.reach_tiles, MIN_COUNTED_LEVER)?;
-        // The early-delivery gate. At `0` the party delivers an empty pack (the flip-flop bug this
-        // lever exists to fix); above a full pack it could never open.
-        require_fraction("hunt.min_deliver_fraction", self.hunt.min_deliver_fraction)?;
-        // A `0` threshold flags every trip NOT VIABLE, making the signal meaningless.
-        require_at_least(
-            "hunt.viability_warn_turns",
-            self.hunt.viability_warn_turns,
-            MIN_COUNTED_LEVER,
-        )?;
-        // **The bug this validator was written for.** `simulate_hunt_trip` loops `1..=horizon`, so a
-        // `0` horizon simulates zero turns: every herd × sampled floor × party size reports `turns_to_fill =
-        // None` + `first_turn_provisions = 0`, the launch feed says "the party will return empty" for
-        // every trip, and the client's `_hunt_trip_impossible` gate disables every send button.
-        // Hunting expeditions cease to exist, silently.
+        // **The bug this validator was written for.** The forecast loops `1..=horizon`, so a `0`
+        // horizon simulates zero turns and every raid reports a verdict it never ran.
         require_at_least(
             "hunt.forecast_horizon_turns",
             self.hunt.forecast_horizon_turns,
             MIN_COUNTED_LEVER,
-        )?;
-        // Cross-field: a horizon shorter than the viability threshold is incoherent — a trip the
-        // player would be told is viable (`turns_to_fill <= viability_warn_turns`) could not even be
-        // *discovered* before the simulation gives up and reports "won't fill".
-        require_at_least(
-            "hunt.forecast_horizon_turns",
-            self.hunt.forecast_horizon_turns,
-            self.hunt.viability_warn_turns,
         )?;
 
         // THE pack = `workers × per_worker_carry`. At `0` nobody can carry anything — every split takes
@@ -354,17 +302,6 @@ fn require_non_negative_finite(
         return Err(ExpeditionConfigError::Invalid {
             field,
             constraint: "be finite and at least 0".to_string(),
-            value: value.to_string(),
-        });
-    }
-    Ok(())
-}
-
-fn require_fraction(field: &'static str, value: f32) -> Result<(), ExpeditionConfigError> {
-    if !value.is_finite() || value <= 0.0 || value > MAX_FRACTION {
-        return Err(ExpeditionConfigError::Invalid {
-            field,
-            constraint: format!("be finite and in (0, {MAX_FRACTION}]"),
             value: value.to_string(),
         });
     }
@@ -493,16 +430,9 @@ mod tests {
         assert!(config.provision_upkeep_per_worker > 0.0);
         assert!(config.hunt.per_worker_carry > 0.0);
         assert!(config.hunt.reach_tiles >= 1);
-        // Min-deliver gate in (0, 1]; the viability warning needs at least one turn to warn about.
-        assert!(config.hunt.min_deliver_fraction > 0.0 && config.hunt.min_deliver_fraction <= 1.0);
-        assert!(config.hunt.viability_warn_turns >= 1);
-        // The forecast horizon must simulate at least one turn — at `0`, `simulate_hunt_trip`'s
-        // `1..=horizon` loop runs zero times and EVERY trip reports "won't fill" (the sibling
-        // assertion this file was missing).
+        // The forecast horizon must simulate at least one turn — at `0` the forecast's
+        // `1..=horizon` loop runs zero times and EVERY raid reports a verdict it never ran.
         assert!(config.hunt.forecast_horizon_turns >= 1);
-        // ...and it must reach at least as far as the viability threshold, or a "viable" trip could
-        // never be discovered before the simulation gives up.
-        assert!(config.hunt.forecast_horizon_turns >= config.hunt.viability_warn_turns);
         assert!(config.replenish.low_turns >= 1);
         assert!(config.replenish.reach_tiles >= 1);
         // A floor of `0` would refuse nothing, so the gate must ship above it.
@@ -528,10 +458,8 @@ mod tests {
     }
 
     /// **The regression this validator exists for.** A `0` forecast horizon used to be accepted
-    /// silently and killed every hunting expedition on the map (zero simulated turns → `turns_to_fill
-    /// = None` for every herd × sampled floor × party size → the client disables every send button).
-    /// It must
-    /// now be *rejected*, not merely "not shipped".
+    /// silently and blanked every raid forecast (zero simulated turns). It must now be *rejected*,
+    /// not merely "not shipped".
     #[test]
     fn zero_forecast_horizon_is_rejected() {
         let mut config = valid_config();
@@ -559,16 +487,6 @@ mod tests {
         }
     }
 
-    /// A horizon shorter than the viability threshold is incoherent: every trip the player would be
-    /// told is viable lies beyond the point the simulation stops looking.
-    #[test]
-    fn forecast_horizon_shorter_than_the_viability_threshold_is_rejected() {
-        let mut config = valid_config();
-        config.hunt.viability_warn_turns = 20;
-        config.hunt.forecast_horizon_turns = 19;
-        assert_rejects(config, "hunt.forecast_horizon_turns");
-    }
-
     /// One rejection case: the field the error must blame, and the mutation that breaks it.
     type RejectionCase = (&'static str, fn(&mut ExpeditionConfig));
 
@@ -594,23 +512,10 @@ mod tests {
             ("provision_upkeep_per_worker", |c| {
                 c.provision_upkeep_per_worker = -1.0
             }),
-            // Carry cap 0 → the pack is "full" the instant it is empty; every trip returns nothing.
+            // Carry cap 0 → a raid hauls nothing home; every carcass is waste.
             ("hunt.per_worker_carry", |c| c.hunt.per_worker_carry = 0.0),
             // Reach 0 → the party must stand on a roaming herd's exact tile to ever take or finish.
             ("hunt.reach_tiles", |c| c.hunt.reach_tiles = 0),
-            // 0 → deliver an empty pack (the flip-flop bug); > 1 → the gate can never open.
-            ("hunt.min_deliver_fraction", |c| {
-                c.hunt.min_deliver_fraction = 0.0
-            }),
-            ("hunt.min_deliver_fraction", |c| {
-                c.hunt.min_deliver_fraction = 1.5
-            }),
-            // 0 → every trip is flagged NOT VIABLE, so the signal carries nothing.
-            ("hunt.viability_warn_turns", |c| {
-                c.hunt.viability_warn_turns = 0
-            }),
-            // 0 → the herd's own requirement is never sampled, so the sheet opens on whichever
-            // ladder rung sits above it rather than on the party that works.
             // 0 → a scout never tops up / must stand on the herd's exact tile.
             ("replenish.low_turns", |c| c.replenish.low_turns = 0),
             ("replenish.reach_tiles", |c| c.replenish.reach_tiles = 0),
@@ -653,8 +558,6 @@ mod tests {
         let mut config = valid_config();
         // "The party must physically walk back into camp to report."
         config.comm_range_tiles = 0;
-        // No early drop-off; a full pack still delivers.
-        config.hunt.drop_off_within_tiles = 0;
         // Free launches, no upkeep (v1 ships deterministic success).
         config.provision_draw_per_worker_per_tile = 0.0;
         config.provision_upkeep_per_worker = 0.0;

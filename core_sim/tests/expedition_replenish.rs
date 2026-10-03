@@ -55,7 +55,7 @@ const INEDIBLE_SPECIES: &str = "Grey Wolf Pack";
 const TOP_UP_GAP: f32 = 0.05;
 
 /// A world with terrain, herds, patches and every config `advance_expeditions` reads — the same
-/// shape `expedition_hunt.rs` builds, kept local because these fixtures seed the plant web too.
+/// shape `raiding_party.rs` builds, kept local because these fixtures seed the plant web too.
 fn spawn_world() -> App {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
@@ -117,6 +117,11 @@ fn spawn_world() -> App {
     // first turn a crew stands on it, so a harness with no `extract` row has none.
     app.world
         .insert_resource(core_sim::extraction::DepositRegistry::default());
+    // Belief on a place — a hunt or a raid credits its dead to the tile the band stands on.
+    app.world
+        .insert_resource(core_sim::BeliefRegistry::default());
+    app.world
+        .insert_resource(core_sim::BeliefConfigHandle::default());
     app.world.insert_resource(ExpeditionConfigHandle::default());
     app.world
         .insert_resource(VisibilityConfigHandle::new(VisibilityConfig::builtin()));

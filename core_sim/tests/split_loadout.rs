@@ -1834,3 +1834,163 @@ fn a_revision_trades_food_for_goods_in_both_directions() {
         Err(LoadoutRejection::OverCarry { .. }) | Err(LoadoutRejection::ParentCannotSupply { .. })
     ));
 }
+
+// -------------------------------------------------------------------------------------------
+// When a fit has to cut, it cuts MATERIALS before TOOLS (#732 follow-up 3)
+// -------------------------------------------------------------------------------------------
+
+/// The workers the over-carry take below sends off. Six hands carry 48 at the shipped pack — room
+/// for the proportional kit share of a 24-worker parent in its default outfit, with room left for
+/// materials.
+const OVER_CARRY_ASKED: u32 = 6;
+
+/// A material heap far bigger than any splinter can carry: a quarter of it is 600 units against a
+/// 48-load pack, so the proportional default is over the carry by the materials alone.
+const MATERIAL_HEAP: f32 = 2_400.0;
+
+/// **A turn-two take off a parent holding its default outfit, an empty larder and `hide_units` of
+/// hide**, split `OVER_CARRY_ASKED` off. Returns the app and the splinter's id.
+fn a_take_with_a_material_heap(hide_units: f32) -> (App, BandId) {
+    let mut app = world_on_the_build_turn();
+    run_turn(&mut app);
+    let (parent, _) = home_band(&mut app);
+    set_workers(&mut app, parent, CHAIN_WORKERS);
+    // The parent keeps the default outfit it was created holding — not the restocked fixture
+    // roster, whose kit share alone nearly fills a splinter's packs and leaves no room to show where
+    // the materials go. The subject is what the GOODS budget is spent on, so the food tier is
+    // emptied out of it.
+    empty_the_larder(&mut app, parent);
+    let table = app
+        .world
+        .resource::<core_sim::MaterialsConfigHandle>()
+        .get();
+    let readings: BTreeMap<String, f32> = table
+        .material(BANKED_MATERIAL)
+        .expect("the roster carries the banked material")
+        .characteristics
+        .iter()
+        .map(|axis| (axis.clone(), core_sim::OPENING_MATERIAL_READING))
+        .collect();
+    let key = table
+        .band_key(BANKED_MATERIAL, &readings)
+        .expect("the opening reading resolves to a band");
+    {
+        let mut cohort = app
+            .world
+            .get_mut::<PopulationCohort>(parent)
+            .expect("the band keeps a cohort");
+        cohort.stores.clear_materials();
+        cohort.stores.deposit_material(
+            BANKED_MATERIAL,
+            key,
+            Scalar::from_f32(hide_units),
+            &readings,
+        );
+    }
+    let split = split_band_from_parent(
+        &mut app.world,
+        parent,
+        OVER_CARRY_ASKED,
+        &permissive_settle(),
+    )
+    .expect("the split is admitted");
+    (app, split.band)
+}
+
+/// ⛔ **A TAKE WHOSE PROPORTIONAL DEFAULT IS OVER THE CARRY KEEPS EVERY KIT ROW WHOLE AND CUTS THE
+/// MATERIALS.**
+///
+/// The seed-37 shape: a turn-five splinter's proportional default (kits + fibre 14 + hide 9) was
+/// heavier than its packs, the uniform scale shrank its three baskets to nothing while the fibre
+/// barely moved, and the band foraged at half the rate of the same crew with baskets. Tools feed a
+/// band; materials can be gathered again. The control is the same split with no material at all —
+/// its kits are what the share gives when nothing competes for the packs.
+#[test]
+fn a_take_over_its_carry_keeps_its_kits_whole_and_cuts_the_materials() {
+    let (mut control, control_band) = a_take_with_a_material_heap(0.0);
+    let control_window = published_window(&mut control, control_band);
+    let cap = carry_capacity(OVER_CARRY_ASKED, &carry_cfg(&control));
+    assert!(
+        !control_window.kits.is_empty(),
+        "**LIVENESS**: the control splinter must take kits, or there is nothing to keep whole"
+    );
+    assert!(
+        control_window.load(&control) < cap,
+        "fixture: the kit share alone must leave room for materials ({} against {cap})",
+        control_window.load(&control)
+    );
+
+    let (mut app, band) = a_take_with_a_material_heap(MATERIAL_HEAP);
+    let window = published_window(&mut app, band);
+    assert_eq!(
+        window.kits, control_window.kits,
+        "every kit row the share gives is kept whole when the materials are what overflow"
+    );
+    let hide = window
+        .materials
+        .iter()
+        .find(|(id, _)| id == BANKED_MATERIAL)
+        .map(|(_, units)| *units)
+        .unwrap_or(0);
+    let proportional_share = (MATERIAL_HEAP as u32) * OVER_CARRY_ASKED / CHAIN_WORKERS as u32;
+    assert!(
+        hide > 0 && hide < proportional_share,
+        "the materials fill the room the kits leave, cut from their share of {proportional_share}: \
+         {hide} ({window:?} vs control {control_window:?}, cap {cap})"
+    );
+    assert!(
+        window.load(&app) <= cap,
+        "and the whole take fits the packs: {} against {cap}",
+        window.load(&app)
+    );
+}
+
+/// The working-age value a splinter of 4 drifts to after a turn of demographic flow — the seed-37
+/// case, which floored to 3 workers.
+const DRIFTED_WORKING: f32 = 3.99;
+
+/// ⛔ **A SPLINTER WHOSE WORKING DRIFTS FROM 4.0 TO 3.99 KEEPS ITS 4-WORKER CARRY, ON THE WIRE.**
+///
+/// The published `carryCapacity` and the long-move forecast are priced on the band's actual
+/// working-age value, so a drift of a hundredth of a worker costs a hundredth of a pack — never the
+/// 32 → 24 step a floored head count took, which made a fresh splinter's first long move leave two
+/// of its three baskets behind.
+#[test]
+fn a_splinter_drifting_below_four_workers_keeps_its_carry_on_the_wire() {
+    const ASKED: u32 = 4;
+    let (mut app, _, _, child, child_band) = a_settled_split(ASKED, CHAIN_WORKERS);
+    set_workers(&mut app, child, DRIFTED_WORKING);
+    recapture_snapshot_in_place(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let row = envelope
+        .payload_as_snapshot()
+        .and_then(|snapshot| snapshot.population())
+        .and_then(|section| section.populations())
+        .expect("the population section is published")
+        .iter()
+        .find(|row| row.bandId() == child_band.0)
+        .expect("the splinter publishes a row");
+    let per_worker = carry_cfg(&app).per_worker_carry;
+    let floored = (ASKED - 1) as f32 * per_worker;
+    assert!(
+        (row.carryCapacity() - DRIFTED_WORKING * per_worker).abs() < 1e-3,
+        "carry is the actual working value times one pack: {} (a floored count would read {floored})",
+        row.carryCapacity()
+    );
+    assert!(
+        row.carryLoad() <= row.carryCapacity(),
+        "the split packed it inside its carry, so a long move leaves nothing: load {} against {}",
+        row.carryLoad(),
+        row.carryCapacity()
+    );
+    assert_eq!(row.longMoveLeavesItems(), 0, "no tool is left behind");
+    assert_eq!(row.longMoveLeavesFood(), 0.0, "nor any food");
+}

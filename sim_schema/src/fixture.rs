@@ -211,6 +211,7 @@ fn blank_tile() -> TileState {
         graze_ecology_phase: 0,
         forage_capacity: 0.0,
         underlying_terrain: TerrainType::AlluvialPlain,
+        belief: 0.0,
     }
 }
 

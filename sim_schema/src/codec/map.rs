@@ -152,6 +152,7 @@ fn create_tiles<'a>(
                     grazeEcologyPhase: tile.graze_ecology_phase,
                     forageCapacity: tile.forage_capacity,
                     underlyingTerrain: to_fb_terrain_type(tile.underlying_terrain),
+                    belief: tile.belief,
                     riverEdges: tile.river_edges,
                     riverInflow: tile.river_inflow,
                     riverChannel: tile.river_channel,
@@ -350,6 +351,7 @@ fn decode_tile(tile: fb::TileState<'_>) -> Result<TileState, DecodeError> {
         graze_ecology_phase: tile.grazeEcologyPhase(),
         forage_capacity: tile.forageCapacity(),
         underlying_terrain: to_state_terrain_type(tile.underlyingTerrain())?,
+        belief: tile.belief(),
     })
 }
 

@@ -14,6 +14,15 @@ paths:
 (`carry::carry_capacity`). Workers carry; children and elders add nothing, so
 splitting off elders buys no cargo space.
 
+> ### ⛔ ONE WORKER COUNT FOR A BAND'S CARRY — the actual working-age value, never floored
+>
+> Carry is continuous, so a standing band's carry is priced on `cohort.working` as it is, through
+> one helper. A split prices on `asked` (exactly the workers who cross) and the opening grant on
+> `party_workers` (a budget struck once at spawn). **What this closed:** the long move floored
+> `working` while the split did not, so one turn of demographic drift (4.0 → 3.99) cut a fresh
+> splinter's carry from 32 to 24, its first long move dropped 2 of its 3 baskets, and the band
+> starved on a third of its forage (AI bench seed 37, 2 hunger deaths).
+
 ## ONE currency, and it is the trade party's
 
 **There is ONE carry model for every reason goods move** — a band's split, a long move, a trade
@@ -76,10 +85,13 @@ the rounding slack. On shipped numbers an untouched 4-worker turn-one splinter c
 - **Past it, the band sheds down to its carry the moment the order is accepted**, and what it drops
   is **lost**: there is no storage object to leave it in. When storage exists, that becomes where the
   leftover goes.
-- **The shedding order is the split's: food first**, then items and materials scaled together by
-  `(cap − food mass) ÷ goods load` and floored to whole units. The units left behind are the **most
-  worn** (`BandEquipment::shed_units`), so the band carries its best gear. Bench tools weigh like
-  anything else.
+- **Food first, then tools before materials.** If the food tier alone overfills the packs, food and
+  hay scale down to fit and every item and material is left. Otherwise, in the room left: if the
+  items alone fit, every item is kept and the materials are cut (proportional, floored); if not, the
+  materials are dropped and the items scale down, floored to whole units. It is `fit_to_carry`'s
+  staging — **one rule for every fit that has to cut: tools feed a band, materials can be gathered
+  again.** The units left behind are the **most worn** (`BandEquipment::shed_units`), so the band
+  carries its best gear. Bench tools weigh like anything else.
 - **Distance is measured per order.** A band that crosses the map in reach-sized hops keeps
   everything. That reads as ferrying in relays and is accepted, not an exploit to close.
 

@@ -44,7 +44,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 147
+const EXPECTED_CHECKPOINTS := 178
 
 const Q := preload("res://tools/ui_preview/node_query.gd")
 ## The walk's shared band fixtures — `with_band_id` is what stamps a cohort's durable id and its name,
@@ -255,6 +255,24 @@ const TAKE_FORBIDDEN_NOUN := "unspent"
 ## shut-window push simply omits it.
 const ADOPT_BAND_ENTITY := 6204
 
+## **A REFUSAL, in the sim's own words** — the wire's `detail`, lowercase and with no full stop, which
+## the card quotes verbatim. Nothing here names a kit; the card must not either. It is the shape of
+## `LoadoutRejection::OverCarry`'s message — the budget refusal it replaced no longer exists (#732).
+## How far a measured edge may sit past the card's own before the claim calls it off the card — the
+## sub-pixel slack a fractional canvas scale leaves on a rect's edge, never a layout allowance.
+const CARD_EDGE_TOLERANCE := 0.5
+const REFUSAL_DETAIL := "the order weighs 15.0 against a carry of 14.0"
+## …and one too long for two lines at the card's width, which must ellipsize and keep the whole text on
+## its tooltip. Ends in a full stop the card must not double.
+const REFUSAL_LONG_DETAIL := ("the order names more than the band can carry: every allocation is "
+	+ "checked against both budgets at once, and this one was over the kit budget and over the "
+	+ "resource budget, so the whole order was turned down and nothing in it was applied to the band "
+	+ "this turn, which keeps exactly what it held before the order arrived and nothing else besides.")
+## The word only a refusal that RESET the picks may say.
+const REFUSAL_RESET_NEEDLE := "reset"
+## The label the sim gives every refused outfit order.
+const REFUSAL_LABEL := "Outfit failed"
+
 ## The window it opens on, and the one the sim re-publishes a frame later. **The re-fit is what a split
 ## does to the PARENT** (`fission::rebalance_partitioned_grant`): the carry shrinks and the standing
 ## allocation is restated against it — an allocation this card never sent, so the card must take it.
@@ -394,6 +412,7 @@ func run(harness) -> void:
 	await _an_over_budget_band_is_not_outfitted()
 	await _a_moved_allocation_is_adopted()
 	await _two_presses_do_not_flicker_back()
+	await _a_refused_order_resets_the_picks()
 	_assert_window_shuts()
 	h._hud.set_starting_loadout_requested.disconnect(_on_order)
 
@@ -912,6 +931,188 @@ func _two_presses_do_not_flicker_back() -> void:
 			% [_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING), want],
 		_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING) == want)
 
+## ⛔ **THE SIM REFUSED THE ORDER, AND THE ONLY WORD OF IT IS ONE EVENT ROW.** A refused order moves
+## no band row (populations ship as diffs), so no frame republishes the band — the card has to put its
+## optimistic pick back off the `starting_loadout` row alone, and say why.
+##
+## Also asserted: a row from an EARLIER turn is moot and ignored; the same row re-sent (a full
+## snapshot's ring) is not applied twice; the next press clears the line; and a reason too long for two
+## lines is ellipsized there and carried whole on the tooltip.
+func _a_refused_order_resets_the_picks() -> void:
+	var band_id := _band_id(ADOPT_BAND_ENTITY)
+	var turn: int = h._hud._band_labor.current_turn()
+	var holds := _stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING)
+	var holds_spent := _controller().carry_spent()
+	# A `−`, because the flicker pair above leaves this band's carry with too little room for a `+` to
+	# be sure of landing. Either direction is an order the sim can refuse.
+	_press_minus(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING)
+	await h._settle()
+	h._assert_hud("loadout/refused — the press moved the row first (%d → %d)"
+			% [holds, _stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING)],
+		_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING) == holds - HudConst.WORKER_STEP)
+	# **THE SERVER REFUSED IT**, so the band does not hold it and no fixture may publish it.
+	_orders.pop_back()
+	var seq: int = _controller()._event_seq_cursor + 1
+	# An EARLIER turn's refusal: that window is shut, so the row says nothing about this one.
+	_next_snapshot()
+	h._hud.ingest_command_events([_refusal_event(seq, turn - 1, band_id, REFUSAL_DETAIL)])
+	await h._settle()
+	h._assert_hud("loadout/refused — a refusal from an earlier turn moves nothing (%d)"
+			% _stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING),
+		_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING) == holds - HudConst.WORKER_STEP
+			and _refusal_line() == null)
+	var refusal := _refusal_event(seq + 1, turn, band_id, REFUSAL_DETAIL)
+	_next_snapshot()
+	h._hud.ingest_command_events([refusal])
+	await h._settle()
+	h._assert_hud("loadout/refused — the refusal puts the row back on what the band holds (%d, want %d)"
+			% [_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING), holds],
+		_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING) == holds)
+	h._assert_hud("loadout/refused — …and the carry meter with it (%.1f spent, want %.1f)"
+			% [_controller().carry_spent(), holds_spent],
+		is_equal_approx(_controller().carry_spent(), holds_spent))
+	var line := _refusal_line()
+	var want_text := HudLoadoutVocab.REFUSAL_FORMAT % REFUSAL_DETAIL
+	h._assert_hud("loadout/refused — the card says why, in the sim's words (%s)"
+			% (line.text if line != null else "<no line>"),
+		line != null and line.visible and line.text == want_text)
+	h._assert_hud("loadout/refused — …in warning ink",
+		line != null and line.get_theme_color("font_color").is_equal_approx(HudStyle.WARN))
+	await _assert_no_dead_space("refused")
+	await h._save("starting_loadout_refused")
+	# The next press supersedes the refused order — and its line.
+	_press_minus(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING)
+	await h._settle()
+	h._assert_hud("loadout/refused — the next press clears the line",
+		_refusal_line() == null)
+	# A full snapshot re-sends the ring: the same row again must not reset the new press.
+	_next_snapshot()
+	h._hud.ingest_command_events([refusal])
+	await h._settle()
+	h._assert_hud("loadout/refused — the same row re-sent is not applied twice (%d, want %d)"
+			% [_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING),
+				holds - HudConst.WORKER_STEP],
+		_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING) == holds - HudConst.WORKER_STEP
+			and _refusal_line() == null)
+	# That press is refused too, with a reason too long for two lines.
+	_orders.pop_back()
+	_next_snapshot()
+	h._hud.ingest_command_events([_refusal_event(seq + 2, turn, band_id, REFUSAL_LONG_DETAIL)])
+	await h._settle()
+	line = _refusal_line()
+	var full := HudLoadoutVocab.REFUSAL_FORMAT % REFUSAL_LONG_DETAIL.trim_suffix(
+		HudLoadoutVocab.REFUSAL_DETAIL_TRAILING_STOP)
+	h._assert_hud("loadout/refused — a long reason takes two lines and no more (%d of %d)"
+			% [line.get_visible_line_count() if line != null else -1,
+				line.get_line_count() if line != null else -1],
+		line != null and line.get_line_count() > HudLoadoutVocab.REFUSAL_MAX_LINES
+			and line.get_visible_line_count() == HudLoadoutVocab.REFUSAL_MAX_LINES)
+	h._assert_hud("loadout/refused — …and the tooltip carries all of it, the stop not doubled",
+		line != null and line.tooltip_text == full and not full.contains(".."))
+	await _assert_no_dead_space("refused_long")
+	await h._save("starting_loadout_refused_long")
+	await _a_refusal_leaves_a_later_order_in_flight(band_id, turn, seq + 3)
+	await _a_refusal_older_than_the_published_state_says_nothing(band_id, turn, seq + 4)
+
+## ⛔ **A IS REFUSED WHILE B IS STILL IN FLIGHT: ONLY A IS FORGOTTEN.** The sim runs a band's orders in
+## sequence, so A's refusal is about the OLDEST unechoed order. B is a whole replacement still on its
+## way, so the card keeps B's pick on screen, says A was not taken, and lets B's own echo settle it.
+## Resetting every in-flight order dragged the card back past B and left the line over B's accepted
+## picks.
+func _a_refusal_leaves_a_later_order_in_flight(band_id: int, turn: int, seq: int) -> void:
+	_next_snapshot()
+	var holds := _stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING)
+	_press_minus(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING)
+	await h._settle()
+	_press_minus(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING)
+	await h._settle()
+	var order_b: Dictionary = _orders.back()
+	# A is the order BEFORE B, and no server holds it.
+	_orders.remove_at(_orders.size() - 2)
+	var want_b := holds - 2 * HudConst.WORKER_STEP
+	_next_snapshot()
+	h._hud.ingest_command_events([_refusal_event(seq, turn, band_id, REFUSAL_DETAIL)])
+	await h._settle()
+	var line := _refusal_line()
+	h._assert_hud("loadout/refused-in-flight — A's refusal shows its line (%s)"
+			% (line.text if line != null else "<no line>"),
+		line != null and line.text == HudLoadoutVocab.REFUSAL_IN_FLIGHT_FORMAT % REFUSAL_DETAIL)
+	# Nothing was reset — B's pick is still standing — so the line must not say it was.
+	h._assert_hud("loadout/refused-in-flight — …and does not claim a reset (%s)"
+			% (line.text if line != null else "<no line>"),
+		line != null and not line.text.to_lower().contains(REFUSAL_RESET_NEEDLE))
+	h._assert_hud("loadout/refused-in-flight — …and B's pick stays on screen (%d, want %d)"
+			% [_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING), want_b],
+		_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING) == want_b)
+	var unechoed := _unechoed(band_id)
+	h._assert_hud("loadout/refused-in-flight — …and only B is still awaiting its echo (%d in flight)"
+			% unechoed.size(),
+		unechoed.size() == 1 and (unechoed[0] as Dictionary).get(HudLoadoutVocab.WINDOW_KITS_KEY, {})
+			== _order_rows(order_b, "kits", "count"))
+	await _assert_no_dead_space("refused_in_flight")
+	await h._save("starting_loadout_refused_in_flight")
+	# B's own frame: the sim accepted it, so the line over it goes.
+	_next_snapshot()
+	h._hud.update_band_alerts([_adopt_band_holding(order_b)])
+	await h._settle()
+	h._assert_hud("loadout/refused-in-flight — B's echo clears the line and keeps B (%d)"
+			% _stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING),
+		_refusal_line() == null
+			and _stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING) == want_b
+			and _unechoed(band_id).is_empty())
+
+## ⛔ **ONE SNAPSHOT CARRIES B'S ECHO AND A'S REFUSAL, AND THE REFUSAL IS THE OLDER FACT.** `Main` hands
+## the card populations BEFORE command_events, so B's echo is already on screen when A's refusal is
+## read — and the capture carrying both was taken after the sim ran both orders. A "Not taken" line
+## there would sit over picks the sim accepted afterwards.
+func _a_refusal_older_than_the_published_state_says_nothing(band_id: int, turn: int,
+		seq: int) -> void:
+	_next_snapshot()
+	var holds := _stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING)
+	_press_minus(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING)
+	await h._settle()
+	_press_minus(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING)
+	await h._settle()
+	var order_b: Dictionary = _orders.back()
+	_orders.remove_at(_orders.size() - 2)
+	var want_b := holds - 2 * HudConst.WORKER_STEP
+	# ONE snapshot, in `Main`'s order: the band first, then the event rows.
+	_next_snapshot()
+	h._hud.update_band_alerts([_adopt_band_holding(order_b)])
+	h._hud.ingest_command_events([_refusal_event(seq, turn, band_id, REFUSAL_DETAIL)])
+	await h._settle()
+	h._assert_hud("loadout/refused-same-frame — no line over B's accepted picks",
+		_refusal_line() == null)
+	h._assert_hud("loadout/refused-same-frame — …which stay on screen, nothing in flight (%d, want %d)"
+			% [_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING), want_b],
+		_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING) == want_b
+			and _unechoed(band_id).is_empty())
+
+## The `command_events` row the sim pushes for a refused `set_starting_loadout`.
+func _refusal_event(seq: int, tick: int, band_id: int, detail: String) -> Dictionary:
+	return {
+		"seq": seq,
+		"tick": tick,
+		"kind": HudLoadoutVocab.REFUSAL_EVENT_KIND,
+		"faction": HudConst.PLAYER_FACTION_ID,
+		"label": REFUSAL_LABEL,
+		"detail": detail,
+		"band": band_id,
+	}
+
+## The orders the card has sent for one band and not yet seen echoed.
+func _unechoed(band_id: int) -> Array:
+	return (_controller()._bands.get(band_id, {}) as Dictionary).get(
+		StartingLoadoutController.BAND_UNECHOED, [])
+
+## Start a snapshot the way `Main` does — `update_overlay` comes first in every one, and it is the
+## boundary the card uses to tell a refusal OLDER than a state it has just been handed.
+func _next_snapshot() -> void:
+	h._hud.update_overlay(h._hud._band_labor.current_turn(), {})
+
+func _refusal_line() -> Label:
+	return Q.find_meta_node(_panel(), HudLoadoutVocab.REFUSAL_LINE_META) as Label
+
 ## The band whose allocation the SIM moves. `refit` is the second frame: the carry shrunk and every
 ## row restated against it, which is what a split does to the parent.
 func _adopt_band(refit: bool) -> Dictionary:
@@ -1095,6 +1296,70 @@ func _a_press_on_a_take_sends_the_whole_standing_order() -> void:
 			% str(_order_rows(_orders.back(), "materials", "units")),
 		_order_rows(_orders.back(), "materials", "units")
 			== {TAKE_MATERIALS[0]: TAKE_DEFAULT_HIDE})
+	await _a_refused_take_rolls_the_food_back()
+
+## ⛔ **A REFUSED ORDER ROLLS THE FOOD BACK WITH THE PICKS.** The `−` above is out and unanswered, so
+## the line is previewing the room it leaves (12); the wire's last word was the staged echo (10, for
+## the allocation still holding one fibre). Refusing the `−` must put the picks back on that held
+## allocation AND the food back on the wire's 10 — a card that kept previewing reads 12 for an order
+## that never happened. Then a second `−` restores the standing take the cap walk below starts from.
+func _a_refused_take_rolls_the_food_back() -> void:
+	h._assert_hud("loadout/take — the unanswered `−` previews its food (`%s`)" % TAKE_FOOD_OPENING,
+		Q.has_label_containing(_panel(), TAKE_FOOD_OPENING))
+	_orders.pop_back()
+	var seq: int = _controller()._event_seq_cursor + 1
+	_next_snapshot()
+	h._hud.ingest_command_events([_refusal_event(seq, h._hud._band_labor.current_turn(),
+		_band_id(SPLINTER_BAND_ENTITY), REFUSAL_DETAIL)])
+	await h._settle()
+	h._assert_hud("loadout/take — a refusal puts the fibre back on what the band holds (%d)"
+			% _stepper_count(HudLoadoutVocab.MATERIAL_ROW_META, TAKE_MATERIALS[1]),
+		_stepper_count(HudLoadoutVocab.MATERIAL_ROW_META, TAKE_MATERIALS[1]) == HudConst.WORKER_STEP
+			and _refusal_line() != null)
+	h._assert_hud("loadout/take — …and the food back on the WIRE's figure (`%s`, got `%s`)"
+			% [TAKE_FOOD_ECHOED_LINE, Q.label_containing(_panel(), FOOD_LINE_NEEDLE)],
+		Q.has_label_containing(_panel(), TAKE_FOOD_ECHOED_LINE)
+			and not Q.has_label_containing(_panel(), TAKE_FOOD_OPENING))
+	await _assert_no_dead_space("take_refused")
+	await h._save("starting_loadout_take_refused")
+	# ⛔ **THREE PRESSES, EACH LANDING ON THE FRAME THE PREVIOUS ONE'S FIT FINISHES** — the `−` that
+	# clears the refusal line (the header loses a row), then a `+`/`−` pair on a kit row, one `_settle`
+	# apart. `_settle` is two frames and so is `refit`, so each render lands right after the last fit,
+	# rebuilds every autowrapping label, and the card's column is sorted against their unsized, inflated
+	# minimums at an unchanged card height. That is the reported frame: a 1596px scroll in an 839px
+	# card, the footer pushed off the bottom (`StartingLoadoutPanel._fit_expanded_height`). Pressing
+	# with NO settle between does not reproduce it — the three renders share one frame and one sort.
+	# The pair nets out, so the cap walk below still starts from the standing take.
+	_press_minus(HudLoadoutVocab.MATERIAL_ROW_META, TAKE_MATERIALS[1])
+	await h._settle()
+	_press_plus(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING)
+	await h._settle()
+	_press_minus(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING)
+	# The last render's fit spans two frames (`refit`), so the claim waits for it to land.
+	await h._settle()
+	await h._settle()
+	_assert_card_holds_its_column("take_back_to_back")
+	await _assert_no_dead_space("take_refusal_cleared")
+
+## ⛔ **THE CARD'S COLUMN FITS INSIDE THE CARD, AND THE FOOTER IS ON IT.** The scroll region may not be
+## taller than the card that holds it, and the footer (the `Done` row) must end inside the card's own
+## rect. Both are geometry a dead-space bound reads only indirectly; a card whose column was laid out
+## against stale minimums fails both at once, which is what the reported frame showed.
+func _assert_card_holds_its_column(arm: String) -> void:
+	var card := _panel().card()
+	var scroll: Control = card.find_child("LoadoutScroll", true, false)
+	var footer: Control = card.find_child("LoadoutFooter", true, false)
+	if scroll == null or footer == null:
+		h._assert_hud("loadout/%s — the card still has a scroll and a footer to measure" % arm, false)
+		return
+	h._assert_hud("loadout/%s — the scroll region fits inside the card (%.0f of %.0f)"
+			% [arm, scroll.size.y, card.size.y],
+		scroll.size.y <= card.size.y)
+	var card_rect := card.get_global_rect()
+	var footer_rect := footer.get_global_rect()
+	h._assert_hud("loadout/%s — the footer is on the card (ends at %.0f, card ends at %.0f)"
+			% [arm, footer_rect.end.y, card_rect.end.y],
+		footer.is_visible_in_tree() and footer_rect.end.y <= card_rect.end.y + CARD_EDGE_TOLERANCE)
 
 ## One half of a composed order as `id -> amount`. A DICT rather than the emitted array, so the claim
 ## is about the rows and not about the order a Dictionary happened to hand back its keys in.

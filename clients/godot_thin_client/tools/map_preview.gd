@@ -78,9 +78,8 @@ const SEAM_OUTLINE_MIN_PIXELS := 200
 const SEAM_BOX_RADII := 2.0
 const TRAVEL_EXPEDITION_ENTITY := 9301
 const HERD_ON_TILE_ID := "game_boar_03"   # herd id used by the selected-hex herd fixture
-# Quarry-targeting state: the band's hunt reach and the two herd offsets that straddle it (one inside
-# → a local hunt, no glow; one beyond → a valid quarry, glowed).
-const QUARRY_HUNT_REACH := 3
+# Quarry-targeting state: two herd offsets from the band, one near and one far — the denial pick has
+# no reach rule, so both are valid quarry.
 const QUARRY_NEAR_OFFSET := 2
 const QUARRY_FAR_OFFSET := 6
 # First worked forage tile of the work fixture — named because the draw-order guard (State A-overlap)
@@ -802,7 +801,7 @@ func _ready() -> void:
 
 	# State A — a band working two forage tiles + hunting a distant herd. Shows the
 	# work-range ring (Chebyshev square), two strong-green worked forage tiles, and the
-	# red herd ring + band→herd link (the herd sits OUTSIDE the ring: hunt reach = range + leash).
+	# red herd ring + band→herd link (the herd sits OUTSIDE the ring: a far herd is worked by a work party).
 	_map.display_snapshot(_snapshot_work())
 	_map.selected_unit_id = BAND_ENTITY
 	_map._fit_map_to_view()
@@ -1157,32 +1156,18 @@ func _ready() -> void:
 	_assert_map("…because the SCALED FACTION BAR is what the nameplate is at that zoom",
 		_frame_inks_red_below_hex(below_gate_frame, below_gate_tile, FACTION_BAR_INK_RED_MARGIN))
 
-	# State M — hunting expeditions (PR 2, §2b): alongside the resident band (solid dot) and a scout
-	# party (hollow ⚑ flag), two hunt parties render as hollow 🏹 bow discs — one Hunting, one
-	# Delivering (with a green food pip, "carrying a haul home"). Verifies hunt vs scout markers +
-	# the Hunting-vs-Delivering distinction.
-	_map.set_fow_enabled(false)
-	_map.display_snapshot(_snapshot_hunt_expeditions())
-	_map.selected_unit_id = -1
-	_map._fit_map_to_view()
-	await _settle()
-	await _save("map_hunt_expeditions")
-
-	# State M2 — PREY targeting (the frame's name predates the row's rename, issue #650): the party
-	# compose sheet asks for a herd, and the map glows the
-	# VALID ones. A hunting party is for game the band cannot work from home, so only a herd strictly
-	# beyond the band's `hunt_reach` qualifies — carried on the targeting info as `min_distance`, the
-	# render-side mirror of `TargetingController.is_expedition_quarry`. Both herds here are huntable and visible;
-	# ONLY the far one may wear the pulsing ring. A ring on the near herd would promise a target the
-	# pick refuses.
+	# State M2 — PREY targeting (the frame's name predates the row's rename, issue #650): the armed
+	# denial pick asks for a herd, and the map glows the VALID ones. The denial raid has no
+	# beyond-reach rule, so `min_distance` is `QUARRY_NO_REACH_BOUND` — the render-side mirror of
+	# `TargetingController.is_expedition_quarry` — and BOTH visible, huntable herds wear the ring.
 	_map.set_fow_enabled(false)
 	_map.display_snapshot(_snapshot_quarry_targeting())
 	_map.selected_unit_id = -1
 	_map._fit_map_to_view()
 	_map.set_targeting({
-		"active": true, "command": TargetingController.PICK_PREY_COMMAND, "need": "herd",
+		"active": true, "command": TargetingController.DENY_PICK_COMMAND, "need": "herd",
 		"origin_x": BAND_X, "origin_y": BAND_Y,
-		"min_distance": QUARRY_HUNT_REACH, "context_label": "Band 1",
+		"min_distance": TargetingController.QUARRY_NO_REACH_BOUND, "context_label": "Band 1",
 	})
 	await _settle()
 	await _save("map_quarry_targeting")
@@ -1230,18 +1215,16 @@ func _ready() -> void:
 	_map.set_targeting({})
 
 	# State M5 — EXPEDITION MARKER ART: a scouting, a denying and a trading party wear their bundled
-	# `expeditions/` art centred in the dark disc and ring; the hunting party has no art and keeps its
-	# 🏹 glyph. The trading party is AWAITING, so its orders pulse draws over the art face.
+	# `expeditions/` art centred in the dark disc and ring. The trading party is AWAITING, so its orders pulse draws over the art face.
 	_map.display_snapshot(_snapshot_expedition_art())
 	_map.selected_unit_id = -1
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_expedition_art")
-	_assert_map("scout, deny and trade parties resolve marker art; hunt resolves none and keeps its glyph",
+	_assert_map("scout, deny and trade parties resolve marker art",
 		ExpeditionSprites.for_mission(HudExpeditionVocab.EXPEDITION_MISSION_SCOUT) != null
 			and ExpeditionSprites.for_mission(HudExpeditionVocab.EXPEDITION_MISSION_DENY) != null
-			and ExpeditionSprites.for_mission(HudExpeditionVocab.EXPEDITION_MISSION_TRADE) != null
-			and ExpeditionSprites.for_mission(HudExpeditionVocab.EXPEDITION_MISSION_HUNT) == null)
+			and ExpeditionSprites.for_mission(HudExpeditionVocab.EXPEDITION_MISSION_TRADE) != null)
 
 	# State N — selected TRAVELLING band destination (non-wrapping map): the band reports
 	# `is_traveling` + a `travel_target` a few hexes away → a thin cyan line from its tile to the
@@ -1284,15 +1267,15 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_travel_expedition")
 
-	# State — A HUNT EXPEDITION'S QUARRY IS MARKED (issue #412). The party is outbound to the wolf
+	# State — A RAIDING PARTY'S QUARRY IS MARKED (issue #412). The denial party is outbound to the wolf
 	# pack while the resident band hunts the deer locally: two different routes to a worked source,
 	# both wearing the same red ring and crew badge, because the mark describes the SOURCE and not who
 	# reached it.
-	_map.display_snapshot(_snapshot_hunt_expedition())
+	_map.display_snapshot(_snapshot_raid_party_quarry())
 	_map.selected_unit_id = TRAVEL_EXPEDITION_ENTITY
 	_map._fit_map_to_view()
 	await _settle()
-	await _save("map_hunt_expedition_quarry")
+	await _save("map_raid_party_quarry")
 
 	# State Q — MULTI-BIOME terrain + edge-blend (Approach B: per-pixel biome-blend shader). Four vertical
 	# bands of the four REAL base textures (the other 33 are noise placeholders): hot_desert_erg /
@@ -3894,7 +3877,6 @@ func _marker_band(entity: int, tile: Vector2i) -> Dictionary:
 		"size": 30,
 		"id": "Band %d" % entity,
 		"work_range": 2,
-		"hunt_reach": 5,
 		"scout_reveal_radius": 0,
 		"labor_assignments": [],
 	}, STAGE_NOMADIC)
@@ -4033,9 +4015,6 @@ func _band(assignments: Array, work_range: int, scout_radius: int) -> Dictionary
 		"size": 30,
 		"id": "Band 1",
 		"work_range": work_range,
-		# hunt_reach = work_range + the hunt leash (the sim ships 5 = 2 + 3), so the selected-band
-		# HUNT range border draws at R=5 and the deer herd at (13,6) sits right on it.
-		"hunt_reach": work_range + 3,
 		"scout_reveal_radius": scout_radius,
 		"labor_assignments": assignments,
 	}, STAGE_NOMADIC)
@@ -4384,25 +4363,22 @@ func _expedition(entity: int, x: int, y: int, phase: String) -> Dictionary:
 		"is_traveling": phase != "awaiting",
 	}
 
-## A HUNTING party and its quarry (issue #412). A hunt expedition carries its target on the COHORT
+## A RAIDING party and its quarry (issue #412). A denial party carries its target on the COHORT
 ## (`expedition_target_herd`) rather than in `labor_assignments`, so before this it was the one kind of
 ## work the map never marked: the party walked and the map never said what it was walking to. The
 ## resident band beside it hunts a DIFFERENT herd locally, so the frame shows both routes to a marked
 ## source in one picture — and the party is still `outbound`, which is exactly when "this herd is
 ## already claimed" is worth knowing.
-func _snapshot_hunt_expedition() -> Dictionary:
+func _snapshot_raid_party_quarry() -> Dictionary:
 	var snap := _base_snapshot(_band([
 		{"kind": "hunt", "workers": 3, "fauna_id": "game_deer_07", "floor": WORK_PEAK_FLOOR,
 			"target_x": 13, "target_y": 6, "actual_yield": 0.20, "sustainable_yield": 0.20,
 			"overdraws": false},
 	], 2, 0), [_deer_herd(), _pelt_only_wolf_herd()])
 	var party := _expedition(TRAVEL_EXPEDITION_ENTITY, 8, 5, "outbound")
-	party["id"] = "Hunt Party"
-	party["expedition_mission"] = "hunt"
+	party["id"] = "Raid Party"
+	party["expedition_mission"] = HudExpeditionVocab.EXPEDITION_MISSION_DENY
 	party["expedition_target_herd"] = "game_wolf_03"
-	# The party's ORDERS ride the cohort, not a labor row — and the wire field is the floor
-	# (`expedition_floor`); the retired `expeditionHuntPolicy` slot is one the sim no longer writes.
-	party["expedition_floor"] = WORK_DRAWDOWN_FLOOR
 	party["travel_target_x"] = 11
 	party["travel_target_y"] = 4
 	snap["populations"].append(party)
@@ -4825,17 +4801,8 @@ func _snapshot_far_zoom() -> Dictionary:
 		"food_modules": [{"x": cx - 1, "y": cy + 1, "module": "berry_patch", "kind": "forage"}],
 	}
 
-## A detached hunting party (PR 2, §2b): mission "hunt" → the bow-disc marker; "delivering" phase
-## adds the green food pip. Shares the expedition marker path with the scout party.
-func _hunt_expedition(entity: int, x: int, y: int, phase: String) -> Dictionary:
-	var party := _expedition(entity, x, y, phase)
-	party["expedition_mission"] = "hunt"
-	party["expedition_target_herd"] = "game_deer_07"
-	return party
-
-## Two huntable, visible herds straddling the band's hunt reach: the Roe Deer sits INSIDE it (a local
-## hunt — no glow) and the Wild Boar well beyond (a party's job — glow). The frame is judged on the
-## ring appearing on exactly one of them.
+## Two huntable, visible herds, one near the band and one far: the denial pick admits both, so both
+## wear the ring.
 func _snapshot_quarry_targeting() -> Dictionary:
 	return _base_snapshot(_band([], 2, 2), [
 		{"id": "game_deer_79", "label": "Roe Deer (game_deer_79)",
@@ -4844,17 +4811,7 @@ func _snapshot_quarry_targeting() -> Dictionary:
 			"x": BAND_X + QUARRY_FAR_OFFSET, "y": BAND_Y, "biomass": 800.0, "huntable": true},
 	])
 
-func _snapshot_hunt_expeditions() -> Dictionary:
-	var snap := _base_snapshot(_band([], 2, 2), [_deer_herd()])
-	# A scout party (flag) + three hunt parties (bow): Hunting (red gathering cue), Delivering and
-	# Returning (both hauling home → green food pip).
-	snap["populations"].append(_expedition(9201, 11, 3, "outbound"))
-	snap["populations"].append(_hunt_expedition(9202, 5, 9, "hunting"))
-	snap["populations"].append(_hunt_expedition(9203, 10, 8, "delivering"))
-	snap["populations"].append(_hunt_expedition(9204, 3, 4, "returning"))
-	return snap
-
-## One party per mission for the marker-art frame: scout, deny and trade (art) beside a hunt (glyph).
+## One party per mission for the marker-art frame: scout, deny and trade.
 func _snapshot_expedition_art() -> Dictionary:
 	var snap := _base_snapshot(_band([], 2, 2), [_deer_herd()])
 	snap["populations"].append(_expedition(9211, 11, 3, "outbound"))
@@ -4864,7 +4821,6 @@ func _snapshot_expedition_art() -> Dictionary:
 	var trade := _expedition(9213, 10, 8, "awaiting")
 	trade["expedition_mission"] = HudExpeditionVocab.EXPEDITION_MISSION_TRADE
 	snap["populations"].append(trade)
-	snap["populations"].append(_hunt_expedition(9214, 3, 4, "hunting"))
 	return snap
 
 ## A selected band in transit: carries `is_traveling` + a `travel_target` a few hexes SE of its
@@ -5866,8 +5822,6 @@ func _snapshot_working_beside_herd() -> Dictionary:
 		"actual_yield": WORKING_BESIDE_HERD_RATE, "sustainable_yield": WORKING_BESIDE_HERD_RATE,
 		"realized_yield": WORKING_BESIDE_HERD_RATE, "overdraws": false,
 	})
-	# The band reaches both hexes: the working is 1 west, the herd 1 east.
-	band["hunt_reach"] = int(band.get("work_range", 2))
 	snap["herds"] = [RUNG_FX.stamp_herd({
 		"id": WORKING_BESIDE_HERD_ID, "label": "Red Deer (%s)" % WORKING_BESIDE_HERD_ID,
 		"x": herd_tile.x, "y": herd_tile.y, "biomass": 800.0, "huntable": true,

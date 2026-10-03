@@ -124,6 +124,11 @@ fn base_world() -> App {
     // first turn a crew stands on it, so a harness with no `extract` row has none.
     app.world
         .insert_resource(core_sim::extraction::DepositRegistry::default());
+    // Belief on a place — a hunt or a raid credits its dead to the tile the band stands on.
+    app.world
+        .insert_resource(core_sim::BeliefRegistry::default());
+    app.world
+        .insert_resource(core_sim::BeliefConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.run_system_once(spawn_initial_herds);
     app.world.run_system_once(spawn_initial_graze);
@@ -1088,10 +1093,9 @@ fn deposit_input(app: &mut App, keeper: Entity, material: &str, amount: f32, axe
 /// shed for a shortage it did not cause. `settle_pen_hay` has always filtered the hay the same way;
 /// the material settlement shares the rule through `BandReach`.
 ///
-/// **DISTANCE USED TO BE THE FIXTURE, AND IS NO LONGER A REASON TO SKIP A ROW.** A pen past
-/// `hunt_reach` lapsed on the spot; it posts a work party now and is worked from wherever it stands
-/// (`docs/plan_civilization_steps.md` §One work party), so the surviving case — and the one this
-/// arm has to stage — is a herd that is simply **gone**.
+/// **DISTANCE IS NOT A REASON TO SKIP A ROW.** A far pen posts a work party and is worked from
+/// wherever it stands (`docs/plan_civilization_steps.md` §One work party), so the case this arm has
+/// to stage is a herd that is simply **gone**.
 ///
 /// **The store holds exactly the worked pen's whole bill.** Under a settlement blind to the skip,
 /// the two `Normal` pens split it in proportion to demand and the worked one is paid about half;

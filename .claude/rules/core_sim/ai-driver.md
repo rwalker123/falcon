@@ -296,7 +296,7 @@ and the rest of the band gathers. The baskets go at `DEMAND_PRIORITY_GATHERING` 
 pays first, and a hand without a basket gathers nothing better than bare hands do); a hunting
 kit × the hands left over, at `DEMAND_PRIORITY_HUNTING`
 (0.8 — hunting is what opens penning, second to the sites), when a huntable herd within
-`hunt_reach` can be brought down with it (`Food::hunting_kit_for`: among the roster's hunt-job
+`SeatMemory::hunt_reach` can be brought down with it (`Food::hunting_kit_for`: among the roster's hunt-job
 kits, never `none`, the greatest fresh `attack` whose mass window admits the biggest herd in
 reach and clears its `defense` — the gate is `max(0, attack − defense)`; herds are tried biggest
 first). The mass window reads `HerdTelemetryState::body_mass` — *"Biomass of one animal of this
@@ -429,7 +429,8 @@ the seated link; `Unasked` answers nothing (what `decide`'s own fold and the tes
 tests' `Canned` serves curves by herd id. **The cache and its key.** `SeatMemory::crew_takes` is
 per `(band, herd)`, refreshed in the composite's `observe` by `refresh_crew_takes` — after the
 rows are folded (a row is held to the forecast it was staffed under) and before the ground is
-read — for every huntable herd within `hunt_reach` of an own band whose animals are worth food:
+read — for every huntable herd within `SeatMemory::hunt_reach` of an own band whose animals are
+worth food:
 a question is due when there is no entry, when the **key** has changed (the kit id, the band's
 resolved `attack` under it off `kit_tiers`, the units held, and the herd's biomass in
 `CREW_TAKE_BIOMASS_BUCKET` (0.25) fractions of its `K`), or when the entry is
@@ -978,7 +979,7 @@ is its patches' (seed 54: `people_fed_wild_stay` 61.8 → 26.8, the patches-only
 at tick 2 under the new key and read their crew take from then on — which is why the bench
 captures its `ground.*` measures at tick 2, "The land reading" below). The **hex layer** (`Hex`): every discovered, walkable,
 unoccupied hex within some site's reach, with the patches within `work_range` and the herds
-within `hunt_reach` of it (both read off the band) — the site layer convolved with the two ranges.
+within `SeatMemory::hunt_reach` of it — the site layer convolved with the two ranges.
 `people_fed = food / (food_need / size)`, what one of the band's people must eat.
 
 **The shape** (`Reading::plan(levers, anchor, bound)`): standing hexes for up to `k_max = 1 +
@@ -1107,8 +1108,8 @@ it in as a measured `0.0` is what poisoned the whole hunt web above.
 `Discovered` = `SCALE / 2`, `Unexplored` = 0 (`visibility_raster_from_ledger`,
 `core_sim/src/snapshot/vision.rs`) — `VISIBILITY_ACTIVE` / `VISIBILITY_DISCOVERED` in `view.rs`.
 `geometry.rs` restates `hex_distance_wrapped` (odd-r offset → axial, cube distance, the shortest
-wrapped column delta) from `core_sim/src/grid_utils.rs`, because the sim's assignment loop lapses a
-row outside `work_range` / `hunt_reach` in that metric.
+wrapped column delta) from `core_sim/src/grid_utils.rs`, because the sim measures `work_range` (the
+apron past which a row posts a work party) in that metric.
 
 ## The profile file (`data/ai_profiles.json`, `profile.rs`)
 
@@ -1154,6 +1155,7 @@ and `rover` (expand). Each key has one consumer:
 | Tuning key | Consumer | Effect |
 |---|---|---|
 | `alarm_budget_shift` | `ConstantStance` | worker share moved to an alarming specialist for one cadence |
+| `hunt_search_beyond_work_range` | `SeatMemory::hunt_reach` | **the seat's hunting search radius** in hex steps beyond a band's `work_range` (shipped **3**): a herd inside `work_range + this` is one the seat asks crew-take curves for, ranks as a hunt source, prices a hunting kit against, and keeps a hunt row on when the band moves. The seat's own horizon, not a sim rule — the sim has no hunt-only reach (a work party follows its herd anywhere). `SeatMemory::default` reads the shipped value, so a memory built without a profile searches as a seat does |
 
 `StartProfileOverrides::ai_profile_overrides` and the `late_forager_tribe` block that carried
 `scout_bias` / `camp_rotation_period` are deleted: a start profile is per campaign and AI tuning is
@@ -1412,17 +1414,20 @@ by value, conflicts per claim, free hands landing where they take more (the hone
 row-full reading), the pools releasing their spare hands, and *hold the ground* a standing bill
 sized by what a keeper supplies, keeping the harvesters, and defaulted on when paying it would
 starve the band. At t60, alive / hunger deaths / `patches_improved` by start kind: 54 (`stay`)
-52 / 0 / 2; 22 (`split_local`) 40 / 0 / 1; 59 (`split_local`) 50 / 0 / 1; 50 (`split_far`)
-44 / 0 / 2; 20 (`split_far`) 44 / 0 / 2; 18 (`short`) 44 / 0 / 1; 3 (`short`) 33 / 3 / 1; 37
-(`short`) 51 / 0 / 1. `hard` because argmax makes the run the rules' — at `normal` two
-proposals for one band in the top two are a seeded coin flip. Seat 2 is Pass, starves on every
-seed alike, and is marked `degenerate` on all eight by the writer. `Land` wins on seven seeds
-(5 to 26 moves accepted) and on seed 20 proposes nothing in sixty turns: it raises `land_short`
-at t5, t9, t10, t11 and t13 — no discovered walkable tile within `land.horizon_tiles` out-takes
-the cluster the band stands in by `better_ground_gain_fraction`, the reading names no
-`move_target`, and the band is not blind — so the file carries one `declined` entry, `seed 20,
-seat 1, land`, with that note. Regenerate the entry in the PR that moves it, with the numbers
-in the PR body.
+54 / 0 / 1; 18 (`stay`) 53 / 0 / 2; 22 (`stay`) 43 / 0 / 0; 59 (`stay`) 50 / 0 / 0; 20
+(`stay`) 44 / 0 / 1; 50 (`split_far`) 46 / 0 / 1; 3 (`short`) 41 / 0 / 0; 37 (`short`)
+49 / 0 / 1. `hard` because argmax makes the run the rules' — at `normal` two proposals for one
+band in the top two are a seeded coin flip. Seat 2 is Pass, starves on every seed alike, and is
+marked `degenerate` on all eight by the writer. `Land` wins on all eight seeds (6 to 15 moves
+accepted), so the file's `declined` list is empty.
+
+⛔ **The start kinds above are what the seeds read NOW, not what they were chosen for.** The
+eight were picked to span `stay` / `split_local` / `split_far` / `short`; the sim changes since
+(the work party, site crews, spoilage) moved the tick-2 ground reading, and the set now covers
+no `split_local` start at all. **Regenerate the entry in the PR that moves it, with the numbers
+in the PR body** — the ratchet is on-demand (no hook or CI step runs `--check`), so a PR that
+skips this leaves the next one to inherit violations it did not cause, which is how this entry
+drifted across several merges (#734 to #764) before it was rewritten.
 
 ⛔ **The file must parse back to the f64 it was written from.** The tolerance is 0, so `sim_ai`
 takes serde_json with `float_roundtrip`: the default float parse is best-effort and read seed

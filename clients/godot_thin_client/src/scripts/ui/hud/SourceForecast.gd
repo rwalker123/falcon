@@ -8,8 +8,8 @@ class_name SourceForecast
 ##   • POST-HOC — `source_yield_readout`: what a worked source actually produced this turn.
 ##   • PRE-COMMIT — `forecast_inputs` / `max_useful_workers` / `expected_yield`: what it WOULD produce
 ##     for N workers under a policy, and how many workers can usefully be pointed at it.
-##   • THE RAID — `hunt_trip_forecast` and friends: what a detached hunting party delivers, over how
-##     many turns, and whether the trip is worth taking at all.
+##   • THE RAID — `denial_forecast` and friends: what a detached denial party does to a herd, over how
+##     many turns, and what it hauls home.
 ##   • THE FLOOR'S INSTRUMENT — `floor_chart_model` and the layer under it (`regrowth_at`,
 ##     `project_stock`, `crew_to_clear` / `crew_to_hold`, `harvest_verdict`): the projection the
 ##     compose sheet's chart draws, the two crew targets beneath it and the sentence saying which of
@@ -28,7 +28,7 @@ class_name SourceForecast
 ## THE ONE THING THAT ISN'T A PLAIN VALUE is the grid-wrap pair. Round-trip travel needs a wrap-aware
 ## hex distance, which needs (`grid_width`, `wrap_horizontal`) — snapshot facts `HudLayer` receives via
 ## `set_grid_dimensions`. They are threaded through as EXPLICIT PARAMETERS (`hex_distance_wrapped` →
-## `round_trip_travel_turns` → `hunt_trip_forecast` / `expedition_policy_takes`) rather than held as
+## `round_trip_travel_turns` → `outbound_travel_turns` → the denial readout) rather than held as
 ## module state, so a stale grid can never be captured here. `HudLayer._hex_distance_wrapped` is a
 ## one-line pass-through that supplies its own members: ONE hex implementation, no duplication.
 ##
@@ -927,11 +927,9 @@ const ASSIGNMENT_PARTY_KEYS: Array[String] = [
 	ASSIGNMENT_FODDER_RATE_HOME_KEY, ASSIGNMENT_MATERIALS_RATE_HOME_KEY,
 ]
 
-# **WHAT A WHOLE TRIP LANDS, PER MATERIAL** — on each row of the `HuntTripForecast` reply (the
-# composed row and every per-preset one). It is a PAYLOAD, not a rate: no `/turn`, projected off the
-# same carried biomass `delivered_food` is, so the two readouts of one raid cannot disagree. On an
-# INEDIBLE quarry it is the ENTIRE payload, which is what stops such a raid reading as a denial
-# mission with nothing to bring home.
+# **WHAT A WHOLE TRIP LANDS, PER MATERIAL** — on the `DenialRaidForecast` reply's row. It is a
+# PAYLOAD, not a rate: no `/turn`, projected off the same carried biomass `delivered_food` is, so the
+# two readouts of one raid cannot disagree. On an INEDIBLE quarry it is the ENTIRE payload.
 const TRIP_DELIVERED_MATERIAL_KEY := "delivered_material"
 # **THE CREW'S THROUGHPUT IN BIOMASS** — what ONE worker moves before any account conversion, and the
 # term everything on the crew side of the panel divides by. Published identically by both webs, which
@@ -1726,22 +1724,17 @@ const LABOR_BOUND_NOTE_FORMAT := "%d of %d useful — free up idle workers to se
 # A verb states no crew now: the sheet has one stepper, so there is one remedy and
 # `LABOR_BOUND_NOTE_FORMAT` is it.
 
-# ⛔ **THE LAUNCH-SHEET RAID READOUT IS RETIRED** (`docs/plan_civilization_steps.md` §One work party):
-# a herd past the apron is an ordinary hunt whose crew posts a caravan, so the client composes, prices
-# and sends no hunting expedition. What survives below is what the DENIAL raid and an IN-FLIGHT party's
-# readouts still read.
+# A herd past the apron is an ordinary hunt whose crew posts a caravan (`docs/plan_civilization_steps.md`
+# §One work party); the only raid the client composes is the DENIAL raid.
 #
-# **THE SCALE EVERY "NEVER COMPLETED" SENTINEL ON THIS WIRE IS RELATIVE TO** — how many turns the sim's
-# raid projection runs before giving up (`expedition_config.hunt.forecast_horizon_turns`), echoed onto
-# EVERY cohort in the `expeditionViabilityWarnTurns` idiom. ONE lever serves both raid tables (the sim's
-# `denial_projection_at` and `hunt_trip_forecast_seeded` read the same field), so `turnsToFill == 0`,
-# `turnsToCollapse{,Low,High} == 0` and `expeditionTripBound == "horizon"` are all measured against this
-# one number and there is nothing here to pick wrongly between.
+# **THE SCALE THE DENIAL FORECAST'S "NEVER COMPLETED" SENTINEL IS RELATIVE TO** — how many turns the
+# sim's raid projection runs before giving up (`expedition_config.hunt.forecast_horizon_turns`), echoed
+# onto EVERY cohort. `turnsToCollapse{,Low,High} == 0` is measured against this one number (the sim's
+# `denial_projection_at` reads it).
 #
 # **IT IS NOT A TRIP LENGTH, AND QUOTING IT AS ONE IS WORSE THAN THE HEDGE IT REPLACES.** It bounds the
-# HUNTING alone — `turnsToFill` excludes travel — while the round trip out and back is a separate,
-# already-known term, so the floor on the WHOLE trip is `horizon + round_trip_travel_turns`: *"Away more
-# than 78 turns"*, never *"more than 60"*. A number wrong in the REASSURING direction sends the player
+# RAIDING alone — travel is excluded — while the walk out is a separate, already-known term, so the
+# floor on the WHOLE span is `horizon + travel`: *"more than 78 turns"*, never *"more than 60"*. A number wrong in the REASSURING direction sends the player
 # out on a raid they would not have taken.
 const COHORT_FORECAST_HORIZON_KEY := "expedition_forecast_horizon_turns"
 # The lever is absent (a fixture that predates it). A real horizon is always positive — the sim pins that
@@ -1760,31 +1753,6 @@ const HUNT_FORECAST_WARN_GLYPH := "⚠ "
 # When a kill can't be fully carried (a big animal the crew is too small to haul) the surplus meat rots.
 # A WARN-tinted suffix flags the fraction wasted — its OWN concern, rendered amber even on a green line.
 const HUNT_WASTE_NOTE_FORMAT := "⚠ %d%% wasted"
-
-# ---- WHICH STOP ENDS THE TRIP (`docs/plan_hunt_through_combat.md` §5.2) -------------------------
-# A trip LENGTH alone cannot say WHY the party turned for home — "the pack filled in 4 turns" and "you
-# reach the floor in 2 turns with the pack a third full" are different situations carrying the same
-# kind of number — so the SIM names the bound and this layer only renders it. These are
-# `core_sim::HuntTripBound::as_str` keys, and the client never infers one from the numbers.
-const TRIP_BOUND_KEY := "bound"
-# **`""` IS "NOT STATED", AND IT IS NOT `TRIP_BOUND_HORIZON`.** On a launched party it means *not
-# raiding* (a resident band, a scout, a party already walking a load home); on an estimate row it
-# means a snapshot that predates the field. Both render NO clause, which is the only honest answer —
-# `horizon`, by contrast, is the projection having run and found no stop.
-const TRIP_BOUND_NONE := ""
-const TRIP_BOUND_PACK_FULL := "pack_full"
-const TRIP_BOUND_FLOOR := "floor"
-const TRIP_BOUND_HERD_LOST := "herd_lost"
-const TRIP_BOUND_HORIZON := "horizon"
-# The sentence each bound adds after the trip's length. `horizon` renders NOTHING: the long-raid
-# verdict above already says exactly that ("still delivering at the end of the forecast"), and a
-# second spelling of it beside the first would be the same fact twice.
-const TRIP_BOUND_CLAUSES := {
-    TRIP_BOUND_PACK_FULL: "The pack fills; the herd never reaches your floor.",
-    TRIP_BOUND_FLOOR: "The herd reaches your floor first — the party comes home part-loaded.",
-    TRIP_BOUND_HERD_LOST: "The herd is wiped out before the party's load is made up.",
-    TRIP_BOUND_HORIZON: "",
-}
 
 ## **A STANDING STOCK, in the units the rest of the HUD reads one in** — whole biomass, matching the
 ## drawer's own `Forage biomass 35 / 100` pair. It is NOT `format_magnitude`, which is the food-RATE
@@ -2360,10 +2328,10 @@ const COMPASS_COLUMN_SPACING := 1.7320508
 const COMPASS_ROW_SPACING := 1.5
 
 ## Round-trip TRAVEL turns for a raid party walking from `band` out to `herd` and back — the honest
-## remainder of the trip length the sim's answer does not carry: `turns_to_fill` counts HUNTING turns
+## remainder of the trip length the sim's answer does not carry: the forecast counts RAIDING turns
 ## only, whichever band asked. Matches the sim launch feed EXACTLY: ceil(2 × wrap-aware hex_distance(band, herd)
 ## / band_move_tiles_per_turn), from the SELECTED band's tile + the exported move rate.
-## Returns 0 — so the forecast degrades to hunting turns only, never a fabricated travel — when the move
+## Returns 0 — so the forecast degrades to raiding turns only, never a fabricated travel — when the move
 ## rate isn't on the band dict or a position is unknown. `band_move_tiles_per_turn` (a LaborConfig scalar
 ## echoed per-cohort) is now decoded in `native/src/lib.rs` and flowed onto the band marker, so this
 ## lights up on the live wire; it degrades gracefully if a future snapshot omits it.
@@ -2390,10 +2358,9 @@ const TRAVEL_LEGS_PER_ROUND_TRIP := 2
 ## the server's launch feed), and this is a reading of it, not a second one: for an integer `n`,
 ## `ceil(ceil(x)/n) == ceil(x/n)`, so `ceil(round_trip / 2)` is EXACTLY `ceil(one_way / move_rate)` —
 ## the turn the party arrives. A second `hex_distance ÷ move_rate` here would be a second definition
-## free to drift from the one the hunt readout and the server both use.
+## free to drift from the one the server uses.
 ##
-## **WHO WANTS THE OUTBOUND LEG RATHER THAN THE ROUND TRIP:** a HUNT's payload only counts once it is
-## carried home, so its headline is the whole round trip. A DENIAL raid's verdict is about the HERD
+## **WHY THE OUTBOUND LEG RATHER THAN THE ROUND TRIP:** a DENIAL raid's verdict is about the HERD
 ## crossing the point of no return — an event that happens on the range, the moment the party has
 ## walked there and started killing — so the return leg falls outside the span the verdict is about.
 static func outbound_travel_turns(band: Dictionary, herd: Dictionary,
@@ -3039,8 +3006,7 @@ static func crew_take_plateau(per_crew: Array) -> int:
 ## named 47 hands to a band holding 26. Truncating those at the pool does not make them honest, it
 ## deletes them.
 ##
-## So the rule is a domain rule, and it is the same one `expedition_useful_cap` already runs on the
-## raid branch: **inside the asked range the curve is the only authority; past it, where the panel can
+## So the rule is a domain rule: **inside the asked range the curve is the only authority; past it, where the panel can
 ## neither staff nor promise anything, the closed forms answer.** A curve that PLATEAUED below a target
 ## has answered — no crew reaches it, at any size — and the closed form does not get to overrule that.
 ## A curve still climbing when the rows ran out has said nothing about the crews past its edge.
@@ -3331,13 +3297,9 @@ const VERDICT_HOLDS_AT_FLOOR := "At the floor and holding it — taking only wha
 const VERDICT_NO_CREW := "No one assigned. Nothing is taken and it grows back on its own."
 
 # ---- THE DENIAL RAID — a MISSION, not a floor (`docs/plan_denial_raid.md`) -----------------------
-# **IT CARRIES NO FLOOR AND NO RATE, WHICH IS WHY NONE OF THE RAID VOCABULARY ABOVE APPLIES TO IT.**
-# A hunting raid's readout answers "what comes home, and when"; a denial party deliberately publishes
-# no `expeditionProjectedDelivery` / `expeditionEtaTurns` / `expeditionTripBound` at all, because its
-# goal is not a delivery — it is to push the herd BELOW `ecology.collapse_fraction`, where growth
-# zeroes and the decline is irreversible, and then walk away (§1.1). So its readout is a COLLAPSE
-# VERDICT, and `expeditionFloor` (`0.0`) / `expeditionFillTarget` (`0`) must never be rendered for it:
-# they are the mission reporting that it has no such lever, not values it chose.
+# **IT CARRIES NO FLOOR AND NO RATE.** A denial party publishes no delivery forecast, because its goal
+# is not a delivery — it is to push the herd BELOW `ecology.collapse_fraction`, where growth zeroes and
+# the decline is irreversible, and then walk away (§1.1). So its readout is a COLLAPSE VERDICT.
 # The requirement is `DenialRaidForecastReply.party_needed`, searched CONTIGUOUSLY to the asking band's
 # own last worker — so `0` says "no party YOU can field does this", a fact the player can act on,
 # rather than "no party anyone happened to sample did".
@@ -5842,7 +5804,6 @@ static func max_useful_workers(forecast: Dictionary) -> int:
         # asked about is still buying take and has said nothing about the ones past that. The closed
         # form answers the tail, exactly as it does with no reply at all — with the curve's own last
         # row as a FLOOR under it, so the cap can never land below a crew the rows showed to be useful.
-        # `expedition_useful_cap` runs the identical shape on the raid branch.
         hold = maxi(hold, per_crew.size())
         plateau = NO_CREW_ANSWER
     if plateau == PUBLISHED_NO_USEFUL_CREW:
@@ -6956,30 +6917,6 @@ static func expected_materials(workers: float, forecast: Dictionary,
         })
     return out
 
-## **THE RAID ROW'S OWN KEYS.** A forecast row is what it always was — the sim's forward-simulated
-## answer for one (floor, party) — and it still spells `floor` / `party_workers` / `turns_to_fill` /
-## `bound` / `delivers_*` / `animals_taken` / `delivered_*` / `wasted_food` exactly as the snapshot
-## table did. **What moved is where the row COMES FROM**, not what a row is: `native/src/bridge/query.rs`
-## decodes the reply under the same names, so every reader below is unchanged from the table era.
-##
-## **NOTHING HERE IS ROUNDED, AND NO SENTENCE APOLOGISES FOR A ROUNDING.** A row answers the exact
-## party and floor the sheet composed, so the take it states is the take of the raid on screen. Any
-## copy that names a party OTHER than the composed one is describing a contract that no longer exists.
-
-## The trip's length and the stop that ends it, as one sentence — or the length alone when the bound
-## has nothing to add (`""` = not stated; `horizon` = the length sentence already said it).
-static func _with_bound_clause(text: String, clause: String) -> String:
-    return text if clause == "" else "%s %s" % [text, clause]
-
-
-## **WHICH STOP ENDS THIS TRIP, IN WORDS** — the sim's `bound` key through `TRIP_BOUND_CLAUSES`, and
-## `""` for the two states with nothing to add. The readout box folds it into its verdict; the Band
-## panel's dock sheet, whose forecast is the one-LINE form, renders it as its own quiet line beneath.
-## One table, so the two surfaces cannot describe the same stop differently.
-static func trip_bound_clause(forecast: Dictionary) -> String:
-    return String(TRIP_BOUND_CLAUSES.get(
-        String(forecast.get(TRIP_BOUND_KEY, TRIP_BOUND_NONE)), ""))
-
 # ---- THE DENIAL RAID's readout (`docs/plan_denial_raid.md` §1.1 / §3) ---------------------------
 
 ## What `workers` from this band do to `herd` on a DENIAL raid — the reply's row for the composed party,
@@ -7059,7 +6996,7 @@ static func _denial_turns_from_launch(turns: int, travel: int) -> int:
 ## **THE ONE RESOLUTION OF THE OUTCOME KEY** — the `{line, turns, button, severity, reason}` entry
 ## every surface of the verdict is composed from, so the sentence, the Send button's face and the
 ## spelled-out reason are three views of one answer. An outcome this table cannot explain falls to the
-## unattributed entry rather than to a guess (the `hunt_empty_refusal` rule).
+## unattributed entry rather than to a guess.
 static func denial_verdict(forecast: Dictionary) -> Dictionary:
     var outcome := String(forecast.get("outcome", DENIAL_OUTCOME_NONE))
     return DENIAL_VERDICTS.get(outcome, DENIAL_VERDICTS[DENIAL_OUTCOME_NONE])

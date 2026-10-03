@@ -2,6 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
 
+use crate::belief::BeliefRegistry;
+use crate::belief_config::{BeliefConfig, BeliefConfigHandle};
 use crate::work_party::WorkParty;
 
 /// **"Is this crew actually working the source?"** — THE eligibility term that replaced the
@@ -248,6 +250,8 @@ pub struct LaborConfigs<'w> {
     /// **How food keeps** (#706) — the keeping classes a take lands in, and the shelf lives a
     /// caravan pack rots by on its walk home.
     pub demographics: Option<Res<'w, DemographicsConfigHandle>>,
+    /// What a death adds to the place it happens on (`crate::belief`).
+    pub belief: Res<'w, BeliefConfigHandle>,
 }
 
 /// **WHAT THE BAND'S BUILDERS' TOOLS ADD TO WHAT THEY DELIVER, RESOLVED PER BUILD.**
@@ -3743,9 +3747,7 @@ fn settle_tool_cell(
 ///
 /// # ⛔ DISTANCE IS NO LONGER ONE OF ITS QUESTIONS
 ///
-/// It used to hold a band position and the two lapse distances, because a patch past
-/// `band_work_range` or a herd past the retired `hunt_reach` was abandoned on that very `continue`. **A far
-/// source acquires a [`crate::work_party::WorkParty`] instead of lapsing**
+/// **A far source acquires a [`crate::work_party::WorkParty`] instead of lapsing**
 /// (`docs/plan_civilization_steps.md` §One work party), so every worked row is reached wherever it
 /// is and the only thing left that can make an arm skip is a herd the registry no longer carries.
 /// The type survives rather than collapsing into a bare `registry.find`, because *"will the arm
@@ -4917,6 +4919,27 @@ fn build_material_wants(
 // the *people* were already starving. What grass and hay leave unpaid is a shortfall now, and
 // [`settle_pen_hay`] is the only settlement there is.
 
+/// **Where a resident band's hunt dead are credited** — the tile the band stands on, the belief
+/// registry, and what a death is worth there (`crate::belief`). Bundled so [`settle_hunt_band_side`]
+/// takes the one place its dead go rather than three loose arguments.
+///
+/// **Absent (`None`) for a row worked by a far WORK PARTY** (a posting past `band_work_range`): the
+/// party fought at its herd, not where the band stands, so — like an expedition's — its casualties
+/// credit no belief anywhere.
+struct BeliefSink<'a> {
+    position: UVec2,
+    registry: &'a mut BeliefRegistry,
+    config: &'a BeliefConfig,
+}
+
+impl BeliefSink<'_> {
+    /// Credit `died` — the people the band actually lost — to the place it stands on.
+    fn credit(self, died: Scalar) {
+        self.registry
+            .credit_deaths(self.position, died.to_f32(), self.config);
+    }
+}
+
 /// **THE BAND'S SIDE OF A HUNT, SETTLED — at every rung.** The animal side is already off the herd
 /// inside [`crate::systems::hunt_take`] (`take.killed_biomass()`); this is where what the animals did
 /// back lands.
@@ -4940,6 +4963,7 @@ fn build_material_wants(
 /// §6.6: it is what happened, as facts, every turn a hunt happens — the wounded ride there, beside
 /// which bound actually ended the take. [`crate::systems::expeditions::hunt_report_event`] returns
 /// `None` for a turn that engaged nothing, so a wait turn writes no line.
+#[allow(clippy::too_many_arguments)] // the fight's outcome, its narration, and where its dead lie
 fn settle_hunt_band_side(
     outcome: &crate::systems::expeditions::HuntOutcome,
     species: &str,
@@ -4948,6 +4972,7 @@ fn settle_hunt_band_side(
     faction: FactionId,
     cohort: &mut PopulationCohort,
     event_log: &mut CommandEventLog,
+    belief: Option<BeliefSink<'_>>,
 ) {
     // Human text names the SPECIES, never the internal herd id.
     let species_name = fauna
@@ -4957,7 +4982,13 @@ fn settle_hunt_band_side(
     if outcome.fight.casualties.killed > fauna::NO_DEATHS_TO_REPORT {
         let killed_f = outcome.fight.casualties.killed;
         let wounded_f = outcome.fight.casualties.wounded;
-        cohort.apply_combat_casualties(scalar_from_f32(killed_f));
+        let died = cohort.apply_combat_casualties(scalar_from_f32(killed_f));
+        // **The hunt's dead are buried where the band stands** (`crate::belief`) — a resident band's
+        // own hunt, so its people died on its ground. A far work party's sink is absent: they died
+        // at the herd, and credit nothing.
+        if let Some(belief) = belief {
+            belief.credit(died);
+        }
         // The prose rounds `killed` for a readable "cost N lives"; the **detail carries the
         // fractional truth** (casualties are `Scalar`-fractional by design — a well-guarded party
         // takes a fraction of a death), so a consumer reads precise killed/wounded rather than a
@@ -5033,6 +5064,9 @@ pub fn advance_labor_allocation(
     // stock this pass takes from.
     mut deposits: ResMut<crate::extraction::DepositRegistry>,
     mut cohorts: Query<LaborBandParts>,
+    // **Belief on a place** — a resident band's hunt dead are credited to the tile it stands on
+    // ([`settle_hunt_band_side`]).
+    mut belief: ResMut<BeliefRegistry>,
 ) {
     // # ⛔ THIS PASS MAY RUN ONCE PER LOGISTICS CLEAR, AND A SECOND RUN OVERSTATES THE KEEPING
     //
@@ -5084,6 +5118,7 @@ pub fn advance_labor_allocation(
     // **The minimal TOE** (`docs/plan_hunt_through_combat.md` §4.8) — the two-tier table and the
     // durability dials, resolved once. What varies per band is only its `BandEquipment` *wear*.
     let equipment_cfg = configs.equipment.get();
+    let belief_cfg = configs.belief.get();
     // **The materials table** (`docs/plan_crafting_and_materials.md` §1) — resolved once, because it
     // decides only how a stated reading BANDS. What each source yields is that source's own config.
     let materials_cfg = configs.materials.get();
@@ -8277,6 +8312,13 @@ pub fn advance_labor_allocation(
                             faction,
                             &mut cohort,
                             &mut event_log,
+                            // A far WORK PARTY fought where its herd stands, not where the band does: like
+                            // an expedition's, its dead credit no belief.
+                            (!postings.contains_key(&idx)).then(|| BeliefSink {
+                                position: band_pos,
+                                registry: &mut belief,
+                                config: &belief_cfg,
+                            }),
                         );
                         continue;
                     }
@@ -9080,6 +9122,13 @@ pub fn advance_labor_allocation(
                         faction,
                         &mut cohort,
                         &mut event_log,
+                        // A far WORK PARTY fought where its herd stands, not where the band does: like
+                        // an expedition's, its dead credit no belief.
+                        (!postings.contains_key(&idx)).then(|| BeliefSink {
+                            position: band_pos,
+                            registry: &mut belief,
+                            config: &belief_cfg,
+                        }),
                     );
                 }
                 LaborTarget::Extract {
@@ -12525,6 +12574,8 @@ pub struct RaidConfigs<'w> {
     pub ladder: Res<'w, LadderConfigHandle>,
     pub materials: Res<'w, crate::materials_config::MaterialsConfigHandle>,
     pub extraction: Res<'w, crate::extraction_config::ExtractionConfigHandle>,
+    /// What a death adds to the place it happens on (`crate::belief`).
+    pub belief: Res<'w, BeliefConfigHandle>,
 }
 
 /// **Predators Phase 1b — the raid trigger, and the Warrior role's first live consumer**
@@ -12586,12 +12637,16 @@ pub fn advance_predator_raids(
         ),
         With<ResidentBand>,
     >,
+    // **Belief on a place** — a raid kills the band where it stands, so its dead are credited to
+    // that tile.
+    mut belief: ResMut<BeliefRegistry>,
 ) {
     // Resolved once — none of these change within a turn (the hunt-danger adapter's discipline).
     let fauna = configs.fauna.get();
     let tuning = configs.combat.get().tuning();
     let person = configs.creatures.get().person();
     let equipment_cfg = configs.equipment.get();
+    let belief_cfg = configs.belief.get();
     let raid_radius = fauna.predators.raid_radius;
     let raid_exposure = fauna.predators.raid_exposure;
     let raid_yield_forfeit_fraction = fauna.predators.raid_yield_forfeit_fraction;
@@ -12932,7 +12987,10 @@ pub fn advance_predator_raids(
             event_log.push(line);
         }
         // One mutation per band — working-age only this phase.
-        cohort.apply_combat_casualties(scalar_from_f32(total_killed));
+        let died = cohort.apply_combat_casualties(scalar_from_f32(total_killed));
+        // **The raid's dead are buried where the band stands** (`crate::belief`): the pack came to
+        // the band, so `band_pos` is the place they died.
+        belief.credit_deaths(band_pos, died.to_f32(), &belief_cfg);
     }
 }
 
@@ -13526,6 +13584,8 @@ mod labor_yield_tests {
         // **An empty deposit registry is the shipped turn-1 state** — a working is opened the first
         // turn a crew stands on it, so a harness with no `extract` row has none.
         world.insert_resource(crate::extraction::DepositRegistry::default());
+        world.insert_resource(crate::belief::BeliefRegistry::default());
+        world.insert_resource(crate::belief_config::BeliefConfigHandle::default());
         world.insert_resource(FactionInventory::default());
         world.insert_resource(DiscoveryProgressLedger::default());
         world.insert_resource(CommandEventLog::default());
@@ -13778,6 +13838,92 @@ mod labor_yield_tests {
                 },
             ))
             .id()
+    }
+
+    /// **A resident band's hunt dead are buried where it stands** (`crate::belief`, issue #697) —
+    /// credited to the band's tile through the one seam both hunt rungs settle through, at the
+    /// people the band ACTUALLY lost: a fight asking for more dead than the working bracket holds
+    /// credits only the bracket.
+    #[test]
+    fn a_resident_hunts_dead_credit_belief_to_the_tile_the_band_stands_on() {
+        use crate::fauna::{AnimalTake, FightCasualties, HuntFight, HuntTakeBound};
+        use crate::systems::expeditions::HuntOutcome;
+        /// Where the band stands.
+        const STANDING: UVec2 = UVec2::new(2, 0);
+        /// Elsewhere on the map.
+        const ELSEWHERE: UVec2 = UVec2::new(1, 0);
+        /// The hunt's fractional dead — a well-guarded party takes a fraction of a death.
+        const KILLED: f32 = 1.5;
+        /// More dead than the fixture's working bracket holds.
+        const KILLED_PAST_THE_BRACKET: f32 = 1_000.0;
+        const EPSILON: f32 = 1e-4;
+
+        let outcome = |killed: f32| HuntOutcome {
+            take: AnimalTake::default(),
+            fight: HuntFight {
+                brought_down: 0.0,
+                expected_brought_down: 0.0,
+                casualties: FightCasualties {
+                    killed,
+                    wounded: 0.0,
+                },
+                fought: true,
+                wounds: Default::default(),
+                strike_charges: Vec::new(),
+            },
+            engaged: 1.0,
+            fled: 0.0,
+            bound: HuntTakeBound::Engagement,
+        };
+        let (mut world, source_tile) = world_with_source(100.0);
+        let band = spawn_band(&mut world, source_tile, Vec::new());
+        let fauna = crate::fauna_config::FaunaConfig::default();
+        let config = crate::belief_config::BeliefConfig::default();
+        let mut belief = crate::belief::BeliefRegistry::default();
+        let mut log = CommandEventLog::default();
+        let mut cohort = world.get::<PopulationCohort>(band).unwrap().clone();
+
+        super::settle_hunt_band_side(
+            &outcome(KILLED),
+            "Test Game",
+            &fauna,
+            0,
+            FactionId(0),
+            &mut cohort,
+            &mut log,
+            Some(super::BeliefSink {
+                position: STANDING,
+                registry: &mut belief,
+                config: &config,
+            }),
+        );
+        assert!(
+            (belief.get(STANDING) - KILLED * config.belief_per_death).abs() < EPSILON,
+            "the hunt's dead credit the band's tile: {}",
+            belief.get(STANDING)
+        );
+        assert_eq!(belief.get(ELSEWHERE), crate::belief::NO_BELIEF);
+
+        let left = cohort.working.to_f32();
+        let before = belief.get(STANDING);
+        super::settle_hunt_band_side(
+            &outcome(KILLED_PAST_THE_BRACKET),
+            "Test Game",
+            &fauna,
+            0,
+            FactionId(0),
+            &mut cohort,
+            &mut log,
+            Some(super::BeliefSink {
+                position: STANDING,
+                registry: &mut belief,
+                config: &config,
+            }),
+        );
+        assert!(
+            (belief.get(STANDING) - before - left * config.belief_per_death).abs() < EPSILON,
+            "only the people actually lost are buried, not the casualties the fight asked for"
+        );
     }
 
     /// (a) both a Forage and a Hunt source capture `actual > 0`; (b) the hunt's `sustainable` equals

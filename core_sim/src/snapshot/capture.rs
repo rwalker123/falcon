@@ -40,6 +40,9 @@ pub struct SnapshotContext<'w> {
     /// (graze is on nearly every land tile, so a per-patch list would be the wrong shape — see
     /// `graze.rs`). Not published as a registry; the checkpoint carries it.
     pub graze_registry: Res<'w, GrazeRegistry>,
+    /// Belief on every place — read for the per-tile `TileState.belief` readout (graze's per-tile
+    /// shape, for graze's reason). Not published as a registry; the checkpoint carries it.
+    pub belief: Res<'w, crate::belief::BeliefRegistry>,
     /// The Telling's narrative memory — read for the client-facing fork tier, stance and voice
     /// readouts. The ledger itself is not published; the checkpoint carries it.
     pub beat_ledger: Res<'w, BeatLedger>,
@@ -111,9 +114,8 @@ pub struct SnapshotContext<'w> {
     pub flora_quotes: ResMut<'w, FloraQuoteCache>,
     /// Fauna tuning (ecology / hunt / market / husbandry). Read at capture for each herd's
     /// **pre-commit yield forecast** (`fauna::hunt_forecast` — the client's live "Expected yield" +
-    /// worker-stepper cap and the exported per-policy `hunt_policy_ceilings`), the per-cohort hunt
-    /// throughput, and the pre-launch expedition trip estimates (see `core_sim/CLAUDE.md` →
-    /// Scouting & Hunting Expeditions → Snapshot).
+    /// worker-stepper cap and the exported per-policy `hunt_policy_ceilings`) and the per-cohort
+    /// hunt throughput.
     pub fauna: Res<'w, crate::fauna_config::FaunaConfigHandle>,
     pub expedition: Res<'w, crate::expedition_config::ExpeditionConfigHandle>,
     /// The base human's intrinsic combat profile — the **unequipped** attack tier the minimal TOE's
@@ -2568,6 +2570,7 @@ pub fn capture_snapshot(
         herd_registry,
         forage_registry,
         graze_registry,
+        belief,
         beat_ledger,
         elevation,
         moisture,
@@ -2663,6 +2666,7 @@ pub fn capture_snapshot(
                 &morale_pressure_cfg,
                 graze_registry.patch(tile.position),
                 &labor_config.forage,
+                belief.get(tile.position),
             ));
             tile_tags.set(tile.position, tile.terrain_tags);
             if let Some(module) = food_module {
@@ -2829,11 +2833,6 @@ pub fn capture_snapshot(
         // Global labor config today (identical for every band); the work-range ring is surfaced
         // per-band so the client reads it off the selected band (future-proof if bands diverge).
         let band_work_range = labor_config.band_work_range;
-        // Effective hunt reach (= `band_work_range + hunt_leash_tiles`) — the distance past which a
-        // hunt stops being local and posts a WORK PARTY instead (it is no longer a leash a row
-        // lapses past; see `.claude/rules/core_sim/work-party.md`). Echoed per-band so the client
-        // can tell a local hunt from a far posting by herd distance.
-        let hunt_reach = labor_config.hunt_reach();
         // Expedition levers echoed per-cohort — same idiom as `band_work_range`: global config today,
         // surfaced per-band so the client reads them off the selected band. Populated for EVERY cohort
         // (the outfit UI lives on the resident-band panel, not on the expedition).
@@ -2849,10 +2848,6 @@ pub fn capture_snapshot(
         // `BandEquipment` wear, which `population_state` resolves against these.
         let equipment_config = equipment.get();
         let combat_config = combat.get();
-        // A detached party fights at the `expedition_danger_multiplier`-scaled lethality, exactly as
-        // `advance_expeditions` resolves it — so the in-flight ETA and the turn agree. Through the one
-        // named constructor rather than a fourth copy of the multiply (`CombatConfig::expedition_tuning`).
-        let expedition_combat_tuning = combat_config.expedition_tuning();
         let kit_levers = crate::snapshot::population::BandKitLevers {
             config: &equipment_config,
             person_intrinsic: creatures.get().person(),
@@ -2918,24 +2913,12 @@ pub fn capture_snapshot(
                 ),
                 &fauna_config,
             ),
-            hunt_viability_warn_turns: expedition_cfg.hunt.viability_warn_turns,
             hunt_forecast_horizon_turns: expedition_cfg.hunt.forecast_horizon_turns,
             band_move_tiles_per_turn: labor_config.band_move_tiles_per_turn,
             settle_min_founding_workers: expedition_cfg.settle.min_founding_workers,
             settle_parent_min_workers: expedition_cfg.settle.parent_min_workers,
             move_ferry_reach_tiles: crate::carry::move_ferry_reach_tiles(&supply_network_cfg),
         };
-        // A cohort → live-tile map so an in-flight expedition can find its home band's CURRENT tile
-        // (bands are nomadic). The `populations` query is read-only, so iterating it twice is fine.
-        let cohort_positions: std::collections::HashMap<Entity, UVec2> = populations
-            .iter()
-            .filter_map(|(entity, cohort, _, _, _, _, _, _, _)| {
-                tile_positions
-                    .get(&cohort.current_tile.to_bits())
-                    .copied()
-                    .map(|p| (entity, p))
-            })
-            .collect();
         // **EVERY OPEN OUTFITTING WINDOW**, resolved once — a take's cap is a fact about its PARENT's
         // ledger, so this is a lookup rather than a per-band walk. Empty on every turn after the windows
         // shut, which is almost every frame.
@@ -3053,78 +3036,6 @@ pub fn capture_snapshot(
                         .map(|alloc| alloc.workers_on(&LaborTarget::Scout))
                         .unwrap_or(0);
                     let scout_vantage_distance = labor_config.scout.vantage_distance(scout_workers);
-                    // The in-flight delivery forecast for a live hunting party (`None` for a scout or a
-                    // normal band). Reuses the raid forward-sim seeded with the party's current haul.
-                    let expedition_delivery = expedition.and_then(|exp| {
-                        let party_pos = current_pos?;
-                        let home_pos = cohort_positions.get(&exp.home_band).copied();
-                        // **This party's own fighting tier** — the kit it was SENT OUT WITH masked over
-                        // its `BandEquipment` wear, through the same seams `advance_expeditions` reads,
-                        // so the ETA projects the take the party can actually make: bare-handed if it
-                        // left bare-handed, and stepped down once its spears are gone.
-                        let party_wear = equipment.cloned().unwrap_or_else(|| {
-                            BandEquipment::start_stocked_for(
-                                &equipment_config,
-                                available_workers(cohort.working) as f32,
-                            )
-                        });
-                        // **The party's TARGET, so a mass-bounded weapon is judged against the animal it
-                        // was actually sent after.** A party whose mission names no herd (a scout) has no
-                        // quarry, and its ETA is a travel figure rather than a take — the unbounded
-                        // reading is the honest one there.
-                        let expedition_quarry_mass = match &exp.mission {
-                            crate::components::ExpeditionMission::Hunt { fauna_id, .. }
-                            | crate::components::ExpeditionMission::Deny { fauna_id, .. } => {
-                                herd_registry.find(fauna_id).map(|herd| herd.body_mass)
-                            }
-                            _ => None,
-                        };
-                        // **How the party's own gear divides it** — the same seam
-                        // `advance_expeditions` resolves the live turn through, so the ETA projects the
-                        // crews the party actually fields rather than a uniformly-armed one.
-                        let coverage = equipment_config.coverage(
-                            &exp.kit,
-                            available_workers(cohort.working) as f32,
-                            &party_wear,
-                        );
-                        let party = crate::fauna::PartyResolution {
-                            equipment: &equipment_config,
-                            coverage: &coverage,
-                            wear: &party_wear,
-                            intrinsic: kit_levers.person_intrinsic,
-                            tuning: expedition_combat_tuning,
-                            hunt_injury_damage_per_animal: combat_config
-                                .hunt_injury_damage_per_animal,
-                        }
-                        .party_against(match expedition_quarry_mass {
-                            Some(mass) => crate::equipment_config::Quarry::Mass(mass),
-                            None => crate::equipment_config::Quarry::Any,
-                        });
-                        // And the same kit's haul tier — the ETA has to project what THIS party can drag
-                        // home, not what a kitted one could.
-                        let party_haul = coverage.weighted_rate(|kit| {
-                            equipment_config.hunt_per_worker_biomass_capacity(
-                                kit_levers.baseline_haul_rate,
-                                kit,
-                                &party_wear,
-                            )
-                        });
-                        crate::systems::expedition_delivery(
-                            exp,
-                            cohort.stores.get(FOOD).to_f32(),
-                            available_workers(cohort.working),
-                            party_pos,
-                            home_pos,
-                            &herd_registry,
-                            &fauna_config,
-                            &labor_config,
-                            &expedition_cfg,
-                            &party,
-                            party_haul,
-                            config.grid_size.x,
-                            config.map_topology.wrap_horizontal,
-                        )
-                    });
                     Some(population_state(PopulationStateInputs {
                         entity,
                         band_id,
@@ -3144,8 +3055,6 @@ pub fn capture_snapshot(
                         expedition_levers: &expedition_levers,
                         settlement_stage_config: &settlement_stage_config,
                         travel_target,
-                        hunt_reach,
-                        expedition_delivery,
                         equipment,
                         kit_levers: &kit_levers,
                         // The take model's roster and the fight's dials, for each hunt row's

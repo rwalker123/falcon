@@ -1893,8 +1893,8 @@ Market hunting shipped as the third extractive rung, later renamed `Deplete`
 pressure); `SedentarizationScore` shipped (see
 "Sedentarization" under Campaign Loop); **corrals shipped** (Intensification Rung 1c — see "Corral"
 below). Still deferred (`docs/plan_wildlife_hunting_overlay.md`): the `Camp` entity, and wiring the
-sedentarization hard prompt to an actual `found_settlement`. The tile-based `HuntGame` handler stays
-neutralized (its client button no longer surfaces).
+sedentarization hard prompt to an actual `found_settlement`. The tile-based `hunt_game` command is
+deleted.
 
 ---
 

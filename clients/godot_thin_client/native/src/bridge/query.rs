@@ -13,8 +13,8 @@
 //!
 //! Which connection it holds open is decided by [`names_a_faction`]:
 //!
-//! - **The faction-bearing questions** (`HuntTripForecast`, `DenialRaidForecast`, `HuntCrewTake`,
-//!   `WorkPartyForecast`, `DepositCrewTake`) go out on the **seated command link**
+//! - **The faction-bearing questions** (`DenialRaidForecast`, `HuntCrewTake`, `WorkPartyForecast`,
+//!   `DepositCrewTake`, `ForageCrewTake`) go out on the **seated command link**
 //!   (`bridge/command_link.rs`). Each names a `faction_id` and is answered with that faction's private
 //!   state — a band's live equipment wear, its idle workers, its take curve — so asking from an
 //!   unseated connection is the same disclosure
@@ -48,8 +48,8 @@ use godot::prelude::*;
 use sim_runtime::{
     CommandEncodeError, CommandEnvelope, CommandPayload, DenialRaidForecastQuery,
     DepositCrewTakeQuery, FactionCapacityQuery, ForageCrewTakeQuery, HuntCrewTakeQuery,
-    HuntTripForecastQuery, QueryPayload, QueryReply, QueryReplyEnvelope, WorkPartyForecastQuery,
-    WorkPartySource, MAX_PROTO_FRAME,
+    QueryPayload, QueryReply, QueryReplyEnvelope, WorkPartyForecastQuery, WorkPartySource,
+    MAX_PROTO_FRAME,
 };
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -87,9 +87,8 @@ const QUERY_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 /// must not wedge the worker for the session.
 const SAVE_REPLY_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// The three questions, spelled as the GDScript seam spells them. They are matched on rather than
+/// The questions, spelled as the GDScript seam spells them. They are matched on rather than
 /// compared to literals at the call site so a typo cannot become a silently unsent query.
-pub(crate) const QUERY_KIND_HUNT_TRIP: &str = "hunt_trip_forecast";
 pub(crate) const QUERY_KIND_DENIAL_RAID: &str = "denial_raid_forecast";
 /// The **resident** crew's take curve — the Assign Herders panel's question, and NOT the trip
 /// sheet's: a resident band fights at the base tuning where an expedition is priced at
@@ -238,16 +237,6 @@ pub(crate) fn dispatch(
         _ => {}
     }
     let query = match kind.as_str() {
-        QUERY_KIND_HUNT_TRIP => QueryPayload::HuntTripForecast(HuntTripForecastQuery {
-            faction_id: dict_u32(ask, "faction_id"),
-            band_id: dict_u64(ask, "band_id"),
-            herd_id: dict_string(ask, "herd_id"),
-            kit_id: dict_string(ask, "kit_id"),
-            party_workers: dict_u32(ask, "party_workers"),
-            floor: dict_f32(ask, "floor"),
-            preset_floors: dict_f32_array(ask, "preset_floors"),
-            max_party_workers: dict_u32(ask, "max_party_workers"),
-        }),
         QUERY_KIND_DENIAL_RAID => QueryPayload::DenialRaidForecast(DenialRaidForecastQuery {
             faction_id: dict_u32(ask, "faction_id"),
             band_id: dict_u64(ask, "band_id"),
@@ -366,8 +355,7 @@ fn names_a_faction(query: &QueryPayload) -> bool {
     match query {
         // Each carries a client-supplied `faction_id` and is answered with that faction's private
         // state: a named band's live equipment wear, its idle workers, its take curve.
-        QueryPayload::HuntTripForecast(_)
-        | QueryPayload::DenialRaidForecast(_)
+        QueryPayload::DenialRaidForecast(_)
         | QueryPayload::HuntCrewTake(_)
         | QueryPayload::WorkPartyForecast(_)
         | QueryPayload::DepositCrewTake(_)
@@ -548,17 +536,6 @@ fn answer_to_dict(answer: &QueryAnswer) -> VarDictionary {
     let mut dict = VarDictionary::new();
     let _ = dict.insert("request_id", answer.request_id as i64);
     match &answer.reply {
-        Ok(QueryReply::HuntTripForecast(reply)) => {
-            let _ = dict.insert("ok", true);
-            let _ = dict.insert("kind", QUERY_KIND_HUNT_TRIP);
-            let _ = dict.insert("at_composed", &hunt_row_to_dict(&reply.at_composed));
-            let mut presets = VarArray::new();
-            for row in &reply.per_preset {
-                presets.push(&hunt_row_to_dict(row).to_variant());
-            }
-            let _ = dict.insert("per_preset", &presets);
-            let _ = dict.insert("useful_cap", i64::from(reply.useful_cap));
-        }
         Ok(QueryReply::DenialRaidForecast(reply)) => {
             let _ = dict.insert("ok", true);
             let _ = dict.insert("kind", QUERY_KIND_DENIAL_RAID);
@@ -726,39 +703,6 @@ fn config_digest_kind_name(kind: sim_runtime::commands::ConfigDigestKind) -> &'s
     }
 }
 
-/// **THE ROW KEYS ARE THE SNAPSHOT TABLE'S, DELIBERATELY.** `SourceForecast` shapes a raid readout
-/// out of exactly these names, and it did so when they arrived on `HerdTelemetryState`; the query
-/// moved *where the row comes from*, not what a row is. Renaming here would have rewritten every
-/// reader for no gain and would have made the two eras impossible to diff.
-fn hunt_row_to_dict(row: &sim_runtime::HuntTripRow) -> VarDictionary {
-    let mut dict = VarDictionary::new();
-    let _ = dict.insert("floor", f64::from(row.floor));
-    let _ = dict.insert("party_workers", i64::from(row.party_workers));
-    let _ = dict.insert("turns_to_fill", i64::from(row.turns_to_fill));
-    let _ = dict.insert("bound", row.bound.as_str());
-    let _ = dict.insert("delivers_food", row.delivers_food);
-    let _ = dict.insert("animals_taken", i64::from(row.animals_taken));
-    let _ = dict.insert("delivered_food", f64::from(row.delivered_food));
-    let _ = dict.insert("wasted_food", f64::from(row.wasted_food));
-    // WHAT THE TRIP LANDS, PER MATERIAL (arc #527) — and on an INEDIBLE quarry (a wolf) the ENTIRE
-    // payload, since `delivered_food` is 0 there and nothing else on this row can say what comes
-    // home. An ARRAY of `{ material_id, amount }` dicts, projected off the same carried biomass
-    // `delivered_food` is, so the two readouts of one trip cannot disagree.
-    //
-    // **AN EMPTY ARRAY IS "NO ROW", NEVER "ZERO"** — most quarries are made of nothing anyone builds
-    // with. The key is always inserted so a reader can tell "no projection sent" from "this raid
-    // brings home no material". **DO NOT SUM** the rows into one figure.
-    let mut materials = VarArray::new();
-    for payoff in &row.delivered_material {
-        let mut entry = VarDictionary::new();
-        let _ = entry.insert("material_id", payoff.material_id.as_str());
-        let _ = entry.insert("amount", f64::from(payoff.amount));
-        materials.push(&entry.to_variant());
-    }
-    let _ = dict.insert("delivered_material", &materials);
-    dict
-}
-
 /// One crew size's take, **whole-crew and per turn**, with engagement, escapement, retreat and the
 /// fight already resolved by the sim.
 ///
@@ -893,20 +837,6 @@ fn dict_f32(dict: &VarDictionary, key: &str) -> f32 {
         .unwrap_or_default() as f32
 }
 
-fn dict_f32_array(dict: &VarDictionary, key: &str) -> Vec<f32> {
-    let Some(value) = dict.get(key) else {
-        return Vec::new();
-    };
-    let Ok(array) = value.try_to::<VarArray>() else {
-        return Vec::new();
-    };
-    array
-        .iter_shared()
-        .filter_map(|entry| entry.try_to::<f64>().ok())
-        .map(|entry| entry as f32)
-        .collect()
-}
-
 fn dict_string_array(dict: &VarDictionary, key: &str) -> Vec<String> {
     let Some(value) = dict.get(key) else {
         return Vec::new();
@@ -956,16 +886,6 @@ mod tests {
         // connection that holds that faction's seat — the same disclosure the seat gate closes on
         // commands.
         for query in [
-            QueryPayload::HuntTripForecast(HuntTripForecastQuery {
-                faction_id: 0,
-                band_id: 1,
-                herd_id: String::new(),
-                kit_id: String::new(),
-                party_workers: 0,
-                floor: 0.0,
-                preset_floors: Vec::new(),
-                max_party_workers: 0,
-            }),
             QueryPayload::DenialRaidForecast(DenialRaidForecastQuery {
                 faction_id: 0,
                 band_id: 1,

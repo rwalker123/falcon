@@ -36,9 +36,6 @@ extends RefCounted
 ## exactly one place.
 
 # --- The controller's OWN signals (HudLayer connects + relays each; see the class header) ---
-# ⛔ RETIRED — **`send_hunt_expedition_requested`.** The herd sheet composed a hunting EXPEDITION past
-# `hunt_reach`, and that branch made the work party unreachable from the map; every herd is an
-# ordinary hunt now (`docs/plan_civilization_steps.md` §One work party), so nothing here sends one.
 # ⛔ RETIRED — **`extend_pen_requested` on THIS controller.** The signal itself lives on
 # `BandPanelController` now (`docs/plan_standing_upkeep.md` §4.9 item 12c): the ring is declared from
 # the work row's standing-rung mark, not from a button on the tile card. `HudLayer` still carries the
@@ -81,8 +78,8 @@ signal work_tab_requested(band_entity: int)
 
 ## ⛔ **THE ROUTE BRANCH'S DECLARATION — `grade|pave <faction> <band> <x> <y>`** (arc #532 slice 13),
 ## relayed by `HudLayer` straight onto `improvement_requested` and formatted by
-## `Main.format_improvement`, both unchanged. It is a signal for the reason `send_hunt_expedition` is:
-## the command has no other emitter, so there is no HudLayer helper to route it through.
+## `Main.format_improvement`, both unchanged. It is a signal because the command has no other
+## emitter, so there is no HudLayer helper to route it through.
 ##
 ## **IT IS DELIBERATELY NOT CALLED `improvement_requested`.** That name was RETIRED from this
 ## controller (see the block below) when the rung checkbox stopped being the commit, and reusing it
@@ -198,8 +195,8 @@ var _road_ladder_index: int = -1
 ## band's `builders` pool raises it at the head — so there is nothing left to hold between restates.
 
 ## **THE FORECAST QUERY SEAM**, injected by `HudLayer` after construction (`set_forecast_query`).
-## The expedition branch's every number comes through it; the LOCAL hunt branch never touches it,
-## being priced from the herd's own per-biomass vector and the band's ceilings.
+## Every sim-answered figure on the sheets comes through it — the crew-take curves and the work-party
+## forecast.
 var _forecast_query: ForecastQuery = null
 
 # ---- WHAT A LIVE FLOOR DRAG HOLDS (see `_refresh_floor_live` and `_drag_crew_take`) --------------
@@ -377,7 +374,6 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
 ## all-zero food ceilings. The sim's own doc comments now say exactly this. Since arc #527 retired the
 ## trade axis an inedible quarry answers `available: false` here, and the sheet states no rate at all
 ## rather than a rate in an account nothing keeps.
-## Resident-band only: an EXPEDITION's trip is never a rate division (see `SourceForecast.hunt_trip_forecast`).
 ##
 ## **IT TAKES NO IMPROVEMENT** (`docs/plan_standing_upkeep.md` §2.2). While a Tame or a Corral ran,
 ## the sim used to pay a gentling crew `workers × per_worker × build_dip`, and a take priced without
@@ -756,9 +752,8 @@ func _local_hunt_preview_bbcode(band: Dictionary, herd: Dictionary, floor: float
 ## **ITS ROWS ARE ACCOUNTS, LIKE EVERY OTHER PER-TURN READING — one per account the take PAYS.** The
 ## readout answers what a turn of this hunt puts in the band's stores, so it is stated in every
 ## account the take credits through `SourceForecast.rescaled_accounts` → `yield_rows` and the account
-## table's units, exactly as the plant web's is and exactly as the raid's payload
-## (`_trip_yield_rows`) already was. **The WHOLE-ANIMAL reading belongs to the CHART above it** (the
-## escapement curve and its handle, which count bodies) and to the whole-trip payload of a raid; a
+## table's units, exactly as the plant web's is. **The WHOLE-ANIMAL reading belongs to the CHART above
+## it** (the escapement curve and its handle, which count bodies); a
 ## per-turn row wearing the quarry's name in place of an account states a rate in a currency the
 ## stores do not keep, and the header over it (`per turn · now → after`) then keys nothing the
 ## number beside it can be spent as.
@@ -3030,14 +3025,9 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         _compose.set_hunt_band(int(picked.get("entity", -1)))
         _build_herd_assign_controls(_live_herd(herd_id, herd), target)))
     # ⛔ **EVERY HERD IS AN ORDINARY HUNT, WHATEVER THE DISTANCE** (`docs/plan_civilization_steps.md`
-    # §One work party). This sheet branched on `distance > hunt_reach` into the hunting-EXPEDITION
-    # sheet, and that branch is what made the work party unreachable from the map: Ray clicked a Wild
-    # Boar 8 hexes out, pressed *Assign hunters*, and got *"Detach a party to follow it"* over an
-    # *"Away ≈29 turns"* raid readout. The sim posts a party past the apron on its own, so the sheet
-    # composes one `assign_labor` for every herd and only ADDS what distance costs.
+    # §One work party). The sim posts a party past the apron on its own, so the sheet composes one
+    # `assign_labor` for every herd and only ADDS what distance costs.
     #
-    # ⛔ **`hunt_reach` IS DEAD, AND NOTHING HERE READS IT.** It is still on the wire until the
-    # expedition path retires sim-side, and a reader deciding anything by it is exactly the defect.
     # The one threshold a caravan has is the PICKED band's `band_work_range`, measured wrap-aware from
     # that band's own tile — the band picker above drives every part of it.
     var herd_x := int(herd.get("x", -1))
@@ -3408,8 +3398,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # independent statements is binding, the crew or the floor), then the idle-crew note (§7.2 —
     # reported, never acted on) and the teaching line. The take is recomposed from the LIVE floor,
     # so the numbers the player is dragging toward move while the drag runs.
-    # **NO ANSWER YET, OR NONE COMING** — the expedition branch's rule on the local one, and for
-    # the same reason: the numbers are the sim's, so the sheet says it is waiting rather than
+    # **NO ANSWER YET, OR NONE COMING** — the query seam's rule, and for this reason: the numbers are the sim's, so the sheet says it is waiting rather than
     # composing a take out of the two stages it can see. Everything above this line is client
     # arithmetic over wire terms (the chart, the crew targets, the combat gate) and stands.
     # **AND IT IS IN THE LIVE SET, because the answer it is waiting on is the FLOOR's.** It used

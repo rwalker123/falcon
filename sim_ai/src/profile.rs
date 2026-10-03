@@ -213,6 +213,27 @@ pub struct Tuning {
     /// Consumed by `ConstantStance`: the worker share moved to an alarming specialist for one
     /// cadence.
     pub alarm_budget_shift: f32,
+    #[serde(
+        default,
+        rename = "_comment_hunt_search_beyond_work_range",
+        skip_serializing
+    )]
+    _comment_hunt_search_beyond_work_range: Option<String>,
+    /// Consumed by `SeatMemory::hunt_reach`: **the seat's hunting search radius**, in hex steps
+    /// beyond a band's `work_range`. A herd inside `work_range + this` is one the seat asks about,
+    /// ranks, prices a kit against and keeps a hunt row on. The seat's own horizon, never a sim
+    /// rule — a work party follows its herd at any distance.
+    pub hunt_search_beyond_work_range: u32,
+}
+
+/// **The shipped file, parsed once** — the source of every default a component needs before a
+/// profile is chosen (`SeatMemory::default`), so such a default is the shipped lever rather than a
+/// second copy of its number.
+static BUILTIN: std::sync::LazyLock<AiProfiles> = std::sync::LazyLock::new(AiProfiles::builtin);
+
+/// The shipped [`Tuning`] — see [`BUILTIN`].
+pub fn builtin_tuning() -> &'static Tuning {
+    &BUILTIN.tuning
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]

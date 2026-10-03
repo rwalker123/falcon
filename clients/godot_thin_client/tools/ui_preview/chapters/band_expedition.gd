@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 132
+const EXPECTED_CHECKPOINTS := 126
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -81,18 +81,6 @@ const BAND_DISCLOSURE_GROWTH := "growth:904"
 # The collapsed-growth band is `_concerning_food_band_fixture`'s entity (905), not 904.
 const BAND_DISCLOSURE_GROWTH_COLLAPSED := "growth:905"
 
-# ---- THE LAUNCHED HUNT PARTY'S ORDERS ROW --------------------------------------------------------
-# The detail row's KEY, which is what `Readout.detail_excerpt` seeks: the leading half of
-# `DetailFormat.EXPEDITION_ORDERS_ROW_FORMAT`, restated here only because a `const` cannot split one.
-# A reworded row does not pass quietly — the excerpt answers `DETAIL_EXCERPT_ABSENT` and every
-# assertion below fails naming the row it could not find.
-#
-# **IT WAS `Leaves standing`, THEN A MERGED TWO-CLAUSE ROW, AND IT IS THE SAME ROW.** The fill target
-# that shared it is retired (issue #491), so the row states the floor alone; it stays a merged-shaped
-# `Orders:` row because the parties inspector strip budgeted for ONE row here — see
-# `DetailFormat.expedition_orders_line`.
-const EXPEDITION_ORDERS_DETAIL_KEY := "Orders"
-
 # ---- THE IN-FLIGHT DENIAL RAID (`docs/plan_denial_raid.md` §3) -----------------------------------
 # The party size the frame renders, and the row of `HerdFx`'s denial table it therefore reads. Named
 # so the expected sentence is composed from the SAME index the fixture is, rather than from a literal
@@ -108,9 +96,9 @@ const DENIAL_TARGET_QUARRY := "Red Deer"
 const DENIAL_HORIZON_TURNS := BandFx.FORECAST_HORIZON_TURNS
 const DENIAL_HORIZON_OUTBOUND_TURNS := 7
 
-## The two row KEYS a denial party must NOT render, each because the mission has no such thing: the
-## hunt party's ORDERS row — a floor it never chose — and a delivery it is not making.
-const DENIAL_ABSENT_ORDERS_KEY := EXPEDITION_ORDERS_DETAIL_KEY
+## The two row KEYS a denial party must NOT render, each because the mission has no such thing: an
+## ORDERS row — a floor it never chose — and a delivery it is not making.
+const DENIAL_ABSENT_ORDERS_KEY := "Orders"
 
 const DENIAL_ABSENT_DELIVERY_KEY := "Next delivery"
 
@@ -264,15 +252,9 @@ func _concerning_food_band_fixture() -> Dictionary:
 	]
 	return band
 
-## A hunting expedition (PR 2, docs/plan_exploration_and_sites.md §2b): a detached party following a
-## migratory herd. mission "hunt" + a target herd + carried food (its own kills). The drawer renders
-## the hunt readout (target herd + carried food + phase) + Recall/Move.
-## A launched DENIAL raid, built off the hunt party so the only differences are the mission's own.
-##
-## **`expedition_floor` 0.0 IS ON IT DELIBERATELY** — it is what the sim really publishes for this
-## mission (which has no such lever), so a fixture omitting it would let the absent `Orders:` row pass
-## on a party that simply carried no field. The delivery trio is absent because a denial party
-## genuinely publishes none.
+## A launched DENIAL raid: a detached party following a migratory herd — a target herd + carried food
+## (its own kills). The drawer renders the raid readout (target herd + carried food + phase + collapse
+## verdict) + Recall/Move.
 ##
 ## **IT CARRIES A `band_id` AND ITS OWN `kit_id`, and both are what make its `Collapse:` row reachable.**
 ## A detached party is a band, so the collapse forecast is a QUERY asked about IT — and a party holding
@@ -295,7 +277,6 @@ func _denial_expedition_fixture() -> Dictionary:
 		"expedition_phase": "hunting",
 		"expedition_target_herd": "game_deer_07",
 		"expedition_carry_cap": 16.0,
-		"expedition_floor": 0.0,
 		"tile_info": {
 			"x": 67, "y": 16,
 			"terrain_label": "Prairie Steppe",
@@ -305,37 +286,6 @@ func _denial_expedition_fixture() -> Dictionary:
 			"food_module_label": "None",
 		},
 	})
-
-func _hunt_expedition_fixture() -> Dictionary:
-	return {
-		"id": "Hunters 1",
-		"size": 5,
-		"entity": 7101,
-		"faction": 0,
-		"pos": [64, 22],
-		"turns_of_food": 4.0,
-		# Carried 8 of a 16 carry cap → "Carried 8 / 16".
-		"stores": {"provisions": 8.0},
-		"is_expedition": true,
-		"expedition_mission": "hunt",
-		"expedition_phase": "hunting",
-		"expedition_target_herd": "game_deer_07",
-		"expedition_hunt_policy": "surplus",
-		"expedition_carry_cap": 16.0,
-		# In-flight next-delivery forecast: 12 food arrives in 6 turns. Surplus is one-shot, so the
-		# party folds home after delivering → not recurring (no ↻).
-		"expedition_eta_turns": 6,
-		"expedition_projected_delivery": 12.0,
-		"expedition_recurring": false,
-		"tile_info": {
-			"x": 64, "y": 22,
-			"terrain_label": "Prairie Steppe",
-			"tags_text": "Fertile",
-			"visibility_state": "active",
-			"food_module": "",
-			"food_module_label": "None",
-		},
-	}
 
 ## A well-fed band whose morale has collapsed on a harsh tile: food is not limited
 ## (∞) but morale 0.22 sits below the critical threshold, so the Morale row reads red.
@@ -646,90 +596,10 @@ func run(harness) -> void:
 	await h._save("expedition_outfit_cap")
 	h._hud._bandpanel._send_expedition_count = 1   # reset so later states render a fresh party stepper
 
-	# State 1h — a hunting expedition (PR 2, §2b) selected in its Hunting phase: the panel shows the
-	# hunt readout (Mission "Hunting expedition", Target herd, Policy, Carried 8 / 16, Party) +
-	# Recall/Move.
-	h._hud.show_unit_selection(_hunt_expedition_fixture())
-	await h._settle()
-	await h._save("expedition_hunt_panel")
-
-	# State 1i — a FULL hunt party (carried at the carry ceiling): the Carried row reads "16 / 16 …
-	# · FULL" and the Phase is Delivering (it heads home when full).
-	var full_hunt := _hunt_expedition_fixture()
-	full_hunt["expedition_phase"] = "delivering"
-	full_hunt["stores"] = {"provisions": 16.0}
-	full_hunt["turns_of_food"] = 8.0
-	h._hud.show_unit_selection(full_hunt)
-	await h._settle()
-	await h._save("expedition_hunt_full")
-
-	# State 1j — a recalled hunt party in its Returning phase: the Phase reads "Returning" and the
-	# panel's Recall button flips to a disabled "Returning" (same treatment as the scout panel).
-	var returning_hunt := _hunt_expedition_fixture()
-	returning_hunt["expedition_phase"] = "returning"
-	returning_hunt["stores"] = {"provisions": 12.0}
-	returning_hunt["turns_of_food"] = 6.0
-	h._hud.show_unit_selection(returning_hunt)
-	await h._settle()
-	await h._save("expedition_hunt_returning")
-
-	# State 1j2 — a DEPLETE hunt party in flight: Deplete relaunches for repeated trips, so its
-	# "Next delivery" line wears the recurring ↻ marker. That ↻ must read distinct from the Deplete
-	# policy glyph (⇊) elsewhere in the panel — the whole point of the marker choice.
-	var deplete_hunt := _hunt_expedition_fixture()
-	deplete_hunt["expedition_hunt_policy"] = "deplete"
-	deplete_hunt["expedition_eta_turns"] = 9
-	deplete_hunt["expedition_projected_delivery"] = 16.0
-	deplete_hunt["expedition_recurring"] = true
-	h._hud.show_unit_selection(deplete_hunt)
-	await h._settle()
-	await h._save("expedition_hunt_recurring")
-
-	# State 1j3 — **A LAUNCHED PARTY UNDER A STATED TRIP BOUND.** The row this adds is the sim's own
-	# answer for which stop will end the raid, in the same words the pre-launch readout uses.
-	# **`expeditionTripBound` is the AUTHORITY once a party is out** — the sheet's estimate is a
-	# projection over a SAMPLED party and floor, this is the sim's forward simulation of the party's
-	# REAL orders — which is why it is rendered rather than the sheet's estimate being remembered.
-	# The frame staged a FILL TARGET until issue #491 retired that lever; the bound is what is left of
-	# it, and `pack_full` is the stop the raid it staged would really have reached.
-	var bounded_hunt := _hunt_expedition_fixture()
-	bounded_hunt["expedition_trip_bound"] = SourceForecast.TRIP_BOUND_PACK_FULL
-	h._hud.show_unit_selection(bounded_hunt)
-	await h._settle()
-	await h._save("expedition_hunt_bounded")
-	# **THE ROW IS READ THROUGH `Readout.detail_excerpt`, not searched for whole.** `detail_bbcode`
-	# splits a `Key: value` line into two spans, so the rendered source never contains the line
-	# contiguously. Excerpt from the KEY and assert the VALUE is what follows it.
-	var orders_row := Readout.detail_excerpt(h._hud.occupant_detail.text,
-		EXPEDITION_ORDERS_DETAIL_KEY)
-	h._assert_hud("a launched party states the ONE order it carries — the floor it was given",
-		orders_row.contains(HudComposeVocab.FLOOR_VALUE_FORMAT % SourceForecast.floor_percent(
-			SourceForecast.DEFAULT_HARVEST_FLOOR)))
-	h._assert_hud("…and the sim's own answer for which stop will end its raid",
-		h._hud.occupant_detail.text.contains(SourceForecast.TRIP_BOUND_CLAUSES[
-			SourceForecast.TRIP_BOUND_PACK_FULL]))
-	# **THE `""` BOUND IS NOT `horizon`, AND IT RENDERS NOTHING.** A party already walking a load home
-	# is not raiding toward a stop, so the row must be ABSENT rather than reading a stop it does not
-	# have — and this negative is only a claim because the state above shows the presence.
-	var unbounded_hunt := _hunt_expedition_fixture()
-	h._hud.show_unit_selection(unbounded_hunt)
-	await h._settle()
-	h._assert_hud("a party the sim states no bound for says nothing about a stop",
-		not h._hud.occupant_detail.text.contains(SourceForecast.TRIP_BOUND_CLAUSES[
-				SourceForecast.TRIP_BOUND_FLOOR])
-			and not h._hud.occupant_detail.text.contains(SourceForecast.TRIP_BOUND_CLAUSES[
-				SourceForecast.TRIP_BOUND_PACK_FULL]))
-	# …and it still states its ORDERS row, the floor being an order every hunt party carries.
-	h._assert_hud("…but still states the floor it is holding",
-		Readout.detail_excerpt(h._hud.occupant_detail.text, EXPEDITION_ORDERS_DETAIL_KEY).contains(
-			HudComposeVocab.FLOOR_VALUE_FORMAT % SourceForecast.floor_percent(
-				SourceForecast.DEFAULT_HARVEST_FLOOR)))
-
-	# State 1j4 — **AN IN-FLIGHT DENIAL RAID** (`docs/plan_denial_raid.md` §3). The third mission, and
-	# its drawer is judged on what it does NOT say as much as on what it does: a denial party publishes
-	# no delivery ETA and has no floor and no fill target, so the `Orders:` row (which carries both) and
-	# the `Next delivery` line must both be absent, and the collapse verdict stands where the ETA stands
-	# on a hunt party.
+	# State 1j4 — **AN IN-FLIGHT DENIAL RAID** (`docs/plan_denial_raid.md` §3). Its drawer is judged on
+	# what it does NOT say as much as on what it does: a denial party publishes no delivery ETA and has
+	# no floor and no fill target, so no `Orders:` row and no `Next delivery` line may render, and the
+	# collapse verdict is what it states instead.
 	var deny_party := _denial_expedition_fixture()
 	h._hud.show_unit_selection(deny_party)
 	await h._settle()
@@ -762,9 +632,8 @@ func run(harness) -> void:
 	# builder that emitted neither span would satisfy that one alone only by accident.
 	h._assert_hud("…and never the FROM-LAUNCH span, which is the launch sheet's",
 		not deny_text.contains(SourceForecast.DENIAL_SPAN_FROM_LAUNCH))
-	# **THE HUNT-ONLY READOUTS ARE ABSENT, and that is the mission's specification.** Its
-	# `expedition_floor` reads `0.0` because it HAS no such order; rendering the row would put a lever
-	# on screen the command grammar cannot express.
+	# **NO ORDERS ROW AND NO DELIVERY ETA, and that is the mission's specification.** It HAS no such
+	# order; rendering the row would put a lever on screen the command grammar cannot express.
 	h._assert_hud("…and renders NO orders row (no floor) and NO delivery ETA",
 		not deny_text.contains(DENIAL_ABSENT_ORDERS_KEY)
 			and not deny_text.contains(DENIAL_ABSENT_DELIVERY_KEY))

@@ -40,8 +40,12 @@ var h
 ## was priced at the composed crew reads the QUESTION, not the answer.
 var _last_work_party_ask: Dictionary = {}
 
-# The armed hunt party for the pre-launch forecast states (4 workers, matching the spec's worked
-# example: a 4-worker party fills in ~6 turns on a mammoth but ~54 on red deer).
+# The dialed-in hunter count for the LOCAL hunt preview states — deliberately dialed PAST every
+# ceiling in them, so the stepper clamps it back to the sheet's own whole-animal carry cap exactly as
+# it would for the player (`LOCAL_HUNT_CAPPED_CREW`; these frames render 3 hunters, not 6). The point
+# survives the clamp: even the clamped crew out-carries every policy ceiling here, so the HERD (not
+# the hunters) is still the binding constraint — which is exactly the case where the per-turn yield
+# preview earns its keep.
 const LOCAL_HUNT_HUNTERS := 6
 
 ## What the stepper actually renders once `LOCAL_HUNT_HUNTERS` is dialed in: the sheet's own
@@ -101,47 +105,6 @@ const FLOOR_CHART_ALLEE_STOCK_FRACTION := 0.08
 const BOAR_TAME_PAYOFF_FACE := "1.48 food"
 
 const BOAR_CORRAL_PAYOFF_FACE := "2.95 food"
-
-# The sim's forward-SIMULATED turns-to-fill for the 4-worker party in these states (it exports the
-# answer; the client never divides). Sustain is a small renewable flow → slow; Surplus/Deplete strip the
-# herd's stock headroom first → fast. The deer's Sustain trip (54) blows past the 20-turn viability
-# threshold; its Surplus trip (6) does not — same herd, same party, opposite verdicts.
-const MAMMOTH_SUSTAIN_TRIP_TURNS := 6
-
-const DEER_SUSTAIN_TRIP_TURNS := 54
-
-const DEER_SURPLUS_TRIP_TURNS := 6
-
-const MAMMOTH_SURPLUS_TRIP_TURNS := 3
-
-# The whole animals the 4-worker RAID delivers (HuntTripEstimate.animalsTaken) — the payload the readout
-# headlines. A viable/slow raid lands a positive count; a herd at/below its policy floor lands 0 (the
-# no-surplus state). Surplus/Deplete raid deeper than Sustain, so a deeper policy lands MORE animals.
-const MAMMOTH_SUSTAIN_ANIMALS := 8
-
-const DEER_SUSTAIN_ANIMALS := 6
-
-const DEER_SURPLUS_ANIMALS := 12
-
-const NO_SURPLUS_ANIMALS := 0
-
-# The server's measured Wild Boar raid (K=1433, body 50, B=1010, 4 food/hunter): 1 hunter → 5 animals /
-# 7 turns, 2 → 8 / 8, 3 → 8 / 4. animalsTaken PLATEAUS at 8 (party 2), so max-useful = 2 hunters — the
-# frame the "delivers ≈5 boar over ≈7 turns" readout and the stepper-cap-at-plateau are judged on.
-const MAMMOTH_FOOD_PER_ANIMAL := 16.0
-
-const RAID_TRAVEL_TURNS := 8
-
-const RAID_TRAVEL_HUNT_TURNS := 8
-
-# 0 = the raid ran the whole forecast horizon still delivering (a long raid), used by the no-surplus /
-# collapsed fixtures where the raid also lands 0 animals.
-const NEVER_FILLS_TRIP_TURNS := 0
-
-## The quarry `_horizon_raid_herd` builds — a slow breeder a big party can neither fill nor exhaust. Named
-## because the unbounded-raid copy assertions quote it by EQUALITY and a hand-typed second spelling is
-## how a rename turns a real claim into a comparison of two wrong strings.
-const HORIZON_QUARRY_NAME := "Steppe Bison"
 
 # ---- THE FAR HERD'S WORK PARTY (`herd_hunt_far_party`) ------------------------------------------
 ## The crew the far-herd sheet is composed at — the figure the ask must carry. Two hunters, Ray's
@@ -234,14 +197,14 @@ func _spine_grammar(spine: Array) -> Array:
 ## handle N). Different idle_workers so switching the dropdown visibly re-caps the worker
 ## stepper; neither hunts the deer herd, so the cap for a fresh source == idle_workers.
 func _two_player_bands() -> Array:
-	# hunt_reach 6 keeps both bands WITHIN local reach of the (66,10) herd (distances 0 and 3), so the
-	# band-picker states test the LOCAL-hunt re-cap (the distance-aware expedition path is exercised by
-	# BandFx.hunt_distance_bands, in `fixtures_band.gd`).
+	# Both bands sit near the (66,10) herd (distances 0 and 3), so the band-picker states test the
+	# LOCAL-hunt re-cap (the distance-aware work-party path is exercised by BandFx.hunt_distance_bands,
+	# in `fixtures_band.gd`).
 	return [
 		BandFx.with_band_id({"entity": 801, "faction": 0, "size": 120, "current_x": 66, "current_y": 10,
-			"working_age": 14, "idle_workers": 12, "hunt_reach": 6, "activity": "forage", "labor_assignments": []}),
+			"working_age": 14, "idle_workers": 12, "activity": "forage", "labor_assignments": []}),
 		BandFx.with_band_id({"entity": 802, "faction": 0, "size": 40, "current_x": 68, "current_y": 12,
-			"working_age": 6, "idle_workers": 2, "hunt_reach": 6, "activity": "hunt", "labor_assignments": []}),
+			"working_age": 6, "idle_workers": 2, "activity": "hunt", "labor_assignments": []}),
 	]
 
 ## A band 8 tiles from the (66,10) herd with an apron of 2 — Ray's playtest geometry, so the caravan walks
@@ -251,11 +214,9 @@ func _far_boar_band() -> Dictionary:
 		"name": "Ashfell", "id": "Ashfell", "entity": 833, "faction": 0, "size": 80,
 		"current_x": 66, "current_y": 18, "pos": [66, 18],
 		"working_age": 10, "idle_workers": 6,
-		"hunt_reach": 7, "work_range": 2, "max_expedition_party_size": 8,
+		"work_range": 2, "max_expedition_party_size": 8,
 		"hunt_per_worker_provisions": 0.8,
-		"expedition_viability_warn_turns": 20,
 		"expedition_forecast_horizon_turns": BandFx.FORECAST_HORIZON_TURNS,
-		"expedition_per_worker_carry": 4.0,
 		"band_move_tiles_per_turn": 1,
 		"activity": "forage", "labor_assignments": [],
 	})
@@ -314,7 +275,7 @@ func _delivered_oracle_band() -> Dictionary:
 		# Nobody assigned, so every working-age hand is idle — the sim's invariant, which the sheet's
 		# crew pool reads (`effective_idle`) rather than trusting `idle_workers` beside it.
 		"working_age": 26, "idle_workers": 26,
-		"hunt_reach": 7, "work_range": 2, "max_expedition_party_size": 8,
+		"work_range": 2, "max_expedition_party_size": 8,
 		"hunt_per_worker_provisions": 0.8,
 		"output_multiplier": 1.0,
 		"activity": "hunt", "labor_assignments": [],
@@ -558,10 +519,6 @@ const WOLF_ROOM_AT_PEAK := WOLF_BIOMASS - 0.5 * WOLF_CAPACITY
 ## only account this species has, so the ladder reads as a ladder rather than as two equal offers.
 const WOLF_PASTORAL_HIDE := 0.34
 const WOLF_CORRAL_HIDE := 0.52
-## What ONE hauled wolf is worth in hides on a RAID. The trip line rounds its payload to whole units
-## (a trip is not a rate), so this is sized to clear 1.0 at the frame's kill counts — a payload that
-## rounded to `~0` would render a clause the reader could not tell from a suppressed one.
-const WOLF_RAID_HIDE_PER_ANIMAL := 0.55
 
 ## What the frame must read, composed at assertion time from the crew the sheet actually landed on
 ## (see above): the QUANTISED delivery in biomass, valued through the pack's per-biomass hide rate.
@@ -753,10 +710,7 @@ func run(harness) -> void:
 	h._hud._compose.reset_hunt_source()
 
 	# State 3h — **THE SCREEN RAY OPENS FIRST: a herd past the band's apron is an ORDINARY HUNT**
-	# (`docs/plan_civilization_steps.md` §One work party). The retired sheet branched on
-	# `distance > hunt_reach` into a hunting EXPEDITION — *"Detach a party to follow it"*, *"Away ≈29
-	# turns — 13 hunting, 16 travel"*, *"Send Anyway"* — and that branch is what made the work party
-	# unreachable from the map. This is the reported shape: a Wild Boar 8 hexes out from a band whose
+	# (`docs/plan_civilization_steps.md` §One work party). This is the reported shape: a Wild Boar 8 hexes out from a band whose
 	# apron is 2, so the caravan walks 6 each way. The sheet composes `assign_labor` like any local hunt
 	# and ADDS the party section, priced by the sim's caravan forecast (`ForecastQuery.KIND_WORK_PARTY`,
 	# answered here by the fixture's own authored reply).
@@ -997,11 +951,7 @@ func run(harness) -> void:
 	#   3n Sustain — delivered = min(0.30×0.9, …) = 0.27 → ≈0.14 Red Deer/turn · renewable (green).
 	#   3o Deplete  — delivered 0.54 > Sustain 0.27 → WARN-amber "⚠ ≈0.27 Red Deer/turn — overdraws the
 	#                herd" (the same ⚠ the allocation rows use). No waste (a whole deer is carryable).
-	# (The herd's `hunt_trip_estimates` ride along but are IGNORED here — a trip table answers an
-	# EXPEDITION's question; a local hunt is carry arithmetic over the band's flow ceilings. Band = flow
-	# arithmetic; expedition = lookup.)
-	var local_herd := HerdFx.assign_preview_herd("game_deer_07", "Red Deer", "thriving", 0.30,
-		DEER_SUSTAIN_TRIP_TURNS, DEER_SURPLUS_TRIP_TURNS)
+	var local_herd := HerdFx.assign_preview_herd("game_deer_07", "Red Deer", "thriving", 0.30)
 	h._hud._band_labor._player_bands = [BandFx.hunt_preview_local_band()]
 	h._hud._band_labor._player_band = h._hud._band_labor._player_bands[0]
 	h._hud._compose.reset_hunt_source()
@@ -2434,7 +2384,7 @@ func _naming_band(entity: int, band_name: String) -> Dictionary:
 	return BandFx.with_band_id({
 		"entity": entity, "faction": 0, "size": 60, "name": band_name,
 		"current_x": NAMING_TILE.x, "current_y": NAMING_TILE.y,
-		"working_age": 12, "idle_workers": 4, "work_range": 2, "hunt_reach": 7,
+		"working_age": 12, "idle_workers": 4, "work_range": 2,
 		"max_expedition_party_size": 8, "activity": "forage", "labor_assignments": [],
 	})
 
@@ -3542,10 +3492,10 @@ func _panel_band_roster() -> Array:
 	# (`HudBandLaborState.source_crew_pool_*`, `effective_idle` plus the crew on the source).
 	return [
 		BandFx.with_band_id({"entity": 841, "faction": 0, "size": 120, "current_x": 66, "current_y": 10,
-			"working_age": PANEL_BAND_PARENT_IDLE, "idle_workers": PANEL_BAND_PARENT_IDLE, "hunt_reach": 7, "work_range": 2,
+			"working_age": PANEL_BAND_PARENT_IDLE, "idle_workers": PANEL_BAND_PARENT_IDLE, "work_range": 2,
 			"max_expedition_party_size": 8, "activity": "forage", "labor_assignments": []}),
 		BandFx.with_band_id({"entity": 842, "faction": 0, "size": 40, "current_x": 67, "current_y": 10,
-			"working_age": PANEL_BAND_COLONY_IDLE, "idle_workers": PANEL_BAND_COLONY_IDLE, "hunt_reach": 7, "work_range": 2,
+			"working_age": PANEL_BAND_COLONY_IDLE, "idle_workers": PANEL_BAND_COLONY_IDLE, "work_range": 2,
 			"max_expedition_party_size": 8, "activity": "forage", "labor_assignments": []}),
 	]
 
@@ -3699,7 +3649,7 @@ func _actor_band(entity: int, assignments: Array) -> Dictionary:
 		"entity": entity, "faction": 0, "size": 90,
 		"current_x": ACTOR_TILE_X, "current_y": ACTOR_TILE_Y,
 		"working_age": 16, "idle_workers": ACTOR_IDLE_WORKERS,
-		"work_range": 2, "hunt_reach": 7, "max_expedition_party_size": 8,
+		"work_range": 2, "max_expedition_party_size": 8,
 		"activity": "forage", "labor_assignments": assignments,
 	})
 

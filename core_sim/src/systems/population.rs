@@ -1,4 +1,6 @@
 use super::*;
+use crate::belief::BeliefRegistry;
+use crate::belief_config::BeliefConfigHandle;
 use crate::components::FertilityFactors;
 use crate::demographics_config::{
     DemographicsBirths, DemographicsTemperatureTail, DemographicsTrend,
@@ -221,6 +223,13 @@ struct DemographicFlows {
     pub child_death_cause: DeathCause,
     pub working_death_cause: DeathCause,
     pub elder_death_cause: DeathCause,
+}
+
+impl DemographicFlows {
+    /// Every death this turn across the three brackets — the fractional head-count the band lost.
+    fn total_deaths(&self) -> Scalar {
+        self.child_deaths + self.working_deaths + self.elder_deaths
+    }
 }
 
 /// The **flow** fertility factor. `None` flow means *not projected* — a band with no
@@ -908,8 +917,13 @@ pub fn simulate_population(
     mut cohorts: DemographicBands,
     mut event_log: ResMut<CommandEventLog>,
     tick: Res<SimulationTick>,
+    // **Belief on a place** — the turn's deaths are credited to the tile each band STANDS on
+    // (`crate::belief`).
+    mut belief: ResMut<BeliefRegistry>,
+    belief_config: Res<BeliefConfigHandle>,
 ) {
     let population_cfg = pipeline_config.config().population();
+    let belief_cfg = belief_config.get();
     let demo = demographics.get();
     let wellbeing = wellbeing_config.get();
     let max_cap_scalar = scalar_from_u32(config.population_cap);
@@ -1003,6 +1017,20 @@ pub fn simulate_population(
         // shortfall, and the runway counts down need, never eaten.
         cohort.last_food_need = outcome.need.to_f32();
         cohort.sync_size();
+
+        // **The cemetery** (`docs/plan_civilization_steps.md` §"The first pulls are not
+        // productive"): every death while the band stands on a place adds to that place's belief.
+        // The tile it STANDS on — `current_tile`, not `home` — because the dead are buried where
+        // the band is. The FRACTIONAL total, not the whole-person events `push_demographic_events`
+        // announces: belief is a continuous stock, so fractions accrue exactly, and a band with no
+        // durable id or carry still buries its dead.
+        if let Ok(standing) = tiles.get(cohort.current_tile) {
+            belief.credit_deaths(
+                standing.position,
+                outcome.flows.total_deaths().to_f32(),
+                &belief_cfg,
+            );
+        }
 
         // The flows the model just resolved become the player's world events, once each has
         // accumulated a whole person. A band with neither a durable id nor a carry cannot report

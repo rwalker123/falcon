@@ -1775,12 +1775,18 @@ impl PopulationCohort {
     /// hunt's `killed` come out of `working` (floored at 0), and `size` is resynced. This is the
     /// `death_fraction` seam's combat twin — a net-new way people die, beside starvation, cold and
     /// elder mortality. Casualties are working-age only in Phase 0.
-    pub fn apply_combat_casualties(&mut self, killed: Scalar) {
+    ///
+    /// Returns the people **actually** removed — `killed` floored at the working-age bracket that
+    /// was there — so a caller crediting the dead elsewhere (belief on the place, `crate::belief`)
+    /// counts the dead the band lost rather than the casualties the fight asked for.
+    pub fn apply_combat_casualties(&mut self, killed: Scalar) -> Scalar {
         if killed <= scalar_zero() {
-            return;
+            return scalar_zero();
         }
+        let before = self.working;
         self.working = (self.working - killed).max(scalar_zero());
         self.sync_size();
+        before - self.working
     }
 }
 
@@ -1870,17 +1876,30 @@ pub struct BandId(pub u64);
 #[derive(Component, Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct BandName(pub String);
 
-/// What an expedition was sent to do: `Scout` (explore + report the map, PR 1) or `Hunt` (follow a
-/// migratory herd, harvest food, deliver it, PR 2) — two verbs on one traveling-party system.
-// `Eq` is deliberately absent: the mission carries an `f32` floor, and float equality is not an
-// equivalence relation. Nothing compares missions for identity — `same_source` keys on the herd id.
+/// What an expedition was sent to do: `Scout` (explore + report the map), `Deny` (erase a herd) or
+/// `Trade` (carry a shipment to another band) — three verbs on one traveling-party system. A far
+/// *hunt* is not a mission: it is a work party (`crate::work_party`), posted by a band's own labour.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ExpeditionMission {
     /// Explore toward a target and report the map + any Wondrous Sites it uncovers.
     Scout,
-    /// Follow the herd `fauna_id`, harvest a **productive** hunt's worth of food each turn into the
-    /// party's larder, and deliver it back to the band. `fauna_id` keys `HerdRegistry::find`.
-    Hunt {
+    /// **Erase the herd `fauna_id`** — the denial raid (`docs/plan_denial_raid.md` §1). The party
+    /// works the herd until it is past the point of no return
+    /// ([`crate::fauna::herd_past_recovery`]) and then walks away. `fauna_id` keys
+    /// `HerdRegistry::find`.
+    ///
+    /// **It carries no floor and no rate, and that is the whole reason it is a mission** rather than
+    /// a number on the assign dialog. There is nothing to tune: you choose a herd and a party size.
+    /// [`Self::raid_orders`] reports [`STRIP_IT_BARE`] for it — the escapement ceiling is the herd's
+    /// whole standing stock — and `floor` never appears in its command text or its UI.
+    ///
+    /// **It never stops engaging** ([`crate::fauna::EngagementStop::Never`]): a full pack does not
+    /// end the slaughter. `carried` is still bounded by the pack, so the raid banks whatever it can
+    /// haul on the way home — a rounding error against what it killed, which is the point
+    /// ([`crate::fauna::AnimalTake`] models kill ≠ carry).
+    ///
+    /// **No target faction** (§2). Denial is aimed at a herd, not at a player.
+    Deny {
         fauna_id: String,
         /// **The quarry's species display name, resolved ONCE at launch** — what the client names
         /// this party's target on screen (`Red Deer`), never the `fauna_id` beside it.
@@ -1890,58 +1909,12 @@ pub enum ExpeditionMission {
         /// pruned at local extinction, and a detached party is deliberately **not** a vision source
         /// ([`crate::visibility_systems::calculate_visibility`], `Without<Expedition>`) — so a
         /// party's own quarry routinely leaves the published herd list while the party is still bound
-        /// to it. A client joining `fauna_id` against that list had nothing left to join against and
-        /// fell back to rendering the raw id.
+        /// to it. A denial raid's whole purpose is to drive the herd past recovery, so its target is
+        /// pruned from the herd list by the raid succeeding.
         ///
         /// **Launch is the moment the name is reliable**: the herd is in [`crate::fauna::HerdRegistry`]
-        /// by construction there (the command resolved it to forecast the trip), and it can never be
-        /// again once the herd is gone. Resolving at capture time instead would have survived fog and
-        /// still gone blank on extinction, which prunes the registry itself.
-        target_species: String,
-        /// **WHERE THE RAID STOPS, as a fraction of the herd's `K`** — chosen at launch, and the
-        /// whole of what the party's orders say about pressure (`docs/plan_harvest_floor.md` §1).
-        /// The raid takes the stock standing above it as fast as it can carry it, then comes home;
-        /// the floor therefore governs both the take and the trip's shape
-        /// ([`crate::components::raid_is_recurring`]).
-        ///
-        /// **Floor `0` takes everything** — nothing is left standing, the herd falls under
-        /// `extinction_floor`, and the party banks the whole-stock windfall on the way (an end
-        /// state, not an empty pack). That reading is a *consequence* of the number here rather than
-        /// a mission kind.
-        ///
-        /// **It is maximal *harvest*, and that is not denial** (`docs/plan_denial_raid.md` §0): the
-        /// take is still bounded by what the party can **carry**, so erasing a herd this way is as
-        /// slow and as crew-hungry as eating it. Denial is a mission of its own with the carry bound
-        /// removed, at which point this field means only "how deep a harvest".
-        ///
-        /// **The floor is the ONLY number a hunt carries.** A party-side `fill_target` ("take ≈50
-        /// and come home") shipped beside it and was retired — see
-        /// `docs/plan_hunt_through_combat.md` §5.2, marked retired in place.
-        floor: f32,
-    },
-    /// **Erase the herd `fauna_id`** — the denial raid (`docs/plan_denial_raid.md` §1). The party
-    /// works the herd until it is past the point of no return
-    /// ([`crate::fauna::herd_past_recovery`]) and then walks away.
-    ///
-    /// **It carries no floor and no rate, and that is the whole reason it is a mission** rather than
-    /// a number on the assign dialog. There is nothing to tune: you choose a herd and a party size.
-    /// [`Self::hunt_floor`] reports [`STRIP_IT_BARE`] for it — the escapement ceiling is the herd's
-    /// whole standing stock — and `floor` never appears in its command text or its UI.
-    ///
-    /// **One line of behaviour differs from a hunt** ([`Self::engagement_stop`]): a hunting party
-    /// stops engaging once its pack is full, a denial party never stops. `carried` keeps the hunt's
-    /// formula exactly, so the raid still banks whatever it can haul on the way home — a rounding
-    /// error against what it killed, which is the point. Everything else is reused unchanged:
-    /// [`ExpeditionPhase`], party outfitting, travel, and
-    /// [`crate::fauna::AnimalTake`], which already models kill ≠ carry.
-    ///
-    /// **No target faction** (§2). Denial is aimed at a herd, not at a player.
-    Deny {
-        fauna_id: String,
-        /// The quarry's species display name, resolved once at launch — see
-        /// [`ExpeditionMission::Hunt::target_species`]. A denial raid needs it *more* than a hunt
-        /// does: the mission's whole purpose is to drive the herd past recovery, so its target is
-        /// pruned from the herd list by the raid succeeding.
+        /// by construction there (the command resolved it to forecast the raid), and it can never be
+        /// again once the herd is gone.
         target_species: String,
     },
     /// **Carry a shipment to another band** — the first rider on the connection primitive
@@ -1973,7 +1946,7 @@ pub enum ExpeditionMission {
         /// **The destination's display name, resolved ONCE at launch — and EMPTY today, because
         /// bands have no names in this game.**
         ///
-        /// The field exists for the reason [`ExpeditionMission::Hunt::target_species`] does: the
+        /// The field exists for the reason [`ExpeditionMission::Deny::target_species`] does: the
         /// party outlives its target's presence in the viewer's world, so a name that can only be
         /// resolved at launch has to be *carried*. The moment a second faction lands (#513) a
         /// foreign band's name must come from here, because the client has no roster to resolve one
@@ -1990,9 +1963,8 @@ pub enum ExpeditionMission {
     },
 }
 
-/// **The orders a party works a herd under** — what [`ExpeditionMission::Hunt`] and
-/// [`ExpeditionMission::Deny`] have in common, resolved once so the `Hunting` phase arm and the
-/// forecasts branch on data rather than re-matching the mission at every seam.
+/// **The orders a party works a herd under** — [`ExpeditionMission::Deny`]'s, resolved once so the
+/// `Hunting` phase arm reads the raid's terms as data rather than re-matching the mission.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RaidOrders<'a> {
     /// The herd the party named — keys `HerdRegistry::find`.
@@ -2008,7 +1980,6 @@ impl ExpeditionMission {
     pub fn as_str(&self) -> &'static str {
         match self {
             ExpeditionMission::Scout => "scout",
-            ExpeditionMission::Hunt { .. } => "hunt",
             ExpeditionMission::Deny { .. } => "deny",
             ExpeditionMission::Trade { .. } => "trade",
         }
@@ -2019,33 +1990,25 @@ impl ExpeditionMission {
     pub fn party_noun(&self) -> &'static str {
         match self {
             ExpeditionMission::Scout => "scouting",
-            ExpeditionMission::Hunt { .. } => "hunting",
             ExpeditionMission::Deny { .. } => "raiding",
             ExpeditionMission::Trade { .. } => "trading",
         }
     }
 
-    /// Parse a mission from its wire keys (snapshot restore). `"hunt"` reconstructs
-    /// `Hunt { fauna_id, target_species, floor }` from `target_herd` + `target_species` + `floor`;
-    /// `"deny"` reconstructs `Deny { fauna_id, target_species }` from the two strings alone — it
-    /// carries no number; `"trade"` reconstructs `Trade { destination_band, destination_faction,
+    /// Parse a mission from its wire keys (snapshot restore). `"deny"` reconstructs
+    /// `Deny { fauna_id, target_species }` from the two strings alone — it carries no number;
+    /// `"trade"` reconstructs `Trade { destination_band, destination_faction,
     /// destination_name }` from the destination triple, which shares nothing with the herd pair (a
     /// shipment names a *people*); anything else is `Scout`.
     pub fn from_wire(
         kind: &str,
         target_herd: &str,
         target_species: &str,
-        floor: f32,
         destination_band: u64,
         destination_faction: u32,
         destination_name: &str,
     ) -> Self {
         match kind {
-            "hunt" => ExpeditionMission::Hunt {
-                fauna_id: target_herd.to_string(),
-                target_species: target_species.to_string(),
-                floor,
-            },
             "deny" => ExpeditionMission::Deny {
                 fauna_id: target_herd.to_string(),
                 target_species: target_species.to_string(),
@@ -2131,18 +2094,16 @@ impl ExpeditionMission {
         }
     }
 
-    /// The target herd id for a `Hunt`/`Deny` mission (empty for `Scout`) — the snapshot
+    /// The target herd id for a `Deny` mission (empty otherwise) — the snapshot
     /// `expeditionTargetHerd`.
     pub fn target_herd(&self) -> &str {
         match self {
-            ExpeditionMission::Hunt { fauna_id, .. } | ExpeditionMission::Deny { fauna_id, .. } => {
-                fauna_id
-            }
+            ExpeditionMission::Deny { fauna_id, .. } => fauna_id,
             ExpeditionMission::Scout | ExpeditionMission::Trade { .. } => "",
         }
     }
 
-    /// The target herd's species display name for a `Hunt`/`Deny` mission (empty for `Scout`) — the
+    /// The target herd's species display name for a `Deny` mission (empty otherwise) — the
     /// snapshot `expeditionTargetSpecies`. **This is the name the client renders**; `target_herd` is
     /// the key it addresses commands by, and the two are not interchangeable.
     ///
@@ -2151,8 +2112,7 @@ impl ExpeditionMission {
     /// was not already missing.
     pub fn target_species(&self) -> &str {
         match self {
-            ExpeditionMission::Hunt { target_species, .. }
-            | ExpeditionMission::Deny { target_species, .. } => target_species,
+            ExpeditionMission::Deny { target_species, .. } => target_species,
             ExpeditionMission::Scout | ExpeditionMission::Trade { .. } => "",
         }
     }
@@ -2177,60 +2137,35 @@ impl ExpeditionMission {
         }
     }
 
-    /// The raid's escapement floor for a `Hunt` mission — the snapshot `expeditionFloor`. A `Scout`
-    /// party harvests nothing, so it reports the floor that takes nothing.
+    /// **The orders a party works a herd under**, for the one mission that works one — `None` for a
+    /// `Scout` or a `Trade`, which raid nothing.
     ///
-    /// **A `Deny` mission reports [`STRIP_IT_BARE`]** (`docs/plan_denial_raid.md` §1) — its ceiling
-    /// is the herd's whole standing stock, and it carries no floor of its own to report. `0` is the
-    /// honest reading rather than a stand-in: nothing is meant to be left standing. It is a
-    /// *derived* number, never a lever — the mission has no floor to set, which is the point of it
-    /// being a mission.
-    pub fn hunt_floor(&self) -> f32 {
-        match self {
-            ExpeditionMission::Hunt { floor, .. } => *floor,
-            ExpeditionMission::Deny { .. } => STRIP_IT_BARE,
-            ExpeditionMission::Scout | ExpeditionMission::Trade { .. } => NO_RAID_FLOOR,
-        }
-    }
-
-    /// **Does a full pack stop this party engaging?** — the one line of behaviour a denial raid
-    /// changes (`docs/plan_denial_raid.md` §1), stated here so every take and forecast path reads it
-    /// from the mission rather than re-deriving it from a floor.
-    pub fn engagement_stop(&self) -> crate::fauna::EngagementStop {
-        match self {
-            ExpeditionMission::Deny { .. } => crate::fauna::EngagementStop::Never,
-            ExpeditionMission::Hunt { .. }
-            | ExpeditionMission::Scout
-            | ExpeditionMission::Trade { .. } => crate::fauna::EngagementStop::WhenPackFull,
-        }
-    }
-
-    /// **The orders a party works a herd under**, for the two missions that work one — `None` for a
-    /// `Scout`, which raids nothing. One seam, so the `Hunting` phase arm handles a hunt and a
-    /// denial raid through the same code with the differences carried as data.
+    /// **A denial raid's floor is [`STRIP_IT_BARE`]** (`docs/plan_denial_raid.md` §1) — its ceiling
+    /// is the herd's whole standing stock, and it carries no floor of its own. It is a *derived*
+    /// number, never a lever. **And it never stops engaging**: a full pack does not end the
+    /// slaughter ([`crate::fauna::EngagementStop::Never`]).
     pub fn raid_orders(&self) -> Option<RaidOrders<'_>> {
         match self {
-            ExpeditionMission::Scout | ExpeditionMission::Trade { .. } => None,
-            _ => Some(RaidOrders {
-                fauna_id: self.target_herd(),
-                floor: self.hunt_floor(),
-                stop: self.engagement_stop(),
+            ExpeditionMission::Deny { fauna_id, .. } => Some(RaidOrders {
+                fauna_id,
+                floor: STRIP_IT_BARE,
+                stop: crate::fauna::EngagementStop::Never,
             }),
+            ExpeditionMission::Scout | ExpeditionMission::Trade { .. } => None,
         }
     }
 }
 
 /// The expedition's lifecycle phase. Scout: `Outbound` toward a target; `AwaitingOrders` parked at
-/// the target (the decision point — chain a `move_band` waypoint or `recall_expedition`). Hunt:
-/// `Hunting` (chase the herd + harvest) and `Delivering` (run carried food to the band, then
-/// auto-relaunch). Shared: `Returning` chasing the home band's live tile to fold back on recall.
+/// the target (the decision point — chain a `move_band` waypoint or `recall_expedition`). Denial raid:
+/// `Hunting` (chase the herd + work it). Shared: `Returning` chasing the home band's live tile to fold
+/// back on recall or completion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ExpeditionPhase {
     Outbound,
     AwaitingOrders,
     Returning,
     Hunting,
-    Delivering,
 }
 
 impl ExpeditionPhase {
@@ -2241,7 +2176,6 @@ impl ExpeditionPhase {
             ExpeditionPhase::AwaitingOrders => "awaiting",
             ExpeditionPhase::Returning => "returning",
             ExpeditionPhase::Hunting => "hunting",
-            ExpeditionPhase::Delivering => "delivering",
         }
     }
 
@@ -2251,13 +2185,12 @@ impl ExpeditionPhase {
             "awaiting" => ExpeditionPhase::AwaitingOrders,
             "returning" => ExpeditionPhase::Returning,
             "hunting" => ExpeditionPhase::Hunting,
-            "delivering" => ExpeditionPhase::Delivering,
             _ => ExpeditionPhase::Outbound,
         }
     }
 }
 
-/// Marks a detached traveling party (a scouting/hunting expedition). Reuses `PopulationCohort` +
+/// Marks a detached traveling party (a scout, a denial raid or a shipment). Reuses `PopulationCohort` +
 /// `BandTravel` + `LaborAllocation` + `StartingUnit` machinery, but is excluded from the
 /// population/settlement arc (it lacks [`ResidentBand`]) and from live faction fog reveal
 /// (`Without<Expedition>` in `calculate_visibility`). Discovery is **communication-range gated**: it
@@ -2278,10 +2211,12 @@ pub struct Expedition {
     /// Observed-but-unreported tile coordinates (deduped). Flushed to the faction map as
     /// `Discovered` when the party is within comm range of its home band, then cleared.
     pub pending_reveal: Vec<UVec2>,
-    /// **Peoples the party has found and not yet reported** — subject band → (where it was seen,
-    /// the turn it was seen). Comm-gated exactly like [`Self::pending_reveal`] beside it: a
-    /// scouting party extends its home band's range, and what it finds reaches the faction through
-    /// the same flush.
+    /// **Peoples the party has found and not yet reported** — subject band →
+    /// [`crate::connections::Sighting`]: where it was seen, the turn, and the name it answered to
+    /// then (read off its [`BandName`] at sight, so the report carries what the party saw, not what
+    /// the band is called by the time it lands). Comm-gated exactly like [`Self::pending_reveal`]
+    /// beside it: a scouting party extends its home band's range, and what it finds reaches the
+    /// faction through the same flush.
     ///
     /// **Most-recent observation per subject wins** (re-observing overwrites), and the flush
     /// credits the **home band** with *one* contact per subject however many turns the party
@@ -2290,7 +2225,7 @@ pub struct Expedition {
     ///
     /// A `BTreeMap` for the reason [`crate::connections::ConnectionLedger`] is one: the flush order
     /// reaches a checkpointed ledger, so it must be an order rather than an accident.
-    pub pending_contacts: std::collections::BTreeMap<BandId, (UVec2, u64)>,
+    pub pending_contacts: std::collections::BTreeMap<BandId, crate::connections::Sighting>,
     // **`carried_trade` is RETIRED** (arc #527) with the trade-goods axis it banked. What a raid
     // physically carries home is provisions in `stores[FOOD]` and **material batches** in that same
     // `LocalStore`, moved by `LocalStore::drain_materials_into` batch by batch — so a mammoth hide
@@ -2538,7 +2473,7 @@ pub enum LaborTarget {
         take_species: TakeSelection,
     },
     /// Hunt a fauna group by id, stopping at a **floor**. Past
-    /// [`crate::labor_config::LaborConfig::hunt_reach`] the hunters become a **work party**
+    /// [`crate::work_party::party_begins_past`] the hunters become a **work party**
     /// ([`crate::work_party::WorkParty`]) and follow the herd wherever it goes — a party's position
     /// *is* its source's, so there is no follow order and no pathfinding. The row lapses only if
     /// the herd is gone or the band can no longer supply the party.
@@ -6636,24 +6571,6 @@ pub fn take_overdraws(floor: f32, crew_biomass_per_turn: f32, peak_regrowth_in_b
     floor_overdraws(floor) && crew_biomass_per_turn > peak_regrowth_in_band.max(0.0)
 }
 
-/// **Is a raid at this floor a SERIES of trips** — repeated full-cap runs to the band and back until
-/// the herd is drawn to the floor — rather than one raid? See the `relaunch` arm of
-/// `advance_expeditions` (Population). Stated here as the single source so the snapshot's in-flight
-/// delivery forecast cannot drift from the phase machine.
-///
-/// It is `floor < MSY_BIOMASS_FRACTION`: any floor below the food peak leaves more standing stock
-/// than one pack can carry, so the party is running a campaign rather than making a trip. That is a
-/// **widening** of the rule it replaced (which was the `Deplete` stance alone), and it is safe for
-/// one reason worth stating: **`done` is tested BEFORE `relaunch`**, so a party that has drawn the
-/// herd to its floor comes home for good instead of cycling on an empty surplus.
-///
-/// **Not the same question as "does it ever pass through `Delivering`"** (issue #441): a party whose
-/// herd wanders within `hunt.drop_off_within_tiles` of camp drops its load off and resumes hunting
-/// too. That is an incident *inside* one raid, not a new trip, so this still reads `false` for it.
-pub fn raid_is_recurring(floor: f32) -> bool {
-    floor < crate::fauna::MSY_BIOMASS_FRACTION
-}
-
 /// **WHAT IS BEING RAISED ON A SOURCE** — *what am I building here?* — the axis that is independent
 /// of the take crew's pressure (issue #442, `docs/plan_investment_rung_toggle.md` §2).
 ///
@@ -6761,15 +6678,8 @@ pub enum Improvement {
 }
 
 /// **A floor of `0` — "leave nothing standing."** Named because a bare `0.0` at a comparison site
-/// reads as an absent value rather than as the deliberate instruction it is, and because the
-/// behaviour that hangs off it (a raid that never delivers and grinds a herd to extinction) is a
-/// consequence of *this exact number* rather than of a mission kind.
+/// reads as an absent value rather than as the deliberate instruction it is.
 pub const STRIP_IT_BARE: f32 = 0.0;
-
-/// **A party with no herd to stop short of** — a `Scout` expedition's reported raid floor. `1.0`, not
-/// `0`: an absent floor must not read as *"take everything"*, which is the one value that would be a
-/// dangerous default if a reader ever acted on it.
-pub const NO_RAID_FLOOR: f32 = 1.0;
 
 /// **No improvement in flight** — what a pure harvest passes for the improvement axis. Named because
 /// the take/ceiling seams take it positionally in long argument lists, where a bare `None` says
@@ -6836,9 +6746,8 @@ impl Improvement {
     /// verbs. The exact twin of [`Improvement::valid_for_forage`], and exhaustive for the same reason.
     ///
     /// Note this is the **band's** axis. An *expedition* has no improvement slot **at all** — every
-    /// rung-transition is place-bound work a resident band does — and since issue #442 that is a
-    /// type-level fact (`ExpeditionMission::Hunt` carries a **floor**, a number, which can no longer
-    /// name a build verb) rather than a runtime gate that could rot.
+    /// rung-transition is place-bound work a resident band does, and no `ExpeditionMission` variant
+    /// can name a build verb.
     pub fn valid_for_hunt(self) -> bool {
         match self {
             Improvement::Tame | Improvement::Corral => true,

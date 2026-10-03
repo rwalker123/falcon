@@ -32,9 +32,8 @@ const COMPOSE_SPINE_IMPROVEMENT := "improvement"
 ## check stays a claim about ORDER.
 const COMPOSE_SPINE_SOURCE_CONDITIONAL: Array[String] = []
 
-## What EVERY compose sheet must open with — both webs, and the hunt sheet's local and expedition
-## branches alike. The expedition branch builds no improvement control (a detached party builds
-## nothing), so the shared claim is the HEAD; the two LOCAL sheets are additionally compared in full.
+## What EVERY compose sheet must open with — both webs alike. The shared claim is the HEAD; the two
+## sheets are additionally compared in full.
 const COMPOSE_SPINE_HEAD: Array[String] = [
 	COMPOSE_SPINE_BAND, COMPOSE_SPINE_POLICY, COMPOSE_SPINE_STEPPER,
 ]

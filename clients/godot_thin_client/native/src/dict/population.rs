@@ -1079,9 +1079,6 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // base, 0 when no scouts) — its effect shows directly in the fog, NOT as a drawn disc.
     let _ = dict.insert("work_range", cohort.workRange() as i64);
     let _ = dict.insert("scout_reveal_radius", cohort.scoutRevealRadius() as i64);
-    // Hunt reach = work_range + hunt_leash_tiles (default 5): the max hex distance at which the band
-    // can run a LOCAL hunt. Beyond it, the herd-hunt affordance offers a hunting EXPEDITION instead.
-    let _ = dict.insert("hunt_reach", cohort.huntReach() as i64);
 
     // Scouting expedition (docs/plan_exploration_and_sites.md §2): a detached party is a
     // PopulationCohort tagged Expedition that flows through this same populations[] array as a
@@ -1110,10 +1107,10 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "pending_reveal_count",
         cohort.pendingRevealX().map_or(0, |coords| coords.len()) as i64,
     );
-    // Hunt expedition (PR 2, docs/plan_exploration_and_sites.md §2b): the herd a hunt party
-    // follows (fauna_id string like "game_deer_57", mirrors LaborAssignment.faunaId); "" for a
-    // scout expedition / normal band. `expedition_mission` also takes "hunt", `expedition_phase`
-    // also takes "hunting"/"delivering" — same string fields already decoded above, new values.
+    // Denial raid (docs/plan_denial_raid.md): the herd a raiding party follows (fauna_id string like
+    // "game_deer_57", mirrors LaborAssignment.faunaId); "" for a scout / trade party / normal band.
+    // A raid's `expedition_mission` is "deny" and its `expedition_phase` takes "hunting" while it
+    // works the herd — same string fields already decoded above.
     let _ = dict.insert(
         "expedition_target_herd",
         cohort.expeditionTargetHerd().unwrap_or(""),
@@ -1128,12 +1125,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "expedition_target_species",
         cohort.expeditionTargetSpecies().unwrap_or(""),
     );
-    // WHERE THE RAID STOPS, as a fraction of the herd's carrying capacity — the launched party's
-    // orders (`docs/plan_harvest_floor.md`), replacing the retired `expeditionHuntPolicy` string.
-    // `1.0` on a scout or a resident band: they harvest no herd, and an absent floor must not read as
-    // "take everything". Beside it, the carry ceiling (party × per_worker_carry; 0 for scouts/bands),
-    // which the hunt panel shows as "Carried X / cap" plus a FULL state.
-    let _ = dict.insert("expedition_floor", f64::from(cohort.expeditionFloor()));
+    // The carry ceiling (0 for scouts/bands), which the party panel shows as "Carried X / cap" plus
+    // a FULL state. What fills it depends on the mission — a raid's provisions pack, a shipment's
+    // resolved trade carry.
     let _ = dict.insert(
         "expedition_carry_cap",
         f64::from(cohort.expeditionCarryCap()),
@@ -1187,7 +1181,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     }
     let _ = dict.insert("expedition_cargo_materials", &cargo_materials);
     // **THE THREE SHIPMENT-MASS TERMS, PUBLISHED ONTO EVERY COHORT** — the same every-cohort idiom as
-    // `expedition_per_worker_carry` / `hunt_per_worker_provisions` above, and the set the OUTFIT UI
+    // `hunt_per_worker_provisions` below, and the set the OUTFIT UI
     // needs: it prices a manifest for a party that does not exist yet, so no per-party field can
     // serve that screen. The sim's own expression, held verbatim client-side:
     //
@@ -1201,9 +1195,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // the exact failure the material lever ships to prevent. Its shipped `0.5` is FINITE AND >= 0
     // rather than positive — `0` legitimately means "hay is weightless".
     //
-    // **THE PACK LEVER IS NOT `expedition_per_worker_carry`.** That one is the HUNT pack — a raid's
-    // provisions ceiling — and a client composing a trade cap out of it is one config edit away from
-    // quoting a cap `send_trade_expedition` refuses. Once a shipment is on the map its own pack is
+    // **THE PACK LEVER IS NOT A RAID'S PACK.** A raid's provisions ceiling is a different number
+    // arrived at a different way. Once a shipment is on the map its own pack is
     // `expedition_carry_cap` above, which resolves per MISSION.
     //
     // **AND THE TRADE ONE IS NOT A LEVER AT ALL** (issue #626): `carry_per_worker`
@@ -1217,81 +1210,29 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         f64::from(cohort.carryMaterialWeight()),
     );
     let _ = dict.insert("carry_fodder_weight", f64::from(cohort.carryFodderWeight()));
-    // WHICH STOP WILL END THIS PARTY'S RAID — the `core_sim::HuntTripBound` key
-    // ("pack_full" | "floor" | "herd_lost" | "horizon"), off the same in-flight
-    // forward simulation `expedition_eta_turns` comes from, so it answers for the party's REAL
-    // orders rather than for the band-agnostic pre-launch table.
-    //
-    // `""` = NOT RAIDING (a resident band, a scout, or a party already walking a load home), and it
-    // is deliberately a different statement from `"horizon"`, which means the projection ran and
-    // found no stop. The client renders no bound clause at all for `""`.
-    let _ = dict.insert(
-        "expedition_trip_bound",
-        cohort.expeditionTripBound().unwrap_or(""),
-    );
-    // In-flight hunt-party next-delivery forecast (the drawer's "Next delivery: ~X food in ~N turns"
-    // line) — the in-flight twin of the pre-launch forecast the client now ASKS for over the query
-    // channel. 0 / 0.0 / false when n/a (scout, normal band, or a raid with no finite ETA). See
-    // core_sim expedition_delivery.
-    let _ = dict.insert(
-        "expedition_eta_turns",
-        i64::from(cohort.expeditionEtaTurns()),
-    );
-    let _ = dict.insert(
-        "expedition_projected_delivery",
-        f64::from(cohort.expeditionProjectedDelivery()),
-    );
-    let _ = dict.insert("expedition_recurring", cohort.expeditionRecurring());
-    // Global expedition/labor config echoed onto EVERY cohort. These are DISPLAY levers only — none
-    // of them is an input to an expedition trip length. An expedition's turns-to-fill comes from the
-    // sim's FORECAST QUERY answer and NOTHING ELSE: the sim forward-simulates the trip for the exact
-    // (band, kit, party, floor) that was asked about and returns the ANSWER, so the client performs a
-    // PURE READ and does ZERO arithmetic for an expedition. It must NEVER divide a carry cap by a
-    // take rate: the herd's state moves under the party and its stock exhausts mid-trip, so any
-    // closed form drifts from the take the sim actually performs. Pinned by
-    // core_sim/tests/expedition_hunt.rs.
-    // What each lever is actually FOR:
-    //   expedition_viability_warn_turns — the viable/not-viable threshold applied to `turns_to_fill`
-    //   hunt_per_worker_provisions      — one hunter's throughput, used ONLY by the RESIDENT-BAND
-    //     local-hunt preview, which genuinely IS arithmetic:
-    //         min(workers × hunt_per_worker_provisions, band_ceiling) × output_multiplier
-    //     over the herd's `hunt_policy_ceilings` (a renewable FLOW), pinned by
-    //     `exported_snapshot_fields_reproduce_band_hunt_take`.
-    // Band = flow arithmetic; expedition = lookup.
+    // Global hunt lever echoed onto EVERY cohort — one hunter's throughput, a DISPLAY lever used
+    // ONLY by the RESIDENT-BAND local-hunt preview, which genuinely IS arithmetic:
+    //     min(workers × hunt_per_worker_provisions, band_ceiling) × output_multiplier
+    // over the herd's `hunt_policy_ceilings` (a renewable FLOW), pinned by
+    // `exported_snapshot_fields_reproduce_band_hunt_take`.
     let _ = dict.insert(
         "hunt_per_worker_provisions",
         f64::from(cohort.huntPerWorkerProvisions()),
     );
-    let _ = dict.insert(
-        "expedition_viability_warn_turns",
-        cohort.expeditionViabilityWarnTurns() as i64,
-    );
-    // **HOW LONG THE SIM'S RAID PROJECTION RUNS** — the SCALE every "never completed" sentinel this
-    // subsystem publishes is relative to (`turns_to_fill == 0`, `turns_to_collapse{,_low,_high} == 0`,
-    // `expedition_trip_bound == "horizon"`). ONE lever serves both raid tables (the sim's
-    // `denial_projection_at` and `hunt_trip_forecast_seeded` read the same
-    // `expedition_config.hunt.forecast_horizon_turns`), so there is nothing here for a client to pick
-    // wrongly between.
+    // **HOW LONG THE SIM'S RAID PROJECTION RUNS** — the SCALE the denial forecast's "never completed"
+    // sentinel (`turns_to_collapse{,_low,_high} == 0`) is relative to (the sim's
+    // `denial_projection_at` reads `expedition_config.hunt.forecast_horizon_turns`).
     //
-    // **IT IS NOT A TRIP LENGTH.** It bounds the HUNTING only — `turns_to_fill` excludes travel — so a
-    // client quoting it as a trip figure understates the trip by the entire walk. The floor on a hunt's
-    // whole span is `this + round-trip travel`; see `SourceForecast.RAID_TURNS_UNBOUNDED`.
+    // **IT IS NOT A TRIP LENGTH.** It bounds the RAIDING only — travel is excluded — so a client
+    // quoting it as a trip figure understates the trip by the entire walk. The floor on a raid's
+    // whole span is `this + travel`.
     let _ = dict.insert(
         "expedition_forecast_horizon_turns",
         cohort.expeditionForecastHorizonTurns() as i64,
     );
-    // Per-worker carry the pack fills to: an expedition delivers `party_workers ×
-    // expeditionPerWorkerCarry` food when it fills. This IS a display number the client may multiply
-    // by the party size (the same blessed party×lever arithmetic as the band ceiling — NOT the
-    // ecology/turns-to-fill lookup the expedition discipline protects), used to show the pre-launch
-    // HAUL beside the turns-to-fill forecast. 0 when absent.
-    let _ = dict.insert(
-        "expedition_per_worker_carry",
-        f64::from(cohort.expeditionPerWorkerCarry()),
-    );
-    // Band move speed (tiles/turn, LaborConfig scalar echoed per-cohort). The hunt-expedition
+    // Band move speed (tiles/turn, LaborConfig scalar echoed per-cohort). The denial-raid
     // forecast's round-trip TRAVEL turns are `ceil(2 × hex_distance(band, herd) / this)` — without
-    // it the travel breakdown reads 0 and degrades to hunting-turns-only. 0/absent = no travel line.
+    // it the travel breakdown reads 0 and degrades to raiding-turns-only. 0/absent = no travel line.
     let _ = dict.insert(
         "band_move_tiles_per_turn",
         f64::from(cohort.bandMoveTilesPerTurn()),

@@ -1169,7 +1169,7 @@ impl Food {
         let sources = self.reachable_sources(view, memory, band);
         let falling: Vec<Source> = sources
             .iter()
-            .filter(|source| grid.distance(target, source.tile) > source.reach(band))
+            .filter(|source| grid.distance(target, source.tile) > source.reach(band, memory))
             .cloned()
             .collect();
         if falling.is_empty() {
@@ -1184,7 +1184,7 @@ impl Food {
                     Self::source_tile(view, &key).is_some_and(|tile| {
                         let reach = match key {
                             SourceKey::Patch(_) => band.work_range,
-                            SourceKey::Herd(_) => band.hunt_reach,
+                            SourceKey::Herd(_) => memory.hunt_reach(band),
                         };
                         grid.distance(target, tile) <= reach
                     })
@@ -2030,7 +2030,7 @@ impl Food {
     /// kits for the hands **worth more on a basket than on a spear** ([`Food::outfit_split`],
     /// the walk by value), at [`DEMAND_PRIORITY_GATHERING`]; a hunting kit for every other
     /// hand when a huntable herd
-    /// within `hunt_reach` can be brought down with it ([`Food::hunting_kit_for`]), at
+    /// within [`SeatMemory::hunt_reach`] can be brought down with it ([`Food::hunting_kit_for`]), at
     /// [`DEMAND_PRIORITY_HUNTING`]; and when no herd in reach clears any kit, those hands ask for
     /// baskets too — a spare basket is not forfeited budget, an unspent slot is. Beside the kits,
     /// **the hoe estimate, posted not crafted** ([`Food::hoe_estimate`], off the land reading's
@@ -2065,7 +2065,7 @@ impl Food {
             priority,
         };
         let hunting = (spare > 0)
-            .then(|| Self::hunting_kit_for(view, band))
+            .then(|| Self::hunting_kit_for(view, memory, band))
             .flatten();
         let gathering = match hunting {
             Some(_) => gathering,
@@ -2229,7 +2229,7 @@ impl Food {
             sustained + site.carry.min(room_left) * site.provisions_per_biomass
         };
         // The best herd a kit clears: its sustained take at Best, and the crew that carries it.
-        let herd = Self::best_herd_for(view, band).map(|herd| {
+        let herd = Self::best_herd_for(view, memory, band).map(|herd| {
             let sustained_biomass = regrowth_at(&herd.regrowth_samples, BEST_FLOOR).max(0.0);
             let crew = if herd.per_worker_biomass > 0.0 {
                 ((sustained_biomass / herd.per_worker_biomass).ceil() as u32).max(1)
@@ -2265,10 +2265,11 @@ impl Food {
         (gathering, hunters)
     }
 
-    /// The huntable herd within `hunt_reach` a roster kit clears, with the greatest sustained
-    /// take at Best — what the outfit walk prices a spear against.
+    /// The huntable herd within [`SeatMemory::hunt_reach`] a roster kit clears, with the greatest
+    /// sustained take at Best — what the outfit walk prices a spear against.
     fn best_herd_for<'v>(
         view: &'v SeatView,
+        memory: &SeatMemory,
         band: &PopulationCohortState,
     ) -> Option<&'v HerdTelemetryState> {
         let grid = view.grid();
@@ -2277,7 +2278,9 @@ impl Food {
             .herds
             .iter()
             .filter(|herd| herd.huntable)
-            .filter(|herd| grid.distance(here, Tile::new(herd.x, herd.y)) <= band.hunt_reach)
+            .filter(|herd| {
+                grid.distance(here, Tile::new(herd.x, herd.y)) <= memory.hunt_reach(band)
+            })
             .filter(|herd| Self::kit_clearing(view, herd).is_some())
             .max_by(|a, b| {
                 let take = |herd: &HerdTelemetryState| {
@@ -2314,11 +2317,15 @@ impl Food {
 
     /// **The hunting kit to ask for**: among the roster's hunt-job kits (never the item-less
     /// `none`), the one with the greatest fresh `attack` whose mass window admits the biggest
-    /// huntable herd within `hunt_reach` and whose attack clears that herd's `defense` — the
+    /// huntable herd within [`SeatMemory::hunt_reach`] and whose attack clears that herd's `defense` — the
     /// gate is `max(0, attack − defense)`, and *"below a species' `defense` that species cannot
     /// be hunted at all"*. Herds are tried biggest first, so a kit that cannot take the mammoth
     /// may still be asked for the deer. `None` when no herd in reach clears any kit.
-    fn hunting_kit_for(view: &SeatView, band: &PopulationCohortState) -> Option<String> {
+    fn hunting_kit_for(
+        view: &SeatView,
+        memory: &SeatMemory,
+        band: &PopulationCohortState,
+    ) -> Option<String> {
         let grid = view.grid();
         let here = band_tile(band);
         let mut herds: Vec<&HerdTelemetryState> = view
@@ -2326,7 +2333,9 @@ impl Food {
             .herds
             .iter()
             .filter(|herd| herd.huntable)
-            .filter(|herd| grid.distance(here, Tile::new(herd.x, herd.y)) <= band.hunt_reach)
+            .filter(|herd| {
+                grid.distance(here, Tile::new(herd.x, herd.y)) <= memory.hunt_reach(band)
+            })
             .collect();
         herds.sort_by(|a, b| b.body_mass.total_cmp(&a.body_mass));
         herds
@@ -5317,7 +5326,6 @@ mod tests {
             working_age: 5,
             idle_workers: 5,
             work_range: 2,
-            hunt_reach: 5,
             food_consumption: 6.7,
             food_need: 6.7,
             stores: vec![CohortStoreState {

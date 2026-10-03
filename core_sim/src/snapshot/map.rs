@@ -126,6 +126,7 @@ pub(crate) fn tile_state(
     morale_pressure_cfg: &MoralePressureConfig,
     graze: Option<&GrazePatch>,
     forage: &ForageLaborConfig,
+    belief: f32,
 ) -> TileState {
     let (mountain_kind, mountain_relief) = match tile.mountain {
         Some(meta) => (map_mountain_kind(meta.kind), meta.relief),
@@ -173,6 +174,9 @@ pub(crate) fn tile_state(
         river_edges: tile.river_edges,
         river_inflow: tile.river_inflow,
         river_channel: tile.river_channel,
+        // Belief on this place (`crate::belief::BeliefRegistry::get`) — a stated `NO_BELIEF` where
+        // none has ever accrued.
+        belief,
     }
 }
 

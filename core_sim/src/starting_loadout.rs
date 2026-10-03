@@ -37,7 +37,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    carry::{carry_capacity, scale_units_by_ratio, CarryConfig, CarryLoad},
+    carry::{carry_capacity, goods_cut, scale_units_by_ratio, CarryConfig, CarryLoad, GoodsCut},
     components::{BandEquipment, BandId, PopulationCohort, StartingUnit},
     equipment_config::EquipmentConfigHandle,
     expedition_config::{ExpeditionConfig, ExpeditionConfigHandle},
@@ -371,8 +371,14 @@ pub enum LoadoutRejection {
     #[error("'{0}' is not one of this start profile's pickable materials")]
     UnpickableMaterial(String),
     /// The whole order — every expanded item and every material unit — weighs more than this window
-    /// may carry. Checked on the **sum**, on both arms.
-    #[error("the order weighs {load} against a carry of {capacity}")]
+    /// may carry. Checked on the **sum**, on both arms. The text reaches the player (the refused
+    /// command's event names the band, #723), so it is rounded the way every other player-facing
+    /// quantity is rather than printed at `Scalar`'s six-place `Display`.
+    #[error(
+        "the order weighs {:.1} against a carry of {:.1}",
+        load.to_f32(),
+        capacity.to_f32()
+    )]
     OverCarry { load: Scalar, capacity: Scalar },
     #[error("'{0}' is allocated twice - one line per kit, one line per material")]
     DuplicateAllocation(String),
@@ -443,6 +449,12 @@ pub fn close_opening_window(
 ///
 /// **The spawned larder does NOT count against it** — the band has not walked anywhere. The budget is
 /// the whole `carry_capacity(workers)` (17 × 8.0 = 136 on the shipped profile).
+///
+/// **It is struck on the whole spawn-time head count**, not on the band's continuous working value
+/// ([`crate::carry::band_carry_workers`], which every later reading of a band's own carry uses). The
+/// grant is a budget struck once, when the band is made, and then spent by orders and partitioned by
+/// splits — it is not re-read as the band's working value drifts, so it is counted in the same whole
+/// people `party_workers` spawns.
 ///
 /// A faction with no starting band opens nothing: there is nobody to outfit.
 pub fn stamp_starting_loadout(
@@ -721,16 +733,28 @@ pub struct FittedLoadout {
     pub clamped: bool,
 }
 
-/// **PROPORTIONAL, FLOORED, remainder unspent — fitted on ONE currency.** The one fitting rule for
-/// every allocation measured against a carry budget: the profile's defaults on the opening band and
-/// a grant splinter, a grant parent re-fitted to what a split left it, and a take splinter's default
-/// take fitted to its goods allowance.
+/// **TOOLS FIRST, then PROPORTIONAL, FLOORED, remainder unspent — fitted on ONE currency.** The
+/// one fitting rule for every allocation measured against a carry budget: the profile's defaults on
+/// the opening band and a grant splinter, a grant parent re-fitted to what a split left it, and a
+/// take splinter's default take fitted to its goods allowance.
 ///
 /// If the allocation's load ([`allocation_load`] — its expanded items and its material units) is at
-/// or under `budget` it is kept whole. Otherwise **every kit count and every material unit count is
-/// scaled by `budget ÷ load` and floored** — and re-scaled while the floored result still exceeds
-/// the budget, which only fixed-point rounding on a non-dyadic weight can cause (each pass lowers
-/// every non-zero row by at least one, so it ends).
+/// or under `budget` it is kept whole. Otherwise it is cut in two stages, decided by
+/// [`crate::carry::goods_cut`] — the same staging a long move sheds by:
+///
+/// 1. **If the kits alone fit**, every kit row is kept whole and the materials are fitted
+///    proportionally into what the kits leave (`budget − kit load`).
+/// 2. **Otherwise the materials go to nothing** and the kits are fitted proportionally into the
+///    whole budget.
+///
+/// **Materials are cut before tools because tools feed a band and materials can be gathered
+/// again.** A uniform scale shrank a three-basket row to one or none while a fourteen-unit fibre row
+/// barely moved, so a splinter walked out with its raw fibre and no baskets to forage with, and
+/// gathered half of what the same crew did with them.
+///
+/// Within a stage, **every row is scaled by `room ÷ load` and floored** — and re-scaled while the
+/// floored result still exceeds the room, which only fixed-point rounding on a non-dyadic weight can
+/// cause (each pass lowers every non-zero row by at least one, so it ends).
 ///
 /// **Proportional rather than first-come, and the floor's remainder goes nowhere.** These are
 /// `BTreeMap`s, so there is no author's order to consume in — "declaration order" would really be
@@ -747,33 +771,58 @@ pub fn fit_to_carry(
     equipment: &crate::equipment_config::EquipmentConfig,
     carry_cfg: &CarryConfig,
 ) -> FittedLoadout {
-    let mut kept_kits: BTreeMap<String, u32> = kits
-        .iter()
+    let kept_kits = non_zero_rows(kits);
+    let kept_materials = non_zero_rows(materials);
+    let no_rows = BTreeMap::new();
+    let kit_load = allocation_load(equipment, carry_cfg, &kept_kits, &no_rows);
+    let material_load = allocation_load(equipment, carry_cfg, &no_rows, &kept_materials);
+    let (kits, materials, clamped) = match goods_cut(kit_load, material_load, budget) {
+        GoodsCut::KeepAll => (kept_kits, kept_materials, false),
+        GoodsCut::CutMaterials { room } => {
+            let materials = scale_rows_to_fit(&kept_materials, room, |rows| {
+                allocation_load(equipment, carry_cfg, &no_rows, rows)
+            });
+            (kept_kits, materials, true)
+        }
+        GoodsCut::CutItems { room } => {
+            let kits = scale_rows_to_fit(&kept_kits, room, |rows| {
+                allocation_load(equipment, carry_cfg, rows, &no_rows)
+            });
+            (kits, BTreeMap::new(), true)
+        }
+    };
+    FittedLoadout {
+        kits: kits.into_iter().collect(),
+        materials: materials.into_iter().collect(),
+        clamped,
+    }
+}
+
+/// The rows of an allocation that carry anything.
+fn non_zero_rows(rows: &BTreeMap<String, u32>) -> BTreeMap<String, u32> {
+    rows.iter()
         .filter(|(_, count)| **count > 0)
         .map(|(id, count)| (id.clone(), *count))
-        .collect();
-    let mut kept_materials: BTreeMap<String, u32> = materials
-        .iter()
-        .filter(|(_, units)| **units > 0)
-        .map(|(id, units)| (id.clone(), *units))
-        .collect();
-    let mut clamped = false;
+        .collect()
+}
+
+/// One stage of [`fit_to_carry`]: scale every row by `room ÷ load`, floored, until the rows' load
+/// (`load_of`) is at or under `room`. Rows that floor to zero are dropped.
+fn scale_rows_to_fit(
+    rows: &BTreeMap<String, u32>,
+    room: Scalar,
+    load_of: impl Fn(&BTreeMap<String, u32>) -> Scalar,
+) -> BTreeMap<String, u32> {
+    let mut kept = rows.clone();
     loop {
-        let load = allocation_load(equipment, carry_cfg, &kept_kits, &kept_materials);
-        if load <= budget {
-            break;
+        let load = load_of(&kept);
+        if load <= room {
+            return kept;
         }
-        clamped = true;
-        for count in kept_kits.values_mut().chain(kept_materials.values_mut()) {
-            *count = scale_units_by_ratio(*count, budget, load);
+        for count in kept.values_mut() {
+            *count = scale_units_by_ratio(*count, room, load);
         }
-        kept_kits.retain(|_, count| *count > 0);
-        kept_materials.retain(|_, units| *units > 0);
-    }
-    FittedLoadout {
-        kits: kept_kits.into_iter().collect(),
-        materials: kept_materials.into_iter().collect(),
-        clamped,
+        kept.retain(|_, count| *count > 0);
     }
 }
 
@@ -1471,11 +1520,12 @@ mod fit_tests {
         assert_eq!(fitted.materials, vec![("hide".to_string(), 8)]);
     }
 
-    /// **Over the budget, every kit and every material row scales by `budget ÷ load` and floors** —
-    /// one currency for both halves. `big_game 10` is 20 items and `hide 20` is 20 units, a load of
-    /// 40 at unit weights; against 20 each halves to `5` and `10`.
+    /// **Over the budget with room for the kits, the kits are kept whole and only the materials are
+    /// cut** — proportionally, floored, into what the kits leave. `big_game 10` is 20 items and
+    /// `hide 20` is 20 units, a load of 40 at unit weights; against 30 the kits keep all 20 and the
+    /// hides fit the 10 left.
     #[test]
-    fn an_allocation_over_its_budget_scales_proportionally_on_one_currency() {
+    fn an_allocation_over_its_budget_cuts_materials_before_tools() {
         let equipment = EquipmentConfig::builtin();
         let mut carry_cfg = ExpeditionConfig::builtin().carry.clone();
         carry_cfg.item_carry_weight = 1.0;
@@ -1483,23 +1533,50 @@ mod fit_tests {
         let fitted = fit_to_carry(
             &rows(&[("big_game", 10)]),
             &rows(&[("hide", 20)]),
-            Scalar::from_u32(20),
+            Scalar::from_u32(30),
             &equipment,
             &carry_cfg,
         );
         assert!(fitted.clamped);
-        assert_eq!(fitted.kits, vec![("big_game".to_string(), 5)]);
+        assert_eq!(fitted.kits, vec![("big_game".to_string(), 10)]);
         assert_eq!(fitted.materials, vec![("hide".to_string(), 10)]);
-        // Floored, remainder unspent: 21 of budget still keeps 5 and 10 (21/40 × 10 = 5.25).
+        // Two material rows share the room proportionally, floored, remainder unspent: 5 of room
+        // over hide 20 + fibre 10 (load 30) keeps hide 3 (3.33) and fibre 1 (1.67).
         let fitted = fit_to_carry(
             &rows(&[("big_game", 10)]),
-            &rows(&[("hide", 20)]),
-            Scalar::from_u32(21),
+            &rows(&[("hide", 20), ("fibre", 10)]),
+            Scalar::from_u32(25),
             &equipment,
             &carry_cfg,
         );
-        assert_eq!(fitted.kits, vec![("big_game".to_string(), 5)]);
-        assert_eq!(fitted.materials, vec![("hide".to_string(), 10)]);
+        assert_eq!(fitted.kits, vec![("big_game".to_string(), 10)]);
+        assert_eq!(
+            fitted.materials,
+            vec![("fibre".to_string(), 1), ("hide".to_string(), 3)]
+        );
+    }
+
+    /// **When the kits alone are over the budget, the materials go to nothing** and the kits scale
+    /// by `budget ÷ kit load` and floor. `big_game 10` (20 items) against 10 keeps 5 kits; against
+    /// 11 still 5 (11/20 × 10 = 5.5), the remainder unspent.
+    #[test]
+    fn kits_over_the_budget_drop_every_material_and_scale_proportionally() {
+        let equipment = EquipmentConfig::builtin();
+        let mut carry_cfg = ExpeditionConfig::builtin().carry.clone();
+        carry_cfg.item_carry_weight = 1.0;
+        carry_cfg.material_carry_weight = 1.0;
+        for budget in [10, 11] {
+            let fitted = fit_to_carry(
+                &rows(&[("big_game", 10)]),
+                &rows(&[("hide", 20)]),
+                Scalar::from_u32(budget),
+                &equipment,
+                &carry_cfg,
+            );
+            assert!(fitted.clamped);
+            assert_eq!(fitted.kits, vec![("big_game".to_string(), 5)]);
+            assert!(fitted.materials.is_empty());
+        }
     }
 
     /// A zero budget keeps nothing, and the result always fits whatever the weights.

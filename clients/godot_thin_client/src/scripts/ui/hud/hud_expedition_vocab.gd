@@ -10,23 +10,17 @@ class_name HudExpeditionVocab
 # resident band's allocation panel.
 const EXPEDITION_MISSION_SCOUT := "scout"
 
-const EXPEDITION_MISSION_HUNT := "hunt"
-
-## The DENIAL raid (`docs/plan_denial_raid.md`) — the third mission, and the one whose readouts are
-## deliberately NOT the hunt's. A denial party publishes no `expeditionProjectedDelivery` /
-## `expeditionEtaTurns` / `expeditionTripBound`, and its `expeditionFloor` (`0.0`) /
-## `expeditionFillTarget` (`0`) are the mission saying it has no such lever — never values it chose.
-## Every hunt-only readout is therefore gated on `EXPEDITION_MISSION_HUNT` rather than on "is a raid",
-## and what a denial party shows instead is its COLLAPSE VERDICT.
+## The DENIAL raid (`docs/plan_denial_raid.md`) — the one mission that works a herd. It carries no
+## floor and no delivery forecast; what a denial party shows is its COLLAPSE VERDICT.
 const EXPEDITION_MISSION_DENY := "deny"
 
-## **THE FOURTH MISSION** (arc #527, issue #517) — a shipment is a party that WALKS IT. It names no
+## **THE SHIPMENT** (arc #527, issue #517) — a shipment is a party that WALKS IT. It names no
 ## herd and takes no floor; what it names is another BAND, and what it carries is a manifest drawn
 ## off its home band's stores (`expedition_cargo_food` + `expedition_cargo_fodder` +
 ## `expedition_cargo_materials` — three accounts that never convert, and are never summed on screen).
 ##
 ## **THE DESTINATION HAS A KEY AND A DISPLAY TWIN, and only one of them may be rendered** — the
-## `EXPEDITION_MISSION_HUNT` rule exactly: `expedition_destination_band` is the `BandId`
+## denial raid's quarry rule exactly: `expedition_destination_band` is the `BandId`
 ## `send_trade_expedition` addresses, `expedition_destination_name` is the string a readout shows,
 ## resolved sim-side at launch and carried for the party's life because the party outlives its
 ## destination's presence in the viewer's world.
@@ -42,13 +36,10 @@ const EXPEDITION_PHASE_AWAITING := FoodIcons.STATUS_AWAITING
 
 const EXPEDITION_PHASE_HUNTING := "hunting"
 
-const EXPEDITION_PHASE_DELIVERING := "delivering"
-
 const EXPEDITION_PHASE_RETURNING := "returning"
 
 const EXPEDITION_MISSION_LABELS := {
 	"scout": "Scouting expedition",
-	"hunt": "Hunting expedition",
 	"deny": "Denial raid",
 	"trade": "Trade party",
 }
@@ -62,7 +53,6 @@ const EXPEDITION_MISSION_LABELS := {
 ## why the caller tests `has` rather than reading a default out of it.
 const PARTY_SHORT_LABELS := {
 	"scout": "Scout",
-	"hunt": "Hunt",
 	# A denial raid's parenthetical is `Raid`, not `Deny`: the key is the sim's mission id, the word is
 	# what the player calls the thing (the same split `EXPEDITION_MISSION_LABELS` makes above).
 	"deny": "Raid",
@@ -77,7 +67,6 @@ const EXPEDITION_PHASE_LABELS := {
 	"awaiting": "Awaiting orders",
 	"returning": "Returning",
 	"hunting": "Hunting",
-	"delivering": "Delivering",
 }
 
 # ---- Action-status vocabulary: row GLYPHS, tooltip WORDS ---------------------------------------
@@ -112,7 +101,6 @@ const STATUS_HINTS := {
 	EXPEDITION_PHASE_OUTBOUND: "heading to the target",
 	EXPEDITION_PHASE_AWAITING: "parked at the objective — it needs an order",
 	EXPEDITION_PHASE_HUNTING: "taking food from the herd",
-	EXPEDITION_PHASE_DELIVERING: "bringing the haul home",
 	EXPEDITION_PHASE_RETURNING: "heading home",
 }
 

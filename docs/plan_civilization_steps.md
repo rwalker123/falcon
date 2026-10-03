@@ -668,8 +668,10 @@ per turn; a peer network node would have handed the take to whichever band happe
 - The local-hunt leash: a party that follows the herd never goes out of range.
 - `drop_off_within_tiles`: redundant with `reach_tiles` once the party flows along its home tie.
 - The hunt expedition path, its forecast, and the second hunt command.
-- The launch-time provision draw scaled by distance (`provision_draw_per_worker_per_tile`). It
-  models a one-shot TRIP, and a standing posting has no trip to provision — it has a supply line.
+
+The launch-time provision draw scaled by distance (`provision_draw_per_worker_per_tile`) stays:
+it is the larder a **scout** or **trade** party carries out, and the hunt expedition never read it.
+A work party draws no provisions — its home band feeds it (see "Who eats what" below).
 
 ### Who eats what (decided)
 

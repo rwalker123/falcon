@@ -194,6 +194,7 @@
   ],
   "command_events": [
     {
+      "band": 102,
       "detail": "command_events[0].detail",
       "faction": 107,
       "kind": "command_events[0].kind",
@@ -202,6 +203,7 @@
       "tick": 172
     },
     {
+      "band": 87,
       "faction": 52,
       "kind": "command_events[1].kind",
       "label": "command_events[1].label",
@@ -209,6 +211,7 @@
       "tick": 109
     },
     {
+      "band": 44,
       "detail": "command_events[2].detail",
       "faction": 117,
       "kind": "command_events[2].kind",
@@ -227,7 +230,8 @@
       "last_seen_y": 69,
       "observer_band_id": 139,
       "strength": 34.299999,
-      "subject_band_id": 197
+      "subject_band_id": 197,
+      "subject_name": "connections[0].subject_name"
     },
     {
       "first_contact_turn": 33,
@@ -237,7 +241,8 @@
       "last_seen_y": 182,
       "observer_band_id": 26,
       "strength": 48.959999,
-      "subject_band_id": 10
+      "subject_band_id": 10,
+      "subject_name": "connections[1].subject_name"
     },
     {
       "first_contact_turn": 86,
@@ -247,7 +252,8 @@
       "last_seen_y": 139,
       "observer_band_id": 169,
       "strength": 99.010002,
-      "subject_band_id": 87
+      "subject_band_id": 87,
+      "subject_name": "connections[2].subject_name"
     }
   ],
   "corruption": {
@@ -4644,18 +4650,11 @@
       "expedition_carry_cap": 64.029999,
       "expedition_destination_band": 96,
       "expedition_destination_name": "populations[0].expedition_destination_name",
-      "expedition_eta_turns": 125,
-      "expedition_floor": 69.809998,
       "expedition_forecast_horizon_turns": 148,
       "expedition_mission": "populations[0].expedition_mission",
-      "expedition_per_worker_carry": 3.28,
       "expedition_phase": "populations[0].expedition_phase",
-      "expedition_projected_delivery": 86.919998,
-      "expedition_recurring": false,
       "expedition_target_herd": "populations[0].expedition_target_herd",
       "expedition_target_species": "populations[0].expedition_target_species",
-      "expedition_trip_bound": "populations[0].expedition_trip_bound",
-      "expedition_viability_warn_turns": 89,
       "faction": 182,
       "fertility_hunger": 0.000048,
       "fertility_reserve": 0.000077,
@@ -4704,11 +4703,10 @@
         }
       ],
       "hunt_per_worker_provisions": 29.4,
-      "hunt_reach": 171,
       "hunter_attack": 45.5,
       "idle_workers": 54,
       "is_expedition": false,
-      "is_traveling": true,
+      "is_traveling": false,
       "kit_id": "populations[0].kit_id",
       "kit_item_conditions": [
         {
@@ -5796,18 +5794,11 @@
       "expedition_carry_cap": 0.73,
       "expedition_destination_band": 19,
       "expedition_destination_name": "populations[1].expedition_destination_name",
-      "expedition_eta_turns": 200,
-      "expedition_floor": 33.860001,
       "expedition_forecast_horizon_turns": 115,
       "expedition_mission": "populations[1].expedition_mission",
-      "expedition_per_worker_carry": 96.309998,
       "expedition_phase": "populations[1].expedition_phase",
-      "expedition_projected_delivery": 110.099998,
-      "expedition_recurring": true,
       "expedition_target_herd": "populations[1].expedition_target_herd",
       "expedition_target_species": "populations[1].expedition_target_species",
-      "expedition_trip_bound": "populations[1].expedition_trip_bound",
-      "expedition_viability_warn_turns": 190,
       "faction": 141,
       "fertility_hunger": 0.000157,
       "fertility_reserve": 0.000058,
@@ -5856,11 +5847,10 @@
         }
       ],
       "hunt_per_worker_provisions": 38.400002,
-      "hunt_reach": 130,
       "hunter_attack": 43.43,
       "idle_workers": 151,
       "is_expedition": true,
-      "is_traveling": false,
+      "is_traveling": true,
       "kit_id": "populations[1].kit_id",
       "kit_item_conditions": [
         {
@@ -6910,18 +6900,11 @@
       "expedition_carry_cap": 101.660004,
       "expedition_destination_band": 54,
       "expedition_destination_name": "populations[2].expedition_destination_name",
-      "expedition_eta_turns": 115,
-      "expedition_floor": 112.410004,
       "expedition_forecast_horizon_turns": 114,
       "expedition_mission": "populations[2].expedition_mission",
-      "expedition_per_worker_carry": 15.1,
       "expedition_phase": "populations[2].expedition_phase",
-      "expedition_projected_delivery": 3.88,
-      "expedition_recurring": true,
       "expedition_target_herd": "populations[2].expedition_target_herd",
       "expedition_target_species": "populations[2].expedition_target_species",
-      "expedition_trip_bound": "populations[2].expedition_trip_bound",
-      "expedition_viability_warn_turns": 51,
       "faction": 124,
       "fertility_hunger": 0.000186,
       "fertility_reserve": 0.000015,
@@ -6970,11 +6953,10 @@
         }
       ],
       "hunt_per_worker_provisions": 90.980003,
-      "hunt_reach": 77,
       "hunter_attack": 69.129997,
       "idle_workers": 68,
-      "is_expedition": false,
-      "is_traveling": true,
+      "is_expedition": true,
+      "is_traveling": false,
       "kit_id": "populations[2].kit_id",
       "kit_item_conditions": [
         {

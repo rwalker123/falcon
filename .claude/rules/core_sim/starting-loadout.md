@@ -17,7 +17,8 @@ applied, never suggested"), and the player revises it for the rest of the turn.
 `starting_loadout.rs` holds all of it: the `StartingLoadout` resource, the systems that open, outfit
 and shut a window, and `apply_starting_loadout`, which validates, resolves the band and moves or
 mints.
-`bin/server.rs`'s handler only translates the wire types and logs the refusal. The client half is
+`bin/server.rs`'s handler only translates the wire types and reports a refusal (see "A refusal is
+said on the feed"). The client half is
 `.claude/rules/client/starting-loadout.md`; the split that opens a splinter's window is
 `.claude/rules/core_sim/fission.md`.
 
@@ -180,8 +181,10 @@ splinter.
 > construction, and a later revision replaces something real.
 >
 > **The budget is the BAND's.** `fit_to_carry` fits the kit and material defaults **together** to
-> that band's own `carry_budget`: when their load exceeds it, every kit count and every material unit
-> count scales by `budget ÷ load` and floors — proportional, remainder unspent. The defaults are not
+> that band's own `carry_budget`: when their load exceeds it, **materials are cut before tools** —
+> if the kits alone fit, every kit row is kept and the materials scale into what is left; otherwise
+> the materials go to 0 and the kits scale. Proportional, floored, remainder unspent at each stage.
+> Tools feed a band; materials can be gathered again. The defaults are not
 > validated at load against any campaign number (there is none); they are clamped at runtime, and
 > `stamp_starting_loadout` warns when the opening band's clamp binds.
 >
@@ -354,8 +357,9 @@ pins the grant slice on a non-terminating share.
 
 ## The default is fitted to WHICHEVER budget it is drawn against
 
-`fit_to_carry` is the one fitting rule: proportional, floored, remainder unspent, over kits and
-materials together on one load. There are three readers of it:
+`fit_to_carry` is the one fitting rule: **materials are cut before tools**, each stage proportional,
+floored, remainder unspent, on one load. The long-move shed uses the same staging after its food
+(`band-carry.md`). There are three readers of it:
 
 | reader | the budget it fits to | what it does with the answer |
 |---|---|---|
@@ -396,9 +400,20 @@ The window is **per band**, so it rides the cohort beside the two things a picke
   `loadoutWindow`.
 
 **`loadoutWindow.open` is NOT the client's success signal** — it reads `true` after a refusal and after
-a success alike, because a commit never closes a window. What a client reads is the band's own
-published state on the recapture the command triggers: after a success that is exactly the allocation
-it sent, and after a refusal whatever stood before.
+a success alike, because a commit never closes a window. A success is read off the band's own
+published state on the recapture the command triggers, which is exactly the allocation it sent. A
+refusal is read off the event feed (below), because it moves no band row.
+
+### A refusal is said on the feed
+
+Populations ship as diffs, so a refused order — which leaves the band's row byte-identical —
+publishes **nothing** about the band. The handler therefore keeps its `warn!` and pushes one event
+feed line: kind `starting_loadout` (`CommandEventKind::StartingLoadout`), label `Outfit failed`,
+detail = the `LoadoutRejection`'s Display text, filed under the commanding faction, and
+`CommandEventState.band` = the refused band's `BandId` (`0` on every row not about one band — the
+allocator never issues it). An accepted loadout pushes **no** line: the republished band row is its
+confirmation. Pinned by `bin/server.rs`'s
+`a_refused_starting_loadout_publishes_one_event_naming_its_band`, read off the encoded delta.
 
 A `SimState` shape change has no migration path by design: `SAVE_FORMAT_VERSION` moves instead
 (`save.rs`).
@@ -409,4 +424,4 @@ A `SimState` shape change has no migration path by design: `SAVE_FORMAT_VERSION`
 |---|---|---|
 | `src/data/start_profiles.json` | `opening_loadout.pickable_materials` | The grant's pick list, in the order it is drawn. Binds a grant window only |
 | | `opening_loadout.material_defaults` / `kit_defaults` | The spawned band's pre-fills — suggestions, never grants |
-| `src/data/expedition_config.json` | `trade.per_worker_carry` and the carry weights | The grant's size and every order's load — see `band-carry.md` → Config files. There is deliberately no loadout-specific dial: the budget is the band's own workers × one pack |
+| `src/data/expedition_config.json` | `carry.per_worker_carry` and the carry weights | The grant's size and every order's load — see `band-carry.md` → Config files. There is deliberately no loadout-specific dial: the budget is the band's own workers × one pack |

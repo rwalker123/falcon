@@ -21,6 +21,8 @@ const GUARD_SUBJECT_BAND: u64 = 9;
 const GUARD_TIE_STRENGTH: f32 = 0.5;
 /// Where the guard's subject was last seen, `(x, y)`. Non-zero for the same reason.
 const GUARD_SEEN_TILE: (u32, u32) = (4, 11);
+/// The name the guard's subject was last seen under. Non-empty for the same reason.
+const GUARD_SUBJECT_NAME: &str = "Guardfen";
 /// The turn the reconstruction guard's sections change on — partway through the run, so a delta
 /// that carries nothing is distinguishable from a baseline that was right all along.
 const GUARD_MUTATION_TICK: u64 = 3;
@@ -40,6 +42,7 @@ fn command_event(seq: u64, tick: u64) -> CommandEventState {
         label: format!("event {seq}"),
         detail: Some(format!("count=1 seq={seq}")),
         seq,
+        band: 0,
     }
 }
 
@@ -169,6 +172,7 @@ fn a_baseline_plus_its_deltas_reconstructs_the_world() {
                 last_seen_turn: GUARD_MUTATION_TICK,
                 last_contact_turn: GUARD_MUTATION_TICK,
                 first_contact_turn: GUARD_MUTATION_TICK,
+                subject_name: GUARD_SUBJECT_NAME.to_string(),
             }];
         }
         // The event log grows on two separate turns, so the reconstruction has to have ACCUMULATED
@@ -433,7 +437,7 @@ fn a_recapture_advances_the_sequence_without_pushing_a_ring_entry() {
 /// **Nothing in the sim reads those bytes, which is exactly why it was invisible**: the callers are
 /// tests asserting on encoded content, so a wire-level assertion silently read a frame from before its
 /// fixture had finished building. Found while writing
-/// `expedition_hunt::a_party_names_its_quarry_when_the_herd_has_left_the_snapshot`, whose party had
+/// `raiding_party::a_party_names_its_quarry_when_the_herd_has_left_the_snapshot`, whose party had
 /// not been spawned yet in the bytes it was handed.
 #[test]
 fn a_recaptured_entry_encodes_the_world_it_was_refreshed_with() {

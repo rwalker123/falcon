@@ -18,10 +18,10 @@ use core_sim::{
     GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
     LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets,
     MapPresetsHandle, MaterialsConfigHandle, MoraleCause, PopulationCohort, ResidentBand, Scalar,
-    SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    SourcePriority, StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
-    StartingUnit, SupplyNetworkConfigHandle, SupplyNetworkMembership, TileRegistry,
-    WellbeingConfigHandle, FULL_TIE,
+    Sighting, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, SourcePriority, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle, StartingUnit, SupplyNetworkConfigHandle,
+    SupplyNetworkMembership, TileRegistry, WellbeingConfigHandle, FULL_TIE,
 };
 use std::collections::BTreeMap;
 
@@ -156,6 +156,11 @@ fn hunting_world() -> App {
     // first turn a crew stands on it, so a harness with no `extract` row has none.
     app.world
         .insert_resource(core_sim::extraction::DepositRegistry::default());
+    // Belief on a place — a hunt or a raid credits its dead to the tile the band stands on.
+    app.world
+        .insert_resource(core_sim::BeliefRegistry::default());
+    app.world
+        .insert_resource(core_sim::BeliefConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.run_system_once(spawn_initial_herds);
     app
@@ -323,7 +328,12 @@ fn seed_mutual_tie(app: &mut App, a: BandId, b: BandId) {
     let mut ledger = app.world.resource_mut::<ConnectionLedger>();
     for key in [ConnectionKey::new(a, b), ConnectionKey::new(b, a)] {
         for _ in 0..contacts_to_full {
-            ledger.record_contact(key, SOMEWHERE, SEEDED_ON_TURN, SEEDED_ON_TURN, &cfg);
+            ledger.record_contact(
+                key,
+                &Sighting::new(SOMEWHERE, SEEDED_ON_TURN, ""),
+                SEEDED_ON_TURN,
+                &cfg,
+            );
         }
     }
 }

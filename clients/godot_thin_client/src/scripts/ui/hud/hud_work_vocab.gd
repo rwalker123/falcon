@@ -187,6 +187,10 @@ const ZONE_TAB_PARTIES := "Parties"
 ## shell threshold stays at three zones' worth (`BandCityPanel.ZONE_SPEC_NARROW_ONLY`).
 const ZONE_TAB_TRADE := "Trade"
 
+## The band page's fifth tab (issue #549): the ties the band holds. **NARROW SHELL ONLY**, like Trade —
+## a wide shell appends the same roster under the Parties zone, after Trade's section.
+const ZONE_TAB_PEOPLES := "Peoples"
+
 ## THE FACTION PAGE — the cycler's pinned first entry (issue #450), whose zones answer the
 ## band zones' own questions one rung up: who the faction IS, what it is DOING, what it KNOWS, and
 ## who is OUT.

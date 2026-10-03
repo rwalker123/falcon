@@ -121,6 +121,11 @@ fn spawn_world() -> App {
     // first turn a crew stands on it, so a harness with no `extract` row has none.
     app.world
         .insert_resource(core_sim::extraction::DepositRegistry::default());
+    // Belief on a place — a hunt or a raid credits its dead to the tile the band stands on.
+    app.world
+        .insert_resource(core_sim::BeliefRegistry::default());
+    app.world
+        .insert_resource(core_sim::BeliefConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.run_system_once(spawn_initial_herds);
     // Seed depletable forage patches on every food-module tile (§0-ii).
@@ -764,7 +769,7 @@ fn a_hunt_past_the_leash_follows_its_herd_and_only_a_vanished_herd_ends_it() {
         )
     };
     let grid = app.world.resource::<SimulationConfig>().grid_size;
-    // A camp seven tiles along X from `at` (> band_work_range 2 + hunt_leash_tiles 3 = 5).
+    // A camp seven tiles along X from `at` — well past `band_work_range` (2).
     let seven_out = |app: &App, at: UVec2| {
         let far_x = if at.x + 7 < grid.x {
             at.x + 7
@@ -852,24 +857,18 @@ fn a_hunt_past_the_leash_follows_its_herd_and_only_a_vanished_herd_ends_it() {
     );
 }
 
-/// ⛔ **(c'') THE LEASH DISTANCE IS GONE: A HUNT *INSIDE* THE OLD LEASH POSTS A PARTY TOO.**
+/// ⛔ **(c'') A HUNT JUST PAST THE APRON POSTS A PARTY, EXACTLY AS A GATHER DOES.**
 ///
 /// This is the assertion that pins the one apron, and nothing else in the suite can fail in its
-/// place. [`a_hunt_past_the_leash_follows_its_herd_and_only_a_vanished_herd_ends_it`] stages its herd seven
-/// tiles out — past `hunt_reach()` **and** past `band_work_range` — so it passes whether a Hunt row
-/// begins its party at 2 or at 5. The interesting distance is the one **between** them.
-///
-/// A hunt four tiles out used to be an ordinary local row, free and instant, because
-/// `hunt_leash_tiles` bought it three tiles of slack a Forage row never got. The doc is explicit
-/// that the 5 was *"a patch over the wrong model"*: a party follows its herd, so the patch has
-/// nothing left to fix, and leaving it would have hunt and forage measuring distance differently —
-/// the three-systems problem this arc exists to delete, surviving in miniature.
+/// place. [`a_hunt_past_the_leash_follows_its_herd_and_only_a_vanished_herd_ends_it`] stages its herd
+/// seven tiles out, so it would pass whether a Hunt row began its party at 2 or at 5. This one stands
+/// the herd **two tiles past** `band_work_range`: hunt and forage must measure distance the same way.
 ///
 /// So the row posts a party, and its walk is measured from the **apron** exactly as a forage row's
 /// is. The identity is untouched and asserted elsewhere: it lives inside `band_work_range`, where
 /// neither job posts a party.
 #[test]
-fn a_hunt_inside_the_old_leash_posts_a_party_on_the_same_apron_as_forage() {
+fn a_hunt_just_past_the_apron_posts_a_party_on_the_same_apron_as_forage() {
     let mut app = spawn_world();
     let (id, herd_pos) = {
         let registry = app.world.resource::<HerdRegistry>();
@@ -881,19 +880,18 @@ fn a_hunt_inside_the_old_leash_posts_a_party_on_the_same_apron_as_forage() {
         (herd.id.clone(), herd.position())
     };
     let labor = core_sim::LaborConfig::builtin();
-    // Strictly between the two thresholds, so the test can only pass on the one apron: past
-    // `band_work_range` (a party is owed) and within the retired `hunt_reach()` (the old model
-    // would have called this an ordinary local row and posted nothing).
-    let inside_the_old_leash = labor.band_work_range + 2;
+    // Past `band_work_range` (a party is owed), but close: a hunt-only threshold any wider than the
+    // apron would call this an ordinary local row and post nothing.
+    let just_past_the_apron = labor.band_work_range + 2;
     assert!(
-        inside_the_old_leash > labor.band_work_range && inside_the_old_leash <= labor.hunt_reach(),
-        "the fixture distance must sit between the two thresholds or it proves nothing"
+        just_past_the_apron > labor.band_work_range,
+        "the fixture distance must sit past the apron or it proves nothing"
     );
     let grid = app.world.resource::<SimulationConfig>().grid_size;
-    let band_x = if herd_pos.x + inside_the_old_leash < grid.x {
-        herd_pos.x + inside_the_old_leash
+    let band_x = if herd_pos.x + just_past_the_apron < grid.x {
+        herd_pos.x + just_past_the_apron
     } else {
-        herd_pos.x.saturating_sub(inside_the_old_leash)
+        herd_pos.x.saturating_sub(just_past_the_apron)
     };
     let tile = app
         .world
@@ -935,9 +933,103 @@ fn a_hunt_inside_the_old_leash_posts_a_party_on_the_same_apron_as_forage() {
     );
     assert_eq!(
         party.walk_tiles,
-        inside_the_old_leash - labor.band_work_range,
+        just_past_the_apron - labor.band_work_range,
         "a hunt's walk is measured from the same apron a forage row's is"
     );
+}
+
+/// **A far work party's dead credit no belief** (`core_sim::belief`, issue #697). The party fights
+/// at its herd, not where the band stands, so — like an expedition's — its casualties are buried
+/// nowhere the registry can see: not at the band's camp, not at the herd's tile. People still die.
+#[test]
+fn a_far_work_partys_hunt_dead_credit_no_belief() {
+    /// The shipped megafauna — `attack 8 × ferocity 0.9` clears a person's `defense 1`, so it kills.
+    const MAMMOTH: &str = "Thunder Mammoths";
+    /// A standing stock far above anything the party can take, so the floor never stops the fight.
+    const FAT_HERD: f32 = 4000.0;
+    /// Enough hunters to engage a whole mammoth a turn (`engage_rate 0.05`).
+    const HUNTERS: u32 = 30;
+    /// Two hexes past the apron — a short walk out, so the party reaches its herd quickly.
+    const PAST_THE_APRON: u32 = 2;
+    /// How many labor passes the fixture waits for a casualty before giving up.
+    const MAX_TURNS: usize = 12;
+
+    let mut app = spawn_world();
+    let (id, herd_pos) = {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry
+            .herds
+            .iter_mut()
+            .find(|h| h.id.starts_with("game_"))
+            .expect("expected game herd");
+        herd.species = MAMMOTH.to_string();
+        herd.carrying_capacity = FAT_HERD;
+        herd.biomass = FAT_HERD;
+        (herd.id.clone(), herd.position())
+    };
+    let labor = core_sim::LaborConfig::builtin();
+    let distance = labor.band_work_range + PAST_THE_APRON;
+    let grid = app.world.resource::<SimulationConfig>().grid_size;
+    let band_x = if herd_pos.x + distance < grid.x {
+        herd_pos.x + distance
+    } else {
+        herd_pos.x.saturating_sub(distance)
+    };
+    let band_pos = UVec2::new(band_x, herd_pos.y);
+    let tile = app
+        .world
+        .resource::<TileRegistry>()
+        .index(band_pos.x, band_pos.y)
+        .expect("the camp tile resolves");
+    let band = spawn_band(
+        &mut app,
+        tile,
+        HUNTERS,
+        LaborAllocation {
+            assignments: vec![LaborAssignment {
+                party: None,
+                target: LaborTarget::Hunt {
+                    fauna_id: id.clone(),
+                    floor: 0.5,
+                },
+                workers: HUNTERS,
+                kit: None,
+                priority: SourcePriority::default(),
+            }],
+            ..Default::default()
+        },
+    );
+    stock_the_larder(&mut app, band, A_DEEP_LARDER);
+
+    let working = |app: &App| {
+        app.world
+            .get::<PopulationCohort>(band)
+            .unwrap()
+            .working
+            .to_f32()
+    };
+    let before = working(&app);
+    for _ in 0..MAX_TURNS {
+        app.world.run_system_once(advance_labor_allocation);
+        if working(&app) < before {
+            break;
+        }
+    }
+    assert!(
+        app.world
+            .get::<LaborAllocation>(band)
+            .and_then(|allocation| allocation.assignments.first())
+            .is_some_and(|row| row.party.is_some()),
+        "fixture: the hunt past the apron posts a work party"
+    );
+    assert!(
+        working(&app) < before,
+        "fixture: the party's mammoth hunt must kill someone, or this proves nothing"
+    );
+    let belief = app.world.resource::<core_sim::BeliefRegistry>();
+    assert_eq!(belief.get(band_pos), core_sim::NO_BELIEF, "not at the camp");
+    assert_eq!(belief.get(herd_pos), core_sim::NO_BELIEF, "not at the herd");
+    assert!(belief.is_empty(), "nowhere at all");
 }
 
 /// ⛔ **(c') THE PLANT TWIN: A FORAGE ROW OUT OF WORK RANGE POSTS A PARTY, AND THE NEAR ROW BESIDE

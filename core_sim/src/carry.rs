@@ -25,7 +25,7 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
-use crate::components::{BandEquipment, LocalStore, FODDER, FOOD};
+use crate::components::{BandEquipment, LocalStore, PopulationCohort, FODDER, FOOD};
 use crate::scalar::{scalar_zero, Scalar};
 use crate::supply_network_config::SupplyNetworkConfig;
 
@@ -102,8 +102,63 @@ pub fn per_worker_carry(carry: &CarryConfig) -> f32 {
 ///
 /// **Workers carry; dependants do not.** Children and elders travel with a band and add no
 /// capacity, so splitting off the elders buys no cargo space.
+///
+/// A whole head count is the right input where whole people are being counted out — the workers a
+/// split sends across, a shipment's party. A band carrying its own goods is priced on its actual
+/// working-age value instead: [`band_carry_capacity`].
 pub fn carry_capacity(workers: u32, carry: &CarryConfig) -> Scalar {
-    Scalar::from_u32(workers) * Scalar::from_f32(per_worker_carry(carry))
+    carry_capacity_of(Scalar::from_u32(workers), carry)
+}
+
+/// **How much a continuous `working` count carries** — `working × `[`per_worker_carry`]. The one
+/// multiplication both [`carry_capacity`] and [`band_carry_capacity`] go through.
+pub fn carry_capacity_of(working: Scalar, carry: &CarryConfig) -> Scalar {
+    working.max(scalar_zero()) * Scalar::from_f32(per_worker_carry(carry))
+}
+
+/// **The worker count a band's OWN carry is priced on** — its actual working-age value, unfloored.
+///
+/// Carry is a continuous quantity, so it is struck on the continuous count. Flooring it, as the
+/// commands' assignable count does, made one turn of demographic drift cost a whole pack: a splinter
+/// sent out with 4 workers held `3.99` a turn later, floored to 3, and its next long move priced it
+/// at 24 against the 32 it was split with — and left two of its three baskets behind.
+pub fn band_carry_workers(cohort: &PopulationCohort) -> Scalar {
+    cohort.working
+}
+
+/// **What a band can carry of its own goods** — [`carry_capacity_of`] its [`band_carry_workers`].
+/// Read by the long move, the published `carryCapacity` and the long-move forecast alike.
+pub fn band_carry_capacity(cohort: &PopulationCohort, carry: &CarryConfig) -> Scalar {
+    carry_capacity_of(band_carry_workers(cohort), carry)
+}
+
+/// **Where a fit over its room cuts** — the one materials-before-tools staging, decided on the two
+/// goods loads. Tools feed a band; materials can be gathered again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GoodsCut {
+    /// Everything fits.
+    KeepAll,
+    /// The items fit whole; the materials are fitted into `room`, what the items leave.
+    CutMaterials { room: Scalar },
+    /// The items alone are over: every material goes and the items are fitted into `room`.
+    CutItems { room: Scalar },
+}
+
+/// **Decide the cut** for `item_load` and `material_load` against `room`. [`fit_to_carry`]
+/// (`starting_loadout`) and [`plan_long_move_shed`] both stage through this, so a default outfit, a
+/// split's default take and a long move cut in the same order.
+///
+/// [`fit_to_carry`]: crate::starting_loadout::fit_to_carry
+pub fn goods_cut(item_load: Scalar, material_load: Scalar, room: Scalar) -> GoodsCut {
+    if item_load + material_load <= room {
+        GoodsCut::KeepAll
+    } else if item_load <= room {
+        GoodsCut::CutMaterials {
+            room: room - item_load,
+        }
+    } else {
+        GoodsCut::CutItems { room }
+    }
 }
 
 /// **The goods being carried, by kind** — the four quantities a load is measured on.
@@ -245,22 +300,28 @@ fn floor_to_whole(amount: Scalar) -> Scalar {
     Scalar::from_raw(amount.raw() - amount.raw().rem_euclid(Scalar::SCALE))
 }
 
-/// **Plan what a band of `workers` hands leaves behind on a long move** — the one shedding rule, read
-/// by the move and by the snapshot's forecast alike.
+/// **Plan what a band of `working` hands leaves behind on a long move** — the one shedding rule, read
+/// by the move and by the snapshot's forecast alike. `working` is the band's
+/// [`band_carry_workers`], never a floored head count.
 ///
 /// - **The food tier loads first.** If `food + fodder_carry_weight × fodder` exceeds the band's
 ///   carry, both scale by `cap ÷ food mass` (the excess is left) and every item and material is
 ///   left.
-/// - **Otherwise goods share what the food leaves.** When the goods load exceeds
-///   `cap − food mass`, every item's units and every material's units scale by that ratio and floor
-///   to whole units kept; the rest is left.
+/// - **Then the goods, materials before tools** ([`goods_cut`]), in the room the food leaves:
+///   - if the items alone fit, every item is kept and the materials are scaled into what the
+///     items leave, floored to whole units kept;
+///   - otherwise every material is left and the items are scaled into the room, floored, the
+///     most worn units left.
+///
+/// Tools feed a band; materials can be gathered again. A uniform cut across both left a splinter
+/// with one basket of three and most of its fibre.
 pub fn plan_long_move_shed(
     stores: &LocalStore,
     equipment: Option<&BandEquipment>,
-    workers: u32,
+    working: Scalar,
     carry: &CarryConfig,
 ) -> LongMoveShed {
-    let cap = carry_capacity(workers, carry);
+    let cap = carry_capacity_of(working, carry);
     let held = held_load(stores, equipment);
     if held.load(carry) <= cap {
         return LongMoveShed::default();
@@ -277,36 +338,47 @@ pub fn plan_long_move_shed(
             })
             .unwrap_or_default()
     };
+    let every_material = || -> BTreeMap<String, Scalar> {
+        stores
+            .materials()
+            .map(|(material, _)| (material.to_string(), stores.material_total(material)))
+            .filter(|(_, amount)| *amount > scalar_zero())
+            .collect()
+    };
     if food_mass > cap {
         return LongMoveShed {
             food: held.food - scale_by_ratio(held.food, cap, food_mass),
             fodder: held.fodder - scale_by_ratio(held.fodder, cap, food_mass),
             items: every_item(),
-            materials: stores
-                .materials()
-                .map(|(material, _)| (material.to_string(), stores.material_total(material)))
-                .filter(|(_, amount)| *amount > scalar_zero())
-                .collect(),
+            materials: every_material(),
         };
     }
-    let allowance = cap - food_mass;
-    let goods_load = held.goods_load(carry);
-    let items = every_item()
-        .into_iter()
-        .filter_map(|(item, units)| {
-            let left = units - scale_units_by_ratio(units, allowance, goods_load);
-            (left > 0).then_some((item, left))
-        })
-        .collect();
-    let materials = stores
-        .materials()
-        .filter_map(|(material, _)| {
-            let held = stores.material_total(material);
-            let kept = floor_to_whole(scale_by_ratio(held, allowance, goods_load));
-            let left = held - kept;
-            (left > scalar_zero()).then(|| (material.to_string(), left))
-        })
-        .collect();
+    let item_load = CarryLoad::goods(held.items, scalar_zero()).goods_load(carry);
+    let material_load = CarryLoad::goods(0, held.materials).goods_load(carry);
+    let (items, materials) = match goods_cut(item_load, material_load, cap - food_mass) {
+        GoodsCut::KeepAll => (BTreeMap::new(), BTreeMap::new()),
+        GoodsCut::CutMaterials { room } => {
+            let materials = every_material()
+                .into_iter()
+                .filter_map(|(material, held)| {
+                    let kept = floor_to_whole(scale_by_ratio(held, room, material_load));
+                    let left = held - kept;
+                    (left > scalar_zero()).then_some((material, left))
+                })
+                .collect();
+            (BTreeMap::new(), materials)
+        }
+        GoodsCut::CutItems { room } => {
+            let items = every_item()
+                .into_iter()
+                .filter_map(|(item, units)| {
+                    let left = units - scale_units_by_ratio(units, room, item_load);
+                    (left > 0).then_some((item, left))
+                })
+                .collect();
+            (items, every_material())
+        }
+    };
     LongMoveShed {
         food: scalar_zero(),
         fodder: scalar_zero(),
@@ -418,7 +490,7 @@ mod tests {
     #[test]
     fn a_band_that_fits_keeps_everything() {
         let stores = larder(10);
-        let plan = plan_long_move_shed(&stores, None, 4, &carry());
+        let plan = plan_long_move_shed(&stores, None, Scalar::from_u32(4), &carry());
         assert!(plan.is_empty(), "{plan:?}");
     }
 
@@ -428,7 +500,7 @@ mod tests {
         let mut stores = larder(40);
         let mut ledger = BandEquipment::default();
         ledger.stock("spears", 3, "stone", None);
-        let plan = plan_long_move_shed(&stores, Some(&ledger), 4, &carry());
+        let plan = plan_long_move_shed(&stores, Some(&ledger), Scalar::from_u32(4), &carry());
         assert_eq!(plan.food, Scalar::from_u32(16));
         assert_eq!(plan.items.get("spears"), Some(&3));
         let left = shed_for_long_move(&mut stores, Some(&mut ledger), &plan);
@@ -458,7 +530,7 @@ mod tests {
                 })
                 .collect(),
         );
-        let plan = plan_long_move_shed(&stores, Some(&ledger), 4, &carry());
+        let plan = plan_long_move_shed(&stores, Some(&ledger), Scalar::from_u32(4), &carry());
         assert_eq!(plan.food, scalar_zero());
         assert_eq!(plan.items.get("spears"), Some(&10));
         shed_for_long_move(&mut stores, Some(&mut ledger), &plan);
@@ -472,5 +544,101 @@ mod tests {
             ledger.batches_of("spears")
         );
         assert_eq!(stores.get(FOOD), Scalar::from_u32(14));
+    }
+    /// The shipped weights at the 8.0 pack — the numbers the seed-37 case was measured on.
+    fn shipped_pack() -> CarryConfig {
+        let mut carry = carry();
+        carry.per_worker_carry = 8.0;
+        carry
+    }
+
+    /// **The seed-37 splinter's holdings**: 15.66 food, three baskets and ten material units — a
+    /// load of 28.66.
+    fn seed_37_splinter() -> (LocalStore, BandEquipment) {
+        let mut stores = LocalStore::new();
+        stores.reset_food("dry", Scalar::from_f32(15.66));
+        let key = crate::materials_config::BandKey(vec![1]);
+        for (material, units) in [("bone", 2), ("fibre", 6), ("hide", 2)] {
+            stores.deposit_material(
+                material,
+                key.clone(),
+                Scalar::from_u32(units),
+                &BTreeMap::new(),
+            );
+        }
+        let mut ledger = BandEquipment::default();
+        ledger.stock("baskets", 3, "plain", None);
+        (stores, ledger)
+    }
+
+    /// ⛔ **A BAND'S CARRY IS PRICED ON ITS ACTUAL WORKING VALUE, SO DRIFT COSTS NO PACK.** A
+    /// splinter sent out with 4 workers held 3.99 a turn later; floored to 3 its long move priced it
+    /// at 24 and left two of its three baskets. Unfloored it carries 31.92 and keeps everything.
+    #[test]
+    fn a_splinter_drifting_below_four_workers_keeps_its_four_worker_carry() {
+        let carry = shipped_pack();
+        let drifted = Scalar::from_f32(3.99);
+        let cap = carry_capacity_of(drifted, &carry);
+        assert!(
+            cap > carry_capacity(3, &carry) && cap > Scalar::from_f32(31.9),
+            "3.99 workers carry 3.99 packs, not 3: {cap}"
+        );
+        let (stores, ledger) = seed_37_splinter();
+        let plan = plan_long_move_shed(&stores, Some(&ledger), drifted, &carry);
+        assert!(plan.is_empty(), "the 28.66 load fits 31.92: {plan:?}");
+    }
+
+    /// ⛔ **A LONG MOVE CUTS MATERIALS BEFORE TOOLS.** The seed-37 load against three workers' 24:
+    /// food 15.66 loads first and leaves 8.34; the three baskets fit in that, so every basket is
+    /// kept and the ten material units are cut into the 5.34 left — bone 1, fibre 3, hide 1 kept.
+    /// The uniform cut this replaced kept one basket of three.
+    #[test]
+    fn a_long_move_keeps_its_tools_when_the_materials_alone_make_room() {
+        let carry = shipped_pack();
+        let (mut stores, mut ledger) = seed_37_splinter();
+        let plan = plan_long_move_shed(&stores, Some(&ledger), Scalar::from_u32(3), &carry);
+        assert_eq!(plan.food, scalar_zero(), "food loads first");
+        assert!(plan.items.is_empty(), "every basket is kept: {plan:?}");
+        assert_eq!(
+            plan.materials,
+            [("bone", 1), ("fibre", 3), ("hide", 1)]
+                .into_iter()
+                .map(|(id, units)| (id.to_string(), Scalar::from_u32(units)))
+                .collect::<BTreeMap<_, _>>()
+        );
+        shed_for_long_move(&mut stores, Some(&mut ledger), &plan);
+        assert_eq!(ledger.count_of("baskets"), 3);
+        assert!(
+            held_load(&stores, Some(&ledger)).load(&carry) <= carry_capacity(3, &carry),
+            "and what is kept fits the packs"
+        );
+    }
+
+    /// **When the tools alone overfill what the food leaves, every material goes and the tools
+    /// scale.** 2 hands carry 16; 14 food leaves 2 for three baskets — two are kept, the worst one
+    /// left, and every material unit is left.
+    #[test]
+    fn tools_over_the_room_drop_every_material_and_scale() {
+        let carry = shipped_pack();
+        let (mut stores, ledger) = seed_37_splinter();
+        stores.reset_food("dry", Scalar::from_u32(14));
+        let plan = plan_long_move_shed(&stores, Some(&ledger), Scalar::from_u32(2), &carry);
+        assert_eq!(plan.items.get("baskets"), Some(&1));
+        assert_eq!(plan.material_units(), Scalar::from_u32(10));
+    }
+
+    /// The staging itself, in its three cases.
+    #[test]
+    fn the_goods_cut_keeps_tools_before_materials() {
+        let units = Scalar::from_u32;
+        assert_eq!(goods_cut(units(3), units(4), units(7)), GoodsCut::KeepAll);
+        assert_eq!(
+            goods_cut(units(3), units(4), units(5)),
+            GoodsCut::CutMaterials { room: units(2) }
+        );
+        assert_eq!(
+            goods_cut(units(3), units(4), units(2)),
+            GoodsCut::CutItems { room: units(2) }
+        );
     }
 }

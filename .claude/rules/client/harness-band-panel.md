@@ -473,8 +473,8 @@ frame.)
 two ratings.** A batch is one pile at ONE RATING, so a fixture with one batch per material would pass
 just as well against a producer that summed them — which is the retired trade scalar rebuilt out of
 its own replacement. The fourth claim is therefore a NEGATIVE: the two amounts' sum must not appear.
-The clause rides the `Carried:` row rather than adding an eighth line, so the strip's measured extent
-is unchanged (`band-city-panel.md` → "The parties strip's SEVEN lines"), and the row is found by its
+The clause rides the `Carried:` row rather than adding a line, so the strip's measured extent
+is unchanged (`band-city-panel.md` → "The parties strip's lines"), and the row is found by its
 own prefix rather than by index — a producer that moved the clause elsewhere then fails instead of
 passing on whichever line happened to sit there. (It was 233 / 313 / 91 before arc #527 retired the `trade_goods` yield axis. **Three
 frames went with the band's Trade vitals row** — `band_panel_trade_expanded_left` /
@@ -525,12 +525,11 @@ of the errors this harness used to expect are gone: the 11-frame `Zone_band` 25p
 re-homed the band zone's optional rows and widened the wide shell's flanks) and, after it,
 `band_panel_parties_inspector_wide`'s `Zone_parties` pair — one VBox needing 310px of a 300px box,
 reported twice, once by `_assert_zones_within_bounds` and once by `_assert_zone_content_fits`. That one
-is closed by tightening `PARTIES_INSPECTOR_LINE_SEPARATION` and merging the strip's two ORDERS lines
-(`band-city-panel.md` → "The parties strip's SEVEN lines"), and **`band_panel_worst_case_party` is what
-keeps it closed**: the fixture that state replaced was not the worst case — a hunt party carrying every
-optional detail line at once needed 328px where that one needed 310 — so the state stages one, asserts
-the strip really renders all SEVEN lines (a shorter strip fits, so every assertion goes green on a state
-that has stopped measuring anything) and PRINTS its extent, which reads **294 of the 300px box**.
+is closed by tightening `PARTIES_INSPECTOR_LINE_SEPARATION` (`band-city-panel.md` → "The parties
+strip's lines"), and **`band_panel_worst_case_party` is what keeps it closed**: it stages a denial
+party carrying every optional detail line at once, asserts the strip really renders all of them
+(`WORST_CASE_DETAIL_LINES`; a shorter strip fits, so every assertion goes green on a state that has
+stopped measuring anything) and PRINTS its extent.
 
 **`band_panel_vitals_worst_case`** is the state that pins it — one band carrying EVERY optional
 vitals row at once in the height-capped TOP dock, which no fixture had ever staged, run through the
@@ -2827,7 +2826,7 @@ guards (`_assert_hunt_sheet_chart`, `_assert_chart_reads_the_settled_party`, the
 clause). `SEND_HUNT_CONFIRM_META` is deleted.
 
 **The quarry-eligibility guards inverted with the rule.** `_assert_quarry_eligibility` used to require
-the near herd REFUSED (inside `hunt_reach`); every herd at a known distance is a quarry now, so it
+the near herd REFUSED (inside the hunting party's reach); every herd at a known distance is a quarry now, so it
 requires the near herd COMMITTED (handed to the pick's commit) and a herd at an UNKNOWN distance
 refused with targeting still armed. `_assert_denial_quarry_eligibility` lost its hunt half and asserts the glow at `QUARRY_NO_REACH_BOUND`.
 

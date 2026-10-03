@@ -257,11 +257,15 @@ struct HerdCandidate {
 ///   rule) inside the band's apron (`workRange`), ranked by published `perWorkerYield`, nearest
 ///   first on a tie. [`Staffing::Naive`] takes the top one, [`Staffing::Thorough`] all of them. If
 ///   the apron holds none, the nearest site anywhere.
-/// - **Hunt:** a herd that is `huntable` and pays food (`provisionsPerBiomass > 0`) within the band's
-///   published `huntReach` — the nearest for [`Staffing::Naive`], the largest standing stock for
-///   [`Staffing::Thorough`].
+/// - **Hunt:** a herd that is `huntable` and pays food (`provisionsPerBiomass > 0`) within
+///   `workRange + `[`HUNT_SEARCH_BEYOND_APRON`] — the nearest for [`Staffing::Naive`], the largest
+///   standing stock for [`Staffing::Thorough`].
 ///
 /// Returns the chosen sources, and a line saying what was chosen and why for the output header.
+/// **How far past its apron the probe's player looks for a herd.** A hunt works at any distance (past
+/// the apron it posts a work party), so this is the probe's own search radius, not a sim rule.
+const HUNT_SEARCH_BEYOND_APRON: u32 = 3;
+
 fn choose_sources(
     bytes: &[u8],
     width: u32,
@@ -326,7 +330,7 @@ fn choose_sources(
             biomass: h.biomass(),
             capacity: h.carryingCapacity(),
         })
-        .filter(|h| h.distance <= band.huntReach())
+        .filter(|h| h.distance <= band.workRange() + HUNT_SEARCH_BEYOND_APRON)
         .collect();
     match staffing {
         Staffing::Naive => herds.sort_by(|a, b| {
@@ -352,7 +356,7 @@ fn choose_sources(
         home.x,
         home.y,
         band.workRange(),
-        band.huntReach()
+        band.workRange() + HUNT_SEARCH_BEYOND_APRON
     );
     for site in patches.iter().take(sites_taken) {
         chosen.push(SourceKey::Forage(site.at));
