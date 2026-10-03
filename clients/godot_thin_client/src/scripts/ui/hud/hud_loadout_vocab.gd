@@ -191,8 +191,8 @@ const LEGEND_HEAD := "Materials"
 ## names the TURN, which is true: `close_opening_window` is the only writer that ever clears `open`.
 ## Do not let the two drift back together.
 ##
-## The quiet ink, the subtitle's register: it is guidance rather than a warning, and this card carries
-## no warning ink anywhere else. **If it ever has to be trimmed, the SECOND sentence is the one that
+## The quiet ink, the subtitle's register: it is guidance rather than a warning. The card's one warning
+## ink is the refused-order line (`REFUSAL_FORMAT`). **If it ever has to be trimmed, the SECOND sentence is the one that
 ## survives** — the way back is discoverable by pressing things; the deadline is not.
 const FOOTER_NOTE := "The turn orb reopens this. Ending the turn closes it for good."
 
@@ -230,6 +230,38 @@ const OPENING_HANDOFF_LABEL := "Choose what we carry"
 ## What the panel says while it is open on a world that published no pick list and no kit roster —
 ## a frame between the section arriving and the catalogues arriving, not an error.
 const EMPTY_NOTICE := "Waiting for the world's kit roster."
+
+# ---- a refused order ----------------------------------------------------------------------------
+# A refused `set_starting_loadout` moves no band row (populations ship as diffs), so the ONLY word of
+# it is one `command_events` row. These are the keys that row is read by and the line the card says.
+
+## The command-event kind the sim stamps a refused outfit order with.
+const REFUSAL_EVENT_KIND := "starting_loadout"
+## The row's keys. `band` is the refused band's durable id (`HudConst.NO_BAND_ID` = about no band).
+const EVENT_KIND_KEY := "kind"
+const EVENT_FACTION_KEY := "faction"
+const EVENT_BAND_KEY := "band"
+const EVENT_SEQ_KEY := "seq"
+const EVENT_TICK_KEY := "tick"
+const EVENT_DETAIL_KEY := "detail"
+## Below every real `seq` (they are ONE-based) — the cursor before anything has been handled, and the
+## value a row with no `seq` reads as, so it can never pass the cursor.
+const EVENT_SEQ_NONE := 0
+## Below every real turn, so a row that states no tick can never be read as this turn's.
+const EVENT_TICK_NONE := -1
+
+## ⛔ **THE REASON IS THE SIM'S, VERBATIM.** No item or kit name is spelled here: the detail comes off
+## the wire (*"17 kits allocated against a budget of 16"*), and the second sentence says what the card
+## did about it. Warning ink — the one place this card wears it — and at most two lines.
+const REFUSAL_FORMAT := "Not taken: %s. Picks reset to what the band holds."
+## …and the same line when LATER orders are still in flight. The picks were left alone — the latest
+## order is a whole replacement whose own echo settles them — so the line must not claim a reset.
+const REFUSAL_IN_FLIGHT_FORMAT := "Not taken: %s."
+## A detail that already ends a sentence must not end it twice.
+const REFUSAL_DETAIL_TRAILING_STOP := "."
+## Two lines and no more; a longer reason is ellipsized and carried whole on the tooltip.
+const REFUSAL_MAX_LINES := 2
+const REFUSAL_FONT_SIZE := 11
 
 # ---- the turn orb's row -------------------------------------------------------------------------
 # The orb is the generic attention hub, so an unfinished loadout is one more producer on it. The
@@ -364,6 +396,7 @@ const RECIPE_COUNT_META := &"loadout_recipe_count"
 const BUDGET_METER_META := &"loadout_budget_meter"
 const CLOSE_BUTTON_META := &"loadout_close"
 const LEGEND_ENTRY_META := &"loadout_legend_entry"
+const REFUSAL_LINE_META := &"loadout_refusal_line"
 
 ## The two meters, by the budget each reports.
 const BUDGET_KITS := "kits"

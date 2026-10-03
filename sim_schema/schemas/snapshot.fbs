@@ -4438,6 +4438,10 @@ table CommandEventState {
   // makes the event feed append-only on the wire instead of re-shipping the whole retained ring
   // every turn. Appended last — field slots are positional.
   seq:ulong;
+  // The one band this event is about (`BandId`), or 0 when it is not about a single band — no real
+  // band holds 0. Lets the client file a line against its band without parsing `detail` (a refused
+  // `starting_loadout` names the band it refused). Appended last.
+  band:ulong;
 }
 
 table CampaignStartingUnit {
