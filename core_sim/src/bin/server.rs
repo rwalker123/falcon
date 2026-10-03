@@ -7494,11 +7494,6 @@ fn cancel_scope_applied_message(scope: CancelScope, band_label: &str) -> String 
     }
 }
 
-/// Clear the labor assignments `scope` names on a band — every one plus any in-progress move under
-/// [`CancelScope::All`] (the band goes fully idle), the worked Forage/Hunt sources under `Work`, or
-/// the Scout/Warrior roles under `Roles`. The narrow scopes deliberately leave [`BandTravel`] alone:
-/// moving is not working. Rejects when *the requested scope* has nothing to clear, so a stray
-/// invocation reports a failure rather than a misleading "stood down".
 /// **Apply a composed opening loadout, or refuse the whole thing.**
 ///
 /// The validation, the band selection and the deposit all live in `core_sim::starting_loadout` — the
@@ -7506,9 +7501,15 @@ fn cancel_scope_applied_message(scope: CancelScope, band_label: &str) -> String 
 ///
 /// **A success and a refusal both leave the window open**, because committing a loadout never closes
 /// it: the player revises a pick for the whole turn. So `loadoutWindow.open` is not the
-/// client's confirmation — what a client reads is the **band's own published state** on the recapture
-/// this command triggers, which after a success is exactly the allocation it sent (the apply is a
-/// replacement) and after a refusal is whatever stood before.
+/// client's confirmation — what a client reads after a success is the **band's own published
+/// state** on the recapture this command triggers, which is exactly the allocation it sent (the
+/// apply is a replacement).
+///
+/// **A refusal is reported on the event feed**, because no band row moves: populations ship as
+/// diffs, so a refused order publishes nothing about the band and the client would otherwise keep
+/// its optimistic picks with no word that the sim declined them. The refusal pushes one
+/// `starting_loadout` failure line carrying the refused band's id and the reason as its detail; a
+/// success pushes nothing.
 fn handle_set_starting_loadout(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -7541,9 +7542,21 @@ fn handle_set_starting_loadout(
             %reason,
             "command.starting_loadout.rejected"
         );
+        emit_band_command_failure(
+            app,
+            CommandEventKind::StartingLoadout,
+            faction,
+            band,
+            reason.to_string(),
+        );
     }
 }
 
+/// Clear the labor assignments `scope` names on a band — every one plus any in-progress move under
+/// [`CancelScope::All`] (the band goes fully idle), the worked Forage/Hunt sources under `Work`, or
+/// the Scout/Warrior roles under `Roles`. The narrow scopes deliberately leave [`BandTravel`] alone:
+/// moving is not working. Rejects when *the requested scope* has nothing to clear, so a stray
+/// invocation reports a failure rather than a misleading "stood down".
 fn handle_cancel_order(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -11374,8 +11387,15 @@ fn push_command_event(
     label: String,
     detail: Option<String>,
 ) {
+    push_command_entry(
+        app,
+        CommandEventEntry::new(tick, kind, faction, label, detail),
+    );
+}
+
+fn push_command_entry(app: &mut bevy::prelude::App, entry: CommandEventEntry) {
     if let Some(mut log) = app.world.get_resource_mut::<CommandEventLog>() {
-        log.push(CommandEventEntry::new(tick, kind, faction, label, detail));
+        log.push(entry);
     }
 }
 
@@ -11385,9 +11405,33 @@ fn emit_command_failure(
     faction: FactionId,
     detail: impl Into<String>,
 ) {
+    let entry = command_failure_entry(app, kind, faction, detail);
+    push_command_entry(app, entry);
+}
+
+/// [`emit_command_failure`] for a refusal that is about **one band** — the entry carries the band's
+/// id so a client can file the line against that band without parsing the detail.
+fn emit_band_command_failure(
+    app: &mut bevy::prelude::App,
+    kind: CommandEventKind,
+    faction: FactionId,
+    band: BandId,
+    detail: impl Into<String>,
+) {
+    let entry = command_failure_entry(app, kind, faction, detail).with_band(band);
+    push_command_entry(app, entry);
+}
+
+/// The `"<verb> failed"` feed line both failure emitters push, stamped at the current tick.
+fn command_failure_entry(
+    app: &bevy::prelude::App,
+    kind: CommandEventKind,
+    faction: FactionId,
+    detail: impl Into<String>,
+) -> CommandEventEntry {
     let tick = app.world.resource::<SimulationTick>().0;
     let summary = format!("{} failed", command_kind_display(kind));
-    push_command_event(app, tick, kind, faction, summary, Some(detail.into()));
+    CommandEventEntry::new(tick, kind, faction, summary, Some(detail.into()))
 }
 
 fn command_kind_display(kind: CommandEventKind) -> &'static str {
@@ -11433,6 +11477,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::Migrated => "Migration",
         CommandEventKind::BandChangedHands => "Band changed hands",
         CommandEventKind::PartyDefected => "Party defected",
+        CommandEventKind::StartingLoadout => "Outfit",
     }
 }
 
@@ -26527,5 +26572,105 @@ mod tests {
         let back_at_one = published_wood_row(&mut app).useful_cutters;
         assert_eq!(at_two, at_one, "the cap does not move with the crew");
         assert_eq!(back_at_one, at_one, "stepping back moves nothing");
+    }
+
+    /// A kit id the equipment config does not define — refused by name, so the order is turned down
+    /// whole on any world with an open window.
+    const UNKNOWN_KIT: &str = "no_such_kit";
+
+    /// The spawned resident band of a freshly built world, with its outfitting window still open.
+    fn band_with_an_open_loadout_window(app: &bevy::prelude::App) -> BandId {
+        let band = app
+            .world
+            .iter_entities()
+            .filter(|entity| entity.contains::<core_sim::ResidentBand>())
+            .find_map(|entity| entity.get::<BandId>().copied())
+            .expect("the campaign spawns a resident band");
+        assert!(
+            app.world
+                .resource::<core_sim::StartingLoadout>()
+                .is_open(band),
+            "fixture: the window must be open on the world-build turn, or the refusal is vacuous"
+        );
+        band
+    }
+
+    /// The `starting_loadout` rows of the **delta the recapture just broadcast**, as
+    /// `(band, detail)` — read off the encoded `CommandEventState`, the table the client decodes.
+    fn published_loadout_refusals(app: &mut bevy::prelude::App) -> Vec<(u64, String)> {
+        use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+        recapture_snapshot_in_place(&mut app.world);
+        let bytes = app
+            .world
+            .resource::<SnapshotHistory>()
+            .encoded_delta_flat()
+            .expect("the recapture broadcast a delta");
+        let envelope =
+            fb::root_as_envelope(bytes.as_ref()).expect("the delta encodes to a valid envelope");
+        let wire_kind = CommandEventKind::StartingLoadout.as_str();
+        envelope
+            .payload_as_delta()
+            .expect("the envelope carries a delta")
+            .campaign()
+            .and_then(|section| section.commandEvents())
+            .map(|events| {
+                events
+                    .iter()
+                    .filter(|event| event.kind() == Some(wire_kind))
+                    .map(|event| (event.band(), event.detail().unwrap_or_default().to_owned()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// **A REFUSED LOADOUT IS SAID ON THE FEED, AND NAMES ITS BAND.** Populations ship as diffs and
+    /// a refused order moves no band row, so the published event is the client's only word that
+    /// its picks were not taken. Asserted on the encoded delta — the band id and reason as the
+    /// client decodes them, not the in-process log.
+    #[test]
+    fn a_refused_starting_loadout_publishes_one_event_naming_its_band() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let band = band_with_an_open_loadout_window(&app);
+        // Baseline the event cursor so the next delta carries only what the command appends.
+        recapture_snapshot_in_place(&mut app.world);
+
+        let kits = [sim_runtime::StartingKitAllocation {
+            kit_id: UNKNOWN_KIT.to_string(),
+            count: 1,
+        }];
+        handle_set_starting_loadout(&mut app, faction, band, &kits, &[]);
+
+        let expected_reason = core_sim::LoadoutRejection::UnknownKit(UNKNOWN_KIT.to_string());
+        assert_eq!(
+            published_loadout_refusals(&mut app),
+            vec![(band.0, expected_reason.to_string())],
+            "a refusal publishes exactly one starting_loadout line, carrying the band and reason"
+        );
+        let entry = app
+            .world
+            .resource::<CommandEventLog>()
+            .iter()
+            .find(|entry| entry.kind == CommandEventKind::StartingLoadout)
+            .expect("the refusal is in the log");
+        assert_eq!(entry.faction, faction, "filed under the commanding faction");
+        assert_eq!(entry.label, "Outfit failed");
+    }
+
+    /// **An accepted loadout pushes nothing** — the band's republished row is its confirmation.
+    #[test]
+    fn an_accepted_starting_loadout_publishes_no_event() {
+        let mut app = build_world_app();
+        let faction = FactionId(0);
+        let band = band_with_an_open_loadout_window(&app);
+        recapture_snapshot_in_place(&mut app.world);
+
+        handle_set_starting_loadout(&mut app, faction, band, &[], &[]);
+
+        assert!(
+            published_loadout_refusals(&mut app).is_empty(),
+            "an accepted loadout must not publish a starting_loadout line"
+        );
     }
 }

@@ -77,9 +77,17 @@ extends RefCounted
 ## held an `_awaiting_commit` flag and treated a still-open window on the next frame as a REFUSAL,
 ## which was right while an accepted order closed the window and is now the opposite of right: under
 ## replacement semantics every SUCCESSFUL commit leaves the window open, so that branch would post
-## *"that order was refused"* after each one. The flag and its notice are gone. **A genuine refusal is
-## not visible on this card at all** — the server only `warn!`s it to the log stream — and nothing here
-## may go back to inferring one from `open`.
+## *"that order was refused"* after each one. The flag and its notice are gone, and nothing here may go
+## back to inferring a refusal from `open`.
+##
+## ## ⛔ A REFUSAL ARRIVES AS AN EVENT, BECAUSE NO BAND ROW MOVES
+##
+## A refused order changes nothing the sim holds, and populations ship as diffs — so the frame after a
+## refusal carries no row for the band, `_ingest_window` never runs, and the optimistic picks would stay
+## on screen as gear the band does not hold. The sim says it instead on `command_events`: one
+## `starting_loadout` row naming the band (`band`) with the reason as its `detail`.
+## `ingest_command_events` puts the band back on its last PUBLISHED allocation (`BAND_HELD`),
+## forgets the orders still out (`BAND_UNECHOED`), and the card says why under the band's head.
 
 ## Send one band's composed loadout — `set_starting_loadout <faction> <band> [kit <id> <n>]...
 ## [material <id> <n>]...`. **It fails CLOSED and WHOLE server-side**, so the client sends the entire
@@ -138,6 +146,10 @@ var _first_auto_open_seen: bool = false
 ## The rows last handed to the orb, so an unchanged half is not re-pushed — `set_knowledge_attention`
 ## records what a needless full-registry push costs.
 var _attention_rows: Array = []
+## ⛔ **THE HIGHEST `command_events` SEQ THIS CARD HAS READ.** A full snapshot re-sends the server's
+## whole retained ring, so without it a reconnect would re-apply every refusal still in the ring and
+## reset picks the player has since remade. `seq` is monotonic per world, so `reset_world_state` resets it.
+var _event_seq_cursor: int = HudLoadoutVocab.EVENT_SEQ_NONE
 
 # ---- one band's state, by key ---------------------------------------------------------------
 ## Its display name, resolved once per snapshot through `HudFormat.band_name` — the client's ONE
@@ -175,6 +187,16 @@ const BAND_MATERIAL_PICKS := "material_picks"
 ## a card comparing against what it last SAW would drag itself back a step on every pair of presses.
 ## A match settles that order and every order before it; anything else is adopted, and clears the list.
 const BAND_UNECHOED := "unechoed"
+## ⛔ **WHAT THE SIM LAST PUBLISHED FOR THIS BAND**, in the same `{kits, materials}` map shape —
+## refreshed on EVERY `_ingest_window`, echo or adoption alike. It is what a refusal restores: the
+## refused order changed nothing the band holds, so the last published allocation is still the truth.
+##
+## **It is NOT the retired `BAND_PUBLISHED`**, which was a second copy the picks were reconciled
+## against on every frame. Nothing reads this except a refusal; the pick maps stay the one allocation.
+const BAND_HELD := "held"
+## The sim's reason for refusing this band's last order (`detail`, verbatim), or absent. Set by a
+## refusal; cleared by this band's next stepper press or its next accepted echo.
+const BAND_REFUSAL := "refusal"
 
 ## A recipe with no inputs at all cannot be priced against a pile, so the column reads it as
 ## unreachable rather than as infinitely makeable. Nothing in the shipped book is such a recipe; this
@@ -332,15 +354,81 @@ func _ingest_window(band_id: int, window: Dictionary, names: Dictionary) -> void
 	# for the sim's own reasons — a split re-fitting the parent to its reduced budget
 	# (`fission::rebalance_partitioned_grant`), an order refused whole, or the default the sim applied
 	# when it made the band — and the wire is the authority on what the band holds.
+	state[BAND_HELD] = published
 	var unechoed: Array = state[BAND_UNECHOED]
 	var echoed := unechoed.find(published)
 	if echoed >= 0:
 		# That order and every order before it have landed; later ones are still out.
 		state[BAND_UNECHOED] = unechoed.slice(echoed + 1)
+		# An order this card sent has been ACCEPTED, so an earlier refusal is no longer the news.
+		state.erase(BAND_REFUSAL)
 	else:
 		state[BAND_UNECHOED] = []
 		_adopt_published(state, published)
 	_bands[band_id] = state
+
+## ⛔ **A REFUSED ORDER — read off the same `command_events` array the Telling and the event dock read**
+## (`HudLayer.ingest_command_events` fans it out). A row is acted on only when ALL of these hold:
+##
+## - it is a `starting_loadout` row about the PLAYER's faction, naming a band this card holds a window
+##   for — any other row is some other surface's;
+## - its `seq` is above the cursor — the ring a full snapshot re-sends is history this card has read;
+## - its `tick` is `turn`, the current one — an older turn's window is shut, so its refusal is moot.
+##   A row stating no `seq` cannot be de-duplicated and is dropped for the same reason: applying it on
+##   every resend would keep resetting picks the player has since remade.
+##
+## The band goes back to what it HOLDS (`BAND_HELD`) and every order still out is forgotten: the
+## sim has answered, and whatever it says next is adopted whole rather than read as this card's echo.
+func ingest_command_events(events_variant: Variant, turn: int) -> void:
+	if not (events_variant is Array):
+		return
+	var cursor := _event_seq_cursor
+	var refused := false
+	for entry_variant in (events_variant as Array):
+		if not (entry_variant is Dictionary):
+			continue
+		var entry: Dictionary = entry_variant
+		var seq := int(entry.get(HudLoadoutVocab.EVENT_SEQ_KEY, HudLoadoutVocab.EVENT_SEQ_NONE))
+		# Against the cursor as it stood BEFORE this batch, so the batch's own order does not matter.
+		if seq <= cursor:
+			continue
+		_event_seq_cursor = maxi(_event_seq_cursor, seq)
+		if String(entry.get(HudLoadoutVocab.EVENT_KIND_KEY, "")).strip_edges() \
+				!= HudLoadoutVocab.REFUSAL_EVENT_KIND:
+			continue
+		if int(entry.get(HudLoadoutVocab.EVENT_FACTION_KEY, HudConst.NO_FACTION_ID)) \
+				!= HudConst.PLAYER_FACTION_ID:
+			continue
+		if int(entry.get(HudLoadoutVocab.EVENT_TICK_KEY, HudLoadoutVocab.EVENT_TICK_NONE)) != turn:
+			continue
+		var band_id := int(entry.get(HudLoadoutVocab.EVENT_BAND_KEY, HudConst.NO_BAND_ID))
+		if band_id == HudConst.NO_BAND_ID or not _bands.has(band_id):
+			continue
+		_take_refusal(_bands[band_id],
+			String(entry.get(HudLoadoutVocab.EVENT_DETAIL_KEY, "")).strip_edges())
+		refused = true
+	if not refused:
+		return
+	if is_expanded():
+		render()
+	_push_attention()
+
+## Put one band back on what it holds, and remember why.
+func _take_refusal(state: Dictionary, detail: String) -> void:
+	var published: Variant = state.get(BAND_HELD, null)
+	if published is Dictionary:
+		_adopt_published(state, published)
+	state[BAND_UNECHOED] = []
+	state[BAND_REFUSAL] = detail
+
+## The line the card draws under a refused band's head, or `""` for none.
+func _refusal_text(band: Dictionary) -> String:
+	if not band.has(BAND_REFUSAL):
+		return ""
+	var detail := String(band[BAND_REFUSAL])
+	while detail.ends_with(HudLoadoutVocab.REFUSAL_DETAIL_TRAILING_STOP):
+		detail = detail.left(detail.length() - HudLoadoutVocab.REFUSAL_DETAIL_TRAILING_STOP.length())
+	return HudLoadoutVocab.REFUSAL_FORMAT % detail
 
 ## ⛔ **THE PUBLISHED ALLOCATION, WHOLE AND UNCLAMPED.** The sim already fitted this spread to the
 ## band's budgets when it accepted it, so a second clamp here would disagree with the first — and a
@@ -531,6 +619,7 @@ func reset_world_state() -> void:
 	_subject = HudConst.NO_BAND_ID
 	_auto_opened = {}
 	_first_auto_open_seen = false
+	_event_seq_cursor = HudLoadoutVocab.EVENT_SEQ_NONE
 	_equipment_config = {}
 	_recipes = []
 	_pickable = []
@@ -575,6 +664,7 @@ func render() -> void:
 			StartingLoadoutPanel.BUDGET_SPENT: materials_spent(),
 			StartingLoadoutPanel.BUDGET_TOTAL: _material_total(band, take),
 		},
+		StartingLoadoutPanel.PAYLOAD_REFUSAL: _refusal_text(band),
 	})
 
 ## **THE CARD NAMES ITS BAND**, because a split can leave two windows open at once and a card headed
@@ -1132,6 +1222,8 @@ func _write_pick(band: Dictionary, picks_key: String, id: String, next: int) -> 
 		picks[id] = next
 	else:
 		picks.erase(id)
+	# A new order supersedes the refused one, and so does its line.
+	band.erase(BAND_REFUSAL)
 	# **THE OPTIMISTIC WRITE IS ON SCREEN BEFORE THE SEND**, which is the whole point of it; a refused
 	# send re-renders from `revert_order`. `is_expanded`, never `is_open`, for `_settle_subject`'s
 	# reason: rendering a dismissed card puts it back on screen.

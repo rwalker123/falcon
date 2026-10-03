@@ -125,16 +125,52 @@ band actually holds** — never a suggestion and never an unspent budget.
 > *take nothing*, on a take exactly as on a grant. What makes a press safe is that the card is not
 > empty when the take is not.
 
+> ### ⛔ A REFUSED ORDER IS AN EVENT ROW, BECAUSE NO BAND ROW MOVES
+>
+> A refused `set_starting_loadout` changes nothing the sim holds, and populations ship as diffs — so
+> the frame after it carries no row for the band, `_ingest_window` never runs, and the optimistic
+> picks would stay on screen as gear the band does not hold. The sim reports it instead as one
+> `command_events` row: `kind == "starting_loadout"`, `label == "Outfit failed"`, the reason as
+> `detail`, and the refused band's durable id as `band` (`0` = about no band). An accepted order emits
+> nothing.
+>
+> `HudLayer.ingest_command_events` fans the array to `StartingLoadoutController.ingest_command_events`
+> with the current turn. A row is acted on only when it is a `starting_loadout` row of the PLAYER's
+> faction, names a band the card holds a window for, has a `seq` above the card's cursor
+> (`_event_seq_cursor` — a full snapshot re-sends the whole ring, and a refusal applied twice would
+> reset picks the player has since remade), and has `tick` equal to the current turn (an older turn's
+> window is shut). A row with no `seq` cannot be de-duplicated and is dropped. The cursor resets in
+> `reset_world_state`, `seq` being per world.
+>
+> On a refusal the band goes back to **`BAND_HELD`** — the allocation the sim last published for it,
+> refreshed on every `_ingest_window`, echo or adoption alike — and `BAND_UNECHOED` is emptied: the
+> sim has answered, so whatever it publishes next is adopted whole. `BAND_HELD` is read by nothing
+> but a refusal, which is what separates it from the retired `BAND_PUBLISHED`: the pick maps are
+> still the one allocation.
+>
+> **The line** sits last in the card's head, directly above the columns it just reset, in
+> `HudStyle.WARN` — the card's ONE warning ink: `Not taken: <detail>. Picks reset to what the band
+> holds.` (`REFUSAL_FORMAT`; a trailing full stop on the detail is not doubled). The detail is the
+> sim's own words, so no kit or item is named client-side. It is capped at two lines
+> (`max_lines_visible` + ellipsis) and carries the whole text on its tooltip. It is cleared by that
+> band's next stepper press (`_write_pick`) or its next accepted echo; a press the clamp refuses sends
+> nothing and so clears nothing.
+>
+> The same row reaches the event dock as an unlisted kind — `DEFAULT_RUNG` (routine, off at the
+> default detail level) on the World channel, its prose detail shown verbatim — like the other
+> command refusals that ride their verb's kind. The Telling, the opening card and the turn orb's
+> hand-off producer all filter it out.
+
 ## Key scripts
 
 | Script | Purpose |
 |--------|---------|
 | `ui/StartingLoadoutPanel.gd` | The free-floating card — three columns (kits / resources / what the resources can build), two meters, a **band switcher** drawn only while two or more windows are open, a footer control that CLOSES the card (it sends nothing: every stepper press already orders) and its own reopen pill. **`AutoSizingPanel`, not `PanelCard` + `DockScrollFit`** (`panel-framework.md`): it is measured against the ROOM. **ONE NODE CARRIES BOTH STATES** — the card and the pill are two children and exactly one is visible, so one fit and one placement serve the expanded and dismissed states; the fit measures whichever is showing and `_place` centres the card in the room and puts the pill at the top of it. It renders a payload and emits five intents (`dismissed` / `reopened` / `band_selected` / `kit_count_changed` / `material_units_changed`) and holds no allocation of its own — the footer control emits `dismissed` like the ✕, `commit_requested` having gone with the deferred order. **A row's `+` is enabled from the ROW's own `can_add`**, never re-derived from the meter — on a take the cap is per ITEM, so one kit row can be exhausted while the next is free. `_column` draws NO caption for an empty note, which is what keeps the builds column from carrying a blank row where the other two carry a line |
-| `ui/hud/StartingLoadoutController.gd` | The controller half, held by `HudLayer` as `_loadout`. **Holds ONE allocation PER BAND — what that band HOLDS, never a draft — every clamp, both remainders and the "what this builds" arithmetic.** Ingests the campaign's half (`set_campaign_loadout` — the pick list and the craftable ids; **the two pre-fills are read by nothing**), **the windows off the band roster** (`set_bands`, fed the player bands `HudLayer.update_band_alerts` has already filtered), the parsed equipment config (`set_equipment_config`) and the recipe book (`set_recipes`). `_write_pick` is the one press handler and the one sender; `_send_order` composes the line and queues it in `BAND_UNECHOED`; `revert_order` is the rollback `Main` reaches through `HudLayer.revert_starting_loadout`. Relays `set_starting_loadout_requested` onto `HudLayer`'s and pushes its orb half through `attention_changed` |
+| `ui/hud/StartingLoadoutController.gd` | The controller half, held by `HudLayer` as `_loadout`. **Holds ONE allocation PER BAND — what that band HOLDS, never a draft — every clamp, both remainders and the "what this builds" arithmetic.** Ingests the campaign's half (`set_campaign_loadout` — the pick list and the craftable ids; **the two pre-fills are read by nothing**), **the windows off the band roster** (`set_bands`, fed the player bands `HudLayer.update_band_alerts` has already filtered), the parsed equipment config (`set_equipment_config`) and the recipe book (`set_recipes`). `_write_pick` is the one press handler and the one sender; `_send_order` composes the line and queues it in `BAND_UNECHOED`; `revert_order` is the rollback `Main` reaches through `HudLayer.revert_starting_loadout`; `ingest_command_events` takes a server REFUSAL off the event stream and puts the band back on `BAND_HELD` (see "A REFUSED ORDER IS AN EVENT ROW"). Relays `set_starting_loadout_requested` onto `HudLayer`'s and pushes its orb half through `attention_changed` |
 | `ui/hud/hud_loadout_vocab.gd` (`HudLoadoutVocab`) | The vocabulary leaf — the wire keys, the words, the measured geometry, and the **swatch ring** (`apply_palette`, registered in `HudPalette.apply`) |
 | `ui/hud/OpeningCardController.gd` | The OPENING HAND-OFF, held by `HudLayer` as `_opening` — see "THE OPENING CARD" below. Collects every tick-0 `narrative_beat` off `ingest_command_events` (de-duplicated by `tick\|label\|detail`, arrival order), takes `StartingLoadoutController.opening_grant_held`, and decides in ONE deferred `_resolve`. Owns the `OpeningCardPanel` node, parented into the HUD layer. `reset_world_state` re-arms it; `is_open` / `dismiss` back `HudLayer.is_opening_card_open` / `dismiss_opening_card`, which `Main.escape_claimant` probes BY NAME |
 | `tools/ui_preview/chapters/opening_card.gd` | The opening card's chapter, appended LAST in `CHAPTERS` because every block starts on a world boundary. Three frames (`opening_card`, `opening_card_handoff`, `opening_card_late`) and 32 checkpoints: the window-then-beats frame, the button / scrim click / ESC hand-offs, once per world, a later splinter untouched, no story, a story a snapshot late, and a story after the window shut |
-| `tools/ui_preview/chapters/starting_loadout.gd` | The preview chapter, LAST in `CHAPTERS` — thirteen frames and **136 checkpoints**, including the orb's two colours, the no-dead-space bound, the press-sends-an-order claims, the refused-send rollback, the TAKE arc appended after them and, last, the ADOPTION pair: its own band, a press made, the band's allocation re-published against shrunken budgets and taken whole, then two presses whose first echo must not pull the card back. **Every fixture band publishes the last order this card sent for it** (`_held_kits`), which is what a server does. Its kit fixture is the **shipped nine-kit roster**, `none` included so the picker has something to drop. See `harness-ui-preview.md` |
+| `tools/ui_preview/chapters/starting_loadout.gd` | The preview chapter, LAST in `CHAPTERS` — fifteen frames and **150 checkpoints**, including the orb's two colours, the no-dead-space bound, the press-sends-an-order claims, the refused-send rollback, the TAKE arc appended after them and, last, the ADOPTION pair: its own band, a press made, the band's allocation re-published against shrunken budgets and taken whole, then two presses whose first echo must not pull the card back, and finally the REFUSED pair (`starting_loadout_refused`, `_refused_long`): a press reset by a `starting_loadout` event row, the line in warning ink, an earlier turn's row and a re-sent row ignored, the next press clearing it, and a long reason held to two lines. **Every fixture band publishes the last order this card sent for it** (`_held_kits`), which is what a server does. Its kit fixture is the **shipped nine-kit roster**, `none` included so the picker has something to drop. See `harness-ui-preview.md` |
 
 ## THE OPENING CARD — the world's first auto-open is the Telling's, and it hands off here
 
@@ -179,9 +215,8 @@ card.
   and read a still-open window on the next frame as a REFUSAL. That was right while an accepted order
   closed the window and is now exactly inverted: under replacement semantics every SUCCESSFUL commit
   leaves it open, so the branch would post *"that order was refused"* after each one. It is gone, and
-  nothing here may go back to inferring a refusal from `open`. **A genuine refusal is not visible on
-  this card at all** — `handle_set_starting_loadout` only `warn!`s it to the log stream, so there is
-  no client-facing channel for it; surfacing one needs a `command_events` row server-side.
+  nothing here may go back to inferring a refusal from `open`. A genuine refusal arrives on its own
+  channel — see "A REFUSED ORDER IS AN EVENT ROW" below.
 - **THE THIRD COLUMN IS A READOUT, NOT A BUILD PLAN.** `count = floor(min over inputs of
   allocated[material] / required)` — *how many of THIS one thing the whole pile could make*, so two
   rows both reading `×2` are two answers to two separate questions. **The sentence that used to say so
@@ -375,8 +410,8 @@ the picked and spent states.
 
 > `The turn orb reopens this. Ending the turn closes it for good.`
 
-Two short declaratives, one fact each, in the subtitle's quiet ink — it is guidance, not a warning,
-and this card carries no warning ink anywhere else. A player who has dismissed the card has no other
+Two short declaratives, one fact each, in the subtitle's quiet ink — it is guidance, not a warning.
+The card's one warning ink is the refused-order line. A player who has dismissed the card has no other
 way to learn either fact.
 
 ⛔ **IT IS NOT THE RETIRED FORFEITURE CLAIM.** That one said COMMITTING shuts the window, which is

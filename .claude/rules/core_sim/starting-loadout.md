@@ -17,7 +17,8 @@ applied, never suggested"), and the player revises it for the rest of the turn.
 `starting_loadout.rs` holds all of it: the `StartingLoadout` resource, the systems that open, outfit
 and shut a window, and `apply_starting_loadout`, which validates, resolves the band and moves or
 mints.
-`bin/server.rs`'s handler only translates the wire types and logs the refusal. The client half is
+`bin/server.rs`'s handler only translates the wire types and reports a refusal (see "A refusal is
+said on the feed"). The client half is
 `.claude/rules/client/starting-loadout.md`; the split that opens a splinter's window is
 `.claude/rules/core_sim/fission.md`.
 
@@ -381,6 +382,17 @@ The window is **per band**, so it rides the cohort beside the two things a picke
 a success alike, because a commit never closes a window. What a client reads is the band's own
 published state on the recapture the command triggers: after a success that is exactly the allocation
 it sent, and after a refusal whatever stood before.
+
+### A refusal is said on the feed
+
+Populations ship as diffs, so a refused order — which leaves the band's row byte-identical —
+publishes **nothing** about the band. The handler therefore keeps its `warn!` and pushes one event
+feed line: kind `starting_loadout` (`CommandEventKind::StartingLoadout`), label `Outfit failed`,
+detail = the `LoadoutRejection`'s Display text, filed under the commanding faction, and
+`CommandEventState.band` = the refused band's `BandId` (`0` on every row not about one band — the
+allocator never issues it). An accepted loadout pushes **no** line: the republished band row is its
+confirmation. Pinned by `bin/server.rs`'s
+`a_refused_starting_loadout_publishes_one_event_naming_its_band`, read off the encoded delta.
 
 **`SAVE_FORMAT_VERSION` went to 5** with the map (`save.rs`); a `SimState` shape change has no
 migration path by design.

@@ -30,8 +30,9 @@ class_name StartingLoadoutPanel
 ## back through its own reopen pill and through the turn orb's row. `End Turn` is untouched.
 ##
 ## **`open` IS NOT A SUCCESS SIGNAL.** An apply is a REPLACEMENT, so an accepted order leaves the
-## window open and a refusal is not visible on this card at all. `StartingLoadoutController`'s ⛔
-## block is the contract — nothing here may infer an outcome from `open`.
+## window open. A refusal reaches the card as an event row the controller reads and hands down as
+## `PAYLOAD_REFUSAL`; `StartingLoadoutController`'s ⛔ blocks are the contract — nothing here may infer
+## an outcome from `open`.
 ##
 ## **THIS IS THE FREE-FLOATING CASE, hence `AutoSizingPanel`**
 ## (`.claude/rules/client/panel-framework.md`): the card is measured against the ROOM — the viewport
@@ -97,6 +98,9 @@ const PAYLOAD_RECIPES := "recipes"
 ## `{spent, budget}` for each meter.
 const PAYLOAD_KIT_BUDGET := "kit_budget"
 const PAYLOAD_MATERIAL_BUDGET := "material_budget"
+## The line saying this band's last order was REFUSED, already composed — or `""`, which draws nothing.
+## The controller owns when it shows and when it clears; the panel only puts it under the band's head.
+const PAYLOAD_REFUSAL := "refusal"
 const BUDGET_SPENT := "spent"
 const BUDGET_TOTAL := "total"
 
@@ -377,6 +381,24 @@ func _build_header() -> void:
 		HudLoadoutVocab.PANEL_SUBTITLE)), HudStyle.INK_DIM,
 		HudLoadoutVocab.SUBTITLE_FONT_SIZE, true))
 	_build_band_tabs()
+	_build_refusal_line()
+
+## **THE SIM REFUSED THIS BAND'S LAST ORDER, AND THE CARD SAYS SO** — the last thing in the head, so it
+## sits directly above the columns whose picks it has just reset. The one warning ink on the card.
+##
+## ⛔ **TWO LINES AT MOST.** The reason is the sim's own sentence and its length is not this card's to
+## choose, so a longer one is ellipsized on its second line and carried WHOLE on the tooltip — the
+## text is truncated, never lost.
+func _build_refusal_line() -> void:
+	var text := String(_payload.get(PAYLOAD_REFUSAL, ""))
+	if text.is_empty():
+		return
+	var line := _caption(text, HudStyle.WARN, HudLoadoutVocab.REFUSAL_FONT_SIZE, true)
+	line.max_lines_visible = HudLoadoutVocab.REFUSAL_MAX_LINES
+	line.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	line.set_meta(HudLoadoutVocab.REFUSAL_LINE_META, true)
+	HudWidgets.set_label_tooltip(line, text)
+	_header.add_child(line)
 
 ## **THE SWITCHER — one of the two ways to a second band's card**, the other being that band's own turn
 ## orb row, which carries its subject and opens on it

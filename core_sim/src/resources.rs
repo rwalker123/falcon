@@ -1722,6 +1722,18 @@ pub enum CommandEventKind {
     /// **Appended last**, after [`Self::BandChangedHands`], so no shipped variant's bincode index
     /// moved.
     PartyDefected,
+    /// **An opening loadout was refused** — the `set_starting_loadout` verb
+    /// (`core_sim::starting_loadout`) turned the whole order down, and the detail is the reason.
+    ///
+    /// **A refusal has to be said on the feed because nothing else moves.** Populations ship as
+    /// diffs, and a refused order leaves the band's row exactly as it stood, so without this line the
+    /// client keeps its optimistic picks on screen with no word that the sim never took them. The
+    /// entry names the refused band ([`CommandEventEntry::band`]) so the outfitting card can find its
+    /// own refusal. An accepted loadout pushes nothing: the band's republished row is the
+    /// confirmation.
+    ///
+    /// **Appended last**, after [`Self::PartyDefected`], so no shipped variant's bincode index moved.
+    StartingLoadout,
 }
 
 impl CommandEventKind {
@@ -1766,6 +1778,7 @@ impl CommandEventKind {
             CommandEventKind::BandChangedHands => "band_changed_hands",
             CommandEventKind::PartyDefected => "party_defected",
             CommandEventKind::Aged => "aged",
+            CommandEventKind::StartingLoadout => "starting_loadout",
         }
     }
 }
@@ -1786,6 +1799,14 @@ pub struct CommandEventEntry {
     /// cursor starts at `0`. Every `new` leaves it `0` for the same reason: an unpushed entry
     /// carries the "no sequence" value, and the log is the only writer.
     pub seq: u64,
+    /// **The one band this event is about**, or [`NO_EVENT_BAND`] when it is not about a single
+    /// band. Set with [`Self::with_band`]; every `new` leaves it unset.
+    ///
+    /// It exists so a client can file a line against the band it concerns without parsing the
+    /// detail — today, so the outfitting card finds a refused `starting_loadout` for *its* band.
+    /// The raw `u64` rather than a [`crate::components::BandId`] because `0` is the wire's
+    /// "no band" and [`BandIdAllocator`] never issues it.
+    pub band: u64,
 }
 
 impl CommandEventEntry {
@@ -1806,9 +1827,20 @@ impl CommandEventEntry {
             // no call site can hand out a number the log has already issued. `0` is the
             // never-pushed value; real sequences start at 1.
             seq: 0,
+            band: NO_EVENT_BAND,
         }
     }
+
+    /// Name the band this event is about — see [`Self::band`].
+    pub fn with_band(mut self, band: crate::components::BandId) -> Self {
+        self.band = band.0;
+        self
+    }
 }
+
+/// [`CommandEventEntry::band`]'s "not about one band" value. Zero because [`BandIdAllocator`] starts
+/// at [`FIRST_BAND_ID`], so no real band can hold it — the same value the client reads as no band.
+pub const NO_EVENT_BAND: u64 = 0;
 
 /// Hard cap on how many entries the log will hold **regardless of the turn window**.
 ///

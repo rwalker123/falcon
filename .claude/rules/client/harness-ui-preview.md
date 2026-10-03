@@ -1740,8 +1740,8 @@ refusal).
 
 ## `chapters/starting_loadout.gd` — the outfitting picker (issue #629)
 
-**Appended LAST in `CHAPTERS`**, after `supply_network`, so no existing frame moves. Thirteen frames
-and one hundred and twenty-three assertions (`EXPECTED_CHECKPOINTS` **136**, RE-MEASURED by raising
+**Appended LAST in `CHAPTERS`**, after `supply_network`, so no existing frame moves. Fifteen frames
+and one hundred and thirty-five assertions (`EXPECTED_CHECKPOINTS` **150**, RE-MEASURED by raising
 the const to an impossible number and reading `reached` back — frames count too). It ends by
 publishing SHUT windows, so the surface it stands up is gone before anything appended after it could
 inherit it.
@@ -1786,6 +1786,20 @@ meta, never by scraping a subtree's text) and the frames carry the layout.
 | `starting_loadout_reopened` | ⛔ **the footer control closes the card and SENDS NOTHING**, and nothing is lost by pressing it: the still-open frame the sim really sends, reopened, with every kit intact and no refusal and no forfeiture claim. The pair is the claim — a control that still ordered would double every press's send, and a card that came back empty would be the old defect in new words |
 | `starting_loadout_orb_unspent` | the orb AMBER with one unit still to pick, its popover row reading `Band not fully outfitted` / `1 resource unspent` and wearing `Open ▸` |
 | `starting_loadout_orb_ready` | the same orb BLUE with everything picked, reading `Band outfitted` / `everything is picked` — **still present, still `Open ▸`**, which is what says a dismissed card is reachable right up to the advance |
+
+### The REFUSED pair runs last, after the flicker pair
+
+A refused order moves no band row, so the card is put back by a `starting_loadout` `command_events`
+row alone (`starting-loadout.md` → "A REFUSED ORDER IS AN EVENT ROW"). The block presses a `−` (the
+flicker pair leaves the adopt band's kit budget spent, so a `+` would be clamped to nothing and send
+nothing), pops that order off `_orders` because no server holds it, and feeds rows through
+`HudLayer.ingest_command_events` — the seam `Main` uses. Its `seq` starts one above the card's own
+cursor, since earlier chapters have already fed the HUD sequenced rows.
+
+| frame | what only IT can say |
+|---|---|
+| `starting_loadout_refused` | the pick back on what the band holds, and the amber line under the head — `Not taken: <detail>. Picks reset to what the band holds.` — quoting the fixture's reason verbatim. Asserted around it: an EARLIER turn's row moves nothing; the next press clears the line; the same row re-sent (a full snapshot's ring) does not reset that press |
+| `starting_loadout_refused_long` | a reason too long for two lines held to TWO with an ellipsis, the whole text on the tooltip and a trailing full stop not doubled — the claim asks the label's `get_line_count` (above two) against `get_visible_line_count` (exactly two), so a reason that merely happened to fit cannot pass it |
 
 ### The TAKE arc is APPENDED, never interleaved
 

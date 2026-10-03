@@ -2359,6 +2359,9 @@ func ingest_command_events(events_variant: Variant) -> void:
     # rather than a fourth surface: the row it produces lands in the turn orb's registry beside every
     # other demand on the player.
     _attention.ingest_command_events(events_variant, _band_labor.current_turn())
+    # …and the outfitting card takes its REFUSALS off it: a refused `set_starting_loadout` moves no
+    # band row, so this row is the only word the card gets that its optimistic picks were turned down.
+    _loadout.ingest_command_events(events_variant, _band_labor.current_turn())
 func update_band_alerts(populations_variant: Variant) -> void:
     if not (populations_variant is Array):
         return

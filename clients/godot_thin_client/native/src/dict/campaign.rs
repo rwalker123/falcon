@@ -305,6 +305,9 @@ pub(crate) fn command_events_to_array(
         // `CommandEventLog::push`", so the client must treat 0 as unsequenced and fall back to its
         // signature de-dup rather than letting every such row collide on key 0.
         let _ = dict.insert("seq", event.seq() as i64);
+        // The one band this row is about, or 0 (`HudConst.NO_BAND_ID`) when it is about none —
+        // no real band holds 0. A refused `starting_loadout` carries the band it refused.
+        let _ = dict.insert("band", event.band() as i64);
         array.push(&dict.to_variant());
     }
     array
