@@ -66,7 +66,8 @@ impl BeliefRegistry {
     /// continuous stock, so a third of a person three turns running is one death's worth.
     ///
     /// The caller decides *where*: the tile the band **stands on**, never its home, and only for
-    /// people who died there — a detached party's casualties are not where the band stands.
+    /// people who died there. A detached expedition's casualties and a far work party's (a row
+    /// posted past `band_work_range`) are not where the band stands, and credit nothing.
     pub fn credit_deaths(&mut self, position: UVec2, deaths: f32, config: &BeliefConfig) {
         self.add(position, deaths * config.belief_per_death);
     }

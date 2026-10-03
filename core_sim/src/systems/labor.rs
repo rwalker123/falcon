@@ -4924,6 +4924,10 @@ fn build_material_wants(
 /// **Where a resident band's hunt dead are credited** — the tile the band stands on, the belief
 /// registry, and what a death is worth there (`crate::belief`). Bundled so [`settle_hunt_band_side`]
 /// takes the one place its dead go rather than three loose arguments.
+///
+/// **Absent (`None`) for a row worked by a far WORK PARTY** (a posting past `band_work_range`): the
+/// party fought at its herd, not where the band stands, so — like an expedition's — its casualties
+/// credit no belief anywhere.
 struct BeliefSink<'a> {
     position: UVec2,
     registry: &'a mut BeliefRegistry,
@@ -4970,7 +4974,7 @@ fn settle_hunt_band_side(
     faction: FactionId,
     cohort: &mut PopulationCohort,
     event_log: &mut CommandEventLog,
-    belief: BeliefSink<'_>,
+    belief: Option<BeliefSink<'_>>,
 ) {
     // Human text names the SPECIES, never the internal herd id.
     let species_name = fauna
@@ -4982,8 +4986,11 @@ fn settle_hunt_band_side(
         let wounded_f = outcome.fight.casualties.wounded;
         let died = cohort.apply_combat_casualties(scalar_from_f32(killed_f));
         // **The hunt's dead are buried where the band stands** (`crate::belief`) — a resident band's
-        // own hunt, so its people died on its ground.
-        belief.credit(died);
+        // own hunt, so its people died on its ground. A far work party's sink is absent: they died
+        // at the herd, and credit nothing.
+        if let Some(belief) = belief {
+            belief.credit(died);
+        }
         // The prose rounds `killed` for a readable "cost N lives"; the **detail carries the
         // fractional truth** (casualties are `Scalar`-fractional by design — a well-guarded party
         // takes a fraction of a death), so a consumer reads precise killed/wounded rather than a
@@ -8307,11 +8314,13 @@ pub fn advance_labor_allocation(
                             faction,
                             &mut cohort,
                             &mut event_log,
-                            BeliefSink {
+                            // A far WORK PARTY fought where its herd stands, not where the band does: like
+                            // an expedition's, its dead credit no belief.
+                            (!postings.contains_key(&idx)).then(|| BeliefSink {
                                 position: band_pos,
                                 registry: &mut belief,
                                 config: &belief_cfg,
-                            },
+                            }),
                         );
                         continue;
                     }
@@ -9115,11 +9124,13 @@ pub fn advance_labor_allocation(
                         faction,
                         &mut cohort,
                         &mut event_log,
-                        BeliefSink {
+                        // A far WORK PARTY fought where its herd stands, not where the band does: like
+                        // an expedition's, its dead credit no belief.
+                        (!postings.contains_key(&idx)).then(|| BeliefSink {
                             position: band_pos,
                             registry: &mut belief,
                             config: &belief_cfg,
-                        },
+                        }),
                     );
                 }
                 LaborTarget::Extract {
@@ -13882,11 +13893,11 @@ mod labor_yield_tests {
             FactionId(0),
             &mut cohort,
             &mut log,
-            super::BeliefSink {
+            Some(super::BeliefSink {
                 position: STANDING,
                 registry: &mut belief,
                 config: &config,
-            },
+            }),
         );
         assert!(
             (belief.get(STANDING) - KILLED * config.belief_per_death).abs() < EPSILON,
@@ -13905,11 +13916,11 @@ mod labor_yield_tests {
             FactionId(0),
             &mut cohort,
             &mut log,
-            super::BeliefSink {
+            Some(super::BeliefSink {
                 position: STANDING,
                 registry: &mut belief,
                 config: &config,
-            },
+            }),
         );
         assert!(
             (belief.get(STANDING) - before - left * config.belief_per_death).abs() < EPSILON,

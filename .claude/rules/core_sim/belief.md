@@ -48,7 +48,8 @@ accrue a cemetery at a place it has left.
 | Site | Counts? | What is credited |
 |---|---|---|
 | `simulate_population` — starvation, temperature and old age | **yes** | `DemographicFlows::total_deaths()`, the turn's **fractional** death total — not the whole-person `died` events. Belief is a continuous stock, so a third of a person three turns running is one death's worth, and a band with no `BandId` or flow carry still buries its dead |
-| `settle_hunt_band_side` — a resident band's own hunt, both rungs (range arm and pen tend) | **yes** | the people actually lost, at the band's tile |
+| `settle_hunt_band_side` — a resident band's own hunt, both rungs (range arm and pen tend), worked from the band's own range | **yes** | the people actually lost, at the band's tile |
+| `settle_hunt_band_side` — the same hunt or tend carried out by a far **work party** (`work-party.md`) | **no** | the party fights at the herd, away from where the band stands — the expedition's reason. Its workers stay the band's; only where they died decides the credit |
 | `advance_predator_raids` — a raid on a resident band | **yes** | the people actually lost, at the band's tile; the pack came to the band, so the band's tile is where they died |
 | `advance_expeditions` — a detached party's hunt or roadside kill | **no** | those people died at the party's position, not where the band stands |
 
@@ -80,3 +81,4 @@ config — so the hunt seam names one place its dead go rather than taking three
 | `predator_raid::a_raids_dead_credit_belief_to_the_tile_the_band_stands_on` | a raid credits the lost head-count at the band's tile, not its home |
 | `expedition_hunt::an_expedition_hunts_dead_credit_no_belief` | a lethal expedition hunt leaves the registry untouched (with a liveness assertion that people died) |
 | `labor_yield_tests::a_resident_hunts_dead_credit_belief_to_the_tile_the_band_stands_on` | the hunt seam credits the band's tile, and only the people actually lost |
+| `labor_allocation::a_far_work_partys_hunt_dead_credit_no_belief` | a party posted past `band_work_range` loses people and the registry stays empty — neither the camp nor the herd tile gains belief |

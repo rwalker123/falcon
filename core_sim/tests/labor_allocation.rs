@@ -945,6 +945,100 @@ fn a_hunt_inside_the_old_leash_posts_a_party_on_the_same_apron_as_forage() {
     );
 }
 
+/// **A far work party's dead credit no belief** (`core_sim::belief`, issue #697). The party fights
+/// at its herd, not where the band stands, so — like an expedition's — its casualties are buried
+/// nowhere the registry can see: not at the band's camp, not at the herd's tile. People still die.
+#[test]
+fn a_far_work_partys_hunt_dead_credit_no_belief() {
+    /// The shipped megafauna — `attack 8 × ferocity 0.9` clears a person's `defense 1`, so it kills.
+    const MAMMOTH: &str = "Thunder Mammoths";
+    /// A standing stock far above anything the party can take, so the floor never stops the fight.
+    const FAT_HERD: f32 = 4000.0;
+    /// Enough hunters to engage a whole mammoth a turn (`engage_rate 0.05`).
+    const HUNTERS: u32 = 30;
+    /// Two hexes past the apron — a short walk out, so the party reaches its herd quickly.
+    const PAST_THE_APRON: u32 = 2;
+    /// How many labor passes the fixture waits for a casualty before giving up.
+    const MAX_TURNS: usize = 12;
+
+    let mut app = spawn_world();
+    let (id, herd_pos) = {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry
+            .herds
+            .iter_mut()
+            .find(|h| h.id.starts_with("game_"))
+            .expect("expected game herd");
+        herd.species = MAMMOTH.to_string();
+        herd.carrying_capacity = FAT_HERD;
+        herd.biomass = FAT_HERD;
+        (herd.id.clone(), herd.position())
+    };
+    let labor = core_sim::LaborConfig::builtin();
+    let distance = labor.band_work_range + PAST_THE_APRON;
+    let grid = app.world.resource::<SimulationConfig>().grid_size;
+    let band_x = if herd_pos.x + distance < grid.x {
+        herd_pos.x + distance
+    } else {
+        herd_pos.x.saturating_sub(distance)
+    };
+    let band_pos = UVec2::new(band_x, herd_pos.y);
+    let tile = app
+        .world
+        .resource::<TileRegistry>()
+        .index(band_pos.x, band_pos.y)
+        .expect("the camp tile resolves");
+    let band = spawn_band(
+        &mut app,
+        tile,
+        HUNTERS,
+        LaborAllocation {
+            assignments: vec![LaborAssignment {
+                party: None,
+                target: LaborTarget::Hunt {
+                    fauna_id: id.clone(),
+                    floor: 0.5,
+                },
+                workers: HUNTERS,
+                kit: None,
+                priority: SourcePriority::default(),
+            }],
+            ..Default::default()
+        },
+    );
+    stock_the_larder(&mut app, band, A_DEEP_LARDER);
+
+    let working = |app: &App| {
+        app.world
+            .get::<PopulationCohort>(band)
+            .unwrap()
+            .working
+            .to_f32()
+    };
+    let before = working(&app);
+    for _ in 0..MAX_TURNS {
+        app.world.run_system_once(advance_labor_allocation);
+        if working(&app) < before {
+            break;
+        }
+    }
+    assert!(
+        app.world
+            .get::<LaborAllocation>(band)
+            .and_then(|allocation| allocation.assignments.first())
+            .is_some_and(|row| row.party.is_some()),
+        "fixture: the hunt past the apron posts a work party"
+    );
+    assert!(
+        working(&app) < before,
+        "fixture: the party's mammoth hunt must kill someone, or this proves nothing"
+    );
+    let belief = app.world.resource::<core_sim::BeliefRegistry>();
+    assert_eq!(belief.get(band_pos), core_sim::NO_BELIEF, "not at the camp");
+    assert_eq!(belief.get(herd_pos), core_sim::NO_BELIEF, "not at the herd");
+    assert!(belief.is_empty(), "nowhere at all");
+}
+
 /// ⛔ **(c') THE PLANT TWIN: A FORAGE ROW OUT OF WORK RANGE POSTS A PARTY, AND THE NEAR ROW BESIDE
 /// IT IS UNTOUCHED.**
 ///
