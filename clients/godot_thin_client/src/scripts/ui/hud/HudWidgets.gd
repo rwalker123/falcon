@@ -531,7 +531,7 @@ static func build_inline_link(text: String, ink: Color, on_press: Callable) -> B
     link.pressed.connect(func() -> void: on_press.call())
     return link
 
-## A one-line BBCode readout inside the assign controls (the live hunt-trip forecast / yield preview).
+## A one-line BBCode readout inside the assign controls (the live forecast / yield preview).
 ## Sized like the hint lines it sits among, but BBCode-capable so the forecast keeps its state colors.
 static func forecast_label(bbcode: String) -> RichTextLabel:
     var label := RichTextLabel.new()

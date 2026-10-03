@@ -26,11 +26,9 @@ signal move_band_requested(payload: Dictionary)
 ## the map click on the destination commits. Payload keys:
 ## { faction, band, party_workers, x, y }. Main formats the `send_expedition …` command.
 signal send_expedition_requested(payload: Dictionary)
-## ⛔ RETIRED — **`send_hunt_expedition_requested`** (`docs/plan_civilization_steps.md` §One work
-## party). A herd past the band's apron is an ordinary hunt whose crew posts a caravan; the client
-## composes and sends no hunting expedition any more. The sim's verb survives until #704 and is
-## unreachable from here.
-## DENIAL raid (`docs/plan_denial_raid.md`) — the third mission, launched from the parties zone's own
+## A herd past the band's apron is an ordinary hunt whose crew posts a caravan
+## (`docs/plan_civilization_steps.md` §One work party); there is no hunting expedition.
+## DENIAL raid (`docs/plan_denial_raid.md`) — a mission launched from the parties zone's own
 ## compose sheet. Payload keys: { faction, band_id, party_workers, fauna_id, fauna_label } and
 ## **nothing else**: the command grammar `send_denial_raid <faction> <band> <party> <fauna_id>` is
 ## CLOSED at four tokens, so a floor or a fill target on this payload would be a hard parse error
@@ -863,8 +861,8 @@ func _ready() -> void:
     # rather than in `_bandpanel`'s construction because `_attention` takes `_bandpanel` itself, so the
     # two cannot both be constructed with the other in hand.
     _bandpanel.set_attention(_attention)
-    # **THE FORECAST QUERY SEAM, handed to BOTH raid-composing controllers.** One instance: the drawer's
-    # expedition branch and the dock's two sheets ask the same questions of the same sim, and two seams
+    # **THE FORECAST QUERY SEAM, handed to BOTH composing controllers.** One instance: the drawer's
+    # compose sheets and the dock's verb sheets ask the same sim over one socket, and two seams
     # would be two request-id sequences and two staleness rules over one socket. Injected here rather
     # than constructed into either — neither owns it, and `Main` has to reach it to inject the transport
     # (`forecast_query()`), which is the coordinator's job and not a controller's.
@@ -1243,7 +1241,7 @@ func _resolve_assign_band() -> Dictionary:
     return _band_labor.player_band()
 
 ## Map grid dimensions captured each snapshot (Main forwards the snapshot `grid` key). Width + wrap
-## feed the wrap-aware hex distance the herd-hunt affordance keys its local-vs-expedition decision
+## feed the wrap-aware hex distance the compose sheets' apron test (local crew vs work party) keys
 ## off. Grid rides full snapshots only; persists across deltas (fields default to the last value).
 func set_grid_dimensions(grid: Variant) -> void:
     if not (grid is Dictionary):
@@ -1482,7 +1480,7 @@ func _hex_distance_wrapped(a_col: int, a_row: int, b_col: int, b_row: int) -> in
 ##
 ## **THE LAST TIER IS A PARTY'S OWN DECLARED NAME, AND IT IS WHY THE ID NO LONGER REACHES THE SCREEN.**
 ## The three tiers above it all need the herd to be in a live array the player can currently see, and
-## the one case where that is *guaranteed to fail* is a hunting party's own quarry: herd telemetry is
+## the one case where that is *guaranteed to fail* is a raiding party's own quarry: herd telemetry is
 ## fog-filtered to hexes lit right now, a detached party is deliberately not a vision source, and local
 ## extinction prunes the herd outright — so the party outlives every array that could name its target
 ## (issue #378). The sim resolves the species at launch and ships it on the party

@@ -135,8 +135,8 @@ like any other, so both detached take sites (`systems/expeditions.rs` — the `H
 scout's roadside kill) credit off the same `take.carried` the food comes off, into the **party's**
 `LocalStore`. It banks there rather than as a scalar on the `Expedition` — which is what the retired
 `carried_trade` did — because a material is a batch with a characteristic vector and there is nothing
-to flatten it to. `LocalStore::drain_materials_into` moves it, **batch by batch**, at the
-`Delivering` drop-off and in `fold_party_into_band`, so a mammoth hide is never averaged into a hare
+to flatten it to. `LocalStore::drain_materials_into` moves it, **batch by batch**, in
+`fold_party_into_band`, so a mammoth hide is never averaged into a hare
 pelt on the walk home and the receiver's ordinary merge rule does the merging. It is also what the
 feed line's *"returning EMPTY"* test reads (`systems::expeditions::materials_carried`): a wolf raid
 comes home with no meat and a pack full of hides, and calling that empty is the food-only blindness

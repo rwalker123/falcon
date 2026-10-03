@@ -118,18 +118,6 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "forage <faction_id> <x> <y> <module_key> [band_id]",
     },
     CommandVerbHelp {
-        verb: "hunt_game",
-        aliases: &["hunt"],
-        summary: "Hunt localized wild game at a tile.",
-        usage: "hunt_game <faction_id> <x> <y> [band_id]",
-    },
-    CommandVerbHelp {
-        verb: "hunt_fauna",
-        aliases: &[],
-        summary: "Order a band to pursue and hunt a fauna group (herd) by id.",
-        usage: "hunt_fauna <faction_id> <herd_id> [band_id]",
-    },
-    CommandVerbHelp {
         verb: "tame",
         aliases: &[],
         summary: "DECLARE a Tame on a wild herd: it is appended to the build queue of every band hunting it, and the band's `builders` pool raises whatever is at the HEAD of that queue - so this names no workers. Staff the pool with `assign_labor <faction> <band> builders <n>`, re-order it with `build_order`, withdraw this declaration with `unqueue`, and put the whole source down with `abandon`. An investment that pays a reduced take while the herd is gentled, then makes it pastoral livestock (needs Herding knowledge, earned by Sustain hunting, and a species that can be domesticated).",
@@ -311,13 +299,6 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         summary: "Form a new band — a resident band splits in two where it stands; `workers` is the \
                   only input and everything else divides on the share it implies.",
         usage: "split_band <faction_id> <band_id> <workers>",
-    },
-    CommandVerbHelp {
-        verb: "send_hunt_expedition",
-        aliases: &[],
-        summary: "Outfit a detached hunting party that follows a herd, harvests food, and delivers it.",
-        usage: "send_hunt_expedition <faction_id> <band_id> <party_workers> <fauna_id> [floor] \
-                [kit <id>]",
     },
     CommandVerbHelp {
         verb: "send_denial_raid",
@@ -746,7 +727,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             // Optional `[policy] [band_id]`. When both trail, 3rd = policy,
             // 4th = band. A lone 3rd token that is purely numeric is taken as the
             // band id (policy omitted) so `follow_herd <f> <herd> <band>` works —
-            // mirroring `hunt_fauna`'s numeric band arg; policy words are never numeric.
+            // policy words are never numeric.
             let third = parts.next();
             let fourth = parts.next();
             let (policy, band_bits) = match (third, fourth) {
@@ -804,44 +785,6 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 module: module_key.to_ascii_lowercase(),
                 band_id: match band_bits {
                     Some(raw) => Some(parse_u64(raw, "forage band_id")?),
-                    None => None,
-                },
-            })
-        }
-        "hunt" | "hunt_game" => {
-            let faction_str = parts
-                .next()
-                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
-            let x_str = parts
-                .next()
-                .ok_or(CommandParseError::MissingArgument("target_x"))?;
-            let y_str = parts
-                .next()
-                .ok_or(CommandParseError::MissingArgument("target_y"))?;
-            let band_bits = parts.next();
-            Ok(CommandPayload::HuntGame {
-                faction_id: parse_u32(faction_str, "hunt_game faction")?,
-                target_x: parse_u32(x_str, "hunt_game target_x")?,
-                target_y: parse_u32(y_str, "hunt_game target_y")?,
-                band_id: match band_bits {
-                    Some(raw) => Some(parse_u64(raw, "hunt band_id")?),
-                    None => None,
-                },
-            })
-        }
-        "hunt_fauna" => {
-            let faction_str = parts
-                .next()
-                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
-            let herd_id = parts
-                .next()
-                .ok_or(CommandParseError::MissingArgument("herd_id"))?;
-            let band_bits = parts.next();
-            Ok(CommandPayload::HuntFauna {
-                faction_id: parse_u32(faction_str, "hunt_fauna faction")?,
-                herd_id: herd_id.to_string(),
-                band_id: match band_bits {
-                    Some(raw) => Some(parse_u64(raw, "hunt_fauna band_id")?),
                     None => None,
                 },
             })
@@ -1115,7 +1058,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             // **Both tokens are NAMED** (`recipe <id>`, `workers <n>`), the repo's existing shape
             // (`queue_espionage_mission … owner 1 target 2 tier 2`) rather than an invented
             // `recipe=<id>`. Named because the crew is optional, and a trailing optional positional
-            // is exactly the ambiguity `send_hunt_expedition` already had to dodge — and because a
+            // is exactly the ambiguity `assign_labor`'s `[floor]` tails have to dodge — and because a
             // named tail takes a new dial without reordering anything the day the bench earns one.
             let mut tail: Vec<&str> = parts.collect();
             let recipe_id = take_named_token(&mut tail, "recipe", "set_bench recipe id")?
@@ -1627,7 +1570,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let y_str = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("target_y"))?;
-            // **The kit is a NAMED token** (`kit <id>`), exactly as on `send_hunt_expedition` — the
+            // **The kit is a NAMED token** (`kit <id>`), exactly as on `send_denial_raid` — the
             // one optional tail this verb takes. Absent = the `expedition` job's default.
             let mut tail: Vec<&str> = parts.collect();
             let kit_id = take_named_token(&mut tail, "kit", "send_expedition kit id")?;
@@ -1683,48 +1626,6 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 faction_id: parse_u32(faction_str, "split_band faction")?,
                 band_id: Some(parse_u64(band_str, "split_band band_id")?),
                 workers: parse_u32(workers_str, "split_band workers")?,
-            })
-        }
-        "send_hunt_expedition" => {
-            let faction_str = parts
-                .next()
-                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
-            let band_str = parts
-                .next()
-                .ok_or(CommandParseError::MissingArgument("band_id"))?;
-            let workers_str = parts
-                .next()
-                .ok_or(CommandParseError::MissingArgument("party_workers"))?;
-            let fauna_id = parts
-                .next()
-                .ok_or(CommandParseError::MissingArgument("fauna_id"))?;
-            // **The kit is a NAMED token** (`kit <id>`), lifted out before the optional positional
-            // tail is read — a second positional would make `floor` un-omittable.
-            let mut tail: Vec<&str> = parts.collect();
-            let kit_id = take_named_token(&mut tail, "kit", "send_hunt_expedition kit id")?;
-            let mut parts = tail.into_iter();
-            // Optional trailing FLOOR — where the raid stops, as a fraction of the herd's `K`.
-            // Absent = the sim's default (the food peak). `parse_f32` carries the retired-stance
-            // guard, so a stale client's `sustain` names the grammar that moved rather than failing
-            // as an unparseable number.
-            let floor = parts
-                .next()
-                .map(|token| parse_f32(token, "send_hunt_expedition floor"))
-                .transpose()?;
-            // **The floor is now the ONLY positional tail, and anything after it is refused.** The
-            // retired fill target sat here (`docs/plan_hunt_through_combat.md` §5.2), so a stale
-            // caller's second number would otherwise be silently dropped — accepted as a raid it did
-            // not order. Same fail-closed reading as `send_denial_raid`'s closed grammar below.
-            if let Some(extra) = parts.next() {
-                return Err(CommandParseError::UnexpectedArgument(extra.to_string()));
-            }
-            Ok(CommandPayload::SendHuntExpedition {
-                faction_id: parse_u32(faction_str, "send_hunt_expedition faction")?,
-                band_id: Some(parse_u64(band_str, "send_hunt_expedition band_id")?),
-                party_workers: parse_u32(workers_str, "send_hunt_expedition party_workers")?,
-                fauna_id: fauna_id.to_string(),
-                floor,
-                kit_id,
             })
         }
         // **The denial raid's grammar is DELIBERATELY CLOSED** (`docs/plan_denial_raid.md` §1): it
@@ -1909,10 +1810,9 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
 /// That shape is the repo's existing one — `queue_espionage_mission … owner 1 target 2 tier 2` and
 /// `counterintel_budget … reserve 40` both read it — rather than an invented `kit=<id>`.
 ///
-/// **Named rather than positional because `send_hunt_expedition` already carries an optional
-/// positional tail.** `send_hunt_expedition <faction> <band> <workers> <herd> [floor]` cannot take a
-/// second positional without the floor becoming un-omittable, and `assign_labor`'s per-role tails
-/// already disambiguate by shape. A named token slots in anywhere in the tail, so it needs no
+/// **Named rather than positional because `assign_labor`'s per-role tails already carry optional
+/// positionals** (`hunt <herd> [floor] <workers>`) that disambiguate by shape; another positional
+/// would make one of them un-omittable. A named token slots in anywhere in the tail, so it needs no
 /// ordering rule and extends cleanly.
 ///
 /// Removes the pair from `tokens` and answers the value; `None` when the name is absent. A name with
@@ -2310,38 +2210,6 @@ mod tests {
         );
     }
 
-    /// **The floor is the ONE optional positional tail, and a second number is refused.**
-    ///
-    /// Both halves matter. The floor must stay omittable (absent = the sim's default), and the slot
-    /// after it must be *closed*: the retired fill target sat there
-    /// (`docs/plan_hunt_through_combat.md` §5.2), so a stale caller's `… 0.42 100` must fail rather
-    /// than parse as a valid command naming a raid nobody ordered.
-    #[test]
-    fn parse_send_hunt_expedition_reads_the_floor_and_refuses_a_second_number() {
-        let expected = |floor| CommandPayload::SendHuntExpedition {
-            faction_id: 0,
-            band_id: Some(7),
-            party_workers: 4,
-            fauna_id: "game_fowl_03".to_string(),
-            floor,
-            kit_id: None,
-        };
-        // Absent: the sim's own default floor.
-        assert_eq!(
-            parse_command_line("send_hunt_expedition 0 7 4 game_fowl_03").unwrap(),
-            expected(None)
-        );
-        assert_eq!(
-            parse_command_line("send_hunt_expedition 0 7 4 game_fowl_03 0.42").unwrap(),
-            expected(Some(0.42))
-        );
-        // The retired fill target's old slot — refused, not dropped.
-        assert!(matches!(
-            parse_command_line("send_hunt_expedition 0 7 4 game_fowl_03 0.42 100"),
-            Err(CommandParseError::UnexpectedArgument(_))
-        ));
-    }
-
     /// **The denial raid's grammar is CLOSED, and that is the assertion**
     /// (`docs/plan_denial_raid.md` §1): the mission carries no floor at all, so a fifth
     /// token is a misunderstanding of the verb rather than a value to ignore. Accepting it silently
@@ -2359,7 +2227,7 @@ mod tests {
                 kit_id: None,
             }
         );
-        // A floor — legal on `send_hunt_expedition`, meaningless here, and refused rather than
+        // A floor — legal on a hunt work party, meaningless here, and refused rather than
         // dropped.
         assert!(matches!(
             parse_command_line("send_denial_raid 0 7 4 game_fowl_03 0.42"),
@@ -2507,35 +2375,11 @@ mod tests {
         ));
     }
 
-    /// **The kit is a NAMED token, and it is order-independent** — `kit <id>`, the same shape
-    /// `queue_espionage_mission`'s `owner 1 target 2` already uses. It has to be named rather than
-    /// positional because `send_hunt_expedition` already carries an optional positional tail: a
-    /// second would make `floor` un-omittable, so the two-token form is what lets a player name a
-    /// kit without also naming a floor they did not want to change.
+    /// **The kit is a NAMED token** — `kit <id>`, the same shape `queue_espionage_mission`'s
+    /// `owner 1 target 2` already uses. Order-independence inside a longer tail is pinned on the
+    /// trade manifest's test; this one pins the closed-grammar verbs.
     #[test]
-    fn the_kit_token_is_named_and_can_sit_anywhere_in_the_tail() {
-        let with_kit = |floor, kit: Option<&str>| CommandPayload::SendHuntExpedition {
-            faction_id: 0,
-            band_id: Some(7),
-            party_workers: 4,
-            fauna_id: "game_fowl_03".to_string(),
-            floor,
-            kit_id: kit.map(str::to_string),
-        };
-        // Named alone — the case a positional grammar could not express at all.
-        assert_eq!(
-            parse_command_line("send_hunt_expedition 0 7 4 game_fowl_03 kit none").unwrap(),
-            with_kit(None, Some("none"))
-        );
-        // Before the positional tail, and after it — same reading either way.
-        assert_eq!(
-            parse_command_line("send_hunt_expedition 0 7 4 game_fowl_03 kit none 0.42").unwrap(),
-            with_kit(Some(0.42), Some("none"))
-        );
-        assert_eq!(
-            parse_command_line("send_hunt_expedition 0 7 4 game_fowl_03 0.42 kit none").unwrap(),
-            with_kit(Some(0.42), Some("none"))
-        );
+    fn the_kit_token_is_named_and_closes_a_party_verbs_grammar() {
         // The denial raid's grammar admits the kit and nothing else — a kit is a property of the
         // party, a floor is a property of a mission this one does not have.
         assert_eq!(

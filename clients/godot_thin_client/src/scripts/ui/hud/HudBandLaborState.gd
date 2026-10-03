@@ -50,7 +50,7 @@ var _player_band: Dictionary = {}
 # The band currently shown in the dockable Band/City panel; persists across selection changes and
 # re-resolves by entity each snapshot.
 var _panel_band: Dictionary = {}
-# The player-faction expedition cohorts (detached scout/hunt parties) captured each snapshot.
+# The player-faction expedition cohorts (detached scout, denial and trade parties) captured each snapshot.
 var _player_expeditions: Array = []
 # Every herd in the snapshot — the live position + label source for hunted-herd rows (herds migrate).
 var _world_herds: Array = []
@@ -189,10 +189,10 @@ func find_world_herd(herd_id: String) -> Dictionary:
 			return herd
 	return {}
 
-## The herd a hunting party is bound to, resolved from the live telemetry; {} for a scout party, a
+## The herd a raiding party is bound to, resolved from the live telemetry; {} for a scout party, a
 ## party whose target was lost/replaced, or an unknown id. The stateless detail layer takes this as a
-## PARAMETER (`DetailFormat.expedition_row_tooltip` / `expedition_next_delivery_line`), so the id →
-## herd step lives here rather than being spelled at each of its three call sites.
+## PARAMETER (`DetailFormat.expedition_row_tooltip`), so the id → herd step lives here rather than
+## being spelled at each of its call sites.
 func expedition_target_herd(exp: Dictionary) -> Dictionary:
 	return find_world_herd(String(exp.get("expedition_target_herd", "")).strip_edges())
 
@@ -201,7 +201,7 @@ func expedition_target_herd(exp: Dictionary) -> Dictionary:
 ## The sim resolves this at launch and carries it on the party for the party's whole life
 ## (`expeditionTargetSpecies`), so it answers for a target that has left `_world_herds` entirely: herd
 ## telemetry is fog-filtered to hexes the player can see right now and pruned at local extinction, and
-## a detached party is not a vision source — so a hunting party's own quarry routinely goes dark while
+## a detached party is not a vision source — so a raiding party's own quarry routinely goes dark while
 ## the party is still bound to it, and the id was all the HUD had left to render (issue #378).
 ##
 ## **A pure filter of `_player_expeditions`, NOT a cache of herd names.** It holds nothing and remembers

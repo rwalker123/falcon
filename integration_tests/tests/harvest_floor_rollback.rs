@@ -21,12 +21,6 @@ const CAPTURED_FLOOR: f32 = 0.42;
 /// neither end of the comparison can be reached by a fallback.
 const DRAGGED_FLOOR: f32 = 0.07;
 
-/// The quarry's display name the checkpointed party carries. **Deliberately not a name any fauna
-/// roster holds**, for the same reason the floors are off-default: a restore that re-derived the name
-/// from the registry instead of restoring it would come back empty or come back something else, and
-/// either way could not accidentally equal this.
-const CAPTURED_SPECIES: &str = "Checkpointed Quarry";
-
 /// **A rollback rewinds the FLOOR** (`docs/plan_harvest_floor.md` §4).
 ///
 /// The floor is the whole of what the player decides about harvest pressure, so a rewind that
@@ -224,14 +218,22 @@ fn the_default_floor_is_the_food_peak() {
     );
 }
 
-/// **A hunt expedition's floor round-trips through the mission and the rollback.**
+/// The quarry the checkpointed raid names. **Deliberately not a name or id any fauna roster holds**:
+/// a restore that re-derived either from the registry instead of restoring it would come back empty
+/// or come back something else, and either way could not accidentally equal these.
+const CAPTURED_HERD: &str = "game_raid_probe";
+const CAPTURED_SPECIES: &str = "Checkpointed Quarry";
+
+/// **A denial raid's target round-trips a rollback** — the herd it is bound to and the quarry's
+/// display NAME.
 ///
-/// The floor is the whole of what a raid's orders say — how deep to draw the herd — so it has to
-/// survive the same hops the assignment's floor does. Pinned at a floor **no retired stance named**
-/// (`0.42`), so a value that appears at the far end cannot have come from a default or from a
-/// label.
+/// The name is resolved once at launch and can never be re-derived: the herd it names may be gone
+/// from the registry by now (a successful raid is what prunes it). A checkpoint that dropped it
+/// would leave a restored party rendering its raw fauna id — issue #378 reintroduced by the
+/// persistence layer instead of by the wire. The mission is edited after the capture so the restore
+/// has something to undo.
 #[test]
-fn an_expedition_floor_round_trips_through_the_mission_and_the_rollback() {
+fn a_raids_target_round_trips_through_the_rollback() {
     use core_sim::{Expedition, ExpeditionMission, ExpeditionPhase};
 
     common::ensure_test_config();
@@ -286,10 +288,9 @@ fn an_expedition_floor_round_trips_through_the_mission_and_the_rollback() {
             },
             Expedition {
                 home_band: home,
-                mission: ExpeditionMission::Hunt {
-                    fauna_id: "game_raid_probe".to_string(),
+                mission: ExpeditionMission::Deny {
+                    fauna_id: CAPTURED_HERD.to_string(),
                     target_species: CAPTURED_SPECIES.to_string(),
-                    floor: CAPTURED_FLOOR,
                 },
                 phase: ExpeditionPhase::Hunting,
                 announced: false,
@@ -301,61 +302,36 @@ fn an_expedition_floor_round_trips_through_the_mission_and_the_rollback() {
             },
         ))
         .id();
-    assert_eq!(
-        raid_floor_of(&app, party),
-        CAPTURED_FLOOR,
-        "the fixture must start at the floor it claims to"
-    );
 
     let checkpoint = capture_sim_state(&app.world);
-    {
-        let mut expedition = app
-            .world
-            .get_mut::<Expedition>(party)
-            .expect("the party carries its mission");
-        if let ExpeditionMission::Hunt { floor, .. } = &mut expedition.mission {
-            *floor = DRAGGED_FLOOR;
-        }
-    }
-    assert_eq!(raid_floor_of(&app, party), DRAGGED_FLOOR);
+    app.world
+        .get_mut::<Expedition>(party)
+        .expect("the party carries its mission")
+        .mission = ExpeditionMission::Deny {
+        fauna_id: "game_somewhere_else".to_string(),
+        target_species: "Some Other Quarry".to_string(),
+    };
 
     restore_sim_state(&mut app.world, &checkpoint);
 
-    // A restore renumbers entities, so the orders are read off whichever party carries the mission.
+    // A restore renumbers entities, so the target is read off whichever party carries the mission.
     let mut query = app.world.query::<&Expedition>();
     let restored = query
         .iter(&app.world)
         .find_map(|expedition| match &expedition.mission {
-            ExpeditionMission::Hunt {
-                floor,
+            ExpeditionMission::Deny {
+                fauna_id,
                 target_species,
-                ..
-            } => Some((*floor, target_species.clone())),
+            } => Some((fauna_id.clone(), target_species.clone())),
             _ => None,
         })
-        .expect("the restored world carries the hunt mission");
+        .expect("the restored world carries the raid — its home band resolved");
     assert_eq!(
-        restored.0, CAPTURED_FLOOR,
-        "a rollback restores the raid's orders, not re-picked ones"
+        restored.0, CAPTURED_HERD,
+        "a rollback restores the herd the raid is bound to"
     );
-    // **The quarry's NAME survives the round trip too.** It is resolved once at launch and can never
-    // be re-derived — the herd it names may be gone from the registry by now — so a checkpoint that
-    // dropped it would leave a restored party rendering its raw fauna id, which is the whole of issue
-    // #378 reintroduced by the persistence layer instead of by the wire.
     assert_eq!(
         restored.1, CAPTURED_SPECIES,
         "a rollback restores the quarry's display name, which cannot be looked up again"
     );
-}
-
-fn raid_floor_of(app: &bevy::prelude::App, party: Entity) -> f32 {
-    match &app
-        .world
-        .get::<core_sim::Expedition>(party)
-        .expect("the party carries its mission")
-        .mission
-    {
-        core_sim::ExpeditionMission::Hunt { floor, .. } => *floor,
-        other => panic!("expected a hunt mission, got {other:?}"),
-    }
 }

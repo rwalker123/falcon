@@ -149,7 +149,7 @@ wrapped `##` section instead. Follow the shape the file already uses.
 | `herd-readouts.md` | Fog gate, herd ecology, husbandry, corral, the pen | `PenStatus.gd`, `FaunaPanel.gd` |
 | `land-readouts.md` | Forage, "what grows here", the crop picker, pasture, the meters | `hud_flora_vocab.gd`, `FoodIcons.gd` |
 | `turn-orb.md` | Band alerts and the attention model | `AttentionController.gd`, `TurnOrbController.gd` |
-| `targeting.md` | Move-band and the scouting/hunting expeditions | `TargetingController.gd` |
+| `targeting.md` | Move-band and the band verbs' map picks (scout tile, denial quarry) | `TargetingController.gd` |
 | `band-city-panel.md` | The 4-edge dockable command centre | `BandCityPanel.gd`, `BandPanelController.gd` |
 | `event-dock.md` | The notification bar: importance rungs, channels, the pinned alert, `seq` de-dup | `EventDockPanel.gd`, `hud_event_vocab.gd` |
 | `crafting-panel.md` | Materials & Crafting: the material rail, the bench, the kit ledger, and the rule that the sim resolves the refusal | `CraftingPanel.gd`, `CraftingPanelController.gd`, `hud_crafting_vocab.gd` |

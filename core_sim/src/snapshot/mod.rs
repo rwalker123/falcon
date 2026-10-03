@@ -44,7 +44,6 @@ use crate::{
         available_workers, fragments_to_contract, BandEquipment, BandId, BandName, BandTravel,
         BuildSource, Expedition, ExpeditionMission, LaborAllocation, LaborAssignment, LaborTarget,
         PopulationCohort, PowerNode, SourcePriority, SourceYield, Tile, FODDER, FOOD,
-        NO_RAID_FLOOR,
     },
     culture::{
         CultureLayer, CultureLayerScope as SimCultureLayerScope, CultureManager, CultureOwner,
@@ -302,8 +301,8 @@ where
 /// learned the entry existed. The client is left holding a row the sim will never mention again.
 ///
 /// **This class does not self-heal**, which is what separates it from the within-tick reverts a
-/// keyed section shrugs off. The worked example is the one that found it: `send_hunt_expedition`
-/// spawns a detached party (published on a held frame), `recall_expedition` cancels it in camp and
+/// keyed section shrugs off. The worked example is the one that found it: a launch verb
+/// (`send_expedition`, `send_denial_raid`) spawns a detached party (published on a held frame), `recall_expedition` cancels it in camp and
 /// despawns it in the same tick (published on the next held frame) — and every frame from then on,
 /// forever, is silent about it. The party row stays on the client's Band panel, its ✕ sends the
 /// `BandId` it still holds, and the sim answers `Expedition N does not exist in the simulation` on
@@ -1433,7 +1432,6 @@ mod tests {
             trade_material_carry_weight: 0.0,
             trade_fodder_carry_weight: 0.0,
             hunt_per_worker_provisions: 0.0,
-            hunt_viability_warn_turns: 0,
             hunt_forecast_horizon_turns: 0,
             band_move_tiles_per_turn: 0,
             settle_min_founding_workers: 0,
@@ -1461,8 +1459,6 @@ mod tests {
             expedition_levers: &levers,
             settlement_stage_config: &stages,
             travel_target: None,
-            hunt_reach: 0,
-            expedition_delivery: None,
             // This fixture asserts on the food ledger, not the TOE.
             equipment: None,
             kit_levers: &kit_levers,

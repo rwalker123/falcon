@@ -826,12 +826,12 @@ func run(harness) -> void:
 		{"faction": 0, "entity": 601, "band_id": 4601, "name": ORB_STARVING_BAND_NAME,
 			"size": 120, "turns_of_food": 3.0, "activity": "forage",
 			"current_x": 21, "current_y": 15},
-		# A detached hunt expedition, also starving — it must NOT emit a band-class starving entry, and
+		# A detached denial raid, also starving — it must NOT emit a band-class starving entry, and
 		# it must not disturb what the two bands after it are CALLED. It carries its HOME band's name,
 		# which is the wire contract (issue #615) and the shape the client must stay correct under.
 		{"faction": 0, "entity": 650, "band_id": 4650, "name": ORB_STARVING_BAND_NAME,
 			"size": 6, "turns_of_food": 2.0, "is_expedition": true,
-			"expedition_mission": "hunt", "expedition_phase": "hunting", "home_band_entity": 601,
+			"expedition_mission": "deny", "expedition_phase": "hunting", "home_band_entity": 601,
 			"current_x": 25, "current_y": 18},
 		# Losing population: 90 → 78, well-fed but 12 emigrated last turn → "people leaving".
 		{"faction": 0, "entity": 602, "band_id": 4602, "name": ORB_LOSING_BAND_NAME,
@@ -849,8 +849,8 @@ func run(harness) -> void:
 	# State 7b — turn orb, AWAITING-ORDERS producer: an expedition parked at its objective is a
 	# demand on the player (it burns provisions doing nothing), structurally the same class as idle
 	# workers — so it produces its OWN attention row per party. Here: one band with idle workers
-	# (the two producers must coexist) + FOUR awaiting parties (a scout and a hunt party name their
-	# objective; the 4th trips the ATTENTION_AWAITING_MAX_ROWS cap → an aggregate "+1 more awaiting
+	# (the two producers must coexist) + FOUR awaiting parties (each names its
+	# objective tile; the 4th trips the ATTENTION_AWAITING_MAX_ROWS cap → an aggregate "+1 more awaiting
 	# orders" row). A non-awaiting (outbound) expedition proves only `awaiting` produces a row. The
 	# popover must still fit above the orb with its `Advance ▸` footer on-screen.
 	h._hud.turn_orb.set_attention([])   # drop State 7's registry so this frame is only these rows
@@ -861,11 +861,9 @@ func run(harness) -> void:
 		{"faction": 0, "entity": 751, "size": 6, "turns_of_food": 9.0, "is_expedition": true,
 			"expedition_mission": "scout", "expedition_phase": "awaiting", "home_band_entity": 701,
 			"current_x": 39, "current_y": 26},
-		# The hunt party names its OBJECTIVE by species (game_deer_07 → "Red Deer" via the world-herd
-		# list pushed above), not the raw fauna id — the row has to be actionable at a glance.
 		{"faction": 0, "entity": 752, "size": 5, "turns_of_food": 7.0, "is_expedition": true,
-			"expedition_mission": "hunt", "expedition_phase": "awaiting", "home_band_entity": 701,
-			"expedition_target_herd": "game_deer_07", "current_x": 64, "current_y": 11},
+			"expedition_mission": "scout", "expedition_phase": "awaiting", "home_band_entity": 701,
+			"current_x": 64, "current_y": 11},
 		{"faction": 0, "entity": 753, "size": 4, "turns_of_food": 6.0, "is_expedition": true,
 			"expedition_mission": "scout", "expedition_phase": "awaiting", "home_band_entity": 701,
 			"current_x": 18, "current_y": 44},

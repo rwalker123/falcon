@@ -113,9 +113,8 @@ signal build_priority_requested(payload: Dictionary)
 # the client-local handle a FAILED send hands back to `drop_pending_assign` (`assign_labor`'s own
 # rollback shape, `hud-modules.md` → "AN OPTIMISTIC WRITE NEEDS A ROLLBACK").
 signal improvement_requested(payload: Dictionary)
-# ⛔ RETIRED — **`send_hunt_expedition_requested`**: the parties zone's Hunt verb went with the herd
-# drawer's expedition branch (`docs/plan_civilization_steps.md` §One work party). A herd past the band's
-# apron is an ordinary hunt whose crew posts a caravan, composed on the herd's own sheet.
+# A herd past the band's apron is an ordinary hunt whose crew posts a caravan, composed on the herd's
+# own sheet (`docs/plan_civilization_steps.md` §One work party); the parties zone has no Hunt verb.
 # A DENIAL raid was dispatched — relayed to HudLayer.send_denial_raid_requested. **Its own signal**,
 # because its command grammar is closed at four tokens
 # (`send_denial_raid <faction> <band> <party_workers> <fauna_id>`) — a fifth is a hard parse error —
@@ -8067,8 +8066,11 @@ func _build_parties_inspector(exp: Dictionary) -> PanelContainer:
     # batch and the `Collapse:` verdict is a whole sentence, so this strip's longest line is a
     # function of what the party is hauling — and a line wider than the reserved zone would take the
     # tab's own controls off its right edge rather than its own tail. See `build_status_part`.
+    # **THE STRIP'S LINES ARE PLAIN LABELS, so a line carrying BBCode is stripped to its text** — the
+    # `Collapse:` verdict carries its severity `[color]` for the Occupants drawer's RichTextLabel, and
+    # here every row reads in the strip's one dim ink, the treatment the tinted `Carried:` row gets.
     for line in _banddetail.expedition_summary_lines(exp, null, launched_party_denial_view(exp)):
-        col.add_child(HudWidgets.build_status_part(line, HudStyle.INK_DIM, true))
+        col.add_child(HudWidgets.build_status_part(_plain_text(line), HudStyle.INK_DIM, true))
     var links := HBoxContainer.new()
     links.add_theme_constant_override("separation", HudWorkVocab.COMPOSITION_KEY_SEPARATION)
     links.add_child(HudWidgets.build_inline_link(HudComposeVocab.PARTY_INSPECT_JUMP, HudStyle.INK, func() -> void:
@@ -8096,8 +8098,9 @@ func _build_party_row(exp: Dictionary) -> HBoxContainer:
     HudStyle.apply_button(body, "ghost")
     if phase == HudExpeditionVocab.EXPEDITION_PHASE_AWAITING:
         body.add_theme_color_override("font_color", HudStyle.WARN)
-    body.tooltip_text = DetailFormat.expedition_row_tooltip(
-        exp, phase, _band_labor.expedition_target_herd(exp), launched_party_denial_view(exp))
+    # A tooltip renders tags literally, and the denial row's `Collapse:` line carries one.
+    body.tooltip_text = _plain_text(DetailFormat.expedition_row_tooltip(
+        exp, phase, _band_labor.expedition_target_herd(exp), launched_party_denial_view(exp)))
     var entity := int(exp.get("entity", -1))
     body.pressed.connect(func() -> void: _toggle_parties_inspector(str(entity)))
     row.add_child(body)
@@ -8131,7 +8134,7 @@ func recall_tooltip(exp: Dictionary) -> String:
 
 ## Act on a SINGLE party's recall. Wraps the button handlers (row ✕, inspector link, drawer button) —
 ## NOT the shared `_on_recall_expedition_pressed` emit, which "Recall all" loops under its own one
-## confirm. The prompt names the party (hunt → its herd, scout → the mission word).
+## confirm. The prompt names the party by its mission label.
 ##
 ## **A CANCEL ASKS NOTHING AND FIRES ON THE PRESS.** `_confirm_destructive` is for an action that LOSES
 ## something — the work board's unassign-all, a real recall abandoning a trip in progress. A party still
@@ -8147,13 +8150,10 @@ func confirm_recall_expedition(exp: Dictionary) -> void:
         HudComposeVocab.PARTY_RECALL_ONE_CONFIRM_OK,
         func() -> void: _on_recall_expedition_pressed(exp))
 
-## How a prompt NAMES a party — its herd for a hunt, the bare mission word otherwise. Shared by the
-## recall prompt and the founding one so the two cannot name one party two ways.
+## How a prompt NAMES a party — its mission label (`DetailFormat.expedition_mission_label`, the one
+## resolution of `EXPEDITION_MISSION_LABELS`), lowercased to sit inside the sentence.
 func _party_confirm_label(exp: Dictionary) -> String:
-    var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
-    if mission == HudExpeditionVocab.EXPEDITION_MISSION_HUNT:
-        return _herd_label_for_id(String(exp.get("expedition_target_herd", "")).strip_edges())
-    return HudComposeVocab.PARTY_RECALL_SCOUT_LABEL
+    return DetailFormat.expedition_mission_label(String(exp.get("expedition_mission", ""))).to_lower()
 
 ## Recall every party in one go — there is no bulk verb on the wire and parties are few, so this is
 ## one `recall_expedition` per party through the existing signal.
@@ -8503,9 +8503,8 @@ func _fill_denial_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: in
             _compose.clear_party_quarry()
     if not herd.is_empty():
         sheet.add_child(_build_quarry_row(band, herd))
-    # **THE PARTY IS CAPPED BY THE BAND'S OWN IDLE WORKERS, AND BY NOTHING ELSE.** There is
-    # deliberately no `expedition_useful_cap` twin here: a denial raid has no payload to plateau, and
-    # more hands always break the herd sooner. `max_expedition_party_size` is not a rules cap.
+    # **THE PARTY IS CAPPED BY THE BAND'S OWN IDLE WORKERS, AND BY NOTHING ELSE.** A denial raid has no
+    # payload to plateau, and more hands always break the herd sooner. `max_expedition_party_size` is not a rules cap.
     var party_max := idle
     # **THE KIT IS RESOLVED AGAINST THE PREY, exactly as the row below it is mounted** —
     # `resolve_selection` skips a kit this animal withholds, so asking without the herd can settle on a
@@ -10383,7 +10382,7 @@ func _denial_forecast_view(band: Dictionary, herd: Dictionary, kit_id: String, p
 ## to a raid that has already left.
 ##
 ## `{}` — never a pending view — for anything that is not a launched denial party with a live target, so
-## a hunt party and a scout render no collapse row at all rather than one that waits forever.
+## a scout and a shipment render no collapse row at all rather than one that waits forever.
 ##
 ## **PUBLIC BECAUSE THE OCCUPANTS DRAWER RENDERS THE SAME PARTY**, through the same
 ## `BandDetailLines.expedition_summary_lines`. `SubjectDrawerController` already holds this controller

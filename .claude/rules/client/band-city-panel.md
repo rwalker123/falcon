@@ -92,9 +92,8 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   grew a field, the panel read it, nobody remembered the list — and **enumerating what to KEEP cannot
   be made safe by care, while enumerating what to ADD can**, the addition being the thing being
   written. Measured at the changeover, the list was already missing 13 more keys off a live cohort,
-  four of them read by the panel at the time (`fodder_store`, `raid_forfeit`,
-  `expedition_fill_target` — since retired with its lever, issue #491 — and `expedition_trip_bound`)
-  — leaks four through seven, unreported and waiting.
+  four of them read by the panel at the time (`fodder_store`, `raid_forfeit` and two since retired
+  from the wire) — leaks four through seven, unreported and waiting.
   - **The copy is SHALLOW, and that is the correct depth.** `duplicate(true)` would re-allocate
     `labor_assignments` / `stores` / `harvest` / `scout` per band per frame, the per-turn cost
     `turn-profiling.md` spent a pass removing. Those four sub-trees are re-stamped with their own deep
@@ -659,40 +658,27 @@ stretch, and widening it into that gap would put it over a live HUD column.
   Unassign), and an **inspector strip** the row body opens. It launches nothing: the band's orders
   are verbs on the action bar (see "THE BAND VERBS").
   **A REAL RECALL CONFIRMS; A CANCEL DOES NOT** — see "THE RECALL VERB FOLLOWS THE SIM" below.
-  `BandPanelController.confirm_recall_expedition(exp)` names the party (`_herd_label_for_id` for a hunt,
-  "scouting" for a scout) through the shared `_confirm_destructive` on the recall branch and acts
+  `BandPanelController.confirm_recall_expedition(exp)` names the party (`_party_confirm_label`: its
+  `EXPEDITION_MISSION_LABELS` label lowercased, so "Recall this denial raid?" / "this scouting
+  expedition?" / "this trade party?" — one lookup, no branch per mission) through the shared `_confirm_destructive` on the recall branch and acts
   straight off the press on the cancel one, and every SINGLE-recall entry point (the row `✕`, the
   strip's link, the Occupants drawer's button) routes through it; `_on_recall_expedition_pressed` stays
   the RAW emit, so "Recall all" loops it under its OWN one confirm and never pops N prompts.
   **The row BODY opens an inspector strip** (`_toggle_parties_inspector(str(entity))` → `_party_open_key`
   → `BandPanelController.rerender`, the exact `_work_open_key`/`_build_work_inspector` pattern): a bottom
   `PanelContainer` (reusing `HudStyle.work_inspector_stylebox`) with a titled header + close `✕`, the full
-  `_expedition_summary_lines` detail as dim status parts (Mission / Target / **Orders** / Phase /
-  Carried / **Next delivery** / the trip-bound clause — so the strip IS the detail panel), and
+  `_expedition_summary_lines` detail as dim status parts (Mission / Target / Phase / Carried /
+  **Collapse** — so the strip IS the detail panel), and
   `Jump to party` (INK) / `Recall` (DANGER) inline links. **`Position` is in the producer and never
   reaches THIS host**: it renders off `pos`, which is the map marker's stamp, and the parties zone reads
   the raw cohort dicts, which carry `current_x`/`current_y` and no `pos` at all. It is live in the
-  Occupants drawer, which is reached through the marker. The **"Next delivery" line** (`_expedition_next_delivery_line`, shared by the
-  strip, the Occupants drawer, and the row tooltip) is ALWAYS shown for a hunt party once the field is on
-  the wire (`has("expedition_projected_delivery")`): `Next delivery: ~N food in M turns` when projecting
-  (`↻` appended for a recurring/Deplete party), `~N food (raid underway)` when the ETA is unknown, and —
-  when the projection is `0` — a line that **disambiguates on the party's own TARGET, not the tile's
-  herd**. A hunt party is bound to ONE specific herd (`expedition_target_herd`) chosen at launch, and a
-  projected `0` over a **healthy** herd is structurally impossible (the sim proves it — the in-flight
-  forecast byte-equals the pre-launch estimate), so a `0` means the target is *elsewhere*: `none — its
-  target herd has no surplus to raid` when `_band_labor.find_world_herd(expedition_target_herd)` **is** in telemetry
-  (a different, at-floor herd — NOT the boar the player is inspecting), or `target herd lost — the party
-  is returning home` when it is **absent** (lost/replaced). This is the fix for the live "reads no-surplus
-  next to a thriving boar" report — the target was a different herd. To make that visible, the drawer's
-  **`Target:` row appends the target herd's live `(x, y)`** (read from `_world_herds`, keyed `x`/`y` — a
-  migrating target is usually NOT the herd on the current tile). Never a silently blank line.
+  Occupants drawer, which is reached through the marker. The drawer's **`Target:` row appends the
+  target herd's live `(x, y)`** (read from `_world_herds`, keyed `x`/`y` — a migrating target is
+  usually NOT the herd on the current tile).
   `BandPanelController.build_parties_zone` orders `head → rows → inspector(if open)`; the strip's
   detail-line separation is tightened to `PARTIES_INSPECTOR_LINE_SEPARATION` to keep row + strip inside
   the height-capped T/B zone. **That box is ~300px and it CLIPS, so the strip's height is a budget** —
-  see "The parties strip's SEVEN lines" below.
-  **A hunting party launches from the herd drawer's sheet alone** — the one site of
-  `send_hunt_expedition`, with the quarry rule (`is_expedition_quarry`, strictly beyond `hunt_reach`)
-  held by the targeting controller.
+  see "The parties strip's lines" below.
 - **Destructive bulk actions ASK, and name what is SPARED** (`_confirm_destructive`, a
   `ConfirmationDialog` — a Window, like the `⋯` `MenuButton`'s popup, so opening either cannot move a
   zone's height). `Unassign all work` sends **`cancel_order <faction> <band> work`** — the signal
@@ -753,7 +739,7 @@ stretch, and widening it into that gap would put it over a live HUD column.
   comfortable fit are the same green line otherwise. Sabotage-verified — putting the `Output:` row
   back takes the run from 0 errors to 25, `short by 25`.
   **The PARTIES zone needed the same state and for the same reason** — `band_panel_worst_case_party`,
-  the party carrying every optional detail line at once. See "The parties strip's SEVEN lines" below;
+  the party carrying every optional detail line at once. See "The parties strip's lines" below;
   the lesson generalises, so a zone that clips and a producer with conditional lines want one of these
   before the count is trusted.
 - **The no-dock fallback renders the SAME three builders**, stacked into `%AllocationPanel`
@@ -829,7 +815,7 @@ stretch, and widening it into that gap would put it over a live HUD column.
   renders a 1920-wide panel that proves nothing about a sub-1920 threshold. State
   `band_panel_status_glyphs` is the **row-vocabulary** frame: a confirmed working forage row (`●` + `♻`
   + the overstaffing note) and a working hunt row (`●` + `⚠`) beside a pending row (`○`, amber), plus
-  one Active-expeditions row per phase (`➤` outbound / `●` hunting / `◄` delivering / `◄` returning /
+  one Active-expeditions row per phase (`➤` outbound / `●` hunting / `◄` returning /
   `▮▮ Awaiting orders` in amber) — read it at true size whenever a glyph changes. States
   `band_panel_arrivals_left` / `band_panel_arrivals_top` / **`band_panel_arrivals_bottom`** are the
   **arrival-schedule** frame (a lumpy hunt row with a gappy tick strip beside a continuous forage row
@@ -1547,81 +1533,50 @@ rollup on its next `_push_bands`.
   two-gap sabotage the bracket derives its own probe widths from the same wrong number and stays
   green.
 
-## The parties strip's SEVEN lines, and the two things that paid for them
+## The parties strip's lines
 
 The parties inspector strip IS the detail panel for a launched party, and on a horizontal dock it lives
 in a `clip_contents` zone of ~300px that also owes a head and at least one party row. Its whole budget
-is therefore what `BandDetailLines.expedition_summary_lines` can light up at once, and for a long time
-nobody had counted: the strip overran that box by **10px** on the ONE fixture that opened it
-(`band_panel_parties_inspector_wide`, reported twice per run — once by the recursive bounds assertion,
-once by `_assert_zone_content_fits`) and was the harness's last standing error.
-
-**THE FIXTURE WAS NOT THE WORST CASE, and that is the part that mattered.** That party carries no fill
-target, no carry cap and no trip bound. A hunt party carrying every optional line at once needs
-**SEVEN**:
+is therefore what `BandDetailLines.expedition_summary_lines` can light up at once. A denial party
+carrying every optional line at once renders **five**:
 
 | line | its gate |
 |---|---|
 | `Mission` | unconditional |
-| `Target` + the target's live `(x, y)` | `is_raid`, a non-empty `expedition_target_herd`, the herd still in telemetry |
-| `Orders` | `is_hunt` |
+| `Target` + the target's live `(x, y)` | a denial party, a non-empty `expedition_target_herd`, the herd still in telemetry |
 | `Phase` | a non-empty `expedition_phase` |
-| `Carried` (`N / cap`, the PACK's material clause, then the `· FULL` badge) | `is_raid`, and a carry cap that is > 0 and met |
-| `Next delivery` (`↻` for a recurring party) | `is_hunt` + `has("expedition_projected_delivery")` |
-| the trip-bound clause | a non-empty `expedition_trip_bound` |
+| `Carried` (`N / cap`, the PACK's material clause, then the `· FULL` badge) | a denial party, and a carry cap that is > 0 and met |
+| `Collapse` | a denial party with a live target and an answered forecast |
 
-That party measured **328px of the 300px box**. A DENIAL party is strictly shorter (five lines), and the
-quoted-party note a between-rungs party earns rides the `Collapse:` ROW as a clause rather than as a
-line — which is this budget's rule already being followed.
-
-**THE PACK'S MATERIALS FOLLOWED THAT RULE RATHER THAN BECOMING AN EIGHTH LINE** (arc #527 follow-up).
-`PopulationCohortState.materialBatches` is resolved with no resident-band gate, so a party in flight
-has carried them the whole trip and nothing rendered them — a scout hauled a wolf home and the UI
-never mentioned the hide. What the party is carrying home IS the `Carried:` sentence, so the clause
-rides that row: `Carried: 18 / 18 (5 turns) · 4.5 hide · 1.2 hide · FULL`. **A scout takes the same
-clause on its `Provisions:` row** — a scouting party that walks over a kill banks materials exactly
-as a raid does, and one spelling is what stops the two hosts wording the pack differently.
+**THE PACK'S MATERIALS RIDE THE `Carried:` ROW RATHER THAN BECOMING A LINE OF THEIR OWN** (arc #527
+follow-up). `PopulationCohortState.materialBatches` is resolved with no resident-band gate, so a party
+in flight has carried them the whole trip. What the party is carrying home IS the `Carried:` sentence,
+so the clause rides that row: `Carried: 18 / 18 (5 turns) · 4.5 hide · 1.2 hide · FULL`. **A scout
+takes the same clause on its `Provisions:` row** — a scouting party that walks over a kill banks
+materials exactly as a raid does, and one spelling is what stops the two hosts wording the pack
+differently.
 
 **ONE TERM PER BATCH, NEVER MERGED BY MATERIAL.** A batch is one pile of one material AT ONE RATING,
 so two piles of `hide` at different readings are two terms; summing them rebuilds the retired trade
-scalar out of the very vector that replaced it. The per-axis readings stay the Crafting panel's
-register — this row answers *what is coming home and how much*, in a box that cannot afford a
-characteristic vector per pile. `band_panel_worst_case_party` carries the two-pile case and asserts
-that their SUM does not appear; the strip still measures inside its box, because the clause added no
-line.
+scalar out of the very vector that replaced it. `band_panel_worst_case_party` carries the two-pile case
+and asserts that their SUM does not appear.
+
+**THE STRIP'S LINES ARE PLAIN LABELS, SO EACH IS STRIPPED OF BBCODE** (`BandPanelController._plain_text`).
+The `Collapse:` verdict carries its severity `[color]` for the Occupants drawer's RichTextLabel; in the
+strip every row reads in the one dim ink (the `Carried:` row's food-turns tint is dropped the same way),
+and a Label would print the tag literally. The party ROW's tooltip carries the same verdict and is
+stripped for the same reason. `band_panel_worst_case_party` asserts both carry no tag.
 
 **`Position` IS IN THE PRODUCER AND CANNOT REACH THIS HOST.** It renders off `pos`, the MAP MARKER's
 own stamp; the parties zone reads the raw cohort dicts `update_band_alerts` pushes, and the decoder
-emits `current_x`/`current_y` and no `pos` at all. Staging one in the worst case would inflate this
-zone's requirement with a row it can never be handed, and whatever was cut to pay for it would be cut
-for nothing. The row is live in the Occupants drawer, which is reached through the marker.
+emits `current_x`/`current_y` and no `pos` at all. The row is live in the Occupants drawer, which is
+reached through the marker.
 
-**Two changes closed the 28px, in the order this panel's own rules put them, and NEITHER was enough
-alone:**
-
-1. **`PARTIES_INSPECTOR_LINE_SEPARATION` 4 → 2.** Padding is the cheapest fix available — nothing is
-   lost, only density — and the strip already carries a dedicated constant for exactly this. Nine gaps
-   at the worst case, so it pays 18px. It could not pay 28: at 0 the lines touch.
-2. **The two ORDERS lines merged into one** (`DetailFormat.expedition_orders_line`) —
-   `Orders: 30% left standing · fills 12 Roe Deer`, where `Leaves standing:` and `Fill target:` used to
-   be two rows. This is the band zone's SHORT-tier idiom (Morale + Growth, the Food row's fodder clause)
-   and it is what that tier chooses over dropping a line: nothing is lost, and two facts that read as
-   one sentence cost one row. The producer's own docstring already called them one sentence.
-
-**Neither cut a line, which is the ordering the fix was required to follow** — the strip is the thing
-the row above it exists to open, so `Mission:` and `Phase:` (both restated as glyphs by the strip's own
-header) stayed the last resort and were not reached.
-
-**The merge is UNCONDITIONAL, unlike the band zone's.** The Occupants drawer has room, but it has no
-reason to spend two rows on one sentence, and one spelling is what stops the two hosts wording the
-orders differently. It also removed a wart: the old row read `Leaves standing: 30% left standing`.
-
-**Measured after: the worst case reads 294px of the 300px box**, and the frame that pins it is
-`band_panel_worst_case_party` — which REPORTS its extent beside asserting the fit, the
-`band_panel_vitals_worst_case` rule, because this zone has now been at the edge twice. It also asserts
-the strip really renders all seven lines: a strip that quietly stopped emitting one is SHORTER, so it
-fits, and every assertion would go green on a state that had stopped measuring what it exists to
-measure.
+**The frame that pins it is `band_panel_worst_case_party`** — which REPORTS its extent beside asserting
+the fit, the `band_panel_vitals_worst_case` rule. It also asserts the strip really renders all five
+lines (`WORST_CASE_DETAIL_LINES`): a strip that quietly stopped emitting one is SHORTER, so it fits, and
+every assertion would go green on a state that had stopped measuring what it exists to measure. Its
+target herd carries a denial table so the `Collapse:` row answers.
 
 **ONE party row, deliberately.** A second costs the zone another 48px for a structural reason that has
 nothing to do with the strip's own height, and mixing the two would leave the reported number
@@ -6336,14 +6291,11 @@ hint, no crew preset and no max-useful cap**. Each absence has its own reason an
 
 - A floor would be a control the **command grammar cannot express**.
   `send_denial_raid <faction> <band> <party_workers> <fauna_id>` is closed at four tokens and a fifth
-  is a hard parse error, which is why `Main.format_send_denial_raid` is its own builder rather than a
-  branch of `format_send_hunt_expedition` (whose optional floor tail that parser would reject) and why
-  the HUD carries a **separate `send_denial_raid_requested` signal** with a payload that has nowhere
-  to put one. (The hunt grammar is closed after its floor now too — see `labor-ui.md` → "RETIRED —
-  the FILL TARGET" — so the two differ by that one optional token rather than by two.)
-- There is **no `expedition_useful_cap` twin**. That cap exists because a hunting raid's delivered
-  payload plateaus once the herd's surplus binds; a denial raid has no payload to plateau, and more
-  hands always break the herd sooner.
+  is a hard parse error, which is why `Main.format_send_denial_raid` is its own builder and why the
+  HUD carries a **separate `send_denial_raid_requested` signal** with a payload that has nowhere to
+  put one.
+- There is **no max-useful cap**: a denial raid has no payload to plateau, and more hands always break
+  the herd sooner.
 
 ### The stepper's ceiling is the band's IDLE WORKERS, and its floor is the sim's own requirement
 
@@ -6353,12 +6305,9 @@ party axis, and the only quoting bound there is, having absorbed the retired `de
 and the sim deleted the rules cap for all three launch verbs, so the client's own clamp was the last
 thing enforcing it: a band with 16 idle workers was clamped to 8 while the sheet's own refusal told it
 to send more hunters. Every launch sheet reads the band's idle workforce and nothing else — the
-Scout, Deny and Trade sheets take `idle` directly, and the herd drawer's hunting-party branch applies
-`expedition_useful_cap` under it, which is the DEMAND side (what the raid can *use*, not what the rules
-*allow*). `idle == 0` yields 0 everywhere, and the three expedition verbs grey on it. There is no
-scout-side supply helper: a function that clamps nothing is an invitation to put the clamp back.
-`SourceForecast.expedition_party_cap` is the named seam, for the herd drawer's expedition branch
-(`labor-ui.md`).
+Scout, Deny and Trade sheets take `idle` directly. `idle == 0` yields 0 everywhere, and the three
+expedition verbs grey on it. There is no supply helper: a function that clamps nothing is an
+invitation to put the clamp back.
 
 **The stepper SEEDS on the reply's `party_needed` once a prey is set** — the smallest party the sim
 quotes whose raid SUCCEEDS (`SourceForecast.denial_outcome_succeeds` over `DENIAL_SUCCESS_OUTCOMES` is
@@ -6401,17 +6350,14 @@ retired, that is the ONE quarry rule.
   band's own tile reads *"Rabbit Warren past recovery in ≈5–8 turns from launch"*, never
   *"(0 of them travel)"*. That is why the sentinel for "no band supplied" is `-1` and not `0`.
 - **The server gates none of this.** `handle_send_denial_raid` → `outfit_raiding_party` validates a
-  resident band, a live herd and a legal party size, and nothing else; the sim's only `hunt_reach`
-  test is on the LOCAL `LaborTarget::Hunt` assignment. An in-reach `send_denial_raid` is accepted.
+  resident band, a live herd and a legal party size, and nothing else. A `send_denial_raid` on a herd
+  beside the band is accepted.
 
 ### The readout is a COLLAPSE VERDICT, not a delivery
 
 Its goal is not to kill every animal: it is to push the herd below `ecology.collapse_fraction`, where
-growth zeroes and the decline is irreversible, and walk away. So a denial party deliberately publishes
-**no `expeditionProjectedDelivery` / `expeditionEtaTurns` / `expeditionTripBound` at all**, and its
-`expeditionFloor` (`0.0`) is the mission reporting that it HAS no such lever — never a value it
-chose. Every hunt-only readout is therefore gated on
-`HudExpeditionVocab.EXPEDITION_MISSION_HUNT` and not on "is a raid".
+growth zeroes and the decline is irreversible, and walk away. So a denial party publishes **no
+delivery forecast and no floor at all** — it HAS no such lever.
 
 `SourceForecast` holds the layer, over the `denial_raid_forecast` query's reply (`ForecastQuery`):
 `denial_forecast` → `denial_verdict` (the ONE resolution of the outcome key) → `denial_verdict_text`
@@ -6518,7 +6464,7 @@ is about and adding it would over-state the wait for the thing being promised.
   `0` for the `HUNT_RATE_UNAVAILABLE` reason: a band standing on its quarry has a real zero-turn walk
   and must still read *from launch*.
 - **The in-flight surface quotes the raiding span because it cannot honestly quote the other one.** A
-  denial mission publishes no `expeditionEtaTurns`, so the party's REMAINING walk is not on the wire,
+  denial mission publishes no arrival, so the party's REMAINING walk is not on the wire,
   and adding the leg from the HOME BAND's tile would quote a distance the party may have finished turns
   ago. Closing that needs a per-party arrival on the wire — server-side work.
 
@@ -6559,10 +6505,9 @@ cohort carries `expeditionForecastHorizonTurns` the sentence quotes it:
 
 `HudComposeVocab.BAND_VERBS`' Deny entry (the verb button), `HudFormat.PANEL_EXPEDITION_DENY_GLYPH`
 (the Active-parties row) and `MapView.EXPEDITION_DENY_GLYPH` (the map marker) are one glyph, so the
-mission reads the same at every scale. The parties row deliberately renders **no floor glyph** — its
-`expedition_floor` is `0.0`, which is a real zone (`strip`), so borrowing the hunt branch's mark would
-tag a raid with a pressure it never chose. The map marker likewise takes no phase decoration: the
-green food pip is a haul cue, and a denial party's haul is a rounding error it should not advertise.
+mission reads the same at every scale. The parties row deliberately renders **no floor glyph** — the
+mission has no floor. The map marker takes no phase decoration beyond the awaiting-orders pulse every
+party shares.
 
 ### THE RECALL VERB FOLLOWS THE SIM, AND A CANCEL ASKS NOTHING
 
@@ -7123,9 +7068,9 @@ cap  = party_workers × expeditionTradePerWorkerCarry
 ```
 
 Every term is a per-cohort number the sim publishes, so a tuning change moves the meter and the
-refusal together. **None is a literal here** — `expeditionPerWorkerCarry` is the HUNT pack and a
-client composing a trade cap out of it would be one config edit from quoting a cap
-`send_trade_expedition` refuses.
+refusal together. **None is a literal here** — a raid's pack is a different number, and a client
+composing a trade cap out of it would be one config edit from quoting a cap `send_trade_expedition`
+refuses.
 
 **THE TWO KINDS ARE NOT THE SAME, AND THE CARRY ONE IS WHY THIS SHEET MAY HOLD THE EXPRESSION AT
 ALL** (issue #626). The carry weights are config levers echoed verbatim: what a unit of hay or hide
@@ -7595,24 +7540,11 @@ frame the player adjusted it.
 
 ## ⛔ THERE IS NO HUNT VERB — a far herd is an ordinary hunt
 
-`docs/plan_civilization_steps.md` §One work party. A hunting EXPEDITION — a detached party with its
-own raid forecast, trip readout and `send_hunt_expedition` — was the answer to game past `hunt_reach`,
-and it is retired with it: a herd past the band's apron is composed on the herd's OWN sheet as an
-ordinary hunt whose crew posts a caravan (`labor-ui.md` → "A FAR SOURCE IS AN ORDINARY SHEET"), so a
+`docs/plan_civilization_steps.md` §One work party. There is no hunting expedition: a herd past the
+band's apron is composed on the herd's OWN sheet as an ordinary hunt whose crew posts a caravan (`labor-ui.md` → "A FAR SOURCE IS AN ORDINARY SHEET"), so a
 second, detached way to hunt the same herd would be two answers to one question. The band verbs
 (`HudComposeVocab.BAND_VERBS`) are Move · Scout · Deny · Trade · Split, and neither the herd drawer
 nor the Band panel launches a hunting party.
-
-- **Gone with it, client-side**: `_fill_hunt_compose_sheet`, the dock's `_raid_forecast_view`, the
-  `_send_hunt_floor` compose state, `send_hunt_expedition_requested` on this controller, on
-  `DrawerComposeController` and on `HudLayer`, `Main.format_send_hunt_expedition` and its handler,
-  `HudWidgets.mount_trip_readout` / `SEND_HUNT_CONFIRM_META`, and the launch-sheet raid layer in
-  `SourceForecast` (`hunt_trip_forecast`, `hunt_forecast_line_bbcode`, `expedition_useful_cap`,
-  `expedition_policy_takes`, `style_send_hunt_button`, the empty-raid refusal table and their copy).
-  **The sim-side expedition code stays until #704** and is simply unreachable from the client.
-- **What survives is the IN-FLIGHT half.** A hunting party already out (a save, a rival) still renders
-  in the parties strip through `DetailFormat`'s expedition lines and `SourceForecast.trip_bound_clause`
-  — the client stopped composing hunting parties, not reading them.
 
 ## The Peoples tab (issue #549)
 

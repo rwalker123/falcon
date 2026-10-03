@@ -182,6 +182,8 @@ pub struct BandObservation {
     pub food_income: f32,
     pub food_consumption: f32,
     pub work_range: u32,
+    /// The seat's hunting search radius around this band (`SeatMemory::hunt_reach`) — its
+    /// `work_range` plus the profile file's `tuning.hunt_search_beyond_work_range`.
     pub hunt_reach: u32,
     pub is_traveling: bool,
     /// What the ground would feed this band, read where it stands.
@@ -387,7 +389,7 @@ impl Observation {
                     food_income: band.food_income,
                     food_consumption: band.food_consumption,
                     work_range: band.work_range,
-                    hunt_reach: band.hunt_reach,
+                    hunt_reach: memory.hunt_reach(band),
                     is_traveling: band.is_traveling,
                     ground: GroundObservation {
                         sustained_take_here: cluster_take_sustained(

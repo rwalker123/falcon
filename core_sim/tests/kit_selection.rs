@@ -308,10 +308,9 @@ fn spawn_party(
             StartingUnit::new("expedition".to_string(), Vec::new()),
             Expedition {
                 home_band,
-                mission: ExpeditionMission::Hunt {
+                mission: ExpeditionMission::Deny {
                     fauna_id: fauna_id.to_string(),
                     target_species,
-                    floor: DEFAULT_ESCAPEMENT_FLOOR,
                 },
                 phase: ExpeditionPhase::Hunting,
                 announced: false,
@@ -325,7 +324,7 @@ fn spawn_party(
         .id()
 }
 
-/// A home band placed far from the herd, so no near-band drop-off interferes with the raid's cycle.
+/// A home band placed far from the herd, so no comm-range fold-back interferes with the raid.
 fn spawn_home_band(app: &mut App, herd_pos: UVec2) -> bevy::prelude::Entity {
     let (width, height) = {
         let registry = app.world.resource::<TileRegistry>();
@@ -1149,9 +1148,7 @@ fn a_warren_defaults_to_the_trap_and_a_deer_to_the_spear_on_the_wire() {
 /// differ from itself, so a resolver that had stopped reading the herd — or that answered a
 /// constant — fails the `assert_ne!` however plausible each equality looks alone.
 ///
-/// Read off the **encoded envelope** through [`published_default_kit`], which also asserts both
-/// estimate tables name that same kit — so the pen row's `huntTripEstimatesKitId` /
-/// `denialEstimatesKitId` are pinned to the herd's own default here too.
+/// Read off the **encoded envelope** through [`published_default_kit`].
 #[test]
 fn a_corralled_herd_defaults_to_the_pen_kit_and_a_wild_one_of_the_same_species_does_not() {
     let mut app = wary_world();

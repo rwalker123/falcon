@@ -1138,7 +1138,7 @@ tracks a new world reuses (`.claude/rules/core_sim/world-handoff.md`).
 
 Frames: `map_band_work` (both webs ringed, badges, the green/red outline split),
 `map_worked_ready` (the ⌃ contrast — a tended patch offers Sow, a tamed pen-ceiling deer offers
-Corral, a wild-ceiling wolf offers nothing), `map_hunt_expedition_quarry`, `map_overflow_worked`,
+Corral, a wild-ceiling wolf offers nothing), `map_raid_party_quarry`, `map_overflow_worked`,
 `map_band_label_overlap` (the slot-anchored labels), and the workings' own four in `map-markers.md`
 — of which `map_working_beside_herd` is the PARITY frame, a worked working and a hunted herd in one
 picture with each hex probed for its own web's mark colour and for the absence of the other's.

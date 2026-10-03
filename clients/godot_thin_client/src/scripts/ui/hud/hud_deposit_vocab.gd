@@ -9,9 +9,9 @@ class_name HudDepositVocab
 ## thing none of them is. The sim's own word for a live deposit a band has opened is a **working**,
 ## and `quarrywork` was the retired keeping pool's token, which no player read.
 ##
-## The hunt's own vocabulary no longer competes for the word: a herd pick's banner reads `PREY`
-## (issue #650, `TargetingController.PICK_PREY_COMMAND`), which is what leaves `quarry` free to mean the
-## pit on every surface here.
+## The hunt's own vocabulary does not compete for the word: a herd pick's banner reads `DENY`
+## (`TargetingController.DENY_PICK_COMMAND`), which is what leaves `quarry` free to mean the pit on
+## every surface here.
 ##
 ## ⛔ **A WORKING IS KEYED `(tile, material)`, AND THE PAIR IS INDIVISIBLE.** One tile can hold two —
 ## a wooded highland holds timber and rock, and working the timber is not working the rock — so every
@@ -200,8 +200,8 @@ const FLOOR_MARK_NONE := ""
 ## was drawn at its most confident on the one working that has no floor at all.
 ##
 ## **THE SILENCE IS THE ESTABLISHED ANSWER, NOT A NEW ONE.** `HudFormat.panel_expedition_summary`
-## drops the glyph from a DENIAL row for this reason — that mission's `expedition_floor` is a real
-## zone (`strip`) belonging to a floor it never chose — and a finite working is the same shape. What
+## shows no floor glyph on a DENIAL row for this reason — that mission has no floor it chose — and a
+## finite working is the same shape. What
 ## a finite working's warning IS remains the RUNWAY (`runway_clause`, the fork one screen up), which
 ## the tile card and the roster state and a hex-sized pill has never had room for.
 ##

@@ -59,22 +59,17 @@ Priority, or at the default a new row is given where no row exists yet. Pinned b
 `kit_selection::a_high_party_beats_a_normal_local_row_for_a_scarce_kit`.
 
 `work_party::party_begins_past` is the one place the threshold lives, and it is **`band_work_range`
-for every job**. Hunt gets no longer apron than forage: the retired `hunt_reach` was a patch over the
-wrong model, and a party that follows its herd never roams out of range.
+for every job**. Hunt gets no longer apron than forage: a party that follows its herd never roams out
+of range, so there is no hunt-only reach, on the wire or in config.
 
 Pinned by `labor_allocation::a_local_row_takes_no_party_and_its_whole_take_reaches_the_larder`
 (the published `actual` against the larder credit in **fixed point**, with a liveness assertion) and
-`::a_hunt_inside_the_old_leash_posts_a_party_on_the_same_apron_as_forage`, which stages a herd
-strictly between the two old thresholds — the only distance at which the two readings disagree.
+`::a_hunt_just_past_the_apron_posts_a_party_on_the_same_apron_as_forage`, which stages a herd two
+tiles past `band_work_range` — where a hunt-only threshold would have called it an ordinary local row.
 
-> #### ⛔ `hunt_reach` IS DEAD, AND IT IS STILL ON THE WIRE
->
-> `PopulationCohortState` still publishes `hunt_reach` (`band_work_range + hunt_leash_tiles`), and
-> `hunt_leash_tiles` is still a validated config key — both survive only until the expedition path
-> they also served is retired. **No reader may decide anything by either.** A client that routes a
-> herd past `hunt_reach` to the expedition sheet, or refuses a forage source past the work range, is
-> exactly the defect the first playtest of this arc found: the work party was unreachable from the
-> map. The only threshold a caravan has is `band_work_range`.
+> **The only threshold a caravan has is `band_work_range`.** A client that refuses a source past the
+> work range, or routes a far herd anywhere but the ordinary `assign_labor … hunt` row, is exactly
+> the defect the first playtest of this arc found: the work party was unreachable from the map.
 
 ## What distance costs — walking, and nothing else
 
@@ -402,7 +397,7 @@ in all three, so a party's carry is what its cutters and gatherers hold.
 asked about — a stepper press on a live posting re-seeds that posting, not a fresh one that would
 re-promise a walk out. With none, they step a party posted now. **Inside the apron the query answers
 the ordinary local row's steady rate** with `posts_a_party: false` and every walk field `0`. The seed
-declines no far row on any web, and its Hunt gate no longer reads the retired `hunt_reach()`. A far
+declines no far row on any web, and its Hunt gate reads no hunt-only distance. A far
 Extract row seeds `materials` with what lands next turn (nothing while walking out) and no food field.
 
 Pinned by `work_party_caravan::the_query_quotes_exactly_the_rate_the_row_publishes`, which asks the

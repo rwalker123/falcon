@@ -14,8 +14,6 @@ class_name ExpeditionSprites
 ##
 ## **THE KEY IS THE MISSION ID** (`HudExpeditionVocab.EXPEDITION_MISSION_*`, the same strings as
 ## `MapView.EXPEDITION_*_MISSION`; read off the vocab leaf so this table never loads `MapView`).
-## **Hunt has no art**: the expedition hunt is being retired, so a hunting party answers `null` here
-## and keeps its 🏹 glyph through the renderer's fallback.
 ##
 ## Static-only by design (same reasoning as `FoodIcons`): a pure lookup with no node state.
 
@@ -27,8 +25,8 @@ const SPRITE_PATHS := {
 	HudExpeditionVocab.EXPEDITION_MISSION_TRADE: SPRITE_DIR + "trade.png",
 }
 
-## Bundled sprite for a party's mission, or `null` when the mission has none (a hunting party, an
-## unknown mission) — the caller then draws the mission's text glyph, the contract every art family
+## Bundled sprite for a party's mission, or `null` when the mission has none (an unknown
+## mission) — the caller then draws the mission's text glyph, the contract every art family
 ## has with its emoji.
 ##
 ## Takes `IconSprites.texture_for`'s DEFAULT `warn: true`: this family's coverage is complete for what

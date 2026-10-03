@@ -426,8 +426,7 @@ func draw_targeting(radius: float, origin: Vector2) -> void:
 		# `min_distance` is `TargetingController.QUARRY_NO_REACH_BOUND` (`-1`), and this test is the
 		# RENDER-SIDE MIRROR of `TargetingController.is_expedition_quarry`: breaking the herd next door is
 		# a legal denial order, so at `-1` the strict comparison admits a herd on the band's OWN tile and
-		# still skips the unknown distance. (A hunt's `hunt_reach` bound rode this key until the hunting
-		# party retired.) The halo must never promise a target the pick will refuse, nor hide one it
+		# still skips the unknown distance. The halo must never promise a target the pick will refuse, nor hide one it
 		# would accept, so the two tests must be changed together.
 		# Absent (every other targeting mode omits the key) it defaults to 0 and admits everything.
 		# Fog-gated like the herd marker itself (glowing a herd you can't see would BE the leak), and an

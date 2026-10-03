@@ -5989,7 +5989,7 @@ const REALIZED_PROJECTION_TAKE_EPSILON: f32 = 1e-4;
 /// **The steady `realized` yield for a hunt source — a FORWARD PROJECTION.** The average food/turn
 /// the herd delivers over the next `horizon` turns, computed by simulating it forward from its
 /// CURRENT state under `policy` + `workers`, mirroring the real turn order (Logistics regrow →
-/// Population take) exactly as [`crate::systems::hunt_trip_forecast`] does. It is a **pure function
+/// Population take). It is a **pure function
 /// of the passed herd state** — no history, no persistence — so the assign-time seed and the
 /// resolved row compute the identical number (exact forecast == actual, the true no-jump).
 ///
@@ -6161,7 +6161,7 @@ impl HuntProjection {
     pub fn new(herd: &Herd, fauna: &FaunaConfig) -> Self {
         let quarry = herd.clone();
         // Ecology and capacity cannot change under the projected take (the quarry is never
-        // tamed/penned mid-run), so resolve them once, exactly as `hunt_trip_forecast` does.
+        // tamed/penned mid-run), so resolve them once, exactly as `systems::denial_forecast` does.
         let ecology = herd_ecology(&quarry, fauna);
         let capacity = herd_capacity(&quarry, fauna);
         // The species' yield vector — resolved once; the quarry is never re-speciated.
@@ -6353,7 +6353,7 @@ pub fn project_arrivals_hunt(
     let mut schedule = vec![0.0_f32; horizon as usize];
     // The projection runs on a private copy. Ecology and capacity cannot change under the projected
     // take (the quarry is never tamed/penned mid-run), so resolve them once — as `project_realized_hunt`
-    // and `hunt_trip_forecast` both do.
+    // and `systems::denial_forecast` both do.
     let mut quarry = herd.clone();
     let ecology = herd_ecology(&quarry, fauna);
     let capacity = herd_capacity(&quarry, fauna);
@@ -10961,7 +10961,7 @@ pub fn hunt_take_overdraws(
 /// the caller despawns it once it falls below the viability floor.
 ///
 /// **`pub` because every consumer that runs a herd forward on a CLONE has to apply the same
-/// regrowth the live `advance_herds` does** — the hunt-trip forecast (`systems::hunt_trip_forecast`),
+/// regrowth the live `advance_herds` does** — the denial projection (`systems::denial_forecast`),
 /// the two projections, and the measurement harness `core_sim/tests/food_economy_table.rs`, which
 /// drives the real `systems::hunt_take` turn by turn to read back which bound it hit. Re-deriving the
 /// curve at any of those sites would let the estimate drift from the sim, which is the whole reason

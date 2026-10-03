@@ -12,9 +12,8 @@ extends RefCounted
 ## renders exactly the same plausible sheet whichever way it goes.
 ##
 ## **THE QUESTION IT ASKS IS THE WORK PARTY'S** (`ForecastQuery.KIND_WORK_PARTY`). These claims are
-## about the seam's bookkeeping, not about any one question, and were made on the hunting raid's until
-## the hunting expedition retired from the client (`docs/plan_civilization_steps.md` §One work
-## party); the work party's is the live question that reads through the same `view`.
+## about the seam's bookkeeping, not about any one question; the work party's is a live question that
+## reads through the same `view`.
 ##
 ## It leaves the seam EMPTY and the harness's canned answerer reinstalled, so a chapter appended after
 ## it starts where every other one does.

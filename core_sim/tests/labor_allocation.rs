@@ -769,7 +769,7 @@ fn a_hunt_past_the_leash_follows_its_herd_and_only_a_vanished_herd_ends_it() {
         )
     };
     let grid = app.world.resource::<SimulationConfig>().grid_size;
-    // A camp seven tiles along X from `at` (> band_work_range 2 + hunt_leash_tiles 3 = 5).
+    // A camp seven tiles along X from `at` — well past `band_work_range` (2).
     let seven_out = |app: &App, at: UVec2| {
         let far_x = if at.x + 7 < grid.x {
             at.x + 7
@@ -857,24 +857,18 @@ fn a_hunt_past_the_leash_follows_its_herd_and_only_a_vanished_herd_ends_it() {
     );
 }
 
-/// ⛔ **(c'') THE LEASH DISTANCE IS GONE: A HUNT *INSIDE* THE OLD LEASH POSTS A PARTY TOO.**
+/// ⛔ **(c'') A HUNT JUST PAST THE APRON POSTS A PARTY, EXACTLY AS A GATHER DOES.**
 ///
 /// This is the assertion that pins the one apron, and nothing else in the suite can fail in its
-/// place. [`a_hunt_past_the_leash_follows_its_herd_and_only_a_vanished_herd_ends_it`] stages its herd seven
-/// tiles out — past `hunt_reach()` **and** past `band_work_range` — so it passes whether a Hunt row
-/// begins its party at 2 or at 5. The interesting distance is the one **between** them.
-///
-/// A hunt four tiles out used to be an ordinary local row, free and instant, because
-/// `hunt_leash_tiles` bought it three tiles of slack a Forage row never got. The doc is explicit
-/// that the 5 was *"a patch over the wrong model"*: a party follows its herd, so the patch has
-/// nothing left to fix, and leaving it would have hunt and forage measuring distance differently —
-/// the three-systems problem this arc exists to delete, surviving in miniature.
+/// place. [`a_hunt_past_the_leash_follows_its_herd_and_only_a_vanished_herd_ends_it`] stages its herd
+/// seven tiles out, so it would pass whether a Hunt row began its party at 2 or at 5. This one stands
+/// the herd **two tiles past** `band_work_range`: hunt and forage must measure distance the same way.
 ///
 /// So the row posts a party, and its walk is measured from the **apron** exactly as a forage row's
 /// is. The identity is untouched and asserted elsewhere: it lives inside `band_work_range`, where
 /// neither job posts a party.
 #[test]
-fn a_hunt_inside_the_old_leash_posts_a_party_on_the_same_apron_as_forage() {
+fn a_hunt_just_past_the_apron_posts_a_party_on_the_same_apron_as_forage() {
     let mut app = spawn_world();
     let (id, herd_pos) = {
         let registry = app.world.resource::<HerdRegistry>();
@@ -886,19 +880,18 @@ fn a_hunt_inside_the_old_leash_posts_a_party_on_the_same_apron_as_forage() {
         (herd.id.clone(), herd.position())
     };
     let labor = core_sim::LaborConfig::builtin();
-    // Strictly between the two thresholds, so the test can only pass on the one apron: past
-    // `band_work_range` (a party is owed) and within the retired `hunt_reach()` (the old model
-    // would have called this an ordinary local row and posted nothing).
-    let inside_the_old_leash = labor.band_work_range + 2;
+    // Past `band_work_range` (a party is owed), but close: a hunt-only threshold any wider than the
+    // apron would call this an ordinary local row and post nothing.
+    let just_past_the_apron = labor.band_work_range + 2;
     assert!(
-        inside_the_old_leash > labor.band_work_range && inside_the_old_leash <= labor.hunt_reach(),
-        "the fixture distance must sit between the two thresholds or it proves nothing"
+        just_past_the_apron > labor.band_work_range,
+        "the fixture distance must sit past the apron or it proves nothing"
     );
     let grid = app.world.resource::<SimulationConfig>().grid_size;
-    let band_x = if herd_pos.x + inside_the_old_leash < grid.x {
-        herd_pos.x + inside_the_old_leash
+    let band_x = if herd_pos.x + just_past_the_apron < grid.x {
+        herd_pos.x + just_past_the_apron
     } else {
-        herd_pos.x.saturating_sub(inside_the_old_leash)
+        herd_pos.x.saturating_sub(just_past_the_apron)
     };
     let tile = app
         .world
@@ -940,7 +933,7 @@ fn a_hunt_inside_the_old_leash_posts_a_party_on_the_same_apron_as_forage() {
     );
     assert_eq!(
         party.walk_tiles,
-        inside_the_old_leash - labor.band_work_range,
+        just_past_the_apron - labor.band_work_range,
         "a hunt's walk is measured from the same apron a forage row's is"
     );
 }

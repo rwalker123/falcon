@@ -319,7 +319,7 @@ entity-bearing field, audited rather than fixed one at a time:
 
 | command | was | now |
 |---|---|---|
-| `AssignLabor`, `MoveBand`, `SendExpedition`, `SendHuntExpedition`, `CancelOrder` | `band_entity_bits` | `band_id` (`BandId`) |
+| `AssignLabor`, `MoveBand`, `SendExpedition`, `CancelOrder` | `band_entity_bits` | `band_id` (`BandId`) |
 | `RecallExpedition` | `expedition_entity_bits` | `expedition_band_id` |
 | `Heat` | `entity_bits` | `target_x` / `target_y`, via `TileRegistry` |
 

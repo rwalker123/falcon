@@ -7,9 +7,8 @@ extends RefCounted
 ## placeholder. That is correct behaviour and a useless render gate: the frames this arc exists to
 ## judge are the ones with numbers on them.
 ##
-## So the harnesses install a sender here. It answers out of the FIXTURE HERD'S OWN raid tables
-## (`hunt_trip_estimates` / `denial_estimates`, still authored on the herd fixtures for exactly this
-## purpose), which is why every expectation written against the table era still holds: the numbers a
+## So the harnesses install a sender here. It answers out of the FIXTURE HERD'S OWN denial table
+## (`denial_estimates`, still authored on the herd fixtures for exactly this purpose), which is why every expectation written against the table era still holds: the numbers a
 ## sheet renders are the numbers the fixture states, and only the path they travel changed.
 ##
 ## **THE ROUNDING LIVES HERE NOW, AND THAT IS WHERE IT BELONGS.** The sim answers the exact (floor,
@@ -25,8 +24,7 @@ extends RefCounted
 const SourceForecastRef := preload("res://src/scripts/ui/hud/SourceForecast.gd")
 const RungGatesRef := preload("res://src/scripts/ui/hud/RungGates.gd")
 
-## The herd fixtures' own raid tables, by the key they are authored under.
-const HERD_RAID_TABLE_KEY := "hunt_trip_estimates"
+## The herd fixtures' own denial table, by the key it is authored under.
 const HERD_DENIAL_TABLE_KEY := "denial_estimates"
 
 ## No sampled row was found at all — the fixture herd publishes no table, which is a real state (a
@@ -137,25 +135,12 @@ static func answer(hud: Node, request_id: int, ask: Dictionary) -> Dictionary:
 			(row as Dictionary)[SourceForecastRef.HUNT_CREW_NEXT_RUNG_ANIMALS_KEY] = next_animals
 			(row as Dictionary)["next_rung_keep_hands"] = 0.0
 		return {"request_id": request_id, "ok": true, "kind": kind, "per_crew": rows}
-	var is_denial := kind == ForecastQuery.KIND_DENIAL_RAID
-	var herd := _herd_for_id(hud, String(ask.get("herd_id", "")),
-		HERD_DENIAL_TABLE_KEY if is_denial else HERD_RAID_TABLE_KEY)
+	var herd := _herd_for_id(hud, String(ask.get("herd_id", "")), HERD_DENIAL_TABLE_KEY)
 	var reply := {"request_id": request_id, "ok": true,
 		"kind": String(ask.get("kind", ""))}
-	if is_denial:
-		var rows: Array = herd.get(HERD_DENIAL_TABLE_KEY, [])
-		reply["at_composed"] = _denial_row(rows, int(ask.get("party_workers", 0)))
-		reply["party_needed"] = _party_needed(rows)
-		return reply
-	var table: Dictionary = herd.get(HERD_RAID_TABLE_KEY, {})
-	var party := int(ask.get("party_workers", 0))
-	var floor_value := float(ask.get("floor", 0.0))
-	reply["at_composed"] = _raid_row(table, floor_value, party)
-	var presets: Array = []
-	for preset_floor in ask.get("preset_floors", []):
-		presets.append(_raid_row(table, float(preset_floor), party))
-	reply["per_preset"] = presets
-	reply["useful_cap"] = _useful_cap(table, floor_value)
+	var rows: Array = herd.get(HERD_DENIAL_TABLE_KEY, [])
+	reply["at_composed"] = _denial_row(rows, int(ask.get("party_workers", 0)))
+	reply["party_needed"] = _party_needed(rows)
 	return reply
 
 ## **THE WORK PARTY'S ANSWER, READ OFF THE SOURCE FIXTURE.** A herd or patch that wants a party section
@@ -392,40 +377,6 @@ static func _working_for(hud: Node, x: int, y: int, material: String) -> Diction
 			return working
 	return {}
 
-## **THE PLATEAU, SCANNED OVER THE FIXTURE'S OWN PARTY AXIS.** The sim walks `1..=max` contiguously;
-## a fixture table carries the sizes it was authored with, so this walks those. It scans the component
-## the QUARRY pays. It read a `delivered_trade` fallback for an inedible species until arc #527
-## retired that account; such a species now delivers 0 at every size and the scan finds no plateau,
-## which is the honest reading of a raid with nothing to bring home.
-static func _useful_cap(table: Dictionary, floor_value: float) -> int:
-	var sampled := _nearest_floor(table, floor_value)
-	var rows := _rows_at_floor(table, sampled)
-	rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-		return int(a.get("party_workers", 0)) < int(b.get("party_workers", 0)))
-	var previous := -1.0
-	var plateau := 0
-	for row_variant in rows:
-		var row: Dictionary = row_variant
-		var workers := int(row.get("party_workers", 0))
-		if workers <= 0:
-			continue
-		var delivered := float(row.get("delivered_food", 0.0)) \
-			if bool(row.get("delivers_food", false)) else 0.0
-		if delivered > previous:
-			previous = delivered
-			# A payload that has not risen ABOVE ZERO is not a plateau — a raid every size comes home
-			# empty from is flat at zero, and reading that flatness as "the first size was enough"
-			# is what once capped the stepper at one worker.
-			if delivered > 0.0:
-				plateau = workers
-		else:
-			break
-	return plateau
-
-static func _raid_row(table: Dictionary, floor_value: float, party: int) -> Dictionary:
-	var rows := _rows_at_floor(table, _nearest_floor(table, floor_value))
-	return _nearest_party_row(rows, "party_workers", party)
-
 static func _denial_row(rows: Array, party: int) -> Dictionary:
 	return _nearest_party_row(rows, "party_workers", party)
 
@@ -463,33 +414,6 @@ static func _quarry_for_id(hud: Node, herd_id: String) -> Dictionary:
 	if String(selected.get("id", "")) == herd_id:
 		return selected
 	return _herd_for_id(hud, herd_id, "")
-
-static func _nearest_floor(table: Dictionary, want: float) -> float:
-	var best := INF
-	var best_gap := INF
-	for key in table:
-		var row_variant: Variant = table[key]
-		if not (row_variant is Dictionary):
-			continue
-		var sampled := float((row_variant as Dictionary).get("floor", 0.0))
-		var gap := absf(sampled - want)
-		if gap < best_gap:
-			best_gap = gap
-			best = sampled
-	return best
-
-static func _rows_at_floor(table: Dictionary, sampled: float) -> Array:
-	var rows: Array = []
-	if is_inf(sampled):
-		return rows
-	for key in table:
-		var row_variant: Variant = table[key]
-		if not (row_variant is Dictionary):
-			continue
-		var row: Dictionary = row_variant
-		if is_equal_approx(float(row.get("floor", 0.0)), sampled):
-			rows.append(row)
-	return rows
 
 ## Nearest sampled party, the LOWER of a tie — over-quoting a bigger party's take against a smaller
 ## one is the more misleading direction.

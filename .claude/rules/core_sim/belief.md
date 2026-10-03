@@ -51,7 +51,7 @@ accrue a cemetery at a place it has left.
 | `settle_hunt_band_side` — a resident band's own hunt, both rungs (range arm and pen tend), worked from the band's own range | **yes** | the people actually lost, at the band's tile |
 | `settle_hunt_band_side` — the same hunt or tend carried out by a far **work party** (`work-party.md`) | **no** | the party fights at the herd, away from where the band stands — the expedition's reason. Its workers stay the band's; only where they died decides the credit |
 | `advance_predator_raids` — a raid on a resident band | **yes** | the people actually lost, at the band's tile; the pack came to the band, so the band's tile is where they died |
-| `advance_expeditions` — a detached party's hunt or roadside kill | **no** | those people died at the party's position, not where the band stands |
+| `advance_expeditions` — a detached party's raid (`Deny`) or a scout's roadside kill | **no** | those people died at the party's position, not where the band stands |
 
 **"Actually lost" is `apply_combat_casualties`' return value**: the removal floored at the working
 bracket that was there. A fight asking for more dead than the band holds credits only the bracket.
@@ -79,6 +79,6 @@ config — so the hunt seam names one place its dead go rather than taking three
 | `belief::a_tiles_belief_is_on_the_frame_and_a_change_produces_a_tile_delta` | on the encoded envelope and on the stream's tile delta |
 | `belief::belief_round_trips_the_checkpoint_and_the_save` | `SimState` capture → restore, and the save payload |
 | `predator_raid::a_raids_dead_credit_belief_to_the_tile_the_band_stands_on` | a raid credits the lost head-count at the band's tile, not its home |
-| `expedition_hunt::an_expedition_hunts_dead_credit_no_belief` | a lethal expedition hunt leaves the registry untouched (with a liveness assertion that people died) |
+| `raiding_party::a_raiding_partys_dead_credit_no_belief` | a lethal raid by a detached `Deny` party leaves the registry untouched (with a liveness assertion that people died) |
 | `labor_yield_tests::a_resident_hunts_dead_credit_belief_to_the_tile_the_band_stands_on` | the hunt seam credits the band's tile, and only the people actually lost |
 | `labor_allocation::a_far_work_partys_hunt_dead_credit_no_belief` | a party posted past `band_work_range` loses people and the registry stays empty — neither the camp nor the herd tile gains belief |

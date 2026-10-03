@@ -11,24 +11,10 @@ paths:
 
 # Command targeting — move-band and expeditions
 
-> ⛔ **THE HUNTING EXPEDITION IS NO LONGER COMPOSED ON THE CLIENT** (`docs/plan_civilization_steps.md`
-> §One work party). A herd past the band's apron is an ordinary hunt whose crew posts a caravan, so the
-> herd sheet's expedition branch, the Parties footer's Hunt verb and `send_hunt_expedition_requested`
-> are retired (`labor-ui.md` → "A FAR SOURCE IS AN ORDINARY SHEET", `band-city-panel.md` → "THERE
-> IS NO HUNT VERB"). **Every passage below about a hunting party's quarry, reach or
-> send is superseded.** What changed here:
->
-> - **The quarry pick has ONE rule now, the denial raid's**: every herd at a KNOWN distance is a quarry
->   (`QUARRY_NO_REACH_BOUND`). `quarry_min_distance`, the per-mission fork and the pending pick's
->   mission key are deleted — the quarry pick IS the Deny pick, and a parameter no reader can vary is
->   an invitation to put the old one back. `begin_pick_quarry(band, commit, hover)`,
->   `is_expedition_quarry(band, herd)` and `eligible_quarries_on_tile(band, x, y)` take no `mission`.
->   The passive highlight still files the open sheet's mission (Deny or Trade) under
->   `PRESELECT_MISSION_KEY`, since that decides what it glows.
-> - ⛔ **`hunt_reach` has no reader.** The within-reach refusal note (`PREY_WITHIN_REACH_FORMAT`) went
->   with it; a click that names no huntable herd still says so (`PREY_PICK_MISS`), under the Deny
->   verb's name.
-> - **The glow agrees**: MapView's herd halo filters on the same `QUARRY_NO_REACH_BOUND`.
+> **There is no hunting expedition** (`docs/plan_civilization_steps.md` §One work party). A herd past
+> the band's apron is an ordinary hunt whose crew posts a work party (`labor-ui.md` → "A FAR SOURCE IS
+> AN ORDINARY SHEET", `band-city-panel.md` → "THERE IS NO HUNT VERB"). The one herd pick is the
+> denial raid's, and its rule is "ONE QUARRY RULE" below.
 
 ## Key scripts
 
@@ -133,10 +119,8 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   banner** (top-centre, `HudStyle.banner_stylebox()`: cyan reticle + command + instruction + Cancel)
   and emits the controller's `targeting_changed(info)` (relayed onto the HudLayer signal). **The
   `command` token IS the banner's lead word, uppercased** (`_targeting_banner_bbcode`), so it is a
-  player-facing string rather than plumbing: a hunt-mission herd pick reads `PREY  Saltmarch — click
-  on a herd to hunt`, spelled `prey` since issue #650 because the sim's `quarry` verb opens a stone
-  working.
-  MapView keys its halo off `need`, never off this token. HudLayer's `notify_targeting_click` (MapView's
+  player-facing string rather than plumbing: the herd pick reads `DENY  Saltmarch — click a herd to
+  deny`. MapView keys its halo off `need`, never off this token. HudLayer's `notify_targeting_click` (MapView's
   `targeting_clicked`) calls `_targeting.try_dispatch(tile_info)`, which runs all three pending flows on
   the click (the click carries `tile_info.herds`, which the herd pick resolves its target from).
 - **Main forwards** `hud.targeting_changed → map_view.set_targeting`,
@@ -182,51 +166,15 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   (4) The `marker_field_guard` covers the four new marker keys (`is_expedition`,
   `expedition_mission`, `expedition_phase`, `max_expedition_party_size`). The server still rejects
   a genuinely over-cap request with a feed message as a backstop.
-- **Hunting expedition** (PR 2, `docs/plan_exploration_and_sites.md` §2b; snapshot
-  `PopulationCohortState.expeditionTargetHerd` (string fauna_id) / `expeditionHuntPolicy` (string
-  `sustain|surplus|deplete|eradicate`) / `expeditionCarryCap` (float), decoded as
-  `expedition_target_herd` / `expedition_hunt_policy` / `expedition_carry_cap` and flowed onto the
-  marker; `expedition_mission` also takes `"hunt"`, `expedition_phase` also takes
-  `"hunting"`/`"delivering"`). A hunt party follows a migratory herd, accumulates food up to a carry
-  cap, and drops it at the band — the second verb on the same expedition machinery.
-  **The in-flight next-delivery forecast** (`PopulationCohortState.expeditionEtaTurns` /
-  `expeditionProjectedDelivery` / `expeditionRecurring`, decoded in `native/src/lib.rs` as
-  `expedition_eta_turns` / `expedition_projected_delivery` / `expedition_recurring`) is the client's
-  "Next delivery: ~N food in M turns" readout — see the parties inspector strip under Band/City. **All
-  three MUST be copied onto the unit marker in `MapView._rebuild_unit_markers`** (beside
-  `expedition_target_herd` / `expedition_carry_cap`), because the Occupants **detail panel** reads
-  `_selected_unit` — which is the marker, NOT the raw population dict — so a field the marker drops
-  renders the panel blank even while the Parties ROW (which reads the raw dict) shows it. This is the
-  drop-prone-marker-field bug class: `expedition_projected_delivery` is in `marker_field_guard`'s
-  `FRACTIONAL_ROUND_TRIP_KEYS` (a continuous float, must not `int()`-narrow), all three in
-  `PANEL_CONSUMED_KEYS`. Surfaced:
-  (1) **Distinct map marker** (`MapView._draw_expedition_body`): a hollow 🏹 **bow disc** (vs the
-  scout's ⚑ flag), keyed on `expedition_mission == "hunt"`. Phase read: `hunting` (gathering) draws a
-  small red "working" cue ring; `delivering`/`returning` (hauling home) draw a green food pip.
-  (2) **Hunt drawer panel** (`Hud._expedition_summary_lines` branches on mission): Mission "Hunting
-  expedition", **Target** herd (`expedition_target_herd`, species via `_herd_label_for_id` → raw id
-  fallback), **Policy** (`expedition_hunt_policy`, capitalized), humanized **Phase**
-  (Hunting/Delivering/Returning), Party, and **Carried X / cap** (`stores` total vs
-  `expedition_carry_cap`, turns from `turnsOfFood`) with a **· FULL** badge at the ceiling. Reuses
-  `_build_expedition_panel` (Recall + Move, "Returning"-when-returning treatment — mission-agnostic,
-  so hunt parties get it too).
-  (3) **Outfit UI**: the herd drawer's hunting-party branch (`DrawerComposeController`, the herd
-  selected is the quarry, so no pick is needed). Its Send emits
-  `send_hunt_expedition_requested` → `Main._on_hud_send_hunt_expedition` →
-  `send_hunt_expedition <faction> <band> <party_workers> <fauna_id> [floor]` (a trailing `0.0..=1.0`
-  fraction of `K`; the server defaults `DEFAULT_ESCAPEMENT_FLOOR`, and a retired stance word is a hard
-  parse error rather than a default). A HERD-targeting pick (`_pending_pick_quarry`, `need: "herd"`) —
-  Deny's — resolves a huntable herd on the clicked hex
-  (`_huntable_herd_on_tile` reads `tile_info.herds`); no eligible herd on the hex → a command-feed
-  nudge, and the pick stays armed. For `need == "herd"` `AnnotationRenderer.draw_targeting` reticles
-  the hovered hex and glows the herds that are **valid quarries — those strictly BEYOND the outfitting
-  band's `hunt_reach`**, never every huntable herd. A nearer herd is a LOCAL hunt (the same split
-  `_build_herd_assign_controls` makes between "Assign Local Hunt" and the expedition branch), so haloing
-  it would promise a mission the pick then refuses. The reach rides the targeting info dict as
-  **`min_distance`** — "a valid target must lie strictly farther than this from `origin_x/origin_y`";
-  every other targeting mode omits it and MapView defaults it to **0**, which admits everything and
-  changes nothing for move/scout-tile targeting. The MapView test is commented as the RENDER-SIDE MIRROR
-  of `Hud._is_expedition_quarry` — change the two together, in both directions.
+- **The herd pick** (`_pending_pick_quarry`, `need: "herd"`) — Deny's — resolves a huntable herd on
+  the clicked hex (`_huntable_herd_on_tile` reads `tile_info.herds`); no eligible herd on the hex → a
+  command-feed nudge, and the pick stays armed. For `need == "herd"` `AnnotationRenderer.draw_targeting`
+  reticles the hovered hex and glows the herds that are valid quarries. The bound rides the targeting
+  info dict as **`min_distance`** — "a valid target must lie strictly farther than this from
+  `origin_x/origin_y`"; every other targeting mode omits it and MapView defaults it to **0**, which
+  admits everything and changes nothing for move/scout-tile targeting. The MapView test is commented as
+  the RENDER-SIDE MIRROR of `TargetingController.is_expedition_quarry` — change the two together, in
+  both directions.
 
   **ONE QUARRY RULE: EVERY HERD AT A KNOWN DISTANCE.** `is_expedition_quarry(band, herd)` /
   `eligible_quarries_on_tile(band, x, y)` / `begin_pick_quarry(band, commit, hover)` take no mission,
@@ -237,94 +185,11 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   of the same comparison. The quarry pick is the Deny pick: it has its own banner
   (`DENY … — click a herd to deny`) and posts its refusal notes under the verb's name.
 
-  (4) `marker_field_guard` covers `expedition_target_herd` / `expedition_hunt_policy` /
-  `expedition_carry_cap`. Recall is the unchanged `recall_expedition` (works for hunt parties too).
-  (5) **Pre-launch RAID forecast — the delivered payload + waste** (server `5a130e0`): a hunting expedition
-  is a **greedy raid** — it grabs the herd's standing surplus above the policy floor in a burst and comes
-  home. A party too small to carry a whole animal now **kills one and hauls the fraction its pack holds,
-  wasting the rest**, so the readout headlines the delivered PAYLOAD: **the animal count over the turns, the
-  FOOD landed, and the WASTE**, `delivers ≈1 Thunder Mammoth over ≈20 turns · ~4 food · ⚠ 75% wasted`. The
-  player must know **before** committing workers — and the band-panel launch flow now guarantees they can,
-  because it asks for the **QUARRY FIRST, inside the compose sheet**. The old premise ("the herd isn't
-  chosen until the targeting step, so the forecast has to hang off the targeting banner") is **inverted and
-  gone**, and the hover-forecast + `_hovered_tile_info` with it: the herd is what determines the useful
-  party size, the per-policy take, the trip length and whether the raid is worth making, so it cannot be
-  the LAST question. The targeting mode is now a quarry **PICKER** (`_pending_pick_quarry` /
-  `_on_pick_quarry_pressed` / `_try_pick_quarry`, `command: "prey"`, `need: "herd"` — still what makes
-  MapView glow the huntable herds): it carries only the band, dispatches nothing, and on a hit stores the
-  herd id in the sheet and re-renders. **The forecast, the max-useful cap, the ascending per-policy metrics
-  and the no-surplus block therefore all live in the FORM**, from the SAME helpers the herd drawer's
-  beyond-reach branch uses (`SourceForecast.expedition_policy_takes` · `SourceForecast.expedition_useful_cap` · `SourceForecast.hunt_trip_forecast` →
-  `SourceForecast.hunt_forecast_line_bbcode` · `SourceForecast.style_send_hunt_button` · `SourceForecast.hunt_empty_refusal_reason`), so the two entry
-  points structurally cannot quote different numbers. The line reads cyan
-  `delivers ≈N <Herd> over ≈M turns · ~F food` (+ amber `· ⚠ P% wasted`) for a brisk raid, WARN-amber `⚠ … — a slow raid` past `expeditionViabilityWarnTurns` (or `delivers ≈N <Herd>
-  over more than M turns (more than H hunting + T travel) … — a slow raid` for a **long** raid,
-  `turnsToFill == 0`, that ran the whole horizon still delivering — `M` being
-  `expeditionForecastHorizonTurns + round-trip travel`, never the bare horizon; see `labor-ui.md` →
-  "An unbounded raid quotes a FLOOR"), amber denial `<Herd> — denial mission … brings nothing home`
-  (a raid that lands NOTHING — no food and no material; **never** the Eradicate rung, which delivers
-  its whole-stock windfall like every other rung, #337, and **never an inedible quarry whose hides
-  land**, which is a real delivery quoting `· ~3 hide`), and DANGER-red
-  `⚠ <Herd> is too lean to raid — its surplus is spent` when **`deliveredFood == 0`** (the herd at/below the
-  policy floor — a small party on big game delivers a partial with waste and is NOT too lean). The click
-  still commits (information, not a gate — except the no-surplus case, which the herd panel's button
-  DISABLES; see `%HerdAssignControls`).
-  **The food total** is `HuntTripEstimate.deliveredFood` — the sim's forward-simulated landed food (NOT
-  `animals × foodPerAnimal`, which counts the whole kill and overstates a partial), set on the returned dict
-  as `food` (always present on a delivering forecast); the waste % is `wastedFood / (deliveredFood +
-  wastedFood)`. All rendered by the shared `SourceForecast.hunt_forecast_line_bbcode` at **both** entry points (the party
-  compose sheet + the herd drawer), so the two can never quote different numbers.
-  **The client does ZERO arithmetic for an expedition's raid — it is a pure TABLE LOOKUP.** A band and
-  an expedition are different actors and read **different herd fields**; never one for the other:
-  - **Expedition → `HerdTelemetryState.huntTripEstimates`** (one entry per policy × party size),
-    decoded in `native/src/lib.rs` into `hunt_trip_estimates` on the herd dict, keyed
-    `"<policy>:<party_workers>"` → `{turns_to_fill, delivers_food, animals_taken, delivered_food,
-    wasted_food}` (so it flows through `tile_info.herds` untouched — **`delivered_food`/`wasted_food` are
-    the newest appended fields, added to this decoder dict in this pass; the decoder has silently dropped
-    appended fields 6× now, always audit it first**). `SourceForecast.hunt_trip_forecast` just looks it up:
-    `delivers_food == false` **and an empty `delivered_material`** → **denial** (the raid brings
-    nothing home; `delivers_food` was redefined by #337 to mean "the quarry is edible", its
-    `delivers_trade` sibling went with arc #527's retired account, and `delivered_material` is what
-    replaced that half — so an inedible quarry whose hides land is a REAL delivery. The SIM decides
-    it, and the client never infers it from the policy string); **`delivered_food == 0` and no
-    material** → **no surplus** (the one blocked case — the raid returns empty at every party size;
-    NOT `animals_taken == 0`, which is ≥ 1 whenever there's any surplus since a small party still
-    kills one animal and wastes the uncarried meat; and **not food alone**, which would refuse a raid
-    walking home loaded with hides); else the
-    raid delivers `delivered_food` food (`animals_taken` kills, `wasted_food` rotted), with `turns_to_fill
-    == 0` meaning a **long raid** (ran the whole horizon) and `> expeditionViabilityWarnTurns` flagged
-    **slow**. `deliveredFood` PLATEAUS with party size once the surplus binds — that plateau is the
-    **max-useful** party the stepper caps at (`SourceForecast.expedition_useful_cap`), and the per-policy picker cap is the
-    max over party sizes of `deliveredFood / (turnsToFill + travel)`. **Do not re-derive any of this** — the
-    sim forward-simulates the raid (the herd's state moves under the party, a horizon bounds the answer) and
-    exports the numbers.
-  - **Resident band → `huntPolicyCeilings`** (`provisionsPerTurn`, the herd's renewable **flow**),
-    decoded as `hunt_policy_ceilings`. This one IS pure client arithmetic, and the schema blesses it:
-    `min(workers × huntPerWorkerProvisions, ceiling) × outputMultiplier` (`_hunt_take_rate` →
-    `_local_hunt_preview_bbcode`) — but it must still never re-derive the ecology/MSY model.
-  Plus the global levers echoed on every cohort (same idiom as `maxExpeditionPartySize`, decoded +
-  flowed onto the MapView unit marker + covered by `marker_field_guard`). **Neither of them is an
-  input to an expedition's raid** — that is the lookup above. Their real jobs: `expeditionViabilityWarnTurns`
-  = the **slow-raid threshold** applied to the **TOTAL** trip (`turnsToFill` HUNTING turns **+** the
-  client's round-trip travel — a distant herd trips it on travel alone), and
-  `huntPerWorkerProvisions` = the **resident-band local-hunt take rate** (the one legitimate piece of
-  client arithmetic, pinned by `exported_snapshot_fields_reproduce_band_hunt_take`). The one-liner
-  that keeps this straight: **band = flow arithmetic; expedition = lookup.** Missing estimate /
-  levers absent → no forecast line, banner unchanged. (The old `haul` key — `party ×
-  expeditionPerWorkerCarry` — is retired: a raid's payload is the sim's `animalsTaken`, not a
-  party×lever product. `expeditionPerWorkerCarry` is still decoded onto the marker for completeness but
-  no longer feeds the forecast.)
-  ui_preview banner states `hunt_forecast_viable` / `hunt_forecast_slow` / `hunt_forecast_no_surplus`;
-  herd-panel expedition states `herd_hunt_forecast_viable` (the partial-with-waste Thunder Mammoth: `~4
-  food · ⚠ 75% wasted`, button ENABLED) / `_slow` / `_surplus` / `_no_surplus` (`deliveredFood 0`
-  everywhere → disabled "too lean") / `_eradicate` (a real delivery — `delivers ≈12 Red Deer over ≈11
-  turns · ~24 food`, ordinary Send — a strip-bare raid COMPLETES) / `_horizon` +
-  `herd_hunt_horizon_travel` (the raid that genuinely does not finish, quoting its floor: `Send Anyway
-  (more than 68 turns)`), the raid set `herd_hunt_boar_raid` (clean, no waste) / `herd_hunt_max_useful`
-  / `herd_hunt_raid_travel` (travel-inclusive `over ≈16 turns (8 hunting + 8 travel)`, and the picker
-  caps correctly lower) / `herd_hunt_expedition_automax` (a policy click fills the Party to max-useful).
+  `marker_field_guard` covers `expedition_target_herd` / `expedition_carry_cap`. Recall is the
+  unchanged `recall_expedition`, mission-agnostic.
 - **Retired verbs (Early-Game Labor slice 3a):** the server now parses-but-ignores
-  `follow_herd` / `scout` / `forage` / `hunt_fauna` / `hunt_game`. Every client control that
+  `follow_herd` / `scout` / `forage`; `hunt_fauna` / `hunt_game` are deleted outright and no
+  longer parse. Every client control that
   emitted them was removed or repointed so nothing is silently dead: the map double-click
   `scout` shortcut was dropped and `follow` repointed to quick-assign hunters; Main's
   `_issue_*`/`_on_hud_follow_herd`/`_on_hud_unit_scout` builders are gone; the Fauna tab's

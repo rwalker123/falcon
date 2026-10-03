@@ -44,25 +44,25 @@ use core_sim::{
 };
 use core_sim::{
     build_headless_app, clear_config_overrides, denial_forecast, expedition_returned_event,
-    fold_party_into_band, granted_ai_faction_count, hunt_trip_forecast, install_config_override,
-    party_owes_a_report, publish_baseline_snapshot, recapture_snapshot_in_place, run_turn,
-    scalar_from_f32, shipment_carry_cap, split_band_from_parent, AgentAssignment, BandId,
-    BandIdAllocator, BandName, CommandEventEntry, CommandEventKind, CommandEventLog,
-    CounterIntelBudgets, CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle,
-    CrisisArchetypeCatalogMetadata, CrisisModifierCatalog, CrisisModifierCatalogHandle,
-    CrisisModifierCatalogMetadata, CrisisTelemetry, CrisisTelemetryConfig,
-    CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata, DiscoveryProgressLedger,
-    EquipmentConfigHandle, EspionageAgentHandle, EspionageCatalog, EspionageMissionId,
-    EspionageMissionKind, EspionageMissionState, EspionageMissionTemplate, EspionageRoster,
-    FactionBorderPolicies, FactionId, FactionOrders, FactionRegistry, FactionSecurityPolicies,
-    FaunaConfigHandle, FoodSiteRegistry, ForageRegistry, FrameSink, HerdRegistry, Improvement,
-    LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError,
-    QueueMissionParams, Scalar, SecurityPolicy, Settlement, SimulationConfig,
-    SimulationConfigMetadata, SimulationTick, SnapshotAudiences, SnapshotHistory,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata,
-    StartLocation, StartProfileLookup, StartProfilesHandle, StartingUnit, SubmitError,
-    SubmitOutcome, Tile, TileRegistry, TownCenter, TradeExpeditionConfig, TurnPipelineConfig,
-    TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue, WorldEpoch, FODDER, FOOD,
+    fold_party_into_band, granted_ai_faction_count, install_config_override, party_owes_a_report,
+    publish_baseline_snapshot, recapture_snapshot_in_place, run_turn, scalar_from_f32,
+    shipment_carry_cap, split_band_from_parent, AgentAssignment, BandId, BandIdAllocator, BandName,
+    CommandEventEntry, CommandEventKind, CommandEventLog, CounterIntelBudgets,
+    CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle, CrisisArchetypeCatalogMetadata,
+    CrisisModifierCatalog, CrisisModifierCatalogHandle, CrisisModifierCatalogMetadata,
+    CrisisTelemetry, CrisisTelemetryConfig, CrisisTelemetryConfigHandle,
+    CrisisTelemetryConfigMetadata, DiscoveryProgressLedger, EquipmentConfigHandle,
+    EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionKind,
+    EspionageMissionState, EspionageMissionTemplate, EspionageRoster, FactionBorderPolicies,
+    FactionId, FactionOrders, FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle,
+    FoodSiteRegistry, ForageRegistry, FrameSink, HerdRegistry, Improvement, LaborConfigHandle,
+    MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError, QueueMissionParams,
+    Scalar, SecurityPolicy, Settlement, SimulationConfig, SimulationConfigMetadata, SimulationTick,
+    SnapshotAudiences, SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    SnapshotOverlaysConfigMetadata, StartLocation, StartProfileLookup, StartProfilesHandle,
+    StartingUnit, SubmitError, SubmitOutcome, Tile, TileRegistry, TownCenter,
+    TradeExpeditionConfig, TurnPipelineConfig, TurnPipelineConfigHandle,
+    TurnPipelineConfigMetadata, TurnQueue, WorldEpoch, FODDER, FOOD,
 };
 use core_sim::{
     ConnectionId, ConnectionIdAllocator, SeatRegistry, SeatTurnGate, SeatTurnLimits, TurnWait,
@@ -1400,24 +1400,15 @@ enum Command {
         band_id: Option<u64>,
         workers: u32,
     },
-    SendHuntExpedition {
-        faction: FactionId,
-        band_id: Option<u64>,
-        party_workers: u32,
-        fauna_id: String,
-        floor: Option<f32>,
-        /// **The kit the party is sent out with**, resolved once at launch. `None` = the hunt job's
-        /// default; unknown or wrong-job is a command failure.
-        kit_id: Option<String>,
-    },
-    /// **The denial raid** (`docs/plan_denial_raid.md`) — no floor, no fill target, and no target
-    /// faction. It names a herd, a party size and the kit that party carries, and nothing else.
+    /// **The denial raid** (`docs/plan_denial_raid.md`) — no floor and no target faction. It names
+    /// a herd, a party size and the kit that party carries, and nothing else.
     SendDenialRaid {
         faction: FactionId,
         band_id: Option<u64>,
         party_workers: u32,
         fauna_id: String,
-        /// See [`Command::SendHuntExpedition::kit_id`]. The one order this mission still takes.
+        /// **The kit the party is sent out with**, resolved once at launch. `None` = the hunt job's
+        /// default; unknown or wrong-job is a command failure. The one order this mission takes.
         kit_id: Option<String>,
     },
     /// **The trade expedition** (`docs/plan_contact_and_logistics.md` §Q5) — a party that walks a
@@ -1429,7 +1420,7 @@ enum Command {
         party_workers: u32,
         destination_band_id: u64,
         cargo: Vec<TradeCargoItem>,
-        /// See [`Command::SendHuntExpedition::kit_id`].
+        /// See [`Command::SendDenialRaid::kit_id`].
         kit_id: Option<String>,
     },
     FoundSettlement {
@@ -3155,10 +3146,6 @@ fn handle_set_start_profile(app: &mut bevy::prelude::App, profile_id: String) {
 // failure, never clamped). That is the opposite discipline: this function's whole behaviour was to
 // keep going on a typo, which is defensible for a four-value picker and is not for the one number
 // the harvest model turns on.
-//
-// It is **not** what `send_hunt_expedition` uses — that path has always parsed its own token with
-// its own parse and *rejects* an unusable one, so routing it here would have loosened a
-// gate rather than shared one.
 
 fn handle_found_settlement(
     app: &mut bevy::prelude::App,
@@ -3589,10 +3576,8 @@ fn seed_source_yield(
             let Some(herd) = app.world.resource::<HerdRegistry>().find(fauna_id) else {
                 return; // herd gone → the assignment lapses next turn.
             };
-            // ⛔ **NO LEASH.** This gate read `hunt_reach()`, the retired leash, and made the seed
-            // and the turn disagree for every hunt three to five tiles out: the seed declined a row
-            // the turn posts as a caravan. Past the band's work range a hunt is seeded as a
-            // caravan, exactly as a gather is.
+            // Past the band's work range a hunt is seeded as a caravan, exactly as a gather is and
+            // exactly as the turn posts it — the seed and the turn share one distance rule.
             let caravan = caravan_seed_party(app, band, target, herd.position(), band_pos, workers);
             let fauna = app.world.resource::<FaunaConfigHandle>().get();
             // **The seed must be priced at THIS band's SLED tier** (the minimal TOE), or the
@@ -5655,10 +5640,8 @@ fn handle_send_expedition(
 /// **Everything outfitting a raiding party needs, once its orders are known to be legal** — the band
 /// it comes off, the herd it is aimed at, and the template it is cloned from.
 ///
-/// Shared by the two raiding verbs, [`handle_send_hunt_expedition`] and [`handle_send_denial_raid`],
-/// which differ only in the mission they name, the numbers they validate and the verdict they quote
-/// — never in how a party is drawn off a band. Keeping that half in one place is what stops the third
-/// verb (`docs/plan_denial_raid.md` §3) from acquiring its own copy of the resident-band gate, the
+/// The raiding verb [`handle_send_denial_raid`] reaches it; keeping that half in one place is what
+/// stops another herd-aimed verb from acquiring its own copy of the resident-band gate, the
 /// party-size bound and the herd lookup.
 /// **The half of outfitting that has nothing to do with the mission** — a real *resident* band, a
 /// legal party size, and the template the detached party is cloned from.
@@ -5893,10 +5876,9 @@ fn launch_forecast_haul(app: &bevy::prelude::App, kit: &KitChoice) -> f32 {
 /// re-armed is the opposite of the comparison the player asked for.
 ///
 /// **Absent = the TARGET HERD's default, not the job's** — the same `default_kit_for_target` seam
-/// `handle_assign_labor` resolves through, keyed on the herd this raid names. Both verbs are quoted
-/// against tables the wire priced at that herd's own kit (`huntTripEstimatesKitId` /
-/// `denialEstimatesKitId`, which are `defaultKitId` by construction), and the client's launch sheet
-/// reads `defaultKitId`; resolving `default_kits.hunt` here would launch a party on a different kit
+/// `handle_assign_labor` resolves through, keyed on the herd this raid names. The client's launch
+/// sheet reads that herd's `defaultKitId` and asks the denial query at it; resolving
+/// `default_kits.hunt` here would launch a party on a different kit
 /// than the forecast the player committed from — the silent substitution the refusal above exists to
 /// prevent, arriving through the absent-token door.
 fn resolve_raid_kit(
@@ -5932,8 +5914,8 @@ fn resolve_raid_kit(
 }
 
 /// **The round-trip walk**, in turns, from the launching band's tile out to the herd and back — the
-/// half of a trip's length the band-agnostic forecasts cannot see. `hunt_trip_forecast` /
-/// `denial_forecast` count only the turns spent working the herd once in reach, so the walk is added
+/// half of a trip's length the band-agnostic forecast cannot see. `denial_forecast` counts only the
+/// turns spent working the herd once in reach, so the walk is added
 /// here, where the launching band's tile is known. (The per-herd snapshot tables are band-agnostic —
 /// one row serves every band — so the **client** adds this same travel from the selected band's tile.)
 /// Decimal places the denial launch line prints its payload and waste to — one, because the sheet is
@@ -6174,220 +6156,11 @@ fn launch_party_from_band(
     Some(expedition_entity)
 }
 
-/// Outfit and launch a hunting expedition (PR 2): draw `party_workers` off the resolved home band
-/// and send a detached party to follow the herd `fauna_id` at the escapement `floor` it names. Text
-/// form:
-/// `send_hunt_expedition <faction> <band> <party_workers> <fauna_id> [floor] [kit <id>]`.
-#[allow(clippy::too_many_arguments)] // every launch order the verb accepts is a parameter
-fn handle_send_hunt_expedition(
-    app: &mut bevy::prelude::App,
-    faction: FactionId,
-    band_id: Option<u64>,
-    party_workers: u32,
-    fauna_id: String,
-    floor: Option<f32>,
-    kit_id: Option<String>,
-) {
-    // **The raid's floor FAILS CLOSED**, exactly as `assign_labor`'s does: absent means the default
-    // (the food peak, the conservative reading), and a value outside `0.0..=1.0` is refused with its
-    // own failure event rather than clamped. Where a party stops is the whole of what its orders say
-    // about pressure, so a typo must not silently flip a herd's fate.
-    let floor = match floor {
-        None => DEFAULT_ESCAPEMENT_FLOOR,
-        Some(value) if floor_is_valid(value) => value,
-        Some(value) => {
-            emit_command_failure(
-                app,
-                CommandEventKind::ExpeditionSent,
-                faction,
-                format!(
-                    "send_hunt_expedition: floor must be a fraction of carrying capacity in \
-                     0.0..=1.0; got {value}."
-                ),
-            );
-            return;
-        }
-    };
-    // **The kit fails closed too** — resolved before the party is drawn off the band, so a bad kit
-    // id refuses the launch outright rather than sending a party at a tier nobody named.
-    let Some(kit) = resolve_raid_kit(
-        app,
-        faction,
-        "send_hunt_expedition",
-        kit_id.as_deref(),
-        &fauna_id,
-    ) else {
-        return;
-    };
-    let Some(outfit) = outfit_raiding_party(
-        app,
-        faction,
-        band_id,
-        party_workers,
-        &fauna_id,
-        "send_hunt_expedition",
-    ) else {
-        return;
-    };
-
-    let cfg = app.world.resource::<ExpeditionConfigHandle>().get();
-    // Launch-time viability forecast — a bounded forward SIMULATION of the trip (`hunt_trip_forecast`),
-    // not a division. A party at the food peak skims the herd's Maximum Sustainable Yield (a *flow*),
-    // and a deeper floor eats *stock* headroom and then falls back to the regrowth trickle once it is
-    // gone, so filling a carry cap off a small herd can genuinely take dozens of turns. That is
-    // ecologically true, not a bug; the player must be told at launch rather than silently trapped,
-    // so the forecast rides the `ExpeditionSent` feed entry (it still launches either way).
-    let forecast = {
-        let fauna = app.world.resource::<FaunaConfigHandle>().get();
-        // **Quoted at the kit the party is being sent with**, both halves: the fight through
-        // `party` and the haul through `per_worker_haul`.
-        let per_worker_haul = launch_forecast_haul(app, &kit);
-        let registry = app.world.resource::<HerdRegistry>();
-        registry.find(&fauna_id).map(|herd| {
-            // Resolved INSIDE the herd lookup: the attack tier is a fact about this party against
-            // THIS animal, not about the party alone.
-            let party = launch_forecast_party(app, &kit, herd.body_mass);
-            hunt_trip_forecast(
-                party_workers,
-                herd,
-                floor,
-                &fauna,
-                per_worker_haul,
-                &cfg,
-                &party,
-            )
-        })
-    };
-    let travel_turns = round_trip_travel_turns(app, outfit.band.entity, outfit.herd_pos);
-    // The raid always completes in bounded turns (grab the surplus, come home), so the only genuine
-    // non-viable case is "no surplus to take" — the herd is at/below the policy's floor and delivers
-    // NO animals. Otherwise headline the payload the raid actually lands, including the round trip.
-    let (viability_note, viability_detail) = match &forecast {
-        // An INEDIBLE quarry brings no food home — say what it *does* bring, no food ETA. This arm
-        // used to fire for a denial *mission* (Eradicate); since #337 the policy is pure intensity
-        // and the species decides the product, so a floor-`0` raid on a deer reports its windfall
-        // like any other rung, and only a wolf lands here.
-        Some(_f) if !_f.delivers_food => (
-            // **PREY, not "quarry"** — `describe_denial_ledger`'s reason one clause over: the word
-            // belongs to the deposit branch throughout this arc.
-            " — no food from this prey: the party brings back hides and bone, not meat".to_string(),
-            " eta_turns=none viability=inedible".to_string(),
-        ),
-        // The herd has no surplus above the policy's floor — the honest non-viable case. "Too lean"
-        // now means the raid lands NO food at all (a small party on a big animal still delivers a
-        // partial with waste, so the signal is `delivered_food == 0`, not "the party is too small").
-        Some(f) if f.delivered_food <= 0.0 => (
-            format!(
-                " — the {} is too lean to raid: at its {} floor it has no surplus, the party would \
-                 return empty",
-                fauna_id, floor
-            ),
-            " eta_turns=none viability=no_surplus".to_string(),
-        ),
-        // A completed raid: headline the food landed, with the kill count + waste below. A pack too
-        // small to seat a whole animal delivers a partial and wastes the rest, so food (not the animal
-        // count) is the payload. `turns_to_fill == None` means it ran the whole horizon still delivering
-        // (a slow breeder a big party can neither fill nor exhaust).
-        Some(f) => {
-            let animals = f.animals_taken;
-            let food = f.delivered_food;
-            let wasted = f.wasted_food;
-            match f.turns_to_fill {
-                Some(hunt_turns) => {
-                    let total = hunt_turns + travel_turns;
-                    (
-                        format!(
-                            " — est. ~{:.1} food ({} animals, {:.1} wasted) over ~{} turns ({} hunting \
-                             + {} travel)",
-                            food, animals, wasted, total, hunt_turns, travel_turns
-                        ),
-                        format!(
-                            " eta_turns={} hunt_turns={} travel_turns={} animals={} food={:.2} \
-                             wasted={:.2} bound={}",
-                            total,
-                            hunt_turns,
-                            travel_turns,
-                            animals,
-                            food,
-                            wasted,
-                            f.bound.as_str()
-                        ),
-                    )
-                }
-                None => (
-                    format!(
-                        " — a long raid: ~{:.1} food ({} animals, {:.1} wasted) over {}+ hunting turns \
-                         (+{} travel)",
-                        food, animals, wasted, cfg.hunt.forecast_horizon_turns, travel_turns
-                    ),
-                    format!(
-                        " eta_turns=none travel_turns={} animals={} food={:.2} wasted={:.2} bound={}",
-                        travel_turns,
-                        animals,
-                        food,
-                        wasted,
-                        f.bound.as_str()
-                    ),
-                ),
-            }
-        }
-        None => (String::new(), String::new()),
-    };
-
-    let band_label = outfit.band.label.clone();
-    // Read off the outfit BEFORE it is moved into the launch, for the same reason `band_label` is.
-    let target_species = outfit.herd_species.clone();
-    let mission = ExpeditionMission::Hunt {
-        fauna_id: fauna_id.clone(),
-        target_species,
-        floor,
-    };
-    // **The event line names the species; the `herd=` token below keeps the id.** Read off the
-    // mission rather than off `outfit.herd_species` so this line and every later line about the
-    // same party resolve the name one way (`ExpeditionMission::target_display`).
-    let target_display = mission.target_display().to_string();
-    // **A launch that did not happen publishes a FAILURE, never an `applied` line** — see
-    // `launch_detached_party`, which answers `None` rather than a placeholder entity.
-    let Some(expedition_entity) =
-        launch_detached_party(app, outfit, party_workers, mission, kit.clone())
-    else {
-        emit_command_failure(
-            app,
-            CommandEventKind::ExpeditionSent,
-            faction,
-            format!("send_hunt_expedition: {band_label} has no population to outfit from."),
-        );
-        return;
-    };
-
-    let tick = app.world.resource::<SimulationTick>().0;
-    push_command_event(
-        app,
-        tick,
-        CommandEventKind::ExpeditionSent,
-        faction,
-        format!(
-            "{} hunting expedition (floor {:.2}·K) -> {}{}",
-            band_label, floor, target_display, viability_note
-        ),
-        Some(format!(
-            "status=applied mission=hunt floor={} workers={} herd={} expedition={}{}",
-            floor,
-            party_workers,
-            fauna_id,
-            expedition_entity.to_bits(),
-            viability_detail
-        )),
-    );
-}
-
-/// Outfit and launch a **denial raid** (`docs/plan_denial_raid.md`) — the third expedition verb,
-/// beside Scout and Hunt. Text form:
+/// Outfit and launch a **denial raid** (`docs/plan_denial_raid.md`). Text form:
 /// `send_denial_raid <faction> <band> <party_workers> <fauna_id>`.
 ///
-/// **There is no floor to validate and no fill target to default**, which is why this handler is
-/// shorter than its hunting sibling rather than a copy of it: the mission carries no numbers, so the
-/// order is *"this herd, this many people"* and the only refusals are the shared ones
+/// **There is no floor to validate**: the mission carries no numbers, so the order is *"this herd,
+/// this many people"* and the only refusals are the shared ones
 /// ([`outfit_raiding_party`]). `floor` appears nowhere in the command, the feed line or the detail.
 ///
 /// **The verdict is `turns_to_collapse`, not a food total** (§1.1): a raid succeeds by pushing the
@@ -6402,8 +6175,8 @@ fn handle_send_denial_raid(
     fauna_id: String,
     kit_id: Option<String>,
 ) {
-    // **The one order this mission still takes, and it fails closed like the hunt's.** A denial raid
-    // carries no floor and no fill target, but the party still has to be sent with *something*.
+    // **The one order this mission takes, and it fails closed.** A denial raid carries no floor, but
+    // the party still has to be sent with *something*.
     let Some(kit) = resolve_raid_kit(
         app,
         faction,
@@ -10694,21 +10467,6 @@ fn command_from_payload(
             band_id,
             workers,
         }),
-        ProtoCommandPayload::SendHuntExpedition {
-            faction_id,
-            band_id,
-            party_workers,
-            fauna_id,
-            floor,
-            kit_id,
-        } => Some(Command::SendHuntExpedition {
-            faction: FactionId(faction_id),
-            band_id,
-            party_workers,
-            fauna_id,
-            floor,
-            kit_id,
-        }),
         ProtoCommandPayload::SendDenialRaid {
             faction_id,
             band_id,
@@ -10750,9 +10508,7 @@ fn command_from_payload(
         // `assign_labor` / `move_band` replace them. Ignored if a stale client still sends one.
         ProtoCommandPayload::ScoutArea { .. }
         | ProtoCommandPayload::FollowHerd { .. }
-        | ProtoCommandPayload::ForageTile { .. }
-        | ProtoCommandPayload::HuntGame { .. }
-        | ProtoCommandPayload::HuntFauna { .. } => {
+        | ProtoCommandPayload::ForageTile { .. } => {
             warn!(
                 target: "shadow_scale::server",
                 "command.retired=ignored (replaced by assign_labor/move_band)"
@@ -11714,7 +11470,6 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
         Command::SendExpedition { faction, .. } => Some((*faction, "send_expedition")),
         Command::RecallExpedition { faction, .. } => Some((*faction, "recall_expedition")),
         Command::SplitBand { faction, .. } => Some((*faction, "split_band")),
-        Command::SendHuntExpedition { faction, .. } => Some((*faction, "send_hunt_expedition")),
         Command::SendDenialRaid { faction, .. } => Some((*faction, "send_denial_raid")),
         Command::SendTradeExpedition { faction, .. } => Some((*faction, "send_trade_expedition")),
         Command::FoundSettlement { faction, .. } => Some((*faction, "found_settlement")),
@@ -11801,9 +11556,6 @@ fn querying_faction(query: &QueryPayload) -> Option<(FactionId, &'static str)> {
     match query {
         // Each carries a client-supplied `faction_id` and is answered out of that faction's private
         // state: a named band's live equipment wear, its idle workers, its take curve.
-        QueryPayload::HuntTripForecast(ask) => {
-            Some((FactionId(ask.faction_id), "hunt_trip_forecast"))
-        }
         QueryPayload::DenialRaidForecast(ask) => {
             Some((FactionId(ask.faction_id), "denial_raid_forecast"))
         }
@@ -12058,24 +11810,6 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
             workers,
         } => {
             handle_split_band(app, faction, band_id, workers);
-        }
-        Command::SendHuntExpedition {
-            faction,
-            band_id,
-            party_workers,
-            fauna_id,
-            floor,
-            kit_id,
-        } => {
-            handle_send_hunt_expedition(
-                app,
-                faction,
-                band_id,
-                party_workers,
-                fauna_id,
-                floor,
-                kit_id,
-            );
         }
         Command::SendDenialRaid {
             faction,
@@ -16220,11 +15954,11 @@ mod tests {
         );
     }
 
-    /// Launch a hunting party of `PARTY_ON_A_RECALLED_RAID` off the world's first resident band at
+    /// Launch a raiding party of `PARTY_ON_A_RECALLED_RAID` off the world's first resident band at
     /// the first live herd, returning `(band, party, the band's working count before the launch)` —
     /// the shared opening of both recall fixtures below, so the "cancelled in camp" and "walked home"
     /// cases cannot diverge in how the party was raised.
-    fn launch_a_hunting_party(
+    fn launch_a_raiding_party(
         app: &mut bevy::prelude::App,
         faction: FactionId,
     ) -> (Entity, Entity, Scalar) {
@@ -16250,15 +15984,7 @@ mod tests {
             .expect("worldgen seeded a herd")
             .id
             .clone();
-        handle_send_hunt_expedition(
-            app,
-            faction,
-            None,
-            PARTY_ON_A_RECALLED_RAID,
-            herd_id,
-            None,
-            None,
-        );
+        handle_send_denial_raid(app, faction, None, PARTY_ON_A_RECALLED_RAID, herd_id, None);
         let party = {
             let mut query = app.world.query_filtered::<Entity, With<Expedition>>();
             query
@@ -16275,7 +16001,7 @@ mod tests {
 
     /// **Cancelling a party that has not left is a CANCEL, not a round trip.**
     ///
-    /// The playtest report: launch a hunting expedition, press the party row's ✕ before advancing a
+    /// The playtest report: launch a party, press the party row's ✕ before advancing a
     /// single turn, confirm — and nothing observable happens, because the recall only set
     /// `Returning` and the fold-back waited on the next turn's `advance_expeditions`. A party
     /// standing in its home band's own camp has gone nowhere, so the order that cancels it has
@@ -16289,7 +16015,7 @@ mod tests {
         app.world
             .insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
         let faction = FactionId(0);
-        let (band, party, working_before) = launch_a_hunting_party(&mut app, faction);
+        let (band, party, working_before) = launch_a_raiding_party(&mut app, faction);
         let party_band_id = *app
             .world
             .get::<BandId>(party)
@@ -16330,7 +16056,7 @@ mod tests {
         app.world
             .insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
         let faction = FactionId(0);
-        let (band, party, working_before) = launch_a_hunting_party(&mut app, faction);
+        let (band, party, working_before) = launch_a_raiding_party(&mut app, faction);
 
         // Put the party out on the map, past the comm range its fold-back needs.
         let camp = app
@@ -16493,7 +16219,7 @@ mod tests {
         // Resolve a turn first, so the baseline the recaptures below hold is a committed one.
         resolve_turn_with_auto_orders(&mut app);
 
-        let (_band, party, _working_before) = launch_a_hunting_party(&mut app, faction);
+        let (_band, party, _working_before) = launch_a_raiding_party(&mut app, faction);
         let party_entity = party.to_bits();
         let party_band_id = *app
             .world
@@ -16527,7 +16253,7 @@ mod tests {
     /// A playtest reported the party row's ✕ doing nothing on turn after turn, with the feed saying
     /// `Expedition 2 does not exist in the simulation` — `resolve_expedition_entity`'s `no_such_band`
     /// arm. The client echoes back the `band_id` off the party's snapshot row, so the claim under
-    /// test is a *round trip*: launch through `handle_send_hunt_expedition`, read the id off the
+    /// test is a *round trip*: launch through `handle_send_denial_raid`, read the id off the
     /// **encoded** frame, and recall with exactly that value.
     ///
     /// Asserted across the states the report implicates — the id is read again after a turn has
@@ -16541,7 +16267,7 @@ mod tests {
         app.world
             .insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
         let faction = FactionId(0);
-        let (_band, party, _working_before) = launch_a_hunting_party(&mut app, faction);
+        let (_band, party, _working_before) = launch_a_raiding_party(&mut app, faction);
 
         let at_launch = published_party_band_id(&mut app);
         assert_ne!(
@@ -18334,36 +18060,37 @@ mod tests {
         assert_eq!(herd_pen_state(&app, &id), (0, false), "no ring started");
     }
 
-    /// **An improvement verb never reaches an expedition.** Preparing ground, gentling a herd or
-    /// building a pen is place-bound work a *resident* band does — a detached party cannot pen a herd
-    /// and walk home — so `send_hunt_expedition` refuses all four at launch, alongside any other
-    /// unparseable token. No party may be spawned, and the failure must name the four stances that
-    /// ARE valid.
+    /// **A kit the roster does not carry, or one the verb's job is not on, REFUSES the launch** —
+    /// with a reason, and with no party spawned.
     ///
-    /// **The guarantee is structural, and this is its behavioural echo**: a raid's orders are a
-    /// **floor**, so a build verb cannot be typed there at all — nor can any other word, since the
-    /// launch token is parsed as a number (`sim_runtime`'s `parse_f32`, which also carries the
-    /// retired-stance guard). The two hand-written verb lists this replaces had both rotted (the gate
-    /// silently accepted `tame`), which is what makes the sweep worth keeping.
+    /// The alternative — quietly sending the job's default — is the defect this whole arc exists to
+    /// prevent, and it is worse than a typo: naming a kit is how the player *compares* tiers, so a
+    /// silent substitution answers a different question than the one asked and looks exactly like an
+    /// answer.
     #[test]
-    fn send_hunt_expedition_rejects_a_floor_outside_the_dial() {
-        for bad in [-0.5_f32, 1.5, f32::NAN] {
+    fn a_raiding_verb_refuses_an_unknown_or_wrong_job_kit_rather_than_defaulting() {
+        for bad_kit in ["spear_of_destiny", "gathering"] {
             let mut app = build_test_app();
             let faction = FactionId(0);
             let herd_id = seed_herd(&mut app, UVec2::new(1, 1), Some(faction));
-
-            handle_send_hunt_expedition(&mut app, faction, None, 1, herd_id, Some(bad), None);
+            handle_send_denial_raid(
+                &mut app,
+                faction,
+                None,
+                1,
+                herd_id,
+                Some(bad_kit.to_string()),
+            );
 
             let rejected = app.world.resource::<CommandEventLog>().iter().any(|entry| {
                 matches!(entry.kind, CommandEventKind::ExpeditionSent)
-                    && entry
-                        .detail
-                        .as_deref()
-                        .is_some_and(|detail| detail.contains("floor must be"))
+                    && entry.detail.as_deref().is_some_and(|detail| {
+                        detail.contains("unknown kit") || detail.contains("cannot be sent on")
+                    })
             });
             assert!(
                 rejected,
-                "a floor of {bad} is not on the dial — the launch must be refused with a reason"
+                "a raid with kit '{bad_kit}' must be refused with a reason naming the problem"
             );
             let parties = app
                 .world
@@ -18372,67 +18099,7 @@ mod tests {
                 .peekable()
                 .peek()
                 .is_some();
-            assert!(!parties, "floor {bad}: no expedition may be spawned");
-        }
-    }
-
-    /// **A kit the roster does not carry, or one the verb's job is not on, REFUSES the launch** —
-    /// with a reason, and with no party spawned.
-    ///
-    /// The alternative — quietly sending the job's default — is the defect this whole arc exists to
-    /// prevent, and it is worse than a typo: naming a kit is how the player *compares* tiers, so a
-    /// silent substitution answers a different question than the one asked and looks exactly like an
-    /// answer. Swept over both raiding verbs, because the outfit half is shared and the refusal is
-    /// not.
-    #[test]
-    fn a_raiding_verb_refuses_an_unknown_or_wrong_job_kit_rather_than_defaulting() {
-        for bad_kit in ["spear_of_destiny", "gathering"] {
-            for verb in [RaidVerb::Hunt, RaidVerb::Deny] {
-                let mut app = build_test_app();
-                let faction = FactionId(0);
-                let herd_id = seed_herd(&mut app, UVec2::new(1, 1), Some(faction));
-                match verb {
-                    RaidVerb::Hunt => handle_send_hunt_expedition(
-                        &mut app,
-                        faction,
-                        None,
-                        1,
-                        herd_id,
-                        None,
-                        Some(bad_kit.to_string()),
-                    ),
-                    RaidVerb::Deny => handle_send_denial_raid(
-                        &mut app,
-                        faction,
-                        None,
-                        1,
-                        herd_id,
-                        Some(bad_kit.to_string()),
-                    ),
-                }
-
-                let rejected = app.world.resource::<CommandEventLog>().iter().any(|entry| {
-                    matches!(entry.kind, CommandEventKind::ExpeditionSent)
-                        && entry.detail.as_deref().is_some_and(|detail| {
-                            detail.contains("unknown kit") || detail.contains("cannot be sent on")
-                        })
-                });
-                assert!(
-                    rejected,
-                    "{verb:?} with kit '{bad_kit}' must be refused with a reason naming the problem"
-                );
-                let parties = app
-                    .world
-                    .query::<&Expedition>()
-                    .iter(&app.world)
-                    .peekable()
-                    .peek()
-                    .is_some();
-                assert!(
-                    !parties,
-                    "{verb:?} with kit '{bad_kit}': no party may leave"
-                );
-            }
+            assert!(!parties, "kit '{bad_kit}': no party may leave");
         }
     }
 
@@ -18675,16 +18342,13 @@ mod tests {
     /// estimate tables now stop being able to answer for a party at the first gap between rungs
     /// rather than at a flat ceiling.
     ///
-    /// Three assertions, and the pairing is what makes them mean something:
-    /// 1. a denial raid the tables cannot quote **launches**, with the party it asked for;
-    /// 2. so does a **hunt** — pinned deliberately, because a hunt's party sizing IS changed by this
-    ///    split and *"unchanged unless deliberate"* has to be recorded either way;
-    /// 3. a party past the **band** is still refused, on both verbs, so the bound moved rather than
-    ///    vanished.
+    /// Two assertions, and the pairing is what makes them mean something:
+    /// 1. a denial raid of the whole band **launches**, with the party it asked for;
+    /// 2. a party past the **band** is still refused, so the bound moved rather than vanished.
     #[test]
     fn a_raiding_party_is_bounded_by_the_band_and_not_by_the_sampling_lever() {
-        // 1 + 2. Both raiding verbs launch whatever party the band can field.
-        for verb in [RaidVerb::Deny, RaidVerb::Hunt] {
+        // 1. A raid launches whatever party the band can field.
+        {
             let mut app = build_test_app();
             // Startup, so the world carries the tile registry every launch path resolves against.
             app.update();
@@ -18705,11 +18369,11 @@ mod tests {
             let unquoted_party = pool;
             assert!(
                 unquoted_party > 1,
-                "{verb:?}: the fixture only means something while the band can spare a real party \
+                "the fixture only means something while the band can spare a real party \
                  ({pool} workers)"
             );
 
-            verb.launch(&mut app, faction, unquoted_party, herd_id);
+            launch_fixture_raid(&mut app, faction, unquoted_party, herd_id);
             let launched: Vec<u32> = app
                 .world
                 .query::<(&Expedition, &PopulationCohort)>()
@@ -18719,13 +18383,13 @@ mod tests {
             assert_eq!(
                 launched,
                 vec![unquoted_party],
-                "{verb:?}: a party of {unquoted_party} must launch from a band of {pool} — the \
-                 band's own workers are the only rule about what may be sent"
+                "a party of {unquoted_party} must launch from a band of {pool} — the band's own \
+                 workers are the only rule about what may be sent"
             );
         }
 
-        // 3. The bound MOVED, it did not vanish: a party past the band is still refused, both verbs.
-        for verb in [RaidVerb::Deny, RaidVerb::Hunt] {
+        // 2. The bound MOVED, it did not vanish: a party past the band is still refused.
+        {
             let mut app = build_test_app();
             app.update();
             let faction = FactionId(0);
@@ -18737,57 +18401,34 @@ mod tests {
                     .expect("the fixture band exists")
                     .working,
             );
-            verb.launch(&mut app, faction, pool + 1, herd_id);
+            launch_fixture_raid(&mut app, faction, pool + 1, herd_id);
             assert!(
                 expedition_failure_detail_contains(&app, "workers invalid"),
-                "{verb:?}: a party larger than the band itself must still be refused"
+                "a party larger than the band itself must still be refused"
             );
             assert_eq!(
                 app.world.query::<&Expedition>().iter(&app.world).count(),
                 0,
-                "{verb:?}: …and no party may be spawned"
+                "…and no party may be spawned"
             );
         }
     }
 
-    /// The two raiding verbs, so the party-bound fixture states its claim about **both** rather than
-    /// about whichever one it happened to call.
-    #[derive(Debug, Clone, Copy)]
-    enum RaidVerb {
-        Deny,
-        Hunt,
-    }
-
-    impl RaidVerb {
-        fn launch(
-            self,
-            app: &mut bevy::prelude::App,
-            faction: FactionId,
-            party_workers: u32,
-            fauna_id: String,
-        ) {
-            match self {
-                RaidVerb::Deny => {
-                    handle_send_denial_raid(
-                        app,
-                        faction,
-                        Some(FIXTURE_BAND_ID),
-                        party_workers,
-                        fauna_id,
-                        None,
-                    );
-                }
-                RaidVerb::Hunt => handle_send_hunt_expedition(
-                    app,
-                    faction,
-                    Some(FIXTURE_BAND_ID),
-                    party_workers,
-                    fauna_id,
-                    None,
-                    None,
-                ),
-            }
-        }
+    /// Launch a denial raid off the party-bound fixture's own band.
+    fn launch_fixture_raid(
+        app: &mut bevy::prelude::App,
+        faction: FactionId,
+        party_workers: u32,
+        fauna_id: String,
+    ) {
+        handle_send_denial_raid(
+            app,
+            faction,
+            Some(FIXTURE_BAND_ID),
+            party_workers,
+            fauna_id,
+            None,
+        );
     }
 
     /// The [`BandId`] the party-size fixture addresses its band by. A launch command names a band by
@@ -19852,11 +19493,10 @@ mod tests {
     /// **A raid with no `kit` token launches on the kit the WIRE published for that herd** — the
     /// expedition twin of the assign-labor agreement above, and the same defect class.
     ///
-    /// The client's launch sheet reads `HerdTelemetryState.defaultKitId` and quotes both estimate
-    /// tables (`huntTripEstimatesKitId` / `denialEstimatesKitId`, which are that same id by
-    /// construction). While `resolve_raid_kit` resolved `default_kits.hunt`, the sheet said Trapping
-    /// and the party went out Stalking, so the forecast the player committed from was **not** the
-    /// one they got.
+    /// The client's launch sheet reads `HerdTelemetryState.defaultKitId` and asks its forecast at
+    /// that kit. While `resolve_raid_kit` resolved `default_kits.hunt`, the sheet said Trapping and
+    /// the party went out Stalking, so the forecast the player committed from was **not** the one
+    /// they got.
     ///
     /// The `assert_ne!` is what makes the equality a real agreement: on a quarry whose default IS
     /// the job default, a verb that ignored the herd entirely would still pass the first assertion.
@@ -19870,13 +19510,12 @@ mod tests {
         let published = published_default_kit_for(&mut app, &id);
 
         // **No `kit` token** — the absent-token path, which is the one under test.
-        handle_send_hunt_expedition(
+        handle_send_denial_raid(
             &mut app,
             faction,
             None,
             PARTY_ON_A_DEFAULT_KIT_RAID,
             id.clone(),
-            None,
             None,
         );
 
@@ -20437,34 +20076,26 @@ mod tests {
         );
     }
 
-    /// **How long a launch sheet says a party of [`SHORTFALL_ROW_CREW`] needs to fill its pack** on
-    /// the queried herd — the `resolve_ask` path, the third reader of the crew cut and the one a
-    /// player commits an expedition from.
-    ///
-    /// **`turns_to_fill` rather than the payload**, because the shipped trip is `pack_full`-bound:
-    /// a half-armed party comes home with the same load, having taken longer to gather it, so the
-    /// delivered figure separates the arms by nothing but float noise while the fill time separates
-    /// them in whole turns.
-    fn trip_turns_to_fill(competing_row: bool, outfits: u32) -> u32 {
+    /// **What a launch sheet says a raid of [`SHORTFALL_ROW_CREW`] does to the queried herd** — the
+    /// `resolve_ask` path, the third reader of the crew cut and the one a player commits a raid from.
+    fn raid_reading(competing_row: bool, outfits: u32) -> sim_runtime::commands::DenialRow {
         let (mut app, _band) = shortfall_world(competing_row, outfits);
         let reply = core_sim::forecast_query::answer_forecast_query(
             &mut app.world,
-            &QueryPayload::HuntTripForecast(sim_runtime::commands::HuntTripForecastQuery {
+            &QueryPayload::DenialRaidForecast(sim_runtime::commands::DenialRaidForecastQuery {
                 faction_id: 0,
                 band_id: FIXTURE_BAND_ID,
                 herd_id: QUERIED_QUARRY_ID.to_string(),
                 kit_id: SHARED_HUNT_KIT.to_string(),
                 party_workers: SHORTFALL_ROW_CREW,
-                floor: SUSTAIN_FLOOR,
-                // The composed row is the whole subject; a preset ladder and a plateau scan would
-                // be a second reading of the same coverage.
-                preset_floors: Vec::new(),
+                // The composed row is the whole subject; the seeded-party search would be a second
+                // reading of the same coverage.
                 max_party_workers: 0,
             }),
         );
         match reply {
-            QueryReply::HuntTripForecast(reply) => reply.at_composed.turns_to_fill,
-            other => panic!("the trip ask must be answered with a forecast: {other:?}"),
+            QueryReply::DenialRaidForecast(reply) => reply.at_composed,
+            other => panic!("the raid ask must be answered with a forecast: {other:?}"),
         }
     }
 
@@ -20473,24 +20104,27 @@ mod tests {
     /// `forecast_query::resolve_ask` prices a party nobody has committed yet, so the row already
     /// standing on the asked-about herd is **excluded** and the asked-for party takes its place in
     /// the denominator — a party of `w` competes with the band's other rows exactly as a committed
-    /// crew of `w` does. The claim is the one the fixture above makes, on the surface an expedition
-    /// is launched from: a party rationed against a competing row reads what a band owning only
-    /// that share reads.
+    /// crew of `w` does. The claim is the one the fixture above makes, on the surface a raid is
+    /// launched from: a party rationed against a competing row reads what a band owning only that
+    /// share reads.
     #[test]
-    fn a_trip_forecast_is_priced_at_the_asking_partys_share_of_the_gear() {
-        let shared = trip_turns_to_fill(ONE_COMPETING_ROW, OUTFITS_FOR_HALF_THE_BAND);
-        let owns_only_its_share = trip_turns_to_fill(NO_COMPETING_ROW, ONE_ROWS_SHARE_OF_HALF);
-        let stocked = trip_turns_to_fill(ONE_COMPETING_ROW, OUTFITS_FOR_THE_WHOLE_BAND);
-        let stocked_alone = trip_turns_to_fill(NO_COMPETING_ROW, OUTFITS_FOR_THE_WHOLE_BAND);
+    fn a_raid_forecast_is_priced_at_the_asking_partys_share_of_the_gear() {
+        let shared = raid_reading(ONE_COMPETING_ROW, OUTFITS_FOR_HALF_THE_BAND);
+        let owns_only_its_share = raid_reading(NO_COMPETING_ROW, ONE_ROWS_SHARE_OF_HALF);
+        let stocked = raid_reading(ONE_COMPETING_ROW, OUTFITS_FOR_THE_WHOLE_BAND);
+        let stocked_alone = raid_reading(NO_COMPETING_ROW, OUTFITS_FOR_THE_WHOLE_BAND);
 
         assert_eq!(
             shared, owns_only_its_share,
             "a party quoted against a competing row reads what a band owning only its share reads"
         );
+        // **Kills, not the haul**: a raid's pack binds its haul hard, so the delivered figure
+        // separates the arms by nothing, while the kills a half-armed party lands separate them
+        // plainly.
         assert!(
-            shared > stocked,
-            "liveness: a short band's sheet must promise a LONGER trip than a fully outfitted \
-             one ({shared} turns against {stocked})"
+            shared.animals_killed < stocked.animals_killed,
+            "liveness: a short band's sheet must promise FEWER kills than a fully outfitted one \
+             ({shared:?} against {stocked:?})"
         );
         assert_eq!(
             stocked, stocked_alone,
@@ -20718,29 +20352,27 @@ mod tests {
 
     // --- the query channel ------------------------------------------------------------------
 
-    /// A hunt query, framed as the client sends it. The values are irrelevant to the transport —
+    /// A raid query, framed as the client sends it. The values are irrelevant to the transport —
     /// what is exercised is the framing and the correlation.
     fn a_query_envelope(request_id: u64) -> ProtoCommandEnvelope {
         ProtoCommandEnvelope {
             payload: ProtoCommandPayload::Query {
                 request_id,
-                query: a_hunt_query(),
+                query: a_raid_query(),
             },
             correlation_id: None,
         }
     }
 
     /// The one query shape these transport tests send. Its values never reach a world.
-    fn a_hunt_query() -> QueryPayload {
-        QueryPayload::HuntTripForecast(sim_runtime::commands::HuntTripForecastQuery {
+    fn a_raid_query() -> QueryPayload {
+        QueryPayload::DenialRaidForecast(sim_runtime::commands::DenialRaidForecastQuery {
             faction_id: 0,
             band_id: 1,
             herd_id: "game_transport".to_string(),
             kit_id: "big_game".to_string(),
             party_workers: 3,
-            floor: 0.25,
-            preset_floors: vec![0.0, 0.5],
-            // A plateau scan the transport tests never read; the reply is injected, not computed.
+            // A party search the transport tests never read; the reply is injected, not computed.
             max_party_workers: 0,
         })
     }
@@ -20818,7 +20450,7 @@ mod tests {
         );
         assert_eq!(request_id, REQUEST_ID);
         assert!(
-            matches!(query, QueryPayload::HuntTripForecast(_)),
+            matches!(query, QueryPayload::DenialRaidForecast(_)),
             "the oneof survives the wire"
         );
 
@@ -20923,7 +20555,7 @@ mod tests {
     #[test]
     fn an_idle_server_refuses_a_query_without_touching_the_world() {
         let mut world = bevy::prelude::World::new();
-        let reply = answer_query(false, &mut world, &a_hunt_query());
+        let reply = answer_query(false, &mut world, &a_raid_query());
         assert_eq!(
             reply,
             QueryReply::Error(query_error::NO_ACTIVE_WORLD.to_string())
@@ -20941,7 +20573,7 @@ mod tests {
         let (reply, _reply_rx) = unbounded::<QueryReplyEnvelope>();
         let query = Command::Query {
             request_id: 1,
-            query: a_hunt_query(),
+            query: a_raid_query(),
             reply,
         };
 
@@ -25518,26 +25150,13 @@ mod tests {
         );
     }
 
-    /// The three questions that name a faction, built for `faction` — one shape each, so the gate is
+    /// The questions that name a faction, built for `faction` — one shape each, so the gate is
     /// asserted over the whole faction-bearing surface rather than over the one query that happened
     /// to be handy. The values never reach a world: the gate decides before anything is computed.
     fn faction_bearing_queries(faction: FactionId) -> Vec<(&'static str, QueryPayload)> {
         let herd_id = "game_seat_gate".to_string();
         let kit_id = "big_game".to_string();
         vec![
-            (
-                "hunt_trip_forecast",
-                QueryPayload::HuntTripForecast(sim_runtime::commands::HuntTripForecastQuery {
-                    faction_id: faction.0,
-                    band_id: 1,
-                    herd_id: herd_id.clone(),
-                    kit_id: kit_id.clone(),
-                    party_workers: 3,
-                    floor: 0.25,
-                    preset_floors: vec![0.0, 0.5],
-                    max_party_workers: 0,
-                }),
-            ),
             (
                 "denial_raid_forecast",
                 QueryPayload::DenialRaidForecast(sim_runtime::commands::DenialRaidForecastQuery {

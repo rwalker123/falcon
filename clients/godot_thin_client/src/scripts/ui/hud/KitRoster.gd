@@ -568,7 +568,7 @@ static func default_kit_for(job: String, source: Dictionary, job_default_id: Str
 ## verb may be sent on **and one this quarry can be worked with**, otherwise this QUARRY'S default
 ## (`default_kit_for` — the herd's own, else the job's), otherwise the first kit the job lists. The
 ## fall-through is what lets one composed id survive a world rebuild, a roster edit, and a sheet
-## switching between the hunt and denial missions (which share the `hunt` job) without ever naming a
+## switching between a herd's hunt sheet and the Deny sheet (which share the `hunt` job) without ever naming a
 ## kit the command would refuse.
 ##
 ## **THE COMPOSED CHOICE STILL OUTRANKS THE DEFAULT, and that is why the composed id is dropped on a

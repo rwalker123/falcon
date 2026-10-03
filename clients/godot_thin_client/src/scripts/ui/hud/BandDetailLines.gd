@@ -185,7 +185,7 @@ const BAND_MORALE_GROWTH_CLAUSE_FORMAT := BAND_MORALE_GROWTH_CLAUSE_SEPARATOR + 
 # sheet still read every one of them, and `DisclosureController.kit_breakdown_lines` still composes
 # the popover the crafting surface opens.
 
-# ---- The hunt party's carry-ceiling FULL badge (shown when carried ≥ cap; the party heads home full).
+# ---- A raiding party's carry-ceiling FULL badge (shown when carried ≥ cap).
 const HUNT_FULL_BADGE := "· FULL"
 
 # ---- THE PACK'S MATERIALS — a CLAUSE on the `Carried:` row, and never a row of its own -----------
@@ -254,7 +254,7 @@ const MORALE_CONTRIB_LABEL_SETTLING := "settling"
 const MORALE_CONTRIB_LABEL_CULTURE := "culture"
 
 # --- Collaborators handed in by HudLayer (the SAME instances it holds) ---
-# The snapshot herd list, for a hunt party's migrating target.
+# The snapshot herd list, for a raiding party's migrating target.
 var _band_labor: HudBandLaborState = null
 # The Food/Morale caret + popover cluster. `unit_summary_lines` clears its rows, registers the two
 # disclosures as it emits them, and reads the caret state back onto the render context.
@@ -502,13 +502,13 @@ func _party_pack_clause(unit_data: Dictionary) -> String:
         return ""
     return PARTY_PACK_CLAUSE_PREFIX + PARTY_PACK_CLAUSE_PREFIX.join(terms)
 
-## mission, humanized phase, party size, and carried food (from stores/turnsOfFood). A hunt
-## expedition (§2b) also lists the target herd it follows. Expeditions have no labor in v1, so
+## mission, humanized phase, party size, and carried food (from stores/turnsOfFood). A denial
+## raid also lists the target herd it follows. Expeditions have no labor in v1, so
 ## this replaces the band's labor/morale rows entirely.
 ## Like the band + herd drawers, it carries NO identity row: an expedition rides the same
 ## roster path as a band, so its roster row (`_build_band_row`) already shows the very
 ## `id` the old `Unit:` line printed — nothing is lost with it (unlike the herd's fauna id, which
-## had to move INTO the row). `Policy` / `Phase` deliberately keep their WORDS here: the compact
+## had to move INTO the row). `Phase` deliberately keeps their WORDS here: the compact
 ## Active-expeditions row is where the glyph vocabulary belongs; this block IS the disclosure.
 ##
 ## **`denial_view` IS THE HOST'S ANSWER TO A QUERY, NOT A LOOKUP THIS PRODUCER MAKES.** The `Collapse:`
@@ -525,33 +525,26 @@ func expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context =
     var context := ctx if ctx != null else DetailFormat.Context.new()
     var lines: Array[String] = []
     var mission := String(unit_data.get("expedition_mission", ""))
-    var is_hunt := mission == HudExpeditionVocab.EXPEDITION_MISSION_HUNT
-    # **A DENIAL RAID IS A RAID FOR THE ROWS IT SHARES AND NOT FOR ONE OF THE ORDERS**
-    # (`docs/plan_denial_raid.md`). It has a target herd, a party and a pack, so `is_raid` gates the
-    # Target and Carried rows; it has NO floor, NO fill target and NO delivery ETA — those read `0.0`
-    # / `0` / absent because the mission has no such lever — so they stay gated on `is_hunt` alone,
-    # and what a denial party shows in their place is its COLLAPSE VERDICT.
-    var is_deny := mission == HudExpeditionVocab.EXPEDITION_MISSION_DENY
-    var is_raid := is_hunt or is_deny
-    # The party's OWN target, resolved once: the `Target:` row's live position, the delivery line's
-    # lost-vs-lean disambiguation and the denial verdict's own lookup are the same herd, so they must
-    # not be looked up twice.
+    # **A DENIAL RAID** (`docs/plan_denial_raid.md`) has a target herd, a party and a pack, so it gets
+    # the Target and Carried rows; it has NO floor and NO delivery ETA, and what it shows instead is
+    # its COLLAPSE VERDICT.
+    var is_raid := mission == HudExpeditionVocab.EXPEDITION_MISSION_DENY
+    # The party's OWN target, resolved once: the `Target:` row's live position and the denial verdict's
+    # own lookup are the same herd, so they must not be looked up twice.
     var target_herd: Dictionary = _band_labor.expedition_target_herd(unit_data) if is_raid else {}
     lines.append("Mission: %s" % DetailFormat.expedition_mission_label(mission))
     # **A SHIPMENT'S ROWS ARE ITS OWN, AND IT BORROWS NONE OF THE RAID'S** (arc #527). It has no
-    # quarry, no floor, no delivery ETA and no trip bound — the mission carries no such levers — so
-    # the raid branches below stay closed to it and it answers the two questions a shipment raises:
+    # quarry — the mission carries no such lever — so the raid branches below stay closed to it and it answers the two questions a shipment raises:
     # who it is for, and what is in the packs. Returned early rather than woven in, because the
     # Provisions row beneath the raid branches would restate a pack this party states properly.
     if mission == HudExpeditionVocab.EXPEDITION_MISSION_TRADE:
         return _shipment_summary_lines(unit_data, context, lines)
     if is_raid:
         # The migratory herd it follows (species label from the fauna_id, falling back to the id).
-        # A hunt party's target MIGRATES and is often NOT the herd on the tile the player is looking
-        # at, so when the target is still in the telemetry with a live position we append it — the
-        # player can then tell "my party is bound to a boar at (68, 30)" from a healthy boar nearby.
-        # When the target is absent (lost/replaced), the delivery line already says so, so we leave
-        # the row as just the species/id.
+        # A raid's target MIGRATES and is often NOT the herd on the tile the player is looking at, so
+        # when the target is still in the telemetry with a live position we append it — the player can
+        # then tell "my party is bound to a boar at (68, 30)" from a healthy boar nearby. When the
+        # target is absent (lost/replaced), the row stays just the species/id.
         var herd_id := String(unit_data.get("expedition_target_herd", "")).strip_edges()
         if herd_id != "":
             var target_line := "Target: %s" % _herd_label_for_id(herd_id)
@@ -561,22 +554,12 @@ func expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context =
                 if tx >= 0 and ty >= 0:
                     target_line += " (%d, %d)" % [tx, ty]
             lines.append(target_line)
-    if is_hunt:
-        # The party's ORDERS row — where the raid stops as a fraction of the herd's capacity. Always
-        # on the wire for a hunt party, and every value is meaningful (including `0`), so the row is
-        # stated unconditionally rather than gated on being non-empty as the retired policy string was.
-        # **It stays ONE row whatever it carries, because this producer's output lands in the parties
-        # zone's height-capped, clipping inspector strip** — see `DetailFormat.expedition_orders_line`.
-        # **A DENIAL PARTY IS NOT IN THIS BRANCH**: its `expeditionFloor` reads `0.0` because it HAS no
-        # such orders, so rendering the row would put a lever on screen that the mission does not carry
-        # and the command grammar cannot express.
-        lines.append(DetailFormat.expedition_orders_line(unit_data, mission))
     var phase := String(unit_data.get("expedition_phase", "")).strip_edges()
     if phase != "":
         lines.append("Phase: %s" % HudFormat.expedition_phase_label(phase))
     # NO `Party` row: it printed `unit_data["size"]` — the exact field the roster row already shows as
     # its size meta (`Hunters 1 … 5`), so it was the band `Size` restatement under another name.
-    # Food it carries — larder-drawn provisions for a scout, the hunted haul for a hunt party —
+    # Food it carries — larder-drawn provisions for a scout, the raided haul for a denial party —
     # turns from turnsOfFood. Reuse the food-turns tint context, read back by the formatter.
     var turns: float = float(unit_data.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
     context.food_turns = turns
@@ -602,30 +585,13 @@ func expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context =
             lines.append("Carried: %d / %d  (%s)%s%s" % [carried, cap, DetailFormat.food_turns_text(turns), pack, full_badge])
         else:
             lines.append("Carried: %d  (%s)%s" % [carried, DetailFormat.food_turns_text(turns), pack])
-        # **THE DENIAL PARTY'S OWN READOUT, IN PLACE OF A DELIVERY ETA.** The mission publishes none —
-        # its verdict is whether the herd goes past the point of no return — so the HOST asks the
-        # forecast query on this party's behalf and hands the answer in (see the parameter's note).
-        # Rendered before the hunt-only lines below so the two missions read in the same slot.
-        if is_deny:
-            var collapse_line := DetailFormat.expedition_collapse_line(
-                unit_data, target_herd, denial_view)
-            if collapse_line != "":
-                lines.append(collapse_line)
-        # Next-delivery forecast (the in-flight twin of the pre-launch hunt trip estimate): ALWAYS
-        # shown for a hunt party once the field is on the wire, because a projected 0 is a real,
-        # decision-relevant answer ("this herd has no surplus to raid") that a `> 0` guard used to
-        # hide. The gate is `has(...)`, not `> 0`: the native decoder always inserts the field now, so
-        # present-and-0 is a genuine no-surplus; an ABSENT key (older build) renders nothing rather
-        # than a false "none".
-        if is_hunt and unit_data.has("expedition_projected_delivery"):
-            lines.append(DetailFormat.expedition_next_delivery_line(unit_data, target_herd))
-        # **WHICH STOP ENDS THE TRIP** — the sim's own answer for THIS party's real orders, off the
-        # same in-flight forward simulation the ETA above comes from. A `""` bound (not raiding: a
-        # party already walking a load home, or a snapshot predating the field) renders no line, so
-        # the strip never states a stop for a party that is not hunting toward one.
-        var bound_line := DetailFormat.expedition_trip_bound_line(unit_data, mission)
-        if bound_line != "":
-            lines.append(bound_line)
+        # **THE DENIAL PARTY'S OWN READOUT.** Its verdict is whether the herd goes past the point of
+        # no return, so the HOST asks the forecast query on this party's behalf and hands the answer
+        # in (see the parameter's note).
+        var collapse_line := DetailFormat.expedition_collapse_line(
+            unit_data, target_herd, denial_view)
+        if collapse_line != "":
+            lines.append(collapse_line)
     if not is_raid:
         # **A SCOUT CARRIES THE CLAUSE TOO**, and it is not decoration: a scouting party that walks
         # over a kill banks its materials exactly as a raid does, and the mission it was sent on is no

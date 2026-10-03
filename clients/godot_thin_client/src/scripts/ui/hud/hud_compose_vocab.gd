@@ -38,13 +38,11 @@ const START_ORDER_PENDING_VERB := "Starting"
 # reaching verdict states a bare countdown and nothing about an aftermath (`VERDICT_REACHES_FORMAT`),
 # so this line is the whole of what says what arriving there costs.
 #
-# **EMPTYING AN ENTRY HERE SILENCES IT ON EVERY CONSUMER — five of them**: the compose readout's
-# aside, the expedition compose sheet, the work-row hint, the send-hunt banner and the expedition
-# tooltip. That is the intent for a line worth nothing anywhere, and it is a REGRESSION for a line
-# worth something somewhere — which is how the peak line was blanked once before, for a reason true of
-# one surface, and left a raid rendering three floor presets with nothing saying what they meant. The
-# expedition sheet is where such a blanking surfaces first: it has no chart, so its readout's aside is
-# the whole of what it says a floor MEANS.
+# **EMPTYING AN ENTRY HERE SILENCES IT ON EVERY CONSUMER**: the compose readout's aside (forage and
+# hunt sheets) and the work-row hint. That is the intent for a line worth nothing anywhere, and it is
+# a REGRESSION for a line worth something somewhere — which is how the peak line was blanked once
+# before, for a reason true of one surface, and left a sheet rendering three floor presets with
+# nothing saying what they meant.
 const FLOOR_ZONE_HINTS := {
     "strip": "Take everything — the crew leaves nothing standing. %s",
     "drawdown": "Below the food peak — more food now, taken out of what this source will grow back. It declines while you hold this.",
@@ -65,12 +63,6 @@ const FLOOR_STRIP_CONSEQUENCE := {
     "hunt": "It is the last hunt: the herd is gone for good, for you and for everyone else.",
     "extract": "The seam is cut to nothing and has to grow back from a seed.",
 }
-
-# The one thing a detached party changes about the rule above: an expedition's Hunting arm banks BOTH
-# products (#337) but accrues NO HUSBANDRY — a known v1 gap, tracked server-side — so the LEARNING
-# zone's promise is false for a raid and is replaced rather than appended. Every other zone reads the
-# same for a party as for a resident band, which is the point of having one rule.
-const FLOOR_LEARNING_HINT_EXPEDITION := "Above the food peak — the party takes less and leaves more standing. A detached party learns no craft, so the calories buy nothing but the herd's health."
 
 # THE THREE INTENT PRESETS' LABELS — the picker's three buttons, keyed by
 # `SourceForecast.FLOOR_PRESET_*`. **Naming is not settled** (`docs/plan_harvest_floor.md` §10 Q2);
@@ -389,10 +381,6 @@ const POLICY_PAYOFF_COMPACT := "→ %s"
 
 const POLICY_PAYOFF_FULL_FORMAT := "builds toward %s/turn"
 
-# The EXPEDITION picker wears the SAME "up to X/turn" cap metric as the local hunt + forage pickers
-# (`POLICY_CAP_FORMAT` via `SourceForecast.extractive_take`): each policy's MAX obtainable food/turn, computed in
-# `SourceForecast.expedition_policy_takes` as the max over party sizes of delivered_food / trip_turns. No bespoke
-# raid-animals face any more — the three pickers read identically.
 # ---- THE IMPROVEMENT CONTROL (issue #442) -----------------------------------------------------
 #
 # The second axis's whole vocabulary. `INVESTMENT_POLICIES` used to live here — the named set every
@@ -798,9 +786,7 @@ const SEND_EXPEDITION_HINT := "Detach a party to scout toward the tile you click
 const SEND_EXPEDITION_BUTTON := "Send scouting party"
 
 # ⛔ **EVERY HERD IS AN ORDINARY HUNT, WHATEVER THE DISTANCE** (`docs/plan_civilization_steps.md`
-# §One work party). The herd sheet offered a LOCAL hunt within the selected band's `hunt_reach` and a
-# hunting EXPEDITION beyond it, and that branch is what made the work party unreachable from the map.
-# One compose control and one command (`assign_labor`) for every herd; past the band's apron the sheet
+# §One work party). One compose control and one command (`assign_labor`) for every herd; past the band's apron the sheet
 # adds a WORK PARTY section (`WORK_PARTY_*` below) saying what distance costs.
 #
 # **THE COMMIT BUTTON IS A VERB, and it does not restate the sheet's own header.** The sheet is already
@@ -1006,13 +992,12 @@ const PARTY_RECALL_CONFIRM_OK := "Recall all"
 ## Single-party recall confirm — wraps each BUTTON handler (row ✕, inspector Recall, drawer Recall), NOT
 ## the shared emit `_on_recall_expedition_pressed` (which "Recall all" already loops under its OWN one
 ## confirm — confirming inside the emit would pop N prompts after a confirmed "Recall all").
-const PARTY_RECALL_ONE_CONFIRM_FORMAT := "Recall the %s party? It walks home carrying what it has."
+## `%s` is the party's mission label, lowercased (`HudExpeditionVocab.EXPEDITION_MISSION_LABELS`), so
+## every mission reads by its own name: "Recall this denial raid?", "Recall this trade party?".
+const PARTY_RECALL_ONE_CONFIRM_FORMAT := "Recall this %s? It walks home carrying what it has."
 
 const PARTY_RECALL_ONE_CONFIRM_OK := "Recall"
 
-## The %s a scout party fills into the recall prompt — a bare word, since "Recall the Scouting
-## expedition party?" (the full mission label) reads doubled; a hunt party fills its herd name.
-const PARTY_RECALL_SCOUT_LABEL := "scouting"
 
 ## ---- Form a new band — the fission verb (issue #511, `docs/plan_band_fission.md`)
 ##
@@ -1110,21 +1095,20 @@ const SPLIT_AGE_ELDERS_KEY := "elders"
 ## the T/B parties zone is height-capped at ~300px and CLIPS, so its detail lines are tightened well
 ## below HudWorkVocab.ZONE_BLOCK_SEPARATION to keep the strip + a party row inside the box.
 ##
-## **IT WAS 4, AND THE WORST CASE IS WHAT MOVED IT.** A hunt party carrying every optional line at once
+## **IT WAS 4, AND THE WORST CASE IS WHAT MOVED IT.** A party carrying every optional line at once
 ## — the one `band_panel_worst_case_party` stages — needs 9 gaps in that column, so each pixel here
 ## costs the zone nine: at 4 the strip alone measured 218px of a 300px box that also owes a 20px head,
 ## a 42px party row, the 42px footer the zone then carried and four 6px block gaps. Two pixels is the whole of what padding
 ## could pay (going lower closes the gap between two 14px lines to nothing); the rest came from merging
-## the two ORDERS lines into one — see `DetailFormat.expedition_orders_line`.
+## two of the strip's lines into one.
 const PARTIES_INSPECTOR_LINE_SEPARATION := 2
 
 ## The compose sheet's MISSION — which of the band verbs opened it. The sheet is always already on
 ## one: a verb names its mission, and the sheet opens on the band's own tile. The target is its last
 ## step — Send arms the map pick, unless Deny or Trade already has one pre-selected.
 ##
-## ⛔ **THERE IS NO HUNT MISSION.** It was the answer to game past `hunt_reach`; the work party is the
-## answer now, composed on the herd's own sheet as an ordinary hunt (`docs/plan_civilization_steps.md`
-## §One work party).
+## There is no hunt mission: game past the apron is an ordinary hunt whose crew posts a work party,
+## composed on the herd's own sheet (`docs/plan_civilization_steps.md` §One work party).
 const COMPOSE_MISSION_SCOUT := "scout"
 
 ## **THE DENIAL VERB** (`docs/plan_denial_raid.md` §3). Denial is a MISSION rather than a floor on an
@@ -1488,8 +1472,8 @@ const COMPOSE_FIELD_POLICY := "Policy"
 ##
 ## The quarry pick's miss note — a map click that named no huntable herd. Posted under the denial
 ## verb's own name (`TargetingController._pick_note_title`); `PREY_PICK_NOTE_TITLE` is the title for a
-## pick whose mission names no verb. ⛔ The within-`hunt_reach` refusal that stood here is retired with
-## the hunt mission: the one mission left that picks a herd (denial) has no reach rule to teach.
+## pick whose mission names no verb. The one mission that picks a herd (denial) has no reach rule to
+## teach.
 const PREY_PICK_NOTE_TITLE := "Pick prey"
 const PREY_PICK_MISS := "No huntable herd there — click on a herd."
 
@@ -1824,44 +1808,20 @@ const CANCEL_SCOPE_WORK := "work"
 
 const CANCEL_SCOPE_ROLES := "roles"
 
-# A resident BAND and a detached EXPEDITION are told apart by the sim, and the client reads a
-# DIFFERENT thing for each — never one for the other:
-#   the BAND's ceiling is COMPOSED (`SourceForecast.forecast_inputs`) from `biomass`,
-#       `carryingCapacity` and the herd's per-biomass yield vector: `max(0, B − floor·K) × rate`,
-#       which is linear and exact, so the client lands on the number the sim would at ANY floor.
-#       With the cohort's levers that makes the LOCAL hunt preview pure arithmetic.
-#   the EXPEDITION's trip is ASKED FOR (`ForecastQuery` → `HuntTripForecastReply.at_composed`:
-#       {floor, party_workers, turns_to_fill, delivers_food, …}), forward-simulated
-#       server-side for the exact band, kit, party and floor the sheet composed. A trip length is NOT
-#       a rate division: above the peak the ceiling is a *stock*, so the party strips the headroom in
-#       a turn or two and then crawls at the herd's regrowth trickle. A re-derived `carryCap / rate`
-#       closed form is wrong, and wrong by a lot — on a FULL Rabbit Warren a LONE hunter fills in 23
-#       turns while a party of 4 never fills within the sim's horizon. So the client does ZERO
-#       arithmetic here — it asks, and reads the answer.
+# A resident band's hunt ceiling is COMPOSED (`SourceForecast.forecast_inputs`) from `biomass`,
+# `carryingCapacity` and the herd's per-biomass yield vector: `max(0, B − floor·K) × rate`, which is
+# linear and exact, so the client lands on the number the sim would at ANY floor. With the cohort's
+# levers that makes the LOCAL hunt preview pure arithmetic.
 # **THIS IS THE BOUNDARY OF THE CLIENT-COMPOSES-THE-CEILING EXCEPTION.** The ceiling is composable
-# because it is linear; a raid's trip has no closed form, and a hunt's TAKE is rounded to whole
-# animals (`floor(ceiling / bodyMass)`), which is not linear either. The client draws the curve; the
-# sim states the take.
-# (`delivers_food` says the QUARRY IS EDIBLE (#337) rather than marking a denial mission, so a raid at
-# the bare floor delivers like any other. Its `delivers_trade` sibling went with arc #527's axis, so a
-# DENIAL raid is now one whose quarry pays no food — a property of the SPECIES;
-# `SourceForecast.hunt_trip_forecast` owns that test, and its header records what an inedible quarry
-# consequently reads as.)
+# because it is linear; a hunt's TAKE is rounded to whole animals (`floor(ceiling / bodyMass)`), which
+# is not linear, and a raid has no closed form at all. The client draws the curve; the sim states the
+# take.
 #
-# **THE THREE PRESET FLOORS ARE MARKS ON A DIAL, NOT A SET OF OPTIONS.** The floor is continuous, the
-# launch command accepts ANY value in `0.0..=1.0`, and a question carries whatever the chart was
-# dragged to — the presets ride the ask as `preset_floors` purely so the three buttons get a face in
-# the same round trip. Treating one of them as an offered stance would undo the whole arc.
-#
-# The only thing the client computes for a raid is the display verdict:
-#     viable = turns <= expedition_viability_warn_turns   (the band's own exported lever)
-# Live per-turn yield preview for the LOCAL hunt branch. A resident hunt has no carry cap, so
-# turns-to-fill is meaningless there; the number that decides a standing assignment is the food/turn
-# it will produce — the sim's hunt take:
+# Live per-turn yield preview for the LOCAL hunt. A resident hunt has no carry cap, so turns-to-fill is
+# meaningless there; the number that decides a standing assignment is the food/turn it will produce —
+# the sim's hunt take:
 #     rate = min(workers × per_worker_yield × dip, ceiling(floor)) × output_multiplier
-# The band applies its morale/discontent productivity modifier (`output_multiplier`) at payout; a
-# detached expedition does not, which is why the two branches show different numbers from the same
-# exported fields. (pinned sim-side by core_sim/tests/expedition_hunt.rs.)
+# The band applies its morale/discontent productivity modifier (`output_multiplier`) at payout.
 const LOCAL_HUNT_YIELD_FORMAT := "≈ %s"
 
 # The clause the ⚠ carries on a hunt. **The compose preview and the confirmed allocation rows read
@@ -1985,9 +1945,9 @@ const HUNT_CADENCE_DECIMALS := 1
 ## sentence now, and a middot strip inside one reads as a fragment of the strip this stopped being.
 const HUNT_TAKE_BAND_FORMAT := " (%s – %s)"
 
-## **WHILE THE ANSWER IS IN FLIGHT** — the local hunt's twin of `RAID_FORECAST_PENDING`, and separate
-## for that constant's own reason: the two sheets are waiting on different questions, and a shared
-## "waiting…" would be the only word on either that did not name what it was waiting for. It stands in
+## **WHILE THE ANSWER IS IN FLIGHT** — the local hunt's twin of `DENIAL_FORECAST_PENDING`, and separate
+## from it for one reason: the two sheets are waiting on different questions, and a shared "waiting…"
+## would be the only word on either that did not name what it was waiting for. It stands in
 ## place of the readout's numbers; the chart, the crew targets and the combat gate above it are
 ## composed from wire terms and stay.
 const HUNT_TAKE_PENDING := "Costing what this crew brings down…"

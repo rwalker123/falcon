@@ -144,19 +144,6 @@ message ForageTileCommand {
   optional uint64 band_id = 5;
 }
 
-message HuntGameCommand {
-  uint32 faction_id = 1;
-  uint32 target_x = 2;
-  uint32 target_y = 3;
-  optional uint64 band_id = 4;
-}
-
-message HuntFaunaCommand {
-  uint32 faction_id = 1;
-  string herd_id = 2;
-  optional uint64 band_id = 3;
-}
-
 // The intensification ladder's animal rung-2 verb: set the Tame policy on the bands already hunting
 // this herd (needs Herding knowledge, earned by Sustain-hunting a Thriving herd, and a species whose
 // husbandry_ceiling allows domestication). Taming pays a reduced take while the herd is gentled,
@@ -473,40 +460,11 @@ message SplitBandCommand {
   uint32 workers = 3;
 }
 
-// Outfit and launch a hunting expedition: draw party_workers off the home band and send a detached
-// party to follow the herd fauna_id (lives off its kills — no provisions drawn).
-message SendHuntExpeditionCommand {
-  uint32 faction_id = 1;
-  optional uint64 band_id = 2;
-  uint32 party_workers = 3;
-  string fauna_id = 4;
-  // RETIRED by the harvest floor arc: a raid names a `floor`, not a stance. The field number is NOT
-  // reused and NOT renumbered — a shipped number is immutable — and the server ignores any value.
-  optional string policy = 5;
-  // WHERE THE RAID STOPS, as a fraction of the herd's carrying capacity. Absent = the sim's default
-  // (0.5, the food peak). Rejected with a command failure unless finite and within 0.0..=1.0 —
-  // never clamped. Appended (append-only).
-  optional float floor = 6;
-  // RETIRED with the player-set fill target (docs/plan_hunt_through_combat.md §5.2, marked retired
-  // in place). It named a count of whole animals to come home with, below the pack's capacity. Trip
-  // length is `carry / (engage_rate × stay_chance × body_mass)` — PARTY SIZE CANCELS — so it was the
-  // only lever on a species-and-kit constant, and the trips it existed to escape are a TUNING
-  // problem (issue #491), not a control problem. The field number is NOT reused and NOT renumbered —
-  // a shipped number is immutable — and the server ignores any value, exactly as `policy` above.
-  optional uint32 fill_target = 7;
-  // THE KIT the party is SENT OUT WITH — resolved ONCE at launch and carried for the party's whole
-  // life, never re-resolved against the band's later stock. Absent = the hunt job's default. An
-  // unknown id, or one whose `jobs` does not include `hunt`, is a command failure with a reason.
-  // Appended (append-only).
-  optional string kit_id = 8;
-}
-
 // Outfit and launch a DENIAL RAID: draw party_workers off the home band and send a detached party to
 // erase the herd fauna_id (docs/plan_denial_raid.md).
 //
 // IT CARRIES NO FLOOR, and that absence is the design. Its escapement ceiling is the herd's whole
-// standing stock, so there is no floor to name. You choose a herd and a party size — which is
-// precisely why it is a separate command rather than a value on send_hunt_expedition.
+// standing stock, so there is no floor to name. You choose a herd and a party size.
 //
 // It aims at a HERD, never at a player: there is deliberately no target-faction field (§2).
 message SendDenialRaidCommand {
@@ -514,10 +472,12 @@ message SendDenialRaidCommand {
   optional uint64 band_id = 2;
   uint32 party_workers = 3;
   string fauna_id = 4;
-  // THE KIT the raid is sent out with — same rule as SendHuntExpeditionCommand.kit_id. This is the
-  // one place the denial raid's grammar is NOT closed: a kit is a property of the party, not of the
-  // mission, so it is the one thing there is to say about a raid that carries no floor and no fill
-  // target. Appended (append-only).
+  // THE KIT the raid is SENT OUT WITH — resolved ONCE at launch and carried for the party's whole
+  // life, never re-resolved against the band's later stock. Absent = the hunt job's default. An
+  // unknown id, or one whose `jobs` does not include `hunt`, is a command failure with a reason.
+  // This is the one place the denial raid's grammar is NOT closed: a kit is a property of the party,
+  // not of the mission, so it is the one thing there is to say about a raid that carries no floor.
+  // Appended (append-only).
   optional string kit_id = 5;
 }
 
@@ -553,7 +513,7 @@ message SendTradeExpeditionCommand {
   // The destination's BandId — the durable id, never an entity.
   uint64 destination_band_id = 4;
   repeated TradeCargoItem cargo = 5;
-  // THE KIT the party is sent out with — same rule as SendHuntExpeditionCommand.kit_id.
+  // THE KIT the party is sent out with — same rule as SendDenialRaidCommand.kit_id.
   optional string kit_id = 6;
 }
 
@@ -1014,7 +974,6 @@ message QueryCommand {
   // Correlates the reply. The client owns the numbering; the server only echoes it.
   uint64 request_id = 1;
   oneof query {
-    HuntTripForecastQuery hunt_trip_forecast = 2;
     DenialRaidForecastQuery denial_raid_forecast = 3;
     HuntCrewTakeQuery hunt_crew_take = 4;
     // 4 is held by `hunt_crew_take`, so the slot listing takes 5 (append-only; never renumber).
@@ -1187,39 +1146,8 @@ message FactionCapacityReply {
   uint32 max_ai_faction_count = 2;
 }
 
-// "What does a raid of `party_workers` from `band_id`, carrying `kit_id`, take off `herd_id` if it
-// stops at `floor`?"
-message HuntTripForecastQuery {
-  uint32 faction_id = 1;
-  // The ASKING band — a durable `BandId`, never an ECS entity handle (same rule as every
-  // band-addressed command above). Its LIVE equipment wear is what prices the answer, which is the
-  // whole reason this is a query and not a table lookup.
-  uint64 band_id = 2;
-  string herd_id = 3;
-  // An `equipment.json` roster id, and REQUIRED. Unknown, or one whose `jobs` does not list `hunt`,
-  // is a `QueryError` — never a silent fall back to the job default, because a quietly re-armed
-  // party answers a different question than the one asked.
-  string kit_id = 4;
-  uint32 party_workers = 5;
-  // The composed floor, as a fraction of the herd's K.
-  float floor = 6;
-  // The sheet's floor presets, answered in the SAME round trip so a picker can label all three
-  // buttons without three sockets' worth of latency. Same party size as the composed row.
-  repeated float preset_floors = 7;
-  // **The largest party this band could actually field** - its idle workers, which the client
-  // already knows and the stepper already caps at. It bounds the `useful_cap` plateau scan below.
-  //
-  // The scan walks 1..=max CONTIGUOUSLY. It used to walk `expedition_config.estimate_party_sizes`,
-  // a sampled ladder that existed only to make a pre-computed table affordable - and a sampled scan
-  // finds a sampled plateau, so the answer was "the rung after which the payload stopped rising",
-  // not the party after which it stopped rising. A query answers one herd for one band, so it can
-  // afford to be exact.
-  //
-  // 0 means "do not scan": the reply's `useful_cap` comes back 0 and the client names no cap.
-  uint32 max_party_workers = 8;
-}
-
-// The denial twin. No floor and no fill target: the mission carries neither.
+// "What does a raid of `party_workers` from `band_id`, carrying `kit_id`, do to `herd_id`?" No
+// floor: the mission carries none.
 message DenialRaidForecastQuery {
   uint32 faction_id = 1;
   uint64 band_id = 2;
@@ -1240,13 +1168,13 @@ message DenialRaidForecastQuery {
 // "How many animals does a RESIDENT band of each crew size bring down off `herd_id` per turn, at
 // `floor`, carrying `kit_id`?"
 //
-// THE ASSIGN-HERDERS PANEL'S QUESTION, AND IT IS NOT THE TRIP SHEET'S. `HuntTripForecastQuery`
-// answers one party over a whole detached expedition and prices it at
-// `combat_config.expedition_danger_multiplier` (1.5x lethality as shipped) - a raid far from home is
-// bloodier. A resident band hunting its own range fights at the BASE tuning, so the two answers
-// differ by 50% in the fight term and neither reply may borrow the other's rows.
+// THE ASSIGN-HERDERS PANEL'S QUESTION, AND IT IS NOT THE RAID SHEET'S. `DenialRaidForecastQuery`
+// answers one detached party and prices it at `combat_config.expedition_danger_multiplier` (1.5x
+// lethality as shipped) - a raid far from home is bloodier. A resident band hunting its own range
+// fights at the BASE tuning, so the two answers differ by 50% in the fight term and neither reply may
+// borrow the other's rows.
 //
-// It is a query rather than a snapshot table for the same reason the trip sheet is: the answer
+// It is a query rather than a snapshot table for the same reason the raid sheet is: the answer
 // depends on this band's LIVE equipment wear and on the kit the player has selected, and a
 // per-(herd x cohort x crew) table is exactly what the query channel replaced.
 message HuntCrewTakeQuery {
@@ -1254,8 +1182,9 @@ message HuntCrewTakeQuery {
   // The ASKING band - a durable `BandId`, never an ECS entity handle. Its live wear prices the fight.
   uint64 band_id = 2;
   string herd_id = 3;
-  // An `equipment.json` roster id, and REQUIRED - the same rule `HuntTripForecastQuery.kit_id`
-  // follows. Unknown, or one whose `jobs` does not list `hunt`, is a `QueryError`.
+  // An `equipment.json` roster id, and REQUIRED. Unknown, or one whose `jobs` does not list `hunt`,
+  // is a `QueryError` — never a silent fall back to the job default, because a quietly re-armed
+  // party answers a different question than the one asked.
   string kit_id = 4;
   // The composed floor, as a fraction of the herd's K. It is a TERM IN THE ANSWER, not a filter:
   // the escapement room bounds what the party goes after BEFORE the retreat and the fight
@@ -1275,7 +1204,6 @@ message QueryReplyEnvelope {
   // Echoes the `QueryCommand.request_id` it answers.
   uint64 request_id = 1;
   oneof reply {
-    HuntTripForecastReply hunt_trip_forecast = 2;
     DenialRaidForecastReply denial_raid_forecast = 3;
     QueryError error = 4;
     HuntCrewTakeReply hunt_crew_take = 5;
@@ -1403,63 +1331,6 @@ message QueryError {
 message MaterialPayoff {
   string material_id = 1;
   float amount = 2;
-}
-
-message HuntTripRow {
-  float floor = 1;
-  uint32 party_workers = 2;
-  // Turns of hunting until the party comes home. `0` = never completed inside the forecast horizon —
-  // the same NEVER_FILLED sentinel the retired estimate tables published; `bound` says which kind of
-  // never.
-  uint32 turns_to_fill = 3;
-  // A `HuntTripBound` key: which stop ended the trip.
-  string bound = 4;
-  bool delivers_food = 5;
-  // RETIRED (arc #527) with the trade-goods yield axis. RESERVED, never freed: concurrent branches
-  // append here, and a shipped field number is immutable.
-  reserved 6;
-  // WHOLE animals killed, so uint32 — the same type the retired estimate tables published and the
-  // same type `DenialRow.animals_killed` carries. A float here would let a client render "2.0
-  // animals" and would type one quantity two ways inside a single reply.
-  uint32 animals_taken = 7;
-  float delivered_food = 8;
-  // RETIRED (arc #527) — see the note on 6. RESERVED, never freed. Its replacement is
-  // `delivered_material` below, which answers per material rather than flattening every one of them
-  // into a single number — which is the whole reason the scalar went.
-  reserved 9;
-  float wasted_food = 10;
-  // WHAT THE TRIP LANDS, PER MATERIAL — and on an INEDIBLE quarry (a wolf) the entire payload, since
-  // `delivered_food` is 0 there and nothing else on this row can state what comes home.
-  //
-  // Projected off the SAME carried biomass `delivered_food` is projected from, turn by turn through
-  // one accumulator, so the two readouts of one trip cannot disagree about it — and through the same
-  // expression the live arm's `credit_material_yield` is paid on, so the promise is checkable
-  // against what the home band ends up holding.
-  //
-  // EMPTY MEANS "NO ROW", NEVER "ZERO": most quarries are made of nothing anyone builds with, and a
-  // published 0 would read as a raid that pays badly rather than one that pays in meat alone.
-  repeated MaterialPayoff delivered_material = 11;
-}
-
-message HuntTripForecastReply {
-  // The answer at the exact floor the query named.
-  HuntTripRow at_composed = 1;
-  // One row per `preset_floors` entry, in the SAME order. Empty if none were asked for.
-  repeated HuntTripRow per_preset = 2;
-  // **The max-useful party plateau** — the LAST party at which the delivered payload was still
-  // rising with party size, scanned contiguously over `1..=max_party_workers` at the composed floor.
-  // It is the largest party still worth sending, so a stepper seeds ON it, not one worker above:
-  // `useful_cap + 1` is by construction the first party that adds nothing.
-  //
-  // `0` = **no usefulness cap to name** — the scan found no plateau because the payload never rose
-  // above zero, or was still rising at the band's last fieldable worker, or no scan was asked for
-  // (`max_party_workers = 0`).
-  //
-  // Server-side because the client can no longer find it: reading a plateau needs a row per party
-  // size, and the pre-computed table that used to carry that axis is what the query replaced. It is
-  // the SCAN only — the engagement-crew floor the client maxes into it is derivable from fields the
-  // herd row already carries, and stays there with the prose.
-  uint32 useful_cap = 3;
 }
 
 // One party size's denial-raid forecast — the answer to a `DenialRaidForecastQuery`.
@@ -1648,16 +1519,13 @@ message CommandEnvelope {
     ScoutAreaCommand scout_area = 22;
     FollowHerdCommand follow_herd = 23;
     ForageTileCommand forage_tile = 25;
-    HuntGameCommand hunt_game = 26;
     FoundSettlementCommand found_settlement = 27;
     ExportMapCommand export_map = 28;
-    HuntFaunaCommand hunt_fauna = 29;
     CancelOrderCommand cancel_order = 31;
     AssignLaborCommand assign_labor = 32;
     MoveBandCommand move_band = 33;
     SendExpeditionCommand send_expedition = 34;
     RecallExpeditionCommand recall_expedition = 35;
-    SendHuntExpeditionCommand send_hunt_expedition = 36;
     CultivateCommand cultivate = 37;
     CorralCommand corral = 38;
     ExtendPenCommand extend_pen = 39;

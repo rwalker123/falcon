@@ -157,7 +157,6 @@ static func floorify_ceilings(src: Dictionary, prefix: String) -> void:
 		else "forage_policy_ceilings"
 	var rows: Variant = src.get(prefix + legacy, null)
 	if not (rows is Dictionary):
-		floorify_estimates(src)
 		return
 	var peak_food := float((rows as Dictionary).get("sustain", 0.0))
 	var peak_fodder := legacy_peak(src, prefix, "forage_policy_fodder_ceilings")
@@ -190,54 +189,10 @@ static func floorify_ceilings(src: Dictionary, prefix: String) -> void:
 			"forage_policy_per_worker", "forage_policy_per_worker_trade",
 			"forage_policy_per_worker_fodder"]:
 		src.erase(prefix + key)
-	floorify_estimates(src)
 
 static func legacy_peak(src: Dictionary, prefix: String, key: String) -> float:
 	var rows: Variant = src.get(prefix + key, null)
 	return float((rows as Dictionary).get("sustain", 0.0)) if rows is Dictionary else 0.0
-
-## Re-key a legacy `"<stance>:<party>"` raid table onto `"<floor>:<party>"`, and put the two fields
-## the client SCANS on each row (`floor` / `party_workers`) — it no longer rebuilds the key, since the
-## real key renders the floor with Rust's float Display.
-##
-## **IT MUST BE IDEMPOTENT, AND IT WAS NOT.** A converted row's key is `"0.5:4"`, whose leading token
-## is not a stance, so a SECOND pass over the same dict skipped every row and left an EMPTY table
-## behind — and `floorify_ceilings` reaches here even on its early return, so any state that calls
-## `_show_herd(h)` and then `_compose_herd(h)` with the SAME dict silently lost its whole raid table.
-## Every expedition frame in the `_hunt_assign_forecast_states` block and the boar-raid set did exactly
-## that: `hunt_trip_forecast` answered `available: false`, the sheet rendered no forecast at all, and
-## the states went on passing because nothing asserted on a readout those frames no longer had. A row
-## already carrying the floor field is therefore kept verbatim rather than dropped.
-## The raid ROW's own floor field. It was `SourceForecast.HUNT_ESTIMATE_FLOOR_KEY` until the forecast
-## query retired the snapshot table those keys named; a row still carries `floor`, and this fixture
-## helper is the last thing in the client that builds one out of a legacy stance key.
-const RAID_ROW_FLOOR_KEY := "floor"
-
-static func floorify_estimates(src: Dictionary) -> Dictionary:
-	var estimates: Variant = src.get("hunt_trip_estimates", null)
-	if not (estimates is Dictionary):
-		return src
-	var rekeyed := {}
-	for key in (estimates as Dictionary):
-		var converted: Variant = (estimates as Dictionary)[key]
-		if converted is Dictionary \
-				and (converted as Dictionary).has(RAID_ROW_FLOOR_KEY):
-			rekeyed[key] = converted
-			continue
-		var parts := String(key).split(":")
-		if parts.size() != 2:
-			continue
-		var stance := String(parts[0])
-		if not BaseFx.LEGACY_STANCE_FLOORS.has(stance):
-			continue
-		var floor_value := float(BaseFx.LEGACY_STANCE_FLOORS[stance])
-		var party := int(parts[1])
-		var row: Dictionary = (estimates as Dictionary)[key].duplicate()
-		row["floor"] = floor_value
-		row["party_workers"] = party
-		rekeyed["%s:%d" % [str(floor_value), party]] = row
-	src["hunt_trip_estimates"] = rekeyed
-	return src
 
 ## Six narrative beats in the `mythic` register, transcribed VERBATIM from the authored copy in
 ## `core_sim/src/data/beat_definitions.json` with their nouns filled in as the sim would fill them.
