@@ -1414,17 +1414,20 @@ by value, conflicts per claim, free hands landing where they take more (the hone
 row-full reading), the pools releasing their spare hands, and *hold the ground* a standing bill
 sized by what a keeper supplies, keeping the harvesters, and defaulted on when paying it would
 starve the band. At t60, alive / hunger deaths / `patches_improved` by start kind: 54 (`stay`)
-52 / 0 / 2; 22 (`split_local`) 40 / 0 / 1; 59 (`split_local`) 50 / 0 / 1; 50 (`split_far`)
-44 / 0 / 2; 20 (`split_far`) 44 / 0 / 2; 18 (`short`) 44 / 0 / 1; 3 (`short`) 33 / 3 / 1; 37
-(`short`) 51 / 0 / 1. `hard` because argmax makes the run the rules' — at `normal` two
-proposals for one band in the top two are a seeded coin flip. Seat 2 is Pass, starves on every
-seed alike, and is marked `degenerate` on all eight by the writer. `Land` wins on seven seeds
-(5 to 26 moves accepted) and on seed 20 proposes nothing in sixty turns: it raises `land_short`
-at t5, t9, t10, t11 and t13 — no discovered walkable tile within `land.horizon_tiles` out-takes
-the cluster the band stands in by `better_ground_gain_fraction`, the reading names no
-`move_target`, and the band is not blind — so the file carries one `declined` entry, `seed 20,
-seat 1, land`, with that note. Regenerate the entry in the PR that moves it, with the numbers
-in the PR body.
+54 / 0 / 1; 18 (`stay`) 53 / 0 / 2; 22 (`stay`) 43 / 0 / 0; 59 (`stay`) 50 / 0 / 0; 20
+(`stay`) 44 / 0 / 1; 50 (`split_far`) 46 / 0 / 1; 3 (`short`) 41 / 0 / 0; 37 (`short`)
+49 / 0 / 1. `hard` because argmax makes the run the rules' — at `normal` two proposals for one
+band in the top two are a seeded coin flip. Seat 2 is Pass, starves on every seed alike, and is
+marked `degenerate` on all eight by the writer. `Land` wins on all eight seeds (6 to 15 moves
+accepted), so the file's `declined` list is empty.
+
+⛔ **The start kinds above are what the seeds read NOW, not what they were chosen for.** The
+eight were picked to span `stay` / `split_local` / `split_far` / `short`; the sim changes since
+(the work party, site crews, spoilage) moved the tick-2 ground reading, and the set now covers
+no `split_local` start at all. **Regenerate the entry in the PR that moves it, with the numbers
+in the PR body** — the ratchet is on-demand (no hook or CI step runs `--check`), so a PR that
+skips this leaves the next one to inherit violations it did not cause, which is how this entry
+drifted across several merges (#734 to #764) before it was rewritten.
 
 ⛔ **The file must parse back to the f64 it was written from.** The tolerance is 0, so `sim_ai`
 takes serde_json with `float_roundtrip`: the default float parse is best-effort and read seed
