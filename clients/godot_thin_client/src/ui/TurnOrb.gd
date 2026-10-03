@@ -328,7 +328,7 @@ const BADGE_INSET := 3.0
 const BADGE_FONT_SIZE := 13
 
 # Popover. WIDTH is sized to the widest producer row — `awaiting_orders`, whose detail names the
-# mission AND its objective ("Hunting expedition · Red Deer"). A row's inner HBox is anchored to its
+# mission AND its objective ("Scouting expedition · (34, 24)"). A row's inner HBox is anchored to its
 # Button (not a container child), so its min size does NOT grow the Button: an over-wide row used to
 # spill its `Jump →` OUTSIDE the card instead of widening it. The labels below therefore also clip
 # (ellipsis), which bounds ANY future producer's text to the card rather than letting it escape.

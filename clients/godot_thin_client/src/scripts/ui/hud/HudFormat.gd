@@ -35,9 +35,8 @@ const PEOPLE_DEPENDENCY_TOOLTIP := """Children and elders — they eat from your
 ## Appended when dependents outnumber workers — the reason the chip is WARN-tinted.
 const PEOPLE_DEPENDENCY_HEAVY_TOOLTIP := "\nMore mouths than hands."
 ## Band/City panel "Active expeditions" mission glyphs — they mirror the map markers
-## (MapView EXPEDITION_GLYPH / EXPEDITION_HUNT_GLYPH).
+## (MapView EXPEDITION_GLYPH).
 const PANEL_EXPEDITION_SCOUT_GLYPH := "⚑"
-const PANEL_EXPEDITION_HUNT_GLYPH := "🏹"
 ## The DENIAL raid's mark (`docs/plan_denial_raid.md`) — the same 💀 its footer button and its map
 ## marker wear, so the mission reads identically at every scale.
 const PANEL_EXPEDITION_DENY_GLYPH := "💀"
@@ -45,7 +44,7 @@ const PANEL_EXPEDITION_DENY_GLYPH := "💀"
 ## the denial glyph above states: one mission, one glyph, at every scale.
 const PANEL_EXPEDITION_TRADE_GLYPH := "📦"
 
-## The mark for a party on `expedition_mission` — the ONE resolution of the four constants above, so
+## The mark for a party on `expedition_mission` — the ONE resolution of the three constants above, so
 ## a surface that marks a party by its mission cannot pick a different glyph from the one
 ## `panel_expedition_summary` prints or the map token draws (`MapView.EXPEDITION_*_GLYPH`). An absent
 ## or unrecognised mission answers the SCOUT flag, the same last-resort branch the summary falls
@@ -53,8 +52,6 @@ const PANEL_EXPEDITION_TRADE_GLYPH := "📦"
 ## is the client's generic mark for one.
 static func expedition_mission_glyph(mission: String) -> String:
     var key := mission.strip_edges().to_lower()
-    if key == HudExpeditionVocab.EXPEDITION_MISSION_HUNT:
-        return PANEL_EXPEDITION_HUNT_GLYPH
     if key == HudExpeditionVocab.EXPEDITION_MISSION_DENY:
         return PANEL_EXPEDITION_DENY_GLYPH
     if key == HudExpeditionVocab.EXPEDITION_MISSION_TRADE:
@@ -293,15 +290,12 @@ static func floor_preset_face(preset: String) -> String:
 
 ## **THE ONE SENTENCE SAID ABOUT A FLOOR** — the replacement for the three per-stance hint tables, and
 ## the whole of what the client says about harvest pressure. It is composed rather than looked up
-## because two facts vary independently of the zone: WHAT STRIPPING COSTS differs by web (a patch
-## reseeds, a herd is gone for good), and a detached party earns no craft, so the learning zone's
-## promise is false for a raid. Everything else is one table of five.
+## because one fact varies independently of the zone: WHAT STRIPPING COSTS differs by web (a patch
+## reseeds, a herd is gone for good). Everything else is one table of five.
 ##
-## `kind` is a `SourceForecast.LABOR_KIND_*`; `expedition` marks a detached party.
-static func floor_hint(floor: float, kind: String, expedition: bool = false) -> String:
+## `kind` is a `SourceForecast.LABOR_KIND_*`.
+static func floor_hint(floor: float, kind: String) -> String:
     var zone := SourceForecast.floor_zone(floor)
-    if expedition and zone == SourceForecast.FLOOR_ZONE_LEARNING:
-        return HudComposeVocab.FLOOR_LEARNING_HINT_EXPEDITION
     var text := String(HudComposeVocab.FLOOR_ZONE_HINTS.get(zone, ""))
     if zone == SourceForecast.FLOOR_ZONE_STRIP:
         return text % String(HudComposeVocab.FLOOR_STRIP_CONSEQUENCE.get(kind, ""))
@@ -437,21 +431,7 @@ static func panel_expedition_summary(exp: Dictionary, herd_label_for_id: Callabl
         band_label_for_id: Callable = Callable()) -> String:
     var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
     var phase_suffix := expedition_phase_suffix(expedition_phase_key(exp))
-    # The party's FLOOR as its zone glyph — the same mark the work board gives a resident crew, so a
-    # raid and a hunt at the same pressure read alike. A SCOUT reports `1.0` (it harvests nothing),
-    # which is a real zone, so the glyph is resolved on the hunt branch alone and a scout row keeps
-    # its phase glyph with no orphaned separator.
-    var floor_suffix := row_glyph_suffix(FoodIcons.for_floor_zone(SourceForecast.floor_zone(
-        float(exp.get("expedition_floor", SourceForecast.FLOOR_MAX))))) \
-        if String(exp.get("expedition_mission", "")).strip_edges().to_lower() \
-            == HudExpeditionVocab.EXPEDITION_MISSION_HUNT else ""
-    if mission == HudExpeditionVocab.EXPEDITION_MISSION_HUNT:
-        var herd := String(herd_label_for_id.call(String(exp.get("expedition_target_herd", "")).strip_edges()))
-        return "%s %s%s%s" % [
-            PANEL_EXPEDITION_HUNT_GLYPH, herd, floor_suffix, phase_suffix]
-    # DENIAL — the hunt row's shape with the mission's own mark and NO floor glyph. Its
-    # `expedition_floor` reads `0.0`, which is a real zone (`strip`), so borrowing the hunt branch's
-    # glyph would mark a raid with a pressure it never chose — the mission has no floor at all.
+    # DENIAL — the quarry with the mission's own mark and NO floor glyph: the mission has no floor.
     if mission == HudExpeditionVocab.EXPEDITION_MISSION_DENY:
         var quarry := String(herd_label_for_id.call(String(exp.get("expedition_target_herd", "")).strip_edges()))
         return "%s %s%s" % [PANEL_EXPEDITION_DENY_GLYPH, quarry, phase_suffix]
@@ -469,8 +449,7 @@ static func panel_expedition_summary(exp: Dictionary, herd_label_for_id: Callabl
         return "%s %s%s" % [PANEL_EXPEDITION_TRADE_GLYPH, destination, phase_suffix]
     var x := int(exp.get("current_x", -1))
     var y := int(exp.get("current_y", -1))
-    return "%s → (%d, %d)%s%s" % [
-        PANEL_EXPEDITION_SCOUT_GLYPH, x, y, floor_suffix, phase_suffix]
+    return "%s → (%d, %d)%s" % [PANEL_EXPEDITION_SCOUT_GLYPH, x, y, phase_suffix]
 
 ## A block-glyph bar for a 0–100 score. `cells` is passed by every caller — the Sedentarization meter
 ## (via FactionReadouts) at the standard width, the knowledge strip narrower, the herd-drawer danger

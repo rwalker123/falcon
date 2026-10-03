@@ -15,11 +15,10 @@ paths:
 
 # Labor allocation UI — the compose sheet and forecasts
 
-> ⛔ **A FAR HERD IS AN ORDINARY HUNT AND A FAR PATCH AN ORDINARY GATHER.** The herd sheet's
-> hunting-expedition branch (past `hunt_reach`) and the forage sheet's range refusal (past
-> `band_work_range`) are both RETIRED; past the apron a sheet adds a WORK PARTY section instead. Every
-> passage below describing either is superseded by "A FAR SOURCE IS AN ORDINARY SHEET" at the foot of
-> this file.
+> ⛔ **A FAR HERD IS AN ORDINARY HUNT AND A FAR PATCH AN ORDINARY GATHER.** There is no hunting
+> expedition and no range refusal: past the apron a sheet adds a WORK PARTY section — "A FAR SOURCE IS
+> AN ORDINARY SHEET" at the foot of this file. The one detached party that works a herd is the DENIAL
+> raid (`band-city-panel.md`).
 
 ## ⛔ THE KIT LINE COUNTS COMPLETE KITS, AND BOTH WEBS MUST HAND IT THE CREW
 
@@ -335,14 +334,14 @@ POOL, a pool card, or a remedy of *raise this band's … role*, read the site's 
 |--------|---------|
 | `ui/hud/HudBandLaborState.gd` | `RefCounted` state model (HUD decomposition Phase 0) — "the digested per-snapshot player world + optimistic overlay": `player_band`/`player_bands`/`panel_band`/`player_expeditions`, `world_herds`, grid scalars, `current_turn`, the `prev_band_sizes` losing-population diff, the `forage_patch_lookup`/`food_module_by_tile` lookups, and the `pending_labor` optimistic overlay. Ingest mutators (`set_turn`/`set_grid(width, height, wrap)`/`set_world_herds`/`set_panel_band`/`ingest_snapshot_bands`/`set_food_modules`/`set_forage_patches`) + the pending API (`record_pending_assign`/`record_pending_move`/`reconcile_pending`/`pending_assigns_for`/`pending_key`) + the moved-on derived readers `effective_worker_map`/`effective_idle`/`effective_forage_workers`/`effective_hunt_workers` (pure functions of `pending_labor` + a band) + the statics `as_schedule` and **`labor_assignments_of(band)`** (the public band-dict `labor_assignments` reader — `DetailFormat` + `AttentionController` reach it as `HudBandLaborState.labor_assignments_of`; it merged HudLayer's `_labor_assignments_of` static into the byte-identical private copy that already lived here, and its four internal callers now call it unqualified. The MapView-side `BandOverlayRenderer._labor_assignments_of_marker` deliberately stays a LOCAL copy — a renderer must not depend on the HUD's band-labor model). Also owns the **thin band-labor readers** every consumer reaches through `_band_labor.` — the roster pair `current_player_bands`/`player_band_by_entity`, the per-source lookups `forage_assignment_of`/`hunt_assignment_of` and their `workers_for_forage`/`workers_for_hunt`/`policy_for_hunt`/`policy_for_forage`/**`source_crew_pool_forage`/`source_crew_pool_hunt`** (the ONE pool both of a compose sheet's steppers draw on — it replaced the four per-activity `assignable_*` ceilings, which were each right about ONE command and wrong side by side on a sheet that edits both)/**`unstaffed_build_forage`/`unstaffed_build_hunt`** (a rung this faction has DECLARED and put nobody on, read off the CONFIRMED wire row alone — see `selection-card.md` → "A build DECLARED with nobody on it is a fourth state") — plus the DERIVED READS over its own tables that the `BandPanelController` shared-layer pass brought home: `find_world_herd` (8 call sites file-wide — herds MIGRATE, so this list, never an assignment's launch-time target, is the authority on where a hunted herd is), `food_module_icon` (+ its `FOOD_SITE_KIND_GAME_TRAIL` key), `effective_role_workers`/`workers_for_role` (the band-wide-role twins of `effective_forage_workers`/`workers_for_hunt`), and **`band_parties`/`band_party_workers`** — the pair that KILLED the band↔parties straddle, since the WORKFORCE header's `· N away` clause and the parties zone's row set now read one filter over `player_expeditions()` rather than the band zone calling into the parties zone. **`band_party_workers` feeds a HEADER CLAUSE, not a bar segment** — the sim removes a party's members from the parent cohort on launch, so its sum sits OUTSIDE the `working_age` the WORKFORCE segments partition (`band-city-panel.md` → "PARTIES ARE A HEADER CLAUSE"). Plus the canonical policy-rung consts `HUNT_POLICY_OPTIONS`/`FORAGE_POLICY_OPTIONS`/`DEFAULT_HUNT_POLICY` (the last aliases `SourceForecast`'s; `HudLayer` re-exports all three via `const X = HudBandLaborState.X`). Emits `changed(reason)`, consumed by nothing yet |
 | `ui/hud/ComposeState.gd` | `RefCounted` state model (HUD decomposition Phase 2c-1) — "what the player is dialing but has not committed": the tile card's **forage** compose (`forage_key`/`count`/`policy`/`species`/`band` + its autofill one-shot), the herd drawer's **hunt** compose (`hunt_key`/`count`/`policy`/`band` + its own one-shot), the Band panel's Deny sheet's pre-selected prey and kit (`party_quarry_id` + its seed one-shot, `party_kit_id`), the **pending BAND VERB** (issue #529: `open_verb` / `clear_verb`, the verb, its band and the hex its sheet is anchored on — shared state because both the action bar and the tile panel's band drawer press verbs and the sheet renders in the band's drawer, `targeting.md` → "THE BAND VERBS' TARGET IS THE LAST STEP"), and the open sheet's subject identity (`kind`/`subject`; `COMPOSE_KIND_*` alias to its `KIND_*`). Mutators are named for the transition — `begin_*_source` + `seed_*` (the two-step re-seed: the caller must resolve the actual band between them, and `seed_*` records that band as `forage_seeded_band()` / `hunt_seeded_band()` so an ACTOR-band change re-seeds like a source change — see "THE COMPOSITION RE-SEEDS ON A SOURCE CHANGE **OR AN ACTOR-BAND CHANGE**"), `set_*`, `arm_*_autofill`/`consume_*_autofill`, `reset_*_source` (the harnesses' way to stage a fresh compose), `set_composing`/`clear_composing` — and the three READ-MODIFY-WRITEs get explicit ones so the field is never read and written apart: **`clamp_forage_count`/`clamp_hunt_count`** and **`resolve_forage_species(resolver: Callable)`** (the RMW is the model's; the crop RULES stay with the caller, so it holds no flora knowledge). Pure DATA — which is exactly why **the `ComposeSheet` NODE lives on `DrawerComposeController`**, beside the lifecycle that opens it, rather than on this model. The model instance is SHARED: `BandPanelController` (the band verbs' sheets) and that controller (the drawer) hold the same one. Deliberately **NO `changed` signal**, unlike the Phase-0 pair: nothing subscribes (the compose builders re-render explicitly) and unused API is a liability. **`hunt_policy()` is PUBLIC beyond its builder, but its readers are all HERD-DRAWER ones now** (`_tame_stalled_hint` / `_herd_crew_noun`): `HudWidgets.build_policy_picker`'s `selected` fallback — the one real cross-boundary read, where a work-inspector or party-compose render picked up the DRAWER's rung — was DEAD (every caller passed an explicit, provably non-empty `selected`) and is **deleted**; `selected` is a REQUIRED param, so the shared builder now owns none of its callers' state and the drawer/band-panel boundary is structural rather than conventional |
-| `ui/hud/DrawerComposeController.gd` | `RefCounted` controller (HUD decomposition Phase 2c-2b, `docs/plan_hud_decomposition.md`) owning the selection drawer's **COMPOSE half** — the other half of the selection card, after `SelectionCardController` took the identity/list one. It holds the **compose-sheet lifecycle** (`_ensure_compose_sheet` / `open_forage_compose` / `open_herd_compose` / `refresh_compose_sheet` / `is_compose_sheet_open` / `close_compose_sheet` / `_compose_anchor_rect`, and the `ComposeSheet` NODE itself), the two **drawer-action builders** (`build_forage_drawer_actions` / `build_herd_drawer_actions` + the standing-summary / compose-open-button / extend-pen factories and their in-place diffing twins), the two big **compose builders** (`_build_forage_assign_controls` / `_build_herd_assign_controls`), and the **compose-only** forecast/gate/picker layer beneath them (`_forecast_worker_cap` / `_forecast_yield_row` / `_is_overdraw` / `_hunt_take_rate` / `_hunt_delivered_and_waste` / `_hunt_avg_window_turns` / `_hunt_policy_takes` / `_payoff_take` / `_local_hunt_preview_bbcode` / `_local_forage_preview_bbcode` / `_forage_policy_takes` / `_forage_policy_gates` / `_hunt_policy_gates` / `_sow_site_refusal_reason` / `_tame_stalled_hint` / the `_flora_entry_*` sub-layer / `_build_crop_picker` / `_build_band_picker`) — ~1,400 lines, 54 functions. It also owns the drawer-actions diff caches `_forage_drawer_shape` / `_herd_drawer_shape` (zero external readers), so a per-snapshot restate still patches nodes rather than tearing them down. The drawer RENDER DISPATCH (`_render_land_drawer` / `_render_occupant_drawer` / `_render_subject_drawer` / the terrain-lines producer + `_tile_detail_lines_cache` / `_fit_subject_drawer`) and the `%AllocationPanel` expedition/band-move branches later left `HudLayer` too, into `ui/hud/SubjectDrawerController.gd` (Phase 2c-3), and call IN here through `refresh_compose_sheet` / `build_forage_drawer_actions` / `build_herd_drawer_actions`. Hud holds it as `_drawercompose`, constructed in `_ready` after `_selectioncard`. **THE INJECTION SURFACE IS EXACTLY THREE CALLABLES** — `_resolve_assign_band` / `_herd_label_for_id` / `_emit_assign_labor`, each retained on HudLayer because it has callers on the other side too (and `_emit_assign_labor` additionally owns the `assign_labor_requested` emit, the optimistic pending write and `_after_pending_change()`, which is why `assign_labor` stays INDIRECT). Each is reached through a **typed adapter** rather than called raw — `Callable.call` returns `Variant`, which would push an untyped value into every consumer. Everything else is a collaborator: the SAME `_compose` / `_band_labor` / `_selection` model instances (BY REFERENCE), `_topbar` for `faction_knowledge` ONLY (the rung gates), `_selectioncard` for `tile_contents_unseen` ONLY, the two drawer-action containers it fills (`%HerdAssignControls` / `%ForageAssignControls`), `tile_panel` READ-ONLY (the rect the sheet floats beside), and the HUD CanvasLayer as the **host** it `add_child`s the `ComposeSheet` into (a `RefCounted` cannot parent — the `TurnOrbController` fork-panel pattern). **Three absorptions shrank that boundary from six injections to three:** `_expedition_party_cap` → `SourceForecast.expedition_party_cap` (expedition forecast math, beside its sibling `expedition_useful_cap`), `_format_food_module_label` + its `FOOD_MODULE_LABELS` table → `HudFormat.food_module_label` (vocabulary, not compose logic), and — the highest-leverage one — the grid-wrap flag `_grid_wrap_horizontal` **onto `HudBandLaborState` as `wrap_horizontal()`**, beside the `grid_width()` it is meaningless without, so the moving set calls `SourceForecast.hex_distance_wrapped(…, _band_labor.grid_width(), _band_labor.wrap_horizontal())` DIRECTLY and the `_hex_distance_wrapped` injection disappeared (that pass-through survives on HudLayer for its other callers). `_band_display_name` went to the band-naming rule in `HudFormat` for the same reason (`band_name` since issue #615 — see `hud-modules.md` → "One band, one name"). **Its signals are RELAYED by HudLayer** (the controller never emits a HudLayer signal). `send_hunt_expedition_requested` is RETIRED with the herd sheet's expedition branch — every herd is an ordinary hunt now, see "A FAR SOURCE IS AN ORDINARY SHEET" — and `extend_pen_requested` moved to `BandPanelController` with the ring's declaration. **`is_compose_sheet_open` / `close_compose_sheet` MUST stay callable on the HUD node** — `Main._unhandled_input`'s Esc precedence and ~11 ui_preview sites probe them BY NAME, and a `has_method` probe fails SILENTLY — so HudLayer keeps them as thin delegators. Word tables, formats and thresholds stay on `HudLayer` and are read back as `HudLayer.X`, the `HudWidgets`/`HudFormat`/`FactionReadouts`/`SelectionCardController` convention. Behaviour identical to the old inlined drawer-compose code |
+| `ui/hud/DrawerComposeController.gd` | `RefCounted` controller (HUD decomposition Phase 2c-2b, `docs/plan_hud_decomposition.md`) owning the selection drawer's **COMPOSE half** — the other half of the selection card, after `SelectionCardController` took the identity/list one. It holds the **compose-sheet lifecycle** (`_ensure_compose_sheet` / `open_forage_compose` / `open_herd_compose` / `refresh_compose_sheet` / `is_compose_sheet_open` / `close_compose_sheet` / `_compose_anchor_rect`, and the `ComposeSheet` NODE itself), the two **drawer-action builders** (`build_forage_drawer_actions` / `build_herd_drawer_actions` + the standing-summary / compose-open-button / extend-pen factories and their in-place diffing twins), the two big **compose builders** (`_build_forage_assign_controls` / `_build_herd_assign_controls`), and the **compose-only** forecast/gate/picker layer beneath them (`_forecast_worker_cap` / `_forecast_yield_row` / `_is_overdraw` / `_hunt_take_rate` / `_hunt_delivered_and_waste` / `_hunt_avg_window_turns` / `_hunt_policy_takes` / `_payoff_take` / `_local_hunt_preview_bbcode` / `_local_forage_preview_bbcode` / `_forage_policy_takes` / `_forage_policy_gates` / `_hunt_policy_gates` / `_sow_site_refusal_reason` / `_tame_stalled_hint` / the `_flora_entry_*` sub-layer / `_build_crop_picker` / `_build_band_picker`) — ~1,400 lines, 54 functions. It also owns the drawer-actions diff caches `_forage_drawer_shape` / `_herd_drawer_shape` (zero external readers), so a per-snapshot restate still patches nodes rather than tearing them down. The drawer RENDER DISPATCH (`_render_land_drawer` / `_render_occupant_drawer` / `_render_subject_drawer` / the terrain-lines producer + `_tile_detail_lines_cache` / `_fit_subject_drawer`) and the `%AllocationPanel` expedition/band-move branches later left `HudLayer` too, into `ui/hud/SubjectDrawerController.gd` (Phase 2c-3), and call IN here through `refresh_compose_sheet` / `build_forage_drawer_actions` / `build_herd_drawer_actions`. Hud holds it as `_drawercompose`, constructed in `_ready` after `_selectioncard`. **THE INJECTION SURFACE IS EXACTLY THREE CALLABLES** — `_resolve_assign_band` / `_herd_label_for_id` / `_emit_assign_labor`, each retained on HudLayer because it has callers on the other side too (and `_emit_assign_labor` additionally owns the `assign_labor_requested` emit, the optimistic pending write and `_after_pending_change()`, which is why `assign_labor` stays INDIRECT). Each is reached through a **typed adapter** rather than called raw — `Callable.call` returns `Variant`, which would push an untyped value into every consumer. Everything else is a collaborator: the SAME `_compose` / `_band_labor` / `_selection` model instances (BY REFERENCE), `_topbar` for `faction_knowledge` ONLY (the rung gates), `_selectioncard` for `tile_contents_unseen` ONLY, the two drawer-action containers it fills (`%HerdAssignControls` / `%ForageAssignControls`), `tile_panel` READ-ONLY (the rect the sheet floats beside), and the HUD CanvasLayer as the **host** it `add_child`s the `ComposeSheet` into (a `RefCounted` cannot parent — the `TurnOrbController` fork-panel pattern). **Absorptions shrank that boundary:** `_format_food_module_label` + its `FOOD_MODULE_LABELS` table → `HudFormat.food_module_label` (vocabulary, not compose logic), and — the highest-leverage one — the grid-wrap flag `_grid_wrap_horizontal` **onto `HudBandLaborState` as `wrap_horizontal()`**, beside the `grid_width()` it is meaningless without, so the moving set calls `SourceForecast.hex_distance_wrapped(…, _band_labor.grid_width(), _band_labor.wrap_horizontal())` DIRECTLY and the `_hex_distance_wrapped` injection disappeared (that pass-through survives on HudLayer for its other callers). `_band_display_name` went to the band-naming rule in `HudFormat` for the same reason (`band_name` since issue #615 — see `hud-modules.md` → "One band, one name"). **Its signals are RELAYED by HudLayer** (the controller never emits a HudLayer signal). Every herd is an ordinary hunt (see "A FAR SOURCE IS AN ORDINARY SHEET"), and `extend_pen_requested` moved to `BandPanelController` with the ring's declaration. **`is_compose_sheet_open` / `close_compose_sheet` MUST stay callable on the HUD node** — `Main._unhandled_input`'s Esc precedence and ~11 ui_preview sites probe them BY NAME, and a `has_method` probe fails SILENTLY — so HudLayer keeps them as thin delegators. Word tables, formats and thresholds stay on `HudLayer` and are read back as `HudLayer.X`, the `HudWidgets`/`HudFormat`/`FactionReadouts`/`SelectionCardController` convention. Behaviour identical to the old inlined drawer-compose code |
 | `ui/hud/ComposeSheet.gd` | The selection card's **write state** — the floating **compose sheet** (`docs/plan_tile_panel_layout.md` §10-§15). Composing is MODAL BY NATURE (open, decide, commit, done), so the two ~270px compose blocks (`%ForageAssignControls` / `%HerdAssignControls`) left the drawer for a sheet that borrows space only while in use; the drawer keeps the detail rows and one `Assign … ▸` control, whose SECOND LINE is that source's standing summary (`selection-card.md` → "THE STANDING SUMMARY IS THAT CONTROL'S SECOND LINE" — it was a sibling row above the button until Ray moved it inside). **That button wears `primary` while ITS sheet is open and `ghost` at rest — never `armed`**: `armed` is the destructive/warned treatment (DANGER border), and "its sheet is open" is a LIVE state, which this HUD spells in SIGNAL cyan (the Sight chip, the selection accent, the turn orb's calm pulse). **Its card is an `AutoSizingPanel`, NOT a `DockScrollFit` card** — it floats against the VIEWPORT, which is the opposite of what the drawer above needs, and picking wrong misbehaves silently rather than failing (`.claude/rules/client/panel-framework.md`). **Its width is FITTED to its content like its height** — `CARD_WIDTH` is the nominal, not a cap; see "THE CARD IS AS WIDE AS ITS WIDEST ROW" below, and "THE HEIGHT CHROME IS THE HEADER **ROW**" beside it for the same measurement error on the other axis. **`_panel` is held as a member for the assertion, not for the layout** — the `PanelContainer` that draws the card is a real `Container` in a plain `Control`, so its minimum is the one honest measure of what the fit owes. **The node IS the full-screen dismiss catcher with the card as its CHILD**, reusing `NarrativeForkPanel`'s nesting exactly (siblings make the ordering ambiguous and the catcher eats the card's own clicks), pinned to the viewport EXPLICITLY via `_sync_to_viewport` — a hidden Control's anchors never settle, and the full-rect preset would also overwrite the size. **NO SCRIM, and that is the one deliberate departure from the fork panel:** a fork is a story beat demanding attention, an assignment is composed *against* the map (work-range ring, herd position, hunt reach are all live context), so the catcher dismisses without dimming. **And that is also why the catcher dismisses on a real CLICK only, never a wheel tick** (`DISMISS_BUTTONS`, an ALLOWLIST of left/right/middle so a future Godot wheel/extra index stays non-dismissing by default): the catcher is `MOUSE_FILTER_STOP` across the whole viewport, so an idle scroll over the un-scrimmed map lands on it, and dismissing there would throw away the composition mid-read. `NarrativeForkPanel` is deliberately left as-is — a modal scrimmed story beat has no such gesture — so the two diverge here on purpose; do NOT factor out a shared predicate for one differing call site. (**Not** a map-zoom passthrough: the catcher stops the wheel either way, so the map cannot zoom while a sheet is open, and a wheel over the card is absorbed by its own `ScrollContainer`.) Guarded by ui_preview's paired wheel-leaves-OPEN / left-click-CLOSES assertions. The sheet floats BESIDE the selection card (`_place_card`, falling back to the viewport margin) so the list + summary it is editing stay readable. It knows nothing about foraging or hunting: `open(eyebrow, title, subject_key, anchor)` returns the content VBox and the caller fills it. `subject_key` is what lets a per-snapshot refresh tell "the same source, restated" from "a different source, gone" |
 | `ui/hud/RungGates.gd` | **All-`static`, stateless** shared RUNG-GATE layer — the one answer to "may this source climb its next rung, and if not, why not?". Extracted from `DrawerComposeController` (issue #412) when the compose sheet stopped being the only surface asking: the Band panel's WORK board marks a source that can climb, and the MAP marks it on the source's own marker — and a renderer must not depend on the HUD's compose controller. Shared-layers-BEFORE-controllers, the same measurement that produced `SourceForecast` and `HudWidgets`. Holds `forage_gates` / `hunt_gates` / `sow_site_refusal_reason` (moved VERBATIM, so the compose sheet's greying is unchanged), **`forage_gates_from_patch`** (the BARE-keyed twin for a raw wire patch — the RAW wire patch carries its keys BARE while the `tile_info` cross-ref `patch_`-prefixes every one of them, and this adapter is the ONE place that mapping is written down. **The prefixing is UNIFORM now (#442)** — `is_cultivated`/`cultivation_progress` were the last unprefixed strays on the cross-ref and are stamped `patch_`-prefixed like their siblings, so there is no longer a mixed convention to remember; reading a `tile_info` key without the prefix silently answers nothing (`hud_compose_vocab.gd` → `BARE_FORECAST_PREFIX` carries the long form)), and **`next_rung_ready`** — the READY test all three surfaces mark from — plus **`knowledge_gate_unmet`** (with its `RUNG_KNOWLEDGE_TRACKS` map: is THIS rung blocked on knowledge specifically? — the same `track < KNOWLEDGE_COMPLETE` test the gate builders make, asked on its own so the compose sheet can suppress that reason **structurally instead of by matching its words**; one caller, for the reason the "A KNOWLEDGE gate renders NO improvement control" section gives). **`leg_in_progress` is `rung_in_progress`'s sibling** — the same `{policy, glyph, progress}` RE-POINTED at the first published leg still owing work, for a queue entry that names a DESTINATION and climbs every rung on the way (`band-city-panel.md` → "THE PERCENTAGE IS THE LEG IN FLIGHT'S"). It takes the OTHER answer as a parameter rather than resolving the verb a second time (`SourceForecast.build_is_stalled`'s discipline), so the caller keeps the declared rung the entry's PRICE is quoted at; the Work board and the map badge both call it and a source with no legs falls straight through. **`wild_fodder_reason` broadens the file's remit** from "may this source climb its next rung" to "…and will the work it is doing actually pay out" — the wild forage patch's fodder credit, which the sim refuses to a faction without Foddering; see "The FODDER account can be real and unbankable at once". **STATELESS IS THE INVARIANT**: the one impurity, faction knowledge, is threaded in as a `knowledge` PARAMETER (`FactionReadouts.faction_tracks(faction)`, the whole `{track: progress}` row `faction_knowledge` reads one key out of), never reached for. `next_rung_ready` requires all three of OFFERED (husbandry ceiling / `can_cultivate`-`can_sow` + willing ground), UNGATED (the gate functions answer nothing), and NOT-ALREADY-RUNNING (a patch mid-Cultivate is progress, not an opportunity), **highest rung first**. **That ordering is load-bearing on the PLANT web only** and its assertion needed care: `is_cultivated` retires Cultivate, so on a TENDED patch the two rungs are mutually exclusive and an ordering test there passes with the branches swapped (measured). `Sow` needs no prior patch, so a WILD patch on sowable ground is the one shape that clears both gates at once. On the animal web the rungs are always mutually exclusive — Tame retires at a full meter, Corral requires one — so ordering is genuinely not load-bearing there. `FactionReadouts.faction_knowledge` deliberately does NOT call `RungGates.track`: dependency DIRECTION outranks the one-definition rule for a `float(d.get(k, 0.0))` |
 | `ui/hud/RungLadder.gd` | **All-`static`, stateless** shared LADDER-TRACK layer (`docs/plan_standing_upkeep.md` §2.8) — the one answer to *"what does this source's branch hold, where does it stand on it, and how far may the player send it?"*. `RungGates` answers *may this source climb its NEXT rung*, which is the right question for a MARK; a queue entry names a **destination** now and lays every rung between where the source stands and there, so the picker has to state the WHOLE branch and `next_rung_ready` structurally cannot. `track(kind, source, prefix, improvement, knowledge, band)` walks `SourceForecast.rung_branch_for_kind` bottom rung first and puts every rung in exactly one of six states — `banked` (already paid for, and it contributes NO figure: a previous improvement is a RECEIPT, NOT A DISCOUNT) · `standing` · `path` · `target` · `locked` · `open` — beside its own owing and its own chained date; `has_track` is the *is there anything to offer* test a caller asks before floating a card, and `build_track(rows, on_pick)` renders it, a **`Button` where the rung may be picked and a `Label` where it may not** (the improvement control's own shape-is-the-statement rule — a greyed button on a locked rung offers an act the sim refuses). ⛔ **IT RE-DERIVES NEITHER THE WORK NOR THE TURNS**: a leg's owing and its chained date are `SourceForecast.build_legs`' rows, read where the queued entry publishes them, and a rung NO entry covers has no leg — its owing is the per-rung `workCost − workDone` pair the wire publishes for exactly that pre-commit question (the same two numbers `forage::plant_build_legs` subtracts), and it states **no date at all**, a chain being computed against a build queue this client cannot see. **STATELESS IS THE INVARIANT** — faction knowledge is a `knowledge` PARAMETER and the press handler a `Callable`, `RungGates`'s own treatment. Its two OUTRIGHT bars (`HudFloraVocab.GATE_REASON_SPECIES_NEVER_TAMED` / `_PENNED` / `GATE_REASON_CROP_CANNOT_CLIMB_FORMAT`) are the one place a rung `RungGates` WITHHOLDS is rendered instead: a mark promises the verb is available, a track says what the branch holds, and a rung silently missing from it reads as a shorter ladder. A rung barred from BELOW takes the blocking rung's own reason (`GATE_REASON_PATH_BLOCKED_FORMAT`), because a climb lays every leg and offering a destination whose path is refused is a job that queues and then blocks. **It owns the card's SECOND PAGE too** (§4.15) — `rung_commits_a_crop` (the plant/animal fork: `tame` and `corral` name no species and stay one click), `crop_choices` (one row per legally sowable plant, each stating what ITS OWN Sow would cost and what THIS rung would then pay it, with `Sim picks` last naming the plant it would resolve to) and `build_crop_step`. ⛔ **EVERY FIGURE ON A CROP ROW IS QUOTED AS PUBLISHED and none is derived from another**: the per-crop price is `FloraShareInfo.sowWorkCost` (carried onto the basket entry by `SourceForecast.flora_basket_entries` with its own presence key) while the patch's own Field-row price is `fieldWorkCost`, and a committed patch's published `share` is its REWEIGHTED one where the price is struck on the tile's basket — so the client re-derives neither the price from the share nor either price from the other. **An ABSENT `sowWorkCost` renders NO ROW**, that being the wire's "this plant cannot climb to a Field here" (the tile-specific legality the species-global `can_sow` ceiling cannot express, and the same predicate `default_species_for_rung` filters on) — which is also what keeps `Sim picks` naming the plant the sim would really settle on. The Field row states its price and **no reason**: the per-crop figures are the cause, made visible |
 | `ui/hud/HarvestFloorChart.gd` | The compose sheet's **floor instrument** (`docs/plan_harvest_floor.md` §7.3) — a custom-drawn `Control` (the `FoodOutlookChart` / `ArrivalStrip` idiom) putting the standing stock, the draggable floor line, the projection and the food peak on ONE y-axis of `B/K`, with the `learn_multiplier` gradient rail down the right edge. **IT DRAWS; IT DOES NOT MODEL** — every number comes from `SourceForecast.floor_chart_model`, the projection walks the sim's own `regrowthSamples`, the peak is the argmax of those samples rather than `FLOOR_FOOD_PEAK` restated beside them, and negative samples are carried through as decline. It emits ONE signal, `floor_changed(floor, committed)`, and the second argument is the whole contract: a committed change rebuilds the compose controls (which frees this node), a live one must not, or the drag in flight dies with it — see "THE CHART" below. Keyboard-accessible (`FOCUS_ALL`; arrows / Shift-arrows / Home / End), because the floor is the primary control of the panel. Palette through `HudStyle` only — plus `DetailFormat.ecology_tier_color` for the standing-stock band and the **phase zones** behind it (`_draw_phase_zones`, the furthest-back layer: the source's own `collapseFraction` / `stressedFraction` as horizontal Collapsing/Stressed/Thriving bands, so the floor is dragged against the ecology rather than against a remembered number) |
 | `ui/hud/ForecastQuery.gd` | **The client's half of the command socket's SECOND direction** (`sim_runtime/proto/command.proto` -> "THE QUERY CHANNEL") — a `RefCounted` seam owning the request-id sequence, the SUBJECT/KEY split (`subject_of` = kind + band + herd, `key_of` = that plus the kit, party, floor **and the band's gear state** — see "THE KEY CARRIES THE BAND'S GEAR"), the `{state, answer, error}` a sheet renders off (`view`), the stale-answer window (`STALE_AFTER_MSEC`), the settled test the crew one-shots gate on (`answer_settled`) and the `answered(subject)` signal every consumer redraws from. **It owns NO socket**: `Main` injects the sender and pumps `CommandBridge.poll_query_replies` in through `deliver` / `expire_stale`, so the HUD asks questions without reaching the network and every state is drivable from a harness with no server. **Its own object because THREE sheets across TWO controllers compose a raid** and each needs the same four things — an id, a rule for which reply is still wanted, a rule for what to show while waiting, and a re-render when the answer lands; two copies would drift the moment one learned to keep its last answer and the other did not. `Hud` holds the ONE instance and fans `answered` out to `_drawercompose` / `_bandpanel` / `_drawer`. **`reset()` is a WORLD-BOUNDARY cache clear and `HudLayer.reset_world_state` is its only production caller** — a subject is kind + band + herd, and a new world hands out both handles again (band ids restart low, herd ids are species + index), so a held answer matches the new world's composed key exactly and renders the previous world's numbers as `STATE_READY`; the shape and the reset contract are `.claude/rules/core_sim/world-handoff.md`. **The no-retry rule is scoped to the SERVER's token class** (`TRANSPORT_RETRY_AFTER_MSEC`): a `query_error` names something wrong with the QUESTION, which the sheet composed itself, so it is never re-asked — but `QUERY_ERROR_TRANSPORT` names a dead socket, which heals, so it is re-askable once the backoff has elapsed (not on the next render, which `ask` reaches once per render and would spin the socket; not never, which strands a sheet on `No forecast available (transport)` for the session after a server restart). The failure keeps rendering through the retry, so a server coming back is ONE transition rather than a flicker. See "THE RAID'S NUMBERS ARE ASKED FOR" below |
 | `ui/hud/KitRoster.gd` | **All-`static`, stateless** shared KIT layer (`docs/plan_denial_raid.md`) — the read over `SubsistenceSection.kits` (`kits_for_job` / `kit_by_id` / `kit_display_name` / `display_name_for_id` / `default_kit_for` / `resolve_selection`), the EFFECTIVE tier a given band gets under a given kit — **READ off the band's own `kitTiers` row, never re-derived** (`band_kit_tiers` / `effective_tiers` / `_resolved_tier` / `unequipped_tier` / `equipped_tier` / `kit_item_ids` / `condition_of` / `tier_hint`), the GEAR-SHORTFALL trio — `shortfall_line`, its one phrasing `shortfall_sentence` (the work board's `kit_note` fills it too, so a board row and the sheet that staffed it cannot word one shortfall two ways) and `row_coverage`, which apportions a committed row's published `kitWorkersHolding` of `workers` into whole people — the BAND-WIDE ROLE cards' own tier and gear line (`ROLE_AXES` / `is_band_wide_role` / `role_axis` / `role_gear` / `role_hint`), the OFFER test that decides which kits a quarry may be worked with (`attack_reaches` / `attack_against` / `effective_attack_against` / `kit_uses` / `kit_supplies_any` / `kit_offer` / `kit_is_offered` / `hunt_gate_closes` / `gate_closed_source` — see "A KIT THAT CANNOT WORK ON THIS PREY IS GREYED"), the resolve-then-reprice seam and the CARRY AXIS it prices on (`carry_axis_for` / `priced_source` / `repriced_source` — the axis is the JOB's, a pen collected on the hunt's own haul since `EquipmentStat::PenCarry` was deleted; see "A PENNED herd is priced — and described — on the band's ONE carry"), and the picker ROW itself (`build_kit_row`). **The honesty trio `estimates_quoted_kit` / `estimates_apply_to` / `estimates_quoted_note` is RETIRED with the per-herd estimate tables**: a forecast is a query answered for the composed kit, so there is no other kit's numbers to disown. **`attack_reaches` takes the ROW the attack is read from** — the roster entry for the fresh offer test, the band's `kitTiers` row for the worn gate — so a kit's size window and its attack can never come from two different rows. **Its own file because the control appears on FOUR sheets across TWO controllers** — the Band panel's Scout and Deny verb sheets, the herd drawer's assign-hunters block, the land drawer's assign-foragers block — **and on the WORKFORCE zone's two band-wide role CARDS** — and a row that has to read identically in six places must have one implementation; the same measurement that produced `SourceForecast` and `HudWidgets`. The ROSTER is snapshot data and lives on `HudBandLaborState` (`kits()` / `default_kit_id(job)`, ingested by `Hud.update_kit_roster` off `Main`'s `kits` + the four job defaults), threaded in as a parameter — this layer holds nothing. **Dependency direction: it reads `SourceForecast` / `HudWidgets` / `HudStyle` / `DetailFormat` (for `role_hint` alone, from inside a function body) / the vocab leaves and none of them may read it back** (a `const` cycle between two `class_name`d scripts fails to load the whole client) |
-| `ui/hud/SourceForecast.gd` | **All-`static`, stateless** shared forecast/estimate layer (HUD decomposition, phase 2c-2 precursor) — the pure "what will this source give me?" math THREE consumers ask for: the drawer's compose blocks, the Band panel's WORK zone, and its PARTIES zone and verb sheets. Three families: POST-HOC `source_yield_readout` (what a worked source actually produced, incl. the ⚠ overdraw + overstaff/wasted notes) · PRE-COMMIT `forecast_inputs` / `max_useful_workers` / **`source_worker_cap_state`** (the CONFIRMED-row twin of that cap: `(forecast, workers, idle, useful_floor = 0) → {can_add, note}`, beside the ceiling it reads so a worked row and a compose stepper can never gate differently — the trailing floor is what makes that true rather than merely stated, and `herd_crew_floor` is its one definition; the *hold it after* crew is a floor on BOTH twins and therefore lives inside `max_useful_workers`, carried on the forecast as `hold_crew`) / `expected_yield` / `hunt_policy_ceiling` · THE RAID `hunt_trip_forecast` → `hunt_forecast_line_bbcode` / `hunt_trip_returns_empty` / `hunt_empty_refusal` / `hunt_empty_refusal_reason` / `expedition_party_cap` (the SUPPLY side — the band's idle workforce, and NOT `max_expedition_party_size`, which is the LAST RUNG of the estimate tables' sampled party axis rather than a rules cap) / `expedition_engage_crew` / `expedition_useful_cap` (the DEMAND side, untouched) / `expedition_policy_takes` / `style_send_hunt_button` (`style_send_hunt_button` styles a Button off the raid verdict, so it lives WITH the verdict). Plus **THE DENIAL RAID's own layer** (`docs/plan_denial_raid.md`) — `denial_forecast` / `denial_verdict` / `denial_turns_phrase` / `denial_verdict_text` / `denial_verdict_bbcode` / `denial_party_needed` (a read of the REPLY, not of a table) / `denial_is_short_handed` / `denial_short_handed_reason`, over the `DENIAL_VERDICTS` table — which is composed from the QUERY's reply row (`denialEstimates` is retired) and shares NONE of the raid vocabulary above: denial carries no floor and no delivery ETA, so its readout is a collapse verdict (the Deny pick's hover banner) and its click is refused in exactly one case (`denial_is_short_handed` / `denial_short_handed_reason` — the band cannot field the party the herd REQUIRES; a party the player under-sized still launches). The rationale lives in `band-city-panel.md` → "DENIAL is a third MISSION". Plus the shared leaves those need — `format_magnitude`/`format_signed`/`format_yield`/`extractive_take`, `band_tile`/`hex_distance_wrapped`, `herd_display_name`, `is_managed_hunt_source`, and the two one-off leaks into the read-only detail layer, `flora_basket_entries` / `husbandry_ceiling`. **WHY ITS OWN FILE:** the next phase lifts a `DrawerComposeController` out of `Hud.gd`, but this layer is called by the work + parties zones too, so it cannot travel with the drawer; pure injection was measured at **54 Callables** and a `_hud` back-ref would weld an already-pure layer to the god object (and the band-panel extraction would then need a SECOND back-ref to the same place). All three consumers depend on THIS instead. **STATELESS IS THE INVARIANT** — no node, no `_hud`, no snapshot cache; if a new function needs HUD state, pass it in. The one non-plain-value is the grid-wrap pair (`grid_width`, `wrap_horizontal`), threaded as EXPLICIT PARAMETERS through `hex_distance_wrapped` → `round_trip_travel_turns` → `hunt_trip_forecast` / `expedition_policy_takes` so a stale grid can never be captured; `HudLayer._hex_distance_wrapped` is a one-line pass-through supplying the pair off `_band_labor`, so there is ONE hex implementation (`DrawerComposeController` calls the module directly with the same pair). The **forecast vocabulary constants moved here with the math** (`LABOR_KIND_*` / `LABOR_HUNT_POLICIES` / `DEFAULT_HUNT_POLICY` / `SOURCE_KIND_*` / `FORECAST_*` / `MAX_USEFUL_*` / `HUNT_FORECAST_*` / `SEND_HUNT_*` / `HUSBANDRY_CEILING_*` …) and `HudLayer` **re-exports the still-used ones as aliases** (`const X = SourceForecast.X`, one commented block) rather than redefining them — ONE definition, and every HudLayer call site reads unchanged |
+| `ui/hud/SourceForecast.gd` | **All-`static`, stateless** shared forecast/estimate layer (HUD decomposition, phase 2c-2 precursor) — the pure "what will this source give me?" math THREE consumers ask for: the drawer's compose blocks, the Band panel's WORK zone, and its PARTIES zone and verb sheets. Three families: POST-HOC `source_yield_readout` (what a worked source actually produced, incl. the ⚠ overdraw + overstaff/wasted notes) · PRE-COMMIT `forecast_inputs` / `max_useful_workers` / **`source_worker_cap_state`** (the CONFIRMED-row twin of that cap: `(forecast, workers, idle, useful_floor = 0) → {can_add, note}`, beside the ceiling it reads so a worked row and a compose stepper can never gate differently — the trailing floor is what makes that true rather than merely stated, and `herd_crew_floor` is its one definition; the *hold it after* crew is a floor on BOTH twins and therefore lives inside `max_useful_workers`, carried on the forecast as `hold_crew`) / `expected_yield` / `hunt_policy_ceiling`. Plus **THE DENIAL RAID's own layer** (`docs/plan_denial_raid.md`) — `denial_forecast` / `denial_verdict` / `denial_turns_phrase` / `denial_verdict_text` / `denial_verdict_bbcode` / `denial_party_needed` (a read of the REPLY, not of a table) / `denial_is_short_handed` / `denial_short_handed_reason`, over the `DENIAL_VERDICTS` table — which is composed from the QUERY's reply row (`denialEstimates` is retired) and shares NONE of the hunt vocabulary above: denial carries no floor and no delivery ETA, so its readout is a collapse verdict (the Deny pick's hover banner) and its click is refused in exactly one case (`denial_is_short_handed` / `denial_short_handed_reason` — the band cannot field the party the herd REQUIRES; a party the player under-sized still launches). The rationale lives in `band-city-panel.md` → "DENIAL is a third MISSION". Plus the shared leaves those need — `format_magnitude`/`format_signed`/`format_yield`/`extractive_take`, `band_tile`/`hex_distance_wrapped`, `herd_display_name`, `is_managed_hunt_source`, and the two one-off leaks into the read-only detail layer, `flora_basket_entries` / `husbandry_ceiling`. **WHY ITS OWN FILE:** the next phase lifts a `DrawerComposeController` out of `Hud.gd`, but this layer is called by the work + parties zones too, so it cannot travel with the drawer; pure injection was measured at **54 Callables** and a `_hud` back-ref would weld an already-pure layer to the god object (and the band-panel extraction would then need a SECOND back-ref to the same place). All three consumers depend on THIS instead. **STATELESS IS THE INVARIANT** — no node, no `_hud`, no snapshot cache; if a new function needs HUD state, pass it in. The one non-plain-value is the grid-wrap pair (`grid_width`, `wrap_horizontal`), threaded as EXPLICIT PARAMETERS through `hex_distance_wrapped` → `round_trip_travel_turns` → `outbound_travel_turns` so a stale grid can never be captured; `HudLayer._hex_distance_wrapped` is a one-line pass-through supplying the pair off `_band_labor`, so there is ONE hex implementation (`DrawerComposeController` calls the module directly with the same pair). The **forecast vocabulary constants moved here with the math** (`LABOR_KIND_*` / `LABOR_HUNT_POLICIES` / `DEFAULT_HUNT_POLICY` / `SOURCE_KIND_*` / `FORECAST_*` / `MAX_USEFUL_*` / `HUNT_FORECAST_*` / `HUSBANDRY_CEILING_*` …) and `HudLayer` **re-exports the still-used ones as aliases** (`const X = SourceForecast.X`, one commented block) rather than redefining them — ONE definition, and every HudLayer call site reads unchanged |
 
 ## THE HARVEST AXIS IS AN ESCAPEMENT FLOOR, NOT A STANCE (`docs/plan_harvest_floor.md`, issue #455)
 
@@ -356,11 +355,11 @@ carrying capacity:
 
 | Axis | Question | Wire | Values |
 |---|---|---|---|
-| **Floor** | how much do I leave standing? | `LaborAssignment.floor` / `expeditionFloor` | any `0.0..=1.0` |
+| **Floor** | how much do I leave standing? | `LaborAssignment.floor` | any `0.0..=1.0` |
 | **Improvement** | what am I building? | `LaborAssignment.improvement` | `""` · `cultivate` · `sow` · `tame` · `corral` |
 
 `FollowPolicy` does not exist. `LaborAssignment.policy`, `PopulationCohortState.huntMode`,
-`expeditionHuntPolicy`, `HuntTripEstimate.policy`, `foragePolicyCeilings` and `huntPolicyCeilings` are
+`expeditionHuntPolicy`, `expeditionFloor`, `HuntTripEstimate`, `foragePolicyCeilings` and `huntPolicyCeilings` are
 all retired from the wire — a GDScript reader still asking for their dict keys shows the player
 nothing and looks like a rendering bug rather than a contract break.
 
@@ -1147,9 +1146,7 @@ own *"then holds it"* clause there on the understanding that this line carries t
 
 **Assert the peak's silence as a PAIR with the strip zone's warning**, on the table AND on a rendered
 aside: a lone negative is satisfied by emptying the whole table, which is the mistake this pairing
-exists to catch. `forage_three_accounts` carries the table + strip half; `herd_hunt_expedition` carries
-the rendered half (its trip readout renders no aside at all at the peak, rather than a dashed rule over
-empty space).
+exists to catch. `forage_three_accounts` carries the table + strip half.
 
 The aside's other line states the **live learning rate**, and it is the only thing in the client that
 makes slice 3 visible to a player: `intensification::learn_multiplier` is `floor / the food peak`, so
@@ -1382,44 +1379,6 @@ default) is one DEVICE pixel whatever the scale; `draw_rect` of the same height 
 rule also needs `resized.connect(queue_redraw)`: a Control draws once on entering the tree, before its
 container has laid it out, so the only pass runs at `size.x == 0` and the dash loop never iterates.
 
-**THE EXPEDITION BRANCH TAKES THE SAME READOUT BOX, RE-KEYED FROM A RATE TO A TRIP.** It answered with
-one wrapped sentence carrying five facts — *delivers ≈1 Wild Boar over ≈18 turns (2 hunting + 16
-travel) · ~1 food · ⚠ 20% wasted* — beside a local sheet that laid the same kinds of
-fact out in a bounded well, so one panel read two ways. `_mount_trip_readout` composes the same three
-registers:
-
-| register | the raid's version |
-|---|---|
-| **yields** | header `THIS TRIP`, the ANIMAL count leading in the local hunt row's own idiom (its `YIELD_ROW_NUMBER`/`UNIT` overrides, the quarry as the unit, `YIELD_ACCOUNT_NONE` as the account), then the yield accounts through `SourceForecast.yield_rows`, and the waste on the row's own `waste` slot |
-| **verdict** | `SourceForecast.hunt_trip_verdict` — how long the party is away and where those turns go, `slow` past the band's warn line and on an unbounded raid |
-| **aside** | the floor-zone hint alone |
-
-**What must NOT carry over is the per-turn framing**, and all three registers are where it would have:
-`per turn · now → after` keys a rate and a transition into a holding state, and a raid has neither — it
-is one bounded errand whose numbers are taken once. Hence `EXPEDITION_TRIP_ROW_HEADER`, no `after` on
-any row, and a verdict about the trip's LENGTH rather than about which of the crew and the floor binds
-(a party is fixed at launch; there is no contest to adjudicate).
-
-- **There is still NO chart and NO crew targets**, and those absences are asserted beside the box. A
-  raid's trip is the sim's forward simulation, not a per-turn drawdown by a resident crew, so there is
-  no floor curve to walk and no holding crew to price — and without the pair, "made it look like the
-  local sheet" could quietly come to mean "gave it a chart".
-- **The aside carries the floor hint and nothing else.** The local readout's teaching line has no
-  counterpart: an expedition accrues no husbandry, the gap `FLOOR_LEARNING_HINT_EXPEDITION` already
-  names, so a teaching rate here would quote a multiplier the party never earns. A zone with nothing to
-  say renders no aside at all rather than a dashed rule over blank space.
-- **The three non-delivering states keep the one-line form** — no estimate at all, a denial quarry that
-  pays neither product, a herd stripped to its floor — because each has exactly one thing to say and an
-  empty box would read as a raid delivering nothing measurable rather than one being refused.
-  `SourceForecast.hunt_trip_delivers` is that branch, and `hunt_forecast_line_bbcode` stays: the
-  send-hunt banner is its second caller and keeps the sentence.
-- **It re-renders with the whole compose block** (every stepper tick, every preset click) and is
-  deliberately OUTSIDE `_register_live` — that registry exists to keep readings alive under a chart
-  DRAG, and this branch has no chart.
-
-It takes the crew row as before (the stepper alone — no chart model means no floor axis, hence no
-targets to price), so the shared spine is unchanged.
-
 ### THE CARD IS AS WIDE AS ITS WIDEST ROW, and `CARD_WIDTH` is only where that starts
 
 `ComposeSheet.CARD_WIDTH` (340) is the sheet's **nominal** width — where a narrow sheet reads and the
@@ -1436,7 +1395,7 @@ card left usable (its 13+13 stylebox margins and the scroll gutter):
 
 | sheet | widest row demands | fitted card |
 |---|---|---|
-| forage, staple patch (`food_tile`) · expedition (`herd_hunt_expedition`) · wolf (`herd_hunt_pelts_only`) | **336** | 370 |
+| forage, staple patch (`food_tile`) · wolf (`herd_hunt_pelts_only`) | **336** | 370 |
 | local hunt, two accounts (`herd_hunt_local_sustain`, `herd_hunt_big_game_window`) | **384** | 418 |
 | forage, three accounts (`forage_three_accounts`, `floor_chart_full`) | **529** | 563 |
 
@@ -2043,113 +2002,17 @@ standing`.
   (`FoodIcons.for_floor_zone`). **A continuous number cannot wear one glyph per value**, and the zone
   is the whole of what one mark can honestly say; the exact percent is in the tooltip and in the work
   inspector's sentence (`50% left standing`, `HudComposeVocab.FLOOR_VALUE_FORMAT`).
-- A party row: `expedition_floor`, same glyph, gated on the hunt MISSION — a scout reports `1.0`,
-  which is a real zone but not one it chose.
 
 ### The commands
 
 `assign_labor <f> <b> forage <x> <y> [floor] [species] <workers>` / `… hunt <herd_id> [floor]
-<workers>` / `… extract <x> <y> <material> [floor] <workers>`;
-`send_hunt_expedition <f> <b> <party> <fauna_id> [floor]`. **The optional token is a NUMBER**, formatted to `Main.FLOOR_COMMAND_DECIMALS` (2) — never `str(float)`, which would put
+<workers>` / `… extract <x> <y> <material> [floor] <workers>`. **The optional token is a NUMBER**, formatted to `Main.FLOOR_COMMAND_DECIMALS` (2) — never `str(float)`, which would put
 `0.30000000000000004` on the line. The four stance words are **rejected by name** at parse
 (`CommandParseError::RetiredStanceToken`), so a stale emitter fails loudly instead of being silently
 reinterpreted as a crop key; the two optional forage tokens stay disjoint because a floor only ever
 parses as a float and a species key never does. `_emit_work_assign`'s `RESTATE_STANDING_FLOOR`
 sentinel is outside `0..1` because every real floor **including 0** is a value a crew edit must not
 overwrite.
-
-### The raid table is the ONE place the sim still exports rows
-
-A raid's trip length is a bounded forward simulation with no closed form, so there is no expression to
-hand over. `huntTripEstimates` **samples** the continuum (`snapshot::RAID_FORECAST_FLOOR_SAMPLES` =
-`0.0, 0.15, 0.30, 0.50, 0.80`) × party size.
-
-**BOTH AXES ARE SAMPLED AND BOTH ARE READ AT THEIR NEAREST MARK.** The party axis is
-`expedition_config.estimate_party_sizes`, an ascending LADDER (`[1, 2, 3, 4, 8, 16, 32, 64]`), so most
-party sizes fall between two rungs; `SourceForecast.nearest_estimate_party` is its named seam beside
-`nearest_estimate_floor` and `_row_for_nearest_party` the one resolution the hunt and denial tables
-share, **the lower rung winning a tie** (over-quoting a party's take is the more misleading direction).
-The launch command still sends the player's exact floor and exact party. Where the quoted rung is not
-the selected party the sheet says so — `quoted_party_note`, over `QUOTED_PARTY_KEY` on the forecast —
-and the rationale lives in `band-city-panel.md` → "BOTH ESTIMATE AXES ARE SAMPLED".
-**The rows are SCANNED, never key-built** — the wire key is `"<floor>:<party>"` with the floor rendered
-by Rust's `f32` Display (`0`, not `0.0`), so a GDScript rebuild would have to reproduce Rust float
-formatting and a near-miss finds nothing *silently*. The decoder therefore also inserts `floor` and
-`party_workers` as FIELDS on each row.
-
-#### `turnsToFill == 0` means `horizon` AND NOTHING ELSE
-
-`HuntTripForecast::turns_to_fill` is an `Option<u32>` rendered as `0` on the wire, and the sim reserves
-`None` for [`HuntTripBound::Horizon`] alone: a raid that ends by driving the herd extinct reports the
-turn it ended on like any other, because the live arm's lost-herd guard turns the party for home in
-that same turn. **`SourceForecast.RAID_TURNS_UNBOUNDED` + `raid_is_unbounded` are the ONE reading of
-that sentinel**, so the one-line form, the trip verdict and the Send button cannot answer it three
-ways — and a `herd_lost` row, which carries a real turn count, can never take a "many turns" branch on
-any of them.
-
-**A floor-`0` (`Take everything`) raid is exactly the row that used to publish it**, so a mission whose
-whole purpose is to finish by emptying the range read on three surfaces at once as a trip that never
-completes: `delivers ≈12 Red Deer over many turns`, `Away many turns — still delivering at the end of
-the forecast`, `Send Anyway (long raid)`. It now quotes a real total under
-`TRIP_BOUND_CLAUSES[herd_lost]` — *the herd is wiped out before the party's load is made up* — and the
-ordinary primary Send. The consequence that follows is correct rather than incidental: the
-`Take everything` preset gains a rate in `expedition_policy_takes`. (It also used to bring the FILL
-TARGET control back, that lever needing a bounded length to price a step against; the lever is retired
-— see "RETIRED — the FILL TARGET".)
-
-**That scan asks the RAID, not the total** (`raid_is_unbounded(cell_hunt_turns)`). Its skip used to
-test `turns_to_fill + travel <= 0`, so a horizon cell on a DISTANT herd read `delivered ÷ travel` — a
-rate for a raid the sim says never finished, made entirely out of the walk — while the same cell on a
-near herd correctly showed none.
-
-**Assert the two as a PAIR.** `herd_hunt_forecast_eradicate` (strip-bare, `herd_lost`, a real total)
-and `herd_hunt_forecast_horizon` (a slow breeder at the food peak the party can neither fill nor
-exhaust) are the corpus's only delivering rows on the two branches, so *"never says `many turns`"*
-would otherwise pass on a client that could no longer say it at all.
-
-#### An unbounded raid quotes a FLOOR, and the floor is `horizon + round-trip travel`
-
-The three surfaces above no longer hedge. `PopulationCohortState.expeditionForecastHorizonTurns` —
-`expedition_config.hunt.forecast_horizon_turns`, echoed onto every cohort in the
-`expeditionViabilityWarnTurns` idiom and read here through `SourceForecast.forecast_horizon_turns` —
-is the scale every "never completed" sentinel on this wire is relative to, and ONE lever serves both
-raid tables (the sim's `denial_projection_at` and `hunt_trip_forecast_seeded` read the same field), so
-there is nothing for a client to pick wrongly between.
-
-> **IT IS NOT A TRIP LENGTH.** The horizon bounds the **hunting** alone — `turnsToFill` excludes travel
-> — and the round trip is a separate, already-known term, so the floor on the whole trip is
-> `horizon + round_trip_travel_turns`. The bounded verdict reads *"Away ≈36 turns — 18 hunting, 18
-> travel"*; the unbounded one must be a lower bound on **that same span** or the two cannot be compared
-> and the player is no better off than with "many". Quoting the bare horizon understates the trip by
-> the entire walk, and **a number wrong in the reassuring direction is worse than the hedge it
-> replaces**.
-
-`hunt_trip_forecast` composes both floors on the long branch — `RAID_HUNT_TURNS_FLOOR_KEY` (the
-horizon) and `RAID_TURNS_FLOOR_KEY` (that plus the travel it has just added) — and
-`raid_floor_is_known` is their ONE reading, the `raid_is_unbounded` rule one layer along: the line, the
-verdict and the button must not answer three ways. The copy:
-
-| surface | bounded | unbounded |
-|---|---|---|
-| one-line form | `delivers ≈5 Wild Boar over ≈12 turns (7 hunting + 5 travel)` | `delivers ≈6 Steppe Bison over more than 68 turns (more than 60 hunting + 8 travel)` |
-| trip verdict | `Away ≈12 turns — 7 hunting, 5 travel.` | `Away more than 68 turns — more than 60 hunting, 8 travel. Still delivering at the end of the forecast.` |
-| Send button | `Send Anyway (≈54 turns)` | `Send Anyway (more than 68 turns)` |
-
-The hunting half wears *"more than"* and the travel half does not — travel is exact, and hedging it
-would claim less than the client knows. `TRIP_BOUND_CLAUSES[horizon]` still renders NOTHING, on the
-understanding that the verdict itself carries *"still delivering at the end of the forecast"*.
-
-**A cohort carrying no horizon keeps the hedge** (`FORECAST_HORIZON_UNKNOWN`, `0` — the sim pins the
-published value positive). *"More than 0 turns"* is the one reading worse than *"many"*, so the
-`*_NO_HORIZON_*` fallbacks exist for a fixture that predates the lever and for nothing else.
-
-**The frame that can tell the fix from the bug is `herd_hunt_horizon_travel`**, and its pairing half
-cannot: `herd_hunt_forecast_horizon`'s band carries no move rate, so its trip is all hunting and
-`horizon` and `horizon + travel` are the same number. The travel frame raids the same
-never-completing Steppe Bison from the 8-tiles-out band, and asserts all three surfaces by
-**EQUALITY** against sentences spelled out in the chapter — a `contains` would pass on a line quoting
-the horizon alone, those two lines sharing every word. Sabotage-verified by returning the bare
-horizon as `turns_floor`: exactly those three fail, each naming both the wanted and the found string.
 
 ### §7.7: a zero belongs to an account the source actually pays
 
@@ -2573,20 +2436,6 @@ What it asserts is the refusal's absence and `GATE_SPLIT_KIT_HINT`, the survivin
 `HUNT_CREW_ITEM_IDS_KEY` constants — the client's whole reading of the live
 `PopulationCohortState.huntCrews` field. Removing a readout is not a decision to stop being able to
 read the wire. `HUNT_CREW_WORKER_EPSILON` keeps a live caller in `DetailFormat.kit_coverage`.
-
-## THE RAID'S READOUT IS ONE BUILDER, IN THE SHARED WIDGET LAYER
-
-`HudWidgets.mount_trip_readout` (+ `_trip_yield_rows`) is the boxed `THIS TRIP` section — the payload
-as a yields row, the trip's length as the verdict, the floor's meaning as the aside. It was private
-to `DrawerComposeController` while the Band panel's dock sheet answered the same question with a
-one-line bbcode sentence, and the two drifted exactly as a copied control does. Both sheets call it
-now; everything it needs (`trip`, the quarry's name, the composed floor) arrives as a PARAMETER,
-which is what let it move at all.
-
-Only a DELIVERING trip reaches it (`SourceForecast.hunt_trip_delivers`); the refused states keep the
-one-line form on **both** sheets, an empty box being worse than the sentence it would replace.
-
----
 
 ## THE KIT IS CHOSEN ON THE SHEET, and it moves every figure below it (`docs/plan_denial_raid.md`)
 
@@ -3630,25 +3479,23 @@ is a string — a frame shows a plausible line whichever item it names.
 
 ### THE RAID'S NUMBERS ARE ASKED FOR — one question, one answer, no honesty gate
 
-The two pre-launch raid forecasts used to ride the per-turn snapshot: every huntable herd carried a
-`huntTripEstimates` (floor x party) table and a `denialEstimates` (party) table, both computed at the
+The pre-launch raid forecast used to ride the per-turn snapshot: every huntable herd carried a
+`denialEstimates` (party) table, computed at the
 hunt job's DEFAULT kit over a FRESH component set. They were ~93% of a turn's capture, and they were
 wrong for anyone who had worn their gear or picked another kit — so the sheets had to compare
-`hunt_trip_estimates_kit_id` / `denial_estimates_kit_id` against the selection and REFUSE to present
-the table as the answer when they differed.
+`denial_estimates_kit_id` against the selection and REFUSE to present the table as the answer when
+they differed.
 
-**Both tables are gone and so is the whole apology.** The forecast is a request/response on the command
+**The table is gone and so is the whole apology.** The forecast is a request/response on the command
 socket (`ForecastQuery.gd`, and `sim_runtime/proto/command.proto` -> "THE QUERY CHANNEL"), answered for
 the exact `(band, kit, party, floor)` the sheet is composing. A sheet's numbers are always its own, so
 there is no nearest rung to name and no other kit's raid to disown. Retired with it:
-`KitRoster.estimates_quoted_kit` / `estimates_apply_to` / `estimates_quoted_note`, the two herd kit-id
-wire keys, the four `*_QUOTED_FORMAT` sentences in `hud_compose_vocab.gd`, and the sampled party axis's
+`KitRoster.estimates_quoted_kit` / `estimates_apply_to` / `estimates_quoted_note`, the herd kit-id
+wire key, the four `*_QUOTED_FORMAT` sentences in `hud_compose_vocab.gd`, and the sampled party axis's
 `quoted_party_note`.
 
-**THE SEAM IS ONE OBJECT AND TWO SHEETS ASK THROUGH IT.** The Deny verb's sheet and the herd drawer's
-expedition branch each compose the ask and read the reply back through one key
-(`BandPanelController._denial_forecast_view` / `DrawerComposeController._raid_forecast_view`, one per
-sheet, so the key it asks under is the key it reads). `Main` injects the transport and pumps the
+**THE SEAM IS ONE OBJECT.** The Deny verb's sheet composes the ask and reads the reply back through
+one key (`BandPanelController._denial_forecast_view`, so the key it asks under is the key it reads). `Main` injects the transport and pumps the
 replies; the HUD never reaches the network.
 
 - **The ask is IDEMPOTENT on the composed key**, so a rebuild that moves nothing costs nothing, and
@@ -3656,8 +3503,8 @@ replies; the HUD never reaches the network.
   a re-query. A floor DRAG never reaches it: only a committed change rebuilds the sheet.
 - **A QUERY TRIGGERS NO SNAPSHOT**, deliberately, so `ForecastQuery.answered` is the only thing that
   can tell a sheet to redraw. A sheet must never wait on a frame.
-- **What renders while the answer is in flight** is the pending line (`RAID_FORECAST_PENDING` /
-  `DENIAL_FORECAST_PENDING`) in place of the readout box, never zeros beside a live verdict — and the
+- **What renders while the answer is in flight** is the pending line (`DENIAL_FORECAST_PENDING`) in
+  place of the readout box, never zeros beside a live verdict — and the
   COMBAT GATE beside it, which is composed from wire terms and stays honest with no reply at all. A
   refusal renders `FORECAST_FAILED_FORMAT` carrying the server's own token; the Send stays LIVE either
   way, because the raid is launchable and only its length is unquotable.
@@ -3726,18 +3573,6 @@ does not change the key* is satisfied by the shipped bug, where nothing about th
 A liveness claim rides in front of both, that a kit carrying items produces a NON-empty fingerprint,
 or every difference asserted is a difference between two empty strings.
 
-#### `expedition_policy_takes` CHANGED MEANING, and the preset buttons now move with the crew
-
-It reads the reply's `per_preset` rows, which the sim answers **at the composed party**. It used to
-scan the table's whole party axis and take the MAX over it — so the preset faces quoted a best case
-reachable only by a crew the band might not have, and they did not move when the player stepped the
-Party stepper. They move with it now, and a one-hunter party's presets read a one-hunter party's rates.
-
-That is a visible behaviour change with no new control: the same three buttons, answering a question
-about the crew actually being composed rather than about the best crew the table happened to sample.
-`SourceForecast.preset_floors()` is the ONE list of floors the ask carries and the reply answers in, so
-the ask and the read cannot index the presets differently.
-
 #### THE IN-FLIGHT `Collapse:` ROW ASKS ON THE LAUNCHED PARTY'S OWN BEHALF
 
 `DetailFormat.expedition_collapse_line` used to read the target herd's snapshot `denialEstimates` row
@@ -3785,8 +3620,8 @@ the band's ceilings, with no table and no query in it. Neither has the forage sh
 
 ### The command carries `kit <id>`, and OMITS it at the job default
 
-`Main._kit_token` is the one builder, appended by all four grammars (`assign_labor forage` /
-`assign_labor hunt` / `send_hunt_expedition` / `send_denial_raid`). It is a **named, space-separated,
+`Main._kit_token` is the one builder, appended by all three grammars (`assign_labor forage` /
+`assign_labor hunt` / `send_denial_raid`). It is a **named, space-separated,
 order-independent** tail pair, the parser's existing `name value` style, lifted out of the tail before
 any positional form is read — so it may sit anywhere after the role and no grammar has to make room
 for it. On the denial raid it is the ONE thing the closed four-token grammar admits, because a kit is
@@ -4266,9 +4101,9 @@ the absence is a change rather than a sheet that never offers that herd a rung).
 
 **`ui_preview` asserts the ORDER, because a frame cannot.** `Spine.compose_spine` reduces an open sheet to
 its structural controls — band picker, stance picker, crew stepper, improvement, each found by meta or
-by node type, with the prose between them deliberately excluded — and the three sheets' spines are
-captured at `food_tile` / `herd_hunt_expedition` / `herd_hunt_local_sustain`. Every sheet must open on
-the shared HEAD (`band → policy → stepper`) and the two LOCAL spines must be EQUAL. Sabotage-verified:
+by node type, with the prose between them deliberately excluded — and the sheets' spines are
+captured at `food_tile` / `herd_hunt_local_sustain`. Every sheet must open on the shared HEAD
+(`band → policy → stepper`) and the two spines must be EQUAL. Sabotage-verified:
 putting the stepper back above the picker fails all three, naming the order it found.
 
 **A stance hint states the rung's consequence for the SOURCE, and does not teach the ladder.** The
@@ -4295,13 +4130,8 @@ windows skipped); only where it renders moved.
 
 **The commit button is a VERB and never restates the sheet's own header.** The sheet is already titled
 `ASSIGN HUNTERS <herd>` / `ASSIGN FORAGERS <patch>`. So: forage `Forage` (unchanged), local hunt
-**`Hunt Here`** (was "Assign Local Hunt" — "Here" is what carries the local-vs-expedition distinction),
-expedition **`Send Expedition`** (was "Send hunting party"). **The `Send` STEM is load-bearing**:
-`SourceForecast.style_send_hunt_button` rewrites that same button with the raid verdict — `Send Anyway
-(≈54 turns)` / `Send Anyway (long raid)` / `Send (brings nothing home)` — so the resting face must be
-the verb they vary. The disabled `Herd too lean to raid` is the one face that leaves the stem, and
-deliberately: it is a refusal, not a send. Harnesses reach the send button through
-`HudWidgets.SEND_HUNT_CONFIRM_META`, never by face, which is why a rename does not touch
+**`Hunt Here`** (was "Assign Local Hunt"). Harnesses reach the commit button through
+`HudWidgets.COMPOSE_COMMIT_META`, never by face, which is why a rename does not touch
 `tools/command_guard.gd`.
 
 **The forage sheet's green forecast line is NOT redundant with the rung face, and stays.** The face
@@ -5627,15 +5457,14 @@ spelled and never a raw count.
     count). Pending is emitted to MapView via `labor_pending_changed` → `set_labor_pending`.
   - **Selected-band map highlights** (`BandOverlayRenderer.draw_band_work_highlights`, drawn when a player band
     is selected, cleared on deselect): the **worked forage tiles** (strong green fill on each
-    `forage` assignment's `target_x/y`), the **three range borders** (`_draw_range_border`: a clean
+    `forage` assignment's `target_x/y`), the **range borders** (`_draw_range_border`: a clean
     PERIMETER outline of each reach's hex disk — traced edge-by-edge, drawing an edge only where the
     neighbour across it leaves the disk, NOT a filled tile-by-tile mesh — using the sim's true **odd-r
     hex distance** `hex_distance_wrapped` via `MapView._hex_distance`, so the boundary ==
-    actually-in-range; forage **green** at `work_range` (ties to the worked-forage fills), hunt **red**
-    at `hunt_reach` when it extends past `work_range` (ties to the hunted-herd rings), scout **azure**
+    actually-in-range; forage **green** at `work_range` (ties to the worked-forage fills), scout **azure**
     at `scout_reveal_radius` when scouts are staffed — nested and color-distinct, all at every zoom),
     and the **hunted herds** (red ring on the herd tile + a band→herd link, drawn wherever the herd is
-    since hunt reach = `work_range` + leash). **The per-source RATE is no longer drawn on the map at
+    since a far crew posts a work party). **The per-source RATE is no longer drawn on the map at
     all** (issue #650): a rate pill is ~90px and two markers in one hex's edge slots are ~55px apart,
     so the rates left the markers and became the **source list** docked beside the band —
     `BandSourceList`, one row per worked source, with the connector lines now running from each ROW to
@@ -5644,11 +5473,11 @@ spelled and never a raw count.
     `rate_text` rather than through a label over its tile, and that the row's producers are still this
     layer's (`SourceForecast.row_zero_account` for the account a zero may name, the sim-answered
     `overdraws` bool for the `⚠`, never the client-derived `actual > sustainable`). **Scouting draws its azure range border** (the scout vantage reach `scout_reveal_radius`, when
-    scouts are staffed) — a perimeter outline like the forage/hunt borders, NOT a filled reveal disc:
+    scouts are staffed) — a perimeter outline like the forage border, NOT a filled reveal disc:
     the old faint-blue scouted DISC was removed because `scout_reveal_radius` is a scout-vantage /
     sight-range value, not a revealed-area radius, and the client can't reconstruct the true LOS-revealed
     area; the border just marks how far the vantage reach extends. The band's actual sight is still
-    visible directly in the fog (a wider Active radius). Snapshot fields `work_range` / `hunt_reach` /
+    visible directly in the fog (a wider Active radius). Snapshot fields `work_range` /
     `scout_reveal_radius` are decoded in `native/src/lib.rs population_to_dict` and flowed onto the
     MapView unit marker in `_rebuild_unit_markers` (alongside `labor_assignments`). **Optimistic pending**
     actions for the selected band draw in a distinct **dashed-amber** style (`_draw_band_pending`, fed by
@@ -5683,13 +5512,8 @@ spelled and never a raw count.
     band-picker, then a **distance-aware** "Assign hunters" **compose** control — a **policy picker**
     (`HudWidgets.build_policy_picker`, `_hunt_assign_policy`, default `sustain`) and, BENEATH it, the
     `−/+` worker/party count (`_hunt_assign_count`); stance first, then the crew that staffs it, the same
-    order the forage sheet reads in. **The two policy axes are separated BY BRANCH, and the sim enforces it:** a
-    **local** hunt offers `HUNT_POLICY_OPTIONS` (the four extractive rungs **+ the `Corral` investment
-    rung**, gated by `_hunt_policy_gates`), while a hunting **EXPEDITION** offers only the extractive
-    `LABOR_HUNT_POLICIES` — a detached party follows the herd and builds no pen, `send_hunt_expedition`
-    REJECTS Corral server-side, and the sim exports no `hunt_trip_estimates` row for it, so a Corral
-    ETA could only ever be a lie. The
-    **local** branch renders `LOCAL_HUNT_POLICY_HINTS` under the picker (each rung's consequence FOR THE
+    order the forage sheet reads in. A hunt offers `HUNT_POLICY_OPTIONS` (the four extractive rungs **+ the
+    `Corral` investment rung**, gated by `_hunt_policy_gates`). The sheet renders `LOCAL_HUNT_POLICY_HINTS` under the picker (each rung's consequence FOR THE
     HERD: Sustain → take only the renewable yield, it stays healthy; Surplus → more food now, pushes
     settling; Deplete → draws the herd down hard, much more food now and a fast decline it will not
     recover from while it lasts — deliberately not oversold; Eradicate → **the last hunt**: the whole
@@ -5700,87 +5524,18 @@ spelled and never a raw count.
     METRIC line rather than by the hint — the floor presets state its materials off
     `material_per_biomass`, which is a number and not a noun the prose has to carry). **They no longer
     teach the LADDER** — see
-    "The two compose sheets read in ONE grammar" above. **These are
-    NOT the expedition hints** (`SEND_HUNT_POLICY_HINTS`): an expedition's Hunting arm banks the kill's
-    provisions into the party's larder and into the HOME BAND's `stores` at the drop-off/fold-back, but
-    accrues **no husbandry** (a known v1 gap, tracked server-side) — so the expedition set may state a
-    payoff, never a craft, and the two sets must stay separate. `LOCAL_HUNT_POLICY_HINTS`
+    "The two compose sheets read in ONE grammar" above. `LOCAL_HUNT_POLICY_HINTS`
     also owns the **`corral`** hint (Corral is a local-hunt-only rung) — which must carry all three
     halves of that bargain: the ~25-turn half-yield build, the ladder's best payoff, and the fact that
     **penned animals can't graze, so you feed them from your larder every turn and an underfed herd
     shrinks**, and it is the set `_policy_hint`
-    spells out on a worked Hunt row's tooltip. **The hint is rendered per BRANCH, never once above
-    both** — one shared line under the picker would promise an expedition player the band's payoffs. The
-    button + command switch on the **wrap-aware hex distance** from the **SELECTED band's** own tile
-    to the herd vs that band's **`hunt_reach`** (= `work_range` + hunt leash, decoded as `hunt_reach`
-    and flowed onto the marker): **within reach** → a `Hunters` stepper + **"Hunt Here"** →
-    `assign_labor hunt <herd_id> <policy> <workers>`; **beyond reach** → a `Party` stepper (cap
-    `min(idle_workers, max_expedition_party_size)`) + a distance hint + **"Send Expedition"** →
-    `send_hunt_expedition <faction> <band> <party_workers> <fauna_id> <policy>` (emitted directly, no
-    herd-targeting step — the herd is already selected). Every part of the decision (distance, reach,
-    band-entity target) keys off the band the picker selects, explicitly threaded — never the faction's
-    default band. **Both branches show a LIVE forecast above the button** (everything — band, count,
-    policy, herd — is known at compose time, and the block re-renders on every stepper tick / policy
-    click, so it's live, not a confirmation; missing levers/ceilings → no line, panel otherwise
-    unchanged): the **expedition** branch renders the SAME raid line as the targeting banner
-    (`SourceForecast.hunt_trip_forecast` → `SourceForecast.hunt_forecast_line_bbcode`, shared — the two entry points can't quote
-    different numbers) and gives the **button itself** the verdict (`SourceForecast.style_send_hunt_button`).
-    **A hunting expedition is a GREEDY RAID** (server `5a130e0`): it grabs the herd's standing surplus
-    above the policy floor in a burst and comes home. A party too small to carry a whole animal now
-    **kills one and hauls only the fraction its pack holds, wasting the rest** (mirroring the local hunt's
-    `quantise_animal_take`), so the headline is the delivered **PAYLOAD** — the animal count over the turns,
-    the FOOD the party actually LANDS, and the WASTE below it: **`delivers ≈1 Thunder Mammoth over ≈20
-    turns · ~4 food · ⚠ 75% wasted`** (`HUNT_FORECAST_DELIVERS_FORMAT` + `HUNT_FORECAST_TRAVEL_BREAKDOWN` +
-    `HUNT_FORECAST_FOOD_FORMAT` + a WARN-amber `HUNT_WASTE_SUFFIX_FORMAT`; `animals` =
-    `HuntTripEstimate.animalsTaken` (now a KILL count ≥ 1 whenever there's surplus), **food =
-    `HuntTripEstimate.deliveredFood`** — the sim's forward-simulated landed food, NOT `animals ×
-    foodPerAnimal`, which counts the whole kill and overstates a partial — and waste % =
-    `wastedFood / (deliveredFood + wastedFood)`). A high waste % is **informative, not a block** — the
-    button stays enabled. **`turnsToFill` is HUNTING turns only** (server `3bb9731` — travel is NOT in it;
-    the per-herd estimate table is band-agnostic). The client adds the **round-trip TRAVEL** itself
-    (`SourceForecast.round_trip_travel_turns`, matching the server launch feed EXACTLY: `ceil(2 × wrap-aware
-    hex_distance(band, herd) / band_move_tiles_per_turn)`) and headlines the **total** trip length, spelling
-    the split out via `HUNT_FORECAST_TRAVEL_BREAKDOWN` when travel > 0. `band_move_tiles_per_turn` (a
-    LaborConfig scalar echoed per-cohort) is **now decoded in `native/src/lib.rs` and flowed onto the band
-    marker** (`_rebuild_unit_markers`, guarded by `marker_field_guard`), so travel lights up on the live
-    wire (it degrades to hunting turns only if a snapshot omits it).
-    **WARNED vs BLOCKED — the line that matters:** a **slow** raid (the **TOTAL** trip —
-    `hunt_turns + round-trip travel`, NOT hunting-only `turnsToFill` — past `viability_warn_turns`;
-    see `SourceForecast.hunt_forecast_line_bbcode`'s `total > warn_turns`, so a distant herd is "slow" on travel
-    alone) or a **long** raid (`turnsToFill == 0` — ran the whole horizon still
-    delivering) is a real tradeoff, so it is WARN-amber `"armed"` + `Send Anyway (≈54 turns)` /
-    `Send Anyway (long raid)` and stays **enabled**. A **denial** mission — a raid that brings NOTHING
-    home (`delivers_food == false` **and** an empty `delivered_material`; never the Eradicate rung,
-    which delivers, and never an inedible quarry whose hides land) — likewise stays enabled (`SEND_HUNT_DENIAL_BUTTON`, "Send (brings nothing home)"). The ONE blocked case is **no surplus**
-    (`SourceForecast.hunt_trip_no_surplus`: **`deliveredFood == 0`**) — the herd is at/below the policy's floor, so the raid
-    would return empty at every party size: a mistake with no upside, so the button is **DISABLED**
-    (`Herd too lean to raid`). This is `deliveredFood == 0`, **NOT `animalsTaken == 0`** — a small party on
-    big game now delivers a partial (`animalsTaken 1`, high waste), which is NOT too lean; only a genuinely
-    at-floor herd blocks. Party size cannot fix it — **surplus is a property of the HERD, not the party** —
-    so the reason (`SourceForecast.hunt_no_surplus_reason` → `SEND_HUNT_NO_SURPLUS_REASON`) names **no alternative size**
-    (the old row-scan / `_recommended_party` / step-up-impossible machinery is retired). `SourceForecast.hunt_estimate_key`
-    is the one definition of the `"<policy>:<workers>"` estimate key, shared by the single-cell lookup and
-    the max-useful scan.
-    **The party stepper caps at MAX-USEFUL on both branches** (`SourceForecast.expedition_useful_cap`): the
-    delivered payload PLATEAUS with party size once the herd's surplus (not the pack) binds, so extra hunters
-    past the plateau raid no more food — the cap is the LAST party at which the payload was still RISING
-    (`HuntTripForecastReply.useful_cap`, so `useful_cap + 1` is the first party that adds nothing, and a
-    stepper seeds and clamps ON it rather than one above),
-    with the SAME "max N useful here — more would be idle" note the local hunt uses (`MAX_USEFUL_NOTE_FORMAT`).
-    It scans **`deliveredFood`, not `animalsTaken`** — the whole-animal count sits at a leading 1 across every
-    small-party size on big game (the leading-zeros bug that fooled the old scan into capping at 1); with
-    partials, delivered food rises smoothly, so the cap tracks the true bind. That closes the silent-idle-
-    hunter gap the whole pass exists for.
-    **Picking a policy AUTO-FILLS the crew/party to that policy's max-useful cap** (`_hunt_assign_autofill`,
-    a one-shot set only by a policy CLICK, consumed on the next rebuild before the clamp — the "give me
-    everything this herd sustains" default that guarantees zero waste + the full rate). Both branches;
-    the manual `−/+` stepper is untouched (it never sets the flag).
-    The **band-panel launch flow gates identically, in its own form**: its compose sheet picks the
-    quarry first and then styles its Send with the SAME `SourceForecast.style_send_hunt_button` + `SourceForecast.hunt_no_surplus_reason`,
-    so a no-surplus herd disables there too. The quarry PICKER itself (`_try_pick_quarry`) deliberately
-    does NOT test surplus — no policy is chosen at that point, so the verdict is unknowable; it only
-    nudges "No huntable herd there — click on a herd." so a click is never silently swallowed. The **local** branch has no carry cap, so a raid readout is meaningless and
-    it instead previews the crew's honest **carry-aware delivered take, ANIMALS-first**
+    spells out on a worked Hunt row's tooltip. The sheet commits **"Hunt Here"** →
+    `assign_labor hunt <herd_id> [floor] <workers>` for every herd at every distance (past the apron it
+    ADDS the work party section — "A FAR SOURCE IS AN ORDINARY SHEET"). Every part of it (the apron
+    measure, the band-entity target) keys off the band the picker selects, explicitly threaded — never
+    the faction's default band. **A LIVE forecast shows above the button** (everything — band, count, floor, herd — is known at
+    compose time, and the block re-renders on every stepper tick, so it's live, not a confirmation). It
+    previews the crew's honest **carry-aware delivered take, ANIMALS-first**
     (`_local_hunt_preview_bbcode` / `_hunt_delivered_and_waste`). A hunt takes WHOLE animals via a
     kill-credit bank, so the crew's raw food throughput
     (`workers × hunt_per_worker_provisions × output_multiplier`, capped by the band's flow ceiling)
@@ -5802,38 +5557,17 @@ spelled and never a raw count.
     ~2, mammoth Sustain → ~7), fast game → `ceil(1/frac)`, clamped to `HUNT_WINDOW_MAX_TURNS` (12). Keyed per
     rung (a faster policy averages over a different span), extractive rungs only (an
     investment rung shows a dip→payoff, not a cadence), skipped when the window is unknown (missing
-    food_per_animal / ceiling → returns 0). The resident band applies its
-    morale/discontent productivity modifier at payout, an expedition does not; when `food_per_animal` is
-    unknown the line degrades to the old smoothed `≈ +X /turn · renewable` food line (unchanged). **The
-    two branches read DIFFERENT herd fields**
-    (see "Hunting expedition" below): the expedition line is a pure LOOKUP into the sim's
-    forward-simulated `hunt_trip_estimates` (`HERD_TRIP_ESTIMATES_KEY`, zero client arithmetic — a
-    `carryCap / rate` division is WRONG for Surplus/Deplete), while the local line is carry arithmetic over
+    food_per_animal / ceiling → returns 0). The band applies its
+    morale/discontent productivity modifier at payout; when `food_per_animal` is
+    unknown the line degrades to the old smoothed `≈ +X /turn · renewable` food line (unchanged). The line is carry arithmetic over
     the band's flow ceiling `hunt_policy_ceilings` (`HERD_BAND_CEILINGS_KEY`, via `_hunt_delivered_and_waste`
     / `SourceForecast.hunt_policy_ceiling`; `_hunt_take_rate` still backs the food-line fallback). The ecology/MSY model
     is NEVER re-derived client-side.
     Distance uses Hud-local mirrors of MapView's odd-r `_hex_distance` /
     `_wrapped_col_delta`, fed grid width + wrap via `Hud.set_grid_dimensions` (Main forwards the
     snapshot `grid` key). Compose state re-seeds from current staffing when the selected herd changes.
-    Covered by ui_preview states `herd_verbs` (local) / `herd_hunt_expedition` (single far band) /
-    `herd_hunt_band_near` + `herd_hunt_band_far` (two bands, one herd — picker flips local↔expedition),
-    plus the live-forecast states `herd_hunt_forecast_viable` (Mammoth Sustain: cyan "delivers ≈8 …
-    over ≈6 turns" + primary button) / `herd_hunt_forecast_slow` (Red Deer Sustain, 54 turns past the
-    warn line → amber "⚠ … — a slow raid" + "Send Anyway (≈54 turns)") / `herd_hunt_forecast_surplus`
-    (the SAME Red Deer on Surplus: a deeper floor → more animals, brisk turns) /
-    `herd_hunt_forecast_no_surplus` (collapsing Wild Fowl at its floor → animalsTaken 0 → red "too lean
-    to raid" + disabled button) / `herd_hunt_forecast_eradicate` (a REAL delivery, not a denial —
-    a real payload over a REAL total, ordinary Send — a floor-`0` raid completes by emptying the range;
-    `herd_hunt_forecast_horizon` / `herd_hunt_horizon_travel` are the raids that do not, and they quote
-    `Send Anyway (more than N turns)`), the RAID + max-useful set `herd_hunt_boar_raid` (the server's measured Wild Boar,
-    1 hunter → "delivers ≈5 Wild Boar over ≈7 turns · ~20 food", ascending per-policy compact `≈N` picker
-    buttons — glyph + metric, name-in-tooltip) / `herd_hunt_max_useful` (2 hunters → "delivers ≈8 … over ≈8 turns"; a 3rd raids no more, so
-    the stepper caps at 2 with "max 2 workers useful here — more would be idle") /
-    `herd_hunt_raid_travel` (the SAME boar 8 tiles from a band carrying a move rate → the client adds the
-    round trip: "delivers ≈8 Wild Boar over ≈16 turns (8 hunting + 8 travel) · ~32 food", cap still 2) /
-    `herd_hunt_no_surplus` (a herd stripped to its floor → 0 animals at every size → disabled "Herd too
-    lean to raid") / `herd_hunt_eradicate` (the boar on Eradicate → the whole-stock windfall, ordinary
-    Send), and
+    Covered by ui_preview states `herd_verbs` / `herd_hunt_band_near` + `herd_hunt_band_far` (two bands,
+    one herd) /
     `herd_hunt_local_sustain` /
     `herd_hunt_local_overdraw` (local branch, animals-first: green `≈0.14 Red Deer/turn · renewable` vs
     amber `⚠ ≈0.27 Red Deer/turn — overdraws the herd`) /
@@ -5933,13 +5667,7 @@ spelled and never a raw count.
     rungs only**, and that absence is structural rather than unfinished — no animal is harvested for
     feed. (A third account, `trade`, reached all four until arc #527 retired it; the crop picker's own
     per-material clauses are a BASKET-ROW readout and never reach a rung face — see `land-readouts.md`
-    → "WHAT A CASH CROP PAYS, PER MATERIAL".) **The expedition picker no longer shows raid animals** (`≈N` / `EXPEDITION_TAKE_COMPACT`
-    is retired) — `SourceForecast.expedition_policy_takes` now emits each policy's **MAX obtainable food/turn**, the max
-    over party sizes of `deliveredFood / trip_turns` (`trip_turns = turnsToFill + round-trip travel`), so it
-    is **worker-independent** (never blinks as the Party stepper steps) and the four read ASCENDING Sustain <
-    Surplus < Deplete. **Eradicate DELIVERS like every other rung** (#337) and carries its own rate; a rung
-    falls back to its name + skull glyph only when its cells land nothing at all (an inedible quarry, or a
-    `trip_turns` of 0). **Picking a policy AUTO-FILLS the
+    → "WHAT A CASH CROP PAYS, PER MATERIAL".) **Picking a policy AUTO-FILLS the
     foragers to that policy's max-useful cap** (`_forage_assign_autofill`, the forage twin of
     `_hunt_assign_autofill` — a one-shot set only by a policy CLICK, consumed on the next rebuild before the
     clamp; the manual `−/+` stepper never sets it). It carries a
@@ -5952,7 +5680,7 @@ spelled and never a raw count.
     Mirrors `%HerdAssignControls`' policy affordance. Foraging is
     **stationary** gathering — there is **no forage-expedition fallback** — so the button gates on the
     **wrap-aware hex distance** from the **SELECTED band's** own tile to the forage tile vs that band's
-    **`work_range`** (the plain `workRange` field, NOT `hunt_reach`; already decoded/on the marker):
+    **`work_range`** (the plain `workRange` field, already decoded/on the marker):
     **within range** → enabled **Forage**; **beyond range** → the button is **disabled** + an
     out-of-range hint (`HudComposeVocab.WORK_RANGE_REFUSAL_FORMAT` — `"(x,y) is N tiles away — beyond
     this band's work range (R)"`), no alternative.
@@ -6383,8 +6111,7 @@ spelled and never a raw count.
       `+` that would staff the missing keeper. `BandPanelController._work_source_models` passes
       `herd_crew_floor(live_herd, hunt_forecast)` on the HUNT branch (the LIVE herd from
       `find_world_herd` — herds migrate) and the FORAGE branch passes nothing, a patch owing no crew.
-    * **Local hunt ONLY** — the expedition party has no herding crew, so
-      `SourceForecast.expedition_useful_cap` is left alone. The Herders drawer row (`A / N —
+    * The Herders drawer row (`A / N —
       under-herded`), the work row's own ⚠ and the shed consequence line all read the SAME
       `herders_needed`, so the cap, the rows and the consequence never contradict.
     * `band_panel_preview` **`band_panel_work_herder_floor`** is the frame and the assertion: a managed
@@ -6397,13 +6124,12 @@ spelled and never a raw count.
     ceiling bound and the M you're working toward, so a disabled `+` is never mute.
     **THERE IS ONLY ONE SUPPLY CONSTRAINT, SO THERE IS ONLY ONE NOTE.** `PARTY_SIZE_BOUND_NOTE_FORMAT`
     ("N of M useful — at the max party size") and the branch that chose it are DELETED with the cap
-    they described: `SourceForecast.expedition_party_cap` answers the band's idle workforce alone, so
+    they described: the party cap answers the band's idle workforce alone, so
     freeing idle workers is ALWAYS the remedy and the party-size branch could never be taken. A branch
     that cannot be reached is worse than no branch — it reads as a case someone must have measured. The
     one `ui_preview` state that staged it (`herd_hunt_party_size_bound`, `idle 6 >= max party 2`) went
     with it rather than being re-described: at that fixture the sheet now renders the max-useful note,
-    so the frame could only have shown one note under another one's name. (`SourceForecast.expedition_useful_cap` scans the full estimate table for M even past
-    the fieldable party, so "of M" can exceed the party you can currently staff.)
+    so the frame could only have shown one note under another one's name.
     **ONE forecast row per rung, and forage now mirrors the local hunt exactly** (`Hud.gd`): an
     **INVESTMENT** rung (Cultivate/Sow — a composed IMPROVEMENT since #442, not a policy branch)
     keeps `_forecast_yield_row`'s dip→payoff deal (`Preparing: +X /turn → then +Y /turn`); an
@@ -6523,7 +6249,6 @@ the whole of the rule:
 | `per_worker_material` | a herd **and a patch** | what ONE WORKER brings home per turn, per material | the crew term of the preview's `min` |
 | `corral_material` / `pastoral_material` | a herd | what the built RUNG pays once it stands | the two investment rungs' payoff faces |
 | `material_yield` | a labor assignment | what the source actually CREDITED this turn | the board row, the map label, the inspector strip |
-| `delivered_material` | a `HuntTripForecast` row | what a whole TRIP lands, per material | the launch sheet's raid line, its readout box, its preset faces |
 | `material_batches` | a cohort (`PopulationCohortState`) | what is IN THE PACK right now, per pile | the in-flight party's `Carried:` row |
 | `delivered_material` | a `DenialRow` too | what a DENIAL raid salvages, per material | the denial forecast (`SourceForecast.denial_forecast`) |
 
@@ -6745,34 +6470,7 @@ those sheets is a relation, a presence or a word — so a take quoting the wrong
 perfectly plausible readout. It asserts the rendered FOOD account against the RETIRED food-keyed
 expression, on the reference herd, whose two pairings are asserted to disagree first.
 
-### THE EXPEDITION HALF: what a raid LANDS, and what is in the pack on the way home
-
-A raid on an inedible quarry read as a DENIAL MISSION — "brings nothing home" — for the release in
-which the trade account was gone and no per-trip material figure existed. It was false: the sim banks
-the hides. Two fields close it, at two different registers.
-
-**`delivered_material` — the LAUNCH sheet, and it is a PAYLOAD rather than a rate.** It rides every
-row of the `HuntTripForecast` reply (`at_composed` and each `per_preset`), projected off the same
-carried biomass `delivered_food` is, so the two readouts of one raid cannot disagree.
-
-- **THE DENIAL AND EMPTY TESTS BOTH HAD TO LEARN ABOUT IT, and forgetting the second is the subtle
-  bug.** `hunt_trip_forecast` resolves the payload FIRST, then: *denial* is `delivers_food == false`
-  **and no material** — a raid that hauls something is a real delivery whatever account that
-  something is in — and *empty* is `delivered_food <= 0` **and no material**. A food-only empty test
-  sends every material-landing raid down the returns-empty branch, printing a refusal at a party that
-  is walking home loaded. `herd_hunt_pelts_raid` asserts both negatives, because fixing only the
-  denial branch moves the frame from one wrong sentence to another.
-- **THE ONE-LINE FORM ROUNDS TO WHOLE UNITS, THE READOUT BOX DOES NOT, and that is the register
-  difference rather than a drift.** `_raid_payload_suffix` appends `· ~3 hide` beside `· ~20 food`:
-  this line quotes a TRIP, and a `0.22` beside a `~20 food` would read as a per-turn number smuggled
-  onto a per-trip line. It is the ONE place a material is rounded — every other material readout in
-  the client is a rate at `YIELD_DECIMALS`. The box (`HudWidgets._trip_yield_rows`) states the exact
-  magnitudes under the animal count, through `yield_rows` like every other readout, so an inedible
-  quarry's trip reads `≈5 GREY WOLF` over `2.75 HIDE` and nothing else.
-- **THE PRESET FACES DIVIDE BY THE TRIP** (`expedition_policy_takes`), because that metric is a
-  per-turn rate — the max obtainable over party sizes. Same payload, two spellings, one for each
-  register. A rung reaches the picker when it pays SOMETHING: gating on food alone left an inedible
-  quarry's rungs blank, which is the "worth nothing" reading this whole arc removes.
+### THE EXPEDITION HALF: what is in the pack on the way home
 
 **`material_batches` — the IN-FLIGHT pack, and it is a different SHAPE from everything else here.**
 `PopulationCohortState.materialBatches` is resolved from `cohort.stores` with **no resident-band
@@ -6784,11 +6482,10 @@ them: a scout hauled a wolf home and the UI never mentioned the hide.
   vector, so two piles of `hide` at different readings are **two terms and must not be merged**. That
   distinction is the entire reason the trade scalar was retired; summing batches rebuilds it out of
   its own replacement.
-- **IT IS A CLAUSE ON `Carried:`, NEVER AN EIGHTH LINE.** The parties inspector strip's budget is
-  fully spent at SEVEN lines in a ~300px clipping zone, and that section's own rule for a new fact is
-  the band zone's SHORT-tier idiom: two facts that read as one sentence cost one row. What the party
-  is carrying home IS the `Carried:` sentence. `band-city-panel.md` → "The parties strip's SEVEN
-  lines" owns the budget.
+- **IT IS A CLAUSE ON `Carried:`, NEVER A LINE OF ITS OWN.** The parties inspector strip lives in a
+  ~300px clipping zone, and the rule for a new fact there is the band zone's SHORT-tier idiom: two
+  facts that read as one sentence cost one row. What the party is carrying home IS the `Carried:`
+  sentence. `band-city-panel.md` → "The parties strip's lines" owns the budget.
 - **THE PER-AXIS READINGS ARE THE CRAFTING PANEL'S REGISTER, deliberately not restated.** That panel
   renders every batch's amount beside its `tough: excellent` chips for the band this party folds back
   into; the strip answers *what is coming home and how much*, in a box that cannot afford a
@@ -6799,9 +6496,7 @@ them: a scout hauled a wolf home and the UI never mentioned the hide.
   CARRIES THE CLAUSE TOO** (on its `Provisions:` row): a scouting party that walks over a kill banks
   its materials exactly as a raid does, and the mission it was sent on is no reason to hide its pack.
 
-**Frames.** `herd_hunt_pelts_raid` — the wolf as an expedition target, now a real delivery reading
-`≈5 GREY WOLF` over `2.75 HIDE` with an ordinary Send, asserted on three claims (not denial, not
-empty, names the hide). `band_panel_worst_case_party` — the strip's own worst case, whose
+**Frames.** `band_panel_worst_case_party` — the strip's own worst case, whose
 `Carried: 18 / 18 (5 turns) · 4.5 hide · 1.2 hide · FULL` carries TWO piles of one material at two
 ratings; the third assertion there is that their SUM does not appear, which is the claim a fixture
 with one pile per material could not make.
@@ -6902,28 +6597,7 @@ ratio, and a ratio is unit-free.**
 `hunt.provisions_per_biomass` — the cohort has no herd in scope, so it cannot know the quarry is
 inedible, and quoting its positive food rate against an inedible species' all-zero food ceilings is
 exactly what manufactures phantom food. The species-aware per-herd rate is
-`HerdTelemetryState.perWorkerYield`, and the local-hunt preview clamps with THAT. (The cohort field
-survives as the expedition **outfit** lever, before a target is chosen.)
-
-### `deliversFood` WAS REDEFINED — re-read every branch that keys off it
-
-It no longer means "this is not a denial mission". It now means **the quarry is edible**. Consequences,
-all of them live in `hunt_trip_forecast` / `hunt_forecast_line_bbcode` / `expedition_policy_takes`:
-
-- **Eradicate DELIVERS.** It banks a whole-stock windfall like every other rung, and its raid line
-  quotes that payload instead of "denial mission, delivers no food".
-- A **denial** raid is one that **brings nothing home** — `delivers_food == false` **and** an empty
-  `delivered_material`. Its `delivers_trade` half went with the axis (arc #527), which briefly made
-  every inedible quarry a denial mission; `delivered_material` is what took it back out, because a
-  raid that hauls hides is a real delivery whatever account that something is in. Still a property of
-  the QUARRY and its payload, never inferred from the policy string.
-- **"Too lean to raid"** tests `delivered_food <= 0` **and** an empty `delivered_material` — a
-  food-only test sends every material-landing raid down that branch and prints a refusal at a party
-  walking home loaded.
-- `expedition_policy_takes` gates the food component on `delivers_food` and reaches the picker when a
-  rung pays food **or** a material; `expedition_useful_cap` scans the plateau on food alone — an
-  inedible species delivers 0 food at every party size, so the scan finds no
-  plateau, which is the honest reading of a raid with nothing to bring home.
+`HerdTelemetryState.perWorkerYield`, and the local-hunt preview clamps with THAT.
 
 ### The SOURCE LIST's rate cell is the one-slot surface — the board row stopped being one
 
@@ -7010,9 +6684,7 @@ and the attention producers key off `idle_workers` / `turns_of_food` / pen statu
 **Frames.** `ui_preview`: **`herd_hunt_pelts_only`** (the inedible quarry, quoting `0.11 HIDE` — and
 still asserted as a PAIR with `herd_hunt_both_products`, whose deer prints a live FOOD row, because
 "prints nothing" and "is correctly silent" are the same picture and only a frame that still prints
-tells them apart) · **`herd_hunt_pelts_raid`** (the same wolf as an expedition target — a REAL
-delivery now, reading `≈5 GREY WOLF` over `2.75 HIDE`, asserted on three claims: not denial, not
-empty, names the hide) · `hunt_picker_ascending` · `food_tile` ·
+tells them apart) · `hunt_picker_ascending` · `food_tile` ·
 **`forage_three_accounts`** (the PLANT frame the rule is judged on since #426 — a hay meadow whose
 rungs read `0.24 food · 0.40 fodder`, and the frame the picker's three-column ceiling was MEASURED
 against rather than assumed) · **`forage_three_accounts_overdraw`** (the same meadow, three foragers —
@@ -7615,59 +7287,6 @@ patches were pushed into those frames at all.
 
 ---
 
-## RETIRED — the FILL TARGET, the party-side twin of the floor (issue #491)
-
-**A raid's length is a species-and-kit constant, and the lever that moved it is GONE.** This section
-records why it existed and why it is not coming back; the arc's other §5.2 half — the trip's BOUND —
-is live and is documented where it renders (`SourceForecast.TRIP_BOUND_CLAUSES`, the trip readout's
-verdict, `DetailFormat.expedition_trip_bound_line`).
-
-Reported from PLAY: eight hunters after a Wild Fowl flock read *"away ≈43 turns — 31 hunting, 12
-travel"*, with no control that moved the number. The mechanism (§5.1) is that a raid ends when its
-pack fills, the pack is measured in **carry** and the take in **reach**, so
-
-```text
-turns_to_fill = carry / (engage_rate × stay_chance × body_mass)
-```
-
-and **party size cancels out** — both the pack and the rate scale linearly with hunters. The party
-stepper was not a weak lever there, it was **structurally not one**.
-
-**The fix shipped was a second dial and the fix that stands is a re-tune.** The fill target ("come
-home with N animals") was the only player lever on that quotient, and what it was reaching for was an
-escape from the trips nobody wants — Wild Fowl at 88 turns against Mammoth at 1.1. That spread is a
-**tuning** problem in the species-and-kit terms above, and it is tracked as one on issue #491. Asking
-the player to hold a second dial to work around a config spread is the kind of lever this arc spent
-four fixes removing elsewhere.
-
-**What went, in one list:** `ComposeState._party_fill_target` / `_hunt_fill_target` and their
-accessors · `HudWidgets.build_fill_target_control` (+ `FILL_TARGET_META` / `_VALUE_META` /
-`_TURNS_META`) · `SourceForecast.raid_fill_target_model` / `clamp_fill_target` / `raid_target_binds` /
-`raid_target_turns` / `raid_animals_per_turn` / `NO_FILL_TARGET` / `RAID_TURNS_UNKNOWN` and the
-`FILL_TARGET_*` label vocabulary · `TRIP_BOUND_FILL_TARGET` and its clause (the sim retired the
-`HuntTripBound::FillTarget` variant with the lever, so no live row can carry it) · both compose
-sheets' `BRING HOME` block · the `fill_target` argument to `SourceForecast.hunt_trip_forecast` and to
-`Main.format_send_hunt_expedition`, and the `fill_target` key on the
-`send_hunt_expedition_requested` payload.
-
-**`send_hunt_expedition <faction> <band> <party> <fauna_id> [floor]` is CLOSED after the floor**, like
-`send_denial_raid`'s four-token grammar: a second positional is an `UnexpectedArgument` parse error
-rather than an ignored token, so a stale emitter fails loudly. `cargo xtask command-guard` parses both
-launch sites' emitted lines with the real server parser, which is the only thing that can assert it.
-
-**`DetailFormat.expedition_orders_line` KEPT ITS ROW and lost its target clause.** That row was merged
-out of two lines to buy the parties inspector strip 18px of its ~300px budget; it stays merged and now
-states the floor alone, because the budget is what forced the merge and a second orders row must not
-come back for the next order a party learns to carry. See `band-city-panel.md` → "The parties strip's
-SEVEN lines"; the worst-case strip still measures **294px of the 300px box** (the row count is
-unchanged — only the row's width fell).
-
-**The escapement graph STAYS on the expedition sheet**, and the crew targets stay off it. The note
-that used to justify its absence — *"a raid's trip is a forward simulation, not a per-turn
-drawdown"* — was wrong on its own terms: a party's per-turn take is the same `min(room, carry,
-engagement)` a resident crew's is, so the curve IS the raid's. What the picture cannot show is where
-the trip ENDS, which is the bound clause's job alone now.
-
 ## The FIGHT is stated before the party leaves (`docs/plan_hunt_through_combat.md` §2.1 / §6.5)
 
 The combat gate produces a real outcome that reads as a bug unexplained: **hunters die and nothing is
@@ -7695,7 +7314,7 @@ can compute. What was genuinely missing is `durability`, which is what turns *"y
   own engagement floor rather than a display constant.
 - **THE EFFORT FIGURE IS NOT DIVIDED BY THE PARTY.** The herd's accumulated wounds are deliberately
   not exported (damage carries between turns, so a part-worn quarry needs fewer), and the sim already
-  answers duration where it matters in `huntTripEstimates` — a per-party turn count here would be a
+  answers duration where it matters in the denial forecast — a per-party turn count here would be a
   second, always-pessimistic duration model competing with it. It is hunter-turns for ONE hunter.
 - **The client cannot state the counterfactual `§6.5` quotes.** *"…and with SPEARS it would take 62"*
   needs the equipped attack tier, which is `equipment.json` and not on the wire; what ships is the
@@ -7728,9 +7347,9 @@ neither a blanket suppression nor a blanket refusal passes.
 
 The compose sheet's `PER TURN` row is client-composed from `forecast_inputs` (escapement × carry ×
 engagement) and has **no combat term**, so a sub-gate party reads a positive take directly beneath a
-line saying it would kill nothing. The SIM's own answers are correct — `SourceYield.actual` and
-`huntTripEstimates` both resolve the fight, so a standing row and a raid forecast quote zero — and
-§6.5's "two signals from different paths" is satisfied by those; it is the local pre-commit CURVE that
+line saying it would kill nothing. The SIM's own answer is correct — `SourceYield.actual` resolves the
+fight, so a standing row quotes zero — and §6.5's "two signals from different paths" is satisfied by
+it; it is the local pre-commit CURVE that
 is gate-blind. Closing it means threading `hunterAttack` into `forecast_inputs`, which would put a
 band-scoped term into a source-scoped layer and ripple through `max_useful_workers`, both crew targets
 and the chart.
@@ -7743,116 +7362,6 @@ to a mammoth. Each line carries its own meta (`HudWidgets.HUNTERS_PER_ANIMAL_MET
 `HUNT_GATE_META`, the latter valued `true` while the fight is unwinnable) because they are composed
 from disjoint wire terms and a single handle would let one break while an assertion on the other kept
 passing.
-
----
-
-## AN EMPTY RAID IS EMPTY FOR ONE OF TWO REASONS (`docs/plan_hunt_through_combat.md` §4)
-
-**This section supersedes every passage above that calls the blocked raid "no surplus".** The
-arithmetic is unchanged — `delivered_food <= 0`, still the one blocked case (its
-`delivered_trade <= 0` conjunct went with arc #527's retired account),
-still not `animals_taken == 0` — and what changed is the SENTENCE it renders.
-
-That branch used to assert the herd was at its floor, and before the take resolved through the fight
-that was the only way to reach it. It is not any more: **a party that cannot bring one animal down
-inside the projection's horizon lands here too, with the herd's surplus standing untouched.** Reported
-from play on a THRIVING Wild Aurochs herd — ten of eleven animals, four affordable above a 50% floor —
-refused to a party of one as *"too lean to raid — its surplus is spent"*, two rows below the sheet's
-own line saying it takes several hunters to bring ONE aurochs into contact.
-
-**A wrong explanation is worse than a wrong number**: the remedies are opposites — wait for the herd
-to rebuild, against send more hunters — so one sentence cannot serve both, and the one that shipped
-sent the player to fix the thing that was not broken.
-
-### The sim already tells them apart, and the client never infers it from the numbers
-
-`HuntTripBound` names the stop that ended the projection, and exactly three of its five are reachable
-with nothing delivered. `PackFull` / `FillTarget` cannot be: both require a load, and a load is a
-delivery.
-
-| `bound` | what it means here | the line, the button, the remedy |
-|---|---|---|
-| `floor` | the standing surplus is spent | *"%s is too lean to raid — its surplus is spent"* · `Herd too lean to raid` · wait, lower the floor, hunt it locally |
-| `horizon` | the projection ran its length and the party never killed | *"%s stands above your floor — but this party cannot bring one down"* · `Party can't make the kill` · more hunters, better kit, smaller game |
-| `herd_lost` | the quarry dies out under a raid that never made up a load | *"%s is gone before the party can make up a load"* · `Nothing left to raid` · leave it standing, find other prey |
-| anything else | unattributed | *"%s — the raid would return empty"* · `Raid returns empty` · names NEITHER side |
-
-**`HUNT_EMPTY_REFUSALS` holds all three faces of one refusal in ONE entry** — `line`, `button`,
-`reason` — and `hunt_empty_refusal` is the single resolution of the key. The button used to be a lone
-`const`, which is exactly how a face reading *"Herd too lean to raid"* could sit under a line naming
-the party: the same misattribution, one control further on. Adding a cause means adding all three.
-
-**The unattributed entry is not back-compat, it is a refusal to guess.** Every live estimate row
-carries a bound; a row that does not is a fixture bug, and it should read as unexplained rather than
-as somebody's fault. Guessing is how the defect happened.
-
-**`hunt_empty_refusal_reason` takes the FORECAST as well as the herd**, and `hunt_trip_no_surplus` is
-renamed **`hunt_trip_returns_empty`** — it says THAT, never WHY, and the two were one function only
-while there was one why.
-
-### The raid's max-useful party carries the engagement arm now
-
-`expedition_useful_cap` scans the sim's table for the party size at which the delivered payload stops
-rising. **A scan can only report a bind it watches the payload run into**, and neither half of that
-held on the reported herd:
-
-- **A payload flat at ZERO is not a plateau.** Every sampled size delivered nothing, and the
-  rise-then-break scan read that flatness as *"the first hunter was all that was useful"* — capping the
-  party at ONE and printing `max 1 worker useful here` beside `6 hunters bring one Wild Aurochs into
-  contact`. A size is useful when it lands something.
-- **The engagement crew is past the end of the table.** `SourceForecast.expedition_engage_crew` floors
-  the plateau on `engage_workers` over the room above the floor — the SAME primitive
-  `max_useful_workers` reaches through `take_workers`, which is the whole point: a second definition of
-  the engagement crew is what let the local sheet and the raid sheet drift. It is the **engage half
-  only**, deliberately: the haul half is sized on `perWorkerBiomass`, a RESIDENT crew's throughput,
-  while a raid hauls in its pack (`expedition.hunt.per_worker_carry`, not on the wire) — and the pack
-  side is precisely what the plateau scan already watches.
-
-It is a FLOOR on the demand side, never a cap: `assignable` still binds below it, so the note becomes
-the labor-bound *"6 of 20 useful — free up idle workers to send more"* rather than calling the missing
-hands idle. A detached party builds nothing, so the dip is `IMPROVEMENT_NONE`'s, resolved through
-`build_dip` rather than written as a bare `1.0`.
-
-**A herd with no engagement stage answers `0` and nothing moves** — a pen, the whole plant web, a
-species the roster cannot resolve — which is the byte-identity this arc holds each time the arm reaches
-a new consumer. Measured: of 271 `ui_preview` frames, exactly TWO move, and both are the flat-zero
-raids whose party the scan used to clamp to one.
-
-### Frames + assertions
-
-**`herd_hunt_party_cannot_kill`** (`chapters/hunt.gd`) is the reported case: a Thriving Wild Aurochs at
-`B/K` 0.91 with four animals affordable, `engageRate` 0.25, a speared party of ONE, and a table whose
-every cell is `horizon` with a zero payload. It asserts the line names the party AND not the herd, the
-disabled Send wears the same entry's face, the reason carries the party's remedies and none of the
-herd's, the ceiling is the engagement crew (20) and not `max 1 worker useful here`, and the reach line
-is unchanged beneath it.
-
-**Judge it as a PAIR with `herd_hunt_no_surplus`**, whose every cell is `floor` and which delivers the
-identical zero: without that half every claim above passes on a sheet that blames the party for
-everything. It carries the herd-side line and — publishing no `engageRate`, so nothing floors its
-ceiling — the zero-plateau claim.
-
-Sabotage-verified six ways, each failing a DISJOINT set: resolving every bound to the FLOOR entry
-(**the old misattribution, restored**) fails the line, the button and the reason; hard-coding the
-button's face fails the button alone; ignoring the forecast in the reason fails the reason alone;
-dropping the engagement floor fails the ceiling alone; treating a zero payload as a plateau fails the
-lean herd's claim alone; and resolving every bound to the PARTY entry fails the herd-side control.
-
-**The fixtures had to learn the rule too.** `HerdFx.clean_raid_bound` stamps a zero-payload row with
-the bound the sim would actually report — `floor` above a floor of 0, `herd_lost` at 0 — because a row
-carrying `pack_full` with an empty payload is a herd no live server can produce, and it would fall to
-the unattributed entry and make every assertion about *which* refusal is rendered testify about
-nothing.
-
-### STILL OPEN — the raid sheet's CHART is composed against the pre-fight model
-
-The expedition branch's escapement chart walks `project_stock`, whose per-turn take is
-`min(room, carry, engagement)` and carries **no combat term** — so on `herd_hunt_party_cannot_kill` it
-draws the herd being drawn down to the floor by a party the sheet's own refusal says kills nothing.
-It is the same gap "KNOWN GAP — the local per-turn readout does not carry the gate" records one
-section up, reaching the raid sheet through the chart the fill-target slice brought back, and it closes
-the same way: threading `hunterAttack` into the projection, which puts a band-scoped term into a
-source-scoped layer and ripples through `max_useful_workers`, both crew targets and the verdict.
 
 ---
 
@@ -8464,7 +7973,7 @@ source is copy that has to be kept true by hand.
 
 **IT IS THE COMPOSE SHEET'S ALONE.** `SourceForecast.source_worker_cap_state` — the Work board's
 worked-row twin — reads the sim's published `huntUsefulWorkers` with no curve and no reply in hand, so
-it cannot say WHY it is capped and its wording is unchanged; `expedition_useful_cap` likewise. The
+it cannot say WHY it is capped and its wording is unchanged. The
 forage caller of `_forecast_worker_cap` passes neither value: a patch asks no attack-vs-defense
 question, so the defaults are the unarmed pair (`SourceForecast.CREW_TAKE_NO_ARMED_CREW`, `""`) and the
 plant web renders exactly what it did.
@@ -8540,10 +8049,8 @@ this file's and are why the pointer exists:
 
 ## A FAR SOURCE IS AN ORDINARY SHEET — the party section, and what it retired
 
-`docs/plan_civilization_steps.md` §One work party. **This section supersedes every passage above that
-routes a herd past `hunt_reach` to the hunting-EXPEDITION branch of the herd sheet, or refuses a forage
-patch past `band_work_range`.** Those passages are kept for the reasoning they record; the behaviour
-they describe is gone.
+`docs/plan_civilization_steps.md` §One work party. **There is no hunting expedition and no range
+refusal**: every herd and every patch, at any distance, is composed on its ordinary sheet.
 
 ⛔ **THE REPORTED DEFECT: THE WORK PARTY WAS UNREACHABLE FROM THE MAP.** Ray clicked a Wild Boar 8 hexes
 out, pressed *Assign hunters*, and got the old expedition sheet — *"Detach a party to follow it"*,
@@ -8554,14 +8061,13 @@ sheet refused it outright. The work board rendered a far party correctly; no pla
   distance.** `DrawerComposeController._build_herd_assign_controls` no longer branches; the sim posts a
   party past the apron on its own. The sheet's commit is `Hunt Here` / `Herd Here` on a far herd
   exactly as on a near one, and its spine is asserted EQUAL to the local hunt's.
-- ⛔ **`hunt_reach` IS DEAD, AND NOTHING IN THE CLIENT READS IT.** It is still on the wire until the
-  expedition path retires sim-side. The one threshold a caravan has is the PICKED band's
+- **The one threshold a caravan has is the PICKED band's
   `band_work_range`, measured wrap-aware from that band's own tile (`_is_past_apron`, over the same
-  `_apron_distance` the deposit refusal uses), so the band picker drives every part of it. `-1` is
+  `_apron_distance` the deposit refusal uses)**, so the band picker drives every part of it. `-1` is
   UNKNOWN, never FAR: a frame that arrived before the grid did grows no section.
-- **The map's red HUNT-REACH ring is gone too** (`BandOverlayRenderer`, `HUNT_RANGE_OUTLINE*`). It
-  drew a second, larger boundary around a selected band and told the player hunting stopped somewhere
-  it does not; the green apron ring and the scout ring stay.
+- **The map draws no hunt ring** (`BandOverlayRenderer`): a second, larger boundary around a selected
+  band would tell the player hunting stopped somewhere it does not; the green apron ring and the scout
+  ring are the band's rings.
 - **No sheet refuses on range.** `_mount_work_range_refusal` went in for #650 because a far crew
   lapsed with no warning; the work party removed that lapse for forage and then for wood and stone, so
   the refusal and its `WORK_RANGE_REFUSAL_FORMAT` are gone. A far working mounts this same section,

@@ -292,7 +292,7 @@ ghost-party bug. Reported from play: the parties row's red `✕` did nothing, re
 answered `Expedition 2 does not exist in the simulation`.
 
 **The recall was never broken** — the sim was correctly refusing a party the CLIENT was still
-drawing. A party a `send_hunt_expedition` spawned and an in-camp `recall_expedition` despawned
+drawing. A party a launch command spawned and an in-camp `recall_expedition` despawned
 inside ONE tick was published on a **held** frame, which does not store into the baseline, so
 `diff_removed` had nothing to sweep and every later frame carried `populations: []` /
 `removedPopulations: []`; the row never healed. The sim sends the removal now, and this guard is

@@ -35,7 +35,7 @@ use std::time::{Duration, Instant};
 use core_sim::{apply_port_base, SimulationConfig};
 use sim_runtime::commands::{
     query_error, DenialRaidForecastQuery, DepositCrewTakeQuery, FactionCapacityQuery,
-    HuntCrewTakeQuery, HuntTripForecastQuery, QueryPayload, SeatClaimReply,
+    HuntCrewTakeQuery, QueryPayload, SeatClaimReply,
 };
 use sim_runtime::{CommandEnvelope, CommandPayload, QueryReply, QueryReplyEnvelope};
 
@@ -273,21 +273,8 @@ fn error_token(reply: &QueryReply, what: &str) -> String {
     }
 }
 
-/// A hunt-trip question about `faction_id`. Valid in every respect except the herd, so the sim's own
-/// answer to it is [`query_error::UNKNOWN_HERD`] — see [`NO_SUCH_HERD`].
-fn hunt_trip_about(faction_id: u32) -> QueryPayload {
-    QueryPayload::HuntTripForecast(HuntTripForecastQuery {
-        faction_id,
-        band_id: ANY_BAND,
-        herd_id: NO_SUCH_HERD.to_string(),
-        kit_id: HUNT_KIT.to_string(),
-        party_workers: ANY_PARTY,
-        floor: ANY_FLOOR,
-        preset_floors: Vec::new(),
-        max_party_workers: 0,
-    })
-}
-
+/// A denial-raid question about `faction_id`. Valid in every respect except the herd, so the sim's
+/// own answer to it is [`query_error::UNKNOWN_HERD`] — see [`NO_SUCH_HERD`].
 fn denial_raid_about(faction_id: u32) -> QueryPayload {
     QueryPayload::DenialRaidForecast(DenialRaidForecastQuery {
         faction_id,
@@ -498,7 +485,7 @@ fn a_question_about_another_seats_faction_is_refused_over_the_socket() {
     // the token proves the question reached the *sim* rather than being refused by the gate.
     let own = home.ask(
         HOME_ASKS_ITS_OWN_ID,
-        hunt_trip_about(HOME_SEAT),
+        denial_raid_about(HOME_SEAT),
         "the home seat's question about its own faction",
     );
     assert_eq!(
@@ -511,21 +498,16 @@ fn a_question_about_another_seats_faction_is_refused_over_the_socket() {
     for (request_id, query, label) in [
         (
             HOME_ASKS_THE_RIVALS_ID,
-            hunt_trip_about(RIVAL_SEAT),
-            "hunt_trip_forecast",
-        ),
-        (
-            HOME_ASKS_THE_RIVALS_ID + REQUEST_ID_STRIDE,
             denial_raid_about(RIVAL_SEAT),
             "denial_raid_forecast",
         ),
         (
-            HOME_ASKS_THE_RIVALS_ID + 2 * REQUEST_ID_STRIDE,
+            HOME_ASKS_THE_RIVALS_ID + REQUEST_ID_STRIDE,
             crew_take_about(RIVAL_SEAT),
             "hunt_crew_take",
         ),
         (
-            HOME_ASKS_THE_RIVALS_ID + 3 * REQUEST_ID_STRIDE,
+            HOME_ASKS_THE_RIVALS_ID + 2 * REQUEST_ID_STRIDE,
             deposit_crew_take_about(RIVAL_SEAT),
             "deposit_crew_take",
         ),
@@ -555,7 +537,7 @@ fn a_question_about_another_seats_faction_is_refused_over_the_socket() {
     );
     let refused = rival.ask(
         RIVAL_ASKS_THE_HOMES_ID,
-        hunt_trip_about(HOME_SEAT),
+        denial_raid_about(HOME_SEAT),
         "the rival seat's question about the HOME faction",
     );
     assert_eq!(
@@ -564,7 +546,7 @@ fn a_question_about_another_seats_faction_is_refused_over_the_socket() {
     );
     let own = rival.ask(
         RIVAL_ASKS_ITS_OWN_ID,
-        hunt_trip_about(RIVAL_SEAT),
+        denial_raid_about(RIVAL_SEAT),
         "the rival seat's question about its own faction",
     );
     assert_eq!(
@@ -603,7 +585,7 @@ fn a_question_about_another_seats_faction_is_refused_over_the_socket() {
     // seat is holding nobody's private state.
     let refused = unseated.ask(
         UNSEATED_ASKS_A_FACTION_ID,
-        hunt_trip_about(HOME_SEAT),
+        denial_raid_about(HOME_SEAT),
         "an unseated connection's faction-bearing question",
     );
     assert_eq!(

@@ -1011,7 +1011,7 @@ claim**, a plate that always warned passing either frame alone, and `_snapshot_w
 GAIN that role row for it: without it the ready frame stages the warned case under a comment
 describing work in flight. It was a per-source `improvement_workers` count until §2.5 moved the hands
 onto the band. **See the autopsy below — this pair went dead and both PNGs hashed the same for a
-while**) · `map_hunt_expedition_quarry` (an outbound party's quarry marked beside a resident
+while**) · `map_raid_party_quarry` (an outbound denial party's quarry marked beside a resident
 band's local hunt — two routes to a worked source, one grammar) · `map_overflow_worked` (three wonders
 take every visible slot, so both worked sources roll into the chip as `+2 ⌃`). **Both new states push
 `set_faction_knowledge` explicitly**: `map_preview` has no HUD, so without it every source reads "not

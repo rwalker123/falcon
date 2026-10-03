@@ -537,13 +537,6 @@ pub struct LaborConfig {
     /// the sources they exploit, so those spots provide fog reveal like the band center and
     /// scout vantages do.
     pub worked_source_sight_range: u32,
-    /// ⛔ **DEAD — no system may decide anything by it.** It was the extra reach beyond
-    /// `band_work_range` a Hunt row survived out to before lapsing. Nothing lapses for distance any
-    /// more: past the band's work range **every** job posts a work party
-    /// (`crate::work_party::party_begins_past`), and a hunt four tiles out walks exactly as a gather
-    /// four tiles out does. The key survives, validated and published as the cohort's
-    /// `hunt_reach`, only until the expedition path it also served is retired.
-    pub hunt_leash_tiles: u32,
     /// Tiles a `move_band` order advances the band toward its target each turn.
     ///
     /// **It is also the work party's walking speed** (`crate::work_party::walk_turns`): the party
@@ -640,12 +633,6 @@ impl LaborConfig {
             });
         }
         validate_plant_ladder_payoffs(&self.forage)
-    }
-
-    /// ⛔ **DEAD — published, and read by nothing that decides anything.** `band_work_range +
-    /// hunt_leash_tiles`, the distance a Hunt row used to lapse past. See [`Self::hunt_leash_tiles`].
-    pub fn hunt_reach(&self) -> u32 {
-        self.band_work_range + self.hunt_leash_tiles
     }
 }
 
@@ -1030,7 +1017,6 @@ mod tests {
         let config = LaborConfig::builtin();
         assert!(config.band_work_range >= 1);
         assert!(config.worked_source_sight_range >= 1);
-        assert!(config.hunt_leash_tiles >= 1);
         assert!(config.band_move_tiles_per_turn >= 1);
         // Depletable-forage levers (Intensification §0-ii).
         assert!(config.forage.per_worker_biomass_capacity > 0.0);
@@ -1060,10 +1046,6 @@ mod tests {
         assert!(config.scout.vantage_distance_base >= 1);
         assert!(config.scout.vantage_distance_max >= config.scout.vantage_distance_base);
         assert!(config.scout.vantage_range >= 1);
-        assert_eq!(
-            config.hunt_reach(),
-            config.band_work_range + config.hunt_leash_tiles
-        );
     }
 
     /// Parse the builtin with `mutate` applied to its JSON, expecting a **rejection** — the

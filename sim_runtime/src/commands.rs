@@ -109,17 +109,6 @@ pub enum CommandPayload {
         module: String,
         band_id: Option<u64>,
     },
-    HuntGame {
-        faction_id: u32,
-        target_x: u32,
-        target_y: u32,
-        band_id: Option<u64>,
-    },
-    HuntFauna {
-        faction_id: u32,
-        herd_id: String,
-        band_id: Option<u64>,
-    },
     /// **DECLARE a Tame on this herd** — it appends an entry to the build queue of every band
     /// hunting it and **names no crew** (`docs/plan_standing_upkeep.md` §2.5).
     ///
@@ -504,7 +493,7 @@ pub enum CommandPayload {
         /// **once** at launch and carried for the party's whole life. `None` = the **expedition**
         /// job's default (`ranging`), which arms both of the ways a provisioned party feeds itself;
         /// an unknown id, or one whose `jobs` does not include `expedition`, fails the command with
-        /// a reason. Same rule as [`Self::SendHuntExpedition::kit_id`].
+        /// a reason. Same rule as [`Self::SendDenialRaid::kit_id`].
         kit_id: Option<String>,
     },
     RecallExpedition {
@@ -520,27 +509,11 @@ pub enum CommandPayload {
         band_id: Option<u64>,
         workers: u32,
     },
-    SendHuntExpedition {
-        faction_id: u32,
-        band_id: Option<u64>,
-        party_workers: u32,
-        fauna_id: String,
-        /// **Where the raid stops**, as a fraction of the herd's carrying capacity. `None` = the
-        /// sim's default (`components::DEFAULT_ESCAPEMENT_FLOOR`); validated `0.0..=1.0` at the
-        /// server boundary and **rejected**, never clamped.
-        floor: Option<f32>,
-        /// **The kit the party is SENT OUT WITH** — an `equipment.json` roster id, resolved **once**
-        /// at launch and carried for the party's whole life. `None` = the hunt job's default; an
-        /// unknown id, or one whose `jobs` does not include `hunt`, fails the command with a reason.
-        kit_id: Option<String>,
-    },
-    /// **Outfit and launch a DENIAL RAID** (`docs/plan_denial_raid.md`) — the third expedition verb,
-    /// beside Scout and Hunt. Proto field 49.
+    /// **Outfit and launch a DENIAL RAID** (`docs/plan_denial_raid.md`). Proto field 49.
     ///
     /// **It carries no floor, and cannot be given one.** Its escapement ceiling is the herd's whole
     /// standing stock, so there is no floor to name — the order is *"this herd, this
-    /// many people"*. That is why it is its own payload rather than a flag on
-    /// [`Self::SendHuntExpedition`]: there is nothing here to validate and nothing to tune.
+    /// many people"*: there is nothing here to validate and nothing to tune.
     ///
     /// **No target faction** — denial is aimed at a herd, not at a player.
     SendDenialRaid {
@@ -548,9 +521,11 @@ pub enum CommandPayload {
         band_id: Option<u64>,
         party_workers: u32,
         fauna_id: String,
-        /// **The kit the raid is sent out with** — the one thing there *is* to say about a mission
+        /// **The kit the raid is SENT OUT WITH** — the one thing there *is* to say about a mission
         /// that carries no floor, because a kit is a property of the **party** rather than of the
-        /// mission. Same rule as [`Self::SendHuntExpedition::kit_id`].
+        /// mission. An `equipment.json` roster id, resolved **once** at launch and carried for the
+        /// party's whole life. `None` = the hunt job's default; an unknown id, or one whose `jobs`
+        /// does not include `hunt`, fails the command with a reason.
         kit_id: Option<String>,
     },
     /// **Outfit and launch a TRADE EXPEDITION** — the first rider on the connection primitive
@@ -572,7 +547,7 @@ pub enum CommandPayload {
         /// What the party is loaded with. **Empty is a command failure**, not an empty shipment.
         cargo: Vec<TradeCargoItem>,
         /// **The kit the party is sent out with**, resolved once at launch — same rule as
-        /// [`Self::SendHuntExpedition::kit_id`].
+        /// [`Self::SendDenialRaid::kit_id`].
         kit_id: Option<String>,
     },
     ExportMap {
@@ -703,7 +678,6 @@ pub const AUTOSAVE_SLOT: &str = "autosave";
 /// Which question a [`CommandPayload::Query`] asks. Mirrors the proto `QueryCommand.query` oneof.
 #[derive(Debug, Clone, PartialEq)]
 pub enum QueryPayload {
-    HuntTripForecast(HuntTripForecastQuery),
     DenialRaidForecast(DenialRaidForecastQuery),
     HuntCrewTake(HuntCrewTakeQuery),
     /// *"What is on disk?"* Answered from each save's **header alone** — the format keeps the header
@@ -945,29 +919,8 @@ pub struct FactionCapacityReply {
     pub max_ai_faction_count: u32,
 }
 
-/// *"What does this party, off this band, carrying this kit, take off this herd at this floor?"*
-///
-/// Every field is an exact ask, not a sample: the answer is computed for these values and echoes
-/// them back on each row so a client can assert it got what it asked for.
-#[derive(Debug, Clone, PartialEq)]
-pub struct HuntTripForecastQuery {
-    pub faction_id: u32,
-    /// The asking band's durable `BandId` — its **live** equipment wear prices the answer.
-    pub band_id: u64,
-    pub herd_id: String,
-    /// An `equipment.json` roster id, **required**. Unknown or wrong-job is an error, never a quiet
-    /// fall back to the job default.
-    pub kit_id: String,
-    pub party_workers: u32,
-    pub floor: f32,
-    /// The sheet's floor presets, answered in the same round trip at the same party size.
-    pub preset_floors: Vec<f32>,
-    /// **The largest party this band could field** — its idle workers. Bounds the reply's
-    /// `useful_cap` plateau scan, which walks `1..=max` **contiguously**; `0` means "do not scan".
-    pub max_party_workers: u32,
-}
-
-/// The denial twin of [`HuntTripForecastQuery`] — no floor, because the mission carries none.
+/// *"What does this raid, off this band, carrying this kit, do to this herd?"* No floor, because the
+/// mission carries none.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DenialRaidForecastQuery {
     pub faction_id: u32,
@@ -984,17 +937,17 @@ pub struct DenialRaidForecastQuery {
 /// *"How many animals does a **resident** band of each crew size bring down off this herd per turn,
 /// at this floor, carrying this kit?"* — the Assign Herders panel's question.
 ///
-/// **It is not the trip sheet's question.** [`HuntTripForecastQuery`] answers one party over a whole
-/// detached expedition and prices it at `combat_config.expedition_danger_multiplier` (1.5× lethality
-/// as shipped); a resident band hunting its own range fights at the **base** tuning. The two answers
-/// differ by half again in the fight term, so neither reply may borrow the other's rows.
+/// **It is not the raid sheet's question.** [`DenialRaidForecastQuery`] answers one detached party
+/// and prices it at `combat_config.expedition_danger_multiplier` (1.5× lethality as shipped); a
+/// resident band hunting its own range fights at the **base** tuning. The two answers differ by half
+/// again in the fight term, so neither reply may borrow the other's rows.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HuntCrewTakeQuery {
     pub faction_id: u32,
     /// The asking band's durable `BandId` — its **live** equipment wear prices the fight.
     pub band_id: u64,
     pub herd_id: String,
-    /// An `equipment.json` roster id, **required** — the same rule the trip query follows.
+    /// An `equipment.json` roster id, **required** — the same rule the raid query follows.
     pub kit_id: String,
     /// The composed floor, as a fraction of the herd's `K`. **A term in the answer, not a filter**:
     /// the escapement room bounds what the party goes after *before* the retreat and the fight
@@ -1019,7 +972,6 @@ pub struct QueryReplyEnvelope {
 /// ([`query_error`]); the client owns the prose.
 #[derive(Debug, Clone, PartialEq)]
 pub enum QueryReply {
-    HuntTripForecast(HuntTripForecastReply),
     DenialRaidForecast(DenialRaidForecastReply),
     HuntCrewTake(HuntCrewTakeReply),
     Error(String),
@@ -1275,41 +1227,7 @@ pub struct MaterialPayoff {
     pub amount: f32,
 }
 
-/// One answered hunt-trip forecast. The wire twin of a row of the retired `HuntTripEstimateState`
-/// table, plus the echoed `floor` / `party_workers` that make it self-describing.
-#[derive(Debug, Clone, PartialEq)]
-pub struct HuntTripRow {
-    pub floor: f32,
-    pub party_workers: u32,
-    /// `0` = the raid never completed inside the forecast horizon; `bound` says which kind of never.
-    pub turns_to_fill: u32,
-    pub bound: String,
-    pub delivers_food: bool,
-    /// **Whole** animals killed — a count, typed as one, exactly as the retired
-    /// `HuntTripEstimateState` typed it and as [`DenialRow::animals_killed`] types it.
-    pub animals_taken: u32,
-    pub delivered_food: f32,
-    pub wasted_food: f32,
-    /// **What the trip lands, per material** — and on an **inedible** quarry the entire payload,
-    /// since `delivered_food` is `0` there. Projected off the same carried biomass `delivered_food`
-    /// is. **Empty is "no row", never zero**, and it is never summed.
-    pub delivered_material: Vec<MaterialPayoff>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct HuntTripForecastReply {
-    /// The answer at the exact floor the query named.
-    pub at_composed: HuntTripRow,
-    /// One row per queried preset floor, in the same order.
-    pub per_preset: Vec<HuntTripRow>,
-    /// The max-useful party plateau — the LAST party at which the payload still rose, so a stepper
-    /// seeds ON it; `0` = no plateau found. See the proto for what the number is and what the client
-    /// still owns.
-    pub useful_cap: u32,
-}
-
-/// One answered denial-raid forecast. The denial twin of [`HuntTripRow`], and like it the row
-/// echoes the `party_workers` it was answered for.
+/// One answered denial-raid forecast. The row echoes the `party_workers` it was answered for.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DenialRow {
     pub party_workers: u32,
@@ -1826,26 +1744,6 @@ impl CommandEnvelope {
                 module: module.clone(),
                 band_id: *band_id,
             }),
-            CommandPayload::HuntGame {
-                faction_id,
-                target_x,
-                target_y,
-                band_id,
-            } => pb::command_envelope::Command::HuntGame(pb::HuntGameCommand {
-                faction_id: *faction_id,
-                target_x: *target_x,
-                target_y: *target_y,
-                band_id: *band_id,
-            }),
-            CommandPayload::HuntFauna {
-                faction_id,
-                herd_id,
-                band_id,
-            } => pb::command_envelope::Command::HuntFauna(pb::HuntFaunaCommand {
-                faction_id: *faction_id,
-                herd_id: herd_id.clone(),
-                band_id: *band_id,
-            }),
             CommandPayload::Tame {
                 faction_id,
                 herd_id,
@@ -2183,26 +2081,6 @@ impl CommandEnvelope {
                 band_id: *band_id,
                 workers: *workers,
             }),
-            CommandPayload::SendHuntExpedition {
-                faction_id,
-                band_id,
-                party_workers,
-                fauna_id,
-                floor,
-                kit_id,
-            } => pb::command_envelope::Command::SendHuntExpedition(pb::SendHuntExpeditionCommand {
-                faction_id: *faction_id,
-                band_id: *band_id,
-                party_workers: *party_workers,
-                fauna_id: fauna_id.clone(),
-                // Retired by the harvest floor arc; the number is immutable, the value unread.
-                policy: None,
-                floor: *floor,
-                // Retired with the fill target itself; same rule — the field number is immutable and
-                // the value is never written.
-                fill_target: None,
-                kit_id: kit_id.clone(),
-            }),
             CommandPayload::SendDenialRaid {
                 faction_id,
                 band_id,
@@ -2316,18 +2194,6 @@ impl CommandEnvelope {
                 pb::command_envelope::Command::Query(pb::QueryCommand {
                     request_id: *request_id,
                     query: Some(match query {
-                        QueryPayload::HuntTripForecast(ask) => {
-                            pb::query_command::Query::HuntTripForecast(pb::HuntTripForecastQuery {
-                                faction_id: ask.faction_id,
-                                band_id: ask.band_id,
-                                herd_id: ask.herd_id.clone(),
-                                kit_id: ask.kit_id.clone(),
-                                party_workers: ask.party_workers,
-                                floor: ask.floor,
-                                preset_floors: ask.preset_floors.clone(),
-                                max_party_workers: ask.max_party_workers,
-                            })
-                        }
                         QueryPayload::DenialRaidForecast(ask) => {
                             pb::query_command::Query::DenialRaidForecast(
                                 pb::DenialRaidForecastQuery {
@@ -2583,17 +2449,6 @@ impl CommandEnvelope {
                 module: cmd.module,
                 band_id: cmd.band_id,
             },
-            pb::command_envelope::Command::HuntGame(cmd) => CommandPayload::HuntGame {
-                faction_id: cmd.faction_id,
-                target_x: cmd.target_x,
-                target_y: cmd.target_y,
-                band_id: cmd.band_id,
-            },
-            pb::command_envelope::Command::HuntFauna(cmd) => CommandPayload::HuntFauna {
-                faction_id: cmd.faction_id,
-                herd_id: cmd.herd_id,
-                band_id: cmd.band_id,
-            },
             pb::command_envelope::Command::Tame(cmd) => CommandPayload::Tame {
                 faction_id: cmd.faction_id,
                 herd_id: cmd.herd_id,
@@ -2789,16 +2644,6 @@ impl CommandEnvelope {
                 band_id: cmd.band_id,
                 workers: cmd.workers,
             },
-            pb::command_envelope::Command::SendHuntExpedition(cmd) => {
-                CommandPayload::SendHuntExpedition {
-                    faction_id: cmd.faction_id,
-                    band_id: cmd.band_id,
-                    party_workers: cmd.party_workers,
-                    fauna_id: cmd.fauna_id,
-                    floor: cmd.floor,
-                    kit_id: cmd.kit_id,
-                }
-            }
             pb::command_envelope::Command::SendDenialRaid(cmd) => CommandPayload::SendDenialRaid {
                 faction_id: cmd.faction_id,
                 band_id: cmd.band_id,
@@ -2848,18 +2693,6 @@ impl CommandEnvelope {
                 // A query with no question is as empty as an envelope with no command, and fails the
                 // same way: there is nothing to answer and nothing to guess.
                 let query = match cmd.query.ok_or(CommandDecodeError::MissingPayload)? {
-                    pb::query_command::Query::HuntTripForecast(ask) => {
-                        QueryPayload::HuntTripForecast(HuntTripForecastQuery {
-                            faction_id: ask.faction_id,
-                            band_id: ask.band_id,
-                            herd_id: ask.herd_id,
-                            kit_id: ask.kit_id,
-                            party_workers: ask.party_workers,
-                            floor: ask.floor,
-                            preset_floors: ask.preset_floors,
-                            max_party_workers: ask.max_party_workers,
-                        })
-                    }
                     pb::query_command::Query::DenialRaidForecast(ask) => {
                         QueryPayload::DenialRaidForecast(DenialRaidForecastQuery {
                             faction_id: ask.faction_id,
@@ -3032,17 +2865,6 @@ impl QueryReplyEnvelope {
 
     fn to_proto(&self) -> pb::QueryReplyEnvelope {
         let reply = Some(match &self.reply {
-            QueryReply::HuntTripForecast(answer) => {
-                pb::query_reply_envelope::Reply::HuntTripForecast(pb::HuntTripForecastReply {
-                    at_composed: Some(hunt_trip_row_to_proto(&answer.at_composed)),
-                    per_preset: answer
-                        .per_preset
-                        .iter()
-                        .map(hunt_trip_row_to_proto)
-                        .collect(),
-                    useful_cap: answer.useful_cap,
-                })
-            }
             QueryReply::DenialRaidForecast(answer) => {
                 pb::query_reply_envelope::Reply::DenialRaidForecast(pb::DenialRaidForecastReply {
                     at_composed: Some(denial_row_to_proto(&answer.at_composed)),
@@ -3167,21 +2989,6 @@ impl QueryReplyEnvelope {
 
     fn try_from_proto(proto: pb::QueryReplyEnvelope) -> Result<Self, CommandDecodeError> {
         let reply = match proto.reply.ok_or(CommandDecodeError::MissingPayload)? {
-            pb::query_reply_envelope::Reply::HuntTripForecast(answer) => {
-                QueryReply::HuntTripForecast(HuntTripForecastReply {
-                    at_composed: hunt_trip_row_from_proto(
-                        answer
-                            .at_composed
-                            .ok_or(CommandDecodeError::MissingPayload)?,
-                    ),
-                    per_preset: answer
-                        .per_preset
-                        .into_iter()
-                        .map(hunt_trip_row_from_proto)
-                        .collect(),
-                    useful_cap: answer.useful_cap,
-                })
-            }
             pb::query_reply_envelope::Reply::DenialRaidForecast(answer) => {
                 QueryReply::DenialRaidForecast(DenialRaidForecastReply {
                     at_composed: denial_row_from_proto(
@@ -3306,48 +3113,6 @@ impl QueryReplyEnvelope {
             request_id: proto.request_id,
             reply,
         })
-    }
-}
-
-fn hunt_trip_row_to_proto(row: &HuntTripRow) -> pb::HuntTripRow {
-    pb::HuntTripRow {
-        floor: row.floor,
-        party_workers: row.party_workers,
-        turns_to_fill: row.turns_to_fill,
-        bound: row.bound.clone(),
-        delivers_food: row.delivers_food,
-        animals_taken: row.animals_taken,
-        delivered_food: row.delivered_food,
-        wasted_food: row.wasted_food,
-        delivered_material: row
-            .delivered_material
-            .iter()
-            .map(|payoff| pb::MaterialPayoff {
-                material_id: payoff.material_id.clone(),
-                amount: payoff.amount,
-            })
-            .collect(),
-    }
-}
-
-fn hunt_trip_row_from_proto(row: pb::HuntTripRow) -> HuntTripRow {
-    HuntTripRow {
-        floor: row.floor,
-        party_workers: row.party_workers,
-        turns_to_fill: row.turns_to_fill,
-        bound: row.bound,
-        delivers_food: row.delivers_food,
-        animals_taken: row.animals_taken,
-        delivered_food: row.delivered_food,
-        wasted_food: row.wasted_food,
-        delivered_material: row
-            .delivered_material
-            .into_iter()
-            .map(|payoff| MaterialPayoff {
-                material_id: payoff.material_id,
-                amount: payoff.amount,
-            })
-            .collect(),
     }
 }
 

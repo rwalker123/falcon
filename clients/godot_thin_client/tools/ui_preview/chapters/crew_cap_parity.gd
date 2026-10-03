@@ -318,7 +318,7 @@ func _forage_tile_xy() -> Vector2i:
 
 func _parity_herd() -> Dictionary:
 	var herd := HerdFx.assign_preview_herd(PARITY_HERD_ID, PARITY_HERD_SPECIES, "thriving",
-		PARITY_HERD_SUSTAIN_CEILING, 0, 0)
+		PARITY_HERD_SUSTAIN_CEILING)
 	herd[SourceForecast.FORECAST_ENGAGE_RATE_KEY] = PARITY_HERD_ENGAGE_RATE
 	return herd
 

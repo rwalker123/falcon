@@ -300,10 +300,9 @@ hand-listed allowlist and a key not copied there does not exist as far as the bo
 pair is copied verbatim beside `material_yield` — never into `OPTIONAL_YIELD_KEYS`, whose `float()`
 coercion is what the paragraph above is about.
 
-**THE EXPEDITION HALF ADDS ONE MORE VECTOR AND NEEDED NO NEW DECODER AT ALL.**
-`HuntTripRow.delivered_material` → `delivered_material` on every row of the `HuntTripForecast` QUERY
-reply (`bridge/query.rs`, not the snapshot path) — the trip's whole payload per material, which is
-what makes an inedible quarry's raid legible. Beside it, **`PopulationCohortState.materialBatches` is
+**THE EXPEDITION HALF NEEDED NO NEW DECODER AT ALL.** `DenialRow.delivered_material` →
+`delivered_material` on the `DenialRaidForecast` QUERY reply (`bridge/query.rs`, not the snapshot
+path) carries what a raid salvages per material. Beside it, **`PopulationCohortState.materialBatches` is
 resolved from `cohort.stores` with NO resident-band gate**, so a detached party's carried materials
 were already decoded onto the cohort dict as `material_batches` and had simply never been rendered
 for a party. **That is the failure worth remembering here**: a field the decoder emits correctly and
@@ -352,18 +351,14 @@ corrected sim-side. The golden gives every field a DISTINCT saturated value, whi
 swapped accessor visible in the diff rather than merely different.
 
 It also decodes **`expedition_forecast_horizon_turns`** ← `cohort.expeditionForecastHorizonTurns()`, a
-plain `uint` echoed on every cohort beside `expedition_viability_warn_turns` — the SCALE every "never
-completed" sentinel on this wire is relative to (`turns_to_fill == 0`,
-`turns_to_collapse{,_low,_high} == 0`, `expedition_trip_bound == "horizon"`). **It is not a trip
-length**: it bounds the hunting alone, so a client quoting it as one understates the trip by the whole
-walk — the floor on a hunt's span is `this + round-trip travel` (`labor-ui.md` → "An unbounded raid
-quotes a FLOOR"). Because the MARKER is a structural `duplicate()` of the cohort, it reaches the
+plain `uint` echoed on every cohort — the SCALE the denial forecast's "never completed" sentinel
+(`turns_to_collapse{,_low,_high} == 0`) is relative to. **It is not a trip length**: it bounds the
+raiding alone, so a client quoting it as one understates the trip by the whole walk. Because the MARKER is a structural `duplicate()` of the cohort, it reaches the
 in-flight denial readout — whose caller has no band and reads the horizon off the launched party —
 without a stamp; `marker_field_guard` carries it so the copy stays honest.
 
 **THE PRE-LAUNCH RAID FORECASTS ARE NOT ON THE SNAPSHOT, SO `herds_to_array` DECODES NO ESTIMATE
-TABLE.** `HerdTelemetryState`'s `huntTripEstimates` / `denialEstimates` / `denialPartyNeeded` and the
-two `*EstimatesKitId` fields are not in `snapshot.fbs`: a herd row is a fact about a *herd*, and a raid's numbers depend on the asking band's kit and
+TABLE.** `HerdTelemetryState` carries no `denialEstimates` / `denialPartyNeeded` / `*EstimatesKitId`: a herd row is a fact about a *herd*, and a raid's numbers depend on the asking band's kit and
 live equipment wear, which no per-herd row can carry. The client **asks** instead — see
 `.claude/rules/core_sim/expeditions.md` → "The forecast is ASKED FOR".
 
@@ -702,8 +697,8 @@ became a shipment cargo (issue #590):
 
 **`expedition_carry_cap` resolves per MISSION, and that is the trap worth naming**: a raid's pack is
 its provisions ceiling, a shipment's is what its people can carry out. They are different numbers on
-different levers, so `expedition_per_worker_carry` (the HUNT lever) must never be used to price a
-shipment — a client doing so is one config edit from quoting a cap the launch command refuses.
+different levers, so a raid's pack lever must never be used to price a shipment — a client doing so is
+one config edit from quoting a cap the launch command refuses.
 
 **`expedition_cargo_materials` is a VECTOR field, so it takes the `material_yield` treatment** rather
 than an appended scalar's: saturation reaches it and the golden re-record is the only step, but a

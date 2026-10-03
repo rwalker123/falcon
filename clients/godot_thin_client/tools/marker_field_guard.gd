@@ -103,12 +103,7 @@ const FRACTIONAL_ROUND_TRIP_KEYS := {
 	"food_consumption": 0.6075, "food_need": 0.6075,
 	# Expedition + config levers that are `float` in the schema (carry caps, rates, move speed).
 	"expedition_carry_cap": 16.25,
-	# Next-delivery projected food — a `float` copied onto the marker, so it must survive un-truncated
-	# (the detail panel reads it off `_selected_unit`). `expedition_eta_turns` is an integer count and
-	# `expedition_recurring` a bool → presence-only, NOT here.
-	"expedition_projected_delivery": 14.5,
 	"hunt_per_worker_provisions": 0.8125,
-	"expedition_per_worker_carry": 4.375,
 	"band_move_tiles_per_turn": 3.5,
 	# The TOE's three resolved rates — `float` in the schema end to end, so all three qualify under
 	# the rule above. The per-ITEM CONDITIONS are a nested LIST and cannot ride this dict (it is
@@ -143,7 +138,6 @@ const FIXTURE_ENTRY := {
 	"morale_cause": 1,
 	"activity": "forage",
 	"work_range": 2,
-	"hunt_reach": 7,
 	"scout_reveal_radius": 3,
 	"is_traveling": true,
 	"travel_target_x": 11,
@@ -166,19 +160,15 @@ const FIXTURE_ENTRY := {
 	"expedition_phase": "awaiting",
 	"max_expedition_party_size": 8,
 	"expedition_target_herd": "game_deer_07",
-	"expedition_floor": 0.3,
-	"expedition_eta_turns": 6,       # int count → presence + _expect_int
-	"expedition_recurring": true,    # bool → presence + explicit check
 	"home_band_entity": 7777,
 	# The decoder's PROJECTION of `pendingReveal{X,Y}` — how many tiles this party still owes its home
 	# band, never the coordinates. It is a term of the cancel-in-camp predicate the Occupants drawer's
 	# Recall/Cancel button reads OFF THE MARKER (`_selected_unit` is the map-click payload), so it has
 	# to survive the copy like every other panel-consumed field.
 	"pending_reveal_count": 3,
-	# Pre-launch hunt-trip forecast levers (global config echoed on every cohort). The horizon is the
-	# scale every "never completed" sentinel is relative to, and the IN-FLIGHT denial readout reads it
-	# off this marker (a launched party's own cohort), so it has to survive the copy like the warn line.
-	"expedition_viability_warn_turns": 20,
+	# The raid-forecast horizon (global config echoed on every cohort) — the scale the denial
+	# forecast's "never completed" sentinel is relative to, and the IN-FLIGHT denial readout reads it
+	# off this marker (a launched party's own cohort), so it has to survive the copy.
 	"expedition_forecast_horizon_turns": 60,
 	# The TOE, one row per item — a NESTED LIST, which is the shape a marker copy is most likely to
 	# drop or flatten. The remainders deliberately carry halves (`87.5` through `int()` is 87), and
@@ -244,7 +234,6 @@ func _ready() -> void:
 	_expect_int(marker, "elders", 5)
 	_expect_int(marker, "idle_workers", 7)
 	_expect_int(marker, "work_range", 2)
-	_expect_int(marker, "hunt_reach", 7)
 	_expect_int(marker, "scout_reveal_radius", 3)
 	_expect_int(marker, "travel_target_x", 11)
 	_expect_int(marker, "travel_target_y", 9)
@@ -260,16 +249,11 @@ func _ready() -> void:
 	_expect_str(marker, "expedition_phase", "awaiting")
 	_expect_int(marker, "max_expedition_party_size", 8)
 	_expect_str(marker, "expedition_target_herd", "game_deer_07")
-	_expect_float(marker, "expedition_floor", 0.3)
 	_expect_int(marker, "home_band_entity", 7777)
 	_expect_int(marker, "pending_reveal_count", 3)
-	_expect_int(marker, "expedition_viability_warn_turns", 20)
 	_expect_int(marker, "expedition_forecast_horizon_turns", 60)
-	_expect_int(marker, "expedition_eta_turns", 6)
 	if not bool(marker.get("is_expedition", false)):
 		_fail("is_expedition did not round-trip to true (defaulted?)")
-	if not bool(marker.get("expedition_recurring", false)):
-		_fail("expedition_recurring did not round-trip to true (defaulted?)")
 
 	# 3. Fractional round-trip guard: a continuous field must NOT be narrowed by the marker copy.
 	for key in FRACTIONAL_ROUND_TRIP_KEYS:

@@ -27,6 +27,8 @@
   },
   "tuning": {
     "_comment_alarm_budget_shift": "The share of the worker budget the orchestrator moves to an alarming specialist for one cadence, taken from the others in proportion to what they hold.",
-    "alarm_budget_shift": 0.25
+    "alarm_budget_shift": 0.25,
+    "_comment_hunt_search_beyond_work_range": "THE AI'S HUNTING SEARCH RADIUS, in hex steps beyond a band's work_range: a herd within work_range + this is one the seat asks crew-take curves for, ranks as a hunt source, prices a hunting kit against, and keeps a hunt row on when it moves. It is the seat's own horizon, not a sim rule - a work party follows its herd at any distance. 3 is the radius the seat has always searched.",
+    "hunt_search_beyond_work_range": 3
   }
 }

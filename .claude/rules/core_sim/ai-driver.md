@@ -296,7 +296,7 @@ and the rest of the band gathers. The baskets go at `DEMAND_PRIORITY_GATHERING` 
 pays first, and a hand without a basket gathers nothing better than bare hands do); a hunting
 kit × the hands left over, at `DEMAND_PRIORITY_HUNTING`
 (0.8 — hunting is what opens penning, second to the sites), when a huntable herd within
-`hunt_reach` can be brought down with it (`Food::hunting_kit_for`: among the roster's hunt-job
+`SeatMemory::hunt_reach` can be brought down with it (`Food::hunting_kit_for`: among the roster's hunt-job
 kits, never `none`, the greatest fresh `attack` whose mass window admits the biggest herd in
 reach and clears its `defense` — the gate is `max(0, attack − defense)`; herds are tried biggest
 first). The mass window reads `HerdTelemetryState::body_mass` — *"Biomass of one animal of this
@@ -429,7 +429,8 @@ the seated link; `Unasked` answers nothing (what `decide`'s own fold and the tes
 tests' `Canned` serves curves by herd id. **The cache and its key.** `SeatMemory::crew_takes` is
 per `(band, herd)`, refreshed in the composite's `observe` by `refresh_crew_takes` — after the
 rows are folded (a row is held to the forecast it was staffed under) and before the ground is
-read — for every huntable herd within `hunt_reach` of an own band whose animals are worth food:
+read — for every huntable herd within `SeatMemory::hunt_reach` of an own band whose animals are
+worth food:
 a question is due when there is no entry, when the **key** has changed (the kit id, the band's
 resolved `attack` under it off `kit_tiers`, the units held, and the herd's biomass in
 `CREW_TAKE_BIOMASS_BUCKET` (0.25) fractions of its `K`), or when the entry is
@@ -978,7 +979,7 @@ is its patches' (seed 54: `people_fed_wild_stay` 61.8 → 26.8, the patches-only
 at tick 2 under the new key and read their crew take from then on — which is why the bench
 captures its `ground.*` measures at tick 2, "The land reading" below). The **hex layer** (`Hex`): every discovered, walkable,
 unoccupied hex within some site's reach, with the patches within `work_range` and the herds
-within `hunt_reach` of it (both read off the band) — the site layer convolved with the two ranges.
+within `SeatMemory::hunt_reach` of it — the site layer convolved with the two ranges.
 `people_fed = food / (food_need / size)`, what one of the band's people must eat.
 
 **The shape** (`Reading::plan(levers, anchor, bound)`): standing hexes for up to `k_max = 1 +
@@ -1107,8 +1108,8 @@ it in as a measured `0.0` is what poisoned the whole hunt web above.
 `Discovered` = `SCALE / 2`, `Unexplored` = 0 (`visibility_raster_from_ledger`,
 `core_sim/src/snapshot/vision.rs`) — `VISIBILITY_ACTIVE` / `VISIBILITY_DISCOVERED` in `view.rs`.
 `geometry.rs` restates `hex_distance_wrapped` (odd-r offset → axial, cube distance, the shortest
-wrapped column delta) from `core_sim/src/grid_utils.rs`, because the sim's assignment loop lapses a
-row outside `work_range` / `hunt_reach` in that metric.
+wrapped column delta) from `core_sim/src/grid_utils.rs`, because the sim measures `work_range` (the
+apron past which a row posts a work party) in that metric.
 
 ## The profile file (`data/ai_profiles.json`, `profile.rs`)
 
@@ -1154,6 +1155,7 @@ and `rover` (expand). Each key has one consumer:
 | Tuning key | Consumer | Effect |
 |---|---|---|
 | `alarm_budget_shift` | `ConstantStance` | worker share moved to an alarming specialist for one cadence |
+| `hunt_search_beyond_work_range` | `SeatMemory::hunt_reach` | **the seat's hunting search radius** in hex steps beyond a band's `work_range` (shipped **3**): a herd inside `work_range + this` is one the seat asks crew-take curves for, ranks as a hunt source, prices a hunting kit against, and keeps a hunt row on when the band moves. The seat's own horizon, not a sim rule — the sim has no hunt-only reach (a work party follows its herd anywhere). `SeatMemory::default` reads the shipped value, so a memory built without a profile searches as a seat does |
 
 `StartProfileOverrides::ai_profile_overrides` and the `late_forager_tribe` block that carried
 `scout_bias` / `camp_rotation_period` are deleted: a start profile is per campaign and AI tuning is

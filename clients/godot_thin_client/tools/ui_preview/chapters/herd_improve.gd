@@ -140,7 +140,7 @@ func _building_herd_band_fixture() -> Dictionary:
 		"name": "Ravensgate", "id": "Ravensgate", "entity": 846, "faction": 0, "size": 90,
 		"current_x": 66, "current_y": 10, "pos": [66, 10],
 		"working_age": 30, "idle_workers": HERD_DIP_IDLE_WORKERS,
-		"hunt_reach": 7, "work_range": 2, "max_expedition_party_size": 8,
+		"work_range": 2, "max_expedition_party_size": 8,
 		"hunt_per_worker_provisions": 0.8,
 		"output_multiplier": 1.0,
 		"activity": "hunt", "labor_assignments": [],

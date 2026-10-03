@@ -1,11 +1,10 @@
 //! **The denial raid** (`docs/plan_denial_raid.md` slice 1) — the mission that engages hard and does
 //! not clamp to carry.
 //!
-//! One line of behaviour separates it from a hunt: a hunting party stops engaging once its pack is
-//! full, a denial party never stops (`fauna::EngagementStop`). Everything else — `ExpeditionPhase`,
-//! outfitting, travel, the `Hunting` cycle, `AnimalTake` — is the hunt's, unchanged. What that one
-//! line buys is the thing `floor = 0` could never buy: a party that kills what it has no intention
-//! of using, and therefore erases a herd at the pace of the *fight* rather than the pace of the pack.
+//! A hunter stops engaging once its pack is full; a denial party never stops
+//! (`fauna::EngagementStop::Never`). That one line buys the thing `floor = 0` could never buy: a
+//! party that kills what it has no intention of using, and therefore erases a herd at the pace of the
+//! *fight* rather than the pace of the pack.
 //!
 //! Success is the **point of no return**, not zero: below `ecology.collapse_fraction` the growth flow
 //! is zeroed and the herd declines irreversibly with the party gone, which is why a small party can
@@ -34,11 +33,11 @@ use core_sim::{
     EquipmentConfigHandle, Expedition, ExpeditionConfig, ExpeditionConfigHandle, ExpeditionMission,
     ExpeditionPhase, FactionId, FaunaConfigHandle, GenerationId, HerdRegistry, HerdTelemetry,
     HuntingParty, LaborAllocation, LocalStore, MoraleCause, PopulationCohort, ResidentBand,
-    SimulationConfig, StartingUnit, TileRegistry, VisibilityLedger, FOOD, STRIP_IT_BARE,
+    SimulationConfig, StartingUnit, TileRegistry, VisibilityLedger, FOOD,
 };
 
-/// The reference denial party — four people, the same crew every raid fixture in
-/// `expedition_hunt.rs` uses, so the two files' numbers are comparable.
+/// The reference denial party — four people, the same crew every fixture in `raiding_party.rs`
+/// uses, so the two files' numbers are comparable.
 const PARTY_WORKERS: u32 = 4;
 
 /// A party too small to outpace a herd's regrowth — the "this cannot work" side of the wariness
@@ -48,7 +47,6 @@ const LONE_HUNTER: u32 = 1;
 /// **A quarry that cannot fight back** (`Rabbit Warren`, `combat.attack 0`). A denial raid is by
 /// construction the longest engagement in the game, so a quarry with `ferocity` would shrink the
 /// party turn after turn and these fixtures would end up measuring attrition rather than the raid.
-/// `expedition_hunt::the_raid_forecast_matches_a_real_party_run` retags for the same reason.
 const HARMLESS_QUARRY: &str = "Rabbit Warren";
 
 /// The herd every fixture in this file raids, stated in full so each test says what it is measuring
@@ -220,8 +218,6 @@ fn pin_raid_herd_of(app: &mut App, species: &str, quarry: RaidQuarry) -> (String
     // every turn (`ecological_carrying_capacity`, which returns `None` for a herd with no fodder
     // demand) — so without this the fixtures would be measuring the graze loop rather than the raid,
     // and `forecast == actual` would fail on a `K` the projection resolves once and the sim moves.
-    // `expedition_hunt`'s pure-forecast fixtures build their herds outside the ECS for the same
-    // reason.
     herd.fodder_per_biomass = 0.0;
     let pos = herd.position();
     // **The display telemetry is DERIVED from the registry** — `advance_herds` rebuilds it at the end
@@ -363,26 +359,16 @@ fn spawn_party(
         .id()
 }
 
-/// The target species the mission builders below stamp on a fixture. **A NAMED CONSTANT RATHER THAN A
-/// REGISTRY LOOKUP**, unlike the sibling suites: `deny`/`hunt` are also called from closures
-/// (`|id| hunt(id, STRIP_IT_BARE)`) that have no world to resolve against, and threading an `&App`
-/// through sixteen call sites would buy nothing — the field is display-only, every raid mechanic
-/// resolving its herd through `fauna_id`. What production actually stamps is asserted in
-/// `expedition_hunt.rs`.
+/// The target species the mission builder below stamps on a fixture. **A NAMED CONSTANT RATHER THAN A
+/// REGISTRY LOOKUP**, unlike the sibling suites: threading an `&App` through every call site would
+/// buy nothing — the field is display-only, every raid mechanic resolving its herd through
+/// `fauna_id`. What production actually stamps is asserted in `raiding_party.rs`.
 const FIXTURE_TARGET_SPECIES: &str = "Red Deer";
 
 fn deny(fauna_id: &str) -> ExpeditionMission {
     ExpeditionMission::Deny {
         fauna_id: fauna_id.to_string(),
         target_species: FIXTURE_TARGET_SPECIES.to_string(),
-    }
-}
-
-fn hunt(fauna_id: &str, floor: f32) -> ExpeditionMission {
-    ExpeditionMission::Hunt {
-        fauna_id: fauna_id.to_string(),
-        target_species: FIXTURE_TARGET_SPECIES.to_string(),
-        floor,
     }
 }
 
@@ -448,19 +434,13 @@ fn forecast(app: &App, id: &str, workers: u32) -> core_sim::DenialForecast {
 // THE MECHANIC — one test
 // ---------------------------------------------------------------------------------------------------
 
-/// **A denial raid reaches collapse where a hunt does not** (`docs/plan_denial_raid.md` §5).
+/// **A denial raid reaches collapse, and the herd stays down** (`docs/plan_denial_raid.md` §5).
 ///
 /// A placid herd raided by a given party crosses `collapse_fraction` in bounded turns and then
-/// declines with **no further pressure on it**; the *same* herd worked by the *same* party as a hunt,
-/// at any floor above `collapse_fraction`, never does — however long it is hunted.
-///
-/// **This is the whole mechanic.** The hunting half is deliberately given every advantage the
-/// denial half is not: its trip is restarted the moment it ends and its pack is emptied, so it is an
-/// unbounded series of raids rather than one, and it *still* cannot cross the line. That is the point
-/// — the floor is what stops it, not the party's patience.
+/// declines with **no further pressure on it**. A *hunt* never does this by accident: the escapement
+/// arithmetic `max(0, B − floor·K)` stops its take at any floor above `collapse_fraction` first.
 #[test]
-fn a_denial_raid_reaches_collapse_where_a_hunt_does_not() {
-    // --- denial ---------------------------------------------------------------------------------
+fn a_denial_raid_reaches_collapse_and_the_herd_stays_down() {
     let mut app = placid_world();
     let (id, herd_pos) = pin_raid_herd(&mut app, PLACID_HERD);
     let line = point_of_no_return(&app, &id);
@@ -509,57 +489,6 @@ fn a_denial_raid_reaches_collapse_where_a_hunt_does_not() {
         (None, _) => {}
     }
 
-    // --- the same herd, the same party, hunted ---------------------------------------------------
-    // Every floor strictly above the collapse line. A hunt cannot cross it at any of them, because
-    // the escapement ceiling is `max(0, B − floor·K)` and the party stops there.
-    let fauna_collapse_fraction = {
-        let app = placid_world();
-        let fauna = app.world.resource::<FaunaConfigHandle>().get();
-        fauna.ecology.collapse_fraction
-    };
-    for floor in [0.2_f32, 0.3, 0.5] {
-        assert!(
-            floor > fauna_collapse_fraction,
-            "this sweep is about floors ABOVE the collapse line"
-        );
-        let mut app = placid_world();
-        let (id, herd_pos) = pin_raid_herd(&mut app, PLACID_HERD);
-        let line = point_of_no_return(&app, &id);
-        let opening_biomass = herd_biomass(&app, &id).expect("herd present");
-        let home = spawn_home_band(&mut app, herd_pos);
-        let party = spawn_party(&mut app, home, herd_pos, PARTY_WORKERS, hunt(&id, floor));
-
-        let mut deepest = opening_biomass;
-        for _ in 1..=horizon {
-            drive_turn(&mut app);
-            let Some(biomass) = herd_biomass(&app, &id) else {
-                panic!("floor {floor}: a hunt above the collapse line must never lose the herd");
-            };
-            deepest = deepest.min(biomass);
-            assert!(
-                biomass >= line,
-                "floor {floor}: a hunt must never take the herd past recovery — {biomass} < {line}"
-            );
-            // Restart the trip the moment it ends, with an empty pack: an unbounded SERIES of raids,
-            // so the assertion above is about the floor and not about the party's patience.
-            if let Some(mut expedition) = app.world.get_mut::<Expedition>(party) {
-                expedition.phase = ExpeditionPhase::Hunting;
-            }
-            if let Some(mut cohort) = app.world.get_mut::<PopulationCohort>(party) {
-                let carried = cohort.stores.get(FOOD);
-                cohort.stores.take_food_mix(carried).total();
-            }
-        }
-        // **Liveness.** A hunt that took nothing would also "never cross the line", and would pass
-        // the ordering assertion above while asserting nothing at all.
-        assert!(
-            deepest < opening_biomass,
-            "floor {floor}: the hunt must actually be drawing the herd down ({opening_biomass} -> \
-             {deepest}), or the never-crosses assertion is vacuous"
-        );
-    }
-
-    // The two halves compared: denial crossed, and it did so inside the horizon.
     assert!(
         crossed_on <= horizon,
         "the raid crossed on turn {crossed_on}, within the {horizon}-turn horizon"
@@ -836,7 +765,7 @@ fn detail_value(detail: &str, key: &str) -> f32 {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// …and a floor-`0` HUNT hauls its pack, exactly like every other floor
+// …and a raid hauls its PACK, however much it kills
 // ---------------------------------------------------------------------------------------------------
 
 /// **A body far heavier than one hunter's pack**, so the carry bound and the kill are impossible to
@@ -881,33 +810,24 @@ fn carried_materials(app: &App, party: bevy::prelude::Entity) -> f32 {
         .unwrap_or(0.0)
 }
 
-/// **A floor-`0` hunt hauls its PACK and reports the rest as waste** — the defect this test exists
-/// for (`docs/plan_denial_raid.md` §1).
+/// **A denial raid hauls its PACK and reports the rest as waste** (`docs/plan_denial_raid.md` §1).
 ///
-/// A floor-`0` raid used to pass `f32::INFINITY` as its carry room on the premise that driving a herd
-/// extinct makes the meat incidental. With an infinite pack `carried = killed × body_mass`, so the
-/// party was recorded hauling home **everything it killed**: its hunt report published
-/// `wasted_biomass = 0` for a raid that left a range of carcasses, and its hides accrued off the
-/// whole kill rather than off the load. *When* a party stops engaging and *how much* it can haul are
-/// separate questions — that is what [`ExpeditionMission::Deny`] is for — and carry is never
-/// unbounded for a real party.
+/// *When* a party stops engaging and *how much* it can haul are separate questions: denial drops the
+/// pack as a bound on what it **engages** and keeps it as a bound on what it **hauls**. With an
+/// unbounded pack `carried = killed × body_mass`, and the party would be recorded hauling home
+/// **everything it killed** — `wasted_biomass = 0` for a raid that left a range of carcasses, and
+/// hides accrued off the whole kill rather than off the load.
 ///
 /// Three claims, each paired with the liveness assertion that makes it mean something:
 /// 1. the raid reports **non-zero waste** — and still delivers something;
 /// 2. its total haul is bounded by the **pack** — and the pack is not empty;
 /// 3. its **materials accrue off `carried`, not off `killed`** — and they are non-zero.
 #[test]
-fn a_floor_zero_hunt_hauls_only_its_pack_and_reports_the_waste() {
+fn a_denial_raid_hauls_only_its_pack_and_reports_the_waste() {
     let mut app = placid_world();
     let (id, herd_pos) = pin_raid_herd(&mut app, HEAVY_BODIED_HERD);
     let home = spawn_home_band(&mut app, herd_pos);
-    let party = spawn_party(
-        &mut app,
-        home,
-        herd_pos,
-        SMALL_PARTY,
-        hunt(&id, STRIP_IT_BARE),
-    );
+    let party = spawn_party(&mut app, home, herd_pos, SMALL_PARTY, deny(&id));
 
     let pack = pack_biomass(&app, &id, SMALL_PARTY);
     let horizon = expedition_cfg(&app).hunt.forecast_horizon_turns;
@@ -928,15 +848,15 @@ fn a_floor_zero_hunt_hauls_only_its_pack_and_reports_the_waste() {
     // …and it delivers: a raid that engaged nothing would report zero waste too.
     assert!(
         carried_food(&app, party) > 0.0,
-        "the raid must still bank the windfall it CAN carry — a floor-`0` raid that came home empty \
-         would satisfy the waste claim above vacuously"
+        "the raid must still bank the windfall it CAN carry — a raid that came home empty would \
+         satisfy the waste claim above vacuously"
     );
 
-    // 2. Everything it hauled fits in the pack. It never delivers at floor `0` (`done`/`relaunch`
-    //    are both false), so the whole run's carry is one packful.
+    // 2. Everything it hauled fits in the pack. A denial raid never delivers mid-trip, so the whole
+    //    run's carry is one packful.
     assert!(
         ledger.carried_biomass <= pack + CARRY_TOLERANCE_BIOMASS,
-        "a floor-`0` raid hauls its pack and no more: carried {} against a pack of {pack}",
+        "a raid hauls its pack and no more: carried {} against a pack of {pack}",
         ledger.carried_biomass
     );
     assert!(
@@ -980,64 +900,6 @@ const CARRY_TOLERANCE_BIOMASS: f32 = 1.0;
 /// 3-dp-rounded report values.
 const MATERIAL_TOLERANCE: f32 = 0.01;
 
-/// **Denial is unchanged by the carry fix, and the two missions now differ only where they should.**
-///
-/// The carry arm was never the line denial changed (`docs/plan_denial_raid.md` §1: `carried =
-/// min(killed × body_mass, carry_room)` is *identical* for both), so a denial party and a floor-`0`
-/// hunting party of the same size on the same herd must haul the **same** load and bank the **same**
-/// pelts. Before the fix they did not — the hunt hauled its whole kill — and that difference was the
-/// bug, not the mission.
-///
-/// Paired with the liveness half: denial still kills **at least** as much as the hunt does, because
-/// the engagement bound is the line it really drops.
-#[test]
-fn denial_and_a_floor_zero_hunt_account_carry_identically() {
-    let ledger_for = |mission: &dyn Fn(&str) -> ExpeditionMission| {
-        let mut app = placid_world();
-        let (id, herd_pos) = pin_raid_herd(&mut app, HEAVY_BODIED_HERD);
-        let home = spawn_home_band(&mut app, herd_pos);
-        let party = spawn_party(&mut app, home, herd_pos, SMALL_PARTY, mission(&id));
-        let horizon = expedition_cfg(&app).hunt.forecast_horizon_turns;
-        let ledger = drive_raid(&mut app, party, horizon);
-        (
-            ledger,
-            carried_food(&app, party),
-            carried_materials(&app, party),
-        )
-    };
-
-    let (denial, denial_food, denial_materials) = ledger_for(&deny);
-    let (raid, raid_food, raid_materials) = ledger_for(&|id| hunt(id, STRIP_IT_BARE));
-
-    assert!(
-        denial_food > 0.0 && denial_materials > 0.0,
-        "the denial fixture must actually haul something ({denial_food} food, {denial_materials} \
-         of material)"
-    );
-    assert_eq!(
-        denial_food, raid_food,
-        "the pack is a carry bound for both missions: denial banks the same food a floor-`0` hunt \
-         does"
-    );
-    assert_eq!(
-        denial_materials, raid_materials,
-        "…and the same hides, off the same carried biomass"
-    );
-    assert!(
-        (denial.carried_biomass - raid.carried_biomass).abs() <= CARRY_TOLERANCE_BIOMASS,
-        "…and their reports agree: denial carried {}, the raid {}",
-        denial.carried_biomass,
-        raid.carried_biomass
-    );
-    // The liveness half: the missions are still different where they are meant to be.
-    assert!(
-        denial.killed_biomass() >= raid.killed_biomass(),
-        "denial drops the ENGAGEMENT bound, so it never kills less than the hunt: denial {}, raid {}",
-        denial.killed_biomass(),
-        raid.killed_biomass()
-    );
-}
-
 // ---------------------------------------------------------------------------------------------------
 // The kit cost — the fourth cost, and it needed no new mechanism
 // ---------------------------------------------------------------------------------------------------
@@ -1048,19 +910,18 @@ fn denial_and_a_floor_zero_hunt_account_carry_identically() {
 /// for the least return burns the most irreplaceable kit.
 ///
 /// Both halves are asserted, because the second is what makes the first mean anything:
-/// 1. over the same turns on the same herd, a denial party wears its spears **harder** than a
-///    hunting party at the food peak;
+/// 1. a denial party working a herd wears its spears;
 /// 2. the wear tracks **kills**, not the clock — a party that engaged nothing spends nothing.
 #[test]
-fn a_denial_raid_burns_more_kit_than_a_hunt_and_only_for_kills() {
-    /// Long enough that both parties are past their first turn but neither raid has ended.
+fn a_denial_raid_burns_kit_and_only_for_kills() {
+    /// Long enough that the party is past its first turn but the raid has not ended.
     const TURNS: u32 = 3;
 
-    let spear_wear = |mission: fn(&str) -> ExpeditionMission| {
+    let denial = {
         let mut app = placid_world();
         let (id, herd_pos) = pin_raid_herd(&mut app, PLACID_HERD);
         let home = spawn_home_band(&mut app, herd_pos);
-        let party = spawn_party(&mut app, home, herd_pos, PARTY_WORKERS, mission(&id));
+        let party = spawn_party(&mut app, home, herd_pos, PARTY_WORKERS, deny(&id));
         for _ in 0..TURNS {
             drive_turn(&mut app);
         }
@@ -1069,14 +930,10 @@ fn a_denial_raid_burns_more_kit_than_a_hunt_and_only_for_kills() {
             .expect("the party carries its kit")
             .wear_of("spears")
     };
-
-    let denial = spear_wear(deny);
-    let harvest = spear_wear(|id| hunt(id, 0.5));
     assert!(
-        denial > harvest,
-        "a denial raid must burn more spear than a hunt over the same turns: {denial} vs {harvest}"
+        denial > 0.0,
+        "a denial raid working a herd wears its spears"
     );
-    assert!(harvest > 0.0, "and the hunt must be wearing its kit at all");
 
     // **Wear tracks USE, never turns elapsed.** A party parked on a herd with nothing to spare
     // engages nothing and spends nothing — which is the property §1.2 required for the kit cost to
@@ -1757,10 +1614,6 @@ fn exported_denial_sheet(app: &mut App, id: &str) -> ExportedDenialSheet {
 // A LOST HERD IS THE MISSION SUCCEEDING, and the line has to say so
 // ---------------------------------------------------------------------------------------------------
 
-/// **The floor a HUNT fixture raids to** — the food peak, so the hunting half of the pairing below is
-/// an ordinary raid rather than a strip.
-const HUNT_AT_THE_FOOD_PEAK: f32 = 0.5;
-
 /// **Erase the herd from the registry**, which is exactly the state `advance_herds` leaves behind
 /// when a group falls under its `extinction_floor` and is despawned — and the state the lost-herd
 /// guard exists to answer. Reached here directly rather than by grinding a herd out, because *which*
@@ -1802,16 +1655,13 @@ fn returning_line(app: &App) -> (String, String) {
 /// (`docs/plan_denial_raid.md` §1).
 ///
 /// `DenialOutcome::HerdLost` is one of the two verdicts [`DenialOutcome::succeeded`] returns true
-/// for, and the launch sheet quotes it as a win — so the exit that *realises* it cannot report
-/// *"Hunting expedition lost the …"* with `reason=herd_gone`. Both missions reach this guard the
-/// same way and read it in opposite directions, which is why they are asserted **as a pair**: a
-/// denial-only assertion would pass just as well if the hunt's line had been reworded into denial's
-/// register too, and the hunt's *is* a failure.
+/// for, and the launch sheet quotes it as a win — so the exit that *realises* it must report it as
+/// one.
 ///
 /// The reason token is pinned to `DenialOutcome::HerdLost`'s own wire key rather than to a literal,
 /// so the exit and the pre-launch verdict cannot spell the same outcome two ways.
 #[test]
-fn a_denial_raid_that_loses_its_herd_reports_a_win_and_a_hunt_reports_a_loss() {
+fn a_denial_raid_that_loses_its_herd_reports_a_win() {
     let mut denial = placid_world();
     let (denial_id, denial_pos) = pin_raid_herd(&mut denial, PLACID_HERD);
     let denial_home = spawn_home_band(&mut denial, denial_pos);
@@ -1843,36 +1693,6 @@ fn a_denial_raid_that_loses_its_herd_reports_a_win_and_a_hunt_reports_a_loss() {
         "…and the line reads as the raid's verdict, in the register the `done` arm uses: \
          {denial_label:?}"
     );
-
-    // The other half of the pairing: for a HUNT the same exit really is the quarry slipping away.
-    let mut hunt_world = placid_world();
-    let (hunt_id, hunt_pos) = pin_raid_herd(&mut hunt_world, PLACID_HERD);
-    let hunt_home = spawn_home_band(&mut hunt_world, hunt_pos);
-    let hunt_party = spawn_party(
-        &mut hunt_world,
-        hunt_home,
-        hunt_pos,
-        PARTY_WORKERS,
-        hunt(&hunt_id, HUNT_AT_THE_FOOD_PEAK),
-    );
-    erase_herd(&mut hunt_world, &hunt_id);
-    drive_turn(&mut hunt_world);
-
-    assert_eq!(
-        phase(&hunt_world, hunt_party),
-        Some(ExpeditionPhase::Returning),
-        "the hunting party reaches the same guard"
-    );
-    let (hunt_label, hunt_reason) = returning_line(&hunt_world);
-    assert_ne!(
-        hunt_reason,
-        DenialOutcome::HerdLost.as_str(),
-        "a hunt losing its quarry is not a denial verdict: {hunt_label:?}"
-    );
-    assert!(
-        hunt_label.starts_with("Hunting expedition lost"),
-        "…and it keeps the failure phrasing, which is honest for a hunt: {hunt_label:?}"
-    );
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -1889,7 +1709,7 @@ fn a_denial_raid_that_loses_its_herd_reports_a_win_and_a_hunt_reports_a_loss() {
 // on an edible quarry whose pack binds hard, the hides left on the range are invisible to the
 // launch sheet again. Closing it needs a **per-material** projection — a material carries a
 // characteristic vector, so it cannot be summed into `DenialForecast` the way `wasted_food` is —
-// which is a shape neither `HuntTripForecast` nor `DenialForecast` has today. Do not reintroduce a
+// which is a shape `DenialForecast` does not have today. Do not reintroduce a
 // flat "wasted materials" scalar to fill it: that is the retired trade axis under a new name, and
 // it would collapse exactly the distinction the crafting arc exists to keep.
 

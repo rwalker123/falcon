@@ -29,8 +29,6 @@ class_name ForecastQuery
 signal answered(subject: String)
 
 # ---- the questions, spelled as `bridge/query.rs` matches them -------------------------------------
-# ⛔ The hunting RAID's question (`hunt_trip_forecast`) is no longer asked: the client composes no
-# hunting expedition (`docs/plan_civilization_steps.md` §One work party).
 const KIND_DENIAL_RAID := "denial_raid_forecast"
 ## **THE RESIDENT CREW'S TAKE CURVE** — one row per crew size, each row the WHOLE crew's animals per
 ## turn with the engagement, the retreat and the FIGHT already resolved. It is the Assign Herders

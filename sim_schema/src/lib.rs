@@ -377,24 +377,21 @@ mod tests {
         assert_eq!(herd.penFedFraction(), 1.0);
     }
 
-    /// **The harvest FLOOR survives the wire, on the assignment AND on the raid.**
+    /// **The harvest FLOOR survives the wire, on the assignment.**
     ///
-    /// A labor assignment carries a `floor` and a hunt expedition carries an `expeditionFloor` — the
-    /// whole of what the player decides about pressure (`docs/plan_harvest_floor.md`). The four-value
-    /// `policy` label that used to ride beside them has no field the encoder could write to at all.
+    /// A labor assignment carries a `floor` — the whole of what the player decides about pressure
+    /// (`docs/plan_harvest_floor.md`). The four-value `policy` label that used to ride beside it has
+    /// no field the encoder could write to at all.
     ///
     /// Encode → decode with the generated reader, so a field that silently failed to serialize cannot
     /// pass — the hazard when the authority is appended *behind* the label that used to be it.
     #[test]
-    fn the_harvest_floor_rides_the_wire_on_the_assignment_and_the_raid() {
+    fn the_harvest_floor_rides_the_wire_on_the_assignment() {
         /// A floor no retired stance named, so a value that appears cannot be a defaulted label.
         const UNLABELLED_FLOOR: f32 = 0.42;
-        /// The raid's own floor, deliberately different from the assignment's.
-        const RAID_FLOOR: f32 = 0.07;
 
         let snapshot = WorldSnapshot {
             populations: vec![PopulationCohortState {
-                expedition_floor: RAID_FLOOR,
                 labor_assignments: vec![LaborAssignmentState {
                     kind: "forage".to_string(),
                     floor: UNLABELLED_FLOOR,
@@ -416,11 +413,6 @@ mod tests {
             .expect("cohorts present")
             .get(0);
 
-        assert!(
-            (cohort.expeditionFloor() - RAID_FLOOR).abs() < 1e-6,
-            "the raid's floor crosses verbatim: {}",
-            cohort.expeditionFloor()
-        );
         let assignment = cohort
             .laborAssignments()
             .expect("labor assignments present")

@@ -3743,9 +3743,7 @@ fn settle_tool_cell(
 ///
 /// # ⛔ DISTANCE IS NO LONGER ONE OF ITS QUESTIONS
 ///
-/// It used to hold a band position and the two lapse distances, because a patch past
-/// `band_work_range` or a herd past the retired `hunt_reach` was abandoned on that very `continue`. **A far
-/// source acquires a [`crate::work_party::WorkParty`] instead of lapsing**
+/// **A far source acquires a [`crate::work_party::WorkParty`] instead of lapsing**
 /// (`docs/plan_civilization_steps.md` §One work party), so every worked row is reached wherever it
 /// is and the only thing left that can make an arm skip is a herd the registry no longer carries.
 /// The type survives rather than collapsing into a bare `registry.find`, because *"will the arm

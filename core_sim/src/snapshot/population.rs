@@ -507,8 +507,8 @@ fn merged_arrival_schedule(allocation: Option<&LaborAllocation>) -> Vec<f32> {
 }
 
 /// The global expedition levers the snapshot echoes onto **every** cohort (resolved once per
-/// capture, not per band) — the linear constants the client's **pre-launch hunt forecast**
-/// multiplies against a herd's exported terms, so the outfit UI never re-derives the ecology model.
+/// capture, not per band) — the linear constants the client's outfit UI multiplies, so it never
+/// re-derives the ecology model.
 /// See `.claude/rules/core_sim/expeditions.md`.
 ///
 /// **`max_estimated_party` is retired.** It echoed `estimate_party_sizes`' last rung — where the
@@ -536,8 +536,7 @@ pub(crate) struct ExpeditionLevers<'a> {
     /// promises is the resolved number rather than where it was resolved.
     ///
     /// It is deliberately a **separate** carry from [`Self::hunt_per_worker_carry`] beside it, which
-    /// really is still a raw lever: a shipment's pack and a raid's are different packs, and a client
-    /// reaching for the hunt lever is one config edit away from quoting a cap the sim refuses.
+    /// really is still a raw lever: a shipment's pack and a raid's are different packs.
     pub(crate) trade: &'a crate::expedition_config::TradeExpeditionConfig,
     /// `expedition_config.trade.material_carry_weight` — what one unit of a material costs in pack
     /// space relative to one unit of food, so the cargo picker can run the **same** mass expression
@@ -558,7 +557,6 @@ pub(crate) struct ExpeditionLevers<'a> {
     /// bale in it.
     pub(crate) trade_fodder_carry_weight: f32,
     pub(crate) hunt_per_worker_provisions: f32,
-    pub(crate) hunt_viability_warn_turns: u32,
     /// `expedition_config.hunt.forecast_horizon_turns` — how far *every* raid projection in the
     /// snapshot was simulated before giving up, echoed per-cohort so the client has a scale for the
     /// horizon-relative `0` sentinels (`turns_to_fill`, `turns_to_collapse*`) and for the
@@ -658,8 +656,6 @@ pub(crate) struct PopulationStateInputs<'a> {
     pub(crate) expedition_levers: &'a ExpeditionLevers<'a>,
     pub(crate) settlement_stage_config: &'a crate::settlement_stage_config::SettlementStageConfig,
     pub(crate) travel_target: Option<UVec2>,
-    pub(crate) hunt_reach: u32,
-    pub(crate) expedition_delivery: Option<crate::systems::ExpeditionDelivery>,
     /// The band's kit ledger (the minimal TOE). `None` = the ledger was never built (a hand-rolled
     /// fixture), which reads as a **start-stocked** band — the state every spawn path inserts.
     /// **Not `Default`**, which is an empty ledger owning nothing; an absent *entry inside* a ledger
@@ -962,8 +958,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         expedition_levers,
         settlement_stage_config,
         travel_target,
-        hunt_reach,
-        expedition_delivery,
         equipment,
         kit_levers,
         hunt_crew_levers,
@@ -1607,7 +1601,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         expedition_phase,
         expedition_target_herd,
         expedition_target_species,
-        expedition_floor,
         home_band_entity,
         expedition_announced,
         pending_reveal_x,
@@ -1619,7 +1612,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             exp.phase.as_str().to_string(),
             exp.mission.target_herd().to_string(),
             exp.mission.target_species().to_string(),
-            exp.mission.hunt_floor(),
             exp.home_band.to_bits(),
             exp.announced,
             exp.pending_reveal.iter().map(|p| p.x).collect(),
@@ -1631,9 +1623,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             String::new(),
             String::new(),
             String::new(),
-            // A resident band raids nothing, so it reports the floor that takes nothing — never `0`,
-            // which would read as "take everything" if anything ever acted on it.
-            NO_RAID_FLOOR,
             0,
             false,
             Vec::new(),
@@ -1663,13 +1652,12 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // because it is the very expression the launch command refuses on, and a term that scales with
     // the PARTY rather than with a worker (a wagon holds what it holds) would live inside it where a
     // per-worker echo could never see it. They are different numbers, so the cap resolves per
-    // mission rather than quoting one of them at every party: a client reading the hunt lever for a
-    // trade party would be one config edit away from quoting a cap the launch command refuses.
+    // mission rather than quoting one of them at every party.
     //
-    // **A denial party has a pack too** — it does not clamp to carry, but it still hauls home
-    // whatever it can (`docs/plan_denial_raid.md` §1), so its cap is the hunt's.
+    // **A denial party's pack** does not stop its engaging, but it still bounds what it hauls home
+    // (`docs/plan_denial_raid.md` §1).
     let expedition_carry_cap = match expedition.map(|exp| &exp.mission) {
-        Some(ExpeditionMission::Hunt { .. } | ExpeditionMission::Deny { .. }) => {
+        Some(ExpeditionMission::Deny { .. }) => {
             working_age as f32 * expedition_levers.hunt_per_worker_carry
         }
         Some(ExpeditionMission::Trade { .. }) => {
@@ -1785,14 +1773,10 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         expedition_announced,
         pending_reveal_x,
         pending_reveal_y,
-        expedition_floor,
         expedition_carry_cap,
-        // Appended after every earlier-shipped field (append-only wire discipline; matches the
-        // `.fbs` slot order for `expeditionTargetHerd`/`expeditionHuntPolicy`/`travelTargetX/Y`).
         expedition_target_herd,
         travel_target_x,
         travel_target_y,
-        hunt_reach,
         supply_network_id: supply_membership.network_of(entity),
         morale_delta: cohort.last_morale_delta.raw(),
         morale_cause: cohort.last_morale_cause.as_u8(),
@@ -1822,16 +1806,13 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         food_income,
         food_consumption,
         raid_forfeit,
-        // Pre-launch hunt-forecast levers (global config, echoed onto every cohort — the outfit UI
+        // Hunt and raid-forecast levers (global config, echoed onto every cohort — the outfit UI
         // reads them off the selected resident band).
         hunt_per_worker_provisions: expedition_levers.hunt_per_worker_provisions,
-        expedition_viability_warn_turns: expedition_levers.hunt_viability_warn_turns,
         expedition_forecast_horizon_turns: expedition_levers.hunt_forecast_horizon_turns,
-        expedition_per_worker_carry: expedition_levers.hunt_per_worker_carry,
         // **The RESOLVED shipment carry, echoed onto every cohort** — the outfit UI prices a
         // manifest for a party that does not exist yet, so no per-party field can serve that screen.
-        // Same idiom as the hunt lever above it, but this one is the sim's answer rather than a
-        // lever quote: `party_workers × this` is the cap the launch command enforces, and it is the
+        // This one is the sim's answer rather than a lever quote: `party_workers × this` is the cap the launch command enforces, and it is the
         // *same* resolver `expedition_carry_cap` above multiplies out for a party already on the
         // map.
         expedition_trade_per_worker_carry: crate::expedition_config::trade_per_worker_carry(
@@ -1842,28 +1823,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         expedition_trade_material_carry_weight: expedition_levers.trade_material_carry_weight,
         expedition_trade_fodder_carry_weight: expedition_levers.trade_fodder_carry_weight,
         band_move_tiles_per_turn: expedition_levers.band_move_tiles_per_turn as f32,
-        // In-flight hunt-party delivery forecast (`0`/false for a scout, a normal band, or a party
-        // whose delivery can't be projected).
-        expedition_eta_turns: expedition_delivery
-            .as_ref()
-            .and_then(|d| d.eta_turns)
-            .unwrap_or(0),
-        expedition_projected_delivery: expedition_delivery
-            .as_ref()
-            .map(|d| d.projected_food)
-            .unwrap_or(0.0),
-        expedition_recurring: expedition_delivery
-            .as_ref()
-            .map(|d| d.recurring)
-            .unwrap_or(false),
-        // Which stop will end THIS party's raid. `""` = not raiding at all (a resident band, a
-        // scout, or a party already walking a load home) — never confused with `"horizon"`, which is
-        // a projection that ran and found no stop.
-        expedition_trip_bound: expedition_delivery
-            .as_ref()
-            .and_then(|d| d.trip_bound)
-            .map(|bound| bound.as_str().to_string())
-            .unwrap_or_default(),
         // The band's hay reserve (Flora Roster F3) — the FODDER key of the same `LocalStore` its
         // provisions ride, surfaced as a scalar so the client can show it beside the food reserve. It
         // also rides the full `stores` list above, but a named scalar spares the client a key lookup.
@@ -2562,7 +2521,6 @@ mod tests {
             trade_material_carry_weight: cfg.trade.material_carry_weight,
             trade_fodder_carry_weight: cfg.trade.fodder_carry_weight,
             hunt_per_worker_provisions: 0.0,
-            hunt_viability_warn_turns: cfg.hunt.viability_warn_turns,
             hunt_forecast_horizon_turns: cfg.hunt.forecast_horizon_turns,
             band_move_tiles_per_turn: 1,
             settle_min_founding_workers: cfg.settle.min_founding_workers,
@@ -2646,8 +2604,6 @@ mod tests {
             settlement_stage_config:
                 &crate::settlement_stage_config::SettlementStageConfig::builtin(),
             travel_target: None,
-            hunt_reach: 0,
-            expedition_delivery: None,
             // These fixtures assert on the food ledger, not the TOE.
             equipment: None,
             kit_levers: &kit_levers(),

@@ -230,16 +230,16 @@ paths:
   printed the same `size` field the row's meta shows). **THE FAUNA ID IS A DATABASE KEY AND IS
   NEVER RENDERED** (`game_fowl_27` means nothing to a player and crowded out the two things that
   do). It briefly rode the row as a dim meta on the theory that the command feed named herds by
-  it — the right fix was to stop the FEED leaking it (`Main._on_hud_send_hunt_expedition` now
-  notes `fauna_label`, the species, while the command line keeps `fauna_id`), not to teach the
-  player the key. It stays **data**: the row's `pressed` bind and every `assign_labor` / `tame` /
-  `send_hunt_expedition` address the herd by it. Renders of it elsewhere are **fallbacks only**
+  it — the right fix was to stop the FEED leaking it (a launch handler notes `fauna_label`, the
+  species, while the command line keeps `fauna_id`), not to teach the player the key. It stays
+  **data**: the row's `pressed` bind and every `assign_labor` / `tame` / `send_denial_raid` address
+  the herd by it. Renders of it elsewhere are **fallbacks only**
   (`SourceForecast.herd_display_name` / `_herd_label_for_id` reach for `id` only when species AND label are
   both missing) — never the normal path.
   **AND THERE IS A FOURTH CASE, which is the one that actually leaked** (issue #378): not a herd
   whose strings are empty, but **no herd dict at all**. `_herd_label_for_id`'s three tiers — the tile
   roster, the selected herd, the snapshot herd list — every one of them needs the herd to be in a live
-  array, and a **hunting party's own quarry is guaranteed to leave all three**: herd telemetry is
+  array, and a **raiding party's own quarry is guaranteed to leave all three**: herd telemetry is
   fog-gated to hexes lit *right now*, a detached party is deliberately not a vision source
   (`visibility_systems.rs`, `Without<Expedition>`), and local extinction prunes the herd outright. So a
   party outlives every array that could name its target, and the Parties zone rendered
@@ -252,17 +252,15 @@ paths:
   filter over `_player_expeditions`, **not a name cache**: the parties array is replaced wholesale each
   snapshot, so it can only answer for a herd some live party is hunting now.
   The target's live `(x, y)` still comes from the herd list and is still absent here — that is a
-  separate statement, and the one the "target herd lost" delivery line already makes. What's left in a drawer is only what the row can't show — herd: Size / Herd (the stock pair, with
-  its ecology phase riding it — see `herd-readouts.md`) / Husbandry / Corral; expedition: Mission / Target / Orders / Phase / Carried /
-  Position. **A herd states NO `Position`**: `herd_summary_lines` renders in this drawer and
+  separate statement. What's left in a drawer is only what the row can't show — herd: Size / Herd (the stock pair, with
+  its ecology phase riding it — see `herd-readouts.md`) / Husbandry / Corral; expedition: Mission / Target / Phase / Carried /
+  Collapse / Position. **A herd states NO `Position`**: `herd_summary_lines` renders in this drawer and
   nowhere else, and the card's own `TILE (x, y)` header sits two rows above it, so the row was the
   same coordinate pair twice on one card. Its `Next waypoint` is a different fact — where the herd
   is HEADING — and stays. The expedition's `Position` is NOT the same row: a party is somewhere
   other than the tile whose card you are reading. **The expedition's `Phase` keeps its WORDS** — the compact
-  Active-expeditions row is where the glyph vocabulary belongs; the drawer IS the disclosure. **Its
-  `Policy` row is gone**: a raid names a FLOOR, so the `Orders:` row renders `NN% left standing` off
-  `expedition_floor` — beside the fill target, the two being one sentence
-  (`DetailFormat.expedition_orders_line`). There is no policy word left to keep. In the drawer,
+  Active-expeditions row is where the glyph vocabulary belongs; the drawer IS the disclosure. **It
+  has no `Policy` or `Orders` row**: a denial raid carries no floor. In the drawer,
   `%OccupantDetail` is the selected occupant's
   **detail** for **herds/expeditions** (`_herd_summary_lines` +
   `%HerdAssignControls`; expedition → `_build_expedition_panel` into

@@ -5989,7 +5989,7 @@ const REALIZED_PROJECTION_TAKE_EPSILON: f32 = 1e-4;
 /// **The steady `realized` yield for a hunt source — a FORWARD PROJECTION.** The average food/turn
 /// the herd delivers over the next `horizon` turns, computed by simulating it forward from its
 /// CURRENT state under `policy` + `workers`, mirroring the real turn order (Logistics regrow →
-/// Population take) exactly as [`crate::systems::hunt_trip_forecast`] does. It is a **pure function
+/// Population take). It is a **pure function
 /// of the passed herd state** — no history, no persistence — so the assign-time seed and the
 /// resolved row compute the identical number (exact forecast == actual, the true no-jump).
 ///

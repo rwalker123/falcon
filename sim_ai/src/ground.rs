@@ -6,7 +6,7 @@
 //! (`sustained_food`), the crew that take needs (`sustained_hands`), and the same pair for the
 //! tended and field rungs at the best committable crop's payoff. The **hex layer** ([`Hex`]): every
 //! discovered walkable hex a band could stand on, with the sites within its `work_range` (patches)
-//! and `hunt_reach` (herds) — the site layer convolved with the band's two ranges, which is the
+//! and `SeatMemory::hunt_reach` (herds) — the site layer convolved with the band's two ranges, which is the
 //! heat map a standing choice is read off.
 //!
 //! **The shape** ([`Reading::plan`]): standing hexes for up to `k_max` bands — the sim's two split
@@ -76,7 +76,8 @@ pub struct Site {
     pub y: u32,
     /// The herd's id; `None` for a patch.
     pub herd_id: Option<String>,
-    /// The reach a band works this site from: `work_range` for a patch, `hunt_reach` for a herd.
+    /// The reach a band works this site from: `work_range` for a patch, the seat's
+    /// `SeatMemory::hunt_reach` for a herd.
     pub reach: u32,
     /// What the site gives per turn at the Best floor's regrowth, in provisions.
     pub sustained_food: f32,
@@ -884,7 +885,7 @@ fn herd_site(
         x: herd.x,
         y: herd.y,
         herd_id: Some(herd.id.clone()),
-        reach: band.hunt_reach,
+        reach: memory.hunt_reach(band),
         sustained_food,
         sustained_hands,
         tended_food: 0.0,

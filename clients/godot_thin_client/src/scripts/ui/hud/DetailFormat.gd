@@ -805,25 +805,10 @@ const OVERGRAZING_WARNING := "%s Overgrazing — range can't sustain this herd" 
 const RECOVERY_GUIDANCE_GLYPH := "↑"
 const RECOVERY_GUIDANCE_TEXT := RECOVERY_GUIDANCE_GLYPH + " Recover: move to Hospitable ground · Scout · Hunt"
 
-# ---- Expedition delivery vocabulary (the `expedition_*` producers below are the only readers).
-# Marks a hunt party's "Next delivery" line when the party relaunches for repeated trips (Deplete
-# policy). Distinct from the Deplete policy glyph already shown (`FoodIcons.for_policy("deplete")` = ⇊),
-# so the two never read as duplicated: ↻ = "this trip repeats", ⇊ = "the take presses the herd down hard".
-const EXPEDITION_RECURRING_GLYPH := "↻"
-# "Next delivery" lines for the two ways a projected-0 forecast can arise, disambiguated on the
-# party's own `expedition_target_herd` (which MIGRATES and is often NOT the herd the player is
-# looking at). Target still in the herd telemetry but forecast projects 0 → it is at/below its
-# policy floor; target absent from telemetry → the herd was lost/replaced and the party is coming home.
-const EXPEDITION_NEXT_DELIVERY_NO_SURPLUS := "Next delivery: none — its target herd has no surplus to raid"
-const EXPEDITION_NEXT_DELIVERY_TARGET_LOST := "Next delivery: target herd lost — the party is returning home"
+# ---- Expedition row vocabulary (the `expedition_*` producers below are the only readers).
 # The click affordance on an Active-expeditions row (the whole row is the button there).
 const EXPEDITION_ROW_FOCUS_HINT := "Click to show this expedition on the map."
-# **THE HUNT PARTY'S ORDERS ROW** — `%s` the floor's own `HudComposeVocab.FLOOR_VALUE_FORMAT` value.
-# It carried a second `· `-joined clause for the fill target and is a ONE-clause row since that lever
-# retired (issue #491); see `expedition_orders_line` for why it stays ONE row whatever it carries.
-const EXPEDITION_ORDERS_ROW_FORMAT := "Orders: %s"
-# **THE DENIAL PARTY'S ROW KEY** (`docs/plan_denial_raid.md`), standing where `Next delivery:` stands
-# on a hunt party. One word, so `_split_kv` lays it out as a table row beside the others; the VALUE
+# **THE DENIAL PARTY'S ROW KEY** (`docs/plan_denial_raid.md`). One word, so `_split_kv` lays it out as a table row beside the others; the VALUE
 # carries its own tint, since a verdict's severity is a fact about the forecast and not about the key.
 const DENIAL_COLLAPSE_ROW := "Collapse:"
 # The quoted-party clause this row used to carry is gone with the sampled ladder that made a nearby
@@ -3664,9 +3649,8 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
         lines.append("Next waypoint: (%d, %d)" % [next_x, next_y])
     return lines
 
-## An Active-expeditions row's hover text: everything the glyphs encode, in words — the mission, what
-## the party's escapement FLOOR means for the herd, the phase + what it means, and the click
-## affordance.
+## An Active-expeditions row's hover text: everything the glyphs encode, in words — the mission, the
+## phase + what it means, and the click affordance.
 ##
 ## `target_herd` is the party's OWN target resolved from the snapshot herd list ({} when it has none
 ## or the herd is gone) — threaded in for the same reason `world_herds` is: this layer holds no
@@ -3675,73 +3659,20 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
 ## `denial_view` is the same already-answered forecast the parties strip's `Collapse:` row renders,
 ## handed in for the same reason (`expedition_collapse_line`). A DENIAL party's orders are just "this
 ## herd, these hands", so what its hover adds is the one thing the row cannot show: the collapse
-## verdict. `join_tooltip_lines` drops the `""` a hunt or a scout answers here, so neither gains a line.
+## verdict. `join_tooltip_lines` drops the `""` a scout or a shipment answers here, so neither gains a
+## line.
 static func expedition_row_tooltip(exp: Dictionary, phase: String, target_herd: Dictionary,
 		denial_view: Dictionary = {}) -> String:
     var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
-    # THE PARTY'S ORDERS — `expedition_floor`, where this raid stops (a raid carries no stance
-    # string). `1.0` is the sim's value for a
-    # scout or a resident band, and it is a legal raid floor too, so the hint is gated on the MISSION
-    # rather than on the number.
-    var floor_hint := ""
-    if mission == HudExpeditionVocab.EXPEDITION_MISSION_HUNT:
-        floor_hint = HudFormat.floor_hint(
-            float(exp.get("expedition_floor", SourceForecast.DEFAULT_HARVEST_FLOOR)),
-            SourceForecast.LABOR_KIND_HUNT, true)
     var collapse_line := expedition_collapse_line(exp, target_herd, denial_view) \
         if mission == HudExpeditionVocab.EXPEDITION_MISSION_DENY else ""
     return HudFormat.join_tooltip_lines([
-        expedition_mission_label(mission), floor_hint,
-        expedition_orders_line(exp, mission),
-        HudFormat.status_tooltip_line(phase), _expedition_delivery_tooltip_line(exp, mission, target_herd),
-        expedition_trip_bound_line(exp, mission), collapse_line,
+        expedition_mission_label(mission), HudFormat.status_tooltip_line(phase), collapse_line,
         EXPEDITION_ROW_FOCUS_HINT])
 
-## **THE PARTY'S ORDERS** — how deep to draw the herd: *"Orders: 30% left standing"*.
-##
-## **IT IS A MERGED ROW THAT NOW CARRIES ONE CLAUSE, and it stays merged.** It was `Leaves standing:`
-## and `Fill target:` as two rows, then one sentence stating both; the fill target is retired (issue
-## #491 — trip length is a species-and-kit constant, so the lever moved nothing party size did not
-## already fix), and what is left is the floor alone. The ROW is what the parties inspector strip
-## budgeted for: that strip is the detail panel for a launched party, lives in a `clip_contents` zone
-## capped at ~300px on a horizontal dock, and a hunt party carrying every optional line at once overran
-## it — so a second orders row must not come back for the next order the party learns to carry.
-##
-## `""` for a scout, a denial party or a resident band — none of them evaluates a floor.
-static func expedition_orders_line(exp: Dictionary, mission: String) -> String:
-    if mission != HudExpeditionVocab.EXPEDITION_MISSION_HUNT:
-        return ""
-    var floor_value: String = HudComposeVocab.FLOOR_VALUE_FORMAT % SourceForecast.floor_percent(
-        float(exp.get("expedition_floor", SourceForecast.DEFAULT_HARVEST_FLOOR)))
-    return EXPEDITION_ORDERS_ROW_FORMAT % floor_value
-
-## **WHICH STOP WILL END THIS PARTY'S RAID**, in the same words the pre-launch readout uses
-## (`SourceForecast.TRIP_BOUND_CLAUSES`) — one table, so what the sheet promised and what the party
-## reports cannot be phrased differently.
-##
-## `""` on the wire is NOT RAIDING (a resident band, a scout, or a party already walking a load home)
-## and is deliberately distinct from `"horizon"`, which is the projection having found no stop; both
-## render nothing, but for reasons that are not interchangeable and must not be collapsed here.
-static func expedition_trip_bound_line(exp: Dictionary, mission: String) -> String:
-    if mission != HudExpeditionVocab.EXPEDITION_MISSION_HUNT:
-        return ""
-    return SourceForecast.trip_bound_clause(
-        {SourceForecast.TRIP_BOUND_KEY: String(exp.get("expedition_trip_bound",
-            SourceForecast.TRIP_BOUND_NONE))})
-
-## The full-wording next-delivery line for a hunt row's tooltip — the compact `· ~14 in 6t` token on
-## the row itself is legible-but-terse in the 300px column, so hover carries the same phrasing the
-## drawer's `BandDetailLines.expedition_summary_lines` prints. Empty (dropped by
-## `HudFormat.join_tooltip_lines`) for a scout party or a party not yet projecting a delivery.
-static func _expedition_delivery_tooltip_line(exp: Dictionary, mission: String, target_herd: Dictionary) -> String:
-    if mission != HudExpeditionVocab.EXPEDITION_MISSION_HUNT or not exp.has("expedition_projected_delivery"):
-        return ""
-    return expedition_next_delivery_line(exp, target_herd)
-
-## **THE IN-FLIGHT DENIAL READOUT** (`docs/plan_denial_raid.md` §3) — the collapse verdict where a
-## hunt party shows `Next delivery`. A denial party publishes no `expeditionProjectedDelivery` /
-## `expeditionEtaTurns` / `expeditionTripBound` at all, deliberately: its question is not when food
-## arrives, it is whether the herd goes past the point of no return.
+## **THE IN-FLIGHT DENIAL READOUT** (`docs/plan_denial_raid.md` §3) — the collapse verdict. A denial
+## party publishes no delivery forecast, deliberately: its question is not when food arrives, it is
+## whether the herd goes past the point of no return.
 ##
 ## **THE ANSWER IS HANDED IN, AND THAT IS WHAT KEEPS THIS LAYER STATIC.** The sim publishes no
 ## per-party collapse field and the pre-launch denial TABLE this row used to read is gone — the
@@ -3767,7 +3698,7 @@ static func _expedition_delivery_tooltip_line(exp: Dictionary, mission: String, 
 ## **IT PASSES NO BAND TO THE FORECAST, SO THE VERDICT READS "…of raiding" RATHER THAN "…from launch"**
 ## — and that is the honest span here, not an omission. The launch sheet adds the OUTBOUND WALK because
 ## it knows where the party is starting from; this party has already left, its remaining walk is not on
-## the wire (a denial mission publishes no `expeditionEtaTurns`), and adding the walk from the HOME
+## the wire, and adding the walk from the HOME
 ## BAND's tile would quote a leg the party may have finished turns ago. `denial_forecast` names the span
 ## it is quoting either way, so the two surfaces cannot be read as the same clock.
 static func expedition_collapse_line(exp: Dictionary, target_herd: Dictionary,
@@ -3792,30 +3723,3 @@ static func expedition_collapse_line(exp: Dictionary, target_herd: Dictionary,
     if verdict == "":
         return ""
     return "%s %s" % [DENIAL_COLLAPSE_ROW, verdict]
-
-## The robust "Next delivery: …" wording, shared by the parties inspector strip
-## (`BandDetailLines.expedition_summary_lines`) and the row tooltip (`expedition_row_tooltip`) so the
-## two can never disagree. Caller has already confirmed this is a hunt party carrying the field. A
-## projected 0 is a REAL answer, but it means one of TWO things — and the party's TARGET herd (which
-## migrates and is often NOT the herd the player is inspecting) tells them apart: if the target id is
-## still in the herd telemetry the raid returns empty because that herd is at/below its policy floor;
-## if `target_herd` came back empty the target was lost/replaced and the party is coming home. Never
-## blank the line as if there were no forecast at all, and never imply it is the herd on the tile the
-## player is looking at.
-static func expedition_next_delivery_line(exp: Dictionary, target_herd: Dictionary) -> String:
-    var delivery := float(exp.get("expedition_projected_delivery", 0.0))
-    if delivery <= 0.0:
-        if target_herd.is_empty():
-            return EXPEDITION_NEXT_DELIVERY_TARGET_LOST
-        return EXPEDITION_NEXT_DELIVERY_NO_SURPLUS
-    var amount := int(round(delivery))
-    var eta := int(exp.get("expedition_eta_turns", 0))
-    var line := ""
-    if eta > 0:
-        var turns_word := "turn" if eta == 1 else "turns"
-        line = "Next delivery: ~%d food in %d %s" % [amount, eta, turns_word]
-    else:
-        line = "Next delivery: ~%d food (raid underway)" % amount
-    if bool(exp.get("expedition_recurring", false)):
-        line += "  %s" % EXPEDITION_RECURRING_GLYPH
-    return line

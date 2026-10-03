@@ -308,10 +308,9 @@ fn spawn_party(
             StartingUnit::new("expedition".to_string(), Vec::new()),
             Expedition {
                 home_band,
-                mission: ExpeditionMission::Hunt {
+                mission: ExpeditionMission::Deny {
                     fauna_id: fauna_id.to_string(),
                     target_species,
-                    floor: DEFAULT_ESCAPEMENT_FLOOR,
                 },
                 phase: ExpeditionPhase::Hunting,
                 announced: false,
@@ -325,7 +324,7 @@ fn spawn_party(
         .id()
 }
 
-/// A home band placed far from the herd, so no near-band drop-off interferes with the raid's cycle.
+/// A home band placed far from the herd, so no comm-range fold-back interferes with the raid.
 fn spawn_home_band(app: &mut App, herd_pos: UVec2) -> bevy::prelude::Entity {
     let (width, height) = {
         let registry = app.world.resource::<TileRegistry>();

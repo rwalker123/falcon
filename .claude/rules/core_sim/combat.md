@@ -171,7 +171,7 @@ future TOE-vs-TOE battle bank a multi-turn fight the same way instead of each gr
   failing quietly). `QuarryFight::wounds` goes in, `HuntFight::wounds` comes out, and
   `resolve_hunt_fight` stays a **pure** function; the caller stores the ledger back.
 - **Every FORWARD PROJECTION resolves the fight INSIDE its loop now.** `project_realized_hunt`,
-  `project_arrivals_hunt` and `hunt_trip_forecast` used to hoist it out as a constant, which was right
+  `project_arrivals_hunt` and the denial projection used to hoist it out as a constant, which was right
   for a stateless resolver and is now wrong: a sub-threshold party's first turn is zero and its
   seventh is a whole animal, so a frozen answer quotes **zero forever** for exactly the parties the
   accumulator serves. `project_realized_hunt`'s early break also moved from *"the take was zero"* to
@@ -370,12 +370,11 @@ variance: the authored ordering's shape, the exported band's containment across 
 wary herd costs hunter-turns and never herd biomass", and the surviving zero identity);
 `core_sim/tests/predators.rs`
 (a mammoth hunt costs working-age lives with a killed/wounded split; a **rabbit** hunt — ferocity 0 —
-costs nobody; ferocity scales hunt-danger; config-validation rejections including ferocity); `core_sim/tests/expedition_hunt.rs`
-(a hunting expedition takes casualties against a mammoth; the `expedition_danger_multiplier` scales
-losses). **Note:** `hunt_trip_forecast` still does not model casualties (it projects the take, and the take's
+costs nobody; ferocity scales hunt-danger; config-validation rejections including ferocity); `core_sim/tests/raiding_party.rs`
+(a raiding party takes casualties against a mammoth; the `expedition_danger_multiplier` scales
+losses). **Note:** `denial_forecast` does not model casualties (it projects the take, and the take's
 *kill* arm is the fight — the party's own losses are not fed back into the projected party size), so
-`the_raid_forecast_matches_a_real_party_run` hunts a harmless species. Wiring casualties into the
-launch forecast remains a follow-up, and the resident-band preview has the same gap:
+the denial suite raids a harmless species. The resident-band preview has the same gap:
 `hunt_yield_vector::the_forecast_equals_the_paid_take_across_a_multi_turn_kill` has to re-read the
 band's live head count each turn, because a mammoth hunt shrinks it under the run while
 `hunt_source_yield_preview` quotes whatever staffing it is handed.

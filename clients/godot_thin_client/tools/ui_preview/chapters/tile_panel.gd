@@ -110,8 +110,6 @@ const MODDED_STAGE_ICON := "🏯"
 
 const OCCUPANTS_HUNT_LOCAL_WORKERS := 4
 
-const OCCUPANTS_HUNT_PARTY_WORKERS := 6
-
 # ⛔ **RETIRED WITH THE SHORTCUT THEY STAGED**: `QUICK_HUNT_HERD_ID` and `QUICK_HUNT_IDLE_WORKERS`,
 # *"the quick-hunt axis guard's herd, and idle workers for the shortcut to have something to send."*
 # The map's double-click quick-hunt is gone; see the retirement note where states 5 / 5a stood.
@@ -457,7 +455,7 @@ func _crowded_bands_fixture() -> Array:
 			"settlement_stage_id": "village", "settlement_stage_icon": "🏘️",
 			"settlement_stage_label": "Village",
 			"current_x": 58, "current_y": 24, "working_age": 62, "idle_workers": 9,
-			"work_range": 2, "hunt_reach": 4, "turns_of_food": 15.0, "morale": 0.72,
+			"work_range": 2, "turns_of_food": 15.0, "morale": 0.72,
 			"activity": "forage", "stores": {"provisions": 180.0},
 			"food_income": 3.2, "food_consumption": 2.4, "food_need": 2.4,
 			"labor_assignments": [
@@ -469,13 +467,13 @@ func _crowded_bands_fixture() -> Array:
 			"settlement_stage_id": "camp", "settlement_stage_icon": "🛖",
 			"settlement_stage_label": "Seasonal camp",
 			"current_x": 58, "current_y": 24, "working_age": 44, "idle_workers": 4,
-			"work_range": 2, "hunt_reach": 4, "turns_of_food": 7.0, "morale": 0.51,
+			"work_range": 2, "turns_of_food": 7.0, "morale": 0.51,
 			"activity": "scout", "stores": {"provisions": 40.0}, "labor_assignments": []},
 		{"id": "Band Bryn", "entity": 303, "faction": 0, "size": 54, "pos": [58, 24],
 			"settlement_stage_id": "camp", "settlement_stage_icon": "🛖",
 			"settlement_stage_label": "Seasonal camp",
 			"current_x": 58, "current_y": 24, "working_age": 27, "idle_workers": 0,
-			"work_range": 2, "hunt_reach": 4, "turns_of_food": 2.0, "morale": 0.30,
+			"work_range": 2, "turns_of_food": 2.0, "morale": 0.30,
 			"activity": "idle", "stores": {"provisions": 8.0}, "labor_assignments": []},
 	]
 
@@ -653,7 +651,7 @@ func _cycle_map_snapshot() -> Dictionary:
 			{"id": "Band Wold", "entity": CYCLE_BAND_ENTITY, "faction": 0, "size": 94,
 				"pos": [CYCLE_TILE.x, CYCLE_TILE.y],
 				"current_x": CYCLE_TILE.x, "current_y": CYCLE_TILE.y,
-				"working_age": 48, "idle_workers": 6, "work_range": 2, "hunt_reach": 4,
+				"working_age": 48, "idle_workers": 6, "work_range": 2,
 				"turns_of_food": 11.0, "morale": 0.64, "activity": "idle",
 				"stores": {"provisions": 120.0}, "labor_assignments": []},
 		],
@@ -704,7 +702,7 @@ func _nearest_band_map_snapshot() -> Dictionary:
 			{"name": NEAREST_BAND_NAME, "entity": NEAREST_BAND_ENTITY, "faction": 0, "size": 88,
 				"pos": [NEAREST_BAND_TILE.x, NEAREST_BAND_TILE.y],
 				"current_x": NEAREST_BAND_TILE.x, "current_y": NEAREST_BAND_TILE.y,
-				"working_age": 45, "idle_workers": 5, "work_range": 2, "hunt_reach": 4,
+				"working_age": 45, "idle_workers": 5, "work_range": 2,
 				"turns_of_food": 9.0, "morale": 0.58, "activity": "idle",
 				"stores": {"provisions": 96.0}, "labor_assignments": []},
 		],
@@ -893,12 +891,10 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("occupants_herd")
 
-	# State 3e-staffed — the SAME hex, with the bison actually being hunted BOTH ways at once: a
-	# standing local hunt (4 workers assigned by Band Fen) and a detached hunting party of 6
-	# committed to the same herd. The wildlife row's meta must read the SUM — `10`, under the row's
-	# drawn hunt mark — right-aligned exactly like the land row's own count. One herd, two
-	# mechanisms, one staffing number. The drawer
-	# leads with `Size: Big game`, the class that used to ride the row.
+	# State 3e-staffed — the SAME hex, with the bison actually being hunted: a standing hunt (4
+	# workers assigned by Band Fen). The wildlife row's meta reads `4`, under the row's drawn hunt
+	# mark — right-aligned exactly like the land row's own count. The drawer leads with
+	# `Size: Big game`, the class that used to ride the row.
 	var hunted_bands: Array = WorldFx.occupied_units_fixture()
 	hunted_bands[0]["labor_assignments"] = [
 		{"kind": "hunt", "workers": OCCUPANTS_HUNT_LOCAL_WORKERS, "fauna_id": "game_bison_02",
@@ -906,18 +902,11 @@ func run(harness) -> void:
 	]
 	h._hud._band_labor._player_bands = hunted_bands
 	h._hud._band_labor._player_band = hunted_bands[0]
-	h._hud._band_labor._player_expeditions = [
-		{"id": "Party Fen", "entity": 401, "home_band_entity": 301,
-			"size": OCCUPANTS_HUNT_PARTY_WORKERS, "expedition_mission": "hunt",
-			"expedition_target_herd": "game_bison_02", "expedition_phase": "outbound",
-			"current_x": 59, "current_y": 24},
-	]
 	h._show_herd(_occupied_herd_fixture())
 	await h._settle()
 	await h._save("occupants_herd_staffed")
 	h._hud._band_labor._player_bands = []
 	h._hud._band_labor._player_band = BandFx.band_fixture()
-	h._hud._band_labor._player_expeditions = []
 
 	# ---- ONE CARD, ONE LIST, ONE DRAWER (docs/plan_tile_panel_layout.md) ------------------------
 	# The hex is now a single card: a pinned chip strip, one selectable list with the LAND as its

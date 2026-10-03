@@ -626,8 +626,8 @@ func _build_herd_row(herd: Dictionary) -> Button:
 	var name_label := _roster_name_label(name_text, selected)
 	row.add_child(name_label)
 	# The fauna id (`game_fowl_27`) is a DATABASE KEY, not player-facing text: it is the handle the
-	# code addresses this herd with (the `pressed` bind below, and every `assign_labor`/`tame`/
-	# `send_hunt_expedition` command), so it stays as DATA and never as a rendered label. The row
+	# code addresses this herd with (the `pressed` bind below, and every `assign_labor`/`tame`
+	# command), so it stays as DATA and never as a rendered label. The row
 	# shows the species and, as its meta, how many hunters are on it; the size class reads in the
 	# drawer.
 	var meta := _herd_row_meta(herd)
@@ -682,10 +682,8 @@ func _herd_row_activity(herd: Dictionary) -> String:
 		return SourceForecast.LABOR_KIND_HUNT
 	return ""
 
-## Hunters this faction has on `herd_id`, summed across BOTH ways a herd can be worked: standing
-## local hunts assigned by any player band, and detached hunting expeditions committed to it (in
-## whatever phase — a party en route to a herd is hunting it). The row states the herd's TOTAL
-## staffing, not one band's or one mechanism's share of it — the same rule
+## Hunters this faction has on `herd_id`, summed across every player band's hunt assignment. The row
+## states the herd's TOTAL staffing, not one band's share of it — the same rule
 ## `_forage_workers_on_tile` documents for a hex.
 func _hunt_workers_on_herd(herd_id: String) -> int:
 	if herd_id == "":
@@ -695,15 +693,6 @@ func _hunt_workers_on_herd(herd_id: String) -> int:
 	for band_variant in bands:
 		if band_variant is Dictionary and not (band_variant as Dictionary).is_empty():
 			total += int(_band_labor.workers_for_hunt(band_variant, herd_id))
-	for exp_variant in _band_labor.player_expeditions():
-		if not (exp_variant is Dictionary):
-			continue
-		var exp: Dictionary = exp_variant
-		if String(exp.get("expedition_mission", "")).strip_edges().to_lower() != HudExpeditionVocab.EXPEDITION_MISSION_HUNT:
-			continue
-		if String(exp.get("expedition_target_herd", "")).strip_edges() != herd_id:
-			continue
-		total += int(exp.get("size", 0))
 	return total
 
 ## A roster row's clickable Button shell: selected rows read as "primary", others
