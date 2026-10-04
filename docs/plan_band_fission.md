@@ -459,8 +459,8 @@ reads as:
 Grievance accrues whether or not the band is cut off, so in practice **the ~50-turn tie bleed is
 the clock and grievance is the gate**: an unhappy far band leaves about fifty turns after anyone of
 its people last saw it, and a well-fed one stays yours indefinitely — §Q1's decision, kept. The
-figures above are the dials' arithmetic, not a measured game; the implementation slice confirms the
-opening value against a run with a far, hungry splinter before it ships.
+figures above are the dials' arithmetic, not a measured game. Whether 1.0 is right is a playtest
+question, which is why the lever ships in the Workbench.
 
 ### The unit is the cut-off group, not the band
 
