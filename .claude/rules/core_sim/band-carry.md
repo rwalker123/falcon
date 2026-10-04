@@ -75,6 +75,16 @@ the rounding slack. On shipped numbers an untouched 4-worker turn-one splinter c
 
 **A long move is still food first** (below): a band moving on its own keeps eating.
 
+> ### ⛔ A SPLINTER'S CARD MAY PUSH ITS PARENT OVER ITS CARRY — and that is left alone, deliberately
+>
+> On turn one, raising a splinter's goods hands food back to its parent. The parent's larder is
+> fixed and counts, so its goods room shrinks and a fully outfitted parent reads amber "over carry".
+> **Nothing re-fits or refuses it** (Ray, 2026-10-04: *"leave it"*). The cap limits what walks
+> away, not what a band owns, so the amber is true: the parent holds more than it could carry, and
+> pays for it only if it makes a long move. Silently trimming the parent's gear would move a number
+> on a card the player did not touch; refusing the splinter's order would block one band's card
+> over another's choices. Do not add either.
+
 ## A long move leaves behind what the band cannot carry
 
 `handle_move_band`, for a resident band (never an `Expedition`, whose packs have their own rules):
