@@ -453,6 +453,10 @@ fn create_populations<'a>(
                                 // **A FAR FORAGE ROW'S OTHER ACCOUNTS, HOME** (#706). Appended last.
                                 fodderRateHome: assignment.fodder_rate_home,
                                 materialsRateHome: Some(materials_rate_home),
+                                // THIS ROW'S HANDS STILL WALKING HOME. Appended last.
+                                homewardWorkers: assignment.homeward_workers,
+                                homewardAllHomeIn: assignment.homeward_all_home_in,
+                                homewardFood: assignment.homeward_food,
                             },
                         )
                     })
@@ -1314,6 +1318,9 @@ fn decode_labor_assignment(
         transit_keeps_turns: assignment.transitKeepsTurns(),
         fodder_rate_home: assignment.fodderRateHome(),
         materials_rate_home: decode_material_payoffs(assignment.materialsRateHome()),
+        homeward_workers: assignment.homewardWorkers(),
+        homeward_all_home_in: assignment.homewardAllHomeIn(),
+        homeward_food: assignment.homewardFood(),
     })
 }
 

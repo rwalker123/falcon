@@ -2153,6 +2153,18 @@ table LaborAssignment {
   fodderRateHome:float = 0;
   // One row per material id. NEVER summed into one figure.
   materialsRateHome:[MaterialPayoff];
+  // --- THIS ROW'S HANDS STILL WALKING HOME (appended last) ---------------------------------------
+  // A far crew cut or stood down walks home (PopulationCohortState.homeward*); these are the walks
+  // whose source is THIS row's, summed exactly as the band's fields are. The band fields remain the
+  // TOTAL: a walk whose row is gone (abandoned, lapsed, cancelled) appears only there, so the sum
+  // of every row's homewardWorkers is <= the band's. All 0 = nobody from this row walking home.
+  //
+  // Hands from this row walking home - on no row's crew, not idle, back the turn they arrive.
+  homewardWorkers:uint = 0;
+  // Turns until the last of THOSE hands is back; 0 = none walking.
+  homewardAllHomeIn:uint = 0;
+  // The food they carry, gross of the walk's rot (a deposit's material is not counted).
+  homewardFood:float = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).

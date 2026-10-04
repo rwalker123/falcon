@@ -453,6 +453,16 @@ pub struct LaborAssignmentState {
     /// bone and sinew — one row per material id. Appended last.
     #[serde(default)]
     pub materials_rate_home: Vec<MaterialPayoff>,
+    /// **Hands from this row still walking home** — the band's homeward walks whose source is this
+    /// row's; the band's `homeward_workers` is the total. Appended last.
+    #[serde(default)]
+    pub homeward_workers: u32,
+    /// Turns until the last of those hands is back; `0` = none. Appended last.
+    #[serde(default)]
+    pub homeward_all_home_in: u32,
+    /// The food they carry, gross of the walk's rot. Appended last.
+    #[serde(default)]
+    pub homeward_food: f32,
 }
 
 /// **ONE LINE OF ONE TAKE ROW'S TABLE OF EQUIPMENT** — a row of [`LaborAssignmentState::kit_toe`].
