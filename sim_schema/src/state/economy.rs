@@ -23,5 +23,4 @@ pub struct FactionInventoryState {
 pub struct KnownTechFragment {
     pub discovery_id: u32,
     pub progress: i64,
-    pub fidelity: i64,
 }

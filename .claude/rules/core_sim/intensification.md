@@ -1555,7 +1555,15 @@ ever open since the ledger clamps to `1.0`).
 > knowledge nobody could find the dial for, which is the parked-`0` failure mode in a new costume.
 > Both readers (`knowledge_accrual`, `credit_craft_lesson`) therefore treat the map as total.
 >
-> **All eight are 20.** The spread — rung-3's `seed_selection`/`penning` dearer and `foddering`
+> **Contact is the third teacher, and its coverage is checked at boot, not by `validate`.** The
+> knowledge rider (`knowledge_contact.rs`, `connections.md` → "Knowledge is the third rider") can
+> teach **every tag in `start_profile_knowledge_tags.json`**, so `TeachableLessons::resolve` refuses a
+> tag the ladder does not price and `build_headless_app` panics on it — a cross-file check, because
+> the ladder's own `validate` cannot see the tag table. That is why `nomadic_wayfinding` and
+> `portable_forge` carry a cost although no rung and no bench teaches them: contact is the first
+> thing that can, and they are priced like every other lesson rather than defaulted.
+>
+> **All sixteen are 20.** The spread — rung-3's `seed_selection`/`penning` dearer and `foddering`
 > dearer again — is a later config-only slice.
 
 **A fourth dial sits beside them, and it is a sibling rather than a reading**:

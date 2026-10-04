@@ -6877,19 +6877,21 @@ impl Default for PowerNode {
 }
 
 /// Knowledge fragment payload carried between factions by migration.
+///
+/// **There is no `fidelity`, and there must not be one again** (`docs/plan_contact_and_logistics.md`
+/// §Settled by #531). Partial transmission is what `progress` building up over turns already *is*; a
+/// second "garbled" figure beside it described the same thing twice, and nothing ever read it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KnowledgeFragment {
     pub discovery_id: u32,
     pub progress: Scalar,
-    pub fidelity: Scalar,
 }
 
 impl KnowledgeFragment {
-    pub fn new(discovery_id: u32, progress: Scalar, fidelity: Scalar) -> Self {
+    pub fn new(discovery_id: u32, progress: Scalar) -> Self {
         Self {
             discovery_id,
             progress,
-            fidelity,
         }
     }
 
@@ -6897,7 +6899,6 @@ impl KnowledgeFragment {
         Self {
             discovery_id: fragment.discovery_id,
             progress: Scalar::from_raw(fragment.progress),
-            fidelity: Scalar::from_raw(fragment.fidelity),
         }
     }
 
@@ -6905,7 +6906,6 @@ impl KnowledgeFragment {
         ContractKnowledgeFragment {
             discovery_id: self.discovery_id,
             progress: self.progress.raw(),
-            fidelity: self.fidelity.raw(),
         }
     }
 }

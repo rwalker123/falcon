@@ -20,7 +20,6 @@
   "power_instability_warn": 0.4,
   "power_instability_critical": 0.2,
   "migration_fragment_scaling": 0.25,
-  "migration_fidelity_floor": 0.35,
   "corruption_military_penalty": 0.4,
   "port_base_bind": "127.0.0.1:41000",
   "snapshot_flat_bind": "127.0.0.1:41002",

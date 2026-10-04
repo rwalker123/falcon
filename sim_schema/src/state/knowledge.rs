@@ -20,6 +20,22 @@ pub struct DiscoveredSiteState {
     pub glyph: String,
 }
 
+/// **One discovery the viewer's people is learning BY CONTACT this turn** — the knowledge rider
+/// (`docs/plan_contact_and_logistics.md` §Settled by #531). One row per discovery, naming the
+/// strongest source; absent where contact teaches nothing.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct ContactLessonState {
+    pub discovery_id: u32,
+    /// The knowledge tag (`start_profile_knowledge_tags.json`).
+    pub knowledge_id: String,
+    /// The people learned from — the subject band's faction.
+    pub subject_faction: u32,
+    /// `0 = watching`, `1 = trade`, `2 = road` — `core_sim::ContactChannel::wire_code`.
+    pub channel: u8,
+    /// Ledger progress credited per turn, in the ledger's `0..1` units.
+    pub credit: f32,
+}
+
 /// Per-faction discovered-sites registry (mirrors `SedentarizationState`'s per-faction shape).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct DiscoveredSitesState {

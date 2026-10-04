@@ -314,11 +314,13 @@ const CONFIG_RESOURCES: [&str; 46] = [
 
 /// The remaining config handles, split out only because Rust array consts need a fixed length and
 /// one 50-entry literal reads worse than two.
-const CONFIG_RESOURCES_CONT: [&str; 25] = [
+const CONFIG_RESOURCES_CONT: [&str; 27] = [
     "BeliefConfigHandle",
     "BeliefConfigMetadata",
     "ConnectionsConfigHandle",
     "ConnectionsConfigMetadata",
+    "KnowledgeContactConfigHandle",
+    "KnowledgeContactConfigMetadata",
     "EquipmentConfigHandle",
     "EquipmentConfigMetadata",
     "ExtractionConfigHandle",

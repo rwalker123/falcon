@@ -655,20 +655,25 @@ happens in the ground and in someone's judgment. Each discovery carries:
 - **`observability`** (0..1) — how much being around it teaches. Named apart from the fog-of-war's
   `Seen`/`Discovered` vocabulary on purpose: this is about an idea, not a tile.
 - **`secret_floor`** (0..1, ≤ `observability`) — what stays observable when its people **keeps it a
-  secret**. A cart cannot be hidden; a way of drying fodder can.
+  secret**. A cart cannot be hidden; a way of drying fodder can. **It ships with the keep-it-secret
+  verb, not before** — a floor nothing reads is a dead field.
 
-**Keeping a secret is a later verb, and this is its whole seam:** a people that keeps a discovery
-secret has its observability read at the floor instead. **No channel gets past a floor** — diplomats
+**Keeping a secret is a later verb, and the floor is its whole seam:** a people that keeps a
+discovery secret has its observability read at the floor instead. **No channel gets past a floor** — diplomats
 learn more of what is visible, not what is hidden. Learning what a people is actively hiding is
 espionage (`espionage.rs`), not this rider.
 
 **The rule — per observer people, per discovery it does not yet know, per turn:**
 
 ```
-credit = observe_rate × max over channels( tie × channel_strength × observability_seen ) / lesson_cost
+credit = max over channels( tie × channel_rate × observability_seen ) / lesson_cost
 ```
 
 - **`tie`** — the strength of the `observer → subject` edge the channel rides.
+- **`channel_rate`** — the channel's strength, in the **practice units per turn** that `learn_rate`
+  is paid in. One lever per channel and no global multiplier on top: a full tie to a people that
+  knows a fully observable discovery, over a channel at `learn_rate`, learns it exactly as fast as
+  practising it would.
 - **`observability_seen`** — the discovery's `observability`, or its `secret_floor` where the
   subject's people keeps it secret.
 - **Only discoveries the subject's people KNOWS teach** — at the ladder's `completion_threshold`, the
@@ -679,9 +684,9 @@ credit = observe_rate × max over channels( tie × channel_strength × observabi
 - **`/ lesson_cost`** — the cost from `intensification_ladder.json`'s `lesson_costs`, the same divisor
   practice is paid in, so a dear lesson is dear to learn by watching too. Watching and practising
   credit **one** ledger entry, and whichever gets there first wins: contact shortens the road, it
-  never replaces it. Two tags have no lesson cost today — `nomadic_wayfinding` and `portable_forge`,
-  which only a start profile grants — and the slice that builds this prices them rather than
-  defaulting, for the reason `lesson_costs` already refuses a default.
+  never replaces it. `nomadic_wayfinding` and `portable_forge`, which only a start profile grants,
+  had no lesson cost; contact is the first thing that can teach them, so they are priced like every
+  other lesson rather than defaulted.
 - **It is a rate, not a timer.** The ledger is already a continuous `0..1` per discovery, so the old
   leak timer (§As-built) reduces to a per-turn credit with no lump to schedule. `openness` became the
   tie's strength.
@@ -693,12 +698,11 @@ rate building up over turns *is* — a second "garbled" figure would describe th
 **Not this rider:** map exchange. Telling someone your coastline is a different act from them seeing
 your wheels; the primitive owns that grant (`Discovered`, never `Seen` — §Q3).
 
-**Config homes:** `observability` and `secret_floor` sit on each entry of
-`start_profile_knowledge_tags.json`, the table that already maps every knowledge tag to its discovery
-id, and load-time validation requires both on every entry — a defaulted observability would pace a
-lesson off a number nobody chose. `observe_rate` and the per-channel strengths are a knowledge
-config, never `connections_config.json`, which has no rider vocabulary. All are first guesses tuned
-from play.
+**Config homes:** `observability` sits on each entry of `start_profile_knowledge_tags.json`, the
+table that already maps every knowledge tag to its discovery id, and load-time validation requires it
+on every entry — a defaulted observability would pace a lesson off a number nobody chose. The
+per-channel rates are a knowledge config, never `connections_config.json`, which has no rider
+vocabulary. All are first guesses tuned from play.
 
 **What the player sees:** where a discovery is listed, the strongest source this turn and its
 channel — *"Learning Wheel from the Red Hill people — by trade"* — which needs, per discovery the

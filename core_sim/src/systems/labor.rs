@@ -12401,7 +12401,7 @@ pub fn advance_population_migration(
         *dst_tally.immigrated_foreign.entry(from_people).or_default() += moved_head;
         tallies.entry(src_entity).or_default().joined_people = Some(to_people);
         // **Knowledge travels with people, in proportion.** The source band's knowledge is scaled
-        // by the migration fidelity levers, then by the share of the band that left — so a brain
+        // by `migration_fragment_scaling`, then by the share of the band that left — so a brain
         // drain is proportional, never all-or-nothing.
         let Ok((_, source_cohort, _)) = cohorts.get(src_entity) else {
             continue;
@@ -12410,7 +12410,6 @@ pub fn advance_population_migration(
         let scaled = scale_migration_fragments(
             &fragments_to_contract(&source_cohort.knowledge),
             sim_config.migration_fragment_scaling.raw(),
-            sim_config.migration_fidelity_floor.raw(),
         );
         for mut fragment in scaled {
             fragment.progress = (Scalar::from_raw(fragment.progress) * share).raw();
