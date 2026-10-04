@@ -4753,7 +4753,7 @@ pub struct LaborAllocation {
     /// and **excluded from equality** below.
     pub last_raid_forfeit: f32,
     /// **THE FOOD THIS BAND LEFT BEHIND ON A LONG MOVE THIS WINDOW** (#732) — a band ordered farther
-    /// than it can ferry sheds down to what its workers can carry the moment the order is accepted
+    /// than it can ferry sheds down to what its workers can carry as it departs
     /// (`crate::band_carry`), and what it drops is **lost**: it passes through neither income,
     /// consumption, rot nor a transfer. So it is its own term of the food identity:
     ///
@@ -6692,6 +6692,23 @@ impl LaborAllocation {
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BandTravel {
     pub target: UVec2,
+    /// **Whether this order has taken its first step.** `false` from the moment the order is given
+    /// until `systems::advance_band_movement` first moves the band on it — which is the **departure**,
+    /// where a resident band's long-move shed is applied (`.claude/rules/core_sim/band-carry.md`).
+    /// Every new order starts undeparted, so a re-target is measured afresh from where the band then
+    /// stands. Persisted with the order (`BandRecord::travel`), so a save taken between the order
+    /// and the turn keeps the shed pending rather than skipping it.
+    pub departed: bool,
+}
+
+impl BandTravel {
+    /// **A fresh order toward `target`**, not yet departed.
+    pub fn to(target: UVec2) -> Self {
+        Self {
+            target,
+            departed: false,
+        }
+    }
 }
 
 /// **THE floor a fresh assignment gets when the player named none** — `0.50`, the food peak, so the

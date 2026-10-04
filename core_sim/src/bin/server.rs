@@ -5388,13 +5388,14 @@ fn handle_move_band(
     ) else {
         return;
     };
+    // **A long move leaves behind what the band cannot carry** (#732) — but not here. The band
+    // leaves when the turn advances, so the shed runs at DEPARTURE, on the order's first step
+    // (`systems::advance_band_movement`), measured from where the band then stands. Accepting the
+    // order changes nothing else: a turn-one outfitting window stays open until the turn advance
+    // shuts it, and an order cancelled or replaced before then sheds nothing.
     app.world
         .entity_mut(band.entity)
-        .insert(BandTravel { target });
-
-    // **A long move leaves behind what the band cannot carry** (#732) — at the moment the order is
-    // accepted, because the band is leaving now.
-    shed_for_a_long_move(app, faction, band.entity, &band.label, target);
+        .insert(BandTravel::to(target));
 
     // If the moved entity is an expedition, a fresh `move_band` un-latches AwaitingOrders (or
     // redirects a Returning party back out to explore): re-arm it Outbound and re-open the
@@ -5414,136 +5415,6 @@ fn handle_move_band(
         Some(format!(
             "status=queued action=move_band band={}",
             band.label
-        )),
-    );
-}
-
-/// **Shed a RESIDENT band down to what its workers can carry, when it is ordered farther than it can
-/// ferry** (#732, `core_sim::carry`).
-///
-/// Within [`core_sim::carry::move_ferry_reach_tiles`] the band keeps everything — it can carry
-/// its goods across in trips. Past it, it walks off with
-/// [`core_sim::carry::band_carry_capacity`] — priced on its actual working-age value, never a floored
-/// head count: food loads first, then materials are cut before tools in what the food leaves, the
-/// **most worn** units are the ones dropped, and what is left behind is **lost**. A re-target to another long move re-checks, which is
-/// a no-op once the band is already under its cap.
-///
-/// **A detached party is untouched** — parties keep their own rules (their pack is their pack). The
-/// dropped food is booked on the food ledger's `left_behind` term so the identity still closes, and
-/// one feed line names roughly what was left; nothing is said when nothing is shed.
-fn shed_for_a_long_move(
-    app: &mut bevy::prelude::App,
-    faction: FactionId,
-    entity: Entity,
-    label: &str,
-    target: UVec2,
-) {
-    if app.world.get::<ResidentBand>(entity).is_none()
-        || app.world.get::<Expedition>(entity).is_some()
-    {
-        return;
-    }
-    let Some(current_tile) = app
-        .world
-        .get::<PopulationCohort>(entity)
-        .map(|cohort| cohort.current_tile)
-    else {
-        return;
-    };
-    let Some(from) = app
-        .world
-        .get::<Tile>(current_tile)
-        .map(|tile| tile.position)
-    else {
-        return;
-    };
-    let width = app.world.resource::<TileRegistry>().width;
-    let wrap = app
-        .world
-        .resource::<SimulationConfig>()
-        .map_topology
-        .wrap_horizontal;
-    let reach = core_sim::carry::move_ferry_reach_tiles(
-        &app.world
-            .resource::<core_sim::SupplyNetworkConfigHandle>()
-            .get(),
-    );
-    if hex_distance_wrapped(from, target, width, wrap) <= reach {
-        return;
-    }
-    // ⛔ **A long move ends the band's outfitting window**, whether or not it sheds anything: the
-    // band has walked away, and its outfit is what it carried. Left open, an unchanged card would
-    // re-mint everything the shed below leaves behind.
-    if let Some(band_id) = app.world.get::<BandId>(entity).copied() {
-        let closed = app
-            .world
-            .resource_mut::<core_sim::StartingLoadout>()
-            .close_for_a_long_move(band_id);
-        if !closed.is_empty() {
-            info!(
-                target: "shadow_scale::campaign",
-                band = band_id.0,
-                windows = closed.len(),
-                "starting_loadout.window.closed=long_move"
-            );
-        }
-    }
-    let carry_cfg = app
-        .world
-        .resource::<ExpeditionConfigHandle>()
-        .get()
-        .carry
-        .clone();
-    let Some(cohort) = app.world.get::<PopulationCohort>(entity) else {
-        return;
-    };
-    let plan = core_sim::carry::plan_long_move_shed(
-        &cohort.stores,
-        app.world.get::<BandEquipment>(entity),
-        core_sim::carry::band_carry_workers(cohort),
-        &carry_cfg,
-    );
-    if plan.is_empty() {
-        return;
-    }
-    let mut holdings = app
-        .world
-        .query::<(&mut PopulationCohort, Option<&mut BandEquipment>)>();
-    let Ok((mut cohort, equipment)) = holdings.get_mut(&mut app.world, entity) else {
-        return;
-    };
-    let food_left = core_sim::carry::shed_for_long_move(
-        &mut cohort.stores,
-        equipment.map(|equipment| equipment.into_inner()),
-        &plan,
-    );
-    // **Booked on the food ledger, or the identity is false on the turn a band walks away** — the
-    // larder fell by food that passed through no income, meal, rot or transfer.
-    if let Some(mut allocation) = app.world.get_mut::<LaborAllocation>(entity) {
-        allocation.last_food_left_behind += food_left.to_f32();
-    }
-    let tick = app.world.resource::<SimulationTick>().0;
-    let food = food_left.to_f32();
-    let items = plan.item_units();
-    let materials = plan.material_units().to_f32();
-    // `band=` is the durable `BandId`, never the entity — the token the client joins on.
-    let band_token = app
-        .world
-        .get::<BandId>(entity)
-        .map(|band| format!(" band={}", band.0))
-        .unwrap_or_default();
-    push_command_event(
-        app,
-        tick,
-        CommandEventKind::CancelOrder,
-        faction,
-        format!(
-            "{label} left behind {food:.0} food, {items} gear, {materials:.0} material - too far \
-             to carry"
-        ),
-        Some(format!(
-            "status=left_behind action=move_band food={food:.2} items={items} \
-             materials={materials:.2}{band_token}"
         )),
     );
 }
@@ -5753,7 +5624,7 @@ fn handle_send_expedition(
                 cargo: LocalStore::new(),
                 defection_pull: Scalar::zero(),
             },
-            BandTravel { target },
+            BandTravel::to(target),
         ))
         .id();
 
@@ -6266,9 +6137,7 @@ fn launch_party_from_band(
                 cargo: orders.cargo,
                 defection_pull: Scalar::zero(),
             },
-            BandTravel {
-                target: orders.target,
-            },
+            BandTravel::to(orders.target),
         ))
         .id();
     Some(expedition_entity)
@@ -26881,8 +26750,9 @@ mod tests {
     }
 }
 
-/// **A long move leaves behind what the band cannot carry** (#732) — `shed_for_a_long_move`, driven
-/// through the real `move_band` handler and read back off the **encoded** frame.
+/// **A long move leaves behind what the band cannot carry** (#732) — ordered through the real
+/// `move_band` handler, applied at DEPARTURE by `advance_band_movement`, and read back off the
+/// **encoded** frame.
 #[cfg(test)]
 mod long_move_tests {
     use super::*;
@@ -27123,6 +26993,7 @@ mod long_move_tests {
             reach + 1..=reach + 1 + LONG_MOVE_EXTRA_TILES,
         );
         handle_move_band(&mut app, faction, Some(band_id), target.x, target.y);
+        depart(&mut app);
 
         let after = holdings(&app, band);
         assert_eq!(after.0, before.0, "the food rode first and none was left");
@@ -27198,6 +27069,7 @@ mod long_move_tests {
             reach + 1..=reach + 1 + LONG_MOVE_EXTRA_TILES,
         );
         handle_move_band(&mut app, faction, Some(band_id), target.x, target.y);
+        depart(&mut app);
         let (food, items, hide) = holdings(&app, band);
         assert!(
             (larder_before - food - forecast.leaves_food).abs() < FOOD_EPSILON,
@@ -27221,7 +27093,7 @@ mod long_move_tests {
         );
         assert!(
             (published_carry(&mut app, band_id).food_left_behind - left).abs() < FOOD_EPSILON,
-            "and published on the recapture the command triggers"
+            "and published on the next capture"
         );
 
         // **The identity, turn frame to turn frame, across the shedding move.**
@@ -27257,6 +27129,7 @@ mod long_move_tests {
         let reach = ferry_reach(&app);
         let target = land_tile_within(&mut app, from, 1..=reach);
         handle_move_band(&mut app, faction, Some(band_id), target.x, target.y);
+        depart(&mut app);
         assert_eq!(holdings(&app, band), before, "nothing is left behind");
         assert_eq!(
             app.world
@@ -27296,6 +27169,7 @@ mod long_move_tests {
             reach + 1..=reach + 1 + LONG_MOVE_EXTRA_TILES,
         );
         handle_move_band(&mut app, faction, Some(party_id), target.x, target.y);
+        depart(&mut app);
         assert_eq!(holdings(&app, party), before, "the party keeps its pack");
     }
 
@@ -27802,24 +27676,192 @@ mod long_move_tests {
         .expect("an order at the party-held count is accepted");
     }
 
-    /// ⛔ **A LONG MOVE ENDS THE BAND'S OUTFITTING WINDOW.** A turn-one band overloaded walks off
-    /// past the ferry reach and leaves goods behind; re-sending its unchanged card is then refused
-    /// `WindowClosed`, so nothing that was left behind is re-minted, and the band keeps only what it
-    /// carried.
+    /// **The band departs** — one pass of the movement system, which is where an order's first step
+    /// applies the long-move shed. Isolated from the rest of the turn so a holdings comparison is
+    /// about the shed alone, not the meal or the take.
+    fn depart(app: &mut bevy::prelude::App) {
+        use bevy::ecs::system::RunSystemOnce;
+        app.world.run_system_once(core_sim::advance_band_movement);
+    }
+
+    /// Whether `band_id`'s row publishes an OPEN outfitting window, off the encoded envelope.
+    fn published_window_open(app: &mut bevy::prelude::App, band_id: u64) -> bool {
+        recapture_snapshot_in_place(&mut app.world);
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+        let envelope = fb::root_as_envelope(&bytes).expect("the snapshot encodes");
+        envelope
+            .payload_as_snapshot()
+            .and_then(|snapshot| snapshot.population())
+            .and_then(|section| section.populations())
+            .expect("the population section is published")
+            .iter()
+            .find(|cohort| cohort.bandId() == band_id)
+            .and_then(|cohort| cohort.loadoutWindow())
+            .is_some_and(|window| window.open())
+    }
+
+    /// **What the departure probe saw** — written by [`departure_probe`], which the schedule places
+    /// after the window closes and before the band moves.
+    #[derive(bevy::prelude::Resource, Default)]
+    struct DepartureProbe {
+        /// The splinter's window was shut when the probe ran.
+        window_shut: Option<bool>,
+        /// The splinter still held everything when the probe ran — nothing shed yet.
+        unshed_items: Option<u32>,
+        band: Option<(Entity, BandId)>,
+    }
+
+    fn departure_probe(
+        loadout: bevy::prelude::Res<core_sim::StartingLoadout>,
+        ledgers: bevy::prelude::Query<&BandEquipment>,
+        mut probe: bevy::prelude::ResMut<DepartureProbe>,
+    ) {
+        let Some((entity, band)) = probe.band else {
+            return;
+        };
+        probe.window_shut = Some(!loadout.is_open(band));
+        probe.unshed_items = ledgers.get(entity).ok().map(BandEquipment::total_units);
+    }
+
+    /// Split `half` of the home band's working-age people off into a splinter, returning it.
+    fn split_off(app: &mut bevy::prelude::App, home: Entity, home_id: u64) -> (Entity, u64) {
+        let (faction, workers) = {
+            let cohort = app.world.get::<PopulationCohort>(home).expect("a cohort");
+            (
+                cohort.faction,
+                core_sim::available_workers(cohort.working) / SPLIT_IN_HALF,
+            )
+        };
+        handle_split_band(app, faction, Some(home_id), workers);
+        let mut query = app
+            .world
+            .query_filtered::<(Entity, &BandId), (With<ResidentBand>, bevy::prelude::Without<Expedition>)>();
+        query
+            .iter(&app.world)
+            .filter(|(_, id)| id.0 != home_id)
+            .max_by_key(|(_, id)| id.0)
+            .map(|(entity, id)| (entity, id.0))
+            .expect("the split founded a splinter")
+    }
+
+    /// A split sends half the band's working-age people.
+    const SPLIT_IN_HALF: u32 = 2;
+
+    /// ⛔ **A TURN-ONE SPLIT BAND ORDERED ON A LONG MOVE KEEPS ITS OUTFIT WINDOW UNTIL IT DEPARTS.**
+    /// The reported bug: accepting the order shed the band and shut its window that instant, so the
+    /// outfit tab vanished before the band had moved a step. Now the order changes nothing that turn
+    /// — the window is OPEN on the encoded frame and the band holds everything — and the shed lands
+    /// when the turn advances, after the window has shut, so the card can never re-mint what was
+    /// left behind.
+    ///
+    /// **The schedule order is asserted, not assumed**: a probe system is registered AFTER
+    /// `close_opening_window` and BEFORE `advance_band_movement`. Were the movement ordered ahead of
+    /// the close, that pair of constraints would be a cycle and the schedule would refuse to build;
+    /// and what the probe reads — window shut, nothing shed yet — is the state the shed starts from.
     #[test]
-    fn a_long_move_closes_the_outfitting_window() {
-        let (mut app, band, band_id) = world();
+    fn a_turn_one_split_band_on_a_long_move_keeps_its_window_until_it_departs() {
+        let (mut app, home, home_id) = world();
+        let (splinter, splinter_id) = split_off(&mut app, home, home_id);
         let faction = app
             .world
-            .get::<PopulationCohort>(band)
-            .expect("the band keeps a cohort")
+            .get::<PopulationCohort>(splinter)
+            .expect("the splinter keeps a cohort")
             .faction;
-        let (kits, materials) = window_rows(&app, band_id);
+        assert!(
+            published_window_open(&mut app, splinter_id),
+            "fixture: the turn-one splinter holds an open window"
+        );
+        // The card as it stands — what an untouched card re-sends after the turn.
+        let (kits, materials) = window_rows(&app, splinter_id);
+        overload(&mut app, splinter, MODEST_LARDER);
+        let held_before = holdings(&app, splinter);
+        let from = position(&app, splinter);
+        let reach = ferry_reach(&app);
+        let target = land_tile_within(
+            &mut app,
+            from,
+            reach + 1..=reach + 1 + LONG_MOVE_EXTRA_TILES,
+        );
+        handle_move_band(&mut app, faction, Some(splinter_id), target.x, target.y);
+
+        assert!(
+            published_window_open(&mut app, splinter_id),
+            "accepting the order does not shut the window — the band has not left"
+        );
+        assert_eq!(
+            holdings(&app, splinter),
+            held_before,
+            "and nothing is shed until it departs"
+        );
+
+        app.insert_resource(DepartureProbe {
+            band: Some((splinter, BandId(splinter_id))),
+            ..Default::default()
+        });
+        use bevy::prelude::IntoSystemConfigs;
+        app.add_systems(
+            bevy::prelude::Update,
+            departure_probe
+                .after(core_sim::starting_loadout::close_opening_window)
+                .before(core_sim::advance_band_movement)
+                // A read-only observer: its two edges are the whole claim, and its order against
+                // every other system is irrelevant to it.
+                .ambiguous_with_all(),
+        );
+        core_sim::run_turn(&mut app);
+
+        let probe = app.world.resource::<DepartureProbe>();
+        assert_eq!(
+            probe.window_shut,
+            Some(true),
+            "the window is shut before the band moves"
+        );
+        assert_eq!(
+            probe.unshed_items,
+            Some(held_before.1),
+            "and the band still held everything at that point"
+        );
+        let held_after = holdings(&app, splinter);
+        assert!(
+            held_after.1 < held_before.1,
+            "**LIVENESS**: departing on the long move left gear behind: {held_before:?} → \
+             {held_after:?}"
+        );
+        assert!(
+            !published_window_open(&mut app, splinter_id),
+            "the turn advance shut the window"
+        );
+        assert_eq!(
+            core_sim::apply_starting_loadout(
+                &mut app.world,
+                faction,
+                BandId(splinter_id),
+                &kits,
+                &materials
+            ),
+            Err(core_sim::LoadoutRejection::WindowClosed),
+            "re-sending the unchanged card is refused — the window is shut"
+        );
+        assert_eq!(
+            holdings(&app, splinter).1,
+            held_after.1,
+            "so nothing left behind is re-minted"
+        );
+    }
+
+    /// **AN ORDER CANCELLED BEFORE THE TURN ADVANCES SHEDS NOTHING** — the band never left.
+    #[test]
+    fn a_cancelled_long_move_sheds_nothing() {
+        let (mut app, band, band_id) = world();
+        let faction = app.world.get::<PopulationCohort>(band).unwrap().faction;
         overload(&mut app, band, MODEST_LARDER);
-        let held_before = app
-            .world
-            .get::<BandEquipment>(band)
-            .map_or(0, BandEquipment::total_units);
+        let before = holdings(&app, band);
         let from = position(&app, band);
         let reach = ferry_reach(&app);
         let target = land_tile_within(
@@ -27828,37 +27870,16 @@ mod long_move_tests {
             reach + 1..=reach + 1 + LONG_MOVE_EXTRA_TILES,
         );
         handle_move_band(&mut app, faction, Some(band_id), target.x, target.y);
-        let held_after = app
-            .world
-            .get::<BandEquipment>(band)
-            .map_or(0, BandEquipment::total_units);
+        handle_cancel_order(&mut app, faction, Some(band_id), CancelScope::All);
         assert!(
-            held_after < held_before,
-            "**LIVENESS**: the long move left goods behind: {held_before} → {held_after}"
+            app.world.get::<BandTravel>(band).is_none(),
+            "fixture: the cancel took the order off"
         );
-        assert!(
-            !app.world
-                .resource::<core_sim::StartingLoadout>()
-                .is_open(BandId(band_id)),
-            "the band's window is shut"
-        );
+        depart(&mut app);
         assert_eq!(
-            core_sim::apply_starting_loadout(
-                &mut app.world,
-                faction,
-                BandId(band_id),
-                &kits,
-                &materials
-            ),
-            Err(core_sim::LoadoutRejection::WindowClosed),
-            "re-sending the unchanged card is refused"
-        );
-        assert_eq!(
-            app.world
-                .get::<BandEquipment>(band)
-                .map_or(0, BandEquipment::total_units),
-            held_after,
-            "and the band keeps only what it carried"
+            holdings(&app, band),
+            before,
+            "the band never left, so it keeps it all"
         );
     }
 
