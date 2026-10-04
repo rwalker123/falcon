@@ -227,8 +227,8 @@ Landing as sequential slices (each its own PR), in dependency order:
    Warrior combat resolution — lights up the Warrior role built inert in slice 3.
 7. ✅ **Food ledger** — shipped (#182). Per-band income/outflow breakdown.
 - **Deferred (M2+), documented.** Crafter role + crafting to replenish/upgrade TOEs (#491); storage
-  tiers (#183; spoilage itself shipped in PR #764); **breakaway-to-new-band** (a band split, the SplitClan/migration seam);
-  richer threats (barbarians, rival civs); the settlement arc's Phase 3 improvement catalog.
+  tiers (#708, #709; spoilage itself shipped in PR #764); **breakaway-to-new-band** (a band split,
+  the SplitClan/migration seam); richer threats (barbarians, rival civs); the settlement arc's Phase 3 improvement catalog.
 
 ## Open tuning dials (to settle live)
 
