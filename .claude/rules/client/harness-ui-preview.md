@@ -1749,8 +1749,8 @@ refusal).
 
 ## `chapters/starting_loadout.gd` — the outfitting picker (issue #629)
 
-**Appended LAST in `CHAPTERS`**, after `supply_network`, so no existing frame moves. Seventeen frames
-and one hundred and sixty-one assertions (`EXPECTED_CHECKPOINTS` **185**, RE-MEASURED by raising
+**Appended LAST in `CHAPTERS`**, after `supply_network`, so no existing frame moves. Eighteen frames
+and one hundred and sixty-seven assertions (`EXPECTED_CHECKPOINTS` **185**, RE-MEASURED by raising
 the const to an impossible number and reading `reached` back — frames count too). It ends by
 publishing SHUT windows, so the surface it stands up is gone before anything appended after it could
 inherit it.
@@ -1760,8 +1760,11 @@ units × `item_carry_weight` + material units × `material_carry_weight`, both 1
 shipped, so `big_game` (spears + sled) weighs 2 and `gathering` 1. The grant's WHOLE carry is **78**
 with a **fixed 18 larder** inside it (`food_fixed`), so its goods allowance is 60; its held default
 (4/4/4 kits = 20 items, bone 3 / fibre 17 / hide 8 = 28 units) weighs **48**, so the card opens on
-`12 / 78 carry left` with a `Food 18` legend. Meter needles are LITERALS (`/ 78 carry left`, `0 / 18 carry left`,
-`-6 / 24 carry left`), never composed through `CARRY_REMAINING_FORMAT`.
+`12 / 78 carry left` with a `Food 18` legend. Meter needles are LITERALS (`/ 78 carry left`,
+`0 / 18 carry left`, `0 / 24 carry left`, `0 / 125 carry left`), never composed through
+`CARRY_REMAINING_FORMAT`. ⛔ **No meter in the chapter is negative or in `WARN`**: a band that is not
+moving is never warned that it is over its carry (`starting-loadout.md` → "THE FREE ROOM FLOORS AT
+ZERO").
 
 ⛔ **THE WINDOW RIDES THE COHORT, so the chapter pushes TWO seams in `Main`'s own order**:
 `update_opening_loadout` (the campaign's half — the pick list, the craftable ids and the two carry
@@ -1796,7 +1799,7 @@ meta, never by scraping a subtree's text) and the frames carry the layout.
 
 | frame | what only IT can say |
 |---|---|
-| `starting_loadout` | the three columns fit side by side at the shipped width; the legend and the recipe rows draw the SAME five inks; the picker OPENED ITSELF on what the band holds — kits 4/4/4 and the pile on the profile's defaults, `12 / 60 carry left` — and the two-item `big_game` row says `· 2 carry` where the one-item `gathering` row says nothing about carry. **The card is placed at the top-left of the room on this ONE frame** — a first-render placement race that predates the per-band arc, confirmed by rendering the pre-arc client in the same environment; every later frame centres |
+| `starting_loadout` | the three columns fit side by side at the shipped width; the legend and the recipe rows draw the SAME five inks; the picker OPENED ITSELF on what the band holds — kits 4/4/4 and the pile on the profile's defaults, `12 / 78 carry left` over a `Food 18` legend — and the two-item `big_game` row says `· 2 carry` where the one-item `gathering` row says nothing about carry. **The card is placed at the top-left of the room on this ONE frame** — a first-render placement race that predates the per-band arc, confirmed by rendering the pre-arc client in the same environment; every later frame centres |
 | `starting_loadout_picked` | three real presses of the Stalking kit's `+` move the meter — and **each one sent ONE order carrying the WHOLE allocation**, every kit and every resource the band holds, with no footer control touched. A replacement naming only the pressed row would order the rest away and reads as a perfectly correct line |
 | — (PNG-less, on the same card) | ⛔ **a refused send takes the press back.** The `has_method` name `Main` probes for is asserted first (that probe fails SILENTLY), the row is seen to MOVE, then the emitted payload is handed to `revert_starting_loadout` — `band_panel_preview._assert_pending_assign_rollback`'s shape, and for its reason: a card showing one more kit than it ordered is an ordinary card. A fourth claim pushes the next frame and requires the rolled-back row to stay put, which is what says the un-sent order left no echo waiting |
 | `starting_loadout_spent` | the carry spent to the unit — every `+` disabled, kit and resource alike, the bar full with **no remainder sliver**, and the footer control's face UNMOVED from the frame above |
@@ -1825,6 +1828,14 @@ block's echo.
 | `starting_loadout_refused_in_flight` | ⛔ **A refused while B is still in flight: only A is forgotten.** The line shows as `Not taken: <detail>.` — without the word "reset", since nothing was — B's pick STAYS on screen and `BAND_UNECHOED` holds only B; B's own echo then clears the line and keeps B. A card that reset every in-flight order fails at B's pick |
 | — (PNG-less, after it) | **B's echo and A's refusal in ONE snapshot**, in `Main`'s order (band first): no line over B's accepted picks, and nothing left in flight |
 
+**`starting_loadout_whole_numbers` closes the grant blocks** (`_the_card_prints_whole_numbers`, after
+the refused pair, on the adopt band). The reported screen was `Food 77.7`, `0.2 / 124.9 carry left`:
+the band is re-published with a 124.9 carry and a FIXED larder leaving exactly 0.2 free, and the card
+must read `0 / 125 carry left` (free room floors, the total rounds) and `Food 115`. Then one more unit
+of larder puts the band 0.8 OVER, and the meter must read `0 / 125 carry left` again, not in `WARN` —
+never negative. The goods precondition is read off the controller's floats, so only the printing is
+under test.
+
 ### The TAKE arc is APPENDED, never interleaved
 
 The take blocks run after the orb states and before the shut, and that order is load-bearing:
@@ -1839,7 +1850,7 @@ somebody else's row.
 | `starting_loadout_take_refused` | ⛔ **a refused order rolls the food back with the picks.** The `−` above is out and unanswered, so the line previews `12`; a `starting_loadout` refusal puts the fibre back on what the band holds AND the line back on the wire's `Food 10 of 14`, the refusal line drawn under the meter and food lines. A card that kept previewing reads 12 for an order that never happened |
 | — (PNG-less, after it) | ⛔ **the back-to-back presses** (`loadout/take_back_to_back`, `_assert_card_holds_its_column`): a `−` that clears the refusal line, then a `+`/`−` pair on a kit row, each ONE `_settle` apart — so every render lands on the frame the previous two-frame fit finished. The scroll region must fit inside the card and the footer must end on it. These two claims fail without `_card.queue_sort()` in `_fit_expanded_height` (`starting-loadout.md` → "THE CARD IS RE-SORTED AFTER THE HEIGHT IS APPLIED"); presses with no settle between them share one frame and one sort and do not reproduce it |
 | `starting_loadout_take_capped` | ⛔ **the cap is the EXPANDED item list.** `big_game` stops at the SLED (five) rather than at its own six spears — with carry still left, so it is the SUPPLY that stopped it — `trapping` is then capped at zero with four traps still at home, and giving two sleds back frees it again: the one claim a per-row cap passes every other assertion on. PNG-less after it, **the carry binds a take row too**: hide clamps at its supply of 4, and fibre stops at 8 with 9 still at home, the pack full — `can_add` is BOTH caps |
-| `starting_loadout_bands` | two open windows, two orb rows, two tabs — and pressing the HOME band's tab renders its GRANT again, its own `/ 60 carry left` meter and not the take's `/ 18`. It is one of the two ways to a second band's card; the row's own `Open ▸` is the other, and has its own claim below |
+| `starting_loadout_bands` | two open windows, two orb rows, two tabs — and pressing the HOME band's tab renders its GRANT again, its own `/ 78 carry left` meter and not the take's `/ 18`. It is one of the two ways to a second band's card; the row's own `Open ▸` is the other, and has its own claim below |
 
 **THE SUPPLY IS AIMED AT THE SHARED ITEM.** Sleds are the scarcest line on purpose, so the failure
 worth catching — two kit rows capped independently — is the one the fixture produces; and the walk
@@ -1871,8 +1882,8 @@ Two frames and twelve claims appended after the switcher block, before the shut.
 | frame | what only IT can say |
 |---|---|
 | `starting_loadout_orb_bands` | **the reported popover, fixed** — two loadout rows LEADING with different bands (`Brackwater — everything is picked` / `Thornhollow — 3 kits, 4 resources`) where the report showed the same sentence twice, both still wearing `Open ▸` |
-| `starting_loadout_over_budget` | the reported CARD, in the carry's terms — `-6 / 24 carry left` in WARN ink on a band holding 7 `big_game` (14 items) and 16 bone against a carry of 24, which is what the row beside it must not call done: it reads `Band over its carry` / `Windmere — 6 carry over` at `warn`, and never `everything is picked` |
-| `starting_loadout_adopted` | ⛔ **an allocation this card never sent is the SIM's, and the card takes it whole.** Staged on the chapter's own fourth band: it draws what the band holds, the player orders one more, then its carry shrinks (20 → 14) and EVERY row is restated — including the one the player ordered, to a value the presses never reach, so "the published rows won" cannot be satisfied by a card that merely kept what it had. The meter is read off the orb's over arm (`Band over its carry` must be absent), the one reader of the unclamped remainder, and a last claim presses again and reads the composed ORDER, which is what says the send agrees with the card |
+| `starting_loadout_over_budget` | ⛔ **an over-full band that is not moving is NOT warned.** A band holding 7 `big_game` (14 items) and 16 bone against a carry of 24 — 6 over — reads `0 / 24 carry left` in the calm ink, never negative; NO label on the card wears `WARN`; the `+` is shut and the `−` open on the over-full row; and the orb row is the READY arm, `Band outfitted` / `Windmere — everything is picked` at `ready`, with `carry over` asserted absent |
+| `starting_loadout_adopted` | ⛔ **an allocation this card never sent is the SIM's, and the card takes it whole.** Staged on the chapter's own fourth band: it draws what the band holds, the player orders one more, then its carry shrinks (20 → 14) and EVERY row is restated — including the one the player ordered, to a value the presses never reach, so "the published rows won" cannot be satisfied by a card that merely kept what it had. The orb row is asserted not to be the supply over-arm (`Band takes more than home holds`), and a last claim presses again and reads the composed ORDER, which is what says the send agrees with the card |
 | — (PNG-less, on the same band) | ⛔ **two presses in a row, and the FIRST one's echo must not pull the card back.** The two frames a server sends for a pair of quick presses are pushed in order, and the card must read the second press after each. The second frame is not decoration: without it the block passes on a card that ignores published allocations altogether. **Sabotage-verified** by making every published allocation adopt — exactly this claim fails, at `(4, want 5)`, and the rest of the run stays green |
 
 - **The `Open ▸` claim is a PRESS, not a reading.** Both rows wear the affordance whatever it reaches,
@@ -1882,17 +1893,15 @@ Two frames and twelve claims appended after the switcher block, before the shut.
   it there and pass every wording claim on the screen.
 - **The over-carry state is staged the only way a client can reach it**: the SIM publishes an
   allocation over the band's carry. The card draws a published allocation as-is (a second clamp here
-  would disagree with the sim's own), so the meter goes negative exactly as it did on the reported
-  screen — and the frame's first claim is that it really does read `-6 / 24 carry left`, without
-  which the row's claim is about a band that is merely unspent.
-- **The row's detail is asserted by EQUALITY against a literal** (`Windmere — 6 carry over`), so a
-  detail that reported the wrong amount or the wrong noun fails on the string.
+  would disagree with the sim's own), and the claims are the ABSENCE of a warning: the meter floored
+  at `0 / 24`, calm ink on the meter AND on every label (`_warn_labels_on_card() == 0`), and the
+  READY row. Each half alone passes on a card that merely changed its wording.
+- **The row's detail is asserted by EQUALITY against a literal** (`Windmere — everything is
+  picked`), with the retired `carry over` wording asserted absent.
 
-**Sabotage-verified on the two-budget card #732 retired** by returning `_over_allowance` to `false`
-(the `remaining <= 0` regime): exactly **four** claims failed, and the detail came back reading
-`Windmere — everything is picked` at `ready` — the reported defect, in its own words — while the
-card's meter precondition and the auto-open claim correctly stayed green, being about a different
-layer.
+**History:** before the maintainer's rule this frame staged the opposite claim — `-6 / 24 carry left`
+in warn ink and a `Band over its carry` row — and before #732 the two-budget card's `-6 / 22 left`
+beside a row calling the band done.
 
 **A clean run is 450 frames / 2166 `PASS`, exit 0 — RE-MEASURED windowed on this tree** when the
 outfitting draft was deleted. **This chapter's own delta is FRAME-NEUTRAL** — `starting_loadout_resent`
@@ -2009,9 +2018,11 @@ Each fails a DISJOINT set, and each names the defect in its own words:
 - **The `Carry:` row, as a PAIR on one band with only the load moving** (`_carry_states`, after
   `_expedition_kit_states`). The fixture states `carry_capacity` 96, `move_ferry_reach_tiles` 2 and a
   `carry_load` of 61.4, then 154. Under its capacity the row reads `61 / 96` in plain ink and the
-  block registers no hover; over it the row reads `154 / 96` in `HudStyle.WARN` and the hover says
-  `A move farther than 2 tiles leaves behind what the band can't carry.` — frame **`band_carry_over`**.
-  Either half alone passes on a row that never or always warns. The value and the hover are
+  block registers no hover; over it the row reads `154 / 96`, asserted NOT in `HudStyle.WARN`, and the
+  hover states the move rule, `A move farther than 2 tiles leaves behind what the band can't
+  carry.` — frame **`band_carry_over`**. Both halves are plain ink (`band-readouts.md` → "The `Carry`
+  row is a FACT"); the pair is what pins the hover, which either half alone passes on a row that
+  never or always registers it. The value and the hover are
   LITERALS, and the value is asserted beside the row's KEY (`HudDisclosureVocab.DETAIL_ROW_CARRY`)
   rather than as one `Carry: …` string, because `detail_bbcode` splits a row into a key cell and a
   value cell.

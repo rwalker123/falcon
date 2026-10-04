@@ -1042,8 +1042,9 @@ const BILL_INCOME_NONE := 0.0
 const BAND_DISCLOSURE_UPKEEP := "upkeep:908"
 
 ## ---- WHAT THE BAND CARRIES (#732) — the `Carry:` row, as a PAIR on one band with only the load moving:
-## under its capacity the row is plain ink and registers no hover; over it the row is amber and the
-## block's hover says what that costs. Either half alone passes on a row that never or always warns.
+## under its capacity the row registers no hover; over it the block's hover states the move rule. BOTH
+## are plain ink: a band that is not moving is never warned that it is over its carry (the maintainer's
+## rule). Either half alone passes on a row that never or always registers the hover.
 const CARRY_CAPACITY := 96.0
 const CARRY_LOAD_UNDER := 61.4
 const CARRY_LOAD_OVER := 154.0
@@ -1086,10 +1087,12 @@ func _carry_states() -> void:
 			% [HudDisclosureVocab.DETAIL_ROW_CARRY, CARRY_VALUE_OVER],
 		heavy_vitals.contains(HudDisclosureVocab.DETAIL_ROW_CARRY)
 			and heavy_vitals.contains(CARRY_VALUE_OVER))
-	h._assert_hud("…its value is drawn in the warning ink",
-		String(h._hud.occupant_detail.text).contains("[color=#%s]%s" % [HudStyle.WARN_HEX,
+	# ⛔ **AND OVER ITS CARRY IS STILL NOT A WARNING.** It was amber; the band is not moving, and the
+	# long-move targeting warning is the one place over-carry is stated.
+	h._assert_hud("…and its value is NOT drawn in the warning ink",
+		not String(h._hud.occupant_detail.text).contains("[color=#%s]%s" % [HudStyle.WARN_HEX,
 			CARRY_VALUE_OVER]))
-	h._assert_hud("…and the block's hover says what a long move costs (\"%s\")" % CARRY_HOVER,
+	h._assert_hud("…and the block's hover states the move rule (\"%s\")" % CARRY_HOVER,
 		String(h._hud.occupant_detail.tooltip_text).contains(CARRY_HOVER))
 
 ## A band that HOLDS something which eats a good. Its own entity, for the disclosure key's sake.

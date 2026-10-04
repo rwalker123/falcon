@@ -907,10 +907,6 @@ class Context extends RefCounted:
     ## larders read. NAN when no bill row was emitted (a band holding nothing that eats a good), which
     ## is what stops the previous band's tint reaching a row that is not there.
     var material_turns: float = NAN
-    ## Whether the band holds more than it can carry (#732), for the `Carry:` row's WARN tint. Reset per
-    ## render by `BandDetailLines.unit_summary_lines`, so a previous band's overload never tints a row
-    ## that is not there.
-    var carry_over: bool = false
     var morale: float = NAN
     ## The band's fertility MULTIPLIER (`hunger x reserve x trend`), 1.0 = its normal birth rate.
     ## NAN when there is no band, or when the sim published no reading yet (the not-projected
@@ -1101,11 +1097,6 @@ static func _value_hex(key: String, value: String, ctx: Context) -> String:
         # answers WARN only on the hazard mark its composer put there — so a band bill that declines
         # the runway tint reads the same plain ink it always did.
         return HudRouteVocab.upkeep_value_hex(value)
-    elif key == HudDisclosureVocab.DETAIL_ROW_CARRY:
-        # A band holding more than it can carry is the one state this row warns about — a long move
-        # would leave the difference behind. Amber rather than red: nothing is lost until it moves.
-        if ctx.carry_over:
-            return HudStyle.WARN_HEX
     elif key == HudDisclosureVocab.DETAIL_ROW_MORALE:
         # The player band's morale row tints by the morale thresholds.
         if not is_nan(ctx.morale):

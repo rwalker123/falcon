@@ -1016,3 +1016,81 @@ fn an_over_allocating_pre_fill_cuts_materials_before_tools() {
     assert!(fitted.clamped);
     assert!(fitted.kits.is_empty() && fitted.materials.is_empty());
 }
+
+/// **A band left over its allowance by a carry that shrank under it** — outfitted with `gathering`
+/// kits (one basket, one load each) up to its allowance, then two packs' worth of its working hands
+/// sent away, so its standing outfit sits over the room it now has. Returns the app, the band, its
+/// id and the number of kits it stands on.
+fn a_band_left_over_its_allowance() -> (App, Entity, BandId, u32) {
+    let (mut app, band, band_id) = open_window();
+    let held = (goods_allowance(&app, band, band_id).raw() / Scalar::one().raw()) as u32;
+    apply_starting_loadout(
+        &mut app.world,
+        PLAYER,
+        band_id,
+        &kits(&[(GATHERING, held)]),
+        &[],
+    )
+    .expect("an outfit inside the allowance is accepted");
+    // A worker or two sent away takes their packs with them: nobody ordered the band heavier.
+    const HANDS_SENT_AWAY: f32 = 2.0;
+    app.world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the band keeps a cohort")
+        .working -= Scalar::from_f32(HANDS_SENT_AWAY);
+    let allowance = goods_allowance(&app, band, band_id);
+    assert!(
+        Scalar::from_u32(held) - allowance >= Scalar::from_u32(2),
+        "fixture: the band stands at least two loads over: {held} on {allowance}"
+    );
+    (app, band, band_id, held)
+}
+
+/// ⛔ **THE CAP BOUNDS WHAT IS ADDED: A BAND OVER ITS ALLOWANCE CAN STILL STEP DOWN.** A band whose
+/// carry shrank under it is over without anyone ordering it so. Removing one basket leaves it still
+/// over, and is accepted — refusing it would leave the band unable to get back down — and a swap
+/// that keeps the load is accepted too.
+#[test]
+fn a_band_over_its_allowance_may_still_lighten_its_load() {
+    let (mut app, band, band_id, held) = a_band_left_over_its_allowance();
+    apply_starting_loadout(
+        &mut app.world,
+        PLAYER,
+        band_id,
+        &kits(&[(GATHERING, held - 1)]),
+        &[],
+    )
+    .expect("removing one basket is accepted, though the band is still over");
+    let allowance = goods_allowance(&app, band, band_id);
+    assert!(
+        Scalar::from_u32(held - 1) > allowance,
+        "and it is still over: {} on {allowance}",
+        held - 1
+    );
+    // A swap that keeps the load — two baskets for one Stalking kit (spear + sled) — is no heavier.
+    apply_starting_loadout(
+        &mut app.world,
+        PLAYER,
+        band_id,
+        &kits(&[(GATHERING, held - 3), (BIG_GAME, 1)]),
+        &[],
+    )
+    .expect("a swap that keeps the load is accepted while over");
+}
+
+/// ⛔ **…BUT A BAND OVER ITS ALLOWANCE MAY NOT ADD ANYTHING.** The same band adding one material unit
+/// on top of what it stands on is heavier and over, so it is refused whole.
+#[test]
+fn a_band_over_its_allowance_may_not_add_load() {
+    let (mut app, band, band_id, held) = a_band_left_over_its_allowance();
+    let reason = refused(
+        &mut app,
+        band,
+        band_id,
+        (kits(&[(GATHERING, held)]), materials(&[(BONE, 1)])),
+    );
+    assert!(
+        matches!(reason, LoadoutRejection::OverCarry { .. }),
+        "adding to an over band is refused over the carry: {reason:?}"
+    );
+}

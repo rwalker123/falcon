@@ -498,8 +498,8 @@ func _refusal_text(band: Dictionary) -> String:
 
 ## ⛔ **THE PUBLISHED ALLOCATION, WHOLE AND UNCLAMPED.** The sim already fitted this spread to the
 ## band's carry when it accepted it, so a second clamp here would disagree with the first — and a
-## band the sim has genuinely left over its carry must READ as over rather than be quietly
-## trimmed into looking fine (`_over_allowance` is the row that says so).
+## band the sim has left over its carry is drawn as it stands rather than quietly trimmed. It is not
+## WARNED: a stationary band is never told it is over its carry (#732); the move warning says it.
 ##
 ## A material this window cannot pick is dropped — it could not be spent and would strand part of the
 ## budget. **The kit half needs no such filter**: the roster it is drawn against is the published
@@ -1168,10 +1168,11 @@ func attention_rows() -> Array:
 		rows.append(_attention_row(band_id, band))
 	return rows
 
-## ⛔ **THREE ARMS, AND THE THIRD ONE IS A FLOOR UNDER THE OTHER TWO.** A window whose meter reads
-## NEGATIVE — the band holding more than its carry or its home band's supply allows — is a state
-## this row has no true wording for, so it must not take the wording that says *done*. It reads
-## `warn` and says which way it is wrong.
+## ⛔ **THREE ARMS, AND THE THIRD ONE IS A FLOOR UNDER THE OTHER TWO.** A take that draws more than
+## its home band's SUPPLY holds is a state this row has no true wording for, so it must not take the
+## wording that says *done*: it reads `warn` and says so in kit and resource counts. **Over its CARRY
+## is not this arm** — a stationary band is never warned about carry (#732); an over-full grant reads
+## ready.
 ##
 ## The completeness test was `remaining <= 0` over a remainder clamped at zero, so over-budget and
 ## fully-spent were literally the same answer; a live run showed a card reading `-6 / 22 left` beside
@@ -1185,7 +1186,7 @@ func _attention_row(band_id: int, band: Dictionary) -> Dictionary:
 	var complete := not over and (_take_is_ordered(band) if take else _grant_is_complete(band))
 	var label := HudLoadoutVocab.ATTENTION_LABEL_UNSPENT
 	if over:
-		label = HudLoadoutVocab.ATTENTION_LABEL_OVER
+		label = HudLoadoutVocab.ATTENTION_LABEL_OVER_SUPPLY
 	elif complete:
 		label = HudLoadoutVocab.ATTENTION_LABEL_READY
 	var fact := _over_detail(band)
@@ -1209,22 +1210,15 @@ func _attention_row(band_id: int, band: Dictionary) -> Dictionary:
 		"y": HudAttentionVocab.ATTENTION_NON_LOCATING,
 	}
 
-## **Is this band holding more than its window allows?** Over its CARRY, or — on a take — standing on
-## more of an item or a material than the home band now holds (an onward split shrank the supply).
-## Asked of SIGNED remainders, because `carry_left` clamps at zero for its callers and a clamp is
-## precisely what hid this state.
+## **Is this take standing on more than its home band now holds?** An onward split can shrink the
+## supply under a standing take. ⛔ **Over its CARRY is deliberately NOT a term**: a band that is not
+## moving is never warned about its carry (`HudLoadoutVocab.ATTENTION_LABEL_OVER_SUPPLY`).
 func _over_allowance(band: Dictionary) -> bool:
-	return _signed_carry(band) < -HudLoadoutVocab.CARRY_EPSILON \
-		or _items_over_supply(band) > 0 or _materials_over_supply(band) > 0
+	return _items_over_supply(band) > 0 or _materials_over_supply(band) > 0
 
-## …and by how much: `3 carry over`, plus a take's supply overdraw in the bare count nouns the take
-## arm already uses — `3 carry, 2 kits over`.
+## …and by how much, in the bare count nouns the take arm already uses — `2 kits over`.
 func _over_detail(band: Dictionary) -> String:
 	var parts: Array[String] = []
-	var carry_over := -_signed_carry(band)
-	if carry_over > HudLoadoutVocab.CARRY_EPSILON:
-		parts.append(HudLoadoutVocab.ATTENTION_COUNT_CARRY_FORMAT
-			% HudLoadoutVocab.whole_cost(carry_over))
 	var items := _items_over_supply(band)
 	if items == 1:
 		parts.append(HudLoadoutVocab.ATTENTION_COUNT_KITS_ONE)
@@ -1291,10 +1285,8 @@ func _take_detail(band: Dictionary) -> String:
 		return HudLoadoutVocab.ATTENTION_DETAIL_TAKE_NONE
 	return HudLoadoutVocab.ATTENTION_DETAIL_SEPARATOR.join(parts)
 
-## ⛔ **THE UNCLAMPED CARRY REMAINDER — what the card's own meter draws, negative included.** Every
-## clamped reader is written in terms of it, so the one place a negative can be seen is the one place
-## it is asked about; a clamp applied before the question is what made an over-budget band read as
-## finished. Per band, because the orb asks about every band and not only the subject.
+## ⛔ **THE UNCLAMPED CARRY REMAINDER.** The `+` gates and the completeness arm read it unclamped;
+## the meter PRINTS it floored at zero (`whole_free`), because an over-full band is not warned. Per band, because the orb asks about every band and not only the subject.
 func _signed_carry(band: Dictionary) -> float:
 	return _goods_allowance(band) - _order_load(band)
 

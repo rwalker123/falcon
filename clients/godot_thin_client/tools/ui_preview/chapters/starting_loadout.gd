@@ -149,19 +149,20 @@ const KIT_NONE := "none"
 
 const OVER_BAND_ENTITY := 6203
 ## Its carry is the one the split left it with; its accepted rows are what it still claims — 7
-## `big_game` (14 items) and 16 bone against 24, i.e. 6 over.
+## `big_game` (14 items) and 16 bone against 24, i.e. 6 over. ⛔ **THE BAND IS NOT MOVING, SO NOTHING
+## ON THE CARD OR THE ORB SAYS SO** (the maintainer's rule — the long-move targeting warning is the one
+## place over-carry is stated): the meter reads `0 /` in its calm ink and the orb calls it outfitted.
 const OVER_CARRY_CAPACITY := 24.0
 const OVER_KITS_HELD := 7
 const OVER_UNITS_HELD := 16
-## What the card's own meter must read — NEGATIVE, never clamped, spelled as a LITERAL rather than
-## composed through `CARRY_REMAINING_FORMAT`, since an expectation built from the format under test can
-## only agree with itself.
-const OVER_METER_NEEDLE := "-6 / 24 carry left"
-## …and the row's whole detail, by equality: the band leads, then the overload.
-const OVER_DETAIL := "Windmere — 6 carry over"
-## The words the READY arm uses, asserted ABSENT from an over-budget row — the defect was those exact
-## words on this exact band.
-const ORB_DETAIL_READY_NEEDLE := "everything is picked"
+## What the card's own meter must read — the free room FLOORED AT ZERO, spelled as a LITERAL rather
+## than composed through `CARRY_REMAINING_FORMAT`, since an expectation built from the format under
+## test can only agree with itself.
+const OVER_METER_NEEDLE := "0 / 24 carry left"
+## …and the row's whole detail, by equality: the band leads, then the READY arm's own words.
+const OVER_DETAIL := "Windmere — everything is picked"
+## The retired over-carry wording, asserted ABSENT from the row: `6 carry over`.
+const RETIRED_CARRY_OVER_NEEDLE := "carry over"
 
 ## A stepper loop's ceiling. It is a GUARD, not the expected count: a `+` that stopped working would
 ## otherwise spin this chapter until the watchdog killed the whole run.
@@ -815,29 +816,30 @@ func _an_over_budget_band_is_not_outfitted() -> void:
 			% _controller().subject_band_id(),
 		_controller().is_expanded()
 			and _controller().subject_band_id() == _band_id(OVER_BAND_ENTITY))
-	# **THE CARD REALLY DOES READ NEGATIVE.** Without this the row's claim is about a band that is
-	# merely unspent, which the `warn` arm has always handled.
-	h._assert_hud("loadout/over — the card's meter reads `%s`" % OVER_METER_NEEDLE,
-		Q.has_label_containing(_panel(), OVER_METER_NEEDLE))
+	# ⛔ **AN OVER-FULL BAND THAT IS NOT MOVING IS NOT WARNED.** The meter floors at zero in its calm
+	# ink, no label on the card wears the warning ink, and the orb's row is the READY arm — there is no
+	# over-carry row any more. Each half alone passes on a card that has merely changed its wording.
+	h._assert_hud("loadout/over — the card's meter reads `%s`, never negative (got `%s`)"
+			% [OVER_METER_NEEDLE, _meter_label_text()],
+		_meter_label_text() == OVER_METER_NEEDLE)
+	h._assert_hud("loadout/over — …in the calm ink, not the warning one",
+		_meter_label_color() != HudStyle.WARN)
+	h._assert_hud("loadout/over — NO label on the card wears the warning ink (%d did)"
+			% _warn_labels_on_card(),
+		_warn_labels_on_card() == 0)
+	# …and the `+` is shut (there is no room) while the `−` stays open — the band can still put back.
+	var plus := _plus_button(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING)
+	h._assert_hud("loadout/over — `+` is shut and `−` is open on the over-full row",
+		plus != null and plus.disabled and _minus_enabled(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING))
 	var row := _band_attention_row(_band_id(OVER_BAND_ENTITY))
-	h._assert_hud("loadout/over — the row is `%s`, not `%s` (got `%s`)"
-			% [HudAttentionVocab.ATTENTION_SEVERITY_WARN,
-				HudAttentionVocab.ATTENTION_SEVERITY_READY, row.get("severity", "")],
-		String(row.get("severity", "")) == HudAttentionVocab.ATTENTION_SEVERITY_WARN)
-	h._assert_hud("loadout/over — …and it reads `%s`, never `%s` (got `%s`)"
-			% [HudLoadoutVocab.ATTENTION_LABEL_OVER, HudLoadoutVocab.ATTENTION_LABEL_READY,
-				row.get("label", "")],
-		String(row.get("label", "")) == HudLoadoutVocab.ATTENTION_LABEL_OVER)
-	# …and its detail says which way it is wrong, in the meter's own word, behind its own band's name.
-	# ⛔ **AND THE METER IS WARNING INK** — read off the meter label itself, since a negative number in
-	# the calm ink reads as a typo rather than as a band that cannot move with what it holds.
-	h._assert_hud("loadout/over — the meter reads in WARN ink, not clamped into the calm one",
-		_meter_label_color() == HudStyle.WARN)
-	h._assert_hud("loadout/over — the detail names the band and the overload (`%s`)"
-			% row.get("detail", ""),
-		String(row.get("detail", "")) == OVER_DETAIL)
-	h._assert_hud("loadout/over — …and never claims everything is picked",
-		not String(row.get("detail", "")).contains(ORB_DETAIL_READY_NEEDLE))
+	h._assert_hud("loadout/over — the orb row is `%s`, never a warning (got `%s` / `%s`)"
+			% [HudLoadoutVocab.ATTENTION_LABEL_READY, row.get("label", ""), row.get("severity", "")],
+		String(row.get("label", "")) == HudLoadoutVocab.ATTENTION_LABEL_READY
+			and String(row.get("severity", "")) == HudAttentionVocab.ATTENTION_SEVERITY_READY)
+	h._assert_hud("loadout/over — the detail is `%s`, and says nothing of carry over (`%s`)"
+			% [OVER_DETAIL, row.get("detail", "")],
+		String(row.get("detail", "")) == OVER_DETAIL
+			and not String(row.get("detail", "")).contains(RETIRED_CARRY_OVER_NEEDLE))
 	await _assert_no_dead_space("over")
 	await h._save("starting_loadout_over_budget")
 
@@ -900,9 +902,9 @@ func _a_moved_allocation_is_adopted() -> void:
 	# **THE PROPERTY ADOPTION EXISTS FOR.** The `over` arm is the one that reads the UNCLAMPED
 	# remainder, so a card still holding the pre-refit allocation against the post-refit carry lights it.
 	var row := _band_attention_row(_band_id(ADOPT_BAND_ENTITY))
-	h._assert_hud("loadout/adopt — the meter is not negative — the orb says `%s`, never `%s`"
-			% [row.get("label", ""), HudLoadoutVocab.ATTENTION_LABEL_OVER],
-		String(row.get("label", "")) != HudLoadoutVocab.ATTENTION_LABEL_OVER)
+	h._assert_hud("loadout/adopt — the re-fit is not a supply overdraw — the orb says `%s`, never `%s`"
+			% [row.get("label", ""), HudLoadoutVocab.ATTENTION_LABEL_OVER_SUPPLY],
+		String(row.get("label", "")) != HudLoadoutVocab.ATTENTION_LABEL_OVER_SUPPLY)
 	# **AND THE NEXT ORDER AGREES WITH THE CARD.** The rendered steppers and the composed command are
 	# two different claims — a card that adopted only on screen would send the rows it no longer shows.
 	var before := _orders.size()
@@ -1138,14 +1140,13 @@ func _refusal_line() -> Label:
 ## `Food 77.7`, `0.2 / 124.9 carry left`. The adopt band is re-published with the reported carry and a
 ## FIXED larder that leaves exactly 0.2 free, so the meter must read `0 / 125` (the room FLOORS, the
 ## total rounds) and the larder `Food 115`. Then one more unit of larder puts the band 0.8 over, and
-## the meter must still read NEGATIVE (`-1`), in the warning ink — a rounding that printed `0` there
-## would call an overloaded band full. Only the printing moves: the goods precondition is read off the
-## controller's floats.
+## the meter reads `0 /` again, in the calm ink — a band that is not moving is never told it is over
+## its carry. Only the printing moves: the goods precondition is read off the controller's floats.
 const WHOLE_CARRY := 124.9
 const WHOLE_FREE := 0.2
 const WHOLE_OVER_BY := 1.0
 const WHOLE_METER := "0 / 125 carry left"
-const WHOLE_METER_OVER := "-1 / 125 carry left"
+const WHOLE_METER_OVER := "0 / 125 carry left"
 const WHOLE_FOOD_LINE := "Food 115"
 ## The adopt band's re-fitted allocation, weighed as the server weighs it.
 const ADOPT_REFIT_LOAD := (ADOPT_REFIT_BIG_GAME * KIT_STALKING_ITEMS
@@ -1169,9 +1170,9 @@ func _the_card_prints_whole_numbers() -> void:
 	h._hud.update_band_alerts([_grant_band(), _splinter_band(), _over_budget_band(),
 		_fractional_adopt_band(larder + WHOLE_OVER_BY)])
 	await h._settle()
-	h._assert_hud("loadout/whole — 0.8 over still reads NEGATIVE, `%s` (got `%s`)"
+	h._assert_hud("loadout/whole — 0.8 over reads `%s` in the calm ink, never negative (got `%s`)"
 			% [WHOLE_METER_OVER, _meter_label_text()],
-		_meter_label_text() == WHOLE_METER_OVER and _meter_label_color() == HudStyle.WARN)
+		_meter_label_text() == WHOLE_METER_OVER and _meter_label_color() != HudStyle.WARN)
 
 ## The adopt band at its re-fitted allocation, with a fractional WHOLE carry and a FIXED larder.
 func _fractional_adopt_band(larder: float) -> Dictionary:
@@ -1846,6 +1847,28 @@ func _press_minus(meta: StringName, id: String) -> void:
 		minus.pressed.emit()
 
 ## The carry meter's LABEL ink, read off the rendered label inside the meter block.
+## Labels on the card drawn in the warning ink. The refusal line is the card's one legitimate warning
+## and none is up where this is asked.
+func _warn_labels_on_card() -> int:
+	return _count_warn_labels(_panel())
+
+func _count_warn_labels(node: Node) -> int:
+	var count := 0
+	if node is Label and (node as Label).is_visible_in_tree() \
+			and (node as Label).get_theme_color("font_color") == HudStyle.WARN:
+		count += 1
+	for child in node.get_children():
+		count += _count_warn_labels(child)
+	return count
+
+## Whether a row's `−` is enabled. The stepper's two buttons are found in the row as `+` is.
+func _minus_enabled(meta: StringName, id: String) -> bool:
+	var row := _row_node(meta, id)
+	if row == null:
+		return false
+	var minus := Q.find_button_by_text(row, STEPPER_MINUS_FACE)
+	return minus != null and not minus.disabled
+
 func _meter_label_text() -> String:
 	var meter := _row_node(HudLoadoutVocab.BUDGET_METER_META, HudLoadoutVocab.BUDGET_CARRY)
 	if meter == null or meter.get_child_count() == 0 or not (meter.get_child(0) is Label):

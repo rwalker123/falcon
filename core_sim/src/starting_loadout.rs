@@ -399,9 +399,17 @@ pub enum LoadoutRejection {
     #[error("'{0}' is not one of this start profile's pickable materials")]
     UnpickableMaterial(String),
     /// The whole order — every expanded item and every material unit — weighs more than this window
-    /// may carry. Checked on the **sum**, on both arms. The text reaches the player (the refused
-    /// command's event names the band, #723), so it is rounded the way every other player-facing
-    /// quantity is rather than printed at `Scalar`'s six-place `Display`.
+    /// may carry **and more than the band already holds**. Checked on the **sum**, on both arms.
+    ///
+    /// ⛔ **The cap bounds what is ADDED; it never punishes a band for its carry shrinking.** A band
+    /// can end up over its allowance with nobody ordering it — a worker sent out on a scout party
+    /// takes a pack with them, a splinter's revision hands food back to a fixed larder — and an order
+    /// that does not make it heavier (a removal, a swap that keeps or lowers the load) is accepted
+    /// even while it stays over, so it can always step its way back down.
+    ///
+    /// The text reaches the player (the refused command's event names the band, #723), so it is
+    /// rounded the way every other player-facing quantity is rather than printed at `Scalar`'s
+    /// six-place `Display`.
     #[error(
         "the order weighs {:.1} against a carry of {:.1}",
         load.to_f32(),
@@ -946,8 +954,12 @@ pub(crate) fn expand_kits(
 /// # One carry check, then the two supplies
 ///
 /// The whole order's load (its expanded items and material units, [`order_load`]) must fit the
-/// window's [`LoadoutWindow::goods_allowance`] on **both** arms, or it is refused `OverCarry` — the
-/// whole carry when the band's food yields to goods, the carry less its larder when it is fixed.
+/// window's [`LoadoutWindow::goods_allowance`] on **both** arms — the whole carry when the band's food
+/// yields to goods, the carry less its larder when it is fixed — **or not make the band heavier than
+/// the allocation it already stands on**, or it is refused `OverCarry`. The cap bounds what is
+/// ADDED: a band whose carry shrank under it (a worker sent out, food handed back to a fixed
+/// larder) may still remove or swap goods while over, and only an order that adds load past the
+/// allowance is refused. On a take, the standing load is the take it currently holds.
 ///
 /// - [`LoadoutSupply::Grant`] — both halves are built from **empty** and minted. The material reset
 ///   is account-aware and the store is what makes it so: a band's `LocalStore` holds its food beside
@@ -1015,7 +1027,8 @@ pub fn apply_starting_loadout(
 
     // **ONE CARRY CHECK, ON BOTH ARMS, ON THE WHOLE ORDER.** The expanded items and the material
     // units weigh what [`order_load`] says, and a band may take what its workers can carry — a grant
-    // against what it may mint, a take against its goods allowance. On a take it is asked after the
+    // against what it may mint, a take against its goods allowance — or anything no heavier than
+    // what it already stands on. On a take it is asked after the
     // parent-supply and onward-take checks, which name the line the player must change.
     let wanted_items = expand_kits(&equipment, kits);
     let carry_cfg = carry_config(world).carry.clone();
@@ -1026,7 +1039,24 @@ pub fn apply_starting_loadout(
     else {
         return Err(LoadoutRejection::NoStartingBand);
     };
-    let over_carry = (load > capacity).then_some(LoadoutRejection::OverCarry { load, capacity });
+    // **The cap bounds what is ADDED.** The standing load is the accepted allocation this band
+    // stands on now — the outfit a grant minted, or the take a splinter holds — so an order that is
+    // no heavier is accepted even when a shrinking carry has left the band over.
+    let standing = {
+        let standing_kits: BTreeMap<String, u32> = window
+            .kits
+            .iter()
+            .map(|row| (row.kit_id.clone(), row.count))
+            .collect();
+        let standing_materials: BTreeMap<String, u32> = window
+            .materials
+            .iter()
+            .map(|row| (row.material_id.clone(), row.units))
+            .collect();
+        allocation_load(&equipment, &carry_cfg, &standing_kits, &standing_materials)
+    };
+    let over_carry = (load > capacity && load > standing)
+        .then_some(LoadoutRejection::OverCarry { load, capacity });
 
     match &window.supply {
         LoadoutSupply::Grant { .. } => {

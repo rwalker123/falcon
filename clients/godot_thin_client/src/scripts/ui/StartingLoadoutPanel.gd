@@ -713,18 +713,18 @@ func _carry_meter(carry: Dictionary, materials: Array) -> Control:
 	block.set_meta(HudLoadoutVocab.BUDGET_METER_META, HudLoadoutVocab.BUDGET_CARRY)
 	var total := float(carry.get(BUDGET_TOTAL, 0.0))
 	# What is actually FREE: the whole carry less the goods AND the food in it.
-	var remaining := total - float(carry.get(BUDGET_SPENT, 0.0)) \
-		- float(carry.get(CARRY_FOOD_LOAD, 0.0))
+	# Floored at ZERO: a band that is not moving is never told it is over its carry, so an over-full
+	# band reads `0 /` and its bar draws full (`HudLoadoutVocab.CARRY_REMAINING_FORMAT`).
+	var remaining := maxf(total - float(carry.get(BUDGET_SPENT, 0.0))
+		- float(carry.get(CARRY_FOOD_LOAD, 0.0)), 0.0)
 	var label := Label.new()
 	label.text = HudLoadoutVocab.CARRY_REMAINING_FORMAT % [
 		HudLoadoutVocab.whole_free(remaining), HudLoadoutVocab.whole_amount(total)]
 	label.add_theme_font_size_override("font_size", HudLoadoutVocab.BUDGET_FONT_SIZE)
-	# A full pack is not a problem — it is a finished decision — so it reads in the calm signal ink;
-	# only an OVERLOADED one is a warning.
+	# A full pack is not a problem — it is a finished decision — so it reads in the calm signal ink,
+	# and that includes a pack holding more than the carry. Nothing on this meter is a warning.
 	var ink := HudStyle.INK_DIM
-	if remaining < -HudLoadoutVocab.CARRY_EPSILON:
-		ink = HudStyle.WARN
-	elif remaining <= HudLoadoutVocab.CARRY_EPSILON:
+	if remaining <= HudLoadoutVocab.CARRY_EPSILON:
 		ink = HudStyle.SIGNAL
 	label.add_theme_color_override("font_color", ink)
 	block.add_child(label)

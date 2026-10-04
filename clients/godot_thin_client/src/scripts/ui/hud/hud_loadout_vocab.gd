@@ -172,9 +172,10 @@ const BUILDS_NOTE := ""
 ## ⛔ **ONE METER FOR THE BAND, AND IT SAYS WHAT IS ACTUALLY FREE** (#732): `carry_capacity − goods
 ## load − food`, over the whole carry. Kits, resources AND food share one pack, so the bar draws all
 ## three and the number is the room none of them is using. A splinter whose food fills the room its
-## goods leave reads `0 /`, never the goods room the food has already taken. **A negative remainder
-## is printed negative**, in warning ink — the adoption rule says a band the sim left over its carry
-## must READ as over.
+## goods leave reads `0 /`, never the goods room the food has already taken. ⛔ **The free room floors
+## at ZERO and never reads in warning ink**: a band that is not moving is never warned that it is over
+## its carry (see `ATTENTION_LABEL_OVER_SUPPLY`). An over-full band reads `0 /` and its bar draws full;
+## its `+` stays shut and its `−` stays open.
 const CARRY_REMAINING_FORMAT := "%s / %s carry left"
 ## …what ONE more of a row costs in that currency, said only where it is not obvious — a kit that
 ## puts two items in hands weighs 2, a one-item kit at weight 1 needs no note. `CARRY_OBVIOUS_UNIT_LOAD`
@@ -313,20 +314,22 @@ const REFUSAL_FONT_SIZE := 11
 ## contradict the card beside it, which is showing the kits the band is carrying.
 const ATTENTION_LABEL_UNSPENT := "Band not fully outfitted"
 const ATTENTION_LABEL_READY := "Band outfitted"
-## ⛔ **A THIRD RUNG, BECAUSE OVER-CARRY AND FULLY-SPENT ARE NOT THE SAME ANSWER.** The completeness
-## test was `remaining <= 0`, so a band holding MORE than its window allows passed it and the orb
-## called it done — reported from a live run as a card reading `-6 / 22 left` beside a row saying
-## *everything is picked*. A state this row cannot word is exactly the state it must not paint green,
-## so a negative remainder reads `warn` and says which way it is wrong.
-const ATTENTION_LABEL_OVER := "Band over its carry"
+## ⛔ **A BAND THAT IS NOT MOVING IS NEVER WARNED THAT IT IS OVER ITS CARRY** (#732, the maintainer's
+## rule). The cap matters only when a band walks away, and the long-move targeting warning is the ONE
+## place that says so. A band left heavier than its carry — say, by sending a scout, which takes a
+## pack's worth of carry with it — reads as OUTFITTED here: nothing more fits, and there is nothing
+## to fix.
+##
+## **What this arm still reports is SUPPLY, which is not carry.** A take standing on more of an item
+## or a material than its home band now holds (an onward split shrank the supply) is an order the
+## server refuses, so it keeps a warn row — worded in the take's own terms, never as carry.
+const ATTENTION_LABEL_OVER_SUPPLY := "Band takes more than home holds"
 ## The parts of one detail line. A part with nothing to say is dropped rather than printed as a zero.
 const ATTENTION_DETAIL_SEPARATOR := ", "
 ## **`carry`, the meter's own word** — the remainder is named whatever the control that spends it is
 ## named, which is why this row stopped saying `units` beside a column headed `RESOURCES`.
 const ATTENTION_DETAIL_CARRY_UNSPENT_FORMAT := "%s carry unspent"
-## The over arm's carry part: `3 carry`. A take can also stand on more than its home band now holds
-## (an onward split shrank the supply), which reuses the bare kit/resource counts below.
-const ATTENTION_COUNT_CARRY_FORMAT := "%s carry"
+## The supply arm's detail — the take's overdraw in the bare kit/resource counts below: `2 kits over`.
 const ATTENTION_DETAIL_OVER_FORMAT := "%s over"
 ## Nothing more fits. It reads as a statement of fact rather than as an instruction, because at this
 ## point there is nothing the player still has to do.
@@ -492,8 +495,8 @@ static func material_label(material_id: String) -> String:
 ## ⛔ **THE CARD STATES CARRY AND FOOD IN WHOLE NUMBERS — DISPLAY ONLY.** Every `+` gate and the over
 ## state read the floats; these three only decide how a figure is PRINTED, and each rounds in the
 ## direction that keeps the card honest beside its own bar:
-## - `whole_free` FLOORS, so the meter never offers more room than there is, and an over-carry of any
-##   size still prints negative (`-0.2` reads `-1`). A genuinely tiny remainder reads `0`.
+## - `whole_free` FLOORS at zero, so the meter never offers more room than there is and an over-full
+##   band reads `0` — a stationary band is never warned it is over its carry (#732).
 ## - `whole_cost` CEILS, so what one more of a row costs is never printed as less than it weighs.
 ## - `whole_amount` rounds to the nearest, for a figure that is neither room nor price — a capacity, a
 ##   larder.

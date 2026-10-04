@@ -136,10 +136,15 @@ const BAND_MATERIAL_UPKEEP_ROW_FORMAT := HudDisclosureVocab.DETAIL_ROW_UPKEEP + 
 # **ONE LINE, NO DISCLOSURE.** The row's whole job is the comparison; what a long move would leave
 # behind is the targeting banner's to say, at the moment it is true.
 #
-# **AMBER WHEN THE LOAD EXCEEDS THE CAPACITY, AND ONLY THEN DOES IT CARRY A HOVER.** A detail block is
-# one `RichTextLabel` whose hover answers for every row (`DetailFormat.block_tooltip`), so a sentence
-# registered on every band would greet a cursor resting on Food or Morale too. It is registered where
-# it is news: the band is over its carry, and the sentence says what that costs.
+# ⛔ **NEVER AMBER.** A band that is not moving is never warned that it is over its carry (#732, the
+# maintainer's rule): the long-move targeting warning is the one place that is said. The row reads
+# `load / carry` in plain ink whatever the two are.
+#
+# **The hover is the MOVE RULE, stated plainly, and only where it is news.** A detail block is one
+# `RichTextLabel` whose hover answers for every row (`DetailFormat.block_tooltip`), so a sentence
+# registered on every band would greet a cursor resting on Food or Morale too. It is registered when
+# the load is above the carry — the one case a long move would leave something behind — and it says
+# what a move does, not that anything is wrong.
 const BAND_CARRY_ROW_FORMAT := HudDisclosureVocab.DETAIL_ROW_CARRY + ": %d / %d"
 const BAND_CARRY_TOOLTIP_FORMAT := \
     "A move farther than %d tiles leaves behind what the band can't carry."
@@ -355,7 +360,6 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
     # …and the standing bill's runway, for exactly the same reason: a band that owes no goods emits no
     # `Upkeep:` row, and last render's tint would colour a row that is not there — or the next band's.
     context.material_turns = NAN
-    context.carry_over = false
     # Food, like Morale below, is our OWN bands' business only. A rival's cohort carries no
     # `turns_of_food`/`stores` on the wire, so rendering the row for one printed a FABRICATED
     # `Food 0 (∞)` in healthy green — the UI claiming we'd counted a larder we cannot see. A foreign
@@ -777,8 +781,7 @@ func _band_carry_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> Strin
     if capacity <= 0.0:
         return ""
     var carried := float(unit_data.get(BAND_CARRY_LOAD_KEY, 0.0))
-    ctx.carry_over = carried > capacity
-    if ctx.carry_over:
+    if carried > capacity:
         ctx.row_tooltips[HudDisclosureVocab.DETAIL_ROW_CARRY] = BAND_CARRY_TOOLTIP_FORMAT \
             % int(unit_data.get(HudComposeVocab.MOVE_FERRY_REACH_KEY, 0))
     return BAND_CARRY_ROW_FORMAT % [roundi(carried), roundi(capacity)]

@@ -101,15 +101,21 @@ outfit (playtest: 5/5/7 split 6 → splinter 2/2/2, parent 3/3/5). The parent is
 
 **A long move is still food first** (below): a band moving on its own keeps eating.
 
-> ### ⛔ A SPLINTER'S CARD MAY PUSH ITS PARENT OVER ITS CARRY — and that is left alone, deliberately
+> ### ⛔ A STATIONARY BAND IS NEVER WARNED THAT IT IS OVER ITS CARRY
 >
-> On turn one, raising a splinter's goods hands food back to its parent. The parent's larder is
-> fixed and counts, so its goods room shrinks and a fully outfitted parent reads amber "over carry".
-> **Nothing re-fits or refuses it** (Ray, 2026-10-04: *"leave it"*). The cap limits what walks
-> away, not what a band owns, so the amber is true: the parent holds more than it could carry, and
-> pays for it only if it makes a long move. Silently trimming the parent's gear would move a number
-> on a card the player did not touch; refusing the splinter's order would block one band's card
-> over another's choices. Do not add either.
+> A band can end up holding more than it could carry without anybody ordering it: a splinter's
+> revision hands food back to its turn-one parent (whose larder is fixed and counts), a scout party
+> leaves and takes a pack of carry with it, the working value drifts. **Nothing re-fits or refuses
+> that** (Ray, 2026-10-04: *"leave it"*), and — Ray, the same day — **"if a band isn't moving, it
+> should never give the warning it is over its carry limit."** The cap limits what walks away, not
+> what a band owns, so the ONE place over-carry is stated is the long-move targeting warning (the
+> published `longMoveLeaves*`). The outfit card prints `0 / C carry left` in normal ink, the turn orb
+> has no over-carry item, and the band panel's Carry row is never amber.
+>
+> **`OverCarry` bounds what is ADDED.** It refuses an order only if its goods load is above the
+> allowance **and** above what the band already holds, so a band over its carry can still step its
+> way back down one removal at a time — refusing every order that leaves it over would trap it.
+> Silently trimming a band's gear, or refusing one band's order over another's choices, stays out.
 
 ## A long move leaves behind what the band cannot carry
 

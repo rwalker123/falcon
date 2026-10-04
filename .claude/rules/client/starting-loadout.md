@@ -46,9 +46,18 @@ load = item_carry_weight × Σ EXPANDED item units + material_carry_weight × Σ
   shipped weight of 1. The weights ride the campaign section (one per world); the capacity rides each
   band's window.
 - **The meter** is `CARRY_REMAINING_FORMAT` (`12 / 78 carry left`) over a stacked bar: the kits as
-  ONE segment, each material in its swatch ink, then the remainder. A negative remainder is printed
-  negative in `HudStyle.WARN`; a full pack reads in `HudStyle.SIGNAL` (a finished decision, not a
-  problem).
+  ONE segment, each material in its swatch ink, then the remainder. A full pack reads in
+  `HudStyle.SIGNAL` (a finished decision, not a problem).
+- ⛔ **THE FREE ROOM FLOORS AT ZERO AND THE METER NEVER WEARS `WARN`.** A band that is not moving is
+  never warned that it is over its carry: the cap bounds what walks away, not what a band owns, and
+  the long-move targeting warning is the ONE place over-carry is stated
+  (`.claude/rules/core_sim/band-carry.md` → "IT CAPS THE TRANSFER, NEVER THE STORAGE"). So an
+  over-full band reads `0 / C carry left` in the calm ink and its bar draws full — never a negative
+  number, never amber. Its `+` is shut (no room) and its `−` stays open: `_clamp_press` clamps to
+  `max(ceiling, current)`, so a ceiling below what the row holds refuses a raise and never forces a
+  drop. That matches the sim, whose `OverCarry` refuses an order only when its load is above the
+  allowance AND above what the band already holds — so an over-full band steps down one removal at a
+  time.
 - **A row says what one more costs only where that is not obvious** — not at the meter's own unit
   (`CARRY_OBVIOUS_UNIT_LOAD`, 1.0). A two-item kit's uses line ends `· 2 carry`
   (`KIT_CARRY_COST_FORMAT`); a material row reads `N carry each` (`MATERIAL_CARRY_COST_FORMAT`) when
@@ -59,9 +68,9 @@ load = item_carry_weight × Σ EXPANDED item units + material_carry_weight × Σ
 ### THE CARD PRINTS WHOLE NUMBERS — and rounds each figure in the direction that cannot mislead
 
 Display only: the `+` enablement and the over state compare the unrounded values. Free room
-**floors** (`whole_free` — the meter never offers more than the bar shows; 0.2 free reads `0`, 0.8
-over reads `-1`); totals and a fixed larder **round to nearest** (`whole_amount` — 124.9 → 125);
-costs and "N carry over" **round up** (`whole_cost`); a splinter's food brought floors and its share
+**floors** (`whole_free` — the meter never offers more than the bar shows; 0.2 free reads `0`, and
+the meter's own floor at zero makes 0.8 over read `0` too); totals and a fixed larder **round to
+nearest** (`whole_amount` — 124.9 → 125); a row's cost **rounds up** (`whole_cost`); a splinter's food brought floors and its share
 rounds, and the "fewer tools" clause follows the printed pair, so it never reads `26 of 26 · fewer
 tools…`. Pinned by `_the_card_prints_whole_numbers` (frame `starting_loadout_whole_numbers`).
 
@@ -162,9 +171,9 @@ band actually holds** — never a suggestion and never an unspent budget.
 > A split re-fits the PARENT's standing allocation down to its reduced carry and re-materializes the
 > band from it (`fission::rebalance_partitioned_grant`). The wire is the authority on what a band
 > holds, so the card adopts those rows whole and unclamped — a card that kept its own copy would draw
-> the pre-split rows against the post-split carry, a negative meter reproduced client-side out of
-> stale state. A band the sim has genuinely left over its carry must READ as over rather than be
-> trimmed into looking fine.
+> the pre-split rows against the post-split carry, out of stale state. A band the sim has genuinely
+> left over its carry is drawn as it stands — every row it holds, the bar full, `0 /` free, `+` shut
+> and `−` open — rather than trimmed; it is NOT warned (see "THE FREE ROOM FLOORS AT ZERO" above).
 >
 > **`BAND_UNECHOED` is what tells an echo from a move.** The sim recaptures after every dispatched
 > command, so each press comes back as a frame restating it; the list holds the orders this card has
@@ -258,7 +267,7 @@ band actually holds** — never a suggestion and never an unspent budget.
 | `ui/hud/hud_loadout_vocab.gd` (`HudLoadoutVocab`) | The vocabulary leaf — the wire keys, the words, the measured geometry, and the **swatch ring** (`apply_palette`, registered in `HudPalette.apply`) |
 | `ui/hud/OpeningCardController.gd` | The OPENING HAND-OFF, held by `HudLayer` as `_opening` — see "THE OPENING CARD" below. Collects every tick-0 `narrative_beat` off `ingest_command_events` (de-duplicated by `tick\|label\|detail`, arrival order), takes `StartingLoadoutController.opening_grant_held`, and decides in ONE deferred `_resolve`. Owns the `OpeningCardPanel` node, parented into the HUD layer. `reset_world_state` re-arms it; `is_open` / `dismiss` back `HudLayer.is_opening_card_open` / `dismiss_opening_card`, which `Main.escape_claimant` probes BY NAME |
 | `tools/ui_preview/chapters/opening_card.gd` | The opening card's chapter, appended LAST in `CHAPTERS` because every block starts on a world boundary. Three frames (`opening_card`, `opening_card_handoff`, `opening_card_late`) and 32 checkpoints: the window-then-beats frame, the button / scrim click / ESC hand-offs, once per world, a later splinter untouched, no story, a story a snapshot late, and a story after the window shut |
-| `tools/ui_preview/chapters/starting_loadout.gd` | The preview chapter, LAST in `CHAPTERS` — eighteen frames and **185 checkpoints**, including the orb's two colours, the no-dead-space bound, the press-sends-an-order claims, the refused-send rollback, the TAKE arc appended after them (its food line, the food preview and the wire's echo, a refused take rolling the food back — `starting_loadout_take_refused` — and the back-to-back presses `_assert_card_holds_its_column` pins) and, last, the ADOPTION pair: its own band, a press made, the band's allocation re-published against a shrunken carry and taken whole, then two presses whose first echo must not pull the card back, and finally the REFUSED pair (`starting_loadout_refused`, `_refused_long`): a press reset by a `starting_loadout` event row, the line in warning ink, an earlier turn's row and a re-sent row ignored, the next press clearing it, and a long reason held to two lines; then A refused with B still in flight (`starting_loadout_refused_in_flight`: the line shown without the word "reset", B's pick kept, only B awaiting its echo, B's echo clearing the line) and B's echo plus A's refusal in ONE snapshot leaving no line. **Every fixture band publishes the last order this card sent for it** (`_held_kits`), which is what a server does. Its kit fixture is the **shipped nine-kit roster**, `none` included so the picker has something to drop. See `harness-ui-preview.md` |
+| `tools/ui_preview/chapters/starting_loadout.gd` | The preview chapter, LAST in `CHAPTERS` — eighteen frames and **185 checkpoints**, including the orb's two colours, the no-dead-space bound, the press-sends-an-order claims, the refused-send rollback, the TAKE arc appended after them (its food line, the food preview and the wire's echo, a refused take rolling the food back — `starting_loadout_take_refused` — and the back-to-back presses `_assert_card_holds_its_column` pins) and, last, the over-full band (`starting_loadout_over_budget`: `0 / 24 carry left` in calm ink, no warn ink anywhere on the card, `+` shut and `−` open, the orb row `Windmere — everything is picked`), the ADOPTION pair: its own band, a press made, the band's allocation re-published against a shrunken carry and taken whole, then two presses whose first echo must not pull the card back, and finally the REFUSED pair (`starting_loadout_refused`, `_refused_long`): a press reset by a `starting_loadout` event row, the line in warning ink, an earlier turn's row and a re-sent row ignored, the next press clearing it, and a long reason held to two lines; then A refused with B still in flight (`starting_loadout_refused_in_flight`: the line shown without the word "reset", B's pick kept, only B awaiting its echo, B's echo clearing the line) and B's echo plus A's refusal in ONE snapshot leaving no line. **Every fixture band publishes the last order this card sent for it** (`_held_kits`), which is what a server does. Its kit fixture is the **shipped nine-kit roster**, `none` included so the picker has something to drop. See `harness-ui-preview.md` |
 
 ## THE OPENING CARD — the world's first auto-open is the Telling's, and it hands off here
 
@@ -534,8 +543,8 @@ the picked and spent states.
 > `The turn orb reopens this. Ending the turn closes it for good.`
 
 Two short declaratives, one fact each, in the subtitle's quiet ink — it is guidance, not a warning.
-`HudStyle.WARN` on this card is kept for the refused-order line and an
-over-carry meter. A player who has dismissed the card has no other way to learn either fact.
+`HudStyle.WARN` on this card is kept for the refused-order line alone. A player who has dismissed
+the card has no other way to learn either fact.
 
 ⛔ **IT IS NOT THE RETIRED FORFEITURE CLAIM.** That one said COMMITTING shuts the window, which is
 false — an apply is a replacement and the order may be revised as often as the player likes. This
@@ -597,47 +606,49 @@ ending the turn. What moves is the SEVERITY and the WORDING:
 
 | window | state | severity | reads |
 |---|---|---|---|
-| either | **over its allowance** (`_over_allowance`): the carry remainder NEGATIVE, or — on a take — an item or material standing above the home band's supply | `warn` → `HudStyle.WARN` | `Band over its carry` / `Windmere — 6 carry over`; a take's supply overdraw adds the bare count nouns, `3 carry, 2 kits over` |
+| TAKE | **standing on more than home holds** (`_over_allowance`): an item or a material above the home band's supply — an onward split shrank it under a standing take | `warn` → `HudStyle.WARN` | `Band takes more than home holds` (`ATTENTION_LABEL_OVER_SUPPLY`) / `<band> — 2 kits over`, the overdraw in the bare kit and resource counts |
 | GRANT | room left for at least the cheapest single unit | `warn` → `HudStyle.WARN` | `Band not fully outfitted` / `Brackwater — 1 carry unspent` |
-| GRANT | the remainder is below the cheapest single unit (`_grant_is_complete`) | `ready` → `HudStyle.READY` | `Band outfitted` / `Brackwater — everything is picked` |
+| GRANT | the remainder is below the cheapest single unit (`_grant_is_complete`) — **an over-full grant included** | `ready` → `HudStyle.READY` | `Band outfitted` / `Brackwater — everything is picked` |
 | TAKE | nothing ordered — reachable only by CLEARING the card, a fresh splinter drawing its default take | `warn` → `HudStyle.WARN` | `Band not fully outfitted` / `Thornhollow — nothing taken yet` |
 | TAKE | an order standing | `ready` → `HudStyle.READY` | `Band outfitted` / `Thornhollow — 3 kits, 4 resources` |
 
+⛔ **OVER ITS CARRY IS NOT A ROW, AND NOT A WARNING.** A band that is not moving is never warned that
+it is over its carry (`.claude/rules/core_sim/band-carry.md` → "IT CAPS THE TRANSFER, NEVER THE
+STORAGE"; the long-move targeting warning is the ONE place it is stated). `_over_allowance` is
+therefore SUPPLY overdraw alone, and an over-full grant falls through to `_grant_is_complete` — nothing
+more fits — and reads READY. There is no carry over-arm: no `Band over its carry`, no `N carry over`,
+no `ATTENTION_COUNT_CARRY_FORMAT`.
+
 ⛔ **`not FULLY outfitted`, BECAUSE A BAND IS NEVER UNOUTFITTED ANY MORE.** The sim applies a band's
 default outfit when it makes the band, so every band this row speaks for is already carrying gear;
-what the warn arm reports is carry still to MINT, which the turn advance forfeits.
+what the warn arm reports is carry still to MINT, which the turn advance forfeits. The bare
+*"Band not outfitted"* was true while the card held an unsent draft over an empty band, and would now
+contradict the card beside it — which is showing the kits those people are holding. The READY arm's
+`Band outfitted` / `everything is picked` is true BY CONSTRUCTION rather than by the card's say-so:
+the rows it counts are the sim's own.
 
 ⛔ **"FULL" IS "NOTHING MORE FITS", NOT "EXACTLY ZERO".** The currency is a float with two weights, so
 a grant is complete when its remainder is below the lightest thing a press can add
 (`_cheapest_unit_load` — the smaller non-zero of the two weights): a 0.5 left over beside one-unit
-materials is a full pack. The bare
-*"Band not outfitted"* was true while the card held an unsent draft over an empty band, and would now
-contradict the card beside it — which is showing the kits those people are holding. The READY arm's
-`Band outfitted` / `everything is picked` is unchanged and is now true BY CONSTRUCTION rather than by
-the card's say-so: the rows it counts are the sim's own.
+materials is a full pack, and so is a remainder below zero.
 
 ⛔ **A TAKE NEVER SAYS `unspent`.** That word is on the orb because a grant's remainder is GONE on the
 turn advance; supply a take leaves behind stays with the home band and is lost by nobody. So a take's
 arms report what IS taken. A take is *outfitted* as soon as an order stands: it forfeits nothing by
 leaving supply at home, so "everything drawn" is not a state anyone is working towards.
 
-> ### ⛔ OVER THE CARRY IS NOT FULLY SPENT, AND IT IS THE FIRST ARM FOR THAT REASON
+> ### ⛔ A SUPPLY OVERDRAW IS NOT AN ORDER STANDING, AND IT IS THE FIRST ARM FOR THAT REASON
 >
-> The completeness test was `remaining <= 0` over a remainder **clamped at zero**, so a band holding
-> more than its window allows passed it and the orb called it done. Reported from a live run, on the
-> two-budget card #732 retired: a resources meter reading **`-6 / 22 left`** beside a row saying
-> *everything is picked*. `<=` was doing double duty for *nothing left* and *less than nothing*, and
-> the clamp is what hid the difference.
+> **History:** the completeness test was once `remaining <= 0` over a remainder **clamped at zero**,
+> so a band holding more than its window allowed passed it and the orb called it done — reported from
+> a live run, on the two-budget card #732 retired, as a resources meter reading **`-6 / 22 left`**
+> beside a row saying *everything is picked*. That sim bug is fixed and nothing here relies on it.
 >
-> `_over_allowance` asks the **unclamped** carry remainder (`_signed_carry`, which is what the card's
-> own meter draws), and every clamped reader (`carry_left`) is written in terms of it — so the one
-> place a negative can be seen is the one place it is asked about. **A state this row cannot word is
-> exactly the state it must not paint green.**
->
-> It covers a TAKE's supply as well: a supply that shrank under a standing take (an onward split)
-> leaves the take standing on more than the home band holds (`_items_over_supply` /
-> `_materials_over_supply`), with no meter to show it. The sim bug that produced the reported `-6` is
-> fixed and **nothing here relies on that**.
+> **What survives of the rule is the supply half.** A take standing on more than its home band now
+> holds (`_items_over_supply` / `_materials_over_supply`) is an order the server refuses, with no
+> meter to show it, so it takes the warn arm ahead of *outfitted* and says which way it is wrong, in
+> the take's own terms and never as carry. An over-CARRY band is the opposite case by the rule above:
+> it is complete, and painting it green is correct.
 
 ### The row names its BAND, and `Open ▸` reaches it
 
@@ -660,7 +671,7 @@ It is **NOT `blocking` in either state**: closing the window is the sim's busine
 `ATTENTION_KINDS_WITH_A_PANEL`.
 
 ⛔ **THE REMAINDER IS NAMED WHATEVER THE CONTROL THAT SPENDS IT IS NAMED** — `carry`, the meter's own
-word (`1 carry unspent`, `6 carry over`). It once read `2 units unspent` beside a picker column headed
+word (`1 carry unspent`). It once read `2 units unspent` beside a picker column headed
 `RESOURCES`, and a player asked what a unit was — the orb had invented a noun for a budget the card
 already named. The preview asserts the row's DETAIL as well as its label (and the noun `unit` absent),
 because both arms carry the same label whatever the remainder is worded as, so a label-only claim
