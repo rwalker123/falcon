@@ -68,10 +68,36 @@ food ledger.
 > sim made the choice for them. The pack went from 6.0 to 8.0 for the same reason: at 6.0 a
 > small splinter could carry its food *or* its tools, not both.
 
-**The default is proportional**: an untouched split takes the default goods and the full food share
-if they fit; otherwise both are scaled by `C ÷ (F + goods load)`, goods floored, and the food absorbs
-the rounding slack. On shipped numbers an untouched 4-worker turn-one splinter carries 3 kits
-(Stalking, Trapping, Gathering), no materials and 13.0 of its 17.4 food (pack 7.0, carry 28).
+**A split's default is ONE proportional rule — kits, then food, then materials**
+(`starting_loadout::split_default_outfit`, both arms):
+
+1. **Kits:** the splinter's proportional share of the source's kits,
+   `floor(source kits × asked ÷ the source band's WHOLE working hands)`, spread across the rows by
+   largest remainder in the source's mix. A parent with a kit for every hand gives a kit for every
+   splinter hand (17 kits on 17 hands, split 6 → **6**); a short parent shares the shortage (12 on 17
+   → **4**, and it keeps 8); a parent with spares shares those too (20 on 17 → **7**). The
+   denominator is **whole** hands: dividing by the fractional working value (17.85) would floor the
+   playtest's 6 to 5.
+2. **Food:** the splinter's full larder share `F`, or what the carry leaves after the kits.
+3. **Materials** fill the room left, in the source's mix, floored and capped by the source.
+
+When the carry cannot hold it all, the cut runs in reverse: materials, then food, kits last. **The
+parent keeps what is left** — on BOTH arms. On the take arm the goods physically move; on the grant
+arm the splinter mints its share and **exactly those rows are deducted from the parent's standing
+allocation** (`rebalance_partitioned_grant`, `MintedRows`), so the pair holds precisely the parent's
+outfit (playtest: 5/5/7 split 6 → splinter 2/2/2, parent 3/3/5). The parent is then cut with
+`fit_to_carry`'s staging only if it is still over its own goods allowance.
+
+> ⛔ **A grant split that deducted nothing was a duplication**: the parent kept all 17 kits while the
+> splinter minted 6 on top — 23 kits from a 17-kit outfit, each band "within its own carry". Pinned on
+> the pair by `split_loadout::a_grant_split_conserves_the_parents_outfit_across_the_pair`.
+
+> **Why one rule, not "one kit per worker".** The playtest ask was *"match the number of kits to
+> workers"* for a fully kitted parent, and proportional gives exactly that there. A per-worker target
+> instead hands the whole shortage to the parent when it is short of kits (a later split of a band
+> that has worn tools out) — the bench showed it. The earlier default (scale goods and food together by
+> `C ÷ (F + goods)`) left a 6-worker splinter 12 kits and 18 of its 26 food, and re-fitted the parent
+> to 14 kits and no materials; both read wrong in play.
 
 **A long move is still food first** (below): a band moving on its own keeps eating.
 
@@ -102,6 +128,11 @@ the rounding slack. On shipped numbers an untouched 4-worker turn-one splinter c
   staging — **one rule for every fit that has to cut: tools feed a band, materials can be gathered
   again.** The units left behind are the **most worn** (`BandEquipment::shed_units`), so the band
   carries its best gear. Bench tools weigh like anything else.
+- **An overage smaller than one whole unit comes off the food.** A band at exactly full carry can
+  drift a hair over it (a fresh splinter at 4.0 workers reads 3.99 a turn later: 27.93 of carry
+  against a 28 load), and dropping a whole tool for 0.07 is a punishment for rounding, not a choice.
+  So a sub-unit overage is taken from the continuous food tier and every item and material stays; a
+  real overage keeps the order above, whole units apportioned by largest remainder.
 - **Distance is measured per order.** A band that crosses the map in reach-sized hops keeps
   everything. That reads as ferrying in relays and is accepted, not an exploit to close.
 

@@ -746,25 +746,27 @@ fn the_opening_loadout_reaches_the_client() {
         "the pre-fill names only pickable materials: {defaults:?}"
     );
 
-    // **The kit column's rows, applied at the shipped 4/4/4 and published on the band's own window**
-    // — the picker opens on a plausible band rather than a column of zeros. 20 items and 28 material
-    // units against 136 of carry, so the fit does not bind here and these are the profile's numbers
-    // verbatim (the fit has its own test; a splinter's binding one is asserted in
-    // `split_loadout.rs`).
+    // **The kit column's rows, applied at the profile's default and published on the band's own
+    // window** — the picker opens on a plausible band rather than a column of zeros. The shipped
+    // default fits the room the card shows whole, so these are the profile's numbers verbatim (the
+    // fit has its own test).
     let kit_rows: Vec<(String, u32)> = cohort_window
         .kits()
         .expect("the band's applied kit rows are published")
         .iter()
         .map(|entry| (entry.kitId().unwrap_or_default().to_string(), entry.count()))
         .collect();
-    assert_eq!(
-        kit_rows,
-        vec![
-            (BIG_GAME.to_string(), 4),
-            (GATHERING.to_string(), 4),
-            (TRAPPING.to_string(), 4),
-        ]
-    );
+    let kit_defaults: Vec<(String, u32)> = app
+        .world
+        .resource::<core_sim::ActiveStartProfile>()
+        .profile()
+        .overrides()
+        .opening_loadout
+        .kit_defaults
+        .iter()
+        .map(|(id, count)| (id.clone(), *count))
+        .collect();
+    assert_eq!(kit_rows, kit_defaults);
 
     let craftable: Vec<String> = published
         .craftableRecipeIds()

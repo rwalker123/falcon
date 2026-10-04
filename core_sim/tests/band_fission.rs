@@ -734,8 +734,8 @@ fn gear_is_conserved_across_a_split() {
 /// handed the whole dowry back (`split_loadout.rs`). What crosses now is the expansion of a kit
 /// allocation, and two properties follow:
 ///
-/// - **no item exceeds its own share** of what the parent held — which is also the shared-item
-///   clamp: every kit that uses an item draws on that one item's share; and
+/// - **one kit per worker, never more than the parent held** — the take follows the parent's own
+///   mix, and no item exceeds what the parent held, which is also the shared-item clamp; and
 /// - **the ledger IS the expansion of the kit allocation** — for every item, the splinter holds
 ///   exactly `Σ count` over the kits in its window's manifest that use it. The sled is the sharp
 ///   case: `big_game`, `trapping`, the cutting kits and the sled-only `sledding` kit all carry one,
@@ -746,7 +746,7 @@ fn gear_is_conserved_across_a_split() {
 fn the_manifest_is_a_kit_allocation_that_fits_the_share() {
     let mut app = spawn_world();
     let (parent, _, _) = home_band(&mut app);
-    let (_, working, _) = stock_the_parent(&mut app, parent);
+    stock_the_parent(&mut app, parent);
 
     let before: Vec<(String, u32)> = owned(&app, parent);
     let asked = 6;
@@ -755,11 +755,10 @@ fn the_manifest_is_a_kit_allocation_that_fits_the_share() {
     let child_entity = entity_for_band(&mut app, split.band);
 
     for (item, whole) in &before {
-        let budget = ((*whole as f64) * (asked as f64) / (working as f64)).floor() as u32;
         let taken = count_of(&app, child_entity, item);
         assert!(
-            taken <= budget,
-            "'{item}': {taken} taken against a share budget of {budget} out of {whole}"
+            taken <= *whole,
+            "'{item}': {taken} taken against the {whole} the parent held"
         );
     }
 
@@ -805,7 +804,7 @@ fn the_manifest_is_a_kit_allocation_that_fits_the_share() {
 fn materials_are_conserved_across_a_split_with_their_readings() {
     let mut app = spawn_world();
     let (parent, _, _) = home_band(&mut app);
-    let (_, working, _) = stock_the_parent(&mut app, parent);
+    stock_the_parent(&mut app, parent);
 
     // Two batches of one material at *different* readings, so an averaging move would be visible.
     let table = app.world.resource::<MaterialsConfigHandle>().get();
@@ -861,15 +860,24 @@ fn materials_are_conserved_across_a_split_with_their_readings() {
         (kept + taken - whole).abs() < EPSILON,
         "the material is conserved: {kept} kept + {taken} taken against {whole}"
     );
-    // **Whole units, floored** — the take is published as an allocation and a card states `units:u32`,
-    // so a fractional share is one it could not show and re-sending what it showed would hand the
-    // remainder back (`split_loadout::re_sending_the_published_allocation_untouched_changes_nothing`).
-    // The remainder stays with the parent, where the player can take it deliberately.
-    let expected = ((whole as f64) * (asked as f64) / (working as f64)).floor() as f32;
+    // **Whole units, and exactly what the card shows** — the take is published as an allocation and
+    // a card states `units:u32`, so a fractional take is one it could not show and re-sending what it
+    // showed would hand the remainder back
+    // (`split_loadout::re_sending_the_published_allocation_untouched_changes_nothing`). The split's
+    // default fills the room its kits and food leave with materials, capped by what the parent holds.
+    let published = app
+        .world
+        .resource::<StartingLoadout>()
+        .window(split.band)
+        .expect("the splinter opens a window at its default take")
+        .materials
+        .iter()
+        .find(|row| row.material_id == BANKED_MATERIAL)
+        .map_or(0, |row| row.units) as f32;
     assert!(
-        (taken - expected).abs() < EPSILON,
-        "the material divides on the same share as everything else, floored to whole units: \
-         {taken} against {expected}"
+        (taken - published).abs() < EPSILON && taken <= whole,
+        "the material that crossed is the whole units the card shows, never more than the parent \
+         held: {taken} against {published}"
     );
 
     // **The readings survive.** A split is a move, not a merge, so the child holds batches at the

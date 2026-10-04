@@ -416,11 +416,17 @@ func _build_food_lines(food: Dictionary) -> void:
 		return
 	var brought := float(food.get(FOOD_BROUGHT, 0.0))
 	var share := float(food.get(FOOD_SHARE, 0.0))
-	var text := HudLoadoutVocab.FOOD_FIXED_FORMAT % HudLoadoutVocab.amount_text(brought)
+	var text := HudLoadoutVocab.FOOD_FIXED_FORMAT % HudLoadoutVocab.whole_amount(brought)
 	if not bool(food.get(FOOD_FIXED, false)):
-		text = HudLoadoutVocab.FOOD_BROUGHT_FORMAT % [
-			HudLoadoutVocab.amount_text(brought), HudLoadoutVocab.amount_text(share)]
-		if brought < share - HudLoadoutVocab.CARRY_EPSILON:
+		# Whole numbers, and the clause follows the PRINTED pair: what is brought floors (it is short of
+		# the share by the room the goods took) and the share rounds, so the line never reads
+		# "26 of 26 · fewer tools leave room for more".
+		var brought_text := HudLoadoutVocab.whole_free(brought)
+		var share_text := HudLoadoutVocab.whole_amount(share)
+		if brought >= share - HudLoadoutVocab.CARRY_EPSILON:
+			brought_text = share_text
+		text = HudLoadoutVocab.FOOD_BROUGHT_FORMAT % [brought_text, share_text]
+		if brought_text != share_text:
 			text += HudLoadoutVocab.FOOD_ROOM_CLAUSE
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", HudLoadoutVocab.SWATCH_SEPARATION)
@@ -711,7 +717,7 @@ func _carry_meter(carry: Dictionary, materials: Array) -> Control:
 		- float(carry.get(CARRY_FOOD_LOAD, 0.0))
 	var label := Label.new()
 	label.text = HudLoadoutVocab.CARRY_REMAINING_FORMAT % [
-		HudLoadoutVocab.amount_text(remaining), HudLoadoutVocab.amount_text(total)]
+		HudLoadoutVocab.whole_free(remaining), HudLoadoutVocab.whole_amount(total)]
 	label.add_theme_font_size_override("font_size", HudLoadoutVocab.BUDGET_FONT_SIZE)
 	# A full pack is not a problem — it is a finished decision — so it reads in the calm signal ink;
 	# only an OVERLOADED one is a warning.
@@ -755,7 +761,7 @@ func _carry_bar_segments(carry: Dictionary, materials: Array, remaining: float) 
 	if food_load > HudLoadoutVocab.CARRY_EPSILON:
 		segments.append({"key": HudLoadoutVocab.FOOD_SEGMENT_KEY, "count": food_load,
 			"color": HudLoadoutVocab.FOOD_SEGMENT_COLOR,
-			"tooltip": HudLoadoutVocab.FOOD_FIXED_FORMAT % HudLoadoutVocab.amount_text(food_load)})
+			"tooltip": HudLoadoutVocab.FOOD_FIXED_FORMAT % HudLoadoutVocab.whole_amount(food_load)})
 	if remaining > HudLoadoutVocab.CARRY_EPSILON:
 		segments.append({"key": "", "count": remaining,
 			"color": HudLoadoutVocab.BUDGET_REMAINDER_COLOR})

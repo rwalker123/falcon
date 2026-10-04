@@ -489,6 +489,24 @@ static func material_label(material_id: String) -> String:
 
 ## An input amount, trimmed. Recipe inputs are floats and most of them are whole, so `2` beats `2.0`
 ## while `0.5` must survive.
+## ⛔ **THE CARD STATES CARRY AND FOOD IN WHOLE NUMBERS — DISPLAY ONLY.** Every `+` gate and the over
+## state read the floats; these three only decide how a figure is PRINTED, and each rounds in the
+## direction that keeps the card honest beside its own bar:
+## - `whole_free` FLOORS, so the meter never offers more room than there is, and an over-carry of any
+##   size still prints negative (`-0.2` reads `-1`). A genuinely tiny remainder reads `0`.
+## - `whole_cost` CEILS, so what one more of a row costs is never printed as less than it weighs.
+## - `whole_amount` rounds to the nearest, for a figure that is neither room nor price — a capacity, a
+##   larder.
+## The tolerance keeps float noise (`11.99999`) on the integer it means.
+static func whole_free(amount: float) -> String:
+	return "%d" % int(floorf(amount + CARRY_EPSILON))
+
+static func whole_cost(amount: float) -> String:
+	return "%d" % int(ceilf(amount - CARRY_EPSILON))
+
+static func whole_amount(amount: float) -> String:
+	return "%d" % int(roundf(amount))
+
 static func amount_text(amount: float) -> String:
 	if is_equal_approx(amount, roundf(amount)):
 		return "%d" % int(roundf(amount))

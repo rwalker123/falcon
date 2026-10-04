@@ -866,7 +866,7 @@ func _kit_rows(band: Dictionary) -> Array:
 		# at two lines of copy under its name.
 		if not _carry_cost_is_obvious(unit_load):
 			uses_text = HudLoadoutVocab.KIT_CARRY_COST_FORMAT \
-				% [uses_text, HudLoadoutVocab.amount_text(unit_load)]
+				% [uses_text, HudLoadoutVocab.whole_cost(unit_load)]
 		rows.append({
 			"id": kit_id,
 			"display_name": String(entry.get(HudLoadoutVocab.KIT_DISPLAY_NAME_KEY, kit_id)),
@@ -915,7 +915,7 @@ func _material_rows(band: Dictionary) -> Array:
 			"load": float(units) * _material_carry_weight,
 			"carry_text": "" if _carry_cost_is_obvious(_material_carry_weight) \
 				else HudLoadoutVocab.MATERIAL_CARRY_COST_FORMAT \
-					% HudLoadoutVocab.amount_text(_material_carry_weight),
+					% HudLoadoutVocab.whole_cost(_material_carry_weight),
 			"can_add": _material_ceiling(band, material_id) > units,
 		})
 	return rows
@@ -1224,7 +1224,7 @@ func _over_detail(band: Dictionary) -> String:
 	var carry_over := -_signed_carry(band)
 	if carry_over > HudLoadoutVocab.CARRY_EPSILON:
 		parts.append(HudLoadoutVocab.ATTENTION_COUNT_CARRY_FORMAT
-			% HudLoadoutVocab.amount_text(carry_over))
+			% HudLoadoutVocab.whole_cost(carry_over))
 	var items := _items_over_supply(band)
 	if items == 1:
 		parts.append(HudLoadoutVocab.ATTENTION_COUNT_KITS_ONE)
@@ -1266,7 +1266,7 @@ func _grant_detail(band: Dictionary) -> String:
 	if _grant_is_complete(band):
 		return HudLoadoutVocab.ATTENTION_DETAIL_READY
 	return HudLoadoutVocab.ATTENTION_DETAIL_CARRY_UNSPENT_FORMAT \
-		% HudLoadoutVocab.amount_text(maxf(_signed_carry(band), 0.0))
+		% HudLoadoutVocab.whole_free(maxf(_signed_carry(band), 0.0))
 
 ## A TAKE's detail: what has been taken. **It named the home band until the row named its OWN**, which
 ## was the only way two identically-worded rows could be told apart; the subject's name does that job

@@ -287,9 +287,10 @@ allocation** — the kit and material rows the card draws itself from — and it
 advances. What the split does to get there is a fact about the **parent's** state rather than about
 the turn:
 
-- the parent still **grants** → the split **partitions the grant** and moves nothing off the parent;
-  the splinter then **mints the campaign default** against its own slice of that grant
-  (`starting_loadout::outfit_band_with_defaults`), so it is standing in an outfit from the moment it
+- the parent still **grants** → the split **recomputes the grant** and moves nothing off the parent;
+  the splinter then **mints its split default** (`split_default_outfit`: its proportional share of
+  the parent's kits, its food, materials in the room left — `band-carry.md`) through
+  `fission::outfit_grant_splinter`, so it is standing in an outfit from the moment it
   exists and its window's rows are what that apply set
   (`.claude/rules/core_sim/starting-loadout.md` → "A default is applied, never suggested"). The
   parent is separately re-fitted to what the partition left it;

@@ -29,10 +29,10 @@ Two things open a window and nothing else does:
 | opener | when | the window it opens |
 |---|---|---|
 | `stamp_starting_loadout` | Startup, chained after the spawn | the spawned band's, carrying the campaign's **grant**. `outfit_opening_bands` is chained straight after it and commits the default against that grant |
-| `split_band_from_parent` | every split, every turn | the splinter's, **carrying its accepted allocation** — the default take it was moved, or (on a grant) the default outfit it mints against its slice of the grant |
+| `split_band_from_parent` | every split, every turn | the splinter's, **carrying its accepted allocation** — the default take it was moved, or (on a grant) the split default it mints against its own carry |
 
 **Turn one is not special — only the PARENT's state differs.** On turn one the parent still holds an
-unspent grant, so its splinter takes a slice of that grant, its picks **mint**, and the split moves no
+unspent grant, so its splinter mints against a grant of its own (`carry_capacity(asked)`), its picks **mint**, and the split moves no
 gear at all. From turn two nobody holds a grant, so a splinter's window is a take on the parent, its
 picks **move** gear out of the parent's own ledger, and the split moves the default take across. There is no `if turn == 1` anywhere in the arc, and there must not be: the
 question the code asks is *"does this band's parent still have a grant"*, which is a fact about the
@@ -90,10 +90,10 @@ that scaled with the workers leaving.
 **Goods load first on both arms, and food fills the room left.** The window records the splinter's
 `SplitDowry` — its full proportional larder share `F` and what has crossed — and after every accepted
 order `resolve_split_food` sets the food to `min(F, C − goods load)`, moving only the delta (both
-directions) and booking it as `DowryOut`/`DowryIn`. The **default** is proportional: if the default
-goods and `F` do not fit, both scale by `C ÷ (F + goods load)` (`split_default_goods_budget`), goods
-floored, and the food absorbs the slack — so re-sending the published allocation is still an exact
-no-op, food included. Why goods first: `band-carry.md`. Every cap is a number the split has just
+directions) and booking it as `DowryOut`/`DowryIn`. The **default** is `split_default_outfit`:
+the splinter's proportional share of the source's kits (over whole hands), then its food, then
+materials in the room left — the rule and its reasons are in `band-carry.md`. Re-sending the
+published allocation is still an exact no-op, food included. Why goods first: `band-carry.md`. Every cap is a number the split has just
 resolved (`asked`, `share`), not a literal.
 
 > #### ⛔ A GRANT SPLIT PAYS **ONCE** — IT PARTITIONS OR IT MOVES, NEVER BOTH
@@ -164,17 +164,17 @@ re-sending it unchanged is an exact no-op. `items` and `kits` are two readings o
 approximately right.
 
 **A splinter of a still-granting parent gets its rows from the APPLY that outfits it**: nothing was
-moved, so it **mints the campaign default** against its own slice of the grant, and the window's rows
+moved, so it **mints its split default** (`split_default_outfit`) against its own carry, and the window's rows
 are what that apply set. See the callout below, which is the rule for every band and not only a
 splinter.
 
 > ### ⛔ A DEFAULT IS APPLIED, NEVER SUGGESTED
 >
 > **A band holds its default outfit from the moment it is created, whether or not anybody ever opens
-> its card.** `starting_loadout::outfit_band_with_defaults` is the one seam, reached from two places:
-> `outfit_opening_bands` (a Startup system chained after `stamp_starting_loadout`, the first moment
-> the budgets exist) and `split_band_from_parent`, on the grant arm, as soon as the splinter's window
-> exists.
+> its card.** Two seams, one per kind of band: the **opening band** gets the profile's defaults through
+> `starting_loadout::outfit_band_with_defaults` (from `outfit_opening_bands`, a Startup system chained
+> after `stamp_starting_loadout`), and a **splinter** gets `split_default_outfit` — through
+> `fission::outfit_grant_splinter` on the grant arm, and as the moved default take on the take arm.
 >
 > **The defect this closes is a loss, not a blank screen.** A player composed an outfit for a
 > splinter, never pressed *Set out*, ended the turn — and the band walked away with nothing. The
@@ -202,7 +202,7 @@ splinter.
 > default take that physically crossed.
 >
 > ⛔ **MINTED, NEVER MOVED.** A grant split still takes nothing off the parent: the splinter's outfit
-> comes out of its own slice of the grant, so filling the card cannot resurrect the double charge
+> is minted against its own carry, so filling the card cannot resurrect the double charge
 > (`split_band_from_parent`'s `default_kits` / `default_materials` stay empty on that arm and are the
 > only lists `expand_kits` walks).
 >
@@ -370,7 +370,7 @@ floored, remainder unspent, on one load. The long-move shed uses the same stagin
 
 | reader | the budget it fits to | what it does with the answer |
 |---|---|---|
-| `outfit_band_with_defaults` | **that band's own** `carry_budget` | **applies** it — the opening band at Startup, a grant splinter at its split |
+| `outfit_band_with_defaults` | **that band's own** goods allowance | **applies** it — the opening band at Startup (a splinter's default is `split_default_outfit`, not this) |
 | `fission::rebalance_partitioned_grant` | the parent's reduced `carry_budget` | re-materializes the parent from it |
 | `stamp_starting_loadout` | the opening band's | warns once per world when the config over-allocates, which is the only moment that fault is observable |
 
@@ -434,5 +434,5 @@ A `SimState` shape change has no migration path by design: `SAVE_FORMAT_VERSION`
 | File | Key | Purpose |
 |---|---|---|
 | `src/data/start_profiles.json` | `opening_loadout.pickable_materials` | The grant's pick list, in the order it is drawn. Binds a grant window only |
-| | `opening_loadout.material_defaults` / `kit_defaults` | The spawned band's pre-fills — suggestions, never grants |
+| | `opening_loadout.material_defaults` / `kit_defaults` | The **opening band's** default outfit, applied after the world-build meal so it fits the allowance the card shows. Shipped: kits `big_game 5 / trapping 5 / gathering 7` (one per hand on the 30-person band, so an untouched proportional split hands a kit per splinter worker) and `bone 2 / fibre 12 / hide 6` — load 47 against ≈ 47.2, fitting whole. A splinter's default is `split_default_outfit`, not these |
 | `src/data/expedition_config.json` | `carry.per_worker_carry` and the carry weights | The grant's size and every order's load — see `band-carry.md` → Config files. There is deliberately no loadout-specific dial: the budget is the band's own workers × one pack |

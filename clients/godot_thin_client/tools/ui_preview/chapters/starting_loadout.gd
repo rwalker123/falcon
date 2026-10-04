@@ -44,7 +44,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 180
+const EXPECTED_CHECKPOINTS := 185
 
 const Q := preload("res://tools/ui_preview/node_query.gd")
 ## The walk's shared band fixtures — `with_band_id` is what stamps a cohort's durable id and its name,
@@ -424,6 +424,7 @@ func run(harness) -> void:
 	await _a_moved_allocation_is_adopted()
 	await _two_presses_do_not_flicker_back()
 	await _a_refused_order_resets_the_picks()
+	await _the_card_prints_whole_numbers()
 	_assert_window_shuts()
 	h._hud.set_starting_loadout_requested.disconnect(_on_order)
 
@@ -1133,6 +1134,55 @@ func _next_snapshot() -> void:
 func _refusal_line() -> Label:
 	return Q.find_meta_node(_panel(), HudLoadoutVocab.REFUSAL_LINE_META) as Label
 
+## ⛔ **THE CARD PRINTS WHOLE NUMBERS, AND ROUNDS THE WAY THAT KEEPS IT HONEST.** Reported from play:
+## `Food 77.7`, `0.2 / 124.9 carry left`. The adopt band is re-published with the reported carry and a
+## FIXED larder that leaves exactly 0.2 free, so the meter must read `0 / 125` (the room FLOORS, the
+## total rounds) and the larder `Food 115`. Then one more unit of larder puts the band 0.8 over, and
+## the meter must still read NEGATIVE (`-1`), in the warning ink — a rounding that printed `0` there
+## would call an overloaded band full. Only the printing moves: the goods precondition is read off the
+## controller's floats.
+const WHOLE_CARRY := 124.9
+const WHOLE_FREE := 0.2
+const WHOLE_OVER_BY := 1.0
+const WHOLE_METER := "0 / 125 carry left"
+const WHOLE_METER_OVER := "-1 / 125 carry left"
+const WHOLE_FOOD_LINE := "Food 115"
+## The adopt band's re-fitted allocation, weighed as the server weighs it.
+const ADOPT_REFIT_LOAD := (ADOPT_REFIT_BIG_GAME * KIT_STALKING_ITEMS
+		+ ADOPT_REFIT_GATHERING * KIT_GATHERING_ITEMS) * ITEM_CARRY_WEIGHT \
+		+ (ADOPT_REFIT_BONE + ADOPT_REFIT_FIBRE) * MATERIAL_CARRY_WEIGHT
+
+func _the_card_prints_whole_numbers() -> void:
+	var larder := WHOLE_CARRY - ADOPT_REFIT_LOAD - WHOLE_FREE
+	h._hud.update_band_alerts([_grant_band(), _splinter_band(), _over_budget_band(),
+		_fractional_adopt_band(larder)])
+	await h._settle()
+	h._assert_hud("loadout/whole — the card is on the re-fitted allocation (%.1f, want %.1f)"
+			% [_controller().carry_spent(), ADOPT_REFIT_LOAD],
+		_controller().subject_band_id() == _band_id(ADOPT_BAND_ENTITY)
+			and is_equal_approx(_controller().carry_spent(), ADOPT_REFIT_LOAD))
+	h._assert_hud("loadout/whole — the meter reads `%s` (got `%s`)" % [WHOLE_METER, _meter_label_text()],
+		_meter_label_text() == WHOLE_METER)
+	h._assert_hud("loadout/whole — the larder reads `%s` (got `%s`)" % [WHOLE_FOOD_LINE, _food_line_text()],
+		_food_line_text() == WHOLE_FOOD_LINE)
+	await h._save("starting_loadout_whole_numbers")
+	h._hud.update_band_alerts([_grant_band(), _splinter_band(), _over_budget_band(),
+		_fractional_adopt_band(larder + WHOLE_OVER_BY)])
+	await h._settle()
+	h._assert_hud("loadout/whole — 0.8 over still reads NEGATIVE, `%s` (got `%s`)"
+			% [WHOLE_METER_OVER, _meter_label_text()],
+		_meter_label_text() == WHOLE_METER_OVER and _meter_label_color() == HudStyle.WARN)
+
+## The adopt band at its re-fitted allocation, with a fractional WHOLE carry and a FIXED larder.
+func _fractional_adopt_band(larder: float) -> Dictionary:
+	var band := _adopt_band(true)
+	var window: Dictionary = band[HudLoadoutVocab.WINDOW_KEY]
+	window[HudLoadoutVocab.CARRY_CAPACITY_KEY] = WHOLE_CARRY
+	window[HudLoadoutVocab.FOOD_SHARE_KEY] = larder
+	window[HudLoadoutVocab.FOOD_CARRIED_KEY] = larder
+	window[HudLoadoutVocab.FOOD_FIXED_KEY] = true
+	return band
+
 ## The band whose allocation the SIM moves. `refit` is the second frame: the carry shrunk and every
 ## row restated against it, which is what a split does to the parent.
 func _adopt_band(refit: bool) -> Dictionary:
@@ -1796,6 +1846,12 @@ func _press_minus(meta: StringName, id: String) -> void:
 		minus.pressed.emit()
 
 ## The carry meter's LABEL ink, read off the rendered label inside the meter block.
+func _meter_label_text() -> String:
+	var meter := _row_node(HudLoadoutVocab.BUDGET_METER_META, HudLoadoutVocab.BUDGET_CARRY)
+	if meter == null or meter.get_child_count() == 0 or not (meter.get_child(0) is Label):
+		return ""
+	return (meter.get_child(0) as Label).text
+
 func _meter_label_color() -> Color:
 	var meter := _row_node(HudLoadoutVocab.BUDGET_METER_META, HudLoadoutVocab.BUDGET_CARRY)
 	if meter == null or meter.get_child_count() == 0 or not (meter.get_child(0) is Label):

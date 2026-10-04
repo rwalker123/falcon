@@ -384,7 +384,7 @@ pub use start_profile::{
     StartingUnitSpec,
 };
 pub use starting_loadout::{
-    allocation_load, apply_starting_loadout, fit_to_carry, order_load, split_default_goods_budget,
+    allocation_load, apply_starting_loadout, fit_to_carry, order_load, split_default_outfit,
     FittedLoadout, KitAllocation, LoadoutRejection, LoadoutSupply, LoadoutWindow,
     MaterialAllocation, SplitDowry, StartingLoadout, OPENING_MATERIAL_READING,
 };
@@ -1040,9 +1040,6 @@ pub fn build_headless_app() -> App {
                 // **After the spawn and the seeding, because the carry is the spawned band's own
                 // working-age value** — derived from the band, not configured.
                 starting_loadout::stamp_starting_loadout,
-                // **And outfit it at once.** A band holds its default from the moment it exists —
-                // see `outfit_band_with_defaults`, which is also what a split runs on its splinter.
-                starting_loadout::outfit_opening_bands,
                 hydrology::generate_hydrology,
                 systems::apply_tag_budget_solver,
                 systems::apply_biome_palette_clamp,
@@ -1206,6 +1203,12 @@ pub fn build_headless_app() -> App {
                     // carried into the turn, and resets this turn's `last_food_spoiled`, which the
                     // labor pass's caravan transit rot then adds to.
                     spoilage::rot_band_larders,
+                    // **The opening band is outfitted on the world-build pass, after its meal** —
+                    // its fixed larder counts against its carry, and this is the larder the first
+                    // frame publishes (`starting_loadout::outfit_opening_bands`). A splinter's
+                    // default is the split's own rule (`split_default_outfit`).
+                    starting_loadout::outfit_opening_bands
+                        .run_if(starting_loadout::on_the_world_build_pass),
                     // Move first so the band's `current_tile` is current before labor reads its
                     // in-range sources, then resolve per-worker Forage/Hunt/Scout yields.
                     systems::advance_band_movement,

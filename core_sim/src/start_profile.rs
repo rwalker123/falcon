@@ -169,8 +169,9 @@ pub struct OpeningLoadoutConfig {
     /// nobody would spend on. Validated non-empty, and every entry must name a material the
     /// materials table carries.
     pub pickable_materials: Vec<String>,
-    /// **The material half of the DEFAULT OUTFIT the sim applies to every band at creation**
+    /// **The material half of the DEFAULT OUTFIT the sim applies to the opening band at creation**
     /// ([`crate::starting_loadout::outfit_band_with_defaults`]), re-fitted to that band's own budget.
+    /// A splinter's default is drawn from its parent's allocation instead.
     /// It is the allocation the window opens on and the player is free to spend elsewhere — but it
     /// is *applied*, not suggested, so a card nobody commits costs the band nothing. Empty is the
     /// ordinary case and means *"the window opens with everything unspent"*. Every key must be in
@@ -1051,11 +1052,13 @@ mod tests {
         ));
     }
 
-    /// **The kit column opens on the three subsistence kits, four hands each.**
+    /// **The kit column opens on the three subsistence kits, a kit per hand.**
     ///
     /// The counts are asserted as literals because they are the shipped *opening state of the game*
     /// — the first thing a player sees in that column — so a pre-fill that drifted to something else
-    /// should have to be changed on purpose.
+    /// should have to be changed on purpose. Stalking 5 / Harvesting 7 / Trapping 5 is the
+    /// maintainer's playtest outfit: 17 kits for the shipped band's 17 hands, so an untouched split
+    /// hands a kit per splinter worker.
     #[test]
     fn the_shipped_profile_pre_fills_the_three_subsistence_kits() {
         let profiles = StartProfiles::builtin();
@@ -1070,9 +1073,9 @@ mod tests {
                 .iter()
                 .map(|(id, count)| (id.as_str(), *count))
                 .collect::<Vec<_>>(),
-            vec![("big_game", 4), ("gathering", 4), ("trapping", 4)],
-            "Stalking, Harvesting and Trapping, four hands each - a plausible band rather than a \
-             column of zeros, with hands still left to spend deliberately"
+            vec![("big_game", 5), ("gathering", 7), ("trapping", 5)],
+            "Stalking, Harvesting and Trapping, a kit per hand on the shipped 17 - a plausible band \
+             rather than a column of zeros"
         );
     }
 

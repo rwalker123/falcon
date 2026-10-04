@@ -258,6 +258,62 @@ pub fn held_load(stores: &LocalStore, equipment: Option<&BandEquipment>) -> Carr
     }
 }
 
+/// **`target` whole units in the mix of `source`**, by largest remainder: each row's exact quota is
+/// `target × count ÷ total`; every row takes its floor, and the units left over go one each to the
+/// rows with the largest remainders, ties to the lower id. A source holding `target` units or fewer
+/// gives every one of them, so no row ever exceeds its source count. A split's kit share and a long
+/// move's kept goods are both apportioned through this.
+pub fn apportion_largest_remainder(
+    source: &BTreeMap<String, u32>,
+    target: u32,
+) -> BTreeMap<String, u32> {
+    let total: u64 = source.values().map(|count| u64::from(*count)).sum();
+    if u64::from(target) >= total {
+        return source.clone();
+    }
+    let target = u64::from(target);
+    let mut rows: Vec<(&String, u64, u64)> = source
+        .iter()
+        .map(|(id, count)| {
+            let exact = target * u64::from(*count);
+            (id, exact / total, exact % total)
+        })
+        .collect();
+    let given: u64 = rows.iter().map(|(_, floor, _)| *floor).sum();
+    let mut order: Vec<usize> = (0..rows.len()).collect();
+    // Largest remainder first; `rows` is in id order, so a stable sort breaks ties to the lower id.
+    order.sort_by(|a, b| rows[*b].2.cmp(&rows[*a].2));
+    for index in order.into_iter().take((target - given) as usize) {
+        rows[index].1 += 1;
+    }
+    rows.into_iter()
+        .filter(|(_, count, _)| *count > 0)
+        .map(|(id, count, _)| (id.clone(), count as u32))
+        .collect()
+}
+
+/// **The load of the lightest whole unit a band holds** — one item, or one material unit, whichever
+/// weighs less among the kinds it holds any of. `None` when it holds no goods, or only weightless
+/// ones.
+fn lightest_whole_unit(held: &CarryLoad, carry: &CarryConfig) -> Option<Scalar> {
+    let item = (held.items > 0).then(|| CarryLoad::goods(1, scalar_zero()).goods_load(carry));
+    let material = (held.materials >= Scalar::one())
+        .then(|| CarryLoad::goods(0, Scalar::one()).goods_load(carry));
+    [item, material]
+        .into_iter()
+        .flatten()
+        .filter(|unit| *unit > scalar_zero())
+        .min()
+}
+
+/// **How many whole units of `unit_load` fit in `room`** — every unit when a unit weighs nothing.
+fn whole_units_in(room: Scalar, unit_load: Scalar) -> u32 {
+    if unit_load <= scalar_zero() {
+        return u32::MAX;
+    }
+    u32::try_from(room.max(scalar_zero()).raw() / unit_load.raw()).unwrap_or(u32::MAX)
+}
+
 /// **What a long move leaves behind** — the plan [`plan_long_move_shed`] resolves and
 /// [`shed_for_long_move`] applies. Empty when the band fits its carry.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -310,10 +366,24 @@ fn floor_to_whole(amount: Scalar) -> Scalar {
 ///   carry, both scale by `cap ÷ food mass` (the excess is left) and every item and material is
 ///   left.
 /// - **Then the goods, materials before tools** ([`goods_cut`]), in the room the food leaves:
-///   - if the items alone fit, every item is kept and the materials are scaled into what the
-///     items leave, floored to whole units kept;
-///   - otherwise every material is left and the items are scaled into the room, floored, the
-///     most worn units left.
+///   - if the items alone fit, every item is kept and the materials keep as many whole units as
+///     what the items leave holds, apportioned across them by largest remainder;
+///   - otherwise every material is left and the items keep as many whole units as the room holds,
+///     apportioned the same way, the most worn units left.
+///
+///   Apportioned, not floored row by row: a load a hair over its room once lost one unit from
+///   EVERY row (nine tools for 0.07 of overage); now it loses the one unit the room cannot hold.
+///
+/// # ⛔ AN OVERAGE SMALLER THAN ONE WHOLE UNIT COMES OFF THE FOOD
+///
+/// When the load is over the carry by less than the lightest whole unit the band holds (one item at
+/// `item_carry_weight`, or one material unit at `material_carry_weight`), the overage is taken from
+/// the food tier — food and hay in their own proportion, which are continuous — and every item and
+/// material is kept. A carry drifts with the band's working value (a splinter sent out with 4 holds
+/// 3.99 a turn later, its packs filled to the 28 it was split with), so a turn of drift leaves a
+/// fully packed band a few hundredths over. Shedding a whole tool for 0.07 of load would cost the
+/// band a thing it works with for a rounding error; a few hundredths of a meal is the honest price.
+/// An overage of a whole unit or more keeps the order above.
 ///
 /// Tools feed a band; materials can be gathered again. A uniform cut across both left a splinter
 /// with one basket of three and most of its fibre.
@@ -329,6 +399,18 @@ pub fn plan_long_move_shed(
         return LongMoveShed::default();
     }
     let food_mass = held.food_mass(carry);
+    let overage = held.load(carry) - cap;
+    if let Some(unit) = lightest_whole_unit(&held, carry) {
+        if overage < unit && overage <= food_mass {
+            let kept = food_mass - overage;
+            return LongMoveShed {
+                food: held.food - scale_by_ratio(held.food, kept, food_mass),
+                fodder: held.fodder - scale_by_ratio(held.fodder, kept, food_mass),
+                items: BTreeMap::new(),
+                materials: BTreeMap::new(),
+            };
+        }
+    }
     let every_item = || -> BTreeMap<String, u32> {
         equipment
             .map(|ledger| {
@@ -360,21 +442,38 @@ pub fn plan_long_move_shed(
     let (items, materials) = match goods_cut(item_load, material_load, cap - food_mass) {
         GoodsCut::KeepAll => (BTreeMap::new(), BTreeMap::new()),
         GoodsCut::CutMaterials { room } => {
-            let materials = every_material()
+            // Keep as many WHOLE units as the room holds, apportioned across the materials in the
+            // mix held by largest remainder — never a unit per row lost to flooring each one.
+            let held = every_material();
+            let whole: BTreeMap<String, u32> = held
+                .iter()
+                .map(|(material, amount)| {
+                    let units = floor_to_whole(*amount).raw() / Scalar::SCALE;
+                    (material.clone(), u32::try_from(units).unwrap_or(u32::MAX))
+                })
+                .collect();
+            let unit = CarryLoad::goods(0, Scalar::one()).goods_load(carry);
+            let kept = apportion_largest_remainder(&whole, whole_units_in(room, unit));
+            let materials = held
                 .into_iter()
-                .filter_map(|(material, held)| {
-                    let kept = floor_to_whole(scale_by_ratio(held, room, material_load));
-                    let left = held - kept;
+                .filter_map(|(material, amount)| {
+                    let keep = Scalar::from_u32(kept.get(&material).copied().unwrap_or(0));
+                    let left = amount - keep;
                     (left > scalar_zero()).then_some((material, left))
                 })
                 .collect();
             (BTreeMap::new(), materials)
         }
         GoodsCut::CutItems { room } => {
-            let items = every_item()
+            // The same: as many whole items as the room holds, in the held mix by largest
+            // remainder; the units left are the most worn of each item (`shed_for_long_move`).
+            let held = every_item();
+            let unit = CarryLoad::goods(1, scalar_zero()).goods_load(carry);
+            let kept = apportion_largest_remainder(&held, whole_units_in(room, unit));
+            let items = held
                 .into_iter()
                 .filter_map(|(item, units)| {
-                    let left = units - scale_units_by_ratio(units, room, item_load);
+                    let left = units - kept.get(&item).copied().unwrap_or(0);
                     (left > 0).then_some((item, left))
                 })
                 .collect();
@@ -628,6 +727,75 @@ mod tests {
         let plan = plan_long_move_shed(&stores, Some(&ledger), Scalar::from_u32(2), &carry);
         assert_eq!(plan.items.get("baskets"), Some(&1));
         assert_eq!(plan.material_units(), Scalar::from_u32(10));
+    }
+
+    /// ⛔ **A LOAD OVER ITS ROOM LOSES THE WHOLE UNITS THE ROOM CANNOT HOLD — NOT ONE PER ROW.**
+    /// Nine items of nine kinds and 13 food against 20.93 of carry (1.07 over, more than one unit, so
+    /// the food does not absorb it): 7.93 of room holds seven whole items, so two are left. Flooring
+    /// each row at `0.88` once left all nine.
+    #[test]
+    fn a_hair_over_its_carry_sheds_one_unit_not_one_per_row() {
+        let carry = carry();
+        let mut stores = larder(13);
+        let mut ledger = BandEquipment::default();
+        for item in [
+            "spears", "sled", "traps", "baskets", "hoes", "crook", "clubs", "axe", "wedges",
+        ] {
+            ledger.stock(item, 1, "plain", None);
+        }
+        let working = Scalar::from_f32(20.93) / Scalar::from_f32(carry.per_worker_carry);
+        let plan = plan_long_move_shed(&stores, Some(&ledger), working, &carry);
+        assert_eq!(plan.item_units(), 2, "two items left, not nine: {plan:?}");
+        assert!(plan.materials.is_empty() && plan.food == scalar_zero());
+        shed_for_long_move(&mut stores, Some(&mut ledger), &plan);
+        assert_eq!(ledger.total_units(), 7);
+    }
+
+    /// ⛔ **A DRIFT OVERAGE UNDER ONE WHOLE UNIT COMES OFF THE FOOD.** Three baskets and 25 food
+    /// is a load of 28; at 3.99 workers on a 7.0 pack the carry is 27.93, 0.07 short. The band keeps
+    /// every basket and leaves 0.07 food.
+    #[test]
+    fn an_overage_under_one_unit_comes_off_the_food() {
+        let mut carry = carry();
+        carry.per_worker_carry = 7.0;
+        let mut stores = larder(25);
+        let mut ledger = BandEquipment::default();
+        ledger.stock("baskets", 3, "plain", None);
+        let plan = plan_long_move_shed(&stores, Some(&ledger), Scalar::from_f32(3.99), &carry);
+        assert!(
+            plan.items.is_empty() && plan.materials.is_empty(),
+            "{plan:?}"
+        );
+        assert!(
+            (plan.food.to_f32() - 0.07).abs() < 1e-3,
+            "0.07 of food: {plan:?}"
+        );
+        shed_for_long_move(&mut stores, Some(&mut ledger), &plan);
+        assert_eq!(ledger.count_of("baskets"), 3);
+        assert!(
+            held_load(&stores, Some(&ledger)).load(&carry)
+                <= carry_capacity_of(Scalar::from_f32(3.99), &carry)
+        );
+    }
+
+    /// **An overage of a whole unit or more still sheds whole units, in the old order.** Three
+    /// baskets, two spears and 25 food is a load of 30 against 4 × 7.0 = 28 — two whole units over:
+    /// the food loads first and stays, and two whole items are left.
+    #[test]
+    fn an_overage_of_a_whole_unit_still_sheds_whole_units() {
+        let mut carry = carry();
+        carry.per_worker_carry = 7.0;
+        let stores = larder(25);
+        let mut ledger = BandEquipment::default();
+        ledger.stock("baskets", 3, "plain", None);
+        ledger.stock("spears", 2, "plain", None);
+        let plan = plan_long_move_shed(&stores, Some(&ledger), Scalar::from_u32(4), &carry);
+        assert_eq!(
+            plan.food,
+            scalar_zero(),
+            "food loads first and stays: {plan:?}"
+        );
+        assert_eq!(plan.item_units(), 2, "two whole items are left: {plan:?}");
     }
 
     /// The staging itself, in its three cases.

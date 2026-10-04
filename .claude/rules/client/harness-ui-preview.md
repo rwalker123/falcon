@@ -1750,7 +1750,7 @@ refusal).
 ## `chapters/starting_loadout.gd` — the outfitting picker (issue #629)
 
 **Appended LAST in `CHAPTERS`**, after `supply_network`, so no existing frame moves. Seventeen frames
-and one hundred and sixty-one assertions (`EXPECTED_CHECKPOINTS` **180**, RE-MEASURED by raising
+and one hundred and sixty-one assertions (`EXPECTED_CHECKPOINTS` **185**, RE-MEASURED by raising
 the const to an impossible number and reading `reached` back — frames count too). It ends by
 publishing SHUT windows, so the surface it stands up is gone before anything appended after it could
 inherit it.
