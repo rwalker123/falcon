@@ -1313,7 +1313,7 @@ is the only thing that catches it.
 `carry_fodder_weight`), which the native decoder echoes onto every cohort. The shipper and prototype
 bands state the whole pack echo under its #732 names — `carry_per_worker` / `carry_material_weight` /
 `carry_fodder_weight` (wire `carryPerWorker` / `carryMaterialWeight` / `carryFodderWeight`, renamed
-from `expeditionTrade*`) — and the prototype band's pack is the shipped **8.0**. Without the weights
+from `expeditionTrade*`) — and the prototype band's pack is the shipped **7.0**. Without the weights
 the `Carrying:` row prices the pack at its food and the mass claim above goes green on the defect it
 exists for. **The fodder weight is deliberately 0.5** — neither 1.0 nor the material
 weight — because at either of those a three-term mass is indistinguishable from a two-term one that

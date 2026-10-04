@@ -74,7 +74,7 @@ const LOADOUT_UNITS := 4
 const LOADOUT_KIT_ID := "big_game"
 const LOADOUT_KIT_COUNT := 2
 const LOADOUT_CARRY_CAPACITY := 42.0
-## The shipped `trade.item_carry_weight` / `trade.material_carry_weight`.
+## The shipped `expedition_config.carry.item_carry_weight` / `.material_carry_weight`.
 const LOADOUT_ITEM_CARRY_WEIGHT := 1.0
 const LOADOUT_MATERIAL_CARRY_WEIGHT := 1.0
 
@@ -179,7 +179,7 @@ const TRADE_HIDE_AXIS_BAND := "excellent"
 ## and a cargo this harness cannot send emits no line to parse.
 const TRADE_PER_WORKER_CARRY := 120.0
 const TRADE_MATERIAL_CARRY_WEIGHT := 1.0
-## Hay's own pack-space price, the shipped `expedition_config.trade.fodder_carry_weight`. Stated so
+## Hay's own pack-space price, the shipped `expedition_config.carry.fodder_carry_weight`. Stated so
 ## the meter this drive has to get past prices the hay row the way the server will, and so the pack
 ## above holds all three piles at once.
 const TRADE_FODDER_CARRY_WEIGHT := 0.5

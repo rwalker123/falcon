@@ -58,15 +58,16 @@ goods leave with people:
 
 The splinter's kits and materials load first, and food fills what is left, up to its full
 proportional larder share `F`: food carried = `min(F, C − goods load)`. **Taking fewer tools brings
-more food — that is the player's dial, and there is no food row.** The card reads *"Brings N of M
-food"*. Every accepted order re-resolves the food and moves only the delta, booked as dowry on the
-food ledger.
+more food — that is the player's dial, and there is no food row.** The card draws the food as a
+segment of its carry bar with the legend *"Food N of M · fewer tools leave room for more"*, in quiet
+ink. Every accepted order re-resolves the food and moves only the delta, booked as dowry on the food
+ledger.
 
 > **Food-first was tried and REVERSED.** With food loading first and no food dial, a turn-one
 > splinter's share of the larder filled ~75% of its packs, it walked out with **0 kits**, and the AI
 > bench's hunger deaths rose (seed 3: 3 → 16). The player had no way to trade food for tools, so the
-> sim made the choice for them. The pack went from 6.0 to 8.0 for the same reason: at 6.0 a
-> small splinter could carry its food *or* its tools, not both.
+> sim made the choice for them. The pack rose from 6.0 for the same reason — at 6.0 a small
+> splinter could carry its food *or* its tools, not both — and settled at **7.0** (see Config files).
 
 **A split's default is ONE proportional rule — kits, then food, then materials**
 (`starting_loadout::split_default_outfit`, both arms):
@@ -181,6 +182,10 @@ left would re-mint the scout's kit.
   against a 28 load), and dropping a whole tool for 0.07 is a punishment for rounding, not a choice.
   So a sub-unit overage is taken from the continuous food tier and every item and material stays; a
   real overage keeps the order above, whole units apportioned by largest remainder.
+- **A long move ends the band's turn-one outfitting.** `StartingLoadout::close_for_a_long_move`
+  closes the mover's window — and every take or dowry window that draws on it — the moment the order
+  is accepted, whether or not anything was shed. A grant apply rebuilds the ledger from empty, so a
+  window left open would re-mint everything the move left behind. Short moves leave it open.
 - **Distance is measured per order.** A band that crosses the map in reach-sized hops keeps
   everything. That reads as ferrying in relays and is accepted, not an exploit to close.
 
@@ -202,10 +207,11 @@ ledger has no spoil term.
 
 ## On the wire
 
-`PopulationCohortState`: `carryCapacity`, `carryPerWorker` / `carryMaterialWeight` / `carryFodderWeight` (the pack echo, renamed from `expeditionTrade*`),, `carryLoad`, `moveFerryReachTiles` (echoed per cohort, the
-`bandMoveTilesPerTurn` idiom), the three `longMoveLeaves*` fields (all 0 when the band fits) and
-`foodLeftBehind`. The outfitting window's own cap and the weights a client prices an order with are
-in `starting-loadout.md` → On the wire.
+`PopulationCohortState`: `carryCapacity`, `carryPerWorker` / `carryMaterialWeight` /
+`carryFodderWeight` (the pack echo, renamed from `expeditionTrade*`), `carryLoad`,
+`moveFerryReachTiles` (echoed per cohort, the `bandMoveTilesPerTurn` idiom), the three
+`longMoveLeaves*` fields (all 0 when the band fits) and `foodLeftBehind`. The outfitting window's
+own cap and the weights a client prices an order with are in `starting-loadout.md` → On the wire.
 
 ## Config files
 

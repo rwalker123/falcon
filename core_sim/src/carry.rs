@@ -15,11 +15,14 @@
 //! sheds the band down to its carry **the moment the order is accepted**, and what is left behind is
 //! **lost**: there is no storage object to leave it in. The shedding order is **food first**: if
 //! the food tier alone (`food + fodder_carry_weight × fodder`) overfills the packs, food and hay
-//! scale down to fit and every item and material is left. Otherwise items and materials scale down
-//! together by `(cap − food mass) ÷ goods load`, floored to whole units — and the units left are the
-//! **most worn**: the band carries its best gear ([`BandEquipment::shed_units`]). One function plans
-//! the shed ([`plan_long_move_shed`]); the move applies its plan and the snapshot publishes the same
-//! plan as the band's long-move forecast, so the two can never disagree.
+//! scale down to fit and every item and material is left. **An overage smaller than one whole unit
+//! comes off the food**, so a hair of drift never costs a tool. Otherwise the goods are cut **tools
+//! before materials** in the room the food leaves ([`goods_cut`]): the materials go first, and the
+//! items scale down only if they alone do not fit, whole units apportioned across the rows by largest
+//! remainder — and the units left are the **most worn**: the band carries its best gear
+//! ([`BandEquipment::shed_units`]). One function plans the shed ([`plan_long_move_shed`]); the move
+//! applies its plan and the snapshot publishes the same plan as the band's long-move forecast, so the
+//! two can never disagree.
 
 use std::collections::BTreeMap;
 

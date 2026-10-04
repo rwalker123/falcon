@@ -1709,7 +1709,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         i64::from(cohort.homewardAllHomeIn()),
     );
     // WHAT THIS BAND CAN CARRY (#732), in food-unit load:
-    //   carry_capacity  — whole working-age hands × `trade.per_worker_carry`.
+    //   carry_capacity  — whole working-age hands × `expedition_config.carry.per_worker_carry` (7.0).
     //   carry_load      — everything the band holds right now: food + weighted hay + items + materials.
     //   move_ferry_reach_tiles — how far a move may go and keep everything; a move FARTHER sheds the
     //                     band down to `carry_capacity` and what is left behind is lost.

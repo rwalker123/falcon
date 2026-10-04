@@ -395,6 +395,38 @@ impl StartingLoadout {
         self.windows.insert(band, window);
     }
 
+    /// **Shut the windows a band's LONG MOVE ends** — its own, and every open window that draws on
+    /// it (a take on it, or a splinter whose food dowry it holds). Returns the bands whose windows
+    /// shut, in band order.
+    ///
+    /// ⛔ **A band that has walked away has been outfitted: its outfit is what it carried.** The
+    /// long move sheds what the band cannot carry (`carry::plan_long_move_shed`); a window left open
+    /// would let an unchanged card re-mint, from a grant rebuilt from empty, everything that was just
+    /// left behind. A closed window is an absent one, so the card disappears and any further order
+    /// is `WindowClosed`. The windows that name it as a parent shut with it: a take would move gear,
+    /// and a dowry food, between two bands that are no longer standing together — each keeps
+    /// exactly what it holds now, nothing stranded and nothing re-minted.
+    pub fn close_for_a_long_move(&mut self, band: BandId) -> Vec<BandId> {
+        let mut closing: Vec<BandId> = self
+            .windows
+            .iter()
+            .filter(|(id, window)| {
+                **id == band
+                    || window.supply.parent() == Some(band)
+                    || window
+                        .dowry
+                        .as_ref()
+                        .is_some_and(|dowry| dowry.parent == band)
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        closing.sort();
+        for id in &closing {
+            self.windows.remove(id);
+        }
+        closing
+    }
+
     /// Every window, in band order.
     pub fn iter(&self) -> impl Iterator<Item = (BandId, &LoadoutWindow)> {
         self.windows.iter().map(|(band, window)| (*band, window))
@@ -517,6 +549,18 @@ pub enum LoadoutRejection {
         id: String,
         asked: u32,
         onward: u32,
+    },
+    /// A grant order asks for fewer of an item than this band's detached parties are carrying. A
+    /// party's kit is the band's — taken off its shelf at launch and placed back on its fold-back —
+    /// so cutting the row below it would let the band spend the freed room elsewhere and then hold
+    /// more than its carry let it mint once the party came home. **Refused, never clamped.**
+    #[error(
+        "a party out is carrying {held_by_parties} '{id}', so the order cannot ask for {asked}"
+    )]
+    PartyCarries {
+        id: String,
+        asked: u32,
+        held_by_parties: u32,
     },
 }
 
@@ -1139,6 +1183,20 @@ pub fn apply_starting_loadout(
 
     match &window.supply {
         LoadoutSupply::Grant { .. } => {
+            // **What this band's parties are carrying is a floor on every item row.** A grant
+            // rebuilds the ledger from empty and mints the allocation less the parties' kit
+            // (`mint_loadout`), so an order below that floor would free room the band could spend
+            // elsewhere while the party's units still come home on its fold-back.
+            for (id, held_by_parties) in party_held_items(world, entity) {
+                let asked = wanted_items.get(&id).copied().unwrap_or(0);
+                if asked < held_by_parties {
+                    return Err(LoadoutRejection::PartyCarries {
+                        id,
+                        asked,
+                        held_by_parties,
+                    });
+                }
+            }
             if let Some(refusal) = over_carry {
                 return Err(refusal);
             }
@@ -1939,5 +1997,62 @@ mod fit_tests {
         let kits: BTreeMap<String, u32> = fitted.kits.into_iter().collect();
         let materials: BTreeMap<String, u32> = fitted.materials.into_iter().collect();
         assert!(allocation_load(&equipment, &carry_cfg, &kits, &materials) <= budget);
+    }
+}
+
+#[cfg(test)]
+mod long_move_close_tests {
+    use super::*;
+
+    /// A splinter of `parent`, drawing either its gear (a take) or only its food (a grant).
+    fn splinter_of(parent: BandId, take: bool) -> LoadoutWindow {
+        let supply = if take {
+            LoadoutSupply::Parent {
+                parent,
+                items: BTreeMap::new(),
+                materials: BTreeMap::new(),
+                carry_budget: scalar_zero(),
+            }
+        } else {
+            LoadoutSupply::Grant { carry_budget: None }
+        };
+        LoadoutWindow {
+            open: true,
+            supply,
+            kits: Vec::new(),
+            materials: Vec::new(),
+            dowry: Some(SplitDowry {
+                parent,
+                food_share: scalar_zero(),
+                fodder_share: scalar_zero(),
+                food_taken: scalar_zero(),
+                fodder_taken: scalar_zero(),
+            }),
+        }
+    }
+
+    /// ⛔ **A long move shuts the band's own window and every window that draws on it** — a take on
+    /// it, and a grant splinter whose dowry it holds — and leaves the band's own parent, and an
+    /// unrelated band, alone.
+    #[test]
+    fn a_long_move_shuts_the_band_and_what_draws_on_it() {
+        let (grandparent, mover, take_child, grant_child, stranger) =
+            (BandId(1), BandId(2), BandId(3), BandId(4), BandId(5));
+        let mut loadout = StartingLoadout::default();
+        loadout.open(grandparent, splinter_of(BandId(0), false));
+        loadout.open(mover, splinter_of(grandparent, true));
+        loadout.open(take_child, splinter_of(mover, true));
+        loadout.open(grant_child, splinter_of(mover, false));
+        loadout.open(stranger, splinter_of(grandparent, false));
+
+        let closed = loadout.close_for_a_long_move(mover);
+
+        assert_eq!(closed, vec![mover, take_child, grant_child]);
+        for band in [mover, take_child, grant_child] {
+            assert!(!loadout.is_open(band), "{band:?} shut");
+        }
+        for band in [grandparent, stranger] {
+            assert!(loadout.is_open(band), "{band:?} untouched");
+        }
     }
 }

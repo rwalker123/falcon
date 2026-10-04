@@ -1260,7 +1260,8 @@ table PopulationCohortState {
   // term out of the mass expression under-prices every manifest carrying a bale, and the player
   // finds out on submit.
   //
-  // The shipped 0.5 is priced in TURNS OF KEEP against food's 50 person-turns per worker load -
+  // The shipped 0.5 is priced in TURNS OF KEEP against a worker's load of food, which scales with
+  // the pack (`carry.per_worker_carry` / per-capita draw: 43.75 person-turns at the shipped 7.0) -
   // see the lever's own comment in `core_sim/src/data/expedition_config.json` for the derivation.
   // It is a playtest dial, and a client must read it rather than hardcode it.
   //
@@ -1398,8 +1399,9 @@ table PopulationCohortState {
   // Turns until the last homeward hand is back; 0 = nobody walking home.
   homewardAllHomeIn:uint = 0;
   // --- WHAT THIS BAND CAN CARRY (appended last, #732) ----------------------------------------
-  // A band carries what its WORKERS can carry: whole working-age hands x expedition_config
-  // carry.per_worker_carry. Dependants add nothing. In food-unit load, where
+  // A band carries what its WORKERS can carry: its working-age value as it stands (never floored to
+  // whole hands) x expedition_config carry.per_worker_carry. Dependants add nothing. In food-unit
+  // load, where
   //   load = food + fodderWeight x fodder + itemCarryWeight x items + materialCarryWeight x materials.
   carryCapacity:float = 0;
   // The load of EVERYTHING this band holds right now - its larder, its hay, every item in its ledger
@@ -1412,8 +1414,10 @@ table PopulationCohortState {
   moveFerryReachTiles:uint = 0;
   // THE FORECAST OF A LONG MOVE, computed by the same shedding function the move runs (no client
   // mirror): what a move beyond `moveFerryReachTiles` would leave behind right now. Food loads first
-  // (if the food alone overfills the packs it is scaled down and every item and material is left);
-  // otherwise items and materials scale down together and the MOST WORN units are the ones left.
+  // (if the food alone overfills the packs it is scaled down and every item and material is left),
+  // and an overage smaller than one whole unit comes off the food. Otherwise tools go before
+  // materials: the materials are cut first, then the items in whole units apportioned by largest
+  // remainder, and the MOST WORN units are the ones left.
   // All 0 when the band fits, and always 0 on a detached party (parties keep their own rules).
   longMoveLeavesFood:float = 0;
   // Whole item units a long move would leave behind.

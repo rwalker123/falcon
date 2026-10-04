@@ -5440,12 +5440,16 @@ fn shed_for_a_long_move(
     {
         return;
     }
-    let Some(cohort) = app.world.get::<PopulationCohort>(entity) else {
+    let Some(current_tile) = app
+        .world
+        .get::<PopulationCohort>(entity)
+        .map(|cohort| cohort.current_tile)
+    else {
         return;
     };
     let Some(from) = app
         .world
-        .get::<Tile>(cohort.current_tile)
+        .get::<Tile>(current_tile)
         .map(|tile| tile.position)
     else {
         return;
@@ -5464,12 +5468,32 @@ fn shed_for_a_long_move(
     if hex_distance_wrapped(from, target, width, wrap) <= reach {
         return;
     }
+    // ⛔ **A long move ends the band's outfitting window**, whether or not it sheds anything: the
+    // band has walked away, and its outfit is what it carried. Left open, an unchanged card would
+    // re-mint everything the shed below leaves behind.
+    if let Some(band_id) = app.world.get::<BandId>(entity).copied() {
+        let closed = app
+            .world
+            .resource_mut::<core_sim::StartingLoadout>()
+            .close_for_a_long_move(band_id);
+        if !closed.is_empty() {
+            info!(
+                target: "shadow_scale::campaign",
+                band = band_id.0,
+                windows = closed.len(),
+                "starting_loadout.window.closed=long_move"
+            );
+        }
+    }
     let carry_cfg = app
         .world
         .resource::<ExpeditionConfigHandle>()
         .get()
         .carry
         .clone();
+    let Some(cohort) = app.world.get::<PopulationCohort>(entity) else {
+        return;
+    };
     let plan = core_sim::carry::plan_long_move_shed(
         &cohort.stores,
         app.world.get::<BandEquipment>(entity),
@@ -27015,8 +27039,12 @@ mod long_move_tests {
         }
     }
 
-    /// ⛔ **ADDING GOODS AFTER A DETACH IS REFUSED EXACTLY AS BEFORE IT.** One-load `gathering` kits
-    /// up to the room fit; one more is refused — and a party out changes neither.
+    /// Item units in one `big_game` kit — a spear and a sled.
+    const BIG_GAME_KIT_ITEMS: f32 = 2.0;
+
+    /// ⛔ **ADDING GOODS AFTER A DETACH IS REFUSED EXACTLY AS BEFORE IT.** One Stalking kit (so the
+    /// order covers the spear and sled the party carries) and one-load `gathering` kits up to the
+    /// room fit; one more is refused — and a party out changes neither.
     #[test]
     fn a_detached_party_does_not_move_the_outfitting_cap() {
         let (mut app, band, band_id) = world();
@@ -27025,12 +27053,25 @@ mod long_move_tests {
             .get::<PopulationCohort>(band)
             .expect("the band keeps a cohort")
             .faction;
-        let room = window_numbers(&app, band, band_id).2.floor() as u32;
+        let item_weight = app
+            .world
+            .resource::<ExpeditionConfigHandle>()
+            .get()
+            .carry
+            .item_carry_weight;
+        let allowance = window_numbers(&app, band, band_id).2;
+        let room = ((allowance - BIG_GAME_KIT_ITEMS * item_weight) / item_weight).floor() as u32;
         let order = |count: u32| {
-            vec![core_sim::KitAllocation {
-                kit_id: "gathering".to_string(),
-                count,
-            }]
+            vec![
+                core_sim::KitAllocation {
+                    kit_id: "big_game".to_string(),
+                    count: 1,
+                },
+                core_sim::KitAllocation {
+                    kit_id: "gathering".to_string(),
+                    count,
+                },
+            ]
         };
         let at = position(&app, band);
         let target = land_tile_within(&mut app, at, 8..=10);
@@ -27262,5 +27303,174 @@ mod long_move_tests {
                 "'{item}': the band and its party hold the allocation once, not twice"
             );
         }
+    }
+
+    /// The turn-one window's accepted rows — what an untouched card re-sends.
+    fn window_rows(
+        app: &bevy::prelude::App,
+        band_id: u64,
+    ) -> (
+        Vec<core_sim::KitAllocation>,
+        Vec<core_sim::MaterialAllocation>,
+    ) {
+        let window = app
+            .world
+            .resource::<core_sim::StartingLoadout>()
+            .window(BandId(band_id))
+            .expect("the band holds its turn-one window")
+            .clone();
+        (window.kits, window.materials)
+    }
+
+    /// ⛔ **A GRANT ORDER MAY NOT CUT A ROW BELOW WHAT THE BAND'S PARTIES CARRY.** A scout out with
+    /// a spear: an order for no Stalking kit would free that spear's room for other goods while the
+    /// spear still comes home on the fold-back. It is refused whole, the world untouched; an order
+    /// that keeps every row at or above what the party carries is accepted.
+    #[test]
+    fn a_grant_order_below_what_a_party_carries_is_refused() {
+        let (mut app, band, band_id) = world();
+        let faction = send_scout(&mut app, band, band_id, 1);
+        let party = party_entity(&mut app, band);
+        let carried = ranging_held(&app, party);
+        assert!(
+            carried["spears"] > 0 && carried["sled"] > 0 && carried["baskets"] > 0,
+            "fixture: the scout carries a spear, a sled and a basket: {carried:?}"
+        );
+        let windows_before = app.world.resource::<core_sim::StartingLoadout>().clone();
+        let ledger_before = app.world.get::<BandEquipment>(band).cloned();
+        let no_spears = vec![core_sim::KitAllocation {
+            kit_id: "gathering".to_string(),
+            count: carried["baskets"],
+        }];
+        let refusal = core_sim::apply_starting_loadout(
+            &mut app.world,
+            faction,
+            BandId(band_id),
+            &no_spears,
+            &[],
+        )
+        .expect_err("cutting the spears below the party's is refused");
+        assert!(
+            matches!(
+                &refusal,
+                core_sim::LoadoutRejection::PartyCarries { held_by_parties, asked: 0, .. }
+                    if *held_by_parties > 0
+            ),
+            "refused as a party's kit: {refusal:?}"
+        );
+        assert!(
+            refusal.to_string().starts_with("a party out is carrying"),
+            "and it reads as a plain sentence: {refusal}"
+        );
+        assert_eq!(
+            *app.world.resource::<core_sim::StartingLoadout>(),
+            windows_before,
+            "the window is untouched"
+        );
+        assert_eq!(
+            app.world.get::<BandEquipment>(band).cloned(),
+            ledger_before,
+            "and so is the band's gear"
+        );
+        let at_the_floor = vec![
+            core_sim::KitAllocation {
+                kit_id: "big_game".to_string(),
+                count: carried["spears"].max(carried["sled"]),
+            },
+            core_sim::KitAllocation {
+                kit_id: "gathering".to_string(),
+                count: carried["baskets"],
+            },
+        ];
+        core_sim::apply_starting_loadout(
+            &mut app.world,
+            faction,
+            BandId(band_id),
+            &at_the_floor,
+            &[],
+        )
+        .expect("an order at the party-held count is accepted");
+    }
+
+    /// ⛔ **A LONG MOVE ENDS THE BAND'S OUTFITTING WINDOW.** A turn-one band overloaded walks off
+    /// past the ferry reach and leaves goods behind; re-sending its unchanged card is then refused
+    /// `WindowClosed`, so nothing that was left behind is re-minted, and the band keeps only what it
+    /// carried.
+    #[test]
+    fn a_long_move_closes_the_outfitting_window() {
+        let (mut app, band, band_id) = world();
+        let faction = app
+            .world
+            .get::<PopulationCohort>(band)
+            .expect("the band keeps a cohort")
+            .faction;
+        let (kits, materials) = window_rows(&app, band_id);
+        overload(&mut app, band, MODEST_LARDER);
+        let held_before = app
+            .world
+            .get::<BandEquipment>(band)
+            .map_or(0, BandEquipment::total_units);
+        let from = position(&app, band);
+        let reach = ferry_reach(&app);
+        let target = land_tile_within(
+            &mut app,
+            from,
+            reach + 1..=reach + 1 + LONG_MOVE_EXTRA_TILES,
+        );
+        handle_move_band(&mut app, faction, Some(band_id), target.x, target.y);
+        let held_after = app
+            .world
+            .get::<BandEquipment>(band)
+            .map_or(0, BandEquipment::total_units);
+        assert!(
+            held_after < held_before,
+            "**LIVENESS**: the long move left goods behind: {held_before} → {held_after}"
+        );
+        assert!(
+            !app.world
+                .resource::<core_sim::StartingLoadout>()
+                .is_open(BandId(band_id)),
+            "the band's window is shut"
+        );
+        assert_eq!(
+            core_sim::apply_starting_loadout(
+                &mut app.world,
+                faction,
+                BandId(band_id),
+                &kits,
+                &materials
+            ),
+            Err(core_sim::LoadoutRejection::WindowClosed),
+            "re-sending the unchanged card is refused"
+        );
+        assert_eq!(
+            app.world
+                .get::<BandEquipment>(band)
+                .map_or(0, BandEquipment::total_units),
+            held_after,
+            "and the band keeps only what it carried"
+        );
+    }
+
+    /// **A SHORT MOVE LEAVES THE WINDOW OPEN** — within the ferry reach the band keeps everything
+    /// and can still revise its card.
+    #[test]
+    fn a_short_move_keeps_the_outfitting_window_open() {
+        let (mut app, band, band_id) = world();
+        let faction = app
+            .world
+            .get::<PopulationCohort>(band)
+            .expect("the band keeps a cohort")
+            .faction;
+        let from = position(&app, band);
+        let reach = ferry_reach(&app);
+        let target = land_tile_within(&mut app, from, 1..=reach);
+        handle_move_band(&mut app, faction, Some(band_id), target.x, target.y);
+        assert!(
+            app.world
+                .resource::<core_sim::StartingLoadout>()
+                .is_open(BandId(band_id)),
+            "a move within the ferry reach leaves the window open"
+        );
     }
 }

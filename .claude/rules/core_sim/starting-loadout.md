@@ -309,6 +309,7 @@ would spend the player's points on something they did not choose. `LoadoutReject
 | `WindowClosed` | the named band has no open window. **A band with no entry reads as closed**, which is what a turn-two band without a splinter's window is |
 | `UnknownKit` / `KitBuysNothing` | a kit the roster does not carry, or one that carries nothing — the roster's `none`, refused by its **empty `uses`** rather than by its id, so the rule stays true of any future empty entry |
 | `UnpickableMaterial` | **grant windows only** — see below |
+| `PartyCarries` | grant windows only: the order's expanded count of an item is below what the band's detached parties are carrying of it. A grant apply rebuilds from empty and mints `allocation − party_held_items`, so an order below the parties' holding would let their gear land on top of a re-spent outfit when they fold back |
 | `OverCarry` | both arms: the whole order's **load** exceeds the window's `carry_budget`. On a take it is checked after `ParentCannotSupply` and `OnwardTakeStranded`, so those are reported first |
 | `DuplicateAllocation` | a repeated kit or material line |
 | `NoStartingBand` | no band of that id in that faction (or its parent has vanished) |

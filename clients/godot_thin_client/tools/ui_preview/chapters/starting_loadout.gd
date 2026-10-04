@@ -81,7 +81,7 @@ const CARRY_CAPACITY := 60.0
 const GRANT_FOOD := 18.0
 const GRANT_WHOLE_CARRY := CARRY_CAPACITY + GRANT_FOOD
 const GRANT_FOOD_LINE := "Food 18"
-## The shipped `trade.item_carry_weight` / `trade.material_carry_weight`.
+## The shipped `carry.item_carry_weight` / `carry.material_carry_weight`.
 const ITEM_CARRY_WEIGHT := 1.0
 const MATERIAL_CARRY_WEIGHT := 1.0
 ## The shipped pick list, in the profile's own order — which is also the draw order of the resources

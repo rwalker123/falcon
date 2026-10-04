@@ -851,19 +851,27 @@ message DeleteSaveCommand {
 // material declares a start stock), so this command is where a campaign's opening kit comes from -
 // and every band that splits off gets a window of its own, so it is also how a splinter is outfitted.
 //
-// TWO SUPPLIES, and the named band's window decides which one applies. A GRANT window mints: `kits`
-// spends one point per allocated kit against one kit per working-age hand (derived from the band,
-// never configured), `materials` one point per unit against `start_profiles.json`
-// `opening_loadout.material_points`. A window a SPLIT opened on a parent with no grant left MOVES:
-// the picks come out of the parent's own ledger, and the cap is what the parent can supply.
+// ONE BUDGET: THE BAND'S CARRY. An order's goods load (`item_carry_weight` x the item units its kits
+// expand to + `material_carry_weight` x material units, expedition_config.json `carry`) must fit the
+// window's carry less its food - the opening band's larder is fixed and counts first; a splinter's
+// food fills whatever room its goods leave. A band's detached parties count as part of it. An order
+// over that room is refused `OverCarry` only if it is also above what the band already holds, so a
+// band that is over can still step down one removal at a time.
 //
-// Anything unspent when the turn advances is forfeited; the window shuts then and on nothing else.
+// TWO SUPPLIES, and the named band's window decides which one applies. A GRANT window mints, and
+// may not ask for fewer of an item than the band's parties out are carrying. A window a SPLIT opened
+// on a parent with no grant left MOVES: the picks come out of the parent's own ledger, and the cap is
+// also what the parent can supply.
+//
+// The window shuts when the turn advances, and when the band makes a move past its ferry reach (its
+// outfit is then what it carried); anything unspent is forfeited.
 //
 // IT FAILS CLOSED, WHOLE. A closed window, an unknown kit id, a kit that carries nothing, a material
-// the profile does not offer, a duplicate line, a budget overspent, a pick the parent cannot cover,
-// or a revision that would strand a take a further split already moved rejects the ENTIRE command
-// and changes nothing - a loadout is one composition against one supply, so honouring the legal half
-// would spend the player's points on something they did not choose.
+// the profile does not offer, a duplicate line, an order over the carry, a grant row below what a
+// party carries, a pick the parent cannot cover, or a revision that would strand a take a further
+// split already moved rejects the ENTIRE command and changes nothing - a loadout is one composition
+// against one supply, so honouring the legal half would spend the band's carry on something the
+// player did not choose.
 message SetStartingLoadoutCommand {
   uint32 faction_id = 1;
   repeated StartingKitAllocation kits = 2;

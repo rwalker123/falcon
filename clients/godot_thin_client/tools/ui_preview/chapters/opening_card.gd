@@ -58,7 +58,7 @@ const OPENING_LARDER := 40.0
 ## A take's TOTAL carry. A splinter's goods load first and food fills what they leave, so this is
 ## not net of food.
 const SPLINTER_CARRY_CAPACITY := 24.0
-## The shipped `trade.item_carry_weight` and `trade.material_carry_weight`, both 1.
+## The shipped `carry.item_carry_weight` and `carry.material_carry_weight`, both 1.
 const CARRY_WEIGHT := 1.0
 const KIT_STALKING := "big_game"
 const KIT_GATHERING := "gathering"
