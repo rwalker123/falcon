@@ -26803,4 +26803,206 @@ mod long_move_tests {
         handle_move_band(&mut app, faction, Some(party_id), target.x, target.y);
         assert_eq!(holdings(&app, party), before, "the party keeps its pack");
     }
+
+    // ---------------------------------------------------------------------------------------------
+    // The outfitting window counts the band's detached parties (#732)
+    // ---------------------------------------------------------------------------------------------
+
+    /// The window's numbers a player reads off a grant card: its whole carry, its fixed food, and
+    /// the goods room that leaves.
+    fn window_numbers(app: &bevy::prelude::App, band: Entity, band_id: u64) -> (f32, f32, f32) {
+        let carry_cfg = app
+            .world
+            .resource::<ExpeditionConfigHandle>()
+            .get()
+            .carry
+            .clone();
+        let people = core_sim::starting_loadout::window_people(&app.world, band, &carry_cfg)
+            .expect("the band keeps a cohort");
+        let window = app
+            .world
+            .resource::<core_sim::StartingLoadout>()
+            .window(BandId(band_id))
+            .expect("the band holds its turn-one window")
+            .clone();
+        (
+            window.carry(&people, &carry_cfg).to_f32(),
+            people.larder_mass.to_f32(),
+            window.goods_allowance(&people, &carry_cfg).to_f32(),
+        )
+    }
+
+    /// **The window as the card draws it** — `(carryCapacity, foodCarried)` off the encoded envelope.
+    fn published_window(app: &mut bevy::prelude::App, band_id: u64) -> (f32, f32) {
+        recapture_snapshot_in_place(&mut app.world);
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+        let envelope = fb::root_as_envelope(&bytes).expect("the snapshot encodes");
+        let window = envelope
+            .payload_as_snapshot()
+            .and_then(|snapshot| snapshot.population())
+            .and_then(|section| section.populations())
+            .expect("the population section is published")
+            .iter()
+            .find(|cohort| cohort.bandId() == band_id)
+            .and_then(|cohort| cohort.loadoutWindow())
+            .expect("the band publishes its window");
+        (window.carryCapacity(), window.foodCarried())
+    }
+
+    /// The party out from `band`, by its band id.
+    fn party_of(app: &mut bevy::prelude::App, band: Entity) -> Option<u64> {
+        let mut query = app.world.query::<(&Expedition, &BandId)>();
+        query
+            .iter(&app.world)
+            .find(|(expedition, _)| expedition.home_band == band)
+            .map(|(_, id)| id.0)
+    }
+
+    /// The slack on comparing two window numbers that crossed through `f32`.
+    const WINDOW_EPSILON: f32 = 1e-3;
+
+    /// ⛔ **FOR THE OUTFITTING WINDOW, A BAND'S DETACHED PARTIES ARE PART OF THE BAND.** Sending one
+    /// worker out — on a short trip or a long one, whose provisions draw differs — and recalling them
+    /// leaves the turn-one grant card's carry, fixed food and free room exactly where they were, so a
+    /// long trip cannot free room to mint more kits. The band panel's own `carryCapacity` (its
+    /// PRESENT people) does drop by one pack while the party is out.
+    #[test]
+    fn a_detached_party_leaves_the_outfitting_window_unchanged() {
+        const PARTY: u32 = 1;
+        const SHORT_TRIP: std::ops::RangeInclusive<u32> = 1..=2;
+        const LONG_TRIP: std::ops::RangeInclusive<u32> = 8..=10;
+        for trip in [SHORT_TRIP, LONG_TRIP] {
+            let (mut app, band, band_id) = world();
+            let faction = app
+                .world
+                .get::<PopulationCohort>(band)
+                .expect("the band keeps a cohort")
+                .faction;
+            let carry_cfg = app
+                .world
+                .resource::<ExpeditionConfigHandle>()
+                .get()
+                .carry
+                .clone();
+            let before = window_numbers(&app, band, band_id);
+            let card_before = published_window(&mut app, band_id);
+            let panel_before = core_sim::carry::band_carry_capacity(
+                app.world.get::<PopulationCohort>(band).expect("cohort"),
+                &carry_cfg,
+            );
+            let at = position(&app, band);
+            let target = land_tile_within(&mut app, at, trip.clone());
+            handle_send_expedition(
+                &mut app,
+                faction,
+                Some(band_id),
+                PARTY,
+                target.x,
+                target.y,
+                None,
+            );
+            let party = party_of(&mut app, band).expect("the party was launched");
+
+            let detached = window_numbers(&app, band, band_id);
+            for (label, was, is) in [
+                ("carry", before.0, detached.0),
+                ("fixed food", before.1, detached.1),
+                ("free room", before.2, detached.2),
+            ] {
+                assert!(
+                    (was - is).abs() < WINDOW_EPSILON,
+                    "{label} on a {trip:?}-tile trip: {was} before, {is} with the party out"
+                );
+            }
+            let card_detached = published_window(&mut app, band_id);
+            assert!(
+                (card_before.0 - card_detached.0).abs() < WINDOW_EPSILON
+                    && (card_before.1 - card_detached.1).abs() < WINDOW_EPSILON,
+                "the published card is unchanged too: {card_before:?} → {card_detached:?}"
+            );
+            let panel_detached = core_sim::carry::band_carry_capacity(
+                app.world.get::<PopulationCohort>(band).expect("cohort"),
+                &carry_cfg,
+            );
+            assert!(
+                (panel_before
+                    - panel_detached
+                    - core_sim::carry::carry_capacity(PARTY, &carry_cfg))
+                .abs()
+                    < Scalar::from_f32(WINDOW_EPSILON),
+                "the band panel's carry drops by one pack: {panel_before} → {panel_detached}"
+            );
+
+            handle_recall_expedition(&mut app, faction, party);
+            assert!(
+                party_of(&mut app, band).is_none(),
+                "the recall folded it back"
+            );
+            let recalled = window_numbers(&app, band, band_id);
+            assert!(
+                (before.0 - recalled.0).abs() < WINDOW_EPSILON
+                    && (before.1 - recalled.1).abs() < WINDOW_EPSILON
+                    && (before.2 - recalled.2).abs() < WINDOW_EPSILON,
+                "and the recall leaves the window as it was: {before:?} → {recalled:?}"
+            );
+        }
+    }
+
+    /// ⛔ **ADDING GOODS AFTER A DETACH IS REFUSED EXACTLY AS BEFORE IT.** One-load `gathering` kits
+    /// up to the room fit; one more is refused — and a party out changes neither.
+    #[test]
+    fn a_detached_party_does_not_move_the_outfitting_cap() {
+        let (mut app, band, band_id) = world();
+        let faction = app
+            .world
+            .get::<PopulationCohort>(band)
+            .expect("the band keeps a cohort")
+            .faction;
+        let room = window_numbers(&app, band, band_id).2.floor() as u32;
+        let order = |count: u32| {
+            vec![core_sim::KitAllocation {
+                kit_id: "gathering".to_string(),
+                count,
+            }]
+        };
+        let at = position(&app, band);
+        let target = land_tile_within(&mut app, at, 8..=10);
+        handle_send_expedition(
+            &mut app,
+            faction,
+            Some(band_id),
+            1,
+            target.x,
+            target.y,
+            None,
+        );
+        assert!(party_of(&mut app, band).is_some(), "the party is out");
+        assert!(
+            matches!(
+                core_sim::apply_starting_loadout(
+                    &mut app.world,
+                    faction,
+                    BandId(band_id),
+                    &order(room + 1),
+                    &[]
+                ),
+                Err(core_sim::LoadoutRejection::OverCarry { .. })
+            ),
+            "one kit past the room is refused with the party out, as before it left"
+        );
+        core_sim::apply_starting_loadout(
+            &mut app.world,
+            faction,
+            BandId(band_id),
+            &order(room),
+            &[],
+        )
+        .expect("and the room it had before the party left is still there");
+    }
 }

@@ -589,7 +589,19 @@ fn grant_of(app: &App, band: BandId) -> Scalar {
         "expected a grant window, got {:?}",
         window.supply
     );
-    window.goods_allowance(cohort_of(app, band), &carry_cfg(app))
+    window.goods_allowance(&people_of(app, band), &carry_cfg(app))
+}
+
+/// **The people a band's window is struck on** — the band and its detached parties.
+fn people_of(app: &App, band: BandId) -> core_sim::starting_loadout::WindowPeople {
+    let entity = app
+        .world
+        .iter_entities()
+        .find(|entity| entity.get::<BandId>() == Some(&band))
+        .map(|entity| entity.id())
+        .expect("that band exists");
+    core_sim::starting_loadout::window_people(&app.world, entity, &carry_cfg(app))
+        .expect("that band keeps a cohort")
 }
 
 /// **A band's whole carry** as its window reads it — goods and food together.
@@ -598,7 +610,7 @@ fn carry_of(app: &App, band: BandId) -> Scalar {
         .resource::<StartingLoadout>()
         .window(band)
         .expect("the band has a window")
-        .carry(cohort_of(app, band), &carry_cfg(app))
+        .carry(&people_of(app, band), &carry_cfg(app))
 }
 
 /// **A CLOSED WINDOW REFUSES, whoever the band is.** The turn advance shuts every window at once —

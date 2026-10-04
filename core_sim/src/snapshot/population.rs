@@ -2386,10 +2386,41 @@ pub(crate) fn band_loadout_windows<'a>(
     windows: &crate::starting_loadout::StartingLoadout,
     equipment_config: &crate::equipment_config::EquipmentConfig,
     carry: &crate::carry::CarryConfig,
-    bands: impl Iterator<Item = (BandId, Option<&'a BandEquipment>, &'a PopulationCohort)>,
+    bands: impl Iterator<
+        Item = (
+            Entity,
+            BandId,
+            Option<&'a BandEquipment>,
+            &'a PopulationCohort,
+        ),
+    >,
+    // Every detached party, as `(its home band's entity, its cohort)` — counted into the home band's
+    // window (`starting_loadout::WindowPeople`).
+    parties: impl Iterator<Item = (Entity, &'a PopulationCohort)>,
 ) -> std::collections::HashMap<u64, BandLoadoutWindowState> {
+    let bands: Vec<(Entity, BandId, Option<&BandEquipment>, &PopulationCohort)> = bands.collect();
+    let mut people: std::collections::HashMap<Entity, crate::starting_loadout::WindowPeople> =
+        bands
+            .iter()
+            .map(|(entity, _, _, cohort)| {
+                (
+                    *entity,
+                    crate::starting_loadout::WindowPeople::of_band(cohort, carry),
+                )
+            })
+            .collect();
+    for (home, party) in parties {
+        if let Some(home_people) = people.get_mut(&home) {
+            *home_people = home_people.with_party(party, carry);
+        }
+    }
+    let people: std::collections::HashMap<u64, crate::starting_loadout::WindowPeople> = bands
+        .iter()
+        .filter_map(|(entity, band, _, _)| people.get(entity).map(|people| (band.0, *people)))
+        .collect();
     let bands: std::collections::HashMap<u64, (Option<&BandEquipment>, &PopulationCohort)> = bands
-        .map(|(band, equipment, cohort)| (band.0, (equipment, cohort)))
+        .into_iter()
+        .map(|(_, band, equipment, cohort)| (band.0, (equipment, cohort)))
         .collect();
     let held: std::collections::HashMap<u64, (Option<&BandEquipment>, &LocalStore)> = bands
         .iter()
@@ -2415,18 +2446,17 @@ pub(crate) fn band_loadout_windows<'a>(
                     units: row.units,
                 })
                 .collect();
-            let cohort = bands.get(&band.0).map(|(_, cohort)| *cohort);
+            // The band's people for its window — its detached parties counted back in.
+            let window_people = people.get(&band.0);
             // A splinter's food yields to its goods: the most it may take, and what it holds. A
-            // fixed larder counts against the carry as it stands.
+            // fixed larder counts against the carry as it stands, its parties' provisions included.
             let (food_share, food_carried) = match &window.dowry {
                 Some(dowry) => (
                     dowry.share_mass(carry).to_f32(),
                     dowry.carried_mass(carry).to_f32(),
                 ),
                 None => {
-                    let larder = cohort.map_or(0.0, |cohort| {
-                        crate::starting_loadout::larder_mass(&cohort.stores, carry).to_f32()
-                    });
+                    let larder = window_people.map_or(0.0, |people| people.larder_mass.to_f32());
                     (larder, larder)
                 }
             };
@@ -2434,11 +2464,11 @@ pub(crate) fn band_loadout_windows<'a>(
                 open: true,
                 kits,
                 materials,
-                // The band's whole carry, goods and food together — its own live carry when the
-                // window struck none, so the card reads what the band panel reads.
-                carry_capacity: cohort.map_or_else(
+                // The band's whole carry, goods and food together — the live carry of its people
+                // (its detached parties included) when the window struck none.
+                carry_capacity: window_people.map_or_else(
                     || window.supply.struck_carry().unwrap_or_default().to_f32(),
-                    |cohort| window.carry(cohort, carry).to_f32(),
+                    |people| window.carry(people, carry).to_f32(),
                 ),
                 food_share,
                 food_carried,

@@ -205,6 +205,63 @@ impl SplitDowry {
     }
 }
 
+/// **The people an outfitting window is struck on — the band AND its detached parties.**
+///
+/// ⛔ **For the outfitting window, a band's parties out are part of the band.** Sending a party moves
+/// a pack of carry and the party's provisions off the band; counted against the window, a long trip
+/// would FREE room on a turn-one grant card (send a scout, mint more kits, recall the scout) and a
+/// short one would push the band over. So the window's carry is struck on `band working + Σ party
+/// workers` (unfloored, [`crate::carry::band_carry_workers`]'s rule) and its fixed larder is the
+/// band's larder mass plus every party's carried provisions — detaching or recalling a party leaves
+/// the card's carry, food and free room exactly where they were.
+///
+/// **The window only.** The cohort's own `carryCapacity` / `carryLoad`, the band panel and the
+/// long-move shed and forecast stay the band's PRESENT people: a party does not walk with its band.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowPeople {
+    /// The working-age value the carry is struck on.
+    pub working: Scalar,
+    /// The mass of the larders that count against it: `food + fodder_carry_weight × fodder`.
+    pub larder_mass: Scalar,
+}
+
+impl WindowPeople {
+    /// The band alone — what a band with no party out is.
+    pub fn of_band(cohort: &PopulationCohort, carry_cfg: &CarryConfig) -> Self {
+        Self {
+            working: crate::carry::band_carry_workers(cohort),
+            larder_mass: larder_mass(&cohort.stores, carry_cfg),
+        }
+    }
+
+    /// The same people with one of the band's detached parties counted back in.
+    pub fn with_party(self, party: &PopulationCohort, carry_cfg: &CarryConfig) -> Self {
+        Self {
+            working: self.working + crate::carry::band_carry_workers(party),
+            larder_mass: self.larder_mass + larder_mass(&party.stores, carry_cfg),
+        }
+    }
+}
+
+/// **The [`WindowPeople`] of the band on `band`** — its cohort plus every detached party whose home
+/// band it is. `None` when the entity carries no cohort.
+pub fn window_people(world: &World, band: Entity, carry_cfg: &CarryConfig) -> Option<WindowPeople> {
+    let cohort = world.get::<PopulationCohort>(band)?;
+    let mut people = WindowPeople::of_band(cohort, carry_cfg);
+    for entity in world.iter_entities() {
+        let (Some(expedition), Some(party)) = (
+            entity.get::<crate::components::Expedition>(),
+            entity.get::<PopulationCohort>(),
+        ) else {
+            continue;
+        };
+        if expedition.home_band == band {
+            people = people.with_party(party, carry_cfg);
+        }
+    }
+    Some(people)
+}
+
 /// **A larder's carry mass** — `food + fodder_carry_weight × fodder`, the food tier of
 /// [`CarryLoad`].
 pub fn larder_mass(larder: &LocalStore, carry_cfg: &CarryConfig) -> Scalar {
@@ -232,21 +289,20 @@ impl LoadoutWindow {
     }
 
     /// **The band's whole carry**, goods and food together — the window's struck carry, or the
-    /// band's own live carry ([`crate::carry::band_carry_capacity`]) when it has none. `cohort` is
-    /// the window's own band.
-    pub fn carry(&self, cohort: &PopulationCohort, carry_cfg: &CarryConfig) -> Scalar {
+    /// carry of the band's people ([`WindowPeople`], its detached parties included) when it has none.
+    pub fn carry(&self, people: &WindowPeople, carry_cfg: &CarryConfig) -> Scalar {
         self.supply
             .struck_carry()
-            .unwrap_or_else(|| crate::carry::band_carry_capacity(cohort, carry_cfg))
+            .unwrap_or_else(|| crate::carry::carry_capacity_of(people.working, carry_cfg))
     }
 
     /// **The goods load an order may weigh** — what `OverCarry` refuses above. The whole carry when
-    /// the food yields to goods; the carry less the band's live larder mass (saturating at zero)
-    /// when the larder is fixed. `cohort` is the window's own band.
-    pub fn goods_allowance(&self, cohort: &PopulationCohort, carry_cfg: &CarryConfig) -> Scalar {
-        let carry = self.carry(cohort, carry_cfg);
+    /// the food yields to goods; the carry less the fixed larder mass (saturating at zero) when the
+    /// larder is fixed — the band's and its detached parties' together ([`WindowPeople`]).
+    pub fn goods_allowance(&self, people: &WindowPeople, carry_cfg: &CarryConfig) -> Scalar {
+        let carry = self.carry(people, carry_cfg);
         if self.food_is_fixed() {
-            (carry - larder_mass(&cohort.stores, carry_cfg)).max(scalar_zero())
+            (carry - people.larder_mass).max(scalar_zero())
         } else {
             carry
         }
@@ -535,8 +591,10 @@ pub fn stamp_starting_loadout(
     for (faction, (band, cohort)) in opening_bands {
         // The band's own carry, read live (`carry_budget: None`).
         let window = LoadoutWindow::opened(LoadoutSupply::Grant { carry_budget: None });
-        let carry_budget = window.carry(cohort, &expedition.carry);
-        let goods_allowance = window.goods_allowance(cohort, &expedition.carry);
+        // Worldgen has sent no party yet, so the band's people are the band.
+        let people = WindowPeople::of_band(cohort, &expedition.carry);
+        let carry_budget = window.carry(&people, &expedition.carry);
+        let goods_allowance = window.goods_allowance(&people, &expedition.carry);
         loadout.open(band, window);
         info!(
             target: "shadow_scale::campaign",
@@ -644,7 +702,8 @@ pub(crate) fn outfit_band_with_defaults(world: &mut World, faction: FactionId, b
     let Some(entity) = entity_of(world, band) else {
         return;
     };
-    let Some(cohort) = world.get::<PopulationCohort>(entity).cloned() else {
+    let expedition = carry_config(world);
+    let Some(people) = window_people(world, entity, &expedition.carry) else {
         return;
     };
     let Some(profile) = world.get_resource::<ActiveStartProfile>() else {
@@ -652,8 +711,7 @@ pub(crate) fn outfit_band_with_defaults(world: &mut World, faction: FactionId, b
     };
     let opening = &profile.profile().overrides().opening_loadout;
     let equipment = world.resource::<EquipmentConfigHandle>().get();
-    let expedition = carry_config(world);
-    let goods_allowance = window.goods_allowance(&cohort, &expedition.carry);
+    let goods_allowance = window.goods_allowance(&people, &expedition.carry);
     let fitted = fit_to_carry(
         &opening.kit_defaults,
         &opening.material_defaults,
@@ -1033,9 +1091,8 @@ pub fn apply_starting_loadout(
     let wanted_items = expand_kits(&equipment, kits);
     let carry_cfg = carry_config(world).carry.clone();
     let load = order_load(&carry_cfg, &wanted_items, material_total);
-    let Some(capacity) = world
-        .get::<PopulationCohort>(entity)
-        .map(|cohort| window.goods_allowance(cohort, &carry_cfg))
+    let Some(capacity) = window_people(world, entity, &carry_cfg)
+        .map(|people| window.goods_allowance(&people, &carry_cfg))
     else {
         return Err(LoadoutRejection::NoStartingBand);
     };
@@ -1169,8 +1226,8 @@ pub(crate) fn resolve_split_food(world: &mut World, band: BandId, goods_load: Sc
     };
     let carry_cfg = carry_config(world).carry.clone();
     let Some(carry) = entity_of(world, band)
-        .and_then(|entity| world.get::<PopulationCohort>(entity))
-        .map(|cohort| window.carry(cohort, &carry_cfg))
+        .and_then(|entity| window_people(world, entity, &carry_cfg))
+        .map(|people| window.carry(&people, &carry_cfg))
     else {
         return;
     };

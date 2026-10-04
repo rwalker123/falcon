@@ -988,11 +988,17 @@ fn rebalance_partitioned_grant(
         .map(|handle| handle.get())
         .unwrap_or_else(EquipmentConfig::builtin);
     let expedition = crate::starting_loadout::carry_config(world);
-    let Some(parent_budget) = world
-        .query::<(&BandId, &PopulationCohort)>()
+    let Some(parent_entity) = world
+        .query::<(Entity, &BandId)>()
         .iter(world)
-        .find(|(band, _)| **band == parent_band)
-        .map(|(_, cohort)| parent_window.goods_allowance(cohort, &expedition.carry))
+        .find(|(_, band)| **band == parent_band)
+        .map(|(entity, _)| entity)
+    else {
+        return;
+    };
+    let Some(parent_budget) =
+        crate::starting_loadout::window_people(world, parent_entity, &expedition.carry)
+            .map(|people| parent_window.goods_allowance(&people, &expedition.carry))
     else {
         return;
     };

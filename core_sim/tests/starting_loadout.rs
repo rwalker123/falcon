@@ -61,18 +61,21 @@ fn open_window() -> (App, Entity, BandId) {
 
 /// The spawned band's grant — its carry budget, in load units. Panics on a window that is not a
 /// grant, which is the whole subject of this suite.
+/// **The people a band's window is struck on** — the band and its detached parties, through the
+/// sim's own helper.
+fn window_people(app: &App, entity: Entity) -> core_sim::starting_loadout::WindowPeople {
+    core_sim::starting_loadout::window_people(&app.world, entity, &carry_cfg(app))
+        .expect("the band keeps a cohort")
+}
+
 /// **The goods an order may weigh** on this band's window — the sim's own allowance, against the
 /// band's live larder.
 fn goods_allowance(app: &App, entity: Entity, band: BandId) -> Scalar {
-    let cohort = app
-        .world
-        .get::<PopulationCohort>(entity)
-        .expect("the band keeps a cohort");
     app.world
         .resource::<StartingLoadout>()
         .window(band)
         .expect("the band has a window")
-        .goods_allowance(cohort, &carry_cfg(app))
+        .goods_allowance(&window_people(app, entity), &carry_cfg(app))
 }
 
 /// **The spawned band's whole carry** as its grant window reads it — goods and food together.
@@ -87,13 +90,13 @@ fn grant(app: &App, band: BandId) -> Scalar {
         "the spawned band's window must carry a grant, got {:?}",
         window.supply
     );
-    let cohort = app
+    let entity = app
         .world
         .iter_entities()
         .find(|entity| entity.get::<BandId>() == Some(&band))
-        .and_then(|entity| entity.get::<PopulationCohort>())
-        .expect("the band keeps a cohort");
-    window.carry(cohort, &carry_cfg(app))
+        .map(|entity| entity.id())
+        .expect("the band exists");
+    window.carry(&window_people(app, entity), &carry_cfg(app))
 }
 
 /// The live carry tuning an order is weighed with.

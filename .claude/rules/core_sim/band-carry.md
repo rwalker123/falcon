@@ -101,6 +101,22 @@ outfit (playtest: 5/5/7 split 6 → splinter 2/2/2, parent 3/3/5). The parent is
 
 **A long move is still food first** (below): a band moving on its own keeps eating.
 
+> ### ⛔ ON THE OUTFITTING CARD, A BAND'S DETACHED PARTIES ARE STILL PART OF THE BAND
+>
+> `starting_loadout::window_people` = the band plus every `Expedition` whose home band it is: the
+> window's carry is `carry_capacity(band working + Σ party working)` and its fixed larder is the
+> band's larder plus every party's carried provisions. So detaching or recalling a party leaves the
+> card's carry, food and free room unchanged (`long_move_tests::a_detached_party_leaves_the_outfitting_window_unchanged`).
+>
+> **What it closes** (Ray, playtest): a scout takes one pack of carry AND `workers × distance ×
+> provision_draw_per_worker_per_tile` of food, so a long trip FREED room on a turn-one grant card —
+> send a scout, mint more kits, recall it — and a short trip pushed the band over.
+>
+> **The card only.** The cohort's own `carryCapacity` / `carryLoad`, the band panel and the long-move
+> shed count the people PRESENT — a party does not walk with its band. A party's own kit is a fresh
+> set issued at launch (`outfitted_party_equipment`), not debited from the band's ledger, so no goods
+> term is needed for it.
+
 > ### ⛔ A STATIONARY BAND IS NEVER WARNED THAT IT IS OVER ITS CARRY
 >
 > A band can end up holding more than it could carry without anybody ordering it: a splinter's

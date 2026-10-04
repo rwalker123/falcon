@@ -2930,10 +2930,15 @@ pub fn capture_snapshot(
                     &equipment_config,
                     &expedition_cfg.carry,
                     populations.iter().filter_map(
-                        |(_, cohort, _, _, _, band_id, _, equipment, _)| {
-                            band_id.map(|band| (*band, equipment, cohort))
+                        |(entity, cohort, _, _, _, band_id, _, equipment, _)| {
+                            band_id.map(|band| (entity, *band, equipment, cohort))
                         },
                     ),
+                    populations
+                        .iter()
+                        .filter_map(|(_, cohort, _, _, expedition, _, _, _, _)| {
+                            expedition.map(|expedition| (expedition.home_band, cohort))
+                        }),
                 )
             })
             .unwrap_or_default();
