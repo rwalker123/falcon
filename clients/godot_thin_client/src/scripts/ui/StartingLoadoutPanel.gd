@@ -107,6 +107,8 @@ const BUDGET_TOTAL := "total"
 const CARRY_KIT_LOAD := "kit_load"
 ## The food's share of the carry, in load — its own segment of the bar.
 const CARRY_FOOD_LOAD := "food_load"
+## The free room, signed — `StartingLoadoutController._free_room`, the same figure the orb reads.
+const CARRY_FREE := "free"
 ## ⛔ **THE SPLIT'S FOOD** — `{brought, share}` in load, or `{}` on a window that brings none. Drawn as
 ## one plain line under the meter, plus one amber hint while `brought` is under `share`: two lines at
 ## most, and the controller has already chosen between the wire's figure and the order's preview.
@@ -715,8 +717,7 @@ func _carry_meter(carry: Dictionary, materials: Array) -> Control:
 	# What is actually FREE: the whole carry less the goods AND the food in it.
 	# Floored at ZERO: a band that is not moving is never told it is over its carry, so an over-full
 	# band reads `0 /` and its bar draws full (`HudLoadoutVocab.CARRY_REMAINING_FORMAT`).
-	var remaining := maxf(total - float(carry.get(BUDGET_SPENT, 0.0))
-		- float(carry.get(CARRY_FOOD_LOAD, 0.0)), 0.0)
+	var remaining := maxf(float(carry.get(CARRY_FREE, 0.0)), 0.0)
 	var label := Label.new()
 	label.text = HudLoadoutVocab.CARRY_REMAINING_FORMAT % [
 		HudLoadoutVocab.whole_free(remaining), HudLoadoutVocab.whole_amount(total)]

@@ -44,7 +44,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 185
+const EXPECTED_CHECKPOINTS := 190
 
 const Q := preload("res://tools/ui_preview/node_query.gd")
 ## The walk's shared band fixtures — `with_band_id` is what stamps a cohort's durable id and its name,
@@ -426,6 +426,7 @@ func run(harness) -> void:
 	await _two_presses_do_not_flicker_back()
 	await _a_refused_order_resets_the_picks()
 	await _the_card_prints_whole_numbers()
+	await _a_splinters_food_is_not_unspent_room()
 	_assert_window_shuts()
 	h._hud.set_starting_loadout_requested.disconnect(_on_order)
 
@@ -1183,6 +1184,65 @@ func _fractional_adopt_band(larder: float) -> Dictionary:
 	window[HudLoadoutVocab.FOOD_CARRIED_KEY] = larder
 	window[HudLoadoutVocab.FOOD_FIXED_KEY] = true
 	return band
+
+## ⛔ **A SPLINTER'S FOOD IS NOT UNSPENT ROOM** — reported from play: two splinters reading
+## `0 / 35 carry left` and `Food 22 of 22` while the orb said *"22 carry unspent"*. A GRANT window on a
+## band whose food is NOT fixed (a splinter of a band whose grant was still open), staged twice on one
+## band: full (13 goods + 22 food = 35) must read OUTFITTED with no "carry unspent", and genuinely
+## roomy (5 goods + 22 food, 8 free) must still read *"8 carry unspent"* beside a meter reading 8 —
+## the pair, since either half alone passes on an arm that always or never fires.
+const FOOD_SPLINTER_ENTITY := 6205
+const FOOD_SPLINTER_CARRY := 35.0
+const FOOD_SPLINTER_SHARE := 22.0
+const FOOD_SPLINTER_FULL_GOODS := 13
+const FOOD_SPLINTER_ROOMY_GOODS := 5
+const FOOD_SPLINTER_FULL_METER := "0 / 35 carry left"
+const FOOD_SPLINTER_ROOMY_METER := "8 / 35 carry left"
+const FOOD_SPLINTER_ROOMY_FACT := "8 carry unspent"
+const CARRY_UNSPENT_NEEDLE := "carry unspent"
+
+func _a_splinters_food_is_not_unspent_room() -> void:
+	h._hud.update_band_alerts([_grant_band(), _food_splinter_band(FOOD_SPLINTER_FULL_GOODS)])
+	await h._settle()
+	_controller().open_band(_band_id(FOOD_SPLINTER_ENTITY))
+	await h._settle()
+	h._assert_hud("loadout/splinter food — the full card reads `%s` (got `%s`)"
+			% [FOOD_SPLINTER_FULL_METER, _meter_label_text()],
+		_meter_label_text() == FOOD_SPLINTER_FULL_METER)
+	var row := _band_attention_row(_band_id(FOOD_SPLINTER_ENTITY))
+	h._assert_hud("loadout/splinter food — …and the orb calls it `%s`, never unspent (`%s` / `%s`)"
+			% [HudLoadoutVocab.ATTENTION_LABEL_READY, row.get("label", ""), row.get("detail", "")],
+		String(row.get("label", "")) == HudLoadoutVocab.ATTENTION_LABEL_READY
+			and not String(row.get("detail", "")).contains(CARRY_UNSPENT_NEEDLE))
+	await h._save("starting_loadout_splinter_food_full")
+	h._hud.update_band_alerts([_grant_band(), _food_splinter_band(FOOD_SPLINTER_ROOMY_GOODS)])
+	await h._settle()
+	h._assert_hud("loadout/splinter food — the roomy card reads `%s` (got `%s`)"
+			% [FOOD_SPLINTER_ROOMY_METER, _meter_label_text()],
+		_meter_label_text() == FOOD_SPLINTER_ROOMY_METER)
+	row = _band_attention_row(_band_id(FOOD_SPLINTER_ENTITY))
+	h._assert_hud("loadout/splinter food — …and the orb says `%s`, the meter's own figure (`%s` / `%s`)"
+			% [FOOD_SPLINTER_ROOMY_FACT, row.get("label", ""), row.get("detail", "")],
+		String(row.get("label", "")) == HudLoadoutVocab.ATTENTION_LABEL_UNSPENT
+			and String(row.get("detail", "")).ends_with(FOOD_SPLINTER_ROOMY_FACT))
+
+## A GRANT window on a splinter: its food yields to its goods (`food_fixed` false), the window's food
+## carried being the room its goods leave, capped by the share — what the sim answers.
+func _food_splinter_band(goods: int) -> Dictionary:
+	return _band(FOOD_SPLINTER_ENTITY, {
+		HudLoadoutVocab.OPEN_KEY: true,
+		HudLoadoutVocab.CARRY_CAPACITY_KEY: FOOD_SPLINTER_CARRY,
+		HudLoadoutVocab.FOOD_SHARE_KEY: FOOD_SPLINTER_SHARE,
+		HudLoadoutVocab.FOOD_CARRIED_KEY: minf(FOOD_SPLINTER_SHARE,
+			FOOD_SPLINTER_CARRY - goods * MATERIAL_CARRY_WEIGHT),
+		HudLoadoutVocab.FOOD_FIXED_KEY: false,
+		HudLoadoutVocab.PARENT_BAND_ID_KEY: HudLoadoutVocab.GRANT_PARENT_BAND_ID,
+		HudLoadoutVocab.WINDOW_KITS_KEY: [],
+		HudLoadoutVocab.WINDOW_MATERIALS_KEY: [
+			{HudLoadoutVocab.MATERIAL_DEFAULT_ID_KEY: PICKABLE[0],
+				HudLoadoutVocab.MATERIAL_DEFAULT_UNITS_KEY: goods},
+		],
+	})
 
 ## The band whose allocation the SIM moves. `refit` is the second frame: the carry shrunk and every
 ## row restated against it, which is what a split does to the parent.

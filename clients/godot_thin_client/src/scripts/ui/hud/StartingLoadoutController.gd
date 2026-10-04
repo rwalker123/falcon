@@ -730,6 +730,7 @@ func render() -> void:
 			StartingLoadoutPanel.BUDGET_TOTAL: _carry_of(band),
 			StartingLoadoutPanel.CARRY_KIT_LOAD: _kit_load(band),
 			StartingLoadoutPanel.CARRY_FOOD_LOAD: food_brought_of(band),
+			StartingLoadoutPanel.CARRY_FREE: _free_room(band),
 		},
 		StartingLoadoutPanel.PAYLOAD_FOOD: _food_payload(band),
 		StartingLoadoutPanel.PAYLOAD_REFUSAL: _refusal_text(band),
@@ -1008,8 +1009,8 @@ func materials_spent() -> int:
 		total += int(units)
 	return total
 
-## The subject's carry: what its order weighs, what it may weigh, and what is left — the meter's three
-## numbers. `carry_left` is CLAMPED for its callers; the orb asks `_signed_carry`, unclamped.
+## The subject's carry: what its order weighs, what it may weigh, and what its GOODS allowance has left.
+## `carry_left` is clamped; the meter and the orb read `_free_room`, which also takes the food out.
 func carry_spent() -> float:
 	return _order_load(_subject_state())
 
@@ -1236,7 +1237,18 @@ func _over_detail(band: Dictionary) -> String:
 ## card offers. "Exactly zero" is the wrong test in a float currency with two weights: a 0.5 left over
 ## beside one-unit materials is a full pack.
 func _grant_is_complete(band: Dictionary) -> bool:
-	return _signed_carry(band) < _cheapest_unit_load() - HudLoadoutVocab.CARRY_EPSILON
+	return _free_room(band) < _cheapest_unit_load() - HudLoadoutVocab.CARRY_EPSILON
+
+## ⛔ **THE FREE ROOM — the ONE figure the meter prints and the orb's completeness arm reads**:
+## `carry − goods − food`. They read two different remainders once — the orb took the GOODS
+## allowance, which on a splinter is the whole carry, so the room its food fills read as unspent:
+## `0 / 35 carry left` and `Food 22 of 22` beside *"22 carry unspent"*. The food is whatever
+## `food_brought_of` answers, so the optimistic preview and the wire's echo move both together; on a
+## fixed larder it equals the goods allowance's own remainder. Signed — the meter floors it, and a
+## band below zero is simply full. **The `+` gate does NOT read this**: on a splinter a `+` trades
+## food for goods and stays live while the goods fit the carry (`_goods_allowance`).
+func _free_room(band: Dictionary) -> float:
+	return _carry_of(band) - _order_load(band) - food_brought_of(band)
 
 ## The lightest single thing a press can add — a material unit or one item's worth of kit. A weight of
 ## `0` costs nothing and so cannot be what fills a pack; with both weightless, any remainder at all is
@@ -1260,7 +1272,7 @@ func _grant_detail(band: Dictionary) -> String:
 	if _grant_is_complete(band):
 		return HudLoadoutVocab.ATTENTION_DETAIL_READY
 	return HudLoadoutVocab.ATTENTION_DETAIL_CARRY_UNSPENT_FORMAT \
-		% HudLoadoutVocab.whole_free(maxf(_signed_carry(band), 0.0))
+		% HudLoadoutVocab.whole_free(maxf(_free_room(band), 0.0))
 
 ## A TAKE's detail: what has been taken. **It named the home band until the row named its OWN**, which
 ## was the only way two identically-worded rows could be told apart; the subject's name does that job
