@@ -520,8 +520,18 @@ what lifts it (#689, not built).
   sum: a line two members share (a one-line split) counts once. A same-people network's lines are
   its starting band's `L` however often it split, so splitting while connected changes nothing; a
   band that walks off the network takes its lines and both ceilings fall.
+- **A line held by several breeding populations shares its `K` between them.** A one-line
+  band's split gives both halves a copy of its line (`split_off_share` cannot partition it), so
+  counting the line whole in each unlinked half would let an isolated people split and scatter
+  past `L × K` with no contact. So the pre-pass counts, per `LineId`, how many distinct
+  populations hold it, and a population's ceiling is `lineage::shared_breeding_ceiling` —
+  `floor(Σ K / holders(line))` over its union, summed in fixed point. Across the world the
+  ceilings sum to at most `distinct lines × K` however bands split: two unlinked halves of one
+  line get `floor(19 / 2)` = 9 each, and relinked they are one holder again at 19. With every
+  line held once it is plain `|union| × K`. The `free_breeding_at` lift compares against this
+  shared figure.
 - **It lifts at `free_breeding_at` (500).** `lineage::inbreeding_ceiling` answers `None` once
-  `|lines| × K` reaches `lineage.free_breeding_at`: ~500 is the forager mating-network size
+  the population's (shared) ceiling reaches `lineage.free_breeding_at`: ~500 is the forager mating-network size
   (Birdsell's dialect tribe; Wobst's 175–475) at which a people finds mates without outside
   contact, so past it growth is not restricted by mixing. A lifted population's factor is `1`
   at any head-count (`breeding_factor`), and it publishes `breedingCeiling` `0`
@@ -559,7 +569,9 @@ pair shares the union's one ceiling and a member may exceed its own lines' share
 splinter caps at its own lines; a band above its ceiling bears nobody and loses no one the open arm
 keeps; the three fields off the encoded envelope on a partial-room turn; a population whose
 `lines × K` reaches `free_breeding_at` grows past it and publishes ceiling `0`, one line short of
-it still caps) and `systems::population::breeding_ceiling_tests` (the factor's math, the
+it still caps; two unlinked halves of one line each publish 9 and together never pass 19,
+relinked they publish 19; a people scattered by repeated splits, one-line copies included,
+publishes ceilings summing to at most `L × K`), `lineage::tests` (the per-line share) and `systems::population::breeding_ceiling_tests` (the factor's math, the
 threshold edge, and a capped turn's attribution).
 
 ### Supply Network (logistics from turn 0)

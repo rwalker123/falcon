@@ -1060,7 +1060,9 @@ impl BreedingCeilings {
 /// **The ceiling pre-pass** (issue #688): group the resident bands into breeding populations, and
 /// resolve each population's ceiling and the factor its births are scaled by this turn.
 ///
-/// Per population: the ceiling is `|union of its members' lines| × people_per_line` — lifted
+/// Per population: the ceiling is `Σ people_per_line / holders(line)` over its union's lines
+/// (`lineage::shared_breeding_ceiling` — a line several separate populations hold splits its `K`
+/// between them, so `|union| × people_per_line` when every line is its own) — lifted
 /// altogether once it reaches `free_breeding_at`, when the factor is `1` — the headroom is
 /// `max(0, ceiling − opening head-count)`, and the factor is [`ceiling_factor`] of the headroom
 /// against the members' summed would-be births — priced by [`meal_and_births`], the same function
@@ -1092,15 +1094,23 @@ fn resolve_breeding_ceilings(
                 meal_and_births(&state, band_food_flow(labor), demo).would_be_births;
         }
     }
+    // How many distinct breeding populations hold each line: a line two separate populations both
+    // hold (a one-line split copies it) splits its K between them.
+    let mut holders: BTreeMap<crate::lineage::LineId, u32> = BTreeMap::new();
+    for tally in tallies.values() {
+        for line in &tally.lines {
+            *holders.entry(*line).or_default() += 1;
+        }
+    }
     let lineage = &demo.lineage;
     let ceilings = tallies
         .into_iter()
         .map(|(group, tally)| {
-            let people = crate::lineage::inbreeding_ceiling(
-                tally.lines.len(),
+            let shared = crate::lineage::shared_breeding_ceiling(
+                tally.lines.iter().map(|line| holders[line]),
                 lineage.people_per_line,
-                lineage.free_breeding_at,
             );
+            let people = crate::lineage::inbreeding_ceiling(shared, lineage.free_breeding_at);
             let factor = breeding_factor(people, tally.opening, tally.would_be_births);
             (group, BreedingCeiling { people, factor })
         })
@@ -2326,8 +2336,6 @@ mod demographics_tests {
     }
 }
 
-/// `band_food_flow`'s no-data-vs-genuine-zero disambiguation (#286). An empty `last_yields` alone
-/// cannot tell an unresolved cohort from an idle one — and the two must read oppositely.
 #[cfg(test)]
 mod breeding_ceiling_tests {
     use super::*;
@@ -2386,8 +2394,14 @@ mod breeding_ceiling_tests {
         let k = std::num::NonZeroU16::new(PEOPLE_PER_LINE).unwrap();
         let free_at = std::num::NonZeroU32::new(FREE_BREEDING_AT).unwrap();
         let lines_at = (FREE_BREEDING_AT / u32::from(PEOPLE_PER_LINE)) as usize;
-        let under = crate::lineage::inbreeding_ceiling(lines_at - 1, k, free_at);
-        let at = crate::lineage::inbreeding_ceiling(lines_at, k, free_at);
+        let under = crate::lineage::inbreeding_ceiling(
+            crate::lineage::breeding_ceiling(lines_at - 1, k),
+            free_at,
+        );
+        let at = crate::lineage::inbreeding_ceiling(
+            crate::lineage::breeding_ceiling(lines_at, k),
+            free_at,
+        );
         assert_eq!(under, Some(FREE_BREEDING_AT - u32::from(PEOPLE_PER_LINE)));
         assert_eq!(at, None, "a ceiling of free_breeding_at is lifted");
 
@@ -2471,6 +2485,8 @@ mod breeding_ceiling_tests {
     }
 }
 
+/// `band_food_flow`'s no-data-vs-genuine-zero disambiguation (#286). An empty `last_yields` alone
+/// cannot tell an unresolved cohort from an idle one — and the two must read oppositely.
 #[cfg(test)]
 mod food_flow_tests {
     use super::band_food_flow;

@@ -541,3 +541,145 @@ fn a_population_just_under_the_free_breeding_size_still_caps() {
     assert_eq!(factor, Scalar::zero().raw());
     assert_eq!(published, ceiling);
 }
+
+/// One line — a band that cannot partition it, so its split hands both halves a copy.
+const ONE_LINE: u16 = 1;
+/// A band large enough to split off a crew, in people.
+const SPLITTABLE_PEOPLE: f32 = 100.0;
+/// Workers a splitting fixture sends off — about half a `SPLITTABLE_PEOPLE` band's workers, so
+/// every split of a band holding several lines walks off with some and leaves it fewer.
+const HALF_THE_WORKERS: u32 = 30;
+/// Where a one-line half is re-seated after its split, in people — under its shared ceiling, so the
+/// test watches it grow into the share.
+const SMALL_HALF_PEOPLE: f32 = 6.0;
+/// Turns the shared-line pair runs, enough to fill both halves' shares.
+const SHARED_LINE_TURNS: usize = 120;
+
+/// Split `workers` off `band` and return the splinter. Its trend is left as the split made it, so
+/// it can split in turn; callers neutralize every band once the splitting is done.
+fn split_off(app: &mut App, band: Entity, workers: u32) -> Entity {
+    let split = split_band_from_parent(&mut app.world, band, workers, &SETTLE)
+        .expect("the fixture band can spare the splinter");
+    app.world
+        .query::<(Entity, &BandId)>()
+        .iter(&app.world)
+        .find(|(_, id)| **id == split.band)
+        .map(|(entity, _)| entity)
+        .expect("the splinter is in the world")
+}
+
+/// The home band reduced to one line and split, both halves re-seated small. Both hold a copy of
+/// the same line.
+fn one_line_split(app: &mut App) -> (Entity, Entity) {
+    let (parent, id) = home_band(app);
+    seat_lines(app, parent, id, ONE_LINE);
+    seat_people(app, parent, SPLITTABLE_PEOPLE);
+    let child = split_off(app, parent, HALF_THE_WORKERS);
+    assert_eq!(
+        cohort(app, parent).founding_lines,
+        cohort(app, child).founding_lines,
+        "a one-line split copies its line"
+    );
+    for band in [parent, child] {
+        seat_people(app, band, SMALL_HALF_PEOPLE);
+        neutral_trend(app, band);
+    }
+    (parent, child)
+}
+
+/// **A line two separate groups hold splits its K between them.** Two unlinked halves of a
+/// one-line band each publish `floor(K / 2)`, and together they never exceed one line's `K`.
+#[test]
+fn two_unlinked_halves_of_one_line_share_its_k() {
+    let mut app = one_faction_world();
+    let (parent, child) = one_line_split(&mut app);
+    app.world.run_system_once(balance_supply_networks);
+    assert_eq!(network_of(&app, parent), 0);
+    assert_eq!(network_of(&app, child), 0);
+
+    let k = u32::from(shipped_lineage(&app).1.get());
+    let one_line = Scalar::from_u32(k);
+    for _ in 0..SHARED_LINE_TURNS {
+        turn(&mut app, &[parent, child]);
+        let combined = cohort(&app, parent).total() + cohort(&app, child).total();
+        assert!(
+            combined <= one_line,
+            "{combined:?} people on one line's K of {k}"
+        );
+    }
+    for band in [parent, child] {
+        assert_eq!(
+            cohort(&app, band).last_breeding.ceiling,
+            k / 2,
+            "each half holds half the line"
+        );
+        assert!(
+            total(&app, band) >= (k / 2) as f32 - REACHED_WITHIN_PEOPLE,
+            "liveness: each half grew into its share"
+        );
+    }
+}
+
+/// **Relinked, the line has one holder again**: the pair is one breeding population with the
+/// line's whole `K`.
+#[test]
+fn relinked_halves_of_one_line_hold_its_whole_k() {
+    let mut app = one_faction_world();
+    let (parent, child) = one_line_split(&mut app);
+    tie(&mut app, parent, child);
+    app.world.run_system_once(balance_supply_networks);
+    assert!(network_of(&app, parent) != 0);
+    assert_eq!(network_of(&app, parent), network_of(&app, child));
+
+    turn(&mut app, &[parent, child]);
+    let k = u32::from(shipped_lineage(&app).1.get());
+    for band in [parent, child] {
+        assert_eq!(cohort(&app, band).last_breeding.ceiling, k);
+    }
+}
+
+/// **Splitting never raises a people's total ceiling.** One isolated people split again and again
+/// — down to one-line bands, and a one-line band split once more so its line is copied — with
+/// every band unlinked: the ceilings its bands publish sum to at most `L × K`.
+#[test]
+fn scattering_a_people_never_raises_its_total_ceiling() {
+    let mut app = one_faction_world();
+    let (founder, id) = home_band(&mut app);
+    let (lines, _) = shipped_lineage(&app);
+    seat_lines(&mut app, founder, id, lines);
+    seat_people(&mut app, founder, SPLITTABLE_PEOPLE);
+
+    let mut bands = vec![founder];
+    let mut source = founder;
+    while cohort(&app, source).founding_lines.len() > usize::from(ONE_LINE) {
+        seat_people(&mut app, source, SPLITTABLE_PEOPLE);
+        bands.push(split_off(&mut app, source, HALF_THE_WORKERS));
+        source = *bands.last().unwrap();
+    }
+    // `source` holds one line now; split it again so the line is held twice.
+    seat_people(&mut app, source, SPLITTABLE_PEOPLE);
+    let copy = split_off(&mut app, source, HALF_THE_WORKERS);
+    assert_eq!(
+        cohort(&app, copy).founding_lines,
+        cohort(&app, source).founding_lines
+    );
+    bands.push(copy);
+    for &band in &bands {
+        neutral_trend(&mut app, band);
+    }
+
+    app.world.run_system_once(balance_supply_networks);
+    assert!(bands.iter().all(|&band| network_of(&app, band) == 0));
+    turn(&mut app, &bands);
+
+    let total_ceiling: u32 = bands
+        .iter()
+        .map(|&band| cohort(&app, band).last_breeding.ceiling)
+        .sum();
+    let people_ceiling = ceiling_for(&app, usize::from(lines));
+    assert!(
+        total_ceiling <= people_ceiling,
+        "{} scattered bands publish {total_ceiling} against the people's {people_ceiling}",
+        bands.len()
+    );
+}
