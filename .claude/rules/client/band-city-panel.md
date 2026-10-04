@@ -5340,7 +5340,7 @@ applied one level up: a second total beside the first, shown only when non-zero.
 
 **FODDER IS THAT SIBLING** (issue #449), and it credits the band's `FODDER` store and never the larder,
 so folding it into the food figure would break the identity
-`larder_delta == income − consumption − raid_forfeit − food_spoiled + received − sent`. The head reads `2 sources +0.20
+`larder_delta == income − consumption − raid_forfeit − food_spoiled − food_left_behind + received − sent`. The head reads `2 sources +0.20
 /turn +0.40 fodder` (`WORK_FODDER_TOTAL_TOOLTIP` making the beside-not-in point) and a chip covering
 only hay-bearing patches reads `🌿 1 · 0.40 fodder` — via `SourceForecast.magnitude_components`, the
 bare-magnitude twin of `yield_components` (a chip states levels, not deltas, so no `+`). A kind whose
@@ -6792,7 +6792,7 @@ Pick a band on the map to trade with. Load something first.   (WARN, also the Se
   holds it. The over-cap Send reason stays as a guard and is unreachable in play.
 - **Porters** is the party stepper (`TRADE_PORTERS_LABEL`), its `+` greyed at the idle count with
   `TRADE_PORTERS_AT_MAX_REASON`; the line under it is `N of M free workers · each carries X`, X the
-  sim's resolved `expedition_trade_per_worker_carry`.
+  sim's resolved `carry_per_worker`.
 - **The Send waits for a destination and a load**, each a clause of its hover and of the WARN line
   under it (`TRADE_SEND_NEEDS_DESTINATION`, `TRADE_SEND_NEEDS_CARGO`). **There is no armed pick on this
   sheet**: the destination is set by a click on a ringed band while the sheet is open, and the Send
@@ -6907,8 +6907,8 @@ one), so abandoning a half-typed amount does not also open the pause menu.
 ```text
 row_max = min(what the band HOLDS,
               (carry_cap − the mass of every OTHER row) ÷ this row's carry weight)
-carry_cap    = party_workers × expeditionTradePerWorkerCarry
-carry weight = 1.0 food · expeditionTradeFodderCarryWeight hay · expeditionTradeMaterialCarryWeight material
+carry_cap    = party_workers × carryPerWorker
+carry weight = 1.0 food · carryFodderWeight hay · carryMaterialWeight material
 ```
 
 ⛔ **OTHER rows, never all of them.** A row's own current amount counted against its own headroom
@@ -7062,9 +7062,9 @@ statement about the step.
 
 ```text
 mass = Σ food rows
-     + expeditionTradeFodderCarryWeight   × Σ fodder rows
-     + expeditionTradeMaterialCarryWeight × Σ material row amounts
-cap  = party_workers × expeditionTradePerWorkerCarry
+     + carryFodderWeight   × Σ fodder rows
+     + carryMaterialWeight × Σ material row amounts
+cap  = party_workers × carryPerWorker
 ```
 
 Every term is a per-cohort number the sim publishes, so a tuning change moves the meter and the
@@ -7074,7 +7074,7 @@ refuses.
 
 **THE TWO KINDS ARE NOT THE SAME, AND THE CARRY ONE IS WHY THIS SHEET MAY HOLD THE EXPRESSION AT
 ALL** (issue #626). The carry weights are config levers echoed verbatim: what a unit of hay or hide
-costs in pack space is a property of the GOODS. `expeditionTradePerWorkerCarry` is not a lever — it
+costs in pack space is a property of the GOODS. `carryPerWorker` is not a lever — it
 is the sim's RESOLVED answer to *"what does one worker on this shipment carry"*, with whatever carry
 depends on already applied. So the client's whole share of the rule is the multiplication by the
 party, and a carrier-side model — a cart kit's stat, a tech factor, a road grade — changes the
@@ -7085,7 +7085,7 @@ nothing would fail: the meter would just lie.
 **THREE TERMS, AND THE HAY ONE FAILS IN THE DANGEROUS DIRECTION.** A meter missing the fodder term
 UNDER-prices every manifest with a bale in it: it reads lighter than the sim will weigh it, so the
 send button goes live on a load the server then refuses — the exact failure the material lever
-shipped to prevent, one account over. `expeditionTradeFodderCarryWeight` is FINITE AND >= 0 rather
+shipped to prevent, one account over. `carryFodderWeight` is FINITE AND >= 0 rather
 than positive; `0` legitimately means "hay is weightless".
 
 **The mass expression itself lives in ONE place, `DetailFormat.shipment_mass`**, because the in-flight

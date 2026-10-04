@@ -3,13 +3,13 @@
 //! `snapshot.fbs`'s `fodderTransferRoute{Received,Sent}Turn` shipped ahead of anything that could
 //! fill them: a shipment's manifest took `food` and `material` lines only, so the arms read `0` on
 //! every frame and their comment said so. Issue #590 gave hay a currency in a shipment — a `fodder
-//! <amount>` line, drawn from the same store, priced at `trade.fodder_carry_weight` — and this file
+//! <amount>` line, drawn from the same store, priced at `carry.fodder_carry_weight` — and this file
 //! is what pins the arms live.
 //!
 //! ⛔ **THE HAY IS BOOKED ON ITS OWN LEDGER AND NOWHERE IN THE FOOD ONE.** The food identity
 //!
 //! ```text
-//! larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled
+//! larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled − foodLeftBehind
 //!                 + transferReceived − transferSent
 //! ```
 //!
@@ -42,7 +42,7 @@ const PARENT_WORKERS: f32 = 20.0;
 const SPLIT_WORKERS: u32 = 5;
 /// Workers a shipment party carries.
 const PARTY_WORKERS: u32 = 2;
-/// The hay one shipment carries. Inside `PARTY_WORKERS × trade.per_worker_carry` at any sane
+/// The hay one shipment carries. Inside `PARTY_WORKERS × carry.per_worker_carry` at any sane
 /// `fodder_carry_weight`, and a number nothing else in the fixture could coincidentally produce.
 const CARGO_FODDER: f32 = 7.0;
 /// The hay the sending band opens with. Nothing eats it — the fixture keeps no pens — so every unit
@@ -82,6 +82,8 @@ struct Rows {
     raid_forfeit: f32,
     /// `foodSpoiled` — the food that rotted this turn (#706), the identity's `spoiled` term.
     food_spoiled: f32,
+    /// `foodLeftBehind` — the food a long move left behind (#732), the identity's `left_behind`.
+    food_left_behind: f32,
     food_received: f32,
     food_sent: f32,
     /// `expeditionCargoFodder` — the hay an in-flight party is carrying, on its own wire field.
@@ -91,7 +93,11 @@ struct Rows {
 impl Rows {
     /// The food identity's right-hand side. Hay appears nowhere in it, which is the point.
     fn food_delta(&self) -> f32 {
-        self.food_income - self.food_consumption - self.raid_forfeit - self.food_spoiled
+        self.food_income
+            - self.food_consumption
+            - self.raid_forfeit
+            - self.food_spoiled
+            - self.food_left_behind
             + self.food_received
             - self.food_sent
     }
@@ -126,6 +132,7 @@ fn rows_of(app: &bevy::prelude::App, band: BandId) -> Rows {
         food_consumption: row.foodConsumption(),
         raid_forfeit: row.raidForfeit(),
         food_spoiled: row.foodSpoiled(),
+        food_left_behind: row.foodLeftBehind(),
         food_received: row.transferReceived(),
         food_sent: row.transferSent(),
         cargo_fodder: row.expeditionCargoFodder(),

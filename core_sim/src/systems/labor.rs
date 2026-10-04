@@ -4361,7 +4361,7 @@ fn shed_unopened_party(
 /// ⛔ **It must go on the ledger**, because it is not this turn's income: there is no live row to
 /// publish telemetry that counts it, and food that reached the larder through neither
 /// `food_income` nor a transfer would break the pinned identity
-/// `larder_delta == food_income − food_consumption − raid_forfeit − spoiled + transfer_received −
+/// `larder_delta == food_income − food_consumption − raid_forfeit − spoiled − left_behind + transfer_received −
 /// transfer_sent`. The whole delivery is booked received, and what rots of it the same turn is the
 /// identity's `spoiled` term — exactly the shape [`land_food_home`] gives a live row's income.
 ///

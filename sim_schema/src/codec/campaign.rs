@@ -459,6 +459,8 @@ fn create_opening_loadout<'a>(
             pickableMaterials: Some(pickable),
             materialDefaults: Some(defaults),
             craftableRecipeIds: Some(craftable),
+            itemCarryWeight: state.item_carry_weight,
+            materialCarryWeight: state.material_carry_weight,
         },
     )
 }
@@ -688,6 +690,8 @@ fn decode_opening_loadout(state: fb::OpeningLoadoutState<'_>) -> OpeningLoadoutS
             }
         }),
         craftable_recipe_ids: decode_strings(state.craftableRecipeIds()),
+        item_carry_weight: state.itemCarryWeight(),
+        material_carry_weight: state.materialCarryWeight(),
     }
 }
 

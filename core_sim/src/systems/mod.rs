@@ -212,6 +212,8 @@ pub fn reset_transfer_ledger(mut allocations: Query<&mut LaborAllocation>) {
         allocation.last_food_transfers.clear();
         allocation.last_fodder_transfers.clear();
         allocation.last_transfer_crossings.clear();
+        // The long-move shed is a command-time debit on the same window (#732).
+        allocation.last_food_left_behind = 0.0;
     }
 }
 

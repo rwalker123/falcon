@@ -462,6 +462,15 @@ func _targeting_banner_bbcode(info: Dictionary) -> String:
 	else:
 		instruction = String(BANNER_INSTRUCTIONS.get(String(info.get("command", "")),
 			"click a tile to survey"))
+	# ⛔ **A LONG MOVE THAT LEAVES THINGS BEHIND SAYS SO, IN AMBER, BEFORE THE CLICK** (#732). Only on
+	# an armed Move, and only over a hex past the band's ferry reach when the sim's own forecast says
+	# something would be dropped — the base prompt is untouched everywhere else.
+	var move_warning := move_hover_warning()
+	if move_warning != "":
+		return "[color=#%s]%s[/color]  [color=#%s]%s[/color] [color=#%s]%s[/color] [color=#%s]%s[/color]" % [
+			HudStyle.SIGNAL_HEX, cmd, HudStyle.INK_HEX, ctx, HudStyle.INK_DIM_HEX,
+			HudComposeVocab.VERB_HOVER_ARROW, HudStyle.WARN_HEX, move_warning,
+		]
 	var detail := _hover_detail()
 	if detail != "":
 		# **THE HOVER STATES WHAT THE CLICK WOULD COMMIT TO** — `DENY Saltmarch → Wild Boar · <verdict>`.
@@ -472,6 +481,44 @@ func _targeting_banner_bbcode(info: Dictionary) -> String:
 	return "[color=#%s]%s[/color]  [color=#%s]%s[/color]%s   [color=#%s]— %s[/color]" % [
 		HudStyle.SIGNAL_HEX, cmd, HudStyle.INK_HEX, ctx, loc, HudStyle.INK_DIM_HEX, instruction,
 	]
+
+## **WHAT AN ARMED MOVE WOULD LEAVE BEHIND AT THE HOVERED HEX**, `""` when nothing would be (#732).
+##
+## ⛔ **NO CLIENT MIRROR OF THE SHEDDING RULE.** The sim publishes its own forecast of a long move on the
+## cohort (`long_move_leaves_*`, computed by the very function the move runs); the client decides only
+## WHETHER the hovered hex is a long move — hex distance past `move_ferry_reach_tiles`, wrap-aware —
+## and then quotes the published numbers. Within the reach nothing is dropped, so nothing is said.
+##
+## A detached party is not a resident band and keeps its own rules (its forecast is always 0), so an
+## armed Move on one says nothing here either. Whole numbers: food and materials are rounded for
+## display, the item count already is.
+func move_hover_warning() -> String:
+	if _pending_move_band.is_empty() or _hovered_tile_info.is_empty():
+		return ""
+	var band := _pending_move_band
+	if bool(band.get("is_expedition", false)):
+		return ""
+	var food := roundi(float(band.get(HudComposeVocab.MOVE_LEAVES_FOOD_KEY, 0.0)))
+	var items := int(band.get(HudComposeVocab.MOVE_LEAVES_ITEMS_KEY, 0))
+	var materials := roundi(float(band.get(HudComposeVocab.MOVE_LEAVES_MATERIALS_KEY, 0.0)))
+	if food <= 0 and items <= 0 and materials <= 0:
+		return ""
+	var origin := SourceForecast.band_tile(band)
+	var x := int(_hovered_tile_info.get("x", -1))
+	var y := int(_hovered_tile_info.get("y", -1))
+	if x < 0 or y < 0 or origin.x < 0 or origin.y < 0:
+		return ""
+	var reach := int(band.get(HudComposeVocab.MOVE_FERRY_REACH_KEY, 0))
+	if _hex_distance_wrapped(origin.x, origin.y, x, y) <= reach:
+		return ""
+	var parts: Array[String] = []
+	if food > 0:
+		parts.append(HudComposeVocab.MOVE_LEAVES_FOOD_FORMAT % food)
+	if items > 0:
+		parts.append(HudComposeVocab.MOVE_LEAVES_GEAR_FORMAT % items)
+	if materials > 0:
+		parts.append(HudComposeVocab.MOVE_LEAVES_MATERIALS_FORMAT % materials)
+	return HudComposeVocab.MOVE_LEAVES_FORMAT % HudComposeVocab.MOVE_LEAVES_JOIN.join(parts)
 
 ## Cancel the active targeting (banner Cancel / Esc / right-click all route here). **An armed VERB pick
 ## is cancelled ALONE** (`verb_pick_cancelled`): the pick is the sheet's last step, so backing out of it

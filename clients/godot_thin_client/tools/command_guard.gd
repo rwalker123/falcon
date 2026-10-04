@@ -67,14 +67,16 @@ const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
 ## **THE OUTFITTING ORDER THE CARD COMMITS.** The material half is a pick list of one and the kit half
 ## a pre-fill of one, because what this guard reads off the line is the BAND TOKEN — a longer order
-## would be more tokens saying the same thing. Both budgets sit above the pre-fill, the client drawing
-## a published pre-fill as-is.
+## would be more tokens saying the same thing. The carry sits well above the pre-fill's load (2 kits
+## of 2 items + 4 units = 8), the client drawing a published pre-fill as-is.
 const LOADOUT_MATERIALS := ["hide"]
 const LOADOUT_UNITS := 4
 const LOADOUT_KIT_ID := "big_game"
 const LOADOUT_KIT_COUNT := 2
-const LOADOUT_KIT_BUDGET := 12
-const LOADOUT_MATERIAL_BUDGET := 30
+const LOADOUT_CARRY_CAPACITY := 42.0
+## The shipped `expedition_config.carry.item_carry_weight` / `.material_carry_weight`.
+const LOADOUT_ITEM_CARRY_WEIGHT := 1.0
+const LOADOUT_MATERIAL_CARRY_WEIGHT := 1.0
 
 ## The stepper face pressed to compose an order on the outfitting card. `HudWidgets` stamps no meta on
 ## either stepper button, so the face is the handle.
@@ -177,7 +179,7 @@ const TRADE_HIDE_AXIS_BAND := "excellent"
 ## and a cargo this harness cannot send emits no line to parse.
 const TRADE_PER_WORKER_CARRY := 120.0
 const TRADE_MATERIAL_CARRY_WEIGHT := 1.0
-## Hay's own pack-space price, the shipped `expedition_config.trade.fodder_carry_weight`. Stated so
+## Hay's own pack-space price, the shipped `expedition_config.carry.fodder_carry_weight`. Stated so
 ## the meter this drive has to get past prices the hay row the way the server will, and so the pack
 ## above holds all three piles at once.
 const TRADE_FODDER_CARRY_WEIGHT := 0.5
@@ -301,6 +303,8 @@ func _drive_set_starting_loadout() -> void:
 	_hud.update_opening_loadout({
 		"pickable_materials": LOADOUT_MATERIALS,
 		"craftable_recipe_ids": [],
+		"item_carry_weight": LOADOUT_ITEM_CARRY_WEIGHT,
+		"material_carry_weight": LOADOUT_MATERIAL_CARRY_WEIGHT,
 	})
 	_hud.update_band_alerts([_outfitting_band_fixture(), _party_fixture()])
 	await _settle()
@@ -308,15 +312,14 @@ func _drive_set_starting_loadout() -> void:
 	await _settle()
 
 ## The band fixture with an OPEN GRANT window on it — the turn-one shape. **Its allocation is what the
-## band already holds**, the default outfit the sim applied at its creation, and the budgets are large
+## band already holds**, the default outfit the sim applied at its creation, and the carry is large
 ## enough to leave room for the press below (the client draws a published allocation as-is and the sim
-## is what clamps it, so a budget under it would be a fixture no server can send).
+## is what clamps it, so a carry under it would be a fixture no server can send).
 func _outfitting_band_fixture() -> Dictionary:
 	var band := _band_fixture()
 	band["loadout_window"] = {
 		"open": true,
-		"kit_budget": LOADOUT_KIT_BUDGET,
-		"material_budget": LOADOUT_MATERIAL_BUDGET,
+		"carry_capacity": LOADOUT_CARRY_CAPACITY,
 		"parent_band_id": 0,
 		"kits": [{"kit_id": LOADOUT_KIT_ID, "count": LOADOUT_KIT_COUNT}],
 		"materials": [{"material_id": LOADOUT_MATERIALS[0], "units": LOADOUT_UNITS}],
@@ -1324,9 +1327,9 @@ func _band_fixture() -> Dictionary:
 		HudCraftingVocab.BAND_MATERIAL_BATCHES_KEY: [_hide_batch_fixture()],
 		# The two shipment pack levers, so the manifest the drive composes is one the meter passes and
 		# the send button therefore exists to be pressed.
-		"expedition_trade_per_worker_carry": TRADE_PER_WORKER_CARRY,
-		"expedition_trade_material_carry_weight": TRADE_MATERIAL_CARRY_WEIGHT,
-		"expedition_trade_fodder_carry_weight": TRADE_FODDER_CARRY_WEIGHT,
+		"carry_per_worker": TRADE_PER_WORKER_CARRY,
+		"carry_material_weight": TRADE_MATERIAL_CARRY_WEIGHT,
+		"carry_fodder_weight": TRADE_FODDER_CARRY_WEIGHT,
 		"output_multiplier": 1.0,
 		"work_range": BAND_WORK_RANGE,
 		"max_expedition_party_size": RAID_MAX_PARTY,

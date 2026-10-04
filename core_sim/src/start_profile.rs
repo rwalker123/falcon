@@ -152,30 +152,31 @@ pub struct StartProfileOverrides {
 /// source of opening gear and material — `equipment.json` ships `start_stock_fraction: 0.0` and no
 /// material declares a start stock any more.
 ///
-/// # ⛔ THE KIT BUDGET IS NOT HERE, AND MUST NOT MOVE HERE
+/// # ⛔ THERE IS NO BUDGET HERE, AND THERE MUST NOT BE ONE
 ///
-/// One kit per working-age hand is a **model fact**, derived from the band that actually spawned
+/// The window's budget is the spawned band's **carry**: its working-age hands
 /// (`size × demographics.initial_distribution.working`, floored — the same `party_workers` the spawn
-/// already computes). A dial here would be a second, independent statement of how many people the
-/// band has, free to disagree with the band itself the moment a band size or a working share is
-/// retuned. The **material** budget has no such head count to derive from — nothing says how much
-/// bone a band walked in with — so it is, and can only be, a number.
+/// already computes) × one worker's pack, `expedition_config.json` `carry.per_worker_carry`
+/// ([`crate::carry::carry_capacity`]). Kits and materials are spent from it alike,
+/// in the one load currency. A dial here would be a second, independent statement of how much the
+/// band can carry, free to disagree with the band itself the moment a band size, a working share or
+/// the pack is retuned.
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct OpeningLoadoutConfig {
-    /// Material points the player may spend, where **one point buys one unit**. Validated `> 0`.
-    pub material_points: u32,
     /// **The pick list, in the order the client draws it.** A material absent from it cannot be
     /// bought at any price, which is what keeps `hurdles` and the three luxury crops off a list
     /// nobody would spend on. Validated non-empty, and every entry must name a material the
     /// materials table carries.
     pub pickable_materials: Vec<String>,
-    /// **The material half of the DEFAULT OUTFIT the sim applies to every band at creation**
+    /// **The material half of the DEFAULT OUTFIT the sim applies to the opening band at creation**
     /// ([`crate::starting_loadout::outfit_band_with_defaults`]), re-fitted to that band's own budget.
+    /// A splinter's default is drawn from its parent's allocation instead.
     /// It is the allocation the window opens on and the player is free to spend elsewhere — but it
     /// is *applied*, not suggested, so a card nobody commits costs the band nothing. Empty is the
     /// ordinary case and means *"the window opens with everything unspent"*. Every key must be in
-    /// [`Self::pickable_materials`], and the values must sum at or below [`Self::material_points`].
+    /// [`Self::pickable_materials`]. There is no sum check: the budget is the band's carry, which
+    /// does not exist until the band does, so the defaults are fitted to it when applied.
     #[serde(default)]
     pub material_defaults: BTreeMap<String, u32>,
     /// **The kit half of the default outfit** — the material twin above, on exactly the same terms.
@@ -188,11 +189,10 @@ pub struct OpeningLoadoutConfig {
     ///
     /// # ⛔ THERE IS NO SUM CHECK HERE, BECAUSE THE BUDGET IS NOT IN THIS FILE
     ///
-    /// [`Self::material_defaults`] can be validated against [`Self::material_points`] at load
-    /// because both are config. The kit budget is **derived from the spawned band's working-age head
-    /// count**, which does not exist until worldgen has run — so an over-allocating default cannot
-    /// be a parse error and is instead **clamped when it is applied** by
-    /// [`crate::starting_loadout::clamped_kit_defaults`], which states the clamping rule and warns
+    /// The carry budget is **derived from the spawned band's working-age head count**, which does
+    /// not exist until worldgen has run — so an over-allocating default (kits and materials
+    /// together) cannot be a parse error and is instead **fitted when it is applied** by
+    /// [`crate::starting_loadout::fit_to_carry`], which states the fitting rule; the stamp warns
     /// when it binds.
     #[serde(default)]
     pub kit_defaults: BTreeMap<String, u32>,
@@ -486,14 +486,6 @@ fn validate_opening_loadout(
     profile: &str,
     loadout: &OpeningLoadoutConfig,
 ) -> Result<(), StartProfilesError> {
-    if loadout.material_points == 0 {
-        return Err(StartProfilesError::InvalidOpeningLoadout {
-            profile: profile.to_string(),
-            reason: "`material_points` must be greater than 0 - a window that can buy nothing is \
-                     a window that should not open"
-                .to_string(),
-        });
-    }
     if loadout.pickable_materials.is_empty() {
         return Err(StartProfilesError::InvalidOpeningLoadout {
             profile: profile.to_string(),
@@ -512,8 +504,7 @@ fn validate_opening_loadout(
             });
         }
     }
-    let mut defaulted = 0u32;
-    for (id, units) in &loadout.material_defaults {
+    for id in loadout.material_defaults.keys() {
         if !loadout.pickable_materials.iter().any(|pick| pick == id) {
             return Err(StartProfilesError::InvalidOpeningLoadout {
                 profile: profile.to_string(),
@@ -523,21 +514,10 @@ fn validate_opening_loadout(
                 ),
             });
         }
-        defaulted = defaulted.saturating_add(*units);
     }
-    if defaulted > loadout.material_points {
-        return Err(StartProfilesError::InvalidOpeningLoadout {
-            profile: profile.to_string(),
-            reason: format!(
-                "`material_defaults` sum to {defaulted}, over the {} `material_points` on offer - \
-                 the window would open already overdrawn",
-                loadout.material_points
-            ),
-        });
-    }
-    // **No sum check on the kit side**, because the kit budget is the spawned band's own head count
-    // rather than a number in this file — see `OpeningLoadoutConfig::kit_defaults`. A count of zero
-    // is still a fault here: a pre-fill of nothing is exactly what an absent key already says.
+    // **No sum check on either side**, because the budget is the spawned band's own carry rather
+    // than a number in this file — see `OpeningLoadoutConfig::kit_defaults`. A count of zero is
+    // still a fault here: a pre-fill of nothing is exactly what an absent key already says.
     for (id, count) in &loadout.kit_defaults {
         if *count == 0 {
             return Err(StartProfilesError::InvalidOpeningLoadout {
@@ -995,13 +975,7 @@ mod tests {
         for profile in profiles.iter() {
             let loadout = &profile.overrides().opening_loadout;
             checked += 1;
-            assert!(loadout.material_points > 0, "{}", profile.id);
             assert!(!loadout.pickable_materials.is_empty(), "{}", profile.id);
-            assert!(
-                loadout.material_defaults.values().sum::<u32>() <= loadout.material_points,
-                "{} pre-fills more than it offers",
-                profile.id
-            );
         }
         assert!(
             checked > 0,
@@ -1027,14 +1001,6 @@ mod tests {
     }
 
     #[test]
-    fn a_non_positive_material_budget_is_rejected() {
-        assert!(matches!(
-            mutated_loadout(|loadout| loadout["material_points"] = Value::from(0)),
-            StartProfilesError::InvalidOpeningLoadout { .. }
-        ));
-    }
-
-    #[test]
     fn an_empty_pick_list_is_rejected() {
         assert!(matches!(
             mutated_loadout(|loadout| loadout["pickable_materials"] = Value::Array(Vec::new())),
@@ -1052,14 +1018,17 @@ mod tests {
         ));
     }
 
+    /// ⛔ **THE RETIRED `material_points` KEY IS REFUSED**, not ignored: the block is
+    /// `deny_unknown_fields`, so a profile still naming the old flat material budget fails to parse
+    /// rather than silently losing a dial its author thinks is live.
     #[test]
-    fn defaults_over_the_budget_are_rejected() {
+    fn the_retired_material_points_key_is_refused() {
+        let mut json: Value =
+            serde_json::from_str(BUILTIN_START_PROFILES).expect("the builtin parses as json");
+        json["profiles"][0]["opening_loadout"]["material_points"] = Value::from(30);
         assert!(matches!(
-            mutated_loadout(|loadout| {
-                let points = loadout["material_points"].as_u64().expect("a number");
-                loadout["material_defaults"]["bone"] = Value::from(points + 1);
-            }),
-            StartProfilesError::InvalidOpeningLoadout { .. }
+            StartProfiles::from_json_str(&json.to_string()),
+            Err(StartProfilesError::Parse(_))
         ));
     }
 
@@ -1083,11 +1052,13 @@ mod tests {
         ));
     }
 
-    /// **The kit column opens on the three subsistence kits, four hands each.**
+    /// **The kit column opens on the three subsistence kits, a kit per hand.**
     ///
     /// The counts are asserted as literals because they are the shipped *opening state of the game*
     /// — the first thing a player sees in that column — so a pre-fill that drifted to something else
-    /// should have to be changed on purpose.
+    /// should have to be changed on purpose. Stalking 5 / Harvesting 7 / Trapping 5 is the
+    /// maintainer's playtest outfit: 17 kits for the shipped band's 17 hands, so an untouched split
+    /// hands a kit per splinter worker.
     #[test]
     fn the_shipped_profile_pre_fills_the_three_subsistence_kits() {
         let profiles = StartProfiles::builtin();
@@ -1102,9 +1073,9 @@ mod tests {
                 .iter()
                 .map(|(id, count)| (id.as_str(), *count))
                 .collect::<Vec<_>>(),
-            vec![("big_game", 4), ("gathering", 4), ("trapping", 4)],
-            "Stalking, Harvesting and Trapping, four hands each - a plausible band rather than a \
-             column of zeros, with hands still left to spend deliberately"
+            vec![("big_game", 5), ("gathering", 7), ("trapping", 5)],
+            "Stalking, Harvesting and Trapping, a kit per hand on the shipped 17 - a plausible band \
+             rather than a column of zeros"
         );
     }
 
@@ -1153,10 +1124,9 @@ mod tests {
         ));
     }
 
-    /// ⛔ **THERE IS NO SUM CHECK ON THE KIT SIDE, AND THAT IS DELIBERATE.** The budget is the
-    /// spawned band's head count, which does not exist at load; an over-allocating pre-fill parses
-    /// and is clamped when it is applied to a band instead
-    /// ([`crate::starting_loadout::clamped_kit_defaults`]).
+    /// ⛔ **THERE IS NO SUM CHECK, AND THAT IS DELIBERATE.** The budget is the spawned band's
+    /// carry, which does not exist at load; an over-allocating pre-fill parses and is fitted when it
+    /// is applied to a band instead ([`crate::starting_loadout::fit_to_carry`]).
     #[test]
     fn a_kit_pre_fill_over_any_plausible_budget_still_parses() {
         let mut json: Value =

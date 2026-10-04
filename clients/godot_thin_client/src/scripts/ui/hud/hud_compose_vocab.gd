@@ -1227,6 +1227,22 @@ const VERB_HOVER_ARROW := "→"
 const VERB_HOVER_JOIN := " · "
 const VERB_HOVER_DETAIL_FORMAT := "%s · %s"
 const VERB_HOVER_MORE_FORMAT := "%s +%d more"
+## ⛔ **A LONG MOVE LEAVES BEHIND WHAT THE BAND CANNOT CARRY** (#732). Over a hex farther than the
+## band's `move_ferry_reach_tiles`, an armed Move's banner states the sim's own forecast
+## (`long_move_leaves_*`) as an AMBER hover detail — never a client mirror of the shedding rule. Each
+## part with nothing to leave is dropped; within the reach, or when nothing would be left, the banner
+## is unchanged. Whole numbers, so food and materials are rounded for display.
+const MOVE_LEAVES_FORMAT := "Too far to carry it all — leaves %s behind"
+const MOVE_LEAVES_FOOD_FORMAT := "%d food"
+const MOVE_LEAVES_GEAR_FORMAT := "%d gear"
+const MOVE_LEAVES_MATERIALS_FORMAT := "%d materials"
+const MOVE_LEAVES_JOIN := ", "
+## The cohort keys the warning reads — the sim's own forecast of a long move, decoded in
+## `native/src/dict/population.rs`. All four are `0` when the band fits (and on a detached party).
+const MOVE_FERRY_REACH_KEY := "move_ferry_reach_tiles"
+const MOVE_LEAVES_FOOD_KEY := "long_move_leaves_food"
+const MOVE_LEAVES_ITEMS_KEY := "long_move_leaves_items"
+const MOVE_LEAVES_MATERIALS_KEY := "long_move_leaves_materials"
 ## The Deny pick's herd chooser's node name — a `PopupMenu` at the pointer, opened by a click on a hex
 ## holding more than one eligible herd (`TargetingController._open_quarry_chooser`).
 const QUARRY_CHOOSER_NAME := "QuarryChooser"
@@ -1340,8 +1356,8 @@ const COMPOSE_CARGO_NONE_PACKED_REASON := "None of this is packed yet."
 const COMPOSE_CARGO_FIELD_HINT := "Type an amount and press Enter. Esc puts the last one back."
 
 ## The pack meter (`TRADE_PACK_CARRIED_FORMAT`). **Every number in it comes off the wire**
-## (`expedition_trade_per_worker_carry` × the party for the cap;
-## `expedition_trade_fodder_carry_weight` on the hay and `expedition_trade_material_carry_weight` on
+## (`carry_per_worker` × the party for the cap;
+## `carry_fodder_weight` on the hay and `carry_material_weight` on
 ## the material total for the mass), never a literal: the sim refuses an over-cap manifest naming
 ## both sides, and a client quoting a lever of its own would be one config edit from a meter that
 ## disagrees with the refusal it exists to prevent. The carry term arrives ALREADY RESOLVED (issue

@@ -97,8 +97,12 @@ of nobody is not a band, so `min_founding_workers ≥ 1` is validated.
 
 ## The dowry, and the two lines that are not in it
 
-- **A proportional share of the larder** — not a reserve calculation and not a new number. The new band
-  starts stocked because its people were already sitting on that food.
+- **A proportional share of the larder, up to what the splinter can carry** — not a reserve
+  calculation and not a new number. The new band starts stocked because its people were already
+  sitting on that food. The split itself moves **no** food: the splinter's outfitting window
+  loads its goods first and food fills the room left, up to this share, re-resolved on every order
+  (`.claude/rules/core_sim/band-carry.md`, `starting-loadout.md`). The dowry books what actually
+  crossed, delta by delta.
 > ⛔ **THE TWO GOODS BULLETS BELOW ARE THE *TAKE* ARM — a split whose parent still holds an unspent
 > grant moves NEITHER.** It partitions the grant instead, and moving goods on top of that charged the
 > parent twice (`.claude/rules/core_sim/starting-loadout.md` → "A grant split pays ONCE"). The people,
@@ -168,14 +172,14 @@ of nobody is not a band, so `min_founding_workers ≥ 1` is validated.
 > re-sending it unchanged is an exact no-op
 > (`split_loadout::re_sending_the_published_allocation_untouched_changes_nothing`).
 >
-> **The rule is proportional, floored, remainder unspent** — `clamped_kit_defaults`' rule, applied to a
+> **The rule is proportional, floored, remainder unspent** — `fit_to_carry`'s rule, applied to a
 > different budget. Two clamps, because `sled` is used by **several** kits — `big_game`, `trapping`
 > and the three `extract` kits, `sledding` among them — and so no kit's count can be resolved on its
 > own: each kit's own ceiling is the minimum share across the items it uses, and where the kits'
 > combined demand for an item exceeds that item's share they are all scaled by `budget ÷ demand` and
 > floored. **So a small share can move no hunting kit at all**: a parent holding eight sleds and four
 > spears gives a six-of-16.5 splinter two sleds' worth of share, which `big_game`, `trapping` and
-> `sledding` all want, and the scaled floor lands the one sled on `sledding`. Not first-come, for the reason `clamped_kit_defaults` states:
+> `sledding` all want, and the scaled floor lands the one sled on `sledding`. Not first-come, for the reason `fit_to_carry` states:
 > the roster has no author's order to consume in, so "declaration order" is really *id* order and makes
 > `big_game` beat `trapping` because `b` sorts first.
 >
@@ -233,7 +237,7 @@ nothing carried the food anywhere — the same *standing together* crossing pool
 **A split is a command, so it lands *between* two captures** — inside the interval a client's
 `larder_delta` measures. Without the booking the parent publishes a frame whose Food line is short by
 exactly the provisions and the child's opens at food it never grew, and the identity
-`larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled + transferReceived −
+`larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled − foodLeftBehind + transferReceived −
 transferSent` is simply false on the turn a band splits. The child receives it on the
 `LaborAllocation` it is spawned with, because its first published frame is the one that has to
 account for it.
@@ -283,9 +287,10 @@ allocation** — the kit and material rows the card draws itself from — and it
 advances. What the split does to get there is a fact about the **parent's** state rather than about
 the turn:
 
-- the parent still **grants** → the split **partitions the grant** and moves nothing off the parent;
-  the splinter then **mints the campaign default** against its own slice of that grant
-  (`starting_loadout::outfit_band_with_defaults`), so it is standing in an outfit from the moment it
+- the parent still **grants** → the split **recomputes the grant** and moves nothing off the parent;
+  the splinter then **mints its split default** (`split_default_outfit`: its proportional share of
+  the parent's kits, its food, materials in the room left — `band-carry.md`) through
+  `fission::outfit_grant_splinter`, so it is standing in an outfit from the moment it
   exists and its window's rows are what that apply set
   (`.claude/rules/core_sim/starting-loadout.md` → "A default is applied, never suggested"). The
   parent is separately re-fitted to what the partition left it;

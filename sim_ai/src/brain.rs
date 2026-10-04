@@ -680,8 +680,7 @@ mod tests {
         let working_age = view.snapshot.populations[0].working_age;
         view.snapshot.populations[0].loadout_window = Some(BandLoadoutWindowState {
             open: true,
-            kit_budget: working_age,
-            material_budget: 0,
+            carry_capacity: crate::specialists::food::tests::FIXTURE_BAND_CARRY,
             ..Default::default()
         });
         let mut sink = VecSink::default();

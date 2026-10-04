@@ -1,11 +1,16 @@
 extends RefCounted
 
-## THE OUTFITTING PICKER (issue #629) — a band's outfitting window: two meters, a pick list, and the
-## readout that says what the pile is worth.
+## THE OUTFITTING PICKER (issue #629) — a band's outfitting window: ONE carry meter (#732), a pick
+## list, and the readout that says what the pile is worth.
 ##
-## **IT WALKS BOTH WINDOWS.** The spawned band's GRANT (two budgets, picks that MINT) comes first and
-## is most of the chapter; the TAKE a split opens on a splinter (picks that MOVE gear out of the home
-## band, capped per ITEM) is appended at the end, after the orb states, so nothing before it moves.
+## **IT WALKS BOTH WINDOWS.** The spawned band's GRANT (picks that MINT) comes first and is most of the
+## chapter; the TAKE a split opens on a splinter (picks that MOVE gear out of the home band, capped per
+## ITEM as well as by the carry) is appended at the end, after the orb states, so nothing before it
+## moves.
+##
+## ⛔ **BOTH ARE CAPPED BY THE BAND'S CARRY** — an order's load is `item weight × expanded item units +
+## material weight × material units` against the window's `carry_capacity`. The fixture weights are the
+## shipped 1.0 each, so a `big_game` kit (spears + sled) weighs 2 and a `gathering` kit 1.
 ##
 ## ⛔ **THE CARD DRAWS WHAT THE BAND HOLDS, AND EVERY PRESS ORDERS.** The sim applies a band's default
 ## outfit when it makes the band, so `loadout_window.kits` / `.materials` are gear in hands rather than
@@ -39,7 +44,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 159
+const EXPECTED_CHECKPOINTS := 190
 
 const Q := preload("res://tools/ui_preview/node_query.gd")
 ## The walk's shared band fixtures — `with_band_id` is what stamps a cohort's durable id and its name,
@@ -61,29 +66,52 @@ var h
 
 # ---- the window the sim publishes ---------------------------------------------------------------
 
-## One kit per working-age hand of the shipped 30-person band — the sim DERIVES this, so a fixture
-## states it rather than inventing a dial.
-const KIT_BUDGET := 17
-## `start_profiles.json` `opening_loadout.material_points`.
-const MATERIAL_BUDGET := 30
+## The working-age hands of the fixture band. Nothing on the card reads it any more — the carry is
+## the sim's answer, published on the window — but a cohort reaching `update_band_alerts` is shaped
+## like one.
+const WORKING_AGE := 17
+## ⛔ **THE GRANT'S CARRY, IN LOAD.** The defaults weigh 48 (20 items + 28 units), so the meter opens
+## with 12 left; three `big_game` presses take it to 54, and three more fill it EXACTLY — every step
+## is 2, so the pack closes on the unit rather than leaving a fraction no press can spend.
+const CARRY_CAPACITY := 60.0
+## ⛔ **THE OPENING BAND'S LARDER, IN LOAD — a FIXED larder** (`food_fixed`): it counts against the
+## carry without yielding to goods, so the window publishes the WHOLE carry (goods room + larder) and
+## the goods allowance is that less the larder — `CARRY_CAPACITY` above, unchanged. The card states it
+## as the bar's food segment and `Food 18`, which is what says why the goods room is smaller.
+const GRANT_FOOD := 18.0
+const GRANT_WHOLE_CARRY := CARRY_CAPACITY + GRANT_FOOD
+const GRANT_FOOD_LINE := "Food 18"
+## The shipped `carry.item_carry_weight` / `carry.material_carry_weight`.
+const ITEM_CARRY_WEIGHT := 1.0
+const MATERIAL_CARRY_WEIGHT := 1.0
 ## The shipped pick list, in the profile's own order — which is also the draw order of the resources
 ## column and of the legend above the recipe list.
 const PICKABLE := ["bone", "fibre", "hide", "wood", "stone"]
-## …and the pile the band already holds, the profile's own spread as the sim applied it. Sums to 28 of
-## 30, deliberately NOT to the budget: a fixture holding its whole budget could not tell a working
-## meter from one stuck at zero.
+## …and the pile the band already holds, the profile's own spread as the sim applied it. With the kits
+## it weighs 48 of 60, deliberately NOT the whole carry: a fixture holding its whole carry could not
+## tell a working meter from one stuck at zero.
 const DEFAULT_BONE := 3
 const DEFAULT_FIBRE := 17
 const DEFAULT_HIDE := 8
 const DEFAULTS_TOTAL := DEFAULT_BONE + DEFAULT_FIBRE + DEFAULT_HIDE
 
-## The KITS THE BAND HOLDS — the shipped spread, and 12 of the 17-kit budget so the meter opens with
-## something left for the same reason the material one does. **The sim fitted these to the budget when
-## it applied them**; the fixture states them as the sim would and the picker must draw them unchanged.
+## The KITS THE BAND HOLDS — the shipped spread. **The sim fitted these to the carry when it applied
+## them**; the fixture states them as the sim would and the picker must draw them unchanged.
 const DEFAULT_STALKING := 4
 const DEFAULT_TRAPPING := 4
 const DEFAULT_GATHERING := 4
-const KIT_DEFAULTS_TOTAL := DEFAULT_STALKING + DEFAULT_TRAPPING + DEFAULT_GATHERING
+## What one kit of each weighs at the shipped item weight — the items it EXPANDS to.
+const KIT_STALKING_ITEMS := 2
+const KIT_TRAPPING_ITEMS := 2
+const KIT_GATHERING_ITEMS := 1
+## The opening load: 4×2 + 4×2 + 4×1 items and 28 units — spelled as the sum the server weighs.
+const DEFAULT_LOAD := (DEFAULT_STALKING * KIT_STALKING_ITEMS + DEFAULT_TRAPPING * KIT_TRAPPING_ITEMS
+	+ DEFAULT_GATHERING * KIT_GATHERING_ITEMS) * ITEM_CARRY_WEIGHT + DEFAULTS_TOTAL * MATERIAL_CARRY_WEIGHT
+## ⛔ **WHAT ONE MORE `big_game` COSTS, SAID ON ITS ROW** — a kit that puts two items in hands weighs
+## 2, which is not obvious. A LITERAL, the needle rule: a needle composed through the format under test
+## moves with it. The one-item `gathering` row must carry no such clause.
+const KIT_CARRY_COST_NEEDLE := "· 2 carry"
+const CARRY_COST_WORD := "carry"
 
 ## **THE GATED BENCH TOOL, PRESENT IN THE RECIPE BOOK AND ABSENT FROM `craftable_recipe_ids`.** It is
 ## the whole reason the list of ids is published: a client that filtered on anything else — a refusal
@@ -120,22 +148,21 @@ const KIT_NONE := "none"
 # ---- the OVER-BUDGET band (the reported screen) --------------------------------------------------
 
 const OVER_BAND_ENTITY := 6203
-## Its budgets are the ones the split left it with; its accepted rows are what it still claims. The
-## two overspends are DIFFERENT sizes and in different currencies, so a detail that reported one for
-## the other lands on the wrong number rather than on a coincidence.
-const OVER_KIT_BUDGET := 12
-const OVER_KITS_HELD := 14
-const OVER_MATERIAL_BUDGET := 22
-const OVER_UNITS_HELD := 28
-## What the card's own material meter must read — the reported `-6 / 22 left`, spelled as a LITERAL
-## rather than composed through `BUDGET_REMAINING_FORMAT`, since an expectation built from the format
-## under test can only agree with itself.
-const OVER_METER_NEEDLE := "-6 / 22 left"
-## …and the row's whole detail, by equality: the band leads, then both overspends.
-const OVER_DETAIL := "Windmere — 2 kits, 6 resources over budget"
-## The words the READY arm uses, asserted ABSENT from an over-budget row — the defect was those exact
-## words on this exact band.
-const ORB_DETAIL_READY_NEEDLE := "everything is picked"
+## Its carry is the one the split left it with; its accepted rows are what it still claims — 7
+## `big_game` (14 items) and 16 bone against 24, i.e. 6 over. ⛔ **THE BAND IS NOT MOVING, SO NOTHING
+## ON THE CARD OR THE ORB SAYS SO** (the maintainer's rule — the long-move targeting warning is the one
+## place over-carry is stated): the meter reads `0 /` in its calm ink and the orb calls it outfitted.
+const OVER_CARRY_CAPACITY := 24.0
+const OVER_KITS_HELD := 7
+const OVER_UNITS_HELD := 16
+## What the card's own meter must read — the free room FLOORED AT ZERO, spelled as a LITERAL rather
+## than composed through `CARRY_REMAINING_FORMAT`, since an expectation built from the format under
+## test can only agree with itself.
+const OVER_METER_NEEDLE := "0 / 24 carry left"
+## …and the row's whole detail, by equality: the band leads, then the READY arm's own words.
+const OVER_DETAIL := "Windmere — everything is picked"
+## The retired over-carry wording, asserted ABSENT from the row: `6 carry over`.
+const RETIRED_CARRY_OVER_NEEDLE := "carry over"
 
 ## A stepper loop's ceiling. It is a GUARD, not the expected count: a `+` that stopped working would
 ## otherwise spin this chapter until the watchdog killed the whole run.
@@ -162,12 +189,32 @@ const TAKE_SPEARS := 6
 const TAKE_SLED := 5
 const TAKE_TRAPS := 4
 const TAKE_BASKETS := 3
-## What the kit meter reads against on a take: the whole published supply. **It lists only items some
-## kit carries** — the sim filters the three bench tools out, shop equipment staying with the workshop
-## that built it — so no client re-derives that filter and a fixture naming one would be a supply no
+## **The supply lists only items some kit carries** — the sim filters the three bench tools out, shop
+## equipment staying with the workshop that built it — so a fixture naming one would be a supply no
 ## server can send.
-const TAKE_ITEM_TOTAL := TAKE_SPEARS + TAKE_SLED + TAKE_TRAPS + TAKE_BASKETS
-## ⛔ **THE DEFAULT TAKE THE SPLIT ALREADY MOVED, kit-denominated and published on the window** — and
+##
+## ⛔ **THE TAKE'S CARRY**, the splinter's TOTAL — goods load first and its food fills what they leave,
+## so this is not net of food. 18 is above the sled-bound
+## `big_game` walk (10 items + 2 hide = 12), so the SUPPLY is what stops that walk — and below what
+## fibre's supply would take on top of the released kits, so the CARRY is what stops fibre. One window,
+## both caps, each binding where the fixture aims it.
+const TAKE_CARRY_CAPACITY := 18.0
+## ⛔ **THE SPLINTER'S FOOD SHARE**, in load — its full proportional larder share. 14 is ABOVE the room
+## the standing take leaves (18 − 6 = 12), so the card opens with the food UNDER its share and the
+## amber hint up, and every goods press visibly costs food. A share inside that room would put the
+## hint nowhere and make "a press moves the food line" a claim about nothing.
+const TAKE_FOOD_SHARE := 14.0
+## The food line the standing take opens on: the room it leaves, 12 of the 14.
+const TAKE_FOOD_OPENING := "Food 12 of 14"
+## …after ONE more fibre, before the server answers: the card's own preview, 11 of the 14.
+const TAKE_FOOD_PREVIEW := "Food 11 of 14"
+## ⛔ **THE WIRE'S FIGURE WINS ONCE THE ORDER IS ECHOED.** Staged off the card's own `min()` (which reads
+## 11 for the echoed order) so the two readings are distinguishable — a card that kept previewing after
+## the echo reads 11 here, one that reads the wire reads 10. No other property of this fixture moves.
+const TAKE_FOOD_ECHOED := 10.0
+## What every food line begins with, for reporting the line that WAS drawn when a claim fails.
+const FOOD_LINE_NEEDLE := "Food "
+const TAKE_FOOD_ECHOED_LINE := "Food 10 of 14"## ⛔ **THE DEFAULT TAKE THE SPLIT ALREADY MOVED, kit-denominated and published on the window** — and
 ## the card OPENS on it. It is what makes an untouched `Set out` an exact no-op instead of an order to
 ## take nothing, which is what an empty card would order the moment a stepper is pressed.
 ## Non-zero and unequal to the stepper's floor, so a card that opened at zero — or at one — fails on
@@ -177,9 +224,6 @@ const TAKE_DEFAULT_HIDE := 2
 
 ## `big_game` is sled-bound, not spear-bound — the whole point of the fixture.
 const TAKE_BIG_GAME_CEILING := TAKE_SLED
-## What one `big_game` kit puts in hands (`spears` + `sled`), which is what the take's meter counts:
-## its currency is ITEM UNITS, not kit slots, because that is the currency the cap is denominated in.
-const KIT_STALKING_ITEMS := 2
 ## …and how far it is walked BACK, so `trapping` has sleds again.
 const TAKE_BIG_GAME_RELEASED := 2
 
@@ -192,18 +236,26 @@ const TAKE_MATERIALS := ["hide", "fibre", "clay"]
 const TAKE_HIDE := 4
 const TAKE_FIBRE := 9
 const TAKE_CLAY := 2
-const TAKE_MATERIAL_TOTAL := TAKE_HIDE + TAKE_FIBRE + TAKE_CLAY
 ## Presses aimed past the hide cap, so the clamp is what stops the stepper rather than the loop.
 const TAKE_HIDE_OVERPRESSES := TAKE_HIDE + 2
+## ⛔ **WHERE THE CARRY, NOT THE SUPPLY, STOPS A TAKE ROW.** After the release the order is 3
+## `big_game` (6) + 4 hide = 10 of 18, so fibre stops at 8 with 9 still at home.
+const TAKE_FIBRE_CARRY_CEILING := 8
+## The take's opening load: 2 `big_game` (4 items) + 2 hide.
+const TAKE_DEFAULT_LOAD := 6.0
 
 ## The words a TAKE card must carry, as needles rather than composed formats — an expectation taken
 ## from the const under test moves with it and passes on the very rename it exists to catch.
-const TAKE_METER_NEEDLE := "left at home"
+## ⛔ **WHAT IS FREE, NOT WHAT THE GOODS LEAVE**: 18 − 6 goods − 12 food = 0. The goods leave 12, and
+## the food fills exactly that, so a meter reading `12 /` would offer room nothing can use.
+const TAKE_METER_OPENING := "0 / 18 carry left"
+const TAKE_METER_NEEDLE := "/ 18 carry left"
 const TAKE_SUBTITLE_NEEDLE := "take from"
-## …and the grant's own meter wording, asserted ABSENT from a take card: what a grant leaves unspent
-## is forfeited on the advance and what a take leaves is not, so one meter must not wear the other's
-## words.
-const GRANT_METER_NEEDLE := "/ 30 left"
+## …and the GRANT's carry, asserted ABSENT from a take card and present on the grant again — one
+## meter, two bands, two capacities, so the denominator is what tells the cards apart.
+const GRANT_METER_NEEDLE := "/ 78 carry left"
+## …and the grant's opening meter, what is actually free: 78 − 48 goods − 18 food.
+const GRANT_METER_OPENING := "12 / 78 carry left"
 ## The orb noun a take may never use, for the same reason. Supply left at home is lost by nobody.
 const TAKE_FORBIDDEN_NOUN := "unspent"
 
@@ -216,8 +268,12 @@ const TAKE_FORBIDDEN_NOUN := "unspent"
 const ADOPT_BAND_ENTITY := 6204
 
 ## **A REFUSAL, in the sim's own words** — the wire's `detail`, lowercase and with no full stop, which
-## the card quotes verbatim. Nothing here names a kit; the card must not either.
-const REFUSAL_DETAIL := "7 kits allocated against a budget of 6"
+## the card quotes verbatim. Nothing here names a kit; the card must not either. It is the shape of
+## `LoadoutRejection::OverCarry`'s message — the budget refusal it replaced no longer exists (#732).
+## How far a measured edge may sit past the card's own before the claim calls it off the card — the
+## sub-pixel slack a fractional canvas scale leaves on a rect's edge, never a layout allowance.
+const CARD_EDGE_TOLERANCE := 0.5
+const REFUSAL_DETAIL := "the order weighs 15.0 against a carry of 14.0"
 ## …and one too long for two lines at the card's width, which must ellipsize and keep the whole text on
 ## its tooltip. Ends in a full stop the card must not double.
 const REFUSAL_LONG_DETAIL := ("the order names more than the band can carry: every allocation is "
@@ -230,12 +286,12 @@ const REFUSAL_RESET_NEEDLE := "reset"
 const REFUSAL_LABEL := "Outfit failed"
 
 ## The window it opens on, and the one the sim re-publishes a frame later. **The re-fit is what a split
-## does to the PARENT** (`fission::rebalance_partitioned_grant`): both budgets shrink and the standing
-## allocation is restated against them — an allocation this card never sent, so the card must take it.
-const ADOPT_KIT_BUDGET := 10
-const ADOPT_MATERIAL_BUDGET := 14
-const ADOPT_REFIT_KIT_BUDGET := 6
-const ADOPT_REFIT_MATERIAL_BUDGET := 10
+## does to the PARENT** (`fission::rebalance_partitioned_grant`): the carry shrinks and the standing
+## allocation is restated against it — an allocation this card never sent, so the card must take it.
+## The held rows weigh 19 of 20 (one press to spare); the re-fit weighs 10 of 14, room for the three
+## presses the next two blocks make.
+const ADOPT_CARRY_CAPACITY := 20.0
+const ADOPT_REFIT_CARRY_CAPACITY := 14.0
 ## What the band holds when the card opens.
 const ADOPT_HELD_BIG_GAME := 3
 const ADOPT_HELD_GATHERING := 3
@@ -286,12 +342,12 @@ const READY_RIVAL_KEYS := ["SIGNAL", "WARN", "DANGER", "HEALTHY"]
 const ORB_OPEN_AFFORDANCE := "Open ▸"
 
 ## **THE ORB ROW'S DETAIL, SPELLED OUT RATHER THAN COMPOSED THROUGH `HudLoadoutVocab`.** The remainder
-## must be named whatever the PICKER names it — its second column is headed `RESOURCES`, and the orb
-## read `2 units unspent` beside it until a player asked what a unit was. An expectation taken from
+## must be named whatever the PICKER names it — the card's one meter says `carry` — and the orb read
+## `2 units unspent` beside a `RESOURCES` column until a player asked what a unit was. An expectation taken from
 ## the const under test moves with it, so both sides of the comparison change together and the claim
 ## passes on the very rename it exists to catch; measured, sabotaging the const failed this claim not
 ## at all. These are literals for the same reason `_assert_horizon_floor_is_the_whole_trip`'s are.
-const ORB_DETAIL_ONE_RESOURCE := "Brackwater — 1 resource unspent"
+const ORB_DETAIL_ONE_CARRY := "Brackwater — 1 carry unspent"
 const ORB_DETAIL_EVERYTHING_PICKED := "Brackwater — everything is picked"
 ## …and the noun it must never go back to, asserted ABSENT so the rename cannot quietly revert.
 const ORB_DETAIL_RETIRED_NOUN := "unit"
@@ -340,17 +396,17 @@ func run(harness) -> void:
 	_assert_orb_row()
 	_assert_the_footer_says_how_to_get_back()
 	_assert_the_footer_control_does_not_read_as_a_send()
-	_assert_no_dead_space("opened")
+	await _assert_no_dead_space("opened")
 	await h._save("starting_loadout")
 
 	await _a_press_sends_the_whole_allocation()
-	_assert_no_dead_space("picked")
+	await _assert_no_dead_space("picked")
 	await h._save("starting_loadout_picked")
 
 	await _a_failed_send_rolls_the_press_back()
 
-	await _spend_both_budgets()
-	_assert_no_dead_space("spent")
+	await _spend_the_carry()
+	await _assert_no_dead_space("spent")
 	await h._save("starting_loadout_spent")
 
 	await _dismiss_and_reopen()
@@ -369,6 +425,8 @@ func run(harness) -> void:
 	await _a_moved_allocation_is_adopted()
 	await _two_presses_do_not_flicker_back()
 	await _a_refused_order_resets_the_picks()
+	await _the_card_prints_whole_numbers()
+	await _a_splinters_food_is_not_unspent_room()
 	_assert_window_shuts()
 	h._hud.set_starting_loadout_requested.disconnect(_on_order)
 
@@ -389,10 +447,10 @@ func _assert_opened_itself() -> void:
 ## string, so a text match would only confirm the fixture back to itself.
 ##
 ## ⛔ **THE COUNTS ARE ASSERTED AS PUBLISHED, which is what catches a second clamp.** The sim fitted
-## the spread to `kit_budget` when it applied it, so a client that re-fitted it would render a
+## the spread to the band's carry when it applied it, so a client that re-fitted it would render a
 ## different allocation from the one the band is carrying — and with a spread comfortably inside the
-## budget (12 of 17) that re-fit would be INVISIBLE unless the individual counts are checked, since
-## the total would still look reasonable.
+## carry (48 of 60) that re-fit would be INVISIBLE unless the individual counts are checked, since the
+## total would still look reasonable.
 ##
 ## ⛔ **AND THE CAMPAIGN PRE-FILL IS NOT DRAWN HERE AT ALL.** `_campaign()` no longer states it, so a
 ## client that seeded its kits from the campaign section would render an EMPTY kit column on this frame
@@ -413,10 +471,29 @@ func _assert_the_kits_the_band_holds() -> void:
 	h._assert_hud("loadout — a kit the band does not hold reads 0 (got %d)"
 			% _stepper_count(HudLoadoutVocab.KIT_ROW_META, "warrior"),
 		_stepper_count(HudLoadoutVocab.KIT_ROW_META, "warrior") == 0)
-	h._assert_hud("loadout — the meter accounts for what is held (%d spent, %d of %d left)"
-			% [_controller().kits_spent(), _controller().kits_left(), KIT_BUDGET],
-		_controller().kits_spent() == KIT_DEFAULTS_TOTAL
-			and _controller().kits_left() == KIT_BUDGET - KIT_DEFAULTS_TOTAL)
+	h._assert_hud("loadout — the carry meter weighs what is held (%.1f of %.1f, want %.1f)"
+			% [_controller().carry_spent(), _controller().carry_capacity(), DEFAULT_LOAD],
+		is_equal_approx(_controller().carry_spent(), DEFAULT_LOAD)
+			and is_equal_approx(_controller().carry_capacity(), GRANT_WHOLE_CARRY))
+	# ⛔ **A FIXED LARDER IS PART OF THE BAR, AND THE METER SAYS WHAT IS ACTUALLY FREE.** The window's
+	# carry is the WHOLE carry; the meter is that less the goods AND the food, and the food states
+	# itself on its legend line. A meter of `30 /` (goods only) passes the claim above and fails this.
+	h._assert_hud("loadout — the meter reads what is free with the larder in it (`%s`)"
+			% GRANT_METER_OPENING,
+		Q.has_label_containing(_panel(), GRANT_METER_OPENING))
+	h._assert_hud("loadout — the opening band's larder is the bar's food segment, `%s` (got `%s`)"
+			% [GRANT_FOOD_LINE, Q.label_containing(_panel(), FOOD_LINE_NEEDLE)],
+		_food_line_text() == GRANT_FOOD_LINE)
+	# ⛔ **WHAT ONE MORE COSTS IS ON THE ROW WHERE IT IS NOT OBVIOUS** — a two-item kit says `2 carry`,
+	# and a one-item kit says nothing. The pair is the claim: a row that always or never said it passes
+	# one half.
+	var stalking := _row_node(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING)
+	var gathering := _row_node(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING)
+	h._assert_hud("loadout — the two-item %s row says what one more weighs (`%s`)"
+			% [KIT_STALKING, KIT_CARRY_COST_NEEDLE],
+		Q.has_label_containing(stalking, KIT_CARRY_COST_NEEDLE))
+	h._assert_hud("loadout — …and the one-item %s row says nothing about carry" % KIT_GATHERING,
+		gathering != null and not Q.has_label_containing(gathering, CARRY_COST_WORD))
 
 ## …and the resources column draws the pile the band holds rather than zero. A picker that opened
 ## both columns at zero would look identical in a screenshot.
@@ -425,9 +502,14 @@ func _assert_the_pile_the_band_holds() -> void:
 	h._assert_hud("loadout — one row per pickable material, in the profile's order (%s)"
 			% str(rows),
 		rows == PICKABLE)
-	h._assert_hud("loadout — the pile draws what the band holds (%d of %d spent)"
-			% [_controller().materials_spent(), MATERIAL_BUDGET],
+	h._assert_hud("loadout — the pile draws what the band holds (%d units, want %d)"
+			% [_controller().materials_spent(), DEFAULTS_TOTAL],
 		_controller().materials_spent() == DEFAULTS_TOTAL)
+	# **ONE METER, ON THE HEADER** — the kit meter and the material meter are gone, so a card still
+	# drawing either fails on the count.
+	h._assert_hud("loadout — the card carries exactly ONE meter, the carry (%s)"
+			% str(_rows(HudLoadoutVocab.BUDGET_METER_META)),
+		_rows(HudLoadoutVocab.BUDGET_METER_META) == [HudLoadoutVocab.BUDGET_CARRY])
 
 ## **THE KNOWLEDGE-GATED BENCH TOOL IS NOT DRAWN AT ALL** — not greyed, not in a locked group. It is
 ## in the recipe book this chapter pushed and off the published craftable list, so a client filtering
@@ -499,11 +581,10 @@ func _a_press_sends_the_whole_allocation() -> void:
 	for _i in range(KIT_PRESSES):
 		_press_plus(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING)
 		await h._settle()
-	var want_spent := KIT_DEFAULTS_TOTAL + KIT_PRESSES
-	h._assert_hud("loadout — %d presses buy %d more kits, and the meter says so (%d left of %d)"
-			% [KIT_PRESSES, _controller().kits_spent(), _controller().kits_left(), KIT_BUDGET],
-		_controller().kits_spent() == want_spent
-			and _controller().kits_left() == KIT_BUDGET - want_spent)
+	var want_load := DEFAULT_LOAD + KIT_PRESSES * KIT_STALKING_ITEMS * ITEM_CARRY_WEIGHT
+	h._assert_hud("loadout — %d presses weigh %d each, and the meter says so (%.1f of %.1f)"
+			% [KIT_PRESSES, KIT_STALKING_ITEMS, _controller().carry_spent(), CARRY_CAPACITY],
+		is_equal_approx(_controller().carry_spent(), want_load))
 	h._assert_hud("loadout — …and each press sent ONE order, with no `%s` pressed (%d for %d presses)"
 			% [RETIRED_SEND_FACE, _orders.size() - before, KIT_PRESSES],
 		_orders.size() - before == KIT_PRESSES)
@@ -540,7 +621,7 @@ func _a_press_sends_the_whole_allocation() -> void:
 ## for its reason: a card showing one more kit than it ordered is a perfectly ordinary card.
 func _a_failed_send_rolls_the_press_back() -> void:
 	var before := _stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING)
-	var before_spent := _controller().kits_spent()
+	var before_spent := _controller().carry_spent()
 	h._assert_hud("loadout/rollback — the HUD carries the name `Main` probes for",
 		h._hud.has_method("revert_starting_loadout"))
 	_press_plus(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING)
@@ -557,9 +638,9 @@ func _a_failed_send_rolls_the_press_back() -> void:
 	h._assert_hud("loadout/rollback — …and the refused send takes the row back (%d, want %d)"
 			% [_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING), before],
 		_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING) == before)
-	h._assert_hud("loadout/rollback — …and the meter with it (%d spent, want %d)"
-			% [_controller().kits_spent(), before_spent],
-		_controller().kits_spent() == before_spent)
+	h._assert_hud("loadout/rollback — …and the meter with it (%.1f carried, want %.1f)"
+			% [_controller().carry_spent(), before_spent],
+		is_equal_approx(_controller().carry_spent(), before_spent))
 	# **AND THE ROLLED-BACK ORDER IS NOT LEFT WAITING FOR AN ECHO.** The card un-sent it, so the next
 	# frame — which restates the band as it stood BEFORE the press, that being the last order that
 	# really went — must leave the rolled-back row exactly where the rollback put it.
@@ -569,30 +650,30 @@ func _a_failed_send_rolls_the_press_back() -> void:
 			% _stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING),
 		_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING) == before)
 
-## Spend BOTH budgets to the last unit, then press once more. The extra press is the point: the
-## controller clamps against the budget, so the `+` is disabled and nothing can be overspent — the
-## sim rejects an overspent order WHOLE, so a client that let one be composed would throw the picks
-## away on send.
-func _spend_both_budgets() -> void:
+## Fill the CARRY to the last unit with `big_game` presses, then press once more. The extra press is
+## the point: the controller clamps against the carry, so every `+` is disabled and nothing can be
+## overloaded — the sim refuses an over-carry order WHOLE (`OverCarry`), so a client that let one be
+## composed would throw the picks away on send.
+func _spend_the_carry() -> void:
 	var presses := 0
-	while _controller().kits_left() > 0 and presses < STEPPER_PRESS_LIMIT:
-		_press_plus(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING)
+	while presses < STEPPER_PRESS_LIMIT:
+		var plus := _plus_button(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING)
+		if plus == null or plus.disabled:
+			break
+		plus.pressed.emit()
 		presses += 1
-	while _controller().materials_left() > 0 and presses < STEPPER_PRESS_LIMIT:
-		_press_plus(HudLoadoutVocab.MATERIAL_ROW_META, PICKABLE[0])
-		presses += 1
-	await h._settle()
-	h._assert_hud("loadout — both budgets are spent to the unit (%d kits, %d units left)"
-			% [_controller().kits_left(), _controller().materials_left()],
-		_controller().kits_left() == 0 and _controller().materials_left() == 0)
+		await h._settle()
+	h._assert_hud("loadout — the carry is spent to the unit (%.1f left)" % _controller().carry_left(),
+		is_zero_approx(_controller().carry_left()))
 	var plus := _plus_button(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING)
-	h._assert_hud("loadout — `+` is disabled once the budget is gone",
-		plus != null and plus.disabled)
-	# **THE FOOTER CONTROL'S FACE IS UNCONDITIONAL**, taken here with both budgets clear against the
-	# opening state's reading with both unspent. Neither half is worth anything alone: a face asserted
-	# only where something is unspent passes on a control that renames itself once the budgets clear,
-	# and only where they are clear on one that renames itself while they are not.
-	h._assert_hud("loadout — the footer control still reads `%s` with both budgets clear (got `%s`)"
+	var material_plus := _plus_button(HudLoadoutVocab.MATERIAL_ROW_META, PICKABLE[0])
+	h._assert_hud("loadout — every `+` is disabled once the carry is full, kit and resource alike",
+		plus != null and plus.disabled and material_plus != null and material_plus.disabled)
+	# **THE FOOTER CONTROL'S FACE IS UNCONDITIONAL**, taken here with the carry full against the
+	# opening state's reading with room left. Neither half is worth anything alone: a face asserted
+	# only where something is unspent passes on a control that renames itself once the pack fills, and
+	# only where it is full on one that renames itself while it is not.
+	h._assert_hud("loadout — the footer control still reads `%s` with the carry full (got `%s`)"
 			% [HudLoadoutVocab.CLOSE_LABEL, _close_face()],
 		_close_face() == HudLoadoutVocab.CLOSE_LABEL)
 
@@ -657,7 +738,7 @@ func _closing_the_card_sends_nothing() -> void:
 		_controller().is_expanded() and _controller().kits_spent() == spent
 			and not Q.has_label_containing(_panel(), REFUSAL_NEEDLE)
 			and not Q.has_label_containing(_panel(), FORFEIT_NEEDLE))
-	_assert_no_dead_space("reopened")
+	await _assert_no_dead_space("reopened")
 	await h._save("starting_loadout_reopened")
 	# **AND A PRESS STILL ORDERS AFTER A CLOSE AND A REOPEN** — an ordinary act under replacement
 	# semantics, and one a client that latched "already sent" would refuse. It also leaves ONE resource
@@ -665,9 +746,9 @@ func _closing_the_card_sends_nothing() -> void:
 	var sends := _orders.size()
 	_press_minus(HudLoadoutVocab.MATERIAL_ROW_META, PICKABLE[0])
 	await h._settle()
-	h._assert_hud("loadout — a revised allocation sends again (%d units left, %d order)"
-			% [_controller().materials_left(), _orders.size() - sends],
-		_orders.size() - sends == 1 and _controller().materials_left() == 1)
+	h._assert_hud("loadout — a revised allocation sends again (%.1f carry left, %d order)"
+			% [_controller().carry_left(), _orders.size() - sends],
+		_orders.size() - sends == 1 and is_equal_approx(_controller().carry_left(), MATERIAL_CARRY_WEIGHT))
 
 ## ⛔ **EVERY ROW NAMES ITS OWN BAND, AND ITS `Open ▸` REACHES THAT BAND.**
 ##
@@ -719,15 +800,15 @@ func _popover_row_for(rendered: Array, band_name: String) -> Dictionary:
 			return row
 	return {}
 
-## ⛔ **OVER BUDGET IS NOT FULLY SPENT, AND THE ORB MUST NOT PAINT IT GREEN.**
+## ⛔ **OVER ITS CARRY IS NOT FULLY SPENT, AND THE ORB MUST NOT PAINT IT GREEN.**
 ##
 ## The completeness test was `remaining <= 0` over a remainder clamped at zero, so a band holding MORE
-## than its budget allows passed it: a live run showed a card reading `-6 / 22 left` beside a row
+## than its window allows passed it: a live run showed a card reading `-6 / 22 left` beside a row
 ## calling that band outfitted. The sim bug behind the `-6` is fixed and **nothing here relies on
 ## that** — a state the row cannot word is exactly the state it must not paint as done.
 ##
 ## The state is staged the only way a client can reach it: the SIM publishes an allocation over the
-## band's budget. The card draws a published allocation as-is (a second clamp here would disagree with
+## band's carry. The card draws a published allocation as-is (a second clamp here would disagree with
 ## the sim's own), so the meter goes negative exactly as it did on the screen that was reported.
 func _an_over_budget_band_is_not_outfitted() -> void:
 	h._hud.update_band_alerts([_grant_band(), _splinter_band(), _over_budget_band()])
@@ -736,26 +817,31 @@ func _an_over_budget_band_is_not_outfitted() -> void:
 			% _controller().subject_band_id(),
 		_controller().is_expanded()
 			and _controller().subject_band_id() == _band_id(OVER_BAND_ENTITY))
-	# **THE CARD REALLY DOES READ NEGATIVE.** Without this the row's claim is about a band that is
-	# merely unspent, which the `warn` arm has always handled.
-	h._assert_hud("loadout/over — the card's meter reads `%s`" % OVER_METER_NEEDLE,
-		Q.has_label_containing(_panel(), OVER_METER_NEEDLE))
+	# ⛔ **AN OVER-FULL BAND THAT IS NOT MOVING IS NOT WARNED.** The meter floors at zero in its calm
+	# ink, no label on the card wears the warning ink, and the orb's row is the READY arm — there is no
+	# over-carry row any more. Each half alone passes on a card that has merely changed its wording.
+	h._assert_hud("loadout/over — the card's meter reads `%s`, never negative (got `%s`)"
+			% [OVER_METER_NEEDLE, _meter_label_text()],
+		_meter_label_text() == OVER_METER_NEEDLE)
+	h._assert_hud("loadout/over — …in the calm ink, not the warning one",
+		_meter_label_color() != HudStyle.WARN)
+	h._assert_hud("loadout/over — NO label on the card wears the warning ink (%d did)"
+			% _warn_labels_on_card(),
+		_warn_labels_on_card() == 0)
+	# …and the `+` is shut (there is no room) while the `−` stays open — the band can still put back.
+	var plus := _plus_button(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING)
+	h._assert_hud("loadout/over — `+` is shut and `−` is open on the over-full row",
+		plus != null and plus.disabled and _minus_enabled(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING))
 	var row := _band_attention_row(_band_id(OVER_BAND_ENTITY))
-	h._assert_hud("loadout/over — the row is `%s`, not `%s` (got `%s`)"
-			% [HudAttentionVocab.ATTENTION_SEVERITY_WARN,
-				HudAttentionVocab.ATTENTION_SEVERITY_READY, row.get("severity", "")],
-		String(row.get("severity", "")) == HudAttentionVocab.ATTENTION_SEVERITY_WARN)
-	h._assert_hud("loadout/over — …and it reads `%s`, never `%s` (got `%s`)"
-			% [HudLoadoutVocab.ATTENTION_LABEL_OVER, HudLoadoutVocab.ATTENTION_LABEL_READY,
-				row.get("label", "")],
-		String(row.get("label", "")) == HudLoadoutVocab.ATTENTION_LABEL_OVER)
-	# …and its detail says which way it is wrong, in both currencies, behind its own band's name.
-	h._assert_hud("loadout/over — the detail names the band and both overspends (`%s`)"
-			% row.get("detail", ""),
-		String(row.get("detail", "")) == OVER_DETAIL)
-	h._assert_hud("loadout/over — …and never claims everything is picked",
-		not String(row.get("detail", "")).contains(ORB_DETAIL_READY_NEEDLE))
-	_assert_no_dead_space("over")
+	h._assert_hud("loadout/over — the orb row is `%s`, never a warning (got `%s` / `%s`)"
+			% [HudLoadoutVocab.ATTENTION_LABEL_READY, row.get("label", ""), row.get("severity", "")],
+		String(row.get("label", "")) == HudLoadoutVocab.ATTENTION_LABEL_READY
+			and String(row.get("severity", "")) == HudAttentionVocab.ATTENTION_SEVERITY_READY)
+	h._assert_hud("loadout/over — the detail is `%s`, and says nothing of carry over (`%s`)"
+			% [OVER_DETAIL, row.get("detail", "")],
+		String(row.get("detail", "")) == OVER_DETAIL
+			and not String(row.get("detail", "")).contains(RETIRED_CARRY_OVER_NEEDLE))
+	await _assert_no_dead_space("over")
 	await h._save("starting_loadout_over_budget")
 
 ## One producer row by the band it is about, read off the CONTROLLER — the popover holds every
@@ -772,13 +858,13 @@ func _band_attention_row(band_id: int) -> Dictionary:
 ## A split re-fits the PARENT's standing allocation down to its reduced budget
 ## (`fission::rebalance_partitioned_grant`) and re-materializes the band from it, so the published
 ## rows genuinely move under a card that is already up. The wire is the authority on what a band
-## holds: a card that kept its own copy would draw the pre-split rows against the post-split budget,
+## holds: a card that kept its own copy would draw the pre-split rows against the post-split carry,
 ## which is a negative meter reproduced client-side out of stale state.
 ##
 ## **EVERY ROW MOVES, and the one the player pressed moves to a value the presses never reach** — so
 ## "the published rows won" cannot be satisfied by a card that simply kept what it had. The meter is
-## read off the ORB, whose `over budget` arm is the one reader of the unclamped remainder, because a
-## stale allocation carried past a shrunken budget is exactly what would light it.
+## read off the ORB, whose `over` arm is the one reader of the unclamped remainder, because a stale
+## allocation carried past a shrunken carry is exactly what would light it.
 ##
 ## **Its own band** (see `ADOPT_BAND_ENTITY`), and last, so no earlier state's edits are in its state
 ## and no orb claim above it sees a fourth row.
@@ -801,7 +887,7 @@ func _a_moved_allocation_is_adopted() -> void:
 	h._assert_hud("loadout/adopt — the player's own order stands at %d (got %d)"
 			% [ordered, _stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING)],
 		_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING) == ordered)
-	# **THE FRAME THE SIM SENDS FOR ITS OWN REASONS**: both budgets shrink and every row is restated.
+	# **THE FRAME THE SIM SENDS FOR ITS OWN REASONS**: the carry shrinks and every row is restated.
 	h._hud.update_band_alerts([_grant_band(), _splinter_band(), _over_budget_band(),
 		_adopt_band(true)])
 	await h._settle()
@@ -814,12 +900,12 @@ func _a_moved_allocation_is_adopted() -> void:
 	h._assert_hud("loadout/adopt — …and the resources column too (%d, want %d)"
 			% [_stepper_count(HudLoadoutVocab.MATERIAL_ROW_META, "fibre"), ADOPT_REFIT_FIBRE],
 		_stepper_count(HudLoadoutVocab.MATERIAL_ROW_META, "fibre") == ADOPT_REFIT_FIBRE)
-	# **THE PROPERTY ADOPTION EXISTS FOR.** `over budget` is the one arm that reads the UNCLAMPED
-	# remainder, so a card still holding the pre-refit allocation against the post-refit budget lights it.
+	# **THE PROPERTY ADOPTION EXISTS FOR.** The `over` arm is the one that reads the UNCLAMPED
+	# remainder, so a card still holding the pre-refit allocation against the post-refit carry lights it.
 	var row := _band_attention_row(_band_id(ADOPT_BAND_ENTITY))
-	h._assert_hud("loadout/adopt — the meter is not negative — the orb says `%s`, never `%s`"
-			% [row.get("label", ""), HudLoadoutVocab.ATTENTION_LABEL_OVER],
-		String(row.get("label", "")) != HudLoadoutVocab.ATTENTION_LABEL_OVER)
+	h._assert_hud("loadout/adopt — the re-fit is not a supply overdraw — the orb says `%s`, never `%s`"
+			% [row.get("label", ""), HudLoadoutVocab.ATTENTION_LABEL_OVER_SUPPLY],
+		String(row.get("label", "")) != HudLoadoutVocab.ATTENTION_LABEL_OVER_SUPPLY)
 	# **AND THE NEXT ORDER AGREES WITH THE CARD.** The rendered steppers and the composed command are
 	# two different claims — a card that adopted only on screen would send the rows it no longer shows.
 	var before := _orders.size()
@@ -832,7 +918,7 @@ func _a_moved_allocation_is_adopted() -> void:
 				KIT_GATHERING: ADOPT_REFIT_GATHERING + HudConst.WORKER_STEP,
 				KIT_STALKING: ADOPT_REFIT_BIG_GAME,
 			})
-	_assert_no_dead_space("adopt")
+	await _assert_no_dead_space("adopt")
 	await h._save("starting_loadout_adopted")
 
 ## ⛔ **TWO PRESSES IN A ROW, AND THE FIRST ONE'S ECHO MUST NOT PULL THE CARD BACK.**
@@ -880,9 +966,9 @@ func _a_refused_order_resets_the_picks() -> void:
 	var band_id := _band_id(ADOPT_BAND_ENTITY)
 	var turn: int = h._hud._band_labor.current_turn()
 	var holds := _stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING)
-	var holds_spent := _controller().kits_spent()
-	# A `−`, because the flicker pair above left this band's kit budget fully spent and a `+` would be
-	# clamped to nothing. Either direction is an order the sim can refuse.
+	var holds_spent := _controller().carry_spent()
+	# A `−`, because the flicker pair above leaves this band's carry with too little room for a `+` to
+	# be sure of landing. Either direction is an order the sim can refuse.
 	_press_minus(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING)
 	await h._settle()
 	h._assert_hud("loadout/refused — the press moved the row first (%d → %d)"
@@ -906,9 +992,9 @@ func _a_refused_order_resets_the_picks() -> void:
 	h._assert_hud("loadout/refused — the refusal puts the row back on what the band holds (%d, want %d)"
 			% [_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING), holds],
 		_stepper_count(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING) == holds)
-	h._assert_hud("loadout/refused — …and the meter with it (%d spent, want %d)"
-			% [_controller().kits_spent(), holds_spent],
-		_controller().kits_spent() == holds_spent)
+	h._assert_hud("loadout/refused — …and the carry meter with it (%.1f spent, want %.1f)"
+			% [_controller().carry_spent(), holds_spent],
+		is_equal_approx(_controller().carry_spent(), holds_spent))
 	var line := _refusal_line()
 	var want_text := HudLoadoutVocab.REFUSAL_FORMAT % REFUSAL_DETAIL
 	h._assert_hud("loadout/refused — the card says why, in the sim's words (%s)"
@@ -916,7 +1002,7 @@ func _a_refused_order_resets_the_picks() -> void:
 		line != null and line.visible and line.text == want_text)
 	h._assert_hud("loadout/refused — …in warning ink",
 		line != null and line.get_theme_color("font_color").is_equal_approx(HudStyle.WARN))
-	_assert_no_dead_space("refused")
+	await _assert_no_dead_space("refused")
 	await h._save("starting_loadout_refused")
 	# The next press supersedes the refused order — and its line.
 	_press_minus(HudLoadoutVocab.KIT_ROW_META, KIT_GATHERING)
@@ -947,7 +1033,7 @@ func _a_refused_order_resets_the_picks() -> void:
 			and line.get_visible_line_count() == HudLoadoutVocab.REFUSAL_MAX_LINES)
 	h._assert_hud("loadout/refused — …and the tooltip carries all of it, the stop not doubled",
 		line != null and line.tooltip_text == full and not full.contains(".."))
-	_assert_no_dead_space("refused_long")
+	await _assert_no_dead_space("refused_long")
 	await h._save("starting_loadout_refused_long")
 	await _a_refusal_leaves_a_later_order_in_flight(band_id, turn, seq + 3)
 	await _a_refusal_older_than_the_published_state_says_nothing(band_id, turn, seq + 4)
@@ -987,7 +1073,7 @@ func _a_refusal_leaves_a_later_order_in_flight(band_id: int, turn: int, seq: int
 			% unechoed.size(),
 		unechoed.size() == 1 and (unechoed[0] as Dictionary).get(HudLoadoutVocab.WINDOW_KITS_KEY, {})
 			== _order_rows(order_b, "kits", "count"))
-	_assert_no_dead_space("refused_in_flight")
+	await _assert_no_dead_space("refused_in_flight")
 	await h._save("starting_loadout_refused_in_flight")
 	# B's own frame: the sim accepted it, so the line over it goes.
 	_next_snapshot()
@@ -1051,14 +1137,120 @@ func _next_snapshot() -> void:
 func _refusal_line() -> Label:
 	return Q.find_meta_node(_panel(), HudLoadoutVocab.REFUSAL_LINE_META) as Label
 
-## The band whose allocation the SIM moves. `refit` is the second frame: both budgets shrunk and every
-## row restated against them, which is what a split does to the parent.
+## ⛔ **THE CARD PRINTS WHOLE NUMBERS, AND ROUNDS THE WAY THAT KEEPS IT HONEST.** Reported from play:
+## `Food 77.7`, `0.2 / 124.9 carry left`. The adopt band is re-published with the reported carry and a
+## FIXED larder that leaves exactly 0.2 free, so the meter must read `0 / 125` (the room FLOORS, the
+## total rounds) and the larder `Food 115`. Then one more unit of larder puts the band 0.8 over, and
+## the meter reads `0 /` again, in the calm ink — a band that is not moving is never told it is over
+## its carry. Only the printing moves: the goods precondition is read off the controller's floats.
+const WHOLE_CARRY := 124.9
+const WHOLE_FREE := 0.2
+const WHOLE_OVER_BY := 1.0
+const WHOLE_METER := "0 / 125 carry left"
+const WHOLE_METER_OVER := "0 / 125 carry left"
+const WHOLE_FOOD_LINE := "Food 115"
+## The adopt band's re-fitted allocation, weighed as the server weighs it.
+const ADOPT_REFIT_LOAD := (ADOPT_REFIT_BIG_GAME * KIT_STALKING_ITEMS
+		+ ADOPT_REFIT_GATHERING * KIT_GATHERING_ITEMS) * ITEM_CARRY_WEIGHT \
+		+ (ADOPT_REFIT_BONE + ADOPT_REFIT_FIBRE) * MATERIAL_CARRY_WEIGHT
+
+func _the_card_prints_whole_numbers() -> void:
+	var larder := WHOLE_CARRY - ADOPT_REFIT_LOAD - WHOLE_FREE
+	h._hud.update_band_alerts([_grant_band(), _splinter_band(), _over_budget_band(),
+		_fractional_adopt_band(larder)])
+	await h._settle()
+	h._assert_hud("loadout/whole — the card is on the re-fitted allocation (%.1f, want %.1f)"
+			% [_controller().carry_spent(), ADOPT_REFIT_LOAD],
+		_controller().subject_band_id() == _band_id(ADOPT_BAND_ENTITY)
+			and is_equal_approx(_controller().carry_spent(), ADOPT_REFIT_LOAD))
+	h._assert_hud("loadout/whole — the meter reads `%s` (got `%s`)" % [WHOLE_METER, _meter_label_text()],
+		_meter_label_text() == WHOLE_METER)
+	h._assert_hud("loadout/whole — the larder reads `%s` (got `%s`)" % [WHOLE_FOOD_LINE, _food_line_text()],
+		_food_line_text() == WHOLE_FOOD_LINE)
+	await h._save("starting_loadout_whole_numbers")
+	h._hud.update_band_alerts([_grant_band(), _splinter_band(), _over_budget_band(),
+		_fractional_adopt_band(larder + WHOLE_OVER_BY)])
+	await h._settle()
+	h._assert_hud("loadout/whole — 0.8 over reads `%s` in the calm ink, never negative (got `%s`)"
+			% [WHOLE_METER_OVER, _meter_label_text()],
+		_meter_label_text() == WHOLE_METER_OVER and _meter_label_color() != HudStyle.WARN)
+
+## The adopt band at its re-fitted allocation, with a fractional WHOLE carry and a FIXED larder.
+func _fractional_adopt_band(larder: float) -> Dictionary:
+	var band := _adopt_band(true)
+	var window: Dictionary = band[HudLoadoutVocab.WINDOW_KEY]
+	window[HudLoadoutVocab.CARRY_CAPACITY_KEY] = WHOLE_CARRY
+	window[HudLoadoutVocab.FOOD_SHARE_KEY] = larder
+	window[HudLoadoutVocab.FOOD_CARRIED_KEY] = larder
+	window[HudLoadoutVocab.FOOD_FIXED_KEY] = true
+	return band
+
+## ⛔ **A SPLINTER'S FOOD IS NOT UNSPENT ROOM** — reported from play: two splinters reading
+## `0 / 35 carry left` and `Food 22 of 22` while the orb said *"22 carry unspent"*. A GRANT window on a
+## band whose food is NOT fixed (a splinter of a band whose grant was still open), staged twice on one
+## band: full (13 goods + 22 food = 35) must read OUTFITTED with no "carry unspent", and genuinely
+## roomy (5 goods + 22 food, 8 free) must still read *"8 carry unspent"* beside a meter reading 8 —
+## the pair, since either half alone passes on an arm that always or never fires.
+const FOOD_SPLINTER_ENTITY := 6205
+const FOOD_SPLINTER_CARRY := 35.0
+const FOOD_SPLINTER_SHARE := 22.0
+const FOOD_SPLINTER_FULL_GOODS := 13
+const FOOD_SPLINTER_ROOMY_GOODS := 5
+const FOOD_SPLINTER_FULL_METER := "0 / 35 carry left"
+const FOOD_SPLINTER_ROOMY_METER := "8 / 35 carry left"
+const FOOD_SPLINTER_ROOMY_FACT := "8 carry unspent"
+const CARRY_UNSPENT_NEEDLE := "carry unspent"
+
+func _a_splinters_food_is_not_unspent_room() -> void:
+	h._hud.update_band_alerts([_grant_band(), _food_splinter_band(FOOD_SPLINTER_FULL_GOODS)])
+	await h._settle()
+	_controller().open_band(_band_id(FOOD_SPLINTER_ENTITY))
+	await h._settle()
+	h._assert_hud("loadout/splinter food — the full card reads `%s` (got `%s`)"
+			% [FOOD_SPLINTER_FULL_METER, _meter_label_text()],
+		_meter_label_text() == FOOD_SPLINTER_FULL_METER)
+	var row := _band_attention_row(_band_id(FOOD_SPLINTER_ENTITY))
+	h._assert_hud("loadout/splinter food — …and the orb calls it `%s`, never unspent (`%s` / `%s`)"
+			% [HudLoadoutVocab.ATTENTION_LABEL_READY, row.get("label", ""), row.get("detail", "")],
+		String(row.get("label", "")) == HudLoadoutVocab.ATTENTION_LABEL_READY
+			and not String(row.get("detail", "")).contains(CARRY_UNSPENT_NEEDLE))
+	await h._save("starting_loadout_splinter_food_full")
+	h._hud.update_band_alerts([_grant_band(), _food_splinter_band(FOOD_SPLINTER_ROOMY_GOODS)])
+	await h._settle()
+	h._assert_hud("loadout/splinter food — the roomy card reads `%s` (got `%s`)"
+			% [FOOD_SPLINTER_ROOMY_METER, _meter_label_text()],
+		_meter_label_text() == FOOD_SPLINTER_ROOMY_METER)
+	row = _band_attention_row(_band_id(FOOD_SPLINTER_ENTITY))
+	h._assert_hud("loadout/splinter food — …and the orb says `%s`, the meter's own figure (`%s` / `%s`)"
+			% [FOOD_SPLINTER_ROOMY_FACT, row.get("label", ""), row.get("detail", "")],
+		String(row.get("label", "")) == HudLoadoutVocab.ATTENTION_LABEL_UNSPENT
+			and String(row.get("detail", "")).ends_with(FOOD_SPLINTER_ROOMY_FACT))
+
+## A GRANT window on a splinter: its food yields to its goods (`food_fixed` false), the window's food
+## carried being the room its goods leave, capped by the share — what the sim answers.
+func _food_splinter_band(goods: int) -> Dictionary:
+	return _band(FOOD_SPLINTER_ENTITY, {
+		HudLoadoutVocab.OPEN_KEY: true,
+		HudLoadoutVocab.CARRY_CAPACITY_KEY: FOOD_SPLINTER_CARRY,
+		HudLoadoutVocab.FOOD_SHARE_KEY: FOOD_SPLINTER_SHARE,
+		HudLoadoutVocab.FOOD_CARRIED_KEY: minf(FOOD_SPLINTER_SHARE,
+			FOOD_SPLINTER_CARRY - goods * MATERIAL_CARRY_WEIGHT),
+		HudLoadoutVocab.FOOD_FIXED_KEY: false,
+		HudLoadoutVocab.PARENT_BAND_ID_KEY: HudLoadoutVocab.GRANT_PARENT_BAND_ID,
+		HudLoadoutVocab.WINDOW_KITS_KEY: [],
+		HudLoadoutVocab.WINDOW_MATERIALS_KEY: [
+			{HudLoadoutVocab.MATERIAL_DEFAULT_ID_KEY: PICKABLE[0],
+				HudLoadoutVocab.MATERIAL_DEFAULT_UNITS_KEY: goods},
+		],
+	})
+
+## The band whose allocation the SIM moves. `refit` is the second frame: the carry shrunk and every
+## row restated against it, which is what a split does to the parent.
 func _adopt_band(refit: bool) -> Dictionary:
 	return _band(ADOPT_BAND_ENTITY, {
 		HudLoadoutVocab.OPEN_KEY: true,
-		HudLoadoutVocab.KIT_BUDGET_KEY: ADOPT_REFIT_KIT_BUDGET if refit else ADOPT_KIT_BUDGET,
-		HudLoadoutVocab.MATERIAL_BUDGET_KEY: ADOPT_REFIT_MATERIAL_BUDGET if refit \
-			else ADOPT_MATERIAL_BUDGET,
+		HudLoadoutVocab.CARRY_CAPACITY_KEY: ADOPT_REFIT_CARRY_CAPACITY if refit \
+			else ADOPT_CARRY_CAPACITY,
 		HudLoadoutVocab.PARENT_BAND_ID_KEY: HudLoadoutVocab.GRANT_PARENT_BAND_ID,
 		HudLoadoutVocab.WINDOW_KITS_KEY: [
 			{HudLoadoutVocab.KIT_DEFAULT_ID_KEY: KIT_STALKING,
@@ -1116,6 +1308,13 @@ func _assert_window_shuts() -> void:
 ## **The card stands ITSELF up on the splinter**, exactly as it did on the spawned band — a player who
 ## has just split a band should not have to find the screen.
 func _take_window_opens_on_the_splinter() -> void:
+	# ⛔ **A FIXED LARDER STATES ITS MASS AND NO CHOICE** — taken before the splinter's window stands
+	# its own card up, while the grant is still the subject. The opening band cannot trade its food for
+	# tools, so its line carries no "fewer tools" clause; the splinter's below does. Paired, or "the
+	# clause appears" passes on a card that prints it on every window.
+	h._assert_hud("loadout/take — the GRANT's food line is its fixed larder alone (`%s`)"
+			% _food_line_text(),
+		_food_line_text() == GRANT_FOOD_LINE and not _controller().is_take())
 	h._hud.update_band_alerts([_grant_band(), _splinter_band()])
 	await h._settle()
 	h._assert_hud("loadout/take — the splinter's window opens the card on the SPLINTER (subject %d)"
@@ -1132,25 +1331,23 @@ func _take_window_opens_on_the_splinter() -> void:
 	# left at home is lost by nobody.
 	h._assert_hud("loadout/take — the card makes no forfeiture claim",
 		not Q.has_label_containing(_panel(), FORFEIT_NEEDLE))
-	h._assert_hud("loadout/take — the meters read against the home band's supply, not a budget",
-		Q.has_label_containing(_panel(), TAKE_METER_NEEDLE)
+	# **ONE CARRY METER, THE SPLINTER'S OWN.** Its denominator is the take's carry, never the grant's.
+	h._assert_hud("loadout/take — the meter reads the splinter's carry (`%s`), not the grant's"
+			% TAKE_METER_OPENING,
+		Q.has_label_containing(_panel(), TAKE_METER_OPENING)
 			and not Q.has_label_containing(_panel(), GRANT_METER_NEEDLE))
 	# **THE PICK LIST DOES NOT BIND A TAKE.** The rows are what the home band holds — `clay` included,
 	# which the profile never offered — so a card drawing `PICKABLE` here fails on the row list alone.
 	var rows := _rows(HudLoadoutVocab.MATERIAL_ROW_META)
 	h._assert_hud("loadout/take — the resources column lists what the HOME BAND holds (%s)" % str(rows),
 		rows == TAKE_MATERIALS and rows != PICKABLE)
-	# **THE METERS COUNT WHAT THE SPLIT ALREADY MOVED.** The kit meter's currency is ITEM UNITS, so the
-	# two standing `big_game` kits read as four; the material meter counts the two hide.
-	var spent_items := TAKE_DEFAULT_BIG_GAME * KIT_STALKING_ITEMS
-	h._assert_hud("loadout/take — the kit meter reads the standing take against the supply (%d of %d)"
-			% [_controller().kits_spent(), TAKE_ITEM_TOTAL],
-		_controller().kits_spent() == spent_items
-			and _controller().kits_left() == TAKE_ITEM_TOTAL - spent_items)
-	h._assert_hud("loadout/take — …and the material meter does the same (%d of %d)"
-			% [_controller().materials_spent(), TAKE_MATERIAL_TOTAL],
-		_controller().materials_spent() == TAKE_DEFAULT_HIDE
-			and _controller().materials_left() == TAKE_MATERIAL_TOTAL - TAKE_DEFAULT_HIDE)
+	# **THE METER WEIGHS WHAT THE SPLIT ALREADY MOVED** — the two standing `big_game` kits expand to
+	# four items, plus the two hide.
+	h._assert_hud("loadout/take — the meter weighs the standing take (%.1f of %.1f, want %.1f)"
+			% [_controller().carry_spent(), _controller().carry_capacity(), TAKE_DEFAULT_LOAD],
+		is_equal_approx(_controller().carry_spent(), TAKE_DEFAULT_LOAD)
+			and _controller().items_spent() == TAKE_DEFAULT_BIG_GAME * KIT_STALKING_ITEMS
+			and _controller().materials_spent() == TAKE_DEFAULT_HIDE)
 	# ⛔ **THE CARD OPENS ON THE STANDING TAKE, NOT AT ZERO — the whole point of the fix.** The split's
 	# default take is kit-denominated and published on the window, so the splinter's card draws the
 	# allocation it is already standing on. Asserted ROW BY ROW rather than on the meter: a card that
@@ -1168,7 +1365,16 @@ func _take_window_opens_on_the_splinter() -> void:
 	h._assert_hud("loadout/take — a kit the take does not name opens at 0 (got %d)"
 			% _stepper_count(HudLoadoutVocab.KIT_ROW_META, "trapping"),
 		_stepper_count(HudLoadoutVocab.KIT_ROW_META, "trapping") == 0)
-	_assert_no_dead_space("take")
+	# ⛔ **THE FOOD A SPLIT BRINGS IS THE ROOM THE GOODS LEAVE** — 18 − 6 = 12 of a 14 share, and the
+	# choice that would bring more, on ONE line.
+	h._assert_hud("loadout/take — the food line reads `%s`, with the choice beside it (`%s`)"
+			% [TAKE_FOOD_OPENING + HudLoadoutVocab.FOOD_ROOM_CLAUSE, _food_line_text()],
+		_food_line_text() == TAKE_FOOD_OPENING + HudLoadoutVocab.FOOD_ROOM_CLAUSE)
+	# ⛔ **AND IT IS A CHOICE, NOT A FAULT: QUIET INK, NEVER AMBER.** It was a separate amber line; the
+	# maintainer read a warning into a trade-off.
+	h._assert_hud("loadout/take — …in the quiet ink, never the warning one",
+		_food_line_ink() == HudStyle.INK_DIM and _food_line_ink() != HudStyle.WARN)
+	await _assert_no_dead_space("take")
 	await h._save("starting_loadout_take")
 
 ## ⛔ **ONE PRESS ON A TAKE ORDERS THE WHOLE STANDING TAKE, PLUS THE PRESS.** The splinter is already
@@ -1198,6 +1404,25 @@ func _a_press_on_a_take_sends_the_whole_standing_order() -> void:
 		_order_rows(order, "materials", "units") == {
 			TAKE_MATERIALS[0]: TAKE_DEFAULT_HIDE, TAKE_MATERIALS[1]: HudConst.WORKER_STEP,
 		})
+	# ⛔ **THE PRESS MOVES THE FOOD LINE BEFORE THE SERVER ANSWERS** — nothing has been re-pushed, so
+	# the card is previewing `min(share, carry − goods)`, 11 of 14. A card that waited for the wire would
+	# still read the opening 12 here.
+	h._assert_hud("loadout/take — a goods press previews the food it costs (`%s`, got `%s`, %.2f)"
+			% [TAKE_FOOD_PREVIEW, Q.label_containing(_panel(), FOOD_LINE_NEEDLE), _controller().food_brought()],
+		Q.has_label_containing(_panel(), TAKE_FOOD_PREVIEW)
+			and not Q.has_label_containing(_panel(), TAKE_FOOD_OPENING))
+	# ⛔ **AND A `+` STAYS LIVE WHILE GOODS FIT, EVEN THOUGH IT COSTS FOOD.** Food is not a term of the
+	# carry check; only the goods are. Fibre's next unit fits (8 of 18), so its `+` must be enabled.
+	var fibre_plus := _plus_button(HudLoadoutVocab.MATERIAL_ROW_META, TAKE_MATERIALS[1])
+	h._assert_hud("loadout/take — a `+` that would cost food stays enabled while the goods fit",
+		fibre_plus != null and not fibre_plus.disabled)
+	# ⛔ **ONCE ECHOED, THE WIRE'S FIGURE IS THE TRUTH** — the fixture republishes the order (so the card
+	# has nothing out) with the food staged off the preview; the line must read the wire's.
+	h._hud.update_band_alerts([_grant_band(), _splinter_band(TAKE_FOOD_ECHOED)])
+	await h._settle()
+	h._assert_hud("loadout/take — once the order is echoed the line reads the WIRE's food (`%s`)"
+			% TAKE_FOOD_ECHOED_LINE,
+		Q.has_label_containing(_panel(), TAKE_FOOD_ECHOED_LINE))
 	# Put the fibre back, so the cap walk below starts from the standing take the fixture describes.
 	_press_minus(HudLoadoutVocab.MATERIAL_ROW_META, TAKE_MATERIALS[1])
 	await h._settle()
@@ -1205,6 +1430,70 @@ func _a_press_on_a_take_sends_the_whole_standing_order() -> void:
 			% str(_order_rows(_orders.back(), "materials", "units")),
 		_order_rows(_orders.back(), "materials", "units")
 			== {TAKE_MATERIALS[0]: TAKE_DEFAULT_HIDE})
+	await _a_refused_take_rolls_the_food_back()
+
+## ⛔ **A REFUSED ORDER ROLLS THE FOOD BACK WITH THE PICKS.** The `−` above is out and unanswered, so
+## the line is previewing the room it leaves (12); the wire's last word was the staged echo (10, for
+## the allocation still holding one fibre). Refusing the `−` must put the picks back on that held
+## allocation AND the food back on the wire's 10 — a card that kept previewing reads 12 for an order
+## that never happened. Then a second `−` restores the standing take the cap walk below starts from.
+func _a_refused_take_rolls_the_food_back() -> void:
+	h._assert_hud("loadout/take — the unanswered `−` previews its food (`%s`)" % TAKE_FOOD_OPENING,
+		Q.has_label_containing(_panel(), TAKE_FOOD_OPENING))
+	_orders.pop_back()
+	var seq: int = _controller()._event_seq_cursor + 1
+	_next_snapshot()
+	h._hud.ingest_command_events([_refusal_event(seq, h._hud._band_labor.current_turn(),
+		_band_id(SPLINTER_BAND_ENTITY), REFUSAL_DETAIL)])
+	await h._settle()
+	h._assert_hud("loadout/take — a refusal puts the fibre back on what the band holds (%d)"
+			% _stepper_count(HudLoadoutVocab.MATERIAL_ROW_META, TAKE_MATERIALS[1]),
+		_stepper_count(HudLoadoutVocab.MATERIAL_ROW_META, TAKE_MATERIALS[1]) == HudConst.WORKER_STEP
+			and _refusal_line() != null)
+	h._assert_hud("loadout/take — …and the food back on the WIRE's figure (`%s`, got `%s`)"
+			% [TAKE_FOOD_ECHOED_LINE, Q.label_containing(_panel(), FOOD_LINE_NEEDLE)],
+		Q.has_label_containing(_panel(), TAKE_FOOD_ECHOED_LINE)
+			and not Q.has_label_containing(_panel(), TAKE_FOOD_OPENING))
+	await _assert_no_dead_space("take_refused")
+	await h._save("starting_loadout_take_refused")
+	# ⛔ **THREE PRESSES, EACH LANDING ON THE FRAME THE PREVIOUS ONE'S FIT FINISHES** — the `−` that
+	# clears the refusal line (the header loses a row), then a `+`/`−` pair on a kit row, one `_settle`
+	# apart. `_settle` is two frames and so is `refit`, so each render lands right after the last fit,
+	# rebuilds every autowrapping label, and the card's column is sorted against their unsized, inflated
+	# minimums at an unchanged card height. That is the reported frame: a 1596px scroll in an 839px
+	# card, the footer pushed off the bottom (`StartingLoadoutPanel._fit_expanded_height`). Pressing
+	# with NO settle between does not reproduce it — the three renders share one frame and one sort.
+	# The pair nets out, so the cap walk below still starts from the standing take.
+	_press_minus(HudLoadoutVocab.MATERIAL_ROW_META, TAKE_MATERIALS[1])
+	await h._settle()
+	_press_plus(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING)
+	await h._settle()
+	_press_minus(HudLoadoutVocab.KIT_ROW_META, KIT_STALKING)
+	# The last render's fit spans two frames (`refit`), so the claim waits for it to land.
+	await h._settle()
+	await h._settle()
+	_assert_card_holds_its_column("take_back_to_back")
+	await _assert_no_dead_space("take_refusal_cleared")
+
+## ⛔ **THE CARD'S COLUMN FITS INSIDE THE CARD, AND THE FOOTER IS ON IT.** The scroll region may not be
+## taller than the card that holds it, and the footer (the `Done` row) must end inside the card's own
+## rect. Both are geometry a dead-space bound reads only indirectly; a card whose column was laid out
+## against stale minimums fails both at once, which is what the reported frame showed.
+func _assert_card_holds_its_column(arm: String) -> void:
+	var card := _panel().card()
+	var scroll: Control = card.find_child("LoadoutScroll", true, false)
+	var footer: Control = card.find_child("LoadoutFooter", true, false)
+	if scroll == null or footer == null:
+		h._assert_hud("loadout/%s — the card still has a scroll and a footer to measure" % arm, false)
+		return
+	h._assert_hud("loadout/%s — the scroll region fits inside the card (%.0f of %.0f)"
+			% [arm, scroll.size.y, card.size.y],
+		scroll.size.y <= card.size.y)
+	var card_rect := card.get_global_rect()
+	var footer_rect := footer.get_global_rect()
+	h._assert_hud("loadout/%s — the footer is on the card (ends at %.0f, card ends at %.0f)"
+			% [arm, footer_rect.end.y, card_rect.end.y],
+		footer.is_visible_in_tree() and footer_rect.end.y <= card_rect.end.y + CARD_EDGE_TOLERANCE)
 
 ## One half of a composed order as `id -> amount`. A DICT rather than the emitted array, so the claim
 ## is about the rows and not about the order a Dictionary happened to hand back its keys in.
@@ -1241,10 +1530,15 @@ func _the_take_cap_is_the_expanded_item_list() -> void:
 	h._assert_hud("loadout/take — …and `trapping` is capped at 0 with %d traps still at home"
 			% TAKE_TRAPS,
 		trapping_plus != null and trapping_plus.disabled)
-	h._assert_hud("loadout/take — the meter counts ITEM UNITS, the currency the cap is in (%d spent)"
-			% _controller().kits_spent(),
-		_controller().kits_spent() == TAKE_BIG_GAME_CEILING * KIT_STALKING_ITEMS)
-	_assert_no_dead_space("take_capped")
+	h._assert_hud("loadout/take — the order expands to ITEM UNITS, the currency the cap is in (%d)"
+			% _controller().items_spent(),
+		_controller().items_spent() == TAKE_BIG_GAME_CEILING * KIT_STALKING_ITEMS)
+	# …and the SUPPLY stopped it, not the carry: the pack still has room. Without this the sled claim
+	# above could be a carry bind that happened to land on five.
+	h._assert_hud("loadout/take — the carry still has room, so the SUPPLY is what stopped it (%.1f left)"
+			% _controller().carry_left(),
+		_controller().carry_left() > 0.0)
+	await _assert_no_dead_space("take_capped")
 	await h._save("starting_loadout_take_capped")
 	# **GIVE THE SLEDS BACK AND THE OTHER ROW OPENS.** The two rows share one supply line, so this is
 	# the same claim from the other side — and it is what a per-row cap gets wrong in both directions.
@@ -1263,6 +1557,21 @@ func _the_take_cap_is_the_expanded_item_list() -> void:
 	h._assert_hud("loadout/take — hide clamps at the %d the supply names (%d)"
 			% [TAKE_HIDE, _stepper_count(HudLoadoutVocab.MATERIAL_ROW_META, TAKE_MATERIALS[0])],
 		_stepper_count(HudLoadoutVocab.MATERIAL_ROW_META, TAKE_MATERIALS[0]) == TAKE_HIDE)
+	# ⛔ **AND THE CARRY BINDS A TAKE ROW TOO.** Fibre has 9 at home, but the pack has room for 8 — so
+	# the row's own supply cap is not enough for its `+` to be live: `can_add` is BOTH caps.
+	for _i in range(TAKE_FIBRE + 1):
+		_press_plus(HudLoadoutVocab.MATERIAL_ROW_META, TAKE_MATERIALS[1])
+	await h._settle()
+	var fibre := _stepper_count(HudLoadoutVocab.MATERIAL_ROW_META, TAKE_MATERIALS[1])
+	var fibre_plus := _plus_button(HudLoadoutVocab.MATERIAL_ROW_META, TAKE_MATERIALS[1])
+	h._assert_hud("loadout/take — fibre stops at %d, bound by the CARRY with %d still at home (got %d)"
+			% [TAKE_FIBRE_CARRY_CEILING, TAKE_FIBRE, fibre],
+		fibre == TAKE_FIBRE_CARRY_CEILING and fibre_plus != null and fibre_plus.disabled
+			and is_zero_approx(_controller().carry_left()))
+	# Hand the fibre back, so the switcher block below finds the take it describes.
+	for _i in range(TAKE_FIBRE_CARRY_CEILING):
+		_press_minus(HudLoadoutVocab.MATERIAL_ROW_META, TAKE_MATERIALS[1])
+	await h._settle()
 
 ## **TWO OPEN WINDOWS, TWO ORB ROWS, AND A SWITCHER — the way to the other card for a player who never
 ## opens the popover.** The row's own `Open ▸` is the other, and it is asserted by the block below;
@@ -1295,10 +1604,10 @@ func _the_switcher_reaches_the_other_band() -> void:
 			% [_controller().subject_band_id(), str(_controller().is_take())],
 		_controller().subject_band_id() == _band_id(HOME_BAND_ENTITY)
 			and not _controller().is_take())
-	h._assert_hud("loadout — …and that card is a GRANT again, meters and all",
+	h._assert_hud("loadout — …and that card is a GRANT again, its own carry and all",
 		Q.has_label_containing(_panel(), GRANT_METER_NEEDLE)
 			and not Q.has_label_containing(_panel(), TAKE_METER_NEEDLE))
-	_assert_no_dead_space("switched")
+	await _assert_no_dead_space("switched")
 	await h._save("starting_loadout_bands")
 
 ## ⛔ **NO BAND OF EMPTY SPACE UNDER THE COLUMNS.**
@@ -1326,6 +1635,11 @@ func _the_switcher_reaches_the_other_band() -> void:
 ## Asked in EVERY card state the chapter renders, because the defect appeared on an INTERACTION rather
 ## than on a mount and a bound checked only on the opening frame would not have seen it.
 func _assert_no_dead_space(arm: String) -> void:
+	# ⛔ **THE FIT LANDS OVER TWO FRAMES, so the bound waits for it.** A state that changes the subject
+	# (a tab press, a re-push) re-renders a card whose header can be a different height — a split's
+	# food lines — and one `_settle` returns before the second frame's height is applied. Measured
+	# there, the bound reports the PREVIOUS content's height as dead space.
+	await h._settle()
 	var card := _panel().card()
 	var body: Control = card.find_child("LoadoutBody", true, false)
 	var scroll: Control = card.find_child("LoadoutScroll", true, false)
@@ -1409,16 +1723,16 @@ func _orb_states() -> void:
 	_assert_orb_state("unspent", HudAttentionVocab.ATTENTION_SEVERITY_WARN, HudStyle.WARN)
 	await _open_orb_popover()
 	_assert_orb_row_reads("unspent", HudLoadoutVocab.ATTENTION_LABEL_UNSPENT,
-		ORB_DETAIL_ONE_RESOURCE)
+		ORB_DETAIL_ONE_CARRY)
 	await h._save("starting_loadout_orb_unspent")
 	_close_orb_popover()
 
 	# **COMPLETE — the ready arm.** One press puts the last unit back, and nothing else changes.
 	_press_plus(HudLoadoutVocab.MATERIAL_ROW_META, PICKABLE[0])
 	await h._settle()
-	h._assert_hud("loadout — the last unit really is spent (%d kits, %d units left)"
-			% [_controller().kits_left(), _controller().materials_left()],
-		_controller().kits_left() == 0 and _controller().materials_left() == 0)
+	h._assert_hud("loadout — the last unit really is spent (%.1f carry left)"
+			% _controller().carry_left(),
+		is_zero_approx(_controller().carry_left()))
 	_assert_orb_state("complete", HudAttentionVocab.ATTENTION_SEVERITY_READY, HudStyle.READY)
 	await _open_orb_popover()
 	_assert_orb_row_reads("complete", HudLoadoutVocab.ATTENTION_LABEL_READY,
@@ -1462,7 +1776,7 @@ func _assert_orb_row_reads(arm: String, label: String, detail: String) -> void:
 	# **THE DETAIL NAMES THE BUDGET THE PICKER NAMES.** It read `2 units unspent` beside a column
 	# headed `RESOURCES`, and a player asked what a unit was. The label alone cannot see that: both
 	# arms carry the same label whatever the remainder is worded as. `detail` is a LITERAL from this
-	# chapter — see `ORB_DETAIL_ONE_RESOURCE`.
+	# chapter — see `ORB_DETAIL_ONE_CARRY`.
 	h._assert_hud("loadout/%s — …and its detail reads `%s` (got `%s`)"
 			% [arm, detail, found.get("detail", "")],
 		String(found.get("detail", "")) == detail)
@@ -1592,6 +1906,41 @@ func _press_minus(meta: StringName, id: String) -> void:
 	if minus != null and not minus.disabled:
 		minus.pressed.emit()
 
+## The carry meter's LABEL ink, read off the rendered label inside the meter block.
+## Labels on the card drawn in the warning ink. The refusal line is the card's one legitimate warning
+## and none is up where this is asked.
+func _warn_labels_on_card() -> int:
+	return _count_warn_labels(_panel())
+
+func _count_warn_labels(node: Node) -> int:
+	var count := 0
+	if node is Label and (node as Label).is_visible_in_tree() \
+			and (node as Label).get_theme_color("font_color") == HudStyle.WARN:
+		count += 1
+	for child in node.get_children():
+		count += _count_warn_labels(child)
+	return count
+
+## Whether a row's `−` is enabled. The stepper's two buttons are found in the row as `+` is.
+func _minus_enabled(meta: StringName, id: String) -> bool:
+	var row := _row_node(meta, id)
+	if row == null:
+		return false
+	var minus := Q.find_button_by_text(row, STEPPER_MINUS_FACE)
+	return minus != null and not minus.disabled
+
+func _meter_label_text() -> String:
+	var meter := _row_node(HudLoadoutVocab.BUDGET_METER_META, HudLoadoutVocab.BUDGET_CARRY)
+	if meter == null or meter.get_child_count() == 0 or not (meter.get_child(0) is Label):
+		return ""
+	return (meter.get_child(0) as Label).text
+
+func _meter_label_color() -> Color:
+	var meter := _row_node(HudLoadoutVocab.BUDGET_METER_META, HudLoadoutVocab.BUDGET_CARRY)
+	if meter == null or meter.get_child_count() == 0 or not (meter.get_child(0) is Label):
+		return Color()
+	return (meter.get_child(0) as Label).get_theme_color("font_color")
+
 ## The footer control's rendered FACE. Read off the button rather than off a producer, because the
 ## claim is about what the player is looking at.
 func _close_face() -> String:
@@ -1617,6 +1966,34 @@ func _last_order_for(entity: int) -> Dictionary:
 
 ## One band's published kits: the last order sent for it, else the default outfit the sim applied when
 ## it made the band.
+## A window's goods load, computed here from the fixture's own item counts and weights — never asked
+## of the controller, whose `_order_load` is what the food line is checked against.
+const KIT_ITEM_COUNTS := {
+	KIT_STALKING: KIT_STALKING_ITEMS, "trapping": KIT_TRAPPING_ITEMS, KIT_GATHERING: KIT_GATHERING_ITEMS,
+}
+
+func _window_goods_load(kits: Array, materials: Array) -> float:
+	var load_total := 0.0
+	for row in kits:
+		load_total += ITEM_CARRY_WEIGHT * int(KIT_ITEM_COUNTS.get(
+			String(row.get(HudLoadoutVocab.KIT_DEFAULT_ID_KEY, "")), 0)) \
+			* int(row.get(HudLoadoutVocab.KIT_DEFAULT_COUNT_KEY, 0))
+	for row in materials:
+		load_total += MATERIAL_CARRY_WEIGHT * int(row.get(HudLoadoutVocab.MATERIAL_DEFAULT_UNITS_KEY, 0))
+	return load_total
+
+## The food legend line's whole text, `""` where no line is drawn.
+func _food_line_text() -> String:
+	var line := Q.find_meta_node(_panel(), HudLoadoutVocab.FOOD_LINE_META) as Label
+	return line.text if line != null else ""
+
+## The food legend line's ink, or transparent where no line is drawn.
+func _food_line_ink() -> Color:
+	var line := Q.find_meta_node(_panel(), HudLoadoutVocab.FOOD_LINE_META) as Label
+	if line == null:
+		return Color(0, 0, 0, 0)
+	return line.get_theme_color("font_color")
+
 func _held_kits(entity: int, fallback: Array) -> Array:
 	var order := _last_order_for(entity)
 	if order.is_empty():
@@ -1656,7 +2033,8 @@ func _window_rows(rows: Variant, order_amount_key: String, id_key: String,
 ## neither: the SIM applies that spread when it makes the band, so it arrives on the window below, and
 ## a fixture stating it here as well would let a client that drew it a second time pass.
 ##
-## `open` and the budgets are not here either — they are facts about one band and ride the cohort.
+## `open` and the carry capacity are not here either — they are facts about one band and ride the
+## cohort. The two carry WEIGHTS are, being one per world.
 func _campaign() -> Dictionary:
 	return {
 		HudLoadoutVocab.PICKABLE_MATERIALS_KEY: PICKABLE.duplicate(),
@@ -1664,6 +2042,8 @@ func _campaign() -> Dictionary:
 			RECIPE_SLED, RECIPE_CROOK, RECIPE_BASKETS, RECIPE_TRAPS, RECIPE_SPEARS,
 			RECIPE_EARTHMOVING,
 		],
+		HudLoadoutVocab.ITEM_CARRY_WEIGHT_KEY: ITEM_CARRY_WEIGHT,
+		HudLoadoutVocab.MATERIAL_CARRY_WEIGHT_KEY: MATERIAL_CARRY_WEIGHT,
 	}
 
 ## The spawned band, carrying its own GRANT window. Stamped through `BandFx.with_band_id` like every
@@ -1676,8 +2056,12 @@ func _campaign() -> Dictionary:
 func _grant_band() -> Dictionary:
 	return _band(HOME_BAND_ENTITY, {
 		HudLoadoutVocab.OPEN_KEY: true,
-		HudLoadoutVocab.KIT_BUDGET_KEY: KIT_BUDGET,
-		HudLoadoutVocab.MATERIAL_BUDGET_KEY: MATERIAL_BUDGET,
+		# The WHOLE carry, its larder FIXED inside it — the opening band, and the parent whose grant is
+		# still open after the split below, are both this window.
+		HudLoadoutVocab.CARRY_CAPACITY_KEY: GRANT_WHOLE_CARRY,
+		HudLoadoutVocab.FOOD_SHARE_KEY: GRANT_FOOD,
+		HudLoadoutVocab.FOOD_CARRIED_KEY: GRANT_FOOD,
+		HudLoadoutVocab.FOOD_FIXED_KEY: true,
 		# **A GRANT NAMES NO PARENT.** Its picks mint; nothing moves off another band.
 		HudLoadoutVocab.PARENT_BAND_ID_KEY: HudLoadoutVocab.GRANT_PARENT_BAND_ID,
 		HudLoadoutVocab.WINDOW_KITS_KEY: _held_kits(HOME_BAND_ENTITY, [
@@ -1698,30 +2082,39 @@ func _grant_band() -> Dictionary:
 		]),
 	})
 
-## The splinter a split just made, carrying a TAKE on the home band. Both budgets are `0` and mean
-## nothing; the cap is the two supplies, each already `the home band's holdings + this take's standing
-## units`, which is the number the sim refuses on.
+## The splinter a split just made, carrying a TAKE on the home band. Capped by its own carry AND the
+## two supplies, each already `the home band's holdings + this take's standing units`, which is the
+## number the sim refuses on.
 ##
 ## ⛔ **ITS ROWS ARE NOT EMPTY**, and a fixture that left them so would be staging the very state the
 ## split's kit-denominated default take exists to remove — a card reading zero on a band standing on
 ## its dowry, whose next press would hand the dowry back.
-func _splinter_band() -> Dictionary:
+func _splinter_band(food_carried: float = -1.0) -> Dictionary:
+	var kits := _held_kits(SPLINTER_BAND_ENTITY, [
+		{HudLoadoutVocab.KIT_DEFAULT_ID_KEY: KIT_STALKING,
+			HudLoadoutVocab.KIT_DEFAULT_COUNT_KEY: TAKE_DEFAULT_BIG_GAME},
+	])
+	var materials := _held_materials(SPLINTER_BAND_ENTITY, [
+		{HudLoadoutVocab.MATERIAL_DEFAULT_ID_KEY: TAKE_MATERIALS[0],
+			HudLoadoutVocab.MATERIAL_DEFAULT_UNITS_KEY: TAKE_DEFAULT_HIDE},
+	])
+	# **THE FOOD THE SIM WOULD HAND BACK** for the allocation this fixture publishes — the room its goods
+	# leave, capped by the share — unless a state stages it.
+	if food_carried < 0.0:
+		food_carried = clampf(TAKE_CARRY_CAPACITY - _window_goods_load(kits, materials),
+			0.0, TAKE_FOOD_SHARE)
 	return _band(SPLINTER_BAND_ENTITY, {
 		HudLoadoutVocab.OPEN_KEY: true,
-		HudLoadoutVocab.KIT_BUDGET_KEY: 0,
-		HudLoadoutVocab.MATERIAL_BUDGET_KEY: 0,
+		HudLoadoutVocab.CARRY_CAPACITY_KEY: TAKE_CARRY_CAPACITY,
+		HudLoadoutVocab.FOOD_SHARE_KEY: TAKE_FOOD_SHARE,
+		HudLoadoutVocab.FOOD_CARRIED_KEY: food_carried,
+		HudLoadoutVocab.FOOD_FIXED_KEY: false,
 		HudLoadoutVocab.PARENT_BAND_ID_KEY: _band_id(HOME_BAND_ENTITY),
 		# **THE DEFAULT TAKE, kit-denominated** — what the split already moved, which is what the card
 		# draws and what every press re-sends beside itself. Its expansion (2 spears, 2 sleds) is inside
 		# the supply below by construction, the sim publishing `holdings + this take's standing units`.
-		HudLoadoutVocab.WINDOW_KITS_KEY: _held_kits(SPLINTER_BAND_ENTITY, [
-			{HudLoadoutVocab.KIT_DEFAULT_ID_KEY: KIT_STALKING,
-				HudLoadoutVocab.KIT_DEFAULT_COUNT_KEY: TAKE_DEFAULT_BIG_GAME},
-		]),
-		HudLoadoutVocab.WINDOW_MATERIALS_KEY: _held_materials(SPLINTER_BAND_ENTITY, [
-			{HudLoadoutVocab.MATERIAL_DEFAULT_ID_KEY: TAKE_MATERIALS[0],
-				HudLoadoutVocab.MATERIAL_DEFAULT_UNITS_KEY: TAKE_DEFAULT_HIDE},
-		]),
+		HudLoadoutVocab.WINDOW_KITS_KEY: kits,
+		HudLoadoutVocab.WINDOW_MATERIALS_KEY: materials,
 		HudLoadoutVocab.PARENT_ITEM_SUPPLY_KEY: [
 			_supply("spears", TAKE_SPEARS), _supply("sled", TAKE_SLED),
 			_supply("traps", TAKE_TRAPS), _supply("baskets", TAKE_BASKETS),
@@ -1732,15 +2125,14 @@ func _splinter_band() -> Dictionary:
 		],
 	})
 
-## **A BAND WHOSE PUBLISHED ALLOCATION IS OVER ITS BUDGET** — the reported screen, staged the one way
-## a client can reach it. Its grant budgets are the post-split ones and its accepted rows are the
-## pre-split allocation, which is the shape the duplication bug left behind; the card draws a
-## published allocation as-is, so both meters read negative.
+## **A BAND WHOSE PUBLISHED ALLOCATION IS OVER ITS CARRY** — the reported screen, staged the one way
+## a client can reach it. Its carry is the post-split one and its accepted rows are the pre-split
+## allocation, which is the shape the duplication bug left behind; the card draws a published
+## allocation as-is, so the meter reads negative.
 func _over_budget_band() -> Dictionary:
 	return _band(OVER_BAND_ENTITY, {
 		HudLoadoutVocab.OPEN_KEY: true,
-		HudLoadoutVocab.KIT_BUDGET_KEY: OVER_KIT_BUDGET,
-		HudLoadoutVocab.MATERIAL_BUDGET_KEY: OVER_MATERIAL_BUDGET,
+		HudLoadoutVocab.CARRY_CAPACITY_KEY: OVER_CARRY_CAPACITY,
 		HudLoadoutVocab.PARENT_BAND_ID_KEY: HudLoadoutVocab.GRANT_PARENT_BAND_ID,
 		HudLoadoutVocab.WINDOW_KITS_KEY: [
 			{HudLoadoutVocab.KIT_DEFAULT_ID_KEY: KIT_STALKING,
@@ -1758,7 +2150,7 @@ func _band(entity: int, window: Dictionary) -> Dictionary:
 		"entity": entity,
 		"faction": HudConst.PLAYER_FACTION_ID,
 		"size": BAND_FIXTURE_SIZE,
-		"working_age": KIT_BUDGET,
+		"working_age": WORKING_AGE,
 		"current_x": BAND_FIXTURE_X,
 		"current_y": BAND_FIXTURE_Y,
 		"idle_workers": 0,

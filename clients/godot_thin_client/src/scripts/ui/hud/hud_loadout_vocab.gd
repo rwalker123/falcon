@@ -11,7 +11,7 @@ class_name HudLoadoutVocab
 ## **THIS PANEL HAS ONE COLOUR VOCABULARY AND IT MEANS "MATERIAL".** A swatch is a material's
 ## identity, drawn identically in the resources column, in the legend above the recipe list and on
 ## every recipe's cost row, so the three read as one key. Nothing else in the panel is tinted by
-## identity — the kit meter's bar is a single spent segment against its remainder, kits being
+## identity — the kits' part of the carry bar is a single segment, kits being
 ## interchangeable hands with nothing to tell apart — because a second colour vocabulary beside the
 ## legend would be read as part of it.
 ##
@@ -43,12 +43,18 @@ const KIT_DEFAULT_COUNT_KEY := "count"
 ## by sniffing a craft offer's refusal SENTENCE — that would make a player-facing string into a
 ## machine contract.
 const CRAFTABLE_RECIPE_IDS_KEY := "craftable_recipe_ids"
+## ⛔ **THE TWO WEIGHTS AN ORDER IS MEASURED IN** (#732) — echoes of `expedition_config.json`
+## `carry.item_carry_weight` / `carry.material_carry_weight`. An order's load is
+## `item weight × Σ EXPANDED item units + material weight × Σ material units`, which is the exact
+## comparison the server refuses on (`OverCarry`); a kit weighs the items it expands to.
+const ITEM_CARRY_WEIGHT_KEY := "item_carry_weight"
+const MATERIAL_CARRY_WEIGHT_KEY := "material_carry_weight"
 
 # ---- the wire's own keys: ONE BAND'S WINDOW ------------------------------------------------------
 # `PopulationCohortState.loadoutWindow`, decoded onto each cohort dict as `loadout_window`
 # (`native/src/dict/population.rs`). **EVERY BAND GETS ONE** — the spawned band's, and one on every
-# splinter a split makes — so the budgets and the open flag are facts about a BAND and the campaign
-# section above does not carry them.
+# splinter a split makes — so the carry capacity and the open flag are facts about a BAND and the
+# campaign section above does not carry them.
 
 ## The window, on the cohort dict. Absent means this band has nothing to outfit.
 const WINDOW_KEY := "loadout_window"
@@ -58,15 +64,23 @@ const BAND_ID_KEY := "band_id"
 ## False once THIS band's window has shut. It shuts on the turn advance and on nothing else, so it is
 ## never a success signal: an accepted order leaves it open, which is what lets a pick be revised.
 const OPEN_KEY := "open"
-## One kit per working-age hand of the band — derived sim-side, never configured. `0` on a TAKE
-## window, which mints nothing.
-const KIT_BUDGET_KEY := "kit_budget"
-## `start_profiles.json` `opening_loadout.material_points`. One point buys one unit; `0` on a take.
-const MATERIAL_BUDGET_KEY := "material_budget"
-## ⛔ **WHICH OF THE TWO WINDOWS THIS IS, and it decides everything the card draws.**
-## `GRANT_PARENT_BAND_ID` means the picks MINT against the two budgets above. Anything else is the
-## id of the band this take is drawn FROM: the picks MOVE gear out of that band's ledger, the budgets
-## are `0` and mean nothing, and the cap is the two supplies below.
+## ⛔ **THE BAND'S WHOLE CARRY — goods AND food, in food-unit load** (#732), on every window: the
+## band's workers × per-worker carry, the same number as the cohort's own `carry_capacity`. It is the
+## carry bar's whole width. What an order's GOODS may weigh depends on `food_fixed` (below).
+const CARRY_CAPACITY_KEY := "carry_capacity"
+## ⛔ **THE BAND'S FOOD, in load.** On a SPLINTER (`food_fixed` false) `food_share` is the most it may
+## take (its full proportional larder share) and `food_carried` what it holds now; food that crosses
+## is `min(food_share, carry_capacity − goods load)`, re-resolved by the server on every accepted
+## order, so `food_carried` is the TRUTH and the card's own `min()` is a preview while an order is out.
+## On a FIXED larder (`food_fixed` true — the opening band, a parent whose grant is still open after
+## a split) both are the larder's mass, and it counts against the carry WITHOUT yielding: the goods
+## allowance is `carry_capacity − food_carried`.
+const FOOD_SHARE_KEY := "food_share"
+const FOOD_CARRIED_KEY := "food_carried"
+const FOOD_FIXED_KEY := "food_fixed"
+## ⛔ **WHICH OF THE TWO WINDOWS THIS IS — where the gear comes from.** `GRANT_PARENT_BAND_ID` means
+## the picks MINT. Anything else is the id of the band this take is drawn FROM: the picks MOVE gear
+## out of that band's ledger, and each row is also capped by the two supplies below.
 const PARENT_BAND_ID_KEY := "parent_band_id"
 ## The value of [PARENT_BAND_ID_KEY] on a grant window. `0` is "no band" throughout this client.
 const GRANT_PARENT_BAND_ID := 0
@@ -155,14 +169,33 @@ const BUILDS_HEAD := "What the resources can build"
 ## meant to remove.
 const BUILDS_NOTE := ""
 
-## The budget meters say the REMAINDER and nothing else. A second clause ("28 of 30 packed") is the
-## same fact subtracted from itself, and the bar beside it already draws the spent half.
-const BUDGET_REMAINING_FORMAT := "%d / %d left"
-## ⛔ **A TAKE HAS NO BUDGET, SO ITS METER READS THE HOME BAND'S SUPPLY** — and what is left of it is
-## not forfeited when the turn advances, it simply stays where it is. Hence *"left at home"* rather
-## than the grant's bare *"left"*: the grant's remainder is lost on the advance and the orb says so,
-## and reusing that wording here would state a loss that does not happen.
-const SUPPLY_REMAINING_FORMAT := "%d / %d left at home"
+## ⛔ **ONE METER FOR THE BAND, AND IT SAYS WHAT IS ACTUALLY FREE** (#732): `carry_capacity − goods
+## load − food`, over the whole carry. Kits, resources AND food share one pack, so the bar draws all
+## three and the number is the room none of them is using. A splinter whose food fills the room its
+## goods leave reads `0 /`, never the goods room the food has already taken. ⛔ **The free room floors
+## at ZERO and never reads in warning ink**: a band that is not moving is never warned that it is over
+## its carry (see `ATTENTION_LABEL_OVER_SUPPLY`). An over-full band reads `0 /` and its bar draws full;
+## its `+` stays shut and its `−` stays open.
+const CARRY_REMAINING_FORMAT := "%s / %s carry left"
+## …what ONE more of a row costs in that currency, said only where it is not obvious — a kit that
+## puts two items in hands weighs 2, a one-item kit at weight 1 needs no note. `CARRY_OBVIOUS_UNIT_LOAD`
+## is the "not obvious" test: the meter's own unit.
+const KIT_CARRY_COST_FORMAT := "%s · %s carry"
+const MATERIAL_CARRY_COST_FORMAT := "%s carry each"
+## ⛔ **THE FOOD IS THE BAR'S OWN SEGMENT, AND THIS IS ITS LEGEND ENTRY** — one line under the bar, in
+## the quiet ink, beside a swatch of `FOOD_SEGMENT_COLOR`. A fixed larder states its mass, so the
+## opening band's card says why its goods room is smaller than its carry. A splinter states what it
+## brings of its share, and — only while that is under the share — the choice that would bring more.
+## **It is a CHOICE, not a fault, so nothing about it is amber**: fewer tools is one way to spend the
+## pack, not a remedy for something wrong.
+const FOOD_FIXED_FORMAT := "Food %s"
+const FOOD_BROUGHT_FORMAT := "Food %s of %s"
+const FOOD_ROOM_CLAUSE := " · fewer tools leave room for more"
+## How far the food's tint sits from the HUD's ink toward its warm accent — a pale wheat, separable
+## from every material swatch (the ring's own `WARN` and `VOICE_PIGMENT` are both far more saturated)
+## and from the bar's dark remainder.
+const FOOD_SEGMENT_TINT := 0.35
+const CARRY_OBVIOUS_UNIT_LOAD := 1.0
 
 ## `Hunt · Builders` over `Spears, Sled` — the jobs a kit may be sent on, then what it puts in hands.
 const KIT_JOBS_SEPARATOR := " · "
@@ -191,8 +224,8 @@ const LEGEND_HEAD := "Materials"
 ## names the TURN, which is true: `close_opening_window` is the only writer that ever clears `open`.
 ## Do not let the two drift back together.
 ##
-## The quiet ink, the subtitle's register: it is guidance rather than a warning. The card's one warning
-## ink is the refused-order line (`REFUSAL_FORMAT`). **If it ever has to be trimmed, the SECOND sentence is the one that
+## The quiet ink, the subtitle's register: it is guidance rather than a warning. Warning ink on the
+## card is the refused-order line (`REFUSAL_FORMAT`), the over-carry meter and the food hint. **If it ever has to be trimmed, the SECOND sentence is the one that
 ## survives** — the way back is discoverable by pressing things; the deadline is not.
 const FOOTER_NOTE := "The turn orb reopens this. Ending the turn closes it for good."
 
@@ -251,8 +284,8 @@ const EVENT_SEQ_NONE := 0
 const EVENT_TICK_NONE := -1
 
 ## ⛔ **THE REASON IS THE SIM'S, VERBATIM.** No item or kit name is spelled here: the detail comes off
-## the wire (*"17 kits allocated against a budget of 16"*), and the second sentence says what the card
-## did about it. Warning ink — the one place this card wears it — and at most two lines.
+## the wire (*"the order weighs 15.0 against a carry of 14.0"*), and the second sentence says what the card
+## did about it. Warning ink, beside the over-carry meter and the food hint, and at most two lines.
 const REFUSAL_FORMAT := "Not taken: %s. Picks reset to what the band holds."
 ## …and the same line when LATER orders are still in flight. The picks were left alone — the latest
 ## order is a whole replacement whose own echo settles them — so the line must not claim a reset.
@@ -281,27 +314,25 @@ const REFUSAL_FONT_SIZE := 11
 ## contradict the card beside it, which is showing the kits the band is carrying.
 const ATTENTION_LABEL_UNSPENT := "Band not fully outfitted"
 const ATTENTION_LABEL_READY := "Band outfitted"
-## ⛔ **A THIRD RUNG, BECAUSE OVER-BUDGET AND FULLY-SPENT ARE NOT THE SAME ANSWER.** The completeness
-## test was `remaining <= 0`, so a band holding MORE than its budget allows passed it and the orb
-## called it done — reported from a live run as a card reading `-6 / 22 left` beside a row saying
-## *everything is picked*. A state this row cannot word is exactly the state it must not paint green,
-## so a negative remainder reads `warn` and says which way it is wrong.
-const ATTENTION_LABEL_OVER := "Band over budget"
-## Both remainders in one line, because the two budgets are one decision. A budget already clear is
-## dropped from it rather than printed as a zero.
+## ⛔ **A BAND THAT IS NOT MOVING IS NEVER WARNED THAT IT IS OVER ITS CARRY** (#732, the maintainer's
+## rule). The cap matters only when a band walks away, and the long-move targeting warning is the ONE
+## place that says so. A band left heavier than its carry — say, by sending a scout, which takes a
+## pack's worth of carry with it — reads as OUTFITTED here: nothing more fits, and there is nothing
+## to fix.
+##
+## **What this arm still reports is SUPPLY, which is not carry.** A take standing on more of an item
+## or a material than its home band now holds (an onward split shrank the supply) is an order the
+## server refuses, so it keeps a warn row — worded in the take's own terms, never as carry.
+const ATTENTION_LABEL_OVER_SUPPLY := "Band takes more than home holds"
+## The parts of one detail line. A part with nothing to say is dropped rather than printed as a zero.
 const ATTENTION_DETAIL_SEPARATOR := ", "
-const ATTENTION_DETAIL_KITS_ONE := "1 kit unspent"
-const ATTENTION_DETAIL_KITS_MANY := "%d kits unspent"
-## **`resources`, NEVER `units`** — the picker's own second column is headed `RESOURCES`, and the orb
-## naming the same budget something else made a player ask what a "unit" was. A budget is called
-## whatever the control that spends it is called.
-const ATTENTION_DETAIL_UNITS_ONE := "1 resource unspent"
-const ATTENTION_DETAIL_UNITS_MANY := "%d resources unspent"
-## …and the over-budget arm's own tail, built from the bare counts below so the two nouns are typed
-## once. `2 kits, 6 resources over budget`.
-const ATTENTION_DETAIL_OVER_FORMAT := "%s over budget"
-## Both budgets are clear. It reads as a statement of fact rather than as an instruction, because at
-## this point there is nothing the player still has to do.
+## **`carry`, the meter's own word** — the remainder is named whatever the control that spends it is
+## named, which is why this row stopped saying `units` beside a column headed `RESOURCES`.
+const ATTENTION_DETAIL_CARRY_UNSPENT_FORMAT := "%s carry unspent"
+## The supply arm's detail — the take's overdraw in the bare kit/resource counts below: `2 kits over`.
+const ATTENTION_DETAIL_OVER_FORMAT := "%s over"
+## Nothing more fits. It reads as a statement of fact rather than as an instruction, because at this
+## point there is nothing the player still has to do.
 const ATTENTION_DETAIL_READY := "everything is picked"
 
 ## ⛔ **THE ROW NAMES ITS OWN BAND, and the band leads.** Every window is one band's, so with two open
@@ -394,13 +425,18 @@ const MATERIAL_ROW_META := &"loadout_material_row"
 const RECIPE_ROW_META := &"loadout_recipe_row"
 const RECIPE_COUNT_META := &"loadout_recipe_count"
 const BUDGET_METER_META := &"loadout_budget_meter"
+## The food's legend line under the bar, and the food segment of the bar. A harness reads them by these.
+const FOOD_LINE_META := &"loadout_food_line"
+const FOOD_SEGMENT_KEY := "food"
 const CLOSE_BUTTON_META := &"loadout_close"
 const LEGEND_ENTRY_META := &"loadout_legend_entry"
 const REFUSAL_LINE_META := &"loadout_refusal_line"
 
-## The two meters, by the budget each reports.
-const BUDGET_KITS := "kits"
-const BUDGET_MATERIALS := "materials"
+## The one meter, by the budget it reports — a harness finds it by this meta value.
+const BUDGET_CARRY := "carry"
+## ⛔ **AN ORDER'S LOAD IS COMPARED IN FLOATS, SO THE COMPARISON NEEDS A TOLERANCE.** Both weights are
+## config floats; `3 × 0.1` against `0.3` must fit. Far below any weight a config would ship.
+const CARRY_EPSILON := 0.0001
 
 # ---- the palette --------------------------------------------------------------------------------
 
@@ -413,10 +449,12 @@ const BUDGET_MATERIALS := "materials"
 ##
 ## Every entry is a themed `HudStyle` ink, so the ring re-derives with the palette.
 static var SWATCH_COLORS: Array[Color] = []
-## The unspent half of a budget bar, and the ink a swatch falls back to before the palette lands.
+## The unspent part of the carry bar, and the ink a swatch falls back to before the palette lands.
 static var BUDGET_REMAINDER_COLOR: Color = Color()
-## The spent half of the KIT bar — one segment, not a stack. See this file's docstring.
+## The KITS' share of the carry bar — one segment, not a stack by kit. See this file's docstring.
 static var BUDGET_SPENT_COLOR: Color = Color()
+## The FOOD's share of the carry bar, and its legend swatch. Derived per palette (`FOOD_SEGMENT_TINT`).
+static var FOOD_SEGMENT_COLOR: Color = Color()
 
 ## Install the current `HudStyle` palette into this file's tints. Called by `HudPalette.apply()`
 ## after `HudStyle.apply_palette`; it takes no palette of its own, because none of these is a colour
@@ -437,6 +475,7 @@ static func apply_palette() -> void:
 	# from, which is exactly the state the meter is most needed in.
 	BUDGET_REMAINDER_COLOR = HudStyle.LINE
 	BUDGET_SPENT_COLOR = HudStyle.SIGNAL_DEEP
+	FOOD_SEGMENT_COLOR = HudStyle.INK.lerp(HudStyle.WARN, FOOD_SEGMENT_TINT)
 
 ## The swatch for the material at `index` in the published pick list. Wraps, so a profile offering
 ## more materials than the ring has inks repeats a colour rather than losing one — a repeat is
@@ -453,6 +492,24 @@ static func material_label(material_id: String) -> String:
 
 ## An input amount, trimmed. Recipe inputs are floats and most of them are whole, so `2` beats `2.0`
 ## while `0.5` must survive.
+## ⛔ **THE CARD STATES CARRY AND FOOD IN WHOLE NUMBERS — DISPLAY ONLY.** Every `+` gate and the over
+## state read the floats; these three only decide how a figure is PRINTED, and each rounds in the
+## direction that keeps the card honest beside its own bar:
+## - `whole_free` FLOORS at zero, so the meter never offers more room than there is and an over-full
+##   band reads `0` — a stationary band is never warned it is over its carry (#732).
+## - `whole_cost` CEILS, so what one more of a row costs is never printed as less than it weighs.
+## - `whole_amount` rounds to the nearest, for a figure that is neither room nor price — a capacity, a
+##   larder.
+## The tolerance keeps float noise (`11.99999`) on the integer it means.
+static func whole_free(amount: float) -> String:
+	return "%d" % int(floorf(amount + CARRY_EPSILON))
+
+static func whole_cost(amount: float) -> String:
+	return "%d" % int(ceilf(amount - CARRY_EPSILON))
+
+static func whole_amount(amount: float) -> String:
+	return "%d" % int(roundf(amount))
+
 static func amount_text(amount: float) -> String:
 	if is_equal_approx(amount, roundf(amount)):
 		return "%d" % int(roundf(amount))

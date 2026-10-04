@@ -228,13 +228,15 @@ fn create_populations<'a>(
                     builder,
                     &fb::BandLoadoutWindowStateArgs {
                         open: window.open,
-                        kitBudget: window.kit_budget,
-                        materialBudget: window.material_budget,
                         kits: Some(kits),
                         materials: Some(materials),
                         parentBandId: window.parent_band_id,
                         parentItemSupply: Some(parent_item_supply),
                         parentMaterialSupply: Some(parent_material_supply),
+                        carryCapacity: window.carry_capacity,
+                        foodShare: window.food_share,
+                        foodCarried: window.food_carried,
+                        foodFixed: window.food_fixed,
                     },
                 )
             });
@@ -1039,11 +1041,10 @@ fn create_populations<'a>(
                     transferSent: cohort.transfer_sent,
                     // One person's shipment pack — appended last. Always written: it is a global
                     // lever, so every cohort carries the same positive number.
-                    expeditionTradePerWorkerCarry: cohort.expedition_trade_per_worker_carry,
+                    carryPerWorker: cohort.carry_per_worker,
                     // The other half of a shipment's mass — appended last, always written, and
                     // legitimately `0` (weightless materials) unlike the pack lever above it.
-                    expeditionTradeMaterialCarryWeight: cohort
-                        .expedition_trade_material_carry_weight,
+                    carryMaterialWeight: cohort.expedition_trade_material_carry_weight,
                     // The transfer pair a client renders — appended last, always written. Per-turn
                     // state, so unlike the accumulating pair above it survives the sim's
                     // after-every-command recapture; on a turn frame the two read the same number.
@@ -1093,7 +1094,7 @@ fn create_populations<'a>(
                     // always written. `0` is a real reading on both: "this shipment carries no hay"
                     // and "hay is weightless".
                     expeditionCargoFodder: cohort.expedition_cargo_fodder,
-                    expeditionTradeFodderCarryWeight: cohort.expedition_trade_fodder_carry_weight,
+                    carryFodderWeight: cohort.expedition_trade_fodder_carry_weight,
                     // THE BAND'S NAME — appended last. The sim owns it; a client that counts rows
                     // instead disagrees with itself the moment two screens filter differently.
                     name: band_name,
@@ -1123,6 +1124,14 @@ fn create_populations<'a>(
                     homewardFoodSpoils: cohort.homeward_food_spoils,
                     homewardNextLoadIn: cohort.homeward_next_load_in,
                     homewardAllHomeIn: cohort.homeward_all_home_in,
+                    // WHAT THIS BAND CAN CARRY — appended last (#732).
+                    carryCapacity: cohort.carry_capacity,
+                    carryLoad: cohort.carry_load,
+                    moveFerryReachTiles: cohort.move_ferry_reach_tiles,
+                    longMoveLeavesFood: cohort.long_move_leaves_food,
+                    longMoveLeavesItems: cohort.long_move_leaves_items,
+                    longMoveLeavesMaterials: cohort.long_move_leaves_materials,
+                    foodLeftBehind: cohort.food_left_behind,
                 },
             )
         })
@@ -1316,8 +1325,6 @@ fn decode_loadout_supply_rows(
 fn decode_loadout_window(window: fb::BandLoadoutWindowState<'_>) -> BandLoadoutWindowState {
     BandLoadoutWindowState {
         open: window.open(),
-        kit_budget: window.kitBudget(),
-        material_budget: window.materialBudget(),
         kits: map_rows(window.kits(), |row| OpeningKitDefaultState {
             kit_id: text(row.kitId()),
             count: row.count(),
@@ -1329,6 +1336,10 @@ fn decode_loadout_window(window: fb::BandLoadoutWindowState<'_>) -> BandLoadoutW
         parent_band_id: window.parentBandId(),
         parent_item_supply: decode_loadout_supply_rows(window.parentItemSupply()),
         parent_material_supply: decode_loadout_supply_rows(window.parentMaterialSupply()),
+        carry_capacity: window.carryCapacity(),
+        food_share: window.foodShare(),
+        food_carried: window.foodCarried(),
+        food_fixed: window.foodFixed(),
     }
 }
 
@@ -1559,8 +1570,8 @@ fn decode_population(
         expedition_cargo_materials: decode_material_payoffs(cohort.expeditionCargoMaterials()),
         transfer_received: cohort.transferReceived(),
         transfer_sent: cohort.transferSent(),
-        expedition_trade_per_worker_carry: cohort.expeditionTradePerWorkerCarry(),
-        expedition_trade_material_carry_weight: cohort.expeditionTradeMaterialCarryWeight(),
+        carry_per_worker: cohort.carryPerWorker(),
+        expedition_trade_material_carry_weight: cohort.carryMaterialWeight(),
         transfer_received_turn: cohort.transferReceivedTurn(),
         transfer_sent_turn: cohort.transferSentTurn(),
         upkeep_fund_mode: text(cohort.upkeepFundMode()),
@@ -1603,7 +1614,7 @@ fn decode_population(
         fodder_transfer_route_received_turn: cohort.fodderTransferRouteReceivedTurn(),
         fodder_transfer_route_sent_turn: cohort.fodderTransferRouteSentTurn(),
         expedition_cargo_fodder: cohort.expeditionCargoFodder(),
-        expedition_trade_fodder_carry_weight: cohort.expeditionTradeFodderCarryWeight(),
+        expedition_trade_fodder_carry_weight: cohort.carryFodderWeight(),
         name: text(cohort.name()),
         loadout_window: cohort.loadoutWindow().map(decode_loadout_window),
         transfer_crossings: map_rows(cohort.transferCrossings(), |crossing| {
@@ -1639,6 +1650,13 @@ fn decode_population(
         homeward_food_spoils: cohort.homewardFoodSpoils(),
         homeward_next_load_in: cohort.homewardNextLoadIn(),
         homeward_all_home_in: cohort.homewardAllHomeIn(),
+        carry_capacity: cohort.carryCapacity(),
+        carry_load: cohort.carryLoad(),
+        move_ferry_reach_tiles: cohort.moveFerryReachTiles(),
+        long_move_leaves_food: cohort.longMoveLeavesFood(),
+        long_move_leaves_items: cohort.longMoveLeavesItems(),
+        long_move_leaves_materials: cohort.longMoveLeavesMaterials(),
+        food_left_behind: cohort.foodLeftBehind(),
     })
 }
 

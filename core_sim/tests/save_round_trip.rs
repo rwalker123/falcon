@@ -636,14 +636,12 @@ fn a_blob_taken_before_the_first_turn_restores_an_open_opening_window() {
         .map(|(_, window)| window.supply.clone())
         .expect("fixture: the spawned band must hold an open grant window");
     assert!(
-        matches!(
-            grant,
-            core_sim::LoadoutSupply::Grant {
-                kit_budget,
-                material_budget,
-            } if kit_budget > 0 && material_budget > 0
-        ),
-        "fixture: the grant must carry real budgets, or the equality below is trivial: {grant:?}"
+        matches!(grant, core_sim::LoadoutSupply::Grant { .. }),
+        "fixture: the spawned band's window must be a grant: {grant:?}"
+    );
+    assert!(
+        live.iter().any(|(_, window)| !window.kits.is_empty()),
+        "fixture: the window must hold an applied outfit, or the equality below is trivial"
     );
 
     let blob = encode_save(&original.world).expect("the world encodes");

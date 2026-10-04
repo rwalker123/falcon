@@ -379,14 +379,14 @@ pub struct VictorySnapshotState {
 /// two pre-fills, and what this faction could bench today.
 ///
 /// **The per-band half is [`super::PopulationCohortState::loadout_window`]**: whether *this* band's
-/// window is open, and what caps it. Every band gets one, and a splinter's budgets are not the
-/// spawned band's, so `open` / `kit_budget` / `material_budget` were deleted from here rather than
-/// duplicated.
+/// window is open, and what caps it. Every band gets one, and a splinter's carry is not the
+/// spawned band's, so `open` and the window's cap live there rather than being duplicated here.
+/// What stays here is what is the same for every band: the two weights an order is measured in.
 ///
 /// **The kit roster is deliberately absent** — it already rides
 /// `SubsistenceSection.equipmentConfigJson`, and a recipe's input costs already ride the per-band
 /// `craftOffers` rows. A second copy of either would be a second wire contract for one fact.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct OpeningLoadoutState {
     #[serde(default)]
     pub pickable_materials: Vec<String>,
@@ -397,6 +397,15 @@ pub struct OpeningLoadoutState {
     /// a refusal string to work out which bench tools are still gated.
     #[serde(default)]
     pub craftable_recipe_ids: Vec<String>,
+    /// **What one expanded item unit weighs** in an outfitting order — `expedition_config.json`
+    /// `carry.item_carry_weight`. A kit weighs the items it expands to. Appended last.
+    #[serde(default)]
+    pub item_carry_weight: f32,
+    /// **What one material unit weighs** in an outfitting order — `carry.material_carry_weight`. An
+    /// order's load is `item_carry_weight × Σ items + this × Σ material units`, checked against
+    /// [`super::BandLoadoutWindowState::carry_capacity`]. Appended last.
+    #[serde(default)]
+    pub material_carry_weight: f32,
 }
 
 /// One pre-filled kit allocation — a suggestion the window opens on, never a grant.

@@ -19,6 +19,7 @@ mod band_names;
 pub mod belief;
 mod belief_config;
 mod biome_palette;
+pub mod carry;
 pub mod climate;
 pub mod combat;
 mod combat_config;
@@ -121,6 +122,7 @@ pub use belief_config::{
     load_belief_config_from_env, BeliefConfig, BeliefConfigHandle, BeliefConfigMetadata,
     BUILTIN_BELIEF_CONFIG,
 };
+pub use carry::{carry_capacity, per_worker_carry, CarryConfig, CarryLoad};
 pub use combat::{
     attacks_landed_at, landed_strikes_seeded, resolve_fight, strike_damage, units_brought_down,
     CombatStats, CombatTuning, Contingent, ContingentId, ContingentResult, DamageLedger,
@@ -205,9 +207,8 @@ pub use espionage::{
     QueueMissionParams, SecurityPolicy,
 };
 pub use expedition_config::{
-    load_expedition_config_from_env, shipment_carry_cap, trade_per_worker_carry, DefectionConfig,
-    ExpeditionConfig, ExpeditionConfigHandle, ExpeditionConfigMetadata, SettleConfig,
-    TradeExpeditionConfig, BUILTIN_EXPEDITION_CONFIG,
+    load_expedition_config_from_env, DefectionConfig, ExpeditionConfig, ExpeditionConfigHandle,
+    ExpeditionConfigMetadata, SettleConfig, BUILTIN_EXPEDITION_CONFIG,
 };
 pub use faction_names::{
     load_faction_names_from_env, FactionNameCatalog, FactionNameCatalogHandle,
@@ -383,8 +384,9 @@ pub use start_profile::{
     StartingUnitSpec,
 };
 pub use starting_loadout::{
-    apply_starting_loadout, clamped_kit_defaults, KitAllocation, LoadoutRejection, LoadoutSupply,
-    LoadoutWindow, MaterialAllocation, StartingLoadout, OPENING_MATERIAL_READING,
+    allocation_load, apply_starting_loadout, fit_to_carry, order_load, split_default_outfit,
+    FittedLoadout, KitAllocation, LoadoutRejection, LoadoutSupply, LoadoutWindow,
+    MaterialAllocation, SplitDowry, StartingLoadout, OPENING_MATERIAL_READING,
 };
 pub use supply::{
     balance_supply_networks, free_pooling_reach_tiles, BandSupplyMembership, PoolingLink,
@@ -458,8 +460,8 @@ pub use systems::{
     party_owes_a_report, prospective_keep_hands, publish_turn_transfers, settle_bands_roadwork,
     settle_scarce_tools, simulate_population, simulate_power, source_has_a_meter_at_risk,
     split_band_from_parent, split_refusals, BenchTiers, DenialForecast, DenialOutcome, HuntOutcome,
-    PartySightings, PoolToolPlan, PowerSimParams, RaidRoll, SplitBand, SplitRefusal, SplitRefusals,
-    ToolClaimStage, TradeDiffusionEvent,
+    PartyGear, PartySightings, PoolToolPlan, PowerSimParams, RaidRoll, SplitBand, SplitRefusal,
+    SplitRefusals, ToolClaimStage, TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,
@@ -1031,13 +1033,13 @@ pub fn build_headless_app() -> App {
             Startup,
             (
                 systems::spawn_initial_world,
-                // **After the spawn, because the kit budget is the spawned band's own worker
-                // count** — one kit per working-age hand is derived from the band, not configured.
-                starting_loadout::stamp_starting_loadout,
-                // **And outfit it at once.** A band holds its default from the moment it exists —
-                // see `outfit_band_with_defaults`, which is also what a split runs on its splinter.
-                starting_loadout::outfit_opening_bands,
+                // **The brackets and the larder first** — the window's carry is the band's
+                // working-age value × one pack, and its fixed larder counts against it, so both
+                // must exist before the window is struck.
                 systems::apply_starting_inventory_effects,
+                // **After the spawn and the seeding, because the carry is the spawned band's own
+                // working-age value** — derived from the band, not configured.
+                starting_loadout::stamp_starting_loadout,
                 hydrology::generate_hydrology,
                 systems::apply_tag_budget_solver,
                 systems::apply_biome_palette_clamp,
@@ -1201,6 +1203,12 @@ pub fn build_headless_app() -> App {
                     // carried into the turn, and resets this turn's `last_food_spoiled`, which the
                     // labor pass's caravan transit rot then adds to.
                     spoilage::rot_band_larders,
+                    // **The opening band is outfitted on the world-build pass, after its meal** —
+                    // its fixed larder counts against its carry, and this is the larder the first
+                    // frame publishes (`starting_loadout::outfit_opening_bands`). A splinter's
+                    // default is the split's own rule (`split_default_outfit`).
+                    starting_loadout::outfit_opening_bands
+                        .run_if(starting_loadout::on_the_world_build_pass),
                     // Move first so the band's `current_tile` is current before labor reads its
                     // in-range sources, then resolve per-worker Forage/Hunt/Scout yields.
                     systems::advance_band_movement,

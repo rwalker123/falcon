@@ -869,7 +869,7 @@ decision** (issue #590); nothing about hay and bread being separate currencies e
 `.claude/rules/core_sim/husbandry.md` → "WHY HAY AND BREAD ARE TWO ACCOUNTS".
 
 **Food is the numéraire at weight 1.0, so every other good's weight is a statement about how it
-compares to bread.** `trade.fodder_carry_weight` is **0.5**, and it is not a taste — it is solved
+compares to bread.** `carry.fodder_carry_weight` is **0.5**, and it is not a taste — it is solved
 from the only comparison that means anything, *how long one trader's load feeds one mouth*.
 
 > **"Feeds one mouth for N turns" is the unit, and it is a product.** *Enough hay to feed one goat
@@ -880,10 +880,10 @@ from the only comparison that means anything, *how long one trader's load feeds 
 
 | | units per trader | one unit feeds | **one load feeds** |
 |---|---|---|---|
-| food | `6.0 / 1.0` = **6** | one person for `1 / 0.16` = 6.25 turns | **one person for 37.5 turns** |
-| fodder | `6.0 / 0.5` = **12** | one goat for `1 / 0.29` = 3.4 turns | **one goat for 40 turns** |
+| food | `7.0 / 1.0` = **7** | one person for `1 / 0.16` = 6.25 turns | **one person for 43.75 turns** |
+| fodder | `7.0 / 0.5` = **14** | one goat for `1 / 0.29` = 3.4 turns | **one goat for 48 turns** |
 
-- The food column is `trade.per_worker_carry` (6.0) against
+- The food column is `carry.per_worker_carry` (7.0) against
   `demographics_config.consumption.per_capita_draw` (0.16).
 - The fodder column is anchored on a **mid-sized pennable animal**, because one animal's feed is
   `fodder_per_biomass × body_mass` and the roster spans 500× — crag_goat (`0.05 × 6` = 0.30) and
@@ -915,7 +915,7 @@ either of those and this number is stale** — it is derived, so re-derive it ra
 A shipment's hay is booked on `last_fodder_transfers`' `TransferLink::Route` arm — **debited at
 launch, credited on delivery, and credited again on the fold-back** so a recalled shipment leaves no
 phantom sent-but-never-received figure standing. It is never booked on `last_food_transfers`: the
-larder identity `larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled +
+larder identity `larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled − foodLeftBehind +
 transferReceived − transferSent` is about food that entered a *larder*, and hay never enters one. The
 `fodderTransferRoute{Received,Sent}Turn` wire fields were minted dead against exactly this day and
 now read non-zero; the local-pair-is-a-rate / route-pair-is-an-event distinction beside them is
@@ -944,10 +944,10 @@ unchanged.
 (below), so a shipment parked there would be quietly eaten by the people hauling it, arriving short
 with nothing to notice.
 
-- **Carry cap** = `expedition_config::shipment_carry_cap` — `party_workers ×` the **resolved**
-  per-worker carry (`trade_per_worker_carry`, today `trade.per_worker_carry` and nothing else) —
+- **Carry cap** = `carry::carry_capacity` (the one capacity function every carrier uses — `band-carry.md`) — `party_workers ×` the **resolved**
+  per-worker carry (`per_worker_carry`, today `carry.per_worker_carry` and nothing else) —
   where a shipment's mass is
-  `food + trade.fodder_carry_weight × fodder + trade.material_carry_weight × Σ material amounts`.
+  `carry::CarryLoad` — `food + carry.fodder_carry_weight × fodder + carry.material_carry_weight × Σ material amounts` (items 0).
   The two weights are config levers, the carry is resolved rather than read, and none of the three is
   a literal. See "Cargo is food, FODDER and materials" below
   for where the fodder weight's number comes from.
@@ -1100,18 +1100,18 @@ terms.**
 
 | field | answers | shape |
 |---|---|---|
-| `expeditionTradePerWorkerCarry` | *"how big a shipment can I send?"* — **before** there is a party | `expedition_config::trade_per_worker_carry` — the **resolved** per-worker carry, never the raw lever — published onto **every** cohort |
-| `expeditionTradeFodderCarryWeight` | *"what does a unit of hay cost me in pack space?"* | `expedition_config.trade.fodder_carry_weight`, same every-cohort echo |
-| `expeditionTradeMaterialCarryWeight` | *"what does a unit of hide cost me in pack space?"* | `expedition_config.trade.material_carry_weight`, same every-cohort echo |
+| `carryPerWorker` | *"how big a shipment can I send?"* — **before** there is a party | `carry::per_worker_carry` — the **resolved** per-worker carry, never the raw lever — published onto **every** cohort |
+| `carryFodderWeight` | *"what does a unit of hay cost me in pack space?"* | `expedition_config.carry.fodder_carry_weight`, same every-cohort echo |
+| `carryMaterialWeight` | *"what does a unit of hide cost me in pack space?"* | `expedition_config.carry.material_carry_weight`, same every-cohort echo |
 | `expeditionCarryCap` | *"how full is this party?"* — a party already on the map | `party_workers ×` the per-worker carry of the pack **its mission** fills |
 
 The three published terms are the sim's own mass expression, and the client holds it verbatim:
 
 ```text
 mass = expeditionCargoFood
-     + expeditionTradeFodderCarryWeight   × expeditionCargoFodder
-     + expeditionTradeMaterialCarryWeight × Σ material amounts
-cap  = party_workers × expeditionTradePerWorkerCarry
+     + carryFodderWeight   × expeditionCargoFodder
+     + carryMaterialWeight × Σ material amounts
+cap  = party_workers × carryPerWorker
 ```
 
 They ride **every cohort** rather than only the parties: the outfit UI prices a manifest for a party
@@ -1141,8 +1141,8 @@ that does not exist yet, and `party_workers` is the number the stepper is *choos
 
 > #### ⛔ THE CARRY IS RESOLVED BY THE SIM; THE CLIENT OWNS ONLY THE MULTIPLICATION
 >
-> `expeditionTradePerWorkerCarry` publishes **what one worker on this shipment carries**, not
-> `trade.per_worker_carry`. Today they are the same number — a party carries what its people can
+> `carryPerWorker` publishes **what one worker on this shipment carries**, not
+> `carry.per_worker_carry`. Today they are the same number — a party carries what its people can
 > carry — and the field is still deliberately not documented as the second one (issue #626).
 >
 > **What the distinction buys is a bound on what the client's copy of the rule contains.** `cap =
@@ -1159,12 +1159,12 @@ that does not exist yet, and `party_workers` is the number the stepper is *choos
 > resolve and gain nothing from the same treatment.
 >
 > **TWO EXPRESSIONS, EACH WRITTEN ONCE, AND EVERY CONSUMER CALLS ONE.**
-> `expedition_config::trade_per_worker_carry` answers the per-worker question and
-> `shipment_carry_cap` is its product with the party. The launch refusal (`resolve_shipment`) and the
+> `carry::per_worker_carry` answers the per-worker question and
+> `carry::carry_capacity` is its product with the party. The launch refusal (`resolve_shipment`) and the
 > per-mission `expeditionCarryCap` are both the second; the every-cohort echo is the first. **Neither
 > is ever restated at a call site** — and that is a rule about the model that is *not* per-worker: a
 > wagon holds what it holds however many people walk beside it, so it attaches inside
-> `shipment_carry_cap`, where a consumer that multiplied a per-worker number itself could never see
+> `carry::carry_capacity`, where a consumer that multiplied a per-worker number itself could never see
 > it. The refusal would enforce the wagon while the published cap went on quoting `workers ×
 > per-worker`, and nothing would fail. So the snapshot takes the **config** down to the cohort row
 > (`ExpeditionLevers::trade`, the one borrow in a struct of scalars) rather than a pre-multiplied
@@ -1182,7 +1182,7 @@ that does not exist yet, and `party_workers` is the number the stepper is *choos
 > manifest of exactly `party × published` launches whole, one epsilon over is refused with the larder
 > untouched. It is asserted against the *published* number rather than against the config because a
 > carry model that grew server-side but skipped the resolver would satisfy an equality with
-> `trade.per_worker_carry` and still mis-meter every client. It lives with the launch command rather
+> `carry.per_worker_carry` and still mis-meter every client. It lives with the launch command rather
 > than in `tests/trade_expedition.rs` because that harness spawns its party by hand and never
 > consults the cap, so neither half of the boundary is observable from it.
 
@@ -1196,13 +1196,13 @@ weightless"*) and asserting positivity would pin a tuning as if it were a rule.
 **`expeditionCarryCap` resolves per mission**, and that is what stops a client reaching for the hunt
 lever: a raid's pack is the provisions ceiling of what it hauls home, and it is filled by the raw
 `hunt.per_worker_carry`; a shipment's is what its people can carry out, and it is
-`shipment_carry_cap` — the **resolved** carry times the party, per the callout above. Two packs,
+`carry::carry_capacity` — the **resolved** carry times the party, per the callout above. Two packs,
 arrived at two different ways, and the asymmetry is deliberate: the carrier side is the half expected
 to grow a model, the raid's provisions ceiling is not. `0` stays a scout's and a resident band's
 answer. Pinned by `trade_expedition::{every_cohort_publishes_the_shipment_mass_levers_on_the_wire,
 a_trade_partys_carry_cap_is_quoted_at_the_resolved_shipment_carry}` — the first composes a real
 shipment's mass out of nothing but wire fields and checks it against the published cap, the second
-asserts the cap is `shipment_carry_cap`'s product **and not** the hunt lever's, after first asserting
+asserts the cap is `carry::carry_capacity`'s product **and not** the hunt lever's, after first asserting
 the two numbers differ so "quoted at the right one" is falsifiable.
 
 ### The food ledger gained two terms, and one of the holes was pre-existing

@@ -90,3 +90,8 @@ const DETAIL_ROW_FODDER := "Fodder"
 # question the row answers** (*what do the things I have built cost me to keep?*); the value cell
 # names ONE GOOD, which is what keeps it from reading as the summed materials scalar this arc refuses.
 const DETAIL_ROW_UPKEEP := "Upkeep"
+
+# **What the band can CARRY against what it holds** (#732) — `Carry: 48 / 102`, beneath the stores it
+# weighs. No disclosure: the row is the whole of it, and the sim's long-move forecast is what the
+# targeting banner quotes when a move would leave something behind.
+const DETAIL_ROW_CARRY := "Carry"

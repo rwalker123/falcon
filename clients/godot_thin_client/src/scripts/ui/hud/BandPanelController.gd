@@ -8765,12 +8765,12 @@ static func _plain_text(bbcode: String) -> String:
 ##
 ## **THE MASS METER IS A COURTESY, NOT THE AUTHORITY.** `send_trade_expedition` refuses an over-cap
 ## manifest and its refusal names both numbers; this meter exists so the player never meets it. Both
-## terms come off the wire (`expedition_trade_per_worker_carry`,
-## `expedition_trade_fodder_carry_weight`, `expedition_trade_material_carry_weight`) — a lever typed
+## terms come off the wire (`carry_per_worker`,
+## `carry_fodder_weight`, `carry_material_weight`) — a lever typed
 ## here would be one config edit from a meter that disagrees with the refusal it exists to prevent.
 ##
 ## **THE CARRY NUMBER ARRIVES RESOLVED, AND THAT IS WHY THIS SHEET MAY HOLD THE EXPRESSION AT ALL**
-## (issue #626). `expedition_trade_per_worker_carry` is not a config lever: it is the sim's own answer
+## (issue #626). `carry_per_worker` is not a config lever: it is the sim's own answer
 ## to *"what does one worker on this shipment carry"*, with whatever carry depends on already applied.
 ## The only part of the rule this client owns is the multiplication by the party, so when a cart, a
 ## wagon or a road grade enters the model the published number moves and nothing here is edited. The
@@ -8815,7 +8815,7 @@ func _fill_trade_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int
         HudComposeVocab.TRADE_PORTERS_LABEL, HudComposeVocab.TRADE_PORTERS_AT_MAX_REASON))
     sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.TRADE_PORTERS_SUB_FORMAT % [
         _send_expedition_count, idle, HudCraftingVocab.BATCH_AMOUNT_FORMAT
-            % float(band.get("expedition_trade_per_worker_carry", 0.0))]))
+            % float(band.get("carry_per_worker", 0.0))]))
     # **A SMALLER PARTY TRIMS THE LOAD, IT DOES NOT REFUSE IT.** Fewer porters can leave the pack
     # over-full, so the manifest is fitted from the bottom up before it is priced — the last good
     # first, its worst grade first (`_fit_manifest_to_pack`).
@@ -9582,7 +9582,7 @@ func _commit_cargo_field(field: LineEdit, key: String, row_max: float, committed
 ## meter renders an unknown ceiling rather than a cap of zero; the headroom term is dropped to match,
 ## or `Max` would refuse every row on a band the meter is refusing nothing on. A row whose carry
 ## weight is 0 has infinite headroom for the same reason - it cannot fill a pack, and
-## `expeditionTradeFodderCarryWeight` may legitimately be 0 ("hay is weightless").
+## `carryFodderWeight` may legitimately be 0 ("hay is weightless").
 func _trade_row_max(band: Dictionary, rows: Array, row: Dictionary) -> float:
     var held := float(row.get("held", 0.0))
     var cap := _trade_carry_cap(band)
@@ -9614,9 +9614,9 @@ func _trade_other_rows_mass(band: Dictionary, rows: Array, key: String) -> float
 ## answers *batch or larder*, and there are two larders.
 func _trade_row_carry_weight(band: Dictionary, row: Dictionary) -> float:
     if bool(row.get("is_material", false)):
-        return float(band.get("expedition_trade_material_carry_weight", 0.0))
+        return float(band.get("carry_material_weight", 0.0))
     if String(row.get("key", "")) == TRADE_FODDER_ROW_KEY:
-        return float(band.get("expedition_trade_fodder_carry_weight", 0.0))
+        return float(band.get("carry_fodder_weight", 0.0))
     return HudComposeVocab.COMPOSE_CARGO_FOOD_CARRY_WEIGHT
 
 ## What the manifest currently carries of one row, read back out of the same three fields
@@ -9718,7 +9718,7 @@ func _fit_manifest_to_pack(band: Dictionary) -> void:
 ## splits the sheet's mixed row list into the three accounts that expression takes.
 ##
 ## **THE SPLIT IS BY ROW KEY, and the hay term is not optional** (issue #590): a manifest with a bale
-## in it priced without `expedition_trade_fodder_carry_weight` reads LIGHTER than the sim will weigh
+## in it priced without `carry_fodder_weight` reads LIGHTER than the sim will weigh
 ## it, so the meter clears a load the server then refuses — the exact failure the material lever
 ## ships to prevent, one account over.
 func _trade_manifest_mass(band: Dictionary, rows: Array) -> float:
@@ -9735,16 +9735,16 @@ func _trade_manifest_mass(band: Dictionary, rows: Array) -> float:
         else:
             food += amount
     return DetailFormat.shipment_mass(food,
-        fodder, float(band.get("expedition_trade_fodder_carry_weight", 0.0)),
-        material_total, float(band.get("expedition_trade_material_carry_weight", 0.0)))
+        fodder, float(band.get("carry_fodder_weight", 0.0)),
+        material_total, float(band.get("carry_material_weight", 0.0)))
 
-## `party_workers × expedition_trade_per_worker_carry` — the SHIPMENT pack, never the hunt one. The
+## `party_workers × carry_per_worker` — the SHIPMENT pack, never the hunt one. The
 ## wire number is the sim's RESOLVED per-worker carry (issue #626), so this product is the whole of the
 ## client's share of the rule. A band publishing no carry number answers 0, which the meter renders as
 ## an unknown ceiling rather than as a cap of zero that would refuse every manifest.
 func _trade_carry_cap(band: Dictionary) -> float:
     return float(_send_expedition_count) \
-        * float(band.get("expedition_trade_per_worker_carry", 0.0))
+        * float(band.get("carry_per_worker", 0.0))
 
 ## **THE PACK METER** — `Pack` on the left, `12.0 of 40.0 carried` on the right, a bar below that
 ## goes WARN when the pack is full and the figure DANGER if it is ever over. `TRADE_MASS_METER_META`

@@ -605,13 +605,13 @@ table PopulationCohortState {
   // *** WHAT FILLS IT DEPENDS ON THE MISSION, and that is the whole reason this is one field. ***
   // A denial party fills `expedition_config.hunt.per_worker_carry` — the provisions ceiling of what
   // it hauls home. A TRADE party fills the RESOLVED per-worker shipment carry
-  // (`expeditionTradePerWorkerCarry` below) times the party — a different pack, measured in what its
+  // (`carryPerWorker` below) times the party — a different pack, measured in what its
   // people can carry out rather than in food they can haul home. A client that reached for the hunt
   // lever to price a shipment would be one config edit away from quoting a cap the launch command
   // refuses.
   //
   // For the PRE-LAUNCH question — pricing a manifest for a party that does not exist yet — read
-  // `expeditionTradePerWorkerCarry` below instead; there is no party to read a cap off.
+  // `carryPerWorker` below instead; there is no party to read a cap off.
   expeditionCarryCap:float = 0;
   // Denial mission only: the target herd id (`HerdRegistry` fauna_id). Empty for scout/normal bands.
   // A string (not uint) because herd ids are non-numeric (e.g. "herd_3_00") — matches
@@ -674,7 +674,7 @@ table PopulationCohortState {
   // line. A casualty-causing raid costs the band a fraction of that
   // turn's food income (the people were defending/fleeing, not gathering), debited from the larder and
   // capped at what it held. Extends the ledger identity to
-  //   larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled
+  //   larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled − foodLeftBehind
   //                   + transferReceived − transferSent            (see those fields below)
   // It is a PAST-turn stochastic debit, NOT a recurring cost — do not add it to the turnsOfFood runway
   // drain. Append-only.
@@ -928,7 +928,7 @@ table PopulationCohortState {
   //
   // The last two terms of the food-ledger identity, which now reads
   //
-  //   larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled
+  //   larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled − foodLeftBehind
   //                   + transferReceived − transferSent
   //
   // pinned against real turns by integration_tests/tests/transfer_food_ledger.rs.
@@ -959,15 +959,15 @@ table PopulationCohortState {
   // under a new name.
   transferReceived:float = 0;
   transferSent:float = 0;
-  // --- ONE PERSON'S SHIPMENT PACK (appended last, arc #527 / issue #517) ------------------------
+  // --- ONE PERSON'S PACK — THE ONE CARRY SYSTEM (arc #527 / issue #517; renamed in #732) ----------
   //
-  // *** WHAT ONE WORKER ON A SHIPMENT SENT FROM THIS BAND CARRIES, RESOLVED BY THE SIM. *** Not a
-  // config lever quoted onto the wire: it is the sim's own answer after everything carry depends on
-  // has been applied (`core_sim::trade_per_worker_carry`). The client multiplies it by the party and
-  // does NOTHING else — `cap = party_workers × this` — so when carry grows a carrier-side model (a
-  // cart kit's trade_carry stat, a tech factor, a road grade) this number changes and no client edit
-  // is needed. Echoed onto EVERY cohort, the same idiom as huntPerWorkerProvisions /
-  // expeditionForecastHorizonTurns.
+  // *** WHAT ONE WORKER CARRIES, RESOLVED BY THE SIM, FOR EVERY CARRIER *** — a trade shipment's
+  // party, a band splitting, a band on a long move (`core_sim::per_worker_carry`, the one seam). Not
+  // a config lever quoted onto the wire: it is the sim's own answer after everything carry depends on
+  // has been applied. The client multiplies it by the party and does NOTHING else —
+  // `cap = party_workers × this` — so when carry grows a carrier-side model (a cart, a pack animal, a
+  // tech factor, a road grade) this number changes and no client edit is needed. Echoed onto EVERY
+  // cohort, the same idiom as huntPerWorkerProvisions / expeditionForecastHorizonTurns.
   //
   // *** THIS IS THE ONE THE OUTFIT UI NEEDS. *** The player builds a shipment's manifest for a party
   // that DOES NOT EXIST YET, so no per-party field can serve that screen, and `party_workers` is
@@ -982,17 +982,17 @@ table PopulationCohortState {
   // lever is validated `> 0` at load and every future term has to preserve that, because a `0` here
   // would let a client render a zero cap and refuse every manifest the player could build — the same
   // failure expeditionForecastHorizonTurns is asserted positive against.
-  expeditionTradePerWorkerCarry:float = 0;
-  // The other half of a shipment's MASS: `expedition_config.trade.material_carry_weight`, what one
+  carryPerWorker:float = 0;
+  // The other half of a load's MASS: `expedition_config.carry.material_carry_weight`, what one
   // unit of a material costs in pack space relative to one unit of food. Echoed onto every cohort
   // exactly like the field above, though this one IS a lever echo — a material's bulk is a property
   // of the GOODS, not of the carrier, so nothing resolves it. Together they give the client the
   // sim's own expression:
   //
   //   mass = expeditionCargoFood
-  //          + expeditionTradeFodderCarryWeight × expeditionCargoFodder
-  //          + expeditionTradeMaterialCarryWeight × Sum(material amounts)
-  //   cap  = party_workers × expeditionTradePerWorkerCarry
+  //          + carryFodderWeight × expeditionCargoFodder
+  //          + carryMaterialWeight × Sum(material amounts)
+  //   cap  = party_workers × carryPerWorker
   //
   // (The hay term joined the expression when shipments learned to carry fodder; its lever is
   // appended at the end of this table, and a client that omits it under-prices every manifest with
@@ -1011,7 +1011,7 @@ table PopulationCohortState {
   //
   // FINITE AND >= 0, not positive: `0` is a legitimate setting here ("materials are weightless"),
   // unlike the pack lever above, which is why the two carry different wire assertions.
-  expeditionTradeMaterialCarryWeight:float = 0;
+  carryMaterialWeight:float = 0;
   // --- THE TRANSFER PAIR A CLIENT RENDERS (appended last, arc #527 / issue #517) ----------------
   //
   // The same two facts as transferReceived / transferSent above, taken as of THIS TURN'S FRAME.
@@ -1250,9 +1250,9 @@ table PopulationCohortState {
   // walking larder for people and holds no hay at all. 0 for every other mission and for a resident
   // band, and a real reading rather than an absent one: a shipment of pure grain says `0` here.
   expeditionCargoFodder:float = 0;
-  // The THIRD term of a shipment's mass: `expedition_config.trade.fodder_carry_weight`, what one
+  // The THIRD term of a shipment's mass: `expedition_config.carry.fodder_carry_weight`, what one
   // unit of hay costs in pack space relative to one unit of food. Echoed onto EVERY cohort exactly
-  // like `expeditionTradeMaterialCarryWeight`, and for the identical reason - the player prices a
+  // like `carryMaterialWeight`, and for the identical reason - the player prices a
   // manifest for a party that does not exist yet, so no per-party field can serve that screen.
   //
   // *** IT IS NOT OPTIONAL POLISH. *** Without it a cargo picker cannot evaluate the cap rule the
@@ -1260,13 +1260,14 @@ table PopulationCohortState {
   // term out of the mass expression under-prices every manifest carrying a bale, and the player
   // finds out on submit.
   //
-  // The shipped 0.5 is priced in TURNS OF KEEP against food's 37.5 person-turns per worker load -
+  // The shipped 0.5 is priced in TURNS OF KEEP against a worker's load of food, which scales with
+  // the pack (`carry.per_worker_carry` / per-capita draw: 43.75 person-turns at the shipped 7.0) -
   // see the lever's own comment in `core_sim/src/data/expedition_config.json` for the derivation.
   // It is a playtest dial, and a client must read it rather than hardcode it.
   //
   // FINITE AND >= 0, not positive: `0` is a legitimate setting ("hay is weightless"), the same wire
   // assertion the material lever carries and deliberately not the `> 0` the pack lever does.
-  expeditionTradeFodderCarryWeight:float = 0;
+  carryFodderWeight:float = 0;
   // --- THE BAND'S NAME (appended last, issue #615) ---------------------------------------------
   //
   // *** THE SIM OWNS A BAND'S DISPLAY NAME. A CLIENT MUST NEVER FALL BACK TO COUNTING. ***
@@ -1376,7 +1377,7 @@ table PopulationCohortState {
   // rot of any caravan pack that landed after a walk longer than its class keeps. A rotten pack is
   // credited in foodIncome when it lands and debited here the same turn, so it is ONE term of the
   // larder ledger identity: larder_delta == foodIncome - foodConsumption - raidForfeit - foodSpoiled
-  // + transferReceived - transferSent. 0 on a turn nothing rotted.
+  // - foodLeftBehind + transferReceived - transferSent. 0 on a turn nothing rotted.
   foodSpoiled:float = 0;
   // --- THE BAND'S STOOD-DOWN WORK PARTIES, STILL WALKING HOME (appended last, #706) -----------
   // A far posting that ends (unassign, lapse, a herd gone or back in range, a shed row,
@@ -1397,19 +1398,53 @@ table PopulationCohortState {
   homewardNextLoadIn:uint = 0;
   // Turns until the last homeward hand is back; 0 = nobody walking home.
   homewardAllHomeIn:uint = 0;
+  // --- WHAT THIS BAND CAN CARRY (appended last, #732) ----------------------------------------
+  // A band carries what its WORKERS can carry: its working-age value as it stands (never floored to
+  // whole hands) x expedition_config carry.per_worker_carry. Dependants add nothing. In food-unit
+  // load, where
+  //   load = food + fodderWeight x fodder + itemCarryWeight x items + materialCarryWeight x materials.
+  carryCapacity:float = 0;
+  // The load of EVERYTHING this band holds right now - its larder, its hay, every item in its ledger
+  // (bench tools included) and every material unit.
+  carryLoad:float = 0;
+  // How far a band may move and still keep everything (it can ferry its goods), in hex steps - the
+  // same radius within which same-faction bands pool. Echoed on every cohort (the
+  // `bandMoveTilesPerTurn` idiom). A move FARTHER than this sheds the band down to `carryCapacity`
+  // the moment the order is accepted, and what is left behind is LOST.
+  moveFerryReachTiles:uint = 0;
+  // THE FORECAST OF A LONG MOVE, computed by the same shedding function the move runs (no client
+  // mirror): what a move beyond `moveFerryReachTiles` would leave behind right now. Food loads first
+  // (if the food alone overfills the packs it is scaled down and every item and material is left),
+  // and an overage smaller than one whole unit comes off the food. Otherwise tools go before
+  // materials: the materials are cut first, then the items in whole units apportioned by largest
+  // remainder, and the MOST WORN units are the ones left.
+  // All 0 when the band fits, and always 0 on a detached party (parties keep their own rules).
+  longMoveLeavesFood:float = 0;
+  // Whole item units a long move would leave behind.
+  longMoveLeavesItems:uint = 0;
+  // Material units a long move would leave behind.
+  longMoveLeavesMaterials:float = 0;
+  // THE FOOD THIS BAND LEFT BEHIND ON A LONG MOVE since the last turn frame - one term of the larder
+  // ledger identity: larder_delta == foodIncome - foodConsumption - raidForfeit - foodSpoiled
+  // - foodLeftBehind + transferReceived - transferSent. A move is a command, so this accumulates
+  // between captures on the transfer pair's snapshot window and is cleared after the turn capture.
+  foodLeftBehind:float = 0;
 }
 
 // One band's outfitting window. THE TWO SUPPLIES ARE MUTUALLY EXCLUSIVE and `parentBandId` says which
 // one this is:
 //
-//   parentBandId == 0  - a GRANT window. The picks MINT gear, capped by `kitBudget` (kits, summed
-//                        over the order) and `materialBudget` (units). This is the spawned band's
-//                        window, and a splinter's when it split off a band whose own grant was still
-//                        unspent - that splinter's budgets were DEDUCTED from the parent's, so no
-//                        slot and no point is minted twice or lost.
+//   parentBandId == 0  - a GRANT window. The picks MINT gear, capped by `carryCapacity`. This is the
+//                        spawned band's window, and a splinter's when it split off a band whose own
+//                        grant was still unspent - that splinter's slice was DEDUCTED from the
+//                        parent's, so no load unit is minted twice or lost.
 //   parentBandId != 0  - a TAKE on that band. The picks MOVE gear and material out of the parent's
-//                        ledger, `kitBudget`/`materialBudget` are 0 and mean nothing, and the cap is
-//                        `parentItemSupply` / `parentMaterialSupply` below.
+//                        ledger, capped by `parentItemSupply` / `parentMaterialSupply` below AND by
+//                        `carryCapacity`.
+//
+// ONE CARRY RULE ON BOTH ARMS. An order's load is
+//   itemCarryWeight x SUM(expanded item units) + materialCarryWeight x SUM(material units)
+// (the two weights ride `CampaignSection.openingLoadout`), and it must be <= `carryCapacity`.
 //
 // A KIT ROW CANNOT BE CAPPED ON ITS OWN. The roster maps kits to items almost one-to-one, but `sled`
 // is used by both `big_game` and `trapping`, so what the sim validates is the EXPANDED item list,
@@ -1419,10 +1454,6 @@ table BandLoadoutWindowState {
   // False (or the whole table absent) once this band's window has shut. It shuts on the turn advance
   // and on nothing else - committing a loadout leaves it open, which is what lets a pick be revised.
   open:bool;
-  // Kit slots this window may MINT against. 0 for a take, which mints nothing.
-  kitBudget:uint;
-  // Material points this window may MINT against, one point per unit. 0 for a take.
-  materialBudget:uint;
   // THE ACCEPTED ALLOCATION - the kit rows this band's last accepted `set_starting_loadout` named.
   // NO FRESH WINDOW IS EMPTY, and on every one of them these rows describe gear the band is ACTUALLY
   // HOLDING: the sim commits a band's default outfit the moment it is created (a TAKE splinter's is
@@ -1444,6 +1475,28 @@ table BandLoadoutWindowState {
   parentItemSupply:[BandLoadoutSupplyRow];
   // The material twin, in whole units (floored, because that is the currency the command spends).
   parentMaterialSupply:[BandLoadoutSupplyRow];
+  // THE GOODS ALLOWANCE THIS WINDOW'S ORDER IS CHECKED AGAINST, in food-unit load (appended last).
+  // THE BAND'S WHOLE CARRY, goods and food together, in food-unit load: the band's working-age
+  // value x per-worker carry (the opening band, and a granting parent after a split), or a
+  // splinter's asked workers x per-worker carry. Weigh an order with the two weights on
+  // `openingLoadout`; the goods allowance the server refuses on (`OverCarry`) is
+  // `carryCapacity - foodCarried` when `foodFixed`, and `carryCapacity` otherwise.
+  carryCapacity:float = 0;
+  // THE BAND'S FOOD, in load (appended last, #732). On a SPLINTER (`foodFixed == false`) goods load
+  // first and food fills the room they leave: the food that crosses is
+  // min(foodShare, carryCapacity - goods load), re-resolved by the server on every accepted order
+  // (fewer tools, more food - the food dial without a food row). `foodShare` is the most it may
+  // take (its full proportional larder share); `foodCarried` is the food load it holds now - the
+  // truth, where a client's min() is an optimistic preview. On a FIXED larder (`foodFixed == true`:
+  // the opening band, and a granting parent) both are the larder's mass, which counts against the
+  // carry and does not yield to goods.
+  foodShare:float = 0;
+  foodCarried:float = 0;
+  // Whether this band's food is FIXED (appended last, #732): true when the larder counts against
+  // the carry and cannot be traded for tools (the opening band, a granting parent); false on a
+  // splinter, whose food yields to its goods. `foodShare == foodCarried` is not a safe test - a
+  // splinter whose goods leave room for its whole share carries all of it.
+  foodFixed:bool = false;
 }
 
 // One cap row: how many units of `id` this take may claim. `id` is an `equipment.json` item id on
@@ -5630,9 +5683,9 @@ table CampaignSection {
 // THE KIT ROSTER IS NOT HERE and must not be added: it already rides
 // `SubsistenceSection.equipmentConfigJson`, and a recipe's input costs already ride the per-band
 // `craftOffers` rows. A second copy of either is a second wire contract for one fact.
-// *** WHETHER A WINDOW IS OPEN, ITS BUDGETS, AND THE KIT PRE-FILL ARE NOT HERE. *** They live on
-// `PopulationCohortState.loadoutWindow`, because a window is a fact about ONE BAND rather than about
-// the campaign: every band gets one, and a splinter's budgets are not the spawned band's. The sim
+// *** WHETHER A WINDOW IS OPEN, ITS CARRY CAPACITY, AND THE KIT PRE-FILL ARE NOT HERE. *** They live
+// on `PopulationCohortState.loadoutWindow`, because a window is a fact about ONE BAND rather than
+// about the campaign: every band gets one, and a splinter's carry is not the spawned band's. The sim
 // applies the kit pre-fill to each band itself, and it arrives in `loadoutWindow.kits`.
 table OpeningLoadoutState {
   // The pick list, in the order the profile declares it. A material absent from it cannot be bought.
@@ -5649,15 +5702,22 @@ table OpeningLoadoutState {
   // PUBLISHED AS IDS rather than left for the client to infer: the alternative is sniffing a refusal
   // string off a craft offer, which makes a player-facing sentence into a machine contract.
   craftableRecipeIds:[string];
+  // THE TWO WEIGHTS AN OUTFITTING ORDER IS MEASURED IN (appended last), so a client weighs an order
+  // exactly the way the server refuses on: load = itemCarryWeight x SUM(expanded item units) +
+  // materialCarryWeight x SUM(material units), against `loadoutWindow.carryCapacity`. A kit weighs
+  // the items it expands to. Echoes of `expedition_config.json` `carry.item_carry_weight` /
+  // `carry.material_carry_weight`.
+  itemCarryWeight:float = 0;
+  materialCarryWeight:float = 0;
 }
 
-// One pre-filled material allocation. `units` is in the same points the budget is counted in.
+// One pre-filled material allocation. `units` is in material units.
 table OpeningMaterialDefault {
   materialId:string;
   units:uint;
 }
 
-// One pre-filled kit allocation. `count` is in kits, against `kitBudget`.
+// One pre-filled kit allocation. `count` is in kits; a kit weighs the items it expands to.
 table OpeningKitDefault {
   kitId:string;
   count:uint;

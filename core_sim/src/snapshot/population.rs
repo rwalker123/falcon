@@ -521,11 +521,11 @@ pub(crate) struct ExpeditionLevers<'a> {
     /// field here that is not a scalar, and deliberately so.
     ///
     /// Shipment carry has **two** rules resolved off it, and the cohort row builder runs both:
-    /// [`crate::expedition_config::trade_per_worker_carry`] fills the per-cohort echo the outfit UI
-    /// multiplies, and [`crate::expedition_config::shipment_carry_cap`] fills a live trade party's
+    /// [`crate::carry::per_worker_carry`] fills the per-cohort echo the outfit UI
+    /// multiplies, and [`crate::carry::carry_capacity`] fills a live trade party's
     /// own `expedition_carry_cap`. Handing down the *config* rather than a pre-multiplied scalar is
     /// what keeps each of those expressed exactly once: a **party-level** term — a wagon that holds
-    /// what it holds however many people walk beside it — attaches inside `shipment_carry_cap`, and
+    /// what it holds however many people walk beside it — attaches inside `carry_capacity`, and
     /// a snapshot holding only a per-worker number could not see it. The launch refusal would
     /// enforce the wagon while the published cap went on quoting `workers × per-worker`, and nothing
     /// would fail.
@@ -536,9 +536,10 @@ pub(crate) struct ExpeditionLevers<'a> {
     /// promises is the resolved number rather than where it was resolved.
     ///
     /// It is deliberately a **separate** carry from [`Self::hunt_per_worker_carry`] beside it, which
-    /// really is still a raw lever: a shipment's pack and a raid's are different packs.
-    pub(crate) trade: &'a crate::expedition_config::TradeExpeditionConfig,
-    /// `expedition_config.trade.material_carry_weight` — what one unit of a material costs in pack
+    /// really is still a raw lever: a shipment's pack and a raid's are different packs, and a client
+    /// reaching for the hunt lever is one config edit away from quoting a cap the sim refuses.
+    pub(crate) carry: &'a crate::carry::CarryConfig,
+    /// `expedition_config.carry.material_carry_weight` — what one unit of a material costs in pack
     /// space relative to one unit of food, so the cargo picker can run the **same** mass expression
     /// the launch command checks: `food + this × Σ material amounts`.
     ///
@@ -546,16 +547,16 @@ pub(crate) struct ExpeditionLevers<'a> {
     /// evaluate.** Without it the picker is a guessing game — the player adds hide rows one at a
     /// time against a cap meter that cannot move, and finds out on submit. The refusal stays the
     /// authority; the meter is what stops the player ever meeting it.
-    pub(crate) trade_material_carry_weight: f32,
-    /// `expedition_config.trade.fodder_carry_weight` — what one unit of **hay** costs in pack space
+    pub(crate) carry_material_weight: f32,
+    /// `expedition_config.carry.fodder_carry_weight` — what one unit of **hay** costs in pack space
     /// relative to one unit of food, the third term of the mass expression
-    /// `food + this × fodder + trade_material_carry_weight × Σ material amounts`.
+    /// `food + this × fodder + carry_material_weight × Σ material amounts`.
     ///
-    /// Ships for the same reason as [`Self::trade_material_carry_weight`] beside it: the launch
+    /// Ships for the same reason as [`Self::carry_material_weight`] beside it: the launch
     /// refusal is the authority, and a picker that cannot run the sim's expression is a guessing
     /// game the player only loses on submit. Leaving this out under-prices every manifest with a
     /// bale in it.
-    pub(crate) trade_fodder_carry_weight: f32,
+    pub(crate) carry_fodder_weight: f32,
     pub(crate) hunt_per_worker_provisions: f32,
     /// `expedition_config.hunt.forecast_horizon_turns` — how far *every* raid projection in the
     /// snapshot was simulated before giving up, echoed per-cohort so the client has a scale for the
@@ -574,6 +575,9 @@ pub(crate) struct ExpeditionLevers<'a> {
     /// `expedition_config.settle.parent_min_workers` — the twin floor on what the **parent** keeps.
     /// Both floors ship because both are evaluated at the split and reported together.
     pub(crate) settle_parent_min_workers: u32,
+    /// [`crate::carry::move_ferry_reach_tiles`] — how far a band moves and keeps everything,
+    /// echoed per-cohort on the same idiom as the floors above.
+    pub(crate) move_ferry_reach_tiles: u32,
 }
 
 /// **The TOE levers a cohort's kit readout is resolved against** — the config, plus the *equipped*
@@ -967,6 +971,19 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     } = inputs;
     let homeward: &[crate::work_party::HomewardWalk] =
         allocation.map_or(&[], |allocation| allocation.homeward.as_slice());
+    // The hands a band's own carry is struck on — its actual working-age value, unfloored, the
+    // same count the long move itself prices on.
+    let carry_workers = crate::carry::band_carry_workers(cohort);
+    let long_move = if expedition.is_none() {
+        crate::carry::plan_long_move_shed(
+            &cohort.stores,
+            equipment,
+            carry_workers,
+            expedition_levers.carry,
+        )
+    } else {
+        crate::carry::LongMoveShed::default()
+    };
     // **The minimal TOE, resolved for the wire.** An absent component means the ledger was never
     // built, which reads as **start-stocked** — the same fallback `advance_labor_allocation`,
     // `advance_expeditions` and the party-wear site in `capture.rs` take, and it has to be, or this
@@ -1647,7 +1664,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     //
     // **What fills it is a fact about the mission, not about expeditions.** A raid's pack is
     // measured in food it can haul home, and is still a raw lever (`hunt.per_worker_carry` × the
-    // party). A shipment's is `expedition_config::shipment_carry_cap` — **called, not restated**,
+    // party). A shipment's is `carry::carry_capacity` — **called, not restated**,
     // because it is the very expression the launch command refuses on, and a term that scales with
     // the PARTY rather than with a worker (a wagon holds what it holds) would live inside it where a
     // per-worker echo could never see it. They are different numbers, so the cap resolves per
@@ -1660,7 +1677,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             working_age as f32 * expedition_levers.hunt_per_worker_carry
         }
         Some(ExpeditionMission::Trade { .. }) => {
-            crate::expedition_config::shipment_carry_cap(working_age, expedition_levers.trade)
+            crate::carry::carry_capacity(working_age, expedition_levers.carry).to_f32()
         }
         // A scout hauls nothing it was sent for, and a resident band is not a party.
         Some(ExpeditionMission::Scout) | None => 0.0,
@@ -1814,13 +1831,11 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // This one is the sim's answer rather than a lever quote: `party_workers × this` is the cap the launch command enforces, and it is the
         // *same* resolver `expedition_carry_cap` above multiplies out for a party already on the
         // map.
-        expedition_trade_per_worker_carry: crate::expedition_config::trade_per_worker_carry(
-            expedition_levers.trade,
-        ),
+        carry_per_worker: crate::carry::per_worker_carry(expedition_levers.carry),
         // The other two thirds of the mass expression, so the cargo picker runs the sim's own rule
         // rather than watching a meter that cannot move.
-        expedition_trade_material_carry_weight: expedition_levers.trade_material_carry_weight,
-        expedition_trade_fodder_carry_weight: expedition_levers.trade_fodder_carry_weight,
+        expedition_trade_material_carry_weight: expedition_levers.carry_material_weight,
+        expedition_trade_fodder_carry_weight: expedition_levers.carry_fodder_weight,
         band_move_tiles_per_turn: expedition_levers.band_move_tiles_per_turn as f32,
         // The band's hay reserve (Flora Roster F3) — the FODDER key of the same `LocalStore` its
         // provisions ride, surfaced as a scalar so the client can show it beside the food reserve. It
@@ -2114,6 +2129,19 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             .map(|walk| walk.turns_left)
             .max()
             .unwrap_or(crate::work_party::NO_WALK),
+        // **WHAT THIS BAND CAN CARRY** (#732) — its whole working-age hands × one worker's pack, and
+        // the load of everything it holds. Dependants add nothing.
+        carry_capacity: crate::carry::band_carry_capacity(cohort, expedition_levers.carry).to_f32(),
+        carry_load: crate::carry::held_load(&cohort.stores, equipment)
+            .load(expedition_levers.carry)
+            .to_f32(),
+        move_ferry_reach_tiles: expedition_levers.move_ferry_reach_tiles,
+        // **The long-move forecast is the shed the move would run**, from the same function — no
+        // client mirror. A detached party keeps its own rules, so it forecasts nothing.
+        long_move_leaves_food: long_move.food.to_f32(),
+        long_move_leaves_items: long_move.item_units(),
+        long_move_leaves_materials: long_move.material_units().to_f32(),
+        food_left_behind: allocation.map_or(0.0, |allocation| allocation.last_food_left_behind),
     }
 }
 
@@ -2357,10 +2385,46 @@ pub(crate) fn snapshot_demographics(
 pub(crate) fn band_loadout_windows<'a>(
     windows: &crate::starting_loadout::StartingLoadout,
     equipment_config: &crate::equipment_config::EquipmentConfig,
-    bands: impl Iterator<Item = (BandId, Option<&'a BandEquipment>, &'a LocalStore)>,
+    carry: &crate::carry::CarryConfig,
+    bands: impl Iterator<
+        Item = (
+            Entity,
+            BandId,
+            Option<&'a BandEquipment>,
+            &'a PopulationCohort,
+        ),
+    >,
+    // Every detached party, as `(its home band's entity, its cohort)` — counted into the home band's
+    // window (`starting_loadout::WindowPeople`).
+    parties: impl Iterator<Item = (Entity, &'a PopulationCohort)>,
 ) -> std::collections::HashMap<u64, BandLoadoutWindowState> {
+    let bands: Vec<(Entity, BandId, Option<&BandEquipment>, &PopulationCohort)> = bands.collect();
+    let mut people: std::collections::HashMap<Entity, crate::starting_loadout::WindowPeople> =
+        bands
+            .iter()
+            .map(|(entity, _, _, cohort)| {
+                (
+                    *entity,
+                    crate::starting_loadout::WindowPeople::of_band(cohort, carry),
+                )
+            })
+            .collect();
+    for (home, party) in parties {
+        if let Some(home_people) = people.get_mut(&home) {
+            *home_people = home_people.with_party(party, carry);
+        }
+    }
+    let people: std::collections::HashMap<u64, crate::starting_loadout::WindowPeople> = bands
+        .iter()
+        .filter_map(|(entity, band, _, _)| people.get(entity).map(|people| (band.0, *people)))
+        .collect();
+    let bands: std::collections::HashMap<u64, (Option<&BandEquipment>, &PopulationCohort)> = bands
+        .into_iter()
+        .map(|(_, band, equipment, cohort)| (band.0, (equipment, cohort)))
+        .collect();
     let held: std::collections::HashMap<u64, (Option<&BandEquipment>, &LocalStore)> = bands
-        .map(|(band, equipment, store)| (band.0, (equipment, store)))
+        .iter()
+        .map(|(band, (equipment, cohort))| (*band, (*equipment, &cohort.stores)))
         .collect();
     windows
         .iter()
@@ -2382,24 +2446,42 @@ pub(crate) fn band_loadout_windows<'a>(
                     units: row.units,
                 })
                 .collect();
+            // The band's people for its window — its detached parties counted back in.
+            let window_people = people.get(&band.0);
+            // A splinter's food yields to its goods: the most it may take, and what it holds. A
+            // fixed larder counts against the carry as it stands, its parties' provisions included.
+            let (food_share, food_carried) = match &window.dowry {
+                Some(dowry) => (
+                    dowry.share_mass(carry).to_f32(),
+                    dowry.carried_mass(carry).to_f32(),
+                ),
+                None => {
+                    let larder = window_people.map_or(0.0, |people| people.larder_mass.to_f32());
+                    (larder, larder)
+                }
+            };
             let mut state = BandLoadoutWindowState {
                 open: true,
                 kits,
                 materials,
+                // The band's whole carry, goods and food together — the live carry of its people
+                // (its detached parties included) when the window struck none.
+                carry_capacity: window_people.map_or_else(
+                    || window.supply.struck_carry().unwrap_or_default().to_f32(),
+                    |people| window.carry(people, carry).to_f32(),
+                ),
+                food_share,
+                food_carried,
+                food_fixed: window.food_is_fixed(),
                 ..BandLoadoutWindowState::default()
             };
             match &window.supply {
-                crate::starting_loadout::LoadoutSupply::Grant {
-                    kit_budget,
-                    material_budget,
-                } => {
-                    state.kit_budget = *kit_budget;
-                    state.material_budget = *material_budget;
-                }
+                crate::starting_loadout::LoadoutSupply::Grant { .. } => {}
                 crate::starting_loadout::LoadoutSupply::Parent {
                     parent,
                     items,
                     materials,
+                    ..
                 } => {
                     state.parent_band_id = parent.0;
                     let (parent_equipment, parent_store) = held
@@ -2516,14 +2598,17 @@ mod tests {
         let cfg = EXPEDITION.get_or_init(ExpeditionConfig::builtin);
         ExpeditionLevers {
             hunt_per_worker_carry: cfg.hunt.per_worker_carry,
-            trade: &cfg.trade,
-            trade_material_carry_weight: cfg.trade.material_carry_weight,
-            trade_fodder_carry_weight: cfg.trade.fodder_carry_weight,
+            carry: &cfg.carry,
+            carry_material_weight: cfg.carry.material_carry_weight,
+            carry_fodder_weight: cfg.carry.fodder_carry_weight,
             hunt_per_worker_provisions: 0.0,
             hunt_forecast_horizon_turns: cfg.hunt.forecast_horizon_turns,
             band_move_tiles_per_turn: 1,
             settle_min_founding_workers: cfg.settle.min_founding_workers,
             settle_parent_min_workers: cfg.settle.parent_min_workers,
+            move_ferry_reach_tiles: crate::carry::move_ferry_reach_tiles(
+                &crate::supply_network_config::SupplyNetworkConfig::builtin(),
+            ),
         }
     }
 

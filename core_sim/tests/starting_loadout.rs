@@ -3,16 +3,16 @@
 //! Nothing at the *spawn* grants a band anything, so everything here is about the turn-one
 //! allocation: what the sim applies by default, what a player's order buys, what it refuses, and
 //! when it stops being available. The refusal cases each assert **nothing changed**, because a
-//! loadout is one composition against two budgets — honouring the legal half would spend the
-//! player's points on something they did not choose.
+//! loadout is one composition against one carry budget — honouring the legal half would spend the
+//! player's carry on something they did not choose.
 
 use bevy::prelude::*;
 
 use core_sim::{
-    apply_starting_loadout, build_test_app, run_turn, BandEquipment, BandId, EquipmentConfigHandle,
-    FactionId, KitAllocation, LoadoutRejection, LoadoutSupply, MaterialAllocation,
-    MaterialsConfigHandle, PopulationCohort, ResidentBand, StartingLoadout,
-    OPENING_MATERIAL_READING,
+    apply_starting_loadout, build_test_app, fit_to_carry, order_load, run_turn, BandEquipment,
+    BandId, CarryConfig, EquipmentConfigHandle, FactionId, KitAllocation, LoadoutRejection,
+    LoadoutSupply, MaterialAllocation, MaterialsConfigHandle, PopulationCohort, ResidentBand,
+    Scalar, StartingLoadout, OPENING_MATERIAL_READING,
 };
 
 /// The faction every shipped profile spawns under.
@@ -59,22 +59,53 @@ fn open_window() -> (App, Entity, BandId) {
     (app, band, band_id)
 }
 
-/// The spawned band's grant, as `(kit_budget, material_budget)`. Panics on a window that is not a
+/// The spawned band's grant — its carry budget, in load units. Panics on a window that is not a
 /// grant, which is the whole subject of this suite.
-fn grant(app: &App, band: BandId) -> (u32, u32) {
-    match &app
-        .world
+/// **The people a band's window is struck on** — the band and its detached parties, through the
+/// sim's own helper.
+fn window_people(app: &App, entity: Entity) -> core_sim::starting_loadout::WindowPeople {
+    core_sim::starting_loadout::window_people(&app.world, entity, &carry_cfg(app))
+        .expect("the band keeps a cohort")
+}
+
+/// **The goods an order may weigh** on this band's window — the sim's own allowance, against the
+/// band's live larder.
+fn goods_allowance(app: &App, entity: Entity, band: BandId) -> Scalar {
+    app.world
         .resource::<StartingLoadout>()
         .window(band)
         .expect("the band has a window")
-        .supply
-    {
-        LoadoutSupply::Grant {
-            kit_budget,
-            material_budget,
-        } => (*kit_budget, *material_budget),
-        other => panic!("the spawned band's window must carry a grant, got {other:?}"),
-    }
+        .goods_allowance(&window_people(app, entity), &carry_cfg(app))
+}
+
+/// **The spawned band's whole carry** as its grant window reads it — goods and food together.
+fn grant(app: &App, band: BandId) -> Scalar {
+    let window = app
+        .world
+        .resource::<StartingLoadout>()
+        .window(band)
+        .expect("the band has a window");
+    assert!(
+        matches!(window.supply, LoadoutSupply::Grant { .. }),
+        "the spawned band's window must carry a grant, got {:?}",
+        window.supply
+    );
+    let entity = app
+        .world
+        .iter_entities()
+        .find(|entity| entity.get::<BandId>() == Some(&band))
+        .map(|entity| entity.id())
+        .expect("the band exists");
+    window.carry(&window_people(app, entity), &carry_cfg(app))
+}
+
+/// The live carry tuning an order is weighed with.
+fn carry_cfg(app: &App) -> CarryConfig {
+    app.world
+        .resource::<core_sim::ExpeditionConfigHandle>()
+        .get()
+        .carry
+        .clone()
 }
 
 /// Everything the band owns, as `(item, units)` — summed over batches, because a stock call appends
@@ -165,44 +196,39 @@ fn refused(
     reason
 }
 
-/// ⛔ **THE BUDGET IS ONE KIT PER WORKING-AGE HAND, DERIVED FROM THE BAND THAT SPAWNED.**
+/// ⛔ **THE CARRY IS WHAT THE BAND'S WORKERS CAN CARRY, AND ITS LARDER COUNTS AGAINST IT.**
 ///
-/// It is deliberately not a config lever: a dial would be a second statement of how many people the
-/// band has, free to disagree with the band the moment a band size or a working share is retuned.
-/// So this asserts the identity against the cohort's own workers rather than against a literal.
+/// `working-age value × carry.per_worker_carry` — the band's actual, unfloored working value, the
+/// count the long move and the published `carryCapacity` read, so the card and the band panel agree.
+/// It is deliberately not a config lever of its own: a dial would be a second statement of how many
+/// people the band has. **What a band carries includes its food**, and the spawned larder is fixed
+/// (there is nowhere to leave it), so the goods it may mint are the carry less the larder's mass.
 #[test]
-fn the_kit_budget_is_the_starting_bands_own_worker_count() {
+fn the_carry_is_the_starting_bands_working_value_and_its_larder_counts() {
     let (app, band, band_id) = open_window();
     let cohort = app
         .world
         .get::<PopulationCohort>(band)
         .expect("the fixture band keeps a cohort");
-    let working_fraction = app
-        .world
-        .resource::<core_sim::DemographicsConfigHandle>()
-        .get()
-        .initial_distribution
-        .working;
-    let expected = (cohort.size as f32 * working_fraction).floor() as u32;
     assert!(
-        expected > 0,
+        cohort.working > Scalar::zero(),
         "**LIVENESS**: the shipped band must field somebody, or the equality below is 0 == 0"
     );
-    let (kit_budget, material_budget) = grant(&app, band_id);
+    let carry = grant(&app, band_id);
     assert_eq!(
-        kit_budget, expected,
-        "one kit per working-age hand, off the band's own head count"
+        carry,
+        core_sim::carry::band_carry_capacity(cohort, &carry_cfg(&app)),
+        "the band's working-age value × one pack"
+    );
+    let larder = core_sim::starting_loadout::larder_mass(&cohort.stores, &carry_cfg(&app));
+    assert!(
+        larder > Scalar::zero(),
+        "**LIVENESS**: the band holds a larder, or the subtraction below is not exercised"
     );
     assert_eq!(
-        material_budget,
-        app.world
-            .resource::<core_sim::ActiveStartProfile>()
-            .profile()
-            .overrides()
-            .opening_loadout
-            .material_points,
-        "the material budget is the profile's, because no head count says how much bone a band \
-         walked in with"
+        goods_allowance(&app, band, band_id),
+        carry - larder,
+        "the goods may mint what the fixed larder leaves"
     );
 }
 
@@ -353,7 +379,7 @@ fn applying_a_loadout_leaves_the_window_open_for_a_revision() {
     assert_eq!(
         grant(&app, band_id),
         before,
-        "and the grant is UNCHANGED - the budgets do not shrink as drafts are committed, because \
+        "and the grant is UNCHANGED - the budget does not shrink as drafts are committed, because \
          each apply is measured against the whole budget it replaces rather than adds to"
     );
 }
@@ -374,7 +400,7 @@ fn a_revised_loadout_replaces_the_one_before_it() {
         &kits(&[(BIG_GAME, 6)]),
         &materials(&[(BONE, 20)]),
     )
-    .expect("the first draft is inside both budgets");
+    .expect("the first draft is inside the carry");
     apply_starting_loadout(
         &mut app.world,
         PLAYER,
@@ -382,7 +408,7 @@ fn a_revised_loadout_replaces_the_one_before_it() {
         &kits(&[(BIG_GAME, 4)]),
         &materials(&[(FIBRE, 10)]),
     )
-    .expect("the revision is inside both budgets");
+    .expect("the revision is inside the carry");
 
     let ledger = owned(&app, band);
     let count = |item: &str| {
@@ -537,43 +563,56 @@ fn a_material_the_profile_does_not_offer_is_refused() {
     );
 }
 
+/// ⛔ **ONE CARRY, CHECKED ON THE WHOLE ORDER** — kits and materials are spent from the same
+/// budget, so an order whose kit half fits and whose material half fits can still be refused
+/// together. The kit weighs its items; a unit of material weighs its own weight.
 #[test]
-fn a_loadout_over_the_kit_budget_is_refused() {
+fn a_loadout_over_the_carry_is_refused_on_the_whole_order() {
     let (mut app, band, band_id) = open_window();
-    let budget = grant(&app, band_id).0;
-    let reason = refused(
-        &mut app,
-        band,
-        band_id,
-        (kits(&[(BIG_GAME, budget), (TRAPPING, 1)]), Vec::new()),
+    // The goods this window may mint — its carry less its fixed larder.
+    let budget = goods_allowance(&app, band, band_id);
+    let per_kit = order_load(
+        &carry_cfg(&app),
+        &[(SPEARS.to_string(), 1), (SLED.to_string(), 1)]
+            .into_iter()
+            .collect(),
+        0,
     );
+    let kits_that_fit = (budget.raw() / per_kit.raw()) as u32;
+    let kit_load = order_load(
+        &carry_cfg(&app),
+        &[
+            (SPEARS.to_string(), kits_that_fit),
+            (SLED.to_string(), kits_that_fit),
+        ]
+        .into_iter()
+        .collect(),
+        0,
+    );
+    let material_unit = order_load(&carry_cfg(&app), &Default::default(), 1);
+    let units_that_fit = ((budget - kit_load).raw() / material_unit.raw()) as u32;
+    // The kits alone fit, and the material alone fits; together they are one unit over.
+    let order = (
+        kits(&[(BIG_GAME, kits_that_fit)]),
+        materials(&[(BONE, units_that_fit + 1)]),
+    );
+    let reason = refused(&mut app, band, band_id, order);
     assert_eq!(
         reason,
-        LoadoutRejection::OverKitBudget {
-            kits: budget + 1,
-            budget
+        LoadoutRejection::OverCarry {
+            load: order_load(
+                &carry_cfg(&app),
+                &[
+                    (SPEARS.to_string(), kits_that_fit),
+                    (SLED.to_string(), kits_that_fit),
+                ]
+                .into_iter()
+                .collect(),
+                units_that_fit + 1,
+            ),
+            capacity: budget,
         },
-        "the budget is checked on the SUM across kits, not per line"
-    );
-}
-
-#[test]
-fn a_loadout_over_the_material_budget_is_refused() {
-    let (mut app, band, band_id) = open_window();
-    let budget = grant(&app, band_id).1;
-    let reason = refused(
-        &mut app,
-        band,
-        band_id,
-        (Vec::new(), materials(&[(BONE, budget), (HIDE, 1)])),
-    );
-    assert_eq!(
-        reason,
-        LoadoutRejection::OverMaterialBudget {
-            units: budget + 1,
-            budget
-        },
-        "the budget is checked on the SUM across materials, not per line"
+        "the carry is checked on the SUM across kits and materials, not per half"
     );
 }
 
@@ -638,9 +677,9 @@ fn the_opening_loadout_reaches_the_client() {
         .openingLoadout()
         .expect("the campaign section carries the opening loadout");
 
-    // **THE PER-BAND HALF RIDES THE COHORT.** `open` and the two budgets left the campaign section
-    // when every band gained a window of its own — a splinter's budgets are not the spawned band's,
-    // so a campaign-wide reading of them could only be right for one band.
+    // **THE PER-BAND HALF RIDES THE COHORT.** `open` and the carry left the campaign section
+    // when every band gained a window of its own — a splinter's carry is not the spawned band's,
+    // so a campaign-wide reading of it could only be right for one band.
     let cohort_window = envelope
         .payload_as_snapshot()
         .expect("the envelope carries a snapshot")
@@ -652,13 +691,25 @@ fn the_opening_loadout_reaches_the_client() {
         .expect("the spawned band is published")
         .loadoutWindow()
         .expect("the spawned band carries its outfitting window");
-    let (kit_budget, material_budget) = grant(&app, band_id);
+    let budget = grant(&app, band_id);
     assert!(
         cohort_window.open(),
         "the window is open on the world-build turn"
     );
-    assert_eq!(cohort_window.kitBudget(), kit_budget);
-    assert_eq!(cohort_window.materialBudget(), material_budget);
+    assert_eq!(
+        cohort_window.carryCapacity(),
+        budget.to_f32(),
+        "the published cap is the one the server refuses on"
+    );
+    // **And the two weights an order is measured in**, so a client weighs an order the server's way.
+    assert_eq!(
+        published.itemCarryWeight(),
+        carry_cfg(&app).item_carry_weight
+    );
+    assert_eq!(
+        published.materialCarryWeight(),
+        carry_cfg(&app).material_carry_weight
+    );
     assert_eq!(
         cohort_window.parentBandId(),
         0,
@@ -698,28 +749,27 @@ fn the_opening_loadout_reaches_the_client() {
         "the pre-fill names only pickable materials: {defaults:?}"
     );
 
-    // **The kit column's rows, applied at the shipped 4/4/4 and published on the band's own window**
-    // — the picker opens on a plausible band rather than a column of zeros. Twelve against ~17
-    // hands, so the clamp does not bind here and these are the profile's numbers verbatim (the clamp
-    // has its own test; a splinter's binding one is asserted in `split_loadout.rs`).
+    // **The kit column's rows, applied at the profile's default and published on the band's own
+    // window** — the picker opens on a plausible band rather than a column of zeros. The shipped
+    // default fits the room the card shows whole, so these are the profile's numbers verbatim (the
+    // fit has its own test).
     let kit_rows: Vec<(String, u32)> = cohort_window
         .kits()
         .expect("the band's applied kit rows are published")
         .iter()
         .map(|entry| (entry.kitId().unwrap_or_default().to_string(), entry.count()))
         .collect();
-    assert_eq!(
-        kit_rows,
-        vec![
-            (BIG_GAME.to_string(), 4),
-            (GATHERING.to_string(), 4),
-            (TRAPPING.to_string(), 4),
-        ]
-    );
-    assert!(
-        kit_rows.iter().map(|(_, count)| count).sum::<u32>() <= kit_budget,
-        "a published kit allocation always fits the budget it is drawn against"
-    );
+    let kit_defaults: Vec<(String, u32)> = app
+        .world
+        .resource::<core_sim::ActiveStartProfile>()
+        .profile()
+        .overrides()
+        .opening_loadout
+        .kit_defaults
+        .iter()
+        .map(|(id, count)| (id.clone(), *count))
+        .collect();
+    assert_eq!(kit_rows, kit_defaults);
 
     let craftable: Vec<String> = published
         .craftableRecipeIds()
@@ -755,7 +805,7 @@ fn the_opening_loadout_reaches_the_client() {
 }
 
 /// ⛔ **A REFUSAL IS WHOLE.** The kit half of this loadout is perfectly legal and the material half
-/// is not; nothing lands, because a loadout is one composition against two budgets.
+/// is not; nothing lands, because a loadout is one composition against one carry.
 #[test]
 fn a_legal_half_beside_an_illegal_half_lands_nothing() {
     let (mut app, band, band_id) = open_window();
@@ -801,17 +851,31 @@ fn a_band_is_created_already_holding_its_default_outfit() {
         !kit_defaults.is_empty() && !material_defaults.is_empty(),
         "**LIVENESS**: the shipped profile must default something, or this asserts nothing"
     );
-    let (kit_budget, material_budget) = grant(&app, band_id);
+    let equipment = app.world.resource::<EquipmentConfigHandle>().get();
+    // **The default as the band was outfitted with it** — fitted to the goods its carry leaves its
+    // fixed larder, materials cut before kits. The window's accepted rows are what that apply set.
+    let accepted_materials: std::collections::BTreeMap<String, u32> = app
+        .world
+        .resource::<StartingLoadout>()
+        .window(band_id)
+        .expect("the band has a window")
+        .materials
+        .iter()
+        .map(|row| (row.material_id.clone(), row.units))
+        .collect();
+    for (id, units) in &accepted_materials {
+        assert!(
+            *units <= material_defaults.get(id).copied().unwrap_or_default(),
+            "'{id}' is fitted at or under its declared default: {units}"
+        );
+    }
     assert!(
-        kit_defaults.values().sum::<u32>() <= kit_budget
-            && material_defaults.values().sum::<u32>() <= material_budget,
-        "fixture: the shipped defaults fit the shipped band's budgets, so the clamp does not bind \
-         here and the quantities below are the declared ones (the clamp has its own case)"
+        !accepted_materials.is_empty(),
+        "**LIVENESS**: some of the material default fits, or the store check below is vacuous"
     );
 
     // --- what the band HOLDS, with no command sent anywhere -------------------------------------
     let ledger = owned(&app, band);
-    let equipment = app.world.resource::<EquipmentConfigHandle>().get();
     let mut expected: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
     for (kit_id, count) in &kit_defaults {
         let definition = equipment
@@ -832,8 +896,8 @@ fn a_band_is_created_already_holding_its_default_outfit() {
     for (id, _) in materials_table.materials() {
         assert_eq!(
             held(&app, band, id),
-            material_defaults.get(id).copied().unwrap_or_default() as f32,
-            "'{id}' is held at exactly its declared default - and a material nothing defaults is \
+            accepted_materials.get(id).copied().unwrap_or_default() as f32,
+            "'{id}' is held at exactly its fitted default - and a material nothing defaults is \
              still held at none, because `start_stock` is deleted"
         );
     }
@@ -851,62 +915,185 @@ fn a_band_is_created_already_holding_its_default_outfit() {
             .map(|row| (row.kit_id.clone(), row.count))
             .collect::<std::collections::BTreeMap<_, _>>(),
         kit_defaults,
-        "the card opens on the outfit the band is standing in, not on a suggestion beside it"
-    );
-    assert_eq!(
-        window
-            .materials
-            .iter()
-            .map(|row| (row.material_id.clone(), row.units))
-            .collect::<std::collections::BTreeMap<_, _>>(),
-        material_defaults,
-        "and so does the material half"
+        "the card opens on the outfit the band is standing in - every kit row whole, because \
+         materials are cut before tools"
     );
 }
 
-/// ⛔ **AN OVER-ALLOCATING PRE-FILL IS CLAMPED, PROPORTIONALLY, AND THE REMAINDER IS LEFT UNSPENT.**
+/// ⛔ **AN OVER-ALLOCATING PRE-FILL IS FITTED, PROPORTIONALLY, AND THE REMAINDER IS LEFT UNSPENT.**
 ///
-/// The kit budget is the spawned band's head count, so `start_profiles.json` cannot sum-check its own
-/// pre-fill and an over-allocation has to be survivable at runtime. The shipped 12-against-~17 never
-/// binds, which is exactly why the rule needs a case that does.
+/// The carry is the spawned band's working value × one pack less its larder, so `start_profiles.json`
+/// cannot sum-check its own pre-fill and an over-allocation has to be survivable at runtime. These
+/// cases pin the rule on fixed numbers rather than on whatever the shipped band happens to hold.
+/// Materials are cut before any kit, and only a kit load over the carry scales the kits.
 #[test]
-fn an_over_allocating_kit_pre_fill_is_clamped_proportionally() {
-    let declared: std::collections::BTreeMap<String, u32> =
-        [(BIG_GAME, 6u32), (TRAPPING, 3), (GATHERING, 1)]
+fn an_over_allocating_pre_fill_cuts_materials_before_tools() {
+    let app = open_window().0;
+    let equipment = app.world.resource::<EquipmentConfigHandle>().get();
+    let mut carry_cfg = carry_cfg(&app);
+    carry_cfg.item_carry_weight = 1.0;
+    carry_cfg.material_carry_weight = 1.0;
+    let declared_kits: std::collections::BTreeMap<String, u32> =
+        [(BIG_GAME, 6u32), (TRAPPING, 3), (GATHERING, 2)]
             .into_iter()
             .map(|(id, count)| (id.to_string(), count))
             .collect();
+    let declared_materials: std::collections::BTreeMap<String, u32> =
+        [(BONE.to_string(), 4)].into_iter().collect();
+    // 6×2 + 3×2 + 2×1 = 20 items, + 4 bone = 24 of load.
 
-    // Inside the budget: passed through verbatim, and reported as not clamped.
-    let (rows, clamped) = core_sim::clamped_kit_defaults(&declared, 10);
-    assert!(!clamped);
+    // Inside the budget: passed through verbatim, and reported as not fitted.
+    let fitted = fit_to_carry(
+        &declared_kits,
+        &declared_materials,
+        Scalar::from_u32(24),
+        &equipment,
+        &carry_cfg,
+    );
+    assert!(!fitted.clamped);
     assert_eq!(
-        rows,
+        fitted.kits,
         vec![
             (BIG_GAME.to_string(), 6),
-            (GATHERING.to_string(), 1),
+            (GATHERING.to_string(), 2),
             (TRAPPING.to_string(), 3),
         ]
     );
+    assert_eq!(fitted.materials, vec![(BONE.to_string(), 4)]);
 
-    // Over the budget: `floor(count × 5 / 10)` — 3 / 0 / 1, and the zero row is DROPPED rather than
-    // published as a pre-fill of nothing. The floor's leftover point is deliberately not handed to
-    // whichever id sorts first: a suggestion that leaves a hand free beats an arbitrary winner
-    // dressed as a rule.
-    let (rows, clamped) = core_sim::clamped_kit_defaults(&declared, 5);
-    assert!(clamped, "the clamp must report that it bound");
+    // Over the budget with room for every kit: the kits are kept WHOLE and the bone is cut into
+    // what they leave — `floor(4 × 2 / 4)` = 2. Tools feed a band; bone can be gathered again.
+    let fitted = fit_to_carry(
+        &declared_kits,
+        &declared_materials,
+        Scalar::from_u32(22),
+        &equipment,
+        &carry_cfg,
+    );
+    assert!(fitted.clamped, "the fit must report that it bound");
     assert_eq!(
-        rows,
-        vec![(BIG_GAME.to_string(), 3), (TRAPPING.to_string(), 1)],
-        "proportional, floored, and `gathering` floors out entirely"
+        fitted.kits,
+        vec![
+            (BIG_GAME.to_string(), 6),
+            (GATHERING.to_string(), 2),
+            (TRAPPING.to_string(), 3),
+        ],
+        "materials are cut before any tool"
+    );
+    assert_eq!(fitted.materials, vec![(BONE.to_string(), 2)]);
+
+    // The kits alone over the budget: every material goes, and every kit row is
+    // `floor(count × 12 / 20)` — 3 / 1 / 1. A row that floors to zero is DROPPED rather than
+    // published as a pre-fill of nothing, and the floor's leftover is not handed to whichever id
+    // sorts first.
+    let fitted = fit_to_carry(
+        &declared_kits,
+        &declared_materials,
+        Scalar::from_u32(12),
+        &equipment,
+        &carry_cfg,
+    );
+    assert!(fitted.clamped, "the fit must report that it bound");
+    assert_eq!(
+        fitted.kits,
+        vec![
+            (BIG_GAME.to_string(), 3),
+            (GATHERING.to_string(), 1),
+            (TRAPPING.to_string(), 1),
+        ],
+        "proportional and floored on the kits alone"
     );
     assert!(
-        rows.iter().map(|(_, count)| count).sum::<u32>() <= 5,
-        "a clamped pre-fill never exceeds the budget it was fitted to"
+        fitted.materials.is_empty(),
+        "no material rides before a tool"
     );
 
-    // A band with no hands pre-fills nothing, with no special case anywhere.
-    let (rows, clamped) = core_sim::clamped_kit_defaults(&declared, 0);
-    assert!(clamped);
-    assert!(rows.is_empty());
+    // A band with no carry pre-fills nothing, with no special case anywhere.
+    let fitted = fit_to_carry(
+        &declared_kits,
+        &declared_materials,
+        Scalar::zero(),
+        &equipment,
+        &carry_cfg,
+    );
+    assert!(fitted.clamped);
+    assert!(fitted.kits.is_empty() && fitted.materials.is_empty());
+}
+
+/// **A band left over its allowance by a carry that shrank under it** — outfitted with `gathering`
+/// kits (one basket, one load each) up to its allowance, then two packs' worth of its working hands
+/// sent away, so its standing outfit sits over the room it now has. Returns the app, the band, its
+/// id and the number of kits it stands on.
+fn a_band_left_over_its_allowance() -> (App, Entity, BandId, u32) {
+    let (mut app, band, band_id) = open_window();
+    let held = (goods_allowance(&app, band, band_id).raw() / Scalar::one().raw()) as u32;
+    apply_starting_loadout(
+        &mut app.world,
+        PLAYER,
+        band_id,
+        &kits(&[(GATHERING, held)]),
+        &[],
+    )
+    .expect("an outfit inside the allowance is accepted");
+    // A worker or two sent away takes their packs with them: nobody ordered the band heavier.
+    const HANDS_SENT_AWAY: f32 = 2.0;
+    app.world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the band keeps a cohort")
+        .working -= Scalar::from_f32(HANDS_SENT_AWAY);
+    let allowance = goods_allowance(&app, band, band_id);
+    assert!(
+        Scalar::from_u32(held) - allowance >= Scalar::from_u32(2),
+        "fixture: the band stands at least two loads over: {held} on {allowance}"
+    );
+    (app, band, band_id, held)
+}
+
+/// ⛔ **THE CAP BOUNDS WHAT IS ADDED: A BAND OVER ITS ALLOWANCE CAN STILL STEP DOWN.** A band whose
+/// carry shrank under it is over without anyone ordering it so. Removing one basket leaves it still
+/// over, and is accepted — refusing it would leave the band unable to get back down — and a swap
+/// that keeps the load is accepted too.
+#[test]
+fn a_band_over_its_allowance_may_still_lighten_its_load() {
+    let (mut app, band, band_id, held) = a_band_left_over_its_allowance();
+    apply_starting_loadout(
+        &mut app.world,
+        PLAYER,
+        band_id,
+        &kits(&[(GATHERING, held - 1)]),
+        &[],
+    )
+    .expect("removing one basket is accepted, though the band is still over");
+    let allowance = goods_allowance(&app, band, band_id);
+    assert!(
+        Scalar::from_u32(held - 1) > allowance,
+        "and it is still over: {} on {allowance}",
+        held - 1
+    );
+    // A swap that keeps the load — two baskets for one Stalking kit (spear + sled) — is no heavier.
+    apply_starting_loadout(
+        &mut app.world,
+        PLAYER,
+        band_id,
+        &kits(&[(GATHERING, held - 3), (BIG_GAME, 1)]),
+        &[],
+    )
+    .expect("a swap that keeps the load is accepted while over");
+}
+
+/// ⛔ **…BUT A BAND OVER ITS ALLOWANCE MAY NOT ADD ANYTHING.** The same band adding one material unit
+/// on top of what it stands on is heavier and over, so it is refused whole.
+#[test]
+fn a_band_over_its_allowance_may_not_add_load() {
+    let (mut app, band, band_id, held) = a_band_left_over_its_allowance();
+    let reason = refused(
+        &mut app,
+        band,
+        band_id,
+        (kits(&[(GATHERING, held)]), materials(&[(BONE, 1)])),
+    );
+    assert!(
+        matches!(reason, LoadoutRejection::OverCarry { .. }),
+        "adding to an over band is refused over the carry: {reason:?}"
+    );
 }

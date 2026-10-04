@@ -12,15 +12,18 @@
 //!
 //! **The v1 outfit resolution** ([`Orchestrator::outfit`]): the kit demands ranked by
 //! `priority × the profile weight of the requester's domain` (`food` → `food_security`, `land` →
-//! `land_claim`, ties by requester id), walked granting `min(asked, budget left)` — on a
-//! splinter's take, capped by the parent's supply of **every item** the kit lists — two demands
-//! for one kit coalesced into one line; materials the same way against `material_budget`, and on
-//! a grant window **the campaign pre-fill fills whatever material budget the demands leave**
-//! (`opening_loadout.material_defaults`, the sim's own suggestion, scaled to the points left in
-//! its own proportions and floored — [`prefill_over`]). Never a `none` kit, a kit the roster does
-//! not name, or a total above either budget: the sim refuses the whole order for any of them. **Every grant under the ask says why** ([`Grant`]): a demand
-//! the budget cannot reach at all is declined, one it reaches partly is trimmed — and a craft
-//! demand is declined `no crafter yet`, because nothing runs a bench for the seat.
+//! `land_claim`, ties by requester id), walked granting `min(asked, what the carry left can
+//! hold)` — **one carry budget** (`loadoutWindow.carryCapacity`), a kit weighing its items ×
+//! `openingLoadout.itemCarryWeight` and a material unit `materialCarryWeight`, the exact load the
+//! sim refuses an order on — and on a splinter's take, also capped by the parent's supply of
+//! **every item** the kit lists; two demands for one kit coalesced into one line. On a grant
+//! window **the campaign pre-fill fills whatever carry the demands leave**
+//! (`opening_loadout.material_defaults`, the sim's own suggestion, scaled to the units the carry
+//! left can hold in its own proportions and floored — [`prefill_over`]). Never a `none` kit, a kit
+//! the roster does not name, or a load above the carry: the sim refuses the whole order for any of
+//! them. **Every grant under the ask says why** ([`Grant`]): a demand the carry cannot reach at
+//! all is declined, one it reaches partly is trimmed — and a craft demand is declined
+//! `no crafter yet`, because nothing runs a bench for the seat.
 
 use std::collections::BTreeMap;
 
@@ -33,17 +36,16 @@ use crate::specialists::{SpecialistId, SPECIALIST_FOOD};
 use crate::view::{SeatMemory, SeatView};
 
 /// A grant window: `parent_band_id` is `0` — *"`0` — a GRANT window. The picks mint gear, capped
-/// by `kit_budget` … and `material_budget`"* (`BandLoadoutWindowState`); non-zero is a take on
-/// that band, capped by the parent's supply instead.
+/// by `carry_capacity`"* (`BandLoadoutWindowState`); non-zero is a take on that band, capped by
+/// the parent's supply as well.
 const GRANT_WINDOW: u64 = 0;
 
 /// **Why a grant fell short**, as the board records it.
 pub const DECLINED_NO_CRAFTER: &str = "no crafter yet";
 pub const DECLINED_BARE_KIT: &str = "the bare kit is never a line";
 pub const DECLINED_UNKNOWN_KIT: &str = "not on the kit roster";
-pub const DECLINED_KIT_BUDGET: &str = "kit budget spent";
+pub const DECLINED_CARRY: &str = "carry spent";
 pub const DECLINED_PARENT_SUPPLY: &str = "parent cannot supply";
-pub const DECLINED_MATERIAL_BUDGET: &str = "material budget spent";
 pub const DECLINED_NOT_PICKABLE: &str = "not on the pick list";
 
 /// The grant for `asked` against `cap`, with the reason when it falls short.
@@ -61,13 +63,12 @@ fn grant_against(asked: u32, cap: u32, short_because: &str) -> Grant {
     }
 }
 
-/// **The campaign pre-fill over the material points the demands left**: each default row scaled
-/// by `min(1, budget_left / Σ defaults)` and floored — proportional, remainder unspent, the
-/// `clamped_kit_defaults` rule on the material side — so a grant that spent part of its budget
-/// on what a specialist asked for still carries the sim's suggestion for the rest, in the
-/// suggestion's own mix. Clamping row by row instead spent the whole budget on the first rows
-/// and none on the last; skipping the pre-fill when anything was asked left a third of the
-/// budget on the table (the hoe estimate's `bone 6, fibre 12` against 30 points).
+/// **The campaign pre-fill over the material units the carry left can hold**: each default row
+/// scaled by `min(1, units_left / Σ defaults)` and floored — proportional, remainder unspent, the
+/// sim's own `fit_to_carry` rule — so a grant that spent part of its carry on what a specialist
+/// asked for still carries the sim's suggestion for the rest, in the suggestion's own mix.
+/// Clamping row by row instead spent the whole budget on the first rows and none on the last;
+/// skipping the pre-fill when anything was asked left a third of the budget on the table.
 fn prefill_over(defaults: &[OpeningMaterialDefaultState], budget_left: u32) -> Vec<(String, u32)> {
     let total: u32 = defaults.iter().map(|row| row.units).sum();
     if total == 0 || budget_left == 0 {
@@ -243,8 +244,24 @@ impl Orchestrator for ConstantStance {
                 .then_with(|| demands[a].demand.requester.cmp(demands[b].demand.requester))
         });
         let is_take = window.parent_band_id != GRANT_WINDOW;
-        let mut kit_budget = window.kit_budget;
-        let mut material_budget = window.material_budget;
+        // **One carry budget for kits and materials alike**, weighed exactly as the sim weighs an
+        // order: a kit at its items × `itemCarryWeight`, a material unit at `materialCarryWeight`.
+        let item_weight = view.snapshot.opening_loadout.item_carry_weight;
+        let material_weight = view.snapshot.opening_loadout.material_carry_weight;
+        // **A splinter keeps the food its default gave it.** A split loads goods first and food fills
+        // the room they leave (`BandLoadoutWindowState::food_carried`), so spending that room on
+        // goods would hand the food back to the parent; the goods budget is what the food left.
+        // The opening band carries no food share, so its whole carry is goods.
+        let mut carry_left = (window.carry_capacity - window.food_carried).max(0.0);
+        // How many units of `weight` the carry left can hold. A weightless unit is never bound by
+        // the carry, so it answers the whole ask.
+        let units_carried = |carry_left: f32, weight: f32, asked: u32| -> u32 {
+            if weight <= 0.0 {
+                asked
+            } else {
+                (carry_left.max(0.0) / weight).floor() as u32
+            }
+        };
         // A take's caps: `BandLoadoutSupplyRowState` is *"One cap row … how many units of `id`
         // this take may claim"*, keyed per **item** — *"A kit row cannot be capped on its own …
         // what the sim validates is the expanded item list, whole"* — so a kit's cap is the
@@ -264,7 +281,7 @@ impl Orchestrator for ConstantStance {
             .map(|entry| {
                 (
                     entry.demand.resource.clone(),
-                    Grant::declined(DECLINED_KIT_BUDGET),
+                    Grant::declined(DECLINED_CARRY),
                 )
             })
             .collect();
@@ -282,17 +299,21 @@ impl Orchestrator for ConstantStance {
                         grants[index].1 = Grant::declined(DECLINED_UNKNOWN_KIT);
                         continue;
                     };
-                    let (cap, short_because) = if is_take {
-                        (
-                            kit.item_ids
-                                .iter()
-                                .map(|item| item_supply.get(item.as_str()).copied().unwrap_or(0))
-                                .min()
-                                .unwrap_or(0),
-                            DECLINED_PARENT_SUPPLY,
-                        )
+                    let kit_weight = kit.item_ids.len() as f32 * item_weight;
+                    let carry_cap = units_carried(carry_left, kit_weight, demand.amount);
+                    let supply_cap = if is_take {
+                        kit.item_ids
+                            .iter()
+                            .map(|item| item_supply.get(item.as_str()).copied().unwrap_or(0))
+                            .min()
+                            .unwrap_or(0)
                     } else {
-                        (kit_budget, DECLINED_KIT_BUDGET)
+                        u32::MAX
+                    };
+                    let (cap, short_because) = if supply_cap < carry_cap {
+                        (supply_cap, DECLINED_PARENT_SUPPLY)
+                    } else {
+                        (carry_cap, DECLINED_CARRY)
                     };
                     let grant = grant_against(demand.amount, cap, short_because);
                     let granted = grant.granted;
@@ -306,24 +327,26 @@ impl Orchestrator for ConstantStance {
                                 *units -= granted;
                             }
                         }
-                    } else {
-                        kit_budget -= granted;
                     }
+                    carry_left -= granted as f32 * kit_weight;
                     coalesce(&mut kits, id, granted);
                 }
                 Resource::Material(id) => {
+                    let carry_cap = units_carried(carry_left, material_weight, demand.amount);
                     let (cap, short_because) = if is_take {
-                        (
-                            material_supply.get(id.as_str()).copied().unwrap_or(0),
-                            DECLINED_PARENT_SUPPLY,
-                        )
+                        let supply_cap = material_supply.get(id.as_str()).copied().unwrap_or(0);
+                        if supply_cap < carry_cap {
+                            (supply_cap, DECLINED_PARENT_SUPPLY)
+                        } else {
+                            (carry_cap, DECLINED_CARRY)
+                        }
                     } else if view
                         .snapshot
                         .opening_loadout
                         .pickable_materials
                         .contains(id)
                     {
-                        (material_budget, DECLINED_MATERIAL_BUDGET)
+                        (carry_cap, DECLINED_CARRY)
                     } else {
                         (0, DECLINED_NOT_PICKABLE)
                     };
@@ -337,9 +360,8 @@ impl Orchestrator for ConstantStance {
                         if let Some(units) = material_supply.get_mut(id.as_str()) {
                             *units -= granted;
                         }
-                    } else {
-                        material_budget -= granted;
                     }
+                    carry_left -= granted as f32 * material_weight;
                     coalesce(&mut materials, id, granted);
                 }
                 // Nothing runs a bench for the seat: the ask and its timing are recorded, and
@@ -349,12 +371,14 @@ impl Orchestrator for ConstantStance {
                 }
             }
         }
-        // A grant window: the campaign's own pre-fill over whatever the demands left, in its own
-        // proportions. A splinter's take carries no pre-fill.
+        // A grant window: the campaign's own pre-fill over whatever carry the demands left, in its
+        // own proportions. A splinter's take carries no pre-fill.
         if !is_take {
+            let defaults = &view.snapshot.opening_loadout.material_defaults;
+            let declared: u32 = defaults.iter().map(|row| row.units).sum();
             for (id, units) in prefill_over(
-                &view.snapshot.opening_loadout.material_defaults,
-                material_budget,
+                defaults,
+                units_carried(carry_left, material_weight, declared),
             ) {
                 coalesce(&mut materials, &id, units);
             }
@@ -418,19 +442,18 @@ mod tests {
         }
     }
 
-    fn grant_window(kit_budget: u32, material_budget: u32) -> BandLoadoutWindowState {
+    fn grant_window(carry_capacity: f32) -> BandLoadoutWindowState {
         BandLoadoutWindowState {
             open: true,
-            kit_budget,
-            material_budget,
+            carry_capacity,
             ..Default::default()
         }
     }
 
-    /// Two kit demands over the budget: the higher-ranked (`priority × domain weight`) is granted
+    /// Two kit demands over the carry: the higher-ranked (`priority × domain weight`) is granted
     /// whole and the other what is left; a `none` kit is never a line; a grant window nobody
-    /// asked material for takes the campaign pre-fill, scaled to the budget in its own
-    /// proportions (17 : 8 over 20 points is 13 : 6, floored).
+    /// asked material for takes the campaign pre-fill over the carry the kits left, scaled in its
+    /// own proportions (17 : 8 over the 19 units left of 30 is 12 : 6, floored).
     #[test]
     fn outfit_grants_in_priority_order_and_pre_fills_material_on_a_grant_window() {
         let mut orchestrator =
@@ -448,8 +471,8 @@ mod tests {
         ];
         let band = &view.snapshot.populations[0];
         // Land's scout kit at 0.5 × 0.3 ranks under Food's baskets at 1.0 × 0.9 and its spears at
-        // 0.8 × 0.9; the budget of 10 covers 8 baskets and 2 of the 3 spears, and no scout kit
-        // (the fixture roster does not carry one either).
+        // 0.8 × 0.9; a carry of 10 (each fixture kit weighs one item) covers 8 baskets and 2 of
+        // the 3 spears, and no scout kit (the fixture roster does not carry one either).
         let entries = [
             entry(
                 SPECIALIST_LAND,
@@ -467,7 +490,7 @@ mod tests {
             entry(SPECIALIST_FOOD, Resource::Kit("none".to_owned()), 1, 1.0),
         ];
         let demands: Vec<&Entry> = entries.iter().collect();
-        let outfit = orchestrator.outfit(&view, &forager(), band, &grant_window(10, 20), &demands);
+        let outfit = orchestrator.outfit(&view, &forager(), band, &grant_window(10.0), &demands);
         assert_eq!(outfit.band, BAND);
         assert_eq!(
             outfit.kits,
@@ -483,7 +506,7 @@ mod tests {
                 (Resource::Kit(FORAGE_KIT.to_owned()), Grant::whole(8)),
                 (
                     Resource::Kit(HUNT_KIT.to_owned()),
-                    Grant::trimmed(2, format!("trimmed from 3 to 2: {DECLINED_KIT_BUDGET}"))
+                    Grant::trimmed(2, format!("trimmed from 3 to 2: {DECLINED_CARRY}"))
                 ),
                 (
                     Resource::Kit("none".to_owned()),
@@ -491,10 +514,20 @@ mod tests {
                 ),
             ]
         );
+        assert!(
+            outfit.materials.is_empty(),
+            "the kits spent the whole carry"
+        );
+        // Thirty: the kits take 11, and the pre-fill fills the 19 left in its own mix.
+        let outfit = orchestrator.outfit(&view, &forager(), band, &grant_window(30.0), &demands);
+        assert_eq!(
+            outfit.kits,
+            vec![(FORAGE_KIT.to_owned(), 8), (HUNT_KIT.to_owned(), 3)]
+        );
         assert_eq!(
             outfit.materials,
-            vec![("fibre".to_owned(), 13), ("hide".to_owned(), 6)],
-            "the pre-fill, scaled to the 20 points in its own mix"
+            vec![("fibre".to_owned(), 12), ("hide".to_owned(), 6)],
+            "the pre-fill, scaled to the 19 units the kits left in its own mix"
         );
         // A material demand is capped by the budget and the pick list; a budget it spends whole
         // leaves no pre-fill.
@@ -524,14 +557,11 @@ mod tests {
         ];
         let demands: Vec<&Entry> = entries.iter().collect();
         let band = &view.snapshot.populations[0];
-        let outfit = orchestrator.outfit(&view, &forager(), band, &grant_window(10, 20), &demands);
+        let outfit = orchestrator.outfit(&view, &forager(), band, &grant_window(20.0), &demands);
         assert_eq!(outfit.materials, vec![("bone".to_owned(), 20)]);
         assert_eq!(
             outfit.grants[0].1,
-            Grant::trimmed(
-                20,
-                format!("trimmed from 25 to 20: {DECLINED_MATERIAL_BUDGET}")
-            )
+            Grant::trimmed(20, format!("trimmed from 25 to 20: {DECLINED_CARRY}"))
         );
         assert_eq!(
             outfit.grants[1].1,
@@ -545,13 +575,13 @@ mod tests {
         );
     }
 
-    /// **Demands first, the pre-fill over what is left.** Six bone asked of thirty points with a
-    /// pre-fill of bone 3 / fibre 17 / hide 8 (28): the six are granted, the 24 points left take
+    /// **Demands first, the pre-fill over what is left.** Six bone asked of a carry of thirty with a
+    /// pre-fill of bone 3 / fibre 17 / hide 8 (28): the six are granted, the 24 of carry left take
     /// the pre-fill at 24/28 — bone 2, fibre 14, hide 6, floored — so the line reads bone 8,
-    /// fibre 14, hide 6; nothing is displaced and nothing is spent past the budget. A pre-fill
+    /// fibre 14, hide 6; nothing is displaced and nothing is spent past the carry. A pre-fill
     /// smaller than what is left goes whole.
     #[test]
-    fn outfit_fills_the_material_budget_the_demands_leave_with_the_pre_fill() {
+    fn outfit_fills_the_carry_the_demands_leave_with_the_pre_fill() {
         let mut orchestrator = ConstantStance::new(&[SPECIALIST_FOOD], cadence(), SHIFT);
         let mut view = a_view();
         let default = |id: &str, units: u32| OpeningMaterialDefaultState {
@@ -570,7 +600,7 @@ mod tests {
         )];
         let demands: Vec<&Entry> = entries.iter().collect();
         let band = &view.snapshot.populations[0];
-        let outfit = orchestrator.outfit(&view, &forager(), band, &grant_window(10, 30), &demands);
+        let outfit = orchestrator.outfit(&view, &forager(), band, &grant_window(30.0), &demands);
         assert_eq!(outfit.grants[0].1, Grant::whole(6));
         assert_eq!(
             outfit.materials,
@@ -584,8 +614,8 @@ mod tests {
             outfit.materials.iter().map(|(_, units)| units).sum::<u32>() <= 30,
             "never past the budget"
         );
-        // Sixty points: the pre-fill goes whole on top of the demand.
-        let outfit = orchestrator.outfit(&view, &forager(), band, &grant_window(10, 60), &demands);
+        // A carry of sixty: the pre-fill goes whole on top of the demand.
+        let outfit = orchestrator.outfit(&view, &forager(), band, &grant_window(60.0), &demands);
         assert_eq!(
             outfit.materials,
             vec![
@@ -632,6 +662,7 @@ mod tests {
                 supply("traps", 4),
                 supply("sled", 5),
             ],
+            carry_capacity: crate::specialists::food::tests::FIXTURE_BAND_CARRY,
             ..Default::default()
         };
         let entries = [
@@ -651,6 +682,28 @@ mod tests {
         assert_eq!(outfit.kits, vec![(HUNT_KIT.to_owned(), 5)]);
         assert_eq!(outfit.grants[1].1, Grant::declined(DECLINED_PARENT_SUPPLY));
         assert!(outfit.materials.is_empty(), "a splinter takes no pre-fill");
+        // **And a take is capped by what the splinter can CARRY**: six of load holds three
+        // two-item stalking kits whatever the parent holds, and the shortfall names the carry.
+        let carried = BandLoadoutWindowState {
+            carry_capacity: 6.0,
+            ..window
+        };
+        let outfit = orchestrator.outfit(&view, &forager(), band, &carried, &demands);
+        assert_eq!(outfit.kits, vec![(HUNT_KIT.to_owned(), 3)]);
+        assert_eq!(
+            outfit.grants[0].1,
+            Grant::trimmed(3, format!("trimmed from 9 to 3: {DECLINED_CARRY}"))
+        );
+        // **And the food the default gave the splinter stays**: of a ten-load carry with four of
+        // food already packed, the goods get six — three two-item kits, not five.
+        let fed = BandLoadoutWindowState {
+            carry_capacity: 10.0,
+            food_share: 8.0,
+            food_carried: 4.0,
+            ..carried
+        };
+        let outfit = orchestrator.outfit(&view, &forager(), band, &fed, &demands);
+        assert_eq!(outfit.kits, vec![(HUNT_KIT.to_owned(), 3)]);
     }
 
     #[test]

@@ -46,22 +46,21 @@ use core_sim::{
     build_headless_app, clear_config_overrides, denial_forecast, expedition_returned_event,
     fold_party_into_band, granted_ai_faction_count, install_config_override, party_owes_a_report,
     publish_baseline_snapshot, recapture_snapshot_in_place, run_turn, scalar_from_f32,
-    shipment_carry_cap, split_band_from_parent, AgentAssignment, BandId, BandIdAllocator, BandName,
-    CommandEventEntry, CommandEventKind, CommandEventLog, CounterIntelBudgets,
-    CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle, CrisisArchetypeCatalogMetadata,
-    CrisisModifierCatalog, CrisisModifierCatalogHandle, CrisisModifierCatalogMetadata,
-    CrisisTelemetry, CrisisTelemetryConfig, CrisisTelemetryConfigHandle,
-    CrisisTelemetryConfigMetadata, DiscoveryProgressLedger, EquipmentConfigHandle,
-    EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionKind,
-    EspionageMissionState, EspionageMissionTemplate, EspionageRoster, FactionBorderPolicies,
-    FactionId, FactionOrders, FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle,
-    FoodSiteRegistry, ForageRegistry, FrameSink, HerdRegistry, Improvement, LaborConfigHandle,
-    MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError, QueueMissionParams,
-    Scalar, SecurityPolicy, Settlement, SimulationConfig, SimulationConfigMetadata, SimulationTick,
-    SnapshotAudiences, SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    SnapshotOverlaysConfigMetadata, StartLocation, StartProfileLookup, StartProfilesHandle,
-    StartingUnit, SubmitError, SubmitOutcome, Tile, TileRegistry, TownCenter,
-    TradeExpeditionConfig, TurnPipelineConfig, TurnPipelineConfigHandle,
+    split_band_from_parent, AgentAssignment, BandId, BandIdAllocator, BandName, CommandEventEntry,
+    CommandEventKind, CommandEventLog, CounterIntelBudgets, CrisisArchetypeCatalog,
+    CrisisArchetypeCatalogHandle, CrisisArchetypeCatalogMetadata, CrisisModifierCatalog,
+    CrisisModifierCatalogHandle, CrisisModifierCatalogMetadata, CrisisTelemetry,
+    CrisisTelemetryConfig, CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata,
+    DiscoveryProgressLedger, EquipmentConfigHandle, EspionageAgentHandle, EspionageCatalog,
+    EspionageMissionId, EspionageMissionKind, EspionageMissionState, EspionageMissionTemplate,
+    EspionageRoster, FactionBorderPolicies, FactionId, FactionOrders, FactionRegistry,
+    FactionSecurityPolicies, FaunaConfigHandle, FoodSiteRegistry, ForageRegistry, FrameSink,
+    HerdRegistry, Improvement, LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns,
+    PopulationCohort, QueueMissionError, QueueMissionParams, Scalar, SecurityPolicy, Settlement,
+    SimulationConfig, SimulationConfigMetadata, SimulationTick, SnapshotAudiences, SnapshotHistory,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata,
+    StartLocation, StartProfileLookup, StartProfilesHandle, StartingUnit, SubmitError,
+    SubmitOutcome, Tile, TileRegistry, TownCenter, TurnPipelineConfig, TurnPipelineConfigHandle,
     TurnPipelineConfigMetadata, TurnQueue, WorldEpoch, FODDER, FOOD,
 };
 use core_sim::{
@@ -5390,6 +5389,10 @@ fn handle_move_band(
         .entity_mut(band.entity)
         .insert(BandTravel { target });
 
+    // **A long move leaves behind what the band cannot carry** (#732) — at the moment the order is
+    // accepted, because the band is leaving now.
+    shed_for_a_long_move(app, faction, band.entity, &band.label, target);
+
     // If the moved entity is an expedition, a fresh `move_band` un-latches AwaitingOrders (or
     // redirects a Returning party back out to explore): re-arm it Outbound and re-open the
     // arrival announcement so reaching the new waypoint fires the feed line again.
@@ -5408,6 +5411,136 @@ fn handle_move_band(
         Some(format!(
             "status=queued action=move_band band={}",
             band.label
+        )),
+    );
+}
+
+/// **Shed a RESIDENT band down to what its workers can carry, when it is ordered farther than it can
+/// ferry** (#732, `core_sim::carry`).
+///
+/// Within [`core_sim::carry::move_ferry_reach_tiles`] the band keeps everything — it can carry
+/// its goods across in trips. Past it, it walks off with
+/// [`core_sim::carry::band_carry_capacity`] — priced on its actual working-age value, never a floored
+/// head count: food loads first, then materials are cut before tools in what the food leaves, the
+/// **most worn** units are the ones dropped, and what is left behind is **lost**. A re-target to another long move re-checks, which is
+/// a no-op once the band is already under its cap.
+///
+/// **A detached party is untouched** — parties keep their own rules (their pack is their pack). The
+/// dropped food is booked on the food ledger's `left_behind` term so the identity still closes, and
+/// one feed line names roughly what was left; nothing is said when nothing is shed.
+fn shed_for_a_long_move(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    entity: Entity,
+    label: &str,
+    target: UVec2,
+) {
+    if app.world.get::<ResidentBand>(entity).is_none()
+        || app.world.get::<Expedition>(entity).is_some()
+    {
+        return;
+    }
+    let Some(current_tile) = app
+        .world
+        .get::<PopulationCohort>(entity)
+        .map(|cohort| cohort.current_tile)
+    else {
+        return;
+    };
+    let Some(from) = app
+        .world
+        .get::<Tile>(current_tile)
+        .map(|tile| tile.position)
+    else {
+        return;
+    };
+    let width = app.world.resource::<TileRegistry>().width;
+    let wrap = app
+        .world
+        .resource::<SimulationConfig>()
+        .map_topology
+        .wrap_horizontal;
+    let reach = core_sim::carry::move_ferry_reach_tiles(
+        &app.world
+            .resource::<core_sim::SupplyNetworkConfigHandle>()
+            .get(),
+    );
+    if hex_distance_wrapped(from, target, width, wrap) <= reach {
+        return;
+    }
+    // ⛔ **A long move ends the band's outfitting window**, whether or not it sheds anything: the
+    // band has walked away, and its outfit is what it carried. Left open, an unchanged card would
+    // re-mint everything the shed below leaves behind.
+    if let Some(band_id) = app.world.get::<BandId>(entity).copied() {
+        let closed = app
+            .world
+            .resource_mut::<core_sim::StartingLoadout>()
+            .close_for_a_long_move(band_id);
+        if !closed.is_empty() {
+            info!(
+                target: "shadow_scale::campaign",
+                band = band_id.0,
+                windows = closed.len(),
+                "starting_loadout.window.closed=long_move"
+            );
+        }
+    }
+    let carry_cfg = app
+        .world
+        .resource::<ExpeditionConfigHandle>()
+        .get()
+        .carry
+        .clone();
+    let Some(cohort) = app.world.get::<PopulationCohort>(entity) else {
+        return;
+    };
+    let plan = core_sim::carry::plan_long_move_shed(
+        &cohort.stores,
+        app.world.get::<BandEquipment>(entity),
+        core_sim::carry::band_carry_workers(cohort),
+        &carry_cfg,
+    );
+    if plan.is_empty() {
+        return;
+    }
+    let mut holdings = app
+        .world
+        .query::<(&mut PopulationCohort, Option<&mut BandEquipment>)>();
+    let Ok((mut cohort, equipment)) = holdings.get_mut(&mut app.world, entity) else {
+        return;
+    };
+    let food_left = core_sim::carry::shed_for_long_move(
+        &mut cohort.stores,
+        equipment.map(|equipment| equipment.into_inner()),
+        &plan,
+    );
+    // **Booked on the food ledger, or the identity is false on the turn a band walks away** — the
+    // larder fell by food that passed through no income, meal, rot or transfer.
+    if let Some(mut allocation) = app.world.get_mut::<LaborAllocation>(entity) {
+        allocation.last_food_left_behind += food_left.to_f32();
+    }
+    let tick = app.world.resource::<SimulationTick>().0;
+    let food = food_left.to_f32();
+    let items = plan.item_units();
+    let materials = plan.material_units().to_f32();
+    // `band=` is the durable `BandId`, never the entity — the token the client joins on.
+    let band_token = app
+        .world
+        .get::<BandId>(entity)
+        .map(|band| format!(" band={}", band.0))
+        .unwrap_or_default();
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::CancelOrder,
+        faction,
+        format!(
+            "{label} left behind {food:.0} food, {items} gear, {materials:.0} material - too far \
+             to carry"
+        ),
+        Some(format!(
+            "status=left_behind action=move_band food={food:.2} items={items} \
+             materials={materials:.2}{band_token}"
         )),
     );
 }
@@ -5582,6 +5715,7 @@ fn handle_send_expedition(
         .get::<BandName>(band.entity)
         .cloned()
         .unwrap_or_else(|| BandName(String::default()));
+    let party_gear = issue_party_kit(app, band.entity, &kit, party_workers);
     let expedition_entity = app
         .world
         .spawn((
@@ -5598,7 +5732,7 @@ fn handle_send_expedition(
             // haul rate — a contradiction on the wire. **Stated rather than defaulted**: an absent
             // ledger entry means NOT OWNED since the count slice, so `Default` would send the party
             // out bare-handed.
-            outfitted_party_equipment(app, party_workers),
+            party_gear,
             StartingUnit::new(unit_kind, unit_tags),
             Expedition {
                 home_band: band.entity,
@@ -5796,77 +5930,57 @@ fn outfit_raiding_party(
     })
 }
 
-/// **What a detached party leaves outfitted with** — one unworn unit of every item some kit
-/// carries, exactly as a band spawns.
+/// **What a detached party leaves outfitted with — TAKEN from its home band's stockpile.**
 ///
-/// One helper for both outfitting paths, because *"a party leaves outfitted"* is one fact: two
-/// call sites reaching for the ledger separately is how one of them ends up sending a bare-handed
-/// raid out under a kitted forecast.
+/// For every item the party's kit uses, `ceil(party_workers ÷ workers_per_unit)` units leave the
+/// band's [`BandEquipment`] with `take_units` — the freshest first, the order a splinter takes in —
+/// and become the party's ledger, worn as they are. **Nothing is minted**: a band holding fewer
+/// than the party needs sends what it has, and a party handed no spear is simply not equipped with
+/// one; its kit coverage reads what it actually carries. The gear comes back on the party's
+/// fold-back (`fold_party_into_band`'s `PartyGear`), and is lost with a party that is lost.
 ///
-/// **Sized to the party that leaves**, because a unit arms one person: a raid of ten sent out with
-/// one spear is nine bare hands, which is neither what the launch line quotes nor what "outfitted"
-/// means. Every worker in the party is a hunter, so the head count *is* the worker count here.
-fn outfitted_party_equipment(app: &bevy::prelude::App, party_workers: u32) -> BandEquipment {
-    BandEquipment::start_stocked_owned(
-        &app.world.resource::<EquipmentConfigHandle>().get(),
-        &app.world.resource::<RecipesConfigHandle>().get(),
-        &app.world.resource::<MaterialsConfigHandle>().get(),
-        party_workers as f32,
-    )
+/// **Sized to the party that leaves**, because a unit arms `workers_per_unit` people.
+fn issue_party_kit(
+    app: &mut bevy::prelude::App,
+    band: Entity,
+    kit: &KitChoice,
+    party_workers: u32,
+) -> BandEquipment {
+    let equipment = app.world.resource::<EquipmentConfigHandle>().get();
+    app.world
+        .get_mut::<BandEquipment>(band)
+        .map(|mut ledger| ledger.take_party_issue(&equipment, kit, party_workers))
+        .unwrap_or_default()
 }
 
-/// **The party a launch forecast is quoted for** — the kit the player is sending it with, over a
-/// **fresh** set of components ([`BandEquipment::default`] is zero wear), because the party leaves
-/// outfitted and that is the tier it will fight its first turns at. Wear is what moves it later, and
-/// the in-flight readouts re-quote against the party's live kit each turn.
-///
-/// **Quoted at the CHOSEN kit, not at "equipped"** — a raid sent out bare-handed must be quoted
-/// bare-handed, or the launch line promises a slaughter the party cannot perform.
+/// **The party a launch forecast is quoted for, and the haul it drags** — the kit the band would
+/// actually ISSUE it ([`BandEquipment::party_issue`] on the band's live ledger), resolved through
+/// [`core_sim::forecast_query::issued_raid_party`], the seam the compose sheet's query uses too. A
+/// band short of spears is quoted the raid it will really send, bare or partly armed, rather than a
+/// full kit it cannot hand over.
 ///
 /// **It takes the QUARRY'S MASS** because a mass-bounded weapon is only a weapon against animals it
 /// can hold: a raid sent with traps after a mammoth must be quoted at the bare hand's attack, which
 /// is the gate refusing the raid — the same answer the take will give.
 fn launch_forecast_party(
     app: &bevy::prelude::App,
+    band: Entity,
     kit: &KitChoice,
+    party_workers: u32,
     quarry_body_mass: f32,
-) -> HuntingParty {
-    let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
-    let combat = app.world.resource::<CombatConfigHandle>().get();
-    // A fresh ledger: the launch line quotes the KIT the party is being sent with, before it has worn
-    // any of it. The party's own wear then moves its tiers turn by turn once it is in flight.
-    let fresh = BandEquipment::start_stocked(&equipment_cfg);
-    // **UNIFORM**: the party leaves *outfitted* — `outfitted_party_equipment` stocks a party's
-    // worth of each item, sized to the head count being sent — so every hunter is holding the kit
-    // the player named. Quoting coverage against the one-unit reference ledger would price a raid
-    // of ten at one armed hunter and nine bare hands, which is not the party that will leave.
-    HuntingParty::uniform(
-        equipment_cfg.hunter_profile_against(
-            app.world.resource::<CreaturesConfigHandle>().get().person(),
-            kit,
-            &fresh,
-            quarry_body_mass,
-        ),
-        combat.expedition_tuning(),
-        combat.hunt_injury_damage_per_animal * equipment_cfg.exposure(kit, &fresh),
-        equipment_cfg.dispersion(kit, &fresh),
-    )
-}
-
-/// **The per-hunter haul rate the same launch forecast is quoted at** — the chosen kit's *sled*
-/// tier over a fresh set of components, the twin of [`launch_forecast_party`]'s attack tier. Both
-/// halves have to move together: quoting a bare-handed fight against a kitted haul would promise a
-/// party that kills nothing and drags it home fast.
-fn launch_forecast_haul(app: &bevy::prelude::App, kit: &KitChoice) -> f32 {
-    let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
-    let baseline_rate = app
+) -> (HuntingParty, f32) {
+    let ledger = app
         .world
-        .resource::<LaborConfigHandle>()
-        .get()
-        .hunt
-        .per_worker_biomass_capacity;
-    let fresh = BandEquipment::start_stocked(&equipment_cfg);
-    equipment_cfg.hunt_per_worker_biomass_capacity(baseline_rate, kit, &fresh)
+        .get::<BandEquipment>(band)
+        .cloned()
+        .unwrap_or_default();
+    core_sim::forecast_query::issued_raid_party(
+        &app.world,
+        &ledger,
+        kit,
+        party_workers,
+        quarry_body_mass,
+    )
 }
 
 /// Resolve the kit a raiding verb was given, or refuse the launch with a reason.
@@ -6127,6 +6241,7 @@ fn launch_party_from_band(
         .get::<BandName>(band.entity)
         .cloned()
         .unwrap_or_else(|| BandName(String::default()));
+    let party_gear = issue_party_kit(app, band.entity, &kit, party_workers);
     let expedition_entity = app
         .world
         .spawn((
@@ -6134,8 +6249,8 @@ fn launch_party_from_band(
             expedition_band_id,
             expedition_band_name,
             LaborAllocation::default(),
-            // **Outfitted, stated rather than defaulted** — see the scout's spawn above.
-            outfitted_party_equipment(app, party_workers),
+            // **Outfitted out of the band's own stock** — see the scout's spawn above.
+            party_gear,
             StartingUnit::new(unit_kind, unit_tags),
             Expedition {
                 home_band: band.entity,
@@ -6207,14 +6322,14 @@ fn handle_send_denial_raid(
             .resource::<CombatConfigHandle>()
             .get()
             .forecast_range_sigmas;
-        // Quoted at the kit the raid is being sent with — the verdict rests on kills, which the
-        // fight owns, so a bare-handed raid is told it cannot do the job rather than promised it can.
-        let per_worker_haul = launch_forecast_haul(app, &kit);
+        // Quoted at the kit the raid would be ISSUED — the verdict rests on kills, which the fight
+        // owns, so a bare-handed raid is told it cannot do the job rather than promised it can.
         let registry = app.world.resource::<HerdRegistry>();
         registry.find(&fauna_id).map(|herd| {
             // Resolved INSIDE the herd lookup: the attack tier is a fact about this party against
             // THIS animal, not about the party alone.
-            let party = launch_forecast_party(app, &kit, herd.body_mass);
+            let (party, per_worker_haul) =
+                launch_forecast_party(app, outfit.band.entity, &kit, party_workers, herd.body_mass);
             denial_forecast(
                 party_workers,
                 herd,
@@ -6357,36 +6472,11 @@ struct ResolvedShipment {
     materials: Vec<(String, Scalar)>,
 }
 
-/// **How much pack space this shipment takes** — `food + fodder_carry_weight × fodder +
-/// material_carry_weight × Σ material amounts`, the one expression the cap is checked against.
-///
-/// **Food is the numéraire at weight 1.0**; the other two accounts are priced against it. A
-/// material's bulk is a v1 simplification (`expedition_config.trade.material_carry_weight`): every
-/// material weighs the same per unit relative to food, because `materials.json` authors no density
-/// axis to read instead. Hay's weight (`trade.fodder_carry_weight`) is priced in *turns of keep* —
-/// see that lever for the derivation.
-fn shipment_mass(
-    food: Scalar,
-    fodder: Scalar,
-    materials: &[(String, Scalar)],
-    trade: &TradeExpeditionConfig,
-) -> f32 {
-    let material_units: f32 = materials
-        .iter()
-        .map(|(_, amount)| amount.to_f32())
-        .sum::<f32>();
-    food.to_f32()
-        + trade.fodder_carry_weight * fodder.to_f32()
-        + trade.material_carry_weight * material_units
-}
-
-// **How much pack space this party HAS** is [`core_sim::shipment_carry_cap`], the twin of
-// [`shipment_mass`] above: the two halves of one rule, and a shipment launches exactly when the
-// first is no greater than the second. It lives in the lib rather than here because there is **one**
-// resolver for shipment carry and the snapshot goes through it — the launch refusal below, the
-// per-mission cap a live party publishes, and the per-worker carry the wire echoes to the cargo
-// picker are all that one expression, so a carry model (a cart kit, a tech factor, a road grade)
-// moves it once and the wire follows.
+// **A shipment is priced by the ONE carry system** (`core_sim::carry`): its cap is
+// `carry_capacity(party)` and its mass is a `CarryLoad` of its food, hay and material units (no
+// items — a shipment carries no gear today). A shipment launches exactly when the load is no greater
+// than the cap — the same rule a band's split and a long move are held to, so a carrier model (a
+// cart, a pack animal, a road grade) moves every one of them through `core_sim::per_worker_carry`.
 
 /// Resolve and validate a shipment's destination and its cargo. **Fails closed on every axis** — an
 /// empty order, an unknown commodity or material, a non-positive or non-finite amount, cargo the
@@ -6546,8 +6636,17 @@ fn resolve_shipment(
 
     // --- it fits in the packs of the people being sent ----------------------------------------
     let cfg = app.world.resource::<ExpeditionConfigHandle>().get();
-    let cap = shipment_carry_cap(party_workers, &cfg.trade);
-    let mass = shipment_mass(food, fodder, &materials, &cfg.trade);
+    let cap = core_sim::carry_capacity(party_workers, &cfg.carry).to_f32();
+    let mass = core_sim::CarryLoad {
+        food,
+        fodder,
+        items: 0,
+        materials: materials
+            .iter()
+            .fold(Scalar::zero(), |total, (_, amount)| total + *amount),
+    }
+    .load(&cfg.carry)
+    .to_f32();
     if mass > cap {
         emit_command_failure(
             app,
@@ -7106,11 +7205,23 @@ fn cancel_party_standing_in_camp(
     // exactly as a party turned home mid-flight would deliver it. The caller despawns the party
     // immediately after, so the live component is never read again.
     let mut cargo = expedition.cargo.clone();
+    // The party's kit goes back on the band's shelf with it, worn as it is — read off a clone, since
+    // the caller despawns the party immediately after.
+    let mut party_gear = app.world.get::<BandEquipment>(entity).cloned();
     let fold = {
-        let mut home = app
+        let mut homes = app
             .world
-            .get_mut::<PopulationCohort>(expedition.home_band)?;
-        fold_party_into_band(&mut party, &mut cargo, &mut home)
+            .query::<(&mut PopulationCohort, Option<&mut BandEquipment>)>();
+        let (mut home, home_gear) = homes.get_mut(&mut app.world, expedition.home_band).ok()?;
+        fold_party_into_band(
+            &mut party,
+            &mut cargo,
+            &mut home,
+            core_sim::PartyGear {
+                party: party_gear.as_mut(),
+                home: home_gear.map(|gear| gear.into_inner()),
+            },
+        )
     };
     // The pack and any undelivered cargo landing back in the band's larder is a transfer, exactly as
     // the `Returning` arm's fold-back is — a cancel differs only in *when* it fires, not in what
@@ -13840,8 +13951,7 @@ mod tests {
     fn profiles_named(id: &str) -> StartProfilesHandle {
         let json = format!(
             "{{\"profiles\": [{{\"id\": \"{id}\", \
-             \"opening_loadout\": {{\"material_points\": 1, \"pickable_materials\": \
-             [\"bone\"]}}}}]}}"
+             \"opening_loadout\": {{\"pickable_materials\": [\"bone\"]}}}}]}}"
         );
         StartProfilesHandle::new(std::sync::Arc::new(
             core_sim::StartProfiles::from_json_str(&json).expect("the fixture profiles parse"),
@@ -20099,37 +20209,104 @@ mod tests {
         }
     }
 
-    /// **⛔ AND THE LAUNCH SHEET IS CUT FROM THE SAME SHARE.**
+    /// **⛔ THE LAUNCH SHEET QUOTES THE KIT THE LAUNCH WILL ISSUE.**
     ///
-    /// `forecast_query::resolve_ask` prices a party nobody has committed yet, so the row already
-    /// standing on the asked-about herd is **excluded** and the asked-for party takes its place in
-    /// the denominator — a party of `w` competes with the band's other rows exactly as a committed
-    /// crew of `w` does. The claim is the one the fixture above makes, on the surface a raid is
-    /// launched from: a party rationed against a competing row reads what a band owning only that
-    /// share reads.
+    /// A raid's kit is taken from its band's stock at launch — `ceil(party ÷ workers_per_unit)` units
+    /// of each kit item, freshest first, whatever the band's rows are doing — so the sheet quotes
+    /// exactly that issue (`forecast_query::issued_raid_party`). Three claims:
+    ///
+    /// - **short:** a band holding half the outfits its raid of four needs is quoted the raid the
+    ///   launched party then really is — its forecast equals the one resolved off the launched
+    ///   party's own issued ledger, and the launched ledger is the issue the quote previewed;
+    /// - **liveness:** that short raid kills fewer than a fully outfitted one;
+    /// - **stocked:** a band holding at least the party's need is quoted the full kit, however much
+    ///   more it holds.
     #[test]
-    fn a_raid_forecast_is_priced_at_the_asking_partys_share_of_the_gear() {
-        let shared = raid_reading(ONE_COMPETING_ROW, OUTFITS_FOR_HALF_THE_BAND);
-        let owns_only_its_share = raid_reading(NO_COMPETING_ROW, ONE_ROWS_SHARE_OF_HALF);
-        let stocked = raid_reading(ONE_COMPETING_ROW, OUTFITS_FOR_THE_WHOLE_BAND);
-        let stocked_alone = raid_reading(NO_COMPETING_ROW, OUTFITS_FOR_THE_WHOLE_BAND);
-
-        assert_eq!(
-            shared, owns_only_its_share,
-            "a party quoted against a competing row reads what a band owning only its share reads"
-        );
-        // **Kills, not the haul**: a raid's pack binds its haul hard, so the delivered figure
-        // separates the arms by nothing, while the kills a half-armed party lands separate them
-        // plainly.
+    fn a_raid_forecast_is_priced_at_the_kit_the_launch_will_issue() {
+        let short = raid_reading(NO_COMPETING_ROW, ONE_ROWS_SHARE_OF_HALF);
+        let stocked = raid_reading(NO_COMPETING_ROW, SHORTFALL_ROW_CREW);
+        let surplus = raid_reading(NO_COMPETING_ROW, OUTFITS_FOR_THE_WHOLE_BAND);
         assert!(
-            shared.animals_killed < stocked.animals_killed,
-            "liveness: a short band's sheet must promise FEWER kills than a fully outfitted one \
-             ({shared:?} against {stocked:?})"
+            short.animals_killed < stocked.animals_killed,
+            "liveness: a band short of outfits must be promised FEWER kills ({short:?} against \
+             {stocked:?})"
         );
         assert_eq!(
-            stocked, stocked_alone,
-            "a band that is NOT short quotes bit-for-bit what the same party quoted as the only \
-             claimant on the ledger"
+            stocked, surplus,
+            "a band holding the party's whole need is quoted the full kit whatever it holds beyond"
+        );
+
+        // Launch the short raid and price the party that actually left.
+        let (mut app, band) = shortfall_world(NO_COMPETING_ROW, ONE_ROWS_SHARE_OF_HALF);
+        let equipment = app.world.resource::<EquipmentConfigHandle>().get();
+        let kit = equipment
+            .resolve_kit_or(
+                Some(SHARED_HUNT_KIT),
+                KitJob::Hunt,
+                equipment.default_kit(KitJob::Hunt),
+            )
+            .expect("the shared hunt kit is on the roster");
+        let previewed = app
+            .world
+            .get::<BandEquipment>(band)
+            .expect("the band keeps a ledger")
+            .party_issue(&equipment, &kit, SHORTFALL_ROW_CREW);
+        handle_send_denial_raid(
+            &mut app,
+            FactionId(0),
+            Some(FIXTURE_BAND_ID),
+            SHORTFALL_ROW_CREW,
+            QUERIED_QUARRY_ID.to_string(),
+            Some(SHARED_HUNT_KIT.to_string()),
+        );
+        let party_ledger = {
+            let mut parties = app.world.query::<(&Expedition, &BandEquipment)>();
+            parties
+                .iter(&app.world)
+                .find(|(expedition, _)| expedition.home_band == band)
+                .map(|(_, ledger)| ledger.clone())
+                .expect("the raid launched")
+        };
+        for item in SHARED_HUNT_ITEMS {
+            assert_eq!(
+                party_ledger.count_of(item),
+                previewed.count_of(item),
+                "'{item}': the launched party carries exactly the issue the quote previewed"
+            );
+        }
+        assert!(
+            party_ledger.count_of("traps") < SHORTFALL_ROW_CREW,
+            "fixture: the band is short, so the party leaves partly armed: {party_ledger:?}"
+        );
+        let herd = app
+            .world
+            .resource::<HerdRegistry>()
+            .find(QUERIED_QUARRY_ID)
+            .cloned()
+            .expect("the queried herd stands");
+        let (party, per_worker_haul) = core_sim::forecast_query::issued_raid_party(
+            &app.world,
+            &party_ledger,
+            &kit,
+            SHORTFALL_ROW_CREW,
+            herd.body_mass,
+        );
+        let launched = denial_forecast(
+            SHORTFALL_ROW_CREW,
+            &herd,
+            &app.world.resource::<FaunaConfigHandle>().get(),
+            per_worker_haul,
+            &app.world.resource::<ExpeditionConfigHandle>().get(),
+            &party,
+            app.world
+                .resource::<CombatConfigHandle>()
+                .get()
+                .forecast_range_sigmas,
+        );
+        assert_eq!(
+            (short.animals_killed, short.outcome.as_str()),
+            (launched.animals_killed, launched.outcome.as_str()),
+            "the sheet's forecast is what the launched party achieves with its issued kit"
         );
     }
 
@@ -20956,8 +21133,8 @@ mod tests {
     /// Working-age people the fixture band is stocked with, so a split leaves two real bands and
     /// there is a comfortable party to draw off either.
     const TRADE_FIXTURE_WORKERS: f32 = 20.0;
-    /// Workers the shipment party is sent with. At the shipped resolved carry of 6.0 per worker
-    /// (`core_sim::trade_per_worker_carry`) this is a 12-unit pack — big enough to hold
+    /// Workers the shipment party is sent with. At the shipped resolved carry of 7.0 per worker
+    /// (`core_sim::per_worker_carry`) this is a 14-unit pack — big enough to hold
     /// `TRADE_CARGO_FOOD` and small enough that `OVER_CAP_FOOD` genuinely does not fit.
     const TRADE_PARTY: u32 = 2;
     /// Workers the fixture hands the second band. Over `min_founding_workers` on any seed.
@@ -20965,7 +21142,7 @@ mod tests {
     /// Food the fixture band is stocked with — far more than any shipment below asks for, so a
     /// refusal is never a refusal about availability unless it says so.
     const TRADE_FIXTURE_LARDER: f32 = 400.0;
-    /// A shipment that fits: under `core_sim::shipment_carry_cap(TRADE_PARTY, ..)`.
+    /// A shipment that fits: under `core_sim::carry_capacity(TRADE_PARTY, ..)`.
     const TRADE_CARGO_FOOD: f32 = 10.0;
     /// A shipment that does not: over the same cap, and comfortably inside the larder, so the only
     /// thing that can refuse it is the pack.
@@ -21211,7 +21388,7 @@ mod tests {
         );
     }
 
-    /// **One band's published `expeditionTradePerWorkerCarry`**, read off the **encoded** envelope
+    /// **One band's published `carryPerWorker`**, read off the **encoded** envelope
     /// through the accessor chain a client uses — the number a cargo picker multiplies by the party
     /// it is composing. Read from the wire rather than from config deliberately: that a client
     /// running the published expression lands on the sim's own cap is the whole claim.
@@ -21237,17 +21414,17 @@ mod tests {
             .iter()
             .find(|cohort| cohort.bandId() == band_id)
             .expect("the sending band publishes a cohort row")
-            .expeditionTradePerWorkerCarry()
+            .carryPerWorker()
     }
 
     /// **THE PUBLISHED CARRY IS THE BOUNDARY THE LAUNCH COMMAND ENFORCES.**
     ///
-    /// `expeditionTradePerWorkerCarry` promises a client the sim's **resolved** per-worker shipment
+    /// `carryPerWorker` promises a client the sim's **resolved** per-worker shipment
     /// carry, so the cargo picker's entire rule is `cap = party_workers × it`. This pins that promise
     /// to the command that refuses on it, and it takes the carry **off the wire** rather than out of
     /// config on purpose: a carry model that grew server-side but skipped
-    /// `core_sim::trade_per_worker_carry` would still satisfy an equality against
-    /// `trade.per_worker_carry` while silently mis-metering every client. The *published* number is
+    /// `core_sim::per_worker_carry` would still satisfy an equality against
+    /// `carry.per_worker_carry` while silently mis-metering every client. The *published* number is
     /// therefore what both halves below are asserted against.
     ///
     /// **Both sides of the boundary, because one alone is unfalsifiable.** A manifest of exactly the
@@ -21270,7 +21447,7 @@ mod tests {
         );
         let resolved_cap = {
             let cfg = app.world.resource::<ExpeditionConfigHandle>().get();
-            shipment_carry_cap(TRADE_PARTY, &cfg.trade)
+            core_sim::carry_capacity(TRADE_PARTY, &cfg.carry).to_f32()
         };
         // The expression the wire hands a client, run exactly as the client runs it.
         let client_cap = TRADE_PARTY as f32 * wire_carry;
@@ -21332,7 +21509,7 @@ mod tests {
     /// **A SHIPMENT'S MASS IS `food + 0.5 × fodder + 1.0 × materials`, and the refusal reports it.**
     ///
     /// The three accounts are priced apart — food is the numéraire at `1.0`, hay is the shipped
-    /// `trade.fodder_carry_weight`, a material is `trade.material_carry_weight` — so a manifest that
+    /// `carry.fodder_carry_weight`, a material is `carry.material_carry_weight` — so a manifest that
     /// fits by food alone can still be over the pack once the bales and hides are weighed. Pinned
     /// against the config's own levers rather than the literals, because they are playtest dials.
     ///
@@ -21347,10 +21524,10 @@ mod tests {
         let (cap, food_weight, fodder_weight, material_weight) = {
             let cfg = app.world.resource::<ExpeditionConfigHandle>().get();
             (
-                shipment_carry_cap(TRADE_PARTY, &cfg.trade),
+                core_sim::carry_capacity(TRADE_PARTY, &cfg.carry).to_f32(),
                 1.0_f32,
-                cfg.trade.fodder_carry_weight,
-                cfg.trade.material_carry_weight,
+                cfg.carry.fodder_carry_weight,
+                cfg.carry.material_carry_weight,
             )
         };
         // The levers have to differ, or "weighed at its own lever" is unfalsifiable.
@@ -26290,6 +26467,1010 @@ mod tests {
         assert!(
             published_loadout_refusals(&mut app).is_empty(),
             "an accepted loadout must not publish a starting_loadout line"
+        );
+    }
+}
+
+/// **A long move leaves behind what the band cannot carry** (#732) — `shed_for_a_long_move`, driven
+/// through the real `move_band` handler and read back off the **encoded** frame.
+#[cfg(test)]
+mod long_move_tests {
+    use super::*;
+    use core_sim::{
+        build_test_app, carry::move_ferry_reach_tiles, recapture_snapshot_in_place, BandEquipment,
+        LaborAllocation, SnapshotHistory,
+    };
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    /// A larder no band's packs can hold — the food-over-the-cap case.
+    const HUGE_LARDER: u32 = 10_000;
+    /// A larder well inside the band's packs, so the goods half is what sheds.
+    const MODEST_LARDER: u32 = 30;
+    /// Spears stocked fresh and worn — together far more than a band can carry beside its food.
+    const FRESH_SPEARS: u32 = 80;
+    const WORN_SPEARS: u32 = 80;
+    /// A mid-life wear on the worn batch, on the config's 0–100 scale.
+    const WORN_CONDITION: f32 = 60.0;
+    /// Hide banked beside the spears, so the material half sheds too.
+    const BANKED_HIDE: u32 = 40;
+    /// How far past the ferry reach a long move is sent.
+    const LONG_MOVE_EXTRA_TILES: u32 = 2;
+    /// Food values cross the wire as `f32`; this is the slack on a comparison of two of them.
+    const FOOD_EPSILON: f32 = 1e-3;
+    /// The slack on the ledger identity, which sums seven `f32` terms against a larder change of
+    /// thousands — an `f32` at that magnitude resolves about a thousandth, so the sum is held to a
+    /// few hundredths.
+    const IDENTITY_EPSILON: f32 = 0.05;
+
+    fn world() -> (bevy::prelude::App, Entity, u64) {
+        let mut app = build_test_app();
+        app.world.resource_mut::<SimulationConfig>().map_seed = core_sim::HARNESS_MAP_SEED;
+        app.update();
+        let (band, faction) = {
+            let mut query = app
+                .world
+                .query_filtered::<(Entity, &PopulationCohort), With<ResidentBand>>();
+            let (entity, cohort) = query
+                .iter(&app.world)
+                .next()
+                .expect("the campaign spawns a resident band");
+            (entity, cohort.faction)
+        };
+        app.world.insert_resource(core_sim::ViewerFaction(faction));
+        let band_id = app.world.get::<BandId>(band).expect("a band has an id").0;
+        (app, band, band_id)
+    }
+
+    fn position(app: &bevy::prelude::App, band: Entity) -> UVec2 {
+        let tile = app
+            .world
+            .get::<PopulationCohort>(band)
+            .expect("the band keeps a cohort")
+            .current_tile;
+        app.world.get::<Tile>(tile).expect("a real tile").position
+    }
+
+    /// The nearest land tile whose hex distance from `from` lies in `range`, ties to the lowest
+    /// `(y, x)` so the pick is deterministic.
+    fn land_tile_within(
+        app: &mut bevy::prelude::App,
+        from: UVec2,
+        range: std::ops::RangeInclusive<u32>,
+    ) -> UVec2 {
+        let width = app.world.resource::<TileRegistry>().width;
+        let wrap = app
+            .world
+            .resource::<SimulationConfig>()
+            .map_topology
+            .wrap_horizontal;
+        let mut query = app.world.query::<&Tile>();
+        query
+            .iter(&app.world)
+            .filter(|tile| !tile.terrain_tags.contains(TerrainTags::WATER))
+            .map(|tile| {
+                (
+                    hex_distance_wrapped(from, tile.position, width, wrap),
+                    tile.position,
+                )
+            })
+            .filter(|(distance, _)| range.contains(distance))
+            .min_by_key(|(distance, at)| (*distance, at.y, at.x))
+            .map(|(_, at)| at)
+            .expect("the fixture map has land at that distance")
+    }
+
+    fn ferry_reach(app: &bevy::prelude::App) -> u32 {
+        move_ferry_reach_tiles(
+            &app.world
+                .resource::<core_sim::SupplyNetworkConfigHandle>()
+                .get(),
+        )
+    }
+
+    /// Overload the band: `food` in the larder, fresh and worn spears, and banked hide.
+    fn overload(app: &mut bevy::prelude::App, band: Entity, food: u32) {
+        let equipment = app.world.resource::<EquipmentConfigHandle>().get();
+        let tier = equipment
+            .item("spears")
+            .expect("the roster carries spears")
+            .default_tier()
+            .id
+            .clone();
+        let mut ledger = BandEquipment::default();
+        ledger.stock("spears", WORN_SPEARS, &tier, None);
+        ledger.stock("spears", FRESH_SPEARS, &tier, None);
+        let mut batches = ledger.batches_of("spears").to_vec();
+        batches[0].wear = WORN_CONDITION;
+        ledger.restore_batches("spears", batches);
+        app.world.entity_mut(band).insert(ledger);
+
+        let materials = app
+            .world
+            .resource::<core_sim::MaterialsConfigHandle>()
+            .get();
+        let readings: std::collections::BTreeMap<String, f32> = materials
+            .material("hide")
+            .expect("the roster carries hide")
+            .characteristics
+            .iter()
+            .map(|axis| (axis.clone(), core_sim::OPENING_MATERIAL_READING))
+            .collect();
+        let key = materials
+            .band_key("hide", &readings)
+            .expect("hide has a band key");
+        let mut cohort = app
+            .world
+            .get_mut::<PopulationCohort>(band)
+            .expect("the band keeps a cohort");
+        cohort.stores.clear_materials();
+        cohort
+            .stores
+            .deposit_material("hide", key, Scalar::from_u32(BANKED_HIDE), &readings);
+        cohort.stores.reset_food("dry", Scalar::from_u32(food));
+    }
+
+    /// What the band holds: food, whole item units, material units.
+    fn holdings(app: &bevy::prelude::App, band: Entity) -> (f32, u32, f32) {
+        let cohort = app
+            .world
+            .get::<PopulationCohort>(band)
+            .expect("the band keeps a cohort");
+        let items = app
+            .world
+            .get::<BandEquipment>(band)
+            .map(BandEquipment::total_units)
+            .unwrap_or(0);
+        (
+            cohort.stores.get(FOOD).to_f32(),
+            items,
+            cohort.stores.material_total("hide").to_f32(),
+        )
+    }
+
+    /// The band's published carry readout, off the encoded envelope.
+    #[derive(Debug, Clone, Copy)]
+    struct PublishedCarry {
+        carry_capacity: f32,
+        carry_load: f32,
+        move_ferry_reach_tiles: u32,
+        leaves_food: f32,
+        leaves_items: u32,
+        leaves_materials: f32,
+        food_left_behind: f32,
+        food_income: f32,
+        food_consumption: f32,
+        raid_forfeit: f32,
+        food_spoiled: f32,
+        transfer_received: f32,
+        transfer_sent: f32,
+    }
+
+    fn read_carry(app: &bevy::prelude::App, band_id: u64) -> PublishedCarry {
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+        let envelope = fb::root_as_envelope(&bytes).expect("the snapshot encodes");
+        let row = envelope
+            .payload_as_snapshot()
+            .expect("the envelope carries a snapshot")
+            .population()
+            .and_then(|section| section.populations())
+            .expect("the population section is published")
+            .iter()
+            .find(|cohort| cohort.bandId() == band_id)
+            .expect("the band publishes a row");
+        PublishedCarry {
+            carry_capacity: row.carryCapacity(),
+            carry_load: row.carryLoad(),
+            move_ferry_reach_tiles: row.moveFerryReachTiles(),
+            leaves_food: row.longMoveLeavesFood(),
+            leaves_items: row.longMoveLeavesItems(),
+            leaves_materials: row.longMoveLeavesMaterials(),
+            food_left_behind: row.foodLeftBehind(),
+            food_income: row.foodIncome(),
+            food_consumption: row.foodConsumption(),
+            raid_forfeit: row.raidForfeit(),
+            food_spoiled: row.foodSpoiled(),
+            transfer_received: row.transferReceived(),
+            transfer_sent: row.transferSent(),
+        }
+    }
+
+    fn published_carry(app: &mut bevy::prelude::App, band_id: u64) -> PublishedCarry {
+        recapture_snapshot_in_place(&mut app.world);
+        read_carry(app, band_id)
+    }
+
+    /// ⛔ **A LONG MOVE SHEDS THE GOODS THE FOOD DOES NOT LEAVE ROOM FOR, AND THE WORN GEAR IS
+    /// WHAT STAYS BEHIND** — and the published forecast is exactly what the move then drops.
+    #[test]
+    fn a_long_move_sheds_goods_to_the_carry_and_leaves_the_worn_gear() {
+        let (mut app, band, band_id) = world();
+        let faction = app.world.get::<PopulationCohort>(band).unwrap().faction;
+        overload(&mut app, band, MODEST_LARDER);
+        let forecast = published_carry(&mut app, band_id);
+        assert_eq!(forecast.move_ferry_reach_tiles, ferry_reach(&app));
+        assert!(
+            forecast.carry_load > forecast.carry_capacity,
+            "**LIVENESS**: the fixture band must hold more than it can carry: {forecast:?}"
+        );
+        assert_eq!(
+            forecast.leaves_food, 0.0,
+            "a modest larder fits, so food loads first and none is left: {forecast:?}"
+        );
+        assert!(forecast.leaves_items > 0 && forecast.leaves_materials > 0.0);
+
+        let before = holdings(&app, band);
+        let from = position(&app, band);
+        let reach = ferry_reach(&app);
+        let target = land_tile_within(
+            &mut app,
+            from,
+            reach + 1..=reach + 1 + LONG_MOVE_EXTRA_TILES,
+        );
+        handle_move_band(&mut app, faction, Some(band_id), target.x, target.y);
+
+        let after = holdings(&app, band);
+        assert_eq!(after.0, before.0, "the food rode first and none was left");
+        assert_eq!(
+            before.1 - after.1,
+            forecast.leaves_items,
+            "the move dropped exactly the items the forecast named"
+        );
+        assert!(
+            ((before.2 - after.2) - forecast.leaves_materials).abs() < FOOD_EPSILON,
+            "and exactly the material: {} vs {}",
+            before.2 - after.2,
+            forecast.leaves_materials
+        );
+        let ledger = app.world.get::<BandEquipment>(band).expect("a ledger");
+        let fresh_kept: u32 = ledger
+            .batches_of("spears")
+            .iter()
+            .filter(|batch| batch.wear == 0.0)
+            .map(|batch| batch.count)
+            .sum();
+        assert!(
+            forecast.leaves_items <= WORN_SPEARS && fresh_kept == FRESH_SPEARS,
+            "the band carries its best gear - the worn spears are the ones left, every fresh one \
+             kept: {:?}",
+            ledger.batches_of("spears")
+        );
+        let published = published_carry(&mut app, band_id);
+        assert!(
+            published.carry_load <= published.carry_capacity + FOOD_EPSILON,
+            "after the shed the band holds what it can carry: {published:?}"
+        );
+        assert_eq!(
+            published.leaves_items, 0,
+            "a re-target from here sheds nothing"
+        );
+        assert!(
+            app.world
+                .resource::<CommandEventLog>()
+                .iter()
+                .any(|entry| entry
+                    .detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains("status=left_behind"))),
+            "the band says what it left behind"
+        );
+    }
+
+    /// ⛔ **FOOD OVER THE CAP: THE FOOD IS SCALED TO THE PACKS AND EVERY ITEM AND MATERIAL IS
+    /// LEFT** — and the food that is left is booked, so the ledger identity holds from one turn frame
+    /// to the next across the move.
+    #[test]
+    fn a_long_move_with_too_much_food_sheds_food_first_and_the_identity_holds() {
+        let (mut app, band, band_id) = world();
+        let faction = app.world.get::<PopulationCohort>(band).unwrap().faction;
+        overload(&mut app, band, HUGE_LARDER);
+        // A turn frame to measure from, holding the overloaded band.
+        core_sim::run_turn(&mut app);
+        let larder_before = holdings(&app, band).0;
+        let forecast = published_carry(&mut app, band_id);
+        assert!(
+            forecast.leaves_food > 0.0
+                && forecast.leaves_items > 0
+                && forecast.leaves_materials > 0.0,
+            "a larder over the packs leaves food AND every good: {forecast:?}"
+        );
+
+        let from = position(&app, band);
+        let reach = ferry_reach(&app);
+        let target = land_tile_within(
+            &mut app,
+            from,
+            reach + 1..=reach + 1 + LONG_MOVE_EXTRA_TILES,
+        );
+        handle_move_band(&mut app, faction, Some(band_id), target.x, target.y);
+        let (food, items, hide) = holdings(&app, band);
+        assert!(
+            (larder_before - food - forecast.leaves_food).abs() < FOOD_EPSILON,
+            "the move dropped the food the forecast named: {} vs {}",
+            larder_before - food,
+            forecast.leaves_food
+        );
+        assert_eq!(
+            (items, hide),
+            (0, 0.0),
+            "with the packs full of food, every item and material is left"
+        );
+        let left = app
+            .world
+            .get::<LaborAllocation>(band)
+            .expect("a band keeps an allocation")
+            .last_food_left_behind;
+        assert!(
+            (left - forecast.leaves_food).abs() < FOOD_EPSILON,
+            "the drop is booked on the ledger's left-behind term: {left}"
+        );
+        assert!(
+            (published_carry(&mut app, band_id).food_left_behind - left).abs() < FOOD_EPSILON,
+            "and published on the recapture the command triggers"
+        );
+
+        // **The identity, turn frame to turn frame, across the shedding move.**
+        core_sim::run_turn(&mut app);
+        let turn = read_carry(&app, band_id);
+        let larder_after = holdings(&app, band).0;
+        let identity = turn.food_income
+            - turn.food_consumption
+            - turn.raid_forfeit
+            - turn.food_spoiled
+            - turn.food_left_behind
+            + turn.transfer_received
+            - turn.transfer_sent;
+        assert!(
+            ((larder_after - larder_before) - identity).abs() < IDENTITY_EPSILON,
+            "larder moved {} and the ledger says {identity}: {turn:?}",
+            larder_after - larder_before
+        );
+        assert!(
+            (turn.food_left_behind - left).abs() < FOOD_EPSILON,
+            "the turn frame carries the left-behind term: {turn:?}"
+        );
+    }
+
+    /// **Within the ferry reach the band keeps everything** — it carries its goods across in trips.
+    #[test]
+    fn a_short_move_keeps_everything() {
+        let (mut app, band, band_id) = world();
+        let faction = app.world.get::<PopulationCohort>(band).unwrap().faction;
+        overload(&mut app, band, HUGE_LARDER);
+        let before = holdings(&app, band);
+        let from = position(&app, band);
+        let reach = ferry_reach(&app);
+        let target = land_tile_within(&mut app, from, 1..=reach);
+        handle_move_band(&mut app, faction, Some(band_id), target.x, target.y);
+        assert_eq!(holdings(&app, band), before, "nothing is left behind");
+        assert_eq!(
+            app.world
+                .get::<LaborAllocation>(band)
+                .expect("a band keeps an allocation")
+                .last_food_left_behind,
+            0.0
+        );
+    }
+
+    /// **A detached party keeps its own rules** — a long move of an expedition sheds nothing, and
+    /// its row forecasts nothing.
+    #[test]
+    fn an_expedition_move_is_untouched() {
+        let (mut app, band, band_id) = world();
+        let faction = app.world.get::<PopulationCohort>(band).unwrap().faction;
+        let home = position(&app, band);
+        handle_send_expedition(&mut app, faction, Some(band_id), 4, home.x, home.y, None);
+        let party = app
+            .world
+            .query_filtered::<Entity, With<Expedition>>()
+            .iter(&app.world)
+            .next()
+            .expect("the scout party launched");
+        let party_id = app.world.get::<BandId>(party).expect("a party id").0;
+        overload(&mut app, party, HUGE_LARDER);
+        assert_eq!(
+            published_carry(&mut app, party_id).leaves_food,
+            0.0,
+            "a party forecasts no long-move shed"
+        );
+        let before = holdings(&app, party);
+        let reach = ferry_reach(&app);
+        let target = land_tile_within(
+            &mut app,
+            home,
+            reach + 1..=reach + 1 + LONG_MOVE_EXTRA_TILES,
+        );
+        handle_move_band(&mut app, faction, Some(party_id), target.x, target.y);
+        assert_eq!(holdings(&app, party), before, "the party keeps its pack");
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // The outfitting window counts the band's detached parties (#732)
+    // ---------------------------------------------------------------------------------------------
+
+    /// The window's numbers a player reads off a grant card: its whole carry, its fixed food, and
+    /// the goods room that leaves.
+    fn window_numbers(app: &bevy::prelude::App, band: Entity, band_id: u64) -> (f32, f32, f32) {
+        let carry_cfg = app
+            .world
+            .resource::<ExpeditionConfigHandle>()
+            .get()
+            .carry
+            .clone();
+        let people = core_sim::starting_loadout::window_people(&app.world, band, &carry_cfg)
+            .expect("the band keeps a cohort");
+        let window = app
+            .world
+            .resource::<core_sim::StartingLoadout>()
+            .window(BandId(band_id))
+            .expect("the band holds its turn-one window")
+            .clone();
+        (
+            window.carry(&people, &carry_cfg).to_f32(),
+            people.larder_mass.to_f32(),
+            window.goods_allowance(&people, &carry_cfg).to_f32(),
+        )
+    }
+
+    /// **The window as the card draws it** — `(carryCapacity, foodCarried)` off the encoded envelope.
+    fn published_window(app: &mut bevy::prelude::App, band_id: u64) -> (f32, f32) {
+        recapture_snapshot_in_place(&mut app.world);
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+        let envelope = fb::root_as_envelope(&bytes).expect("the snapshot encodes");
+        let window = envelope
+            .payload_as_snapshot()
+            .and_then(|snapshot| snapshot.population())
+            .and_then(|section| section.populations())
+            .expect("the population section is published")
+            .iter()
+            .find(|cohort| cohort.bandId() == band_id)
+            .and_then(|cohort| cohort.loadoutWindow())
+            .expect("the band publishes its window");
+        (window.carryCapacity(), window.foodCarried())
+    }
+
+    /// The party out from `band`, by its band id.
+    fn party_of(app: &mut bevy::prelude::App, band: Entity) -> Option<u64> {
+        let mut query = app.world.query::<(&Expedition, &BandId)>();
+        query
+            .iter(&app.world)
+            .find(|(expedition, _)| expedition.home_band == band)
+            .map(|(_, id)| id.0)
+    }
+
+    /// The slack on comparing two window numbers that crossed through `f32`.
+    const WINDOW_EPSILON: f32 = 1e-3;
+
+    /// ⛔ **FOR THE OUTFITTING WINDOW, A BAND'S DETACHED PARTIES ARE PART OF THE BAND.** Sending one
+    /// worker out — on a short trip or a long one, whose provisions draw differs — and recalling them
+    /// leaves the turn-one grant card's carry, fixed food and free room exactly where they were, so a
+    /// long trip cannot free room to mint more kits. The band panel's own `carryCapacity` (its
+    /// PRESENT people) does drop by one pack while the party is out.
+    #[test]
+    fn a_detached_party_leaves_the_outfitting_window_unchanged() {
+        const PARTY: u32 = 1;
+        const SHORT_TRIP: std::ops::RangeInclusive<u32> = 1..=2;
+        const LONG_TRIP: std::ops::RangeInclusive<u32> = 8..=10;
+        for trip in [SHORT_TRIP, LONG_TRIP] {
+            let (mut app, band, band_id) = world();
+            let faction = app
+                .world
+                .get::<PopulationCohort>(band)
+                .expect("the band keeps a cohort")
+                .faction;
+            let carry_cfg = app
+                .world
+                .resource::<ExpeditionConfigHandle>()
+                .get()
+                .carry
+                .clone();
+            let before = window_numbers(&app, band, band_id);
+            let card_before = published_window(&mut app, band_id);
+            let panel_before = core_sim::carry::band_carry_capacity(
+                app.world.get::<PopulationCohort>(band).expect("cohort"),
+                &carry_cfg,
+            );
+            let at = position(&app, band);
+            let target = land_tile_within(&mut app, at, trip.clone());
+            handle_send_expedition(
+                &mut app,
+                faction,
+                Some(band_id),
+                PARTY,
+                target.x,
+                target.y,
+                None,
+            );
+            let party = party_of(&mut app, band).expect("the party was launched");
+
+            let detached = window_numbers(&app, band, band_id);
+            for (label, was, is) in [
+                ("carry", before.0, detached.0),
+                ("fixed food", before.1, detached.1),
+                ("free room", before.2, detached.2),
+            ] {
+                assert!(
+                    (was - is).abs() < WINDOW_EPSILON,
+                    "{label} on a {trip:?}-tile trip: {was} before, {is} with the party out"
+                );
+            }
+            let card_detached = published_window(&mut app, band_id);
+            assert!(
+                (card_before.0 - card_detached.0).abs() < WINDOW_EPSILON
+                    && (card_before.1 - card_detached.1).abs() < WINDOW_EPSILON,
+                "the published card is unchanged too: {card_before:?} → {card_detached:?}"
+            );
+            let panel_detached = core_sim::carry::band_carry_capacity(
+                app.world.get::<PopulationCohort>(band).expect("cohort"),
+                &carry_cfg,
+            );
+            assert!(
+                (panel_before
+                    - panel_detached
+                    - core_sim::carry::carry_capacity(PARTY, &carry_cfg))
+                .abs()
+                    < Scalar::from_f32(WINDOW_EPSILON),
+                "the band panel's carry drops by one pack: {panel_before} → {panel_detached}"
+            );
+
+            handle_recall_expedition(&mut app, faction, party);
+            assert!(
+                party_of(&mut app, band).is_none(),
+                "the recall folded it back"
+            );
+            let recalled = window_numbers(&app, band, band_id);
+            assert!(
+                (before.0 - recalled.0).abs() < WINDOW_EPSILON
+                    && (before.1 - recalled.1).abs() < WINDOW_EPSILON
+                    && (before.2 - recalled.2).abs() < WINDOW_EPSILON,
+                "and the recall leaves the window as it was: {before:?} → {recalled:?}"
+            );
+        }
+    }
+
+    /// Item units in one `big_game` kit — a spear and a sled.
+    const BIG_GAME_KIT_ITEMS: f32 = 2.0;
+
+    /// ⛔ **ADDING GOODS AFTER A DETACH IS REFUSED EXACTLY AS BEFORE IT.** One Stalking kit (so the
+    /// order covers the spear and sled the party carries) and one-load `gathering` kits up to the
+    /// room fit; one more is refused — and a party out changes neither.
+    #[test]
+    fn a_detached_party_does_not_move_the_outfitting_cap() {
+        let (mut app, band, band_id) = world();
+        let faction = app
+            .world
+            .get::<PopulationCohort>(band)
+            .expect("the band keeps a cohort")
+            .faction;
+        let item_weight = app
+            .world
+            .resource::<ExpeditionConfigHandle>()
+            .get()
+            .carry
+            .item_carry_weight;
+        let allowance = window_numbers(&app, band, band_id).2;
+        let room = ((allowance - BIG_GAME_KIT_ITEMS * item_weight) / item_weight).floor() as u32;
+        let order = |count: u32| {
+            vec![
+                core_sim::KitAllocation {
+                    kit_id: "big_game".to_string(),
+                    count: 1,
+                },
+                core_sim::KitAllocation {
+                    kit_id: "gathering".to_string(),
+                    count,
+                },
+            ]
+        };
+        let at = position(&app, band);
+        let target = land_tile_within(&mut app, at, 8..=10);
+        handle_send_expedition(
+            &mut app,
+            faction,
+            Some(band_id),
+            1,
+            target.x,
+            target.y,
+            None,
+        );
+        assert!(party_of(&mut app, band).is_some(), "the party is out");
+        assert!(
+            matches!(
+                core_sim::apply_starting_loadout(
+                    &mut app.world,
+                    faction,
+                    BandId(band_id),
+                    &order(room + 1),
+                    &[]
+                ),
+                Err(core_sim::LoadoutRejection::OverCarry { .. })
+            ),
+            "one kit past the room is refused with the party out, as before it left"
+        );
+        core_sim::apply_starting_loadout(
+            &mut app.world,
+            faction,
+            BandId(band_id),
+            &order(room),
+            &[],
+        )
+        .expect("and the room it had before the party left is still there");
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // A detached party's kit comes OUT of its home band's stock, and goes back on the fold-back
+    // ---------------------------------------------------------------------------------------------
+
+    /// The items a scout party's default (`ranging`) kit puts in its hands.
+    const RANGING_ITEMS: [&str; 4] = ["spears", "sled", "baskets", "wayfinding"];
+
+    /// `item → units` a ledger holds, for the items a ranging party carries.
+    fn ranging_held(
+        app: &bevy::prelude::App,
+        entity: Entity,
+    ) -> std::collections::BTreeMap<&'static str, u32> {
+        let ledger = app.world.get::<BandEquipment>(entity);
+        RANGING_ITEMS
+            .into_iter()
+            .map(|item| (item, ledger.map_or(0, |ledger| ledger.count_of(item))))
+            .collect()
+    }
+
+    /// The scout party out from `band`, as an entity.
+    fn party_entity(app: &mut bevy::prelude::App, band: Entity) -> Entity {
+        let mut query = app.world.query::<(Entity, &Expedition)>();
+        query
+            .iter(&app.world)
+            .find(|(_, expedition)| expedition.home_band == band)
+            .map(|(entity, _)| entity)
+            .expect("a party is out")
+    }
+
+    /// Send a scout of `workers` a few tiles out, returning the faction.
+    fn send_scout(
+        app: &mut bevy::prelude::App,
+        band: Entity,
+        band_id: u64,
+        workers: u32,
+    ) -> FactionId {
+        let faction = app
+            .world
+            .get::<PopulationCohort>(band)
+            .expect("the band keeps a cohort")
+            .faction;
+        let at = position(app, band);
+        let target = land_tile_within(app, at, 2..=3);
+        handle_send_expedition(
+            app,
+            faction,
+            Some(band_id),
+            workers,
+            target.x,
+            target.y,
+            None,
+        );
+        faction
+    }
+
+    /// A wear a party's spear has taken in the field, on the config's 0–100 scale.
+    const FIELD_WEAR: f32 = 7.0;
+
+    /// ⛔ **A PARTY'S KIT IS TAKEN FROM ITS BAND, AND A RECALL PUTS IT BACK WORN AS IT IS.** Nothing
+    /// is minted: the units the scout carries are exactly the units its band lost, and the recall
+    /// returns them to the band's ledger keeping the wear the party gave them.
+    #[test]
+    fn a_partys_kit_comes_out_of_its_band_and_goes_back_on_recall() {
+        let (mut app, band, band_id) = world();
+        let band_before = ranging_held(&app, band);
+        assert!(
+            band_before["spears"] > 0 && band_before["baskets"] > 0,
+            "**LIVENESS**: the band holds kit to issue: {band_before:?}"
+        );
+        let faction = send_scout(&mut app, band, band_id, 1);
+        let party = party_entity(&mut app, band);
+        let party_held = ranging_held(&app, party);
+        let band_after = ranging_held(&app, band);
+        for item in RANGING_ITEMS {
+            assert_eq!(
+                band_before[item],
+                band_after[item] + party_held[item],
+                "'{item}': the party's units are exactly the units the band lost"
+            );
+        }
+        assert!(
+            party_held["spears"] > 0,
+            "the scout carries a spear: {party_held:?}"
+        );
+        // The field wears the party's spear.
+        {
+            let mut ledger = app
+                .world
+                .get_mut::<BandEquipment>(party)
+                .expect("the party carries a ledger");
+            let worn: Vec<_> = ledger
+                .batches_of("spears")
+                .iter()
+                .cloned()
+                .map(|mut batch| {
+                    batch.wear = FIELD_WEAR;
+                    batch
+                })
+                .collect();
+            ledger.restore_batches("spears", worn);
+        }
+        let party_id = app.world.get::<BandId>(party).expect("a party id").0;
+        handle_recall_expedition(&mut app, faction, party_id);
+        assert_eq!(
+            ranging_held(&app, band),
+            band_before,
+            "the recall puts every unit back on the band's shelf"
+        );
+        assert!(
+            app.world
+                .get::<BandEquipment>(band)
+                .expect("the band keeps a ledger")
+                .batches_of("spears")
+                .iter()
+                .any(|batch| (batch.wear - FIELD_WEAR).abs() < f32::EPSILON),
+            "and the spear comes back carrying the wear the field gave it"
+        );
+    }
+
+    /// ⛔ **A BAND SHORT OF GEAR SENDS WHAT IT HAS.** A band holding one basket that sends three
+    /// workers out issues that one basket — no unit is minted to make up the rest.
+    #[test]
+    fn a_band_short_of_gear_issues_a_partial_kit() {
+        let (mut app, band, band_id) = world();
+        {
+            let mut ledger = app
+                .world
+                .get_mut::<BandEquipment>(band)
+                .expect("the band keeps a ledger");
+            let held = ledger.count_of("baskets");
+            ledger.take_units("baskets", held.saturating_sub(1));
+            assert_eq!(ledger.count_of("baskets"), 1, "fixture: one basket left");
+        }
+        const PARTY: u32 = 3;
+        send_scout(&mut app, band, band_id, PARTY);
+        let party = party_entity(&mut app, band);
+        assert_eq!(
+            ranging_held(&app, party)["baskets"],
+            1,
+            "the party carries the one basket the band had"
+        );
+        assert_eq!(
+            ranging_held(&app, band)["baskets"],
+            0,
+            "and the band has none left"
+        );
+    }
+
+    /// ⛔ **A TURN-ONE REVISION AFTER A SCOUT LEAVES DOES NOT RE-MINT THE SCOUT'S GEAR.** A grant
+    /// rebuilds the band's ledger from empty; the units out with its party are still the band's, so
+    /// the band's ledger plus the party's is exactly what the allocation expands to.
+    #[test]
+    fn a_revision_after_a_scout_leaves_does_not_duplicate_its_gear() {
+        let (mut app, band, band_id) = world();
+        let (kits, materials) = {
+            let window = app
+                .world
+                .resource::<core_sim::StartingLoadout>()
+                .window(BandId(band_id))
+                .expect("the band holds its turn-one window")
+                .clone();
+            (window.kits, window.materials)
+        };
+        let faction = send_scout(&mut app, band, band_id, 1);
+        let party = party_entity(&mut app, band);
+        core_sim::apply_starting_loadout(
+            &mut app.world,
+            faction,
+            BandId(band_id),
+            &kits,
+            &materials,
+        )
+        .expect("re-sending the band's own allocation is accepted");
+        let equipment = app.world.resource::<EquipmentConfigHandle>().get();
+        let mut expanded: std::collections::BTreeMap<&str, u32> = std::collections::BTreeMap::new();
+        for row in &kits {
+            for item in &equipment
+                .kit_definition(&row.kit_id)
+                .expect("a roster kit")
+                .uses
+            {
+                if let Some(item) = RANGING_ITEMS.iter().find(|ranging| **ranging == item) {
+                    *expanded.entry(item).or_default() += row.count;
+                }
+            }
+        }
+        let band_held = ranging_held(&app, band);
+        let party_held = ranging_held(&app, party);
+        for (item, wanted) in expanded {
+            assert_eq!(
+                band_held[item] + party_held[item],
+                wanted,
+                "'{item}': the band and its party hold the allocation once, not twice"
+            );
+        }
+    }
+
+    /// The turn-one window's accepted rows — what an untouched card re-sends.
+    fn window_rows(
+        app: &bevy::prelude::App,
+        band_id: u64,
+    ) -> (
+        Vec<core_sim::KitAllocation>,
+        Vec<core_sim::MaterialAllocation>,
+    ) {
+        let window = app
+            .world
+            .resource::<core_sim::StartingLoadout>()
+            .window(BandId(band_id))
+            .expect("the band holds its turn-one window")
+            .clone();
+        (window.kits, window.materials)
+    }
+
+    /// ⛔ **A GRANT ORDER MAY NOT CUT A ROW BELOW WHAT THE BAND'S PARTIES CARRY.** A scout out with
+    /// a spear: an order for no Stalking kit would free that spear's room for other goods while the
+    /// spear still comes home on the fold-back. It is refused whole, the world untouched; an order
+    /// that keeps every row at or above what the party carries is accepted.
+    #[test]
+    fn a_grant_order_below_what_a_party_carries_is_refused() {
+        let (mut app, band, band_id) = world();
+        let faction = send_scout(&mut app, band, band_id, 1);
+        let party = party_entity(&mut app, band);
+        let carried = ranging_held(&app, party);
+        assert!(
+            carried["spears"] > 0 && carried["sled"] > 0 && carried["baskets"] > 0,
+            "fixture: the scout carries a spear, a sled and a basket: {carried:?}"
+        );
+        let windows_before = app.world.resource::<core_sim::StartingLoadout>().clone();
+        let ledger_before = app.world.get::<BandEquipment>(band).cloned();
+        let no_spears = vec![core_sim::KitAllocation {
+            kit_id: "gathering".to_string(),
+            count: carried["baskets"],
+        }];
+        let refusal = core_sim::apply_starting_loadout(
+            &mut app.world,
+            faction,
+            BandId(band_id),
+            &no_spears,
+            &[],
+        )
+        .expect_err("cutting the spears below the party's is refused");
+        assert!(
+            matches!(
+                &refusal,
+                core_sim::LoadoutRejection::PartyCarries { held_by_parties, asked: 0, .. }
+                    if *held_by_parties > 0
+            ),
+            "refused as a party's kit: {refusal:?}"
+        );
+        assert!(
+            refusal.to_string().starts_with("a party out is carrying"),
+            "and it reads as a plain sentence: {refusal}"
+        );
+        assert_eq!(
+            *app.world.resource::<core_sim::StartingLoadout>(),
+            windows_before,
+            "the window is untouched"
+        );
+        assert_eq!(
+            app.world.get::<BandEquipment>(band).cloned(),
+            ledger_before,
+            "and so is the band's gear"
+        );
+        let at_the_floor = vec![
+            core_sim::KitAllocation {
+                kit_id: "big_game".to_string(),
+                count: carried["spears"].max(carried["sled"]),
+            },
+            core_sim::KitAllocation {
+                kit_id: "gathering".to_string(),
+                count: carried["baskets"],
+            },
+        ];
+        core_sim::apply_starting_loadout(
+            &mut app.world,
+            faction,
+            BandId(band_id),
+            &at_the_floor,
+            &[],
+        )
+        .expect("an order at the party-held count is accepted");
+    }
+
+    /// ⛔ **A LONG MOVE ENDS THE BAND'S OUTFITTING WINDOW.** A turn-one band overloaded walks off
+    /// past the ferry reach and leaves goods behind; re-sending its unchanged card is then refused
+    /// `WindowClosed`, so nothing that was left behind is re-minted, and the band keeps only what it
+    /// carried.
+    #[test]
+    fn a_long_move_closes_the_outfitting_window() {
+        let (mut app, band, band_id) = world();
+        let faction = app
+            .world
+            .get::<PopulationCohort>(band)
+            .expect("the band keeps a cohort")
+            .faction;
+        let (kits, materials) = window_rows(&app, band_id);
+        overload(&mut app, band, MODEST_LARDER);
+        let held_before = app
+            .world
+            .get::<BandEquipment>(band)
+            .map_or(0, BandEquipment::total_units);
+        let from = position(&app, band);
+        let reach = ferry_reach(&app);
+        let target = land_tile_within(
+            &mut app,
+            from,
+            reach + 1..=reach + 1 + LONG_MOVE_EXTRA_TILES,
+        );
+        handle_move_band(&mut app, faction, Some(band_id), target.x, target.y);
+        let held_after = app
+            .world
+            .get::<BandEquipment>(band)
+            .map_or(0, BandEquipment::total_units);
+        assert!(
+            held_after < held_before,
+            "**LIVENESS**: the long move left goods behind: {held_before} → {held_after}"
+        );
+        assert!(
+            !app.world
+                .resource::<core_sim::StartingLoadout>()
+                .is_open(BandId(band_id)),
+            "the band's window is shut"
+        );
+        assert_eq!(
+            core_sim::apply_starting_loadout(
+                &mut app.world,
+                faction,
+                BandId(band_id),
+                &kits,
+                &materials
+            ),
+            Err(core_sim::LoadoutRejection::WindowClosed),
+            "re-sending the unchanged card is refused"
+        );
+        assert_eq!(
+            app.world
+                .get::<BandEquipment>(band)
+                .map_or(0, BandEquipment::total_units),
+            held_after,
+            "and the band keeps only what it carried"
+        );
+    }
+
+    /// **A SHORT MOVE LEAVES THE WINDOW OPEN** — within the ferry reach the band keeps everything
+    /// and can still revise its card.
+    #[test]
+    fn a_short_move_keeps_the_outfitting_window_open() {
+        let (mut app, band, band_id) = world();
+        let faction = app
+            .world
+            .get::<PopulationCohort>(band)
+            .expect("the band keeps a cohort")
+            .faction;
+        let from = position(&app, band);
+        let reach = ferry_reach(&app);
+        let target = land_tile_within(&mut app, from, 1..=reach);
+        handle_move_band(&mut app, faction, Some(band_id), target.x, target.y);
+        assert!(
+            app.world
+                .resource::<core_sim::StartingLoadout>()
+                .is_open(BandId(band_id)),
+            "a move within the ferry reach leaves the window open"
         );
     }
 }

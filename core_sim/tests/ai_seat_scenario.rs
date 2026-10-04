@@ -28,7 +28,6 @@ use common::seat_harness::{
     build_world, rival_band_count, run_scripted_sim_ai, run_utility_sim_ai, start_server, Link,
     RIVAL_SEAT, SCRIPT, SPLIT_WORKERS,
 };
-use core_sim::starting_loadout::clamped_kit_defaults;
 
 /// How many resolved turns the AI plays before releasing its seat.
 const AI_TURNS: u64 = 3;
@@ -127,21 +126,15 @@ fn a_scripted_sim_ai_plays_a_seat_over_the_real_sockets() {
 /// **One demand round-trips posted → planned → fulfilled** (`docs/plan_ai_driver.md` §11 row 7):
 /// the utility seat outfits its band on the first turn from the specialists' demands, the server
 /// refuses nothing, and the frame after the first advance carries the kit the decisions log says
-/// was sent — **summed over the band and every band it split off, less what the sim's own
-/// partition floors away**. On this harness world *split to feed* fires on the grant turn, and
-/// a split of a still-granting parent partitions the grant (`starting-loadout.md` → "What a
-/// SPLIT gives the splinter"): the splinter's window gets `min(asked, the parent's remaining
-/// kit budget)` slots, the parent is re-fitted to what is left by `clamp_allocation`'s
-/// proportional-floored rule, and what the clamp shed is fitted to the splinter's slots by the
-/// same rule — two floors per split, each dropping a fraction of a unit per kit row: on this
-/// world one split of four against a budget of seventeen leaves the family 14 of the 15
-/// baskets and 1 of the 2 spears on the line. The expectation is therefore the sim's
-/// own rule replayed: the parent's kit budget read off the world **before** the AI plays, the
-/// grant-turn splits in the order the log sent them, `clamped_kit_defaults` (the one
-/// implementation of the rule, public) applied as `fission::rebalance_partitioned_grant`
-/// applies it, and a splinter's own loadout line standing in for its share where it sent one.
-/// With no split the replay is the identity and the family — the parent alone — must hold the
-/// whole line.
+/// was sent — **summed over the band and every band it split off, at least what the sim's own
+/// partition leaves the family**. On this harness world *split to feed* fires on the grant turn,
+/// and a split of a still-granting parent recomputes both carries (`starting-loadout.md` → "What a
+/// SPLIT gives the splinter"): the splinter carries `asked × pack`, the parent what its remaining
+/// workers carry, and the parent is re-fitted by `fit_to_carry` to what that carry leaves its fixed
+/// larder. The replay is a **lower bound**: the parent keeps at least
+/// `carry − Σ asked × pack − larder` for goods ([`family_kits`]), and a splinter holds its own
+/// loadout line where it sent one, else something at least nothing. With no split the family — the
+/// parent alone — must hold the whole line.
 #[test]
 fn a_utility_sim_ai_outfits_its_band_on_the_first_turn() {
     let server = start_server("ai_seat_outfit", UTILITY_PORT_BASE, None);
@@ -149,8 +142,8 @@ fn a_utility_sim_ai_outfits_its_band_on_the_first_turn() {
     build_world(&server);
 
     // The grant BEFORE the AI plays, through the rival's own seat — then released: every
-    // resident rival band's open window and the kit slots it may mint against.
-    let kit_budgets: BTreeMap<u64, u32> = {
+    // resident rival band's open window, the carry it may mint against and its working-age hands.
+    let grants: BTreeMap<u64, GrantWindow> = {
         let mut before = Link::open(server.ports.command, &server.log_path);
         let claim = before.claim_seat(UTILITY_BEFORE_CLAIM_ID, RIVAL_SEAT);
         assert!(
@@ -168,12 +161,24 @@ fn a_utility_sim_ai_outfits_its_band_on_the_first_turn() {
                     .loadout_window
                     .as_ref()
                     .filter(|window| window.open)?;
-                Some((cohort.band_id, window.kit_budget))
+                Some((
+                    cohort.band_id,
+                    GrantWindow {
+                        carry: window.carry_capacity,
+                        per_worker_carry: cohort.carry_per_worker,
+                        // A fixed larder counts against the carry; a yielding one does not.
+                        fixed_larder: if window.food_fixed {
+                            window.food_carried
+                        } else {
+                            0.0
+                        },
+                    },
+                ))
             })
             .collect()
     };
     assert!(
-        !kit_budgets.is_empty(),
+        !grants.is_empty(),
         "no rival band opens the world with a grant window"
     );
 
@@ -271,6 +276,7 @@ fn a_utility_sim_ai_outfits_its_band_on_the_first_turn() {
     // `set_starting_loadout <faction> <band> [kit <id> <n>]... [material <id> <units>]...`.
     let granted = kit_rows(line);
     assert!(!granted.is_empty(), "the loadout named no kit: {line}");
+    let granted_material_units: u32 = material_rows(line).values().sum();
     let grant_tick = outfit["tick"].as_u64().expect("the loadout's tick");
     // The grant-turn splits of the outfitted band, in the order they were sent: `split_band
     // <faction> <band> <workers>`. A later turn's split is a take on the parent, which moves
@@ -345,24 +351,32 @@ fn a_utility_sim_ai_outfits_its_band_on_the_first_turn() {
         splits.len()
     );
 
-    // The sim's rule replayed (`fission::open_splinter_loadout_window` and
-    // `rebalance_partitioned_grant`): per split, the splinter takes `min(asked, remaining)` kit
-    // slots off the parent's budget and MINTS ITS OWN DEFAULT against them
-    // (`starting_loadout::outfit_band_with_defaults`), while the parent's own allocation is
-    // re-fitted to what the partition left it.
-    //
-    // ⛔ **THE PARENT'S SHED ROWS ARE NOT HANDED DOWN.** That arm of `rebalance_partitioned_grant`
-    // was deleted when every band began holding its default outfit from the moment it exists —
-    // handing the leftovers down would fight the default the splinter has already applied. So the
-    // family's per-kit totals are NOT the granted line re-cut: each side is minted from its own
-    // budget, the two budgets still partition the grant exactly, and each side's proportional floor
-    // leaves its own remainder unspent. `split_loadout.rs`
-    // → `the_splinters_outfit_is_its_own_default_rather_than_the_parents_leftovers` pins the rule
-    // in process; this replays it against a real server.
-    let parent_budget = *kit_budgets
+    // The sim's rule replayed as a lower bound (`fission::open_splinter_loadout_window` and
+    // `rebalance_partitioned_grant`): the parent keeps at least its line fitted to the carry the
+    // splits left it, and a splinter holds its own line where it sent one. A splinter's minted
+    // default (`starting_loadout::outfit_band_with_defaults`) is struck against a carry net of the
+    // food it walked out with — a number the frame does not carry — so it is bounded below by
+    // nothing. `split_loadout.rs` pins the rule exactly in process; this replays it against a real
+    // server.
+    let grant = *grants
         .get(&band)
         .unwrap_or_else(|| panic!("band {band} had no open grant window before the AI played"));
-    let expected = family_kits(&granted, parent_budget, &splits, &children, &own_lines);
+    let parent_budget = grant.carry;
+    let item_weight = after.opening_loadout.item_carry_weight;
+    let material_weight = after.opening_loadout.material_carry_weight;
+    let items_per_kit: BTreeMap<String, u32> = after
+        .kits
+        .iter()
+        .map(|kit| (kit.id.clone(), kit.item_ids.len() as u32))
+        .collect();
+    let line_load = granted
+        .iter()
+        .map(|(kit_id, count)| {
+            *count as f32 * items_per_kit.get(kit_id).copied().unwrap_or(0) as f32 * item_weight
+        })
+        .sum::<f32>()
+        + granted_material_units as f32 * material_weight;
+    let expected = family_kits(&granted, line_load, grant, &splits, &children, &own_lines);
     if splits.is_empty() {
         assert_eq!(
             expected, granted,
@@ -387,7 +401,7 @@ fn a_utility_sim_ai_outfits_its_band_on_the_first_turn() {
                 held >= *count,
                 "bands {family_ids:?} hold {held} `{item}` for {count} `{kit_id}` expected of the \
                  {} `{kit_id}` granted to band {band} over {} grant-turn split(s) {splits:?} \
-                 against a kit budget of {parent_budget}\n--- sim_ai log ---\n{}",
+                 against a carry of {parent_budget}\n--- sim_ai log ---\n{}",
                 granted.get(kit_id).copied().unwrap_or(0),
                 splits.len(),
                 log_tail(&ai.log_path)
@@ -396,40 +410,52 @@ fn a_utility_sim_ai_outfits_its_band_on_the_first_turn() {
     }
 }
 
-/// **What the family holds after its grant-turn splits**, per kit — the sim's own rule replayed.
+/// **A grant window as the rival's frame published it before the AI played** — its whole carry,
+/// one worker's pack, and the larder that counts against the carry when it is fixed.
+#[derive(Debug, Clone, Copy)]
+struct GrantWindow {
+    carry: f32,
+    per_worker_carry: f32,
+    fixed_larder: f32,
+}
+
+/// **At least what the family holds after its grant-turn splits**, per kit — the sim's own rule
+/// replayed as a lower bound.
 ///
-/// `granted` is the accepted line the parent was outfitted with, `parent_budget` its kit budget
-/// before any split, `splits` the workers each grant-turn split asked for in the order sent, and
-/// `children` the splinters' band ids in the same order. A splinter that sent a loadout order of
-/// its own holds that instead of its default, which is what `own_lines` carries.
+/// `granted` is the accepted line the parent was outfitted with and `line_load` what it weighs
+/// (kits and materials together, the one currency), `grant` the parent's window before any split,
+/// `splits` the workers each grant-turn split asked for in the order sent, and `children` the
+/// splinters' band ids in the same order. A split recomputes the parent's carry to what its
+/// remaining workers carry — its carry less `asked × per_worker_carry` — and its fixed larder counts
+/// against it. That larder only shrinks as splinters take their food (a revision hands back at most
+/// what was taken), so the parent keeps at least `carry − Σ asked × per_worker_carry − larder` for
+/// goods, and is fitted to it proportionally and floored; a splinter that sent a loadout order of
+/// its own holds that.
 fn family_kits(
     granted: &BTreeMap<String, u32>,
-    parent_budget: u32,
+    line_load: f32,
+    grant: GrantWindow,
     splits: &[u32],
     children: &[u64],
     own_lines: &BTreeMap<u64, BTreeMap<String, u32>>,
 ) -> BTreeMap<String, u32> {
-    let defaults = opening_kit_defaults();
-    let mut remaining = parent_budget;
-    let mut parent_holds = granted.clone();
-    let mut expected: BTreeMap<String, u32> = BTreeMap::new();
-    for (child, asked) in children.iter().zip(splits) {
-        let slots = (*asked).min(remaining);
-        remaining -= slots;
-        parent_holds = clamped_kit_defaults(&parent_holds, remaining)
-            .0
-            .into_iter()
-            .collect();
-        let childs_default: BTreeMap<String, u32> = clamped_kit_defaults(&defaults, slots)
-            .0
-            .into_iter()
-            .collect();
-        for (kit_id, count) in own_lines.get(child).unwrap_or(&childs_default) {
+    let asked: u32 = splits.iter().sum();
+    let kept_carry =
+        (grant.carry - asked as f32 * grant.per_worker_carry - grant.fixed_larder).max(0.0);
+    let kept_share = if line_load <= kept_carry || line_load <= 0.0 {
+        1.0
+    } else {
+        kept_carry / line_load
+    };
+    let mut expected: BTreeMap<String, u32> = granted
+        .iter()
+        .map(|(kit_id, count)| (kit_id.clone(), (*count as f32 * kept_share).floor() as u32))
+        .filter(|(_, count)| *count > 0)
+        .collect();
+    for child in children.iter().take(splits.len()) {
+        for (kit_id, count) in own_lines.get(child).into_iter().flatten() {
             *expected.entry(kit_id.clone()).or_default() += count;
         }
-    }
-    for (kit_id, count) in &parent_holds {
-        *expected.entry(kit_id.clone()).or_default() += count;
     }
     expected
 }
@@ -438,52 +464,68 @@ fn family_kits(
 ///
 /// Whether the utility seat splits at all on its grant turn is the AI's decision, and it does not
 /// on every host — the CI runner split and the developer machine did not, so the arithmetic above
-/// went unexercised locally while it failed in CI. This replays the exact reported numbers: a band
-/// granted 15 `gathering` and 2 `big_game` against a budget of 17, splitting once for 4 workers.
+/// went unexercised locally while it failed in CI. This replays the reported line: a band granted
+/// 15 `gathering` and 2 `big_game` (19 items) against a 17-hand carry, splitting once for 4 workers.
+/// The numbers are a fixture, held fixed so the arithmetic is pinned whatever the shipped pack is.
 ///
-/// Under the retired rule the parent's shed rows were re-fitted to the splinter's slots, which put
-/// **14** `gathering` in the family. The splinter mints its **own default** now, so the two sides
-/// are minted from two budgets and each floors its own remainder away: 12.
+/// Under the retired two-budget rule the parent was re-fitted to the 13 kit slots the split left it
+/// and the family held 12 `gathering`. Under one carry the parent keeps its carry less the
+/// splinter's `asked × pack` — `136 − 32 = 104` with no larder, far above the 19 its line weighs,
+/// so it keeps the whole line. Its fixed larder counts against what it keeps.
 #[test]
-fn a_grant_turn_split_leaves_the_family_holding_two_minted_defaults() {
+fn a_grant_turn_split_leaves_the_parent_holding_a_line_its_carry_still_covers() {
+    const FIXTURE_PACK: f32 = 8.0;
+    const FIXTURE_HANDS: f32 = 17.0;
+    let unfed = GrantWindow {
+        carry: FIXTURE_HANDS * FIXTURE_PACK,
+        per_worker_carry: FIXTURE_PACK,
+        fixed_larder: 0.0,
+    };
     let granted = BTreeMap::from([("big_game".to_owned(), 2), ("gathering".to_owned(), 15)]);
-    let expected = family_kits(&granted, 17, &[4], &[3], &BTreeMap::new());
-
-    // The parent is re-fitted to the 13 slots the split left it: `floor(2 x 13 / 17) = 1` and
-    // `floor(15 x 13 / 17) = 11`. The splinter mints the profile's `4/4/4` against 4 slots:
-    // `floor(4 x 4 / 12) = 1` of each.
+    let expected = family_kits(&granted, 19.0, unfed, &[4], &[3], &BTreeMap::new());
     assert_eq!(
-        expected,
-        BTreeMap::from([
-            ("big_game".to_owned(), 2),
-            ("gathering".to_owned(), 12),
-            ("trapping".to_owned(), 1),
-        ]),
-        "the family holds each side's own minted default, not the granted line re-cut"
+        expected, granted,
+        "the parent's carry after the split still covers its whole line"
     );
-}
-
-/// The kit half of the **default outfit every band mints for itself at creation**, off the shipped
-/// start profile the harness builds its world from (`build_world` sends a plain `new_game`, so the
-/// server resolves the same builtin profiles this reads).
-fn opening_kit_defaults() -> BTreeMap<String, u32> {
-    let profiles = core_sim::StartProfiles::builtin();
-    profiles
-        .first()
-        .expect("the builtin start profiles carry a profile")
-        .overrides()
-        .opening_loadout
-        .kit_defaults
-        .clone()
+    // And a line heavier than what the split leaves is fitted proportionally: 120 of load against
+    // the 104 kept keeps `floor(count × 104 / 120)` of each row.
+    let heavy = BTreeMap::from([("big_game".to_owned(), 30), ("gathering".to_owned(), 30)]);
+    let fitted = family_kits(&heavy, 120.0, unfed, &[4], &[3], &BTreeMap::new());
+    assert_eq!(
+        fitted,
+        BTreeMap::from([("big_game".to_owned(), 26), ("gathering".to_owned(), 26)])
+    );
+    // A fixed larder of 66 leaves 38 of the 104 for goods: the 19-load line keeps half of each row.
+    let fed = GrantWindow {
+        fixed_larder: 66.0,
+        ..unfed
+    };
+    let kept = family_kits(&granted, 19.0, fed, &[4], &[3], &BTreeMap::new());
+    assert_eq!(kept, granted, "38 of room still covers a 19-load line");
+    let kept = family_kits(&heavy, 120.0, fed, &[4], &[3], &BTreeMap::new());
+    assert_eq!(
+        kept,
+        BTreeMap::from([("big_game".to_owned(), 9), ("gathering".to_owned(), 9)]),
+        "and a 120-load line keeps floor(30 × 38 / 120) = 9 of each row"
+    );
 }
 
 /// The `kit <id> <n>` rows of a `set_starting_loadout` line, summed per kit.
 fn kit_rows(line: &str) -> BTreeMap<String, u32> {
+    keyword_rows(line, "kit")
+}
+
+/// The `material <id> <units>` rows of a `set_starting_loadout` line, summed per material.
+fn material_rows(line: &str) -> BTreeMap<String, u32> {
+    keyword_rows(line, "material")
+}
+
+fn keyword_rows(line: &str, keyword: &str) -> BTreeMap<String, u32> {
     let tokens: Vec<&str> = line.split_whitespace().collect();
     let mut rows = BTreeMap::new();
-    for window in tokens.windows(3).filter(|window| window[0] == "kit") {
+    for window in tokens.windows(3).filter(|window| window[0] == keyword) {
         *rows.entry(window[1].to_owned()).or_default() +=
-            window[2].parse::<u32>().expect("a kit count");
+            window[2].parse::<u32>().expect("a row count");
     }
     rows
 }

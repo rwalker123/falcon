@@ -11,7 +11,7 @@
 //!
 //! **It also resolves the demand board** (`plan_ai_driver.md` §4, *"The board's first customer
 //! is outfitting"*): for every own band whose outfitting window is open, [`Orchestrator::outfit`]
-//! turns the specialists' posted demands into one [`Outfit`] against the window's two budgets —
+//! turns the specialists' posted demands into one [`Outfit`] against the window's carry —
 //! by its goals and personality — and the composite emits the `set_starting_loadout`. It still
 //! never emits a command: it resolves, the composite sends.
 

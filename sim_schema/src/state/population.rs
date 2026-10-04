@@ -1029,7 +1029,7 @@ pub struct PopulationCohortState {
     /// ledger identity to
     ///
     /// ```text
-    /// larder_delta == food_income − food_consumption − raid_forfeit − food_spoiled
+    /// larder_delta == food_income − food_consumption − raid_forfeit − food_spoiled − food_left_behind
     /// ```
     ///
     /// (pinned by `integration_tests/tests/raid_food_ledger.rs`). It is a **past-turn** stochastic
@@ -1262,7 +1262,7 @@ pub struct PopulationCohortState {
     /// With [`Self::transfer_sent`] it completes the food-ledger identity
     ///
     /// ```text
-    /// larder_delta == food_income − food_consumption − raid_forfeit − food_spoiled
+    /// larder_delta == food_income − food_consumption − raid_forfeit − food_spoiled − food_left_behind
     ///                 + transfer_received − transfer_sent
     /// ```
     ///
@@ -1278,9 +1278,9 @@ pub struct PopulationCohortState {
     /// `send_trade_expedition` command debits the larder between two published frames.
     #[serde(default)]
     pub transfer_sent: f32,
-    /// **What one worker on a shipment sent from this band carries, RESOLVED BY THE SIM** — the
-    /// sim's own answer after everything carry depends on has been applied
-    /// (`core_sim::trade_per_worker_carry`), not a config lever quoted onto the wire. Echoed onto
+    /// **What one worker carries, RESOLVED BY THE SIM, for every carrier** — a shipment, a split, a
+    /// long move — the sim's own answer after everything carry depends on has been applied
+    /// (`core_sim::per_worker_carry`), not a config lever quoted onto the wire. Echoed onto
     /// every cohort in the `hunt_per_worker_provisions` idiom.
     ///
     /// **The client multiplies it by the party and does nothing else**: `cap = party_workers ×
@@ -1299,10 +1299,10 @@ pub struct PopulationCohortState {
     /// The lever is validated `> 0` at load and every future term has to preserve that, because a
     /// `0` would let a client render a zero cap and refuse every manifest.
     #[serde(default)]
-    pub expedition_trade_per_worker_carry: f32,
+    pub carry_per_worker: f32,
     /// **What one unit of a material costs in shipment pack space, relative to one unit of food** —
-    /// `expedition_config.trade.material_carry_weight`, the other half of a shipment's mass, echoed
-    /// onto every cohort exactly like [`Self::expedition_trade_per_worker_carry`] — though this one
+    /// `expedition_config.carry.material_carry_weight`, the other half of a shipment's mass, echoed
+    /// onto every cohort exactly like [`Self::carry_per_worker`] — though this one
     /// really is a lever echo, because a material's bulk is a property of the **goods** rather than
     /// of the carrier, so nothing resolves it.
     ///
@@ -1312,7 +1312,7 @@ pub struct PopulationCohortState {
     /// mass = expedition_cargo_food
     ///        + expedition_trade_fodder_carry_weight × expedition_cargo_fodder
     ///        + this × Σ material amounts
-    /// cap  = party_workers × expedition_trade_per_worker_carry
+    /// cap  = party_workers × carry_per_worker
     /// ```
     ///
     /// **It ships because the sim otherwise refuses a manifest on a rule the client cannot
@@ -1524,7 +1524,7 @@ pub struct PopulationCohortState {
     #[serde(default)]
     pub expedition_cargo_fodder: f32,
     /// **What one unit of HAY costs in shipment pack space, relative to one unit of food** —
-    /// `expedition_config.trade.fodder_carry_weight`, the third term of a shipment's mass and the
+    /// `expedition_config.carry.fodder_carry_weight`, the third term of a shipment's mass and the
     /// same every-cohort lever echo as [`Self::expedition_trade_material_carry_weight`].
     ///
     /// **It ships for the identical reason**: without it a cargo picker cannot evaluate the cap rule
@@ -1647,6 +1647,32 @@ pub struct PopulationCohortState {
     /// Turns until the last homeward hand is back; `0` = nobody walking home. Appended last.
     #[serde(default)]
     pub homeward_all_home_in: u32,
+    /// **What this band can carry** (#732) — whole working-age hands × one worker's pack, in
+    /// food-unit load. Dependants add nothing. Appended last.
+    #[serde(default)]
+    pub carry_capacity: f32,
+    /// **The load of everything this band holds** — larder, hay, every item (bench tools included)
+    /// and every material unit. Appended last.
+    #[serde(default)]
+    pub carry_load: f32,
+    /// **How far a move keeps everything**, in hex steps — echoed per cohort. A move farther than
+    /// this sheds the band to [`Self::carry_capacity`]. Appended last.
+    #[serde(default)]
+    pub move_ferry_reach_tiles: u32,
+    /// **What a long move would leave behind right now**: food. Computed by the shedding function the
+    /// move itself runs. `0` when the band fits, and on a detached party. Appended last.
+    #[serde(default)]
+    pub long_move_leaves_food: f32,
+    /// What a long move would leave behind: whole item units (the most worn). Appended last.
+    #[serde(default)]
+    pub long_move_leaves_items: u32,
+    /// What a long move would leave behind: material units. Appended last.
+    #[serde(default)]
+    pub long_move_leaves_materials: f32,
+    /// **The food this band left behind on a long move** since the last turn frame — one term of the
+    /// larder ledger identity (`snapshot.fbs` → `foodLeftBehind`). Appended last.
+    #[serde(default)]
+    pub food_left_behind: f32,
 }
 
 /// **ONE GOOD THAT CROSSED A BAND'S STORE, BY CAUSE** — a row of
@@ -2185,27 +2211,25 @@ pub struct GenerationState {
 ///
 /// # The two supplies are mutually exclusive, and [`Self::parent_band_id`] says which
 ///
-/// - **`0` — a GRANT window.** The picks *mint* gear, capped by [`Self::kit_budget`] (kits, summed
-///   over the order) and [`Self::material_budget`] (units). This is the spawned band's window, and a
-///   splinter's when it split off a band whose own grant was still unspent — that splinter's budgets
-///   were deducted from the parent's, so no slot and no point is minted twice or lost.
+/// - **`0` — a GRANT window.** The picks *mint* gear, capped by [`Self::carry_capacity`]. This is
+///   the spawned band's window, and a splinter's when it split off a band whose own grant was still
+///   unspent — that splinter's slice was deducted from the parent's, so no load unit is minted twice
+///   or lost.
 /// - **non-zero — a TAKE on that band.** The picks *move* gear and material out of the parent's
-///   ledger, the two budgets are `0` and mean nothing, and the cap is [`Self::parent_item_supply`] /
-///   [`Self::parent_material_supply`].
+///   ledger, capped by [`Self::parent_item_supply`] / [`Self::parent_material_supply`] **and** by
+///   [`Self::carry_capacity`].
+///
+/// **One carry rule on both arms**: an order's load is `item_carry_weight × Σ expanded items +
+/// material_carry_weight × Σ material units` (the weights ride
+/// [`super::OpeningLoadoutState`]), and it must not exceed [`Self::carry_capacity`].
 ///
 /// **A kit row cannot be capped on its own.** The roster maps kits to items almost one-to-one, but
 /// `sled` is used by both `big_game` and `trapping`, so what the sim validates is the **expanded
 /// item list**, whole — a client drawing a take's cap has to expand the same way.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct BandLoadoutWindowState {
     /// False once this band's window has shut. It shuts on the turn advance and on nothing else.
     pub open: bool,
-    /// Kit slots this window may **mint** against. `0` for a take, which mints nothing.
-    #[serde(default)]
-    pub kit_budget: u32,
-    /// Material points this window may **mint** against, one point per unit. `0` for a take.
-    #[serde(default)]
-    pub material_budget: u32,
     /// **The accepted allocation** — the kit rows this band's last accepted `set_starting_loadout`
     /// named. Empty only for a window nobody has ordered against yet; **a fresh splinter's is not
     /// empty**, because the default take a split hands over is denominated in kits and published
@@ -2227,6 +2251,23 @@ pub struct BandLoadoutWindowState {
     /// The material twin of [`Self::parent_item_supply`], in whole units.
     #[serde(default)]
     pub parent_material_supply: Vec<BandLoadoutSupplyRowState>,
+    /// **The band's whole carry**, goods and food together, in food-unit load. The goods allowance
+    /// an order is checked against is `carry_capacity − food_carried` when [`Self::food_fixed`], and
+    /// `carry_capacity` otherwise. Appended last.
+    #[serde(default)]
+    pub carry_capacity: f32,
+    /// **The band's food share**, in load. On a splinter, the most food it may take — goods load
+    /// first and food fills `min(food_share, carry_capacity − goods load)`. On a fixed larder, the
+    /// larder's mass. Appended last.
+    #[serde(default)]
+    pub food_share: f32,
+    /// The food load the band holds now, as the server resolved it. Appended last.
+    #[serde(default)]
+    pub food_carried: f32,
+    /// **Whether the band's food is FIXED** — its larder counts against the carry and does not yield
+    /// to goods (the opening band, a granting parent). `false` on a splinter. Appended last.
+    #[serde(default)]
+    pub food_fixed: bool,
 }
 
 /// One cap row of [`BandLoadoutWindowState`]: how many units of `id` this take may claim.

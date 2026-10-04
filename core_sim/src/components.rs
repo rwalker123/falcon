@@ -1377,7 +1377,7 @@ pub struct PopulationCohort {
     /// turn's *opening* brackets — the real `stores` debit `advance_demographics` took, before the
     /// same turn's births/aging change the head-count). This — not a re-derived `food_demand` on the
     /// *post*-turn brackets — is the consumption term of the larder ledger identity
-    /// `larder_delta == food_income − food_consumption − raid_forfeit − spoiled + received − sent`,
+    /// `larder_delta == food_income − food_consumption − raid_forfeit − spoiled − left_behind + received − sent`,
     /// so it holds by construction whether the band is fully fed or starving. Recomputed each turn
     /// by `simulate_population`; on the client wire as `PopulationCohortState.food_consumption`.
     pub last_food_consumption: f32,
@@ -1393,7 +1393,7 @@ pub struct PopulationCohort {
     /// right after the meal (which also resets it each turn), plus the transit rot of any caravan
     /// pack that landed home after a walk longer than its class keeps (`systems::labor`). One term,
     /// the ledger identity's `spoiled`:
-    /// `larder_delta == income − consumption − raid_forfeit − spoiled + received − sent`. A rotten
+    /// `larder_delta == income − consumption − raid_forfeit − spoiled − left_behind + received − sent`. A rotten
     /// pack is credited as income when it lands and debited here the same turn, so income stays the
     /// one producer it always was. On the wire as `PopulationCohortState.foodSpoiled`.
     pub last_food_spoiled: f32,
@@ -1413,7 +1413,7 @@ pub struct PopulationCohort {
     /// **It neither replaces the accumulator nor changes its window.** At the moment it is copied
     /// the accumulator holds *(command-time draws since the last turn capture) + (this turn's
     /// transfers)* — exactly the interval the ledger identity
-    /// `larder_delta == income − consumption − raid_forfeit − spoiled + received − sent` measures —
+    /// `larder_delta == income − consumption − raid_forfeit − spoiled − left_behind + received − sent` measures —
     /// so the two readings cannot disagree on a turn frame. On the wire as
     /// `PopulationCohortState.transfer_{local,route}_{received,sent}_turn`, beside the accumulator's
     /// own summed `transfer_received` / `transfer_sent`.
@@ -3414,7 +3414,7 @@ pub struct SourceYield {
     /// **It is NOT food income.** `PopulationCohortState.food_income` stays `Σ actual` and must never
     /// include this — fodder credits the band's `FODDER` store and never touches the larder, so
     /// folding it in would break the larder identity
-    /// `larder_delta == food_income − food_consumption − raid_forfeit − spoiled + received − sent`.
+    /// `larder_delta == food_income − food_consumption − raid_forfeit − spoiled − left_behind + received − sent`.
     ///
     /// **There is deliberately NO `realized_fodder` twin.** The plant web's forward projection is
     /// food-only (`forage::plant_food_only`) and fodder is paid by the plant web **alone**,
@@ -3664,6 +3664,15 @@ pub struct BandEquipment {
     retired: std::collections::BTreeMap<String, std::collections::BTreeMap<String, u32>>,
 }
 
+/// **Which units a removal takes first** — the two answers to two different questions:
+/// *which unit is handed over* ([`BandEquipment::take_units`], freshest first) and *which unit is
+/// left behind* ([`BandEquipment::shed_units`], most worn first).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UnitOrder {
+    FreshestFirst,
+    MostWornFirst,
+}
+
 impl BandEquipment {
     /// **A fully start-stocked band** — one unit of every item some kit carries, at that item's
     /// default tier and unworn.
@@ -3835,6 +3844,41 @@ impl BandEquipment {
             .unwrap_or_default()
     }
 
+    /// **Take a detached party's kit off this ledger** — for every item the party's kit uses,
+    /// `ceil(party_workers ÷ workers_per_unit)` units, freshest first ([`Self::take_units`]), and
+    /// return them as the party's own ledger, worn as they are. A ledger short of an item gives what
+    /// it holds; **nothing is minted**. The one rule for how a party is equipped: the launch takes
+    /// it, and every forecast that quotes a party before launch previews it ([`Self::party_issue`]),
+    /// so the quote and the party that leaves cannot disagree.
+    pub fn take_party_issue(
+        &mut self,
+        equipment: &crate::equipment_config::EquipmentConfig,
+        kit: &crate::equipment_config::KitChoice,
+        party_workers: u32,
+    ) -> BandEquipment {
+        let mut party = BandEquipment::default();
+        for item in kit.uses() {
+            let workers_per_unit = equipment
+                .item(item)
+                .map_or(1, |definition| definition.workers_per_unit.max(1));
+            let wanted = party_workers.div_ceil(workers_per_unit);
+            let batches = self.take_units(item, wanted);
+            party.place_batches(item, batches);
+        }
+        party
+    }
+
+    /// **The kit a detached party would be issued from this ledger**, without taking it — the
+    /// preview [`Self::take_party_issue`] answers on a copy.
+    pub fn party_issue(
+        &self,
+        equipment: &crate::equipment_config::EquipmentConfig,
+        kit: &crate::equipment_config::KitChoice,
+        party_workers: u32,
+    ) -> BandEquipment {
+        self.clone().take_party_issue(equipment, kit, party_workers)
+    }
+
     /// **Take `count` whole units of `item` OUT of this ledger, FRESHEST FIRST** — the moving half
     /// of a band split and of a splinter's outfitting take ([`crate::starting_loadout`]).
     ///
@@ -3860,6 +3904,28 @@ impl BandEquipment {
     /// Returns **what actually left**, which is short of `count` when the ledger is short: the
     /// availability question is the caller's, asked with [`Self::count_of`].
     pub fn take_units(&mut self, item: &str, count: u32) -> Vec<EquipmentBatch> {
+        self.remove_units(item, count, UnitOrder::FreshestFirst)
+    }
+
+    /// **Remove `count` whole units of `item`, MOST WORN FIRST** — what a band LEAVES BEHIND when it
+    /// walks farther than it can ferry and its packs are full (`crate::band_carry`). The band carries
+    /// its best gear, so the units nearest the end of their life are the ones dropped: the
+    /// [`Self::wear_item`] order (descending `wear`, earliest insertion index on a tie), and the exact
+    /// inverse of [`Self::take_units`]. Same split-the-last-batch and pruning rules; returns what
+    /// actually left.
+    pub fn shed_units(&mut self, item: &str, count: u32) -> Vec<EquipmentBatch> {
+        self.remove_units(item, count, UnitOrder::MostWornFirst)
+    }
+
+    /// **Every whole unit the band holds**, across every item and batch — bench tools included.
+    pub fn total_units(&self) -> u32 {
+        self.batches
+            .values()
+            .flat_map(|batches| batches.iter().map(|batch| batch.count))
+            .sum()
+    }
+
+    fn remove_units(&mut self, item: &str, count: u32, order_by: UnitOrder) -> Vec<EquipmentBatch> {
         let mut taken = Vec::new();
         if count == 0 {
             return taken;
@@ -3870,12 +3936,14 @@ impl BandEquipment {
         let mut order: Vec<usize> = (0..batches.len()).collect();
         // `total_cmp` rather than `partial_cmp().unwrap()`: a NaN wear is unrepresentable today
         // (`wear_item` refuses a non-finite charge) and a total order keeps it that way without a
-        // panic seam.
+        // panic seam. Ties break on the earliest insertion index in BOTH orders.
         order.sort_by(|left, right| {
-            batches[*left]
-                .wear
-                .total_cmp(&batches[*right].wear)
-                .then(left.cmp(right))
+            let by_wear = batches[*left].wear.total_cmp(&batches[*right].wear);
+            let by_wear = match order_by {
+                UnitOrder::FreshestFirst => by_wear,
+                UnitOrder::MostWornFirst => by_wear.reverse(),
+            };
+            by_wear.then(left.cmp(right))
         });
         let mut remaining = count;
         for index in order {
@@ -4526,14 +4594,33 @@ pub struct LaborAllocation {
     /// forward runway drain:
     ///
     /// ```text
-    /// larder_delta == food_income − food_consumption − raid_forfeit − spoiled
+    /// larder_delta == food_income − food_consumption − raid_forfeit − spoiled − left_behind
     /// ```
     ///
-    /// (plus the transfer pair below; `spoiled` is [`PopulationCohort::last_food_spoiled`], #706).
+    /// (plus the transfer pair below; `spoiled` is [`PopulationCohort::last_food_spoiled`], #706,
+    /// and `left_behind` is [`Self::last_food_left_behind`], #732).
     ///
     /// Same treatment as `last_yields`: reset then re-levied each turn by `advance_predator_raids`,
     /// and **excluded from equality** below.
     pub last_raid_forfeit: f32,
+    /// **THE FOOD THIS BAND LEFT BEHIND ON A LONG MOVE THIS WINDOW** (#732) — a band ordered farther
+    /// than it can ferry sheds down to what its workers can carry the moment the order is accepted
+    /// (`crate::band_carry`), and what it drops is **lost**: it passes through neither income,
+    /// consumption, rot nor a transfer. So it is its own term of the food identity:
+    ///
+    /// ```text
+    /// larder_delta == food_income − food_consumption − raid_forfeit − spoiled − left_behind
+    ///                 + transfer_received − transfer_sent
+    /// ```
+    ///
+    /// **The window is the SNAPSHOT window**, exactly as [`Self::last_food_transfers`]'s is, and for
+    /// its reason: a move is a command, applied between two captures. Every shed **adds**, and
+    /// `systems::reset_transfer_ledger` clears it after the turn capture has published it.
+    /// Exported as `PopulationCohortState.food_left_behind`; **excluded from equality** below.
+    ///
+    /// **Fodder has no twin**: the fodder ledger closes no identity (it has no spoil or forfeit
+    /// term), so dropped hay needs no booking to keep anything true.
+    pub last_food_left_behind: f32,
     /// **THE FOOD THAT CROSSED BETWEEN THIS BAND'S LARDER AND ANOTHER'S THIS WINDOW** — supply-network
     /// balancing, an arriving trade shipment, an expedition of its own handing its pack back, or a
     /// party drawn off it walking away with cargo and provisions. Split by [`TransferLink`]; the
@@ -4548,7 +4635,7 @@ pub struct LaborAllocation {
     /// therefore
     ///
     /// ```text
-    /// larder_delta == food_income − food_consumption − raid_forfeit − spoiled
+    /// larder_delta == food_income − food_consumption − raid_forfeit − spoiled − left_behind
     ///                 + transfer_received − transfer_sent
     /// ```
     ///

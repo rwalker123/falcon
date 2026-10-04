@@ -29,10 +29,10 @@ Two things open a window and nothing else does:
 | opener | when | the window it opens |
 |---|---|---|
 | `stamp_starting_loadout` | Startup, chained after the spawn | the spawned band's, carrying the campaign's **grant**. `outfit_opening_bands` is chained straight after it and commits the default against that grant |
-| `split_band_from_parent` | every split, every turn | the splinter's, **carrying its accepted allocation** — the default take it was moved, or (on a grant) the default outfit it mints against its slice of the grant |
+| `split_band_from_parent` | every split, every turn | the splinter's, **carrying its accepted allocation** — the default take it was moved, or (on a grant) the split default it mints against its own carry |
 
 **Turn one is not special — only the PARENT's state differs.** On turn one the parent still holds an
-unspent grant, so its splinter takes a slice of that grant, its picks **mint**, and the split moves no
+unspent grant, so its splinter mints against a grant of its own (`carry_capacity(asked)`), its picks **mint**, and the split moves no
 gear at all. From turn two nobody holds a grant, so a splinter's window is a take on the parent, its
 picks **move** gear out of the parent's own ledger, and the split moves the default take across. There is no `if turn == 1` anywhere in the arc, and there must not be: the
 question the code asks is *"does this band's parent still have a grant"*, which is a fact about the
@@ -53,22 +53,48 @@ land in a world whose windows are still open, budgets and standing takes intact.
 ## The two supplies — `LoadoutSupply`, and it decides EVERYTHING downstream
 
 ```
-Grant  { kit_budget, material_budget }              → the picks MINT
-Parent { parent, items, materials }                 → the picks MOVE
+Grant  { carry_budget }                             → the picks MINT
+Parent { parent, items, materials, carry_budget }   → the picks MOVE
 ```
 
-It is an enum rather than a pair of *"meaningful only when…"* fields because the two cases cap on
-different currencies: a grant is bounded by two integers the world handed out, a take is bounded by
-what another band is standing on right now.
+**Both arms cap on ONE currency: load** (`.claude/rules/core_sim/band-carry.md` owns the carry model
+and the load formula). An order's load is its expanded items × `item_carry_weight` plus its material
+units × `material_carry_weight`, and `OverCarry { load, capacity }` refuses an order whose load
+exceeds the window's `carry_budget`. It is still an enum because the arms differ in what ELSE caps
+them: a grant mints, so nothing else does; a take moves, so it is also bounded by what another band is
+standing on right now, per item and per material.
+
+**What a band carries includes its food, on every window.** The opening band's carry is its own,
+**read live** (`Grant { carry_budget: None }` → `band_carry_capacity(cohort)`, the unfloored working
+value), so its card and its band panel state one number. Its spawned larder is **fixed**
+(`LoadoutWindow::food_is_fixed`, published `foodFixed`): it counts against the carry and does not
+yield to goods, so the goods it may mint are `carry − larder mass` (`goods_allowance`). Shipped:
+≈ 125 − 77.7 ≈ 47, the old system's opening total (17 kit slots + 30 points).
+
+> **The larder was once free, and that was wrong.** With the starting larder outside the budget, the
+> opening band minted 136 of goods and then stood **over its own carry** on turn one (playtest: a
+> parent after a split read `Carry 125 / 87`), so its first long move would shed ~38 — the outfit
+> card let it pick goods its people could not walk away with, and a bigger band looked far richer
+> per head than a splinter that paid for its food.
+`opening_loadout.material_points` and the per-hand kit budget are **retired**: two allowances in two
+incomparable currencies was the defect #732 closed, because on turn two a take was capped by nothing
+that scaled with the workers leaving.
 
 ### What a SPLIT gives the splinter
 
 | the parent's window | what the split does | the splinter's window |
 |---|---|---|
-| still **grants** (`LoadoutWindow::grants()` — open, and a `Grant`) | **partitions the grant, and moves NOTHING physical** | a `Grant` of its own: `min(asked, the parent's remaining kit budget)` kit slots, and `floor(share × the parent's remaining material points)`. Both are deducted from the parent's, so no slot and no point is minted twice or lost. |
-| does not (closed, or already a take) | **moves goods** — there is no grant left to partition | a `Parent` take: no budgets, and the cap is what the parent can supply — see below. |
+| still **grants** (`LoadoutWindow::grants()` — open, and a `Grant`) | **recomputes the grant, and moves NOTHING physical** | a `Grant` of its own struck at `carry_capacity(asked)` — exactly the take arm's carry. The goods are minted from it; the food that fills the rest moves off the parent's larder. The parent's grant is **recomputed, not partitioned**: its own live carry less its own (fixed) larder, re-fitted by `rebalance_partitioned_grant` when its outfit no longer fits. The two carries add up to the parent's carry before the split by construction (both are linear in workers), which is the invariant the old ratio partition guarded (`split_loadout::a_turn_one_splits_two_carries_add_up_to_the_parents_before_it`). |
+| does not (closed, or already a take) | **moves goods** — there is no grant left to partition | a `Parent` take whose `carry_budget` is the **whole carry**, `carry_capacity(asked)`. It is also capped by what the parent can supply (see below). |
 
-Both caps are the numbers the split has just resolved (`asked`, `share`), not literals.
+**Goods load first on both arms, and food fills the room left.** The window records the splinter's
+`SplitDowry` — its full proportional larder share `F` and what has crossed — and after every accepted
+order `resolve_split_food` sets the food to `min(F, C − goods load)`, moving only the delta (both
+directions) and booking it as `DowryOut`/`DowryIn`. The **default** is `split_default_outfit`:
+the splinter's proportional share of the source's kits (over whole hands), then its food, then
+materials in the room left — the rule and its reasons are in `band-carry.md`. Re-sending the
+published allocation is still an exact no-op, food included. Why goods first: `band-carry.md`. Every cap is a number the split has just
+resolved (`asked`, `share`), not a literal.
 
 > #### ⛔ A GRANT SPLIT PAYS **ONCE** — IT PARTITIONS OR IT MOVES, NEVER BOTH
 >
@@ -97,7 +123,7 @@ Both caps are the numbers the split has just resolved (`asked`, `share`), not li
 `fission::rebalance_partitioned_grant` closes the loop, and it runs **only when the parent no longer
 fits its reduced budget**:
 
-1. the parent's standing allocation is re-fitted by `clamp_allocation`'s proportional-floored rule —
+1. the parent's standing allocation is re-fitted by `fit_to_carry`'s proportional-floored rule —
    the same rule the profile's default outfit is fitted by;
 2. the parent is **re-materialized from the clamped allocation** through `apply_starting_loadout`, the
    path a player's own commit takes, so its ledger, its store and its meter state one thing and the
@@ -138,17 +164,17 @@ re-sending it unchanged is an exact no-op. `items` and `kits` are two readings o
 approximately right.
 
 **A splinter of a still-granting parent gets its rows from the APPLY that outfits it**: nothing was
-moved, so it **mints the campaign default** against its own slice of the grant, and the window's rows
+moved, so it **mints its split default** (`split_default_outfit`) against its own carry, and the window's rows
 are what that apply set. See the callout below, which is the rule for every band and not only a
 splinter.
 
 > ### ⛔ A DEFAULT IS APPLIED, NEVER SUGGESTED
 >
 > **A band holds its default outfit from the moment it is created, whether or not anybody ever opens
-> its card.** `starting_loadout::outfit_band_with_defaults` is the one seam, reached from two places:
-> `outfit_opening_bands` (a Startup system chained after `stamp_starting_loadout`, the first moment
-> the budgets exist) and `split_band_from_parent`, on the grant arm, as soon as the splinter's window
-> exists.
+> its card.** Two seams, one per kind of band: the **opening band** gets the profile's defaults through
+> `starting_loadout::outfit_band_with_defaults` (from `outfit_opening_bands`, a Startup system chained
+> after `stamp_starting_loadout`), and a **splinter** gets `split_default_outfit` — through
+> `fission::outfit_grant_splinter` on the grant arm, and as the moved default take on the take arm.
 >
 > **The defect this closes is a loss, not a blank screen.** A player composed an outfit for a
 > splinter, never pressed *Set out*, ended the turn — and the band walked away with nothing. The
@@ -164,17 +190,19 @@ splinter.
 > the window's accepted rows say so **because an apply sets them** — the card and the band agree by
 > construction, and a later revision replaces something real.
 >
-> **The budgets are the BAND's.** `clamped_kit_defaults` fits the kit half to that band's own
-> `kit_budget` and `clamp_allocation` fits the material half to its `material_budget` — the same
-> proportional, floored, remainder-unspent rule for both. The material half needs the clamp even
-> though `material_defaults` is config-validated against `material_points`: that validation is
-> against the *campaign's* budget, and a splinter's is a slice of it.
+> **The budget is the BAND's.** `fit_to_carry` fits the kit and material defaults **together** to
+> that band's own `carry_budget`: when their load exceeds it, **materials are cut before tools** —
+> if the kits alone fit, every kit row is kept and the materials scale into what is left; otherwise
+> the materials go to 0 and the kits scale. Proportional, floored, remainder unspent at each stage.
+> Tools feed a band; materials can be gathered again. The defaults are not
+> validated at load against any campaign number (there is none); they are clamped at runtime, and
+> `stamp_starting_loadout` warns when the opening band's clamp binds.
 >
-> **Only a grant window is outfitted.** A take window mints nothing — both its budgets are `0` — and
-> it already opens on the default take that physically crossed.
+> **Only a grant window is outfitted.** A take window mints nothing, and it already opens on the
+> default take that physically crossed.
 >
 > ⛔ **MINTED, NEVER MOVED.** A grant split still takes nothing off the parent: the splinter's outfit
-> comes out of its own slice of the grant, so filling the card cannot resurrect the double charge
+> is minted against its own carry, so filling the card cannot resurrect the double charge
 > (`split_band_from_parent`'s `default_kits` / `default_materials` stay empty on that arm and are the
 > only lists `expand_kits` walks).
 >
@@ -263,7 +291,7 @@ nothing between the two can fail.
 both `big_game` and `trapping`**. It is why `default_take_kits` needs its second clamp too: a kit's
 share cannot be resolved independently, so where two kits' combined demand for an item exceeds that
 item's share both are scaled by `budget ÷ demand` and floored — proportional, remainder unspent, on
-`clamped_kit_defaults`' stated reasoning about arbitrary first-come winners. So the thing that has to fit is the **expanded item list**, whole:
+`fit_to_carry`'s stated reasoning about arbitrary first-come winners. So the thing that has to fit is the **expanded item list**, whole:
 `expand_kits` sums the order into `item → units` and every cap is checked against that. A client
 drawing a take's cap must expand the same way, or it will draw a cap the server does not refuse on.
 
@@ -281,7 +309,8 @@ would spend the player's points on something they did not choose. `LoadoutReject
 | `WindowClosed` | the named band has no open window. **A band with no entry reads as closed**, which is what a turn-two band without a splinter's window is |
 | `UnknownKit` / `KitBuysNothing` | a kit the roster does not carry, or one that carries nothing — the roster's `none`, refused by its **empty `uses`** rather than by its id, so the rule stays true of any future empty entry |
 | `UnpickableMaterial` | **grant windows only** — see below |
-| `OverKitBudget` / `OverMaterialBudget` | grant windows only, checked on the **sum**, not per line |
+| `PartyCarries` | grant windows only: the order's expanded count of an item is below what the band's detached parties are carrying of it. A grant apply rebuilds from empty and mints `allocation − party_held_items`, so an order below the parties' holding would let their gear land on top of a re-spent outfit when they fold back |
+| `OverCarry` | both arms: the whole order's **load** exceeds the window's `carry_budget`. On a take it is checked after `ParentCannotSupply` and `OnwardTakeStranded`, so those are reported first |
 | `DuplicateAllocation` | a repeated kit or material line |
 | `NoStartingBand` | no band of that id in that faction (or its parent has vanished) |
 | `ParentCannotSupply` | take windows only: a line the parent cannot cover, naming the id and the shortfall |
@@ -323,35 +352,32 @@ both.
 
 `share` is a fixed-point quotient: a third stores as `0.333333`, and `0.333333 × 3` floors to **0**.
 `fission::whole_share` computes `floor(held × asked ÷ workers)` instead, and its sibling
-`whole_share_of` does the same for a `held` the parent stores in fixed point — a material total, or a
-grant's material points. **Every whole-unit quantity a split derives goes through one of the two**:
-the item manifest, the default take's materials, and the splinter's slice of the parent's grant.
-Continuous quantities — the larder, the material batches — multiply by the share as before, because
-nothing there is quantised.
+`whole_share_of` does the same for a `held` the parent stores in fixed point — a material total.
+**Every whole-unit quantity a split derives goes through one of the two**: the item manifest and the
+default take's materials. Continuous quantities — the larder, the material batches — multiply by the share as before.
 
 The division is done in **exact integers**, never through `f32`, and both operands being fixed point
 at the same scale is what makes that free: the scale cancels, so `held.raw() × asked ÷ workers.raw()`
 *is* the floored quotient. An `f32` hop fails in both directions — a non-dyadic count rounds up
 (a tenth of 101 at 10.1 workers answered 9, and the `min(held)` clamp cannot see a quotient that is
-too *small*), and multiplying the rounded share rounds down (15 hands splitting 5 against 30 points
-gives `30 × 0.333333 = 9.99999`, floor 9, where a third of thirty is exactly 10). The second is
-reachable on shipped config, so `split_loadout::a_grant_split_divides_the_material_points_on_the_ratio`
-pins those numbers rather than deriving them from the `earthlike` fixture, whose own worker count
-never lands on a non-terminating share.
+too *small*), and multiplying the rounded share rounds down (`30 × 0.333333 = 9.99999`, floor 9,
+where a third of thirty is exactly 10).
 
 ## The default is fitted to WHICHEVER budget it is drawn against
 
-`clamped_kit_defaults` keeps its rule unchanged: proportional, floored, remainder unspent. What moved
-is which budget it is fitted to, and there are two readers of it:
+`fit_to_carry` is the one fitting rule: **materials are cut before tools**, each stage proportional,
+floored, remainder unspent, on one load. The long-move shed uses the same staging after its food
+(`band-carry.md`). There are three readers of it:
 
 | reader | the budget it fits to | what it does with the answer |
 |---|---|---|
-| `outfit_band_with_defaults` | **that band's own** `kit_budget` / `material_budget` | **applies** it — the opening band at Startup, a grant splinter at its split |
+| `outfit_band_with_defaults` | **that band's own** goods allowance | **applies** it — the opening band at Startup (a splinter's default is `split_default_outfit`, not this) |
+| `fission::rebalance_partitioned_grant` | the parent's reduced `carry_budget` | re-materializes the parent from it |
 | `stamp_starting_loadout` | the opening band's | warns once per world when the config over-allocates, which is the only moment that fault is observable |
 
 **A TAKE splinter is not outfitted from the defaults.** What it opens on is the **default take**, the
-kit allocation the split just moved, which is a statement about what the band already holds — and its
-two budgets are `0`, so the defaults would clamp to nothing anyway.
+kit allocation the split just moved — already fitted to the goods allowance — which is a statement
+about what the band already holds.
 
 **The kit default is NOT published campaign-wide.** What a band holds comes from the apply, and the
 applied, clamped rows arrive on that band's `loadoutWindow.kits` — pinned by
@@ -364,8 +390,13 @@ seeds from it.
 
 The window is **per band**, so it rides the cohort beside the two things a picker draws with it:
 
-- **`PopulationCohortState.loadoutWindow`** (`BandLoadoutWindowState`) — `open`, `kitBudget`,
-  `materialBudget`, the accepted `kits` / `materials` rows, `parentBandId` (`0` = a grant), and a
+- **`PopulationCohortState.loadoutWindow`** (`BandLoadoutWindowState`) — `open`, `carryCapacity`
+  (the band's WHOLE carry, goods and food, on every window — the same number as the cohort's
+  `carryCapacity`), `foodShare` / `foodCarried` and `foodFixed`: on a fixed-larder window (the
+  opening band, a parent whose grant is open) both food fields are the larder's mass and the goods
+  allowance is `carryCapacity − foodCarried`; on a splinter they are its full share F and what has
+  crossed, and the goods allowance is the whole `carryCapacity`. `OverCarry`'s capacity is that goods
+  allowance. Then the accepted `kits` / `materials` rows, `parentBandId` (`0` = a grant), and a
   take's caps as `parentItemSupply` / `parentMaterialSupply` (`id → units`, each already **holdings +
   this take's standing units**, so a client draws the cap the server refuses on). Absent, or `open ==
   false`, means there is nothing to outfit.
@@ -375,8 +406,10 @@ The window is **per band**, so it rides the cohort beside the two things a picke
   blank against a live budget. `parentItemSupply` lists only items some kit carries, so a bench tool
   never appears as a claimable cap.
 - **`CampaignSection.openingLoadout`** keeps only the campaign-wide facts: `pickableMaterials`,
-  `materialDefaults`, `craftableRecipeIds`. Whether a window is open, its budgets and its kit rows
-  are all per-band, on `loadoutWindow`.
+  `materialDefaults`, `craftableRecipeIds`, and the two weights a client prices an order with,
+  `itemCarryWeight` / `materialCarryWeight` — so it computes an order's load exactly the way
+  `OverCarry` refuses on. Whether a window is open, its carry and its kit rows are all per-band, on
+  `loadoutWindow`.
 
 **`loadoutWindow.open` is NOT the client's success signal** — it reads `true` after a refusal and after
 a success alike, because a commit never closes a window. A success is read off the band's own
@@ -394,13 +427,13 @@ allocator never issues it). An accepted loadout pushes **no** line: the republis
 confirmation. Pinned by `bin/server.rs`'s
 `a_refused_starting_loadout_publishes_one_event_naming_its_band`, read off the encoded delta.
 
-**`SAVE_FORMAT_VERSION` went to 5** with the map (`save.rs`); a `SimState` shape change has no
-migration path by design.
+A `SimState` shape change has no migration path by design: `SAVE_FORMAT_VERSION` moves instead
+(`save.rs`).
 
 ## Config files
 
 | File | Key | Purpose |
 |---|---|---|
-| `src/data/start_profiles.json` | `opening_loadout.material_points` (**30**) | The **grant's** material budget, one point per unit. There is deliberately no kit dial: the kit budget is the band's own working-age head count, and a dial would be a second statement of how many people the band has |
-| | `opening_loadout.pickable_materials` | The grant's pick list, in the order it is drawn. Binds a grant window only |
-| | `opening_loadout.material_defaults` / `kit_defaults` | The spawned band's pre-fills — suggestions, never grants |
+| `src/data/start_profiles.json` | `opening_loadout.pickable_materials` | The grant's pick list, in the order it is drawn. Binds a grant window only |
+| | `opening_loadout.material_defaults` / `kit_defaults` | The **opening band's** default outfit, applied after the world-build meal so it fits the allowance the card shows. Shipped: kits `big_game 5 / trapping 5 / gathering 7` (one per hand on the 30-person band, so an untouched proportional split hands a kit per splinter worker) and `bone 2 / fibre 12 / hide 6` — load 47 against ≈ 47.2, fitting whole. A splinter's default is `split_default_outfit`, not these |
+| `src/data/expedition_config.json` | `carry.per_worker_carry` and the carry weights | The grant's size and every order's load — see `band-carry.md` → Config files. There is deliberately no loadout-specific dial: the budget is the band's own workers × one pack |

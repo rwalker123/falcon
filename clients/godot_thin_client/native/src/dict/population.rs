@@ -182,7 +182,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // footprint grows plus the hay its keeper carries in, and what those two leave uncovered makes it
     // UNDERFED (`pen_fed_fraction` < 1) instead of billing the people. The identity is now
     //     larder_delta == food_income − food_consumption − raid_forfeit − food_spoiled
-    //                     + transfer_received − transfer_sent
+    //                     − food_left_behind + transfer_received − transfer_sent
     // (pinned sim-side by `integration_tests/tests/pen_food_ledger.rs`).
     // The band's FODDER store (Flora roster F3): hay this band has stockpiled to feed its pens, a second
     // larder distinct from the food larder above. Copied verbatim from `cohort.fodderStore()` — the
@@ -264,12 +264,13 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     //                  answers and the client never re-derives. 0 when no raid landed → the ledger
     //                  omits the row.
     //                  Full net is larder_delta == food_income − food_consumption − raid_forfeit
-    //                  − food_spoiled (+ the transfer pair below).
+    //                  − food_spoiled − food_left_behind (+ the transfer pair below).
     let _ = dict.insert("raid_forfeit", cohort.raidForfeit() as f64);
     //   transfer_received / transfer_sent — FOOD THAT CROSSED BETWEEN BANDS (arc #527), the last two
     //                  terms of the ledger identity
     //                    larder_delta == food_income − food_consumption − raid_forfeit
-    //                                    − food_spoiled + transfer_received − transfer_sent
+    //                                    − food_spoiled − food_left_behind
+    //                                    + transfer_received − transfer_sent
     //                  Food moving from one larder to another passes through NEITHER income (what
     //                  THIS band's workers produced) nor consumption (what its people ate) — the
     //                  same hole raid_forfeit was minted for. TWO NAMED
@@ -1185,9 +1186,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // serve that screen. The sim's own expression, held verbatim client-side:
     //
     //   mass = Σ food rows
-    //          + expedition_trade_fodder_carry_weight × Σ fodder rows
-    //          + expedition_trade_material_carry_weight × Σ material row amounts
-    //   cap  = party_workers × expedition_trade_per_worker_carry
+    //          + carry_fodder_weight × Σ fodder rows
+    //          + carry_material_weight × Σ material row amounts
+    //   cap  = party_workers × carry_per_worker
     //
     // The hay term joined when shipments learned to carry fodder (issue #590); a client that omits
     // it UNDER-PRICES every manifest with a bale in it and the player finds out on submit, which is
@@ -1198,23 +1199,17 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // arrived at a different way. Once a shipment is on the map its own pack is
     // `expedition_carry_cap` above, which resolves per MISSION.
     //
-    // **AND THE TRADE ONE IS NOT A LEVER AT ALL** (issue #626): `expedition_trade_per_worker_carry`
+    // **AND THE TRADE ONE IS NOT A LEVER AT ALL** (issue #626): `carry_per_worker`
     // is the sim's RESOLVED answer to *"what does one worker on this shipment carry"*, so the client's
     // whole share of the rule is multiplying it by the party — a cart, a wagon or a road grade moves
     // the published number and no decode or readout here changes. The two cargo weights beside it
     // stay verbatim lever echoes, being properties of the GOODS rather than of the carrier.
+    let _ = dict.insert("carry_per_worker", f64::from(cohort.carryPerWorker()));
     let _ = dict.insert(
-        "expedition_trade_per_worker_carry",
-        f64::from(cohort.expeditionTradePerWorkerCarry()),
+        "carry_material_weight",
+        f64::from(cohort.carryMaterialWeight()),
     );
-    let _ = dict.insert(
-        "expedition_trade_material_carry_weight",
-        f64::from(cohort.expeditionTradeMaterialCarryWeight()),
-    );
-    let _ = dict.insert(
-        "expedition_trade_fodder_carry_weight",
-        f64::from(cohort.expeditionTradeFodderCarryWeight()),
-    );
+    let _ = dict.insert("carry_fodder_weight", f64::from(cohort.carryFodderWeight()));
     // Global hunt lever echoed onto EVERY cohort — one hunter's throughput, a DISPLAY lever used
     // ONLY by the RESIDENT-BAND local-hunt preview, which genuinely IS arithmetic:
     //     min(workers × hunt_per_worker_provisions, band_ceiling) × output_multiplier
@@ -1687,7 +1682,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // `raid_forfeit` is — the sim's answer, never re-derived. 0 on a turn nothing rotted → the Food
     // breakdown omits the row. The full identity is now
     //     larder_delta == food_income − food_consumption − raid_forfeit − food_spoiled
-    //                     + transfer_received − transfer_sent
+    //                     − food_left_behind + transfer_received − transfer_sent
     let _ = dict.insert("food_spoiled", cohort.foodSpoiled() as f64);
     // THE BAND'S STOOD-DOWN PARTIES STILL WALKING HOME (#706). A far posting that ends hands nothing
     // over at once: the hands walk home, carrying the load. These outlive the row, so they are the
@@ -1713,11 +1708,40 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "homeward_all_home_in",
         i64::from(cohort.homewardAllHomeIn()),
     );
+    // WHAT THIS BAND CAN CARRY (#732), in food-unit load:
+    //   carry_capacity  — whole working-age hands × `expedition_config.carry.per_worker_carry` (7.0).
+    //   carry_load      — everything the band holds right now: food + weighted hay + items + materials.
+    //   move_ferry_reach_tiles — how far a move may go and keep everything; a move FARTHER sheds the
+    //                     band down to `carry_capacity` and what is left behind is lost.
+    //   long_move_leaves_food / _items / _materials — the sim's own forecast of that shedding, by
+    //                     the same function the move runs. The client NEVER mirrors the rule; all 0
+    //                     when the band fits (and on a detached party).
+    //   food_left_behind — food a long move left behind since the last turn frame: a loss term of the
+    //                     larder identity, read exactly as `food_spoiled` is.
+    let _ = dict.insert("carry_capacity", f64::from(cohort.carryCapacity()));
+    let _ = dict.insert("carry_load", f64::from(cohort.carryLoad()));
+    let _ = dict.insert(
+        "move_ferry_reach_tiles",
+        i64::from(cohort.moveFerryReachTiles()),
+    );
+    let _ = dict.insert(
+        "long_move_leaves_food",
+        f64::from(cohort.longMoveLeavesFood()),
+    );
+    let _ = dict.insert(
+        "long_move_leaves_items",
+        i64::from(cohort.longMoveLeavesItems()),
+    );
+    let _ = dict.insert(
+        "long_move_leaves_materials",
+        f64::from(cohort.longMoveLeavesMaterials()),
+    );
+    let _ = dict.insert("food_left_behind", f64::from(cohort.foodLeftBehind()));
 
     // **THIS BAND'S OUTFITTING WINDOW**, and it is a fact about ONE band rather than about the world
-    // — which is the whole shape of the per-band loadout arc. `open`, `kitBudget` and
-    // `materialBudget` were deleted from `CampaignSection.openingLoadout` and live here; what stayed
-    // on the campaign section is the profile's pick list and pre-fills, one per world.
+    // — which is the whole shape of the per-band loadout arc. `open` and `carryCapacity` live here;
+    // what stayed on the campaign section is the profile's pick list, its pre-fills and the two
+    // carry weights, one per world.
     //
     // **Inserted only when the table rode the frame**, unlike the campaign half's own fields: an
     // absent window and a shut one mean the same thing to the picker (*this band has nothing to
@@ -1736,10 +1760,16 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
 /// **ONE BAND'S OUTFITTING WINDOW** (`PopulationCohortState.loadoutWindow`) — what the picker draws
 /// itself with, and what says which of the two windows this is.
 ///
-/// ⛔ **`parentBandId` DECIDES EVERYTHING DOWNSTREAM.** `0` is a GRANT window: the picks MINT, and
-/// `kit_budget` / `material_budget` are what caps them. Non-zero is a TAKE on that band: the picks
-/// MOVE gear out of that band's ledger, both budgets are `0` and mean nothing, and the cap is
-/// `parent_item_supply` / `parent_material_supply`.
+/// ⛔ **`parentBandId` DECIDES WHERE THE GEAR COMES FROM.** `0` is a GRANT window: the picks MINT.
+/// Non-zero is a TAKE on that band: the picks MOVE gear out of that band's ledger, and each row is
+/// also capped by `parent_item_supply` / `parent_material_supply`.
+///
+/// **ONE CARRY RULE ON BOTH ARMS** (#732): an order's load — `item_carry_weight` × expanded item
+/// units + `material_carry_weight` × material units (the weights ride `opening_loadout`) — must fit
+/// the GOODS ALLOWANCE. `carry_capacity` is the band's WHOLE carry (goods + food) on every window.
+/// Where `food_fixed` the larder counts against it and does not yield, so the allowance is
+/// `carry_capacity − food_carried`; on a splinter goods load first and food fills the room they
+/// leave (`min(food_share, carry_capacity − goods load)`), so the allowance is `carry_capacity`.
 ///
 /// ⛔ **A TAKE'S KIT CAP CANNOT BE DRAWN PER KIT ROW.** The roster maps kits to items almost
 /// one-to-one, but `sled` is used by both `big_game` and `trapping` — so what the sim validates is
@@ -1751,8 +1781,18 @@ fn loadout_window_to_dict(window: fb::BandLoadoutWindowState<'_>) -> VarDictiona
     // False once this band's window has shut. It shuts on the TURN ADVANCE and on nothing else —
     // committing a loadout leaves it open, which is what lets a pick be revised.
     let _ = dict.insert("open", window.open());
-    let _ = dict.insert("kit_budget", window.kitBudget() as i64);
-    let _ = dict.insert("material_budget", window.materialBudget() as i64);
+    // The band's WHOLE carry (goods + food), in food-unit load — the bar's whole width, and the
+    // same number as the cohort's own `carry_capacity`.
+    let _ = dict.insert("carry_capacity", f64::from(window.carryCapacity()));
+    // THE BAND'S FOOD, in load. On a splinter (`food_fixed` false) `food_share` is the most it may
+    // take and `food_carried` what it holds now — the truth, where a client's
+    // `min(food_share, carry_capacity − goods load)` is only an optimistic preview. On a FIXED larder
+    // (the opening band, a parent whose grant is still open) both are the larder's mass, and it
+    // counts against the carry without yielding: the goods allowance is `carry_capacity −
+    // food_carried`.
+    let _ = dict.insert("food_share", f64::from(window.foodShare()));
+    let _ = dict.insert("food_carried", f64::from(window.foodCarried()));
+    let _ = dict.insert("food_fixed", window.foodFixed());
     // THE ACCEPTED ALLOCATION — the rows this band's last accepted order named, and **what a card
     // opens on**. Empty only for a grant window nobody has ordered against yet.
     //
@@ -1780,7 +1820,7 @@ fn loadout_window_to_dict(window: fb::BandLoadoutWindowState<'_>) -> VarDictiona
 
 /// A take's cap rows — `id -> units`, an `equipment.json` item id on the item supply and a
 /// `materials.json` material id on the material one. Empty for a grant window, which mints and is
-/// capped by its budgets instead.
+/// capped by its `carry_capacity` alone.
 fn loadout_supply_to_array(
     rows: Option<Vector<'_, ForwardsUOffset<fb::BandLoadoutSupplyRow<'_>>>>,
 ) -> VarArray {

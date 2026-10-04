@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 119
+const EXPECTED_CHECKPOINTS := 126
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -367,12 +367,15 @@ func _band_alert_fixture() -> Array:
 ##     "⚔ Lost to raids −1.20" food-ledger row and a net dragged negative the turn the raid landed.
 ##   • `food_spoiled` 0.45 (`PopulationCohortState.foodSpoiled`, food that rotted THIS turn, #706) → the
 ##     "Spoiled −0.45" row right under the raid row — the ledger's other loss term, lit beside it.
+##   • `food_left_behind` 0.80 (`PopulationCohortState.foodLeftBehind`, food a long move dropped, #732)
+##     → the "Left behind −0.80" row, the identity's newest loss term, lit beside the other two.
 ## Reuses entity 904, so `BAND_DISCLOSURE_FOOD` opens its ledger popover.
 func _raided_band_fixture() -> Dictionary:
 	var band := BandFx.band_fixture()
 	band["raid_radius"] = 3
 	band["raid_forfeit"] = 1.20
 	band["food_spoiled"] = 0.45
+	band["food_left_behind"] = 0.80
 	return band
 
 ## The VISIBLE predator the raided band can see: one tile off its [71,18] (hex distance 1, well inside
@@ -509,7 +512,7 @@ func run(harness) -> void:
 	# reappears — or a headline that stops equalling the rows beneath it — is invisible in a PNG, and
 	# this is the fixture with a pen on it, so it is the one where a resurrected `🐄 Pen feed (animals)`
 	# row would show. Both halves are claimed: the ARITHMETIC identity
-	# `net == income − consumption − raid_forfeit − food_spoiled`, evaluated against the fixture's own numbers rather
+	# `net == income − consumption − raid_forfeit − food_spoiled − food_left_behind`, evaluated against the fixture's own numbers rather
 	# than against a re-run of the code under test, and the ABSENCE of any animal-feed row from the
 	# breakdown the popover above just drew.
 	var pen_band := _pen_keeper_band_fixture()
@@ -770,6 +773,17 @@ func run(harness) -> void:
 		spoiled_row_found and absf(DetailFormat.band_net_food(unspoiled_band)
 			- DetailFormat.band_net_food(raided_band)
 			- DetailFormat.band_food_spoiled(raided_band)) < LEDGER_EPSILON)
+	# …and the LEFT-BEHIND term (#732) the same way: its own row, and the net carries exactly it.
+	var left_behind_row_found := false
+	for line in raided_breakdown:
+		if String(line).contains(DetailFormat.FOOD_LABEL_LEFT_BEHIND):
+			left_behind_row_found = true
+	var kept_band := raided_band.duplicate()
+	kept_band["food_left_behind"] = 0.0
+	h._assert_hud("a band that left food behind on a long move itemizes it, and its net carries the loss",
+		left_behind_row_found and absf(DetailFormat.band_net_food(kept_band)
+			- DetailFormat.band_net_food(raided_band)
+			- DetailFormat.band_food_left_behind(raided_band)) < LEDGER_EPSILON)
 	h._set_world_herds(HerdFx.world_herds_fixture())   # restore the shared world-herd list
 
 	# **HAND THE REFERENCE BAND BACK, exactly as the retired FILL-TARGET block did on its way out.**
@@ -799,6 +813,10 @@ func run(harness) -> void:
 	# **APPENDED, never inserted**, for the reason the block above states: states render into one
 	# long-lived `HudLayer`, so a block moved is a set of frames changed.
 	await _expedition_kit_states()
+
+	# ---- WHAT THE BAND CARRIES (#732) --------------------------------------------------------------
+	# **APPENDED**, for the reason the blocks above state.
+	await _carry_states()
 
 	# band_alerts (above) left _player_band as an alert-fixture band (no work_range, far from the food
 	# tile); seed a NEAR band so the forage controls resolve an in-range actor.
@@ -1022,6 +1040,60 @@ const BILL_INCOME_NONE := 0.0
 ## Its disclosure key — `DetailFormat.breakdown_key(kind, band)`'s shape over the bill band's own
 ## entity, so the caret cannot collide with the reference band's Food / Morale / Growth popovers.
 const BAND_DISCLOSURE_UPKEEP := "upkeep:908"
+
+## ---- WHAT THE BAND CARRIES (#732) — the `Carry:` row, as a PAIR on one band with only the load moving:
+## under its capacity the row registers no hover; over it the block's hover states the move rule. BOTH
+## are plain ink: a band that is not moving is never warned that it is over its carry (the maintainer's
+## rule). Either half alone passes on a row that never or always registers the hover.
+const CARRY_CAPACITY := 96.0
+const CARRY_LOAD_UNDER := 61.4
+const CARRY_LOAD_OVER := 154.0
+const CARRY_REACH := 2
+## The row's VALUE and the hover, spelled as LITERALS — a needle composed through the format under
+## test can only agree with itself. The value is asserted beside the row's KEY rather than as one
+## `Carry: …` string, because `detail_bbcode` splits a row into a key cell and a value cell.
+const CARRY_VALUE_UNDER := "61 / 96"
+const CARRY_VALUE_OVER := "154 / 96"
+const CARRY_HOVER := "A move farther than 2 tiles leaves behind what the band can't carry."
+
+func _carry_band_fixture(carried: float) -> Dictionary:
+	var band := BandFx.band_fixture()
+	band["carry_capacity"] = CARRY_CAPACITY
+	band["carry_load"] = carried
+	band["move_ferry_reach_tiles"] = CARRY_REACH
+	return band
+
+func _carry_states() -> void:
+	var light := _carry_band_fixture(CARRY_LOAD_UNDER)
+	h._hud._band_labor._player_band = light
+	h._hud.show_unit_selection(light)
+	await h._settle()
+	var light_vitals := String(h._hud.occupant_detail.get_parsed_text())
+	h._assert_hud("a band under its carry states `%s %s`, and registers no hover"
+			% [HudDisclosureVocab.DETAIL_ROW_CARRY, CARRY_VALUE_UNDER],
+		light_vitals.contains(HudDisclosureVocab.DETAIL_ROW_CARRY)
+			and light_vitals.contains(CARRY_VALUE_UNDER)
+			and not String(h._hud.occupant_detail.tooltip_text).contains(CARRY_HOVER))
+	h._assert_hud("…in plain ink, not the warning one",
+		not String(h._hud.occupant_detail.text).contains(
+			"[color=#%s]%s" % [HudStyle.WARN_HEX, CARRY_VALUE_UNDER]))
+	var heavy := _carry_band_fixture(CARRY_LOAD_OVER)
+	h._hud._band_labor._player_band = heavy
+	h._hud.show_unit_selection(heavy)
+	await h._settle()
+	await h._save("band_carry_over")
+	var heavy_vitals := String(h._hud.occupant_detail.get_parsed_text())
+	h._assert_hud("a band OVER its carry states `%s %s`"
+			% [HudDisclosureVocab.DETAIL_ROW_CARRY, CARRY_VALUE_OVER],
+		heavy_vitals.contains(HudDisclosureVocab.DETAIL_ROW_CARRY)
+			and heavy_vitals.contains(CARRY_VALUE_OVER))
+	# ⛔ **AND OVER ITS CARRY IS STILL NOT A WARNING.** It was amber; the band is not moving, and the
+	# long-move targeting warning is the one place over-carry is stated.
+	h._assert_hud("…and its value is NOT drawn in the warning ink",
+		not String(h._hud.occupant_detail.text).contains("[color=#%s]%s" % [HudStyle.WARN_HEX,
+			CARRY_VALUE_OVER]))
+	h._assert_hud("…and the block's hover states the move rule (\"%s\")" % CARRY_HOVER,
+		String(h._hud.occupant_detail.tooltip_text).contains(CARRY_HOVER))
 
 ## A band that HOLDS something which eats a good. Its own entity, for the disclosure key's sake.
 func _standing_bill_band_fixture() -> Dictionary:

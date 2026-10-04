@@ -97,7 +97,7 @@ the final one.
 **There is no work-range rule on this branch, and the reason is not complexity.** Ray: *"already
 forage and hunting have different work ranges, expeditions are even farther. I don't think it makes
 sense to restrict it."* A fourth arbitrary radius would say nothing. What bounds a distant road is
-that it is **dearer to hold and slower to build** — the argument `TradeExpeditionConfig` already makes
+that it is **dearer to hold and slower to build** — the argument the trade-shipment config made
 about friction, *"what a long haul costs is already paid, and paid in the right currency."*
 
 **A THRESHOLD, NOT A CURVE.** Within `routes::road_keeping_range` a road costs what the rung says;

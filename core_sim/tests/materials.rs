@@ -652,13 +652,27 @@ fn a_spawned_band_owns_exactly_its_default_outfit() {
     // One update, so worldgen has run and its spawns are on the ground.
     app.update();
     let materials = app.world.resource::<MaterialsConfigHandle>().get();
-    let mut query = app
-        .world
-        .query::<(&PopulationCohort, &core_sim::BandEquipment, &ResidentBand)>();
-    let (cohort, equipment, _) = query
+    let mut query = app.world.query::<(
+        &PopulationCohort,
+        &core_sim::BandEquipment,
+        &core_sim::BandId,
+        &ResidentBand,
+    )>();
+    let (cohort, equipment, band_id, _) = query
         .iter(&app.world)
         .next()
         .expect("the campaign spawns at least one resident band");
+    // **The default as the band was outfitted with it** — fitted to the goods its carry leaves its
+    // fixed larder, materials cut before kits — which is what the window's accepted rows record.
+    let accepted: std::collections::BTreeMap<String, u32> = app
+        .world
+        .resource::<core_sim::StartingLoadout>()
+        .window(*band_id)
+        .expect("the band has a window")
+        .materials
+        .iter()
+        .map(|row| (row.material_id.clone(), row.units))
+        .collect();
     let defaults = app
         .world
         .resource::<core_sim::ActiveStartProfile>()
@@ -685,17 +699,22 @@ fn a_spawned_band_owns_exactly_its_default_outfit() {
         }
     }
     for (id, amount) in &held {
+        let fitted = accepted.get(*id).copied().unwrap_or_default() as f32;
         let declared = defaults.get(*id).copied().unwrap_or_default() as f32;
         assert_eq!(
-            *amount, declared,
-            "'{id}' is held at {amount} against a declared default of {declared} - `start_stock` \
+            *amount, fitted,
+            "'{id}' is held at {amount} against its fitted default of {fitted} - `start_stock` \
              is deleted, so the default outfit is the ONLY way material reaches a spawning band"
+        );
+        assert!(
+            fitted <= declared,
+            "and the fit never exceeds the declared default"
         );
     }
     assert_eq!(
         held.len(),
-        defaults.values().filter(|units| **units > 0).count(),
-        "and every defaulted material is held, so the check above is not vacuous: {held:?}"
+        accepted.values().filter(|units| **units > 0).count(),
+        "and every fitted material is held, so the check above is not vacuous: {held:?}"
     );
 }
 

@@ -247,7 +247,7 @@ reason }`): `posted` (`Board::post`, at the tick the specialists proposed); `pla
 (`Board::plan`, the orchestrator's grant for the band's open demands **in the order `open_for`
 gave them**, the record's `reason` naming the trim when the grant is under the ask); **`declined
 { reason }`** (a grant of zero — nothing was sent, so nothing can fulfil it — with the
-orchestrator's reason: `kit budget spent`, `material budget spent`, `not on the pick list`,
+orchestrator's reason: `carry spent`, `not on the pick list`,
 `parent cannot supply`, `not on the kit roster`, `the bare kit is never a line`, or `no crafter
 yet` for every craft; terminal, and the requester does not re-post within the frame — the window
 is one frame, and its next turn's rules read what the band holds); `fulfilled { granted }`
@@ -339,23 +339,23 @@ food; it sees farther and nothing eats it).
 grants: Vec<(Resource, Grant)> }`, a `Grant { granted, reason }` per demand — `whole`, `trimmed`
 with the reason, or `declined` with it): the kit demands ranked by `priority × the profile weight
 of the requester's domain` (`WEIGHT_TO_SPECIALIST` inverted: `food` → `food_security`, `land` →
-`land_claim`; ties by requester id), walked granting `min(asked, budget left)`; on a splinter's take
+`land_claim`; ties by requester id), walked granting `min(asked, what the carry left can hold)` —
+**one carry budget** (`loadoutWindow.carryCapacity`) for kits and materials alike, a kit weighing its
+items × `openingLoadout.itemCarryWeight` and a material unit `materialCarryWeight`, exactly as the
+sim's `OverCarry` weighs an order (`band-carry.md`); on a splinter's take
 (`parent_band_id != 0`) the cap is the parent's supply of **every item** the kit lists —
 `BandLoadoutSupplyRowState` is *"One cap row … how many units of `id` this take may claim"*,
 keyed per **item**, and the window's doc is explicit: *"A kit row cannot be capped on its own …
 what the sim validates is the expanded item list, whole"* — so a kit's cap is the minimum over
 its `item_ids` and each grant draws those items down (the sled both hunting kits carry is one
 supply). Two demands for one kit coalesce into one line; a `none` kit and a kit the roster does
-not name are never lines. Materials the same way against `material_budget` and the pick list;
-then, on a grant window, **the campaign pre-fill fills whatever material budget the demands
-left** (`ConstantStance::prefill_over`: `opening_loadout.material_defaults`, the sim's own
-suggestion, each row scaled by `min(1, points left / Σ defaults)` and floored — proportional,
-remainder unspent, `clamped_kit_defaults`' rule on the material side), coalesced with the
-demanded lines, so the eight Standard bench seeds' t1 line reads `bone 7, fibre 19, hide 3` (the
-hoe estimate's 6 + 12, then 12 of the 30 points at 3 : 17 : 8). A splinter's take carries no
-pre-fill. Before this a material demand displaced the pre-fill entirely, which left 12 of 30
-points unspent and no hide at all. Never a total above either budget: the sim refuses the whole
-order for any of these.
+not name are never lines. Materials the same way against the carry left and the pick list;
+then, on a grant window, **the campaign pre-fill fills whatever carry the demands left**
+(`ConstantStance::prefill_over`: `opening_loadout.material_defaults`, the sim's own suggestion,
+scaled to the material units the carry left can hold and floored — proportional, remainder unspent,
+`fit_to_carry`'s rule), coalesced with the demanded lines. A splinter's take carries no pre-fill.
+Before the pre-fill filled the remainder, a material demand displaced it entirely and left the
+budget unspent. Never a load above the carry: the sim refuses the whole order.
 
 **The composite emits** (`Composite::outfit_windows`): one `set_starting_loadout` per open window
 with something to send — a window with nothing gets no order, because an empty order on a
@@ -1684,20 +1684,15 @@ every resident band of its faction** together hold, for every kit, at least the 
 item the roster's kit lists that **the sim's own partition rule leaves the family**. On the
 harness world *split to feed* fires on the grant turn, and a split of a still-granting parent
 partitions the grant rather than moving goods (`starting-loadout.md` → "What a SPLIT gives the
-splinter"): the splinter's window gets `min(asked, the parent's remaining kit budget)` slots,
-the parent is re-fitted to what is left by `clamp_allocation`'s proportional-floored rule, and
-what that shed is fitted to the splinter's slots by the same rule — two floors per split: on
-the harness world one split of four against a budget of seventeen leaves the family 14 of the
-15 baskets and 1 of the 2 spears on the line (`gathering 15, big_game 2` → kept `11, 1`, shed
-`4, 1` fitted to four slots → `3, 0`). The test
-therefore replays the rule: it reads the parent's `loadout_window.kit_budget` off the world
-**before** the AI plays (a claim of seat 1, released — a closed window is absent from the
-frame), takes the grant-turn `food:split:<band>` decisions in the order the log sent them with
-their `split_band … <workers>`, pairs them with the children sorted by band id (ids are minted
-in order), applies `core_sim::starting_loadout::clamped_kit_defaults` — the public face of the
-one implementation — as `fission::rebalance_partitioned_grant` does, and lets a splinter's own
-`orchestrator:outfit:<child>` line stand in for its share where it sent one (an apply is a
-replacement). A later turn's split is a take, which moves goods inside the family and changes
+splinter"): the splinter's window gets its slice of the parent's carry, `asked ÷ working` of it,
+less the food it walked out with, and the parent is re-fitted to what is left by `fit_to_carry`'s
+proportional-floored rule. The test **replays the rule as a lower bound**: it reads the parent's
+`loadout_window.carryCapacity` and its working-age hands off the world **before** the AI plays (a
+claim of seat 1, released — a closed window is absent from the frame), takes the grant-turn
+`food:split:<band>` decisions in the order the log sent them with their `split_band … <workers>`,
+and asserts the family holds at least the line fitted to `budget × (working_age − Σ asked) ÷
+working_age` of carry. It is a bound rather than an exact replay because the sim divides by the
+fractional working pool and nets the splinter's food mass, neither of which the frame carries. A later turn's split is a take, which moves goods inside the family and changes
 nothing it holds. With no split the replay is the identity and the family — the parent alone —
 must hold the whole line exactly as granted.
 

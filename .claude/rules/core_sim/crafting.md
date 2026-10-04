@@ -354,9 +354,10 @@ every shipped start-stocked item has one, so that arm is unreachable today.
 `start_stocked`.** The latter is also the **fresh reference ledger** every kit-scoring and
 roster-quoting surface prices against (`kit_supplying`, `quarry_default_hunt_kit`, the published kit
 roster, a launch forecast), where a grade *label* answers no question being asked and the recipe book
-and materials table it would have to carry are two configs those passes do not read. The two owning
-call sites are the band spawn (`systems::worldgen::spawn_population_entity`, via the `StartKit`
-bundle) and the detached party's outfit (`server::outfitted_party_equipment`).
+and materials table it would have to carry are two configs those passes do not read. The owning call
+site is the band spawn (`systems::worldgen::spawn_population_entity`, via the `StartKit` bundle). A
+detached party is no longer stocked here: its kit is TAKEN from its home band (`server::issue_party_kit`,
+`.claude/rules/core_sim/band-carry.md`).
 
 Pinned as a *pairing* by
 `crafting_wire::a_start_stocked_batch_carries_the_grade_a_bare_handed_craft_of_it_comes_out_at`: the

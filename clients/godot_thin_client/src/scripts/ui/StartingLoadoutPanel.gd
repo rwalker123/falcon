@@ -7,20 +7,20 @@ class_name StartingLoadoutPanel
 ## source of a campaign's starting gear and material.
 ##
 ## **IT DRAWS ONE BAND'S WINDOW, AND THERE CAN BE SEVERAL.** Every band gets one — the spawned band's
-## GRANT, whose picks mint against two budgets, and a TAKE on the home band for every splinter a
-## split makes, whose picks move gear out of that band's ledger. `PAYLOAD_IS_TAKE` is which, and the
-## only differences on screen are what the two meters read against and what the subtitle says; the
-## band switcher across the header is how the player reaches the other card.
+## GRANT, whose picks mint, and a TAKE on the home band for every splinter a split makes, whose picks
+## move gear out of that band's ledger. `PAYLOAD_IS_TAKE` is which, and the only difference on screen
+## is what the subtitle says; the band switcher across the header is how the player reaches the other
+## card.
 ##
 ## **IT DRAWS WHAT THE BAND HOLDS, AND EVERY PRESS ORDERS.** The sim applies a band's default outfit
 ## when it makes the band, so the rows are gear the band has; a stepper press emits the whole
 ## allocation as the controller's own command on the spot. There is no draft here and no deferred
 ## commit — the footer control closes the card and sends nothing.
 ##
-## **IT IS A READOUT AND A WRITE SURFACE AT ONCE, AND THE READOUT IS THE POINT.** Two budgets sit
-## side by side because they buy different things out of one decision — hands carrying gear, and a
-## pile to build gear FROM — and the third column is the only place a player can see what the second
-## budget is actually worth. Its counts answer *"how many could I make if I spent the whole pile on
+## **IT IS A READOUT AND A WRITE SURFACE AT ONCE, AND THE READOUT IS THE POINT.** ONE carry meter
+## heads the card (#732): kits and resources come out of the same packs — gear in hands, and a pile to
+## build gear FROM — and the third column is the only place a player can see what the pile is
+## actually worth. Its counts answer *"how many could I make if I spent the whole pile on
 ## this one thing"*, never a simultaneous build plan — which the column's own head says by naming its
 ## subject, the `×N` beside each row being the rest of the explanation.
 ##
@@ -46,7 +46,7 @@ class_name StartingLoadoutPanel
 ## be a second thing to place, to fit and to tear down on a world rebuild.
 ##
 ## The words, the wire keys and the measured geometry live in `HudLoadoutVocab`; the ARITHMETIC (what
-## a pile builds, what a budget has left) lives in `StartingLoadoutController`, which is also the
+## a pile builds, what the carry has left) lives in `StartingLoadoutController`, which is also the
 ## only thing that holds the allocation. This panel renders a payload and emits intents.
 
 const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
@@ -60,7 +60,7 @@ signal reopened
 ## what a press means in the renderer.
 signal band_selected(band_id: int)
 ## A kit's stepper moved: the kit's id and the count it should now stand at. **The panel never
-## clamps** — the controller owns the budget and answers with a fresh payload.
+## clamps** — the controller owns the carry and answers with a fresh payload.
 signal kit_count_changed(kit_id: String, count: int)
 ## A material's stepper moved, in units.
 signal material_units_changed(material_id: String, units: int)
@@ -76,10 +76,9 @@ const PAYLOAD_SUBTITLE := "subtitle"
 ## switcher is drawn only for two or more**: naming the only band there is teaches nothing and costs
 ## a row.
 const PAYLOAD_BANDS := "bands"
-## ⛔ **WHICH WINDOW THIS IS.** `false` is the GRANT — two point budgets, picks that mint. `true` is a
-## TAKE on the home band: the meters read against what that band can supply, and what is left of it
-## is not forfeited on the turn advance but simply stays there, which is why the two meters carry
-## different words.
+## ⛔ **WHICH WINDOW THIS IS.** `false` is the GRANT — picks that mint. `true` is a TAKE on the home
+## band: the picks move gear out of that band's ledger, each row also capped by what it can supply.
+## Both read the same carry meter.
 const PAYLOAD_IS_TAKE := "is_take"
 ## `[{id, display_name, jobs, uses, count, can_add}]` — the kit roster in the config's own order,
 ## `none` already excluded, each row carrying the count it currently stands at.
@@ -88,21 +87,35 @@ const PAYLOAD_IS_TAKE := "is_take"
 ## `trapping`, so one row can be exhausted while the next is still free — the panel never re-derives
 ## it from the meter, which on a take is a sum over items no single row is bounded by.
 const PAYLOAD_KITS := "kits"
-## `[{id, label, color, units, can_add}]` — one row per material this window may pick, in the
-## published order, each already carrying its swatch so the legend and the recipe rows cannot resolve
-## a different one.
+## `[{id, label, color, units, load, carry_text, can_add}]` — one row per material this window may
+## pick, in the published order, each already carrying its swatch so the legend and the recipe rows
+## cannot resolve a different one. `load` is the row's share of the carry bar; `carry_text` is what one
+## more unit costs, `""` where that goes without saying.
 const PAYLOAD_MATERIALS := "materials"
 ## `[{id, display_name, work, count, inputs}]` — the craftable recipes, reachable first, where
 ## `inputs` is `[{material_id, amount, color}]`.
 const PAYLOAD_RECIPES := "recipes"
-## `{spent, budget}` for each meter.
-const PAYLOAD_KIT_BUDGET := "kit_budget"
-const PAYLOAD_MATERIAL_BUDGET := "material_budget"
+## ⛔ **THE ONE CARRY METER** (#732) — `{spent, total, kit_load}` in food-unit load: what the order
+## weighs, the window's `carry_capacity`, and the kits' share of `spent` (the bar's kit segment; each
+## material row carries its own `load`). It replaced the kit meter and the material meter.
+const PAYLOAD_CARRY := "carry"
 ## The line saying this band's last order was REFUSED, already composed — or `""`, which draws nothing.
 ## The controller owns when it shows and when it clears; the panel only puts it under the band's head.
 const PAYLOAD_REFUSAL := "refusal"
 const BUDGET_SPENT := "spent"
 const BUDGET_TOTAL := "total"
+const CARRY_KIT_LOAD := "kit_load"
+## The food's share of the carry, in load — its own segment of the bar.
+const CARRY_FOOD_LOAD := "food_load"
+## The free room, signed — `StartingLoadoutController._free_room`, the same figure the orb reads.
+const CARRY_FREE := "free"
+## ⛔ **THE SPLIT'S FOOD** — `{brought, share}` in load, or `{}` on a window that brings none. Drawn as
+## one plain line under the meter, plus one amber hint while `brought` is under `share`: two lines at
+## most, and the controller has already chosen between the wire's figure and the order's preview.
+const PAYLOAD_FOOD := "food"
+const FOOD_BROUGHT := "brought"
+const FOOD_SHARE := "share"
+const FOOD_FIXED := "fixed"
 
 ## How many open windows it takes before the band switcher earns its row. One window is the ordinary
 ## case and a tab naming the only band there is says nothing the title does not.
@@ -350,6 +363,18 @@ func _fit_expanded_height() -> void:
 	max_height = room.size.y
 	fit_to_content(_body.get_combined_minimum_size().y + _chrome_height(),
 		HudStyle.card_stylebox().get_minimum_size().y, _scroll)
+	# ⛔ **RE-SORT THE CARD, OR ITS COLUMN KEEPS A HEIGHT FROM A FRAME THAT NO LONGER EXISTS.** A render
+	# rebuilds every autowrapping label, and on the frame they are mounted they report their minimum
+	# height at a width of nothing — measured, the header asks 712px where it settles at 199 and the
+	# body 1083 where it settles at 556. If the card sorts on that frame it hands its column that
+	# inflated height (1857px in an 839px card). When the labels settle the column's minimum falls
+	# back, but the card is not re-sorted: its own size has not changed, so no resize reaches it, and a
+	# shrinking child minimum does not do it either. The column keeps 1857px, the scroll's expand flag
+	# takes the excess (1596px) and the footer is laid out past the card's bottom edge, for good. It
+	# happens when a render lands on the very frame the previous fit finished — the press-settle-press
+	# cadence of a player clicking a stepper. The height read here is the settled one, so this is the
+	# point to have the card lay its column out against it.
+	_card.queue_sort()
 	_place()
 
 # ---- header -----------------------------------------------------------------
@@ -381,10 +406,42 @@ func _build_header() -> void:
 		HudLoadoutVocab.PANEL_SUBTITLE)), HudStyle.INK_DIM,
 		HudLoadoutVocab.SUBTITLE_FONT_SIZE, true))
 	_build_band_tabs()
+	_header.add_child(_carry_meter(_payload.get(PAYLOAD_CARRY, {}),
+		_payload.get(PAYLOAD_MATERIALS, [])))
+	_build_food_lines(_payload.get(PAYLOAD_FOOD, {}))
 	_build_refusal_line()
 
+## The food's legend entry under the bar — its swatch and ONE quiet line. Nothing on a window carrying
+## no food. See `HudLoadoutVocab.FOOD_BROUGHT_FORMAT` for why nothing here is amber.
+func _build_food_lines(food: Dictionary) -> void:
+	if food.is_empty():
+		return
+	var brought := float(food.get(FOOD_BROUGHT, 0.0))
+	var share := float(food.get(FOOD_SHARE, 0.0))
+	var text := HudLoadoutVocab.FOOD_FIXED_FORMAT % HudLoadoutVocab.whole_amount(brought)
+	if not bool(food.get(FOOD_FIXED, false)):
+		# Whole numbers, and the clause follows the PRINTED pair: what is brought floors (it is short of
+		# the share by the room the goods took) and the share rounds, so the line never reads
+		# "26 of 26 · fewer tools leave room for more".
+		var brought_text := HudLoadoutVocab.whole_free(brought)
+		var share_text := HudLoadoutVocab.whole_amount(share)
+		if brought >= share - HudLoadoutVocab.CARRY_EPSILON:
+			brought_text = share_text
+		text = HudLoadoutVocab.FOOD_BROUGHT_FORMAT % [brought_text, share_text]
+		if brought_text != share_text:
+			text += HudLoadoutVocab.FOOD_ROOM_CLAUSE
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", HudLoadoutVocab.SWATCH_SEPARATION)
+	var swatch := _swatch(HudLoadoutVocab.FOOD_SEGMENT_COLOR)
+	swatch.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(swatch)
+	var line := _caption(text, HudStyle.INK_DIM, HudLoadoutVocab.BUDGET_FONT_SIZE)
+	line.set_meta(HudLoadoutVocab.FOOD_LINE_META, true)
+	row.add_child(line)
+	_header.add_child(row)
+
 ## **THE SIM REFUSED THIS BAND'S LAST ORDER, AND THE CARD SAYS SO** — the last thing in the head, so it
-## sits directly above the columns whose picks it has just reset. The one warning ink on the card.
+## sits directly above the columns whose picks it has just reset. Drawn in warning ink.
 ##
 ## ⛔ **TWO LINES AT MOST.** The reason is the sim's own sentence and its length is not this card's to
 ## choose, so a longer one is ellipsized on its second line and carried WHOLE on the tooltip — the
@@ -448,13 +505,10 @@ func _build_columns(payload: Dictionary) -> void:
 
 ## COLUMN 1 — the kits. **It opens on the kits the band ALREADY HOLDS** (`loadout_window.kits`), the
 ## default outfit the sim applied when it made the band. **Draw the counts as-is** — the sim fitted
-## that spread to the band's derived kit budget when it applied it, and a second clamp here would
-## disagree with the first.
+## that spread to the band's carry when it applied it, and a second clamp here would disagree with
+## the first.
 func _build_kits_column(payload: Dictionary) -> Control:
 	var col := _column(HudLoadoutVocab.KITS_HEAD, HudLoadoutVocab.KITS_NOTE)
-	var budget: Dictionary = payload.get(PAYLOAD_KIT_BUDGET, {})
-	col.add_child(_budget_meter(HudLoadoutVocab.BUDGET_KITS, budget, _kit_bar_segments(budget),
-		bool(payload.get(PAYLOAD_IS_TAKE, false))))
 	var rows: Array = payload.get(PAYLOAD_KITS, [])
 	if rows.is_empty():
 		col.add_child(_caption(HudLoadoutVocab.EMPTY_NOTICE, HudStyle.INK_FAINT,
@@ -466,7 +520,8 @@ func _build_kits_column(payload: Dictionary) -> Control:
 	return col
 
 ## **THE ROW CARRIES ITS OWN `can_add`** — see `PAYLOAD_KITS`. Reading it off the meter was right
-## while every row shared one budget and is wrong the moment a take caps them per item.
+## while every row shared one count budget; kits weigh what they expand to now, and a take caps them
+## per item.
 func _kit_row(row: Dictionary) -> Control:
 	var kit_id := String(row.get("id", ""))
 	var count := int(row.get("count", 0))
@@ -499,10 +554,7 @@ func _kit_row(row: Dictionary) -> Control:
 ## walks out with something to build from.
 func _build_materials_column(payload: Dictionary) -> Control:
 	var col := _column(HudLoadoutVocab.RESOURCES_HEAD, HudLoadoutVocab.RESOURCES_NOTE)
-	var budget: Dictionary = payload.get(PAYLOAD_MATERIAL_BUDGET, {})
 	var rows: Array = payload.get(PAYLOAD_MATERIALS, [])
-	col.add_child(_budget_meter(HudLoadoutVocab.BUDGET_MATERIALS, budget,
-		_material_bar_segments(rows, budget), bool(payload.get(PAYLOAD_IS_TAKE, false))))
 	if rows.is_empty():
 		col.add_child(_caption(HudLoadoutVocab.EMPTY_NOTICE, HudStyle.INK_FAINT,
 			HudLoadoutVocab.ROW_NOTE_FONT_SIZE, true))
@@ -527,6 +579,10 @@ func _material_row(row: Dictionary) -> Control:
 		HudStyle.INK if units > 0 else HudStyle.INK_DIM)
 	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	line.add_child(name_label)
+	# What one more unit costs in carry, only where the controller judged it not obvious.
+	var carry_text := String(row.get("carry_text", ""))
+	if not carry_text.is_empty():
+		line.add_child(_caption(carry_text, HudStyle.INK_FAINT, HudLoadoutVocab.ROW_NOTE_FONT_SIZE))
 	_add_stepper(line, units, can_add,
 		func(next: int) -> void: material_units_changed.emit(material_id, next))
 	return line
@@ -644,74 +700,70 @@ func _build_footer() -> void:
 	close.pressed.connect(func() -> void: dismissed.emit())
 	_footer.add_child(close)
 
-# ---- the budget meters ------------------------------------------------------
+# ---- the carry meter -------------------------------------------------------
 
-## A meter is the REMAINDER and a stacked bar, and nothing else. Printing "28 of 30 packed" beside
-## "2 / 30 left" states one fact twice, and the bar already draws the spent half.
+## ⛔ **ONE METER FOR THE BAND** (#732) — the carry remainder and a stacked bar, and nothing else.
+## Printing "28 of 30 packed" beside "2 / 30 carry left" states one fact twice, and the bar already
+## draws the spent part. It sits in the header because it spans both columns that spend it.
 ##
-## On a TAKE the remainder is what the home band keeps rather than what this band may still mint, so
-## the same two numbers are read with different words — see the label below.
-func _budget_meter(key: String, budget: Dictionary, segments: Array, take: bool) -> Control:
+## **A NEGATIVE REMAINDER IS DRAWN NEGATIVE, IN WARNING INK.** The sim cannot leave a band over its
+## carry by construction, but the adoption rule takes a published allocation whole, and a band that is
+## over must READ as over rather than be clamped into looking full.
+func _carry_meter(carry: Dictionary, materials: Array) -> Control:
 	var block := VBoxContainer.new()
 	block.add_theme_constant_override("separation", HudLoadoutVocab.BUDGET_ROW_SEPARATION)
-	block.set_meta(HudLoadoutVocab.BUDGET_METER_META, key)
-	var total := int(budget.get(BUDGET_TOTAL, 0))
-	var remaining := total - int(budget.get(BUDGET_SPENT, 0))
+	block.set_meta(HudLoadoutVocab.BUDGET_METER_META, HudLoadoutVocab.BUDGET_CARRY)
+	var total := float(carry.get(BUDGET_TOTAL, 0.0))
+	# What is actually FREE: the whole carry less the goods AND the food in it.
+	# Floored at ZERO: a band that is not moving is never told it is over its carry, so an over-full
+	# band reads `0 /` and its bar draws full (`HudLoadoutVocab.CARRY_REMAINING_FORMAT`).
+	var remaining := maxf(float(carry.get(CARRY_FREE, 0.0)), 0.0)
 	var label := Label.new()
-	# **A TAKE'S REMAINDER STAYS AT HOME; A GRANT'S IS FORFEIT ON THE ADVANCE.** Two different facts,
-	# so two different words — reusing the grant's bare `left` here would state a loss that a take
-	# does not have.
-	label.text = (HudLoadoutVocab.SUPPLY_REMAINING_FORMAT if take
-		else HudLoadoutVocab.BUDGET_REMAINING_FORMAT) % [remaining, total]
+	label.text = HudLoadoutVocab.CARRY_REMAINING_FORMAT % [
+		HudLoadoutVocab.whole_free(remaining), HudLoadoutVocab.whole_amount(total)]
 	label.add_theme_font_size_override("font_size", HudLoadoutVocab.BUDGET_FONT_SIZE)
-	# A budget with nothing left is not a problem — it is a finished decision — so it reads in the
-	# calm signal ink rather than in a warning colour.
-	label.add_theme_color_override("font_color",
-		HudStyle.INK_DIM if remaining > 0 else HudStyle.SIGNAL)
+	# A full pack is not a problem — it is a finished decision — so it reads in the calm signal ink,
+	# and that includes a pack holding more than the carry. Nothing on this meter is a warning.
+	var ink := HudStyle.INK_DIM
+	if remaining <= HudLoadoutVocab.CARRY_EPSILON:
+		ink = HudStyle.SIGNAL
+	label.add_theme_color_override("font_color", ink)
 	block.add_child(label)
-	var bar := HudWidgets.build_composition_bar(segments)
+	var bar := HudWidgets.build_composition_bar(_carry_bar_segments(carry, materials, remaining))
 	bar.custom_minimum_size = Vector2(0.0, HudLoadoutVocab.BUDGET_BAR_HEIGHT)
 	block.add_child(bar)
 	return block
 
-## The KIT bar is ONE spent segment against its remainder. Kits are interchangeable pairs of hands
-## and there is nothing to tell apart, so stacking them by kit would introduce a second colour
-## vocabulary next to the material legend — see `HudLoadoutVocab`'s docstring.
-func _kit_bar_segments(budget: Dictionary) -> Array:
-	var total := int(budget.get(BUDGET_TOTAL, 0))
-	var spent := int(budget.get(BUDGET_SPENT, 0))
+## The bar: the KITS as one segment (kits are interchangeable hands with nothing to tell apart, so a
+## stack by kit would be a second colour vocabulary beside the material legend), then each material
+## in its swatch colour — the pile in exactly the colours the third column prices it in — then the
+## FOOD in its own tint, then the remainder. The segments sum to the whole carry.
+##
+## **A REMAINDER OF ZERO DRAWS NOTHING.** `build_composition_bar` floors every segment's stretch ratio
+## at `COMPOSITION_MIN_RATIO` so a one-unit segment stays a visible sliver, which means a zero segment
+## handed to it renders as a sliver of *nothing left* on a full pack — a bar that never quite fills.
+func _carry_bar_segments(carry: Dictionary, materials: Array, remaining: float) -> Array:
 	var segments: Array = []
-	if spent > 0:
-		segments.append({"key": HudLoadoutVocab.BUDGET_KITS, "count": spent,
-			"color": HudLoadoutVocab.BUDGET_SPENT_COLOR})
-	# **A REMAINDER OF ZERO DRAWS NOTHING.** `build_composition_bar` floors every segment's stretch
-	# ratio at `COMPOSITION_MIN_RATIO` so a one-person segment stays a visible sliver, which means a
-	# zero-count segment handed to it renders as a sliver of *nothing left* on a budget that is fully
-	# spent — a bar that never quite fills.
-	var remaining := total - spent
-	if remaining > 0:
-		segments.append({"key": "", "count": remaining,
-			"color": HudLoadoutVocab.BUDGET_REMAINDER_COLOR})
-	return segments
-
-## The MATERIAL bar stacks by material, in the swatch colours the legend and the recipe rows use — so
-## the bar is a picture of the pile in exactly the colours the third column prices it in.
-func _material_bar_segments(rows: Array, budget: Dictionary) -> Array:
-	var segments: Array = []
-	var spent := 0
-	for row_variant in rows:
+	var kit_load := float(carry.get(CARRY_KIT_LOAD, 0.0))
+	if kit_load > 0.0:
+		segments.append({"key": HudLoadoutVocab.KITS_HEAD, "count": kit_load,
+			"color": HudLoadoutVocab.BUDGET_SPENT_COLOR, "tooltip": HudLoadoutVocab.KITS_HEAD})
+	for row_variant in materials:
 		if not (row_variant is Dictionary):
 			continue
 		var row: Dictionary = row_variant
-		var units := int(row.get("units", 0))
-		if units <= 0:
+		var row_load := float(row.get("load", 0.0))
+		if row_load <= 0.0:
 			continue
-		spent += units
-		segments.append({"key": String(row.get("id", "")), "count": units,
+		segments.append({"key": String(row.get("id", "")), "count": row_load,
 			"color": row.get("color", HudStyle.INK_FAINT),
 			"tooltip": String(row.get("label", ""))})
-	var remaining := int(budget.get(BUDGET_TOTAL, 0)) - spent
-	if remaining > 0:
+	var food_load := float(carry.get(CARRY_FOOD_LOAD, 0.0))
+	if food_load > HudLoadoutVocab.CARRY_EPSILON:
+		segments.append({"key": HudLoadoutVocab.FOOD_SEGMENT_KEY, "count": food_load,
+			"color": HudLoadoutVocab.FOOD_SEGMENT_COLOR,
+			"tooltip": HudLoadoutVocab.FOOD_FIXED_FORMAT % HudLoadoutVocab.whole_amount(food_load)})
+	if remaining > HudLoadoutVocab.CARRY_EPSILON:
 		segments.append({"key": "", "count": remaining,
 			"color": HudLoadoutVocab.BUDGET_REMAINDER_COLOR})
 	return segments
