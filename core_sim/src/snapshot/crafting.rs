@@ -559,9 +559,10 @@ fn bench_state(
 
 /// **THE BENCH'S QUEUE ON THE WIRE**, head first — one [`BenchOrderState`] per order.
 ///
-/// Every order carries its own `progress` and whether it holds a cut pile, not only the head: an
-/// order raised over a head that had already drawn leaves that head **paused** with its pile, and a
-/// removal of it destroys what it cut — so the readout that offers the removal must be able to say so.
+/// Every order carries its own `progress` and whether it holds a cut pile, not only the worked one:
+/// an order overtaken after it had drawn — raised over, or passed by an earlier order whose stock
+/// arrived — is **paused** with its pile, and a removal of it destroys what it cut — so the readout
+/// that offers the removal must be able to say so.
 ///
 /// **Each order also says why it is being SKIPPED** — `blockedReason` / `blockedSeverity`, empty for
 /// an order that holds a pile or can draw one ([`crate::systems::order_is_workable`], the rule the

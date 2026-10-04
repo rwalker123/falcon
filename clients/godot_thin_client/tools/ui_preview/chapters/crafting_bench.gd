@@ -17,7 +17,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 228
+const EXPECTED_CHECKPOINTS := 230
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
@@ -924,6 +924,27 @@ func _short_head_state() -> void:
 	lines = await _lines_from(_clear_button(panel))
 	h._assert_hud("crafting/short-head — the WELL's ✕ removes order 1 (%s)" % [lines],
 		lines == ["bench_remove %d %d order %d" % [faction, band_id, SHORT_HEAD_WORKED]])
+
+	# **THE PAUSING-RAISE HOVER IS A PAIR.** The sled sits straight under the worked spears, whose pile
+	# is cut, so raising it pauses them and its ↑ says so; the SAME sled carrying a `blocked_reason`
+	# would still be skipped once above, so raising it pauses nothing and its ↑ must not claim it.
+	panel = h._hud.crafting_panel().panel()
+	var sled_raise := _queue_control(panel, HudCraftingVocab.ORDER_RAISE_META, QUEUE_WAITING_INDEX)
+	h._assert_hud("crafting/short-head — raising a workable order over the drawn worked one warns it pauses it",
+		sled_raise != null and sled_raise.tooltip_text == HudCraftingVocab.ORDER_RAISE_PAUSES_TOOLTIP)
+	var blocked_band := _short_head_band()
+	var blocked_bench: Dictionary = blocked_band["bench"]
+	var blocked_sled: Dictionary = (blocked_bench["orders"] as Array)[QUEUE_WAITING_INDEX]
+	blocked_sled["blocked_reason"] = SHORT_HEAD_REASON
+	blocked_sled["blocked_severity"] = HudCraftingVocab.SEVERITY_DANGER
+	h._hud.update_band_alerts([blocked_band])
+	h._hud.crafting_panel().refresh_snapshot()
+	await h._settle()
+	panel = h._hud.crafting_panel().panel()
+	sled_raise = _queue_control(panel, HudCraftingVocab.ORDER_RAISE_META, QUEUE_WAITING_INDEX) \
+		if panel != null else null
+	h._assert_hud("crafting/short-head — …while a WAITING order's ↑ claims no pause, it would still be skipped",
+		sled_raise != null and sled_raise.tooltip_text == HudCraftingVocab.ORDER_RAISE_TOOLTIP)
 	h._hud.close_crafting_panel()
 	await h._settle()
 

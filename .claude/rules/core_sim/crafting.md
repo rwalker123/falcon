@@ -734,8 +734,9 @@ consequence is the ladder's own `crew_scale` shape: over-crewing a bench buys le
 proportionally, and a `work: 8` recipe wants about four hands rather than sixteen.
 
 **Removing an order spends the pile it drew** (see "The queue — one bench works its orders in
-turn"). What is lost is nameable rather than merely warned about: for the head it is
-`BenchState::drawnInputs`, straight off `DrawnInputs::withdrawn`.
+turn"). What is lost is nameable rather than merely warned about: for the order the bench row
+describes (the worked order) it is `BenchState::drawnInputs`, straight off `DrawnInputs::withdrawn`,
+and every order's `BenchOrder.drawn` says whether it holds a pile at all.
 
 ## What a completed craft delivers
 
@@ -757,9 +758,9 @@ budget), so a tool finished on turn N cannot be issued before turn N+1. Stocking
 it in the store a turn before anything could hand it out: the published pool cards and keeping rows
 read short beside a ledger that already held the hoe. Parked, **the turn a tool first shows in the
 store is the turn it is first issued** — the one-turn lag is kept (the tool did not exist while that
-turn's work was done), and the store and the issue agree. A finished **bench tool** is unaffected in
-effect: the re-draw after a completion already used the tiers resolved at the top of that band's
-pass, and the next turn's delivery lands before the next turn's bench.
+turn's work was done), and the store and the issue agree. A finished **bench tool** works from the
+next turn: the re-draw after a completion resolves tiers off the ledger as it stands, which does not
+yet hold the parked tool, and the next turn's delivery lands before the next turn's bench.
 
 - **Resolved at completion, delivered with no lookup.** The tier and the grade's absolutes are
   copied into the `FinishedBatch` exactly as they were stamped onto the stocked batch before, so a
@@ -1358,9 +1359,13 @@ those zeros as the zeros they are.
 - **A spent unit counts and a worn one does not** with no code for either: `filled` is what the
   settlement issued from stock, an expired unit is gone from stock, and a worn one is issued like any
   other.
-- **The count is the WHOLE shortfall in units, never capped by affordability**, less what the queue
-  already owes (`queued_units`: `(count − made) × the output amount` over every order whose recipe
-  makes the item). The shortfall is `ceil(Σ missing − WHOLE_UNIT_TOLERANCE)`, so float noise never asks
+- **The count is the WHOLE shortfall in units, never capped by affordability**, less what is
+  already coming from the bench (`queued_units`): what the queue still owes — `(count − made) × the
+  output amount` over every order whose recipe makes the item — **plus the units parked on
+  `BandBench::finished`**. The parked ones count because the labor pass settles tools *before* the
+  bench runs: on the turn an item completes the lines still read it missing while its order has
+  already counted it made, so netting the queue alone raised the suggestion by the item just made
+  (and kept it there when the order popped). Next turn it is delivered, issued, and gone from both. The shortfall is `ceil(Σ missing − WHOLE_UNIT_TOLERANCE)`, so float noise never asks
   for a second tool; a netted count at or below zero drops the suggestion.
 - **Work a turn recovered** is stated only where the gear adds build or keeping work — on pool and
   site sources, `workers without × build_work_per_worker(item)`: the `build_work` **equipped** value
@@ -1372,7 +1377,8 @@ those zeros as the zeros they are.
 
 Pinned by `craft_suggestions::tests` (ranking and ties, work only where gear adds work, queue netting
 to zero, fractional shortfalls) and, off the encoded frame, by
-`bench_queue::suggestions_rank_by_workers_without_and_net_out_the_queue` and
+`bench_queue::suggestions_rank_by_workers_without_and_net_out_the_queue`,
+`::a_suggestion_does_not_rise_on_the_turn_its_item_is_made` and
 `::a_detached_party_publishes_no_suggestions` (paired with its home band carrying the same lines).
 
 ## What is deliberately not wired

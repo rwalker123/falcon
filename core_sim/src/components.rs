@@ -4418,7 +4418,7 @@ pub enum BenchQueueError {
 /// in queue order, that holds a pile or can draw one now (`systems::crafting::worked_order`). A short
 /// order keeps its place and is skipped until its inputs are there. Each finished item counts against
 /// the worked order, and when its count is met the order leaves and the next worked order draws its
-/// own inputs. **The crew stays with the bench** across orders — a new head
+/// own inputs. **The crew stays with the bench** across orders — a new worked order
 /// is not an order to send anyone home — and an empty queue leaves the crew standing at an idle
 /// bench. Parallel crafting comes from more benches, never from splitting one bench's crew.
 ///
@@ -4500,7 +4500,9 @@ impl BandBench {
         self.last_started.get(row).map(String::as_str)
     }
 
-    /// **The order being worked** — the head of the queue, or `None` on an idle bench.
+    /// **The head of the queue** — the first order, or `None` on an idle bench. Not necessarily the
+    /// order being worked: that is the first order that holds a pile or can draw one
+    /// (`systems::crafting::worked_order`).
     pub fn head(&self) -> Option<&BenchOrder> {
         self.orders.get(HEAD_ORDER)
     }
@@ -4547,8 +4549,10 @@ impl BandBench {
     ///
     /// ⛔ **THIS FORFEITS THE ORDER'S DRAWN PILE**, exactly as clearing the bench always has: the
     /// materials were cut for the thing the player stopped making, and a `LocalStore` has no
-    /// representation for a half-worked pile. What is lost is nameable on the wire beforehand
-    /// (`BenchState::drawnInputs` for the head). The shed must never call this — it uses
+    /// representation for a half-worked pile. What is lost is stated on the wire beforehand:
+    /// `BenchState::drawnInputs` names the pile of the order the bench row describes (the worked
+    /// order), and every order's `BenchOrder::drawn` says whether it holds one. The shed must never
+    /// call this — it uses
     /// [`Self::shed_one_worker`].
     ///
     /// **The crew, [`Self::last_started`] and [`Self::finished`] all survive it**: the crew is the
@@ -4562,8 +4566,8 @@ impl BandBench {
         Ok(self.orders.remove(index))
     }
 
-    /// **Move one order up one place.** Raising the second order makes it the head; the displaced
-    /// head keeps its progress and its pile ([`BenchOrder`]) and resumes when it is the head again.
+    /// **Move one order up one place.** Raising the second order makes it the head; the order it
+    /// displaces keeps its progress and its pile ([`BenchOrder`]) and resumes when it is worked again.
     pub fn raise_order(&mut self, index: usize) -> Result<(), BenchQueueError> {
         if index >= self.orders.len() {
             return Err(BenchQueueError::NoSuchOrder {
@@ -4611,7 +4615,8 @@ impl BandBench {
     /// does to a bench, and the whole of it.
     ///
     /// The queue — every order's progress, drawn pile and made count — and the last grade are all
-    /// untouched, so the crew coming back resumes rather than restarts. At zero the **head stalls**:
+    /// untouched, so the crew coming back resumes rather than restarts. At zero the **worked order
+    /// stalls**:
     /// it is still the order the player chose, making no progress, which is the crafting system's
     /// own shipped answer to a pass it cannot advance (*"silently emptying their bench is a worse
     /// answer than a job that makes no progress"*).

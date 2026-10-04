@@ -174,11 +174,11 @@ signal bench_crew_requested(payload: Dictionary)
 ## `order` the order's index in `bench.orders` (0 = the head). Main formats
 ## `bench_order_count <faction> <band> order <i> count <n>`. RELAYED from `CraftingPanelController`.
 signal bench_order_count_requested(payload: Dictionary)
-## Emitted when an order's ✕ is pressed — the well's ✕ is order 0. A drawn pile is lost (the control's
+## Emitted when an order's ✕ is pressed — the well's ✕ is `order <worked>`. A drawn pile is lost (the control's
 ## tooltip says so). Payload keys: { faction, band_id, order }. Main formats
 ## `bench_remove <faction> <band> order <i>`. RELAYED from `CraftingPanelController`.
 signal bench_remove_requested(payload: Dictionary)
-## Emitted when an order's ↑ is pressed — never on the head. Payload keys: { faction, band_id, order }.
+## Emitted when an order's ↑ is pressed — never on index 0. Payload keys: { faction, band_id, order }.
 ## Main formats `bench_raise <faction> <band> order <i>`. RELAYED from `CraftingPanelController`.
 signal bench_raise_requested(payload: Dictionary)
 ## Emitted when a rung of the bench's rank picker is pressed — the player's own answer to what the band

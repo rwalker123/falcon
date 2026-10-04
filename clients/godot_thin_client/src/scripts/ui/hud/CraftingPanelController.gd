@@ -33,9 +33,9 @@ signal bench_crew_requested(payload: Dictionary)
 ## Change one order's count — `bench_order_count <faction> <band> order <i> count <n>`.
 signal bench_order_count_requested(payload: Dictionary)
 ## Take one order off the queue — `bench_remove <faction> <band> order <i>`. A drawn pile is lost,
-## which is what the control's tooltip names before it is pressed. The well's ✕ is order 0.
+## which is what the control's tooltip names before it is pressed. The well's ✕ is `order <worked>`.
 signal bench_remove_requested(payload: Dictionary)
-## Move one order up a place — `bench_raise <faction> <band> order <i>`, never the head.
+## Move one order up a place — `bench_raise <faction> <band> order <i>`, never index 0.
 signal bench_raise_requested(payload: Dictionary)
 ## Rank the bench against the band's other work — `bench_priority <faction> <band> high|normal|low`
 ## (`docs/plan_standing_upkeep.md` §4.9 item 9b). **A SIBLING VERB, not a `work_priority` token**:
@@ -230,7 +230,7 @@ func _on_crew_changed(workers: int) -> void:
 		"workers": maxi(workers, 0),
 	})
 
-## **THE QUEUE EDITS NAME AN ORDER BY ITS PLACE** in the published `bench.orders` (0 = the head), the
+## **THE QUEUE EDITS NAME AN ORDER BY ITS PLACE** in the published `bench.orders` (0 = the head of the queue), the
 ## index the server's queue verbs address. All three go out through the same seam the crew does.
 func _on_order_count_changed(order: int, count: int) -> void:
 	var band := _open_band()
@@ -253,7 +253,7 @@ func _on_order_remove_requested(order: int) -> void:
 		"order": order,
 	})
 
-## The head cannot be raised — the server refuses it — so the panel draws no ↑ there and this drops it.
+## Index 0 cannot be raised — the server refuses it — so the panel draws no ↑ there and this drops it.
 func _on_order_raise_requested(order: int) -> void:
 	var band := _open_band()
 	if band.is_empty() or order < 1:

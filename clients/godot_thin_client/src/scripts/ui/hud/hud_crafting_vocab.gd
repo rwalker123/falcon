@@ -36,8 +36,8 @@ const READING_AXIS_KEY := "axis"
 const READING_VALUE_KEY := "value"
 const READING_BAND_NAME_KEY := "band_name"
 
-## `PopulationCohortState.bench` — every scalar describes the HEAD order of the bench's queue
-## (`BENCH_ORDERS_KEY`). An empty `recipe_id` is an IDLE bench (an empty queue), which is a different
+## `PopulationCohortState.bench` — every scalar describes the WORKED order of the bench's queue,
+## `orders[worked]` (`BENCH_ORDERS_KEY`, `BENCH_WORKED_KEY`). An empty `recipe_id` is an IDLE bench (an empty queue), which is a different
 ## statement from a BLOCKED one.
 const BAND_BENCH_KEY := "bench"
 const BENCH_RECIPE_ID_KEY := "recipe_id"
@@ -56,7 +56,7 @@ const BENCH_BLOCKED_REASON_KEY := "blocked_reason"
 ## ledger's offer rows resolve through, so the bench and the ledger cannot disagree about what a
 ## published severity looks like.
 const BENCH_BLOCKED_SEVERITY_KEY := "blocked_severity"
-## The head order has cut its pile for the pass in flight — which is what raising an order over it pauses.
+## The worked order has cut its pile for the pass in flight — which is what raising an order over it pauses.
 const BENCH_DRAWN_KEY := "drawn"
 const BENCH_OUTPUT_GRADE_KEY := "output_grade"
 ## **WHAT ONE TURN ADDS, RESOLVED SIM-SIDE** — `workers × progress_per_worker_turn × craft_speed`,
@@ -94,7 +94,7 @@ const BENCH_PRIORITY_LINK_META := "crafting_bench_priority_link"
 
 ## **THE QUEUE** (`BenchState.orders`, `docs/plan_crafting_and_materials.md` §7 → "The queue") — every
 ## order on the bench, HEAD FIRST, `[]` on an idle bench. An order's INDEX in this array is the `order`
-## argument the three queue verbs address, so the panel never renumbers it. The head's `made` is what
+## argument the three queue verbs address, so the panel never renumbers it. The worked order's `made` is what
 ## the retired `BenchState.itemsCompleted` carried; no surface reads that field any more.
 const BENCH_ORDERS_KEY := "orders"
 const ORDER_RECIPE_ID_KEY := "recipe_id"
@@ -104,8 +104,8 @@ const ORDER_COUNT_KEY := "count"
 ## which is what the row's `−` greys against.
 const ORDER_MADE_KEY := "made"
 const ORDER_PROGRESS_KEY := "progress"
-## **`drawn` ON A NON-HEAD ORDER IS A PAUSED ORDER** — raised over while it held a cut pile, which it
-## keeps, with its progress, until it is the head again. Removing it destroys that pile.
+## **`drawn` ON AN ORDER THE BENCH IS NOT WORKING IS A PAUSED ORDER** — raised over while it held a cut
+## pile, which it keeps, with its progress, until it is worked again. Removing it destroys that pile.
 const ORDER_DRAWN_KEY := "drawn"
 ## The head's index — the one order that cannot be raised.
 const ORDER_HEAD_INDEX := 0
@@ -354,8 +354,8 @@ const BENCH_CREW_CAPTION := "Crafters"
 const BENCH_CREW_DECREMENT := "−"
 const BENCH_CREW_INCREMENT := "+"
 
-## **TAKING THE HEAD ORDER OFF THE BENCH — `bench_remove <faction> <band> order 0`**, the retired
-## `clear_bench`'s control. The next order, if any, becomes the job. Offered only on a bench that HAS
+## **TAKING THE WORKED ORDER OFF THE BENCH — `bench_remove <faction> <band> order <worked>`**, the
+## retired `clear_bench`'s control. The bench then works the next order it can, if any. Offered only on a bench that HAS
 ## an order: an idle bench has nothing to remove, so the control is absent rather than dead.
 ##
 ## **IT WEARS THE `armed` TREATMENT, WHICH IS WHAT KEEPS IT APART FROM THE HEADER'S ✕.** The card
@@ -471,17 +471,17 @@ const LEDGER_STOCK_ROW_KEY_FORMAT := "recipe:%s"
 const MAKE_BUTTON_META := "crafting_make_button"
 
 # ---- the queue rows under the bench well ---------------------------------------------------------
-## **THE WELL IS THE HEAD ORDER'S ROW** — its title, progress, crew, ✕ and a `made/count` stepper
-## captioned `Made`. **One row per order BEHIND it**, each stating what it makes, `made/count` inside its
-## own `− n +`, a `↑` and a `✕`. The leading status word says which of them is PAUSED (holding a cut
-## pile) and which merely waits.
+## **THE WELL IS THE WORKED ORDER'S ROW** — its title, progress, crew, ✕ and a `made/count` stepper
+## captioned `Made`. **One row per OTHER order** (a skipped head included), each stating what it makes,
+## `made/count` inside its own `− n +`, a `↑` (not on index 0) and a `✕`. The leading status word says
+## which is WAITING (skipped), PAUSED (holding a cut pile) or merely QUEUED.
 const HEAD_COUNT_CAPTION := "Made"
 const ORDER_STATUS_PAUSED := "Paused"
 const ORDER_STATUS_QUEUED := "Queued"
 ## An order the bench is SKIPPING because it cannot draw — its reason sits under its name.
 const ORDER_STATUS_WAITING := "Waiting"
 const ORDER_STATUS_PAUSED_TOOLTIP := "Raised over while its pile was cut — the pile and its progress wait for it."
-## A queued order's name. The head's is the sim's `BenchState.displayName` verbatim; a waiting order
+## A queued order's name. The worked order's is the sim's `BenchState.displayName` verbatim; any other
 ## publishes no name, so it is the recipe book's `display_name` with the recipe's `label` — the sim's
 ## own `RecipeDef::full_name` shape (`Spears (Flint)`), so the two cannot read differently.
 const ORDER_NAME_WITH_LABEL_FORMAT := "%s (%s)"
@@ -495,13 +495,13 @@ const ORDER_COUNT_TOOLTIP := "Made / asked for. − and + change how many this o
 const ORDER_COUNT_FLOOR_TOOLTIP := "Already at the fewest it can ask for — use ✕ to stop it."
 const ORDER_RAISE_GLYPH := "↑"
 const ORDER_RAISE_TOOLTIP := "Move this order up one place."
-## Raising the SECOND order over a head that has cut its pile pauses that head with its pile intact.
+## Raising an order over the WORKED order when that one has cut its pile pauses it with its pile intact.
 const ORDER_RAISE_PAUSES_TOOLTIP := "Move this order to the top — the order being worked pauses and keeps its cut pile."
 const ORDER_REMOVE_GLYPH := "✕"
 const ORDER_REMOVE_TOOLTIP_DRAWN := "Remove this order — its cut pile is lost."
 const ORDER_REMOVE_TOOLTIP_UNDRAWN := "Remove this order — nothing has been cut for it yet."
-## How the queue's parts are found by IDENTITY, each valued the ORDER INDEX (the head's stepper in the
-## well carries the decrement/increment pair at index 0) — the stepper glyphs are the crew stepper's
+## How the queue's parts are found by IDENTITY, each valued the ORDER INDEX (the worked order's stepper in
+## the well carries the decrement/increment pair at index `worked`) — the stepper glyphs are the crew stepper's
 ## own, and every row's ✕ is the well's and the header's glyph too.
 const QUEUE_ROW_META := "crafting_queue_row"
 const ORDER_STATUS_META := "crafting_order_status"
@@ -738,7 +738,7 @@ const ORDER_STATUS_FONT_SIZE := 10
 const ORDER_REASON_FONT_SIZE := 11
 const ORDER_STATUS_WIDTH := 56.0
 const ORDER_COUNT_WIDTH := 40.0
-## The head's `made/count` face in the well, at the crew count's size — wide enough for `12/20`.
+## The worked order's `made/count` face in the well, at the crew count's size — wide enough for `12/20`.
 const HEAD_COUNT_FACE_WIDTH := 52.0
 const QUEUE_BUTTON_SIZE := 22.0
 const QUEUE_ROW_SEPARATION := 6

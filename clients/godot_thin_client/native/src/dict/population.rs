@@ -1414,8 +1414,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // itemsCompleted` carried, which is why that field is no longer read.
     let _ = bench_dict.insert("worked", cohort.bench().map_or(0, |b| b.worked()) as i64);
     //
-    // **`drawn` on a NON-head order is a PAUSED order** — raised over while holding a cut pile, it
-    // keeps that pile and its progress until it is the head again, or until it is removed, which
+    // **`drawn` on an order the bench is NOT working is a PAUSED order** — raised over while holding a
+    // cut pile, it keeps that pile and its progress until it is worked again, or until it is removed, which
     // destroys the pile exactly as removing the head does.
     let mut bench_orders = VarArray::new();
     if let Some(orders) = cohort.bench().and_then(|b| b.orders()) {

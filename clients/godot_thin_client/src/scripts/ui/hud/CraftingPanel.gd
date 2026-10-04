@@ -46,11 +46,11 @@ class_name CraftingPanel
 ## with a count of one (→ `bench_enqueue`) and recruits nobody, so *"No one at the bench"* is the
 ## ordinary state one click later and the crew `− n +` stepper (`crew_changed` → `bench_crew`) is the
 ## only thing that picks the number — live on an idle bench too, the crew staying with the bench across
-## orders. **The bench works ONE order at a time, top of the queue first**: the well describes the HEAD
-## order, and the queue rows under it list every order with its own `made/count` stepper
-## (`order_count_changed` → `bench_order_count`), a `↑` (`order_raise_requested` → `bench_raise`, never
-## on the head) and a `✕` (`order_remove_requested` → `bench_remove`). The well's own ✕ is
-## `bench_remove … order 0`. **SUGGESTIONS open the main column** — the sim's ranked list of what the
+## orders. **The bench works ONE order at a time — the first in queue order that holds a pile or can
+## draw (`BenchState.worked`)**: the well describes that WORKED order, and the queue rows under it list
+## every other order with its own `made/count` stepper (`order_count_changed` → `bench_order_count`), a
+## `↑` (`order_raise_requested` → `bench_raise`, never on index 0) and a `✕` (`order_remove_requested` →
+## `bench_remove`). The well's own ✕ and stepper address `order <worked>`. **SUGGESTIONS open the main column** — the sim's ranked list of what the
 ## band's workers are going without, each with a Queue that enqueues its whole count. There is no
 ## Crafter role card on the Band panel: crafting always has a subject, so it is staffed at the bench
 ## like a worked source rather than through a standing role.
@@ -85,12 +85,12 @@ signal enqueue_requested(recipe_id: String, count: int)
 ## The bench's crew stepper moved — `bench_crew <faction> <band> workers <n>`.
 signal crew_changed(workers: int)
 ## A queued order's `− n +` moved — `bench_order_count <faction> <band> order <i> count <n>`. `order`
-## is the order's index in the published `bench.orders`, 0 the head.
+## is the order's index in the published `bench.orders`, 0 the head of the queue.
 signal order_count_changed(order: int, count: int)
-## An order's ✕ was pressed — `bench_remove <faction> <band> order <i>`. The well's ✕ is order 0. A
+## An order's ✕ was pressed — `bench_remove <faction> <band> order <i>`. The well's ✕ is `order <worked>`. A
 ## drawn pile is lost, which is why every ✕'s tooltip says whether there is one.
 signal order_remove_requested(order: int)
-## An order's ↑ was pressed — `bench_raise <faction> <band> order <i>`, never the head.
+## An order's ↑ was pressed — `bench_raise <faction> <band> order <i>`, never index 0.
 signal order_raise_requested(order: int)
 ## A rung of the bench's rank picker was pressed — `bench_priority <faction> <band> high|normal|low`
 ## (`docs/plan_standing_upkeep.md` §4.9 item 9b). `level` is one of `HudWorkVocab`'s three tokens,
@@ -725,16 +725,16 @@ func _build_bench(payload: Dictionary) -> void:
 			_commit_priority(level), priority))
 
 	section.add_child(well)
-	# **THE REST OF THE QUEUE, under the well that IS its head.** A bench with one order — or none —
-	# draws nothing here.
+	# **THE REST OF THE QUEUE, under the well that IS its worked order.** A bench with one order — or
+	# none — draws nothing here.
 	if orders.size() > 1:
 		section.add_child(_build_queue(orders, bench, payload))
 	_main.add_child(section)
 
 ## The bench's second line, in the units the sim keeps the job in: the recipe's own `work` accrued
 ## against the pass's cost, then what a turn adds and when that finishes it, then the grade the pile in
-## flight fixed. **How many the order has delivered is not here**: it is the head queue row's
-## `made/count`, the one home that fact has.
+## flight fixed. **How many the order has delivered is not here**: it is the well's own `made/count`
+## stepper face, the one home that fact has.
 ##
 ## **THE UNIT IS `work`, AND THAT RENAME IS THE POINT OF THE OTHER TWO CLAUSES.** It read
 ## `worker-turns`, and a player with two crafters divided 6 by 2, expected three turns and measured
@@ -774,8 +774,8 @@ func _bench_estimate_clause(remaining: float, rate: float) -> String:
 		return HudCraftingVocab.BENCH_ESTIMATE_NEXT_TURN
 	return HudCraftingVocab.BENCH_ESTIMATE_FORMAT % turns
 
-## **THE HEAD ORDER'S WAY OFF THE BENCH** — `bench_remove … order 0`, the retired `clear_bench`'s
-## control. The next order in the queue, if any, becomes the job.
+## **THE WORKED ORDER'S WAY OFF THE BENCH** — `bench_remove … order <worked>`, the retired
+## `clear_bench`'s control. The bench then works the next order it can, if any.
 ##
 ## **THE TOOLTIP NAMES WHAT IT DESTROYS, off the published `drawn_inputs`** — the amounts the store
 ## really lost, never the recipe's inputs, which differ from the withdrawal the moment a bench tool's
@@ -2131,13 +2131,13 @@ func _suggestion_in(payload: Dictionary, item_id: String) -> Dictionary:
 
 # ---- the queue: one bench works its orders in turn --------------------------
 
-## **THE WELL IS THE HEAD'S ROW; THESE ARE THE ORDERS BEHIND IT, UNCAPPED** (§7 → "The queue"). The
-## head is the order being worked, and the well already says so — its name, its progress, its refusal,
-## its crew, its `made/count` stepper and its ✕ (`bench_remove … order 0`). A second row repeating the
-## head would state its name twice and carry a second ✕ for the same act, and measured it cost ~26px on
+## **THE WELL IS THE WORKED ORDER'S ROW; THESE ARE EVERY OTHER ORDER, UNCAPPED** (§7 → "The queue").
+## The well already says everything about `orders[worked]` — its name, its progress, its refusal, its
+## crew, its `made/count` stepper and its ✕ (`bench_remove … order <worked>`). A second row repeating
+## it would state its name twice and carry a second ✕ for the same act, and measured it cost ~26px on
 ## EVERY running bench, which pushed `crafting_panel_band_dock_collapsed` into an internal scroll its
-## state asserts it does not need. So one row per order AFTER the head, each keeping its published
-## index, which is the `order` the queue verbs address.
+## state asserts it does not need. So one row per OTHER order — a skipped head included, above the
+## rest — each keeping its published index, which is the `order` the queue verbs address.
 func _build_queue(orders: Array, bench: Dictionary, payload: Dictionary) -> Control:
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", 0)
@@ -2147,7 +2147,7 @@ func _build_queue(orders: Array, bench: Dictionary, payload: Dictionary) -> Cont
 			column.add_child(_build_queue_row(index, orders[index], bench, payload))
 	return column
 
-## **THE HEAD ORDER'S `made/count` STEPPER**, in the crew stepper's own shape and metrics so the well
+## **THE WORKED ORDER'S `made/count` STEPPER**, in the crew stepper's own shape and metrics so the well
 ## reads as two captioned steppers — how many to make, and who is making them. `−` is dead at
 ## `made + 1` for the server's reason (a count at or below `made` would finish the order; stopping it
 ## is the ✕ beside it).
@@ -2196,12 +2196,12 @@ func _wire_count_increment(plus: Button, index: int, count: int) -> void:
 	plus.set_meta(HudCraftingVocab.ORDER_INCREMENT_META, index)
 	plus.pressed.connect(func() -> void: order_count_changed.emit(index, count + 1))
 
-## **ONE ORDER BEHIND THE HEAD**: whether it is PAUSED or merely waiting; what it makes; `made/count`
-## inside its own `− n +`; `↑`; `✕`.
+## **ONE ORDER THE WELL DOES NOT DESCRIBE**: WAITING (skipped, its reason beneath), PAUSED or QUEUED;
+## what it makes; `made/count` inside its own `− n +`; `↑` (not on index 0); `✕`.
 ##
-## **PAUSED IS `drawn` ON AN ORDER THAT IS NOT THE HEAD** — it was raised over while holding a cut pile,
-## and keeps the pile and its progress until it is the head again. The head is never "paused": a head
-## that is not moving is BLOCKED, and the well's refusal line is where that is said.
+## **PAUSED IS `drawn` ON AN ORDER THE BENCH IS NOT WORKING** — it was raised over while holding a cut
+## pile, and keeps the pile and its progress until it is worked again. The worked order is never
+## "paused": one that is not moving is BLOCKED, and the well's refusal line is where that is said.
 func _build_queue_row(index: int, order: Dictionary, bench: Dictionary, payload: Dictionary) -> Control:
 	var drawn := bool(order.get(HudCraftingVocab.ORDER_DRAWN_KEY, false))
 	var count := int(order.get(HudCraftingVocab.ORDER_COUNT_KEY, 0))
@@ -2264,7 +2264,7 @@ func _build_queue_row(index: int, order: Dictionary, bench: Dictionary, payload:
 	_wire_count_increment(plus, index, count)
 	row.add_child(plus)
 
-	var raise := _queue_button(HudCraftingVocab.ORDER_RAISE_GLYPH, _raise_tooltip(index, bench))
+	var raise := _queue_button(HudCraftingVocab.ORDER_RAISE_GLYPH, _raise_tooltip(index, order, bench))
 	if index == HudCraftingVocab.ORDER_HEAD_INDEX:
 		# The head has nowhere to go up to (the server refuses it). The button stays as an INVISIBLE,
 		# dead placeholder so the ✕ column lines up down the queue — a bare gap of the nominal size does
@@ -2285,7 +2285,8 @@ func _build_queue_row(index: int, order: Dictionary, bench: Dictionary, payload:
 	row.add_child(remove)
 	return row
 
-## **A WAITING ORDER PUBLISHES NO NAME** (the head's is the well's title, `BenchState.displayName`), so
+## **AN ORDER THE WELL DOES NOT DESCRIBE PUBLISHES NO NAME** (the worked one's is the well's title,
+## `BenchState.displayName`), so
 ## it is the recipe book's `display_name` plus its `label` in the sim's own `full_name` shape — the two
 ## cannot read differently for one recipe. An unknown recipe names itself by id.
 func _order_name(order: Dictionary, payload: Dictionary) -> String:
@@ -2297,9 +2298,12 @@ func _order_name(order: Dictionary, payload: Dictionary) -> String:
 	var label := String(recipe.get(HudCraftingVocab.RECIPE_LABEL_KEY, ""))
 	return name if label == "" else HudCraftingVocab.ORDER_NAME_WITH_LABEL_FORMAT % [name, label]
 
-## Raising the order straight under a head that has CUT ITS PILE pauses that head — say so before.
-func _raise_tooltip(index: int, bench: Dictionary) -> String:
-	if index - 1 == _worked_index(bench) and bool(bench.get(HudCraftingVocab.BENCH_DRAWN_KEY, false)):
+## Raising the order straight under the WORKED order, when that one has CUT ITS PILE, pauses it — say
+## so before. **Only if the raised order could itself be worked**: one carrying a `blocked_reason` is
+## still skipped once it is above, so raising it changes nothing about what the bench works.
+func _raise_tooltip(index: int, order: Dictionary, bench: Dictionary) -> String:
+	if index - 1 == _worked_index(bench) and bool(bench.get(HudCraftingVocab.BENCH_DRAWN_KEY, false)) \
+			and String(order.get(HudCraftingVocab.ORDER_BLOCKED_REASON_KEY, "")) == "":
 		return HudCraftingVocab.ORDER_RAISE_PAUSES_TOOLTIP
 	return HudCraftingVocab.ORDER_RAISE_TOOLTIP
 

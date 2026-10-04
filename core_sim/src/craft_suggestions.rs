@@ -242,14 +242,22 @@ pub fn craft_suggestions(
     suggestions
 }
 
-/// **UNITS OF `item` THE BENCH'S QUEUE STILL OWES** — `(count − made) × the output amount`, summed
-/// over every order whose recipe makes the item. An order whose recipe the book no longer carries
-/// makes nothing and nets nothing.
+/// **UNITS OF `item` ALREADY COMING FROM THE BENCH** — what the queue still owes, `(count − made) ×
+/// the output amount` over every order whose recipe makes the item, **plus** what the bench has
+/// already made and parked on [`BandBench::finished`] for delivery at the top of the next turn.
+///
+/// ⛔ **The parked units count because the shortfall lines do not yet know about them.** The labor
+/// pass settles the band's tools *before* the bench runs, so on the turn an item is finished the
+/// lines still read it missing while the order has already counted it as made — netting the queue
+/// alone would raise the suggestion by exactly the item just made (and keep it there when the order
+/// popped). Next turn the item is in the store, issued, and gone from both.
+///
+/// An order whose recipe the book no longer carries makes nothing and nets nothing.
 pub fn queued_units(bench: Option<&BandBench>, recipes: &RecipesConfig, item: &str) -> f32 {
     let Some(bench) = bench else {
         return NOTHING_TO_MAKE;
     };
-    bench
+    let owed: f32 = bench
         .orders
         .iter()
         .filter_map(|order| {
@@ -262,7 +270,14 @@ pub fn queued_units(bench: Option<&BandBench>, recipes: &RecipesConfig, item: &s
                 .sum();
             Some(order.remaining() as f32 * per_pass)
         })
-        .sum()
+        .sum();
+    let parked: f32 = bench
+        .finished
+        .iter()
+        .filter(|batch| batch.item == item)
+        .map(|batch| batch.count as f32)
+        .sum();
+    owed + parked
 }
 
 /// **THE WORK ONE HOLDER OF THIS ITEM ADDS** — the `build_work` `equipped` value at the item's

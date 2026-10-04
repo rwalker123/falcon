@@ -3737,4 +3737,4 @@ live COUNT `+` as a live crew `+` and pass the benchable-ceiling claim on the wr
 is a `WAITING` queue row with its tinted reason, and the head row's `+`/✕ send `order 0` while the
 well's send `order 1`. Every fixture bench now carries `worked` and every order `blocked_reason` /
 `blocked_severity`. **`EXPECTED_CHECKPOINTS` moved 218 → 228, RE-MEASURED** the same way (the run read
-back `reached 228`).
+back `reached 228`); the PR #784 review's pausing-raise pair (a WAITING order's ↑ claims no pause) took it to 230 and the run to 2664 `PASS` / 0 `FAIL` / 483 frames.

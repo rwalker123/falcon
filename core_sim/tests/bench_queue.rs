@@ -626,3 +626,60 @@ fn the_head_resumes_priority_when_its_stock_arrives() {
         "the overtaken sled kept its made count and the pile it had cut"
     );
 }
+
+/// **A SUGGESTION DOES NOT RISE ON THE TURN ITS ITEM IS MADE.** The labor pass settles the band's
+/// tools before the bench runs, so on the completion turn the shortfall lines still read the item
+/// missing — while its order has already counted it made, and here popped. The parked unit on
+/// `BandBench::finished` is what keeps the netting whole until it is delivered and issued.
+///
+/// A site crew three sleds short and one sled queued: `3 − 1 = 2` before the turn. The bench makes the
+/// sled (the order pops); the settled lines are untouched, exactly as on a real completion turn.
+#[test]
+fn a_suggestion_does_not_rise_on_the_turn_its_item_is_made() {
+    /// Three sleds short at the site; one queued, so two suggested.
+    const SITE_SHORT: f32 = 3.0;
+    const NOTHING_ISSUED: f32 = 0.0;
+    const SUGGESTED: u32 = 2;
+    let (mut app, band) = world();
+    bench_with(&mut app, band, FIBRE_FOR_TWO_SLEDS, &[(SLED_RECIPE, ONE)]);
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .expect("a spawned band carries an allocation")
+        .last_keeping_issued = vec![KeepingIssue {
+        source: BuildSource::Patch(PATCH),
+        item: SLED_RECIPE.to_string(),
+        units: NOTHING_ISSUED,
+        required: SITE_SHORT,
+    }];
+    let sled_count = |suggestions: &[PublishedSuggestion]| {
+        suggestions
+            .iter()
+            .find(|(item, ..)| item == SLED_RECIPE)
+            .map(|(_, count, ..)| *count)
+    };
+
+    let (_, before) = publish(&mut app, band);
+    assert_eq!(
+        sled_count(&before),
+        Some(SUGGESTED),
+        "fixture: the queued sled is netted out of the three short"
+    );
+
+    app.world.run_system_once(advance_crafting);
+    let (orders, after) = publish(&mut app, band);
+    assert!(
+        orders.is_empty()
+            && !app
+                .world
+                .get::<BandBench>(band)
+                .expect("a spawned band carries a bench")
+                .finished
+                .is_empty(),
+        "fixture: the sled was made, its order popped, and the sled is parked for delivery"
+    );
+    assert_eq!(
+        sled_count(&after),
+        Some(SUGGESTED),
+        "the sled just made is still coming — the suggestion must not rise by it"
+    );
+}

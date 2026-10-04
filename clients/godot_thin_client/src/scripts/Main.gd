@@ -2102,7 +2102,7 @@ static func format_bench_order_count(payload: Dictionary) -> Dictionary:
     }
 
 ## **`bench_remove <faction_id> <band_id> order <i>`** — take one order off the bench's queue. Order
-## `0` is the head, which is what the bench well's ✕ sends — the retired `clear_bench`'s job. **A drawn
+## The bench well's ✕ sends the WORKED order's index — the retired `clear_bench`'s job. **A drawn
 ## pile is LOST** — a band's store has no representation for a half-worked pile — which is why the
 ## control that emits this states the pile in its tooltip rather than being guarded by a dialog.
 static func format_bench_remove(payload: Dictionary) -> Dictionary:
@@ -2117,8 +2117,8 @@ static func format_bench_remove(payload: Dictionary) -> Dictionary:
     }
 
 ## **`bench_raise <faction_id> <band_id> order <i>`** — move one order up a place. The server refuses
-## the head (`0`), so this builds no line for it and the queue's head row draws no ↑. Raising an order
-## over a head that has drawn PAUSES that head with its pile and progress intact.
+## the head (`0`), so this builds no line for it and the queue's index-0 row draws no ↑. Raising an order
+## over the worked order when it has drawn PAUSES it with its pile and progress intact.
 static func format_bench_raise(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     var order := int(payload.get("order", -1))
