@@ -319,6 +319,8 @@ pub fn split_band_from_parent(
     child.last_morale_delta = scalar_zero();
     child.last_morale_cause = MoraleCause::default();
     child.last_morale_contributions = MoraleContributions::default();
+    // `belief_anchor` is deliberately NOT reset: the splinter is the same people with the same dead,
+    // so it remembers the parent's ancestors' place (`belief.md` → "The culture morale term").
     child.last_fertility_factors = crate::components::FertilityFactors::default();
     child.discontent_fraction = scalar_zero();
     child.last_emigrated = 0;

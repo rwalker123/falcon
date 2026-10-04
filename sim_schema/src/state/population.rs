@@ -906,7 +906,8 @@ pub struct PopulationCohortState {
     /// (`PopulationCohort::last_morale_delta`).
     #[serde(default)]
     pub morale_delta: i64,
-    /// Dominant negative morale driver this turn: `0 = None, 1 = Terrain, 2 = Cold, 3 = Unrest`.
+    /// Dominant negative morale driver this turn: `0 = None, 1 = Terrain, 2 = Cold, 3 = Unrest,
+    /// 4 = Culture`.
     /// Names *why* morale is falling. Recomputed each turn alongside [`Self::morale_delta`].
     #[serde(default)]
     pub morale_cause: u8,
@@ -930,7 +931,7 @@ pub struct PopulationCohortState {
     #[serde(default)]
     pub grievance: i64,
     /// Layer-1 named morale contributions whose signed sum IS `morale_delta` — the itemized
-    /// breakdown. Fixed-point raw. Derived at capture.
+    /// breakdown (with [`Self::morale_culture`], appended last). Fixed-point raw. Derived at capture.
     #[serde(default)]
     pub morale_settling: i64,
     #[serde(default)]
@@ -1673,6 +1674,11 @@ pub struct PopulationCohortState {
     /// larder ledger identity (`snapshot.fbs` → `foodLeftBehind`). Appended last.
     #[serde(default)]
     pub food_left_behind: f32,
+    /// Layer-1 **culture** morale contribution — near (+) / far (−) from the band's ancestors
+    /// (`snapshot.fbs` → `moraleCulture`), part of the `morale_*` breakdown whose signed sum IS
+    /// `morale_delta`. Fixed-point raw. Derived at capture. Appended last.
+    #[serde(default)]
+    pub morale_culture: i64,
 }
 
 /// **ONE GOOD THAT CROSSED A BAND'S STORE, BY CAUSE** — a row of

@@ -5687,6 +5687,9 @@ fn handle_send_expedition(
     let drawn = drawn.total();
     expedition_cohort.age_turns = 0;
     expedition_cohort.grievance = Scalar::from_i64(0);
+    // A party keeps no morale of its own (`simulate_population` is `With<ResidentBand>`), so it
+    // remembers no ancestors' place; the band it left keeps the anchor (`belief.md`).
+    expedition_cohort.belief_anchor = None;
     expedition_cohort.sync_size();
 
     // A detached party is a band in its own right, so it takes its own durable id.
@@ -12935,6 +12938,7 @@ mod tests {
                         core_sim::BandId(0),
                         core_sim::MIN_BAND_LINES,
                     ),
+                    belief_anchor: None,
                 },
                 LaborAllocation {
                     assignments: vec![core_sim::LaborAssignment {

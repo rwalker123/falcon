@@ -234,6 +234,7 @@ fn spawn_band(app: &mut App, tile: UVec2, assignments: Vec<LaborAssignment>) -> 
                     core_sim::BandId(0),
                     core_sim::MIN_BAND_LINES,
                 ),
+                belief_anchor: None,
             },
             StartingUnit {
                 kind: "BandKeeper".to_string(),

@@ -3491,6 +3491,7 @@ fn spawn_population_entity(
         // **A starting band is where lines are minted** — `L` of them, each originating on this
         // band's own id, which is what makes a line id unique without an allocator of its own.
         founding_lines: FoundingLines::founded(band_id, start_kit.founding_lines),
+        belief_anchor: None,
     });
     // Every band carries a labor allocation (default empty = fully idle). The client drives
     // assignment; the startup food reserve covers the ramp before the first orders land.

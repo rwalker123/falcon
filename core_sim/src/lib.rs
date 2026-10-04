@@ -390,7 +390,7 @@ pub use starting_loadout::{
 };
 pub use supply::{
     balance_supply_networks, free_pooling_reach_tiles, BandSupplyMembership, PoolingLink,
-    SupplyNetworkMembership,
+    SupplyNetworkMembership, WalkReach,
 };
 pub use supply_network_config::{
     load_supply_network_config_from_env, SupplyNetworkConfig, SupplyNetworkConfigHandle,
@@ -415,8 +415,9 @@ pub use visibility_config::{
     VisibilityConfigMetadata, BUILTIN_VISIBILITY_CONFIG,
 };
 pub use wellbeing_config::{
-    load_wellbeing_config_from_env, DiscontentConfig, MigrationConfig, ProductivityConfig,
-    WellbeingConfig, WellbeingConfigHandle, WellbeingConfigMetadata, BUILTIN_WELLBEING_CONFIG,
+    load_wellbeing_config_from_env, CultureConfig, DiscontentConfig, MigrationConfig,
+    ProductivityConfig, WellbeingConfig, WellbeingConfigHandle, WellbeingConfigMetadata,
+    BUILTIN_WELLBEING_CONFIG,
 };
 pub use work_party::{CaravanForecast, SourceTake, Walker, WorkParty};
 

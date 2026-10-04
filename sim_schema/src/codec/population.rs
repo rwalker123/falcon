@@ -1132,6 +1132,7 @@ fn create_populations<'a>(
                     longMoveLeavesItems: cohort.long_move_leaves_items,
                     longMoveLeavesMaterials: cohort.long_move_leaves_materials,
                     foodLeftBehind: cohort.food_left_behind,
+                    moraleCulture: cohort.morale_culture,
                 },
             )
         })
@@ -1657,6 +1658,7 @@ fn decode_population(
         long_move_leaves_items: cohort.longMoveLeavesItems(),
         long_move_leaves_materials: cohort.longMoveLeavesMaterials(),
         food_left_behind: cohort.foodLeftBehind(),
+        morale_culture: cohort.moraleCulture(),
     })
 }
 

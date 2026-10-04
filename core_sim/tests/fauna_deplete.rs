@@ -201,6 +201,7 @@ fn spawn_hunter(
                     core_sim::BandId(0),
                     core_sim::MIN_BAND_LINES,
                 ),
+                belief_anchor: None,
             },
             StartingUnit {
                 kind: "BandHunter".to_string(),

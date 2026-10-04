@@ -275,6 +275,9 @@ const MORALE_TREND_RISING_GLYPH := "▲"
 # contribution reads as "culture" (cohesion), negative as "unrest".
 const MORALE_CONTRIB_LABEL_SETTLING := "settling"
 const MORALE_CONTRIB_LABEL_CULTURE := "culture"
+# A positive `morale_culture` (within walking reach of the remembered belief place) reads as "near the
+# ancestors"; a negative one reads `DetailFormat.MORALE_CAUSE_LABEL_CULTURE` ("far from the ancestors").
+const MORALE_CONTRIB_LABEL_ANCESTORS_NEAR := "near the ancestors"
 
 # --- Collaborators handed in by HudLayer (the SAME instances it holds) ---
 # The snapshot herd list, for a raiding party's migrating target.
@@ -950,7 +953,7 @@ func _fertility_breakdown_lines(unit_data: Dictionary) -> Array[String]:
         lines.append(DetailFormat.fertility_breakdown_row(factor, entry[1]))
     return lines
 
-## Itemized morale breakdown: the four signed Layer-1 contributions (their sum IS morale_delta) as
+## Itemized morale breakdown: the five signed Layer-1 contributions (their sum IS morale_delta) as
 ## indented sub-lines, each above the breakdown epsilon rendered as `    ▲ +1.0%  settling`
 ## (`DetailFormat.detail_bbcode` tints by sign glyph). Now a click-to-expand disclosure (like Food): the
 ## contributions always compute so the row can be manually opened in the good state; the
@@ -962,12 +965,14 @@ func _morale_breakdown_lines(unit_data: Dictionary, terrain_label: String) -> Ar
     if terrain_label != "":
         terrain_row_label = "%s (%s)" % [DetailFormat.MORALE_CAUSE_LABEL_TERRAIN, terrain_label]
     var unrest_value := float(unit_data.get("morale_unrest", 0.0))
-    # (value, label) in the display order of the spec: settling, terrain, climate, unrest.
+    var culture_value := float(unit_data.get("morale_culture", 0.0))
+    # (value, label) in the display order of the spec: settling, terrain, climate, unrest, culture.
     var contributions := [
         [float(unit_data.get("morale_settling", 0.0)), MORALE_CONTRIB_LABEL_SETTLING],
         [float(unit_data.get("morale_terrain", 0.0)), terrain_row_label],
         [float(unit_data.get("morale_climate", 0.0)), DetailFormat.MORALE_CAUSE_LABEL_COLD],
         [unrest_value, MORALE_CONTRIB_LABEL_CULTURE if unrest_value > 0.0 else DetailFormat.MORALE_CAUSE_LABEL_UNREST],
+        [culture_value, MORALE_CONTRIB_LABEL_ANCESTORS_NEAR if culture_value > 0.0 else DetailFormat.MORALE_CAUSE_LABEL_CULTURE],
     ]
     var epsilon := BandFoodStatus.morale_breakdown_epsilon()
     for entry in contributions:

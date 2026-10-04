@@ -2033,6 +2033,22 @@ Each fails a DISJOINT set, and each names the defect in its own words:
   claim: the row is itemized AND the net differs from the same band with the term zeroed by exactly
   `DetailFormat.band_food_left_behind`.
 
+## `chapters/band_expedition.gd` — the culture morale term (#699)
+
+`EXPECTED_CHECKPOINTS` **132**, RE-MEASURED: two frames and four claims, appended after
+`_carry_states` (`_ancestors_states`) so no earlier frame moves.
+
+- **NEAR** — the reference band (entity 910) with `morale_culture` +0.006, its Morale disclosure
+  opened: the popover itemizes `▲ +0.6%  near the ancestors` — frame
+  **`band_morale_ancestors_near`**.
+- **FAR** — the low-morale band (entity 911) with `morale_culture` −0.009 and `morale_cause` 4
+  (`DetailFormat.MORALE_CAUSE_CULTURE`): the Morale headline reads `— far from the ancestors`, and
+  the popover itemizes `▼ −0.9%  far from the ancestors` and never the word `culture`, which the
+  positive-unrest row owns — frame **`band_morale_ancestors_far`**.
+
+The row needles are LITERALS, matched within one popover line, so a row that drew the other sign's
+label or glyph fails.
+
 ## The ⚠'s one producer, and the biomass quantiser (this arc)
 
 Two PNG-less blocks appended to `chapters/hunt.gd`, one 2x2 re-pointed in

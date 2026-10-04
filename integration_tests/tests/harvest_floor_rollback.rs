@@ -127,6 +127,7 @@ fn spawn_band_with_floors(app: &mut bevy::prelude::App, floor: f32) -> Entity {
                     core_sim::BandId(0),
                     core_sim::MIN_BAND_LINES,
                 ),
+                belief_anchor: None,
             },
             ResidentBand,
             LaborAllocation {
@@ -285,6 +286,7 @@ fn a_raids_target_round_trips_through_the_rollback() {
                     core_sim::BandId(0),
                     core_sim::MIN_BAND_LINES,
                 ),
+                belief_anchor: None,
             },
             Expedition {
                 home_band: home,

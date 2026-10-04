@@ -17,5 +17,14 @@
     "attractive_morale": 0.5,
     "min_morale_gap": 0.05,
     "dependent_weight": 0.4
+  },
+  "culture": {
+    "_comment": "Near / far from the ancestors (docs/plan_civilization_steps.md 'What belief does, through seams that exist'; .claude/rules/core_sim/belief.md 'The culture morale term'). Each band remembers one belief tile, its anchor. With b = the anchor's belief and s = b / (b + belief_half_saturation), the morale term is +near_bonus x s while the band stands within walking reach of the anchor (migration.base_reach, lengthened by roads exactly as migration's reach is) and -away_drag x s beyond it; 0 with no anchor. In or out of reach is binary - the drag does not grow with distance. PLAYTEST DIALs.",
+    "_comment_near_bonus": "Morale per turn gained standing within reach of a saturated anchor. PLAYTEST DIAL.",
+    "near_bonus": 0.01,
+    "_comment_away_drag": "Morale per turn lost standing beyond reach of a saturated anchor. PLAYTEST DIAL.",
+    "away_drag": 0.02,
+    "_comment_belief_half_saturation": "Belief at which the anchor weighs one half. Belief is in dead-equivalents, so 10 = ten people's worth of ancestors: a single death barely registers and a great cemetery caps the term. Must be > 0. PLAYTEST DIAL.",
+    "belief_half_saturation": 10.0
   }
 }

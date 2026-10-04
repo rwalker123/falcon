@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 126
+const EXPECTED_CHECKPOINTS := 132
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -818,6 +818,10 @@ func run(harness) -> void:
 	# **APPENDED**, for the reason the blocks above state.
 	await _carry_states()
 
+	# ---- THE CULTURE MORALE TERM (#699) ------------------------------------------------------------
+	# **APPENDED**, for the reason the blocks above state.
+	await _ancestors_states()
+
 	# band_alerts (above) left _player_band as an alert-fixture band (no work_range, far from the food
 	# tile); seed a NEAR band so the forage controls resolve an in-range actor.
 	h._hud._band_labor._player_band = BandFx.forage_range_bands()[0]
@@ -1094,6 +1098,64 @@ func _carry_states() -> void:
 			CARRY_VALUE_OVER]))
 	h._assert_hud("…and the block's hover states the move rule (\"%s\")" % CARRY_HOVER,
 		String(h._hud.occupant_detail.tooltip_text).contains(CARRY_HOVER))
+
+## ---- THE CULTURE MORALE TERM (#699) — `morale_culture`, the signed pull of the strongest belief place
+## (where the band's dead lie) the band remembers: positive within walking reach of it, negative beyond
+## it. A PAIR, because either half alone passes on a row that only ever draws one label. Each band has
+## its own entity so its Morale caret cannot collide with the reference band's.
+const ANCESTORS_NEAR_BAND_ENTITY := 910
+const ANCESTORS_FAR_BAND_ENTITY := 911
+const ANCESTORS_NEAR_CONTRIB := 0.006
+const ANCESTORS_FAR_CONTRIB := -0.009
+const BAND_DISCLOSURE_MORALE_ANCESTORS_NEAR := "morale:910"
+const BAND_DISCLOSURE_MORALE_ANCESTORS_FAR := "morale:911"
+## The row text, spelled as LITERALS — a needle composed through the format under test can only agree
+## with itself.
+const ANCESTORS_NEAR_ROW := "+0.6%  near the ancestors"
+const ANCESTORS_FAR_ROW := "−0.9%  far from the ancestors"
+const ANCESTORS_FAR_HEADLINE_CAUSE := "— far from the ancestors"
+
+func _ancestors_states() -> void:
+	# NEAR: the healthy reference band, standing within reach of its dead.
+	var near := BandFx.band_fixture()
+	near["entity"] = ANCESTORS_NEAR_BAND_ENTITY
+	near["morale_culture"] = ANCESTORS_NEAR_CONTRIB
+	near["morale_delta"] = float(near.get("morale_delta", 0.0)) + ANCESTORS_NEAR_CONTRIB
+	h._hud.show_unit_selection(near)
+	await h._settle()
+	_click_disclosure(BAND_DISCLOSURE_MORALE_ANCESTORS_NEAR)
+	await h._settle()
+	await h._save("band_morale_ancestors_near")
+	var near_popover := _popover_text()
+	h._assert_hud("a band within reach of its belief place itemizes `%s`" % ANCESTORS_NEAR_ROW,
+		_kit_breakdown_line(near_popover, "near the ancestors").contains(ANCESTORS_NEAR_ROW)
+			and _kit_breakdown_line(near_popover, "near the ancestors").contains(
+				DetailFormat.MORALE_CONTRIB_POSITIVE_GLYPH))
+	_click_disclosure(BAND_DISCLOSURE_MORALE_ANCESTORS_NEAR)
+
+	# FAR: the demoralized band, beyond reach of its dead, with culture the dominant falling cause — so
+	# the headline names it, not just the breakdown.
+	var far := _low_morale_band_fixture()
+	far["entity"] = ANCESTORS_FAR_BAND_ENTITY
+	far["morale_culture"] = ANCESTORS_FAR_CONTRIB
+	far["morale_delta"] = float(far["morale_delta"]) + ANCESTORS_FAR_CONTRIB
+	far["morale_cause"] = DetailFormat.MORALE_CAUSE_CULTURE
+	h._hud.show_unit_selection(far)
+	await h._settle()
+	var far_vitals := String(h._hud.occupant_detail.get_parsed_text())
+	h._assert_hud("the morale headline names the cause `%s`" % ANCESTORS_FAR_HEADLINE_CAUSE,
+		far_vitals.contains(ANCESTORS_FAR_HEADLINE_CAUSE))
+	_click_disclosure(BAND_DISCLOSURE_MORALE_ANCESTORS_FAR)
+	await h._settle()
+	await h._save("band_morale_ancestors_far")
+	var far_popover := _popover_text()
+	h._assert_hud("a band beyond reach of its belief place itemizes `%s`" % ANCESTORS_FAR_ROW,
+		_kit_breakdown_line(far_popover, "far from the ancestors").contains(ANCESTORS_FAR_ROW)
+			and _kit_breakdown_line(far_popover, "far from the ancestors").contains(
+				DetailFormat.MORALE_CONTRIB_NEGATIVE_GLYPH))
+	h._assert_hud("…and never under the word `culture`, which the cohesion row owns",
+		not _kit_breakdown_line(far_popover, "far from the ancestors").contains("culture"))
+	_click_disclosure(BAND_DISCLOSURE_MORALE_ANCESTORS_FAR)
 
 ## A band that HOLDS something which eats a good. Its own entity, for the disclosure key's sake.
 func _standing_bill_band_fixture() -> Dictionary:

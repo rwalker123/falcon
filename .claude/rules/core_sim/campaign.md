@@ -30,7 +30,7 @@ paths:
 | `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), **`keeping`** (how food keeps, #706 — `classes`, each `{ id, shelf_life_turns }`: **`flesh` 4.0**, **`fresh_plant` 8.0**, **`dry` 60.0**; `startup_class` **`dry`**, the class the opening reserve is seeded into; `plant_fallback_class` **`fresh_plant`** / `kill_fallback_class` **`flesh`**, where a take's food lands when no species says. Validated at parse — unique ids, finite positive shelf lives, every named class present — and every fauna/flora species' `keeping` is reconciled against it at boot; see "Food spoils by keeping class" below), `births` (`birth_rate` + the `reserve` stock factor (`bonus`/`saturation_turns`) + the `trend` flow factor (`surplus_gain`/`surplus_saturation`/`deficit_penalty`/`deficit_saturation`); morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `lineage.founding_lines` (`L`, **8**, a `NonZeroU16` so `0` is a parse error — how many founding lines a starting band holds; see "Founding lines" below), `cold` and `heat` (the two temperature tails — `onset_temp` / `mortality_scale` / `max_mortality` plus each tail's own `child_vulnerability` 1.25 / `working_vulnerability` 1.0 / `elder_vulnerability` 1.5, a different ordering from `scarcity`'s; see “The cold/heat death model is PUBLISHED” below for why the two tails differ in all three parameters and why both are calibrated ahead of the map's current range). **This file is the SOLE source of demographics tuning** (#350): `demographics_config.rs` has no hand-written `Default` impls — `DemographicsConfig::default()` parses the builtin JSON, and every field is required with `deny_unknown_fields`, so a missing or unknown key is a parse error rather than a silent fallback to a second set of numbers that can drift (it did: `per_capita_draw` was 0.03 in Rust against 0.16 here). Do not re-add `#[serde(default)]` — the root `Default` parses through serde, so a container-level default would make it recurse. **The loader is strict to match**, and that strictness is no longer demographics-specific: it now lives in the shared `config_load.rs` seam and applies to every boot config (see `.claude/rules/core_sim/config-loading.md`). Strictness without a loud loader would only move the silent substitution one layer out — the whole file instead of one key |
 | `src/data/start_profiles.json` | Campaign initialization. Per profile: `starting_units` (`kind`/`count`/`band_size`), `starting_knowledge_tags`, `inventory`, `food_modules`, `victory_modes_enabled` (AI tuning is per seat and lives in `sim_ai/data/ai_profiles.json`, not here) — plus the **required** `opening_loadout` block: `pickable_materials` (`bone`, `fibre`, `hide`, `wood`, `stone` — the picker's list, in the order it is drawn), `material_defaults` (`bone 2` / `fibre 12` / `hide 6`) and **`kit_defaults`** (`big_game 5` / `trapping 5` / `gathering 7` — one kit per hand on the shipped 30-person band). Together they are the **opening band's** default outfit (load 47 against its ≈ 47 goods allowance), APPLIED after the world-build meal, not suggested; a splinter's default is `split_default_outfit`, not these. ⛔ **There is no budget in this file**: what a band may outfit is its CARRY less its larder (`.claude/rules/core_sim/band-carry.md`), and the retired `material_points` key is **refused at load**, not ignored (`start_profile::the_retired_material_points_key_is_refused`). `StartProfiles::validate_against_materials` rejects a pickable or default naming a material the roster does not carry, and `validate_against_equipment` rejects a `kit_defaults` key the equipment roster does not carry **or one whose `uses` is empty** — both run from `build_headless_app`. Defaults over the band's allowance are fitted at apply (`fit_to_carry`, materials cut before tools); the full rules are `starting-loadout.md` |
 | `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius, in **hex steps**), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer_fraction` (the dead-band, as a fraction of the node's own per-capita fair share of that commodity — see "The dead-band is RELATIVE, because one balancer serves food and a bone pile" below) |
-| `src/data/wellbeing_config.json` | Civilization Wellbeing tuning: `discontent` (`content_morale`/`floor_morale` productivity curve, `grievance_gain`/`grievance_decay`/`trapped_multiplier`), `productivity` (`floor_mult`, `discontent_weight`), `migration` (own morale-scaled onset: `morale_threshold`, `max_rate`, `base_reach`, `attractive_morale`, `min_morale_gap`, `dependent_weight`) |
+| `src/data/wellbeing_config.json` | Civilization Wellbeing tuning: `discontent` (`content_morale`/`floor_morale` productivity curve, `grievance_gain`/`grievance_decay`/`trapped_multiplier`), `productivity` (`floor_mult`, `discontent_weight`), `migration` (own morale-scaled onset: `morale_threshold`, `max_rate`, `base_reach`, `attractive_morale`, `min_morale_gap`, `dependent_weight`), `culture` (the near / far from the ancestors morale term: `near_bonus`, `away_drag`, `belief_half_saturation` — key table in `belief.md`) |
 ## Campaign Loop & System Activation
 
 ### Start Flow
@@ -330,12 +330,15 @@ table exists to make impossible.
 **Morale attribution (why morale/population falls).** Morale is now computed as the signed sum of a
 **named contributor set** (`MoraleContributions` on the cohort — the Layer-1 spine of Civilization
 Wellbeing, below): `settling` (`+population_growth_rate`), `terrain` (`−terrain pressure`),
-`climate` (`−cold pressure`), `unrest` (crisis impacts + cultural sentiment, signed). Their sum IS
+`climate` (`−cold pressure`), `unrest` (crisis impacts + cultural sentiment, signed), `culture`
+(near / far from the band's belief anchor, signed — `belief.md` → "The culture morale term"). Their
+sum IS
 `last_morale_delta`; adding a future factor is a new `MoraleFactor` variant + one field, not a
 rewrite of the morale update. The dominant *negative* contributor becomes `last_morale_cause`
-(`MoraleCause` ∈ `None | Terrain | Cold | Unrest`) when the delta is negative, else `None`. Drivers:
+(`MoraleCause` ∈ `None | Terrain | Cold | Unrest | Culture`) when the delta is negative, else `None`. Drivers:
 `Terrain` = terrain attrition + logistics hardness, `Cold` = temperature-difference penalty,
-`Unrest` = crisis impacts + cultural sentiment.
+`Unrest` = crisis impacts + cultural sentiment, `Culture` = standing beyond walking reach of the
+band's ancestors' place.
 Starvation is deliberately **not** a morale cause — it stays on the days-of-food path. The two
 place-based (negative) terms come from the shared **`tile_morale_pressure(terrain, temperature,
 &MoralePressureConfig)`** helper (`systems.rs`), which returns the tile-intrinsic per-turn morale
@@ -348,7 +351,7 @@ morale and only genuine extremes (poles/high-alt/equator) drain — e.g. at ambi
 reuses this helper, so most of the map rates Hospitable/Fair and only extremes read Harsh/Hostile. These fields are **recomputed each turn** by
 `simulate_population`. Exported as `PopulationCohortState.moraleDelta`
 (fixed-point `long`, `FIXED_POINT_SCALE` = 1e6) + `moraleCause:ubyte` (`0=None, 1=Terrain, 2=Cold,
-3=Unrest`). `TileState.habitability:long` carries the band-independent `tile_morale_pressure` total
+3=Unrest, 4=Culture`). `TileState.habitability:long` carries the band-independent `tile_morale_pressure` total
 for the tile (same fixed-point scale) so the client can rate a hex's harshness. All three are wired
 through `sim_schema`/`snapshot.rs`; the client consumes them for a morale trend arrow + named cause
 and a Tile-card Habitability line (client half).
@@ -1151,7 +1154,8 @@ Extension seams are present and empty — future factors/consequences slot in wi
   the cap). The total is split across brackets ∝ `bracket_size × weight` (working = 1.0, dependents
   = `dependent_weight` 0.4), so leavers are mostly workers while the headline fraction stays exact.
   They seek the **highest-morale eligible band within reach**, their own people's first. **Reach
-  is `hex_distance − road_bonus <= base_reach`** (4 hex steps): the road bonus is
+  is `hex_distance − road_bonus <= base_reach`** (4 hex steps), tested by `supply::WalkReach` — the
+  one road-aware walk test, shared with the culture morale term (`belief.md`): the road bonus is
   `supply::free_pooling_reach_tiles − supply_network_config.reach_tiles`, the one seam the work
   party's walk (`work-party.md` → "The walk") and band pooling already read, so a road between two
   camps brings them into each other's reach exactly as it shortens a caravan's walk. Roads are the
@@ -1170,7 +1174,8 @@ Extension seams are present and empty — future factors/consequences slot in wi
   order-independent.
 - **Snapshot.** `PopulationCohortState` gains `outputMultiplier`, `discontentFraction`, `grievance`,
   `lastEmigrated`/`lastImmigrated`, and the four itemized contributions
-  `moraleSettling/Terrain/Climate/Unrest` (surfaced so the client can render the breakdown). All
+  `moraleSettling/Terrain/Climate/Unrest`, plus `moraleCulture` appended at the end of the table
+  (surfaced so the client can render the breakdown). All
   fixed-point except the two head-counts; all derived per-turn except `grievance` (persisted). The
   birth path's parallel trio `fertilityHunger/Reserve/Trend` rides beside them — see "Fertility is
   stock **and** flow" for why its neutral point is 1.0 and its sentinel is a zero reserve.

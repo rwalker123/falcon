@@ -102,6 +102,7 @@ fn spawn_cohort(app: &mut App, faction: FactionId, size: u32) {
             core_sim::BandId(0),
             core_sim::MIN_BAND_LINES,
         ),
+        belief_anchor: None,
     });
 }
 

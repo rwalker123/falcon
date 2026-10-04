@@ -1,5 +1,5 @@
 use super::*;
-use crate::belief::BeliefRegistry;
+use crate::belief::{BeliefRegistry, NO_BELIEF};
 use crate::belief_config::BeliefConfigHandle;
 use crate::components::FertilityFactors;
 use crate::demographics_config::{
@@ -905,6 +905,83 @@ type DemographicBands<'w, 's> = Query<
     With<ResidentBand>,
 >;
 
+/// **How far a band's people walk** — what the culture morale term needs to build
+/// [`crate::supply::WalkReach`], the road-aware reach test migration also reads, bundled into one
+/// `SystemParam` (the [`MigrationGates`] idiom).
+#[derive(SystemParam)]
+pub struct WalkReachInputs<'w> {
+    pub roads: Res<'w, crate::routes::RoadRegistry>,
+    pub supply: Res<'w, crate::supply_network_config::SupplyNetworkConfigHandle>,
+    pub ladder: Res<'w, LadderConfigHandle>,
+    pub tile_registry: Res<'w, TileRegistry>,
+}
+
+impl WalkReachInputs<'_> {
+    /// The walk test at `base_reach` (`migration.base_reach`) on this world's grid.
+    fn walk_reach(&self, base_reach: f32, wrap: bool) -> crate::supply::WalkReach {
+        crate::supply::WalkReach {
+            base_reach,
+            free_reach: self.supply.get().reach_tiles,
+            widest_route_reach: crate::routes::max_route_reach_tiles(&self.ladder.get()),
+            width: self.tile_registry.width,
+            height: self.tile_registry.height,
+            wrap,
+        }
+    }
+}
+
+/// **The band's anchor moves to a stronger place it can walk to** (`belief.md` → "The culture
+/// morale term"). Every belief tile within walking reach of where the band STANDS is a candidate;
+/// the strongest — the first in the registry's row-major order among equals — replaces the anchor
+/// only when it holds strictly more belief than the anchor holds now (no anchor holds
+/// [`NO_BELIEF`]). Ties keep the anchor the band already has.
+pub fn refresh_belief_anchor(
+    anchor: Option<UVec2>,
+    standing: UVec2,
+    belief: &BeliefRegistry,
+    walk: &crate::supply::WalkReach,
+    roads: &crate::routes::RoadRegistry,
+) -> Option<UVec2> {
+    let held = anchor.map_or(NO_BELIEF, |tile| belief.get(tile));
+    let mut strongest: Option<(UVec2, f32)> = None;
+    for (tile, value) in belief.iter() {
+        if strongest.is_some_and(|(_, best)| value <= best) {
+            continue;
+        }
+        if walk.within(roads, standing, tile) {
+            strongest = Some((tile, value));
+        }
+    }
+    match strongest {
+        Some((tile, value)) if value > held => Some(tile),
+        _ => anchor,
+    }
+}
+
+/// **Near / far from the ancestors** — the culture morale contribution for a band standing at
+/// `standing` with `anchor`: `+near_bonus × s` within walking reach of the anchor, `−away_drag × s`
+/// beyond it, where `s = b / (b + belief_half_saturation)` and `b` is the anchor's belief; `0` with no
+/// anchor. In or out of reach is binary.
+pub fn culture_morale_contribution(
+    anchor: Option<UVec2>,
+    standing: UVec2,
+    belief: &BeliefRegistry,
+    walk: &crate::supply::WalkReach,
+    roads: &crate::routes::RoadRegistry,
+    culture: &crate::wellbeing_config::CultureConfig,
+) -> Scalar {
+    let Some(anchor) = anchor else {
+        return scalar_zero();
+    };
+    let weight = culture.anchor_weight(belief.get(anchor));
+    let term = if walk.within(roads, standing, anchor) {
+        culture.near_bonus * weight
+    } else {
+        -culture.away_drag * weight
+    };
+    scalar_from_f32(term)
+}
+
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn simulate_population(
     config: Res<SimulationConfig>,
@@ -921,6 +998,9 @@ pub fn simulate_population(
     // (`crate::belief`).
     mut belief: ResMut<BeliefRegistry>,
     belief_config: Res<BeliefConfigHandle>,
+    // **Near / far from the ancestors** — the culture term reads the same road-aware walk test
+    // migration does (`supply::WalkReach`).
+    walk_inputs: WalkReachInputs,
 ) {
     let population_cfg = pipeline_config.config().population();
     let belief_cfg = belief_config.get();
@@ -934,6 +1014,10 @@ pub fn simulate_population(
         attrition_penalty_scale: population_cfg.attrition_penalty_scale(),
         hardness_penalty_scale: population_cfg.hardness_penalty_scale(),
     };
+    let walk = walk_inputs.walk_reach(
+        wellbeing.migration.base_reach,
+        config.map_topology.wrap_horizontal,
+    );
     for (mut cohort, labor, band_id, mut accumulator) in cohorts.iter_mut() {
         // Age the band every turn, before any early-out, so a band whose home tile briefly can't be
         // resolved still reports how long it has been simulated.
@@ -948,15 +1032,42 @@ pub fn simulate_population(
         // `habitability`), so sim and snapshot never drift.
         let pressure =
             tile_morale_pressure(&terrain_profile, tile.temperature, &morale_pressure_cfg);
+        // **Near / far from the ancestors.** Where the band STANDS — `current_tile`, never `home`,
+        // for the reason the deaths source gives — decides both which belief tile it can make its
+        // anchor this turn and whether it stands within reach of it. A band whose standing tile
+        // cannot be resolved keeps its anchor and has no culture term.
+        let culture = match tiles.get(cohort.current_tile) {
+            Ok(standing) => {
+                let standing = standing.position;
+                cohort.belief_anchor = refresh_belief_anchor(
+                    cohort.belief_anchor,
+                    standing,
+                    &belief,
+                    &walk,
+                    &walk_inputs.roads,
+                );
+                culture_morale_contribution(
+                    cohort.belief_anchor,
+                    standing,
+                    &belief,
+                    &walk,
+                    &walk_inputs.roads,
+                    &wellbeing.culture,
+                )
+            }
+            Err(_) => scalar_zero(),
+        };
         // Layer 1 (wellbeing): the morale delta is the signed sum of named contributors, so a
         // future factor is a new `MoraleFactor` variant + one field here — not a rewrite. The
         // contribution set doubles as the client's per-band morale breakdown. `unrest` = crisis
-        // impacts + cultural sentiment (signed; may be positive).
+        // impacts + cultural sentiment (signed; may be positive); `culture` = near (+) / far (−)
+        // from the band's ancestors.
         let contributions = MoraleContributions {
             settling: config.population_growth_rate,
             terrain: -pressure.terrain,
             climate: -pressure.cold,
             unrest: impacts.morale_delta + effects.morale_bias,
+            culture,
         };
         let morale_delta = contributions.total();
         // Attribute the dominant *negative* driver when morale fell (else `None`). Starvation is
@@ -2569,6 +2680,7 @@ mod wellbeing_tests {
                 crate::components::BandId(0),
                 crate::lineage::MIN_BAND_LINES,
             ),
+            belief_anchor: None,
         };
         cohort.sync_size();
         cohort

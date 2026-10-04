@@ -294,6 +294,7 @@ fn spawn_keepers_of(
                     core_sim::BandId(0),
                     core_sim::MIN_BAND_LINES,
                 ),
+                belief_anchor: None,
             },
             ResidentBand,
             match gear {
@@ -1386,6 +1387,7 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                     core_sim::BandId(0),
                     core_sim::MIN_BAND_LINES,
                 ),
+                belief_anchor: None,
             },
             ResidentBand,
             // **THE LEDGER IS STATED, NOT LEFT ABSENT.** An absent component resolves to one reference

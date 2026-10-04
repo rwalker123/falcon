@@ -256,6 +256,7 @@ fn spawn_hunters(
                     core_sim::BandId(0),
                     core_sim::MIN_BAND_LINES,
                 ),
+                belief_anchor: None,
             },
             LaborAllocation {
                 assignments: vec![LaborAssignment {
@@ -724,6 +725,7 @@ fn spawn_resident_crew(
                     core_sim::BandId(0),
                     core_sim::MIN_BAND_LINES,
                 ),
+                belief_anchor: None,
             },
             ResidentBand,
             LaborAllocation {

@@ -102,6 +102,7 @@ fn cohort(working: f32, stores: LocalStore) -> PopulationCohort {
             core_sim::BandId(0),
             core_sim::MIN_BAND_LINES,
         ),
+        belief_anchor: None,
     }
 }
 

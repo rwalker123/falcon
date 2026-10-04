@@ -336,6 +336,63 @@ pub fn free_pooling_reach_tiles(
     free_reach.max(crate::routes::path_reach_tiles(roads, &path))
 }
 
+/// ⛔ **HOW FAR PEOPLE WALK — THE ONE ROAD-AWARE "WITHIN REACH" TEST** for a band's people on foot.
+///
+/// Two points are within walking reach when `hex_distance − road_bonus <= base_reach`
+/// (`wellbeing_config.json` → `migration.base_reach`), where the road bonus is the one every other
+/// distance-shortener reads: [`free_pooling_reach_tiles`] `− reach_tiles`, the work party's walk
+/// seam. So a road between two points does for people on foot what it does for a caravan and for
+/// pooling.
+///
+/// **Two readers, one notion of distance**: `advance_population_migration` asks it whether a
+/// destination band is near enough to move camp to, and `simulate_population`'s culture morale term
+/// asks it whether a band stands near enough to its ancestors' place (`belief.md` → "The culture
+/// morale term"). A paved road therefore lengthens how far a band can stand from its dead exactly as
+/// it lengthens how far its people will move.
+///
+/// **Cost**: no road can shorten a walk by more than `widest_route_reach − reach_tiles`, so a pair
+/// past `base_reach` plus that bonus is out of reach without tracing a path, and a pair inside plain
+/// `base_reach` is in reach without one. A game with no roads traces nothing.
+#[derive(Debug, Clone, Copy)]
+pub struct WalkReach {
+    /// `migration.base_reach` — hex steps people walk with no road.
+    pub base_reach: f32,
+    /// `supply_network_config.reach_tiles` — the free reach the road bonus is measured above.
+    pub free_reach: u32,
+    /// [`crate::routes::max_route_reach_tiles`] — the widest reach any road rung holds open.
+    pub widest_route_reach: u32,
+    pub width: u32,
+    pub height: u32,
+    pub wrap: bool,
+}
+
+impl WalkReach {
+    /// Whether `b` is within walking reach of `a` over the roads in `roads`.
+    pub fn within(&self, roads: &crate::routes::RoadRegistry, a: UVec2, b: UVec2) -> bool {
+        let distance = hex_distance_wrapped(a, b, self.width, self.wrap);
+        if distance as f32 <= self.base_reach {
+            return true;
+        }
+        // Past plain reach: only a road can bring it in, and only within the widest bonus.
+        let max_road_bonus = self.widest_route_reach.saturating_sub(self.free_reach);
+        if distance as f32 > self.base_reach + max_road_bonus as f32 {
+            return false;
+        }
+        let road_bonus = free_pooling_reach_tiles(
+            roads,
+            a,
+            b,
+            self.free_reach,
+            self.widest_route_reach,
+            self.width,
+            self.height,
+            self.wrap,
+        )
+        .saturating_sub(self.free_reach);
+        distance.saturating_sub(road_bonus) as f32 <= self.base_reach
+    }
+}
+
 /// ⛔ **WHAT A COMPONENT'S POOLING LOSES IN TRANSIT, as a multiple of the base friction — DERIVED
 /// FROM THE TILES, never stored** (`docs/plan_standing_upkeep.md` §4.13b).
 ///

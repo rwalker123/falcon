@@ -148,6 +148,7 @@ fn hunt_assignment_takes_biomass_and_yields() {
                     core_sim::BandId(0),
                     core_sim::MIN_BAND_LINES,
                 ),
+                belief_anchor: None,
             },
             StartingUnit {
                 kind: "BandHunter".to_string(),

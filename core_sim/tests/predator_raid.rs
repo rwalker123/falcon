@@ -201,6 +201,7 @@ fn resident_band(app: &mut App, tile: Entity, working: u32, warriors: u32) -> En
                     core_sim::BandId(0),
                     core_sim::MIN_BAND_LINES,
                 ),
+                belief_anchor: None,
             },
             LaborAllocation {
                 assignments,

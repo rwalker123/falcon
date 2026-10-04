@@ -143,6 +143,7 @@ fn spawn_band_of(app: &mut App, x: u32, y: u32, food: i64, faction: FactionId) -
                     core_sim::BandId(0),
                     core_sim::MIN_BAND_LINES,
                 ),
+                belief_anchor: None,
             },
             // Real bands carry `ResidentBand`; the supply network filters `With<ResidentBand>`.
             ResidentBand,

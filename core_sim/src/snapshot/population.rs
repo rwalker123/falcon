@@ -1805,6 +1805,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         morale_terrain: cohort.last_morale_contributions.terrain.raw(),
         morale_climate: cohort.last_morale_contributions.climate.raw(),
         morale_unrest: cohort.last_morale_contributions.unrest.raw(),
+        morale_culture: cohort.last_morale_contributions.culture.raw(),
         morale: cohort.morale.raw(),
         generation: cohort.generation,
         faction: cohort.faction.0,
@@ -2647,6 +2648,7 @@ mod tests {
                 crate::components::BandId(0),
                 crate::lineage::MIN_BAND_LINES,
             ),
+            belief_anchor: None,
         }
     }
 

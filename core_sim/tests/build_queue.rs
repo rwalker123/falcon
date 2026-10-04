@@ -251,6 +251,7 @@ fn world_with_a_queue_knowing(
                     core_sim::BandId(0),
                     core_sim::MIN_BAND_LINES,
                 ),
+                belief_anchor: None,
             },
             ResidentBand,
             // **A durable id, because a checkpoint keys bands by it** — a band without one is not
@@ -1006,6 +1007,7 @@ fn world_with_a_half_tamed_herd(crew: u32, floor: f32) -> (App, Entity, String) 
                     core_sim::BandId(0),
                     core_sim::MIN_BAND_LINES,
                 ),
+                belief_anchor: None,
             },
             ResidentBand,
             core_sim::BandId(FIXTURE_BAND),
@@ -1875,6 +1877,7 @@ fn fixture_cohort(tile: Entity, staffed: u32) -> PopulationCohort {
             core_sim::BandId(0),
             core_sim::MIN_BAND_LINES,
         ),
+        belief_anchor: None,
     }
 }
 

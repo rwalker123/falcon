@@ -1390,6 +1390,7 @@ mod tests {
                 crate::components::BandId(0),
                 crate::lineage::MIN_BAND_LINES,
             ),
+            belief_anchor: None,
         };
         (cohort, allocation)
     }

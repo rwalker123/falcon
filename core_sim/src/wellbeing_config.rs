@@ -9,6 +9,8 @@
 //!   Π(modifiers)`); future education/tech/government modifiers slot in alongside it.
 //! - `migration` — tech-gated relocation: discontented people move to a better reachable
 //!   same-faction band or stay (population conserved within the faction).
+//! - `culture` — the Layer-1 "near / far from the ancestors" morale term, read off the band's belief
+//!   anchor (`.claude/rules/core_sim/belief.md` → "The culture morale term").
 //!
 //! Mirrors the `demographics_config.rs` / `sedentarization_config.rs` loader (baked-in builtin +
 //! optional file/env override).
@@ -84,7 +86,7 @@ impl Default for ProductivityConfig {
 /// proportional to `bracket_size × weight` (working = 1.0, dependents = `dependent_weight` 0.4), so
 /// the headline fraction stays exact while workers dominate. They seek the highest-morale eligible
 /// band within reach — their own people's first — where reach is `base_reach` hex steps less the road
-/// bonus between the two camps (`advance_population_migration`; the work party's walk seam). Eligible
+/// bonus between the two camps (`supply::WalkReach`, also the culture term's reach). Eligible
 /// = `morale ≥ attractive_morale` AND
 /// `morale > source_morale + min_morale_gap`.
 #[derive(Debug, Clone, Deserialize)]
@@ -111,6 +113,71 @@ impl Default for MigrationConfig {
     }
 }
 
+/// Layer 1 — the **culture** morale term: near / far from the ancestors
+/// (`docs/plan_civilization_steps.md` §"What belief does, through seams that exist"). With `b` the
+/// belief on the band's anchor tile and `s = b / (b + belief_half_saturation)` its saturating weight,
+/// the term is `+near_bonus × s` while the band stands within walking reach of the anchor
+/// (`supply::WalkReach`, the migration reach) and `−away_drag × s` beyond it; `0` with no anchor.
+/// In or out of reach is binary — the drag does not grow with distance. All three are PLAYTEST
+/// DIALs.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct CultureConfig {
+    /// Morale per turn a band gains standing within reach of a saturated anchor.
+    pub near_bonus: f32,
+    /// Morale per turn a band loses standing beyond reach of a saturated anchor.
+    pub away_drag: f32,
+    /// Belief (dead-equivalents) at which the anchor's weight is one half.
+    pub belief_half_saturation: f32,
+}
+
+impl Default for CultureConfig {
+    fn default() -> Self {
+        Self {
+            near_bonus: 0.01,
+            away_drag: 0.02,
+            belief_half_saturation: 10.0,
+        }
+    }
+}
+
+impl CultureConfig {
+    /// The anchor's saturating weight `s = b / (b + belief_half_saturation)`, in `[0, 1)`: a single
+    /// death's worth barely registers and a great cemetery approaches the full term.
+    pub fn anchor_weight(&self, belief: f32) -> f32 {
+        belief / (belief + self.belief_half_saturation)
+    }
+
+    /// `near_bonus` and `away_drag` must be finite and non-negative; `belief_half_saturation` must be
+    /// finite and `> 0` (it is the weight's denominator at zero belief).
+    pub fn validate(&self) -> Result<(), WellbeingConfigError> {
+        require_non_negative_finite("culture.near_bonus", self.near_bonus)?;
+        require_non_negative_finite("culture.away_drag", self.away_drag)?;
+        if !self.belief_half_saturation.is_finite() || self.belief_half_saturation <= 0.0 {
+            return Err(WellbeingConfigError::Invalid {
+                field: "culture.belief_half_saturation",
+                constraint: "be finite and greater than 0",
+                value: self.belief_half_saturation.to_string(),
+            });
+        }
+        Ok(())
+    }
+}
+
+fn require_non_negative_finite(
+    field: &'static str,
+    value: f32,
+) -> Result<(), WellbeingConfigError> {
+    if !value.is_finite() || value < 0.0 {
+        return Err(WellbeingConfigError::Invalid {
+            field,
+            constraint: "be finite and at least 0",
+            value: value.to_string(),
+        });
+    }
+    Ok(())
+}
+
 /// Root wellbeing configuration.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -118,18 +185,21 @@ pub struct WellbeingConfig {
     pub discontent: DiscontentConfig,
     pub productivity: ProductivityConfig,
     pub migration: MigrationConfig,
+    pub culture: CultureConfig,
 }
 
 impl WellbeingConfig {
     pub fn builtin() -> Arc<Self> {
         Arc::new(
-            serde_json::from_str(BUILTIN_WELLBEING_CONFIG)
-                .expect("builtin wellbeing config should parse"),
+            Self::from_json_str(BUILTIN_WELLBEING_CONFIG)
+                .expect("builtin wellbeing config should parse and validate"),
         )
     }
 
-    pub fn from_json_str(json: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(json)
+    pub fn from_json_str(json: &str) -> Result<Self, WellbeingConfigError> {
+        let config: WellbeingConfig = serde_json::from_str(json)?;
+        config.culture.validate()?;
+        Ok(config)
     }
 
     pub fn from_file(path: &Path) -> Result<Self, WellbeingConfigError> {
@@ -137,7 +207,7 @@ impl WellbeingConfig {
             path: path.to_path_buf(),
             source,
         })?;
-        Ok(WellbeingConfig::from_json_str(&contents)?)
+        WellbeingConfig::from_json_str(&contents)
     }
 }
 
@@ -151,6 +221,12 @@ pub enum WellbeingConfigError {
     },
     #[error("failed to parse wellbeing config: {0}")]
     Parse(#[from] serde_json::Error),
+    #[error("wellbeing config `{field}` must {constraint}, got {value}")]
+    Invalid {
+        field: &'static str,
+        constraint: &'static str,
+        value: String,
+    },
 }
 
 impl ConfigLoadError for WellbeingConfigError {
@@ -241,5 +317,53 @@ mod tests {
         assert!((0.0..=1.0).contains(&m.morale_threshold));
         assert!((0.0..=1.0).contains(&m.dependent_weight));
         assert!((0.0..=1.0).contains(&m.attractive_morale));
+        assert!(config.culture.validate().is_ok());
+    }
+
+    #[test]
+    fn the_shipped_culture_levers_are_the_documented_defaults() {
+        let shipped = &WellbeingConfig::builtin().culture;
+        let default = CultureConfig::default();
+        assert_eq!(shipped.near_bonus, default.near_bonus);
+        assert_eq!(shipped.away_drag, default.away_drag);
+        assert_eq!(
+            shipped.belief_half_saturation,
+            default.belief_half_saturation
+        );
+    }
+
+    /// Belief equal to the half-saturation lever weighs exactly one half.
+    #[test]
+    fn the_anchor_weight_is_one_half_at_the_half_saturation_belief() {
+        const ONE_HALF: f32 = 0.5;
+        let culture = CultureConfig::default();
+        assert_eq!(
+            culture.anchor_weight(culture.belief_half_saturation),
+            ONE_HALF
+        );
+    }
+
+    #[test]
+    fn a_non_positive_half_saturation_is_refused() {
+        let json = r#"{ "culture": { "belief_half_saturation": 0.0 } }"#;
+        assert!(matches!(
+            WellbeingConfig::from_json_str(json),
+            Err(WellbeingConfigError::Invalid {
+                field: "culture.belief_half_saturation",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_negative_culture_lever_is_refused() {
+        let json = r#"{ "culture": { "away_drag": -0.01 } }"#;
+        assert!(matches!(
+            WellbeingConfig::from_json_str(json),
+            Err(WellbeingConfigError::Invalid {
+                field: "culture.away_drag",
+                ..
+            })
+        ));
     }
 }

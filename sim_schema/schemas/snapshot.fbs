@@ -536,7 +536,7 @@ table PopulationCohortState {
   supplyNetworkId:uint = 0;
   // This turn's signed morale delta (fixed-point, FIXED_POINT_SCALE = 1e6) — trend arrow source.
   moraleDelta:long = 0;
-  // Dominant negative morale driver when falling: 0=None, 1=Terrain, 2=Cold, 3=Unrest.
+  // Dominant negative morale driver when falling: 0=None, 1=Terrain, 2=Cold, 3=Unrest, 4=Culture.
   moraleCause:ubyte = 0;
   // Civilization Wellbeing (docs/plan_civ_wellbeing.md). All fixed-point (FIXED_POINT_SCALE = 1e6)
   // except the two head-counts. Derived per-turn unless noted.
@@ -551,7 +551,8 @@ table PopulationCohortState {
   // Phase 1 only surfaces it). PERSISTED for rollback (unlike the other derived fields here).
   grievance:long = 0;
   // Layer-1 named morale contributions whose signed sum IS moraleDelta (the itemized breakdown):
-  // settling (base growth, ≥0), terrain/climate (≤0), unrest (signed).
+  // settling (base growth, ≥0), terrain/climate (≤0), unrest (signed); culture (signed) is
+  // moraleCulture, appended at the end of this table.
   moraleSettling:long = 0;
   moraleTerrain:long = 0;
   moraleClimate:long = 0;
@@ -649,7 +650,7 @@ table PopulationCohortState {
   fodderStore:float = 0;
   // The three named fertility factors behind this turn's births — the birth_rate multiplier
   // fertility = birth_rate × hunger × reserve × trend (docs/plan_population_growth_model.md), the
-  // birth path's equivalent of the moraleSettling/Terrain/Climate/Unrest breakdown above. Fixed-point
+  // birth path's equivalent of the moraleSettling/Terrain/Climate/Unrest/Culture breakdown. Fixed-point
   // (FIXED_POINT_SCALE = 1e6), NEUTRAL AT 1e6 rather than at 0 — these are multiplicative factors,
   // not signed contributions, so the client renders each as its deviation from 1.0.
   //   - fertilityHunger  ∈ [0, 1]     did we eat this turn (consumed / demand). The GATE: the only
@@ -1429,6 +1430,12 @@ table PopulationCohortState {
   // - foodLeftBehind + transferReceived - transferSent. A move is a command, so this accumulates
   // between captures on the transfer pair's snapshot window and is cleared after the turn capture.
   foodLeftBehind:float = 0;
+  // Layer-1 CULTURE morale contribution - near / far from the ancestors (issue #699): +near_bonus x s
+  // while the band stands within walking reach of its belief anchor, -away_drag x s beyond it, 0 with
+  // no anchor; s = b / (b + belief_half_saturation) for the anchor's belief b. Signed, fixed-point
+  // (FIXED_POINT_SCALE = 1e6), part of the moraleSettling/Terrain/Climate/Unrest breakdown whose
+  // signed sum IS moraleDelta. Derived per-turn. The anchor itself is not on the wire.
+  moraleCulture:long = 0;
 }
 
 // One band's outfitting window. THE TWO SUPPLIES ARE MUTUALLY EXCLUSIVE and `parentBandId` says which
