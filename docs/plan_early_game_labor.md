@@ -222,13 +222,14 @@ Landing as sequential slices (each its own PR), in dependency order:
    superseded". Population is capped by the lineage/cohesion ladder; the larder by spoilage.
 5. ✅ **TOE / equipment** — shipped (PR #470). Consumable per-role kit; equipped/unequipped tiers
    (durability cliff); starter stock; role-specific effects. Craftable kits, a wider roster and
-   equipment types continue in #491; as-built rules in `.claude/rules/core_sim/equipment.md`.
+   equipment types followed under #491; as-built rules in `.claude/rules/core_sim/equipment.md`.
 6. ✅ **Minimal predators** — shipped (predators arc, PRs #166 and #341). Predator pressure +
    Warrior combat resolution — lights up the Warrior role built inert in slice 3.
 7. ✅ **Food ledger** — shipped (#182). Per-band income/outflow breakdown.
-- **Deferred (M2+), documented.** Crafter role + crafting to replenish/upgrade TOEs (#491); storage
-  tiers (#708, #709; spoilage itself shipped in PR #764); **breakaway-to-new-band** (a band split,
-  the SplitClan/migration seam); richer threats (barbarians, rival civs); the settlement arc's Phase 3 improvement catalog.
+- **Deferred (M2+), documented.** Crafter role + crafting to replenish/upgrade TOEs (shipped, #494);
+  storage tiers (#708, #709; spoilage itself shipped in PR #764); **breakaway-to-new-band** (a band
+  split, the SplitClan/migration seam); richer threats (barbarians, rival civs); the settlement
+  arc's Phase 3 improvement catalog.
 
 ## Open tuning dials (to settle live)
 
