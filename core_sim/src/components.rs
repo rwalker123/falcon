@@ -4330,10 +4330,10 @@ pub struct FinishedBatch {
 /// already coming ([`crate::craft_suggestions`]).
 ///
 /// **The pass in flight belongs to the ORDER, not to the bench** — its progress and the pile it drew.
-/// Only the head is ever worked, so on every order but the head both are at rest; they live on the
-/// order rather than the bench so that raising an order above a head that has already cut its pile
-/// **pauses** that head rather than destroying what it cut. The displaced order resumes, pile and
-/// progress intact, when it is the head again.
+/// Only one order is worked a turn (the **worked order**, `systems::crafting::worked_order`), so on
+/// every other order both are at rest; they live on the order rather than the bench so that an order
+/// overtaken mid-item — raised over, or passed by one ahead of it whose inputs arrived — **pauses**
+/// rather than losing what it cut, and resumes, pile and progress intact, when it is worked again.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BenchOrder {
     /// The recipe this order makes — an id from `recipes.json`, resolved at the command boundary.
@@ -4414,9 +4414,11 @@ pub enum BenchQueueError {
 /// is what a band crafts, so there is no Crafter role card and no [`LaborTarget`] variant. Crafting
 /// always has a subject, so it is staffed like a worked source rather than like a standing role.
 ///
-/// **The bench holds an ordered queue of [`BenchOrder`]s and works the head** ([`HEAD_ORDER`]);
-/// each finished item counts against it, and when its count is met the order leaves and the next
-/// one starts, drawing its own inputs. **The crew stays with the bench** across orders — a new head
+/// **The bench holds an ordered queue of [`BenchOrder`]s and works ONE of them a turn** — the first,
+/// in queue order, that holds a pile or can draw one now (`systems::crafting::worked_order`). A short
+/// order keeps its place and is skipped until its inputs are there. Each finished item counts against
+/// the worked order, and when its count is met the order leaves and the next worked order draws its
+/// own inputs. **The crew stays with the bench** across orders — a new head
 /// is not an order to send anyone home — and an empty queue leaves the crew standing at an idle
 /// bench. Parallel crafting comes from more benches, never from splitting one bench's crew.
 ///
@@ -4575,21 +4577,22 @@ impl BandBench {
         Ok(())
     }
 
-    /// **THE HEAD FINISHED ONE ITEM** — count it, reset the pass, and pop the order if its count is
-    /// met. Returns `true` when the order left the queue, so the caller knows the next head (if any)
-    /// has to draw its own inputs.
+    /// **THE WORKED ORDER FINISHED ONE ITEM** — count it against the order at `index`, reset its
+    /// pass, and pop it if its count is met. Returns `true` when the order left the queue, so the
+    /// caller knows the next worked order has to draw its own inputs. An index with no order is a
+    /// no-op returning `false`.
     ///
     /// **The overflow past `work` is dropped, not carried**: progress past a completion was done on
     /// an item whose materials have not been drawn yet.
-    pub fn complete_head_item(&mut self) -> bool {
-        let Some(head) = self.head_mut() else {
+    pub fn complete_item(&mut self, index: usize) -> bool {
+        let Some(order) = self.orders.get_mut(index) else {
             return false;
         };
-        head.made = head.made.saturating_add(ONE_ITEM_MADE);
-        head.progress = scalar_zero();
-        head.drawn = None;
-        if head.is_done() {
-            self.orders.remove(HEAD_ORDER);
+        order.made = order.made.saturating_add(ONE_ITEM_MADE);
+        order.progress = scalar_zero();
+        order.drawn = None;
+        if order.is_done() {
+            self.orders.remove(index);
             return true;
         }
         false

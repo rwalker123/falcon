@@ -107,8 +107,17 @@ const ORDER_PROGRESS_KEY := "progress"
 ## **`drawn` ON A NON-HEAD ORDER IS A PAUSED ORDER** — raised over while it held a cut pile, which it
 ## keeps, with its progress, until it is the head again. Removing it destroys that pile.
 const ORDER_DRAWN_KEY := "drawn"
-## The head's index — the order the well describes and the one order that cannot be raised.
+## The head's index — the one order that cannot be raised.
 const ORDER_HEAD_INDEX := 0
+## **WHICH ORDER THE BENCH IS WORKING** (`BenchState.worked`) — the first in queue order that holds a
+## pile or can draw, so a short head no longer stalls the queue. EVERY bench scalar describes
+## `orders[worked]`, and so does the well; `0` when nothing can be worked.
+const BENCH_WORKED_KEY := "worked"
+## Why the bench is SKIPPING an order (`"Short 3.0 fibre"`), sim-resolved and rendered verbatim, with
+## its severity in the offer vocabulary; `""` on an order that holds a pile or can draw. The crew's own
+## refusal is never here — it stays on the bench's `blocked_reason`.
+const ORDER_BLOCKED_REASON_KEY := "blocked_reason"
+const ORDER_BLOCKED_SEVERITY_KEY := "blocked_severity"
 
 ## **WHAT TO MAKE NEXT** (`PopulationCohortState.craftSuggestions`, §7 → "Suggestions") — ranked
 ## SIM-SIDE by the workers going without the item, published in that order, and rendered in it. The
@@ -468,7 +477,9 @@ const MAKE_BUTTON_META := "crafting_make_button"
 ## pile) and which merely waits.
 const HEAD_COUNT_CAPTION := "Made"
 const ORDER_STATUS_PAUSED := "Paused"
-const ORDER_STATUS_WAITING := "Queued"
+const ORDER_STATUS_QUEUED := "Queued"
+## An order the bench is SKIPPING because it cannot draw — its reason sits under its name.
+const ORDER_STATUS_WAITING := "Waiting"
 const ORDER_STATUS_PAUSED_TOOLTIP := "Raised over while its pile was cut — the pile and its progress wait for it."
 ## A queued order's name. The head's is the sim's `BenchState.displayName` verbatim; a waiting order
 ## publishes no name, so it is the recipe book's `display_name` with the recipe's `label` — the sim's
@@ -494,6 +505,7 @@ const ORDER_REMOVE_TOOLTIP_UNDRAWN := "Remove this order — nothing has been cu
 ## own, and every row's ✕ is the well's and the header's glyph too.
 const QUEUE_ROW_META := "crafting_queue_row"
 const ORDER_STATUS_META := "crafting_order_status"
+const ORDER_REASON_META := "crafting_order_reason"
 const ORDER_DECREMENT_META := "crafting_order_decrement"
 const ORDER_INCREMENT_META := "crafting_order_increment"
 const ORDER_RAISE_META := "crafting_order_raise"
@@ -723,6 +735,7 @@ const BENCH_TEACH_FONT_SIZE := 11
 ## a fixed status column so the names line up whatever the word.
 const QUEUE_ROW_FONT_SIZE := 12
 const ORDER_STATUS_FONT_SIZE := 10
+const ORDER_REASON_FONT_SIZE := 11
 const ORDER_STATUS_WIDTH := 56.0
 const ORDER_COUNT_WIDTH := 40.0
 ## The head's `made/count` face in the well, at the crew count's size — wide enough for `12/20`.

@@ -343,10 +343,13 @@ that split.
 
 ### The queue — one bench works its orders in turn
 
-An **order** is `recipe × count`. The bench holds an ordered list of them and works the **head**;
-each finished item counts against it, and when the count is met the order leaves and the next one
-starts, drawing its own inputs. **The crew stays with the bench** across orders — a new head is not
-an order to send anyone home — and an empty queue leaves the crew standing at an idle bench.
+An **order** is `recipe × count`. The bench holds an ordered list of them and works **one a turn:
+the first, in queue order, that holds a pile or can draw one now** — the worked order. An order short
+of its inputs keeps its place and is skipped until they are there, and when it can draw again it
+takes priority back; an order it then overtakes mid-item pauses with its pile. Each finished item
+counts against the worked order, and when the count is met the order leaves and the next worked order
+draws its own inputs. **The crew stays with the bench** across orders — a new order is not an order
+to send anyone home — and an empty queue leaves the crew standing at an idle bench.
 
 - **Every order has a count.** The repeat-until-cleared job is retired: "keep making cordage" is an
   order with a number on it, which is also what lets a suggestion net out what is already coming.
@@ -354,8 +357,11 @@ an order to send anyone home — and an empty queue leaves the crew standing at 
   count.
 - **The player edits the queue**: change an order's count, remove it, or move it up. Removing an
   order that has drawn its inputs **loses them**, as clearing the bench always has — a drawn pile
-  keeps no batch readings to return. Moving an order above a head that has drawn **pauses** that
-  head with its pile and progress intact; each order holds its own.
+  keeps no batch readings to return. Moving an order above one that has drawn **pauses** that order
+  with its pile and progress intact; each order holds its own.
+- **A skipped order says why.** Each queued order carries the bench's own refusal for it
+  (*"Short 4.9 bone"*), empty when it can be worked; when no order can be worked the bench reads as
+  its blocked head.
 - **One bench, one queue.** Crafting in parallel comes from **more benches** — a bench growing toward
   a workshop and a factory, each with its own queue — never from splitting one bench into per-recipe
   crews (#595, closed for that reason).

@@ -1309,9 +1309,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     }
     let _ = dict.insert("material_batches", &material_batches);
 
-    // WHAT IS ON THIS BAND'S BENCH — the scalars describe the HEAD order of its queue (`orders`,
-    // below). An empty `recipe_id` is an IDLE bench, which is a different statement from a BLOCKED one: a
-    // blocked bench has a recipe AND a `blocked_reason`.
+    // WHAT IS ON THIS BAND'S BENCH — the scalars describe the WORKED order, `orders[worked]` (below):
+    // the first order in queue order that holds a pile or can draw, so a short head no longer stalls
+    // the queue. When nothing can be worked `worked` is 0 and the scalars describe the head. An empty
+    // `recipe_id` is an IDLE bench, which is a different statement from a BLOCKED one: a blocked bench
+    // has a recipe AND a `blocked_reason`.
     let mut bench_dict = VarDictionary::new();
     let _ = bench_dict.insert(
         "recipe_id",
@@ -1406,10 +1408,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         },
     );
     // **THE QUEUE, HEAD FIRST** (`docs/plan_crafting_and_materials.md` §7 → "The queue"). Every
-    // scalar above describes the HEAD order; this array is every order, and an order's INDEX here is
+    // scalar above describes `orders[worked]`; this array is every order, and an order's INDEX here is
     // the `order` argument the queue verbs (`bench_order_count`, `bench_remove`, `bench_raise`)
-    // address. Empty on an idle bench. The head's `made` is what the retired `BenchState.
+    // address. Empty on an idle bench. The worked order's `made` is what the retired `BenchState.
     // itemsCompleted` carried, which is why that field is no longer read.
+    let _ = bench_dict.insert("worked", cohort.bench().map_or(0, |b| b.worked()) as i64);
     //
     // **`drawn` on a NON-head order is a PAUSED order** — raised over while holding a cut pile, it
     // keeps that pile and its progress until it is the head again, or until it is removed, which
@@ -1423,6 +1426,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let _ = row.insert("made", order.made() as i64);
             let _ = row.insert("progress", order.progress() as f64);
             let _ = row.insert("drawn", order.drawn());
+            // WHY THE BENCH IS SKIPPING THIS ORDER (`"Short 3.0 fibre"`), sim-resolved and rendered
+            // verbatim, with its severity in the offer vocabulary; both `""` when the order holds a
+            // pile or can draw. The crew's refusal stays on the bench row's own `blocked_reason`.
+            let _ = row.insert("blocked_reason", order.blockedReason().unwrap_or(""));
+            let _ = row.insert("blocked_severity", order.blockedSeverity().unwrap_or(""));
             bench_orders.push(&row.to_variant());
         }
     }

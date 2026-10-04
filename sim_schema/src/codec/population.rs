@@ -752,6 +752,8 @@ fn create_populations<'a>(
                         },
                         // **THE QUEUE, head first** — appended last.
                         orders: Some(orders),
+                        // The index the scalars above describe — appended last.
+                        worked: cohort.bench.worked,
                     },
                 )
             };
@@ -1154,6 +1156,8 @@ fn create_bench_orders<'a>(
         .iter()
         .map(|order| {
             let recipe_id = builder.create_string(&order.recipe_id);
+            let blocked_reason = builder.create_string(&order.blocked_reason);
+            let blocked_severity = builder.create_string(&order.blocked_severity);
             fb::BenchOrder::create(
                 builder,
                 &fb::BenchOrderArgs {
@@ -1162,6 +1166,8 @@ fn create_bench_orders<'a>(
                     made: order.made,
                     progress: order.progress,
                     drawn: order.drawn,
+                    blockedReason: Some(blocked_reason),
+                    blockedSeverity: Some(blocked_severity),
                 },
             )
         })
@@ -1447,7 +1453,10 @@ fn decode_bench(bench: fb::BenchState<'_>) -> Result<BenchState, DecodeError> {
             made: order.made(),
             progress: order.progress(),
             drawn: order.drawn(),
+            blocked_reason: text(order.blockedReason()),
+            blocked_severity: text(order.blockedSeverity()),
         }),
+        worked: bench.worked(),
     })
 }
 

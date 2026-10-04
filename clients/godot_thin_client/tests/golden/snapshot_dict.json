@@ -4371,6 +4371,8 @@
         ],
         "orders": [
           {
+            "blocked_reason": "populations[0].bench.orders[0].blocked_reason",
+            "blocked_severity": "populations[0].bench.orders[0].blocked_severity",
             "count": 198,
             "drawn": true,
             "made": 140,
@@ -4378,6 +4380,8 @@
             "recipe_id": "populations[0].bench.orders[0].recipe_id"
           },
           {
+            "blocked_reason": "populations[0].bench.orders[1].blocked_reason",
+            "blocked_severity": "populations[0].bench.orders[1].blocked_severity",
             "count": 157,
             "drawn": false,
             "made": 1,
@@ -4385,6 +4389,8 @@
             "recipe_id": "populations[0].bench.orders[1].recipe_id"
           },
           {
+            "blocked_reason": "populations[0].bench.orders[2].blocked_reason",
+            "blocked_severity": "populations[0].bench.orders[2].blocked_severity",
             "count": 172,
             "drawn": false,
             "made": 10,
@@ -4419,6 +4425,7 @@
         ],
         "teaches": "populations[0].bench.teaches",
         "work": 77.519997,
+        "worked": 72,
         "workers": 95
       },
       "build_queue": [
@@ -5622,6 +5629,8 @@
         ],
         "orders": [
           {
+            "blocked_reason": "populations[1].bench.orders[0].blocked_reason",
+            "blocked_severity": "populations[1].bench.orders[0].blocked_severity",
             "count": 189,
             "drawn": true,
             "made": 17,
@@ -5629,6 +5638,8 @@
             "recipe_id": "populations[1].bench.orders[0].recipe_id"
           },
           {
+            "blocked_reason": "populations[1].bench.orders[1].blocked_reason",
+            "blocked_severity": "populations[1].bench.orders[1].blocked_severity",
             "count": 46,
             "drawn": false,
             "made": 180,
@@ -5636,6 +5647,8 @@
             "recipe_id": "populations[1].bench.orders[1].recipe_id"
           },
           {
+            "blocked_reason": "populations[1].bench.orders[2].blocked_reason",
+            "blocked_severity": "populations[1].bench.orders[2].blocked_severity",
             "count": 75,
             "drawn": false,
             "made": 15,
@@ -5670,6 +5683,7 @@
         ],
         "teaches": "populations[1].bench.teaches",
         "work": 5.62,
+        "worked": 89,
         "workers": 4
       },
       "build_queue": [
@@ -6834,6 +6848,8 @@
         ],
         "orders": [
           {
+            "blocked_reason": "populations[2].bench.orders[0].blocked_reason",
+            "blocked_severity": "populations[2].bench.orders[0].blocked_severity",
             "count": 40,
             "drawn": true,
             "made": 142,
@@ -6841,6 +6857,8 @@
             "recipe_id": "populations[2].bench.orders[0].recipe_id"
           },
           {
+            "blocked_reason": "populations[2].bench.orders[1].blocked_reason",
+            "blocked_severity": "populations[2].bench.orders[1].blocked_severity",
             "count": 183,
             "drawn": false,
             "made": 147,
@@ -6848,6 +6866,8 @@
             "recipe_id": "populations[2].bench.orders[1].recipe_id"
           },
           {
+            "blocked_reason": "populations[2].bench.orders[2].blocked_reason",
+            "blocked_severity": "populations[2].bench.orders[2].blocked_severity",
             "count": 170,
             "drawn": false,
             "made": 72,
@@ -6882,6 +6902,7 @@
         ],
         "teaches": "populations[2].bench.teaches",
         "work": 80.669998,
+        "worked": 130,
         "workers": 69
       },
       "build_queue": [

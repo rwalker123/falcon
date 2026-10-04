@@ -523,7 +523,8 @@ there in slice 4.
 
 `BandBench` is a component on a band: `{ orders, workers, last_output_grade, priority, last_started,
 finished }`. **One bench, one queue**: `orders` is an ordered list of `BenchOrder { recipe_id, count,
-made, progress, drawn }` and the bench works the **head** (`HEAD_ORDER`). Everything else on the
+made, progress, drawn }` and the bench works **one order a turn — the worked order** (below).
+Everything else on the
 bench — the crew, the rank, the band's recipe habits, the parked output — belongs to the bench and
 survives every queue edit.
 
@@ -535,18 +536,23 @@ Design: `docs/plan_crafting_and_materials.md` §7, "The queue".
   repeat-until-cleared job is retired; `set_bench` (52) and `clear_bench` (53) are reserved in
   `command.proto`. *"Keep making cordage"* is an order with a number on it, which is also what lets the
   craft suggestions net out what is already coming.
-- **On each finished item the head's `made` rises by one**; when `made` reaches `count`
-  (`BandBench::complete_head_item`) the order leaves and the next head **draws its own inputs the same
-  turn**, against its own recipe's material and tiers resolved fresh off the ledger
-  (`systems::crafting::draw_new_head`). An order that is not finished re-draws on the tiers resolved
-  at the top of the band's pass, as it always has.
+- **THE WORKED ORDER is the first, in queue order, that holds a pile or can draw one now**
+  (`systems::crafting::worked_order` over `order_is_workable`, which asks `pass_is_affordable` — the
+  draw's own question). Only it is worked, one order a turn. An order short of its inputs, naming a
+  recipe the book no longer carries, or whose recipe has no bench material is **skipped and keeps
+  its place**; when it can draw again it takes priority back. The rule is **one authority**, read by
+  `advance_crafting`, `bench_material_rate` and the wire's bench row. It is crew-blind — the crew
+  gates the draw, not which order is next. Before it, a short head stalled the whole queue behind it.
+- **On each finished item the worked order's `made` rises by one**; when `made` reaches `count`
+  (`BandBench::complete_item`) the order leaves. Either way **whichever order is now worked draws its
+  own inputs the same turn** (`draw_for_worked_order`), on its recipe's tiers resolved fresh off the
+  ledger — this order again, the next one, or one ahead of it whose inputs this pass just supplied.
 - **The pass in flight lives on the ORDER, not the bench** — `progress` and `drawn` are
-  `BenchOrder` fields. Only the head is ever worked; the reason they are per-order is
-  `bench_raise`: raising an order over a head that has already cut its pile **pauses** that head,
-  pile and progress intact, and it resumes when it is the head again. A bench-level pile would have
-  forced the raise to destroy what the player cut. So a non-head order can hold a pile, and the wire
-  says so (`BenchOrder.drawn` / `progress`).
-- **The crew stays with the bench.** A new head is not an order to send anyone home, and an empty
+  `BenchOrder` fields, so an order overtaken mid-item — raised over, or passed by an earlier order
+  whose stock arrived — **pauses** with its pile and progress intact and resumes when it is worked
+  again. A bench-level pile would have forced the overtake to destroy what the player cut. So a
+  non-worked order can hold a pile, and the wire says so (`BenchOrder.drawn` / `progress`).
+- **The crew stays with the bench.** A new order is not an order to send anyone home, and an empty
   queue leaves the crew standing at an idle bench — which is why `bench_crew` applies to an idle
   bench (it is the only way to stand those hands down). The shed thins an idle bench's crew like any
   other.
@@ -571,7 +577,11 @@ The four queue verbs are `CommandEventKind::Craft` and are band-addressed with a
 in `xtask`'s command guard. Pinned through the encoded frame by
 `bench_queue::a_finished_order_leaves_the_queue_and_the_next_draws_its_own_inputs` and
 `::the_last_order_popping_leaves_an_idle_bench_that_makes_nothing_more` (the liveness half: a
-repeating job would keep drawing), and through the handlers by
+repeating job would keep drawing), the worked-order rule by
+`::a_short_head_is_skipped_and_the_next_makeable_order_is_worked` (the sled behind a short head is
+made while the head keeps index 0 with its reason; the then fully stuck queue publishes `worked` 0
+and the head's reason) and `::the_head_resumes_priority_when_its_stock_arrives` (the overtaken order
+keeps its pile), and through the handlers by
 `server::tests::removing_the_head_spends_its_pile_and_raising_over_it_keeps_it` and
 `::queue_edits_that_cannot_apply_are_refused_by_name`.
 
@@ -961,7 +971,7 @@ number, a grade or a step-down.**
 | Field | Answers |
 |---|---|
 | `materialBatches:[MaterialBatchState]` | *what have I got* — one row per (material, band key) batch: `amount`, plus a `CharacteristicReading` per axis carrying **both** the exact value and its band name, in the material's **declared** axis order |
-| `bench:BenchState` | *what am I making* — every scalar is the **head** order's: `recipeId` (`""` = idle), crew, `progress` against `work`, `teaches` (the recipe's craft), whether the pile is `drawn` and the grade it fixed, `blockedReason` with its `blockedSeverity`, the `ratePerTurn` a turn adds, the `drawnInputs` a removal would destroy — plus `orders:[BenchOrder]`, the whole queue head first (`recipeId`, `count`, `made`, `progress`, `drawn`), whose index is the `order` the queue verbs address; the head's finished count is `orders[0].made` alone — the bench-level `itemsCompleted` twin was deleted |
+| `bench:BenchState` | *what am I making* — every scalar describes `orders[worked]`, the **worked** order (the **head** when no order can be worked, so a fully stuck bench reads as its blocked head; `worked` is `0` then and on an idle bench): `recipeId` (`""` = idle), crew, `progress` against `work`, `teaches` (the recipe's craft), whether the pile is `drawn` and the grade it fixed, `blockedReason` with its `blockedSeverity`, the `ratePerTurn` a turn adds, the `drawnInputs` a removal would destroy — plus `orders:[BenchOrder]`, the whole queue head first (`recipeId`, `count`, `made`, `progress`, `drawn`, and `blockedReason` / `blockedSeverity` — why the bench is skipping that order, in the craft-offer vocabulary, `""` for an order that holds a pile or can draw, resolved by `snapshot::crafting::order_skip_reason` through the bench's own `refusal_reasons`; the crew's refusal stays on the bench row), whose index is the `order` the queue verbs address; the head's finished count is `orders[0].made` alone — the bench-level `itemsCompleted` twin was deleted |
 | `craftOffers:[CraftOffer]` | *what could I make* — **one entry per recipe, always**, which the ledger folds into one row per thing made; with `available`, a resolved `reason` + `severity`, the `shortfalls`, the `outputGrade` a draw would select, `group`, `outputItemId`, `onBench`, and the one-row-per-item fields (`recipeLabel` / `makes` / `lasts` / `suggested` / `ownedAtTier`) |
 | `equipmentBatches:[EquipmentBatchState]` | *what have I got, and how long will it last* — one row per **batch**, plus one `count: 0` row per config item the band owns none of, so the ledger is never missing a row |
 | `craftSuggestions:[CraftSuggestion]` | *what should I make next* — appended last on the cohort; see "Craft suggestions — what to make next, ranked by who is going without" |
@@ -1145,10 +1155,11 @@ hand-written `Default` — because a defaulted `0` would read as *"owns none at 
 takes no default for it**: a serialized `CraftOfferState` missing the field fails like any other
 missing field, rather than decoding silently as *unattributed*.
 
-### The suggested recipe: the head order's, else last started if it can be made, else the first that can
+### The suggested recipe: the worked order's, else last started if it can be made, else the first that can
 
 *(This is which **recipe** a ledger row offers — distinct from the craft suggestions, which say which
-**item** to make next.)* `onBench` is true on the offer whose recipe is the **head** order's.
+**item** to make next.)* `onBench` is true on the offer whose recipe is the order the bench row
+describes — the **worked** order, else the head.
 
 `mark_suggested` runs after a band's offers are built and picks, **per row**:
 

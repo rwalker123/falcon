@@ -3714,7 +3714,7 @@ Two frames appended LAST in the chapter — `crafting_queue_suggestions` and
 `crafting_suggestion_picker` — and 26 claims; the behaviour and each claim's pairing are
 `crafting-panel.md`'s. **`crafting_bench`'s `EXPECTED_CHECKPOINTS` moved 187 → 218, RE-MEASURED**: the
 const was raised to an impossible number, the run read back `reached 218 checkpoints`, and 218 was
-set. **Run totals on this tree: 2653 `PASS` / 0 `FAIL` / 482 frames, exit 0.**
+set. **Run totals on this tree: 2653 `PASS` / 0 `FAIL` / 482 frames, exit 0 (2662 / 0 / 483 after the short-head follow-up).**
 
 **EVERY STATE BUILT ON `_crafting_band()` MOVED IN CONTENT, NONE IN COUNT.** The running bench now
 publishes its one-order queue (`orders[0]`, `1/2`), so the well carries the head's `Made` stepper, the
@@ -3731,3 +3731,10 @@ inside its room`), not estimated.
 **`_crew_button_disabled` skips the queue's own steppers** (`ORDER_DECREMENT_META` /
 `ORDER_INCREMENT_META`): they wear the crew stepper's `−` / `+` glyphs, so a face search would read a
 live COUNT `+` as a live crew `+` and pass the benchable-ceiling claim on the wrong control.
+
+**THE SHORT-HEAD FOLLOW-UP added one frame and nine claims** — `crafting_queue_short_head`
+(`_short_head_state`, after the queue state): the well follows `BenchState.worked`, the skipped head
+is a `WAITING` queue row with its tinted reason, and the head row's `+`/✕ send `order 0` while the
+well's send `order 1`. Every fixture bench now carries `worked` and every order `blocked_reason` /
+`blocked_severity`. **`EXPECTED_CHECKPOINTS` moved 218 → 228, RE-MEASURED** the same way (the run read
+back `reached 228`).

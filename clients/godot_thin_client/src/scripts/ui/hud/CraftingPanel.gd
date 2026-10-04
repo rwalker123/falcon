@@ -688,11 +688,13 @@ func _build_bench(payload: Dictionary) -> void:
 	# built BEFORE the stepper, which insets it from the card's right edge and keeps it away from the
 	# header's own ✕. See `_build_clear_button`.
 	#
-	# **THE WELL IS THE HEAD ORDER'S ROW**, so the head's `made/count` stepper rides here, beside its ✕,
-	# rather than on a second row under the well repeating its name and its ✕. See `_build_queue`.
+	# **THE WELL IS THE WORKED ORDER'S ROW** — `orders[worked]`, the order every bench scalar
+	# describes — so its `made/count` stepper rides here, beside its ✕, rather than on a second row
+	# under the well repeating its name and its ✕. See `_build_queue`.
 	var orders: Array = bench.get(HudCraftingVocab.BENCH_ORDERS_KEY, [])
-	if recipe_id != "" and not orders.is_empty() and orders[HudCraftingVocab.ORDER_HEAD_INDEX] is Dictionary:
-		top.add_child(_build_head_count_stepper(orders[HudCraftingVocab.ORDER_HEAD_INDEX]))
+	var worked := _worked_index(bench)
+	if recipe_id != "" and worked < orders.size() and orders[worked] is Dictionary:
+		top.add_child(_build_head_count_stepper(worked, orders[worked]))
 	if recipe_id != "":
 		top.add_child(_build_clear_button(bench))
 	# **THE CREW STEPPER IS LIVE ON AN IDLE BENCH TOO** — the crew stays with the bench across orders,
@@ -725,7 +727,7 @@ func _build_bench(payload: Dictionary) -> void:
 	section.add_child(well)
 	# **THE REST OF THE QUEUE, under the well that IS its head.** A bench with one order — or none —
 	# draws nothing here.
-	if orders.size() > HudCraftingVocab.ORDER_HEAD_INDEX + 1:
+	if orders.size() > 1:
 		section.add_child(_build_queue(orders, bench, payload))
 	_main.add_child(section)
 
@@ -797,8 +799,8 @@ func _build_clear_button(bench: Dictionary) -> Control:
 	HudStyle.apply_button(button, "armed")
 	# Found by identity rather than by face — the header's close button is the same glyph.
 	button.set_meta(HudCraftingVocab.CLEAR_BENCH_META, true)
-	button.pressed.connect(func() -> void:
-		order_remove_requested.emit(HudCraftingVocab.ORDER_HEAD_INDEX))
+	var worked := _worked_index(bench)
+	button.pressed.connect(func() -> void: order_remove_requested.emit(worked))
 	return button
 
 ## The pile a clear would spend, in the cost cell's own clause shape. Empty `drawn_inputs` is an
@@ -2139,8 +2141,9 @@ func _suggestion_in(payload: Dictionary, item_id: String) -> Dictionary:
 func _build_queue(orders: Array, bench: Dictionary, payload: Dictionary) -> Control:
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", 0)
-	for index in range(HudCraftingVocab.ORDER_HEAD_INDEX + 1, orders.size()):
-		if orders[index] is Dictionary:
+	var worked := _worked_index(bench)
+	for index in range(orders.size()):
+		if index != worked and orders[index] is Dictionary:
 			column.add_child(_build_queue_row(index, orders[index], bench, payload))
 	return column
 
@@ -2148,8 +2151,7 @@ func _build_queue(orders: Array, bench: Dictionary, payload: Dictionary) -> Cont
 ## reads as two captioned steppers — how many to make, and who is making them. `−` is dead at
 ## `made + 1` for the server's reason (a count at or below `made` would finish the order; stopping it
 ## is the ✕ beside it).
-func _build_head_count_stepper(order: Dictionary) -> Control:
-	var index := HudCraftingVocab.ORDER_HEAD_INDEX
+func _build_head_count_stepper(index: int, order: Dictionary) -> Control:
 	var count := int(order.get(HudCraftingVocab.ORDER_COUNT_KEY, 0))
 	var made := int(order.get(HudCraftingVocab.ORDER_MADE_KEY, 0))
 	var column := VBoxContainer.new()
@@ -2212,21 +2214,40 @@ func _build_queue_row(index: int, order: Dictionary, bench: Dictionary, payload:
 	status.custom_minimum_size = Vector2(HudCraftingVocab.ORDER_STATUS_WIDTH, 0.0)
 	status.add_theme_font_size_override("font_size", HudCraftingVocab.ORDER_STATUS_FONT_SIZE)
 	status.set_meta(HudCraftingVocab.ORDER_STATUS_META, index)
-	if drawn:
+	var blocked := String(order.get(HudCraftingVocab.ORDER_BLOCKED_REASON_KEY, ""))
+	if blocked != "":
+		status.text = HudCraftingVocab.ORDER_STATUS_WAITING.to_upper()
+		status.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+	elif drawn:
 		status.text = HudCraftingVocab.ORDER_STATUS_PAUSED.to_upper()
 		status.add_theme_color_override("font_color", HudStyle.WARN)
 		HudWidgets.set_label_tooltip(status, HudCraftingVocab.ORDER_STATUS_PAUSED_TOOLTIP)
 	else:
-		status.text = HudCraftingVocab.ORDER_STATUS_WAITING.to_upper()
+		status.text = HudCraftingVocab.ORDER_STATUS_QUEUED.to_upper()
 		status.add_theme_color_override("font_color", HudStyle.INK_FAINT)
 	row.add_child(status)
 
+	# The name, and — on an order the bench is SKIPPING — the sim's reason on a second line, VERBATIM
+	# and tinted by its published severity through the SAME `REASON_COLORS` the well's blocked line
+	# uses. Two lines at most, the panel's copy limit.
+	var words := VBoxContainer.new()
+	words.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	words.add_theme_constant_override("separation", 0)
 	var name_label := Label.new()
 	name_label.text = _order_name(order, payload)
-	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_label.add_theme_font_size_override("font_size", HudCraftingVocab.QUEUE_ROW_FONT_SIZE)
 	name_label.add_theme_color_override("font_color", HudStyle.INK_DIM)
-	row.add_child(name_label)
+	words.add_child(name_label)
+	if blocked != "":
+		var reason := Label.new()
+		reason.text = blocked
+		reason.add_theme_font_size_override("font_size", HudCraftingVocab.ORDER_REASON_FONT_SIZE)
+		reason.add_theme_color_override("font_color", HudCraftingVocab.REASON_COLORS.get(
+			String(order.get(HudCraftingVocab.ORDER_BLOCKED_SEVERITY_KEY, "")),
+			HudCraftingVocab.REASON_COLOR_QUIET))
+		reason.set_meta(HudCraftingVocab.ORDER_REASON_META, index)
+		words.add_child(reason)
+	row.add_child(words)
 
 	var minus := _queue_button(HudCraftingVocab.ORDER_COUNT_DECREMENT, "")
 	_wire_count_decrement(minus, index, count, made)
@@ -2244,8 +2265,17 @@ func _build_queue_row(index: int, order: Dictionary, bench: Dictionary, payload:
 	row.add_child(plus)
 
 	var raise := _queue_button(HudCraftingVocab.ORDER_RAISE_GLYPH, _raise_tooltip(index, bench))
-	raise.set_meta(HudCraftingVocab.ORDER_RAISE_META, index)
-	raise.pressed.connect(func() -> void: order_raise_requested.emit(index))
+	if index == HudCraftingVocab.ORDER_HEAD_INDEX:
+		# The head has nowhere to go up to (the server refuses it). The button stays as an INVISIBLE,
+		# dead placeholder so the ✕ column lines up down the queue — a bare gap of the nominal size does
+		# not, the button's stylebox padding being wider than its minimum.
+		raise.disabled = true
+		raise.modulate = Color(1.0, 1.0, 1.0, 0.0)
+		raise.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		raise.tooltip_text = ""
+	else:
+		raise.set_meta(HudCraftingVocab.ORDER_RAISE_META, index)
+		raise.pressed.connect(func() -> void: order_raise_requested.emit(index))
 	row.add_child(raise)
 
 	var remove := _queue_button(HudCraftingVocab.ORDER_REMOVE_GLYPH,
@@ -2269,9 +2299,16 @@ func _order_name(order: Dictionary, payload: Dictionary) -> String:
 
 ## Raising the order straight under a head that has CUT ITS PILE pauses that head — say so before.
 func _raise_tooltip(index: int, bench: Dictionary) -> String:
-	if index == HudCraftingVocab.ORDER_HEAD_INDEX + 1 and bool(bench.get(HudCraftingVocab.BENCH_DRAWN_KEY, false)):
+	if index - 1 == _worked_index(bench) and bool(bench.get(HudCraftingVocab.BENCH_DRAWN_KEY, false)):
 		return HudCraftingVocab.ORDER_RAISE_PAUSES_TOOLTIP
 	return HudCraftingVocab.ORDER_RAISE_TOOLTIP
+
+## **THE ORDER THE WELL DESCRIBES** — `BenchState.worked`, the first order in queue order that holds a
+## pile or can draw. `0` (the head) when nothing can be worked, so a fully stuck bench reads as its
+## blocked head exactly as before.
+func _worked_index(bench: Dictionary) -> int:
+	return maxi(int(bench.get(HudCraftingVocab.BENCH_WORKED_KEY, HudCraftingVocab.ORDER_HEAD_INDEX)),
+		HudCraftingVocab.ORDER_HEAD_INDEX)
 
 func _queue_button(glyph: String, tooltip: String) -> Button:
 	var button := Button.new()

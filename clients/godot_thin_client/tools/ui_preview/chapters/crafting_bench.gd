@@ -17,7 +17,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 218
+const EXPECTED_CHECKPOINTS := 228
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
@@ -757,6 +757,7 @@ func _crafting_states() -> void:
 	await _recipe_states()
 	await _shrug_with_a_link_state()
 	await _queue_and_suggestion_states()
+	await _short_head_state()
 
 	# Hand everything back: the panel closed, the roster restored to the reference band.
 	h._hud.close_crafting_panel()
@@ -857,6 +858,109 @@ func _queue_and_suggestion_states() -> void:
 	h._hud.close_crafting_panel()
 	await h._settle()
 
+# ---- the SHORT HEAD: the bench works the first order it can (issue #776 follow-up) ---------------
+
+## The head is short of fibre, so the bench skips it and works order 1, the flint spears.
+const SHORT_HEAD_WORKED := 1
+const SHORT_HEAD_REASON := "Short 3.0 fibre"
+const SHORT_HEAD_COUNT := 2
+const SHORT_HEAD_WORKED_COUNT := 3
+const SHORT_HEAD_WORKED_MADE := 1
+
+## **A SHORT HEAD NO LONGER STALLS THE QUEUE, AND THE PANEL FOLLOWS `worked`.** Every bench scalar
+## describes `orders[worked]`, so the well is order 1 here — its title, its `made/count`, its ✕ — and
+## the skipped head is a queue row ABOVE the rest, reading WAITING with the sim's reason in the danger
+## ink. The claims are PAIRS on the two places an index can go wrong: the head row's ✕ and `+` send 0
+## while the well's send 1, since a panel still hard-wired to the head would send 0 from both.
+func _short_head_state() -> void:
+	var band := _short_head_band()
+	h._hud.update_band_alerts([band])
+	h._hud.open_crafting_panel(band)
+	await h._settle()
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting/short-head — the panel is open", false)
+		return
+	var texts := _label_texts(panel)
+	h._assert_hud("crafting/short-head — the well describes the WORKED order, not the head",
+		_has_prefix(texts, QUEUE_PAUSED_NAME)
+			and _label_with_text(panel, "%d/%d" % [SHORT_HEAD_WORKED_MADE, SHORT_HEAD_WORKED_COUNT]) != null
+			and not _has_prefix(texts, BENCH_TWO_RECIPE_NAME + HudCraftingVocab.BENCH_SUB_SEPARATOR))
+	var rows := _queue_rows(panel)
+	var indices: Array = []
+	for row in rows:
+		indices.append(int(row.get_meta(HudCraftingVocab.QUEUE_ROW_META)))
+	h._assert_hud("crafting/short-head — the skipped head is a queue row ABOVE the others (%s)" % [indices],
+		indices == [HudCraftingVocab.ORDER_HEAD_INDEX, QUEUE_WAITING_INDEX])
+	if rows.is_empty():
+		return
+	var head_texts := _label_texts(rows[0])
+	h._assert_hud("crafting/short-head — the head row reads WAITING with the sim's reason (%s)" % [head_texts],
+		head_texts.has(HudCraftingVocab.ORDER_STATUS_WAITING.to_upper())
+			and head_texts.has(SHORT_HEAD_REASON) and head_texts.has(BENCH_TWO_RECIPE_NAME))
+	var reason := _reason_label(rows[0])
+	h._assert_hud("crafting/short-head — …tinted by its published severity, the bench line's own table",
+		reason != null and reason.get_theme_color(FONT_COLOR_THEME_ITEM)
+			== HudCraftingVocab.REASON_COLORS[HudCraftingVocab.SEVERITY_DANGER])
+	h._assert_hud("crafting/short-head — the head row still has no ↑",
+		_queue_control(panel, HudCraftingVocab.ORDER_RAISE_META, HudCraftingVocab.ORDER_HEAD_INDEX) == null)
+	await h._save("crafting_queue_short_head")
+
+	var faction := HudConst.PLAYER_FACTION_ID
+	var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
+	var lines := await _lines_from(_queue_control(panel, HudCraftingVocab.ORDER_INCREMENT_META,
+		HudCraftingVocab.ORDER_HEAD_INDEX))
+	h._assert_hud("crafting/short-head — the head ROW's + edits order 0 (%s)" % [lines],
+		lines == ["bench_order_count %d %d order 0 count %d" % [faction, band_id, SHORT_HEAD_COUNT + 1]])
+	lines = await _lines_from(_queue_control(panel, HudCraftingVocab.ORDER_INCREMENT_META,
+		SHORT_HEAD_WORKED))
+	h._assert_hud("crafting/short-head — the WELL's + edits order 1 (%s)" % [lines],
+		lines == ["bench_order_count %d %d order %d count %d" % [faction, band_id, SHORT_HEAD_WORKED,
+			SHORT_HEAD_WORKED_COUNT + 1]])
+	lines = await _lines_from(_queue_control(panel, HudCraftingVocab.ORDER_REMOVE_META,
+		HudCraftingVocab.ORDER_HEAD_INDEX))
+	h._assert_hud("crafting/short-head — the head ROW's ✕ removes order 0 (%s)" % [lines],
+		lines == ["bench_remove %d %d order 0" % [faction, band_id]])
+	lines = await _lines_from(_clear_button(panel))
+	h._assert_hud("crafting/short-head — the WELL's ✕ removes order 1 (%s)" % [lines],
+		lines == ["bench_remove %d %d order %d" % [faction, band_id, SHORT_HEAD_WORKED]])
+	h._hud.close_crafting_panel()
+	await h._settle()
+
+func _reason_label(node: Node) -> Label:
+	if node is Label and node.has_meta(HudCraftingVocab.ORDER_REASON_META):
+		return node as Label
+	for child in node.get_children():
+		var found := _reason_label(child)
+		if found != null:
+			return found
+	return null
+
+## The reference band with a short head: baskets short of fibre (skipped), flint spears WORKED with a
+## cut pile, a sled waiting. Every bench scalar is the spears order's, and `on_bench` follows it.
+func _short_head_band() -> Dictionary:
+	var band := _crafting_band()
+	var bench: Dictionary = _bench()
+	bench["recipe_id"] = SPEARS_FLINT_RECIPE
+	bench["display_name"] = QUEUE_PAUSED_NAME
+	# The fixture's knowledge roster names no knapping track, so the spears order teaches nothing here.
+	bench["teaches"] = ""
+	bench["worked"] = SHORT_HEAD_WORKED
+	bench["orders"] = [
+		_order(BASKETS_REED_RECIPE, SHORT_HEAD_COUNT, 0, 0.0, false, SHORT_HEAD_REASON,
+			HudCraftingVocab.SEVERITY_DANGER),
+		_order(SPEARS_FLINT_RECIPE, SHORT_HEAD_WORKED_COUNT, SHORT_HEAD_WORKED_MADE, BENCH_PROGRESS, true),
+		_order("sled", QUEUE_WAITING_COUNT, 0, 0.0, false),
+	]
+	band["bench"] = bench
+	var offers: Array = []
+	for offer_variant in _craft_offers():
+		var offer: Dictionary = offer_variant
+		offer["on_bench"] = String(offer.get("recipe_id", "")) == SPEARS_FLINT_RECIPE
+		offers.append(offer)
+	band["craft_offers"] = offers
+	return band
+
 ## Every queue claim no picture can carry: the head's `made/count` in the WELL and no second row for
 ## it, one row per order BEHIND it keeping its published index, the status word each reads, the `−`
 ## dead exactly at `made + 1`, no ↑ on the head, and the ✕ tooltips.
@@ -882,7 +986,7 @@ func _assert_the_queue_reads(panel: CraftingPanel) -> void:
 			and paused_texts.has(QUEUE_PAUSED_NAME))
 	h._assert_hud("crafting/queue — an undrawn waiting order reads as queued, not paused (%s)"
 			% [waiting_texts],
-		waiting_texts.has(HudCraftingVocab.ORDER_STATUS_WAITING.to_upper())
+		waiting_texts.has(HudCraftingVocab.ORDER_STATUS_QUEUED.to_upper())
 			and not waiting_texts.has(HudCraftingVocab.ORDER_STATUS_PAUSED.to_upper())
 			and waiting_texts.has(QUEUE_WAITING_NAME))
 	h._assert_hud("crafting/queue — each row reads made/count (%s · %s)" % [paused_texts, waiting_texts],
@@ -2195,7 +2299,10 @@ func _short_bench_band() -> Dictionary:
 	bench["blocked_severity"] = SHORT_BENCH_SEVERITY
 	bench["shortfalls"] = [{"material_id": "fibre", "required": 4.0, "held": 3.4, "short": 0.6}]
 	bench["drawn"] = false
-	bench["orders"] = [_order(BASKETS_REED_RECIPE, BENCH_ORDER_COUNT, 0, SHORT_BENCH_PROGRESS, false)]
+	# The ONE order is short too, so nothing can be worked: `worked` stays 0 and the well reads the
+	# blocked head exactly as before — the order's own reason is the bench's.
+	bench["orders"] = [_order(BASKETS_REED_RECIPE, BENCH_ORDER_COUNT, 0, SHORT_BENCH_PROGRESS, false,
+		SHORT_BENCH_REASON, SHORT_BENCH_SEVERITY)]
 	bench["output_grade"] = ""
 	bench["drawn_inputs"] = []
 	band["bench"] = bench
@@ -2268,6 +2375,8 @@ func _bench() -> Dictionary:
 		"progress": BENCH_PROGRESS, "work": BENCH_WORK, "teaches": "weaving", "blocked_reason": "",
 		"shortfalls": [], "drawn": true, "output_grade": "good",
 		"rate_per_turn": BENCH_RATE, "drawn_inputs": _drawn_inputs(),
+		# The order every scalar here describes — the head, which can be worked.
+		"worked": 0,
 		# **A RUNNING BENCH ALWAYS PUBLISHES ITS QUEUE**, the head first — every scalar above is that
 		# order's. One basket of two already made, which is what the head row's `1/2` reads.
 		"orders": [_order(BASKETS_REED_RECIPE, BENCH_ORDER_COUNT, BENCH_ORDER_MADE, BENCH_PROGRESS,
@@ -2275,8 +2384,10 @@ func _bench() -> Dictionary:
 	}
 
 ## One `BenchState.orders` row, in the decoder's own shape.
-func _order(recipe_id: String, count: int, made: int, progress: float, drawn: bool) -> Dictionary:
-	return {"recipe_id": recipe_id, "count": count, "made": made, "progress": progress, "drawn": drawn}
+func _order(recipe_id: String, count: int, made: int, progress: float, drawn: bool,
+		blocked_reason: String = "", blocked_severity: String = "") -> Dictionary:
+	return {"recipe_id": recipe_id, "count": count, "made": made, "progress": progress, "drawn": drawn,
+		"blocked_reason": blocked_reason, "blocked_severity": blocked_severity}
 
 ## The pile already cut, in the recipe's own input order.
 func _drawn_inputs() -> Array:
@@ -2290,8 +2401,8 @@ func _idle_bench() -> Dictionary:
 		"recipe_id": "", "display_name": "", "workers": 0, "progress": 0.0, "work": 0.0,
 		"teaches": "", "blocked_reason": "", "shortfalls": [],
 		"drawn": false, "output_grade": "", "rate_per_turn": 0.0, "drawn_inputs": [],
-		# An IDLE bench is an empty queue.
-		"orders": [],
+		# An IDLE bench is an empty queue, and `worked` reads 0.
+		"orders": [], "worked": 0,
 	}
 
 ## **ONE ROW PER RECIPE, ALWAYS**, each carrying the reason and the severity the SIM resolved. Every

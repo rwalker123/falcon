@@ -1987,6 +1987,10 @@ pub struct BenchState {
     /// queue verbs address. Appended last (append-only).
     #[serde(default)]
     pub orders: Vec<BenchOrderState>,
+    /// **The index into [`Self::orders`] the scalars above describe** — the worked order (the first
+    /// that holds a pile or can draw one), else the head. `0` on an idle bench. Appended last.
+    #[serde(default)]
+    pub worked: u32,
 }
 
 /// **One order on a bench's queue** — `recipe × count`, a row of [`BenchState::orders`].
@@ -2004,6 +2008,13 @@ pub struct BenchOrderState {
     pub progress: f32,
     /// The order holds a pile already cut for its pass in flight.
     pub drawn: bool,
+    /// **Why the bench is skipping this order**, in the craft-offer vocabulary; `""` when it holds a
+    /// pile or can draw one.
+    #[serde(default)]
+    pub blocked_reason: String,
+    /// `danger` when [`Self::blocked_reason`] is set, `""` otherwise.
+    #[serde(default)]
+    pub blocked_severity: String,
 }
 
 /// **One craft suggestion** — an item the band's consumers went without, and how many to make. A row

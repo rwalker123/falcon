@@ -4996,6 +4996,12 @@ table BenchState {
   // Every order on the bench, HEAD FIRST. Empty on an idle bench. An order's index here is the
   // `order` the queue verbs (`bench_order_count`, `bench_remove`, `bench_raise`) address.
   orders:[BenchOrder];
+  // --- WHICH ORDER THE SCALARS ABOVE DESCRIBE (appended last) -----------------------------------
+  // THE WORKED ORDER: the bench works the FIRST order, in queue order, that holds a pile or can draw
+  // one now. A short order keeps its place and is skipped (its own `BenchOrder.blockedReason` says
+  // why). Every scalar above describes `orders[worked]`; when no order can be worked they describe
+  // the head and `worked` is 0, so a fully stuck bench reads as its blocked head. 0 on an idle bench.
+  worked:uint = 0;
 }
 
 // ONE ORDER ON A BENCH'S QUEUE — `recipe x count`. Every order has a count (>= 1); the
@@ -5012,6 +5018,13 @@ table BenchOrder {
   made:uint;           // items it has finished — the count the wear and lesson were charged
   progress:float;      // worker-turns accrued toward the recipe's `work` on the pass in flight
   drawn:bool;          // this order holds a pile already cut for its pass in flight
+  // WHY THIS ORDER IS BEING SKIPPED, resolved sim-side in the CraftOffer vocabulary ("Short 4.9
+  // bone", joined with " · "). "" for an order that holds a pile or can draw one now - it is not
+  // skipped. The crew's own refusal is NOT here: it is the bench's, on BenchState.blockedReason.
+  // Appended last.
+  blockedReason:string;
+  // `danger` when `blockedReason` is set, "" otherwise - the BenchState.blockedSeverity vocabulary.
+  blockedSeverity:string;
 }
 
 // ONE SUGGESTION — an item the band's consumers are short of, and how many to make.

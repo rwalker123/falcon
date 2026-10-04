@@ -36,6 +36,7 @@ use sim_runtime::{
 use crate::{
     components::{
         BandBench, BandEquipment, BuildSource, EquipmentBatch, LocalStore, SourcePriority,
+        HEAD_ORDER,
     },
     craft_suggestions::SupplySource,
     crafting::{craft_discovery_id, title_from_id},
@@ -300,7 +301,23 @@ pub(crate) fn band_craft_state(
                 .or_insert_with(|| bench_tiers(material, inputs.materials, inputs.equipment, wear));
         }
     }
-    let running = bench.and_then(BandBench::head_recipe);
+    // **THE ORDER THE BENCH ROW DESCRIBES** — the worked order, else the head (a fully stuck queue
+    // reads as its head, blocked). One resolution, shared by the bench row and `onBench`.
+    let described = bench.and_then(|bench| {
+        crate::systems::worked_order(
+            bench,
+            store,
+            inputs.recipes,
+            inputs.materials,
+            inputs.equipment,
+            wear,
+        )
+        .or_else(|| bench.head().map(|_| HEAD_ORDER))
+    });
+    let running = bench
+        .zip(described)
+        .and_then(|(bench, index)| bench.orders.get(index))
+        .map(|order| order.recipe_id.as_str());
     let mut craft_offers: Vec<CraftOfferState> = inputs
         .plans
         .iter()
@@ -313,7 +330,7 @@ pub(crate) fn band_craft_state(
         })
         .collect();
     mark_suggested(&mut craft_offers, inputs.plans, bench);
-    let bench_row = bench_state(bench, store, inputs, &tiers_by_material);
+    let bench_row = bench_state(bench, described, store, wear, inputs, &tiers_by_material);
     let bench_material_rate = crate::systems::bench_material_rate(
         bench,
         store,
@@ -407,12 +424,17 @@ fn published_bench_priority(priority: SourcePriority) -> SourcePriorityState {
 /// An idle bench publishes an all-default row rather than nothing, because *"idle"* and *"blocked"*
 /// are different states and a client must be able to tell them apart without a second field.
 ///
+/// **The row's scalars describe ONE order** — `described`, the worked order, or the head when no
+/// order can be worked — and `worked` says which. Every order also carries its own skip reason.
+///
 /// **Once the pile is drawn only two things can stop the job**: nobody at the bench, and a zero
 /// craft rate (the bounding tool wore out mid-craft on a material that cannot be worked bare-handed
 /// — the one genuine *"a running job is stopped"* case). See [`NOTHING_SHORT_STOPS_A_DRAWN_PILE`].
 fn bench_state(
     bench: Option<&BandBench>,
+    described: Option<usize>,
     store: &LocalStore,
+    wear: &BandEquipment,
     inputs: &BandCraftInputs<'_>,
     tiers_by_material: &BTreeMap<&str, BenchTiers>,
 ) -> BenchState {
@@ -426,14 +448,17 @@ fn bench_state(
     let published_priority = published_bench_priority(bench.priority);
     // **THE QUEUE, head first**, published on an idle bench too (as an empty list) — every order's
     // recipe, count and made, plus the progress and pile a displaced order is holding at rest.
-    let orders = bench_orders(bench);
-    let Some(head) = bench.head() else {
+    let orders = bench_orders(bench, store, wear, inputs, tiers_by_material);
+    let Some((worked, head)) =
+        described.and_then(|index| bench.orders.get(index).map(|order| (index, order)))
+    else {
         return BenchState {
             priority: published_priority,
             orders,
             ..BenchState::default()
         };
     };
+    let worked = worked as u32;
     let recipe_id = head.recipe_id.as_str();
     let Some(plan) = inputs.plans.iter().find(|plan| plan.id == recipe_id) else {
         // A recipe the book no longer carries — reachable only through a config edit under a running
@@ -446,6 +471,7 @@ fn bench_state(
             blocked_severity: SEVERITY_DANGER.to_string(),
             priority: published_priority,
             orders,
+            worked,
             ..BenchState::default()
         };
     };
@@ -527,6 +553,7 @@ fn bench_state(
             })
             .unwrap_or_default(),
         orders,
+        worked,
     }
 }
 
@@ -535,18 +562,71 @@ fn bench_state(
 /// Every order carries its own `progress` and whether it holds a cut pile, not only the head: an
 /// order raised over a head that had already drawn leaves that head **paused** with its pile, and a
 /// removal of it destroys what it cut — so the readout that offers the removal must be able to say so.
-fn bench_orders(bench: &BandBench) -> Vec<BenchOrderState> {
+///
+/// **Each order also says why it is being SKIPPED** — `blockedReason` / `blockedSeverity`, empty for
+/// an order that holds a pile or can draw one ([`crate::systems::order_is_workable`], the rule the
+/// bench picks its worked order by), otherwise the bench's own refusal vocabulary for that order's
+/// recipe (*"Short 4.9 bone"*).
+fn bench_orders(
+    bench: &BandBench,
+    store: &LocalStore,
+    wear: &BandEquipment,
+    inputs: &BandCraftInputs<'_>,
+    tiers_by_material: &BTreeMap<&str, BenchTiers>,
+) -> Vec<BenchOrderState> {
     bench
         .orders
         .iter()
-        .map(|order| BenchOrderState {
-            recipe_id: order.recipe_id.clone(),
-            count: order.count,
-            made: order.made,
-            progress: order.progress.to_f32(),
-            drawn: order.drawn.is_some(),
+        .map(|order| {
+            let (blocked_reason, blocked_severity) =
+                order_skip_reason(order, store, wear, inputs, tiers_by_material);
+            BenchOrderState {
+                blocked_reason,
+                blocked_severity: blocked_severity.to_string(),
+                recipe_id: order.recipe_id.clone(),
+                count: order.count,
+                made: order.made,
+                progress: order.progress.to_f32(),
+                drawn: order.drawn.is_some(),
+            }
         })
         .collect()
+}
+
+/// **WHY ONE QUEUED ORDER IS BEING SKIPPED**, `("", "")` when it is not — see [`bench_orders`].
+fn order_skip_reason(
+    order: &crate::components::BenchOrder,
+    store: &LocalStore,
+    wear: &BandEquipment,
+    inputs: &BandCraftInputs<'_>,
+    tiers_by_material: &BTreeMap<&str, BenchTiers>,
+) -> (String, &'static str) {
+    if crate::systems::order_is_workable(
+        order,
+        store,
+        inputs.recipes,
+        inputs.materials,
+        inputs.equipment,
+        wear,
+    ) {
+        return (String::new(), SEVERITY_NONE);
+    }
+    let Some(plan) = inputs.plans.iter().find(|plan| plan.id == order.recipe_id) else {
+        return (
+            format!("Recipe '{}' is not in the book", order.recipe_id),
+            SEVERITY_DANGER,
+        );
+    };
+    let tiers = plan
+        .bench_material
+        .and_then(|material| tiers_by_material.get(material).copied())
+        .unwrap_or(NO_BENCH_TIERS);
+    let shortfalls = shortfalls_for(plan.recipe, &tiers, store);
+    let reasons = refusal_reasons(plan, &tiers, &shortfalls, inputs);
+    if reasons.is_empty() {
+        return (String::new(), SEVERITY_NONE);
+    }
+    (reasons.join(REASON_JOIN), SEVERITY_DANGER)
 }
 
 /// **A SUGGESTION'S CONSUMER KIND, in the wire's spelling** — `snapshot.fbs`'s
