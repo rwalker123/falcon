@@ -590,7 +590,7 @@ pub(crate) mod tests {
     pub const FORAGE_KIT: &str = "gathering";
     /// The fixture's load weights — the shipped `item_carry_weight` / `material_carry_weight`.
     pub const FIXTURE_CARRY_WEIGHT: f32 = 1.0;
-    /// A 17-hand band's carry at the shipped 8.0 per worker — the opening window's budget.
+    /// A 17-hand band's carry at an 8.0 pack — a fixture budget, not the shipped dial.
     pub const FIXTURE_BAND_CARRY: f32 = 136.0;
     pub const FORAGE_KIT_ITEM: &str = "baskets";
     /// The roster's item-less kit, offered on every job — the bare hand's reading.

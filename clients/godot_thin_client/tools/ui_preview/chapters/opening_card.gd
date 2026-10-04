@@ -49,9 +49,9 @@ const SPLINTER_ENTITY := 52
 const BAND_SIZE := 30
 const BAND_X := 44
 const BAND_Y := 9
-## Working hands, and the band's carry — 17 hands × the shipped per-worker carry of 8.
+## Working hands, and the band's carry — 17 hands × the shipped per-worker carry of 7.
 const WORKING_AGE := 17
-const CARRY_CAPACITY := 136.0
+const CARRY_CAPACITY := 119.0
 ## The opening band's larder, in load. It is FIXED (`food_fixed`): it sits inside the carry above and
 ## does not yield to goods, so the outfitting card draws it as the bar's food segment.
 const OPENING_LARDER := 40.0

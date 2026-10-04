@@ -69,7 +69,7 @@ standing on right now, per item and per material.
 value), so its card and its band panel state one number. Its spawned larder is **fixed**
 (`LoadoutWindow::food_is_fixed`, published `foodFixed`): it counts against the carry and does not
 yield to goods, so the goods it may mint are `carry − larder mass` (`goods_allowance`). Shipped:
-≈ 142.8 − 77.7 ≈ 65, which the 12-kit / 28-material default fits whole.
+≈ 125 − 77.7 ≈ 47, the old system's opening total (17 kit slots + 30 points).
 
 > **The larder was once free, and that was wrong.** With the starting larder outside the budget, the
 > opening band minted 136 of goods and then stood **over its own carry** on turn one (playtest: a

@@ -21048,8 +21048,8 @@ mod tests {
     /// Working-age people the fixture band is stocked with, so a split leaves two real bands and
     /// there is a comfortable party to draw off either.
     const TRADE_FIXTURE_WORKERS: f32 = 20.0;
-    /// Workers the shipment party is sent with. At the shipped resolved carry of 8.0 per worker
-    /// (`core_sim::per_worker_carry`) this is a 16-unit pack — big enough to hold
+    /// Workers the shipment party is sent with. At the shipped resolved carry of 7.0 per worker
+    /// (`core_sim::per_worker_carry`) this is a 14-unit pack — big enough to hold
     /// `TRADE_CARGO_FOOD` and small enough that `OVER_CAP_FOOD` genuinely does not fit.
     const TRADE_PARTY: u32 = 2;
     /// Workers the fixture hands the second band. Over `min_founding_workers` on any seed.

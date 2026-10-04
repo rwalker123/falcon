@@ -50,7 +50,7 @@ goods leave with people:
 
 | where | what the cap bounds |
 |---|---|
-| the opening band's grant (turn one) | what it may **mint**: its carry **less its larder**. The larder is **fixed** — there is nowhere to leave it — so it does not yield to goods: on the shipped 30-person band 17.85 × 8.0 ≈ 142.8 of carry, ≈ 77.7 of it larder, ≈ 65 for kits and materials |
+| the opening band's grant (turn one) | what it may **mint**: its carry **less its larder**. The larder is **fixed** — there is nowhere to leave it — so it does not yield to goods: on the shipped 30-person band 17.85 × 7.0 ≈ 125 of carry, ≈ 77.7 of it larder, ≈ 47 for kits and materials — the old system's opening total (17 kit slots + 30 material points) |
 | a split | what the splinter walks out with. **Goods first, then food in the room left** — see below. `.claude/rules/core_sim/starting-loadout.md` owns the window arithmetic |
 | a long move | what the band keeps. See below |
 
@@ -65,13 +65,13 @@ food ledger.
 > **Food-first was tried and REVERSED.** With food loading first and no food dial, a turn-one
 > splinter's share of the larder filled ~75% of its packs, it walked out with **0 kits**, and the AI
 > bench's hunger deaths rose (seed 3: 3 → 16). The player had no way to trade food for tools, so the
-> sim made the choice for them. The pack also went from 6.0 to 8.0 for the same reason: at 6.0 a
+> sim made the choice for them. The pack went from 6.0 to 8.0 for the same reason: at 6.0 a
 > small splinter could carry its food *or* its tools, not both.
 
 **The default is proportional**: an untouched split takes the default goods and the full food share
 if they fit; otherwise both are scaled by `C ÷ (F + goods load)`, goods floored, and the food absorbs
 the rounding slack. On shipped numbers an untouched 4-worker turn-one splinter carries 3 kits
-(Stalking, Trapping, Gathering), about 10 material units and ~15.5 of its 17.4 food.
+(Stalking, Trapping, Gathering), no materials and 13.0 of its 17.4 food (pack 7.0, carry 28).
 
 **A long move is still food first** (below): a band moving on its own keeps eating.
 
@@ -132,7 +132,7 @@ in `starting-loadout.md` → On the wire.
 
 | File | Key | Purpose |
 |---|---|---|
-| `src/data/expedition_config.json` | `carry.per_worker_carry` (**8.0**) | One worker's pack, in food units — THE pack for every carrier (was `trade.per_worker_carry` 6.0) |
+| `src/data/expedition_config.json` | `carry.per_worker_carry` (**7.0**) | One worker's pack, in food units — THE pack for every carrier (was `trade.per_worker_carry` 6.0). History: 6.0 left a splinter its food *or* its tools; 8.0 gave the opening band ≈ 65 of goods room against the old ≈ 47, and with one currency all of it could become kits (playtest: 17 spare baskets on 17 workers); 7.0 puts the opening room back at the old total |
 | | `carry.item_carry_weight` (**1.0**) | Load of one item unit relative to one food unit |
 | | `carry.material_carry_weight` (1.0), `carry.fodder_carry_weight` (0.5) | Load of a material unit and a unit of hay |
 | `src/data/supply_network_config.json` | `reach_tiles` (3) | The base of `move_ferry_reach_tiles` |

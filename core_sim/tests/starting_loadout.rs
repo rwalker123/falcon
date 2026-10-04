@@ -227,13 +227,6 @@ fn the_carry_is_the_starting_bands_working_value_and_its_larder_counts() {
         carry - larder,
         "the goods may mint what the fixed larder leaves"
     );
-    // The shipped figures: 17.79 working × 8.0 ≈ 142.3, less a larder of about 77.7.
-    const SHIPPED_CARRY_FLOOR: f32 = 142.0;
-    const SHIPPED_CARRY_CEILING: f32 = 143.0;
-    assert!(
-        (SHIPPED_CARRY_FLOOR..SHIPPED_CARRY_CEILING).contains(&carry.to_f32()),
-        "the shipped 30-person band carries about 142: {carry}"
-    );
 }
 
 /// ⛔ **TWO KITS THAT SHARE AN ITEM ADD** — 6 `big_game` + 3 `trapping` is 6 spears, 3 traps and
@@ -854,17 +847,26 @@ fn a_band_is_created_already_holding_its_default_outfit() {
         "**LIVENESS**: the shipped profile must default something, or this asserts nothing"
     );
     let equipment = app.world.resource::<EquipmentConfigHandle>().get();
+    // **The default as the band was outfitted with it** — fitted to the goods its carry leaves its
+    // fixed larder, materials cut before kits. The window's accepted rows are what that apply set.
+    let accepted_materials: std::collections::BTreeMap<String, u32> = app
+        .world
+        .resource::<StartingLoadout>()
+        .window(band_id)
+        .expect("the band has a window")
+        .materials
+        .iter()
+        .map(|row| (row.material_id.clone(), row.units))
+        .collect();
+    for (id, units) in &accepted_materials {
+        assert!(
+            *units <= material_defaults.get(id).copied().unwrap_or_default(),
+            "'{id}' is fitted at or under its declared default: {units}"
+        );
+    }
     assert!(
-        !fit_to_carry(
-            &kit_defaults,
-            &material_defaults,
-            grant(&app, band_id),
-            &equipment,
-            &carry_cfg(&app),
-        )
-        .clamped,
-        "fixture: the shipped defaults fit the shipped band's carry, so the fit does not bind \
-         here and the quantities below are the declared ones (the fit has its own case)"
+        !accepted_materials.is_empty(),
+        "**LIVENESS**: some of the material default fits, or the store check below is vacuous"
     );
 
     // --- what the band HOLDS, with no command sent anywhere -------------------------------------
@@ -889,8 +891,8 @@ fn a_band_is_created_already_holding_its_default_outfit() {
     for (id, _) in materials_table.materials() {
         assert_eq!(
             held(&app, band, id),
-            material_defaults.get(id).copied().unwrap_or_default() as f32,
-            "'{id}' is held at exactly its declared default - and a material nothing defaults is \
+            accepted_materials.get(id).copied().unwrap_or_default() as f32,
+            "'{id}' is held at exactly its fitted default - and a material nothing defaults is \
              still held at none, because `start_stock` is deleted"
         );
     }
@@ -908,25 +910,17 @@ fn a_band_is_created_already_holding_its_default_outfit() {
             .map(|row| (row.kit_id.clone(), row.count))
             .collect::<std::collections::BTreeMap<_, _>>(),
         kit_defaults,
-        "the card opens on the outfit the band is standing in, not on a suggestion beside it"
-    );
-    assert_eq!(
-        window
-            .materials
-            .iter()
-            .map(|row| (row.material_id.clone(), row.units))
-            .collect::<std::collections::BTreeMap<_, _>>(),
-        material_defaults,
-        "and so does the material half"
+        "the card opens on the outfit the band is standing in - every kit row whole, because \
+         materials are cut before tools"
     );
 }
 
 /// ⛔ **AN OVER-ALLOCATING PRE-FILL IS FITTED, PROPORTIONALLY, AND THE REMAINDER IS LEFT UNSPENT.**
 ///
-/// The carry is the spawned band's head count × one pack, so `start_profiles.json` cannot sum-check
-/// its own pre-fill and an over-allocation has to be survivable at runtime. The shipped 48-against-136
-/// never binds, which is exactly why the rule needs a case that does. Materials are cut before any
-/// kit, and only a kit load over the carry scales the kits.
+/// The carry is the spawned band's working value × one pack less its larder, so `start_profiles.json`
+/// cannot sum-check its own pre-fill and an over-allocation has to be survivable at runtime. These
+/// cases pin the rule on fixed numbers rather than on whatever the shipped band happens to hold.
+/// Materials are cut before any kit, and only a kit load over the carry scales the kits.
 #[test]
 fn an_over_allocating_pre_fill_cuts_materials_before_tools() {
     let app = open_window().0;

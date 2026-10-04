@@ -1640,7 +1640,8 @@ const PROTOTYPE_BAND_TILE := Vector2i(40, 20)
 const PROTOTYPE_DEST_TILE := Vector2i(42, 18)
 ## What the To row must say of that tile from that band — the prototype's `3 tiles NE`.
 const PROTOTYPE_DEST_WHERE := "3 tiles NE"
-const PROTOTYPE_PER_PORTER := 8.0
+## The shipped `carry.per_worker_carry`, 7.0 — the pack one porter carries.
+const PROTOTYPE_PER_PORTER := 7.0
 const PROTOTYPE_MATERIAL_WEIGHT := 1.0
 const PROTOTYPE_IDLE := 2
 

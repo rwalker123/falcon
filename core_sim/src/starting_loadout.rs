@@ -495,7 +495,7 @@ pub fn close_opening_window(
 /// long move and the published `carryCapacity` read, so the card and the band panel agree. The
 /// spawned larder is **fixed** (there is nowhere to leave it), so it counts against that carry and
 /// the goods may mint what it leaves ([`LoadoutWindow::goods_allowance`]): about
-/// `17.79 × 8.0 − 82` on the shipped profile.
+/// `17.8 × 7.0 − 78 ≈ 47` on the shipped profile.
 ///
 /// A faction with no starting band opens nothing: there is nobody to outfit.
 pub fn stamp_starting_loadout(

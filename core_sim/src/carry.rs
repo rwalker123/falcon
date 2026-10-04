@@ -64,15 +64,17 @@ pub struct CarryConfig {
     ///
     /// **The shipped `0.5` is a bale priced against a meal, in TURNS OF KEEP.** Food is the
     /// numéraire at `1.0`, and one worker's load of it is `per_worker_carry / demographics
-    /// consumption.per_capita_draw` = `8.0 / 0.16` = **50 person-turns**. One animal's feed per turn
-    /// is `fodder_per_biomass × body_mass` (`fauna_config`), which for the mid-sized pennable animals
-    /// hay is historically for — `crag_goat` (0.05 × 6 = 0.30) and `wild_sheep` (0.05 × 5.6 = 0.28)
-    /// — averages ~0.29. So `8.0 / (50 × 0.29)` = 0.55, and `0.5` is still the clean dial beside it
-    /// (the ratio is independent of the pack, which cancels): a one-worker load is **53 goat-turns /
-    /// 57 sheep-turns**, the same order as food's 50 person-turns by construction.
+    /// consumption.per_capita_draw` = `7.0 / 0.16` = **43.75 person-turns**. One animal's feed per
+    /// turn is `fodder_per_biomass × body_mass` (`fauna_config`), which for the mid-sized pennable
+    /// animals hay is historically for — `crag_goat` (0.05 × 6 = 0.30) and `wild_sheep`
+    /// (0.05 × 5.6 = 0.28) — averages ~0.29. So `7.0 / (43.75 × 0.29)` = 0.55, and `0.5` is still the
+    /// clean dial beside it (the ratio is independent of the pack, which cancels): a one-worker load
+    /// is **47 goat-turns / 50 sheep-turns**, the same order as food's 43.75 person-turns by
+    /// construction.
     ///
-    /// **The spread across the roster is honest and intended** — the same bale is 1,026 turns of
-    /// keep for a fowl and 2 turns for an aurochs, because that is what those animals eat. It is a
+    /// **The spread across the roster is honest and intended** — the same one-worker load is about
+    /// 1,200 turns of keep for a fowl and 2.3 turns for an aurochs, because that is what those
+    /// animals eat. It is a
     /// **playtest dial**. `0.0` is legal and means *"hay is weightless"*.
     pub fodder_carry_weight: f32,
 }
@@ -428,7 +430,7 @@ mod tests {
         carry
     }
 
-    /// **Workers × one pack, and dependants add nothing** — 17 hands on the shipped 8.0 carry 136,
+    /// **Workers × one pack, and dependants add nothing** — 17 hands carry `17 × per_worker_carry`,
     /// the opening band's budget.
     #[test]
     fn a_bands_carry_is_its_workers_times_one_pack() {
@@ -545,7 +547,8 @@ mod tests {
         );
         assert_eq!(stores.get(FOOD), Scalar::from_u32(14));
     }
-    /// The shipped weights at the 8.0 pack — the numbers the seed-37 case was measured on.
+    /// The unit weights at the 8.0 pack the seed-37 case was measured on — a fixture pack, held
+    /// fixed so the case's numbers do not move with the shipped dial.
     fn shipped_pack() -> CarryConfig {
         let mut carry = carry();
         carry.per_worker_carry = 8.0;

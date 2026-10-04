@@ -880,10 +880,10 @@ from the only comparison that means anything, *how long one trader's load feeds 
 
 | | units per trader | one unit feeds | **one load feeds** |
 |---|---|---|---|
-| food | `8.0 / 1.0` = **8** | one person for `1 / 0.16` = 6.25 turns | **one person for 50 turns** |
-| fodder | `8.0 / 0.5` = **16** | one goat for `1 / 0.29` = 3.4 turns | **one goat for 55 turns** |
+| food | `7.0 / 1.0` = **7** | one person for `1 / 0.16` = 6.25 turns | **one person for 43.75 turns** |
+| fodder | `7.0 / 0.5` = **14** | one goat for `1 / 0.29` = 3.4 turns | **one goat for 48 turns** |
 
-- The food column is `carry.per_worker_carry` (8.0) against
+- The food column is `carry.per_worker_carry` (7.0) against
   `demographics_config.consumption.per_capita_draw` (0.16).
 - The fodder column is anchored on a **mid-sized pennable animal**, because one animal's feed is
   `fodder_per_biomass × body_mass` and the roster spans 500× — crag_goat (`0.05 × 6` = 0.30) and

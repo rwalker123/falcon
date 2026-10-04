@@ -1716,9 +1716,9 @@ const LEDGER_EPSILON: f32 = 1e-3;
 
 /// ⛔ **AN UNTOUCHED TURN-ONE SPLINTER ON THE SHIPPED PROFILE TAKES A KIT AND FOOD BOTH.**
 /// Food-first left a four-worker splinter holding food alone; goods-first scales both tiers by
-/// `carry ÷ (food share + goods)` when they do not both fit. On the shipped 8.0 pack a four-worker
-/// slice is 30.5 against a 17.4 food share, and the splinter walks out with `big_game`, `trapping`
-/// and `gathering` one each, `fibre 7 / hide 3`, and 15.5 of food.
+/// `carry ÷ (food share + goods)` when they do not both fit. On the shipped 7.0 pack a four-worker
+/// splinter carries 28 against a 17.4 food share; materials are cut before tools, so it walks out
+/// with `big_game`, `trapping` and `gathering` three each, no material, and 13 of food.
 #[test]
 fn an_untouched_turn_one_splinter_holds_a_kit_and_some_food() {
     let mut app = world_on_the_build_turn();
