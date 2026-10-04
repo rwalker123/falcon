@@ -1323,9 +1323,18 @@ pub struct FactionBorderPolicies {
 impl FactionBorderPolicies {
     /// Every faction on the roster, open.
     pub fn new(factions: &[FactionId]) -> Self {
-        Self {
-            open: factions.iter().map(|faction| (*faction, true)).collect(),
+        let mut policies = Self::default();
+        for faction in factions {
+            policies.seed_faction(*faction);
         }
+        policies
+    }
+
+    /// **Seed one faction, open** — every people starts with its borders open. The one statement of
+    /// a fresh faction's row, shared by [`Self::new`] and the runtime roster path. A faction already
+    /// seeded keeps its setting.
+    pub fn seed_faction(&mut self, faction: FactionId) {
+        self.open.entry(faction).or_insert(true);
     }
 
     /// Whether `faction` accepts another people's leavers. A faction with no row reads **open**,
@@ -1734,6 +1743,25 @@ pub enum CommandEventKind {
     ///
     /// **Appended last**, after [`Self::PartyDefected`], so no shipped variant's bincode index moved.
     StartingLoadout,
+    /// **A cut-off, aggrieved group of bands became a people of its own**
+    /// (`systems::independence`, `docs/plan_band_fission.md` §Independence, #284).
+    ///
+    /// **Pushed twice per band, once per side** — [`Self::BandChangedHands`]' shape and for its
+    /// reason (the feed is per-faction on the wire). The people left behind is told the band *"no
+    /// longer answers to us"* and the new people is told it *"broke away"*; both rows carry
+    /// `band=/from=/to=` and `side=lost|gained`. Its own kind rather than a `band_changed_hands`
+    /// row because nobody was joined: the receiving people did not exist a turn earlier.
+    ///
+    /// **Appended last**, after [`Self::StartingLoadout`], so no shipped variant's bincode index
+    /// moved.
+    BandBrokeAway,
+    /// **A people lost its last live tie to one of its own bands** — the band went from in touch
+    /// with its people's heart to cut off this turn (`systems::independence`). Edge-gated: fired on
+    /// the transition, never while the band stays out of touch. Filed under the band's own people
+    /// only; detail `band=`.
+    ///
+    /// **Appended last**, after [`Self::BandBrokeAway`].
+    LostTouch,
 }
 
 impl CommandEventKind {
@@ -1779,6 +1807,8 @@ impl CommandEventKind {
             CommandEventKind::PartyDefected => "party_defected",
             CommandEventKind::Aged => "aged",
             CommandEventKind::StartingLoadout => "starting_loadout",
+            CommandEventKind::BandBrokeAway => "band_broke_away",
+            CommandEventKind::LostTouch => "lost_touch",
         }
     }
 }

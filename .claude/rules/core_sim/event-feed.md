@@ -342,6 +342,10 @@ side a row describes rides its detail:
 - **`BandChangedHands`** — a remnant went over with its leavers. Both rows carry the same
   `band=/from=/to=` and `side=lost|gained`, so the two halves can be matched up. The mechanism and the
   rung are `.claude/rules/core_sim/ecs-systems.md` → "THE HANDOVER IS TOLD TO BOTH PEOPLES".
+- **`BandBrokeAway`** — a cut-off, aggrieved group of bands became a people of its own
+  (`independence.md`). `BandChangedHands`' shape: one row per band per side, `band=/from=/to=` and
+  `side=lost|gained` on both. Its sibling **`LostTouch`** is filed under the band's own people only
+  (detail `band=`), edge-gated on the turn the band's last live tie to its people's heart parks.
 - **`Migrated` across peoples** — one line per band, each filed under the band's own people: the
   source's *"N left Band X to join Faction F"* carries `direction=out to=<faction>`, and the
   destination's *"N from Faction F joined Band Y"* carries `direction=in from=<faction>`

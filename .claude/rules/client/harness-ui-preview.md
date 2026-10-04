@@ -3707,3 +3707,21 @@ re-sent opening raising the card again. `EXIT=1`.
 
 **A clean run is 470 frames / 2540 `PASS`, exit 0 — MEASURED windowed on this tree.**
 `band_panel_preview` 1518 `PASS`, exit 0, on the same tree.
+
+## The band's standing toward its people's heart (`chapters/band_expedition.gd`, issue #284)
+
+Two frames and eleven assertions, appended after the carry states (`_heart_states`). The behaviour is
+`band-city-panel.md` → "THE PEOPLE BLOCK ENDS ON THE BAND'S STANDING TOWARD ITS PEOPLE'S HEART".
+
+- **`band_heart_draining`** — a heart band at bond 0.45, last seen 3 turns ago: the Bond line by
+  EQUALITY and no out-of-touch line.
+- **`band_heart_cut_off`** — a cut-off band at grievance 0.42 of 1.00: both amber lines by equality,
+  the drifting line's ink, and no Bond meter in their place.
+- **The paired negatives, PNG-less**: a LONE heart (bond 1.0) and a band with no reading
+  (`false / 0 / -1`) draw no row — without them "the row is drawn" passes on a block that draws it for
+  every band — and a cut-off band never tied reads `never seen` with no drifting line at 0 grievance.
+- **The block sets the labor model's turn to 40 and hands the walk's turn back**, so every contact
+  turn is one a server can send (the walk's own turn is 0, and `turn − ago` would be negative).
+- Two vocabulary claims ride the block: `band_broke_away` is Alert and `lost_touch` is Notable.
+
+`EXPECTED_CHECKPOINTS` **140**, re-measured.

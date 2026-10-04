@@ -290,6 +290,24 @@
       ]
     },
     {
+      "kind": "wellbeing",
+      "label": "Wellbeing",
+      "env_var": "WELLBEING_CONFIG_PATH",
+      "params": [
+        {
+          "pointer": "/independence/grievance_threshold",
+          "label": "Independence grievance",
+          "type": "float",
+          "min": 0,
+          "max": 5,
+          "step": 0.05,
+          "default": 1.0,
+          "unit": "grievance",
+          "hint": "Grievance at which bands cut off from the heart of their people break away as a people of their own. Low: any far band with a bad season leaves once out of touch. High: only a starving band ever leaves."
+        }
+      ]
+    },
+    {
       "kind": "combat",
       "label": "Combat",
       "env_var": "COMBAT_CONFIG_PATH",

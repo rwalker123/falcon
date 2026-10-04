@@ -17,5 +17,8 @@
     "attractive_morale": 0.5,
     "min_morale_gap": 0.05,
     "dependent_weight": 0.4
+  },
+  "independence": {
+    "grievance_threshold": 1.0
   }
 }

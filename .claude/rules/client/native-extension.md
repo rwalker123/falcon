@@ -237,6 +237,14 @@ by-products arriving home per turn, 0 / empty elsewhere; the forecast reply carr
 `raid_radius` derives the "Predator nearby" Warrior alert (the DANGER itself is derived on the client
 from visible-herd telemetry, never a wire flag), `raid_forfeit` is the "Lost to raids" food-ledger row.
 
+**THE BAND'S STANDING TOWARD ITS PEOPLE'S HEART, four cohort keys** (issue #284) — `cut_off`
+(`bool`), `heart_bond` (`f64`, 0..1, a lone heart reads 1.0), `heart_last_contact_turn` (`i64`, `-1` =
+no tie to the heart) and `independence_grievance_threshold` (`f64`, the config echo `grievance` is
+read against, the `founding_min_workers` idiom). None is a `Scalar`. An unjudged band, a party and a
+foreign row publish `false / 0 / -1`, which is the one combination a band IN the heart never reads (a
+heart member holds a live tie, so its contact turn is never `-1`) — the reader that hides the row
+keys on exactly that.
+
 **THE BAND'S HAY LEDGER, three cohort keys appended last** — `fodder_need` / `fodder_income` /
 `turns_of_fodder`, the fodder twins of `food_income` / `food_consumption` / `turns_of_food`, in FODDER
 units against the `fodder_store` above. `fodder_need` is the hay the band's pens are SHORT per turn,

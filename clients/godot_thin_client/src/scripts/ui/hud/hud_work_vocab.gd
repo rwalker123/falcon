@@ -430,6 +430,38 @@ const PEOPLE_DEPENDENCY_HEAVY := 100
 ## and what it implies live in the tooltip, which is where the teaching belongs.
 const PEOPLE_DEPENDENCY_FORMAT := "%d dependents"
 
+## **THE BAND'S STANDING TOWARD ITS PEOPLE'S HEART** (issue #284, `docs/plan_band_fission.md`
+## §Independence) — the PEOPLE block's last row, drawn only for a band that is NOT a lone heart
+## (`BandPanelController._build_heart_rows`). Three states, all off the sim's own reading:
+##   • in the heart, tie draining — `Bond ▰▰▰▱▱ · last seen N turns ago`, ink.
+##   • cut off — `Out of touch · last seen N turns ago` (or `never seen`), WARN amber.
+##   • cut off with grievance — a second amber line, `Drifting away — grievance X / Y`.
+## Nothing here decides a threshold: `Y` is the sim's `independence_grievance_threshold` echo.
+const HEART_BOND_FORMAT := "Bond %s"
+## Cells in the bond meter (`HudFormat.meter_bar`, which takes a 0..100 score).
+const HEART_BOND_METER_CELLS := 8
+## `heart_bond` is a 0..1 tie strength; `meter_bar` scores 0..100.
+const HEART_BOND_METER_SCALE := 100.0
+## A band whose bond reads this strong and is not cut off is a LONE HEART (or holds a full tie) — the
+## row is omitted, since there is nothing to keep an eye on.
+const HEART_BOND_FULL := 1.0
+## `heart_last_contact_turn`'s "no tie joins them at all" sentinel (`sim_schema::NO_HEART_CONTACT`).
+## A band that is NOT cut off and carries it has no reading (a party, a foreign row, an unjudged
+## band), so the row is omitted rather than drawn as a zero bond.
+const HEART_NO_CONTACT := -1
+const HEART_OUT_OF_TOUCH_TEXT := "Out of touch"
+const HEART_LAST_SEEN_FORMAT := "last seen %d turns ago"
+const HEART_LAST_SEEN_ONE_TEXT := "last seen 1 turn ago"
+## The turn count that takes the singular form above.
+const HEART_LAST_SEEN_SINGULAR := 1
+const HEART_LAST_SEEN_NOW_TEXT := "seen this turn"
+const HEART_NEVER_SEEN_TEXT := "never seen"
+const HEART_SEGMENT_SEPARATOR := " · "
+const HEART_DRIFTING_FORMAT := "Drifting away — grievance %.2f / %.2f"
+## One sentence: the lever, and what happens at the threshold.
+const HEART_TOOLTIP_FORMAT := "Visiting them with another band, or a scout that returns home, " \
+        + "restores contact; a cut-off band whose grievance reaches %.2f becomes its own people."
+
 ## The band zone renders at DENSER TIERS as its box shrinks. **A TIER NEVER DROPS A BLOCK** — the zone
 ## scrolls (`BAND_ZONE_SCROLL_NAME`), so content that outgrows the box is reached rather than lost, and
 ## the only thing a tier decides is how tightly what is there is drawn.

@@ -206,6 +206,17 @@ const RUNG_BY_KIND := {
 	# `side=lost expedition=<bits>`): no `band=` and no coordinate, so it renders no jump and an empty
 	# detail phrase — the party is out of contact and the notice says only that it is gone.
 	"party_defected": RUNG_ALERT,
+	# **A CUT-OFF BAND BECOMING ITS OWN PEOPLE** (issue #284, `docs/plan_band_fission.md`
+	# §Independence) — `band_changed_hands`' sibling with no second faction behind it: the band's
+	# grievance crossed the threshold while it was out of touch, and it now leads itself. Two rows,
+	# `side=lost|gained` (`band= from= to=`). Alert on BOTH sides for `party_defected`'s reason: the
+	# only per-row override is a `key=value` fragment matched on ANY kind, so a `side=gained` demotion
+	# would reach the other two handover kinds too.
+	"band_broke_away": RUNG_ALERT,
+	# **A BAND LOSING TOUCH WITH ITS PEOPLE'S HEART** (issue #284) — the warning one step before
+	# `band_broke_away`, detail `band=`. Notable: nothing is lost yet, a visit restores contact, and
+	# the band panel's Bond readout carries the rest of the story.
+	"lost_touch": RUNG_NOTABLE,
 	# **A MATERIAL THE STANDING BILLS EAT FASTER THAN IT ARRIVES** (`docs/plan_standing_upkeep.md`
 	# §4.9 item 12). Alert, and it NAMES THE BAND — this line is what replaced the faction `Gear`
 	# row's `⚠ 1 band` → *which band* drill-down, and a faction-level warning that says something is

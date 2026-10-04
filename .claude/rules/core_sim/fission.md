@@ -321,6 +321,10 @@ parent's.
 - The derived per-turn readings (`last_morale_*`, `last_food_consumption`, `discontent_fraction`, the
   migration counters) are **cleared**. They are recomputed next turn, but a split publishes a frame
   before then, and the new band would open by narrating somebody else's morale swing and meal.
+- **The two halves start fully tied, both ways** (`ConnectionLedger::insert_full_tie` at `FULL_TIE`,
+  the split's turn and tile), and the splinter inherits its parent's `HeartReading`. They were one
+  band; without it the next turn's heart pass, which runs before that turn's sight sweep, would read
+  the splinter as cut off and tell the player they had lost touch with it (`independence.md`).
 - **Two bands on one tile** is the normal post-split state until the player moves one. Per-hex
   crowding, supply pooling and the work-range overlap all see it.
 - A band formed by a split **can split again** — the command gates the source on `ResidentBand` — so

@@ -1673,7 +1673,27 @@ pub struct PopulationCohortState {
     /// larder ledger identity (`snapshot.fbs` → `foodLeftBehind`). Appended last.
     #[serde(default)]
     pub food_left_behind: f32,
+    /// **Cut off from the heart of its people** — no live contact tie, in either direction, to any
+    /// band of the group that holds the most of its people (`snapshot.fbs` → `cutOff`, #284).
+    /// Appended last.
+    #[serde(default)]
+    pub cut_off: bool,
+    /// The strongest tie between this band and any other band of its people's heart, `0..1`; a band
+    /// that is the whole heart reads `1.0`. Appended last.
+    #[serde(default)]
+    pub heart_bond: f32,
+    /// The latest turn a tie between this band and its heart was refreshed by contact, or
+    /// [`NO_HEART_CONTACT`] where none joins them. Appended last.
+    #[serde(default)]
+    pub heart_last_contact_turn: i64,
+    /// Echo of `independence.grievance_threshold` — the grievance a cut-off group breaks away at.
+    /// Appended last.
+    #[serde(default)]
+    pub independence_grievance_threshold: f32,
 }
+
+/// `PopulationCohortState.heartLastContactTurn` when no tie joins the band to its people's heart.
+pub const NO_HEART_CONTACT: i64 = -1;
 
 /// **ONE GOOD THAT CROSSED A BAND'S STORE, BY CAUSE** — a row of
 /// [`PopulationCohortState::transfer_crossings`]. The code tables are in `snapshot.fbs`'s

@@ -138,6 +138,10 @@ pub struct SnapshotContext<'w> {
     /// ([`crate::carry::move_ferry_reach_tiles`]), echoed on every cohort. `Option` so a
     /// hand-rolled capture world that never installed it reads the builtin.
     pub supply_network: Option<Res<'w, crate::supply_network_config::SupplyNetworkConfigHandle>>,
+    /// Every band's standing toward its people's heart (`systems::independence`), published on its
+    /// cohort row. `Option` so a hand-rolled capture world that never installed it publishes no
+    /// reading.
+    pub hearts: Option<Res<'w, crate::systems::HeartLedger>>,
     pub pipeline_config: Res<'w, TurnPipelineConfigHandle>,
     /// How to write the capture result: record a new ring entry (turn path) or refresh the latest
     /// broadcast in place (post-command re-capture). Bundled here to keep `capture_snapshot` within
@@ -2613,6 +2617,7 @@ pub fn capture_snapshot(
         settlement_stage,
         supply_membership,
         supply_network,
+        hearts,
         pipeline_config,
         capture_mode,
     } = ctx;
@@ -3077,6 +3082,9 @@ pub fn capture_snapshot(
                         loadout_window: band_id
                             .and_then(|band| loadout_windows.get(&band.0))
                             .cloned(),
+                        heart: band_id.and_then(|band| {
+                            hearts.as_deref().and_then(|ledger| ledger.reading(*band))
+                        }),
                         // **This band's faction decides which crafts are known**, so the memo is keyed
                         // per faction and resolved lazily — one entry per faction that owns a band,
                         // not one per band.

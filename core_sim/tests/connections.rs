@@ -97,6 +97,10 @@ fn split_off(app: &mut App, parent: Entity) -> (Entity, BandId) {
     };
     let split = split_band_from_parent(&mut app.world, parent, SPLIT_WORKERS, &settle)
         .expect("a stocked parent can split");
+    // **A split starts its two halves fully tied** (they were one band — `systems::independence`),
+    // and every test here is about ties CONTACT forms. Forgetting the split's ties makes the pair two
+    // groups that have never met, which is the fixture these tests were written against.
+    app.world.insert_resource(ConnectionLedger::default());
     let entity = entity_for_band(app, split.band);
     (entity, split.band)
 }

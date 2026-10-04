@@ -1132,6 +1132,11 @@ fn create_populations<'a>(
                     longMoveLeavesItems: cohort.long_move_leaves_items,
                     longMoveLeavesMaterials: cohort.long_move_leaves_materials,
                     foodLeftBehind: cohort.food_left_behind,
+                    // THE BAND'S STANDING TOWARD ITS PEOPLE'S HEART — appended last (#284).
+                    cutOff: cohort.cut_off,
+                    heartBond: cohort.heart_bond,
+                    heartLastContactTurn: cohort.heart_last_contact_turn,
+                    independenceGrievanceThreshold: cohort.independence_grievance_threshold,
                 },
             )
         })
@@ -1657,6 +1662,10 @@ fn decode_population(
         long_move_leaves_items: cohort.longMoveLeavesItems(),
         long_move_leaves_materials: cohort.longMoveLeavesMaterials(),
         food_left_behind: cohort.foodLeftBehind(),
+        cut_off: cohort.cutOff(),
+        heart_bond: cohort.heartBond(),
+        heart_last_contact_turn: cohort.heartLastContactTurn(),
+        independence_grievance_threshold: cohort.independenceGrievanceThreshold(),
     })
 }
 

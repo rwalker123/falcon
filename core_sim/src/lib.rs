@@ -452,16 +452,17 @@ pub use snapshot::{
 };
 pub use systems::spawn_initial_world;
 pub use systems::{
-    advance_band_movement, advance_crafting, advance_expeditions, advance_labor_allocation,
-    advance_party_defection, advance_population_migration, advance_predator_raids, advance_tick,
-    bench_material_rate, bench_tiers, bill_and_stock_roads, bring_the_dropped_party_home,
-    deliver_bench_output, denial_forecast, expedition_returned_event, fold_party_into_band,
-    hunt_per_worker_provisions, hunt_report_event, hunt_take, output_multiplier,
-    party_owes_a_report, prospective_keep_hands, publish_turn_transfers, settle_bands_roadwork,
-    settle_scarce_tools, simulate_population, simulate_power, source_has_a_meter_at_risk,
-    split_band_from_parent, split_refusals, BenchTiers, DenialForecast, DenialOutcome, HuntOutcome,
-    PartyGear, PartySightings, PoolToolPlan, PowerSimParams, RaidRoll, SplitBand, SplitRefusal,
-    SplitRefusals, ToolClaimStage, TradeDiffusionEvent,
+    advance_band_independence, advance_band_movement, advance_crafting, advance_expeditions,
+    advance_labor_allocation, advance_party_defection, advance_population_migration,
+    advance_predator_raids, advance_tick, bench_material_rate, bench_tiers, bill_and_stock_roads,
+    bring_the_dropped_party_home, deliver_bench_output, denial_forecast, expedition_returned_event,
+    fold_party_into_band, grow_faction_roster, hunt_per_worker_provisions, hunt_report_event,
+    hunt_take, output_multiplier, party_owes_a_report, prospective_keep_hands,
+    publish_turn_transfers, settle_bands_roadwork, settle_scarce_tools, simulate_population,
+    simulate_power, source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers,
+    DenialForecast, DenialOutcome, HeartLedger, HeartReading, HuntOutcome, PartyGear,
+    PartySightings, PoolToolPlan, PowerSimParams, RaidRoll, SplitBand, SplitRefusal, SplitRefusals,
+    ToolClaimStage, TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,
@@ -873,6 +874,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(visibility::VisibilityLedger::default())
         .insert_resource(visibility::VisibilitySweepTracker::default())
         .insert_resource(connections::ConnectionLedger::default())
+        .insert_resource(systems::HeartLedger::default())
         // **The roads and this turn's traffic** (`docs/plan_standing_upkeep.md` §4.13). The registry
         // is world state; the traffic log is a hand-off from the three things that move —
         // `balance_supply_networks` (which pairs pooled), `advance_band_movement` (who marched) and
@@ -1235,6 +1237,11 @@ pub fn build_headless_app() -> App {
                     // sightings `advance_expeditions` recorded this turn; it runs after the trickle
                     // so a band that changed people this turn is judged as the people it now is.
                     systems::advance_party_defection,
+                    // Independence (#284): every band's people is final for the turn and its
+                    // grievance is this turn's, so a cut-off, aggrieved group is judged as what it
+                    // now is — and a band that went over this turn is not judged by the people it
+                    // left.
+                    systems::advance_band_independence,
                     sedentarization::sedentarization_tick,
                 )
                     .chain(),

@@ -213,6 +213,16 @@ pub struct SimState {
     /// Every faction's name. **The save wins**: minted once by worldgen, then carried, so a pool
     /// edit never renames a saved world's factions.
     pub faction_names: crate::faction_names::FactionNames,
+    /// **The roster itself.** It was a world static while it was built once per world; a cut-off
+    /// group of bands now becomes a people of its own mid-game (`systems::independence`), so the
+    /// roster moves with the turn and a rollback must put it back. Left out, a rewind past a
+    /// break-away kept the grown roster and the replay grew it a second time — two peoples for one
+    /// break, under two ids.
+    pub factions: crate::orders::FactionRegistry,
+    /// Every band's standing toward its people's heart (`systems::independence`). **State, not
+    /// derived**: the lost-touch line is an edge read off the previous turn's reading, and the
+    /// capture publishes the readings before a restored world has run a turn.
+    pub hearts: crate::systems::HeartLedger,
     /// **THE LIVE WORKINGS ON THE TWO DEPOSIT BRANCHES.**
     ///
     /// ⛔ **THE STOCK IS THE ONLY THING HERE THAT IS NOT DERIVABLE, and it is why this is state at
@@ -438,6 +448,11 @@ pub fn capture_sim_state(world: &World) -> SimState {
             .get_resource::<crate::faction_names::FactionNames>()
             .cloned()
             .unwrap_or_default(),
+        factions: world.resource::<crate::orders::FactionRegistry>().clone(),
+        hearts: world
+            .get_resource::<crate::systems::HeartLedger>()
+            .cloned()
+            .unwrap_or_default(),
         deposits: world.resource::<DepositRegistry>().clone(),
         forage: world.resource::<ForageRegistry>().clone(),
         graze: world.resource::<GrazeRegistry>().clone(),
@@ -638,6 +653,8 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     world.insert_resource(state.security_policies.clone());
     world.insert_resource(state.border_policies.clone());
     world.insert_resource(state.faction_names.clone());
+    world.insert_resource(state.factions.clone());
+    world.insert_resource(state.hearts.clone());
     world.insert_resource(state.deposits.clone());
     world.insert_resource(state.forage.clone());
     world.insert_resource(state.graze.clone());

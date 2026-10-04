@@ -485,8 +485,11 @@ threshold. Judging band by band would turn one far cluster into two peoples on t
   `push_band_changed_hands_events` tells both peoples.
 - **Name:** the people is named the way worldgen names one (`FactionNames`); each band keeps its
   own. Nothing waits on #271.
-- **Knowledge:** the new people's discovery progress is seeded from the bands' own `knowledge` in
-  full — they keep what they knew. Defection's proportional share does not apply: nobody left them.
+- **Knowledge:** the new people's discovery progress is seeded from the old people's ledger in full,
+  and from the bands' own `knowledge`, each discovery at the best either holds — they keep everything
+  they knew. The ledger half is what carries the lessons a people earns by practice (Cultivation,
+  Herding, Foddering), which never reach a band's own `knowledge`. Defection's proportional share
+  does not apply: nobody left them, and the old people forgets nothing.
 - **The map they remember** is the old people's `Discovered` tiles, copied — they lived there. This
   hands the new AI the old people's explored map, and that is correct.
 - **Ties carry over untouched.** A connection is band-to-band and faction-blind, so they still know

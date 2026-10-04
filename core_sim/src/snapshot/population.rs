@@ -683,6 +683,10 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// [`band_loadout_windows`] — `None` for a band with nothing to outfit, which is every band on
     /// every turn after the windows shut.
     pub(crate) loadout_window: Option<BandLoadoutWindowState>,
+    /// **This band's standing toward its people's heart** (`systems::independence`), off the
+    /// checkpointed [`crate::systems::HeartLedger`]. `None` for a band no turn has judged (a fresh
+    /// world, or a detached party, which is never a member), which publishes as in touch.
+    pub(crate) heart: Option<&'a crate::systems::HeartReading>,
 }
 
 /// The two webs' registries, for resolving a queue entry's **live** rung. No ladder: both
@@ -968,6 +972,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         craft_inputs,
         build_sources,
         loadout_window,
+        heart,
     } = inputs;
     let homeward: &[crate::work_party::HomewardWalk] =
         allocation.map_or(&[], |allocation| allocation.homeward.as_slice());
@@ -2142,6 +2147,19 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         long_move_leaves_items: long_move.item_units(),
         long_move_leaves_materials: long_move.material_units().to_f32(),
         food_left_behind: allocation.map_or(0.0, |allocation| allocation.last_food_left_behind),
+        // **THE BAND'S STANDING TOWARD ITS PEOPLE'S HEART** (#284) — read off the checkpointed
+        // ledger the independence pass rebuilt, never re-derived here: the heart is a computation
+        // over every band of the people, and a second copy of it would be a second answer.
+        // A band no turn has judged (a fresh world's opening frame; a detached party, never a member
+        // of a heart) publishes NO reading: not cut off, no bond, `NO_HEART_CONTACT`.
+        cut_off: heart.is_some_and(|reading| reading.cut_off),
+        heart_bond: heart
+            .map_or(crate::connections::NO_TIE, |reading| reading.bond)
+            .to_f32(),
+        heart_last_contact_turn: heart
+            .and_then(|reading| reading.last_contact_turn)
+            .map_or(sim_schema::state::NO_HEART_CONTACT, |turn| turn as i64),
+        independence_grievance_threshold: wellbeing.independence.grievance_threshold,
     }
 }
 
@@ -2672,6 +2690,7 @@ mod tests {
             band_name: None,
             // No world, so no outfitting window either.
             loadout_window: None,
+            heart: None,
             cohort,
             allocation,
             expedition,

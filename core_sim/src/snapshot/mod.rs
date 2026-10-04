@@ -1445,6 +1445,7 @@ mod tests {
             band_name: None,
             // No world, so no outfitting window either.
             loadout_window: None,
+            heart: None,
             cohort,
             allocation: Some(allocation),
             expedition: None,

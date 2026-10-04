@@ -243,6 +243,36 @@ impl VisibilityLedger {
             .or_insert_with(|| FactionVisibilityMap::new(faction, width, height))
     }
 
+    /// **Give `to` the map `from` remembers, with nothing in sight** — every tile `from` has seen is
+    /// `Discovered` for `to` (its `last_seen_turn` kept), every tile it never saw stays
+    /// `Unexplored`, and no tile is `Active`.
+    ///
+    /// A people born at runtime out of another's bands lived on that people's ground, so it
+    /// remembers it (`docs/plan_band_fission.md` §Independence, "The map they remember"). Nothing is
+    /// copied as *seen*: `Active` is presence, and presence is rebuilt by the next sight sweep from
+    /// where the new people's own bands stand. An absent `from` map gives `to` an all-unexplored map
+    /// of the given size. Replaces any map `to` already had.
+    pub fn insert_remembered_copy(
+        &mut self,
+        from: FactionId,
+        to: FactionId,
+        width: u32,
+        height: u32,
+    ) {
+        let mut map = self
+            .faction_maps
+            .get(&from)
+            .cloned()
+            .unwrap_or_else(|| FactionVisibilityMap::new(to, width, height));
+        map.faction = to;
+        for tile in &mut map.tiles {
+            if tile.state == VisibilityState::Active {
+                tile.state = VisibilityState::Discovered;
+            }
+        }
+        self.faction_maps.insert(to, map);
+    }
+
     /// Get a faction's visibility map.
     pub fn get_faction(&self, faction: FactionId) -> Option<&FactionVisibilityMap> {
         self.faction_maps.get(&faction)
