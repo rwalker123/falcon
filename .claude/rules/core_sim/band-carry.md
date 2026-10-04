@@ -123,6 +123,12 @@ trade shipment) — **takes** the party's kit from its home band's `BandEquipmen
 short of an item sends what it has; nothing is minted. The launch forecast prices the same issued
 counts, so the quote and the party agree.
 
+**The party takes its full issue even from gear the band's staffed rows are using** (Ray, 2026-10-04:
+keep it). People leaving take their tools; the home crews feel the shortage on their own rows until
+the party returns. The raid quote once priced a *rationed share* (after `BandItemBudget` served the
+rows) — that disagreed with the party that actually left, so it quotes the issue now. Do not make the
+launch respect the rows' claims without reopening this.
+
 **It comes back** on every fold-back (`fold_party_into_band` takes a `PartyGear`, so a return path
 that forgot it would not compile): the party's batches are placed into the receiving ledger with
 their wear — the home band on a homecoming or an in-camp cancel, the band it joins on a defection. A
