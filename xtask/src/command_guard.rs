@@ -396,6 +396,12 @@ fn band_handle(payload: &CommandPayload) -> BandHandle {
         // …and the BENCH's rank names a band too, and requires it: a bench belongs to exactly one
         // band, so there is no faction-wide reading of this verb to fall back on.
         CommandPayload::BenchPriority { band_id, .. } => Some(*band_id),
+        // …and so does every verb on the bench's QUEUE: an order index means nothing without the
+        // one band whose queue it indexes.
+        CommandPayload::BenchEnqueue { band_id, .. }
+        | CommandPayload::BenchOrderCount { band_id, .. }
+        | CommandPayload::BenchRemoveOrder { band_id, .. }
+        | CommandPayload::BenchRaiseOrder { band_id, .. } => Some(*band_id),
         // ⛔ **AND `abandon` NAMES A PLACE** (arc #532). The roadwork roster's `✕` is its only
         // emitter and it deliberately carries no band token: the sim drops every holding this
         // FACTION has on the tile, which is why the roster's own tooltip warns that a forage

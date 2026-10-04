@@ -86,6 +86,34 @@ pub struct ExpeditionConfigs<'w> {
     pub demographics: Option<Res<'w, DemographicsConfigHandle>>,
 }
 
+/// The configs and logs [`advance_band_movement`] reads, bundled (the [`ExpeditionConfigs`] idiom).
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct BandMovementParams<'w> {
+    pub labor: Res<'w, LaborConfigHandle>,
+    pub ladder: Res<'w, LadderConfigHandle>,
+    pub sim: Res<'w, SimulationConfig>,
+    pub tile_registry: Res<'w, TileRegistry>,
+    /// The ferry reach a long move is measured against (`carry::move_ferry_reach_tiles`).
+    pub supply: Res<'w, crate::supply_network_config::SupplyNetworkConfigHandle>,
+    /// The carry a long move sheds down to (`expedition_config.json` → `carry`).
+    pub expedition: Res<'w, crate::expedition_config::ExpeditionConfigHandle>,
+    pub tick: Res<'w, SimulationTick>,
+    pub event_log: ResMut<'w, CommandEventLog>,
+    pub route_traffic: ResMut<'w, crate::routes::RouteTrafficLog>,
+}
+
+/// One band on the move, with what a departure's long-move shed touches.
+type MovingBand = (
+    Entity,
+    &'static mut PopulationCohort,
+    &'static mut BandTravel,
+    Option<&'static mut BandEquipment>,
+    Option<&'static mut LaborAllocation>,
+    Option<&'static BandId>,
+    Has<ResidentBand>,
+    Has<Expedition>,
+);
+
 /// Advance any `move_band` order one step toward its target. The band travels at
 /// `band_move_tiles_per_turn` tiles/turn; `current_tile` (and `home`, since a nomad band has no
 /// fixed origin) follow it so labor reads the updated in-range source set, and on arrival the
@@ -114,22 +142,30 @@ pub struct ExpeditionConfigs<'w> {
 /// **pooling link** is banked in the same turn's. Each entry is banked exactly once — the log has
 /// one drain — so nothing is lost and nothing doubles. **Do not reorder a stage for it**; it is the
 /// same shape as every other lag in this arc.
-#[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
+///
+/// ## ⛔ THE LONG-MOVE SHED HAPPENS HERE, AT DEPARTURE — never when the order is accepted
+///
+/// A band leaves when the turn advances, so what it cannot carry is left behind then, measured from
+/// where it stands to that order's target. It runs in `TurnStage::Population`, after
+/// `starting_loadout::close_opening_window` (registered before `TurnStage::Influence`), so a turn-one
+/// outfitting window is already shut when the shed applies and no grant can re-mint what was left.
+/// An order cancelled or replaced before the turn advances sheds nothing.
 pub fn advance_band_movement(
     mut commands: Commands,
-    labor_config: Res<LaborConfigHandle>,
-    ladder_config: Res<LadderConfigHandle>,
-    sim_config: Res<SimulationConfig>,
-    tile_registry: Res<TileRegistry>,
-    mut route_traffic: ResMut<crate::routes::RouteTrafficLog>,
+    mut params: BandMovementParams,
     tiles: Query<&Tile>,
-    mut cohorts: Query<(Entity, &mut PopulationCohort, &BandTravel)>,
+    mut cohorts: Query<MovingBand>,
 ) {
-    let labor = labor_config.get();
-    let ladder = ladder_config.get();
-    let width = tile_registry.width;
-    let wrap_horizontal = sim_config.map_topology.wrap_horizontal;
-    for (entity, mut cohort, travel) in cohorts.iter_mut() {
+    let labor = params.labor.get();
+    let ladder = params.ladder.get();
+    let carry = params.expedition.get().carry.clone();
+    let reach = crate::carry::move_ferry_reach_tiles(&params.supply.get());
+    let width = params.tile_registry.width;
+    let wrap_horizontal = params.sim.map_topology.wrap_horizontal;
+    let tick = params.tick.0;
+    for (entity, mut cohort, mut travel, equipment, allocation, band_id, resident, expedition) in
+        cohorts.iter_mut()
+    {
         let current = tiles
             .get(cohort.current_tile)
             .map(|tile| tile.position)
@@ -138,6 +174,24 @@ pub fn advance_band_movement(
             commands.entity(entity).remove::<BandTravel>();
             continue;
         }
+        // **THE DEPARTURE** — this order's first step. Only a RESIDENT band sheds: a detached party
+        // keeps its own rules (its pack is its pack).
+        if !travel.departed {
+            travel.departed = true;
+            let long = crate::grid_utils::hex_distance_wrapped(
+                current,
+                travel.target,
+                width,
+                wrap_horizontal,
+            ) > reach;
+            if long && resident && !expedition {
+                if let Some(entry) =
+                    shed_at_departure(&mut cohort, equipment, allocation, band_id, &carry, tick)
+                {
+                    params.event_log.push(entry);
+                }
+            }
+        }
         let next = step_toward(
             current,
             travel.target,
@@ -145,14 +199,14 @@ pub fn advance_band_movement(
             width,
             wrap_horizontal,
         );
-        if let Some(tile_entity) = tile_registry.index(next.x, next.y) {
+        if let Some(tile_entity) = params.tile_registry.index(next.x, next.y) {
             cohort.current_tile = tile_entity;
             cohort.home = tile_entity;
         }
         // **The boots that actually crossed the ground**, recorded only where the party moved —
         // `marched` carries the same `from != to` guard, and a party held at its own tile wears
         // nothing.
-        route_traffic.marched(
+        params.route_traffic.marched(
             current,
             next,
             crate::components::available_workers(cohort.working),
@@ -162,6 +216,71 @@ pub fn advance_band_movement(
             commands.entity(entity).remove::<BandTravel>();
         }
     }
+}
+
+/// **Shed a resident band down to what its workers can carry, as it departs on a long move**
+/// (#732, [`crate::carry`]).
+///
+/// Past the ferry reach the band walks off with [`crate::carry::band_carry_capacity`] — priced on
+/// its actual working-age value, never a floored head count: food loads first, then materials are
+/// cut before tools in what the food leaves, the **most worn** units are the ones dropped, and what
+/// is left behind is **lost**. The dropped food is booked on the food ledger's `left_behind` term so
+/// the identity still closes. Returns the feed line naming roughly what was left, or `None` when
+/// nothing is shed.
+fn shed_at_departure(
+    cohort: &mut PopulationCohort,
+    mut equipment: Option<Mut<BandEquipment>>,
+    allocation: Option<Mut<LaborAllocation>>,
+    band_id: Option<&BandId>,
+    carry: &crate::carry::CarryConfig,
+    tick: u64,
+) -> Option<CommandEventEntry> {
+    let plan = crate::carry::plan_long_move_shed(
+        &cohort.stores,
+        equipment.as_deref(),
+        crate::carry::band_carry_workers(cohort),
+        carry,
+    );
+    if plan.is_empty() {
+        return None;
+    }
+    let food_left =
+        crate::carry::shed_for_long_move(&mut cohort.stores, equipment.as_deref_mut(), &plan);
+    // **Booked on the food ledger, or the identity is false on the turn a band walks away** — the
+    // larder fell by food that passed through no income, meal, rot or transfer.
+    if let Some(mut allocation) = allocation {
+        allocation.last_food_left_behind += food_left.to_f32();
+    }
+    let food = food_left.to_f32();
+    let items = plan.item_units();
+    let materials = plan.material_units().to_f32();
+    // `band=` is the durable `BandId`, never the entity — the token the client joins on.
+    let (label, band_token) = band_id.map_or_else(
+        || ("A band".to_string(), String::new()),
+        |band| {
+            (
+                super::population::band_label(*band),
+                format!(" band={}", band.0),
+            )
+        },
+    );
+    let entry = CommandEventEntry::new(
+        tick,
+        CommandEventKind::CancelOrder,
+        cohort.faction,
+        format!(
+            "{label} left behind {food:.0} food, {items} gear, {materials:.0} material - too far \
+             to carry"
+        ),
+        Some(format!(
+            "status=left_behind action=move_band food={food:.2} items={items} \
+             materials={materials:.2}{band_token}"
+        )),
+    );
+    Some(match band_id {
+        Some(band) => entry.with_band(*band),
+        None => entry,
+    })
 }
 
 /// **Which bands each detached party saw on its own sweep THIS turn** — derived, cleared and rebuilt
@@ -1145,9 +1264,7 @@ pub fn advance_expeditions(
                         wrap_horizontal,
                     ) <= comm_range;
                     if !arrived {
-                        commands
-                            .entity(entity)
-                            .insert(BandTravel { target: host_pos });
+                        commands.entity(entity).insert(BandTravel::to(host_pos));
                     } else {
                         // **ARRIVAL IS NOT RE-GATED ON THE TIE.** If the connection decayed to
                         // nothing while the party walked, the shipment still lands: the party is
@@ -1329,7 +1446,7 @@ pub fn advance_expeditions(
                     commands.entity(entity).despawn();
                 } else if let Some(home) = home_pos {
                     // Chase the band's live tile each turn (retargets any stale travel order).
-                    commands.entity(entity).insert(BandTravel { target: home });
+                    commands.entity(entity).insert(BandTravel::to(home));
                 }
             }
             ExpeditionPhase::Hunting => {
@@ -1360,9 +1477,7 @@ pub fn advance_expeditions(
                         ) <= cfg.hunt.reach_tiles;
                         if !in_reach {
                             // Still walking — chase the herd's live tile.
-                            commands
-                                .entity(entity)
-                                .insert(BandTravel { target: herd_pos });
+                            commands.entity(entity).insert(BandTravel::to(herd_pos));
                             continue;
                         }
 
@@ -1574,13 +1689,11 @@ pub fn advance_expeditions(
                                 )),
                             ));
                             if let Some(home) = home_pos {
-                                commands.entity(entity).insert(BandTravel { target: home });
+                                commands.entity(entity).insert(BandTravel::to(home));
                             }
                         } else {
                             // Keep raiding: chase the herd's live tile.
-                            commands
-                                .entity(entity)
-                                .insert(BandTravel { target: herd_pos });
+                            commands.entity(entity).insert(BandTravel::to(herd_pos));
                         }
                     }
                 }

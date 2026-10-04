@@ -27,6 +27,22 @@ use core_sim::{
 };
 use std::collections::BTreeMap;
 
+/// **An order no fixture finishes** — what the retired repeat-until-cleared job was, as a count.
+const NEVER_FINISHED: u32 = u32::MAX;
+
+/// **The bench works `recipe` and nothing else, with `workers` on it** — the queue holding one
+/// [`NEVER_FINISHED`] order, discarding whatever was there (and any pile it had drawn).
+trait PutOnBench {
+    fn put_on(&mut self, recipe: &str, workers: u32);
+}
+
+impl PutOnBench for BandBench {
+    fn put_on(&mut self, recipe: &str, workers: u32) {
+        self.orders = vec![core_sim::BenchOrder::new(recipe, NEVER_FINISHED)];
+        self.workers = workers;
+    }
+}
+
 const HIDE: &str = "hide";
 const BONE: &str = "bone";
 const TOUGHNESS: &str = "toughness";
@@ -171,7 +187,7 @@ fn set_bench_crew(app: &mut App, band: Entity, workers: u32) {
         .world
         .get_mut::<BandBench>(band)
         .expect("a spawned band carries a bench");
-    bench.set_job(SLED_RECIPE, workers);
+    bench.put_on(SLED_RECIPE, workers);
 }
 
 /// What the band's store holds of one material, summed over its batches.
@@ -210,7 +226,7 @@ fn set_bench(app: &mut App, band: Entity, workers: u32) {
     app.world
         .get_mut::<BandBench>(band)
         .expect("a spawned band carries a bench")
-        .set_job(SLED_RECIPE, workers);
+        .put_on(SLED_RECIPE, workers);
 }
 
 /// The sled recipe's input materials **in the book's own order** — asked of the loaded book rather
@@ -1233,7 +1249,7 @@ fn the_bench_publishes_its_job_its_work_and_its_refusal() {
             .world
             .get_mut::<BandBench>(band)
             .expect("a spawned band carries a bench");
-        bench.set_job(SLED_RECIPE, 3);
+        bench.put_on(SLED_RECIPE, 3);
     }
     let blocked = publish(&mut app, band);
     let PublishedBench {
@@ -1306,7 +1322,7 @@ fn a_crewless_bench_publishes_its_own_refusal_while_the_offer_stays_available() 
             .world
             .get_mut::<BandBench>(band)
             .expect("a spawned band carries a bench");
-        bench.set_job(SLED_RECIPE, 0);
+        bench.put_on(SLED_RECIPE, 0);
     }
     let published = publish(&mut app, band);
     assert_eq!(
@@ -1425,7 +1441,7 @@ fn a_drawn_pile_is_not_blocked_by_a_store_too_poor_to_draw_again() {
             .world
             .get_mut::<BandBench>(band)
             .expect("a spawned band carries a bench");
-        bench.set_job(SLED_RECIPE, BENCH_CREW);
+        bench.put_on(SLED_RECIPE, BENCH_CREW);
     }
     app.world.run_system_once(advance_crafting);
 
@@ -1434,6 +1450,8 @@ fn a_drawn_pile_is_not_blocked_by_a_store_too_poor_to_draw_again() {
         app.world
             .get::<BandBench>(band)
             .expect("a spawned band carries a bench")
+            .head()
+            .expect("the fixture's order is on the bench")
             .drawn
             .is_some(),
         "the fixture's whole subject is a bench whose pile is already cut"
@@ -1458,14 +1476,14 @@ fn a_drawn_pile_is_not_blocked_by_a_store_too_poor_to_draw_again() {
          client does not render as blocking"
     );
 
-    // THE PAIRING: put the pile back on the shelf without touching the store — `set_job` clears the
-    // drawn pile and the progress with it — and the identical store now blocks the bench.
+    // THE PAIRING: put the pile back on the shelf without touching the store — a fresh order has
+    // no drawn pile and no progress — and the identical store now blocks the bench.
     {
         let mut bench = app
             .world
             .get_mut::<BandBench>(band)
             .expect("a spawned band carries a bench");
-        bench.set_job(SLED_RECIPE, BENCH_CREW);
+        bench.put_on(SLED_RECIPE, BENCH_CREW);
     }
     let undrawn = publish(&mut app, band);
     assert_eq!(
@@ -1554,7 +1572,7 @@ fn a_start_stocked_batch_carries_the_grade_a_bare_handed_craft_of_it_comes_out_a
             .world
             .get_mut::<BandBench>(band)
             .expect("a spawned band carries a bench");
-        bench.set_job(SLED_RECIPE, CREW_THAT_FINISHES_A_SLED_BARE_HANDED);
+        bench.put_on(SLED_RECIPE, CREW_THAT_FINISHES_A_SLED_BARE_HANDED);
     }
     app.world.run_system_once(advance_crafting);
     // **The top of the next turn** — a finished sled is parked on the bench until then, and this
@@ -1607,7 +1625,7 @@ fn a_drawn_job_whose_tool_ran_dry_still_publishes_its_refusal() {
             .world
             .get_mut::<BandBench>(band)
             .expect("a spawned band carries a bench");
-        bench.set_job(SLED_RECIPE, BENCH_CREW);
+        bench.put_on(SLED_RECIPE, BENCH_CREW);
     }
     app.world.run_system_once(advance_crafting);
 
@@ -1625,6 +1643,8 @@ fn a_drawn_job_whose_tool_ran_dry_still_publishes_its_refusal() {
         app.world
             .get::<BandBench>(band)
             .expect("a spawned band carries a bench")
+            .head()
+            .expect("the fixture's order is on the bench")
             .drawn
             .is_some(),
         "the pile is still cut — this is a running job, not a fresh one"
@@ -2455,7 +2475,8 @@ fn the_benchs_rank_reaches_the_client_running_or_idle() {
     app.world
         .get_mut::<BandBench>(band)
         .expect("a spawned band carries a bench")
-        .recipe_id = None;
+        .orders
+        .clear();
     let idle = publish(&mut app, band).bench;
     assert_eq!(
         idle.recipe_id, "",
@@ -2558,7 +2579,7 @@ fn the_standing_material_bill_reaches_the_client() {
             .world
             .get_mut::<BandBench>(band)
             .expect("a spawned band carries a bench");
-        bench.set_job(HURDLES, 4);
+        bench.put_on(HURDLES, 4);
     }
     app.world.run_system_once(advance_crafting);
     let income = publish(&mut app, band).material_upkeep_income;
@@ -2628,7 +2649,7 @@ fn a_bench_that_cannot_draw_its_pile_publishes_no_income() {
             .world
             .get_mut::<BandBench>(band)
             .expect("a spawned band carries a bench");
-        bench.set_job(HURDLES, BENCH_HANDS);
+        bench.put_on(HURDLES, BENCH_HANDS);
     }
 
     // --- no wood: the row is absent, and the bench really does bank nothing --------------------
@@ -3094,7 +3115,7 @@ fn a_running_job_stays_the_suggested_recipe_after_its_draw_empties_the_pile() {
             .world
             .get_mut::<BandBench>(band)
             .expect("a spawned band carries a bench");
-        bench.set_job(SPEARS_FLINT_RECIPE, BENCH_CREW);
+        bench.put_on(SPEARS_FLINT_RECIPE, BENCH_CREW);
         bench.record_started(SPEARS_ITEM, SPEARS_FLINT_RECIPE);
     }
     app.world.run_system_once(advance_crafting);
@@ -3103,6 +3124,8 @@ fn a_running_job_stays_the_suggested_recipe_after_its_draw_empties_the_pile() {
         app.world
             .get::<BandBench>(band)
             .expect("a spawned band carries a bench")
+            .head()
+            .expect("the fixture's order is on the bench")
             .drawn
             .is_some(),
         "the premise: the knapped job has cut its pile"

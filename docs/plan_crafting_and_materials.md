@@ -321,9 +321,9 @@ and recipes that make stock.
 
 ### The bench IS the assignment — and you staff it
 
-Pressing **Make** puts that recipe on the bench **with nobody on it**; the bench's `− 2 +` stepper is
-how the crew is set; the running row reads *On the bench* with its button spent. **One job at a
-time**, so the panel never has to explain a queue.
+Pressing **Make** adds that recipe to the bench's **queue** (below) — onto an empty bench it is the
+job at once, **with nobody on it**; the bench's `− 2 +` stepper is how the crew is set. The bench
+works **one order at a time**, top of the queue first.
 
 **The sim never picks the crew.** A crafter is a hunter who is not hunting — the bench spends from
 the same pool the labor allocation does — and dividing the band is the decision this game is made of
@@ -340,6 +340,57 @@ crafting always has a subject, so it is staffed like a worked source. That also 
 constraint: the WORKFORCE zone reads 326px against a 275px box and its column split sits *exactly* on
 `band_panel_preview`'s levelness floor, so a third role card would have to be paid for by re-authoring
 that split.
+
+### The queue — one bench works its orders in turn
+
+An **order** is `recipe × count`. The bench holds an ordered list of them and works **one a turn:
+the first, in queue order, that holds a pile or can draw one now** — the worked order. An order short
+of its inputs keeps its place and is skipped until they are there, and when it can draw again it
+takes priority back; an order it then overtakes mid-item pauses with its pile. Each finished item
+counts against the worked order, and when the count is met the order leaves and the next worked order
+draws its own inputs. **The crew stays with the bench** across orders — a new order is not an order
+to send anyone home — and an empty queue leaves the crew standing at an idle bench.
+
+- **Every order has a count.** The repeat-until-cleared job is retired: "keep making cordage" is an
+  order with a number on it, which is also what lets a suggestion net out what is already coming.
+- **Make adds one**; the queued row's own `− n +` stepper raises it. A suggestion adds its whole
+  count.
+- **The player edits the queue**: change an order's count, remove it, or move it up. Removing an
+  order that has drawn its inputs **loses them**, as clearing the bench always has — a drawn pile
+  keeps no batch readings to return. Moving an order above one that has drawn **pauses** that order
+  with its pile and progress intact; each order holds its own.
+- **A skipped order says why.** Each queued order carries the bench's own refusal for it
+  (*"Short 4.9 bone"*), empty when it can be worked; when no order can be worked the bench reads as
+  its blocked head.
+- **One bench, one queue.** Crafting in parallel comes from **more benches** — a bench growing toward
+  a workshop and a factory, each with its own queue — never from splitting one bench into per-recipe
+  crews (#595, closed for that reason).
+
+### Suggestions — what to make next, ranked by who is going without
+
+The panel opens with a short ranked list of what to make. It is computed **in `core_sim`**, so the
+AI's Craft specialist (#668) and auto-craft (#779) read the same list rather than each deriving one.
+
+- **The score is workers going without the tool their job needs.** A missing hoe costs a gardener
+  work; a missing spear costs a hunter attack and carry, which is food, not work — so no single unit
+  of *output* can rank them against each other. A worker without the tool means the same thing for
+  both. Ties break by item id, so the order is stable.
+- **Each suggestion says what the shortage costs in its own unit.** Gear that adds build or keeping
+  work states it as work a turn (`missing units × the work one unit adds`, the `build_work`
+  `equipped` value); gear that does not reads as the people going without (`3 hunters bare`).
+- **The count is the WHOLE shortfall**, never capped by what the band can afford to make now. The
+  shortfall is what later turns into "go and fetch wood" (#777); capping it to today's stock would
+  hide exactly the gap that warning exists to name.
+- **What is already queued is netted out.** A suggestion asks for `shortfall − queued`, and drops off
+  the list at zero — so the click does not keep re-offering the same spears.
+- **Its sources are the consumers that draw on the band's stock each turn**: the standing pools
+  (`poolToe`), the site crews (their keeping TOE), and the take rows (`kitToe`). A **detached party is
+  not a source** — it carries the kit it left with and is never resupplied, so nothing crafted now
+  reaches it.
+- **A spent tool counts; a worn one does not.** A tool performs at full strength until it expires,
+  so wear costs nothing today. Tools about to expire are the forecast's subject (#778).
+- **Whether it can be made at all is the offer's question**, not the suggestion's: a suggestion
+  names an item, and the panel reads the existing `CraftOffer` for that item's refusal and recipe.
 
 ### Readout rules
 

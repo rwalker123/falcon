@@ -1740,6 +1740,32 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         equipment_batches,
         bench_material_rate,
     } = crate::snapshot::crafting::band_craft_state(&cohort.stores, bench, &kit, craft_inputs);
+    // **WHAT TO MAKE NEXT** (`docs/plan_crafting_and_materials.md` §7 "Suggestions") — scored off the
+    // same settled lines the wire publishes: the pools' and site crews' off the allocation, the take
+    // rows' off `row_gear`, which is what each row's `kitToe` is copied from. **A detached party
+    // publishes none**: it is never resupplied, so nothing crafted now reaches it.
+    let craft_suggestions = match (expedition, allocation) {
+        (None, Some(alloc)) => {
+            let take_rows = row_gear
+                .iter()
+                .enumerate()
+                .flat_map(|(row, (_, _, kit_toe))| {
+                    kit_toe
+                        .iter()
+                        .map(move |line| (row, line.item_id.as_str(), line.required, line.filled))
+                });
+            let lines = crate::craft_suggestions::band_tool_shortfall_lines(alloc, take_rows);
+            crate::snapshot::crafting::craft_suggestion_states(
+                crate::craft_suggestions::craft_suggestions(
+                    &lines,
+                    bench,
+                    craft_inputs.recipes,
+                    craft_inputs.equipment,
+                ),
+            )
+        }
+        _ => Vec::new(),
+    };
     PopulationCohortState {
         entity: entity.to_bits(),
         band_id: band_id.map(|id| id.0).unwrap_or_default(),
@@ -1885,6 +1911,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         bench: bench_state,
         craft_offers,
         equipment_batches,
+        craft_suggestions,
         // The two derived halves of the published triple; `working_age` above is the third.
         children_count: age_brackets.children,
         elders_count: age_brackets.elders,
