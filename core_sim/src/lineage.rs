@@ -19,7 +19,7 @@
 //! in id order — the sim is seeded and must stay deterministic.
 
 use std::collections::BTreeSet;
-use std::num::NonZeroU16;
+use std::num::{NonZeroU16, NonZeroU32};
 
 use serde::{Deserialize, Serialize};
 
@@ -108,6 +108,22 @@ pub fn breeding_ceiling(lines: usize, people_per_line: NonZeroU16) -> u32 {
         .saturating_mul(u32::from(people_per_line.get()))
 }
 
+/// What `PopulationCohortState.breedingCeiling` publishes for a breeding population whose
+/// inbreeding ceiling is lifted — "no inbreeding ceiling", never a ceiling of nobody.
+pub const NO_INBREEDING_CEILING: u32 = 0;
+
+/// **The inbreeding ceiling that binds a breeding population, if any** (issue #688):
+/// [`breeding_ceiling`], or `None` once that ceiling reaches `free_breeding_at` — a people that
+/// large finds mates without outside contact, so inbreeding no longer restricts its growth.
+pub fn inbreeding_ceiling(
+    lines: usize,
+    people_per_line: NonZeroU16,
+    free_breeding_at: NonZeroU32,
+) -> Option<u32> {
+    let ceiling = breeding_ceiling(lines, people_per_line);
+    (ceiling < free_breeding_at.get()).then_some(ceiling)
+}
+
 /// **A band's breeding population as of this turn** (issue #688) — the bands in its supply-network
 /// component (or the band alone, in no network), read after the turn's demographics. Parked on
 /// [`crate::components::PopulationCohort::last_breeding`] for publication only: nothing steers off
@@ -119,8 +135,9 @@ pub struct BreedingReading {
     /// the members' fixed-point head-counts summed, then rounded once. On the wire as
     /// `PopulationCohortState.breedingPopulation`.
     pub headcount: u32,
-    /// The ceiling births stopped at: [`breeding_ceiling`] over the union of the members' lines. On
-    /// the wire as `PopulationCohortState.breedingCeiling`.
+    /// The ceiling births stopped at: [`breeding_ceiling`] over the union of the members' lines, or
+    /// [`NO_INBREEDING_CEILING`] once that reaches `free_breeding_at` and no longer applies. On the
+    /// wire as `PopulationCohortState.breedingCeiling`.
     pub ceiling: u32,
 }
 

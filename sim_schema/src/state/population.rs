@@ -1684,7 +1684,8 @@ pub struct PopulationCohortState {
     #[serde(default)]
     pub breeding_population: u32,
     /// **The breeding population's ceiling, in people** — `|union of founding lines| ×
-    /// people_per_line`. Appended last.
+    /// people_per_line`; **`0` means no inbreeding ceiling** (lifted once it reaches
+    /// `lineage.free_breeding_at`). Appended last.
     #[serde(default)]
     pub breeding_ceiling: u32,
 }

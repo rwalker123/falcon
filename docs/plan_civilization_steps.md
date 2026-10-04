@@ -173,6 +173,10 @@ group descends from.
   ceilings rise. That is what lifts a faction past ~150 (#689). Contact with your own split bands
   adds nothing — they hold your lines already.
 - **Lines do not decay.**
+- **The ceiling lifts at ~500** (`lineage.free_breeding_at`). Once a breeding population's
+  lines × `K` reaches it, the inbreeding ceiling no longer applies at all: ~500 is the forager
+  mating-network size (Birdsell's dialect tribe; Wobst's 175–475) at which a people finds mates
+  without outside contact, so past it growth is not restricted by mixing.
 
 **The numbers.** `K` is chosen so an isolated starting band ceilings near 150. Each other people a
 faction mixes with adds its lines, so contact with two or three others carries the union to ~500,
@@ -182,7 +186,7 @@ where inbreeding stops being the binding constraint and the next ceiling takes o
 |---|---|---|
 | An isolated starting band of 30, and every band it splits into while they stay connected | `L` | ~150 |
 | A splinter that walked off the network | its share of `L` | proportionally lower |
-| A people in contact with two or three others | the union | ~500 |
+| A people in contact with two or three others | the union | ~500 — the inbreeding ceiling lifts here |
 
 **Our own clock.** `maturation_rate` 0.05 makes a generation ~20 turns; a well-fed band doubles in
 ~35 turns at the reserve and trend bonuses (`demographics_config.json`). A starting band of 30

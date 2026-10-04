@@ -436,3 +436,108 @@ fn the_breeding_fields_reach_the_encoded_envelope() {
         "a lone band is its own population"
     );
 }
+
+/// The shipped `lineage.free_breeding_at`, in people.
+fn free_breeding_at(app: &App) -> u32 {
+    app.world
+        .resource::<DemographicsConfigHandle>()
+        .get()
+        .lineage
+        .free_breeding_at
+        .get()
+}
+
+/// The fewest lines whose `× K` reaches `free_breeding_at` — the smallest people the ceiling no
+/// longer binds.
+fn lines_at_free_breeding(app: &App) -> u16 {
+    let k = u32::from(shipped_lineage(app).1.get());
+    u16::try_from(free_breeding_at(app).div_ceil(k)).expect("a line count fits a u16")
+}
+
+/// The band's three breeding fields, read off the ENCODED envelope.
+fn published_breeding(app: &mut App, band: Entity) -> (i64, u32, u32) {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    recapture_snapshot_in_place(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let row = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|row| row.entity() == band.to_bits())
+        .expect("the band is on the wire");
+    (
+        row.fertilityCeiling(),
+        row.breedingPopulation(),
+        row.breedingCeiling(),
+    )
+}
+
+/// **At `free_breeding_at` the inbreeding ceiling lifts.** A population whose `lines × K` reaches
+/// it grows straight past that figure with a factor of `1`, and publishes a ceiling of `0` — "no
+/// inbreeding ceiling" — on the encoded envelope.
+#[test]
+fn a_population_at_the_free_breeding_size_grows_past_its_lines() {
+    let mut app = one_faction_world();
+    let (band, id) = home_band(&mut app);
+    let lines = lines_at_free_breeding(&app);
+    let would_be_ceiling = ceiling_for(&app, usize::from(lines));
+    assert!(would_be_ceiling >= free_breeding_at(&app));
+    seat_lines(&mut app, band, id, lines);
+    seat_people(&mut app, band, would_be_ceiling as f32 + SEAT_ABOVE_CEILING);
+    neutral_trend(&mut app, band);
+    let before = total(&app, band);
+
+    for _ in 0..HOLD_TURNS {
+        turn(&mut app, &[band]);
+        assert_eq!(
+            cohort(&app, band).last_fertility_factors.ceiling,
+            Scalar::one(),
+            "a lifted ceiling withholds no birth"
+        );
+    }
+    assert!(
+        total(&app, band) > before,
+        "liveness: the band grew past what its lines × K would have held ({before} → {})",
+        total(&app, band)
+    );
+
+    let (factor, population, ceiling) = published_breeding(&mut app, band);
+    assert_eq!(factor, Scalar::one().raw());
+    assert_eq!(ceiling, core_sim::NO_INBREEDING_CEILING);
+    assert_eq!(population, cohort(&app, band).last_breeding.headcount);
+}
+
+/// **One line short of `free_breeding_at`, the ceiling still binds**: a population above its
+/// `lines × K` bears nobody and publishes that ceiling.
+#[test]
+fn a_population_just_under_the_free_breeding_size_still_caps() {
+    let mut app = one_faction_world();
+    let (band, id) = home_band(&mut app);
+    let lines = lines_at_free_breeding(&app) - 1;
+    let ceiling = ceiling_for(&app, usize::from(lines));
+    assert!(ceiling < free_breeding_at(&app));
+    seat_lines(&mut app, band, id, lines);
+    seat_people(&mut app, band, ceiling as f32 + SEAT_ABOVE_CEILING);
+    neutral_trend(&mut app, band);
+    turn(&mut app, &[band]);
+
+    assert_eq!(
+        cohort(&app, band).last_fertility_factors.ceiling,
+        Scalar::zero()
+    );
+    let (factor, _, published) = published_breeding(&mut app, band);
+    assert_eq!(factor, Scalar::zero().raw());
+    assert_eq!(published, ceiling);
+}

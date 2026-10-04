@@ -1447,6 +1447,10 @@ table PopulationCohortState {
   // fixed-point totals summed, then rounded once). The same figure on every member band.
   breedingPopulation:uint = 0;
   // The breeding population's ceiling, in people. The same figure on every member band.
+  // 0 MEANS "NO INBREEDING CEILING": once |union of lines| x people_per_line reaches
+  // demographics_config.json lineage.free_breeding_at (~500, the size at which a people finds mates
+  // without outside contact) the ceiling is lifted, fertilityCeiling reads 1e6 at any head-count,
+  // and this publishes 0. A client reads 0 as unrestricted, never as a ceiling of nobody.
   breedingCeiling:uint = 0;
 }
 

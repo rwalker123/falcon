@@ -366,6 +366,21 @@ pub(crate) fn ceiling_factor(headroom: Scalar, would_be_births: Scalar) -> Scala
     max(headroom, scalar_zero()) / would_be_births
 }
 
+/// **A breeding population's factor, threshold included** — `1` when its inbreeding ceiling is
+/// lifted (`ceiling` is `None`: `lineage::inbreeding_ceiling` reached `free_breeding_at`), else
+/// [`ceiling_factor`] of the headroom `max(0, ceiling − opening)` against the would-be births.
+pub(crate) fn breeding_factor(
+    ceiling: Option<u32>,
+    opening: Scalar,
+    would_be_births: Scalar,
+) -> Scalar {
+    let Some(people) = ceiling else {
+        return scalar_one();
+    };
+    let headroom = max(scalar_from_u32(people) - opening, scalar_zero());
+    ceiling_factor(headroom, would_be_births)
+}
+
 /// **Which breeding population a band belongs to this turn** — its supply-network component, or the
 /// band alone when it is in none (`SupplyNetworkMembership::network_of` reads `0`). Ordered so the
 /// pre-pass can key a `BTreeMap` on it: the sim is seeded and its walks are in a stated order.
@@ -397,11 +412,11 @@ struct BreedingTally {
     would_be_births: Scalar,
 }
 
-/// One breeding population's resolved ceiling: the people it can hold, and the factor every
-/// member's births are multiplied by this turn.
+/// One breeding population's resolved ceiling: the people it can hold (`None` once the ceiling is
+/// lifted at `free_breeding_at`), and the factor every member's births are multiplied by this turn.
 #[derive(Debug, Clone, Copy)]
 struct BreedingCeiling {
-    people: u32,
+    people: Option<u32>,
     factor: Scalar,
 }
 
@@ -1045,8 +1060,9 @@ impl BreedingCeilings {
 /// **The ceiling pre-pass** (issue #688): group the resident bands into breeding populations, and
 /// resolve each population's ceiling and the factor its births are scaled by this turn.
 ///
-/// Per population: the ceiling is `|union of its members' lines| × people_per_line`, the headroom
-/// is `max(0, ceiling − opening head-count)`, and the factor is [`ceiling_factor`] of the headroom
+/// Per population: the ceiling is `|union of its members' lines| × people_per_line` — lifted
+/// altogether once it reaches `free_breeding_at`, when the factor is `1` — the headroom is
+/// `max(0, ceiling − opening head-count)`, and the factor is [`ceiling_factor`] of the headroom
 /// against the members' summed would-be births — priced by [`meal_and_births`], the same function
 /// [`advance_demographics`] prices them with. A band whose home tile does not resolve skips the
 /// demographic model this turn, so it would bear nobody; its people still count toward the
@@ -1076,13 +1092,16 @@ fn resolve_breeding_ceilings(
                 meal_and_births(&state, band_food_flow(labor), demo).would_be_births;
         }
     }
-    let people_per_line = demo.lineage.people_per_line;
+    let lineage = &demo.lineage;
     let ceilings = tallies
         .into_iter()
         .map(|(group, tally)| {
-            let people = crate::lineage::breeding_ceiling(tally.lines.len(), people_per_line);
-            let headroom = max(scalar_from_u32(people) - tally.opening, scalar_zero());
-            let factor = ceiling_factor(headroom, tally.would_be_births);
+            let people = crate::lineage::inbreeding_ceiling(
+                tally.lines.len(),
+                lineage.people_per_line,
+                lineage.free_breeding_at,
+            );
+            let factor = breeding_factor(people, tally.opening, tally.would_be_births);
             (group, BreedingCeiling { people, factor })
         })
         .collect();
@@ -1108,7 +1127,8 @@ fn publish_breeding_readings(cohorts: &mut DemographicBands, breeding: &Breeding
             ceiling: breeding
                 .ceilings
                 .get(group)
-                .map_or(0, |ceiling| ceiling.people),
+                .and_then(|ceiling| ceiling.people)
+                .unwrap_or(crate::lineage::NO_INBREEDING_CEILING),
         };
     }
 }
@@ -2320,6 +2340,9 @@ mod breeding_ceiling_tests {
     const MILD_TEMP: f32 = 18.0;
     /// A population cap no fixture here reaches.
     const NO_CAP: u32 = 1_000_000;
+    /// A round per-line cap and free-breeding size, so the threshold falls on a whole line.
+    const PEOPLE_PER_LINE: u16 = 20;
+    const FREE_BREEDING_AT: u32 = 500;
 
     fn people(value: f32) -> Scalar {
         scalar_from_f32(value)
@@ -2352,6 +2375,32 @@ mod breeding_ceiling_tests {
         assert_eq!(
             ceiling_factor(people(WOULD_BE_BIRTHS * 2.0), people(WOULD_BE_BIRTHS)),
             scalar_one()
+        );
+    }
+
+    /// **The free-breeding threshold's edge.** One person of ceiling below `free_breeding_at` still
+    /// caps a population at its ceiling; at `free_breeding_at` the ceiling is lifted and the factor
+    /// is `1` however far past it the population stands.
+    #[test]
+    fn the_ceiling_lifts_exactly_at_the_free_breeding_size() {
+        let k = std::num::NonZeroU16::new(PEOPLE_PER_LINE).unwrap();
+        let free_at = std::num::NonZeroU32::new(FREE_BREEDING_AT).unwrap();
+        let lines_at = (FREE_BREEDING_AT / u32::from(PEOPLE_PER_LINE)) as usize;
+        let under = crate::lineage::inbreeding_ceiling(lines_at - 1, k, free_at);
+        let at = crate::lineage::inbreeding_ceiling(lines_at, k, free_at);
+        assert_eq!(under, Some(FREE_BREEDING_AT - u32::from(PEOPLE_PER_LINE)));
+        assert_eq!(at, None, "a ceiling of free_breeding_at is lifted");
+
+        let crowded = scalar_from_u32(FREE_BREEDING_AT * 2);
+        assert_eq!(
+            breeding_factor(under, crowded, people(WOULD_BE_BIRTHS)),
+            scalar_zero(),
+            "just under the threshold, a population above its ceiling still bears nobody"
+        );
+        assert_eq!(
+            breeding_factor(at, crowded, people(WOULD_BE_BIRTHS)),
+            scalar_one(),
+            "at the threshold, no head-count withholds a birth"
         );
     }
 
