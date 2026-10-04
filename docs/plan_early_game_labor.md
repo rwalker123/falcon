@@ -1,13 +1,14 @@
 # Plan: Early-Game Labor — the Band as a Labor Pool (Milestone 1)
 
-Status: **Design approved, not yet implemented.** This is the authoritative spec for the
+Status: **Slices 1–3 and 5–7 shipped; slice 4 (the carry-capacity cap) superseded** — see
+"Milestone breakdown". This is the authoritative spec for the
 playable early game: a single small band, modeled as a **labor pool** whose working-age
 population is partitioned across equipment-gated **roles** (a *Table of Equipment* / TOE
 model), feeding and defending itself until population growth pushes it toward its first
 place-bound structures. It **brings forward and concretizes Phase 2** of
 `docs/plan_settlement_population.md` (labor pool + hybrid allocation), grounding it in the
-first few turns, and it adds two concepts that arc did not have: **equipment (TOE)** and a
-**carry-capacity population cap**.
+first few turns, and it adds a concept that arc did not have: **equipment (TOE)**. It also
+proposed a **carry-capacity population cap**, since superseded — see "Population cap — superseded".
 
 ## Motivation — why the current start is broken
 
@@ -54,7 +55,7 @@ Milestone 1 ships four roles. Each is a demand the player staffs from the labor 
 
 | Role | Produces | Equipped by (TOE) | Unequipped tier |
 |------|----------|-------------------|-----------------|
-| **Foraging** | Food (baseline) | Baskets/containers → higher yield **and** carry capacity | Bare hands — much lower yield |
+| **Foraging** | Food (baseline) | Baskets/containers → higher yield **and** per-trip carry | Bare hands — much lower yield |
 | **Hunting** | Food (draws down herds) | Spears/traps → higher take | Bare hands — weak take |
 | **Scouting** | Vision / exploration | Wayfinding kit → range/speed | Bare hands — short range |
 | **Warrior** | Defense (no food) | Weapons → combat strength | Rocks & fists — weak force |
@@ -109,37 +110,24 @@ A TOE is the equipment set that lifts a role from its *unequipped* to its *equip
   bare hands — *is* the pull into the Milestone 2 crafting economy (the Crafter role that
   produces TOEs). Equipment depletion is effectively the **pacing dial of the first act.**
 - Equipment effects are **role-specific**, not a flat global multiplier: baskets raise forage
-  yield *and* carry capacity; spears raise hunt take; weapons raise combat strength.
+  yield *and* what a forager carries back per trip (`forage_carry`); spears raise hunt take;
+  weapons raise combat strength.
 
 Because equipment is modeled as real depleting inventory from day one (just without a producer),
 adding the crafting/production side later is additive — **least rework**.
 
-### Carry capacity is the population cap
-Growth is **not** capped by food production — it is capped by **carry capacity**, the band's
-mobile food-storage limit:
-
-> The band can only haul a food buffer sufficient for **N** people. Population is capped at N
-> **regardless of how much food it can produce.** A band swimming in game can still be stuck at
-> 20 because it cannot carry provisions for a 21st mouth on its back.
-
-Two distinct constraints therefore govern the band:
-1. **Survival** — food income ≥ consumption, or the band starves and shrinks (production).
-2. **Growth cap** — population ≤ carry capacity; births stop at the cap (storage).
-
-You plateau at whichever binds first, and for a nomad **carry capacity usually binds.** Raising
-it is the only way to grow past the ceiling, via:
-- **more containers/baskets** — equipment, but limited by the depleting kit; or
-- **building place-bound storage** (drying racks → granary) — which is exactly the sunk-cost
-  **tether that *is* sedentarization**.
-
-So the nomad→settle transition becomes **mechanical, not scripted**: mobile carry is inherently
-small, and the only way past your ceiling is to stop moving and build. That is the
-emergent-settlement philosophy (`plan_settlement_population.md`) expressed as a hard number the
-player runs into — and it feeds the existing `SedentarizationScore` readout.
+### Population cap — superseded (was: carry capacity)
+This doc originally capped growth at **carry capacity**: the food buffer a nomad band can haul,
+with storage structures as the only way past it. **That was superseded on 2026-09-19 — there is
+no carry cap.** Population is capped by the **lineage/cohesion ladder**, and a band's larder is
+bounded by **spoilage** alone (food past its shelf life rots, by keeping class). The carry that
+shipped, `forage_carry`, is what one worker brings back per trip, not a bound on the band. See
+`docs/plan_civilization_steps.md` §"The mechanism: a breeding population cannot grow past its
+lines" and §"Step 5: spoilage, storage, and the granary".
 
 ### Growth self-limits (no forced gate)
 Nothing *forces* the player to settle. Births run (per `advance_demographics`) until population
-reaches the carry cap, then plateau. The plateau is set by `min(food-supportable, carry-cap)`,
+reaches a ceiling, then plateau. The plateau is set by `min(food-supportable, lineage ceiling)`,
 and food-supportable is itself the **sum of sustainable yields of reachable herds + forage** —
 so **where the band wanders determines its natural ceiling** (a game-rich valley supports a
 bigger band than thin scrub). This makes the **already-shipped wildlife/forage density overlay a
@@ -152,10 +140,10 @@ food/turn, and today's integer rounding silently zeroes it. **Food income and th
 accumulate fractionally.** This is step zero; nothing else in M1 works without it.
 
 ### The food ledger (the instrument)
-Because growth self-limits at "income = consumption" against a carry cap, the player **must** be
+Because growth self-limits at "income = consumption", the player **must** be
 able to see *why* they've plateaued. A per-band **food ledger** surfaces the flows:
-`+forage, +hunt, +network transfers, −consumption, −(spoilage later) = net/turn → days to
-empty`, plus current population vs carry cap. Most of these quantities are already computed;
+`+forage, +hunt, +network transfers, −consumption, −spoilage = net/turn → days to
+empty`. Most of these quantities are already computed;
 this is primarily a surfacing job, and it is **load-bearing, not cosmetic** — it is the readout
 that makes the entire equilibrium-and-settle loop legible (and would have let the tester
 self-diagnose Issue 2).
@@ -181,7 +169,7 @@ between Warrior and threats is the thing that is cheaper to get right now than t
 | 8 | Growth **self-limits** (no forced settle) | Matches "no found-settlement action"; settling is ambition, not a gate. |
 | 9 | **Fractional food** | Non-negotiable at sub-1-per-source scale; the literal Issue-2 fix. |
 | 10 | **Minimal predator threat in M1** | Warrior needs a consumer to be designed right; cheaper now than retrofitting combat onto an untested role. |
-| 11 | **Spoilage deferred** | Carry-cap gives storage its purpose without spoilage; spoilage matters only once storage lets food *sit* (M2), combined with time-in-storage. |
+| 11 | **Spoilage deferred** | Carry-cap gives storage its purpose without spoilage; spoilage matters only once storage lets food *sit* (M2), combined with time-in-storage. **Superseded with decision 7:** with no carry cap, spoilage is what bounds the larder and gives storage its purpose; it shipped in PR #764 (#706). |
 | 12 | **Source-centric allocation** (assign workers to a specific in-range source), not abstract sliders | Matches the player's mental model ("assign workers to *that* herd/patch"); tractable at ~17 workers × `R`=2; picking *which* source is more interesting than a slider. |
 | 13 | **Band work range `R`** (config, default 2) | Once a band stops it *is* a city working its surrounding tiles; `R` + the density overlay is how the player reads a parking spot. Repositioning is a move-band command. |
 | 14 | Migratory game = **leashed follow** (bounded reuse of `FaunaPursuit`); **breakaway-to-new-band deferred** | Keeps migratory hunting without whole-band chase or unbounded detachments; genuinely-distant game is a band *split* (its own slice). |
@@ -192,9 +180,6 @@ Replace the hardcoded `900` in `spawn_profile_population` with a **config lever*
 profile / demographics config). Target opening values (dials, to be tuned live):
 
 - **1 band, ~30 people**, split by the existing `initial_distribution` (≈33/59/7).
-- **Carry capacity with headroom** — cap ≳ starting population (e.g. start 30, cap ~40) so there
-  is *visible room to grow* before the first plateau; otherwise the loop never demonstrates
-  itself.
 - **Kit duration ~15–20 turns**, matched to the existing `startup.food_reserve_days` (20), so the
   starting kit and the starting food run down on a comparable clock.
 - Starter TOEs: **Foraging (baskets), Hunting (spears/traps), Scouting (wayfinding), Warrior
@@ -206,9 +191,9 @@ This doc **realizes Phase 2** of `docs/plan_settlement_population.md` (labor poo
 allocation) at the earliest scale, and **extends** it:
 - The four roles are the first concrete **labor demands**; the arc's tending/construction/
   knowledge demands slot into the same allocator later.
-- **Carry capacity** and **storage structures** are the bridge into the arc's Phase 3
-  **improvement catalog** (storage-class improvements raise the cap; they are the first
-  place-bound, decay-tethered structures).
+- **Storage structures** are the bridge into the arc's Phase 3 **improvement catalog** — the
+  first place-bound, decay-tethered structures. With no carry cap they answer spoilage, not a
+  population bound (`docs/plan_civilization_steps.md` §"Step 5").
 - **TOE / equipment** is a **new concept** the arc did not have. Its natural home is a future
   **Crafter** role + crafting economy (M2); for now it is capability-with-consumable-kit.
 - **Spoilage** remains the deferred modifier that makes storage *tiers* matter (arc Phase 3+).
@@ -233,21 +218,22 @@ Landing as sequential slices (each its own PR), in dependency order:
    `workingAge` (see `core_sim/CLAUDE.md`); (3b) client — allocation panel (assign/unassign per source
    = the new "cancel"), move-band, role/worker readout. *Flat per-worker tier only — TOE multipliers
    are a later slice.*
-4. **Carry-capacity population cap.** Band carry capacity gates population; baskets + storage lift
-   it. The mechanical nomad→settle bridge.
-5. **TOE / equipment.** Consumable per-role kit; equipped/unequipped tiers (durability cliff);
-   starter stock; role-specific effects. Turns the flat tier from slice 3 into two tiers.
-6. **Minimal predators.** Predator pressure + Warrior combat resolution — lights up the Warrior
-   role built inert in slice 3.
-7. **Food ledger.** Per-band income/outflow breakdown + population-vs-cap readout (can land earlier
-   if useful for debugging the yield math).
-- **Deferred (M2+), documented.** Crafter role + crafting to replenish/upgrade TOEs; larder
-  spoilage + storage tiers; **breakaway-to-new-band** (a band split, the SplitClan/migration seam);
-  richer threats (barbarians, rival civs); the settlement arc's Phase 3 improvement catalog.
+4. ~~**Carry-capacity population cap.**~~ **Superseded (2026-09-19)** — see "Population cap —
+   superseded". Population is capped by the lineage/cohesion ladder; the larder by spoilage.
+5. ✅ **TOE / equipment** — shipped (PR #470). Consumable per-role kit; equipped/unequipped tiers
+   (durability cliff); starter stock; role-specific effects. Craftable kits, a wider roster and
+   equipment types followed under #491; as-built rules in `.claude/rules/core_sim/equipment.md`.
+6. ✅ **Minimal predators** — shipped (predators arc, PRs #166 and #341). Predator pressure +
+   Warrior combat resolution — lights up the Warrior role built inert in slice 3.
+7. ✅ **Food ledger** — shipped (#182). Per-band income/outflow breakdown.
+- **Deferred (M2+), documented.** Crafter role + crafting to replenish/upgrade TOEs (shipped, #494);
+  storage tiers (#708, #709; spoilage itself shipped in PR #764); **breakaway-to-new-band** (a band
+  split, the SplitClan/migration seam); richer threats (barbarians, rival civs); the settlement
+  arc's Phase 3 improvement catalog.
 
 ## Open tuning dials (to settle live)
 
-Starting population; carry-capacity headroom; per-role equipped/unequipped throughput; equipment
+Starting population; per-role equipped/unequipped throughput; equipment
 durability (turns-to-dry); forage-vs-hunt yield balance; predator frequency/strength; the
 demographic knobs (maturation/aging) that size the labor pool. All config, per the no-magic-
 numbers convention.
@@ -258,7 +244,7 @@ numbers convention.
   scout** (extend the band's sight — the fix for the currently-inert Scout role), **scouting
   expeditions** (a provisioned traveling party), and the **Wondrous Sites** catalog they discover.
 - `docs/plan_settlement_population.md` — the arc this realizes/extends (Phase 2 labor; Phase 3
-  improvements/storage; emergent settlements). Carry capacity + storage are the bridge.
+  improvements/storage; emergent settlements). Storage is the bridge.
 - `docs/plan_band_fission.md` — the **SplitClan/migration seam** decisions 1 and 14 defer to: what a
   founding party is made of, what it takes from the parent, and how a detached party becomes a band.
 - `docs/plan_wildlife_hunting_overlay.md` — the herds/Sustain yields this subsistence model draws
