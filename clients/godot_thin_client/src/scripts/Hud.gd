@@ -1132,6 +1132,13 @@ func update_intensification(intensification_variant: Variant) -> void:
     # snapshot seam's own call stays and costs nothing.
     _refresh_knowledge_readouts()
 
+## **WHAT THE PLAYER'S PEOPLE IS LEARNING BY CONTACT** (#531) — a thin delegator for
+## `update_ladder_knowledge`'s reason (`Main` reaches it BY NAME, and a failed probe fails silently),
+## re-running the knowledge readouts because the list can move on a turn that moves nobody.
+func update_contact_lessons(lessons_variant: Variant) -> void:
+    _topbar.update_contact_lessons(lessons_variant)
+    _refresh_knowledge_readouts()
+
 func update_discoveries(discovered_variant: Variant) -> void:
     _topbar.update_discoveries(discovered_variant)
 

@@ -256,6 +256,29 @@
       "subject_name": "connections[2].subject_name"
     }
   ],
+  "contact_lessons": [
+    {
+      "channel": 57,
+      "credit": 78.099998,
+      "discovery_id": 48,
+      "knowledge_id": "contact_lessons[0].knowledge_id",
+      "subject_faction": 125
+    },
+    {
+      "channel": 166,
+      "credit": 4.5,
+      "discovery_id": 61,
+      "knowledge_id": "contact_lessons[1].knowledge_id",
+      "subject_faction": 86
+    },
+    {
+      "channel": 127,
+      "credit": 95.169998,
+      "discovery_id": 182,
+      "knowledge_id": "contact_lessons[2].knowledge_id",
+      "subject_faction": 99
+    }
+  ],
   "corruption": {
     "audit_capacity": 55,
     "entries": [
@@ -4819,19 +4842,16 @@
       "knowledge_fragments": [
         {
           "discovery": 18,
-          "fidelity": 0.000014,
           "progress": 0.000061,
           "progress_raw": 61
         },
         {
           "discovery": 71,
-          "fidelity": 0.000195,
           "progress": 0.000168,
           "progress_raw": 168
         },
         {
           "discovery": 60,
-          "fidelity": 0.00018,
           "progress": 0.000199,
           "progress_raw": 199
         }
@@ -5964,19 +5984,16 @@
       "knowledge_fragments": [
         {
           "discovery": 89,
-          "fidelity": 0.000145,
           "progress": 0.000122,
           "progress_raw": 122
         },
         {
           "discovery": 4,
-          "fidelity": 0.000132,
           "progress": 0.000023,
           "progress_raw": 23
         },
         {
           "discovery": 143,
-          "fidelity": 0.000075,
           "progress": 0.000024,
           "progress_raw": 24
         }
@@ -7070,19 +7087,16 @@
       "knowledge_fragments": [
         {
           "discovery": 84,
-          "fidelity": 0.000124,
           "progress": 0.000191,
           "progress_raw": 191
         },
         {
           "discovery": 97,
-          "fidelity": 0.000161,
           "progress": 0.00001,
           "progress_raw": 10
         },
         {
           "discovery": 98,
-          "fidelity": 0.000022,
           "progress": 0.000045,
           "progress_raw": 45
         }

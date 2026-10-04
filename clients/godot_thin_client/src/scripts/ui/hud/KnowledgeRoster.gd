@@ -368,6 +368,11 @@ const MODEL_LEARNED_THIS_TURN := "learned_this_turn"
 ## leaves the headings in the order their branches were first seen — which is why the client half of
 ## this arc never had to wait on the wire half.
 const MODEL_AREA_ORDER := "area_order"
+## **WHAT CONTACT IS TEACHING** — the viewer's `contact_lessons` rows as the wire sent them
+## (`FactionReadouts.contact_lessons`), one per discovery its people is learning by being around
+## another people that knows it (#531). Joined onto a node by knowledge id; absent or empty means no
+## node is being taught this way, and every node still draws.
+const MODEL_CONTACT_LESSONS := "contact_lessons"
 
 # ---- the two node builders -----------------------------------------------------------------------
 
@@ -421,6 +426,7 @@ static func _ladder_node(entry: Dictionary, domain: StringName, model: Dictionar
 		HudKnowledgeVocab.NODE_NOTE: String(FactionReadouts.KNOWLEDGE_UNLOCK_NOTES.get(track, "")),
 		HudKnowledgeVocab.NODE_PRACTISE: String(HudKnowledgeVocab.PRACTISE_NOTES.get(track, "")),
 		HudKnowledgeVocab.NODE_NEW: _is_new(track, state, model),
+		HudKnowledgeVocab.NODE_CONTACT_LESSON: contact_lesson_for(track, state, model),
 	}
 
 static func _craft_node(row: Dictionary, model: Dictionary) -> Dictionary:
@@ -445,6 +451,8 @@ static func _craft_node(row: Dictionary, model: Dictionary) -> Dictionary:
 		HudKnowledgeVocab.NODE_NOTE: HudKnowledgeVocab.CRAFT_UNLOCK_NOTE_FORMAT % display,
 		HudKnowledgeVocab.NODE_PRACTISE: HudKnowledgeVocab.CRAFT_PRACTISE_NOTE,
 		HudKnowledgeVocab.NODE_NEW: _is_new(craft_id, _state_for(craft_fraction(row), known), model),
+		HudKnowledgeVocab.NODE_CONTACT_LESSON: contact_lesson_for(craft_id,
+			_state_for(craft_fraction(row), known), model),
 	}
 
 ## **A CRAFT TRACK'S 0..1, AGAINST THE SIM'S OWN DENOMINATOR.** `completion_threshold` rides on the
@@ -459,6 +467,19 @@ static func craft_fraction(row: Dictionary) -> float:
 	if threshold <= 0.0:
 		return 0.0
 	return clampf(float(row.get(HudCraftingVocab.CRAFT_KNOWLEDGE_PROGRESS_KEY, 0.0)) / threshold, 0.0, 1.0)
+
+## **THE CONTACT LESSON TEACHING THIS NODE**, or `{}` — the wire row whose `knowledge_id` is `key`.
+## The sim already drops a discovery the viewer knows, so the `known` guard only matters for the one
+## frame where a delta's progress has landed and its lesson list has not: a node that reads Known
+## must never also read *"Learning … from …"*.
+static func contact_lesson_for(key: String, state: String, model: Dictionary) -> Dictionary:
+	if state == HudKnowledgeVocab.NODE_STATE_KNOWN or key == "":
+		return {}
+	for lesson_variant in model.get(MODEL_CONTACT_LESSONS, []):
+		if lesson_variant is Dictionary and String((lesson_variant as Dictionary).get(
+				HudKnowledgeVocab.CONTACT_LESSON_KNOWLEDGE_ID, "")) == key:
+			return lesson_variant as Dictionary
+	return {}
 
 ## **"NEW THIS TURN" IMPLIES KNOWN, and the conjunction is what makes it coherent.** The caller's diff
 ## is a set of keys that FINISHED during the turn, and within one turn a track cannot un-finish — but a

@@ -28,9 +28,9 @@ use crate::dict::governance::{
     crisis_telemetry_to_dict, power_metrics_to_dict, power_nodes_to_array,
 };
 use crate::dict::knowledge::{
-    discovered_sites_to_array, discovery_progress_to_array, great_discovery_definitions_to_array,
-    great_discovery_progress_states_to_array, great_discovery_states_to_array,
-    great_discovery_telemetry_to_dict,
+    contact_lessons_to_array, discovered_sites_to_array, discovery_progress_to_array,
+    great_discovery_definitions_to_array, great_discovery_progress_states_to_array,
+    great_discovery_states_to_array, great_discovery_telemetry_to_dict,
 };
 use crate::dict::map::{terrain_label_from_id, tiles_to_array, TERRAIN_TAG_LABELS};
 use crate::dict::population::{demographics_to_array, generations_to_array, populations_to_array};
@@ -1639,6 +1639,10 @@ pub(crate) fn snapshot_to_dict(
 
     if let Some(progress) = snapshot.knowledge().and_then(|s| s.discoveryProgress()) {
         let _ = dict.insert("discovery_progress", &discovery_progress_to_array(progress));
+    }
+
+    if let Some(lessons) = snapshot.knowledge().and_then(|s| s.contactLessons()) {
+        let _ = dict.insert("contact_lessons", &contact_lessons_to_array(lessons));
     }
 
     // Capture the raster inputs as they were handed to `snapshot_dict` above — pre-normalization,

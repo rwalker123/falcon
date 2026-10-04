@@ -71,6 +71,11 @@ var _ladder_knowledge: Array = []
 ## screen whenever a rung was added, which is the defect that made column order unstable before the
 ## roster carried it.
 var _ladder_areas: Array = []
+## **WHAT THE PLAYER'S PEOPLE IS LEARNING BY CONTACT** — the `contact_lessons` section as the wire
+## sent it (#531): `[{discovery_id, knowledge_id, subject_faction, channel, credit}]`, one row per
+## discovery, already filtered sim-side to the viewer's own people. Per TURN, not per world: a delta
+## that carries it replaces it whole, and one that omits it leaves it standing.
+var _contact_lessons: Array = []
 ## ⛔ **THE ROUTE BRANCH'S RUNG CATALOG as the wire sent it** — an ordered array of
 ## `{rung_key, order, display_name, verb, unlock_knowledge, requires_rung, work_cost,
 ## upkeep_work_per_turn, friction_multiplier, holds_link_to_tiles, grants_sight}`. **Per WORLD, not
@@ -168,6 +173,8 @@ func reset_world_state() -> void:
 	# …and the area order with it, for the identical reason: per WORLD, never restated by a delta, so
 	# the previous game's headings would otherwise stand until the new world's own order arrived.
 	_ladder_areas.clear()
+	# …and the contact lessons, which name the previous world's peoples and must not outlive it.
+	_contact_lessons.clear()
 	# …and the route branch's catalog for the identical reason: it is a per-WORLD constant, so a delta
 	# never restates it, and a road ladder opened before the new world's own catalog lands would draw
 	# the previous game's rungs.
@@ -307,6 +314,19 @@ func update_ladder_areas(areas_variant: Variant) -> void:
 ## leaves the headings in the order their branches were first seen.
 func ladder_areas() -> Array:
 	return _ladder_areas
+
+## **INGEST THE CONTACT LESSONS** — the `contact_lessons` section, retained whole. A non-Array leaves
+## the last value standing: absence on a delta means unchanged. It renders nothing here; the knowledge
+## screen joins it onto its nodes by knowledge id.
+func update_contact_lessons(lessons_variant: Variant) -> void:
+	if not (lessons_variant is Array):
+		return
+	_contact_lessons = lessons_variant
+
+## The lessons as the wire sent them, BY REFERENCE (this HUD's accessor convention). `[]` before any
+## snapshot carrying them has arrived.
+func contact_lessons() -> Array:
+	return _contact_lessons
 
 ## **WHAT THIS CLIENT CALLS ONE KNOWLEDGE** — the sim's own `display_name`, so no surface authors a
 ## second spelling of a discovery's name. `""` for a knowledge the roster does not carry, which is the
