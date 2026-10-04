@@ -381,21 +381,33 @@ func _render_page() -> void:
 		_row_rates[i].text = String(model.get("rate_text", ""))
 		_row_rates[i].add_theme_color_override("font_color",
 			HudStyle.WARN if bool(model.get("overdraw", false)) else HudStyle.HEALTHY)
-		# The attention state takes the cell where it has one; the build countdown otherwise. Only
-		# one of the two can be true of a row — the rank is resolved from them.
+		# The attention state takes the cell where it has one; the build countdown otherwise; the
+		# hands walking home from the source last, in the Workforce zone's quiet ink. Only one of the
+		# first two can be true of a row — the rank is resolved from them.
 		var attention_text := String(model.get("attention_text", ""))
-		var detail := attention_text if attention_text != "" else String(model.get("build_text", ""))
+		var build_text := String(model.get("build_text", ""))
+		var homeward_text := String(model.get("homeward_text", ""))
+		var detail := attention_text
+		var detail_ink := HudStyle.WARN
+		if detail == "" and build_text != "":
+			detail = build_text
+			detail_ink = HudStyle.SIGNAL_DEEP
+		elif detail == "":
+			detail = homeward_text
+			detail_ink = HudStyle.INK_DIM
 		_row_details[i].text = detail
-		_row_details[i].add_theme_color_override("font_color",
-			HudStyle.WARN if attention_text != "" else HudStyle.SIGNAL_DEEP)
+		_row_details[i].add_theme_color_override("font_color", detail_ink)
 		# **THE HOVER CARRIES BOTH ELIDED CELLS**, so nothing on this row can become unreachable: the
-		# rate first (its own column clips a multi-material take), then the detail. A row with no
-		# detail states the rate alone rather than trailing a separator over nothing.
+		# rate first (its own column clips a multi-material take), then the detail — and the walker
+		# line where the cell went to a louder fact. A row with no detail states the rate alone
+		# rather than trailing a separator over nothing.
 		var hover: Array[String] = []
 		if _row_rates[i].text != "":
 			hover.append(_row_rates[i].text)
 		if detail != "":
 			hover.append(detail)
+		if homeward_text != "" and homeward_text != detail:
+			hover.append(homeward_text)
 		row.tooltip_text = TOOLTIP_SEPARATOR.join(PackedStringArray(hover))
 
 func _render_footer(total_text: String) -> void:

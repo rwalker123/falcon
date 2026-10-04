@@ -6049,7 +6049,20 @@ func _work_row_party_lines(model: Dictionary) -> int:
 ## ⛔ **THERE IS NO FOOD ACCOUNT ON THE BLOCK** — no *ate*, no *needs from home*. The whole take walks
 ## home and the band feeds its party through its ordinary consumption, so the row has nothing of the
 ## party's own eating to state.
+##
+## **THE HANDS WALKING HOME FROM THIS SOURCE CLOSE THE BLOCK** (`HudWorkVocab.row_homeward_line`,
+## `model["homeward_line"]`) — one quiet line, on a far row still posted or on one whose crew the
+## player just took to 0. It is counted here so the row's height and the board's reservation pay for
+## it with the party lines.
 func _work_row_party_lines_text(model: Dictionary) -> Array[String]:
+    var lines := _work_row_posted_party_lines(model)
+    var homeward := String(model.get("homeward_line", ""))
+    if homeward != "":
+        lines.append(homeward)
+    return lines
+
+## The posted party's own lines — `[]` on a row with no party out.
+func _work_row_posted_party_lines(model: Dictionary) -> Array[String]:
     var party: Dictionary = model.get("party", {})
     if not SourceForecast.party_is_posted(party):
         return []
@@ -6889,7 +6902,13 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # would put every deliberately-emptied source back on the work board — §2.5's revert arriving
         # by the back door. The entry is what makes hiding actively harmful, because that row is the
         # one spending the pool.
-        if workers <= 0 and not pending and not queued_keys.has(String(key)):
+        #
+        # **AND A ROW WITH HANDS STILL WALKING HOME FROM IT IS ADMITTED TOO.** Unassigning a far crew
+        # takes the row to 0 at once, but the hands are not free until they are back; hiding the row
+        # the player just acted on read as the unassign having failed. The row stays, at crew 0, with
+        # its walker line, until the last hand is home.
+        if workers <= 0 and not pending and not queued_keys.has(String(key)) \
+                and HudWorkVocab.row_homeward_workers(m) <= 0:
             continue
         var x := int(m.get("x", -1))
         var y := int(m.get("y", -1))
@@ -7351,6 +7370,9 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # readout in one key: `{present: false}` on the ordinary local row, whose block is not
             # drawn at all and which renders exactly as it did before the work party existed.
             "party": party,
+            # …and the one line saying who is walking home from this source and when they are free
+            # (`HudWorkVocab.row_homeward_line`), `""` while nobody is. The party block closes on it.
+            "homeward_line": HudWorkVocab.row_homeward_line(m),
             # **`build_queue_position` IS NOT ON THIS MODEL, AND ITS ABSENCE IS THE POINT**
             # (`docs/plan_standing_upkeep.md` §4.9 item 9a). It rode here as the queue block's rank
             # until the block learned that the field is published per SOURCE and rides the WINNING

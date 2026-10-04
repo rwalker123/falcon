@@ -2773,6 +2773,13 @@ on the band tab the partition guard holds with a `Walking home` segment of 3, `e
 and the WORKFORCE zone's `HOMEWARD_LINE_META` lines equal the three expected strings. They hand the
 reference band back, and no earlier frame moves.
 
+**`band_panel_work_row_homeward`** runs inside the same block, after `band_panel_homeward` and before
+the hand-back, on `_row_homeward_band_fixture`: the spoil fixture plus the pelt row KEPT at crew 0
+with 3 walking home, 2.40 food, free next turn, and the near posting carrying 2 more walking home,
+no food, free in 3. Claims: the pelt row is on the board and its only party-meta line is the walker
+line, in `INK_DIM`; the near row's block ends on `2 walking home — free in 3 turns`; the far row
+draws no walker line.
+
 > ⛔ **THE PIPELINE MODEL'S FIXTURE IS RETIRED WITH ITS FIELDS.** It staged `porters`,
 > `travelTiles` / `transitTurns` and `partyTransitRemaining` — a near posting part-way through a walk
 > the sim counted down, a settled one whose line was open, and a `First load arrives next turn`

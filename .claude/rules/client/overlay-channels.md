@@ -872,10 +872,19 @@ separate arguments rather than asking the composer to rank them: `deposit_row_va
 one-line ROSTER cell, and a list row's own ladder is what ranks them here.
 
 **THE PREVIOUS NOTE HERE SAID NOT TO INVENT AN IDLE-CREW CLASS, AND IT IS STILL TRUE OF WHAT IT MEANT.**
-A working with NO crew never appears in this list at all — every row has `workers > 0` — and
-`idle_workers` remains a BAND-level turn-orb row. `ATTENTION_OVERSTAFFED` is the opposite reading: a
+A working with NO crew never appears in this list as an idle-crew row — a row has `workers > 0`
+or hands walking home from it (below) — and `idle_workers` remains a BAND-level turn-orb row. `ATTENTION_OVERSTAFFED` is the opposite reading: a
 crew that IS here and is too big for the ground, which every web can answer per source. The design's
 idle-crew class had no shipped predicate; this one does.
+
+**A CREW-0 SOURCE WITH HANDS WALKING HOME KEEPS ITS ROW.** `compute_source_rows` admits an entry
+with `workers > 0` OR `HudWorkVocab.row_homeward_workers(entry) > 0`, and stamps
+`homeward_text` (`HudWorkVocab.row_homeward_line`, the work board row's own sentence). It drew no
+marker, so it reads `⚒0` and its leader line falls back to the hex centre. `BandSourceList` puts
+the walker line in the detail cell in `INK_DIM` where neither an attention clause nor a build
+countdown has taken it, and always carries it on the row's hover; in the 122px column it elides
+(`3 walking home wit…`), the whole line on the hover. `map_preview`'s `map_source_list_homeward`
+asserts the row, the cell's text and ink, and the hover.
 
 ### ⛔ A ROW'S `⚒N` AND ITS MARKER'S `⚒N` ARE ONE NUMBER, AND THE EXTRACTION ARM DID NOT FILL IT
 
