@@ -1429,6 +1429,15 @@ table PopulationCohortState {
   // - foodLeftBehind + transferReceived - transferSent. A move is a command, so this accumulates
   // between captures on the transfer pair's snapshot window and is cleared after the turn capture.
   foodLeftBehind:float = 0;
+  // --- WHAT TO MAKE NEXT, RANKED BY WHO IS GOING WITHOUT (appended last) -----------------------
+  // The crafting panel's suggestion list, beside `craftOffers` in meaning (docs/plan_crafting_and_
+  // materials.md §7 "Suggestions"). Computed IN core_sim (`craft_suggestions`) so the AI's Craft
+  // specialist and auto-craft read the same list. Ranked by `workersWithout` descending, ties by
+  // `itemId` ascending. NUMBERS ONLY - the client owns the words, exactly as with craftOffers - and
+  // whether the item can be made at all is the CraftOffer's question: join on `itemId` ==
+  // `CraftOffer.outputItemId` for the recipe and the refusal. An item no recipe makes is still
+  // published. Empty on a detached party (it is never resupplied) and on a foreign band.
+  craftSuggestions:[CraftSuggestion];
 }
 
 // One band's outfitting window. THE TWO SUPPLIES ARE MUTUALLY EXCLUSIVE and `parentBandId` says which
@@ -4909,10 +4918,12 @@ table DrawnInput {
   amount:float;
 }
 
-// WHAT IS ON THIS BAND'S BENCH — one job at a time, so there is no queue to explain.
+// WHAT IS ON THIS BAND'S BENCH — ONE BENCH, ONE QUEUE, worked one order at a time.
 //
-// `recipeId` empty = an idle bench. That is a different statement from a blocked one: a blocked
-// bench has a recipe AND a `blockedReason`.
+// Every scalar field below describes the HEAD order (`orders[0]`), the one being worked; `orders`
+// is the whole queue. `recipeId` empty = an idle bench (an empty queue) - a different statement
+// from a blocked one: a blocked bench has a recipe AND a `blockedReason`. The crew (`workers`) and
+// `priority` belong to the BENCH and survive every queue edit; an idle bench may still have a crew.
 table BenchState {
   recipeId:string;
   displayName:string;
@@ -4925,7 +4936,6 @@ table BenchState {
   // refusal, because a bench with a full pile and nobody on it is also stopped.
   blockedReason:string;
   shortfalls:[MaterialShortfall];
-  itemsCompleted:uint;    // items finished on THIS job — the same count the wear and lesson charged
   drawn:bool;             // the pile for the pass in flight is already cut
   // The grade that pile FIXED. "" before the draw, and "" on a recipe that resolves no grade — the
   // same two cases as `CraftOffer.outputGrade` below (reads no characteristic, or outputs only
@@ -4982,6 +4992,70 @@ table BenchState {
   // Captured LIVE off the bench, exactly as `LaborAssignment.priority` is, so an edit lands on the
   // command's own recapture and no optimistic overlay is needed. Appended last (append-only).
   priority:SourcePriority = Normal;
+  // --- THE QUEUE (appended last) -----------------------------------------------------------------
+  // Every order on the bench, HEAD FIRST. Empty on an idle bench. An order's index here is the
+  // `order` the queue verbs (`bench_order_count`, `bench_remove`, `bench_raise`) address.
+  orders:[BenchOrder];
+}
+
+// ONE ORDER ON A BENCH'S QUEUE — `recipe x count`. Every order has a count (>= 1); the
+// repeat-until-cleared job is retired. When `made` reaches `count` the order leaves the queue and
+// the next one starts, drawing its own inputs.
+//
+// `progress` and `drawn` are the ORDER's pass in flight. Only the head is worked, but an order
+// raised over a head that had already drawn leaves that head PAUSED with its pile and progress - so
+// a non-head order can hold a cut pile, and removing it destroys that pile exactly as removing the
+// head does.
+table BenchOrder {
+  recipeId:string;
+  count:uint;          // items this order asks for (finished passes)
+  made:uint;           // items it has finished — the count the wear and lesson were charged
+  progress:float;      // worker-turns accrued toward the recipe's `work` on the pass in flight
+  drawn:bool;          // this order holds a pile already cut for its pass in flight
+}
+
+// ONE SUGGESTION — an item the band's consumers are short of, and how many to make.
+// A row of PopulationCohortState.craftSuggestions.
+//
+// SCORE: `workersWithout` - workers whose job needs this tool and who went without it this turn,
+// summed over the band's consumers (the standing pools' poolToe, the site crews' keeping TOE, the
+// take rows' kitToe). A detached party is NOT a source: it is never resupplied. A SPENT unit counts
+// (it is gone from stock, so it was not issued); a worn one does not (a tool performs at full
+// strength until it expires).
+//
+// `count` is the WHOLE shortfall in units, never capped by what the band can afford to make now,
+// MINUS what is already queued for the item (sum of `count - made` x the recipe's output amount over
+// orders whose recipe makes it). A suggestion netted to zero is not published.
+table CraftSuggestion {
+  itemId:string;               // the equipment.json item id
+  count:uint;                  // units to make: whole shortfall − already queued, always >= 1
+  workersWithout:float;        // the score — summed over `sources`
+  // Work a turn the missing units would add back, summed over `sources` - `workersWithout` on the
+  // pools and site crews x the item's `build_work` `equipped` value (default tier). 0 for gear that
+  // adds no build or keeping work (a spear's cost is food, not work): read `workersWithout` instead.
+  workPerTurn:float = 0;
+  sources:[CraftSuggestionSource];
+}
+
+// ONE CONSUMER GOING WITHOUT AN ITEM — a row of CraftSuggestion.sources, keyed so the client can
+// join it to the row it renders:
+//   kind "pool"  — a standing pool's poolToe line. `job` is the pool token ("roadwork" | "builders"),
+//                  the same spelling as PoolToeLine.pool.
+//   kind "site"  — a site crew's keeping-tool claim. `job` + target keys name the labor row that
+//                  keeps it ("forage" + targetX/Y | "hunt" + faunaId | "extract" + targetX/Y +
+//                  material), the LaborAssignment spelling.
+//   kind "take"  — a take row's kitToe. Same `job` + target keys as a site; a band-wide role
+//                  ("scout" | "warrior") carries no target.
+table CraftSuggestionSource {
+  kind:string;
+  job:string;
+  targetX:uint = 0;
+  targetY:uint = 0;
+  faunaId:string;
+  material:string;
+  missingUnits:float;          // (required − filled), never below 0, in units of the item
+  workersWithout:float;        // missingUnits x the item's workers_per_unit
+  workPerTurn:float = 0;       // workersWithout x build_work on a pool or site; 0 on a take row
 }
 
 // ONE ROW PER RECIPE, ALWAYS — a row of PopulationCohortState.craftOffers.

@@ -421,12 +421,16 @@ func _ready() -> void:
             hud.connect("work_priority_requested", Callable(self, "_on_hud_work_priority"))
         if hud.has_signal("build_priority_requested") and not hud.is_connected("build_priority_requested", Callable(self, "_on_hud_build_priority")):
             hud.connect("build_priority_requested", Callable(self, "_on_hud_build_priority"))
-        if hud.has_signal("set_bench_requested") and not hud.is_connected("set_bench_requested", Callable(self, "_on_hud_set_bench")):
-            hud.connect("set_bench_requested", Callable(self, "_on_hud_set_bench"))
+        if hud.has_signal("bench_enqueue_requested") and not hud.is_connected("bench_enqueue_requested", Callable(self, "_on_hud_bench_enqueue")):
+            hud.connect("bench_enqueue_requested", Callable(self, "_on_hud_bench_enqueue"))
         if hud.has_signal("bench_crew_requested") and not hud.is_connected("bench_crew_requested", Callable(self, "_on_hud_bench_crew")):
             hud.connect("bench_crew_requested", Callable(self, "_on_hud_bench_crew"))
-        if hud.has_signal("clear_bench_requested") and not hud.is_connected("clear_bench_requested", Callable(self, "_on_hud_clear_bench")):
-            hud.connect("clear_bench_requested", Callable(self, "_on_hud_clear_bench"))
+        if hud.has_signal("bench_order_count_requested") and not hud.is_connected("bench_order_count_requested", Callable(self, "_on_hud_bench_order_count")):
+            hud.connect("bench_order_count_requested", Callable(self, "_on_hud_bench_order_count"))
+        if hud.has_signal("bench_remove_requested") and not hud.is_connected("bench_remove_requested", Callable(self, "_on_hud_bench_remove")):
+            hud.connect("bench_remove_requested", Callable(self, "_on_hud_bench_remove"))
+        if hud.has_signal("bench_raise_requested") and not hud.is_connected("bench_raise_requested", Callable(self, "_on_hud_bench_raise")):
+            hud.connect("bench_raise_requested", Callable(self, "_on_hud_bench_raise"))
         if hud.has_signal("bench_priority_requested") and not hud.is_connected("bench_priority_requested", Callable(self, "_on_hud_bench_priority")):
             hud.connect("bench_priority_requested", Callable(self, "_on_hud_bench_priority"))
         if hud.has_signal("set_starting_loadout_requested") and not hud.is_connected("set_starting_loadout_requested", Callable(self, "_on_hud_set_starting_loadout")):
@@ -2054,35 +2058,83 @@ static func format_build_priority(payload: Dictionary) -> Dictionary:
             % [site_label(payload), face.to_lower()],
     }
 
-## **`set_bench <faction_id> <band_id> recipe <recipe_id>`** — put a recipe on a band's crafting bench
-## (`docs/plan_crafting_and_materials.md` §7).
+## **`bench_enqueue <faction_id> <band_id> recipe <recipe_id> count <n>`** — add an ORDER to the back
+## of a band's bench queue (`docs/plan_crafting_and_materials.md` §7 → "The queue"). Onto an empty
+## bench it is the job at once.
 ##
-## **BOTH TAILS ARE NAMED TOKENS, and this builder sends only the first.** The grammar is
-## `recipe <id> [workers <n>]`, and the crew is deliberately omitted: **the player staffs the bench**,
-## and a client-chosen crew here would be a second answer to the question the `− n +` stepper exists
-## to ask. Naming no crew leaves the crew where it is — nobody on a bench that was idle, and the crew
-## already standing there across a swap — so the number is only ever `bench_crew`'s to set.
+## **EVERY ORDER HAS A COUNT**, so `count` is always sent and never below one: the ledger's Make adds
+## one, a suggestion's Queue adds its whole shortfall. **The grammar's `[workers <n>]` tail is
+## deliberately never sent**: the player staffs the bench, and a client-chosen crew here would be a
+## second answer to the question the `− n +` stepper exists to ask. Naming no crew leaves the crew
+## where it is — the crew stays with the bench across orders.
 ##
 ## It takes `<faction_id> <band_id>` first, like `assign_labor`, and names the band by its DURABLE
 ## `band_id` — never its ECS entity bits, which a rollback renumbers.
-static func format_set_bench(payload: Dictionary) -> Dictionary:
+static func format_bench_enqueue(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
         return {}
     var recipe_id := String(payload.get("recipe_id", "")).strip_edges()
-    if recipe_id == "":
+    var count := int(payload.get("count", 0))
+    if recipe_id == "" or count < 1:
         return {}
     var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     return {
-        "line": "set_bench %d %d recipe %s" % [faction, band_id, recipe_id],
-        "message": "Put %s on the bench." % recipe_id,
+        "line": "bench_enqueue %d %d recipe %s count %d" % [faction, band_id, recipe_id, count],
+        "message": "Queued %d × %s on the bench." % [count, recipe_id],
+    }
+
+## **`bench_order_count <faction_id> <band_id> order <i> count <n>`** — change how many one queued
+## order asks for. `order` is the order's place in the published `bench.orders`, `0` the head. The
+## server refuses `0` and anything at or below what the order has already `made` (that would finish
+## it — removing it is `bench_remove`), so this builds no line for a count below one and the queue
+## row's `−` is dead at `made + 1`.
+static func format_bench_order_count(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    var order := int(payload.get("order", -1))
+    var count := int(payload.get("count", 0))
+    if band_id == HudConst.NO_BAND_ID or order < 0 or count < 1:
+        return {}
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
+    return {
+        "line": "bench_order_count %d %d order %d count %d" % [faction, band_id, order, count],
+        "message": "The bench order is now for %d." % count,
+    }
+
+## **`bench_remove <faction_id> <band_id> order <i>`** — take one order off the bench's queue. Order
+## `0` is the head, which is what the bench well's ✕ sends — the retired `clear_bench`'s job. **A drawn
+## pile is LOST** — a band's store has no representation for a half-worked pile — which is why the
+## control that emits this states the pile in its tooltip rather than being guarded by a dialog.
+static func format_bench_remove(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    var order := int(payload.get("order", -1))
+    if band_id == HudConst.NO_BAND_ID or order < 0:
+        return {}
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
+    return {
+        "line": "bench_remove %d %d order %d" % [faction, band_id, order],
+        "message": "Took an order off the bench.",
+    }
+
+## **`bench_raise <faction_id> <band_id> order <i>`** — move one order up a place. The server refuses
+## the head (`0`), so this builds no line for it and the queue's head row draws no ↑. Raising an order
+## over a head that has drawn PAUSES that head with its pile and progress intact.
+static func format_bench_raise(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    var order := int(payload.get("order", -1))
+    if band_id == HudConst.NO_BAND_ID or order < 1:
+        return {}
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
+    return {
+        "line": "bench_raise %d %d order %d" % [faction, band_id, order],
+        "message": "Moved a bench order up.",
     }
 
 ## **`set_starting_loadout <faction_id> <band_id> [kit <kit_id> <n>]... [material <material_id>
 ## <n>]...`** — compose ONE BAND's outfitting window, the ONE source of a campaign's starting gear
 ## and material.
 ##
-## **THE BAND IS POSITIONAL AND REQUIRED**, `set_bench`'s shape: every band gets a window of its own
+## **THE BAND IS POSITIONAL AND REQUIRED**, `bench_enqueue`'s shape: every band gets a window of its own
 ## — the spawned band's grant, and a take on the home band for every splinter a split makes — so
 ## there is no "the faction's band" to default to. It is the durable `band_id`, never the ECS
 ## `entity`, for the reason every band-addressed verb here names one (`cargo xtask command-guard`).
@@ -2128,27 +2180,10 @@ static func format_set_starting_loadout(payload: Dictionary) -> Dictionary:
         "message": "Outfitted the band: %d kits, %d units." % [kits, units],
     }
 
-## **`clear_bench <faction_id> <band_id>`** — take the job off a band's bench. The crew returns to the
-## idle pool.
-##
-## **IT NAMES THE BAND AND NOTHING ELSE**, one job at a time meaning there is no job argument to
-## disambiguate. **The materials already drawn for the pass in flight are SPENT** — they were cut for
-## the thing the player has stopped making and a band's store has no representation for a half-worked
-## pile — which is why the button that emits this states the pile in its tooltip, off the published
-## `drawnInputs`, rather than being guarded by a dialog.
-static func format_clear_bench(payload: Dictionary) -> Dictionary:
-    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
-    if band_id == HudConst.NO_BAND_ID:
-        return {}
-    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
-    return {
-        "line": "clear_bench %d %d" % [faction, band_id],
-        "message": "Cleared the bench.",
-    }
-
-## **`bench_crew <faction_id> <band_id> workers <n>`** — re-crew the running bench, leaving the job and
-## its progress alone. `workers` is a NAMED token and is mandatory; `0` is a legal, meaningful value
-## (the recipe stays up with nobody on it) rather than a missing argument, so it is never omitted.
+## **`bench_crew <faction_id> <band_id> workers <n>`** — re-crew the bench, leaving its queue and its
+## progress alone. It works on an IDLE (empty-queue) bench too: the crew stays with the bench across
+## orders. `workers` is a NAMED token and is mandatory; `0` is a legal, meaningful value (the queue
+## stays up with nobody on it) rather than a missing argument, so it is never omitted.
 static func format_bench_crew(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
@@ -2169,7 +2204,7 @@ static func format_bench_crew(payload: Dictionary) -> Dictionary:
 ## picker serve both, echoing back the word the decoder handed it.
 ##
 ## **IT NAMES THE BAND AND NOTHING ELSE**, one bench at a time meaning there is no job argument to
-## disambiguate — the same shape `clear_bench` takes, and for the same reason. It is legal on an IDLE
+## disambiguate — the same shape `bench_crew` takes, and for the same reason. It is legal on an IDLE
 ## bench: a rank is a standing statement about the bench rather than about the job on it.
 static func format_bench_priority(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
@@ -2369,19 +2404,26 @@ func _on_hud_upkeep_mode(payload: Dictionary) -> void:
 func _on_hud_open_borders(payload: Dictionary) -> void:
     _send_formatted_command(format_open_borders(payload))
 
-## Stage a recipe on the band's bench (Materials & Crafting). The player staffs the bench, so this
-## sends the recipe alone and the crew stays where it was until the stepper moves it.
-func _on_hud_set_bench(payload: Dictionary) -> void:
-    _send_formatted_command(format_set_bench(payload))
+## Add an order to the band's bench queue (Materials & Crafting). The player staffs the bench, so
+## this sends the recipe and its count and the crew stays where it was until the stepper moves it.
+func _on_hud_bench_enqueue(payload: Dictionary) -> void:
+    _send_formatted_command(format_bench_enqueue(payload))
 
-## Re-crew the running bench, leaving the job and its progress alone.
+## Re-crew the bench, leaving its queue and progress alone.
 func _on_hud_bench_crew(payload: Dictionary) -> void:
     _send_formatted_command(format_bench_crew(payload))
 
-## Take the job off the bench. The pile already drawn is spent, which the button said before it was
-## pressed.
-func _on_hud_clear_bench(payload: Dictionary) -> void:
-    _send_formatted_command(format_clear_bench(payload))
+## Change how many one queued order asks for.
+func _on_hud_bench_order_count(payload: Dictionary) -> void:
+    _send_formatted_command(format_bench_order_count(payload))
+
+## Take one order off the queue. A drawn pile is lost, which the control said before it was pressed.
+func _on_hud_bench_remove(payload: Dictionary) -> void:
+    _send_formatted_command(format_bench_remove(payload))
+
+## Move one order up a place.
+func _on_hud_bench_raise(payload: Dictionary) -> void:
+    _send_formatted_command(format_bench_raise(payload))
 
 ## Rank the bench against the band's other work. **No optimistic write, so nothing to roll back** —
 ## the mark is captured live off the bench and lands on this command's own recapture.

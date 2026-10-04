@@ -29,6 +29,7 @@ mod config_load;
 pub mod config_override;
 pub mod connections;
 mod connections_config;
+pub mod craft_suggestions;
 pub mod crafting;
 mod creatures_config;
 mod crisis;
@@ -135,15 +136,16 @@ pub use combat_config::{
 };
 pub use components::{
     available_workers, floor_is_valid, floor_overdraws, take_overdraws, BandBench, BandEquipment,
-    BandId, BandName, BandTravel, BandWorkforce, BatchGrade, BuildJob, BuildQueueEntry,
-    BuildSource, DeathCause, DemographicFlowAccumulator, DrawnInputs, DrawnMaterial, ElementKind,
-    EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase, FinishedBatch, FoodMix,
-    Improvement, KeepingToolLine, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget,
-    LocalStore, MaterialBatch, MaterialDraw, MoraleCause, PopulationCohort, PowerNode,
-    ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep, ShedSubject, SourcePriority,
-    SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile, TownCenter, TransferCause,
-    TransferCounterparty, TransferCrossing, TransferDirection, TransferLedger, TransferLink,
-    YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
+    BandId, BandName, BandTravel, BandWorkforce, BatchGrade, BenchOrder, BenchQueueError, BuildJob,
+    BuildQueueEntry, BuildSource, DeathCause, DemographicFlowAccumulator, DrawnInputs,
+    DrawnMaterial, ElementKind, EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase,
+    FinishedBatch, FoodMix, Improvement, KeepingIssue, KeepingToolLine, KnowledgeFragment,
+    LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch, MaterialDraw,
+    MoraleCause, PoolToeLine, PopulationCohort, PowerNode, ResidentBand, Settlement, ShedCrew,
+    ShedFacts, ShedStep, ShedSubject, SourcePriority, SourceShedFacts, SourceYield, StartingUnit,
+    TakeSelection, Tile, TownCenter, TransferCause, TransferCounterparty, TransferCrossing,
+    TransferDirection, TransferLedger, TransferLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER,
+    FOOD, HEAD_ORDER, MIN_ORDER_COUNT, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
 };
 pub use config_fingerprint::{
     current_config_fingerprint, drift_between, ConfigDigest, ConfigFingerprint,

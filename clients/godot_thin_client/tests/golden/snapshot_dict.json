@@ -4369,7 +4369,29 @@
             "material_id": "populations[0].bench.drawn_inputs[2].material_id"
           }
         ],
-        "items_completed": 180,
+        "orders": [
+          {
+            "count": 198,
+            "drawn": true,
+            "made": 140,
+            "progress": 66.239998,
+            "recipe_id": "populations[0].bench.orders[0].recipe_id"
+          },
+          {
+            "count": 157,
+            "drawn": false,
+            "made": 1,
+            "progress": 75.010002,
+            "recipe_id": "populations[0].bench.orders[1].recipe_id"
+          },
+          {
+            "count": 172,
+            "drawn": false,
+            "made": 10,
+            "progress": 22.700001,
+            "recipe_id": "populations[0].bench.orders[2].recipe_id"
+          }
+        ],
         "output_grade": "populations[0].bench.output_grade",
         "priority": "high",
         "progress": 103.739998,
@@ -4578,6 +4600,90 @@
             }
           ],
           "suggested": false
+        }
+      ],
+      "craft_suggestions": [
+        {
+          "count": 85,
+          "item_id": "hoes",
+          "sources": [
+            {
+              "fauna_id": "populations[0].craft_suggestions[0].sources[0].fauna_id",
+              "job": "populations[0].craft_suggestions[0].sources[0].job",
+              "kind": "populations[0].craft_suggestions[0].sources[0].kind",
+              "material": "populations[0].craft_suggestions[0].sources[0].material",
+              "missing_units": 24.57,
+              "target_x": 28,
+              "target_y": 17,
+              "work_per_turn": 14.15,
+              "workers_without": 66.580002
+            },
+            {
+              "fauna_id": "populations[0].craft_suggestions[0].sources[1].fauna_id",
+              "job": "populations[0].craft_suggestions[0].sources[1].job",
+              "kind": "populations[0].craft_suggestions[0].sources[1].kind",
+              "material": "populations[0].craft_suggestions[0].sources[1].material",
+              "missing_units": 73.300003,
+              "target_x": 189,
+              "target_y": 200,
+              "work_per_turn": 93.330002,
+              "workers_without": 26.9
+            },
+            {
+              "fauna_id": "populations[0].craft_suggestions[0].sources[2].fauna_id",
+              "job": "populations[0].craft_suggestions[0].sources[2].job",
+              "kind": "populations[0].craft_suggestions[0].sources[2].kind",
+              "material": "populations[0].craft_suggestions[0].sources[2].material",
+              "missing_units": 72.07,
+              "target_x": 62,
+              "target_y": 51,
+              "work_per_turn": 90.730003,
+              "workers_without": 11.57
+            }
+          ],
+          "work_per_turn": 19.709999,
+          "workers_without": 65.790001
+        },
+        {
+          "count": 126,
+          "item_id": "spears",
+          "sources": [
+            {
+              "fauna_id": "populations[0].craft_suggestions[1].sources[0].fauna_id",
+              "job": "populations[0].craft_suggestions[1].sources[0].job",
+              "kind": "populations[0].craft_suggestions[1].sources[0].kind",
+              "material": "populations[0].craft_suggestions[1].sources[0].material",
+              "missing_units": 83.980003,
+              "target_x": 43,
+              "target_y": 54,
+              "work_per_turn": 47.610001,
+              "workers_without": 44.82
+            },
+            {
+              "fauna_id": "populations[0].craft_suggestions[1].sources[1].fauna_id",
+              "job": "populations[0].craft_suggestions[1].sources[1].job",
+              "kind": "populations[0].craft_suggestions[1].sources[1].kind",
+              "material": "populations[0].craft_suggestions[1].sources[1].material",
+              "missing_units": 24.99,
+              "target_x": 42,
+              "target_y": 31,
+              "work_per_turn": 16.120001,
+              "workers_without": 24.950001
+            },
+            {
+              "fauna_id": "populations[0].craft_suggestions[1].sources[2].fauna_id",
+              "job": "populations[0].craft_suggestions[1].sources[2].job",
+              "kind": "populations[0].craft_suggestions[1].sources[2].kind",
+              "material": "populations[0].craft_suggestions[1].sources[2].material",
+              "missing_units": 95.769997,
+              "target_x": 89,
+              "target_y": 100,
+              "work_per_turn": 48.09,
+              "workers_without": 55.669998
+            }
+          ],
+          "work_per_turn": 58.299999,
+          "workers_without": 22.379999
         }
       ],
       "current_x": 0,
@@ -5514,7 +5620,29 @@
             "material_id": "populations[1].bench.drawn_inputs[2].material_id"
           }
         ],
-        "items_completed": 59,
+        "orders": [
+          {
+            "count": 189,
+            "drawn": true,
+            "made": 17,
+            "progress": 84.480003,
+            "recipe_id": "populations[1].bench.orders[0].recipe_id"
+          },
+          {
+            "count": 46,
+            "drawn": false,
+            "made": 180,
+            "progress": 38.209999,
+            "recipe_id": "populations[1].bench.orders[1].recipe_id"
+          },
+          {
+            "count": 75,
+            "drawn": false,
+            "made": 15,
+            "progress": 27.290001,
+            "recipe_id": "populations[1].bench.orders[2].recipe_id"
+          }
+        ],
         "output_grade": "populations[1].bench.output_grade",
         "priority": "low",
         "progress": 89.18,
@@ -5723,6 +5851,90 @@
             }
           ],
           "suggested": false
+        }
+      ],
+      "craft_suggestions": [
+        {
+          "count": 100,
+          "item_id": "hoes",
+          "sources": [
+            {
+              "fauna_id": "populations[1].craft_suggestions[0].sources[0].fauna_id",
+              "job": "populations[1].craft_suggestions[0].sources[0].job",
+              "kind": "populations[1].craft_suggestions[0].sources[0].kind",
+              "material": "populations[1].craft_suggestions[0].sources[0].material",
+              "missing_units": 98.639999,
+              "target_x": 125,
+              "target_y": 136,
+              "work_per_turn": 71.769997,
+              "workers_without": 58.66
+            },
+            {
+              "fauna_id": "populations[1].craft_suggestions[0].sources[1].fauna_id",
+              "job": "populations[1].craft_suggestions[0].sources[1].job",
+              "kind": "populations[1].craft_suggestions[0].sources[1].kind",
+              "material": "populations[1].craft_suggestions[0].sources[1].material",
+              "missing_units": 92.110001,
+              "target_x": 76,
+              "target_y": 65,
+              "work_per_turn": 29.49,
+              "workers_without": 80.940002
+            },
+            {
+              "fauna_id": "populations[1].craft_suggestions[0].sources[2].fauna_id",
+              "job": "populations[1].craft_suggestions[0].sources[2].job",
+              "kind": "populations[1].craft_suggestions[0].sources[2].kind",
+              "material": "populations[1].craft_suggestions[0].sources[2].material",
+              "missing_units": 107.169998,
+              "target_x": 159,
+              "target_y": 170,
+              "work_per_turn": 38.130001,
+              "workers_without": 77.43
+            }
+          ],
+          "work_per_turn": 21.93,
+          "workers_without": 44.080002
+        },
+        {
+          "count": 131,
+          "item_id": "spears",
+          "sources": [
+            {
+              "fauna_id": "populations[1].craft_suggestions[1].sources[0].fauna_id",
+              "job": "populations[1].craft_suggestions[1].sources[0].job",
+              "kind": "populations[1].craft_suggestions[1].sources[0].kind",
+              "material": "populations[1].craft_suggestions[1].sources[0].material",
+              "missing_units": 77.639999,
+              "target_x": 38,
+              "target_y": 27,
+              "work_per_turn": 95.019997,
+              "workers_without": 51.419998
+            },
+            {
+              "fauna_id": "populations[1].craft_suggestions[1].sources[1].fauna_id",
+              "job": "populations[1].craft_suggestions[1].sources[1].job",
+              "kind": "populations[1].craft_suggestions[1].sources[1].kind",
+              "material": "populations[1].craft_suggestions[1].sources[1].material",
+              "missing_units": 63.540001,
+              "target_x": 55,
+              "target_y": 66,
+              "work_per_turn": 16.92,
+              "workers_without": 48.119999
+            },
+            {
+              "fauna_id": "populations[1].craft_suggestions[1].sources[2].fauna_id",
+              "job": "populations[1].craft_suggestions[1].sources[2].job",
+              "kind": "populations[1].craft_suggestions[1].sources[2].kind",
+              "material": "populations[1].craft_suggestions[1].sources[2].material",
+              "missing_units": 59.040001,
+              "target_x": 116,
+              "target_y": 105,
+              "work_per_turn": 75.739998,
+              "workers_without": 103.510002
+            }
+          ],
+          "work_per_turn": 55.919998,
+          "workers_without": 55.77
         }
       ],
       "current_x": 1,
@@ -6620,7 +6832,29 @@
             "material_id": "populations[2].bench.drawn_inputs[2].material_id"
           }
         ],
-        "items_completed": 90,
+        "orders": [
+          {
+            "count": 40,
+            "drawn": true,
+            "made": 142,
+            "progress": 34.880001,
+            "recipe_id": "populations[2].bench.orders[0].recipe_id"
+          },
+          {
+            "count": 183,
+            "drawn": false,
+            "made": 147,
+            "progress": 31.74,
+            "recipe_id": "populations[2].bench.orders[1].recipe_id"
+          },
+          {
+            "count": 170,
+            "drawn": false,
+            "made": 72,
+            "progress": 57.529999,
+            "recipe_id": "populations[2].bench.orders[2].recipe_id"
+          }
+        ],
         "output_grade": "populations[2].bench.output_grade",
         "priority": "high",
         "progress": 110.019997,
@@ -6829,6 +7063,90 @@
             }
           ],
           "suggested": false
+        }
+      ],
+      "craft_suggestions": [
+        {
+          "count": 135,
+          "item_id": "hoes",
+          "sources": [
+            {
+              "fauna_id": "populations[2].craft_suggestions[0].sources[0].fauna_id",
+              "job": "populations[2].craft_suggestions[0].sources[0].job",
+              "kind": "populations[2].craft_suggestions[0].sources[0].kind",
+              "material": "populations[2].craft_suggestions[0].sources[0].material",
+              "missing_units": 57.02,
+              "target_x": 130,
+              "target_y": 119,
+              "work_per_turn": 90.349998,
+              "workers_without": 73.940002
+            },
+            {
+              "fauna_id": "populations[2].craft_suggestions[0].sources[1].fauna_id",
+              "job": "populations[2].craft_suggestions[0].sources[1].job",
+              "kind": "populations[2].craft_suggestions[0].sources[1].kind",
+              "material": "populations[2].craft_suggestions[0].sources[1].material",
+              "missing_units": 12.59,
+              "target_x": 11,
+              "target_y": 22,
+              "work_per_turn": 15.98,
+              "workers_without": 98.029999
+            },
+            {
+              "fauna_id": "populations[2].craft_suggestions[0].sources[2].fauna_id",
+              "job": "populations[2].craft_suggestions[0].sources[2].job",
+              "kind": "populations[2].craft_suggestions[0].sources[2].kind",
+              "material": "populations[2].craft_suggestions[0].sources[2].material",
+              "missing_units": 29.52,
+              "target_x": 168,
+              "target_y": 157,
+              "work_per_turn": 0.97,
+              "workers_without": 66.57
+            }
+          ],
+          "work_per_turn": 86.199997,
+          "workers_without": 96.959999
+        },
+        {
+          "count": 184,
+          "item_id": "spears",
+          "sources": [
+            {
+              "fauna_id": "populations[2].craft_suggestions[1].sources[0].fauna_id",
+              "job": "populations[2].craft_suggestions[1].sources[0].job",
+              "kind": "populations[2].craft_suggestions[1].sources[0].kind",
+              "material": "populations[2].craft_suggestions[1].sources[0].material",
+              "missing_units": 85.589996,
+              "target_x": 121,
+              "target_y": 132,
+              "work_per_turn": 84.330002,
+              "workers_without": 77.870003
+            },
+            {
+              "fauna_id": "populations[2].craft_suggestions[1].sources[1].fauna_id",
+              "job": "populations[2].craft_suggestions[1].sources[1].job",
+              "kind": "populations[2].craft_suggestions[1].sources[1].kind",
+              "material": "populations[2].craft_suggestions[1].sources[1].material",
+              "missing_units": 38.009998,
+              "target_x": 176,
+              "target_y": 165,
+              "work_per_turn": 72.0,
+              "workers_without": 81.860001
+            },
+            {
+              "fauna_id": "populations[2].craft_suggestions[1].sources[2].fauna_id",
+              "job": "populations[2].craft_suggestions[1].sources[2].job",
+              "kind": "populations[2].craft_suggestions[1].sources[2].kind",
+              "material": "populations[2].craft_suggestions[1].sources[2].material",
+              "missing_units": 12.56,
+              "target_x": 171,
+              "target_y": 182,
+              "work_per_turn": 59.509998,
+              "workers_without": 4.36
+            }
+          ],
+          "work_per_turn": 85.519997,
+          "workers_without": 102.519997
         }
       ],
       "current_x": 2,

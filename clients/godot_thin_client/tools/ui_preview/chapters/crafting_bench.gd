@@ -17,7 +17,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 187
+const EXPECTED_CHECKPOINTS := 218
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
@@ -144,20 +144,27 @@ const BENCH_RATE := 1.0
 const BENCH_DRAWN_FIBRE := 5.0
 const BENCH_DRAWN_HIDE := 1.0
 
+## **THE RUNNING BENCH'S HEAD ORDER** — two baskets asked for, one made, which is what the head row's
+## `1/2` reads. Its `−` is DEAD (a count of one would finish the order); the queue state below stages
+## a head with room to come down.
+const BENCH_ORDER_COUNT := 2
+const BENCH_ORDER_MADE := 1
+
 ## **THE PROGRESS LINE, SPELLED OUT RATHER THAN RECOMPOSED** through the vocab formats the panel
 ## builds it with — an expectation borrowed from the code under test can only agree with itself. It
 ## is the running fixture's own reading: 3.0 of the 6 work a pass costs, what a turn adds and the
-## turns that implies, one basket already delivered, and the grade the pile in flight fixed.
-const BENCH_PROGRESS_LINE := "3.0 of 6 work · +1.0/turn · done in 3 turns · 1 finished · this pile → good"
+## turns that implies, and the grade the pile in flight fixed. What the order has already delivered
+## is NOT on it — that is the head queue row's `made/count`, the one home that fact has.
+const BENCH_PROGRESS_LINE := "3.0 of 6 work · +1.0/turn · done in 3 turns · this pile → good"
 
 ## **THE SAME BENCH WITH THE ESTIMATE WITHHELD**, which is what a stopped bench reads: the progress
-## and what it has delivered, and nothing about turns. Spelled out for the same reason as the line
+## and the grade, and nothing about turns. Spelled out for the same reason as the line
 ## above, and it is what makes "shows neither" a claim about the WHOLE line rather than about two
 ## needles that could each be missing for their own reason.
-const BENCH_STOPPED_PROGRESS_LINE := "3.0 of 6 work · 1 finished · this pile → good"
+const BENCH_STOPPED_PROGRESS_LINE := "3.0 of 6 work · this pile → good"
 
 ## The tooltip the ✕ carries on a DRAWN bench — the withdrawal, named material by material.
-const BENCH_CLEAR_TOOLTIP := "Clear the bench — 5 fibre · 1 hide already cut are spent"
+const BENCH_CLEAR_TOOLTIP := "Take this order off the bench — 5 fibre · 1 hide already cut are lost"
 
 ## **THE CHEAPEST GENUINE REFUSAL THERE IS**, and the sim's own wording for it
 ## (`core_sim/src/snapshot/crafting.rs`): the crew walked off. It is also the reason that SURVIVES the
@@ -202,9 +209,9 @@ const MISMATCHED_BENCH_SEVERITY := HudCraftingVocab.SEVERITY_NEUTRAL
 ## the *"done in 1 turns"* the plural format would have produced.
 const CEIL_BENCH_PROGRESS := 1.5
 const CEIL_BENCH_RATE := 1.3
-const CEIL_BENCH_PROGRESS_LINE := "1.5 of 6 work · +1.3/turn · done in 4 turns · 1 finished · this pile → good"
+const CEIL_BENCH_PROGRESS_LINE := "1.5 of 6 work · +1.3/turn · done in 4 turns · this pile → good"
 const NEXT_TURN_BENCH_PROGRESS := 5.6
-const NEXT_TURN_BENCH_PROGRESS_LINE := "5.6 of 6 work · +1.0/turn · done next turn · 1 finished · this pile → good"
+const NEXT_TURN_BENCH_PROGRESS_LINE := "5.6 of 6 work · +1.0/turn · done next turn · this pile → good"
 
 ## The theme entry a Label's ink is read back out of. `get_theme_color` answers the override where one
 ## is set, which is how this HUD colours every label.
@@ -749,12 +756,296 @@ func _crafting_states() -> void:
 	await _bench_priority_states()
 	await _recipe_states()
 	await _shrug_with_a_link_state()
+	await _queue_and_suggestion_states()
 
 	# Hand everything back: the panel closed, the roster restored to the reference band.
 	h._hud.close_crafting_panel()
 	h._hud._band_labor._player_bands = []
 	h._hud._band_labor._player_band = BandFx.band_fixture()
 	await h._settle()
+
+# ---- the QUEUE and the SUGGESTIONS (issue #776, §7 "The queue" / "Suggestions") -----------------
+
+## The queued band's three orders: the head working baskets (1 of 3), a PAUSED flint-spear order that
+## was raised over and still holds its cut pile, and a sled order that merely waits.
+const QUEUE_HEAD_COUNT := 3
+const QUEUE_HEAD_MADE := 1
+const QUEUE_PAUSED_INDEX := 1
+const QUEUE_PAUSED_COUNT := 2
+const QUEUE_PAUSED_PROGRESS := 2.0
+const QUEUE_WAITING_INDEX := 2
+const QUEUE_WAITING_COUNT := 1
+## The paused order's name, as the recipe book composes it — the sim's own `full_name` shape.
+const QUEUE_PAUSED_NAME := "Spears (Flint)"
+const QUEUE_WAITING_NAME := "Sled"
+
+## **THE THREE SUGGESTIONS, IN THE SIM'S RANK ORDER** — workers going without, descending:
+## clubs (4 warriors, REFUSED — the only recipe is short of bone), spears (3 hunters on TAKE rows,
+## two recipes so its Queue opens the picker), sled (2 workers whose shortage costs WORK a turn).
+const SUGGEST_CLUBS_COUNT := 4
+const SUGGEST_SPEARS_COUNT := 3
+const SUGGEST_SLED_COUNT := 2
+const SUGGEST_SLED_WORK := 1.6
+## The rendered titles and consequence lines, SPELLED OUT rather than recomposed through the formats.
+const SUGGEST_CLUBS_TITLE := "Clubs ×4"
+const SUGGEST_CLUBS_LINE := "4 workers without"
+const SUGGEST_SPEARS_TITLE := "Spears ×3"
+const SUGGEST_SPEARS_LINE := "3 hunters without"
+const SUGGEST_SLED_TITLE := "Sled ×2"
+const SUGGEST_SLED_LINE := "+1.6 work a turn"
+## The spears suggestion's hover, one line per source.
+const SUGGEST_SPEARS_TOOLTIP := "Hunters on Red Deer: 2 missing, 2 without\nHunters on Aurochs: 1 missing, 1 without"
+
+## **THE QUEUE AND THE SUGGESTIONS, ON ONE BAND.** One frame stages every queue state the spec names —
+## the head being worked (the WELL, with its own `made/count` stepper), a PAUSED order (drawn, not the
+## head), one that merely waits — and every
+## suggestion shape: a refused one (its offer's own words, a dead Queue), a take-row one in the job's
+## crew noun, and one whose shortage costs WORK. The claims a picture cannot carry are asserted beside
+## it, and then each control is PRESSED through the real relay and the line it sends is checked.
+func _queue_and_suggestion_states() -> void:
+	var band := _queued_band()
+	h._hud.update_band_alerts([band])
+	h._hud.open_crafting_panel(band)
+	await h._settle()
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting/queue — the queued panel is open", false)
+		return
+	_assert_the_queue_reads(panel)
+	_assert_the_suggestions_read(panel)
+	await h._save("crafting_queue_suggestions")
+
+	# --- THE COMMANDS. Each asserted as the LINE the socket would see, off the real relay.
+	var faction := HudConst.PLAYER_FACTION_ID
+	var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
+	var lines := await _lines_from(_queue_control(panel, HudCraftingVocab.ORDER_INCREMENT_META,
+		HudCraftingVocab.ORDER_HEAD_INDEX))
+	h._assert_hud("crafting/queue — the head's + asks for one more (%s)" % [lines],
+		lines == ["bench_order_count %d %d order 0 count %d" % [faction, band_id, QUEUE_HEAD_COUNT + 1]])
+	lines = await _lines_from(_queue_control(panel, HudCraftingVocab.ORDER_RAISE_META,
+		QUEUE_WAITING_INDEX))
+	h._assert_hud("crafting/queue — a waiting order's ↑ raises it by its own index (%s)" % [lines],
+		lines == ["bench_raise %d %d order %d" % [faction, band_id, QUEUE_WAITING_INDEX]])
+	lines = await _lines_from(_queue_control(panel, HudCraftingVocab.ORDER_REMOVE_META,
+		QUEUE_PAUSED_INDEX))
+	h._assert_hud("crafting/queue — the paused order's ✕ removes it by its own index (%s)" % [lines],
+		lines == ["bench_remove %d %d order %d" % [faction, band_id, QUEUE_PAUSED_INDEX]])
+	lines = await _lines_from(_suggestion_queue_button(panel, "sled"))
+	h._assert_hud("crafting/suggest — a single-recipe suggestion's Queue enqueues its WHOLE count (%s)"
+			% [lines],
+		lines == ["bench_enqueue %d %d recipe sled count %d" % [faction, band_id, SUGGEST_SLED_COUNT]])
+	# The two-recipe suggestion: Queue opens the SAME picker Make opens, under the suggestion, and
+	# Start queues the chosen recipe at the suggestion's count — not Make's one.
+	lines = await _lines_from(_suggestion_queue_button(panel, "spears"))
+	var picker := _picker(panel)
+	h._assert_hud("crafting/suggest — a two-recipe suggestion's Queue opens the picker and sends nothing (%s)"
+			% [lines],
+		lines.is_empty() and picker != null
+			and String(picker.get_meta(HudCraftingVocab.PICKER_META)) == "spears")
+	h._assert_hud("crafting/suggest — …drawn under the SUGGESTION, before the bench, not under the ledger row",
+		picker != null and _is_above_the_bench(panel, picker))
+	await h._save("crafting_suggestion_picker")
+	lines = await _lines_from(_picker_control(panel, HudCraftingVocab.PICKER_START_META))
+	h._assert_hud("crafting/suggest — Start queues the chosen recipe at the suggestion's count (%s)"
+			% [lines],
+		lines == ["bench_enqueue %d %d recipe %s count %d" % [faction, band_id, SPEARS_FLINT_RECIPE,
+			SUGGEST_SPEARS_COUNT]])
+	lines = await _lines_from(_make_button(panel, "crook"))
+	h._assert_hud("crafting/queue — Make queues an order of ONE (%s)" % [lines],
+		lines == ["bench_enqueue %d %d recipe crook count %d" % [faction, band_id,
+			HudCraftingVocab.MAKE_ORDER_COUNT]])
+	h._hud.close_crafting_panel()
+	await h._settle()
+
+## Every queue claim no picture can carry: the head's `made/count` in the WELL and no second row for
+## it, one row per order BEHIND it keeping its published index, the status word each reads, the `−`
+## dead exactly at `made + 1`, no ↑ on the head, and the ✕ tooltips.
+func _assert_the_queue_reads(panel: CraftingPanel) -> void:
+	var rows := _queue_rows(panel)
+	h._assert_hud("crafting/queue — one row per order BEHIND the head, each at its published index (%d rows)"
+			% rows.size(),
+		rows.size() == 2 and int(rows[0].get_meta(HudCraftingVocab.QUEUE_ROW_META)) == QUEUE_PAUSED_INDEX
+			and int(rows[1].get_meta(HudCraftingVocab.QUEUE_ROW_META)) == QUEUE_WAITING_INDEX)
+	if rows.size() != 2:
+		return
+	var paused_texts := _label_texts(rows[0])
+	var waiting_texts := _label_texts(rows[1])
+	# **THE WELL IS THE HEAD'S ROW**: its `made/count` face and the head's count stepper live there,
+	# under the sim's own name in the title — never a second row repeating them.
+	var head_minus := _queue_control(panel, HudCraftingVocab.ORDER_DECREMENT_META, 0)
+	h._assert_hud("crafting/queue — the head's made/count rides the well, beside its own stepper",
+		_label_with_text(panel, "%d/%d" % [QUEUE_HEAD_MADE, QUEUE_HEAD_COUNT]) != null
+			and head_minus != null and _queue_control(panel, HudCraftingVocab.ORDER_INCREMENT_META, 0) != null
+			and _label_texts(panel).has(HudCraftingVocab.HEAD_COUNT_CAPTION.to_upper()))
+	h._assert_hud("crafting/queue — a drawn order that is not the head reads PAUSED (%s)" % [paused_texts],
+		paused_texts.has(HudCraftingVocab.ORDER_STATUS_PAUSED.to_upper())
+			and paused_texts.has(QUEUE_PAUSED_NAME))
+	h._assert_hud("crafting/queue — an undrawn waiting order reads as queued, not paused (%s)"
+			% [waiting_texts],
+		waiting_texts.has(HudCraftingVocab.ORDER_STATUS_WAITING.to_upper())
+			and not waiting_texts.has(HudCraftingVocab.ORDER_STATUS_PAUSED.to_upper())
+			and waiting_texts.has(QUEUE_WAITING_NAME))
+	h._assert_hud("crafting/queue — each row reads made/count (%s · %s)" % [paused_texts, waiting_texts],
+		paused_texts.has("%d/%d" % [0, QUEUE_PAUSED_COUNT])
+			and waiting_texts.has("%d/%d" % [0, QUEUE_WAITING_COUNT]))
+	# `−` is live while the count can come down without finishing the order, and dead at `made + 1`.
+	var waiting_minus := _queue_control(panel, HudCraftingVocab.ORDER_DECREMENT_META, QUEUE_WAITING_INDEX)
+	h._assert_hud("crafting/queue — − is live above made + 1 and dead at it",
+		head_minus != null and not head_minus.disabled
+			and waiting_minus != null and waiting_minus.disabled)
+	h._assert_hud("crafting/queue — the head has no ↑ and every other order has one",
+		_queue_control(panel, HudCraftingVocab.ORDER_RAISE_META, 0) == null
+			and _queue_control(panel, HudCraftingVocab.ORDER_RAISE_META, QUEUE_PAUSED_INDEX) != null
+			and _queue_control(panel, HudCraftingVocab.ORDER_RAISE_META, QUEUE_WAITING_INDEX) != null)
+	var paused_remove := _queue_control(panel, HudCraftingVocab.ORDER_REMOVE_META, QUEUE_PAUSED_INDEX)
+	var waiting_remove := _queue_control(panel, HudCraftingVocab.ORDER_REMOVE_META, QUEUE_WAITING_INDEX)
+	var head_remove := _clear_button(panel)
+	h._assert_hud("crafting/queue — each ✕ says whether a cut pile is lost, the head's being the well's own",
+		paused_remove != null and paused_remove.tooltip_text == HudCraftingVocab.ORDER_REMOVE_TOOLTIP_DRAWN
+			and waiting_remove != null
+			and waiting_remove.tooltip_text == HudCraftingVocab.ORDER_REMOVE_TOOLTIP_UNDRAWN
+			and head_remove != null and head_remove.tooltip_text == BENCH_CLEAR_TOOLTIP
+			and _queue_control(panel, HudCraftingVocab.ORDER_REMOVE_META, 0) == null)
+	# Raising the order straight under a drawn head pauses that head, and its ↑ says so first.
+	var paused_raise := _queue_control(panel, HudCraftingVocab.ORDER_RAISE_META, QUEUE_PAUSED_INDEX)
+	h._assert_hud("crafting/queue — the ↑ that would pause the drawn head says so",
+		paused_raise != null and paused_raise.tooltip_text == HudCraftingVocab.ORDER_RAISE_PAUSES_TOOLTIP)
+	# The well still describes the HEAD: the crew stepper, the progress line, no "finished" clause.
+	h._assert_hud("crafting/queue — the well's progress line still describes the head",
+		_label_with_text(panel, BENCH_PROGRESS_LINE) != null)
+
+## The suggestion claims: published order, each row's two lines, the refused one's reason and dead
+## button, the live ones' live buttons, and the sources on the hover.
+func _assert_the_suggestions_read(panel: CraftingPanel) -> void:
+	var rows := _suggestion_rows(panel)
+	var order: Array = []
+	for row in rows:
+		order.append(String(row.get_meta(HudCraftingVocab.SUGGESTION_META)))
+	h._assert_hud("crafting/suggest — one row per suggestion, in the sim's published order (%s)" % [order],
+		order == ["clubs", "spears", "sled"])
+	if rows.size() != 3:
+		return
+	var texts := [_label_texts(rows[0]), _label_texts(rows[1]), _label_texts(rows[2])]
+	h._assert_hud("crafting/suggest — name ×count over ONE consequence line (%s)" % [texts],
+		texts[0].has(SUGGEST_CLUBS_TITLE) and texts[0].has(SUGGEST_CLUBS_LINE)
+			and texts[1].has(SUGGEST_SPEARS_TITLE) and texts[1].has(SUGGEST_SPEARS_LINE)
+			and texts[2].has(SUGGEST_SLED_TITLE) and texts[2].has(SUGGEST_SLED_LINE))
+	var clubs := _suggestion_queue_button(panel, "clubs")
+	h._assert_hud("crafting/suggest — a refused item's Queue is dead and its offer's own words sit under it",
+		clubs != null and clubs.disabled and texts[0].has("Short 6.9 bone"))
+	var spears := _suggestion_queue_button(panel, "spears")
+	var sled := _suggestion_queue_button(panel, "sled")
+	h._assert_hud("crafting/suggest — a makeable item's Queue is live",
+		spears != null and not spears.disabled and sled != null and not sled.disabled)
+	h._assert_hud("crafting/suggest — the sources ride the row's hover, one line each (%s)"
+			% [rows[1].tooltip_text],
+		rows[1].tooltip_text == SUGGEST_SPEARS_TOOLTIP)
+	h._assert_hud("crafting/suggest — the list opens the main column, above the bench",
+		_is_above_the_bench(panel, rows[0]))
+
+## Press `control` for real and return the command LINES `Main` would build from what the HUD emitted
+## across every bench verb — so a press that sent the wrong verb, or two, is visible in one array.
+func _lines_from(control: Control) -> Array:
+	var lines: Array = []
+	var on_enqueue := func(p: Dictionary) -> void:
+		lines.append(String(MAIN_SCRIPT.format_bench_enqueue(p).get("line", "")))
+	var on_count := func(p: Dictionary) -> void:
+		lines.append(String(MAIN_SCRIPT.format_bench_order_count(p).get("line", "")))
+	var on_remove := func(p: Dictionary) -> void:
+		lines.append(String(MAIN_SCRIPT.format_bench_remove(p).get("line", "")))
+	var on_raise := func(p: Dictionary) -> void:
+		lines.append(String(MAIN_SCRIPT.format_bench_raise(p).get("line", "")))
+	var on_crew := func(p: Dictionary) -> void:
+		lines.append(String(MAIN_SCRIPT.format_bench_crew(p).get("line", "")))
+	h._hud.bench_enqueue_requested.connect(on_enqueue)
+	h._hud.bench_order_count_requested.connect(on_count)
+	h._hud.bench_remove_requested.connect(on_remove)
+	h._hud.bench_raise_requested.connect(on_raise)
+	h._hud.bench_crew_requested.connect(on_crew)
+	await _press_control(control)
+	h._hud.bench_enqueue_requested.disconnect(on_enqueue)
+	h._hud.bench_order_count_requested.disconnect(on_count)
+	h._hud.bench_remove_requested.disconnect(on_remove)
+	h._hud.bench_raise_requested.disconnect(on_raise)
+	h._hud.bench_crew_requested.disconnect(on_crew)
+	return lines
+
+## Whether `node` sits ABOVE the bench well on screen — the suggestions open the main column.
+func _is_above_the_bench(panel: CraftingPanel, node: Control) -> bool:
+	var progress := _label_with_text(panel, BENCH_PROGRESS_LINE)
+	return progress != null and node.get_global_rect().position.y < progress.get_global_rect().position.y
+
+func _queue_rows(node: Node) -> Array:
+	var found: Array = []
+	if node is Control and node.has_meta(HudCraftingVocab.QUEUE_ROW_META):
+		found.append(node)
+	for child in node.get_children():
+		found.append_array(_queue_rows(child))
+	return found
+
+func _suggestion_rows(node: Node) -> Array:
+	var found: Array = []
+	if node is Control and node.has_meta(HudCraftingVocab.SUGGESTION_META):
+		found.append(node)
+	for child in node.get_children():
+		found.append_array(_suggestion_rows(child))
+	return found
+
+## One queue control by its meta and the ORDER INDEX it is valued with; `null` when not drawn.
+func _queue_control(node: Node, meta: String, index: int) -> Button:
+	if node is Button and node.has_meta(meta) and int(node.get_meta(meta)) == index:
+		return node as Button
+	for child in node.get_children():
+		var found := _queue_control(child, meta, index)
+		if found != null:
+			return found
+	return null
+
+func _suggestion_queue_button(node: Node, item_id: String) -> Button:
+	if node is Button and String(node.get_meta(HudCraftingVocab.SUGGESTION_QUEUE_META, "")) == item_id:
+		return node as Button
+	for child in node.get_children():
+		var found := _suggestion_queue_button(child, item_id)
+		if found != null:
+			return found
+	return null
+
+## The reference band with a three-order queue and three suggestions on it.
+func _queued_band() -> Dictionary:
+	var band := _crafting_band()
+	var bench: Dictionary = _bench()
+	bench["orders"] = [
+		_order(BASKETS_REED_RECIPE, QUEUE_HEAD_COUNT, QUEUE_HEAD_MADE, BENCH_PROGRESS, true),
+		_order(SPEARS_FLINT_RECIPE, QUEUE_PAUSED_COUNT, 0, QUEUE_PAUSED_PROGRESS, true),
+		_order("sled", QUEUE_WAITING_COUNT, 0, 0.0, false),
+	]
+	band["bench"] = bench
+	band["craft_suggestions"] = _craft_suggestions()
+	return band
+
+## **THE SIM'S LIST, IN THE SIM'S SHAPE** (`dict/population.rs`), ranked by `workers_without`.
+func _craft_suggestions() -> Array:
+	return [
+		_suggestion("clubs", SUGGEST_CLUBS_COUNT, 4.0, 0.0, [
+			_source(HudCraftingVocab.SOURCE_KIND_TAKE, "warrior", -1, -1, "", "", 4.0, 4.0, 0.0)]),
+		_suggestion("spears", SUGGEST_SPEARS_COUNT, 3.0, 0.0, [
+			_source(HudCraftingVocab.SOURCE_KIND_TAKE, "hunt", 0, 0, "red_deer", "", 2.0, 2.0, 0.0),
+			_source(HudCraftingVocab.SOURCE_KIND_TAKE, "hunt", 0, 0, "aurochs", "", 1.0, 1.0, 0.0)]),
+		_suggestion("sled", SUGGEST_SLED_COUNT, 2.0, SUGGEST_SLED_WORK, [
+			_source(HudCraftingVocab.SOURCE_KIND_POOL, "builders", 0, 0, "", "", 1.5, 1.5, 1.2),
+			_source(HudCraftingVocab.SOURCE_KIND_SITE, "extract", 12, 7, "", "wood", 0.5, 0.5, 0.4)]),
+	]
+
+func _suggestion(item_id: String, count: int, workers_without: float, work_per_turn: float,
+		sources: Array) -> Dictionary:
+	return {"item_id": item_id, "count": count, "workers_without": workers_without,
+		"work_per_turn": work_per_turn, "sources": sources}
+
+func _source(kind: String, job: String, x: int, y: int, fauna_id: String, material: String,
+		missing: float, workers_without: float, work_per_turn: float) -> Dictionary:
+	return {"kind": kind, "job": job, "target_x": maxi(x, 0), "target_y": maxi(y, 0),
+		"fauna_id": fauna_id, "material": material, "missing_units": missing,
+		"workers_without": workers_without, "work_per_turn": work_per_turn}
 
 # ---- states 12-13: TWO TIERS, which is the only shape the readout can be judged on ---------------
 
@@ -1100,9 +1391,9 @@ func _estimate_arithmetic_states() -> void:
 			% NEXT_TURN_BENCH_PROGRESS_LINE,
 		panel != null and _label_with_text(panel, NEXT_TURN_BENCH_PROGRESS_LINE) != null)
 
-## **WHICH VERB THE ✕ ACTUALLY EMITS, asserted as a PAIR.** A mis-wired button that emitted
-## `set_bench` would satisfy a bare "something was emitted" — and would silently spend the pile on a
-## job the player never chose, which is the very thing this control exists to avoid. Driven through
+## **WHICH VERB THE ✕ ACTUALLY EMITS, asserted as a PAIR.** It is `bench_remove … order 0` — the
+## retired `clear_bench`'s control — and a mis-wired button that ENQUEUED would satisfy a bare
+## "something was emitted" while putting a job on the bench the player never chose. Driven through
 ## the REAL relay (panel → controller → `HudLayer`), because the panel's own signal says nothing about
 ## whether the seam carries it or what band it names.
 func _clear_bench_command_state() -> void:
@@ -1118,17 +1409,18 @@ func _clear_bench_command_state() -> void:
 	var benched: Array = []
 	var on_clear := func(payload: Dictionary) -> void: cleared.append(payload)
 	var on_bench := func(payload: Dictionary) -> void: benched.append(payload)
-	h._hud.clear_bench_requested.connect(on_clear)
-	h._hud.set_bench_requested.connect(on_bench)
+	h._hud.bench_remove_requested.connect(on_clear)
+	h._hud.bench_enqueue_requested.connect(on_bench)
 	button.pressed.emit()
 	await h._settle()
-	h._hud.clear_bench_requested.disconnect(on_clear)
-	h._hud.set_bench_requested.disconnect(on_bench)
+	h._hud.bench_remove_requested.disconnect(on_clear)
+	h._hud.bench_enqueue_requested.disconnect(on_bench)
 	var band := _crafting_band()
-	h._assert_hud("crafting — pressing the bench's ✕ asks to CLEAR the bench, naming the band (%s)"
+	h._assert_hud("crafting — pressing the bench's ✕ removes the HEAD order, naming the band (%s)"
 			% [cleared],
 		cleared.size() == 1
-			and int((cleared[0] as Dictionary).get("band_id", -1)) == int(band.get("band_id", -2)))
+			and int((cleared[0] as Dictionary).get("band_id", -1)) == int(band.get("band_id", -2))
+			and int((cleared[0] as Dictionary).get("order", -1)) == HudCraftingVocab.ORDER_HEAD_INDEX)
 	h._assert_hud("crafting — …and asks for no new job on it (%s)" % [benched],
 		benched.is_empty())
 
@@ -1174,9 +1466,13 @@ func _assert_panel_renders() -> void:
 	h._assert_hud("crafting — the three group heads read as one foldable family",
 		texts.has(_head_face(HEAD_KIT, false)) and texts.has(_head_face(HEAD_TOOLS, false))
 			and texts.has(_head_face(HEAD_MATERIALS, false)))
-	# The running row's button is SPENT — one job at a time, so it has nothing left to ask for.
-	h._assert_hud("crafting — the running row reads On the bench",
-		texts.has(HudCraftingVocab.ON_BENCH_LABEL))
+	# **THE RUNNING ROW'S MAKE STAYS LIVE** — the bench holds a queue, so another press is another
+	# order. It was spent (*On the bench*) while the bench held one job; a Make still dead here would be
+	# that rule surviving the queue.
+	var running_make := _make_button(panel, "baskets")
+	h._assert_hud("crafting — the running row's Make stays live, another press being another order",
+		running_make != null and not running_make.disabled
+			and running_make.text == HudCraftingVocab.MAKE_LABEL)
 	# Sorted by urgency: the worn-out kit leads its group and the untouched one trails it.
 	var worn := _index_of(texts, "Wayfinding gear")
 	var untouched := _index_of(texts, "Traps")
@@ -1455,6 +1751,11 @@ func _assert_bench_crew_is_not_idle() -> void:
 ## buttons in the panel wearing those single glyphs. `true` when no such button was found, which
 ## fails the live claim honestly rather than passing on a stepper that never rendered.
 func _crew_button_disabled(node: Node, face: String) -> bool:
+	# The queue rows wear the same two glyphs on their COUNT steppers, and those are no claim about
+	# the crew — skip them by the meta they carry rather than by face.
+	if node.has_meta(HudCraftingVocab.ORDER_DECREMENT_META) \
+			or node.has_meta(HudCraftingVocab.ORDER_INCREMENT_META):
+		return true
 	if node is Button and (node as Button).text == face:
 		return (node as Button).disabled
 	for child in node.get_children():
@@ -1893,8 +2194,8 @@ func _short_bench_band() -> Dictionary:
 	bench["blocked_reason"] = SHORT_BENCH_REASON
 	bench["blocked_severity"] = SHORT_BENCH_SEVERITY
 	bench["shortfalls"] = [{"material_id": "fibre", "required": 4.0, "held": 3.4, "short": 0.6}]
-	bench["items_completed"] = 0
 	bench["drawn"] = false
+	bench["orders"] = [_order(BASKETS_REED_RECIPE, BENCH_ORDER_COUNT, 0, SHORT_BENCH_PROGRESS, false)]
 	bench["output_grade"] = ""
 	bench["drawn_inputs"] = []
 	band["bench"] = bench
@@ -1965,9 +2266,17 @@ func _bench() -> Dictionary:
 	return {
 		"recipe_id": BASKETS_REED_RECIPE, "display_name": BENCH_TWO_RECIPE_NAME, "workers": BENCH_CREW,
 		"progress": BENCH_PROGRESS, "work": BENCH_WORK, "teaches": "weaving", "blocked_reason": "",
-		"shortfalls": [], "items_completed": 1, "drawn": true, "output_grade": "good",
+		"shortfalls": [], "drawn": true, "output_grade": "good",
 		"rate_per_turn": BENCH_RATE, "drawn_inputs": _drawn_inputs(),
+		# **A RUNNING BENCH ALWAYS PUBLISHES ITS QUEUE**, the head first — every scalar above is that
+		# order's. One basket of two already made, which is what the head row's `1/2` reads.
+		"orders": [_order(BASKETS_REED_RECIPE, BENCH_ORDER_COUNT, BENCH_ORDER_MADE, BENCH_PROGRESS,
+			true)],
 	}
+
+## One `BenchState.orders` row, in the decoder's own shape.
+func _order(recipe_id: String, count: int, made: int, progress: float, drawn: bool) -> Dictionary:
+	return {"recipe_id": recipe_id, "count": count, "made": made, "progress": progress, "drawn": drawn}
 
 ## The pile already cut, in the recipe's own input order.
 func _drawn_inputs() -> Array:
@@ -1979,8 +2288,10 @@ func _drawn_inputs() -> Array:
 func _idle_bench() -> Dictionary:
 	return {
 		"recipe_id": "", "display_name": "", "workers": 0, "progress": 0.0, "work": 0.0,
-		"teaches": "", "blocked_reason": "", "shortfalls": [], "items_completed": 0,
+		"teaches": "", "blocked_reason": "", "shortfalls": [],
 		"drawn": false, "output_grade": "", "rate_per_turn": 0.0, "drawn_inputs": [],
+		# An IDLE bench is an empty queue.
+		"orders": [],
 	}
 
 ## **ONE ROW PER RECIPE, ALWAYS**, each carrying the reason and the severity the SIM resolved. Every
@@ -2427,7 +2738,7 @@ func _bench_priority_states() -> void:
 ## Press one rung and assert what left the HUD. The picker CLOSES on a pick, so the link is re-pressed
 ## each time round — which is itself the claim that the control survives its own commit.
 ##
-## **AND IT ASSERTS WHAT DID NOT GO OUT.** A mis-wired rung emitting `bench_crew` or `clear_bench`
+## **AND IT ASSERTS WHAT DID NOT GO OUT.** A mis-wired rung emitting `bench_crew` or `bench_remove`
 ## would satisfy a bare *"something was emitted"* and would silently re-crew or destroy the pile.
 func _assert_priority_rung_commits(level: String) -> void:
 	var panel: CraftingPanel = h._hud.crafting_panel().panel()
@@ -2444,11 +2755,11 @@ func _assert_priority_rung_commits(level: String) -> void:
 	var on_other := func(payload: Dictionary) -> void: others.append(payload)
 	h._hud.bench_priority_requested.connect(on_rank)
 	h._hud.bench_crew_requested.connect(on_other)
-	h._hud.clear_bench_requested.connect(on_other)
+	h._hud.bench_remove_requested.connect(on_other)
 	await _press_control(rung)
 	h._hud.bench_priority_requested.disconnect(on_rank)
 	h._hud.bench_crew_requested.disconnect(on_other)
-	h._hud.clear_bench_requested.disconnect(on_other)
+	h._hud.bench_remove_requested.disconnect(on_other)
 	if ranked.size() != 1:
 		h._assert_hud("crafting — a REAL press on `%s` emitted exactly one rank (%s)" % [level, ranked],
 			false)
@@ -2744,7 +3055,7 @@ func _popup_states(panel: CraftingPanel) -> void:
 func _make_states(panel: CraftingPanel) -> void:
 	var sent: Array = []
 	var on_bench := func(payload: Dictionary) -> void: sent.append(String(payload.get("recipe_id", "")))
-	h._hud.set_bench_requested.connect(on_bench)
+	h._hud.bench_enqueue_requested.connect(on_bench)
 	await _press_control(_make_button(panel, "crook"))
 	h._assert_hud("crafting/recipes — Make on a single-recipe row sends that recipe (%s)" % [sent],
 		sent == ["crook"])
@@ -2770,7 +3081,7 @@ func _make_states(panel: CraftingPanel) -> void:
 
 	await _press_control(_make_button(panel, "spears"))
 	h._assert_hud("crafting/recipes — pressing Make again closes the picker", _picker(panel) == null)
-	h._hud.set_bench_requested.disconnect(on_bench)
+	h._hud.bench_enqueue_requested.disconnect(on_bench)
 
 ## **START SENDS THE CHOSEN RECIPE, AND NOT THE OTHER.** Staged where BOTH spear recipes can be made and
 ## the sim suggests flint, so choosing bone is a choice against the default — the only shape in which
@@ -2787,7 +3098,7 @@ func _start_sends_the_chosen_recipe() -> void:
 		return
 	var sent: Array = []
 	var on_bench := func(payload: Dictionary) -> void: sent.append(String(payload.get("recipe_id", "")))
-	h._hud.set_bench_requested.connect(on_bench)
+	h._hud.bench_enqueue_requested.connect(on_bench)
 	await _press_control(_make_button(panel, "spears"))
 	var flint := _picker_option(panel, SPEARS_FLINT_RECIPE)
 	h._assert_hud("crafting/recipes — precondition: the picker opens on the suggested flint recipe",
@@ -2804,7 +3115,7 @@ func _start_sends_the_chosen_recipe() -> void:
 	await _press_control(_picker_control(panel, HudCraftingVocab.PICKER_CANCEL_META))
 	h._assert_hud("crafting/recipes — Cancel closes the picker and sends nothing (%s)" % [sent],
 		_picker(panel) == null and sent.is_empty())
-	h._hud.set_bench_requested.disconnect(on_bench)
+	h._hud.bench_enqueue_requested.disconnect(on_bench)
 
 ## **MAKE IS LIVE WHEN ANY RECIPE CAN BE MADE**, and the Costs cell still describes the suggestion. The
 ## fixture suggests the bone recipe while only the flint one can be made — a shape the shipped sim's
