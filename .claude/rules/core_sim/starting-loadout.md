@@ -64,8 +64,18 @@ exceeds the window's `carry_budget`. It is still an enum because the arms differ
 them: a grant mints, so nothing else does; a take moves, so it is also bounded by what another band is
 standing on right now, per item and per material.
 
-**The opening band's `carry_budget` is `carry_capacity(workers)`** — 136 on the shipped
-30-person band (17 hands × 8.0). Its spawned larder does not count against it.
+**What a band carries includes its food, on every window.** The opening band's carry is its own,
+**read live** (`Grant { carry_budget: None }` → `band_carry_capacity(cohort)`, the unfloored working
+value), so its card and its band panel state one number. Its spawned larder is **fixed**
+(`LoadoutWindow::food_is_fixed`, published `foodFixed`): it counts against the carry and does not
+yield to goods, so the goods it may mint are `carry − larder mass` (`goods_allowance`). Shipped:
+≈ 142.8 − 77.7 ≈ 65, which the 12-kit / 28-material default fits whole.
+
+> **The larder was once free, and that was wrong.** With the starting larder outside the budget, the
+> opening band minted 136 of goods and then stood **over its own carry** on turn one (playtest: a
+> parent after a split read `Carry 125 / 87`), so its first long move would shed ~38 — the outfit
+> card let it pick goods its people could not walk away with, and a bigger band looked far richer
+> per head than a splinter that paid for its food.
 `opening_loadout.material_points` and the per-hand kit budget are **retired**: two allowances in two
 incomparable currencies was the defect #732 closed, because on turn two a take was capped by nothing
 that scaled with the workers leaving.
@@ -74,7 +84,7 @@ that scaled with the workers leaving.
 
 | the parent's window | what the split does | the splinter's window |
 |---|---|---|
-| still **grants** (`LoadoutWindow::grants()` — open, and a `Grant`) | **partitions the grant, and moves NOTHING physical** | a `Grant` of its own: its **slice** of the parent's remaining `carry_budget` (`fission::fractional_share_of`, on the ratio in exact fixed point), deducted from the parent's whole, so no load unit is minted twice or lost. The goods are minted from it; the food that fills the rest moves off the parent's larder. |
+| still **grants** (`LoadoutWindow::grants()` — open, and a `Grant`) | **recomputes the grant, and moves NOTHING physical** | a `Grant` of its own struck at `carry_capacity(asked)` — exactly the take arm's carry. The goods are minted from it; the food that fills the rest moves off the parent's larder. The parent's grant is **recomputed, not partitioned**: its own live carry less its own (fixed) larder, re-fitted by `rebalance_partitioned_grant` when its outfit no longer fits. The two carries add up to the parent's carry before the split by construction (both are linear in workers), which is the invariant the old ratio partition guarded (`split_loadout::a_turn_one_splits_two_carries_add_up_to_the_parents_before_it`). |
 | does not (closed, or already a take) | **moves goods** — there is no grant left to partition | a `Parent` take whose `carry_budget` is the **whole carry**, `carry_capacity(asked)`. It is also capped by what the parent can supply (see below). |
 
 **Goods load first on both arms, and food fills the room left.** The window records the splinter's
@@ -343,17 +353,14 @@ both.
 `fission::whole_share` computes `floor(held × asked ÷ workers)` instead, and its sibling
 `whole_share_of` does the same for a `held` the parent stores in fixed point — a material total.
 **Every whole-unit quantity a split derives goes through one of the two**: the item manifest and the
-default take's materials. The splinter's slice of the parent's **carry budget** is not quantised, so
-it goes through `fractional_share_of` — the same ratio discipline in exact `i128`, without the floor.
-Continuous quantities — the larder, the material batches — multiply by the share as before.
+default take's materials. Continuous quantities — the larder, the material batches — multiply by the share as before.
 
 The division is done in **exact integers**, never through `f32`, and both operands being fixed point
 at the same scale is what makes that free: the scale cancels, so `held.raw() × asked ÷ workers.raw()`
 *is* the floored quotient. An `f32` hop fails in both directions — a non-dyadic count rounds up
 (a tenth of 101 at 10.1 workers answered 9, and the `min(held)` clamp cannot see a quotient that is
 too *small*), and multiplying the rounded share rounds down (`30 × 0.333333 = 9.99999`, floor 9,
-where a third of thirty is exactly 10). `split_loadout::a_grant_split_divides_the_carry_budget_on_the_ratio`
-pins the grant slice on a non-terminating share.
+where a third of thirty is exactly 10).
 
 ## The default is fitted to WHICHEVER budget it is drawn against
 
@@ -383,8 +390,12 @@ seeds from it.
 The window is **per band**, so it rides the cohort beside the two things a picker draws with it:
 
 - **`PopulationCohortState.loadoutWindow`** (`BandLoadoutWindowState`) — `open`, `carryCapacity`
-  (the window's whole `carry_budget` C — goods load against it), `foodShare` / `foodCarried`
-  (the splinter's full larder share F and what has crossed; 0 on the opening band), the accepted `kits` / `materials` rows, `parentBandId` (`0` = a grant), and a
+  (the band's WHOLE carry, goods and food, on every window — the same number as the cohort's
+  `carryCapacity`), `foodShare` / `foodCarried` and `foodFixed`: on a fixed-larder window (the
+  opening band, a parent whose grant is open) both food fields are the larder's mass and the goods
+  allowance is `carryCapacity − foodCarried`; on a splinter they are its full share F and what has
+  crossed, and the goods allowance is the whole `carryCapacity`. `OverCarry`'s capacity is that goods
+  allowance. Then the accepted `kits` / `materials` rows, `parentBandId` (`0` = a grant), and a
   take's caps as `parentItemSupply` / `parentMaterialSupply` (`id → units`, each already **holdings +
   this take's standing units**, so a client draws the cap the server refuses on). Absent, or `open ==
   false`, means there is nothing to outfit.

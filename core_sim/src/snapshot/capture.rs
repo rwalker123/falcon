@@ -2931,7 +2931,7 @@ pub fn capture_snapshot(
                     &expedition_cfg.carry,
                     populations.iter().filter_map(
                         |(_, cohort, _, _, _, band_id, _, equipment, _)| {
-                            band_id.map(|band| (*band, equipment, &cohort.stores))
+                            band_id.map(|band| (*band, equipment, cohort))
                         },
                     ),
                 )

@@ -9,10 +9,10 @@
 use bevy::prelude::*;
 
 use core_sim::{
-    apply_starting_loadout, build_test_app, carry_capacity, fit_to_carry, order_load, run_turn,
-    BandEquipment, BandId, CarryConfig, EquipmentConfigHandle, FactionId, KitAllocation,
-    LoadoutRejection, LoadoutSupply, MaterialAllocation, MaterialsConfigHandle, PopulationCohort,
-    ResidentBand, Scalar, StartingLoadout, OPENING_MATERIAL_READING,
+    apply_starting_loadout, build_test_app, fit_to_carry, order_load, run_turn, BandEquipment,
+    BandId, CarryConfig, EquipmentConfigHandle, FactionId, KitAllocation, LoadoutRejection,
+    LoadoutSupply, MaterialAllocation, MaterialsConfigHandle, PopulationCohort, ResidentBand,
+    Scalar, StartingLoadout, OPENING_MATERIAL_READING,
 };
 
 /// The faction every shipped profile spawns under.
@@ -61,17 +61,39 @@ fn open_window() -> (App, Entity, BandId) {
 
 /// The spawned band's grant — its carry budget, in load units. Panics on a window that is not a
 /// grant, which is the whole subject of this suite.
-fn grant(app: &App, band: BandId) -> Scalar {
-    match &app
+/// **The goods an order may weigh** on this band's window — the sim's own allowance, against the
+/// band's live larder.
+fn goods_allowance(app: &App, entity: Entity, band: BandId) -> Scalar {
+    let cohort = app
         .world
+        .get::<PopulationCohort>(entity)
+        .expect("the band keeps a cohort");
+    app.world
         .resource::<StartingLoadout>()
         .window(band)
         .expect("the band has a window")
-        .supply
-    {
-        LoadoutSupply::Grant { carry_budget } => *carry_budget,
-        other => panic!("the spawned band's window must carry a grant, got {other:?}"),
-    }
+        .goods_allowance(cohort, &carry_cfg(app))
+}
+
+/// **The spawned band's whole carry** as its grant window reads it — goods and food together.
+fn grant(app: &App, band: BandId) -> Scalar {
+    let window = app
+        .world
+        .resource::<StartingLoadout>()
+        .window(band)
+        .expect("the band has a window");
+    assert!(
+        matches!(window.supply, LoadoutSupply::Grant { .. }),
+        "the spawned band's window must carry a grant, got {:?}",
+        window.supply
+    );
+    let cohort = app
+        .world
+        .iter_entities()
+        .find(|entity| entity.get::<BandId>() == Some(&band))
+        .and_then(|entity| entity.get::<PopulationCohort>())
+        .expect("the band keeps a cohort");
+    window.carry(cohort, &carry_cfg(app))
 }
 
 /// The live carry tuning an order is weighed with.
@@ -171,50 +193,46 @@ fn refused(
     reason
 }
 
-/// ⛔ **THE BUDGET IS WHAT THE BAND'S WORKERS CAN CARRY, DERIVED FROM THE BAND THAT SPAWNED.**
+/// ⛔ **THE CARRY IS WHAT THE BAND'S WORKERS CAN CARRY, AND ITS LARDER COUNTS AGAINST IT.**
 ///
-/// `working-age hands × carry.per_worker_carry`, and **its larder does not count** — the band has
-/// not walked anywhere. It is deliberately not a config lever of its own: a dial would be a second
-/// statement of how many people the band has, free to disagree with the band the moment a band size
-/// or a working share is retuned. So this asserts the identity against the cohort's own workers, and
-/// pins the shipped figure (17 × 8.0 = 136) beside it.
+/// `working-age value × carry.per_worker_carry` — the band's actual, unfloored working value, the
+/// count the long move and the published `carryCapacity` read, so the card and the band panel agree.
+/// It is deliberately not a config lever of its own: a dial would be a second statement of how many
+/// people the band has. **What a band carries includes its food**, and the spawned larder is fixed
+/// (there is nowhere to leave it), so the goods it may mint are the carry less the larder's mass.
 #[test]
-fn the_carry_budget_is_the_starting_bands_own_workers_times_one_pack() {
+fn the_carry_is_the_starting_bands_working_value_and_its_larder_counts() {
     let (app, band, band_id) = open_window();
     let cohort = app
         .world
         .get::<PopulationCohort>(band)
         .expect("the fixture band keeps a cohort");
-    let working_fraction = app
-        .world
-        .resource::<core_sim::DemographicsConfigHandle>()
-        .get()
-        .initial_distribution
-        .working;
-    let expected = (cohort.size as f32 * working_fraction).floor() as u32;
     assert!(
-        expected > 0,
+        cohort.working > Scalar::zero(),
         "**LIVENESS**: the shipped band must field somebody, or the equality below is 0 == 0"
     );
-    let budget = grant(&app, band_id);
+    let carry = grant(&app, band_id);
     assert_eq!(
-        budget,
-        carry_capacity(expected, &carry_cfg(&app)),
-        "workers × one pack, off the band's own head count"
+        carry,
+        core_sim::carry::band_carry_capacity(cohort, &carry_cfg(&app)),
+        "the band's working-age value × one pack"
     );
-    const SHIPPED_OPENING_HANDS: u32 = 17;
-    const SHIPPED_OPENING_CARRY: u32 = 136;
-    assert_eq!(
-        (expected, budget),
-        (
-            SHIPPED_OPENING_HANDS,
-            Scalar::from_u32(SHIPPED_OPENING_CARRY)
-        ),
-        "the shipped 30-person band fields 17 hands, and 17 × 8.0 is 136"
-    );
+    let larder = core_sim::starting_loadout::larder_mass(&cohort.stores, &carry_cfg(&app));
     assert!(
-        cohort.stores.get(core_sim::FOOD) > Scalar::zero(),
-        "**LIVENESS**: the band holds a larder, and the budget above did not subtract it"
+        larder > Scalar::zero(),
+        "**LIVENESS**: the band holds a larder, or the subtraction below is not exercised"
+    );
+    assert_eq!(
+        goods_allowance(&app, band, band_id),
+        carry - larder,
+        "the goods may mint what the fixed larder leaves"
+    );
+    // The shipped figures: 17.79 working × 8.0 ≈ 142.3, less a larder of about 77.7.
+    const SHIPPED_CARRY_FLOOR: f32 = 142.0;
+    const SHIPPED_CARRY_CEILING: f32 = 143.0;
+    assert!(
+        (SHIPPED_CARRY_FLOOR..SHIPPED_CARRY_CEILING).contains(&carry.to_f32()),
+        "the shipped 30-person band carries about 142: {carry}"
     );
 }
 
@@ -555,7 +573,8 @@ fn a_material_the_profile_does_not_offer_is_refused() {
 #[test]
 fn a_loadout_over_the_carry_is_refused_on_the_whole_order() {
     let (mut app, band, band_id) = open_window();
-    let budget = grant(&app, band_id);
+    // The goods this window may mint — its carry less its fixed larder.
+    let budget = goods_allowance(&app, band, band_id);
     let per_kit = order_load(
         &carry_cfg(&app),
         &[(SPEARS.to_string(), 1), (SLED.to_string(), 1)]

@@ -2386,10 +2386,14 @@ pub(crate) fn band_loadout_windows<'a>(
     windows: &crate::starting_loadout::StartingLoadout,
     equipment_config: &crate::equipment_config::EquipmentConfig,
     carry: &crate::carry::CarryConfig,
-    bands: impl Iterator<Item = (BandId, Option<&'a BandEquipment>, &'a LocalStore)>,
+    bands: impl Iterator<Item = (BandId, Option<&'a BandEquipment>, &'a PopulationCohort)>,
 ) -> std::collections::HashMap<u64, BandLoadoutWindowState> {
+    let bands: std::collections::HashMap<u64, (Option<&BandEquipment>, &PopulationCohort)> = bands
+        .map(|(band, equipment, cohort)| (band.0, (equipment, cohort)))
+        .collect();
     let held: std::collections::HashMap<u64, (Option<&BandEquipment>, &LocalStore)> = bands
-        .map(|(band, equipment, store)| (band.0, (equipment, store)))
+        .iter()
+        .map(|(band, (equipment, cohort))| (*band, (*equipment, &cohort.stores)))
         .collect();
     windows
         .iter()
@@ -2411,21 +2415,34 @@ pub(crate) fn band_loadout_windows<'a>(
                     units: row.units,
                 })
                 .collect();
+            let cohort = bands.get(&band.0).map(|(_, cohort)| *cohort);
+            // A splinter's food yields to its goods: the most it may take, and what it holds. A
+            // fixed larder counts against the carry as it stands.
+            let (food_share, food_carried) = match &window.dowry {
+                Some(dowry) => (
+                    dowry.share_mass(carry).to_f32(),
+                    dowry.carried_mass(carry).to_f32(),
+                ),
+                None => {
+                    let larder = cohort.map_or(0.0, |cohort| {
+                        crate::starting_loadout::larder_mass(&cohort.stores, carry).to_f32()
+                    });
+                    (larder, larder)
+                }
+            };
             let mut state = BandLoadoutWindowState {
                 open: true,
                 kits,
                 materials,
-                // The cap the server refuses an order on, on either arm (`OverCarry`).
-                carry_capacity: window.supply.carry_budget().to_f32(),
-                // A splinter's food: the most it may take, and what it holds (goods load first).
-                food_share: window
-                    .dowry
-                    .as_ref()
-                    .map_or(0.0, |dowry| dowry.share_mass(carry).to_f32()),
-                food_carried: window
-                    .dowry
-                    .as_ref()
-                    .map_or(0.0, |dowry| dowry.carried_mass(carry).to_f32()),
+                // The band's whole carry, goods and food together — its own live carry when the
+                // window struck none, so the card reads what the band panel reads.
+                carry_capacity: cohort.map_or_else(
+                    || window.supply.struck_carry().unwrap_or_default().to_f32(),
+                    |cohort| window.carry(cohort, carry).to_f32(),
+                ),
+                food_share,
+                food_carried,
+                food_fixed: window.food_is_fixed(),
                 ..BandLoadoutWindowState::default()
             };
             match &window.supply {

@@ -45,7 +45,7 @@ load = item_carry_weight × Σ EXPANDED item units + material_carry_weight × Σ
   kit weighs the items it expands to (`_kit_unit_load`): `big_game` (spears + sled) weighs 2 at the
   shipped weight of 1. The weights ride the campaign section (one per world); the capacity rides each
   band's window.
-- **The meter** is `CARRY_REMAINING_FORMAT` (`12 / 60 carry left`) over a stacked bar: the kits as
+- **The meter** is `CARRY_REMAINING_FORMAT` (`12 / 78 carry left`) over a stacked bar: the kits as
   ONE segment, each material in its swatch ink, then the remainder. A negative remainder is printed
   negative in `HudStyle.WARN`; a full pack reads in `HudStyle.SIGNAL` (a finished decision, not a
   problem).
@@ -56,18 +56,26 @@ load = item_carry_weight × Σ EXPANDED item units + material_carry_weight × Σ
 - **The ceiling is float arithmetic with a tolerance** (`_carry_fits`, `CARRY_EPSILON`), so `3 × 0.1`
   fits `0.3`; a weightless unit never binds (`CARRY_UNBOUNDED`).
 
-### A split's card says how much FOOD it brings
+### FOOD IS PART OF THE BAR — what a band carries includes its food
 
-A split loads GOODS first and food fills the room they leave, up to the splinter's full larder share.
-So on a window with `food_share > 0` — a take, or a grant splinter — the card draws, under the meter:
+The bar's whole width is `carry_capacity`, the band's whole carry. It draws kits, then each material,
+then a **food segment** (`FOOD_SEGMENT_COLOR`, a pale wheat derived from the palette in
+`apply_palette` via `FOOD_SEGMENT_TINT`), then what is free — and the meter text states what is
+actually free, `carry − goods − food`. Under the bar, ONE legend row: a food swatch and one line in
+`INK_DIM`:
 
-- **`Brings N of M food`** (`FOOD_BROUGHT_FORMAT`, `FOOD_LINE_META`), and
-- **while N is under the share, `Take fewer tools to bring more food.`** in `HudStyle.WARN`
-  (`FOOD_SHORT_HINT`, `FOOD_HINT_META`). It is the food dial without a food row: the goods are what
-  the food gives way to.
+- **a fixed larder** (`food_fixed` — the opening band, a parent whose grant is open): `Food 78`
+  (`FOOD_FIXED_FORMAT`). It explains why the goods room is smaller than the carry; there is no choice
+  to state.
+- **a splinter** (food yields to goods): `Food 12 of 14`, plus ` · fewer tools leave room for more`
+  (`FOOD_ROOM_CLAUSE`) while it is under its share.
 
-The opening band's window has `food_share == 0` and draws **no food line at all** (`_food_payload`
-returns `{}`).
+⛔ **NEVER WARN INK.** Leaving food with the home band is a CHOICE, not a fault. The amber
+*"Take fewer tools to bring more food."* this replaced read as an error (playtest), and a meter that
+said `22.3 / 53.3 carry left` while food filled exactly that 22.3 said the pack had room it did not.
+
+The goods allowance the `+` and the over state read is `_goods_allowance`: `carry − food_carried` on
+a fixed larder, the whole carry on a splinter — the same cap the sim's `OverCarry` refuses above.
 
 ⛔ **WHERE N COMES FROM** (`food_brought_of`). The sim re-resolves the food on every accepted order and
 the food is a function of the goods load alone, so:
@@ -236,12 +244,12 @@ band actually holds** — never a suggestion and never an unspent budget.
 
 | Script | Purpose |
 |--------|---------|
-| `ui/StartingLoadoutPanel.gd` | The free-floating card — a head carrying ONE carry meter (`_carry_meter`), a split's food line and amber hint (`_build_food_lines`) and the refusal line (`_build_refusal_line`), in that order; three columns (kits / resources / what the resources can build); a **band switcher** drawn only while two or more windows are open, a footer control that CLOSES the card (it sends nothing: every stepper press already orders) and its own reopen pill. **`AutoSizingPanel`, not `PanelCard` + `DockScrollFit`** (`panel-framework.md`): it is measured against the ROOM. **ONE NODE CARRIES BOTH STATES** — the card and the pill are two children and exactly one is visible, so one fit and one placement serve the expanded and dismissed states; the fit measures whichever is showing and `_place` centres the card in the room and puts the pill at the top of it. It renders a payload and emits five intents (`dismissed` / `reopened` / `band_selected` / `kit_count_changed` / `material_units_changed`) and holds no allocation of its own — the footer control emits `dismissed` like the ✕, `commit_requested` having gone with the deferred order. **A row's `+` is enabled from the ROW's own `can_add`**, never re-derived from the meter — kits weigh what they expand to, so one more two-item kit can overfill a pack a one-item kit still fits, and on a take the supply cap is per ITEM, so one kit row can be exhausted while the next is free. `_fit_expanded_height` ends with `_card.queue_sort()` (see "THE FIT IS TWO FRAMES"). `_column` draws NO caption for an empty note, which is what keeps the builds column from carrying a blank row where the other two carry a line |
+| `ui/StartingLoadoutPanel.gd` | The free-floating card — a head carrying ONE carry meter (`_carry_meter`), the food legend row under the bar, quiet ink (`_build_food_lines`) and the refusal line (`_build_refusal_line`), in that order; three columns (kits / resources / what the resources can build); a **band switcher** drawn only while two or more windows are open, a footer control that CLOSES the card (it sends nothing: every stepper press already orders) and its own reopen pill. **`AutoSizingPanel`, not `PanelCard` + `DockScrollFit`** (`panel-framework.md`): it is measured against the ROOM. **ONE NODE CARRIES BOTH STATES** — the card and the pill are two children and exactly one is visible, so one fit and one placement serve the expanded and dismissed states; the fit measures whichever is showing and `_place` centres the card in the room and puts the pill at the top of it. It renders a payload and emits five intents (`dismissed` / `reopened` / `band_selected` / `kit_count_changed` / `material_units_changed`) and holds no allocation of its own — the footer control emits `dismissed` like the ✕, `commit_requested` having gone with the deferred order. **A row's `+` is enabled from the ROW's own `can_add`**, never re-derived from the meter — kits weigh what they expand to, so one more two-item kit can overfill a pack a one-item kit still fits, and on a take the supply cap is per ITEM, so one kit row can be exhausted while the next is free. `_fit_expanded_height` ends with `_card.queue_sort()` (see "THE FIT IS TWO FRAMES"). `_column` draws NO caption for an empty note, which is what keeps the builds column from carrying a blank row where the other two carry a line |
 | `ui/hud/StartingLoadoutController.gd` | The controller half, held by `HudLayer` as `_loadout`. **Holds ONE allocation PER BAND — what that band HOLDS, never a draft — every clamp, the carry remainder (`_order_load` / `_signed_carry`), a split's food (`food_brought_of`) and the "what this builds" arithmetic.** Ingests the campaign's half (`set_campaign_loadout` — the pick list, the craftable ids and the two carry weights; **the material pre-fill is read by nothing**), **the windows off the band roster** (`set_bands`, fed the player bands `HudLayer.update_band_alerts` has already filtered), the parsed equipment config (`set_equipment_config`) and the recipe book (`set_recipes`). `_write_pick` is the one press handler and the one sender; `_send_order` composes the line and queues it in `BAND_UNECHOED`; `revert_order` is the rollback `Main` reaches through `HudLayer.revert_starting_loadout`; `ingest_command_events` takes a server REFUSAL off the event stream and settles the oldest in-flight order, falling back to `BAND_HELD` when nothing else is out; `begin_snapshot` marks the snapshot boundary (see "A REFUSED ORDER IS AN EVENT ROW"). Relays `set_starting_loadout_requested` onto `HudLayer`'s and pushes its orb half through `attention_changed` |
 | `ui/hud/hud_loadout_vocab.gd` (`HudLoadoutVocab`) | The vocabulary leaf — the wire keys, the words, the measured geometry, and the **swatch ring** (`apply_palette`, registered in `HudPalette.apply`) |
 | `ui/hud/OpeningCardController.gd` | The OPENING HAND-OFF, held by `HudLayer` as `_opening` — see "THE OPENING CARD" below. Collects every tick-0 `narrative_beat` off `ingest_command_events` (de-duplicated by `tick\|label\|detail`, arrival order), takes `StartingLoadoutController.opening_grant_held`, and decides in ONE deferred `_resolve`. Owns the `OpeningCardPanel` node, parented into the HUD layer. `reset_world_state` re-arms it; `is_open` / `dismiss` back `HudLayer.is_opening_card_open` / `dismiss_opening_card`, which `Main.escape_claimant` probes BY NAME |
 | `tools/ui_preview/chapters/opening_card.gd` | The opening card's chapter, appended LAST in `CHAPTERS` because every block starts on a world boundary. Three frames (`opening_card`, `opening_card_handoff`, `opening_card_late`) and 32 checkpoints: the window-then-beats frame, the button / scrim click / ESC hand-offs, once per world, a later splinter untouched, no story, a story a snapshot late, and a story after the window shut |
-| `tools/ui_preview/chapters/starting_loadout.gd` | The preview chapter, LAST in `CHAPTERS` — seventeen frames and **178 checkpoints**, including the orb's two colours, the no-dead-space bound, the press-sends-an-order claims, the refused-send rollback, the TAKE arc appended after them (its food line, the food preview and the wire's echo, a refused take rolling the food back — `starting_loadout_take_refused` — and the back-to-back presses `_assert_card_holds_its_column` pins) and, last, the ADOPTION pair: its own band, a press made, the band's allocation re-published against a shrunken carry and taken whole, then two presses whose first echo must not pull the card back, and finally the REFUSED pair (`starting_loadout_refused`, `_refused_long`): a press reset by a `starting_loadout` event row, the line in warning ink, an earlier turn's row and a re-sent row ignored, the next press clearing it, and a long reason held to two lines; then A refused with B still in flight (`starting_loadout_refused_in_flight`: the line shown without the word "reset", B's pick kept, only B awaiting its echo, B's echo clearing the line) and B's echo plus A's refusal in ONE snapshot leaving no line. **Every fixture band publishes the last order this card sent for it** (`_held_kits`), which is what a server does. Its kit fixture is the **shipped nine-kit roster**, `none` included so the picker has something to drop. See `harness-ui-preview.md` |
+| `tools/ui_preview/chapters/starting_loadout.gd` | The preview chapter, LAST in `CHAPTERS` — seventeen frames and **180 checkpoints**, including the orb's two colours, the no-dead-space bound, the press-sends-an-order claims, the refused-send rollback, the TAKE arc appended after them (its food line, the food preview and the wire's echo, a refused take rolling the food back — `starting_loadout_take_refused` — and the back-to-back presses `_assert_card_holds_its_column` pins) and, last, the ADOPTION pair: its own band, a press made, the band's allocation re-published against a shrunken carry and taken whole, then two presses whose first echo must not pull the card back, and finally the REFUSED pair (`starting_loadout_refused`, `_refused_long`): a press reset by a `starting_loadout` event row, the line in warning ink, an earlier turn's row and a re-sent row ignored, the next press clearing it, and a long reason held to two lines; then A refused with B still in flight (`starting_loadout_refused_in_flight`: the line shown without the word "reset", B's pick kept, only B awaiting its echo, B's echo clearing the line) and B's echo plus A's refusal in ONE snapshot leaving no line. **Every fixture band publishes the last order this card sent for it** (`_held_kits`), which is what a server does. Its kit fixture is the **shipped nine-kit roster**, `none` included so the picker has something to drop. See `harness-ui-preview.md` |
 
 ## THE OPENING CARD — the world's first auto-open is the Telling's, and it hands off here
 
@@ -327,7 +335,7 @@ should be:
 ## The TAKE mode — three things change on the card, and nothing else
 
 `parent_band_id == 0` renders as a grant. A take reads the SAME carry meter against its own
-`carry_capacity` (the splinter's whole carry, not net of food); what changes is:
+`carry_capacity` (the band's whole carry); what changes is:
 
 - **Each row is ALSO capped by what the home band can SUPPLY**, through the row's own `can_add`
   rather than a meter: a kit row against the EXPANDED item supply (`_take_kit_ceiling`), a material
@@ -412,10 +420,10 @@ short declarative, one fact each**, and none of them explains a model:
 |---|---|---|
 | `PANEL_TITLE_FORMAT` | `Outfit <band>` | which band this card is for, there being more than one |
 | `PANEL_SUBTITLE_TAKE_FORMAT` | `What they take from <home band>.` | the gear comes out of the home band's ledger rather than being minted |
-| `CARRY_REMAINING_FORMAT` | `12 / 60 carry left` | the pack room left — the remainder alone; a `28 of 30 packed` clause beside it would be the same fact subtracted from itself |
+| `CARRY_REMAINING_FORMAT` | `12 / 78 carry left` | the pack room left — the remainder alone; a `28 of 30 packed` clause beside it would be the same fact subtracted from itself |
 | `KIT_CARRY_COST_FORMAT` / `MATERIAL_CARRY_COST_FORMAT` | `<items> · 2 carry` / `2 carry each` | what one more of THIS row costs, said only where it is not 1 |
-| `FOOD_BROUGHT_FORMAT` | `Brings 12 of 14 food` | the food a split walks out with, against its share |
-| `FOOD_SHORT_HINT` | `Take fewer tools to bring more food.` | the one thing to do about food under its share |
+| `FOOD_BROUGHT_FORMAT` | `Food 12 of 14` | the food a split walks out with, against its share |
+| `FOOD_FIXED_FORMAT` / `FOOD_BROUGHT_FORMAT` + `FOOD_ROOM_CLAUSE` | `Food 78` / `Food 12 of 14 · fewer tools leave room for more` | the food legend under the bar, quiet ink |
 
 The per-band arc's `SUPPLY_REMAINING_FORMAT` (*"18 / 18 left at home"*) went with the take's supply
 meters: a take reads the carry meter like a grant, and its supply caps live on the rows.
@@ -517,7 +525,7 @@ the picked and spent states.
 > `The turn orb reopens this. Ending the turn closes it for good.`
 
 Two short declaratives, one fact each, in the subtitle's quiet ink — it is guidance, not a warning.
-`HudStyle.WARN` on this card is kept for the refused-order line, a split's food hint and an
+`HudStyle.WARN` on this card is kept for the refused-order line and an
 over-carry meter. A player who has dismissed the card has no other way to learn either fact.
 
 ⛔ **IT IS NOT THE RETIRED FORFEITURE CLAIM.** That one said COMMITTING shuts the window, which is

@@ -37,8 +37,8 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    carry::{carry_capacity, goods_cut, scale_units_by_ratio, CarryConfig, CarryLoad, GoodsCut},
-    components::{BandEquipment, BandId, PopulationCohort, StartingUnit},
+    carry::{goods_cut, scale_units_by_ratio, CarryConfig, CarryLoad, GoodsCut},
+    components::{BandEquipment, BandId, LocalStore, PopulationCohort, StartingUnit},
     equipment_config::EquipmentConfigHandle,
     expedition_config::{ExpeditionConfig, ExpeditionConfigHandle},
     materials_config::MaterialsConfigHandle,
@@ -67,17 +67,24 @@ pub const OPENING_MATERIAL_READING: f32 = 0.5;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LoadoutSupply {
     /// **MINTED against the world's opening grant.** The spawned band's window, and a splinter of a
-    /// band whose own grant is still unspent — that splinter takes a slice of the grant, deducted
-    /// from the parent's, so no load unit is minted twice or lost.
+    /// band whose own grant is still unspent. Each band's grant is its own carry: the opening
+    /// band's and a parent's after a split are [`crate::carry::band_carry_capacity`], a splinter's
+    /// is `carry_capacity(asked)` — so across a split the two carries add up to the parent's before
+    /// it, and no load unit is minted twice or lost.
     Grant {
-        /// **The load this window may mint**, in [`CarryLoad`] units: the spawned band's
-        /// `carry_capacity(workers)` (its larder does NOT count — it has not walked anywhere),
-        /// or a splinter's slice of the parent's remaining grant (its food fills what the minted goods
-        /// leave). **Derived, never configured.**
-        carry_budget: Scalar,
+        /// **The carry this window was struck at**, in [`CarryLoad`] units — goods AND food — or
+        /// `None` when the window's carry is **the band's own, read live**
+        /// ([`crate::carry::band_carry_capacity`]): the opening band, and a granting parent after a
+        /// split. A splinter's is `Some(carry_capacity(asked))`, the workers who crossed. Read it
+        /// through [`LoadoutWindow::carry`]. **Derived, never configured.**
+        ///
+        /// Live rather than struck for a band's own carry because the world-build pass runs one
+        /// demographic step after the window opens: a struck value would leave the card a few
+        /// tenths off the band panel's `carryCapacity`.
+        carry_budget: Option<Scalar>,
     },
     /// **MOVED out of `parent`'s ledger** — a splinter of a band with no grant left. The cap is what
-    /// the parent can supply **and** [`Self::carry_budget`], and the standing take is the record of
+    /// the parent can supply **and** its `carry_budget` ([`Self::struck_carry`]), and the standing take is the record of
     /// what has already crossed.
     Parent {
         /// The band this take is drawn from.
@@ -101,13 +108,12 @@ pub enum LoadoutSupply {
 }
 
 impl LoadoutSupply {
-    /// **The load this window's order is checked against**, on either arm: the band's whole carry
-    /// (a splinter's food fills what its goods leave). In [`CarryLoad`] units.
-    pub fn carry_budget(&self) -> Scalar {
+    /// **The carry this window was struck at**, or `None` when it is the band's own, read live —
+    /// see [`LoadoutWindow::carry`], which is what every reader asks.
+    pub fn struck_carry(&self) -> Option<Scalar> {
         match self {
-            LoadoutSupply::Grant { carry_budget } | LoadoutSupply::Parent { carry_budget, .. } => {
-                *carry_budget
-            }
+            LoadoutSupply::Grant { carry_budget } => *carry_budget,
+            LoadoutSupply::Parent { carry_budget, .. } => Some(*carry_budget),
         }
     }
 
@@ -140,8 +146,10 @@ pub struct LoadoutWindow {
     pub kits: Vec<KitAllocation>,
     /// The material rows the last accepted order named, the twin of [`Self::kits`].
     pub materials: Vec<MaterialAllocation>,
-    /// **A splinter's larder dowry** — `None` on a window opened by no split (the opening band,
-    /// whose larder is not carried anywhere). See [`SplitDowry`].
+    /// **A splinter's larder dowry** — `None` on a window opened by no split (the opening band),
+    /// whose larder is **fixed**: it counts against the carry and cannot be traded for tools,
+    /// because there is nowhere to leave it. See [`SplitDowry`] and
+    /// [`LoadoutWindow::food_is_fixed`].
     pub dowry: Option<SplitDowry>,
 }
 
@@ -196,6 +204,12 @@ impl SplitDowry {
     }
 }
 
+/// **A larder's carry mass** — `food + fodder_carry_weight × fodder`, the food tier of
+/// [`CarryLoad`].
+pub fn larder_mass(larder: &LocalStore, carry_cfg: &CarryConfig) -> Scalar {
+    crate::carry::held_load(larder, None).food_mass(carry_cfg)
+}
+
 /// **The goods budget a split's DEFAULT is fitted to** — so an untouched split takes some of
 /// everything.
 ///
@@ -221,6 +235,35 @@ impl LoadoutWindow {
             kits: Vec::new(),
             materials: Vec::new(),
             dowry: None,
+        }
+    }
+
+    /// **Whether this band's food is FIXED rather than yielding to its goods** — true on a window
+    /// with no [`SplitDowry`] (the opening band, and it stays true for a granting parent after its
+    /// splits). A fixed larder counts against the carry and the goods get what it leaves; a
+    /// splinter's food fills what its goods leave instead.
+    pub fn food_is_fixed(&self) -> bool {
+        self.dowry.is_none()
+    }
+
+    /// **The band's whole carry**, goods and food together — the window's struck carry, or the
+    /// band's own live carry ([`crate::carry::band_carry_capacity`]) when it has none. `cohort` is
+    /// the window's own band.
+    pub fn carry(&self, cohort: &PopulationCohort, carry_cfg: &CarryConfig) -> Scalar {
+        self.supply
+            .struck_carry()
+            .unwrap_or_else(|| crate::carry::band_carry_capacity(cohort, carry_cfg))
+    }
+
+    /// **The goods load an order may weigh** — what `OverCarry` refuses above. The whole carry when
+    /// the food yields to goods; the carry less the band's live larder mass (saturating at zero)
+    /// when the larder is fixed. `cohort` is the window's own band.
+    pub fn goods_allowance(&self, cohort: &PopulationCohort, carry_cfg: &CarryConfig) -> Scalar {
+        let carry = self.carry(cohort, carry_cfg);
+        if self.food_is_fixed() {
+            (carry - larder_mass(&cohort.stores, carry_cfg)).max(scalar_zero())
+        } else {
+            carry
         }
     }
 
@@ -443,25 +486,22 @@ pub fn close_opening_window(
     }
 }
 
-/// **Stamp each faction's spawned band's window open with the carry budget the world just built.**
-/// A Startup system, chained after the spawn, because the budget is the *spawned band's* worker count
-/// × one worker's pack rather than anything a config states.
+/// **Stamp each faction's spawned band's window open with the carry the world just built.**
+/// A Startup system, chained after the spawn, because the carry is the *spawned band's* working
+/// value × one worker's pack rather than anything a config states.
 ///
-/// **The spawned larder does NOT count against it** — the band has not walked anywhere. The budget is
-/// the whole `carry_capacity(workers)` (17 × 8.0 = 136 on the shipped profile).
-///
-/// **It is struck on the whole spawn-time head count**, not on the band's continuous working value
-/// ([`crate::carry::band_carry_workers`], which every later reading of a band's own carry uses). The
-/// grant is a budget struck once, when the band is made, and then spent by orders and partitioned by
-/// splits — it is not re-read as the band's working value drifts, so it is counted in the same whole
-/// people `party_workers` spawns.
+/// **One rule: what a band carries includes its food.** The window's carry is
+/// [`crate::carry::band_carry_capacity`] — the band's actual working-age value, the same count the
+/// long move and the published `carryCapacity` read, so the card and the band panel agree. The
+/// spawned larder is **fixed** (there is nowhere to leave it), so it counts against that carry and
+/// the goods may mint what it leaves ([`LoadoutWindow::goods_allowance`]): about
+/// `17.79 × 8.0 − 82` on the shipped profile.
 ///
 /// A faction with no starting band opens nothing: there is nobody to outfit.
 pub fn stamp_starting_loadout(
     mut loadout: ResMut<StartingLoadout>,
     profile: Option<Res<ActiveStartProfile>>,
     bands: Query<(&BandId, &PopulationCohort), With<StartingUnit>>,
-    demographics: Option<Res<crate::demographics_config::DemographicsConfigHandle>>,
     expedition: Option<Res<ExpeditionConfigHandle>>,
     equipment: Option<Res<EquipmentConfigHandle>>,
 ) {
@@ -474,28 +514,21 @@ pub fn stamp_starting_loadout(
     // be placed first and leave every other people unoutfitted, with nothing on screen to say why.
     // Worldgen is the one moment at which exactly the spawned bands exist, so within a faction the
     // lowest id is that faction's opening band by construction.
-    let mut opening_bands: BTreeMap<FactionId, (BandId, u32)> = BTreeMap::new();
+    let mut opening_bands: BTreeMap<FactionId, (BandId, &PopulationCohort)> = BTreeMap::new();
     for (band, cohort) in bands.iter() {
         opening_bands
             .entry(cohort.faction)
-            .and_modify(|(current, size)| {
+            .and_modify(|(current, opening)| {
                 if *band < *current {
                     *current = *band;
-                    *size = cohort.size;
+                    *opening = cohort;
                 }
             })
-            .or_insert((*band, cohort.size));
+            .or_insert((*band, cohort));
     }
     if opening_bands.is_empty() {
         return;
     }
-    let working_fraction = demographics
-        .map(|handle| handle.get().initial_distribution.working)
-        .unwrap_or_else(|| {
-            crate::demographics_config::DemographicsConfig::builtin()
-                .initial_distribution
-                .working
-        });
     let expedition = expedition
         .map(|handle| handle.get())
         .unwrap_or_else(ExpeditionConfig::builtin);
@@ -503,19 +536,19 @@ pub fn stamp_starting_loadout(
         .map(|handle| handle.get())
         .unwrap_or_else(crate::equipment_config::EquipmentConfig::builtin);
     let opening = &profile.profile().overrides().opening_loadout;
-    for (faction, (band, size)) in opening_bands {
-        let workers = crate::systems::party_workers(size, working_fraction) as u32;
-        let carry_budget = carry_capacity(workers, &expedition.carry);
-        loadout.open(
-            band,
-            LoadoutWindow::opened(LoadoutSupply::Grant { carry_budget }),
-        );
+    for (faction, (band, cohort)) in opening_bands {
+        // The band's own carry, read live (`carry_budget: None`).
+        let window = LoadoutWindow::opened(LoadoutSupply::Grant { carry_budget: None });
+        let carry_budget = window.carry(cohort, &expedition.carry);
+        let goods_allowance = window.goods_allowance(cohort, &expedition.carry);
+        loadout.open(band, window);
         info!(
             target: "shadow_scale::campaign",
             faction = faction.0,
             band = band.0,
-            workers,
+            workers = cohort.working.to_f32(),
             carry_budget = carry_budget.to_f32(),
+            goods_allowance = goods_allowance.to_f32(),
             "starting_loadout.window.opened"
         );
         // **The pre-fill's only sanity check, and it happens HERE** — this is the first and only
@@ -525,7 +558,7 @@ pub fn stamp_starting_loadout(
         let fitted = fit_to_carry(
             &opening.kit_defaults,
             &opening.material_defaults,
-            carry_budget,
+            goods_allowance,
             &equipment,
             &expedition.carry,
         );
@@ -533,7 +566,7 @@ pub fn stamp_starting_loadout(
             warn!(
                 target: "shadow_scale::campaign",
                 faction = faction.0,
-                carry_budget = carry_budget.to_f32(),
+                goods_allowance = goods_allowance.to_f32(),
                 declared = allocation_load(
                     &equipment,
                     &expedition.carry,
@@ -600,10 +633,10 @@ pub fn outfit_opening_bands(world: &mut World) {
 ///
 /// # The budget is the BAND's, not the campaign's
 ///
-/// [`fit_to_carry`] fits the kit and material defaults **together** to this band's own
-/// `carry_budget` — one proportional, floored, remainder-unspent rule on one currency. A splinter's
-/// budget is a slice of the grant net of its food, so the campaign's defaults are routinely clamped
-/// here.
+/// [`fit_to_carry`] fits the kit and material defaults **together** to this band's own goods
+/// allowance ([`LoadoutWindow::goods_allowance`]) — materials before tools, on one currency. The
+/// opening band's is its carry less its fixed larder; a splinter's is its whole carry, and its
+/// default is then fitted with its food share so both ride ([`split_default_goods_budget`]).
 ///
 /// **Only a grant window is outfitted.** A take window mints nothing and it has a default take of
 /// its own already standing; this returns without touching it.
@@ -611,12 +644,18 @@ pub fn outfit_opening_bands(world: &mut World) {
 /// A refusal is structurally impossible — a fitted allocation fits by construction and its ids come
 /// from a config the boot validated against both rosters — so one is logged rather than handled.
 pub(crate) fn outfit_band_with_defaults(world: &mut World, faction: FactionId, band: BandId) {
-    let Some(carry_budget) = world
+    let Some(window) = world
         .get_resource::<StartingLoadout>()
         .and_then(|loadout| loadout.window(band))
         .filter(|window| window.grants())
-        .map(|window| window.supply.carry_budget())
+        .cloned()
     else {
+        return;
+    };
+    let Some(entity) = entity_of(world, band) else {
+        return;
+    };
+    let Some(cohort) = world.get::<PopulationCohort>(entity).cloned() else {
         return;
     };
     let Some(profile) = world.get_resource::<ActiveStartProfile>() else {
@@ -625,20 +664,18 @@ pub(crate) fn outfit_band_with_defaults(world: &mut World, faction: FactionId, b
     let opening = &profile.profile().overrides().opening_loadout;
     let equipment = world.resource::<EquipmentConfigHandle>().get();
     let expedition = carry_config(world);
+    let carry_budget = window.carry(&cohort, &expedition.carry);
     let mut fitted = fit_to_carry(
         &opening.kit_defaults,
         &opening.material_defaults,
-        carry_budget,
+        window.goods_allowance(&cohort, &expedition.carry),
         &equipment,
         &expedition.carry,
     );
     // **A splinter's default takes some of everything**: when the fitted defaults and its full food
     // share do not both fit, the goods are fitted to their proportional part of the carry and the
     // apply below fills the rest with food ([`split_default_goods_budget`]).
-    let dowry = world
-        .get_resource::<StartingLoadout>()
-        .and_then(|loadout| loadout.window(band))
-        .and_then(|window| window.dowry.clone());
+    let dowry = window.dowry.clone();
     if let Some(dowry) = &dowry {
         let kits: BTreeMap<String, u32> = fitted.kits.iter().cloned().collect();
         let materials: BTreeMap<String, u32> = fitted.materials.iter().cloned().collect();
@@ -867,7 +904,8 @@ pub(crate) fn expand_kits(
 /// # One carry check, then the two supplies
 ///
 /// The whole order's load (its expanded items and material units, [`order_load`]) must fit the
-/// window's [`LoadoutSupply::carry_budget`] on **both** arms, or it is refused `OverCarry`.
+/// window's [`LoadoutWindow::goods_allowance`] on **both** arms, or it is refused `OverCarry` — the
+/// whole carry when the band's food yields to goods, the carry less its larder when it is fixed.
 ///
 /// - [`LoadoutSupply::Grant`] — both halves are built from **empty** and minted. The material reset
 ///   is account-aware and the store is what makes it so: a band's `LocalStore` holds its food beside
@@ -938,8 +976,14 @@ pub fn apply_starting_loadout(
     // against what it may mint, a take against its goods allowance. On a take it is asked after the
     // parent-supply and onward-take checks, which name the line the player must change.
     let wanted_items = expand_kits(&equipment, kits);
-    let load = order_load(&carry_config(world).carry, &wanted_items, material_total);
-    let capacity = window.supply.carry_budget();
+    let carry_cfg = carry_config(world).carry.clone();
+    let load = order_load(&carry_cfg, &wanted_items, material_total);
+    let Some(capacity) = world
+        .get::<PopulationCohort>(entity)
+        .map(|cohort| window.goods_allowance(cohort, &carry_cfg))
+    else {
+        return Err(LoadoutRejection::NoStartingBand);
+    };
     let over_carry = (load > capacity).then_some(LoadoutRejection::OverCarry { load, capacity });
 
     match &window.supply {
@@ -1041,19 +1085,23 @@ pub fn apply_starting_loadout(
 /// parent that no longer holds the food gives what it has, and what actually crossed is recorded. A
 /// window with no dowry (the opening band) is left alone.
 pub(crate) fn resolve_split_food(world: &mut World, band: BandId, goods_load: Scalar) {
-    let Some((carry, dowry)) = world
+    let Some(window) = world
         .get_resource::<StartingLoadout>()
         .and_then(|loadout| loadout.window(band))
-        .and_then(|window| {
-            window
-                .dowry
-                .clone()
-                .map(|dowry| (window.supply.carry_budget(), dowry))
-        })
+        .cloned()
     else {
         return;
     };
+    let Some(dowry) = window.dowry.clone() else {
+        return;
+    };
     let carry_cfg = carry_config(world).carry.clone();
+    let Some(carry) = entity_of(world, band)
+        .and_then(|entity| world.get::<PopulationCohort>(entity))
+        .map(|cohort| window.carry(cohort, &carry_cfg))
+    else {
+        return;
+    };
     let share = dowry.share_mass(&carry_cfg);
     let room = (carry - goods_load).max(scalar_zero());
     let (food_target, fodder_target) = if room >= share {

@@ -1033,13 +1033,16 @@ pub fn build_headless_app() -> App {
             Startup,
             (
                 systems::spawn_initial_world,
-                // **After the spawn, because the kit budget is the spawned band's own worker
-                // count** — one kit per working-age hand is derived from the band, not configured.
+                // **The brackets and the larder first** — the window's carry is the band's
+                // working-age value × one pack, and its fixed larder counts against it, so both
+                // must exist before the window is struck.
+                systems::apply_starting_inventory_effects,
+                // **After the spawn and the seeding, because the carry is the spawned band's own
+                // working-age value** — derived from the band, not configured.
                 starting_loadout::stamp_starting_loadout,
                 // **And outfit it at once.** A band holds its default from the moment it exists —
                 // see `outfit_band_with_defaults`, which is also what a split runs on its splinter.
                 starting_loadout::outfit_opening_bands,
-                systems::apply_starting_inventory_effects,
                 hydrology::generate_hydrology,
                 systems::apply_tag_budget_solver,
                 systems::apply_biome_palette_clamp,

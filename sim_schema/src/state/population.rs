@@ -2251,19 +2251,23 @@ pub struct BandLoadoutWindowState {
     /// The material twin of [`Self::parent_item_supply`], in whole units.
     #[serde(default)]
     pub parent_material_supply: Vec<BandLoadoutSupplyRowState>,
-    /// **The goods allowance this window's order is checked against**, in food-unit load — a grant's
-    /// mint budget (the opening band's whole carry, its larder not counted; a splinter's slice net of
-    /// its food), or a take's `workers × carry − food mass`. Appended last.
+    /// **The band's whole carry**, goods and food together, in food-unit load. The goods allowance
+    /// an order is checked against is `carry_capacity − food_carried` when [`Self::food_fixed`], and
+    /// `carry_capacity` otherwise. Appended last.
     #[serde(default)]
     pub carry_capacity: f32,
-    /// **A splinter's food share**, in load — the most food it may take; goods load first and food
-    /// fills `min(food_share, carry_capacity − goods load)`. `0` on a window no split opened.
-    /// Appended last.
+    /// **The band's food share**, in load. On a splinter, the most food it may take — goods load
+    /// first and food fills `min(food_share, carry_capacity − goods load)`. On a fixed larder, the
+    /// larder's mass. Appended last.
     #[serde(default)]
     pub food_share: f32,
-    /// The food load the splinter holds now, as the server resolved it. Appended last.
+    /// The food load the band holds now, as the server resolved it. Appended last.
     #[serde(default)]
     pub food_carried: f32,
+    /// **Whether the band's food is FIXED** — its larder counts against the carry and does not yield
+    /// to goods (the opening band, a granting parent). `false` on a splinter. Appended last.
+    #[serde(default)]
+    pub food_fixed: bool,
 }
 
 /// One cap row of [`BandLoadoutWindowState`]: how many units of `id` this take may claim.

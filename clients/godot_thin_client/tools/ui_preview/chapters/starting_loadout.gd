@@ -44,7 +44,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 178
+const EXPECTED_CHECKPOINTS := 180
 
 const Q := preload("res://tools/ui_preview/node_query.gd")
 ## The walk's shared band fixtures — `with_band_id` is what stamps a cohort's durable id and its name,
@@ -74,6 +74,13 @@ const WORKING_AGE := 17
 ## with 12 left; three `big_game` presses take it to 54, and three more fill it EXACTLY — every step
 ## is 2, so the pack closes on the unit rather than leaving a fraction no press can spend.
 const CARRY_CAPACITY := 60.0
+## ⛔ **THE OPENING BAND'S LARDER, IN LOAD — a FIXED larder** (`food_fixed`): it counts against the
+## carry without yielding to goods, so the window publishes the WHOLE carry (goods room + larder) and
+## the goods allowance is that less the larder — `CARRY_CAPACITY` above, unchanged. The card states it
+## as the bar's food segment and `Food 18`, which is what says why the goods room is smaller.
+const GRANT_FOOD := 18.0
+const GRANT_WHOLE_CARRY := CARRY_CAPACITY + GRANT_FOOD
+const GRANT_FOOD_LINE := "Food 18"
 ## The shipped `trade.item_carry_weight` / `trade.material_carry_weight`.
 const ITEM_CARRY_WEIGHT := 1.0
 const MATERIAL_CARRY_WEIGHT := 1.0
@@ -197,16 +204,16 @@ const TAKE_CARRY_CAPACITY := 18.0
 ## hint nowhere and make "a press moves the food line" a claim about nothing.
 const TAKE_FOOD_SHARE := 14.0
 ## The food line the standing take opens on: the room it leaves, 12 of the 14.
-const TAKE_FOOD_OPENING := "Brings 12 of 14 food"
+const TAKE_FOOD_OPENING := "Food 12 of 14"
 ## …after ONE more fibre, before the server answers: the card's own preview, 11 of the 14.
-const TAKE_FOOD_PREVIEW := "Brings 11 of 14 food"
+const TAKE_FOOD_PREVIEW := "Food 11 of 14"
 ## ⛔ **THE WIRE'S FIGURE WINS ONCE THE ORDER IS ECHOED.** Staged off the card's own `min()` (which reads
 ## 11 for the echoed order) so the two readings are distinguishable — a card that kept previewing after
 ## the echo reads 11 here, one that reads the wire reads 10. No other property of this fixture moves.
 const TAKE_FOOD_ECHOED := 10.0
 ## What every food line begins with, for reporting the line that WAS drawn when a claim fails.
-const FOOD_LINE_NEEDLE := "Brings "
-const TAKE_FOOD_ECHOED_LINE := "Brings 10 of 14 food"## ⛔ **THE DEFAULT TAKE THE SPLIT ALREADY MOVED, kit-denominated and published on the window** — and
+const FOOD_LINE_NEEDLE := "Food "
+const TAKE_FOOD_ECHOED_LINE := "Food 10 of 14"## ⛔ **THE DEFAULT TAKE THE SPLIT ALREADY MOVED, kit-denominated and published on the window** — and
 ## the card OPENS on it. It is what makes an untouched `Set out` an exact no-op instead of an order to
 ## take nothing, which is what an empty card would order the moment a stepper is pressed.
 ## Non-zero and unequal to the stepper's floor, so a card that opened at zero — or at one — fails on
@@ -238,12 +245,16 @@ const TAKE_DEFAULT_LOAD := 6.0
 
 ## The words a TAKE card must carry, as needles rather than composed formats — an expectation taken
 ## from the const under test moves with it and passes on the very rename it exists to catch.
-const TAKE_METER_OPENING := "12 / 18 carry left"
+## ⛔ **WHAT IS FREE, NOT WHAT THE GOODS LEAVE**: 18 − 6 goods − 12 food = 0. The goods leave 12, and
+## the food fills exactly that, so a meter reading `12 /` would offer room nothing can use.
+const TAKE_METER_OPENING := "0 / 18 carry left"
 const TAKE_METER_NEEDLE := "/ 18 carry left"
 const TAKE_SUBTITLE_NEEDLE := "take from"
 ## …and the GRANT's carry, asserted ABSENT from a take card and present on the grant again — one
 ## meter, two bands, two capacities, so the denominator is what tells the cards apart.
-const GRANT_METER_NEEDLE := "/ 60 carry left"
+const GRANT_METER_NEEDLE := "/ 78 carry left"
+## …and the grant's opening meter, what is actually free: 78 − 48 goods − 18 food.
+const GRANT_METER_OPENING := "12 / 78 carry left"
 ## The orb noun a take may never use, for the same reason. Supply left at home is lost by nobody.
 const TAKE_FORBIDDEN_NOUN := "unspent"
 
@@ -460,7 +471,16 @@ func _assert_the_kits_the_band_holds() -> void:
 	h._assert_hud("loadout — the carry meter weighs what is held (%.1f of %.1f, want %.1f)"
 			% [_controller().carry_spent(), _controller().carry_capacity(), DEFAULT_LOAD],
 		is_equal_approx(_controller().carry_spent(), DEFAULT_LOAD)
-			and is_equal_approx(_controller().carry_capacity(), CARRY_CAPACITY))
+			and is_equal_approx(_controller().carry_capacity(), GRANT_WHOLE_CARRY))
+	# ⛔ **A FIXED LARDER IS PART OF THE BAR, AND THE METER SAYS WHAT IS ACTUALLY FREE.** The window's
+	# carry is the WHOLE carry; the meter is that less the goods AND the food, and the food states
+	# itself on its legend line. A meter of `30 /` (goods only) passes the claim above and fails this.
+	h._assert_hud("loadout — the meter reads what is free with the larder in it (`%s`)"
+			% GRANT_METER_OPENING,
+		Q.has_label_containing(_panel(), GRANT_METER_OPENING))
+	h._assert_hud("loadout — the opening band's larder is the bar's food segment, `%s` (got `%s`)"
+			% [GRANT_FOOD_LINE, Q.label_containing(_panel(), FOOD_LINE_NEEDLE)],
+		_food_line_text() == GRANT_FOOD_LINE)
 	# ⛔ **WHAT ONE MORE COSTS IS ON THE ROW WHERE IT IS NOT OBVIOUS** — a two-item kit says `2 carry`,
 	# and a one-item kit says nothing. The pair is the claim: a row that always or never said it passes
 	# one half.
@@ -1177,12 +1197,13 @@ func _assert_window_shuts() -> void:
 ## **The card stands ITSELF up on the splinter**, exactly as it did on the spawned band — a player who
 ## has just split a band should not have to find the screen.
 func _take_window_opens_on_the_splinter() -> void:
-	# ⛔ **THE GRANT BRINGS NO FOOD, SO ITS CARD DRAWS NO FOOD LINE** — taken before the splinter's
-	# window stands its own card up, while the grant is still the subject. Paired with the take's
-	# line below, or "draws a food line" passes on a card that draws one on every window.
-	h._assert_hud("loadout/take — the GRANT's card draws no food line (its food share is 0)",
-		Q.find_meta_node(_panel(), HudLoadoutVocab.FOOD_LINE_META) == null
-			and not _controller().is_take())
+	# ⛔ **A FIXED LARDER STATES ITS MASS AND NO CHOICE** — taken before the splinter's window stands
+	# its own card up, while the grant is still the subject. The opening band cannot trade its food for
+	# tools, so its line carries no "fewer tools" clause; the splinter's below does. Paired, or "the
+	# clause appears" passes on a card that prints it on every window.
+	h._assert_hud("loadout/take — the GRANT's food line is its fixed larder alone (`%s`)"
+			% _food_line_text(),
+		_food_line_text() == GRANT_FOOD_LINE and not _controller().is_take())
 	h._hud.update_band_alerts([_grant_band(), _splinter_band()])
 	await h._settle()
 	h._assert_hud("loadout/take — the splinter's window opens the card on the SPLINTER (subject %d)"
@@ -1234,12 +1255,14 @@ func _take_window_opens_on_the_splinter() -> void:
 			% _stepper_count(HudLoadoutVocab.KIT_ROW_META, "trapping"),
 		_stepper_count(HudLoadoutVocab.KIT_ROW_META, "trapping") == 0)
 	# ⛔ **THE FOOD A SPLIT BRINGS IS THE ROOM THE GOODS LEAVE** — 18 − 6 = 12 of a 14 share, and the
-	# amber hint saying what to do about it. The line alone passes on a card that never hints.
-	h._assert_hud("loadout/take — the food line reads `%s`, under its share" % TAKE_FOOD_OPENING,
-		Q.has_label_containing(_panel(), TAKE_FOOD_OPENING))
-	h._assert_hud("loadout/take — …and the amber hint says to take fewer tools",
-		_food_hint_ink() == HudStyle.WARN
-			and Q.has_label_containing(_panel(), HudLoadoutVocab.FOOD_SHORT_HINT))
+	# choice that would bring more, on ONE line.
+	h._assert_hud("loadout/take — the food line reads `%s`, with the choice beside it (`%s`)"
+			% [TAKE_FOOD_OPENING + HudLoadoutVocab.FOOD_ROOM_CLAUSE, _food_line_text()],
+		_food_line_text() == TAKE_FOOD_OPENING + HudLoadoutVocab.FOOD_ROOM_CLAUSE)
+	# ⛔ **AND IT IS A CHOICE, NOT A FAULT: QUIET INK, NEVER AMBER.** It was a separate amber line; the
+	# maintainer read a warning into a trade-off.
+	h._assert_hud("loadout/take — …in the quiet ink, never the warning one",
+		_food_line_ink() == HudStyle.INK_DIM and _food_line_ink() != HudStyle.WARN)
 	await _assert_no_dead_space("take")
 	await h._save("starting_loadout_take")
 
@@ -1820,12 +1843,17 @@ func _window_goods_load(kits: Array, materials: Array) -> float:
 		load_total += MATERIAL_CARRY_WEIGHT * int(row.get(HudLoadoutVocab.MATERIAL_DEFAULT_UNITS_KEY, 0))
 	return load_total
 
-## The amber hint's ink, or transparent where no hint is drawn.
-func _food_hint_ink() -> Color:
-	var hint := Q.find_meta_node(_panel(), HudLoadoutVocab.FOOD_HINT_META) as Label
-	if hint == null:
+## The food legend line's whole text, `""` where no line is drawn.
+func _food_line_text() -> String:
+	var line := Q.find_meta_node(_panel(), HudLoadoutVocab.FOOD_LINE_META) as Label
+	return line.text if line != null else ""
+
+## The food legend line's ink, or transparent where no line is drawn.
+func _food_line_ink() -> Color:
+	var line := Q.find_meta_node(_panel(), HudLoadoutVocab.FOOD_LINE_META) as Label
+	if line == null:
 		return Color(0, 0, 0, 0)
-	return hint.get_theme_color("font_color")
+	return line.get_theme_color("font_color")
 
 func _held_kits(entity: int, fallback: Array) -> Array:
 	var order := _last_order_for(entity)
@@ -1889,7 +1917,12 @@ func _campaign() -> Dictionary:
 func _grant_band() -> Dictionary:
 	return _band(HOME_BAND_ENTITY, {
 		HudLoadoutVocab.OPEN_KEY: true,
-		HudLoadoutVocab.CARRY_CAPACITY_KEY: CARRY_CAPACITY,
+		# The WHOLE carry, its larder FIXED inside it — the opening band, and the parent whose grant is
+		# still open after the split below, are both this window.
+		HudLoadoutVocab.CARRY_CAPACITY_KEY: GRANT_WHOLE_CARRY,
+		HudLoadoutVocab.FOOD_SHARE_KEY: GRANT_FOOD,
+		HudLoadoutVocab.FOOD_CARRIED_KEY: GRANT_FOOD,
+		HudLoadoutVocab.FOOD_FIXED_KEY: true,
 		# **A GRANT NAMES NO PARENT.** Its picks mint; nothing moves off another band.
 		HudLoadoutVocab.PARENT_BAND_ID_KEY: HudLoadoutVocab.GRANT_PARENT_BAND_ID,
 		HudLoadoutVocab.WINDOW_KITS_KEY: _held_kits(HOME_BAND_ENTITY, [
@@ -1936,6 +1969,7 @@ func _splinter_band(food_carried: float = -1.0) -> Dictionary:
 		HudLoadoutVocab.CARRY_CAPACITY_KEY: TAKE_CARRY_CAPACITY,
 		HudLoadoutVocab.FOOD_SHARE_KEY: TAKE_FOOD_SHARE,
 		HudLoadoutVocab.FOOD_CARRIED_KEY: food_carried,
+		HudLoadoutVocab.FOOD_FIXED_KEY: false,
 		HudLoadoutVocab.PARENT_BAND_ID_KEY: _band_id(HOME_BAND_ENTITY),
 		# **THE DEFAULT TAKE, kit-denominated** — what the split already moved, which is what the card
 		# draws and what every press re-sends beside itself. Its expansion (2 spears, 2 sleds) is inside

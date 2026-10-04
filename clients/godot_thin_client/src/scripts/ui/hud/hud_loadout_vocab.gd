@@ -64,17 +64,20 @@ const BAND_ID_KEY := "band_id"
 ## False once THIS band's window has shut. It shuts on the turn advance and on nothing else, so it is
 ## never a success signal: an accepted order leaves it open, which is what lets a pick be revised.
 const OPEN_KEY := "open"
-## ⛔ **THE ONE CAP BOTH WINDOWS SHARE — the band's TOTAL CARRY, in food-unit load** (#732). The
-## band's workers × per-worker carry. It is NOT net of food: a split loads GOODS first and food fills
-## the room they leave, so an order's goods load is compared against the whole of it.
+## ⛔ **THE BAND'S WHOLE CARRY — goods AND food, in food-unit load** (#732), on every window: the
+## band's workers × per-worker carry, the same number as the cohort's own `carry_capacity`. It is the
+## carry bar's whole width. What an order's GOODS may weigh depends on `food_fixed` (below).
 const CARRY_CAPACITY_KEY := "carry_capacity"
-## ⛔ **A SPLINTER'S FOOD, in load.** `food_share` is the most it may take (its full proportional
-## larder share), `food_carried` what it holds now. Food that crosses is
-## `min(food_share, carry_capacity − goods load)`, re-resolved by the server on every accepted order —
-## so `food_carried` is the TRUTH and the card's own `min()` is only a preview while an order is out.
-## Both 0 on a window no split opened, which draws no food line.
+## ⛔ **THE BAND'S FOOD, in load.** On a SPLINTER (`food_fixed` false) `food_share` is the most it may
+## take (its full proportional larder share) and `food_carried` what it holds now; food that crosses
+## is `min(food_share, carry_capacity − goods load)`, re-resolved by the server on every accepted
+## order, so `food_carried` is the TRUTH and the card's own `min()` is a preview while an order is out.
+## On a FIXED larder (`food_fixed` true — the opening band, a parent whose grant is still open after
+## a split) both are the larder's mass, and it counts against the carry WITHOUT yielding: the goods
+## allowance is `carry_capacity − food_carried`.
 const FOOD_SHARE_KEY := "food_share"
 const FOOD_CARRIED_KEY := "food_carried"
+const FOOD_FIXED_KEY := "food_fixed"
 ## ⛔ **WHICH OF THE TWO WINDOWS THIS IS — where the gear comes from.** `GRANT_PARENT_BAND_ID` means
 ## the picks MINT. Anything else is the id of the band this take is drawn FROM: the picks MOVE gear
 ## out of that band's ledger, and each row is also capped by the two supplies below.
@@ -166,23 +169,31 @@ const BUILDS_HEAD := "What the resources can build"
 ## meant to remove.
 const BUILDS_NOTE := ""
 
-## ⛔ **ONE METER FOR THE BAND, AND IT SAYS THE CARRY REMAINDER AND NOTHING ELSE** (#732). Kits and
-## resources are spent from one pack, so the two point meters became this one; a second clause
-## ("28 of 30 packed") is the same fact subtracted from itself, and the bar already draws the spent
-## part. Both windows read it the same way: what is left is the band's own pack room, whether it
-## mints or takes. **A negative remainder is printed negative**, in warning ink — the adoption rule
-## says a band the sim left over its carry must READ as over.
+## ⛔ **ONE METER FOR THE BAND, AND IT SAYS WHAT IS ACTUALLY FREE** (#732): `carry_capacity − goods
+## load − food`, over the whole carry. Kits, resources AND food share one pack, so the bar draws all
+## three and the number is the room none of them is using. A splinter whose food fills the room its
+## goods leave reads `0 /`, never the goods room the food has already taken. **A negative remainder
+## is printed negative**, in warning ink — the adoption rule says a band the sim left over its carry
+## must READ as over.
 const CARRY_REMAINING_FORMAT := "%s / %s carry left"
 ## …what ONE more of a row costs in that currency, said only where it is not obvious — a kit that
 ## puts two items in hands weighs 2, a one-item kit at weight 1 needs no note. `CARRY_OBVIOUS_UNIT_LOAD`
 ## is the "not obvious" test: the meter's own unit.
 const KIT_CARRY_COST_FORMAT := "%s · %s carry"
 const MATERIAL_CARRY_COST_FORMAT := "%s carry each"
-## **THE FOOD A SPLIT BRINGS, as a plain reading under the meter**, on a window whose `food_share` is
-## above zero — the food dial without a food row: the goods it takes are what the food has to give way
-## to. Under its share, the amber clause beneath says the one thing to do about it.
-const FOOD_BROUGHT_FORMAT := "Brings %s of %s food"
-const FOOD_SHORT_HINT := "Take fewer tools to bring more food."
+## ⛔ **THE FOOD IS THE BAR'S OWN SEGMENT, AND THIS IS ITS LEGEND ENTRY** — one line under the bar, in
+## the quiet ink, beside a swatch of `FOOD_SEGMENT_COLOR`. A fixed larder states its mass, so the
+## opening band's card says why its goods room is smaller than its carry. A splinter states what it
+## brings of its share, and — only while that is under the share — the choice that would bring more.
+## **It is a CHOICE, not a fault, so nothing about it is amber**: fewer tools is one way to spend the
+## pack, not a remedy for something wrong.
+const FOOD_FIXED_FORMAT := "Food %s"
+const FOOD_BROUGHT_FORMAT := "Food %s of %s"
+const FOOD_ROOM_CLAUSE := " · fewer tools leave room for more"
+## How far the food's tint sits from the HUD's ink toward its warm accent — a pale wheat, separable
+## from every material swatch (the ring's own `WARN` and `VOICE_PIGMENT` are both far more saturated)
+## and from the bar's dark remainder.
+const FOOD_SEGMENT_TINT := 0.35
 const CARRY_OBVIOUS_UNIT_LOAD := 1.0
 
 ## `Hunt · Builders` over `Spears, Sled` — the jobs a kit may be sent on, then what it puts in hands.
@@ -411,9 +422,9 @@ const MATERIAL_ROW_META := &"loadout_material_row"
 const RECIPE_ROW_META := &"loadout_recipe_row"
 const RECIPE_COUNT_META := &"loadout_recipe_count"
 const BUDGET_METER_META := &"loadout_budget_meter"
-## The food line and its amber hint, under the meter. A harness reads them by these.
+## The food's legend line under the bar, and the food segment of the bar. A harness reads them by these.
 const FOOD_LINE_META := &"loadout_food_line"
-const FOOD_HINT_META := &"loadout_food_hint"
+const FOOD_SEGMENT_KEY := "food"
 const CLOSE_BUTTON_META := &"loadout_close"
 const LEGEND_ENTRY_META := &"loadout_legend_entry"
 const REFUSAL_LINE_META := &"loadout_refusal_line"
@@ -439,6 +450,8 @@ static var SWATCH_COLORS: Array[Color] = []
 static var BUDGET_REMAINDER_COLOR: Color = Color()
 ## The KITS' share of the carry bar — one segment, not a stack by kit. See this file's docstring.
 static var BUDGET_SPENT_COLOR: Color = Color()
+## The FOOD's share of the carry bar, and its legend swatch. Derived per palette (`FOOD_SEGMENT_TINT`).
+static var FOOD_SEGMENT_COLOR: Color = Color()
 
 ## Install the current `HudStyle` palette into this file's tints. Called by `HudPalette.apply()`
 ## after `HudStyle.apply_palette`; it takes no palette of its own, because none of these is a colour
@@ -459,6 +472,7 @@ static func apply_palette() -> void:
 	# from, which is exactly the state the meter is most needed in.
 	BUDGET_REMAINDER_COLOR = HudStyle.LINE
 	BUDGET_SPENT_COLOR = HudStyle.SIGNAL_DEEP
+	FOOD_SEGMENT_COLOR = HudStyle.INK.lerp(HudStyle.WARN, FOOD_SEGMENT_TINT)
 
 ## The swatch for the material at `index` in the published pick list. Wraps, so a profile offering
 ## more materials than the ring has inks repeats a colour rather than losing one — a repeat is

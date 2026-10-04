@@ -308,6 +308,10 @@ pub fn split_band_from_parent(
     // turn, but a split publishes a frame before then, and the new band would open by narrating
     // somebody else's morale swing, meal and migration.
     child.last_food_consumption = 0.0;
+    // ⛔ **Cleared with the meal it is measured against.** The published shortfall is
+    // `need − consumption`, so zeroing the meal alone left the parent's whole need standing against
+    // a meal of nothing, and a fresh splinter with a full larder read "people are starving".
+    child.last_food_need = 0.0;
     child.last_food_spoiled = 0.0;
     // The dowry is booked on the *allocation's* accumulator below, which is what the next turn
     // capture copies here; carrying the parent's published pair over would have the new band open by
@@ -378,8 +382,8 @@ pub fn split_band_from_parent(
     // floored share is what makes an untouched *"Set out"* an exact no-op.
     //
     // **Skipped entirely when the parent still grants** — see the callout above. That arm's band is
-    // not left empty-handed: it **mints** its own default against the grant slice it was just given
-    // ([`crate::starting_loadout::outfit_band_with_defaults`]), which takes nothing off the parent.
+    // not left empty-handed: it **mints** its own default against its own carry
+    // ([`crate::starting_loadout::outfit_band_with_defaults`]), which takes no goods off the parent.
     //
     // ⛔ **AND THE DEFAULT TAKE IS FITTED TO WHAT THE SPLINTER CAN CARRY BEFORE ANYTHING MOVES.** The
     // proportional kit and material take is resolved first, then the pair is fitted to the goods
@@ -630,14 +634,17 @@ pub fn split_band_from_parent(
         let parent_region = culture.upsert_regional(region_id);
         culture.attach_band_from_source(band, parent_region, parent_band);
     }
+    let parent_carry_after = world
+        .get::<PopulationCohort>(parent)
+        .map(|cohort| crate::carry::band_carry_capacity(cohort, carry_cfg))
+        .unwrap_or_else(scalar_zero);
     let partitioned_a_grant = open_splinter_loadout_window(
         world,
         parent,
         band,
-        asked,
-        cohort_working,
         SplinterCarry {
             carry_cap,
+            parent_carry_after,
             dowry: parent_band.map(|parent| SplitDowry {
                 parent,
                 food_share,
@@ -654,17 +661,17 @@ pub fn split_band_from_parent(
         },
     );
     if partitioned_a_grant {
-        // The parent's standing allocation is now measured against a smaller budget, so it is
-        // re-fitted to what the partition left it — otherwise its meter reads negative and its next
-        // revision re-mints the pre-split allocation.
+        // ⛔ **THE SPLINTER HOLDS ITS DEFAULT FROM THE MOMENT IT EXISTS** — minted against its own
+        // carry, through the same accepted-order path a player's own commit takes. A default the
+        // player has to press a button to keep is a default that is lost the moment they do not.
+        // Its food crosses with it, off the parent's larder.
+        crate::starting_loadout::outfit_band_with_defaults(world, child_faction, band);
+        // The parent's standing allocation is now measured against a smaller carry, less the larder
+        // it kept — so it is re-fitted after the splinter's food has left — otherwise its meter
+        // reads negative and its next revision re-mints the pre-split allocation.
         if let Some(parent_band) = world.get::<BandId>(parent).copied() {
             rebalance_partitioned_grant(world, child_faction, parent_band);
         }
-        // ⛔ **AND THE SPLINTER HOLDS ITS DEFAULT FROM THE MOMENT IT EXISTS** — minted against the
-        // slice of the grant it was just given, through the same accepted-order path a player's own
-        // commit takes. A default the player has to press a button to keep is a default that is
-        // lost the moment they do not.
-        crate::starting_loadout::outfit_band_with_defaults(world, child_faction, band);
     } else {
         // **The take arm's food fills the room its default take left.**
         crate::starting_loadout::resolve_split_food(world, band, moved_goods);
@@ -695,8 +702,7 @@ fn whole_share(held: u32, asked: u32, workers: Scalar) -> u32 {
 }
 
 /// **The `Scalar`-valued sibling of [`whole_share`]** — `floor(held × asked ÷ workers)` for a `held`
-/// the parent stores in fixed point (a material total). Its fractional twin, for a quantity that is
-/// not quantised (a grant's carry budget), is [`fractional_share_of`].
+/// the parent stores in fixed point (a material total).
 ///
 /// # ⛔ THE DIVISION IS THE WHOLE POINT — IT NEVER GOES THROUGH FLOATING POINT
 ///
@@ -728,25 +734,15 @@ fn whole_share_of(held: Scalar, asked: u32, workers: Scalar) -> u32 {
     quotient.clamp(0, whole_held) as u32
 }
 
-/// **The share of a fractional `held` that `asked` of `workers` comes to** —
-/// `held × asked ÷ workers`, in **exact fixed point**, for a quantity that is not quantised (a grant's
-/// carry budget). [`whole_share_of`]'s discipline without the floor to whole units: the ratio, never
-/// the rounded `share`, and `i128` all the way through. Clamped to `[0, held]`.
-fn fractional_share_of(held: Scalar, asked: u32, workers: Scalar) -> Scalar {
-    let (held_raw, workers_raw) = (held.raw(), workers.raw());
-    if held_raw <= 0 || asked == 0 || workers_raw <= 0 {
-        return scalar_zero();
-    }
-    let quotient = i128::from(held_raw) * i128::from(asked) * i128::from(Scalar::SCALE)
-        / i128::from(workers_raw);
-    Scalar::from_raw(quotient.clamp(0, i128::from(held_raw)) as i64)
-}
-
 /// **What the splinter walked out carrying, and what that leaves for goods** — the two numbers the
 /// window's carry cap is struck from.
 struct SplinterCarry {
-    /// `carry_capacity(asked)` — a take's whole carry. A grant's is its slice instead.
+    /// `carry_capacity(asked)` — the splinter's whole carry, on both arms.
     carry_cap: Scalar,
+    /// The parent's own carry after the split, [`crate::carry::band_carry_capacity`] — what a
+    /// granting parent that is itself a splinter has its struck carry recomputed to. A parent with a
+    /// fixed larder reads its carry live instead.
+    parent_carry_after: Scalar,
     /// The splinter's food share, recorded on its window so every order can re-resolve the food.
     dowry: Option<SplitDowry>,
 }
@@ -758,7 +754,7 @@ struct SplinterCarry {
 ///
 /// | the parent's window | the splinter's window |
 /// |---|---|
-/// | still holds an unspent **grant** (turn one) | a grant of its own: its **slice** of the parent's remaining carry budget, divided on the ratio in exact fixed point and **deducted from the parent's** — so no load unit is minted twice or lost — **less the food mass it walked out with** (the food part of the slice is consumed by the food, not returned to the parent). Nothing is moved off the parent; the splinter **mints its own default** against that grant the moment the window exists ([`crate::starting_loadout::outfit_band_with_defaults`]), and [`rebalance_partitioned_grant`] re-fits the parent to what the partition left it. |
+/// | still holds an unspent **grant** (turn one) | a grant of its own: its whole carry, `carry_capacity(asked)`, with its food filling what its minted goods leave. The parent's grant is **recomputed** to its own carry after the split ([`crate::carry::band_carry_capacity`]) less its fixed larder — carry is linear in workers, so the two carries add up to the parent's before the split. Nothing is moved off the parent but the splinter's food; the splinter **mints its own default** the moment the window exists ([`crate::starting_loadout::outfit_band_with_defaults`]), and [`rebalance_partitioned_grant`] re-fits the parent to what it is left. |
 /// | holds no grant (every later turn) | a **take** on the parent: the cap is what the parent can supply **and** the splinter's whole carry (`carry_capacity(asked)`), and the kit allocation just moved — fitted with the food share so both ride — is the window's **accepted allocation**, so the card opens on it. Its picks MOVE. |
 ///
 /// Nothing here is a literal: every cap is a number the split itself just resolved.
@@ -769,10 +765,6 @@ fn open_splinter_loadout_window(
     world: &mut World,
     parent: Entity,
     band: BandId,
-    asked: u32,
-    // The **parent's** whole working value, i.e. the denominator of the split's share — passed
-    // rather than the share itself so the grant partition divides exactly. See [`whole_share`].
-    workers: Scalar,
     carry: SplinterCarry,
     take: SplinterTake,
 ) -> bool {
@@ -782,19 +774,20 @@ fn open_splinter_loadout_window(
     let Some(mut loadout) = world.get_resource_mut::<StartingLoadout>() else {
         return false;
     };
-    let parent_grant = loadout
+    let parent_grants = loadout
         .window(parent_band)
-        .filter(|window| window.grants())
-        .map(|window| window.supply.carry_budget());
-    let (supply, kits, materials) = match parent_grant {
-        Some(parent_budget) => {
-            // On the RATIO, never on the rounded `share`, and with no `f32` hop — the trap
-            // [`whole_share_of`] exists to close, for a fractional budget.
-            let slice = fractional_share_of(parent_budget, asked, workers);
+        .is_some_and(|window| window.grants());
+    let (supply, kits, materials) = match parent_grants {
+        true => {
+            // **Each band's grant is its own carry, recomputed — not a slice of the parent's.** The
+            // parent keeps what its remaining workers carry; the splinter gets `carry_capacity(asked)`.
+            // Carry is linear in workers, so the two add up to the parent's carry before the split
+            // and no load unit is minted twice or lost.
+            // A parent whose larder is fixed reads its own carry live; a parent that is itself a
+            // splinter keeps a struck carry, recomputed to what its remaining workers carry.
             if let Some(window) = loadout.window_mut(parent_band) {
-                window.supply = LoadoutSupply::Grant {
-                    carry_budget: parent_budget - slice,
-                };
+                let carry_budget = (!window.food_is_fixed()).then_some(carry.parent_carry_after);
+                window.supply = LoadoutSupply::Grant { carry_budget };
             }
             // **The rows open empty and are filled by an APPLY, not by an assignment** — the
             // caller runs [`crate::starting_loadout::outfit_band_with_defaults`] as soon as the
@@ -803,13 +796,13 @@ fn open_splinter_loadout_window(
             // card the player never commits would lose it.
             (
                 LoadoutSupply::Grant {
-                    carry_budget: slice,
+                    carry_budget: Some(carry.carry_cap),
                 },
                 Vec::new(),
                 Vec::new(),
             )
         }
-        None => (
+        false => (
             LoadoutSupply::Parent {
                 parent: parent_band,
                 items: take.items,
@@ -849,11 +842,11 @@ fn open_splinter_loadout_window(
 ///
 /// # What the fit takes off is NOT handed to the splinter
 ///
-/// The splinter **mints its own default** against its own slice of the grant
+/// The splinter **mints its own default** against its own carry
 /// ([`crate::starting_loadout::outfit_band_with_defaults`]), which is a sensible opening outfit
 /// rather than whatever a heavily-committed parent happened to be over by. Nothing is destroyed by
 /// not handing it over: on this arm every unit on either band is minted from a budget, and the two
-/// budgets still partition the one grant exactly.
+/// carries add up to the parent's before the split.
 ///
 /// **A parent that still fits its reduced budget gives up nothing**, and this returns without
 /// touching it. That is not merely an optimisation: re-materializing rebuilds a ledger from
@@ -881,12 +874,20 @@ fn rebalance_partitioned_grant(world: &mut World, faction: FactionId, parent_ban
         .iter()
         .map(|row| (row.material_id.clone(), row.units))
         .collect();
-    let parent_budget = parent_window.supply.carry_budget();
+    let parent_window = parent_window.clone();
     let equipment = world
         .get_resource::<EquipmentConfigHandle>()
         .map(|handle| handle.get())
         .unwrap_or_else(EquipmentConfig::builtin);
     let expedition = crate::starting_loadout::carry_config(world);
+    let Some(parent_budget) = world
+        .query::<(&BandId, &PopulationCohort)>()
+        .iter(world)
+        .find(|(band, _)| **band == parent_band)
+        .map(|(_, cohort)| parent_window.goods_allowance(cohort, &expedition.carry))
+    else {
+        return;
+    };
 
     let fitted = crate::starting_loadout::fit_to_carry(
         &parent_kits,

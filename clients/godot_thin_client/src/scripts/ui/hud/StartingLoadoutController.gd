@@ -185,6 +185,8 @@ const BAND_CARRY := "carry_capacity"
 ## A splinter's food, in load: the most it may take, and what the sim says it holds now.
 const BAND_FOOD_SHARE := "food_share"
 const BAND_FOOD_CARRIED := "food_carried"
+## Whether the band's larder counts against its carry without yielding to goods (see the vocab key).
+const BAND_FOOD_FIXED := "food_fixed"
 ## `item_id -> units` / `material_id -> units`, a take's caps. Empty on a grant window.
 const BAND_ITEM_SUPPLY := "item_supply"
 const BAND_MATERIAL_SUPPLY := "material_supply"
@@ -366,6 +368,7 @@ func _ingest_window(band_id: int, window: Dictionary, names: Dictionary) -> void
 	state[BAND_CARRY] = float(window.get(HudLoadoutVocab.CARRY_CAPACITY_KEY, 0.0))
 	state[BAND_FOOD_SHARE] = float(window.get(HudLoadoutVocab.FOOD_SHARE_KEY, 0.0))
 	state[BAND_FOOD_CARRIED] = float(window.get(HudLoadoutVocab.FOOD_CARRIED_KEY, 0.0))
+	state[BAND_FOOD_FIXED] = bool(window.get(HudLoadoutVocab.FOOD_FIXED_KEY, false))
 	var item_supply := _supply_map(window.get(HudLoadoutVocab.PARENT_ITEM_SUPPLY_KEY, []))
 	var material_supply := _supply_map(window.get(HudLoadoutVocab.PARENT_MATERIAL_SUPPLY_KEY, []))
 	state[BAND_ITEM_SUPPLY] = item_supply
@@ -726,21 +729,35 @@ func render() -> void:
 			StartingLoadoutPanel.BUDGET_SPENT: _order_load(band),
 			StartingLoadoutPanel.BUDGET_TOTAL: _carry_of(band),
 			StartingLoadoutPanel.CARRY_KIT_LOAD: _kit_load(band),
+			StartingLoadoutPanel.CARRY_FOOD_LOAD: food_brought_of(band),
 		},
 		StartingLoadoutPanel.PAYLOAD_FOOD: _food_payload(band),
 		StartingLoadoutPanel.PAYLOAD_REFUSAL: _refusal_text(band),
 	})
 
-## The split's food, for the line under the meter — `{}` on a window that brings none (the opening
-## band), which draws no line at all.
+## The band's food, for the bar's legend line — `{}` on a window carrying none, which draws no line.
 func _food_payload(band: Dictionary) -> Dictionary:
 	var share := float(band.get(BAND_FOOD_SHARE, 0.0))
-	if share <= HudLoadoutVocab.CARRY_EPSILON:
+	var brought := food_brought_of(band)
+	if share <= HudLoadoutVocab.CARRY_EPSILON and brought <= HudLoadoutVocab.CARRY_EPSILON:
 		return {}
 	return {
-		StartingLoadoutPanel.FOOD_BROUGHT: food_brought_of(band),
+		StartingLoadoutPanel.FOOD_BROUGHT: brought,
 		StartingLoadoutPanel.FOOD_SHARE: share,
+		StartingLoadoutPanel.FOOD_FIXED: _food_is_fixed(band),
 	}
+
+func _food_is_fixed(band: Dictionary) -> bool:
+	return bool(band.get(BAND_FOOD_FIXED, false))
+
+## ⛔ **THE GOODS ALLOWANCE — the cap the server refuses an order above.** A fixed larder counts
+## against the carry without yielding, so its goods get `carry_capacity − food_carried`; a splinter's
+## food fills what its goods leave, so its goods get the whole carry. Every `+` gate and the over
+## state read this, never the carry itself.
+func _goods_allowance(band: Dictionary) -> float:
+	if _food_is_fixed(band):
+		return _carry_of(band) - float(band.get(BAND_FOOD_CARRIED, 0.0))
+	return _carry_of(band)
 
 ## ⛔ **WHAT THE SPLIT BRINGS: THE WIRE'S, EXCEPT WHERE THE CARD IS AHEAD OF IT.** The sim re-resolves
 ## the food on every accepted order, and the food is a function of the goods LOAD alone — so while the
@@ -771,6 +788,9 @@ func _held_load(band: Dictionary) -> float:
 	})
 
 func food_brought_of(band: Dictionary) -> float:
+	# A fixed larder does not move with the goods: what it carries is what the wire says it carries.
+	if _food_is_fixed(band):
+		return float(band.get(BAND_FOOD_CARRIED, 0.0))
 	var share := float(band.get(BAND_FOOD_SHARE, 0.0))
 	var goods := _order_load(band)
 	if absf(goods - _held_load(band)) <= HudLoadoutVocab.CARRY_EPSILON:
@@ -1040,7 +1060,7 @@ func _carry_cost_is_obvious(unit_load: float) -> bool:
 func _carry_fits(band: Dictionary, rest_load: float, unit_load: float) -> int:
 	if unit_load <= 0.0:
 		return CARRY_UNBOUNDED
-	var room := _carry_of(band) - rest_load
+	var room := _goods_allowance(band) - rest_load
 	return maxi(int(floorf((room + HudLoadoutVocab.CARRY_EPSILON) / unit_load)), 0)
 
 ## The units a kit puts in hands, one per `uses` entry and COUNTED rather than de-duplicated: a
@@ -1276,7 +1296,7 @@ func _take_detail(band: Dictionary) -> String:
 ## it is asked about; a clamp applied before the question is what made an over-budget band read as
 ## finished. Per band, because the orb asks about every band and not only the subject.
 func _signed_carry(band: Dictionary) -> float:
-	return _carry_of(band) - _order_load(band)
+	return _goods_allowance(band) - _order_load(band)
 
 ## A take's supply overdraw, in units — `0` on a grant, which has no supply. The expanded order
 ## against `parent_item_supply` per item, so a shared `sled` counts twice as the server counts it.

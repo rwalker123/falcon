@@ -1472,20 +1472,27 @@ table BandLoadoutWindowState {
   // The material twin, in whole units (floored, because that is the currency the command spends).
   parentMaterialSupply:[BandLoadoutSupplyRow];
   // THE GOODS ALLOWANCE THIS WINDOW'S ORDER IS CHECKED AGAINST, in food-unit load (appended last).
-  // A grant: the load it may mint - the opening band's workers x per-worker carry (its larder does
-  // NOT count), or a splinter's slice of the parent's grant net of the food it walked out with. A
-  // take: the splinter's workers x per-worker carry net of the food it walked out with (food loads
-  // first; 0 when the food alone filled the packs). Weigh an order with the two weights on
-  // `openingLoadout` and compare - that is the comparison the server refuses on (`OverCarry`).
+  // THE BAND'S WHOLE CARRY, goods and food together, in food-unit load: the band's working-age
+  // value x per-worker carry (the opening band, and a granting parent after a split), or a
+  // splinter's asked workers x per-worker carry. Weigh an order with the two weights on
+  // `openingLoadout`; the goods allowance the server refuses on (`OverCarry`) is
+  // `carryCapacity - foodCarried` when `foodFixed`, and `carryCapacity` otherwise.
   carryCapacity:float = 0;
-  // A SPLINTER'S FOOD (appended last, #732). A split loads GOODS FIRST and food fills the room they
-  // leave: the food that crosses is min(foodShare, carryCapacity - goods load), re-resolved by the
-  // server on every accepted order (fewer tools, more food - the food dial without a food row).
-  // `foodShare` is the most it may take, in load (its full proportional larder share); `foodCarried`
-  // is the food load it holds now - the truth, where a client's min() is an optimistic preview. Both
-  // 0 on a window no split opened (the opening band).
+  // THE BAND'S FOOD, in load (appended last, #732). On a SPLINTER (`foodFixed == false`) goods load
+  // first and food fills the room they leave: the food that crosses is
+  // min(foodShare, carryCapacity - goods load), re-resolved by the server on every accepted order
+  // (fewer tools, more food - the food dial without a food row). `foodShare` is the most it may
+  // take (its full proportional larder share); `foodCarried` is the food load it holds now - the
+  // truth, where a client's min() is an optimistic preview. On a FIXED larder (`foodFixed == true`:
+  // the opening band, and a granting parent) both are the larder's mass, which counts against the
+  // carry and does not yield to goods.
   foodShare:float = 0;
   foodCarried:float = 0;
+  // Whether this band's food is FIXED (appended last, #732): true when the larder counts against
+  // the carry and cannot be traded for tools (the opening band, a granting parent); false on a
+  // splinter, whose food yields to its goods. `foodShare == foodCarried` is not a safe test - a
+  // splinter whose goods leave room for its whole share carries all of it.
+  foodFixed:bool = false;
 }
 
 // One cap row: how many units of `id` this take may claim. `id` is an `equipment.json` item id on

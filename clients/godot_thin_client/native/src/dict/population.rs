@@ -1765,10 +1765,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
 /// also capped by `parent_item_supply` / `parent_material_supply`.
 ///
 /// **ONE CARRY RULE ON BOTH ARMS** (#732): an order's load — `item_carry_weight` × expanded item
-/// units + `material_carry_weight` × material units (the weights ride `opening_loadout`) — must be
-/// `<= carry_capacity`, the band's TOTAL carry. A splinter's food is not a term of that check: goods
-/// load first and food fills the room they leave, so the food that crosses is
-/// `min(food_share, carry_capacity − goods load)`, re-resolved by the server on every accepted order.
+/// units + `material_carry_weight` × material units (the weights ride `opening_loadout`) — must fit
+/// the GOODS ALLOWANCE. `carry_capacity` is the band's WHOLE carry (goods + food) on every window.
+/// Where `food_fixed` the larder counts against it and does not yield, so the allowance is
+/// `carry_capacity − food_carried`; on a splinter goods load first and food fills the room they
+/// leave (`min(food_share, carry_capacity − goods load)`), so the allowance is `carry_capacity`.
 ///
 /// ⛔ **A TAKE'S KIT CAP CANNOT BE DRAWN PER KIT ROW.** The roster maps kits to items almost
 /// one-to-one, but `sled` is used by both `big_game` and `trapping` — so what the sim validates is
@@ -1780,15 +1781,18 @@ fn loadout_window_to_dict(window: fb::BandLoadoutWindowState<'_>) -> VarDictiona
     // False once this band's window has shut. It shuts on the TURN ADVANCE and on nothing else —
     // committing a loadout leaves it open, which is what lets a pick be revised.
     let _ = dict.insert("open", window.open());
-    // The band's TOTAL carry, in food-unit load — what an order's goods load is weighed against,
-    // the comparison the server refuses on (`OverCarry`). Not net of food: goods load first.
+    // The band's WHOLE carry (goods + food), in food-unit load — the bar's whole width, and the
+    // same number as the cohort's own `carry_capacity`.
     let _ = dict.insert("carry_capacity", f64::from(window.carryCapacity()));
-    // A SPLINTER'S FOOD, in load: `food_share` is the most it may take (its full proportional larder
-    // share) and `food_carried` is what it holds now — the truth, where a client's
-    // `min(food_share, carry_capacity − goods load)` is only an optimistic preview. Both 0 on a window
-    // no split opened.
+    // THE BAND'S FOOD, in load. On a splinter (`food_fixed` false) `food_share` is the most it may
+    // take and `food_carried` what it holds now — the truth, where a client's
+    // `min(food_share, carry_capacity − goods load)` is only an optimistic preview. On a FIXED larder
+    // (the opening band, a parent whose grant is still open) both are the larder's mass, and it
+    // counts against the carry without yielding: the goods allowance is `carry_capacity −
+    // food_carried`.
     let _ = dict.insert("food_share", f64::from(window.foodShare()));
     let _ = dict.insert("food_carried", f64::from(window.foodCarried()));
+    let _ = dict.insert("food_fixed", window.foodFixed());
     // THE ACCEPTED ALLOCATION — the rows this band's last accepted order named, and **what a card
     // opens on**. Empty only for a grant window nobody has ordered against yet.
     //

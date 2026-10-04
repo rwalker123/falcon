@@ -5173,6 +5173,7 @@
       "loadout_window": {
         "carry_capacity": 5.95,
         "food_carried": 43.009998,
+        "food_fixed": true,
         "food_share": 94.739998,
         "kits": [
           {
@@ -5202,7 +5203,7 @@
             "units": 68
           }
         ],
-        "open": true,
+        "open": false,
         "parent_band_id": 3,
         "parent_item_supply": [
           {
@@ -7423,6 +7424,7 @@
       "loadout_window": {
         "carry_capacity": 70.830002,
         "food_carried": 83.400002,
+        "food_fixed": false,
         "food_share": 6.23,
         "kits": [
           {
@@ -7452,7 +7454,7 @@
             "units": 46
           }
         ],
-        "open": false,
+        "open": true,
         "parent_band_id": 41,
         "parent_item_supply": [
           {

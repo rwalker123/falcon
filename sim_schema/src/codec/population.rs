@@ -236,6 +236,7 @@ fn create_populations<'a>(
                         carryCapacity: window.carry_capacity,
                         foodShare: window.food_share,
                         foodCarried: window.food_carried,
+                        foodFixed: window.food_fixed,
                     },
                 )
             });
@@ -1338,6 +1339,7 @@ fn decode_loadout_window(window: fb::BandLoadoutWindowState<'_>) -> BandLoadoutW
         carry_capacity: window.carryCapacity(),
         food_share: window.foodShare(),
         food_carried: window.foodCarried(),
+        food_fixed: window.foodFixed(),
     }
 }
 

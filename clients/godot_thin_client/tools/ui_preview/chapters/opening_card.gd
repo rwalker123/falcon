@@ -52,6 +52,9 @@ const BAND_Y := 9
 ## Working hands, and the band's carry — 17 hands × the shipped per-worker carry of 8.
 const WORKING_AGE := 17
 const CARRY_CAPACITY := 136.0
+## The opening band's larder, in load. It is FIXED (`food_fixed`): it sits inside the carry above and
+## does not yield to goods, so the outfitting card draws it as the bar's food segment.
+const OPENING_LARDER := 40.0
 ## A take's TOTAL carry. A splinter's goods load first and food fills what they leave, so this is
 ## not net of food.
 const SPLINTER_CARRY_CAPACITY := 24.0
@@ -275,6 +278,9 @@ func _grant_band(open: bool) -> Dictionary:
 	return _band(GRANT_ENTITY, {
 		HudLoadoutVocab.OPEN_KEY: open,
 		HudLoadoutVocab.CARRY_CAPACITY_KEY: CARRY_CAPACITY,
+		HudLoadoutVocab.FOOD_SHARE_KEY: OPENING_LARDER,
+		HudLoadoutVocab.FOOD_CARRIED_KEY: OPENING_LARDER,
+		HudLoadoutVocab.FOOD_FIXED_KEY: true,
 		HudLoadoutVocab.PARENT_BAND_ID_KEY: HudLoadoutVocab.GRANT_PARENT_BAND_ID,
 		HudLoadoutVocab.WINDOW_KITS_KEY: [
 			{HudLoadoutVocab.KIT_DEFAULT_ID_KEY: KIT_STALKING,

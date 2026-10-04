@@ -105,12 +105,15 @@ const PAYLOAD_REFUSAL := "refusal"
 const BUDGET_SPENT := "spent"
 const BUDGET_TOTAL := "total"
 const CARRY_KIT_LOAD := "kit_load"
+## The food's share of the carry, in load — its own segment of the bar.
+const CARRY_FOOD_LOAD := "food_load"
 ## ⛔ **THE SPLIT'S FOOD** — `{brought, share}` in load, or `{}` on a window that brings none. Drawn as
 ## one plain line under the meter, plus one amber hint while `brought` is under `share`: two lines at
 ## most, and the controller has already chosen between the wire's figure and the order's preview.
 const PAYLOAD_FOOD := "food"
 const FOOD_BROUGHT := "brought"
 const FOOD_SHARE := "share"
+const FOOD_FIXED := "fixed"
 
 ## How many open windows it takes before the band switcher earns its row. One window is the ordinary
 ## case and a tab naming the only band there is says nothing the title does not.
@@ -406,22 +409,28 @@ func _build_header() -> void:
 	_build_food_lines(_payload.get(PAYLOAD_FOOD, {}))
 	_build_refusal_line()
 
-## The food a split brings, under the meter. Nothing at all on a window that brings none.
+## The food's legend entry under the bar — its swatch and ONE quiet line. Nothing on a window carrying
+## no food. See `HudLoadoutVocab.FOOD_BROUGHT_FORMAT` for why nothing here is amber.
 func _build_food_lines(food: Dictionary) -> void:
 	if food.is_empty():
 		return
 	var brought := float(food.get(FOOD_BROUGHT, 0.0))
 	var share := float(food.get(FOOD_SHARE, 0.0))
-	var line := _caption(HudLoadoutVocab.FOOD_BROUGHT_FORMAT % [
-		HudLoadoutVocab.amount_text(brought), HudLoadoutVocab.amount_text(share)],
-		HudStyle.INK_DIM, HudLoadoutVocab.BUDGET_FONT_SIZE)
+	var text := HudLoadoutVocab.FOOD_FIXED_FORMAT % HudLoadoutVocab.amount_text(brought)
+	if not bool(food.get(FOOD_FIXED, false)):
+		text = HudLoadoutVocab.FOOD_BROUGHT_FORMAT % [
+			HudLoadoutVocab.amount_text(brought), HudLoadoutVocab.amount_text(share)]
+		if brought < share - HudLoadoutVocab.CARRY_EPSILON:
+			text += HudLoadoutVocab.FOOD_ROOM_CLAUSE
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", HudLoadoutVocab.SWATCH_SEPARATION)
+	var swatch := _swatch(HudLoadoutVocab.FOOD_SEGMENT_COLOR)
+	swatch.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(swatch)
+	var line := _caption(text, HudStyle.INK_DIM, HudLoadoutVocab.BUDGET_FONT_SIZE)
 	line.set_meta(HudLoadoutVocab.FOOD_LINE_META, true)
-	_header.add_child(line)
-	if brought < share - HudLoadoutVocab.CARRY_EPSILON:
-		var hint := _caption(HudLoadoutVocab.FOOD_SHORT_HINT, HudStyle.WARN,
-			HudLoadoutVocab.BUDGET_FONT_SIZE)
-		hint.set_meta(HudLoadoutVocab.FOOD_HINT_META, true)
-		_header.add_child(hint)
+	row.add_child(line)
+	_header.add_child(row)
 
 ## **THE SIM REFUSED THIS BAND'S LAST ORDER, AND THE CARD SAYS SO** — the last thing in the head, so it
 ## sits directly above the columns whose picks it has just reset. Drawn in warning ink.
@@ -697,7 +706,9 @@ func _carry_meter(carry: Dictionary, materials: Array) -> Control:
 	block.add_theme_constant_override("separation", HudLoadoutVocab.BUDGET_ROW_SEPARATION)
 	block.set_meta(HudLoadoutVocab.BUDGET_METER_META, HudLoadoutVocab.BUDGET_CARRY)
 	var total := float(carry.get(BUDGET_TOTAL, 0.0))
-	var remaining := total - float(carry.get(BUDGET_SPENT, 0.0))
+	# What is actually FREE: the whole carry less the goods AND the food in it.
+	var remaining := total - float(carry.get(BUDGET_SPENT, 0.0)) \
+		- float(carry.get(CARRY_FOOD_LOAD, 0.0))
 	var label := Label.new()
 	label.text = HudLoadoutVocab.CARRY_REMAINING_FORMAT % [
 		HudLoadoutVocab.amount_text(remaining), HudLoadoutVocab.amount_text(total)]
@@ -719,7 +730,7 @@ func _carry_meter(carry: Dictionary, materials: Array) -> Control:
 ## The bar: the KITS as one segment (kits are interchangeable hands with nothing to tell apart, so a
 ## stack by kit would be a second colour vocabulary beside the material legend), then each material
 ## in its swatch colour — the pile in exactly the colours the third column prices it in — then the
-## remainder.
+## FOOD in its own tint, then the remainder. The segments sum to the whole carry.
 ##
 ## **A REMAINDER OF ZERO DRAWS NOTHING.** `build_composition_bar` floors every segment's stretch ratio
 ## at `COMPOSITION_MIN_RATIO` so a one-unit segment stays a visible sliver, which means a zero segment
@@ -740,6 +751,11 @@ func _carry_bar_segments(carry: Dictionary, materials: Array, remaining: float) 
 		segments.append({"key": String(row.get("id", "")), "count": row_load,
 			"color": row.get("color", HudStyle.INK_FAINT),
 			"tooltip": String(row.get("label", ""))})
+	var food_load := float(carry.get(CARRY_FOOD_LOAD, 0.0))
+	if food_load > HudLoadoutVocab.CARRY_EPSILON:
+		segments.append({"key": HudLoadoutVocab.FOOD_SEGMENT_KEY, "count": food_load,
+			"color": HudLoadoutVocab.FOOD_SEGMENT_COLOR,
+			"tooltip": HudLoadoutVocab.FOOD_FIXED_FORMAT % HudLoadoutVocab.amount_text(food_load)})
 	if remaining > HudLoadoutVocab.CARRY_EPSILON:
 		segments.append({"key": "", "count": remaining,
 			"color": HudLoadoutVocab.BUDGET_REMAINDER_COLOR})

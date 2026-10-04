@@ -50,7 +50,7 @@ goods leave with people:
 
 | where | what the cap bounds |
 |---|---|
-| the opening band's grant (turn one) | what it may **mint**: `carry_capacity(workers)`. **Its spawned larder does NOT count**, because the band starts on that larder and hasn't walked anywhere (136 on the shipped 30-person band: 17 hands × 8.0) |
+| the opening band's grant (turn one) | what it may **mint**: its carry **less its larder**. The larder is **fixed** — there is nowhere to leave it — so it does not yield to goods: on the shipped 30-person band 17.85 × 8.0 ≈ 142.8 of carry, ≈ 77.7 of it larder, ≈ 65 for kits and materials |
 | a split | what the splinter walks out with. **Goods first, then food in the room left** — see below. `.claude/rules/core_sim/starting-loadout.md` owns the window arithmetic |
 | a long move | what the band keeps. See below |
 

@@ -468,26 +468,27 @@ fn a_revision_that_would_strand_an_onward_take_is_refused() {
 }
 
 // -------------------------------------------------------------------------------------------
-// Turn one: the splinter takes a slice of the GRANT
+// Turn one: each band's grant is its own carry
 // -------------------------------------------------------------------------------------------
 
-/// ⛔ **ON TURN ONE THE SPLINTER TAKES A SLICE OF THE PARENT'S GRANT, DEDUCTED FROM IT.**
+/// ⛔ **ON TURN ONE EACH BAND'S GRANT IS ITS OWN CARRY, AND THE TWO ADD UP TO THE PARENT'S BEFORE.**
 ///
 /// Turn one is not a special case in the code — only the parent's *state* differs. Because the
-/// parent still holds an unspent grant, the child gets a grant of its own and its picks MINT; its
-/// slice is carved out of the parent's carry budget on the worker ratio, so no load unit is minted
-/// twice or lost: `parent after + child budget` is the parent's budget before. The splinter's goods
-/// load first and its food fills the slice they leave.
+/// parent still holds an unspent grant, the child gets a grant of its own and its picks MINT. Its
+/// carry is `carry_capacity(asked)` — the workers who crossed — and the parent's is recomputed to
+/// what its remaining workers carry. Carry is linear in workers, so the two add up to the parent's
+/// carry before the split: no load unit is minted twice or lost. The parent's larder is fixed and
+/// counts against its carry; the splinter's goods load first and its food fills what they leave.
 #[test]
-fn a_turn_one_splinter_carves_its_grant_out_of_the_parents() {
+fn a_turn_one_splits_two_carries_add_up_to_the_parents_before_it() {
     let mut app = world_on_the_build_turn();
     let (parent, parent_band) = home_band(&mut app);
     set_workers(&mut app, parent, CHAIN_WORKERS);
 
-    let parent_before = grant_of(&app, parent_band);
+    let parent_before = carry_of(&app, parent_band);
     assert!(
         parent_before > Scalar::zero(),
-        "**LIVENESS**: the spawned band must hold a real grant, or the arithmetic below is 0 == 0"
+        "**LIVENESS**: the spawned band must hold a real carry, or the arithmetic below is 0 == 0"
     );
 
     let asked = 6;
@@ -495,19 +496,38 @@ fn a_turn_one_splinter_carves_its_grant_out_of_the_parents() {
         .expect("the split is admitted");
     let child = entity_for_band(&mut app, split.band);
 
-    let child_budget = grant_of(&app, split.band);
-    let parent_after = grant_of(&app, parent_band);
+    let child_carry = carry_of(&app, split.band);
+    let parent_after = carry_of(&app, parent_band);
     let child_food = food_mass_of(&app, child);
     assert!(
-        child_budget > Scalar::zero() && child_food > Scalar::zero(),
-        "**LIVENESS**: the splinter must hold a slice AND carry food: budget {child_budget}, food \
+        child_carry > Scalar::zero() && child_food > Scalar::zero(),
+        "**LIVENESS**: the splinter must hold a carry AND carry food: carry {child_carry}, food \
          {child_food}"
     );
     assert_eq!(
-        parent_after + child_budget,
-        parent_before,
-        "the slice came OUT of the parent's grant - no load unit is minted twice or lost"
+        child_carry,
+        carry_capacity(asked, &carry_cfg(&app)),
+        "the splinter's carry is the workers who crossed"
     );
+    assert_eq!(
+        parent_after + child_carry,
+        parent_before,
+        "the two carries add up to the parent's before the split - no load unit is minted twice \
+         or lost"
+    );
+    // Σ(goods allowance + food mass): the parent's goods get its carry less its fixed larder, and the
+    // splinter's goods and food share its whole carry.
+    let parent_larder = food_mass_of(&app, parent);
+    assert_eq!(
+        grant_of(&app, parent_band) + parent_larder + child_carry,
+        parent_before,
+        "goods allowance plus larder on the parent, plus the splinter's carry, is the carry before"
+    );
+    assert!(
+        allocated(&app, split.band) + child_food <= child_carry,
+        "and the splinter's goods and food together fit its carry"
+    );
+    let child_budget = grant_of(&app, split.band);
 
     // The child MINTS: its picks are capped by its own carry and never by the parent's ledger.
     let per_kit = order_load(&carry_cfg(&app), &big_game_items(1), 0);
@@ -547,18 +567,38 @@ fn big_game_items(count: u32) -> BTreeMap<String, u32> {
         .collect()
 }
 
-/// A band's grant — its carry budget. Panics on a take window.
+/// A band's cohort, by its durable id.
+fn cohort_of(app: &App, band: BandId) -> &PopulationCohort {
+    app.world
+        .iter_entities()
+        .find(|entity| entity.get::<BandId>() == Some(&band))
+        .and_then(|entity| entity.get::<PopulationCohort>())
+        .expect("that band keeps a cohort")
+}
+
+/// **A grant band's goods allowance** — what its goods may mint: its whole carry when its food
+/// yields (a splinter), its carry less its fixed larder otherwise. Panics on a take window.
 fn grant_of(app: &App, band: BandId) -> Scalar {
-    match &app
+    let window = app
         .world
         .resource::<StartingLoadout>()
         .window(band)
+        .expect("the band has a window");
+    assert!(
+        matches!(window.supply, LoadoutSupply::Grant { .. }),
+        "expected a grant window, got {:?}",
+        window.supply
+    );
+    window.goods_allowance(cohort_of(app, band), &carry_cfg(app))
+}
+
+/// **A band's whole carry** as its window reads it — goods and food together.
+fn carry_of(app: &App, band: BandId) -> Scalar {
+    app.world
+        .resource::<StartingLoadout>()
+        .window(band)
         .expect("the band has a window")
-        .supply
-    {
-        LoadoutSupply::Grant { carry_budget } => *carry_budget,
-        other => panic!("expected a grant window, got {other:?}"),
-    }
+        .carry(cohort_of(app, band), &carry_cfg(app))
 }
 
 /// **A CLOSED WINDOW REFUSES, whoever the band is.** The turn advance shuts every window at once —
@@ -1018,50 +1058,6 @@ fn expanded_units(app: &App, kits: &[KitAllocation]) -> u32 {
         .sum()
 }
 
-/// ⛔ **THE GRANT PARTITION DIVIDES ON THE RATIO, NOT ON THE ROUNDED SHARE.**
-///
-/// 15 hands splitting 5 is exactly a third. `share` is a fixed-point quotient, so it stores as
-/// `0.333333`, and a partition that multiplied the parent's 136-load budget by it would get
-/// `45.333288` — the splinter short and the parent richer than it should be. On the ratio, in exact
-/// fixed point, the slice is `136 ÷ 3` floored to the last micro-unit: `45.333333`.
-///
-/// **The numbers are pinned rather than derived from the fixture**, because the `earthlike` band's
-/// own worker count does not land on a non-terminating share: a test that only exercises today's
-/// fixture never sees this.
-#[test]
-fn a_grant_split_divides_the_carry_budget_on_the_ratio() {
-    const WORKERS: f32 = 15.0;
-    const ASKED: u32 = 5;
-    const THIRD: i64 = 3;
-    // The shipped opening band's 17 × 8.0.
-    const SHIPPED_OPENING_CARRY: u32 = 136;
-
-    let mut app = world_on_the_build_turn();
-    let (parent, parent_band) = home_band(&mut app);
-    set_workers(&mut app, parent, WORKERS);
-    let budget = grant_of(&app, parent_band);
-    assert_eq!(
-        budget,
-        Scalar::from_u32(SHIPPED_OPENING_CARRY),
-        "fixture: the shipped grant this case's numbers were chosen against"
-    );
-    let slice = Scalar::from_raw(budget.raw() / THIRD);
-
-    let split = split_band_from_parent(&mut app.world, parent, ASKED, &permissive_settle())
-        .expect("the split is admitted");
-
-    assert_eq!(
-        grant_of(&app, parent_band),
-        budget - slice,
-        "a third of {budget} is {slice} on the ratio, and that is what the parent gave up"
-    );
-    assert_eq!(
-        grant_of(&app, split.band),
-        slice,
-        "and the splinter's carry is that slice, whole"
-    );
-}
-
 /// ⛔ **THE METER CANNOT READ NEGATIVE.**
 ///
 /// The reported symptom: a parent spent its whole opening allocation, split 5 workers — and its
@@ -1097,13 +1093,13 @@ fn a_grant_split_leaves_the_parents_meter_non_negative() {
 /// revision re-minted all of it while what had walked to the splinter stayed with it: material out
 /// of nothing, on every turn-one split.
 ///
-/// **The invariant is over the GRANT, not over the ledgers**, because on turn one the budget is the
-/// currency and a ledger is a draft against it: `held + unspent` on both bands, plus the food the
-/// splinter's slice paid for, must come back to what the parent alone had.
+/// **The invariant is over the CARRY, not over the ledgers**, because on turn one a carry is the
+/// currency and a ledger is a draft against it: the two bands' carries add up to the parent's
+/// before, each band holds what its card claims, and each band's goods fit its own allowance.
 #[test]
 fn a_grant_split_conserves_the_grant() {
     let (mut app, parent, parent_band) = a_fully_outfitted_parent();
-    let budget_before = grant_of(&app, parent_band);
+    let carry_before = carry_of(&app, parent_band);
     let held_before = goods_held(&app, parent);
 
     let split = split_band_from_parent(&mut app.world, parent, 5, &permissive_settle())
@@ -1113,9 +1109,9 @@ fn a_grant_split_conserves_the_grant() {
     let parent_budget = grant_of(&app, parent_band);
     let child_budget = grant_of(&app, split.band);
     assert_eq!(
-        parent_budget + child_budget,
-        budget_before,
-        "the two budgets partition the one grant"
+        carry_of(&app, parent_band) + carry_of(&app, split.band),
+        carry_before,
+        "the two carries add up to the parent's before the split"
     );
 
     let parent_held = goods_held(&app, parent);
@@ -1134,14 +1130,14 @@ fn a_grant_split_conserves_the_grant() {
         parent_held + child_held <= held_before,
         "nothing is minted out of nothing: {parent_held} + {child_held} against {held_before}"
     );
-    assert_eq!(
-        parent_held + child_held + (parent_budget - parent_held) + (child_budget - child_held),
-        budget_before,
-        "held plus unspent on both bands is the grant the parent had"
+    assert!(
+        parent_held <= parent_budget,
+        "the parent's goods fit what its carry leaves its larder: {parent_held} against \
+         {parent_budget}"
     );
     assert!(
         child_held + food_mass_of(&app, child) <= child_budget,
-        "and the splinter's goods and food together fit its slice"
+        "and the splinter's goods and food together fit its carry"
     );
 
     // ⛔ **AND IT SURVIVES THE PARENT'S NEXT REVISION**, which is where the duplication actually
@@ -1172,18 +1168,16 @@ fn a_grant_split_conserves_the_grant() {
 
 /// ⛔ **THE SPLINTER'S OUTFIT IS ITS OWN DEFAULT, NOT THE PARENT'S LEFTOVERS.**
 ///
-/// The splinter **mints its own default** against its own slice of the grant, which is a sensible
-/// opening outfit rather than whatever a heavily-committed parent happened to be over by.
+/// The splinter **mints its own default** against its own carry, which is a sensible opening outfit
+/// rather than whatever a heavily-committed parent happened to be over by.
 ///
 /// **Nothing is destroyed by not handing it over**, and the pairing says so: the parent sheds, the
-/// splinter holds its default, and the slice still partitions the one grant exactly.
+/// splinter holds its default, and the two carries still add up to the parent's before.
 #[test]
 fn the_splinters_outfit_is_its_own_default_rather_than_the_parents_leftovers() {
     let (mut app, parent, parent_band) = a_fully_outfitted_parent();
-    // Gear is the subject; food loads first, so the larder would leave the splinter no room to mint.
-    empty_the_larder(&mut app, parent);
     let spent_before = allocated(&app, parent_band);
-    let budget_before = grant_of(&app, parent_band);
+    let carry_before = carry_of(&app, parent_band);
 
     let split = split_band_from_parent(&mut app.world, parent, 5, &permissive_settle())
         .expect("the split is admitted");
@@ -1210,9 +1204,9 @@ fn the_splinters_outfit_is_its_own_default_rather_than_the_parents_leftovers() {
         "it is actually holding what its card claims - applied, not suggested"
     );
     assert_eq!(
-        grant_of(&app, parent_band) + child_budget,
-        budget_before,
-        "and the grant is still partitioned exactly - no load unit is minted twice or lost"
+        carry_of(&app, parent_band) + carry_of(&app, split.band),
+        carry_before,
+        "and the two carries add up to the parent's before - no load unit is minted twice or lost"
     );
 }
 
@@ -1672,12 +1666,7 @@ fn a_splinter_of_a_huge_larder_takes_food_up_to_its_carry() {
         "the excess stays with the parent - nothing is lost"
     );
     assert_eq!(
-        app.world
-            .resource::<StartingLoadout>()
-            .window(split.band)
-            .expect("the splinter has a window")
-            .supply
-            .carry_budget(),
+        carry_of(&app, split.band),
         cap,
         "the window's cap is the splinter's whole carry"
     );
@@ -1993,4 +1982,101 @@ fn a_splinter_drifting_below_four_workers_keeps_its_carry_on_the_wire() {
     );
     assert_eq!(row.longMoveLeavesItems(), 0, "no tool is left behind");
     assert_eq!(row.longMoveLeavesFood(), 0.0, "nor any food");
+}
+
+/// The published row of `band`, read off a fresh capture's encoded envelope.
+fn with_published_row<R>(
+    app: &mut App,
+    band: BandId,
+    read: impl FnOnce(fb::PopulationCohortState<'_>) -> R,
+) -> R {
+    recapture_snapshot_in_place(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let row = envelope
+        .payload_as_snapshot()
+        .and_then(|snapshot| snapshot.population())
+        .and_then(|section| section.populations())
+        .expect("the population section is published")
+        .iter()
+        .find(|row| row.bandId() == band.0)
+        .unwrap_or_else(|| panic!("band {} publishes a row", band.0));
+    read(row)
+}
+
+/// ⛔ **A FRESH SPLINTER IS NOT STARVING.** The split cleared the splinter's last meal but kept the
+/// parent's last need, so the published `foodShortfall = need − eaten` read the parent's whole need
+/// against a meal of nothing: "Short 4.09 food last turn — people are starving" on a band holding 22
+/// food. The need is cleared with the meal it is measured against.
+#[test]
+fn a_fresh_splinter_publishes_no_food_shortfall() {
+    let (mut app, parent, parent_band, _, child_band) = a_settled_split(4, CHAIN_WORKERS);
+    let parent_need = app
+        .world
+        .get::<PopulationCohort>(parent)
+        .expect("the parent keeps a cohort")
+        .last_food_need;
+    assert!(
+        parent_need > 0.0,
+        "**LIVENESS**: the parent must have eaten a turn, or there is no need to inherit"
+    );
+    let (child_shortfall, child_need) = with_published_row(&mut app, child_band, |row| {
+        (row.foodShortfall(), row.foodNeed())
+    });
+    assert_eq!(
+        child_shortfall, 0.0,
+        "a band that has not yet eaten is short nothing"
+    );
+    assert_eq!(
+        child_need, 0.0,
+        "and it has no meal to measure a need against"
+    );
+    let _ = parent_band;
+}
+
+/// ⛔ **THE OPENING BAND'S LARDER IS FIXED, AND IT COUNTS AGAINST THE CARRY ON THE WIRE.**
+///
+/// What a band carries includes its food. The opening band cannot trade its spawned larder for tools
+/// (there is nowhere to leave it), so its window publishes `foodFixed`, its `foodShare` and
+/// `foodCarried` are both the larder's mass, and the goods allowance a client draws is
+/// `carryCapacity − foodCarried` — the same number `OverCarry` refuses on. Its `carryCapacity` is
+/// the band panel's own `carryCapacity`, so the two never disagree.
+#[test]
+fn the_opening_bands_window_publishes_a_fixed_larder_inside_its_carry() {
+    let mut app = world_on_the_build_turn();
+    let (parent, parent_band) = home_band(&mut app);
+    let (window_carry, food_share, food_carried, food_fixed, band_carry) =
+        with_published_row(&mut app, parent_band, |row| {
+            let window = row.loadoutWindow().expect("the opening band has a window");
+            (
+                window.carryCapacity(),
+                window.foodShare(),
+                window.foodCarried(),
+                window.foodFixed(),
+                row.carryCapacity(),
+            )
+        });
+    assert!(food_fixed, "the opening band's larder is fixed");
+    let larder = food_mass_of(&app, parent).to_f32();
+    assert!(larder > 0.0, "**LIVENESS**: the band holds a larder");
+    assert_eq!((food_share, food_carried), (larder, larder));
+    assert_eq!(
+        window_carry, band_carry,
+        "the card's carry is the band panel's carry"
+    );
+    assert!(
+        (window_carry - food_carried - grant_of(&app, parent_band).to_f32()).abs() < 1e-3,
+        "the goods allowance is the carry less the fixed larder"
+    );
+    assert!(
+        allocated(&app, parent_band).to_f32() <= window_carry - food_carried,
+        "and the default outfit the band holds fits it"
+    );
 }
