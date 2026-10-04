@@ -113,9 +113,29 @@ outfit (playtest: 5/5/7 split 6 → splinter 2/2/2, parent 3/3/5). The parent is
 > send a scout, mint more kits, recall it — and a short trip pushed the band over.
 >
 > **The card only.** The cohort's own `carryCapacity` / `carryLoad`, the band panel and the long-move
-> shed count the people PRESENT — a party does not walk with its band. A party's own kit is a fresh
-> set issued at launch (`outfitted_party_equipment`), not debited from the band's ledger, so no goods
-> term is needed for it.
+> shed count the people PRESENT — a party does not walk with its band.
+
+## A party's kit comes OUT of its band, and goes back
+
+`server::issue_party_kit` — the one seam every detached launch goes through (scout, denial raid,
+trade shipment) — **takes** the party's kit from its home band's `BandEquipment` with `take_units`
+(freshest first), `ceil(party_workers ÷ workers_per_unit)` of each item the chosen kit uses. A band
+short of an item sends what it has; nothing is minted. The launch forecast prices the same issued
+counts, so the quote and the party agree.
+
+**It comes back** on every fold-back (`fold_party_into_band` takes a `PartyGear`, so a return path
+that forgot it would not compile): the party's batches are placed into the receiving ledger with
+their wear — the home band on a homecoming or an in-camp cancel, the band it joins on a defection. A
+party that dies, or whose home band is gone, loses its gear.
+
+**The turn-one card counts it as the band's**: a grant apply rebuilds the ledger from empty, so
+`mint_loadout` mints `allocation − party_held_items` per item — otherwise a revision after a scout
+left would re-mint the scout's kit.
+
+> **What this replaced.** `outfitted_party_equipment` stocked a party from `start_stock_units`,
+> which is **0** at the shipped `start_stock_fraction 0.0` — so in shipped play every party left
+> bare-handed, and only stocked fixtures saw a (free, unworn) kit. Parties now carry real gear, and
+> their band is short of it while they are out.
 
 > ### ⛔ A STATIONARY BAND IS NEVER WARNED THAT IT IS OVER ITS CARRY
 >

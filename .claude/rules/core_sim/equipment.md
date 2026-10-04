@@ -1577,9 +1577,9 @@ every frame — and a `Vec` inside it because batch order is insertion order, wh
 > `BandEquipment::owns` is gone with the special case.
 >
 > **Every insert path therefore states the stock**, and this is the flip's load-bearing surface:
-> `spawn_profile_population` (`systems/worldgen.rs`), **both** expedition-outfitting paths in
-> `bin/server.rs` (through one `outfitted_party_equipment` helper, because *"a party leaves
-> outfitted"* is one fact), and `sim_state.rs`'s restore, which carries `BandRecord::equipment`
+> `spawn_profile_population` (`systems/worldgen.rs`) and `sim_state.rs`'s restore. **A detached party
+> is NOT an insert path any more**: its ledger is what `server::issue_party_kit` took off its home
+> band (`band-carry.md`), so it never states a stock of its own. The restore, which carries `BandRecord::equipment`
 > verbatim. All of them go through **`BandEquipment::start_stocked(config)`** — one unworn unit of
 > every item some kit `uses` (`EquipmentConfig::start_stocked_items`; a bench tool can never appear
 > there, because `validate` rejects a kit that names one). Pinned by

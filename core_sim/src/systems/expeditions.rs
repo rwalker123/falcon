@@ -27,6 +27,16 @@ type ExpeditionParty = (
     Option<&'static BandId>,
 );
 
+/// **A party [`advance_party_defection`] may carry over to another people** — its people, its
+/// mission, its id, and the gear ledger it takes with it.
+type DefectingParty = (
+    Entity,
+    &'static mut PopulationCohort,
+    &'static mut Expedition,
+    Option<&'static BandId>,
+    Option<&'static mut BandEquipment>,
+);
+
 /// **The RESIDENT bands [`advance_expeditions`] reaches**, named for the reason [`ExpeditionParty`]
 /// is. Three jobs at once: the home band the party reports to and delivers into (`&mut`), the
 /// [`BandId`] a contact report is filed under (an `Entity` is not an identity), and the
@@ -45,6 +55,9 @@ type ExpeditionHomeBands = (
     // **The name a contact report records the band under** — read at the moment a party sees it,
     // so the report carries what the band was called then (clock 1 of the connection it founds).
     Option<&'static BandName>,
+    // **The band's gear ledger** — a party coming home, or going over to this band, places the
+    // kit it carries back here ([`fold_party_into_band`]).
+    Option<&'static mut BandEquipment>,
 );
 
 /// The config handles [`advance_expeditions`] reads, bundled into one `SystemParam` so the system
@@ -235,12 +248,7 @@ pub fn advance_party_defection(
     mut sightings: ResMut<PartySightings>,
     mut event_log: ResMut<CommandEventLog>,
     tiles: Query<&Tile>,
-    mut parties: Query<(
-        Entity,
-        &mut PopulationCohort,
-        &mut Expedition,
-        Option<&BandId>,
-    )>,
+    mut parties: Query<DefectingParty>,
     // The homecoming's own band query: a party joins a resident band exactly as it would fold home.
     mut bands: Query<ExpeditionHomeBands, Without<Expedition>>,
 ) {
@@ -269,7 +277,7 @@ pub fn advance_party_defection(
     }
     let candidates: BTreeMap<BandId, Candidate> = bands
         .iter()
-        .filter_map(|(entity, cohort, band_id, resident, _, _)| {
+        .filter_map(|(entity, cohort, band_id, resident, _, _, _)| {
             resident?;
             let pos = tiles.get(cohort.current_tile).ok()?.position;
             Some((
@@ -288,7 +296,7 @@ pub fn advance_party_defection(
     order.sort_by_key(|entity| entity.to_bits());
     let mut defections: Vec<PartyDefection> = Vec::new();
     for party in order {
-        let Ok((_, cohort, mut expedition, _)) = parties.get_mut(party) else {
+        let Ok((_, cohort, mut expedition, _, _)) = parties.get_mut(party) else {
             continue;
         };
         // The home band's morale is the party's: they are that band's people. An orphaned party has
@@ -296,7 +304,7 @@ pub fn advance_party_defection(
         let home_morale = bands
             .get(expedition.home_band)
             .ok()
-            .map(|(_, home, _, _, _, _)| home.morale);
+            .map(|(_, home, _, _, _, _, _)| home.morale);
         let rate = home_morale
             .map(|morale| migration_move_fraction(morale, mig_cfg))
             .unwrap_or(scalar_zero());
@@ -351,7 +359,7 @@ pub fn advance_party_defection(
     }
 
     for defection in defections {
-        let Ok((_, mut party_cohort, mut expedition, party_band)) =
+        let Ok((_, mut party_cohort, mut expedition, party_band, mut party_gear)) =
             parties.get_mut(defection.party)
         else {
             continue;
@@ -362,17 +370,27 @@ pub fn advance_party_defection(
         let origin = bands
             .get(expedition.home_band)
             .ok()
-            .and_then(|(_, _, band_id, _, _, _)| band_id.copied())
+            .and_then(|(_, _, band_id, _, _, _, _)| band_id.copied())
             .map(|band| TransferCounterparty {
                 band,
                 faction: lost_people,
             });
-        let Ok((_, mut destination, _, _, allocation, _)) = bands.get_mut(defection.destination)
+        let Ok((_, mut destination, _, _, allocation, _, destination_gear)) =
+            bands.get_mut(defection.destination)
         else {
             continue;
         };
         let head_count = available_workers(party_cohort.working);
-        let fold = fold_party_into_band(&mut party_cohort, &mut expedition.cargo, &mut destination);
+        // **A party that goes over takes its gear with it** — it lands in the band it joins.
+        let fold = fold_party_into_band(
+            &mut party_cohort,
+            &mut expedition.cargo,
+            &mut destination,
+            PartyGear {
+                party: party_gear.as_deref_mut(),
+                home: destination_gear.map(|gear| gear.into_inner()),
+            },
+        );
         // Food crossing into the receiver's larder through neither income nor consumption — booked
         // so the ledger identity still closes, under a cause that does not claim they are its own.
         if let Some(mut allocation) = allocation {
@@ -534,7 +552,7 @@ pub fn advance_expeditions(
     // rather than borrowed, because `bands` is re-borrowed mutably below; a band with no
     // `BandName` is recorded under the empty name, which the wire reads as "unknown".
     let mut resident_names: HashMap<BandId, String> = HashMap::new();
-    for (band_entity, cohort, band_id, resident, _, name) in bands.iter() {
+    for (band_entity, cohort, band_id, resident, _, name, _) in bands.iter() {
         let (Some(id), Some(_)) = (band_id, resident) else {
             continue;
         };
@@ -623,14 +641,14 @@ pub fn advance_expeditions(
         let home_pos = bands
             .get(expedition.home_band)
             .ok()
-            .and_then(|(_, band, _, _, _, _)| tiles.get(band.current_tile).ok())
+            .and_then(|(_, band, _, _, _, _, _)| tiles.get(band.current_tile).ok())
             .map(|tile| tile.position);
         // **Who a contact report is filed under.** A party's findings belong to the band that
         // outfitted it, never to the party — the party is a detached crew and owns nothing.
         let home_band_id = bands
             .get(expedition.home_band)
             .ok()
-            .and_then(|(_, _, band_id, _, _, _)| band_id.copied());
+            .and_then(|(_, _, band_id, _, _, _, _)| band_id.copied());
         // "Near enough to run home" — the shared proximity for the fold-back, a shipment's
         // hand-over, and the comm-range flush.
         let near_home = home_pos
@@ -1144,7 +1162,7 @@ pub fn advance_expeditions(
                         let sender =
                             home_band_id.map(|band| TransferCounterparty { band, faction });
                         let landed = bands.get_mut(host_entity).ok().map(
-                            |(_, mut host, _, _, allocation, _)| {
+                            |(_, mut host, _, _, allocation, _, _)| {
                                 // The shipment lands class by class (#706): the host receives the
                                 // flesh, greens and grain that were loaded, not a classless total.
                                 let moved_mix = expedition.cargo.take_food_mix(carried_food);
@@ -1269,14 +1287,22 @@ pub fn advance_expeditions(
                     // before the party despawns and its pack goes with it. No home band left to
                     // receive them means the haul is simply lost, exactly as the carried food is.
                     let mut banked_materials = 0.0;
-                    if let Ok((_, mut home, _, _, allocation, _)) =
+                    if let Ok((_, mut home, _, _, allocation, _, home_gear)) =
                         bands.get_mut(expedition.home_band)
                     {
                         // **The undelivered shipment comes home too** — a party that turned back
                         // because its destination could not be resolved is still carrying real
                         // goods, and they settle into the band that sent them.
-                        let fold =
-                            fold_party_into_band(&mut cohort, &mut expedition.cargo, &mut home);
+                        // **And the kit it carried goes back on the band's shelf**, worn as it is.
+                        let fold = fold_party_into_band(
+                            &mut cohort,
+                            &mut expedition.cargo,
+                            &mut home,
+                            PartyGear {
+                                party: party_equipment.as_deref_mut(),
+                                home: home_gear.map(|gear| gear.into_inner()),
+                            },
+                        );
                         banked_materials = fold.materials;
                         // The pack and the cargo landing in the band's larder is food crossing from
                         // a party into a band, which is neither income nor consumption. A party
@@ -1659,7 +1685,9 @@ pub fn fold_party_into_band(
     party: &mut PopulationCohort,
     cargo: &mut crate::LocalStore,
     home: &mut PopulationCohort,
+    gear: PartyGear<'_>,
 ) -> FoldBack {
+    gear.hand_back();
     home.working += party.working;
     // The pack lands class by class (#706) — read, not emptied, for the reason above.
     let leftover_mix = party.stores.food().clone();
@@ -1687,6 +1715,35 @@ pub fn fold_party_into_band(
         materials,
         pack_materials,
         cargo_materials,
+    }
+}
+
+/// **A party's gear and the ledger it goes back into** — a parameter of [`fold_party_into_band`] so
+/// no fold-back path can forget it.
+///
+/// ⛔ **A party's kit is its home band's, taken off the band's shelf at launch** (`take_units`,
+/// freshest first), so every way a party rejoins a band — a homecoming, a cancel in camp, going over
+/// to another people — places its batches into the receiving band's ledger with `place_batches`,
+/// **keeping their wear**. A party that is lost, or whose band is gone, loses its gear with it.
+pub struct PartyGear<'a> {
+    /// The party's own ledger, emptied by the hand-back.
+    pub party: Option<&'a mut BandEquipment>,
+    /// The receiving band's ledger.
+    pub home: Option<&'a mut BandEquipment>,
+}
+
+impl PartyGear<'_> {
+    /// Move every batch the party carries into the receiving band's ledger, wear and all.
+    fn hand_back(self) {
+        let (Some(party), Some(home)) = (self.party, self.home) else {
+            return;
+        };
+        let items: Vec<String> = party.batches().map(|(item, _)| item.to_string()).collect();
+        for item in items {
+            let units = party.count_of(&item);
+            let batches = party.take_units(&item, units);
+            home.place_batches(&item, batches);
+        }
     }
 }
 

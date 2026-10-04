@@ -3844,6 +3844,41 @@ impl BandEquipment {
             .unwrap_or_default()
     }
 
+    /// **Take a detached party's kit off this ledger** — for every item the party's kit uses,
+    /// `ceil(party_workers ÷ workers_per_unit)` units, freshest first ([`Self::take_units`]), and
+    /// return them as the party's own ledger, worn as they are. A ledger short of an item gives what
+    /// it holds; **nothing is minted**. The one rule for how a party is equipped: the launch takes
+    /// it, and every forecast that quotes a party before launch previews it ([`Self::party_issue`]),
+    /// so the quote and the party that leaves cannot disagree.
+    pub fn take_party_issue(
+        &mut self,
+        equipment: &crate::equipment_config::EquipmentConfig,
+        kit: &crate::equipment_config::KitChoice,
+        party_workers: u32,
+    ) -> BandEquipment {
+        let mut party = BandEquipment::default();
+        for item in kit.uses() {
+            let workers_per_unit = equipment
+                .item(item)
+                .map_or(1, |definition| definition.workers_per_unit.max(1));
+            let wanted = party_workers.div_ceil(workers_per_unit);
+            let batches = self.take_units(item, wanted);
+            party.place_batches(item, batches);
+        }
+        party
+    }
+
+    /// **The kit a detached party would be issued from this ledger**, without taking it — the
+    /// preview [`Self::take_party_issue`] answers on a copy.
+    pub fn party_issue(
+        &self,
+        equipment: &crate::equipment_config::EquipmentConfig,
+        kit: &crate::equipment_config::KitChoice,
+        party_workers: u32,
+    ) -> BandEquipment {
+        self.clone().take_party_issue(equipment, kit, party_workers)
+    }
+
     /// **Take `count` whole units of `item` OUT of this ledger, FRESHEST FIRST** — the moving half
     /// of a band split and of a splinter's outfitting take ([`crate::starting_loadout`]).
     ///

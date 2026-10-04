@@ -262,6 +262,28 @@ pub fn window_people(world: &World, band: Entity, carry_cfg: &CarryConfig) -> Op
     Some(people)
 }
 
+/// **The items the band on `band` has out with its detached parties**, `item → units` — the gear a
+/// party took from the band at launch and will place back on its fold-back.
+pub fn party_held_items(world: &World, band: Entity) -> BTreeMap<String, u32> {
+    let mut held: BTreeMap<String, u32> = BTreeMap::new();
+    for entity in world.iter_entities() {
+        let (Some(expedition), Some(ledger)) = (
+            entity.get::<crate::components::Expedition>(),
+            entity.get::<BandEquipment>(),
+        ) else {
+            continue;
+        };
+        if expedition.home_band != band {
+            continue;
+        }
+        for (item, batches) in ledger.batches() {
+            *held.entry(item.to_string()).or_default() +=
+                batches.iter().map(|batch| batch.count).sum::<u32>();
+        }
+    }
+    held
+}
+
 /// **A larder's carry mass** — `food + fodder_carry_weight × fodder`, the food tier of
 /// [`CarryLoad`].
 pub fn larder_mass(larder: &LocalStore, carry_cfg: &CarryConfig) -> Scalar {
@@ -1548,22 +1570,24 @@ fn mint_loadout(
     recipes: &crate::recipes_config::RecipesConfig,
     materials_table: &crate::materials_config::MaterialsConfig,
 ) {
+    // ⛔ **What the band's detached parties carry is already the band's.** A party's kit is taken
+    // out of its home band's ledger at launch and placed back on its fold-back, so for the window it
+    // is still the band's gear (`WindowPeople`'s rule, for goods). A grant rebuilds the ledger from
+    // empty, so it mints the allocation LESS what the parties hold — or a revision after a scout
+    // leaves would re-mint the scout's baskets and the band would own them twice.
+    let held_out = party_held_items(world, entity);
     let mut ledger = BandEquipment::default();
-    for allocation in kits {
-        let Some(definition) = equipment.kit_definition(&allocation.kit_id) else {
+    for (item_id, wanted) in expand_kits(equipment, kits) {
+        let Some(item) = equipment.item(&item_id) else {
             continue;
         };
-        for item_id in &definition.uses {
-            let Some(item) = equipment.item(item_id) else {
-                continue;
-            };
-            ledger.stock(
-                item_id,
-                allocation.count,
-                &item.default_tier().id,
-                BandEquipment::anchor_grade(recipes, materials_table, item_id),
-            );
-        }
+        let owed = wanted.saturating_sub(held_out.get(&item_id).copied().unwrap_or(0));
+        ledger.stock(
+            &item_id,
+            owed,
+            &item.default_tier().id,
+            BandEquipment::anchor_grade(recipes, materials_table, &item_id),
+        );
     }
     world.entity_mut(entity).insert(ledger);
 

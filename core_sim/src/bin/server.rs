@@ -5691,6 +5691,7 @@ fn handle_send_expedition(
         .get::<BandName>(band.entity)
         .cloned()
         .unwrap_or_else(|| BandName(String::default()));
+    let party_gear = issue_party_kit(app, band.entity, &kit, party_workers);
     let expedition_entity = app
         .world
         .spawn((
@@ -5707,7 +5708,7 @@ fn handle_send_expedition(
             // haul rate — a contradiction on the wire. **Stated rather than defaulted**: an absent
             // ledger entry means NOT OWNED since the count slice, so `Default` would send the party
             // out bare-handed.
-            outfitted_party_equipment(app, party_workers),
+            party_gear,
             StartingUnit::new(unit_kind, unit_tags),
             Expedition {
                 home_band: band.entity,
@@ -5905,77 +5906,57 @@ fn outfit_raiding_party(
     })
 }
 
-/// **What a detached party leaves outfitted with** — one unworn unit of every item some kit
-/// carries, exactly as a band spawns.
+/// **What a detached party leaves outfitted with — TAKEN from its home band's stockpile.**
 ///
-/// One helper for both outfitting paths, because *"a party leaves outfitted"* is one fact: two
-/// call sites reaching for the ledger separately is how one of them ends up sending a bare-handed
-/// raid out under a kitted forecast.
+/// For every item the party's kit uses, `ceil(party_workers ÷ workers_per_unit)` units leave the
+/// band's [`BandEquipment`] with `take_units` — the freshest first, the order a splinter takes in —
+/// and become the party's ledger, worn as they are. **Nothing is minted**: a band holding fewer
+/// than the party needs sends what it has, and a party handed no spear is simply not equipped with
+/// one; its kit coverage reads what it actually carries. The gear comes back on the party's
+/// fold-back (`fold_party_into_band`'s `PartyGear`), and is lost with a party that is lost.
 ///
-/// **Sized to the party that leaves**, because a unit arms one person: a raid of ten sent out with
-/// one spear is nine bare hands, which is neither what the launch line quotes nor what "outfitted"
-/// means. Every worker in the party is a hunter, so the head count *is* the worker count here.
-fn outfitted_party_equipment(app: &bevy::prelude::App, party_workers: u32) -> BandEquipment {
-    BandEquipment::start_stocked_owned(
-        &app.world.resource::<EquipmentConfigHandle>().get(),
-        &app.world.resource::<RecipesConfigHandle>().get(),
-        &app.world.resource::<MaterialsConfigHandle>().get(),
-        party_workers as f32,
-    )
+/// **Sized to the party that leaves**, because a unit arms `workers_per_unit` people.
+fn issue_party_kit(
+    app: &mut bevy::prelude::App,
+    band: Entity,
+    kit: &KitChoice,
+    party_workers: u32,
+) -> BandEquipment {
+    let equipment = app.world.resource::<EquipmentConfigHandle>().get();
+    app.world
+        .get_mut::<BandEquipment>(band)
+        .map(|mut ledger| ledger.take_party_issue(&equipment, kit, party_workers))
+        .unwrap_or_default()
 }
 
-/// **The party a launch forecast is quoted for** — the kit the player is sending it with, over a
-/// **fresh** set of components ([`BandEquipment::default`] is zero wear), because the party leaves
-/// outfitted and that is the tier it will fight its first turns at. Wear is what moves it later, and
-/// the in-flight readouts re-quote against the party's live kit each turn.
-///
-/// **Quoted at the CHOSEN kit, not at "equipped"** — a raid sent out bare-handed must be quoted
-/// bare-handed, or the launch line promises a slaughter the party cannot perform.
+/// **The party a launch forecast is quoted for, and the haul it drags** — the kit the band would
+/// actually ISSUE it ([`BandEquipment::party_issue`] on the band's live ledger), resolved through
+/// [`core_sim::forecast_query::issued_raid_party`], the seam the compose sheet's query uses too. A
+/// band short of spears is quoted the raid it will really send, bare or partly armed, rather than a
+/// full kit it cannot hand over.
 ///
 /// **It takes the QUARRY'S MASS** because a mass-bounded weapon is only a weapon against animals it
 /// can hold: a raid sent with traps after a mammoth must be quoted at the bare hand's attack, which
 /// is the gate refusing the raid — the same answer the take will give.
 fn launch_forecast_party(
     app: &bevy::prelude::App,
+    band: Entity,
     kit: &KitChoice,
+    party_workers: u32,
     quarry_body_mass: f32,
-) -> HuntingParty {
-    let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
-    let combat = app.world.resource::<CombatConfigHandle>().get();
-    // A fresh ledger: the launch line quotes the KIT the party is being sent with, before it has worn
-    // any of it. The party's own wear then moves its tiers turn by turn once it is in flight.
-    let fresh = BandEquipment::start_stocked(&equipment_cfg);
-    // **UNIFORM**: the party leaves *outfitted* — `outfitted_party_equipment` stocks a party's
-    // worth of each item, sized to the head count being sent — so every hunter is holding the kit
-    // the player named. Quoting coverage against the one-unit reference ledger would price a raid
-    // of ten at one armed hunter and nine bare hands, which is not the party that will leave.
-    HuntingParty::uniform(
-        equipment_cfg.hunter_profile_against(
-            app.world.resource::<CreaturesConfigHandle>().get().person(),
-            kit,
-            &fresh,
-            quarry_body_mass,
-        ),
-        combat.expedition_tuning(),
-        combat.hunt_injury_damage_per_animal * equipment_cfg.exposure(kit, &fresh),
-        equipment_cfg.dispersion(kit, &fresh),
-    )
-}
-
-/// **The per-hunter haul rate the same launch forecast is quoted at** — the chosen kit's *sled*
-/// tier over a fresh set of components, the twin of [`launch_forecast_party`]'s attack tier. Both
-/// halves have to move together: quoting a bare-handed fight against a kitted haul would promise a
-/// party that kills nothing and drags it home fast.
-fn launch_forecast_haul(app: &bevy::prelude::App, kit: &KitChoice) -> f32 {
-    let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
-    let baseline_rate = app
+) -> (HuntingParty, f32) {
+    let ledger = app
         .world
-        .resource::<LaborConfigHandle>()
-        .get()
-        .hunt
-        .per_worker_biomass_capacity;
-    let fresh = BandEquipment::start_stocked(&equipment_cfg);
-    equipment_cfg.hunt_per_worker_biomass_capacity(baseline_rate, kit, &fresh)
+        .get::<BandEquipment>(band)
+        .cloned()
+        .unwrap_or_default();
+    core_sim::forecast_query::issued_raid_party(
+        &app.world,
+        &ledger,
+        kit,
+        party_workers,
+        quarry_body_mass,
+    )
 }
 
 /// Resolve the kit a raiding verb was given, or refuse the launch with a reason.
@@ -6236,6 +6217,7 @@ fn launch_party_from_band(
         .get::<BandName>(band.entity)
         .cloned()
         .unwrap_or_else(|| BandName(String::default()));
+    let party_gear = issue_party_kit(app, band.entity, &kit, party_workers);
     let expedition_entity = app
         .world
         .spawn((
@@ -6243,8 +6225,8 @@ fn launch_party_from_band(
             expedition_band_id,
             expedition_band_name,
             LaborAllocation::default(),
-            // **Outfitted, stated rather than defaulted** — see the scout's spawn above.
-            outfitted_party_equipment(app, party_workers),
+            // **Outfitted out of the band's own stock** — see the scout's spawn above.
+            party_gear,
             StartingUnit::new(unit_kind, unit_tags),
             Expedition {
                 home_band: band.entity,
@@ -6316,14 +6298,14 @@ fn handle_send_denial_raid(
             .resource::<CombatConfigHandle>()
             .get()
             .forecast_range_sigmas;
-        // Quoted at the kit the raid is being sent with — the verdict rests on kills, which the
-        // fight owns, so a bare-handed raid is told it cannot do the job rather than promised it can.
-        let per_worker_haul = launch_forecast_haul(app, &kit);
+        // Quoted at the kit the raid would be ISSUED — the verdict rests on kills, which the fight
+        // owns, so a bare-handed raid is told it cannot do the job rather than promised it can.
         let registry = app.world.resource::<HerdRegistry>();
         registry.find(&fauna_id).map(|herd| {
             // Resolved INSIDE the herd lookup: the attack tier is a fact about this party against
             // THIS animal, not about the party alone.
-            let party = launch_forecast_party(app, &kit, herd.body_mass);
+            let (party, per_worker_haul) =
+                launch_forecast_party(app, outfit.band.entity, &kit, party_workers, herd.body_mass);
             denial_forecast(
                 party_workers,
                 herd,
@@ -7199,11 +7181,23 @@ fn cancel_party_standing_in_camp(
     // exactly as a party turned home mid-flight would deliver it. The caller despawns the party
     // immediately after, so the live component is never read again.
     let mut cargo = expedition.cargo.clone();
+    // The party's kit goes back on the band's shelf with it, worn as it is — read off a clone, since
+    // the caller despawns the party immediately after.
+    let mut party_gear = app.world.get::<BandEquipment>(entity).cloned();
     let fold = {
-        let mut home = app
+        let mut homes = app
             .world
-            .get_mut::<PopulationCohort>(expedition.home_band)?;
-        fold_party_into_band(&mut party, &mut cargo, &mut home)
+            .query::<(&mut PopulationCohort, Option<&mut BandEquipment>)>();
+        let (mut home, home_gear) = homes.get_mut(&mut app.world, expedition.home_band).ok()?;
+        fold_party_into_band(
+            &mut party,
+            &mut cargo,
+            &mut home,
+            core_sim::PartyGear {
+                party: party_gear.as_mut(),
+                home: home_gear.map(|gear| gear.into_inner()),
+            },
+        )
     };
     // The pack and any undelivered cargo landing back in the band's larder is a transfer, exactly as
     // the `Returning` arm's fold-back is — a cancel differs only in *when* it fires, not in what
@@ -20191,37 +20185,104 @@ mod tests {
         }
     }
 
-    /// **⛔ AND THE LAUNCH SHEET IS CUT FROM THE SAME SHARE.**
+    /// **⛔ THE LAUNCH SHEET QUOTES THE KIT THE LAUNCH WILL ISSUE.**
     ///
-    /// `forecast_query::resolve_ask` prices a party nobody has committed yet, so the row already
-    /// standing on the asked-about herd is **excluded** and the asked-for party takes its place in
-    /// the denominator — a party of `w` competes with the band's other rows exactly as a committed
-    /// crew of `w` does. The claim is the one the fixture above makes, on the surface a raid is
-    /// launched from: a party rationed against a competing row reads what a band owning only that
-    /// share reads.
+    /// A raid's kit is taken from its band's stock at launch — `ceil(party ÷ workers_per_unit)` units
+    /// of each kit item, freshest first, whatever the band's rows are doing — so the sheet quotes
+    /// exactly that issue (`forecast_query::issued_raid_party`). Three claims:
+    ///
+    /// - **short:** a band holding half the outfits its raid of four needs is quoted the raid the
+    ///   launched party then really is — its forecast equals the one resolved off the launched
+    ///   party's own issued ledger, and the launched ledger is the issue the quote previewed;
+    /// - **liveness:** that short raid kills fewer than a fully outfitted one;
+    /// - **stocked:** a band holding at least the party's need is quoted the full kit, however much
+    ///   more it holds.
     #[test]
-    fn a_raid_forecast_is_priced_at_the_asking_partys_share_of_the_gear() {
-        let shared = raid_reading(ONE_COMPETING_ROW, OUTFITS_FOR_HALF_THE_BAND);
-        let owns_only_its_share = raid_reading(NO_COMPETING_ROW, ONE_ROWS_SHARE_OF_HALF);
-        let stocked = raid_reading(ONE_COMPETING_ROW, OUTFITS_FOR_THE_WHOLE_BAND);
-        let stocked_alone = raid_reading(NO_COMPETING_ROW, OUTFITS_FOR_THE_WHOLE_BAND);
-
-        assert_eq!(
-            shared, owns_only_its_share,
-            "a party quoted against a competing row reads what a band owning only its share reads"
-        );
-        // **Kills, not the haul**: a raid's pack binds its haul hard, so the delivered figure
-        // separates the arms by nothing, while the kills a half-armed party lands separate them
-        // plainly.
+    fn a_raid_forecast_is_priced_at_the_kit_the_launch_will_issue() {
+        let short = raid_reading(NO_COMPETING_ROW, ONE_ROWS_SHARE_OF_HALF);
+        let stocked = raid_reading(NO_COMPETING_ROW, SHORTFALL_ROW_CREW);
+        let surplus = raid_reading(NO_COMPETING_ROW, OUTFITS_FOR_THE_WHOLE_BAND);
         assert!(
-            shared.animals_killed < stocked.animals_killed,
-            "liveness: a short band's sheet must promise FEWER kills than a fully outfitted one \
-             ({shared:?} against {stocked:?})"
+            short.animals_killed < stocked.animals_killed,
+            "liveness: a band short of outfits must be promised FEWER kills ({short:?} against \
+             {stocked:?})"
         );
         assert_eq!(
-            stocked, stocked_alone,
-            "a band that is NOT short quotes bit-for-bit what the same party quoted as the only \
-             claimant on the ledger"
+            stocked, surplus,
+            "a band holding the party's whole need is quoted the full kit whatever it holds beyond"
+        );
+
+        // Launch the short raid and price the party that actually left.
+        let (mut app, band) = shortfall_world(NO_COMPETING_ROW, ONE_ROWS_SHARE_OF_HALF);
+        let equipment = app.world.resource::<EquipmentConfigHandle>().get();
+        let kit = equipment
+            .resolve_kit_or(
+                Some(SHARED_HUNT_KIT),
+                KitJob::Hunt,
+                equipment.default_kit(KitJob::Hunt),
+            )
+            .expect("the shared hunt kit is on the roster");
+        let previewed = app
+            .world
+            .get::<BandEquipment>(band)
+            .expect("the band keeps a ledger")
+            .party_issue(&equipment, &kit, SHORTFALL_ROW_CREW);
+        handle_send_denial_raid(
+            &mut app,
+            FactionId(0),
+            Some(FIXTURE_BAND_ID),
+            SHORTFALL_ROW_CREW,
+            QUERIED_QUARRY_ID.to_string(),
+            Some(SHARED_HUNT_KIT.to_string()),
+        );
+        let party_ledger = {
+            let mut parties = app.world.query::<(&Expedition, &BandEquipment)>();
+            parties
+                .iter(&app.world)
+                .find(|(expedition, _)| expedition.home_band == band)
+                .map(|(_, ledger)| ledger.clone())
+                .expect("the raid launched")
+        };
+        for item in SHARED_HUNT_ITEMS {
+            assert_eq!(
+                party_ledger.count_of(item),
+                previewed.count_of(item),
+                "'{item}': the launched party carries exactly the issue the quote previewed"
+            );
+        }
+        assert!(
+            party_ledger.count_of("traps") < SHORTFALL_ROW_CREW,
+            "fixture: the band is short, so the party leaves partly armed: {party_ledger:?}"
+        );
+        let herd = app
+            .world
+            .resource::<HerdRegistry>()
+            .find(QUERIED_QUARRY_ID)
+            .cloned()
+            .expect("the queried herd stands");
+        let (party, per_worker_haul) = core_sim::forecast_query::issued_raid_party(
+            &app.world,
+            &party_ledger,
+            &kit,
+            SHORTFALL_ROW_CREW,
+            herd.body_mass,
+        );
+        let launched = denial_forecast(
+            SHORTFALL_ROW_CREW,
+            &herd,
+            &app.world.resource::<FaunaConfigHandle>().get(),
+            per_worker_haul,
+            &app.world.resource::<ExpeditionConfigHandle>().get(),
+            &party,
+            app.world
+                .resource::<CombatConfigHandle>()
+                .get()
+                .forecast_range_sigmas,
+        );
+        assert_eq!(
+            (short.animals_killed, short.outcome.as_str()),
+            (launched.animals_killed, launched.outcome.as_str()),
+            "the sheet's forecast is what the launched party achieves with its issued kit"
         );
     }
 
@@ -27004,5 +27065,202 @@ mod long_move_tests {
             &[],
         )
         .expect("and the room it had before the party left is still there");
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // A detached party's kit comes OUT of its home band's stock, and goes back on the fold-back
+    // ---------------------------------------------------------------------------------------------
+
+    /// The items a scout party's default (`ranging`) kit puts in its hands.
+    const RANGING_ITEMS: [&str; 4] = ["spears", "sled", "baskets", "wayfinding"];
+
+    /// `item → units` a ledger holds, for the items a ranging party carries.
+    fn ranging_held(
+        app: &bevy::prelude::App,
+        entity: Entity,
+    ) -> std::collections::BTreeMap<&'static str, u32> {
+        let ledger = app.world.get::<BandEquipment>(entity);
+        RANGING_ITEMS
+            .into_iter()
+            .map(|item| (item, ledger.map_or(0, |ledger| ledger.count_of(item))))
+            .collect()
+    }
+
+    /// The scout party out from `band`, as an entity.
+    fn party_entity(app: &mut bevy::prelude::App, band: Entity) -> Entity {
+        let mut query = app.world.query::<(Entity, &Expedition)>();
+        query
+            .iter(&app.world)
+            .find(|(_, expedition)| expedition.home_band == band)
+            .map(|(entity, _)| entity)
+            .expect("a party is out")
+    }
+
+    /// Send a scout of `workers` a few tiles out, returning the faction.
+    fn send_scout(
+        app: &mut bevy::prelude::App,
+        band: Entity,
+        band_id: u64,
+        workers: u32,
+    ) -> FactionId {
+        let faction = app
+            .world
+            .get::<PopulationCohort>(band)
+            .expect("the band keeps a cohort")
+            .faction;
+        let at = position(app, band);
+        let target = land_tile_within(app, at, 2..=3);
+        handle_send_expedition(
+            app,
+            faction,
+            Some(band_id),
+            workers,
+            target.x,
+            target.y,
+            None,
+        );
+        faction
+    }
+
+    /// A wear a party's spear has taken in the field, on the config's 0–100 scale.
+    const FIELD_WEAR: f32 = 7.0;
+
+    /// ⛔ **A PARTY'S KIT IS TAKEN FROM ITS BAND, AND A RECALL PUTS IT BACK WORN AS IT IS.** Nothing
+    /// is minted: the units the scout carries are exactly the units its band lost, and the recall
+    /// returns them to the band's ledger keeping the wear the party gave them.
+    #[test]
+    fn a_partys_kit_comes_out_of_its_band_and_goes_back_on_recall() {
+        let (mut app, band, band_id) = world();
+        let band_before = ranging_held(&app, band);
+        assert!(
+            band_before["spears"] > 0 && band_before["baskets"] > 0,
+            "**LIVENESS**: the band holds kit to issue: {band_before:?}"
+        );
+        let faction = send_scout(&mut app, band, band_id, 1);
+        let party = party_entity(&mut app, band);
+        let party_held = ranging_held(&app, party);
+        let band_after = ranging_held(&app, band);
+        for item in RANGING_ITEMS {
+            assert_eq!(
+                band_before[item],
+                band_after[item] + party_held[item],
+                "'{item}': the party's units are exactly the units the band lost"
+            );
+        }
+        assert!(
+            party_held["spears"] > 0,
+            "the scout carries a spear: {party_held:?}"
+        );
+        // The field wears the party's spear.
+        {
+            let mut ledger = app
+                .world
+                .get_mut::<BandEquipment>(party)
+                .expect("the party carries a ledger");
+            let worn: Vec<_> = ledger
+                .batches_of("spears")
+                .iter()
+                .cloned()
+                .map(|mut batch| {
+                    batch.wear = FIELD_WEAR;
+                    batch
+                })
+                .collect();
+            ledger.restore_batches("spears", worn);
+        }
+        let party_id = app.world.get::<BandId>(party).expect("a party id").0;
+        handle_recall_expedition(&mut app, faction, party_id);
+        assert_eq!(
+            ranging_held(&app, band),
+            band_before,
+            "the recall puts every unit back on the band's shelf"
+        );
+        assert!(
+            app.world
+                .get::<BandEquipment>(band)
+                .expect("the band keeps a ledger")
+                .batches_of("spears")
+                .iter()
+                .any(|batch| (batch.wear - FIELD_WEAR).abs() < f32::EPSILON),
+            "and the spear comes back carrying the wear the field gave it"
+        );
+    }
+
+    /// ⛔ **A BAND SHORT OF GEAR SENDS WHAT IT HAS.** A band holding one basket that sends three
+    /// workers out issues that one basket — no unit is minted to make up the rest.
+    #[test]
+    fn a_band_short_of_gear_issues_a_partial_kit() {
+        let (mut app, band, band_id) = world();
+        {
+            let mut ledger = app
+                .world
+                .get_mut::<BandEquipment>(band)
+                .expect("the band keeps a ledger");
+            let held = ledger.count_of("baskets");
+            ledger.take_units("baskets", held.saturating_sub(1));
+            assert_eq!(ledger.count_of("baskets"), 1, "fixture: one basket left");
+        }
+        const PARTY: u32 = 3;
+        send_scout(&mut app, band, band_id, PARTY);
+        let party = party_entity(&mut app, band);
+        assert_eq!(
+            ranging_held(&app, party)["baskets"],
+            1,
+            "the party carries the one basket the band had"
+        );
+        assert_eq!(
+            ranging_held(&app, band)["baskets"],
+            0,
+            "and the band has none left"
+        );
+    }
+
+    /// ⛔ **A TURN-ONE REVISION AFTER A SCOUT LEAVES DOES NOT RE-MINT THE SCOUT'S GEAR.** A grant
+    /// rebuilds the band's ledger from empty; the units out with its party are still the band's, so
+    /// the band's ledger plus the party's is exactly what the allocation expands to.
+    #[test]
+    fn a_revision_after_a_scout_leaves_does_not_duplicate_its_gear() {
+        let (mut app, band, band_id) = world();
+        let (kits, materials) = {
+            let window = app
+                .world
+                .resource::<core_sim::StartingLoadout>()
+                .window(BandId(band_id))
+                .expect("the band holds its turn-one window")
+                .clone();
+            (window.kits, window.materials)
+        };
+        let faction = send_scout(&mut app, band, band_id, 1);
+        let party = party_entity(&mut app, band);
+        core_sim::apply_starting_loadout(
+            &mut app.world,
+            faction,
+            BandId(band_id),
+            &kits,
+            &materials,
+        )
+        .expect("re-sending the band's own allocation is accepted");
+        let equipment = app.world.resource::<EquipmentConfigHandle>().get();
+        let mut expanded: std::collections::BTreeMap<&str, u32> = std::collections::BTreeMap::new();
+        for row in &kits {
+            for item in &equipment
+                .kit_definition(&row.kit_id)
+                .expect("a roster kit")
+                .uses
+            {
+                if let Some(item) = RANGING_ITEMS.iter().find(|ranging| **ranging == item) {
+                    *expanded.entry(item).or_default() += row.count;
+                }
+            }
+        }
+        let band_held = ranging_held(&app, band);
+        let party_held = ranging_held(&app, party);
+        for (item, wanted) in expanded {
+            assert_eq!(
+                band_held[item] + party_held[item],
+                wanted,
+                "'{item}': the band and its party hold the allocation once, not twice"
+            );
+        }
     }
 }

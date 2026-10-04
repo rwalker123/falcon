@@ -460,8 +460,8 @@ pub use systems::{
     party_owes_a_report, prospective_keep_hands, publish_turn_transfers, settle_bands_roadwork,
     settle_scarce_tools, simulate_population, simulate_power, source_has_a_meter_at_risk,
     split_band_from_parent, split_refusals, BenchTiers, DenialForecast, DenialOutcome, HuntOutcome,
-    PartySightings, PoolToolPlan, PowerSimParams, RaidRoll, SplitBand, SplitRefusal, SplitRefusals,
-    ToolClaimStage, TradeDiffusionEvent,
+    PartyGear, PartySightings, PoolToolPlan, PowerSimParams, RaidRoll, SplitBand, SplitRefusal,
+    SplitRefusals, ToolClaimStage, TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,

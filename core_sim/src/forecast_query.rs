@@ -120,41 +120,13 @@ fn resolve_ask(
         return Err(query_failure(query_error::INVALID_PARTY));
     }
     let AskedQuarry {
-        herd,
-        wear,
-        kit,
-        other_rows,
-        priority,
+        herd, wear, kit, ..
     } = resolve_quarry_and_kit(world, faction_id, band_id, herd_id, kit_id)?;
-    let equipment = world.resource::<EquipmentConfigHandle>().get();
-
-    // **How this band's gear divides the party it is asking about** — resolved once and read by
-    // both halves below, so the fight it is quoted and the haul it is quoted describe the same
-    // people (`equipment.md` → "the partly-equipped party").
-    //
-    // **And it is the party's SHARE of the gear, not the band's whole ledger** (`equipment.md` →
-    // "ONE BAND, ONE SET OF GEAR"): a prospective party competes with the rows already staffed
-    // exactly as a committed one does, so a band whose two trapping rows share four traps is quoted
-    // the half-armed party the turn will actually pay.
-    //
-    // **A party ranks its kit claim at its own row's Priority** — no near/far distinction: the
-    // band's row on this herd where it has one, else the default a new row is given, exactly as a
-    // local prospective crew is settled (`docs/plan_site_crews.md` §2.3).
-    let party_crew = party_workers as f32;
-    let budget = crate::equipment_config::BandItemBudget::with_prospective_row(
-        other_rows, &kit,
-        // **A detached party takes the standing surplus until it is spent**, so every one of its
-        // hunters takes something and the whole party claims the kit.
-        party_crew, priority,
-    );
-    let coverage = equipment.coverage_from_units(
-        &kit,
-        party_workers as f32,
-        &wear,
-        budget.share_for_prospective(&wear, &equipment),
-    );
-    let party = query_hunting_party(world, &equipment, &coverage, &wear, herd.body_mass);
-    let per_worker_haul = query_per_worker_haul(world, &equipment, &coverage, &wear);
+    // **The party is quoted on the kit the launch would ISSUE it** — `take_party_issue`'s counts,
+    // previewed off the band's live ledger — so the sheet and the raid that leaves describe the same
+    // people. A band short of spears is told the raid's real (bare or partial) yield.
+    let (party, per_worker_haul) =
+        issued_raid_party(world, &wear, &kit, party_workers, herd.body_mass);
     Ok(ResolvedAsk {
         herd,
         party,
@@ -358,6 +330,28 @@ fn query_per_worker_haul(
     // are actually dragging, not at the tier the best-equipped of them has.
     coverage
         .weighted_rate(|kit| equipment.hunt_per_worker_biomass_capacity(equipped_rate, kit, wear))
+}
+
+/// **A raiding party as it would leave this band** — the fight it puts up and the haul it drags,
+/// resolved on the kit the launch issues it ([`BandEquipment::party_issue`] off `band_ledger`, the
+/// home band's live gear) and through the same coverage, party resolution and haul rate
+/// `advance_expeditions` reads a live party through. The ONE seam every pre-launch quote of a raid
+/// goes through — the launch line and the compose sheet's query alike — so a quote cannot promise
+/// gear the launch will not hand over.
+pub fn issued_raid_party(
+    world: &World,
+    band_ledger: &BandEquipment,
+    kit: &crate::equipment_config::KitChoice,
+    party_workers: u32,
+    quarry_body_mass: f32,
+) -> (HuntingParty, f32) {
+    let equipment = world.resource::<EquipmentConfigHandle>().get();
+    let issued = band_ledger.party_issue(&equipment, kit, party_workers);
+    let coverage = equipment.coverage(kit, party_workers as f32, &issued);
+    (
+        query_hunting_party(world, &equipment, &coverage, &issued, quarry_body_mass),
+        query_per_worker_haul(world, &equipment, &coverage, &issued),
+    )
 }
 
 /// Answer a denial-raid forecast: the exact party the query names, plus the party the sheet opens on.
