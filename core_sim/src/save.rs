@@ -116,7 +116,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 19 | `CommandEventEntry` gained `band` — the one band an event is about (`0` = none), which the wire publishes as `CommandEventState.band`; a refused `set_starting_loadout` names its band there (issue #723). The event log rides `SimState.command_events`, so a version-18 blob has no such field |
 /// | 20 | `SimState` gained `belief` — the `BeliefRegistry`, belief on every place (issue #697, `crate::belief`). A version-19 blob has no such field |
 /// | 21 | Band carry (#732): `LoadoutSupply::Grant` lost `kit_budget` / `material_budget` for one optional `carry_budget` (a load in `CarryLoad` units; `None` = the band's own carry, read live), `LoadoutSupply::Parent` gained the take's `carry_budget`, `LoadoutWindow` gained `dowry` (a splinter's food share and what has crossed), and `LaborAllocation` gained `last_food_left_behind` — the food ledger's long-move term. |
-pub const SAVE_FORMAT_VERSION: u32 = 21;
+/// | 22 | The breeding ceiling (#688): `FertilityFactors` gained `ceiling` (the fourth fertility factor) and `PopulationCohort` gained `last_breeding` (the band's breeding population and its ceiling, `crate::lineage::BreedingReading`), which the wire publishes as `PopulationCohortState.fertilityCeiling` / `breedingPopulation` / `breedingCeiling`. The cohort rides `BandRecord`, so a version-21 blob has no such fields |
+pub const SAVE_FORMAT_VERSION: u32 = 22;
 
 /// gzip level for the payload document.
 ///

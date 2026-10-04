@@ -1673,6 +1673,20 @@ pub struct PopulationCohortState {
     /// larder ledger identity (`snapshot.fbs` → `foodLeftBehind`). Appended last.
     #[serde(default)]
     pub food_left_behind: f32,
+    /// **The fourth fertility factor** (#688) — the share of this turn's would-be births the band's
+    /// breeding population had room for under its inbreeding ceiling. Fixed-point raw
+    /// (`Scalar::SCALE`), **neutral at 1.0** like its three siblings; `0` on a cohort that has not
+    /// ticked. Appended last.
+    #[serde(default)]
+    pub fertility_ceiling: i64,
+    /// **The band's breeding population, in whole people** — every band in its supply network, or
+    /// the band alone in none, after this turn's demographics. Appended last.
+    #[serde(default)]
+    pub breeding_population: u32,
+    /// **The breeding population's ceiling, in people** — `|union of founding lines| ×
+    /// people_per_line`. Appended last.
+    #[serde(default)]
+    pub breeding_ceiling: u32,
 }
 
 /// **ONE GOOD THAT CROSSED A BAND'S STORE, BY CAUSE** — a row of

@@ -2102,6 +2102,11 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // set operations (contact merge, the split partition); a reader wants how many.
         // A set minted from a `u16` count and only ever partitioned cannot outgrow `u32`.
         founding_lines: cohort.founding_lines.len() as u32,
+        // The fourth fertility factor and the breeding population it was resolved for (#688) —
+        // read off the cohort as the other three factors are, never re-derived at capture.
+        fertility_ceiling: cohort.last_fertility_factors.ceiling.raw(),
+        breeding_population: cohort.last_breeding.headcount,
+        breeding_ceiling: cohort.last_breeding.ceiling,
         // **What rotted this turn** (#706) — the ledger identity's `spoiled` term, set by the larder
         // rot and added to by any caravan pack's transit rot.
         food_spoiled: cohort.last_food_spoiled,
@@ -2635,6 +2640,7 @@ mod tests {
             last_morale_cause: MoraleCause::None,
             last_morale_contributions: MoraleContributions::default(),
             last_fertility_factors: Default::default(),
+            last_breeding: Default::default(),
             discontent_fraction: scalar_zero(),
             grievance: scalar_zero(),
             last_emigrated: 0,
@@ -2745,12 +2751,14 @@ mod tests {
             hunger: scalar_from_f32(0.6),
             reserve: scalar_from_f32(1.5),
             trend: scalar_from_f32(0.25),
+            ceiling: scalar_from_f32(0.4),
         };
         cohort.last_fertility_factors = factors;
         let state = captured(&cohort, None, None);
         assert_eq!(state.fertility_hunger, factors.hunger.raw());
         assert_eq!(state.fertility_reserve, factors.reserve.raw());
         assert_eq!(state.fertility_trend, factors.trend.raw());
+        assert_eq!(state.fertility_ceiling, factors.ceiling.raw());
     }
 
     /// **The no-data rule on the wire.** A cohort that has not yet been through a turn has no
@@ -2765,9 +2773,10 @@ mod tests {
             (
                 state.fertility_hunger,
                 state.fertility_reserve,
-                state.fertility_trend
+                state.fertility_trend,
+                state.fertility_ceiling
             ),
-            (0, 0, 0),
+            (0, 0, 0, 0),
             "a cohort that has not ticked must publish no reading, not a fabricated one"
         );
     }

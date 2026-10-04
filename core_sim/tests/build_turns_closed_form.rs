@@ -260,6 +260,7 @@ fn spawn_keepers_of(
                 home: tile,
                 current_tile: tile,
                 last_fertility_factors: Default::default(),
+                last_breeding: Default::default(),
                 size: 200,
                 children: scalar_zero(),
                 // **THE BAND MUST BE ABLE TO AFFORD BOTH CREWS.** The take and the build are
@@ -1374,6 +1375,7 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                 last_morale_cause: MoraleCause::None,
                 last_morale_contributions: Default::default(),
                 last_fertility_factors: Default::default(),
+                last_breeding: Default::default(),
                 discontent_fraction: scalar_zero(),
                 grievance: scalar_zero(),
                 last_emigrated: 0,

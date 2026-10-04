@@ -304,6 +304,13 @@ pub struct DemographicsLineage {
     /// parent's. **At least one**, enforced by the type: a band of people descends from someone,
     /// and a `0` is a parse error rather than a band with no lines.
     pub founding_lines: NonZeroU16,
+    /// `K` — **how many people one founding line can carry** before inbreeding stops a breeding
+    /// population's births (issue #688). A breeding population — the bands in one supply network,
+    /// or a lone band — ceilings at `|union of its members' lines| × K`. With the shipped `L` an
+    /// isolated starting band ceilings at `L × K`, which must sit above the starting band's size
+    /// (pinned by a test, not by load-time validation). **At least one**, enforced by the type: a
+    /// `0` would ceiling every people at nobody, so it is a parse error.
+    pub people_per_line: NonZeroU16,
 }
 
 /// Root demographic configuration.
@@ -679,5 +686,44 @@ mod tests {
             DemographicsConfig::from_json_str(&value.to_string()).is_err(),
             "a starting band must descend from at least one line"
         );
+    }
+
+    /// A line that carries **nobody** would ceiling every people at zero, so
+    /// `lineage.people_per_line = 0` is a parse error.
+    #[test]
+    fn zero_people_per_line_is_rejected() {
+        let mut value = builtin_value();
+        value["lineage"]["people_per_line"] = serde_json::json!(0);
+        assert!(
+            DemographicsConfig::from_json_str(&value.to_string()).is_err(),
+            "a founding line must carry at least one person"
+        );
+    }
+
+    /// **The game never opens capped** (issue #688): an isolated starting band's breeding ceiling,
+    /// the shipped `L × K`, sits above every shipped starting unit's head-count. A test rather than
+    /// load-time cross-config validation — the two files load independently, and what this pins is
+    /// the shipped tuning, not a rule a modder's config must obey.
+    #[test]
+    fn the_shipped_starting_band_opens_below_its_breeding_ceiling() {
+        let lineage = DemographicsConfig::default().lineage;
+        let ceiling = crate::lineage::breeding_ceiling(
+            usize::from(lineage.founding_lines.get()),
+            lineage.people_per_line,
+        );
+        let profiles = crate::start_profile::StartProfiles::builtin();
+        let mut checked = 0;
+        for profile in profiles.iter() {
+            for unit in &profile.overrides().starting_units {
+                assert!(
+                    unit.band_size() < ceiling,
+                    "profile '{}' opens a {}-person band at or above its breeding ceiling {ceiling}",
+                    profile.id,
+                    unit.band_size()
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 0, "the shipped profiles carry a starting unit");
     }
 }

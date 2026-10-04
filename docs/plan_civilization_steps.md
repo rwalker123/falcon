@@ -150,106 +150,70 @@ Lack of movement is the *last* link. Belief comes before it, and before belief c
 band cannot meet alone**. That is the thing our sim lacks: a single band is completely
 self-sufficient, so it has no reason to walk, gather, or split.
 
-> The "not viable alone" claim reaches past the video into general anthropology and is **not
-> verified**; the mechanism below holds even if the number is soft, but the claim should be checked
-> before the spec leans on it.
+#### The mechanism: an isolated people cannot grow past its lines
 
-#### The mechanism: a breeding population cannot grow past its lines
-
-The need is **inbreeding**, so the unit that is capped is not the band but the **breeding
-population**: everyone in contact. That is what the supply network already computes as a connected
-component. "Faction limit" is right in practice, with one refinement — a far band that has dropped
-off the network is its own breeding population even though it is still your faction.
+**A completely isolated band of 30 can grow only so big — about 150 — before inbreeding stops its
+growth. Contact with *other* peoples breaks the cap:** as people intermingle they bring the genetic
+diversity that lets both sides grow. Around **500** a population is large enough that inbreeding no
+longer matters. The point of the mechanic is to push a player toward other factions.
 
 The sim has three age brackets, no individuals, no sexes and no kinship, so relatedness cannot be
 read from state. It is a proxy, and the proxy is **founding lines**: how many unrelated families a
 group descends from.
 
-- **Each band carries a count of lines.** The starting band has `L` (config), standing for its
-  unrelated families.
-- **A split takes a proportional share, minimum one.** Five out of thirty takes one or two.
-- **A breeding population's ceiling is its lines × a per-line cap `K`.** Births stop there — the
-  pattern the shipped population clamp already uses (`simulate_population`: total ≤
-  `population_cap`, births stop at the cap).
-- **Contact merges line sets.** Each side gains the lines it lacks. That is what a gathering does.
-  Contact with your *own* split band counts — that is what a tribe was, exogamy between bands of
-  the same people — but a *recent* split shares every line and adds nothing.
-- **Lines do not decay** in the plain version. The one refinement worth holding in reserve is that
-  lines regrow slowly in a long-separated group, so contact after a long separation is worth more
-  than after a short one. Not to be built first.
+- **Each starting band carries `L` lines** (config), standing for its unrelated families.
+- **A split divides its parent's lines; it never adds any.** Every band of a faction descends from
+  the same starting band, so a faction's bands together hold exactly the `L` lines it started with.
+  Splitting spreads a people out; it does not make it more diverse.
+- **The capped unit is the breeding population** — the bands in contact, which is what the supply
+  network already computes as a connected component. Its ceiling is the **union of its members'
+  lines × a per-line cap `K`**, and births stop there. A band that has walked off the network is its
+  own breeding population, holding only the lines it took.
+- **Contact with another people merges line sets.** Each side gains the lines it lacks, and both
+  ceilings rise. That is what lifts a faction past ~150 (#689). Contact with your own split bands
+  adds nothing — they hold your lines already.
+- **Lines do not decay.**
 
-**The numbers, hedged.** From general population genetics and forager anthropology, not the video;
-check before a spec leans on them. Roughly 50 effective breeders avoids short-term inbreeding
-damage and ~500 keeps a population healthy long-term; effective breeders are about a third of
-headcount. Forager mating networks ran around 500 people across many bands, and simulations put the
-minimum self-sustaining network at ~175–475. Founder groups of 15–30 (Pitcairn, Tristan da Cunha,
-Polynesian islands) grew to a few hundred over generations with visible inbreeding costs. A group
-of 5 is two or three couples; every second-generation marriage is between first cousins.
+**The numbers.** `K` is chosen so an isolated starting band ceilings near 150. Each other people a
+faction mixes with adds its lines, so contact with two or three others carries the union to ~500,
+where inbreeding stops being the binding constraint and the next ceiling takes over.
+
+| Breeding population | Lines | Ceiling |
+|---|---|---|
+| An isolated starting band of 30, and every band it splits into while they stay connected | `L` | ~150 |
+| A splinter that walked off the network | its share of `L` | proportionally lower |
+| A people in contact with two or three others | the union | ~500 |
 
 **Our own clock.** `maturation_rate` 0.05 makes a generation ~20 turns; a well-fed band doubles in
-~35 turns at the reserve and trend bonuses (`demographics_config.json`). A splinter of 5 reaches
-30–40 in about three generations — exactly where real isolated founders start to hurt. The timing
-matches the history without tuning.
+~35 turns at the reserve and trend bonuses (`demographics_config.json`). A starting band of 30
+reaches its ~150 ceiling in about three generations.
 
-With `K` chosen so a lone band of 30 ceilings near 150:
-
-| Isolated breeding population | Founding lines | Ceiling |
-|---|---|---|
-| Splinter of 5 | 1–2 | ~25–30 |
-| Starting band of 30 | `L` | ~150–200 |
-| Three or four bands in contact | union | ~500 |
-
-At ~500 inbreeding stops being the binding constraint and the next ceiling takes over.
-
-**Two ceilings on two different units, and they coincide at 150.** A lone band's inbreeding
-ceiling lands at ~150, the same number the video gives for where a band stops being able to run on
-personal relationships and starts losing people. That is a coincidence in the sources, but in the
-model it separates cleanly:
+**Two ceilings on two different units.** The inbreeding ceiling caps a *people*; cohesion caps a
+*group standing in one place*. For a lone band they land on the same ~150:
 
 | Ceiling | Unit | Lifted by | Video step |
 |---|---|---|---|
-| Lines × `K` (inbreeding) | the **breeding population** — a connected component | contact | 1 → 2 |
+| Lines × `K` (inbreeding) | the **breeding population** — a connected component | contact with other peoples | 1 → 2 |
 | Cohesion (~150) | the **co-located group** — a band, or a cluster on one site | belief on the tile | 2 → 3 |
 | Management (a count of stores and routes) | the **things that hold goods** — stores and trade routes | writing / record-keeping | 7 |
 
-Contact lifts the *network's* ceiling but not any one band's: many bands of under 150 each, in
-touch. Belief is what lets a single *place* hold more than 150. Writing is what lets a polity
-administer more than a place can hold. For a lone band the two first ceilings are the same number,
-which is why it reads as one cap until the band has partners.
-
-**Shedding goes along routes, not into the void.** One rule, two edges: **births stop at the
-ceiling; a group pushed above it sheds people.** A group goes above its ceiling only when a lifter
-lapses — it walked away from its partners, or off the tile that held its belief — and then it leaks
-back down. The people who leave **walk the network**: they go to a connected band, along a trade
-route or the local reach, and join it. Nobody vanishes into the surroundings while a route exists.
-Where no route exists (a truly isolated group above its ceiling) the fallback is open. This is the
-resistance to leaving expressed in people rather than mood, and it may make the grievance-on-leaving
-term above redundant; which to keep is open.
+**Shedding goes along routes, not into the void.** Births stop at the ceiling; a group pushed above
+it sheds people. A group goes above its ceiling only when a lifter lapses — it walked away from its
+partners, or off the tile that held its belief — and then it leaks back down. The people who leave
+**walk the network** to a connected band and join it (#690).
 
 What falls out without further rules:
 
-- **Splitting has a purpose, and staying connected is the point.** A lone band caps low. Split, and
-  the cluster can grow past what one band could — limited by land, since each band needs its own
-  work range. But a split that walks off the network takes its lines with it and *lowers both
-  ceilings*: the splinter of 5 caps at ~25–30 and the parent loses what it gave away. The
-  beneficial move is to keep the new band connected, locally or by a trade route, so the breeding
-  population stays whole.
-- **The gathering matters for far bands.** A band beyond reach has no standing contact; the
-  gathering is the episode that renews it. The sim already has the contact primitive: the
-  connection ledger (`.claude/rules/core_sim/connections.md`) gains a tie from presence in sight
-  range and bleeds it over ~50 quiet turns; the gathering should reuse it, not add a second notion
-  of contact. A far band that never gathers stops growing *and* drifts
-  toward independence under the fission rule, from the same missing signal.
-- **The gathering place is wherever bands keep meeting**, and belief accrues there. The dead go into
-  that ground. The settling decision is then real: stay where the partners and the ancestors are, or
-  keep walking the circuit that feeds you better.
-- **Contact, not exchange.** Trade (shipments, network pooling) is a thing you can do at a gathering,
-  not the gate. Gating growth on trade would make a food good stand in for a social need.
-- **Scouting gets teeth.** The scout expedition is rarely used today because nothing depends on what
-  it finds. Under a contact ceiling, the thing a scout finds is a **partner**: another faction's band
-  once #513 lands, and until then where your own far bands are and where the circuit's rich spots
-  (the future gathering places) lie. A scout that reports a band within reach of a route is the
-  difference between a ceiling and growth.
+- **Other peoples are worth finding.** A lone faction caps at ~150; growth past it comes only from
+  meeting someone else.
+- **Splitting off the network costs.** A splinter that walks away takes its lines with it and lowers
+  both ceilings. Keep new bands connected, locally or by a trade route.
+- **The gathering reuses contact.** The connection ledger (`.claude/rules/core_sim/connections.md`)
+  gains a tie from presence in sight range and bleeds it over ~50 quiet turns; the line merge reads
+  it rather than adding a second notion of contact.
+- **Contact, not exchange.** Trade is a thing you can do with another people, not the gate. Gating
+  growth on trade would make a food good stand in for a social need.
+- **Scouting gets teeth.** The thing a scout finds is a **partner**: another faction's band.
 
 Levers: `L` (starting lines), `K` (people per line), contact range, and what belief adds to the
 cohesion ceiling. `L × K` must sit above the start size, or the game opens capped.
@@ -308,8 +272,8 @@ and the breakdown names the cause.
 
 ### The gathering is detected, not commanded
 
-**The sim detects bands meeting.** When two bands of a breeding population come within contact
-range, that is a gathering: lines merge, the tile gains belief, and the event goes to The Telling
+**The sim detects bands meeting.** When bands come within contact range, that is a gathering: lines
+merge when the bands are of different peoples, the tile gains belief, and the event goes to The Telling
 and the event log, with a turn-orb message the way a discovery is announced. There is no gather
 command. The player causes it by moving bands, and learns it happened the way they learn anything
 else the world did.
@@ -726,10 +690,8 @@ staffed it, so there is one place to look for every work item.*
 
 Every decision this doc leaves unmade is owned by an issue, so it cannot be lost:
 
-- **The founding-family levers** — how many families the starting band has (`L`), how many people
-  each sustains (`K`), the contact range, and the genetics numbers behind them — are chosen and
-  verified in the ceiling slice (#688). The deferred refinement that a long-separated group slowly
-  counts as new families again is recorded on the founding-lines slice (#687), not built first.
+- **The founding-family levers** — `L` and `K` — are set in the ceiling slice (#688): an isolated
+  starting band ceilings near 150. The contact range belongs to the line-merge slice (#689).
 - ~~**When a far party's haul is delivered, and what gates its launch**~~ — **decided** on the
   work-party slice (#684), before implementation, and it dissolved rather than resolved: a standing
   posting has no launch and no shipment, so there is nothing to gate. See "The model" above.

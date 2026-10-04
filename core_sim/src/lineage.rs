@@ -1,5 +1,5 @@
 //! **Founding lines** — the unrelated families a band descends from (issue #687,
-//! `docs/plan_civilization_steps.md` §"The mechanism: a breeding population cannot grow past its
+//! `docs/plan_civilization_steps.md` §"The mechanism: an isolated people cannot grow past its
 //! lines").
 //!
 //! The sim has three age brackets and no individuals, sexes or kinship, so relatedness cannot be
@@ -19,6 +19,7 @@
 //! in id order — the sim is seeded and must stay deterministic.
 
 use std::collections::BTreeSet;
+use std::num::NonZeroU16;
 
 use serde::{Deserialize, Serialize};
 
@@ -95,6 +96,32 @@ impl FoundingLines {
         self.0.retain(|line| !walked.contains(line));
         Self(walked)
     }
+}
+
+/// **A breeding population's ceiling, in people** (issue #688) — `lines × people_per_line`, where
+/// `lines` is the size of the UNION of its member bands' line sets (`lineage.people_per_line`, `K`,
+/// in `demographics_config.json`). Births stop there. Saturates rather than wrapping: a union no
+/// real world reaches still reads as "no ceiling in sight", never as a tiny one.
+pub fn breeding_ceiling(lines: usize, people_per_line: NonZeroU16) -> u32 {
+    u32::try_from(lines)
+        .unwrap_or(u32::MAX)
+        .saturating_mul(u32::from(people_per_line.get()))
+}
+
+/// **A band's breeding population as of this turn** (issue #688) — the bands in its supply-network
+/// component (or the band alone, in no network), read after the turn's demographics. Parked on
+/// [`crate::components::PopulationCohort::last_breeding`] for publication only: nothing steers off
+/// it, `simulate_population` rewrites it every turn, and `Default` (all zero) is what a cohort reads
+/// before its first turn.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BreedingReading {
+    /// Everyone in the breeding population after this turn's births and deaths, in whole people —
+    /// the members' fixed-point head-counts summed, then rounded once. On the wire as
+    /// `PopulationCohortState.breedingPopulation`.
+    pub headcount: u32,
+    /// The ceiling births stopped at: [`breeding_ceiling`] over the union of the members' lines. On
+    /// the wire as `PopulationCohortState.breedingCeiling`.
+    pub ceiling: u32,
 }
 
 #[cfg(test)]

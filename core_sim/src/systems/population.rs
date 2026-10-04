@@ -269,8 +269,10 @@ fn trend_factor(flow: Option<FoodFlow>, demand: Scalar, cfg: &DemographicsTrend)
     }
 }
 
-/// Resolve the three fertility factors for a cohort's food position. Pure and shared by the birth
-/// path and its tests so the model has exactly one definition.
+/// Resolve the three food fertility factors for a cohort's food position. Pure and shared by the
+/// birth path and its tests so the model has exactly one definition. The fourth factor, `ceiling`,
+/// is not a fact about food: it is read here as `1` — the would-be reading, before the breeding
+/// population's room is known — and [`advance_demographics`] sets it from the pre-pass.
 fn fertility_factors(
     demand: Scalar,
     consumed: Scalar,
@@ -299,7 +301,108 @@ fn fertility_factors(
         hunger,
         reserve: scalar_one() + scalar_from_f32(births.reserve.bonus) * reserve_ramp,
         trend: trend_factor(flow, demand, &births.trend),
+        ceiling: scalar_one(),
     }
+}
+
+/// **The meal and the would-be births for one cohort's opening state** — everything
+/// [`advance_demographics`] resolves before the ceiling, returned by one pure function so the
+/// ceiling pre-pass in [`simulate_population`] and the real resolve read the same numbers and can
+/// never diverge.
+#[derive(Debug, Clone, Copy)]
+struct MealAndBirths {
+    /// One turn's `food_demand` on the opening brackets.
+    demand: Scalar,
+    /// `min(demand, larder)` — what the people ate.
+    consumed: Scalar,
+    /// The larder after the meal.
+    remaining_food: Scalar,
+    /// The three food factors, with `ceiling` at `1`.
+    factors: FertilityFactors,
+    /// `working × birth_rate × hunger × reserve × trend` — the births this turn before the breeding
+    /// ceiling.
+    would_be_births: Scalar,
+}
+
+/// Resolve [`MealAndBirths`] for a cohort's opening state. See [`advance_demographics`] for the
+/// model; this is its first and third steps without the deaths.
+fn meal_and_births(
+    state: &DemographicState,
+    flow: Option<FoodFlow>,
+    demo: &DemographicsConfig,
+) -> MealAndBirths {
+    let demand = food_demand(
+        state.children,
+        state.working,
+        state.elders,
+        &demo.consumption,
+    );
+    let consumed = min(demand, state.food_store);
+    let remaining_food = state.food_store - consumed;
+    let births_cfg = &demo.births;
+    let factors = fertility_factors(demand, consumed, remaining_food, flow, births_cfg);
+    let fertility = scalar_from_f32(births_cfg.birth_rate) * factors.food_multiplier();
+    MealAndBirths {
+        demand,
+        consumed,
+        remaining_food,
+        factors,
+        would_be_births: state.working * fertility,
+    }
+}
+
+/// **The breeding ceiling's fertility factor** (issue #688) — the share of a breeding population's
+/// would-be births its headroom has room for: `1` when every birth fits (or nobody would be born),
+/// `headroom / Σ would-be births` when they do not, `0` at or above the ceiling. Every band in the
+/// population takes the same factor, so the room is shared in proportion to who would have borne
+/// the children.
+///
+/// Fixed-point division and multiplication both truncate toward zero, so `Σ (births_i × factor)`
+/// never exceeds `headroom`: the ceiling holds exactly, with no epsilon.
+pub(crate) fn ceiling_factor(headroom: Scalar, would_be_births: Scalar) -> Scalar {
+    if would_be_births <= headroom || would_be_births <= scalar_zero() {
+        return scalar_one();
+    }
+    max(headroom, scalar_zero()) / would_be_births
+}
+
+/// **Which breeding population a band belongs to this turn** — its supply-network component, or the
+/// band alone when it is in none (`SupplyNetworkMembership::network_of` reads `0`). Ordered so the
+/// pre-pass can key a `BTreeMap` on it: the sim is seeded and its walks are in a stated order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum BreedingGroup {
+    Network(u32),
+    Alone(Entity),
+}
+
+impl BreedingGroup {
+    fn of(entity: Entity, membership: &crate::supply::SupplyNetworkMembership) -> Self {
+        match membership.network_of(entity) {
+            NO_SUPPLY_NETWORK => Self::Alone(entity),
+            network => Self::Network(network),
+        }
+    }
+}
+
+/// `SupplyNetworkMembership::network_of`'s reading for a band in no multi-band network.
+const NO_SUPPLY_NETWORK: u32 = 0;
+
+/// One breeding population's pre-pass totals: the union of its members' founding lines, their
+/// opening head-count and the births they would have this turn with no ceiling. The lines are a
+/// SET, so a line two members share (a split that could not partition its last one) counts once.
+#[derive(Debug, Default)]
+struct BreedingTally {
+    lines: BTreeSet<crate::lineage::LineId>,
+    opening: Scalar,
+    would_be_births: Scalar,
+}
+
+/// One breeding population's resolved ceiling: the people it can hold, and the factor every
+/// member's births are multiplied by this turn.
+#[derive(Debug, Clone, Copy)]
+struct BreedingCeiling {
+    people: u32,
+    factor: Scalar,
 }
 
 /// Read a band's food flow off last turn's labor telemetry, distinguishing **no data** from a
@@ -325,24 +428,33 @@ fn band_food_flow(labor: Option<&LaborAllocation>) -> Option<FoodFlow> {
 /// from the local larder, then resolve scarcity/cold deaths, births, maturation, aging, and
 /// elder mortality. All bracket flows use the *opening* bracket values and are applied together,
 /// so a newborn does not mature the same turn. The total is clamped to the global cap.
+///
+/// `ceiling` is the breeding ceiling's fertility factor for the band's breeding population this
+/// turn ([`ceiling_factor`], resolved by [`simulate_population`]'s pre-pass); `1` leaves births
+/// exactly what the food model alone gives.
 fn advance_demographics(
     state: DemographicState,
     flow: Option<FoodFlow>,
     temperature: Scalar,
     max_cap: Scalar,
+    ceiling: Scalar,
     demo: &DemographicsConfig,
 ) -> DemographicOutcome {
+    let meal = meal_and_births(&state, flow, demo);
     let DemographicState {
         children: children0,
         working: working0,
         elders: elders0,
-        food_store,
+        food_store: _,
     } = state;
 
     // 1. Food consumption from the band's own larder (dependents eat less than a worker).
-    let demand = food_demand(children0, working0, elders0, &demo.consumption);
-    let consumed = min(demand, food_store);
-    let remaining_food = food_store - consumed;
+    let MealAndBirths {
+        demand,
+        consumed,
+        remaining_food,
+        ..
+    } = meal;
     let has_demand = demand > scalar_zero();
     let deficit = demand - consumed; // >= 0 (consumed <= demand)
     let deficit_fraction = if has_demand {
@@ -393,10 +505,17 @@ fn advance_demographics(
     // Births are morale-INDEPENDENT (wellbeing model, `docs/plan_civ_wellbeing.md`): contentment
     // doesn't change procreation — low morale relocates people or drags output, it never suppresses
     // births or causes faction population loss.
-    let births_cfg = &demo.births;
-    let factors = fertility_factors(demand, consumed, remaining_food, flow, births_cfg);
-    let fertility = scalar_from_f32(births_cfg.birth_rate) * factors.multiplier();
-    let births = working0 * fertility;
+    //
+    // The fourth factor, `ceiling`, is the breeding population's room under its inbreeding ceiling
+    // (issue #688): it scales the would-be births `meal_and_births` priced — the SAME number the
+    // pre-pass summed, so the room it shared out is exactly what is born — and it is parked on the
+    // factors so a stopped birth is attributed to the ceiling as a hungry one is to `hunger`. The
+    // ceiling only ever withholds births; it never removes anyone.
+    let factors = FertilityFactors {
+        ceiling,
+        ..meal.factors
+    };
+    let births = meal.would_be_births * ceiling;
 
     // 4. Aging flows. `maturation` and `aging` are the two ends of a working life and both ride out
     // in the flows; `elder_mortality` is a **death**, not a transition — it is the flat rate at
@@ -897,6 +1016,7 @@ type DemographicBands<'w, 's> = Query<
     'w,
     's,
     (
+        Entity,
         &'static mut PopulationCohort,
         Option<&'static LaborAllocation>,
         Option<&'static BandId>,
@@ -904,6 +1024,94 @@ type DemographicBands<'w, 's> = Query<
     ),
     With<ResidentBand>,
 >;
+
+/// Each resolved band's breeding population, and each population's ceiling this turn.
+struct BreedingCeilings {
+    group_of: BTreeMap<Entity, BreedingGroup>,
+    ceilings: BTreeMap<BreedingGroup, BreedingCeiling>,
+}
+
+impl BreedingCeilings {
+    /// The ceiling factor for one band's births — `1` for a band the pre-pass never saw, which no
+    /// resolved band is.
+    fn factor_for(&self, entity: Entity) -> Scalar {
+        self.group_of
+            .get(&entity)
+            .and_then(|group| self.ceilings.get(group))
+            .map_or(scalar_one(), |ceiling| ceiling.factor)
+    }
+}
+
+/// **The ceiling pre-pass** (issue #688): group the resident bands into breeding populations, and
+/// resolve each population's ceiling and the factor its births are scaled by this turn.
+///
+/// Per population: the ceiling is `|union of its members' lines| × people_per_line`, the headroom
+/// is `max(0, ceiling − opening head-count)`, and the factor is [`ceiling_factor`] of the headroom
+/// against the members' summed would-be births — priced by [`meal_and_births`], the same function
+/// [`advance_demographics`] prices them with. A band whose home tile does not resolve skips the
+/// demographic model this turn, so it would bear nobody; its people still count toward the
+/// head-count.
+fn resolve_breeding_ceilings(
+    cohorts: &DemographicBands,
+    tiles: &Query<&Tile>,
+    membership: &crate::supply::SupplyNetworkMembership,
+    demo: &DemographicsConfig,
+) -> BreedingCeilings {
+    let mut group_of = BTreeMap::new();
+    let mut tallies: BTreeMap<BreedingGroup, BreedingTally> = BTreeMap::new();
+    for (entity, cohort, labor, _, _) in cohorts.iter() {
+        let group = BreedingGroup::of(entity, membership);
+        group_of.insert(entity, group);
+        let tally = tallies.entry(group).or_default();
+        tally.lines.extend(cohort.founding_lines.iter().copied());
+        tally.opening += cohort.total();
+        if tiles.get(cohort.home).is_ok() {
+            let state = DemographicState {
+                children: cohort.children,
+                working: cohort.working,
+                elders: cohort.elders,
+                food_store: cohort.stores.get(FOOD),
+            };
+            tally.would_be_births +=
+                meal_and_births(&state, band_food_flow(labor), demo).would_be_births;
+        }
+    }
+    let people_per_line = demo.lineage.people_per_line;
+    let ceilings = tallies
+        .into_iter()
+        .map(|(group, tally)| {
+            let people = crate::lineage::breeding_ceiling(tally.lines.len(), people_per_line);
+            let headroom = max(scalar_from_u32(people) - tally.opening, scalar_zero());
+            let factor = ceiling_factor(headroom, tally.would_be_births);
+            (group, BreedingCeiling { people, factor })
+        })
+        .collect();
+    BreedingCeilings { group_of, ceilings }
+}
+
+/// Park each band's breeding population — its post-turn head-count and its ceiling — on the cohort
+/// for the snapshot (`PopulationCohort::last_breeding`). Run after the turn's demographics, so the
+/// head-count is the one the same frame's band sizes describe.
+fn publish_breeding_readings(cohorts: &mut DemographicBands, breeding: &BreedingCeilings) {
+    let mut headcounts: BTreeMap<BreedingGroup, Scalar> = BTreeMap::new();
+    for (entity, cohort, _, _, _) in cohorts.iter() {
+        if let Some(group) = breeding.group_of.get(&entity) {
+            *headcounts.entry(*group).or_insert_with(scalar_zero) += cohort.total();
+        }
+    }
+    for (entity, mut cohort, _, _, _) in cohorts.iter_mut() {
+        let Some(group) = breeding.group_of.get(&entity) else {
+            continue;
+        };
+        cohort.last_breeding = crate::lineage::BreedingReading {
+            headcount: headcounts.get(group).copied().unwrap_or_default().to_u32(),
+            ceiling: breeding
+                .ceilings
+                .get(group)
+                .map_or(0, |ceiling| ceiling.people),
+        };
+    }
+}
 
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn simulate_population(
@@ -921,10 +1129,14 @@ pub fn simulate_population(
     // (`crate::belief`).
     mut belief: ResMut<BeliefRegistry>,
     belief_config: Res<BeliefConfigHandle>,
+    // **The breeding population** (issue #688) — the supply-network components the Logistics stage
+    // resolved earlier this turn; a band in none is its own breeding population.
+    supply_membership: Res<crate::supply::SupplyNetworkMembership>,
 ) {
     let population_cfg = pipeline_config.config().population();
     let belief_cfg = belief_config.get();
     let demo = demographics.get();
+    let breeding = resolve_breeding_ceilings(&cohorts, &tiles, &supply_membership, &demo);
     let wellbeing = wellbeing_config.get();
     let max_cap_scalar = scalar_from_u32(config.population_cap);
     let morale_pressure_cfg = MoralePressureConfig {
@@ -934,7 +1146,7 @@ pub fn simulate_population(
         attrition_penalty_scale: population_cfg.attrition_penalty_scale(),
         hardness_penalty_scale: population_cfg.hardness_penalty_scale(),
     };
-    for (mut cohort, labor, band_id, mut accumulator) in cohorts.iter_mut() {
+    for (entity, mut cohort, labor, band_id, mut accumulator) in cohorts.iter_mut() {
         // Age the band every turn, before any early-out, so a band whose home tile briefly can't be
         // resolved still reports how long it has been simulated.
         cohort.age_turns = cohort.age_turns.saturating_add(1);
@@ -988,6 +1200,7 @@ pub fn simulate_population(
             band_food_flow(labor),
             temperature,
             max_cap_scalar,
+            breeding.factor_for(entity),
             &demo,
         );
         cohort.children = outcome.state.children;
@@ -1046,6 +1259,7 @@ pub fn simulate_population(
             );
         }
     }
+    publish_breeding_readings(&mut cohorts, &breeding);
 }
 
 #[cfg(test)]
@@ -1219,6 +1433,7 @@ mod demographics_tests {
             flow,
             scalar_from_f32(temp),
             scalar_from_u32(NO_CAP),
+            scalar_one(),
             &DemographicsConfig::default(),
         )
         .state
@@ -1349,6 +1564,7 @@ mod demographics_tests {
             None,
             scalar_from_f32(MILD_TEMP),
             scalar_from_u32(50),
+            scalar_one(),
             &DemographicsConfig::default(),
         )
         .state;
@@ -1606,6 +1822,7 @@ mod demographics_tests {
             None,
             scalar_from_f32(TODAYS_COLDEST_TILE_C),
             scalar_from_u32(NO_CAP),
+            scalar_one(),
             &cfg,
         )
         .flows;
@@ -1650,6 +1867,7 @@ mod demographics_tests {
             None,
             scalar_from_f32(TODAYS_COLDEST_TILE_C),
             scalar_from_u32(NO_CAP),
+            scalar_one(),
             &cfg,
         )
         .flows;
@@ -1683,6 +1901,7 @@ mod demographics_tests {
                 None,
                 scalar_from_f32(temperature),
                 scalar_from_u32(NO_CAP),
+                scalar_one(),
                 &cfg,
             )
             .flows
@@ -1779,6 +1998,7 @@ mod demographics_tests {
             None,
             scalar_from_f32(BUG_REPORT_TILE_C),
             scalar_from_u32(NO_CAP),
+            scalar_one(),
             &cfg,
         )
         .flows;
@@ -1837,6 +2057,7 @@ mod demographics_tests {
             }),
             scalar_from_f32(MILD_TEMP),
             scalar_from_u32(NO_CAP),
+            scalar_one(),
             &cfg,
         )
         .state;
@@ -1877,6 +2098,7 @@ mod demographics_tests {
             }),
             scalar_from_f32(MILD_TEMP),
             scalar_from_u32(NO_CAP),
+            scalar_one(),
             &cfg,
         );
         // `breeders` is childless, so this turn's `children` IS the births (no maturation out, and a
@@ -1978,6 +2200,7 @@ mod demographics_tests {
             None,
             scalar_from_f32(MILD_TEMP),
             scalar_from_u32(NO_CAP),
+            scalar_one(),
             &cfg,
         )
         .state
@@ -2045,6 +2268,7 @@ mod demographics_tests {
                 None,
                 scalar_from_f32(MILD_TEMP),
                 scalar_from_u32(NO_CAP),
+                scalar_one(),
                 &cfg,
             )
             .state;
@@ -2084,6 +2308,120 @@ mod demographics_tests {
 
 /// `band_food_flow`'s no-data-vs-genuine-zero disambiguation (#286). An empty `last_yields` alone
 /// cannot tell an unresolved cohort from an idle one — and the two must read oppositely.
+#[cfg(test)]
+mod breeding_ceiling_tests {
+    use super::*;
+
+    /// A breeding population's would-be births this turn, in people.
+    const WOULD_BE_BIRTHS: f32 = 4.0;
+    /// Room under the ceiling for half of them.
+    const HALF_THE_ROOM: f32 = 2.0;
+    /// A temperate tile, inside both temperature onsets.
+    const MILD_TEMP: f32 = 18.0;
+    /// A population cap no fixture here reaches.
+    const NO_CAP: u32 = 1_000_000;
+
+    fn people(value: f32) -> Scalar {
+        scalar_from_f32(value)
+    }
+
+    #[test]
+    fn no_headroom_stops_every_birth() {
+        assert_eq!(
+            ceiling_factor(scalar_zero(), people(WOULD_BE_BIRTHS)),
+            scalar_zero()
+        );
+    }
+
+    /// Nobody would be born, so there is nothing to withhold — and no division by zero.
+    #[test]
+    fn no_would_be_births_reads_neutral() {
+        assert_eq!(ceiling_factor(scalar_zero(), scalar_zero()), scalar_one());
+        assert_eq!(
+            ceiling_factor(people(HALF_THE_ROOM), scalar_zero()),
+            scalar_one()
+        );
+    }
+
+    #[test]
+    fn room_for_every_birth_reads_neutral() {
+        assert_eq!(
+            ceiling_factor(people(WOULD_BE_BIRTHS), people(WOULD_BE_BIRTHS)),
+            scalar_one()
+        );
+        assert_eq!(
+            ceiling_factor(people(WOULD_BE_BIRTHS * 2.0), people(WOULD_BE_BIRTHS)),
+            scalar_one()
+        );
+    }
+
+    #[test]
+    fn partial_headroom_shares_out_exactly_the_room() {
+        let factor = ceiling_factor(people(HALF_THE_ROOM), people(WOULD_BE_BIRTHS));
+        assert_eq!(factor, people(HALF_THE_ROOM / WOULD_BE_BIRTHS));
+        assert!(people(WOULD_BE_BIRTHS) * factor <= people(HALF_THE_ROOM));
+    }
+
+    /// Truncating fixed point never lets the shared-out births overshoot the room, whatever the
+    /// split: three bands' births scaled by one factor sum to at most the headroom.
+    #[test]
+    fn the_shared_room_is_never_overshot() {
+        let births = [people(1.234_567), people(0.765_432), people(2.111_111)];
+        let total = births.iter().fold(scalar_zero(), |sum, birth| sum + *birth);
+        let headroom = people(1.0);
+        let factor = ceiling_factor(headroom, total);
+        let born = births
+            .iter()
+            .fold(scalar_zero(), |sum, birth| sum + *birth * factor);
+        assert!(born <= headroom, "{born:?} born into {headroom:?} of room");
+    }
+
+    /// **The ceiling is a fertility factor and attributes the births it stopped.** A capped turn
+    /// publishes `ceiling` on the factors, the factors still multiply out to the births made, and
+    /// nothing but the newborns differs from the same turn uncapped — the ceiling never kills.
+    #[test]
+    fn a_capped_turn_withholds_only_births_and_says_so() {
+        let cfg = DemographicsConfig::default();
+        let start = DemographicState {
+            children: people(10.0),
+            working: people(20.0),
+            elders: people(5.0),
+            food_store: people(1_000.0),
+        };
+        let run = |ceiling: Scalar| {
+            advance_demographics(
+                start,
+                None,
+                scalar_from_f32(MILD_TEMP),
+                scalar_from_u32(NO_CAP),
+                ceiling,
+                &cfg,
+            )
+        };
+        let open = run(scalar_one());
+        let capped = run(scalar_zero());
+        assert_eq!(capped.fertility.ceiling, scalar_zero());
+        assert_eq!(capped.flows.births, scalar_zero());
+        assert!(
+            open.flows.births > scalar_zero(),
+            "liveness: a fed band breeds"
+        );
+        assert_eq!(capped.state.working, open.state.working);
+        assert_eq!(capped.state.elders, open.state.elders);
+        assert_eq!(capped.flows.total_deaths(), open.flows.total_deaths());
+        assert_eq!(
+            open.state.children - capped.state.children,
+            open.flows.births,
+            "the only people a capped turn lacks are the ones it did not bear"
+        );
+        assert_eq!(
+            open.fertility.multiplier(),
+            open.fertility.food_multiplier(),
+            "an open ceiling reads 1 in the product"
+        );
+    }
+}
+
 #[cfg(test)]
 mod food_flow_tests {
     use super::band_food_flow;
@@ -2557,6 +2895,7 @@ mod wellbeing_tests {
             last_morale_cause: MoraleCause::None,
             last_morale_contributions: MoraleContributions::default(),
             last_fertility_factors: Default::default(),
+            last_breeding: Default::default(),
             discontent_fraction: discontent_fraction(m, &cfg().discontent),
             grievance: scalar_zero(),
             last_emigrated: 0,

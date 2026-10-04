@@ -1132,6 +1132,10 @@ fn create_populations<'a>(
                     longMoveLeavesItems: cohort.long_move_leaves_items,
                     longMoveLeavesMaterials: cohort.long_move_leaves_materials,
                     foodLeftBehind: cohort.food_left_behind,
+                    // THE BREEDING CEILING — appended last (#688).
+                    fertilityCeiling: cohort.fertility_ceiling,
+                    breedingPopulation: cohort.breeding_population,
+                    breedingCeiling: cohort.breeding_ceiling,
                 },
             )
         })
@@ -1657,6 +1661,9 @@ fn decode_population(
         long_move_leaves_items: cohort.longMoveLeavesItems(),
         long_move_leaves_materials: cohort.longMoveLeavesMaterials(),
         food_left_behind: cohort.foodLeftBehind(),
+        fertility_ceiling: cohort.fertilityCeiling(),
+        breeding_population: cohort.breedingPopulation(),
+        breeding_ceiling: cohort.breedingCeiling(),
     })
 }
 

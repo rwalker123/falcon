@@ -1493,6 +1493,11 @@ pub struct PopulationCohort {
     /// band's cohort and carries the same set: it is those same people walking somewhere. On the
     /// client wire as `PopulationCohortState.founding_lines` (the count).
     pub founding_lines: crate::lineage::FoundingLines,
+    /// **This band's breeding population and the ceiling its births stop at** (issue #688,
+    /// `crate::lineage::BreedingReading`). Rewritten every turn by `simulate_population`, the same
+    /// per-turn telemetry idiom as [`Self::last_fertility_factors`]; on the client wire as
+    /// `PopulationCohortState.breedingPopulation` / `breedingCeiling`.
+    pub last_breeding: crate::lineage::BreedingReading,
 }
 
 /// The dominant negative driver of a cohort's morale on a given turn, surfaced so the client can
@@ -1691,16 +1696,27 @@ pub struct FertilityFactors {
     pub reserve: Scalar,
     /// **Flow** — is the larder growing or shrinking.
     pub trend: Scalar,
+    /// **Lines** — the share of the would-be births the band's breeding population still has room
+    /// for under its inbreeding ceiling (issue #688, `crate::lineage`). `1` with headroom to spare,
+    /// `0` at or above the ceiling, between where the room is short of the births.
+    pub ceiling: Scalar,
 }
 
 impl FertilityFactors {
-    /// The `birth_rate` multiplier: the product of the three factors.
+    /// The `birth_rate` multiplier: the product of the four factors.
     ///
-    /// Only `hunger` can reach 0 — it is the gate that makes an empty larder yield zero births.
-    /// `reserve` and `trend` are modifiers bracketing 1.0 (`[1, 1.5]` and `[0.25, 1.25]` at shipped
-    /// defaults), so neither can zero the product alone and the stack needs no floor lever; how far
-    /// a collapsed income may damp growth is `trend.deficit_penalty`'s job.
+    /// `hunger` and `ceiling` can reach 0 — the two gates: an empty larder, and a breeding
+    /// population at its ceiling, each yield zero births. `reserve` and `trend` are modifiers
+    /// bracketing 1.0 (`[1, 1.5]` and `[0.25, 1.25]` at shipped defaults), so neither can zero the
+    /// product alone and the stack needs no floor lever; how far a collapsed income may damp growth
+    /// is `trend.deficit_penalty`'s job.
     pub fn multiplier(&self) -> Scalar {
+        self.food_multiplier() * self.ceiling
+    }
+
+    /// The three food factors' product, `hunger × reserve × trend` — the multiplier before the
+    /// ceiling. The would-be births the ceiling is sized against are priced on this.
+    pub fn food_multiplier(&self) -> Scalar {
         self.hunger * self.reserve * self.trend
     }
 }

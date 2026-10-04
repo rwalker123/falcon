@@ -122,7 +122,7 @@ with storage structures as the only way past it. **That was superseded on 2026-0
 no carry cap.** Population is capped by the **lineage/cohesion ladder**, and a band's larder is
 bounded by **spoilage** alone (food past its shelf life rots, by keeping class). The carry that
 shipped, `forage_carry`, is what one worker brings back per trip, not a bound on the band. See
-`docs/plan_civilization_steps.md` §"The mechanism: a breeding population cannot grow past its
+`docs/plan_civilization_steps.md` §"The mechanism: an isolated people cannot grow past its
 lines" and §"Step 5: spoilage, storage, and the granary".
 
 ### Growth self-limits (no forced gate)
@@ -165,7 +165,7 @@ between Warrior and threats is the thing that is cheaper to get right now than t
 | 4 | Equipment = **consumable inventory**, start-stocked, no M1 replacement | Least rework (consumable is the real model); depletion is the pull into M2 crafting and the first-act pacing dial. |
 | 5 | Durability **cliff**, not performance decay | Durability and performance stay orthogonal (crafting tunes each independently); switching to gradual decay later is a one-function change. |
 | 6 | Foraging **free baseline**; baskets **upscale** it | A fresh band with no hunters mustn't instantly starve; equipment is an upgrade, not a gate. |
-| 7 | **Carry capacity** caps population | Makes the growth ceiling physical and makes storage/settling the concrete way past it — mechanical sedentarization. **Superseded (2026-09-19):** population is capped by the lineage/cohesion ladder and a band's larder is bounded by spoilage alone; there is no carry cap. The per-worker carry that shipped (`forage_carry`) is what a worker brings back per trip. See `docs/plan_civilization_steps.md` §"Step 5" and §"The mechanism: a breeding population cannot grow past its lines". |
+| 7 | **Carry capacity** caps population | Makes the growth ceiling physical and makes storage/settling the concrete way past it — mechanical sedentarization. **Superseded (2026-09-19):** population is capped by the lineage/cohesion ladder and a band's larder is bounded by spoilage alone; there is no carry cap. The per-worker carry that shipped (`forage_carry`) is what a worker brings back per trip. See `docs/plan_civilization_steps.md` §"Step 5" and §"The mechanism: an isolated people cannot grow past its lines". |
 | 8 | Growth **self-limits** (no forced settle) | Matches "no found-settlement action"; settling is ambition, not a gate. |
 | 9 | **Fractional food** | Non-negotiable at sub-1-per-source scale; the literal Issue-2 fix. |
 | 10 | **Minimal predator threat in M1** | Warrior needs a consumer to be designed right; cheaper now than retrofitting combat onto an untested role. |

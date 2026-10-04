@@ -1429,6 +1429,25 @@ table PopulationCohortState {
   // - foodLeftBehind + transferReceived - transferSent. A move is a command, so this accumulates
   // between captures on the transfer pair's snapshot window and is cleared after the turn capture.
   foodLeftBehind:float = 0;
+  // --- THE BREEDING CEILING (appended last, issue #688) ------------------------------------------
+  // An isolated people cannot grow past its founding lines (docs/plan_civilization_steps.md). The
+  // capped unit is the BREEDING POPULATION - the bands in this band's supply network, or this band
+  // alone when it is in none - and its ceiling is |union of its members' foundingLines| x
+  // demographics_config.json lineage.people_per_line. Births stop there; nobody is ever removed by
+  // it.
+  //
+  // THE FOURTH FERTILITY FACTOR, beside fertilityHunger/Reserve/Trend and in their fixed-point
+  // encoding (FIXED_POINT_SCALE = 1e6, NEUTRAL AT 1e6): the share of this turn's would-be births the
+  // breeding population had room for. 1e6 with room to spare, 0 at or above the ceiling, between
+  // where the room is short of the births. fertility = birth_rate x hunger x reserve x trend x
+  // ceiling. All-zero with the other three on a cohort that has not ticked (zero reserve is the
+  // not-projected sentinel).
+  fertilityCeiling:long = 0;
+  // The breeding population's head-count after this turn's demographics, whole people (the members'
+  // fixed-point totals summed, then rounded once). The same figure on every member band.
+  breedingPopulation:uint = 0;
+  // The breeding population's ceiling, in people. The same figure on every member band.
+  breedingCeiling:uint = 0;
 }
 
 // One band's outfitting window. THE TWO SUPPLIES ARE MUTUALLY EXCLUSIVE and `parentBandId` says which
