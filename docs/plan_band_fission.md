@@ -443,8 +443,8 @@ is its people, not its first camp.
 `PopulationCohort.grievance` is already a severity × duration accumulator — it gains
 `grievance_gain × discontent_fraction` a turn (× `trapped_multiplier` when the band wants to leave
 and has nowhere to go) and decays only while the band is fully content
-(`wellbeing_config.json` → `discontent`). It was populated and reserved for exactly this; nothing
-reads it yet.
+(`wellbeing_config.json` → `discontent`). It was populated and reserved for a consequence;
+independence is that consequence, and its first reader.
 
 **A cut-off group breaks away when its people-weighted mean grievance reaches
 `independence.grievance_threshold`.** Opening value **1.0**, which at the shipped `discontent` dials
@@ -482,7 +482,8 @@ threshold. Judging band by band would turn one far cluster into two peoples on t
 - **The band changes hands on #512's path.** A break-away is a band flip into a people that did not
   exist a turn earlier: `cohort.faction` moves and `follow_the_band_to_its_new_people` takes its
   roads, the improvements only it works, its parties, and its name (re-minted only on a clash).
-  `push_band_changed_hands_events` tells both peoples.
+  Both peoples are told with their own event, `band_broke_away` (`push_band_broke_away_events`),
+  not `band_changed_hands` — nobody was joined.
 - **Name:** the people is named the way worldgen names one (`FactionNames`); each band keeps its
   own. Nothing waits on #271.
 - **Knowledge:** the new people's discovery progress is seeded from the old people's ledger in full,
@@ -503,7 +504,7 @@ threshold. Judging band by band would turn one far cluster into two peoples on t
 | the tie is draining | band panel | *Last seen N turns ago* and a **Bond** bar — the tie to the heart |
 | cut off and aggrieved | band panel | amber *Drifting away* — grievance against the threshold |
 | the last live tie to the heart parks | event feed | *We have lost touch with ‹Band›.* |
-| the break | event feed, both peoples; The Telling | *‹Band› no longer answers to us — they call themselves ‹People›.* |
+| the break | event feed, both peoples | *‹Band› no longer answers to us — they call themselves ‹People›.* |
 
 The levers are the ones that cause it: visit them, send a scout that comes back, keep them fed — or
 let them go. Like defection, the break is not a prompt.
@@ -540,8 +541,7 @@ ships as a Workbench tuning-manifest row.
    judged during one.
 4. **Naming** — #271, generalized so it serves a split band and not only the player's first one.
 5. **The emergent half, now that #513 put rivals on the map:** #512 (§Defection above), #284
-   (§Independence — this design; its build is a follow-up slice), #458 (cross-faction proximity
-   trade).
+   (§Independence), #458 (cross-faction proximity trade).
 
 ## Cross-cutting touchpoints
 

@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 140
+const EXPECTED_CHECKPOINTS := 141
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -1174,7 +1174,16 @@ func _heart_states() -> void:
 	var unjudged := BandFx.band_fixture()
 	unjudged["heart_last_contact_turn"] = -1
 	host = await _show_heart_band(unjudged)
-	h._assert_hud("a band with NO reading (false / 0 / -1) draws no heart row",
+	h._assert_hud("an unjudged band / party (false / 0 / -1) draws no heart row",
+		not Q.has_label_containing(host, "Bond ") and not Q.has_label_containing(host, "Out of touch"))
+	# A FOREIGN (redacted) row is the schema defaults — contact 0, not -1 — so a gate keyed on the
+	# contact sentinel would draw it a zero Bond; the gate keys on the bond.
+	var redacted := BandFx.band_fixture()
+	redacted["cut_off"] = false
+	redacted["heart_bond"] = 0.0
+	redacted["heart_last_contact_turn"] = 0
+	host = await _show_heart_band(redacted)
+	h._assert_hud("a foreign REDACTED row (false / 0 / 0) draws no heart row",
 		not Q.has_label_containing(host, "Bond ") and not Q.has_label_containing(host, "Out of touch"))
 	# The never-seen cut-off band: "never seen" rather than a turn count.
 	var never := _heart_band_fixture(true, 0.0, 0, 0.0)

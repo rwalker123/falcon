@@ -548,8 +548,9 @@ stretch, and widening it into that gap would put it over a live HUD column.
   `independence_grievance_threshold` echo. Both lines carry one tooltip naming the lever (a visit by
   another band or a returning scout restores contact) and the threshold. **No row for a LONE heart**
   (`heart_bond >= 1` and not cut off — nothing to watch) **and none for a band with no reading** (not
-  cut off and contact `-1`, which is what a party, a foreign row and an unjudged band publish —
-  drawing that as a zero bond would claim a tie is gone). Every figure is the sim's; the client
+  cut off and a zero bond: an unjudged band or a party publishes `false / 0 / -1`, a foreign redacted
+  row `false / 0 / 0`; a heart member always holds a live tie, so the gate keys on the bond, never on
+  the contact sentinel — drawing either as a zero Bond would claim a tie is gone). Every figure is the sim's; the client
   computes only `current turn − contact turn`.
   Its palette is deliberately MUTED (`VOICE_PIGMENT` / `INK_DIM` / `VOICE_INK`) against
   **WORKFORCE**'s saturated one (`HEALTHY` / `SIGNAL` / `VOICE_INK` / `WARN` / `VOICE_PIGMENT` /

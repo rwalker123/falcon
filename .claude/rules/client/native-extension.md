@@ -240,10 +240,10 @@ from visible-herd telemetry, never a wire flag), `raid_forfeit` is the "Lost to 
 **THE BAND'S STANDING TOWARD ITS PEOPLE'S HEART, four cohort keys** (issue #284) — `cut_off`
 (`bool`), `heart_bond` (`f64`, 0..1, a lone heart reads 1.0), `heart_last_contact_turn` (`i64`, `-1` =
 no tie to the heart) and `independence_grievance_threshold` (`f64`, the config echo `grievance` is
-read against, the `founding_min_workers` idiom). None is a `Scalar`. An unjudged band, a party and a
-foreign row publish `false / 0 / -1`, which is the one combination a band IN the heart never reads (a
-heart member holds a live tie, so its contact turn is never `-1`) — the reader that hides the row
-keys on exactly that.
+read against, the `founding_min_workers` idiom). None is a `Scalar`. An unjudged band and a party
+publish `false / 0 / -1`; a foreign (redacted) row carries the schema defaults, `false / 0 / 0`. Both
+have a zero bond, which a band IN the heart never reads (a heart member holds a live tie), so the
+reader that hides the row keys on the BOND, not on the contact sentinel.
 
 **THE BAND'S HAY LEDGER, three cohort keys appended last** — `fodder_need` / `fodder_income` /
 `turns_of_fodder`, the fodder twins of `food_income` / `food_consumption` / `turns_of_food`, in FODDER

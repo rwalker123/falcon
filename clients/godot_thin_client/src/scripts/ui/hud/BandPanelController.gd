@@ -1250,13 +1250,14 @@ func _build_people_block(band: Dictionary) -> VBoxContainer:
 ##   • cut off with grievance — a second amber line, `Drifting away — grievance X / Y`, the threshold
 ##     the sim's own `independence_grievance_threshold` echo.
 ## **Null for a lone heart** (`heart_bond >= HEART_BOND_FULL` and not cut off — nothing to watch) **and
-## for a band with no reading** (not cut off and `HEART_NO_CONTACT`: a party, a foreign row or an
-## unjudged band publishes `false / 0 / -1`, and drawing that as a zero bond would claim a tie is gone).
+## for a band with no reading** (not cut off and a zero bond: an unjudged band or a party publishes
+## `false / 0 / -1`, a foreign redacted row `false / 0 / 0`; a heart member always holds a live tie, so
+## the gate keys on the bond — drawing either as a zero Bond would claim a tie is gone).
 func _build_heart_rows(band: Dictionary) -> VBoxContainer:
     var cut_off := bool(band.get("cut_off", false))
     var bond := float(band.get("heart_bond", 0.0))
     var last := int(band.get("heart_last_contact_turn", HudWorkVocab.HEART_NO_CONTACT))
-    if not cut_off and (last == HudWorkVocab.HEART_NO_CONTACT or bond >= HudWorkVocab.HEART_BOND_FULL):
+    if not cut_off and (bond <= HudWorkVocab.HEART_BOND_NONE or bond >= HudWorkVocab.HEART_BOND_FULL):
         return null
     var threshold := float(band.get("independence_grievance_threshold", 0.0))
     var tooltip := HudWorkVocab.HEART_TOOLTIP_FORMAT % threshold

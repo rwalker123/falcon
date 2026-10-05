@@ -1743,7 +1743,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     //   heart_last_contact_turn — latest turn a heart tie was refreshed; -1 = no tie at all.
     //   independence_grievance_threshold — config echo: the `grievance` at which a cut-off group
     //                            breaks away (same units as the decoded `grievance`).
-    // Unjudged bands, parties and foreign rows carry false / 0 / -1.
+    // An unjudged band or a party carries false / 0 / -1; a foreign (redacted) row carries the
+    // schema defaults, false / 0 / 0. Both have a zero bond, which is what the panel keys on.
     let _ = dict.insert("cut_off", cohort.cutOff());
     let _ = dict.insert("heart_bond", f64::from(cohort.heartBond()));
     let _ = dict.insert("heart_last_contact_turn", cohort.heartLastContactTurn());

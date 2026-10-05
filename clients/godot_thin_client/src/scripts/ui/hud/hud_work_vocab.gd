@@ -445,9 +445,13 @@ const HEART_BOND_METER_SCALE := 100.0
 ## A band whose bond reads this strong and is not cut off is a LONE HEART (or holds a full tie) — the
 ## row is omitted, since there is nothing to keep an eye on.
 const HEART_BOND_FULL := 1.0
-## `heart_last_contact_turn`'s "no tie joins them at all" sentinel (`sim_schema::NO_HEART_CONTACT`).
-## A band that is NOT cut off and carries it has no reading (a party, a foreign row, an unjudged
-## band), so the row is omitted rather than drawn as a zero bond.
+## A bond at or below this on a band that is NOT cut off is NO READING: an unjudged band or a party
+## publishes `false / 0 / -1`, a foreign (redacted) row the schema defaults `false / 0 / 0`. A heart
+## member always holds a live tie, so its bond is above zero — the gate keys on the bond, never on the
+## contact sentinel, which a redacted row does not carry.
+const HEART_BOND_NONE := 0.0
+## `heart_last_contact_turn`'s "no tie joins them at all" sentinel (`sim_schema::NO_HEART_CONTACT`) —
+## a cut-off band carrying it reads `never seen`.
 const HEART_NO_CONTACT := -1
 const HEART_OUT_OF_TOUCH_TEXT := "Out of touch"
 const HEART_LAST_SEEN_FORMAT := "last seen %d turns ago"
