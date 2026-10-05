@@ -541,6 +541,12 @@ func _tile_terrain_lines(tile_info: Dictionary,
             var working: Dictionary = deposit_variant
             lines.append_array(HudDepositVocab.deposit_lines(
                 working, deposit_ladder, ctx, _cutters_on_working(working)))
+    # THE DEAD THIS PLACE HOLDS (issue #699) — belief is a property of the PLACE, so it is a land row,
+    # and it is emitted here, above the discovered early-return, for the deposits' reason: the dead do
+    # not wander off, so a remembered hex states them truly. No dead, no row.
+    var ancestors := DetailFormat.ancestors_line(tile_info)
+    if ancestors != "":
+        lines.append(ancestors)
     # (A discovered Wondrous Site is a standing condition of the ground — it rides the chip strip.)
     #
     # A REMEMBERED TILE KEEPS BOTH WEBS' CAPACITIES AND LOSES BOTH THEIR STOCKS (issue #462). The rule

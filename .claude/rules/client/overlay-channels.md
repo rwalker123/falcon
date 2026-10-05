@@ -985,6 +985,40 @@ the floor-alone reading asserted as the premise.
 
 ---
 
+## The selected band's ANCESTORS — anchor mark and reach outline (issue #699)
+
+`BandOverlayRenderer._draw_band_ancestors`, called from `draw_band_work_highlights` right after the
+range borders, so it draws only for the SELECTED PLAYER band (`_selected_player_band`) and never for a
+foreign one — whose redacted row carries no anchor anyway. A band whose `has_belief_anchor` is false
+draws nothing.
+
+- **The reach outline** is the PERIMETER of the tile set `belief_reach_x/y` (zipped packed arrays off
+  `PopulationCohortState.beliefReachX/Y`): every edge between a tile in the set and one outside it,
+  off-map counting as outside. The set is the sim's road-aware walk test, so it is irregular and is
+  traced from the set, never from a radius. Columns are drawn in the band's effective frame
+  (`_wrapped_col_delta`) and folded back with `posmod` for the membership test
+  (`_in_reach_region`), so the region stays contiguous across the wrap seam. Inside the outline the
+  band's `morale_culture` term is positive; outside it, negative.
+  The violet line (`ANCESTORS_REACH_WIDTH`) is drawn over a wider dark under-stroke
+  (`HudStyle.GROUND`, `ANCESTORS_REACH_UNDER_WIDTH`) — every edge's under-stroke first, then every
+  violet edge, so no under-stroke cuts a neighbouring edge's colour. The under-stroke carries it over
+  light ground (sand, snow); the violet's lightness carries it over dark (forest, water).
+- **The kin-relay outline** is a SECOND perimeter, of `belief_relay_reach_x/y` — the tiles OUTSIDE
+  the direct region from which the band would be tied in through its other kin. Same perimeter code
+  (`_reach_perimeter`) and the same violet, thinner and fainter (`ANCESTORS_RELAY_*`), and solid —
+  dashes mean a pending action on this map. Edges the relayed region shares with the direct one are
+  dropped from it (the direct set is passed as `skip`), and the direct outline is drawn after it, so a
+  shared border reads as the strong "near" line and the faint line marks only "near through kin".
+- **The anchor mark** (`_draw_ancestors_marker`) is the expedition marker's composite: a dark disc
+  (`HudStyle.GROUND`, a band token's radius) ringed in violet, with the `BeliefSprites.urn()` sprite
+  centred on it through `MapView._draw_marker_sprite`, sized at `ANCESTORS_SPRITE_FACTOR` of the disc's
+  diameter — the 24–41 px band the other map markers draw at. When the sprite does not load, the
+  violet `ANCESTORS_GLYPH` ⚱ is drawn on the same disc.
+- **Both ride `HudStyle.BELIEF`**, a light violet authored in every theme (ember `#bf86f2`, loam
+  `#b08cf5`, kiln `#c987ea`, console `#b679ff`) and read at the draw site so a theme swap re-tints
+  them. Purple is the ancestors' hue; no worked-source ring (green / red / slate), range border
+  (green / azure) or pending style (dashed amber) wears it.
+
 ## Worked-source marks — one ring grammar for both food webs
 
 `docs/plan_worked_source_marks.md` (issue #412). Two passes, and the split between them is the whole

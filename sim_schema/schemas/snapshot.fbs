@@ -536,7 +536,7 @@ table PopulationCohortState {
   supplyNetworkId:uint = 0;
   // This turn's signed morale delta (fixed-point, FIXED_POINT_SCALE = 1e6) — trend arrow source.
   moraleDelta:long = 0;
-  // Dominant negative morale driver when falling: 0=None, 1=Terrain, 2=Cold, 3=Unrest.
+  // Dominant negative morale driver when falling: 0=None, 1=Terrain, 2=Cold, 3=Unrest, 4=Culture.
   moraleCause:ubyte = 0;
   // Civilization Wellbeing (docs/plan_civ_wellbeing.md). All fixed-point (FIXED_POINT_SCALE = 1e6)
   // except the two head-counts. Derived per-turn unless noted.
@@ -551,7 +551,8 @@ table PopulationCohortState {
   // Phase 1 only surfaces it). PERSISTED for rollback (unlike the other derived fields here).
   grievance:long = 0;
   // Layer-1 named morale contributions whose signed sum IS moraleDelta (the itemized breakdown):
-  // settling (base growth, ≥0), terrain/climate (≤0), unrest (signed).
+  // settling (base growth, ≥0), terrain/climate (≤0), unrest (signed); culture (signed) is
+  // moraleCulture, appended at the end of this table.
   moraleSettling:long = 0;
   moraleTerrain:long = 0;
   moraleClimate:long = 0;
@@ -649,7 +650,7 @@ table PopulationCohortState {
   fodderStore:float = 0;
   // The three named fertility factors behind this turn's births — the birth_rate multiplier
   // fertility = birth_rate × hunger × reserve × trend (docs/plan_population_growth_model.md), the
-  // birth path's equivalent of the moraleSettling/Terrain/Climate/Unrest breakdown above. Fixed-point
+  // birth path's equivalent of the moraleSettling/Terrain/Climate/Unrest/Culture breakdown. Fixed-point
   // (FIXED_POINT_SCALE = 1e6), NEUTRAL AT 1e6 rather than at 0 — these are multiplicative factors,
   // not signed contributions, so the client renders each as its deviation from 1.0.
   //   - fertilityHunger  ∈ [0, 1]     did we eat this turn (consumed / demand). The GATE: the only
@@ -1461,6 +1462,40 @@ table PopulationCohortState {
   // without outside contact) the ceiling is lifted, fertilityCeiling reads 1e6 at any head-count,
   // and this publishes 0. A client reads 0 as unrestricted, never as a ceiling of nobody.
   breedingCeiling:uint = 0;
+  // Layer-1 CULTURE morale contribution - near / far from the ancestors (issue #699):
+  // s x (r x near_bonus - (1 - r) x away_drag), where s = b / (b + belief_half_saturation) for the
+  // anchor's belief b and r is the kin-relay strength the term was priced from (beliefRelayHops): r = 1
+  // standing within walking reach of the anchor (+near_bonus x s), r = relay_per_hop^n tied in through
+  // n bands of kin (the blend), r = 0 unreached (-away_drag x s); 0 with no anchor. Signed, fixed-point
+  // (FIXED_POINT_SCALE = 1e6), part of the moraleSettling/Terrain/Climate/Unrest breakdown whose
+  // signed sum IS moraleDelta. Derived per-turn.
+  moraleCulture:long = 0;
+  // THE BAND'S ANCESTORS' PLACE - its belief anchor, the tile moraleCulture is measured against
+  // (`hasBeliefAnchor` gates it; `0,0` with no anchor - the `isTraveling`/`travelTarget` idiom).
+  hasBeliefAnchor:bool = false;
+  beliefAnchorX:uint = 0;
+  beliefAnchorY:uint = 0;
+  // Every tile a band could STAND on and be within reach of its anchor itself (zipped x/y, row-major,
+  // the `pendingRevealX/Y` idiom) - derived at capture on the frame's positions from the same
+  // road-aware walk test the culture term uses (core_sim `supply::WalkReach::within(standing,
+  // anchor)`). Standing inside it r = 1 (+near_bonus x s); outside it the band is tied in through kin
+  // (beliefRelayReachX/Y, the blend) or unreached (-away_drag x s). Empty with no anchor.
+  beliefReachX:[uint];
+  beliefReachY:[uint];
+  // KIN RELAY THE REACH (issue #699): how many hops of this band's own people tied it to its anchor
+  // when this turn's culture term was priced - the count moraleCulture was priced from, stored by the
+  // sim (PopulationCohort.last_belief_relay_hops), never recounted at capture on moved positions.
+  // 0 = it stands within reach of the anchor itself (and 0 with no anchor - read hasBeliefAnchor);
+  // n = reached through n bands of kin, near at relay_per_hop^n; 255 = UNREACHED (an anchor is held
+  // and no chain of kin reaches it - the band is fully away). A chain longer than 254 publishes 254.
+  beliefRelayHops:ubyte = 0;
+  // The RELAYED region (zipped x/y, row-major): every tile NOT in beliefReachX/Y where THIS band,
+  // standing there, would be within walking reach of some other band of its people that the anchor's
+  // reach gets to without it (any hop) - where kin keep it tied in. Derived at capture from the same
+  // relay search, run on the frame's positions: it answers where the band could walk NOW and be tied
+  // in, a different question from the turn's hop count. Empty with no anchor.
+  beliefRelayReachX:[uint];
+  beliefRelayReachY:[uint];
 }
 
 // One band's outfitting window. THE TWO SUPPLIES ARE MUTUALLY EXCLUSIVE and `parentBandId` says which

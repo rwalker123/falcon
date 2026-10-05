@@ -79,13 +79,14 @@ const MARKER_OMITTED_KEYS := {}
 # These values are also the fixture's values for these keys (merged over FIXTURE_ENTRY), so the
 # fixture cannot drift away from what the round-trip asserts.
 const FRACTIONAL_ROUND_TRIP_KEYS := {
-	# Morale + its four signed Layer-1 contributions — all fixed-point Scalars.
+	# Morale + its five signed Layer-1 contributions — all fixed-point Scalars.
 	"morale": 0.4137,
 	"morale_delta": -0.0325,
 	"morale_settling": 0.0113,
 	"morale_terrain": -0.0217,
 	"morale_climate": -0.0154,
 	"morale_unrest": -0.0061,
+	"morale_culture": 0.0089,
 	# Wellbeing scalars — fixed-point.
 	"output_multiplier": 0.7225,
 	"discontent_fraction": 0.1837,

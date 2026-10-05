@@ -1302,6 +1302,8 @@ mod tests {
                         crate::components::BandId(0),
                         crate::lineage::MIN_BAND_LINES,
                     ),
+                    belief_anchor: None,
+                    last_belief_relay_hops: 0,
                 },
                 StartingUnit::new("BandScout".to_string(), vec![]),
                 allocation,
@@ -1409,6 +1411,8 @@ mod tests {
                     crate::components::BandId(0),
                     crate::lineage::MIN_BAND_LINES,
                 ),
+                belief_anchor: None,
+                last_belief_relay_hops: 0,
             },
             // BandCrafter: base_range 2, so the band center can't reveal the far worked tiles.
             StartingUnit::new("BandCrafter".to_string(), vec![]),
@@ -1918,6 +1922,8 @@ mod hex_sight_range_tests {
                 crate::components::BandId(0),
                 crate::lineage::MIN_BAND_LINES,
             ),
+            belief_anchor: None,
+            last_belief_relay_hops: 0,
         }
     }
 

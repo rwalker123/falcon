@@ -4373,6 +4373,13 @@
       "activity": "populations[0].activity",
       "band_id": 141,
       "band_move_tiles_per_turn": 65.150002,
+      "belief_anchor_x": 78,
+      "belief_anchor_y": 67,
+      "belief_reach_x": {"__packed": "PackedInt32Array", "len": 3, "items": [114, 109, 120]},
+      "belief_reach_y": {"__packed": "PackedInt32Array", "len": 3, "items": [101, 106, 179]},
+      "belief_relay_hops": 122,
+      "belief_relay_reach_x": {"__packed": "PackedInt32Array", "len": 3, "items": [76, 47, 86]},
+      "belief_relay_reach_y": {"__packed": "PackedInt32Array", "len": 3, "items": [143, 76, 65]},
       "bench": {
         "blocked_reason": "populations[0].bench.blocked_reason",
         "blocked_severity": "populations[0].bench.blocked_severity",
@@ -4813,6 +4820,7 @@
       "founding_parent_min_workers": 132,
       "generation": 178,
       "grievance": 0.000154,
+      "has_belief_anchor": false,
       "home": 193,
       "home_band_entity": 133,
       "homeward_all_home_in": 27,
@@ -4842,7 +4850,7 @@
       "hunter_attack": 45.5,
       "idle_workers": 54,
       "is_expedition": false,
-      "is_traveling": false,
+      "is_traveling": true,
       "kit_id": "populations[0].kit_id",
       "kit_item_conditions": [
         {
@@ -5469,6 +5477,7 @@
       "morale": 0.000022,
       "morale_cause": 86,
       "morale_climate": 0.00015,
+      "morale_culture": 0.000061,
       "morale_delta": 0.000129,
       "morale_settling": 0.000027,
       "morale_terrain": 0.000096,
@@ -5637,6 +5646,13 @@
       "activity": "populations[1].activity",
       "band_id": 42,
       "band_move_tiles_per_turn": 61.23,
+      "belief_anchor_x": 49,
+      "belief_anchor_y": 60,
+      "belief_reach_x": {"__packed": "PackedInt32Array", "len": 3, "items": [29, 50, 115]},
+      "belief_reach_y": {"__packed": "PackedInt32Array", "len": 3, "items": [74, 157, 72]},
+      "belief_relay_hops": 5,
+      "belief_relay_reach_x": {"__packed": "PackedInt32Array", "len": 3, "items": [63, 92, 81]},
+      "belief_relay_reach_y": {"__packed": "PackedInt32Array", "len": 3, "items": [180, 63, 182]},
       "bench": {
         "blocked_reason": "populations[1].bench.blocked_reason",
         "blocked_severity": "populations[1].bench.blocked_severity",
@@ -6077,6 +6093,7 @@
       "founding_parent_min_workers": 115,
       "generation": 195,
       "grievance": 0.000053,
+      "has_belief_anchor": true,
       "home": 148,
       "home_band_entity": 32,
       "homeward_all_home_in": 18,
@@ -6106,7 +6123,7 @@
       "hunter_attack": 43.43,
       "idle_workers": 151,
       "is_expedition": true,
-      "is_traveling": true,
+      "is_traveling": false,
       "kit_id": "populations[1].kit_id",
       "kit_item_conditions": [
         {
@@ -6677,6 +6694,7 @@
       "morale": 0.000167,
       "morale_cause": 171,
       "morale_climate": 0.000195,
+      "morale_culture": 0.000164,
       "morale_delta": 0.00018,
       "morale_settling": 0.00012,
       "morale_terrain": 0.000157,
@@ -6862,6 +6880,13 @@
       "activity": "populations[2].activity",
       "band_id": 87,
       "band_move_tiles_per_turn": 100.839996,
+      "belief_anchor_x": 124,
+      "belief_anchor_y": 113,
+      "belief_reach_x": {"__packed": "PackedInt32Array", "len": 3, "items": [52, 15, 54]},
+      "belief_reach_y": {"__packed": "PackedInt32Array", "len": 3, "items": [175, 92, 89]},
+      "belief_relay_hops": 172,
+      "belief_relay_reach_x": {"__packed": "PackedInt32Array", "len": 3, "items": [30, 121, 36]},
+      "belief_relay_reach_y": {"__packed": "PackedInt32Array", "len": 3, "items": [33, 158, 119]},
       "bench": {
         "blocked_reason": "populations[2].bench.blocked_reason",
         "blocked_severity": "populations[2].bench.blocked_severity",
@@ -7302,6 +7327,7 @@
       "founding_parent_min_workers": 118,
       "generation": 72,
       "grievance": 0.00018,
+      "has_belief_anchor": true,
       "home": 95,
       "home_band_entity": 143,
       "homeward_all_home_in": 125,
@@ -7330,8 +7356,8 @@
       "hunt_per_worker_provisions": 90.980003,
       "hunter_attack": 69.129997,
       "idle_workers": 68,
-      "is_expedition": true,
-      "is_traveling": false,
+      "is_expedition": false,
+      "is_traveling": true,
       "kit_id": "populations[2].kit_id",
       "kit_item_conditions": [
         {
@@ -7958,6 +7984,7 @@
       "morale": 0.000096,
       "morale_cause": 196,
       "morale_climate": 0.000176,
+      "morale_culture": 0.000083,
       "morale_delta": 0.000111,
       "morale_settling": 0.000057,
       "morale_terrain": 0.000138,
@@ -8653,6 +8680,7 @@
   ],
   "tiles": [
     {
+      "belief": 23.15,
       "culture_layer": 111,
       "element": 155,
       "entity": 0,
@@ -8673,6 +8701,7 @@
       "y": 0
     },
     {
+      "belief": 20.17,
       "culture_layer": 156,
       "element": 68,
       "entity": 1,
@@ -8693,6 +8722,7 @@
       "y": 0
     },
     {
+      "belief": 74.18,
       "culture_layer": 105,
       "element": 153,
       "entity": 2,
@@ -8713,6 +8743,7 @@
       "y": 0
     },
     {
+      "belief": 2.45,
       "culture_layer": 126,
       "element": 122,
       "entity": 3,
@@ -8733,6 +8764,7 @@
       "y": 0
     },
     {
+      "belief": 87.919998,
       "culture_layer": 3,
       "element": 159,
       "entity": 4,
@@ -8753,6 +8785,7 @@
       "y": 1
     },
     {
+      "belief": 33.77,
       "culture_layer": 144,
       "element": 184,
       "entity": 5,
@@ -8773,6 +8806,7 @@
       "y": 1
     },
     {
+      "belief": 39.369999,
       "culture_layer": 165,
       "element": 197,
       "entity": 6,
@@ -8793,6 +8827,7 @@
       "y": 1
     },
     {
+      "belief": 25.219999,
       "culture_layer": 2,
       "element": 110,
       "entity": 7,
@@ -8813,6 +8848,7 @@
       "y": 1
     },
     {
+      "belief": 64.879997,
       "culture_layer": 95,
       "element": 115,
       "entity": 8,
@@ -8833,6 +8869,7 @@
       "y": 2
     },
     {
+      "belief": 66.779999,
       "culture_layer": 84,
       "element": 12,
       "entity": 9,
@@ -8853,6 +8890,7 @@
       "y": 2
     },
     {
+      "belief": 37.73,
       "culture_layer": 200,
       "element": 184,
       "entity": 10,
@@ -8873,6 +8911,7 @@
       "y": 2
     },
     {
+      "belief": 47.860001,
       "culture_layer": 67,
       "element": 111,
       "entity": 11,

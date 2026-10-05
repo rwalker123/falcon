@@ -6,7 +6,7 @@ use shadow_scale_flatbuffers::shadow_scale::sim as fb;
 
 use crate::dict::campaign::{kit_allocations_to_array, material_allocations_to_array};
 use crate::dict::economy::fragment_to_dict;
-use crate::dict::fixed64_to_f64;
+use crate::dict::{fixed64_to_f64, u32_vector_to_packed_int32};
 
 /// **ONE TABLE OF EQUIPMENT** — `[{item_id, required, filled}]`, one dict per `KitToeLine`, `[]` when
 /// the vector is absent or empty (nothing claimed). Shared by a take row's `kit_toe` and a site's
@@ -77,6 +77,7 @@ struct CohortScalars {
     morale_terrain: f64,
     morale_climate: f64,
     morale_unrest: f64,
+    morale_culture: f64,
     fertility_hunger: f64,
     fertility_reserve: f64,
     fertility_trend: f64,
@@ -93,6 +94,7 @@ fn cohort_scalars(cohort: fb::PopulationCohortState<'_>) -> CohortScalars {
         morale_terrain: fixed64_to_f64(cohort.moraleTerrain()),
         morale_climate: fixed64_to_f64(cohort.moraleClimate()),
         morale_unrest: fixed64_to_f64(cohort.moraleUnrest()),
+        morale_culture: fixed64_to_f64(cohort.moraleCulture()),
         fertility_hunger: fixed64_to_f64(cohort.fertilityHunger()),
         fertility_reserve: fixed64_to_f64(cohort.fertilityReserve()),
         fertility_trend: fixed64_to_f64(cohort.fertilityTrend()),
@@ -133,17 +135,48 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // draws a wrap-aware reticle + line to it for the selected traveling unit.
     let _ = dict.insert("travel_target_x", i64::from(cohort.travelTargetX()));
     let _ = dict.insert("travel_target_y", i64::from(cohort.travelTargetY()));
+    // The band's ancestors' place — its belief anchor, the tile `morale_culture` is measured against
+    // (`hasBeliefAnchor` gates it; `0,0` with no anchor, the `isTraveling`/`travelTarget` idiom). Own
+    // bands only: a foreign band's redacted row leaves all three at their defaults.
+    let _ = dict.insert("has_belief_anchor", cohort.hasBeliefAnchor());
+    let _ = dict.insert("belief_anchor_x", i64::from(cohort.beliefAnchorX()));
+    let _ = dict.insert("belief_anchor_y", i64::from(cohort.beliefAnchorY()));
+    // Every tile the band can STAND on and still count as near its anchor, as two zipped packed
+    // arrays (index i of each is one tile). Road-aware, so the set is irregular — the map draws its
+    // perimeter, never a circle. Empty with no anchor.
+    let _ = dict.insert(
+        "belief_reach_x",
+        &u32_vector_to_packed_int32(cohort.beliefReachX()),
+    );
+    let _ = dict.insert(
+        "belief_reach_y",
+        &u32_vector_to_packed_int32(cohort.beliefReachY()),
+    );
+    // THE KIN RELAY. `belief_relay_hops`: 0 = direct (also 0 with no anchor — read
+    // `has_belief_anchor` to tell them apart), n = tied in through n bands of kin, 254 = a chain of 254
+    // or longer, 255 = unreached (holds an anchor, no chain reaches it). `belief_relay_reach_x/y`:
+    // every tile OUTSIDE the direct reach region from which the band would be tied in through its
+    // other kin, as two zipped packed arrays. Empty with no anchor.
+    let _ = dict.insert("belief_relay_hops", i64::from(cohort.beliefRelayHops()));
+    let _ = dict.insert(
+        "belief_relay_reach_x",
+        &u32_vector_to_packed_int32(cohort.beliefRelayReachX()),
+    );
+    let _ = dict.insert(
+        "belief_relay_reach_y",
+        &u32_vector_to_packed_int32(cohort.beliefRelayReachY()),
+    );
     let _ = dict.insert("size", cohort.size() as i64);
     // Every Scalar field below comes from `cohort_scalars` — see its doc comment for why.
     let scalars = cohort_scalars(cohort);
     let _ = dict.insert("morale", scalars.morale);
     // Signed per-turn morale trend + the dominant negative driver when falling
-    // (0=None, 1=Terrain, 2=Cold, 3=Unrest). A rehydrated save reports 0/None for
+    // (0=None, 1=Terrain, 2=Cold, 3=Unrest, 4=Culture). A rehydrated save reports 0/None for
     // one turn (the sim doesn't persist them) — the HUD handles that gracefully.
     let _ = dict.insert("morale_delta", scalars.morale_delta);
     let _ = dict.insert("morale_cause", i64::from(cohort.moraleCause()));
     // Civilization Wellbeing (docs/plan_civ_wellbeing.md). Productivity + discontent +
-    // migration counters + the four signed Layer-1 morale contributions (their sum IS
+    // migration counters + the five signed Layer-1 morale contributions (their sum IS
     // morale_delta) that drive the itemized morale breakdown in the band drawer.
     let _ = dict.insert("output_multiplier", scalars.output_multiplier);
     let _ = dict.insert("discontent_fraction", scalars.discontent_fraction);
@@ -155,6 +188,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("morale_terrain", scalars.morale_terrain);
     let _ = dict.insert("morale_climate", scalars.morale_climate);
     let _ = dict.insert("morale_unrest", scalars.morale_unrest);
+    let _ = dict.insert("morale_culture", scalars.morale_culture);
     // The birth path's parallel of the morale contributions: the three named fertility factors whose
     // PRODUCT (not sum) is the birth_rate multiplier — hunger (did we eat) x reserve (is there a
     // cushion) x trend (is the cushion growing or shrinking). NEUTRAL AT 1.0, not at 0, so the
@@ -2008,8 +2042,8 @@ mod cohort_decode_tests {
                 workingAge: 17,
                 eldersCount: 4,
                 morale: 820_000,
-                // == the four Layer-1 contributions below, which the test asserts.
-                moraleDelta: -11_000,
+                // == the five Layer-1 contributions below, which the test asserts.
+                moraleDelta: -3_000,
                 outputMultiplier: 1_000_000,
                 discontentFraction: 250_000,
                 grievance: 40_000,
@@ -2017,6 +2051,7 @@ mod cohort_decode_tests {
                 moraleTerrain: -26_000,
                 moraleClimate: -6_000,
                 moraleUnrest: 11_000,
+                moraleCulture: 8_000,
                 // The three fertility factors: a band eating short (0.6) off a fat larder (1.5)
                 // with its income collapsed (0.25) — the case the model exists for, and the one
                 // where all three sit off their neutral 1.0.
@@ -2048,15 +2083,16 @@ mod cohort_decode_tests {
         );
 
         assert!((scalars.morale - 0.82).abs() < 1e-9);
-        assert!((scalars.morale_delta - -0.011).abs() < 1e-9);
+        assert!((scalars.morale_delta - -0.003).abs() < 1e-9);
         assert!((scalars.output_multiplier - 1.0).abs() < 1e-9);
         assert!((scalars.discontent_fraction - 0.25).abs() < 1e-9);
         assert!((scalars.grievance - 0.04).abs() < 1e-9);
-        // The four signed Layer-1 contributions must sum to the reported morale trend.
+        // The five signed Layer-1 contributions must sum to the reported morale trend.
         let contributions = scalars.morale_settling
             + scalars.morale_terrain
             + scalars.morale_climate
-            + scalars.morale_unrest;
+            + scalars.morale_unrest
+            + scalars.morale_culture;
         assert!(
             (contributions - scalars.morale_delta).abs() < 1e-9,
             "contributions {contributions} != morale_delta {}",
@@ -2091,6 +2127,7 @@ mod cohort_decode_tests {
             ("output_multiplier", scalars.output_multiplier),
             ("discontent_fraction", scalars.discontent_fraction),
             ("grievance", scalars.grievance),
+            ("morale_culture", scalars.morale_culture),
             ("fertility_hunger", scalars.fertility_hunger),
             ("fertility_reserve", scalars.fertility_reserve),
             ("fertility_trend", scalars.fertility_trend),

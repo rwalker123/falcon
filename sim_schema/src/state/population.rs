@@ -916,7 +916,8 @@ pub struct PopulationCohortState {
     /// (`PopulationCohort::last_morale_delta`).
     #[serde(default)]
     pub morale_delta: i64,
-    /// Dominant negative morale driver this turn: `0 = None, 1 = Terrain, 2 = Cold, 3 = Unrest`.
+    /// Dominant negative morale driver this turn: `0 = None, 1 = Terrain, 2 = Cold, 3 = Unrest,
+    /// 4 = Culture`.
     /// Names *why* morale is falling. Recomputed each turn alongside [`Self::morale_delta`].
     #[serde(default)]
     pub morale_cause: u8,
@@ -940,7 +941,7 @@ pub struct PopulationCohortState {
     #[serde(default)]
     pub grievance: i64,
     /// Layer-1 named morale contributions whose signed sum IS `morale_delta` — the itemized
-    /// breakdown. Fixed-point raw. Derived at capture.
+    /// breakdown (with [`Self::morale_culture`], appended last). Fixed-point raw. Derived at capture.
     #[serde(default)]
     pub morale_settling: i64,
     #[serde(default)]
@@ -1706,7 +1707,44 @@ pub struct PopulationCohortState {
     /// `lineage.free_breeding_at`). Appended last.
     #[serde(default)]
     pub breeding_ceiling: u32,
+    /// Layer-1 **culture** morale contribution — near (+) / far (−) from the band's ancestors
+    /// (`snapshot.fbs` → `moraleCulture`), part of the `morale_*` breakdown whose signed sum IS
+    /// `morale_delta`. Fixed-point raw. Derived at capture. Appended last.
+    #[serde(default)]
+    pub morale_culture: i64,
+    /// Whether the band has a belief anchor — gates [`Self::belief_anchor_x`] /
+    /// [`Self::belief_anchor_y`] (`0,0` without one). Derived at capture.
+    #[serde(default)]
+    pub has_belief_anchor: bool,
+    #[serde(default)]
+    pub belief_anchor_x: u32,
+    #[serde(default)]
+    pub belief_anchor_y: u32,
+    /// The anchor's reach region (zipped `x`/`y`, row-major): every tile a band could stand on and
+    /// still count as near its anchor. Empty with no anchor. Derived at capture.
+    #[serde(default)]
+    pub belief_reach_x: Vec<u32>,
+    #[serde(default)]
+    pub belief_reach_y: Vec<u32>,
+    /// How many hops of kin tie the band to its anchor: `0` direct (or no anchor), `n` through `n`
+    /// bands of its own people, [`BELIEF_RELAY_UNREACHED`] when an anchor is held and nothing reaches
+    /// it. Derived at capture.
+    #[serde(default)]
+    pub belief_relay_hops: u8,
+    /// The relayed region (zipped `x`/`y`, row-major): tiles outside [`Self::belief_reach_x`] from
+    /// which this band would be tied in through its OTHER kin bands. Empty with no anchor. Derived at
+    /// capture.
+    #[serde(default)]
+    pub belief_relay_reach_x: Vec<u32>,
+    #[serde(default)]
+    pub belief_relay_reach_y: Vec<u32>,
 }
+
+/// `PopulationCohortState::belief_relay_hops` for a band that holds an anchor no chain of its own
+/// people reaches — fully away.
+pub const BELIEF_RELAY_UNREACHED: u8 = u8::MAX;
+/// The longest relay chain the wire can state; a longer one publishes this.
+pub const BELIEF_RELAY_MAX_HOPS: u8 = BELIEF_RELAY_UNREACHED - 1;
 
 /// **ONE GOOD THAT CROSSED A BAND'S STORE, BY CAUSE** — a row of
 /// [`PopulationCohortState::transfer_crossings`]. The code tables are in `snapshot.fbs`'s

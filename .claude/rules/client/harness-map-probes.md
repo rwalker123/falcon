@@ -1392,8 +1392,31 @@ the even camp. Then the `MAP LAYERS` popover's glyph, three-button layout, attac
 checkbox; the uncheck driven through the box into a scratch prefs file (`EXCHANGE_PREFS_PATH`, so the
 developer's own `client_settings.cfg` is never written) turning the layer off and emptying the marks
 (`map_exchange_network_off`); and the swap/close leg as real presses. The state pins
-`ClientSettings.map_toggles = {}` first — the autoload read the developer's real prefs. **It is the
-LAST state in the run**, appended so no existing frame moved.
+`ClientSettings.map_toggles = {}` first — the autoload read the developer's real prefs. It was
+appended so no existing frame moved; `map_band_ancestors` follows it.
+
+### `map_band_ancestors` — the selected band's anchor mark and reach outline (issue #699)
+
+The selected band carries a belief anchor at `ANCESTORS_ANCHOR` and a reach set built in the harness:
+a hex disk around the anchor plus the tiles within one of a dirt road (`ANCESTORS_ROAD_TILES`) that
+runs east and bends south — the shape the sim's road-aware reach takes, and one a circle cannot
+follow. The road is in the snapshot, so the frame shows the outline following it. Textures and edge
+blending on. Three claims, each a pixel DIFF against the same band rendered with no anchor: the anchor
+hex changed (the mark), the hex just below the bend changed (`ANCESTORS_BEND_TILE` — perimeter that
+exists only because the road bends), and the no-anchor band re-rendered is byte-identical to its
+control (nothing drawn without an anchor). Appended after `map_exchange_network*`.
+
+**`map_band_ancestors_ground`** follows it, PNG-less of claims: the same anchored region over four
+column bands of ground (`ANCESTORS_GROUND_IDS` — glacier · prairie · mixed woodland · deep ocean, the
+anchor on the glacier/prairie seam), so the violet outline and the urn marker are judged over snow,
+grass, forest and water and not only the desert.
+
+**`map_band_ancestors_kin`** follows it: the anchored band back on the desert with a relayed region
+(`belief_relay_reach_x/y`) built in the harness as every tile within `ANCESTORS_KIN_REACH` of two kin
+bands south of the direct region, minus the direct region — so the faint outline both borders the
+strong one and reaches past it. One claim: diffed against the no-relay `map_band_ancestors` frame,
+the hex just outside the relayed region's southern edge (`ANCESTORS_KIN_PROBE_TILE`) changed. It is
+the LAST state in the run.
 
 ### `map_band_names*` — the fixed-screen-size BAND NAME PILL (`map-markers.md`)
 

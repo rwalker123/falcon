@@ -118,7 +118,9 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 21 | Band carry (#732): `LoadoutSupply::Grant` lost `kit_budget` / `material_budget` for one optional `carry_budget` (a load in `CarryLoad` units; `None` = the band's own carry, read live), `LoadoutSupply::Parent` gained the take's `carry_budget`, `LoadoutWindow` gained `dowry` (a splinter's food share and what has crossed), and `LaborAllocation` gained `last_food_left_behind` — the food ledger's long-move term. |
 /// | 22 | The bench became a queue (#776): `BandBench` lost `recipe_id` / `progress` / `drawn` / `items_completed` for `orders` — an ordered list of `BenchOrder { recipe_id, count, made, progress, drawn }`, each carrying its own pass in flight — `KeepingIssue` gained `required` (a site crew's claim beside its issue, which the craft suggestions read), and `BandTravel` gained `departed` (whether a move order has taken its first step, where a long move sheds). All ride `BandRecord`, so a version-21 blob does not decode |
 /// | 23 | The breeding ceiling (#688): `FertilityFactors` gained `ceiling` (the fourth fertility factor) and `PopulationCohort` gained `last_breeding` (the band's breeding population and its ceiling, `crate::lineage::BreedingReading`), which the wire publishes as `PopulationCohortState.fertilityCeiling` / `breedingPopulation` / `breedingCeiling`. The cohort rides `BandRecord`, so a version-22 blob has no such fields |
-pub const SAVE_FORMAT_VERSION: u32 = 23;
+/// | 24 | `PopulationCohort` gained `belief_anchor` — the one belief tile a band remembers as its ancestors' place, which the culture morale term reads (issue #699, `.claude/rules/core_sim/belief.md` → "The culture morale term"). The cohort rides `BandRecord`, so a version-23 blob has no such field |
+/// | 25 | `PopulationCohort` gained `last_belief_relay_hops` — the kin-relay hop count the culture term was priced from this turn (issue #699), which the wire publishes as `PopulationCohortState.beliefRelayHops`. The cohort rides `BandRecord`, so a version-24 blob has no such field |
+pub const SAVE_FORMAT_VERSION: u32 = 25;
 
 /// gzip level for the payload document.
 ///

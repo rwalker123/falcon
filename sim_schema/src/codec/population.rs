@@ -892,6 +892,26 @@ fn create_populations<'a>(
                 builder,
                 &cohort.expedition_cargo_materials,
             );
+            let belief_reach_x = if cohort.belief_reach_x.is_empty() {
+                None
+            } else {
+                Some(builder.create_vector(&cohort.belief_reach_x))
+            };
+            let belief_relay_reach_x = if cohort.belief_relay_reach_x.is_empty() {
+                None
+            } else {
+                Some(builder.create_vector(&cohort.belief_relay_reach_x))
+            };
+            let belief_relay_reach_y = if cohort.belief_relay_reach_y.is_empty() {
+                None
+            } else {
+                Some(builder.create_vector(&cohort.belief_relay_reach_y))
+            };
+            let belief_reach_y = if cohort.belief_reach_y.is_empty() {
+                None
+            } else {
+                Some(builder.create_vector(&cohort.belief_reach_y))
+            };
             let pending_reveal_x = if cohort.pending_reveal_x.is_empty() {
                 None
             } else {
@@ -1148,6 +1168,15 @@ fn create_populations<'a>(
                     fertilityCeiling: cohort.fertility_ceiling,
                     breedingPopulation: cohort.breeding_population,
                     breedingCeiling: cohort.breeding_ceiling,
+                    moraleCulture: cohort.morale_culture,
+                    hasBeliefAnchor: cohort.has_belief_anchor,
+                    beliefAnchorX: cohort.belief_anchor_x,
+                    beliefAnchorY: cohort.belief_anchor_y,
+                    beliefReachX: belief_reach_x,
+                    beliefReachY: belief_reach_y,
+                    beliefRelayHops: cohort.belief_relay_hops,
+                    beliefRelayReachX: belief_relay_reach_x,
+                    beliefRelayReachY: belief_relay_reach_y,
                 },
             )
         })
@@ -1784,6 +1813,15 @@ fn decode_population(
         fertility_ceiling: cohort.fertilityCeiling(),
         breeding_population: cohort.breedingPopulation(),
         breeding_ceiling: cohort.breedingCeiling(),
+        morale_culture: cohort.moraleCulture(),
+        has_belief_anchor: cohort.hasBeliefAnchor(),
+        belief_anchor_x: cohort.beliefAnchorX(),
+        belief_anchor_y: cohort.beliefAnchorY(),
+        belief_reach_x: decode_scalars(cohort.beliefReachX()),
+        belief_reach_y: decode_scalars(cohort.beliefReachY()),
+        belief_relay_hops: cohort.beliefRelayHops(),
+        belief_relay_reach_x: decode_scalars(cohort.beliefRelayReachX()),
+        belief_relay_reach_y: decode_scalars(cohort.beliefRelayReachY()),
     })
 }
 

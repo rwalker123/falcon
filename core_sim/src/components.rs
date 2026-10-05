@@ -1451,8 +1451,16 @@ pub struct PopulationCohort {
     /// The Layer-1 named morale contributors whose signed sum IS `last_morale_delta` (the wellbeing
     /// model's per-band morale breakdown — see `docs/plan_civ_wellbeing.md`). Recomputed each turn by
     /// `simulate_population`; on the client wire as `PopulationCohortState.morale_{settling,terrain,
-    /// climate,unrest}`.
+    /// climate,unrest,culture}`.
     pub last_morale_contributions: MoraleContributions,
+    /// **The kin-relay hop count the culture term was priced from this turn** — the reading off the
+    /// one relay search `simulate_population` ran (`crate::belief_relay`), in the wire's encoding:
+    /// `0` direct or no anchor, `n` hops of kin, `sim_schema::BELIEF_RELAY_UNREACHED` (`255`) for an
+    /// anchor no chain reaches, a longer chain capped at `sim_schema::BELIEF_RELAY_MAX_HOPS`.
+    /// Recomputed each turn beside `last_morale_contributions` and published as
+    /// `PopulationCohortState.beliefRelayHops`, so the hop count a frame shows is the one its
+    /// `moraleCulture` was priced from — not a recount on positions the turn's movement changed.
+    pub last_belief_relay_hops: u8,
     /// The three named fertility factors behind this turn's births — `hunger` (did we eat) ×
     /// `reserve` (is there a cushion) × `trend` (is the cushion growing or shrinking), the
     /// `birth_rate` multiplier from `docs/plan_population_growth_model.md`. The birth path's
@@ -1498,6 +1506,18 @@ pub struct PopulationCohort {
     /// per-turn telemetry idiom as [`Self::last_fertility_factors`]; on the client wire as
     /// `PopulationCohortState.breedingPopulation` / `breedingCeiling`.
     pub last_breeding: crate::lineage::BreedingReading,
+    /// **The one place this band remembers as its ancestors'** — the culture morale term's anchor
+    /// (`docs/plan_civilization_steps.md` §"What belief does, through seams that exist";
+    /// `.claude/rules/core_sim/belief.md` → "The culture morale term"). The strongest belief tile the
+    /// band has ever stood within walking reach of; `None` until it has stood within reach of any.
+    /// Re-chosen each turn by `simulate_population` before morale is computed, and only ever moved
+    /// to a tile holding strictly more belief than the anchor now holds.
+    ///
+    /// **Band state, not the registry's**: belief stays a place's, ownerless; which place a band
+    /// counts as its own is a fact about the band. A tile POSITION, not an `Entity`, so the
+    /// checkpoint carries it with the rest of the cohort and no restore has to remap it. A fission
+    /// daughter inherits it (same people, same dead); a migrant joins its destination's anchor.
+    pub belief_anchor: Option<UVec2>,
 }
 
 /// The dominant negative driver of a cohort's morale on a given turn, surfaced so the client can
@@ -1505,7 +1525,7 @@ pub struct PopulationCohort {
 /// Starvation is deliberately excluded — it is surfaced through the days-of-food path, not morale.
 ///
 /// Snapshot wire encoding (see [`MoraleCause::as_u8`]): `0 = None, 1 = Terrain, 2 = Cold,
-/// 3 = Unrest`.
+/// 3 = Unrest, 4 = Culture`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum MoraleCause {
     /// Morale rose or held this turn — no dominant negative driver.
@@ -1517,6 +1537,10 @@ pub enum MoraleCause {
     Cold,
     /// Crisis impacts + cultural sentiment (unrest) dominated.
     Unrest,
+    /// The culture term's away side dominated: the band is not tied in to its ancestors' place (its
+    /// `belief_anchor`) at full strength — beyond its own walking reach and reached only weakly (or
+    /// not at all) through its kin.
+    Culture,
 }
 
 /// Which mortality term did most of the killing in one age bracket on one turn.
@@ -1632,13 +1656,15 @@ impl DemographicFlowAccumulator {
 }
 
 impl MoraleCause {
-    /// Encode for the snapshot's `moraleCause:ubyte` field: `0=None, 1=Terrain, 2=Cold, 3=Unrest`.
+    /// Encode for the snapshot's `moraleCause:ubyte` field: `0=None, 1=Terrain, 2=Cold, 3=Unrest,
+    /// 4=Culture`.
     pub fn as_u8(self) -> u8 {
         match self {
             MoraleCause::None => 0,
             MoraleCause::Terrain => 1,
             MoraleCause::Cold => 2,
             MoraleCause::Unrest => 3,
+            MoraleCause::Culture => 4,
         }
     }
 }
@@ -1658,6 +1684,8 @@ pub enum MoraleFactor {
     Climate,
     /// Crisis impacts + cultural sentiment (signed).
     Unrest,
+    /// Near (`+`) or far (`−`) from the band's ancestors — its `belief_anchor` (signed).
+    Culture,
 }
 
 /// The Phase-1 named morale contributions for a cohort this turn (each signed; their sum IS
@@ -1674,6 +1702,11 @@ pub struct MoraleContributions {
     pub climate: Scalar,
     /// crisis impacts + cultural sentiment bias (signed).
     pub unrest: Scalar,
+    /// near / far from the ancestors: `s × (r × near_bonus − (1 − r) × away_drag)` for the band's
+    /// `belief_anchor`, `r` its kin-relay strength — `1` within its own walking reach
+    /// (`+near_bonus × s`), `relay_per_hop ^ n` tied in through `n` bands of kin, `0` unreached
+    /// (`−away_drag × s`); `0` with no anchor (signed; `wellbeing_config.json` → `culture`).
+    pub culture: Scalar,
 }
 
 /// The three named fertility factors behind a cohort's births this turn — the `birth_rate`
@@ -1724,13 +1757,14 @@ impl FertilityFactors {
 impl MoraleContributions {
     /// The active contributions as `(factor, signed value)` pairs — the itemized breakdown the
     /// client can render and the single source both `total` and cause attribution iterate. Ordered
-    /// by the historical tie-break priority (Terrain ≥ Climate ≥ Unrest) so the dominant-cause scan
+    /// by the tie-break priority (Terrain ≥ Climate ≥ Unrest ≥ Culture) so the dominant-cause scan
     /// is a stable first-max.
-    pub fn contributions(&self) -> [(MoraleFactor, Scalar); 4] {
+    pub fn contributions(&self) -> [(MoraleFactor, Scalar); 5] {
         [
             (MoraleFactor::Terrain, self.terrain),
             (MoraleFactor::Climate, self.climate),
             (MoraleFactor::Unrest, self.unrest),
+            (MoraleFactor::Culture, self.culture),
             (MoraleFactor::Settling, self.settling),
         ]
     }
@@ -1744,7 +1778,7 @@ impl MoraleContributions {
 
     /// The dominant *negative* contributor as a [`MoraleCause`] (the "why morale fell" label). The
     /// most-negative labeled contribution wins; `Settling` is base growth (never a negative cause),
-    /// and ties resolve by `contributions()` order (Terrain ≥ Climate ≥ Unrest).
+    /// and ties resolve by `contributions()` order (Terrain ≥ Climate ≥ Unrest ≥ Culture).
     pub fn dominant_negative_cause(&self) -> MoraleCause {
         let mut best: Option<(MoraleFactor, Scalar)> = None;
         for (factor, value) in self.contributions() {
@@ -1759,6 +1793,7 @@ impl MoraleContributions {
             Some((MoraleFactor::Terrain, _)) => MoraleCause::Terrain,
             Some((MoraleFactor::Climate, _)) => MoraleCause::Cold,
             Some((MoraleFactor::Unrest, _)) => MoraleCause::Unrest,
+            Some((MoraleFactor::Culture, _)) => MoraleCause::Culture,
             _ => MoraleCause::None,
         }
     }

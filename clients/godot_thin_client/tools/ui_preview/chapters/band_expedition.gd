@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 126
+const EXPECTED_CHECKPOINTS := 139
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -818,6 +818,10 @@ func run(harness) -> void:
 	# **APPENDED**, for the reason the blocks above state.
 	await _carry_states()
 
+	# ---- THE CULTURE MORALE TERM (#699) ------------------------------------------------------------
+	# **APPENDED**, for the reason the blocks above state.
+	await _ancestors_states()
+
 	# band_alerts (above) left _player_band as an alert-fixture band (no work_range, far from the food
 	# tile); seed a NEAR band so the forage controls resolve an in-range actor.
 	h._hud._band_labor._player_band = BandFx.forage_range_bands()[0]
@@ -1094,6 +1098,144 @@ func _carry_states() -> void:
 			CARRY_VALUE_OVER]))
 	h._assert_hud("…and the block's hover states the move rule (\"%s\")" % CARRY_HOVER,
 		String(h._hud.occupant_detail.tooltip_text).contains(CARRY_HOVER))
+
+## ---- THE CULTURE MORALE TERM (#699) — `morale_culture`, the signed pull of the strongest belief place
+## (where the band's dead lie) the band remembers: positive within walking reach of it, negative beyond
+## it. A PAIR, because either half alone passes on a row that only ever draws one label. Each band has
+## its own entity so its Morale caret cannot collide with the reference band's.
+const ANCESTORS_NEAR_BAND_ENTITY := 910
+const ANCESTORS_FAR_BAND_ENTITY := 911
+const ANCESTORS_NEAR_CONTRIB := 0.006
+const ANCESTORS_FAR_CONTRIB := -0.009
+const BAND_DISCLOSURE_MORALE_ANCESTORS_NEAR := "morale:910"
+const BAND_DISCLOSURE_MORALE_ANCESTORS_FAR := "morale:911"
+## THE KIN RELAY pair — the same two bands tied in through kin, on their own entities.
+const ANCESTORS_KIN_NEAR_BAND_ENTITY := 912
+const ANCESTORS_KIN_FAR_BAND_ENTITY := 913
+const BAND_DISCLOSURE_MORALE_ANCESTORS_KIN_NEAR := "morale:912"
+const BAND_DISCLOSURE_MORALE_ANCESTORS_KIN_FAR := "morale:913"
+const ANCESTORS_KIN_NEAR_HOPS := 1
+const ANCESTORS_KIN_FAR_HOPS := 3
+const ANCESTORS_KIN_PLURAL_HOPS := 2
+const ANCESTORS_KIN_LONGEST_HOPS := 254
+const ANCESTORS_KIN_UNREACHED := 255
+const ANCESTORS_KIN_NEAR_ROW := "+0.6%  near the ancestors, through kin (1 hop)"
+const ANCESTORS_KIN_FAR_ROW := "−0.9%  far from the ancestors (12, 7), through kin"
+## The row text, spelled as LITERALS — a needle composed through the format under test can only agree
+## with itself.
+const ANCESTORS_NEAR_ROW := "+0.6%  near the ancestors"
+const ANCESTORS_FAR_ROW := "−0.9%  far from the ancestors (12, 7)"
+## The far band's belief anchor — the row names it in the `Position` row's coordinate form.
+const ANCESTORS_ANCHOR_X := 12
+const ANCESTORS_ANCHOR_Y := 7
+## The tile card's Ancestors row (`TileState.belief`, dead-equivalents): a whole count rounds, under one
+## person reads `<1`, and zero draws no row.
+const ANCESTORS_TILE_BELIEF := 12.4
+const ANCESTORS_TILE_ROW := "Ancestors: 12 dead"
+const ANCESTORS_TILE_BELIEF_UNDER_ONE := 0.4
+const ANCESTORS_TILE_ROW_UNDER_ONE := "Ancestors: <1 dead"
+const ANCESTORS_FAR_HEADLINE_CAUSE := "— far from the ancestors"
+
+func _ancestors_states() -> void:
+	# NEAR: the healthy reference band, standing within reach of its dead.
+	var near := BandFx.band_fixture()
+	near["entity"] = ANCESTORS_NEAR_BAND_ENTITY
+	near["morale_culture"] = ANCESTORS_NEAR_CONTRIB
+	near["morale_delta"] = float(near.get("morale_delta", 0.0)) + ANCESTORS_NEAR_CONTRIB
+	h._hud.show_unit_selection(near)
+	await h._settle()
+	_click_disclosure(BAND_DISCLOSURE_MORALE_ANCESTORS_NEAR)
+	await h._settle()
+	await h._save("band_morale_ancestors_near")
+	var near_popover := _popover_text()
+	h._assert_hud("a band within reach of its belief place itemizes `%s`" % ANCESTORS_NEAR_ROW,
+		_kit_breakdown_line(near_popover, "near the ancestors").contains(ANCESTORS_NEAR_ROW)
+			and _kit_breakdown_line(near_popover, "near the ancestors").contains(
+				DetailFormat.MORALE_CONTRIB_POSITIVE_GLYPH))
+	_click_disclosure(BAND_DISCLOSURE_MORALE_ANCESTORS_NEAR)
+
+	# FAR: the demoralized band, beyond reach of its dead, with culture the dominant falling cause — so
+	# the headline names it, not just the breakdown.
+	var far := _low_morale_band_fixture()
+	far["entity"] = ANCESTORS_FAR_BAND_ENTITY
+	far["morale_culture"] = ANCESTORS_FAR_CONTRIB
+	far["morale_delta"] = float(far["morale_delta"]) + ANCESTORS_FAR_CONTRIB
+	far["morale_cause"] = DetailFormat.MORALE_CAUSE_CULTURE
+	far["has_belief_anchor"] = true
+	far["belief_anchor_x"] = ANCESTORS_ANCHOR_X
+	far["belief_anchor_y"] = ANCESTORS_ANCHOR_Y
+	# …and the hex it stands on holds dead of its own, so the same frame shows the tile card's row.
+	var far_tile: Dictionary = (far["tile_info"] as Dictionary).duplicate()
+	far_tile["belief"] = ANCESTORS_TILE_BELIEF
+	far["tile_info"] = far_tile
+	h._hud.show_unit_selection(far)
+	await h._settle()
+	var far_vitals := String(h._hud.occupant_detail.get_parsed_text())
+	var tile_card := "\n".join(h._hud._drawer._tile_terrain_lines(far_tile))
+	h._assert_hud("the tile card states the dead the hex holds — `%s`" % ANCESTORS_TILE_ROW,
+		tile_card.contains(ANCESTORS_TILE_ROW))
+	h._assert_hud("…`%s` under one whole person, and no row at all on a hex with none"
+			% ANCESTORS_TILE_ROW_UNDER_ONE,
+		DetailFormat.ancestors_line({"belief": ANCESTORS_TILE_BELIEF_UNDER_ONE})
+			== ANCESTORS_TILE_ROW_UNDER_ONE
+		and DetailFormat.ancestors_line({"belief": 0.0}) == ""
+		and DetailFormat.ancestors_line({}) == "")
+	h._assert_hud("the morale headline names the cause `%s`" % ANCESTORS_FAR_HEADLINE_CAUSE,
+		far_vitals.contains(ANCESTORS_FAR_HEADLINE_CAUSE))
+	_click_disclosure(BAND_DISCLOSURE_MORALE_ANCESTORS_FAR)
+	await h._settle()
+	await h._save("band_morale_ancestors_far")
+	var far_popover := _popover_text()
+	h._assert_hud("a band beyond reach of its belief place itemizes `%s`" % ANCESTORS_FAR_ROW,
+		_kit_breakdown_line(far_popover, "far from the ancestors").contains(ANCESTORS_FAR_ROW)
+			and _kit_breakdown_line(far_popover, "far from the ancestors").contains(
+				DetailFormat.MORALE_CONTRIB_NEGATIVE_GLYPH))
+	h._assert_hud("…and never under the word `culture`, which the cohesion row owns",
+		not _kit_breakdown_line(far_popover, "far from the ancestors").contains("culture"))
+	_click_disclosure(BAND_DISCLOSURE_MORALE_ANCESTORS_FAR)
+
+	# THE KIN RELAY — APPENDED. The same two bands tied to their belief place through kin.
+	var kin_near := near.duplicate(true)
+	kin_near["entity"] = ANCESTORS_KIN_NEAR_BAND_ENTITY
+	kin_near["has_belief_anchor"] = true
+	kin_near["belief_anchor_x"] = ANCESTORS_ANCHOR_X
+	kin_near["belief_anchor_y"] = ANCESTORS_ANCHOR_Y
+	kin_near["belief_relay_hops"] = ANCESTORS_KIN_NEAR_HOPS
+	h._hud.show_unit_selection(kin_near)
+	await h._settle()
+	_click_disclosure(BAND_DISCLOSURE_MORALE_ANCESTORS_KIN_NEAR)
+	await h._settle()
+	await h._save("band_morale_ancestors_kin_near")
+	h._assert_hud("a band near its dead through kin says so — `%s`" % ANCESTORS_KIN_NEAR_ROW,
+		_kit_breakdown_line(_popover_text(), "near the ancestors").contains(ANCESTORS_KIN_NEAR_ROW))
+	_click_disclosure(BAND_DISCLOSURE_MORALE_ANCESTORS_KIN_NEAR)
+
+	var kin_far := far.duplicate(true)
+	kin_far["entity"] = ANCESTORS_KIN_FAR_BAND_ENTITY
+	kin_far["belief_relay_hops"] = ANCESTORS_KIN_FAR_HOPS
+	h._hud.show_unit_selection(kin_far)
+	await h._settle()
+	_click_disclosure(BAND_DISCLOSURE_MORALE_ANCESTORS_KIN_FAR)
+	await h._settle()
+	await h._save("band_morale_ancestors_kin_far")
+	var kin_far_line := _kit_breakdown_line(_popover_text(), "far from the ancestors")
+	h._assert_hud("a relayed band whose blended term is negative reads `%s`, and no hop count"
+			% ANCESTORS_KIN_FAR_ROW,
+		kin_far_line.contains(ANCESTORS_KIN_FAR_ROW) and not kin_far_line.contains("hop"))
+	_click_disclosure(BAND_DISCLOSURE_MORALE_ANCESTORS_KIN_FAR)
+
+	# …and the hop-count edge cases, on the producer: plural, the 254 "or longer" cap, and 255
+	# (unreached), which keeps the plain wording.
+	var hop_rows := {}
+	for hops in [ANCESTORS_KIN_PLURAL_HOPS, ANCESTORS_KIN_LONGEST_HOPS, ANCESTORS_KIN_UNREACHED]:
+		var probe := kin_near.duplicate(true)
+		probe["belief_relay_hops"] = hops
+		hop_rows[hops] = "\n".join(h._hud._banddetail._morale_breakdown_lines(probe, ""))
+	h._assert_hud("2 hops reads `(2 hops)`, 254 reads `(254+ hops)`, and 255 (unreached) the plain `near the ancestors`",
+		String(hop_rows[ANCESTORS_KIN_PLURAL_HOPS]).contains("near the ancestors, through kin (2 hops)")
+		and String(hop_rows[ANCESTORS_KIN_LONGEST_HOPS]).contains("near the ancestors, through kin (254+ hops)")
+		and String(hop_rows[ANCESTORS_KIN_UNREACHED]).contains("near the ancestors")
+		and not String(hop_rows[ANCESTORS_KIN_UNREACHED]).contains("kin"))
 
 ## A band that HOLDS something which eats a good. Its own entity, for the disclosure key's sake.
 func _standing_bill_band_fixture() -> Dictionary:

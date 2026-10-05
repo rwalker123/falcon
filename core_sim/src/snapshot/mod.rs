@@ -1394,6 +1394,8 @@ mod tests {
                 crate::components::BandId(0),
                 crate::lineage::MIN_BAND_LINES,
             ),
+            belief_anchor: None,
+            last_belief_relay_hops: 0,
         };
         (cohort, allocation)
     }
@@ -1443,6 +1445,8 @@ mod tests {
             move_ferry_reach_tiles: 0,
         };
         population_state(PopulationStateInputs {
+            belief_reach: Vec::new(),
+            belief_relay_region: Vec::new(),
             entity: Entity::from_raw(1),
             // This fixture asserts on the derived readouts, not on band identity.
             band_id: None,

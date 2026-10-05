@@ -153,6 +153,8 @@ fn spawn_band_camped_at(
                     core_sim::BandId(0),
                     core_sim::MIN_BAND_LINES,
                 ),
+                belief_anchor: None,
+                last_belief_relay_hops: 0,
             },
             LaborAllocation {
                 assignments: vec![LaborAssignment {

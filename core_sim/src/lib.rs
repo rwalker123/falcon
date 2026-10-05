@@ -18,6 +18,7 @@ pub(crate) const BUILD_ID: &str = match option_env!("CORE_SIM_BUILD_ID") {
 mod band_names;
 pub mod belief;
 mod belief_config;
+pub mod belief_relay;
 mod biome_palette;
 pub mod carry;
 pub mod climate;
@@ -125,6 +126,7 @@ pub use belief_config::{
     load_belief_config_from_env, BeliefConfig, BeliefConfigHandle, BeliefConfigMetadata,
     BUILTIN_BELIEF_CONFIG,
 };
+pub use belief_relay::{resolve_belief_relay, BeliefRelay, RelayBand};
 pub use carry::{carry_capacity, per_worker_carry, CarryConfig, CarryLoad};
 pub use combat::{
     attacks_landed_at, landed_strikes_seeded, resolve_fight, strike_damage, units_brought_down,
@@ -407,7 +409,7 @@ pub use starting_loadout::{
 };
 pub use supply::{
     balance_supply_networks, free_pooling_reach_tiles, BandSupplyMembership, PoolingLink,
-    SupplyNetworkMembership,
+    SupplyNetworkMembership, WalkReach,
 };
 pub use supply_network_config::{
     load_supply_network_config_from_env, SupplyNetworkConfig, SupplyNetworkConfigHandle,
@@ -432,8 +434,9 @@ pub use visibility_config::{
     VisibilityConfigMetadata, BUILTIN_VISIBILITY_CONFIG,
 };
 pub use wellbeing_config::{
-    load_wellbeing_config_from_env, DiscontentConfig, MigrationConfig, ProductivityConfig,
-    WellbeingConfig, WellbeingConfigHandle, WellbeingConfigMetadata, BUILTIN_WELLBEING_CONFIG,
+    load_wellbeing_config_from_env, CultureConfig, DiscontentConfig, MigrationConfig,
+    ProductivityConfig, WellbeingConfig, WellbeingConfigHandle, WellbeingConfigMetadata,
+    BUILTIN_WELLBEING_CONFIG,
 };
 pub use work_party::{CaravanForecast, SourceTake, Walker, WorkParty};
 

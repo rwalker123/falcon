@@ -2027,6 +2027,8 @@ func _ready() -> void:
 	await _source_list_states()
 	await _faction_palette_state()
 	await _exchange_network_states()
+	# APPENDED, so no earlier frame moves.
+	await _band_ancestors_states()
 
 	_finish()
 
@@ -7394,3 +7396,159 @@ func _exchange_network_states() -> void:
 	ClientSettings.changed.emit()
 	await _set_canvas(DEFAULT_CANVAS_SIZE)
 	await _settle()
+
+
+## ---- THE BAND'S ANCESTORS (issue #699) -------------------------------------------------------------
+## The selected player band's belief anchor (where its dead lie) and the PERIMETER of its reach region,
+## drawn by `BandOverlayRenderer._draw_band_ancestors`. The region is a hex disk around the anchor plus
+## the tiles beside a ROAD that runs east and then bends south — the sim's reach is road-aware, so the
+## real region has exactly this shape, and an outline traced as a circle could not follow the bend.
+## The road is also in the snapshot, so the frame shows the outline following it.
+const ANCESTORS_ANCHOR := Vector2i(4, 4)
+const ANCESTORS_DISK_RADIUS := 2
+## One tile either side of the road is within walking reach of it.
+const ANCESTORS_ROAD_REACH := 1
+const ANCESTORS_ROAD_TILES := [[6, 4], [7, 4], [8, 4], [9, 4], [10, 4], [11, 4], [12, 5], [12, 6], [13, 7]]
+## The tile just BELOW the road's bend, outside the region: its edge with the region is perimeter that
+## exists only because the road bends south, so ink there is the outline following the bend, not a disk.
+const ANCESTORS_BEND_TILE := Vector2i(13, 9)
+## The probe box around a hex, in hex radii — wide enough to take a perimeter edge on any side.
+const ANCESTORS_PROBE_RADII := 1.2
+## The SECOND frame's ground: the same region over four column bands — glacier · prairie · mixed
+## woodland · deep ocean — so the outline and the marker are judged over snow, grass, forest and water,
+## not only the desert the first frame stands on. The anchor sits on the glacier/prairie seam.
+const ANCESTORS_GROUND_IDS := [22, 11, 12, 0]   # glacier · prairie_steppe · mixed_woodland · deep_ocean
+const ANCESTORS_GROUND_BAND_COLS := 4            # GRID_W (16) / 4 bands
+
+## THE KIN RELAY's region: every tile within `ANCESTORS_KIN_REACH` of a kin band's standing tile
+## (`ANCESTORS_KIN_BANDS`) that is NOT in the direct region — the wire's own shape. The kin sit south of
+## the direct region, so the relayed area both borders it (shared edges, drawn strong) and reaches past
+## it.
+const ANCESTORS_KIN_BANDS := [Vector2i(4, 8), Vector2i(7, 9)]
+const ANCESTORS_KIN_REACH := 2
+const ANCESTORS_KIN_HOPS := 1
+## A hex just outside the relayed region's southern edge, well clear of the direct region — ink there
+## is the relayed outline and nothing else.
+const ANCESTORS_KIN_PROBE_TILE := Vector2i(5, 11)
+
+func _ancestors_relay_tiles() -> Array[Vector2i]:
+	var direct := {}
+	for tile in _ancestors_reach_tiles():
+		direct[tile] = true
+	var tiles: Array[Vector2i] = []
+	for row in range(GRID_H):
+		for col in range(GRID_W):
+			var tile := Vector2i(col, row)
+			if direct.has(tile):
+				continue
+			for kin in ANCESTORS_KIN_BANDS:
+				if _map._hex_distance(kin.x, kin.y, col, row) <= ANCESTORS_KIN_REACH:
+					tiles.append(tile)
+					break
+	return tiles
+
+func _ancestors_ground_terrain() -> Array:
+	var arr: Array = []
+	arr.resize(GRID_W * GRID_H)
+	for y in range(GRID_H):
+		for x in range(GRID_W):
+			arr[y * GRID_W + x] = ANCESTORS_GROUND_IDS[mini(x / ANCESTORS_GROUND_BAND_COLS,
+				ANCESTORS_GROUND_IDS.size() - 1)]
+	return arr
+
+func _ancestors_reach_tiles() -> Array[Vector2i]:
+	var tiles: Array[Vector2i] = []
+	for row in range(GRID_H):
+		for col in range(GRID_W):
+			var inside: bool = _map._hex_distance(ANCESTORS_ANCHOR.x, ANCESTORS_ANCHOR.y, col, row) \
+				<= ANCESTORS_DISK_RADIUS
+			for road in ANCESTORS_ROAD_TILES:
+				if _map._hex_distance(int(road[0]), int(road[1]), col, row) <= ANCESTORS_ROAD_REACH:
+					inside = true
+			if inside:
+				tiles.append(Vector2i(col, row))
+	return tiles
+
+func _snapshot_band_ancestors(with_anchor: bool) -> Dictionary:
+	var band := _band([], 2, 0)
+	band["has_belief_anchor"] = with_anchor
+	band["belief_anchor_x"] = ANCESTORS_ANCHOR.x if with_anchor else 0
+	band["belief_anchor_y"] = ANCESTORS_ANCHOR.y if with_anchor else 0
+	var xs := PackedInt32Array()
+	var ys := PackedInt32Array()
+	if with_anchor:
+		for tile in _ancestors_reach_tiles():
+			xs.append(tile.x)
+			ys.append(tile.y)
+	band["belief_reach_x"] = xs
+	band["belief_reach_y"] = ys
+	var snap := _base_snapshot(band, [])
+	snap["routes"] = _road_run(ANCESTORS_ROAD_TILES, HudRouteVocab.RUNG_KEY_DIRT_ROAD, ROAD_KEPT,
+		ROAD_IDLE_RUNG_METER)
+	return snap
+
+func _hex_probe_rect(image: Image, tile: Vector2i, radii: float) -> Rect2i:
+	var center: Vector2 = _map._hex_center(tile.x, tile.y, _map.last_hex_radius, _map.last_origin)
+	var px_scale := float(image.get_width()) / maxf(get_viewport().get_visible_rect().size.x, 1.0)
+	var half: float = radii * float(_map.last_hex_radius) * px_scale
+	return Rect2i(Vector2i(int(center.x * px_scale - half), int(center.y * px_scale - half)),
+		Vector2i(int(half * 2.0), int(half * 2.0)))
+
+func _band_ancestors_states() -> void:
+	_map.set_fow_enabled(false)
+	_map.set_labor_pending({})
+	_map.enable_terrain_textures(true)
+	TerrainTextureManager.use_edge_blending = true
+	_map._map_cache_enabled = false
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
+	# The SAME band with no anchor first — the control the anchored frame is diffed against.
+	_map.display_snapshot(_snapshot_band_ancestors(false))
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	var bare: Image = await _capture()
+	_map.display_snapshot(_snapshot_band_ancestors(true))
+	_map.selected_unit_id = BAND_ENTITY
+	await _settle()
+	var anchored: Image = await _capture()
+	await _save("map_band_ancestors")
+	_assert_map("ancestors — the anchored band marks its belief place at %s" % ANCESTORS_ANCHOR,
+		_count_changed_pixels(bare, anchored, _hex_probe_rect(anchored, ANCESTORS_ANCHOR, 0.5)) > 0)
+	_assert_map("ancestors — the reach outline follows the road's bend to %s" % ANCESTORS_BEND_TILE,
+		_count_changed_pixels(bare, anchored,
+			_hex_probe_rect(anchored, ANCESTORS_BEND_TILE, ANCESTORS_PROBE_RADII)) > 0)
+	# A band with NO anchor draws nothing of it: deselecting must not change the frame either way.
+	_map.display_snapshot(_snapshot_band_ancestors(false))
+	_map.selected_unit_id = BAND_ENTITY
+	await _settle()
+	_assert_map("ancestors — a band with no anchor draws no mark and no outline",
+		_count_changed_pixels(bare, await _capture(), Rect2i()) == 0)
+	# The same anchored region over snow, grass, forest and water.
+	var over_ground := _snapshot_band_ancestors(true)
+	over_ground["overlays"] = {"terrain": _ancestors_ground_terrain()}
+	_map.display_snapshot(over_ground)
+	_map.selected_unit_id = BAND_ENTITY
+	await _settle()
+	await _save("map_band_ancestors_ground")
+	# THE KIN RELAY — the anchored band again on the desert, now with a relayed region reaching past
+	# the direct one (`belief_relay_reach_x/y`). Diffed against `anchored` above, which is the same
+	# frame with no relay.
+	var kin := _snapshot_band_ancestors(true)
+	var kin_band: Dictionary = (kin["populations"] as Array)[0]
+	var kin_xs := PackedInt32Array()
+	var kin_ys := PackedInt32Array()
+	for tile in _ancestors_relay_tiles():
+		kin_xs.append(tile.x)
+		kin_ys.append(tile.y)
+	kin_band["belief_relay_hops"] = ANCESTORS_KIN_HOPS
+	kin_band["belief_relay_reach_x"] = kin_xs
+	kin_band["belief_relay_reach_y"] = kin_ys
+	_map.display_snapshot(kin)
+	_map.selected_unit_id = BAND_ENTITY
+	await _settle()
+	var kin_frame: Image = await _capture()
+	await _save("map_band_ancestors_kin")
+	_assert_map("ancestors — the relayed region draws its own outline out to %s" % ANCESTORS_KIN_PROBE_TILE,
+		_count_changed_pixels(anchored, kin_frame,
+			_hex_probe_rect(kin_frame, ANCESTORS_KIN_PROBE_TILE, ANCESTORS_PROBE_RADII)) > 0)

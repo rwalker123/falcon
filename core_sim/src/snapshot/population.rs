@@ -683,6 +683,15 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// [`band_loadout_windows`] — `None` for a band with nothing to outfit, which is every band on
     /// every turn after the windows shut.
     pub(crate) loadout_window: Option<BandLoadoutWindowState>,
+    /// **The band's belief-anchor reach region** — every tile it could stand on and still count as
+    /// near its anchor, resolved at capture by [`crate::supply::WalkReach::region_around`], the same
+    /// walk test the culture morale term reads. Empty with no anchor.
+    pub(crate) belief_reach: Vec<UVec2>,
+    /// **The band's relayed region** — tiles outside the direct region from which it would be tied
+    /// in through its other kin, resolved at capture by [`crate::belief_relay`] on the frame's
+    /// positions. (The hop count is NOT recounted here: the frame publishes the one the turn's term
+    /// was priced from, `PopulationCohort::last_belief_relay_hops`.)
+    pub(crate) belief_relay_region: Vec<UVec2>,
 }
 
 /// The two webs' registries, for resolving a queue entry's **live** rung. No ladder: both
@@ -943,6 +952,8 @@ pub(crate) fn redacted_population_state(
 
 pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationCohortState {
     let PopulationStateInputs {
+        belief_reach,
+        belief_relay_region,
         entity,
         band_id,
         band_name,
@@ -1844,6 +1855,19 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         morale_terrain: cohort.last_morale_contributions.terrain.raw(),
         morale_climate: cohort.last_morale_contributions.climate.raw(),
         morale_unrest: cohort.last_morale_contributions.unrest.raw(),
+        morale_culture: cohort.last_morale_contributions.culture.raw(),
+        // **The ancestors' place and the ground near it** — `0,0` and empty with no anchor.
+        has_belief_anchor: cohort.belief_anchor.is_some(),
+        belief_anchor_x: cohort.belief_anchor.map_or(0, |anchor| anchor.x),
+        belief_anchor_y: cohort.belief_anchor.map_or(0, |anchor| anchor.y),
+        belief_reach_x: belief_reach.iter().map(|tile| tile.x).collect(),
+        belief_reach_y: belief_reach.iter().map(|tile| tile.y).collect(),
+        // The hop count the turn's culture term was priced from (`simulate_population`), never a
+        // recount: a band or its kin that moved after the term was priced would otherwise publish a
+        // count that contradicts `morale_culture`.
+        belief_relay_hops: cohort.last_belief_relay_hops,
+        belief_relay_reach_x: belief_relay_region.iter().map(|tile| tile.x).collect(),
+        belief_relay_reach_y: belief_relay_region.iter().map(|tile| tile.y).collect(),
         morale: cohort.morale.raw(),
         generation: cohort.generation,
         faction: cohort.faction.0,
@@ -2684,6 +2708,8 @@ mod tests {
                 crate::components::BandId(0),
                 crate::lineage::MIN_BAND_LINES,
             ),
+            belief_anchor: None,
+            last_belief_relay_hops: 0,
         }
     }
 
@@ -2703,6 +2729,8 @@ mod tests {
         expedition: Option<&Expedition>,
     ) -> PopulationCohortState {
         population_state(PopulationStateInputs {
+            belief_reach: Vec::new(),
+            belief_relay_region: Vec::new(),
             entity: Entity::from_raw(1),
             // These fixtures assert on the derived readouts, not on band identity.
             band_id: None,

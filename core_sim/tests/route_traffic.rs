@@ -151,6 +151,8 @@ fn spawn_band(app: &mut App, (x, y): (u32, u32), food: i64) -> Entity {
                     core_sim::BandId(0),
                     core_sim::MIN_BAND_LINES,
                 ),
+                belief_anchor: None,
+                last_belief_relay_hops: 0,
             },
             ResidentBand,
             BandId(NEXT_TEST_BAND_ID.fetch_add(1, Ordering::Relaxed)),

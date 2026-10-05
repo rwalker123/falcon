@@ -1,5 +1,5 @@
 use super::*;
-use crate::belief::BeliefRegistry;
+use crate::belief::{BeliefRegistry, NO_BELIEF};
 use crate::belief_config::BeliefConfigHandle;
 use crate::components::FertilityFactors;
 use crate::demographics_config::{
@@ -1143,6 +1143,152 @@ fn publish_breeding_readings(cohorts: &mut DemographicBands, breeding: &Breeding
     }
 }
 
+/// **How far a band's people walk** — what the culture morale term needs to build
+/// [`crate::supply::WalkReach`], the road-aware reach test migration also reads, bundled into one
+/// `SystemParam` (the [`MigrationGates`] idiom).
+#[derive(SystemParam)]
+pub struct WalkReachInputs<'w> {
+    pub roads: Res<'w, crate::routes::RoadRegistry>,
+    pub supply: Res<'w, crate::supply_network_config::SupplyNetworkConfigHandle>,
+    pub ladder: Res<'w, LadderConfigHandle>,
+    pub tile_registry: Res<'w, TileRegistry>,
+}
+
+impl WalkReachInputs<'_> {
+    /// The walk test at `base_reach` (`migration.base_reach`) on this world's grid.
+    fn walk_reach(&self, base_reach: f32, wrap: bool) -> crate::supply::WalkReach {
+        crate::supply::WalkReach::for_people(
+            base_reach,
+            &self.supply.get(),
+            &self.ladder.get(),
+            self.tile_registry.width,
+            self.tile_registry.height,
+            wrap,
+        )
+    }
+}
+
+/// **The band's anchor moves to a stronger place it can walk to** (`belief.md` → "The culture
+/// morale term"). Every belief tile within walking reach of where the band STANDS is a candidate;
+/// the strongest — the first in the registry's row-major order among equals — replaces the anchor
+/// only when it holds strictly more belief than the anchor holds now (no anchor holds
+/// [`NO_BELIEF`]). Ties keep the anchor the band already has.
+///
+/// **A place qualifies only once it holds `min_anchor_belief`** (`culture.min_anchor_belief`, one
+/// whole death's worth at the shipped `1.0`). Belief accrues FRACTIONAL deaths every turn, so without
+/// the gate every band would adopt the tile it stands on after its first turn of old-age mortality.
+/// Accrual is untouched — the gate decides only adoption.
+pub fn refresh_belief_anchor(
+    anchor: Option<UVec2>,
+    standing: UVec2,
+    belief: &BeliefRegistry,
+    walk: &crate::supply::WalkReach,
+    roads: &crate::routes::RoadRegistry,
+    min_anchor_belief: f32,
+) -> Option<UVec2> {
+    let held = anchor.map_or(NO_BELIEF, |tile| belief.get(tile));
+    let mut strongest: Option<(UVec2, f32)> = None;
+    for (tile, value) in belief.iter() {
+        if value < min_anchor_belief || strongest.is_some_and(|(_, best)| value <= best) {
+            continue;
+        }
+        if walk.within(roads, standing, tile) {
+            strongest = Some((tile, value));
+        }
+    }
+    match strongest {
+        Some((tile, value)) if value > held => Some(tile),
+        _ => anchor,
+    }
+}
+
+/// **Near / far from the ancestors** — the culture morale contribution for a band with `anchor`,
+/// tied to it at relay strength `strength` (`crate::belief_relay`: `1` standing within walking reach
+/// itself, `relay_per_hop ^ hops` through kin, `0` unreached):
+/// `s × (r × near_bonus − (1 − r) × away_drag)`, where `s = b / (b + belief_half_saturation)` and `b`
+/// is the anchor's belief. At `r = 1` that is `+near_bonus × s` and at `r = 0` `−away_drag × s`
+/// exactly; `0` with no anchor.
+pub fn culture_morale_contribution(
+    anchor: Option<UVec2>,
+    strength: f32,
+    belief: &BeliefRegistry,
+    culture: &crate::wellbeing_config::CultureConfig,
+) -> Scalar {
+    /// The full-strength tie a direct band holds; `1 − r` is what is left to be away.
+    const FULL_STRENGTH: f32 = 1.0;
+    let Some(anchor) = anchor else {
+        return scalar_zero();
+    };
+    let weight = culture.anchor_weight(belief.get(anchor));
+    let near = strength * culture.near_bonus;
+    let away = (FULL_STRENGTH - strength) * culture.away_drag;
+    scalar_from_f32(weight * (near - away))
+}
+
+/// **The culture pre-pass.** Refresh every band's anchor (adoption is DIRECT only — a band never
+/// takes a place through kin), then run the one relay search ([`crate::belief_relay`]) over every
+/// resident band, then price each band's culture term from its own anchor and relay strength. All
+/// of it before any of this turn's deaths are credited, so no band's term depends on query order.
+/// A band whose standing tile does not resolve keeps its anchor, relays nothing and reads `0`.
+fn resolve_culture_terms(
+    cohorts: &mut DemographicBands,
+    tiles: &Query<&Tile>,
+    belief: &BeliefRegistry,
+    walk: &crate::supply::WalkReach,
+    roads: &crate::routes::RoadRegistry,
+    culture: &crate::wellbeing_config::CultureConfig,
+) -> BTreeMap<Entity, CultureReading> {
+    let mut relay_input: Vec<((u64, u64), Entity, crate::belief_relay::RelayBand)> = Vec::new();
+    for (entity, mut cohort, _, band_id, _) in cohorts.iter_mut() {
+        let Ok(standing) = tiles.get(cohort.current_tile).map(|tile| tile.position) else {
+            continue;
+        };
+        cohort.belief_anchor = refresh_belief_anchor(
+            cohort.belief_anchor,
+            standing,
+            belief,
+            walk,
+            roads,
+            culture.min_anchor_belief,
+        );
+        relay_input.push((
+            crate::belief_relay::relay_order_key(band_id.copied(), entity),
+            entity,
+            crate::belief_relay::RelayBand {
+                faction: cohort.faction,
+                standing,
+                anchor: cohort.belief_anchor,
+            },
+        ));
+    }
+    relay_input.sort_by_key(|(key, _, _)| *key);
+    let bands: Vec<crate::belief_relay::RelayBand> =
+        relay_input.iter().map(|(_, _, band)| *band).collect();
+    let relay = crate::belief_relay::resolve_belief_relay(&bands, walk, roads);
+    relay_input
+        .iter()
+        .enumerate()
+        .map(|(index, (_, entity, band))| {
+            let strength = relay.strength(index, culture.relay_per_hop);
+            (
+                *entity,
+                CultureReading {
+                    term: culture_morale_contribution(band.anchor, strength, belief, culture),
+                    relay_hops: crate::belief_relay::wire_hops(band.anchor, relay.hops(index)),
+                },
+            )
+        })
+        .collect()
+}
+
+/// One band's culture term and the relay hop count it was priced from.
+#[derive(Debug, Clone, Copy)]
+struct CultureReading {
+    term: Scalar,
+    /// `crate::belief_relay::wire_hops` of the search that priced `term`.
+    relay_hops: u8,
+}
+
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn simulate_population(
     config: Res<SimulationConfig>,
@@ -1162,6 +1308,9 @@ pub fn simulate_population(
     // **The breeding population** (issue #688) — the supply-network components the Logistics stage
     // resolved earlier this turn; a band in none is its own breeding population.
     supply_membership: Res<crate::supply::SupplyNetworkMembership>,
+    // **Near / far from the ancestors** — the culture term reads the same road-aware walk test
+    // migration does (`supply::WalkReach`).
+    walk_inputs: WalkReachInputs,
 ) {
     let population_cfg = pipeline_config.config().population();
     let belief_cfg = belief_config.get();
@@ -1176,6 +1325,18 @@ pub fn simulate_population(
         attrition_penalty_scale: population_cfg.attrition_penalty_scale(),
         hardness_penalty_scale: population_cfg.hardness_penalty_scale(),
     };
+    let walk = walk_inputs.walk_reach(
+        wellbeing.migration.base_reach,
+        config.map_topology.wrap_horizontal,
+    );
+    let culture_terms = resolve_culture_terms(
+        &mut cohorts,
+        &tiles,
+        &belief,
+        &walk,
+        &walk_inputs.roads,
+        &wellbeing.culture,
+    );
     for (entity, mut cohort, labor, band_id, mut accumulator) in cohorts.iter_mut() {
         // Age the band every turn, before any early-out, so a band whose home tile briefly can't be
         // resolved still reports how long it has been simulated.
@@ -1190,15 +1351,25 @@ pub fn simulate_population(
         // `habitability`), so sim and snapshot never drift.
         let pressure =
             tile_morale_pressure(&terrain_profile, tile.temperature, &morale_pressure_cfg);
+        // **Near / far from the ancestors**, resolved by the pre-pass: where the band STANDS —
+        // `current_tile`, never `home`, for the reason the deaths source gives — and how its own
+        // people tie it to its anchor. A band the pre-pass could not place reads `0` and a hop count
+        // of `0`.
+        let (culture, relay_hops) = culture_terms.get(&entity).map_or(
+            (scalar_zero(), crate::belief_relay::DIRECT_HOPS as u8),
+            |reading| (reading.term, reading.relay_hops),
+        );
         // Layer 1 (wellbeing): the morale delta is the signed sum of named contributors, so a
         // future factor is a new `MoraleFactor` variant + one field here — not a rewrite. The
         // contribution set doubles as the client's per-band morale breakdown. `unrest` = crisis
-        // impacts + cultural sentiment (signed; may be positive).
+        // impacts + cultural sentiment (signed; may be positive); `culture` = near (+) / far (−)
+        // from the band's ancestors.
         let contributions = MoraleContributions {
             settling: config.population_growth_rate,
             terrain: -pressure.terrain,
             climate: -pressure.cold,
             unrest: impacts.morale_delta + effects.morale_bias,
+            culture,
         };
         let morale_delta = contributions.total();
         // Attribute the dominant *negative* driver when morale fell (else `None`). Starvation is
@@ -1210,6 +1381,9 @@ pub fn simulate_population(
             MoraleCause::None
         };
         cohort.last_morale_contributions = contributions;
+        // The hop count `culture` was priced from — what the frame publishes, so it cannot be a
+        // recount on positions this turn's movement changes later.
+        cohort.last_belief_relay_hops = relay_hops;
         cohort.morale = (cohort.morale + morale_delta).clamp(scalar_zero(), scalar_one());
 
         // Layer 2 (wellbeing): map morale → the discontented share of the band. `0` at/above
@@ -2973,6 +3147,8 @@ mod wellbeing_tests {
                 crate::components::BandId(0),
                 crate::lineage::MIN_BAND_LINES,
             ),
+            belief_anchor: None,
+            last_belief_relay_hops: 0,
         };
         cohort.sync_size();
         cohort
