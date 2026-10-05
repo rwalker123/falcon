@@ -1726,7 +1726,25 @@ pub struct PopulationCohortState {
     pub belief_reach_x: Vec<u32>,
     #[serde(default)]
     pub belief_reach_y: Vec<u32>,
+    /// How many hops of kin tie the band to its anchor: `0` direct (or no anchor), `n` through `n`
+    /// bands of its own people, [`BELIEF_RELAY_UNREACHED`] when an anchor is held and nothing reaches
+    /// it. Derived at capture.
+    #[serde(default)]
+    pub belief_relay_hops: u8,
+    /// The relayed region (zipped `x`/`y`, row-major): tiles outside [`Self::belief_reach_x`] from
+    /// which this band would be tied in through its OTHER kin bands. Empty with no anchor. Derived at
+    /// capture.
+    #[serde(default)]
+    pub belief_relay_reach_x: Vec<u32>,
+    #[serde(default)]
+    pub belief_relay_reach_y: Vec<u32>,
 }
+
+/// `PopulationCohortState::belief_relay_hops` for a band that holds an anchor no chain of its own
+/// people reaches — fully away.
+pub const BELIEF_RELAY_UNREACHED: u8 = u8::MAX;
+/// The longest relay chain the wire can state; a longer one publishes this.
+pub const BELIEF_RELAY_MAX_HOPS: u8 = BELIEF_RELAY_UNREACHED - 1;
 
 /// **ONE GOOD THAT CROSSED A BAND'S STORE, BY CAUSE** — a row of
 /// [`PopulationCohortState::transfer_crossings`]. The code tables are in `snapshot.fbs`'s

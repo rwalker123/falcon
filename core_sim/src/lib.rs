@@ -18,6 +18,7 @@ pub(crate) const BUILD_ID: &str = match option_env!("CORE_SIM_BUILD_ID") {
 mod band_names;
 pub mod belief;
 mod belief_config;
+pub mod belief_relay;
 mod biome_palette;
 pub mod carry;
 pub mod climate;
@@ -125,6 +126,7 @@ pub use belief_config::{
     load_belief_config_from_env, BeliefConfig, BeliefConfigHandle, BeliefConfigMetadata,
     BUILTIN_BELIEF_CONFIG,
 };
+pub use belief_relay::{resolve_belief_relay, BeliefRelay, RelayBand};
 pub use carry::{carry_capacity, per_worker_carry, CarryConfig, CarryLoad};
 pub use combat::{
     attacks_landed_at, landed_strikes_seeded, resolve_fight, strike_damage, units_brought_down,

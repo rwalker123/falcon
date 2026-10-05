@@ -616,6 +616,8 @@ fn seed_snapshot() -> WorldSnapshot {
         cohort.pending_reveal_y = vec![0u32; ROWS];
         cohort.belief_reach_x = vec![0u32; ROWS];
         cohort.belief_reach_y = vec![0u32; ROWS];
+        cohort.belief_relay_reach_x = vec![0u32; ROWS];
+        cohort.belief_relay_reach_y = vec![0u32; ROWS];
         cohort.knowledge_fragments = rows();
         // The cohort's optional tables, on the even rows only — see [`seeded_on`].
         cohort.harvest_task = seeded_on(row).then(HarvestTaskState::default);

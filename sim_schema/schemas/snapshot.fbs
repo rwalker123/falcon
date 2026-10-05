@@ -1479,6 +1479,17 @@ table PopulationCohortState {
   // term cannot disagree. Inside it moraleCulture is +near; outside it, -away. Empty with no anchor.
   beliefReachX:[uint];
   beliefReachY:[uint];
+  // KIN RELAY THE REACH (issue #699): how many hops of this band's own people tie it to its anchor.
+  // 0 = it stands within reach of the anchor itself (and 0 with no anchor - read hasBeliefAnchor);
+  // n = reached through n bands of kin, near at relay_per_hop^n; 255 = UNREACHED (an anchor is held
+  // and no chain of kin reaches it - the band is fully away). A chain longer than 254 publishes 254.
+  beliefRelayHops:ubyte = 0;
+  // The RELAYED region (zipped x/y, row-major): every tile NOT in beliefReachX/Y where THIS band,
+  // standing there, would be within walking reach of some other band of its people that the anchor's
+  // reach gets to without it (any hop) - where kin keep it tied in. Derived at capture from the same
+  // relay search the culture term reads. Empty with no anchor.
+  beliefRelayReachX:[uint];
+  beliefRelayReachY:[uint];
 }
 
 // One band's outfitting window. THE TWO SUPPLIES ARE MUTUALLY EXCLUSIVE and `parentBandId` says which

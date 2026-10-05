@@ -611,8 +611,16 @@ which is a property of the tier and not of the merge.
     the ancestors (x, y)` (negative, `DetailFormat.MORALE_CAUSE_LABEL_CULTURE` plus the band's belief
     anchor in the `Position` row's coordinate form, `MORALE_CONTRIB_ANCESTORS_FAR_FORMAT`, read off
     `has_belief_anchor` / `belief_anchor_x/y`; the bare label when the cohort carries no anchor). The
-    morale HEADLINE's cause stays the bare `far from the ancestors` — no coordinates on that line. The
-    culture term never reads
+    morale HEADLINE's cause stays the bare `far from the ancestors` — no coordinates on that line.
+    **The kin relay** (`belief_relay_hops`, off `PopulationCohortState.beliefRelayHops`): a band with
+    an anchor and `1 ≤ hops ≤ 254` is tied to its belief place through that many bands of kin, and the
+    row says so — `near the ancestors, through kin (1 hop)` / `(n hops)` / `(254+ hops)` (254 is "254
+    or longer"), or `far from the ancestors (x, y), through kin`. The relayed term is a blend, so it is
+    often negative but softer; the SIGN still picks near vs far. The far row carries no hop count: the
+    coordinates already take the popover's second line, and the count yields before `through kin` does.
+    `0` (direct — also what a band with no anchor sends, so `has_belief_anchor` tells them apart) and
+    `255` (`BELIEF_RELAY_UNREACHED`: holds an anchor, no chain of kin reaches it) keep the plain
+    wording. The culture term never reads
     as the word `culture`: that word is the positive-unrest (cohesion) row's. A band with no belief
     place sends `0` and draws no row, under the same epsilon. `DetailFormat.detail_bbcode` tints each
     row two-tone by its sign glyph (▲ = HEALTHY green, ▼ = WARN amber — deliberately not a rainbow);

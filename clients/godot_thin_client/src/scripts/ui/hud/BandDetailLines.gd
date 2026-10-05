@@ -281,6 +281,18 @@ const MORALE_CONTRIB_LABEL_ANCESTORS_NEAR := "near the ancestors"
 # The negative row NAMES THE PLACE — "far from the ancestors (x, y)", the anchor tile in the `Position`
 # row's coordinate form — so the player knows where to walk back to. Only when the band has an anchor.
 const MORALE_CONTRIB_ANCESTORS_FAR_FORMAT := "%s (%d, %d)"
+# THE KIN RELAY (`belief_relay_hops`): a band tied to its belief place through n bands of kin says so
+# on the culture row — `near the ancestors, through kin (1 hop)`, or the far wording with its
+# coordinates and `, through kin`. The far row carries NO hop count: the coordinates already take the
+# popover's second line, and the hop count is what yields before "through kin" does (two-line limit).
+# 0 is direct (and also what a band with no anchor sends), 255 unreached: both keep the plain wording.
+const BELIEF_RELAY_DIRECT := 0
+const BELIEF_RELAY_LONGEST := 254       # a chain of 254 hops OR LONGER
+const BELIEF_RELAY_UNREACHED := 255     # mirrors `sim_schema::BELIEF_RELAY_UNREACHED`
+const MORALE_CONTRIB_THROUGH_KIN := ", through kin"
+const MORALE_CONTRIB_KIN_HOP_FORMAT := " (%d hop)"
+const MORALE_CONTRIB_KIN_HOPS_FORMAT := " (%d hops)"
+const MORALE_CONTRIB_KIN_HOPS_LONGEST_FORMAT := " (%d+ hops)"
 
 # --- Collaborators handed in by HudLayer (the SAME instances it holds) ---
 # The snapshot herd list, for a raiding party's migrating target.
@@ -961,8 +973,32 @@ func _fertility_breakdown_lines(unit_data: Dictionary) -> Array[String]:
 func _ancestors_far_label(unit_data: Dictionary) -> String:
     if not bool(unit_data.get("has_belief_anchor", false)):
         return DetailFormat.MORALE_CAUSE_LABEL_CULTURE
-    return MORALE_CONTRIB_ANCESTORS_FAR_FORMAT % [DetailFormat.MORALE_CAUSE_LABEL_CULTURE,
+    var label := MORALE_CONTRIB_ANCESTORS_FAR_FORMAT % [DetailFormat.MORALE_CAUSE_LABEL_CULTURE,
         int(unit_data.get("belief_anchor_x", 0)), int(unit_data.get("belief_anchor_y", 0))]
+    if _belief_relay_hops(unit_data) > BELIEF_RELAY_DIRECT:
+        label += MORALE_CONTRIB_THROUGH_KIN
+    return label
+
+## The positive culture row's label: `near the ancestors`, plus `, through kin (n hops)` when the band
+## is tied in through kin.
+func _ancestors_near_label(unit_data: Dictionary) -> String:
+    var hops := _belief_relay_hops(unit_data)
+    if hops == BELIEF_RELAY_DIRECT:
+        return MORALE_CONTRIB_LABEL_ANCESTORS_NEAR
+    var count_format := MORALE_CONTRIB_KIN_HOP_FORMAT if hops == 1 else MORALE_CONTRIB_KIN_HOPS_FORMAT
+    if hops >= BELIEF_RELAY_LONGEST:
+        count_format = MORALE_CONTRIB_KIN_HOPS_LONGEST_FORMAT
+    return MORALE_CONTRIB_LABEL_ANCESTORS_NEAR + MORALE_CONTRIB_THROUGH_KIN + count_format % hops
+
+## The band's kin-relay hop count, or `BELIEF_RELAY_DIRECT` when it is not tied in through kin — no
+## anchor, direct, or unreached (255) all answer 0, which is what keeps their wording plain.
+func _belief_relay_hops(unit_data: Dictionary) -> int:
+    if not bool(unit_data.get("has_belief_anchor", false)):
+        return BELIEF_RELAY_DIRECT
+    var hops := int(unit_data.get("belief_relay_hops", BELIEF_RELAY_DIRECT))
+    if hops >= BELIEF_RELAY_UNREACHED:
+        return BELIEF_RELAY_DIRECT
+    return hops
 
 ## Itemized morale breakdown: the five signed Layer-1 contributions (their sum IS morale_delta) as
 ## indented sub-lines, each above the breakdown epsilon rendered as `    ▲ +1.0%  settling`
@@ -983,7 +1019,7 @@ func _morale_breakdown_lines(unit_data: Dictionary, terrain_label: String) -> Ar
         [float(unit_data.get("morale_terrain", 0.0)), terrain_row_label],
         [float(unit_data.get("morale_climate", 0.0)), DetailFormat.MORALE_CAUSE_LABEL_COLD],
         [unrest_value, MORALE_CONTRIB_LABEL_CULTURE if unrest_value > 0.0 else DetailFormat.MORALE_CAUSE_LABEL_UNREST],
-        [culture_value, MORALE_CONTRIB_LABEL_ANCESTORS_NEAR if culture_value > 0.0 else _ancestors_far_label(unit_data)],
+        [culture_value, _ancestors_near_label(unit_data) if culture_value > 0.0 else _ancestors_far_label(unit_data)],
     ]
     var epsilon := BandFoodStatus.morale_breakdown_epsilon()
     for entry in contributions:

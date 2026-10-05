@@ -1245,8 +1245,9 @@ Extension seams are present and empty — future factors/consequences slot in wi
   `lastEmigrated`/`lastImmigrated`, and the four itemized contributions
   `moraleSettling/Terrain/Climate/Unrest`, plus `moraleCulture` appended at the end of the table
   (surfaced so the client can render the breakdown) with the band's belief anchor and its reach
-  region beside it (`hasBeliefAnchor`, `beliefAnchorX/Y`, `beliefReachX/Y` — `belief.md` → "On the
-  in the checkpoint"). All
+  region beside it (`hasBeliefAnchor`, `beliefAnchorX/Y`, `beliefReachX/Y`, and the kin relay
+  `beliefRelayHops` / `beliefRelayReachX/Y` — `belief.md` → "On the wire and in the checkpoint").
+  All
   fixed-point except the two head-counts; all derived per-turn except `grievance` (persisted). The
   birth path's parallel trio `fertilityHunger/Reserve/Trend` rides beside them — see "Fertility is
   stock **and** flow" for why its neutral point is 1.0 and its sentinel is a zero reserve.

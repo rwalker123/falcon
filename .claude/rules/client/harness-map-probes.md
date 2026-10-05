@@ -1409,7 +1409,14 @@ control (nothing drawn without an anchor). Appended after `map_exchange_network*
 **`map_band_ancestors_ground`** follows it, PNG-less of claims: the same anchored region over four
 column bands of ground (`ANCESTORS_GROUND_IDS` — glacier · prairie · mixed woodland · deep ocean, the
 anchor on the glacier/prairie seam), so the violet outline and the urn marker are judged over snow,
-grass, forest and water and not only the desert. It is the LAST state in the run.
+grass, forest and water and not only the desert.
+
+**`map_band_ancestors_kin`** follows it: the anchored band back on the desert with a relayed region
+(`belief_relay_reach_x/y`) built in the harness as every tile within `ANCESTORS_KIN_REACH` of two kin
+bands south of the direct region, minus the direct region — so the faint outline both borders the
+strong one and reaches past it. One claim: diffed against the no-relay `map_band_ancestors` frame,
+the hex just outside the relayed region's southern edge (`ANCESTORS_KIN_PROBE_TILE`) changed. It is
+the LAST state in the run.
 
 ### `map_band_names*` — the fixed-screen-size BAND NAME PILL (`map-markers.md`)
 

@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 134
+const EXPECTED_CHECKPOINTS := 139
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -1109,6 +1109,18 @@ const ANCESTORS_NEAR_CONTRIB := 0.006
 const ANCESTORS_FAR_CONTRIB := -0.009
 const BAND_DISCLOSURE_MORALE_ANCESTORS_NEAR := "morale:910"
 const BAND_DISCLOSURE_MORALE_ANCESTORS_FAR := "morale:911"
+## THE KIN RELAY pair — the same two bands tied in through kin, on their own entities.
+const ANCESTORS_KIN_NEAR_BAND_ENTITY := 912
+const ANCESTORS_KIN_FAR_BAND_ENTITY := 913
+const BAND_DISCLOSURE_MORALE_ANCESTORS_KIN_NEAR := "morale:912"
+const BAND_DISCLOSURE_MORALE_ANCESTORS_KIN_FAR := "morale:913"
+const ANCESTORS_KIN_NEAR_HOPS := 1
+const ANCESTORS_KIN_FAR_HOPS := 3
+const ANCESTORS_KIN_PLURAL_HOPS := 2
+const ANCESTORS_KIN_LONGEST_HOPS := 254
+const ANCESTORS_KIN_UNREACHED := 255
+const ANCESTORS_KIN_NEAR_ROW := "+0.6%  near the ancestors, through kin (1 hop)"
+const ANCESTORS_KIN_FAR_ROW := "−0.9%  far from the ancestors (12, 7), through kin"
 ## The row text, spelled as LITERALS — a needle composed through the format under test can only agree
 ## with itself.
 const ANCESTORS_NEAR_ROW := "+0.6%  near the ancestors"
@@ -1181,6 +1193,49 @@ func _ancestors_states() -> void:
 	h._assert_hud("…and never under the word `culture`, which the cohesion row owns",
 		not _kit_breakdown_line(far_popover, "far from the ancestors").contains("culture"))
 	_click_disclosure(BAND_DISCLOSURE_MORALE_ANCESTORS_FAR)
+
+	# THE KIN RELAY — APPENDED. The same two bands tied to their belief place through kin.
+	var kin_near := near.duplicate(true)
+	kin_near["entity"] = ANCESTORS_KIN_NEAR_BAND_ENTITY
+	kin_near["has_belief_anchor"] = true
+	kin_near["belief_anchor_x"] = ANCESTORS_ANCHOR_X
+	kin_near["belief_anchor_y"] = ANCESTORS_ANCHOR_Y
+	kin_near["belief_relay_hops"] = ANCESTORS_KIN_NEAR_HOPS
+	h._hud.show_unit_selection(kin_near)
+	await h._settle()
+	_click_disclosure(BAND_DISCLOSURE_MORALE_ANCESTORS_KIN_NEAR)
+	await h._settle()
+	await h._save("band_morale_ancestors_kin_near")
+	h._assert_hud("a band near its dead through kin says so — `%s`" % ANCESTORS_KIN_NEAR_ROW,
+		_kit_breakdown_line(_popover_text(), "near the ancestors").contains(ANCESTORS_KIN_NEAR_ROW))
+	_click_disclosure(BAND_DISCLOSURE_MORALE_ANCESTORS_KIN_NEAR)
+
+	var kin_far := far.duplicate(true)
+	kin_far["entity"] = ANCESTORS_KIN_FAR_BAND_ENTITY
+	kin_far["belief_relay_hops"] = ANCESTORS_KIN_FAR_HOPS
+	h._hud.show_unit_selection(kin_far)
+	await h._settle()
+	_click_disclosure(BAND_DISCLOSURE_MORALE_ANCESTORS_KIN_FAR)
+	await h._settle()
+	await h._save("band_morale_ancestors_kin_far")
+	var kin_far_line := _kit_breakdown_line(_popover_text(), "far from the ancestors")
+	h._assert_hud("a relayed band whose blended term is negative reads `%s`, and no hop count"
+			% ANCESTORS_KIN_FAR_ROW,
+		kin_far_line.contains(ANCESTORS_KIN_FAR_ROW) and not kin_far_line.contains("hop"))
+	_click_disclosure(BAND_DISCLOSURE_MORALE_ANCESTORS_KIN_FAR)
+
+	# …and the hop-count edge cases, on the producer: plural, the 254 "or longer" cap, and 255
+	# (unreached), which keeps the plain wording.
+	var hop_rows := {}
+	for hops in [ANCESTORS_KIN_PLURAL_HOPS, ANCESTORS_KIN_LONGEST_HOPS, ANCESTORS_KIN_UNREACHED]:
+		var probe := kin_near.duplicate(true)
+		probe["belief_relay_hops"] = hops
+		hop_rows[hops] = "\n".join(h._hud._banddetail._morale_breakdown_lines(probe, ""))
+	h._assert_hud("2 hops reads `(2 hops)`, 254 reads `(254+ hops)`, and 255 (unreached) the plain `near the ancestors`",
+		String(hop_rows[ANCESTORS_KIN_PLURAL_HOPS]).contains("near the ancestors, through kin (2 hops)")
+		and String(hop_rows[ANCESTORS_KIN_LONGEST_HOPS]).contains("near the ancestors, through kin (254+ hops)")
+		and String(hop_rows[ANCESTORS_KIN_UNREACHED]).contains("near the ancestors")
+		and not String(hop_rows[ANCESTORS_KIN_UNREACHED]).contains("kin"))
 
 ## A band that HOLDS something which eats a good. Its own entity, for the disclosure key's sake.
 func _standing_bill_band_fixture() -> Dictionary:

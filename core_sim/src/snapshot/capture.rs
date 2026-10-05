@@ -2568,6 +2568,9 @@ pub fn capture_snapshot(
     gds: GreatDiscoverySnapshotParam,
     culture: Res<CultureManager>,
     mut history: ResMut<SnapshotHistory>,
+    // **Who relays the ancestors' reach** — resident bands only, `simulate_population`'s own filter,
+    // so a detached party in `populations` is never a relayer.
+    resident_bands: Query<Entity, With<crate::components::ResidentBand>>,
 ) {
     // Whole-capture profiling. `snapshot.build` covers assembling the `WorldSnapshot` and CONTAINS
     // its `snapshot.build.*` sub-scopes — the profiler's labels nest flat, so a parent includes its
@@ -2874,6 +2877,41 @@ pub fn capture_snapshot(
             tile_registry.height,
             config.map_topology.wrap_horizontal,
         );
+        // **Kin relay the reach** — the ONE relay search (`crate::belief_relay`) over every resident
+        // band, in the order `simulate_population` hands it, so the published hops and relayed
+        // region are the ties the culture term is priced from.
+        let (belief_relay, relay_index) = {
+            let mut input: Vec<((u64, u64), Entity, crate::belief_relay::RelayBand)> = populations
+                .iter()
+                .filter(|(entity, ..)| resident_bands.contains(*entity))
+                .filter_map(|(entity, cohort, _, _, _, band_id, _, _, _)| {
+                    let standing = tile_positions
+                        .get(&cohort.current_tile.to_bits())
+                        .copied()?;
+                    Some((
+                        crate::belief_relay::relay_order_key(band_id.copied(), entity),
+                        entity,
+                        crate::belief_relay::RelayBand {
+                            faction: cohort.faction,
+                            standing,
+                            anchor: cohort.belief_anchor,
+                        },
+                    ))
+                })
+                .collect();
+            input.sort_by_key(|(key, _, _)| *key);
+            let bands: Vec<crate::belief_relay::RelayBand> =
+                input.iter().map(|(_, _, band)| *band).collect();
+            let index: HashMap<Entity, usize> = input
+                .iter()
+                .enumerate()
+                .map(|(index, (_, entity, _))| (*entity, index))
+                .collect();
+            (
+                crate::belief_relay::resolve_belief_relay(&bands, &walk, &roads),
+                index,
+            )
+        };
         let fauna_config = fauna.get();
         // **The minimal TOE levers**, resolved once for every cohort: the kit table plus the two
         // *equipped* tiers that live outside `equipment.json` (one home per fact) — the bare-handed
@@ -3074,13 +3112,33 @@ pub fn capture_snapshot(
                         .map(|alloc| alloc.workers_on(&LaborTarget::Scout))
                         .unwrap_or(0);
                     let scout_vantage_distance = labor_config.scout.vantage_distance(scout_workers);
+                    // Derived, never checkpointed: a road built, an anchor moved or a kin band
+                    // walked off is re-read here on the next capture and rides that frame's delta.
+                    let belief_reach: Vec<UVec2> = cohort
+                        .belief_anchor
+                        .map(|anchor| walk.region_around(&roads, anchor))
+                        .unwrap_or_default();
+                    let belief_relay = match relay_index.get(&entity) {
+                        Some(&index) if cohort.belief_anchor.is_some() => {
+                            let direct: std::collections::BTreeSet<(u32, u32)> =
+                                belief_reach.iter().map(|tile| (tile.y, tile.x)).collect();
+                            let region: std::collections::BTreeSet<(u32, u32)> = belief_relay
+                                .relayers_without(index, &walk, &roads)
+                                .into_iter()
+                                .flat_map(|relayer| walk.region_around(&roads, relayer))
+                                .map(|tile| (tile.y, tile.x))
+                                .filter(|key| !direct.contains(key))
+                                .collect();
+                            crate::snapshot::population::BeliefRelayReading {
+                                hops: belief_relay.hops(index),
+                                region: region.into_iter().map(|(y, x)| UVec2::new(x, y)).collect(),
+                            }
+                        }
+                        _ => Default::default(),
+                    };
                     Some(population_state(PopulationStateInputs {
-                        // Derived, never checkpointed: a road built or an anchor moved is
-                        // re-read here on the next capture and rides that frame's delta.
-                        belief_reach: cohort
-                            .belief_anchor
-                            .map(|anchor| walk.region_around(&roads, anchor))
-                            .unwrap_or_default(),
+                        belief_reach,
+                        belief_relay,
                         entity,
                         band_id,
                         band_name,

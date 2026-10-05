@@ -7420,6 +7420,33 @@ const ANCESTORS_PROBE_RADII := 1.2
 const ANCESTORS_GROUND_IDS := [22, 11, 12, 0]   # glacier · prairie_steppe · mixed_woodland · deep_ocean
 const ANCESTORS_GROUND_BAND_COLS := 4            # GRID_W (16) / 4 bands
 
+## THE KIN RELAY's region: every tile within `ANCESTORS_KIN_REACH` of a kin band's standing tile
+## (`ANCESTORS_KIN_BANDS`) that is NOT in the direct region — the wire's own shape. The kin sit south of
+## the direct region, so the relayed area both borders it (shared edges, drawn strong) and reaches past
+## it.
+const ANCESTORS_KIN_BANDS := [Vector2i(4, 8), Vector2i(7, 9)]
+const ANCESTORS_KIN_REACH := 2
+const ANCESTORS_KIN_HOPS := 1
+## A hex just outside the relayed region's southern edge, well clear of the direct region — ink there
+## is the relayed outline and nothing else.
+const ANCESTORS_KIN_PROBE_TILE := Vector2i(5, 11)
+
+func _ancestors_relay_tiles() -> Array[Vector2i]:
+	var direct := {}
+	for tile in _ancestors_reach_tiles():
+		direct[tile] = true
+	var tiles: Array[Vector2i] = []
+	for row in range(GRID_H):
+		for col in range(GRID_W):
+			var tile := Vector2i(col, row)
+			if direct.has(tile):
+				continue
+			for kin in ANCESTORS_KIN_BANDS:
+				if _map._hex_distance(kin.x, kin.y, col, row) <= ANCESTORS_KIN_REACH:
+					tiles.append(tile)
+					break
+	return tiles
+
 func _ancestors_ground_terrain() -> Array:
 	var arr: Array = []
 	arr.resize(GRID_W * GRID_H)
@@ -7504,3 +7531,24 @@ func _band_ancestors_states() -> void:
 	_map.selected_unit_id = BAND_ENTITY
 	await _settle()
 	await _save("map_band_ancestors_ground")
+	# THE KIN RELAY — the anchored band again on the desert, now with a relayed region reaching past
+	# the direct one (`belief_relay_reach_x/y`). Diffed against `anchored` above, which is the same
+	# frame with no relay.
+	var kin := _snapshot_band_ancestors(true)
+	var kin_band: Dictionary = (kin["populations"] as Array)[0]
+	var kin_xs := PackedInt32Array()
+	var kin_ys := PackedInt32Array()
+	for tile in _ancestors_relay_tiles():
+		kin_xs.append(tile.x)
+		kin_ys.append(tile.y)
+	kin_band["belief_relay_hops"] = ANCESTORS_KIN_HOPS
+	kin_band["belief_relay_reach_x"] = kin_xs
+	kin_band["belief_relay_reach_y"] = kin_ys
+	_map.display_snapshot(kin)
+	_map.selected_unit_id = BAND_ENTITY
+	await _settle()
+	var kin_frame: Image = await _capture()
+	await _save("map_band_ancestors_kin")
+	_assert_map("ancestors — the relayed region draws its own outline out to %s" % ANCESTORS_KIN_PROBE_TILE,
+		_count_changed_pixels(anchored, kin_frame,
+			_hex_probe_rect(kin_frame, ANCESTORS_KIN_PROBE_TILE, ANCESTORS_PROBE_RADII)) > 0)

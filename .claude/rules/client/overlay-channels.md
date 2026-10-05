@@ -1003,6 +1003,12 @@ draws nothing.
   (`HudStyle.GROUND`, `ANCESTORS_REACH_UNDER_WIDTH`) — every edge's under-stroke first, then every
   violet edge, so no under-stroke cuts a neighbouring edge's colour. The under-stroke carries it over
   light ground (sand, snow); the violet's lightness carries it over dark (forest, water).
+- **The kin-relay outline** is a SECOND perimeter, of `belief_relay_reach_x/y` — the tiles OUTSIDE
+  the direct region from which the band would be tied in through its other kin. Same perimeter code
+  (`_reach_perimeter`) and the same violet, thinner and fainter (`ANCESTORS_RELAY_*`), and solid —
+  dashes mean a pending action on this map. Edges the relayed region shares with the direct one are
+  dropped from it (the direct set is passed as `skip`), and the direct outline is drawn after it, so a
+  shared border reads as the strong "near" line and the faint line marks only "near through kin".
 - **The anchor mark** (`_draw_ancestors_marker`) is the expedition marker's composite: a dark disc
   (`HudStyle.GROUND`, a band token's radius) ringed in violet, with the `BeliefSprites.urn()` sprite
   centred on it through `MapView._draw_marker_sprite`, sized at `ANCESTORS_SPRITE_FACTOR` of the disc's

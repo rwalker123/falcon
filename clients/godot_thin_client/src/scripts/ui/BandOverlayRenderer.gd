@@ -260,6 +260,13 @@ const ANCESTORS_REACH_WIDTH := 4.0
 const ANCESTORS_REACH_ALPHA := 0.95
 const ANCESTORS_REACH_UNDER_WIDTH := 7.0
 const ANCESTORS_REACH_UNDER_ALPHA := 0.7
+# THE KIN RELAY's outline (`belief_relay_reach_x/y`, the tiles outside the direct region from which
+# the band is tied in through its kin): the same violet, thinner and fainter, so the two read as
+# "near" and "near through kin". Solid — a dashed line means a pending action on this map.
+const ANCESTORS_RELAY_WIDTH := 3.0
+const ANCESTORS_RELAY_ALPHA := 0.7
+const ANCESTORS_RELAY_UNDER_WIDTH := 5.5
+const ANCESTORS_RELAY_UNDER_ALPHA := 0.5
 # THE ANCHOR MARKER is the `BeliefSprites` urn at true marker size, on a dark backing disc ringed in
 # violet — the expedition marker's composite (`BandMarkerRenderer._draw_expedition_body`), so it reads
 # over any terrain. The disc is a band token's radius and the sprite spans `ANCESTORS_SPRITE_FACTOR`
@@ -1511,37 +1518,58 @@ func _draw_travel_destination(unit: Dictionary, band_col: int, band_row: int, ef
 func _draw_band_ancestors(band: Dictionary, band_col: int, eff_col: int, radius: float, origin: Vector2) -> void:
 	if not bool(band.get("has_belief_anchor", false)):
 		return
-	var color := Color(HudStyle.BELIEF, ANCESTORS_REACH_ALPHA)
-	var under := Color(HudStyle.GROUND, ANCESTORS_REACH_UNDER_ALPHA)
-	# Perimeter edges are collected first, so the whole dark under-stroke lands before any violet —
-	# drawn edge by edge, one edge's under-stroke would cut the violet of the edge before it.
-	var edges: Array[PackedVector2Array] = []
-	var xs: PackedInt32Array = PackedInt32Array(band.get("belief_reach_x", PackedInt32Array()))
-	var ys: PackedInt32Array = PackedInt32Array(band.get("belief_reach_y", PackedInt32Array()))
-	var count := mini(xs.size(), ys.size())
-	var region := {}
-	for i in range(count):
-		region[Vector2i(xs[i], ys[i])] = true
-	for i in range(count):
-		var row := ys[i]
-		var col := eff_col + _view._wrapped_col_delta(band_col, xs[i])
-		var axial := _view._offset_to_axial(col, row)
-		var pts := _view._hex_points(_view._hex_center(col, row, radius, origin), radius)
-		for edge in range(6):
-			var d: Vector2i = RANGE_BORDER_EDGE_AXIAL[edge]
-			var noff := _view._axial_to_offset(axial.x + d.x, axial.y + d.y)
-			if _in_reach_region(region, noff.x, noff.y):
-				continue
-			edges.append(PackedVector2Array([pts[edge], pts[(edge + 1) % 6]]))
-	for seg in edges:
-		_view.draw_line(seg[0], seg[1], under, ANCESTORS_REACH_UNDER_WIDTH, true)
-	for seg in edges:
-		_view.draw_line(seg[0], seg[1], color, ANCESTORS_REACH_WIDTH, true)
+	var direct := _tile_set(band, "belief_reach_x", "belief_reach_y")
+	var relayed := _tile_set(band, "belief_relay_reach_x", "belief_relay_reach_y")
+	# THE RELAYED REGION FIRST, fainter, and WITHOUT the edges it shares with the direct region — those
+	# are the direct region's boundary, drawn strong on top, so a shared border reads as "near".
+	_draw_reach_outline(_reach_perimeter(relayed, direct, band_col, eff_col, radius, origin),
+		Color(HudStyle.BELIEF, ANCESTORS_RELAY_ALPHA), ANCESTORS_RELAY_WIDTH,
+		Color(HudStyle.GROUND, ANCESTORS_RELAY_UNDER_ALPHA), ANCESTORS_RELAY_UNDER_WIDTH)
+	_draw_reach_outline(_reach_perimeter(direct, {}, band_col, eff_col, radius, origin),
+		Color(HudStyle.BELIEF, ANCESTORS_REACH_ALPHA), ANCESTORS_REACH_WIDTH,
+		Color(HudStyle.GROUND, ANCESTORS_REACH_UNDER_ALPHA), ANCESTORS_REACH_UNDER_WIDTH)
 	var anchor_y := int(band.get("belief_anchor_y", 0))
 	if anchor_y < 0 or anchor_y >= _view.grid_height:
 		return
 	var anchor_col := eff_col + _view._wrapped_col_delta(band_col, int(band.get("belief_anchor_x", 0)))
 	_draw_ancestors_marker(_view._hex_center(anchor_col, anchor_y, radius, origin), radius)
+
+## A zipped x/y tile list off the band as a `Vector2i → true` set.
+func _tile_set(band: Dictionary, x_key: String, y_key: String) -> Dictionary:
+	var xs: PackedInt32Array = PackedInt32Array(band.get(x_key, PackedInt32Array()))
+	var ys: PackedInt32Array = PackedInt32Array(band.get(y_key, PackedInt32Array()))
+	var tiles := {}
+	for i in range(mini(xs.size(), ys.size())):
+		tiles[Vector2i(xs[i], ys[i])] = true
+	return tiles
+
+## The PERIMETER of a tile set as line segments: every edge between a tile in `region` and one outside
+## it (off-map counts as outside), in the band's effective column frame. An edge whose outside tile is
+## in `skip` is left out — the relayed outline passes the direct region here, whose boundary it shares.
+func _reach_perimeter(region: Dictionary, skip: Dictionary, band_col: int, eff_col: int,
+		radius: float, origin: Vector2) -> Array[PackedVector2Array]:
+	var edges: Array[PackedVector2Array] = []
+	for tile in region.keys():
+		var row: int = tile.y
+		var col: int = eff_col + _view._wrapped_col_delta(band_col, tile.x)
+		var axial := _view._offset_to_axial(col, row)
+		var pts := _view._hex_points(_view._hex_center(col, row, radius, origin), radius)
+		for edge in range(6):
+			var d: Vector2i = RANGE_BORDER_EDGE_AXIAL[edge]
+			var noff := _view._axial_to_offset(axial.x + d.x, axial.y + d.y)
+			if _in_reach_region(region, noff.x, noff.y) or _in_reach_region(skip, noff.x, noff.y):
+				continue
+			edges.append(PackedVector2Array([pts[edge], pts[(edge + 1) % 6]]))
+	return edges
+
+## One outline: the whole dark under-stroke first, then the whole violet line — drawn edge by edge,
+## one edge's under-stroke would cut the violet of the edge before it.
+func _draw_reach_outline(edges: Array[PackedVector2Array], color: Color, width: float,
+		under: Color, under_width: float) -> void:
+	for seg in edges:
+		_view.draw_line(seg[0], seg[1], under, under_width, true)
+	for seg in edges:
+		_view.draw_line(seg[0], seg[1], color, width, true)
 
 ## The belief place's MARKER: dark disc, violet ring, then the `BeliefSprites` urn — or the violet ⚱
 ## glyph when the sprite does not load.

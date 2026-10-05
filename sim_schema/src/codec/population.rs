@@ -897,6 +897,16 @@ fn create_populations<'a>(
             } else {
                 Some(builder.create_vector(&cohort.belief_reach_x))
             };
+            let belief_relay_reach_x = if cohort.belief_relay_reach_x.is_empty() {
+                None
+            } else {
+                Some(builder.create_vector(&cohort.belief_relay_reach_x))
+            };
+            let belief_relay_reach_y = if cohort.belief_relay_reach_y.is_empty() {
+                None
+            } else {
+                Some(builder.create_vector(&cohort.belief_relay_reach_y))
+            };
             let belief_reach_y = if cohort.belief_reach_y.is_empty() {
                 None
             } else {
@@ -1164,6 +1174,9 @@ fn create_populations<'a>(
                     beliefAnchorY: cohort.belief_anchor_y,
                     beliefReachX: belief_reach_x,
                     beliefReachY: belief_reach_y,
+                    beliefRelayHops: cohort.belief_relay_hops,
+                    beliefRelayReachX: belief_relay_reach_x,
+                    beliefRelayReachY: belief_relay_reach_y,
                 },
             )
         })
@@ -1806,6 +1819,9 @@ fn decode_population(
         belief_anchor_y: cohort.beliefAnchorY(),
         belief_reach_x: decode_scalars(cohort.beliefReachX()),
         belief_reach_y: decode_scalars(cohort.beliefReachY()),
+        belief_relay_hops: cohort.beliefRelayHops(),
+        belief_relay_reach_x: decode_scalars(cohort.beliefRelayReachX()),
+        belief_relay_reach_y: decode_scalars(cohort.beliefRelayReachY()),
     })
 }
 

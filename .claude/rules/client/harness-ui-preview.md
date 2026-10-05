@@ -2035,7 +2035,7 @@ Each fails a DISJOINT set, and each names the defect in its own words:
 
 ## `chapters/band_expedition.gd` — the culture morale term (#699)
 
-`EXPECTED_CHECKPOINTS` **134**, RE-MEASURED: two frames and six claims, appended after
+`EXPECTED_CHECKPOINTS` **139**, RE-MEASURED: four frames and nine claims, appended after
 `_carry_states` (`_ancestors_states`) so no earlier frame moves.
 
 - **NEAR** — the reference band (entity 910) with `morale_culture` +0.006, its Morale disclosure
@@ -2048,6 +2048,11 @@ Each fails a DISJOINT set, and each names the defect in its own words:
   row owns — frame **`band_morale_ancestors_far`**. Its hex carries `belief` 12.4, and the tile-card
   producer (`_tile_terrain_lines`) is asserted to state `Ancestors: 12 dead`; `<1 dead` under one
   person and no row at zero are asserted on `DetailFormat.ancestors_line` directly.
+- **KIN** — the same two bands tied in through kin (entities 912 / 913): `belief_relay_hops` 1 reads
+  `+0.6%  near the ancestors, through kin (1 hop)` — frame **`band_morale_ancestors_kin_near`** — and
+  3 on the far band reads `−0.9%  far from the ancestors (12, 7), through kin` with no hop count —
+  frame **`band_morale_ancestors_kin_far`**. One PNG-less claim on `_morale_breakdown_lines`: 2 hops
+  reads `(2 hops)`, 254 reads `(254+ hops)`, and 255 (unreached) keeps the plain `near the ancestors`.
 
 The row needles are LITERALS, matched within one popover line, so a row that drew the other sign's
 label or glyph fails.

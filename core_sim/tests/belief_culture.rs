@@ -21,7 +21,7 @@ use core_sim::{
     MoraleCause, PopulationCohort, ResidentBand, RoadRegistry, Scalar, SettleConfig,
     SimulationConfig, SnapshotHistory, Tile, TileRegistry, WellbeingConfig, WellbeingConfigHandle,
 };
-use faction_support::{one_faction_world, HOME};
+use faction_support::{one_faction_world, two_faction_world, HOME, RIVAL};
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
 /// A few dead's worth of belief on a place.
@@ -660,4 +660,355 @@ fn min_anchor_belief_scales_the_adoption_line() {
         "2.0 falls short of a 3.0 line"
     );
     assert!(adopted(RAISED_MIN_ANCHOR), "3.0 meets it");
+}
+
+// ---- Kin relay the reach (`core_sim::belief_relay`) ----
+
+/// The column the relay layouts start at — far enough from the map's edge that every staged band
+/// sits on the same row with exact hex distances.
+const RELAY_ANCHOR_X: u32 = 10;
+/// Workers each kin band is split off with.
+const KIN_WORKERS: u32 = 3;
+/// A kin band staged far beyond every chain, to read the unreached sentinel.
+const FAR_KIN_STEPS: u32 = 30;
+const HALF_STRENGTH: f32 = 0.5;
+const QUARTER_STRENGTH: f32 = 0.25;
+const FULL_STRENGTH: f32 = 1.0;
+const NO_STRENGTH: f32 = 0.0;
+const NO_RELAY: f32 = 0.0;
+
+/// The anchor, and the columns of a chain laid out along one row at the walk's own reach: A within
+/// reach of the anchor, B within reach of A only, C within reach of B only.
+struct RelayLayout {
+    anchor: UVec2,
+    a: UVec2,
+    b: UVec2,
+    c: UVec2,
+}
+
+fn relay_layout(app: &App, row: u32) -> RelayLayout {
+    let reach = base_reach(app);
+    let anchor = UVec2::new(RELAY_ANCHOR_X, row);
+    let a = UVec2::new(RELAY_ANCHOR_X + NEARBY_STEPS, row);
+    let b = UVec2::new(a.x + reach, row);
+    let c = UVec2::new(b.x + reach, row);
+    assert!(
+        b.x - anchor.x > reach && c.x - a.x > reach,
+        "fixture: B and C stand beyond the anchor's reach, C beyond A's"
+    );
+    RelayLayout { anchor, a, b, c }
+}
+
+/// Split `count` kin bands off the fixture band (all the same people), each a resident band.
+fn split_kin(app: &mut App, parent: Entity, count: usize) -> Vec<Entity> {
+    let settle = SettleConfig {
+        min_founding_workers: 1,
+        parent_min_workers: 0,
+    };
+    (0..count)
+        .map(|_| {
+            let split = split_band_from_parent(&mut app.world, parent, KIN_WORKERS, &settle)
+                .expect("the band can split");
+            app.world
+                .query::<(Entity, &BandId)>()
+                .iter(&app.world)
+                .find(|(_, id)| **id == split.band)
+                .map(|(entity, _)| entity)
+                .expect("the splinter is alive")
+        })
+        .collect()
+}
+
+/// Stand `band` at `position`, holding `anchor`, with a deep larder.
+fn place(app: &mut App, band: Entity, position: UVec2, anchor: Option<UVec2>) {
+    stand_on(app, band, position);
+    let mut cohort = app.world.get_mut::<PopulationCohort>(band).unwrap();
+    cohort.belief_anchor = anchor;
+    cohort
+        .stores
+        .reset_food("dry", scalar_from_f32(DEEP_LARDER));
+}
+
+fn expected_at(app: &App, strength: f32) -> Scalar {
+    let culture = wellbeing(app).culture.clone();
+    let weight = culture.anchor_weight(SOME_BELIEF);
+    scalar_from_f32(
+        weight * (strength * culture.near_bonus - (FULL_STRENGTH - strength) * culture.away_drag),
+    )
+}
+
+/// A two-band chain on the fixture's row: the fixture band as A, one kin band as B.
+fn two_kin(app: &mut App) -> (Entity, Entity, RelayLayout) {
+    let fx = fixture(app);
+    let layout = relay_layout(app, fx.at.y);
+    stage_belief(app, layout.anchor, SOME_BELIEF);
+    let b = split_kin(app, fx.band, 1)[0];
+    place(app, fx.band, layout.a, Some(layout.anchor));
+    place(app, b, layout.b, Some(layout.anchor));
+    (fx.band, b, layout)
+}
+
+/// **One hop of kin halves the tie**: B stands beyond the anchor's reach but within A's, and reads
+/// `w × (0.5 × near − 0.5 × away)`; A, standing within reach itself, reads the full `w × near`.
+#[test]
+fn a_band_within_reach_of_a_near_kin_band_is_near_at_half_strength() {
+    let mut app = one_faction_world();
+    let (a, b, _) = two_kin(&mut app);
+    morale_turn(&mut app);
+    assert_scalar_eq(
+        culture_of(&app, a),
+        expected_at(&app, FULL_STRENGTH),
+        "A direct",
+    );
+    assert_scalar_eq(
+        culture_of(&app, b),
+        expected_at(&app, HALF_STRENGTH),
+        "B one hop",
+    );
+}
+
+/// **Each further hop halves it again**: the end of a three-band chain reads 0.25.
+#[test]
+fn a_three_band_chain_reads_a_quarter_at_its_end() {
+    let mut app = one_faction_world();
+    let (_, b, layout) = two_kin(&mut app);
+    let c = split_kin(&mut app, b, 1)[0];
+    place(&mut app, c, layout.c, Some(layout.anchor));
+    morale_turn(&mut app);
+    assert_scalar_eq(culture_of(&app, b), expected_at(&app, HALF_STRENGTH), "B");
+    assert_scalar_eq(
+        culture_of(&app, c),
+        expected_at(&app, QUARTER_STRENGTH),
+        "C",
+    );
+}
+
+/// **Another people is not kin.** A rival band beside A, holding the same anchor, is not reached
+/// through A, and a home band beyond it is not reached through the rival.
+#[test]
+fn another_peoples_band_relays_nothing_either_way() {
+    let mut app = two_faction_world();
+    let fx = fixture(&mut app);
+    let layout = relay_layout(&app, fx.at.y);
+    stage_belief(&mut app, layout.anchor, SOME_BELIEF);
+    let rival = app
+        .world
+        .query_filtered::<(Entity, &PopulationCohort), With<ResidentBand>>()
+        .iter(&app.world)
+        .find(|(_, cohort)| cohort.faction == RIVAL)
+        .map(|(entity, _)| entity)
+        .expect("the rival has a band");
+    let home_beyond = split_kin(&mut app, fx.band, 1)[0];
+    place(&mut app, fx.band, layout.a, Some(layout.anchor));
+    place(&mut app, rival, layout.b, Some(layout.anchor));
+    place(&mut app, home_beyond, layout.c, Some(layout.anchor));
+    morale_turn(&mut app);
+    assert_scalar_eq(
+        culture_of(&app, rival),
+        expected_at(&app, NO_STRENGTH),
+        "rival",
+    );
+    assert_scalar_eq(
+        culture_of(&app, home_beyond),
+        expected_at(&app, NO_STRENGTH),
+        "home band beyond the rival",
+    );
+}
+
+/// **A detached party does not relay.** A cohort with no `ResidentBand` — a party's shape, a clone
+/// of its band's cohort off the resident set — standing between A and B ties nobody in.
+#[test]
+fn a_detached_party_does_not_relay() {
+    let mut app = one_faction_world();
+    let fx = fixture(&mut app);
+    let layout = relay_layout(&app, fx.at.y);
+    stage_belief(&mut app, layout.anchor, SOME_BELIEF);
+    let beyond = split_kin(&mut app, fx.band, 1)[0];
+    place(&mut app, fx.band, layout.a, Some(layout.anchor));
+    place(&mut app, beyond, layout.c, Some(layout.anchor));
+    let mut party = cohort(&app, fx.band).clone();
+    party.current_tile = tile_at(&app, layout.b);
+    app.world.spawn(party);
+    morale_turn(&mut app);
+    assert_scalar_eq(
+        culture_of(&app, beyond),
+        expected_at(&app, NO_STRENGTH),
+        "nothing relays through a party",
+    );
+}
+
+/// **`relay_per_hop = 0` is today's term**: the direct band reads near, the kin band the full drag.
+#[test]
+fn relay_per_hop_zero_reproduces_the_unrelayed_term() {
+    let mut app = one_faction_world();
+    let mut tuned = (*wellbeing(&app)).clone();
+    tuned.culture.relay_per_hop = NO_RELAY;
+    app.world
+        .insert_resource(WellbeingConfigHandle::new(std::sync::Arc::new(tuned)));
+    let (a, b, _) = two_kin(&mut app);
+    morale_turn(&mut app);
+    let culture = wellbeing(&app).culture.clone();
+    let weight = culture.anchor_weight(SOME_BELIEF);
+    assert_scalar_eq(
+        culture_of(&app, a),
+        scalar_from_f32(culture.near_bonus * weight),
+        "A",
+    );
+    assert_scalar_eq(
+        culture_of(&app, b),
+        scalar_from_f32(-culture.away_drag * weight),
+        "B",
+    );
+}
+
+/// **Relaying is never adoption.** B, with no anchor of its own, stands within reach of A and gains
+/// no anchor and no term through it.
+#[test]
+fn a_band_does_not_adopt_a_place_through_kin() {
+    let mut app = one_faction_world();
+    let (_, b, _) = two_kin(&mut app);
+    app.world
+        .get_mut::<PopulationCohort>(b)
+        .unwrap()
+        .belief_anchor = None;
+    morale_turn(&mut app);
+    assert_eq!(cohort(&app, b).belief_anchor, None);
+    assert_eq!(culture_of(&app, b), Scalar::from_i64(0));
+}
+
+/// What one band's row publishes about how kin tie it in.
+struct PublishedRelay {
+    hops: u8,
+    direct: Vec<UVec2>,
+    relayed: Vec<UVec2>,
+}
+
+fn published_relay(app: &mut App, band: Entity) -> PublishedRelay {
+    let direct = published_anchor(app, band).region;
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let row = envelope
+        .payload_as_snapshot()
+        .expect("a snapshot payload")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the cohort list is published")
+        .iter()
+        .find(|row| row.entity() == band.to_bits())
+        .expect("the band is on the wire");
+    let xs: Vec<u32> = row
+        .beliefRelayReachX()
+        .map(|v| v.iter().collect())
+        .unwrap_or_default();
+    let ys: Vec<u32> = row
+        .beliefRelayReachY()
+        .map(|v| v.iter().collect())
+        .unwrap_or_default();
+    assert_eq!(xs.len(), ys.len(), "the relayed region's x and y lists zip");
+    PublishedRelay {
+        hops: row.beliefRelayHops(),
+        direct,
+        relayed: xs
+            .into_iter()
+            .zip(ys)
+            .map(|(x, y)| UVec2::new(x, y))
+            .collect(),
+    }
+}
+
+/// **On the encoded envelope**: B publishes one hop and a relayed region that holds its own tile
+/// and shares no tile with the direct region; A publishes direct; a kin band far beyond every chain
+/// publishes the unreached sentinel.
+#[test]
+fn the_relay_hops_and_region_are_on_the_encoded_snapshot() {
+    let mut app = one_faction_world();
+    let (a, b, layout) = two_kin(&mut app);
+    let far = split_kin(&mut app, a, 1)[0];
+    place(
+        &mut app,
+        far,
+        UVec2::new(layout.anchor.x + FAR_KIN_STEPS, layout.anchor.y),
+        Some(layout.anchor),
+    );
+    morale_turn(&mut app);
+
+    assert_eq!(published_relay(&mut app, a).hops, 0);
+    let relay_b = published_relay(&mut app, b);
+    assert_eq!(relay_b.hops, 1);
+    assert!(
+        relay_b.relayed.contains(&layout.b),
+        "B stands where kin tie it in"
+    );
+    assert!(
+        relay_b
+            .relayed
+            .iter()
+            .all(|tile| !relay_b.direct.contains(tile)),
+        "the relayed region excludes the direct one"
+    );
+    assert_eq!(
+        published_relay(&mut app, far).hops,
+        sim_schema::BELIEF_RELAY_UNREACHED
+    );
+}
+
+/// **The drawn relayed region and the term cannot disagree.** A kin band standing on every tile of
+/// its published relayed region reads `r > 0`; on every tile bordering it outside both regions, `r
+/// == 0` (the full drag).
+#[test]
+fn the_published_relayed_region_agrees_with_the_term_at_every_tile() {
+    let mut app = one_faction_world();
+    let (_, b, layout) = two_kin(&mut app);
+    // A great cemetery, so the fractional deaths the sweep credits to the tiles A and B stand on
+    // over a hundred-odd turns can never out-weigh the anchor and move it.
+    stage_belief(&mut app, layout.anchor, GREAT_CEMETERY);
+    morale_turn(&mut app);
+    let published = published_relay(&mut app, b);
+    assert!(!published.relayed.is_empty(), "fixture: a relayed region");
+
+    let config = app.world.resource::<SimulationConfig>().clone();
+    let (width, height, wrap) = (
+        config.grid_size.x,
+        config.grid_size.y,
+        config.map_topology.wrap_horizontal,
+    );
+    let mut border: Vec<UVec2> = published
+        .relayed
+        .iter()
+        .flat_map(|&tile| core_sim::grid_utils::hex_range_tiles(tile, 1, width, height, wrap))
+        .filter(|tile| !published.relayed.contains(tile) && !published.direct.contains(tile))
+        .collect();
+    border.sort_by_key(|tile| (tile.y, tile.x));
+    border.dedup();
+    assert!(
+        !border.is_empty(),
+        "fixture: the relayed region has an outer edge"
+    );
+
+    let culture = wellbeing(&app).culture.clone();
+    let anchor_belief = app.world.resource::<BeliefRegistry>().get(layout.anchor);
+    let fully_away = scalar_from_f32(-culture.away_drag * culture.anchor_weight(anchor_belief));
+    for &tile in &published.relayed {
+        stand_on(&mut app, b, tile);
+        morale_turn(&mut app);
+        assert!(
+            culture_of(&app, b).raw() > fully_away.raw() + RAW_TOLERANCE,
+            "standing on {tile} in the relayed region must read r > 0"
+        );
+    }
+    for &tile in &border {
+        stand_on(&mut app, b, tile);
+        morale_turn(&mut app);
+        assert_scalar_eq(
+            culture_of(&app, b),
+            fully_away,
+            &format!("standing on {tile} outside both regions must read r == 0"),
+        );
+    }
 }

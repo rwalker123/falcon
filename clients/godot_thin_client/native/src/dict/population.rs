@@ -152,6 +152,20 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "belief_reach_y",
         &u32_vector_to_packed_int32(cohort.beliefReachY()),
     );
+    // THE KIN RELAY. `belief_relay_hops`: 0 = direct (also 0 with no anchor — read
+    // `has_belief_anchor` to tell them apart), n = tied in through n bands of kin, 254 = a chain of 254
+    // or longer, 255 = unreached (holds an anchor, no chain reaches it). `belief_relay_reach_x/y`:
+    // every tile OUTSIDE the direct reach region from which the band would be tied in through its
+    // other kin, as two zipped packed arrays. Empty with no anchor.
+    let _ = dict.insert("belief_relay_hops", i64::from(cohort.beliefRelayHops()));
+    let _ = dict.insert(
+        "belief_relay_reach_x",
+        &u32_vector_to_packed_int32(cohort.beliefRelayReachX()),
+    );
+    let _ = dict.insert(
+        "belief_relay_reach_y",
+        &u32_vector_to_packed_int32(cohort.beliefRelayReachY()),
+    );
     let _ = dict.insert("size", cohort.size() as i64);
     // Every Scalar field below comes from `cohort_scalars` — see its doc comment for why.
     let scalars = cohort_scalars(cohort);

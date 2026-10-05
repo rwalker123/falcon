@@ -1202,28 +1202,80 @@ pub fn refresh_belief_anchor(
     }
 }
 
-/// **Near / far from the ancestors** — the culture morale contribution for a band standing at
-/// `standing` with `anchor`: `+near_bonus × s` within walking reach of the anchor, `−away_drag × s`
-/// beyond it, where `s = b / (b + belief_half_saturation)` and `b` is the anchor's belief; `0` with no
-/// anchor. In or out of reach is binary.
+/// **Near / far from the ancestors** — the culture morale contribution for a band with `anchor`,
+/// tied to it at relay strength `strength` (`crate::belief_relay`: `1` standing within walking reach
+/// itself, `relay_per_hop ^ hops` through kin, `0` unreached):
+/// `s × (r × near_bonus − (1 − r) × away_drag)`, where `s = b / (b + belief_half_saturation)` and `b`
+/// is the anchor's belief. At `r = 1` that is `+near_bonus × s` and at `r = 0` `−away_drag × s`
+/// exactly; `0` with no anchor.
 pub fn culture_morale_contribution(
     anchor: Option<UVec2>,
-    standing: UVec2,
+    strength: f32,
     belief: &BeliefRegistry,
-    walk: &crate::supply::WalkReach,
-    roads: &crate::routes::RoadRegistry,
     culture: &crate::wellbeing_config::CultureConfig,
 ) -> Scalar {
+    /// The full-strength tie a direct band holds; `1 − r` is what is left to be away.
+    const FULL_STRENGTH: f32 = 1.0;
     let Some(anchor) = anchor else {
         return scalar_zero();
     };
     let weight = culture.anchor_weight(belief.get(anchor));
-    let term = if walk.within(roads, standing, anchor) {
-        culture.near_bonus * weight
-    } else {
-        -culture.away_drag * weight
-    };
-    scalar_from_f32(term)
+    let near = strength * culture.near_bonus;
+    let away = (FULL_STRENGTH - strength) * culture.away_drag;
+    scalar_from_f32(weight * (near - away))
+}
+
+/// **The culture pre-pass.** Refresh every band's anchor (adoption is DIRECT only — a band never
+/// takes a place through kin), then run the one relay search ([`crate::belief_relay`]) over every
+/// resident band, then price each band's culture term from its own anchor and relay strength. All
+/// of it before any of this turn's deaths are credited, so no band's term depends on query order.
+/// A band whose standing tile does not resolve keeps its anchor, relays nothing and reads `0`.
+fn resolve_culture_terms(
+    cohorts: &mut DemographicBands,
+    tiles: &Query<&Tile>,
+    belief: &BeliefRegistry,
+    walk: &crate::supply::WalkReach,
+    roads: &crate::routes::RoadRegistry,
+    culture: &crate::wellbeing_config::CultureConfig,
+) -> BTreeMap<Entity, Scalar> {
+    let mut relay_input: Vec<((u64, u64), Entity, crate::belief_relay::RelayBand)> = Vec::new();
+    for (entity, mut cohort, _, band_id, _) in cohorts.iter_mut() {
+        let Ok(standing) = tiles.get(cohort.current_tile).map(|tile| tile.position) else {
+            continue;
+        };
+        cohort.belief_anchor = refresh_belief_anchor(
+            cohort.belief_anchor,
+            standing,
+            belief,
+            walk,
+            roads,
+            culture.min_anchor_belief,
+        );
+        relay_input.push((
+            crate::belief_relay::relay_order_key(band_id.copied(), entity),
+            entity,
+            crate::belief_relay::RelayBand {
+                faction: cohort.faction,
+                standing,
+                anchor: cohort.belief_anchor,
+            },
+        ));
+    }
+    relay_input.sort_by_key(|(key, _, _)| *key);
+    let bands: Vec<crate::belief_relay::RelayBand> =
+        relay_input.iter().map(|(_, _, band)| *band).collect();
+    let relay = crate::belief_relay::resolve_belief_relay(&bands, walk, roads);
+    relay_input
+        .iter()
+        .enumerate()
+        .map(|(index, (_, entity, band))| {
+            let strength = relay.strength(index, culture.relay_per_hop);
+            (
+                *entity,
+                culture_morale_contribution(band.anchor, strength, belief, culture),
+            )
+        })
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
@@ -1266,6 +1318,14 @@ pub fn simulate_population(
         wellbeing.migration.base_reach,
         config.map_topology.wrap_horizontal,
     );
+    let culture_terms = resolve_culture_terms(
+        &mut cohorts,
+        &tiles,
+        &belief,
+        &walk,
+        &walk_inputs.roads,
+        &wellbeing.culture,
+    );
     for (entity, mut cohort, labor, band_id, mut accumulator) in cohorts.iter_mut() {
         // Age the band every turn, before any early-out, so a band whose home tile briefly can't be
         // resolved still reports how long it has been simulated.
@@ -1280,32 +1340,13 @@ pub fn simulate_population(
         // `habitability`), so sim and snapshot never drift.
         let pressure =
             tile_morale_pressure(&terrain_profile, tile.temperature, &morale_pressure_cfg);
-        // **Near / far from the ancestors.** Where the band STANDS — `current_tile`, never `home`,
-        // for the reason the deaths source gives — decides both which belief tile it can make its
-        // anchor this turn and whether it stands within reach of it. A band whose standing tile
-        // cannot be resolved keeps its anchor and has no culture term.
-        let culture = match tiles.get(cohort.current_tile) {
-            Ok(standing) => {
-                let standing = standing.position;
-                cohort.belief_anchor = refresh_belief_anchor(
-                    cohort.belief_anchor,
-                    standing,
-                    &belief,
-                    &walk,
-                    &walk_inputs.roads,
-                    wellbeing.culture.min_anchor_belief,
-                );
-                culture_morale_contribution(
-                    cohort.belief_anchor,
-                    standing,
-                    &belief,
-                    &walk,
-                    &walk_inputs.roads,
-                    &wellbeing.culture,
-                )
-            }
-            Err(_) => scalar_zero(),
-        };
+        // **Near / far from the ancestors**, resolved by the pre-pass: where the band STANDS —
+        // `current_tile`, never `home`, for the reason the deaths source gives — and how its own
+        // people tie it to its anchor. A band the pre-pass could not place reads `0`.
+        let culture = culture_terms
+            .get(&entity)
+            .copied()
+            .unwrap_or_else(scalar_zero);
         // Layer 1 (wellbeing): the morale delta is the signed sum of named contributors, so a
         // future factor is a new `MoraleFactor` variant + one field here — not a rewrite. The
         // contribution set doubles as the client's per-band morale breakdown. `unrest` = crisis

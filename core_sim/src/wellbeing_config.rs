@@ -132,6 +132,10 @@ pub struct CultureConfig {
     /// The least belief (dead-equivalents) a place must hold before a band adopts it as its anchor —
     /// one whole death's worth at `1.0`. Gates adoption only; belief still accrues fractional deaths.
     pub min_anchor_belief: f32,
+    /// How much of the reach each hop of kin relays — a band of the same people within walking reach
+    /// of a near band is near at this strength, and each further hop multiplies by it again
+    /// (`crate::belief_relay`). In `[0, 1]`; `0` turns relaying off.
+    pub relay_per_hop: f32,
 }
 
 impl Default for CultureConfig {
@@ -141,6 +145,7 @@ impl Default for CultureConfig {
             away_drag: 0.02,
             belief_half_saturation: 10.0,
             min_anchor_belief: 1.0,
+            relay_per_hop: 0.5,
         }
     }
 }
@@ -152,12 +157,21 @@ impl CultureConfig {
         belief / (belief + self.belief_half_saturation)
     }
 
-    /// `near_bonus`, `away_drag` and `min_anchor_belief` must be finite and non-negative; `belief_half_saturation` must be
+    /// `near_bonus`, `away_drag` and `min_anchor_belief` must be finite and non-negative,
+    /// `relay_per_hop` finite and in `[0, 1]`; `belief_half_saturation` must be
     /// finite and `> 0` (it is the weight's denominator at zero belief).
     pub fn validate(&self) -> Result<(), WellbeingConfigError> {
         require_non_negative_finite("culture.near_bonus", self.near_bonus)?;
         require_non_negative_finite("culture.away_drag", self.away_drag)?;
         require_non_negative_finite("culture.min_anchor_belief", self.min_anchor_belief)?;
+        require_non_negative_finite("culture.relay_per_hop", self.relay_per_hop)?;
+        if self.relay_per_hop > MAX_RELAY_PER_HOP {
+            return Err(WellbeingConfigError::Invalid {
+                field: "culture.relay_per_hop",
+                constraint: "be at most 1",
+                value: self.relay_per_hop.to_string(),
+            });
+        }
         if !self.belief_half_saturation.is_finite() || self.belief_half_saturation <= 0.0 {
             return Err(WellbeingConfigError::Invalid {
                 field: "culture.belief_half_saturation",
@@ -168,6 +182,10 @@ impl CultureConfig {
         Ok(())
     }
 }
+
+/// The most a hop of kin can relay — a full-strength relay; above it a far band would be nearer than
+/// a direct one.
+const MAX_RELAY_PER_HOP: f32 = 1.0;
 
 fn require_non_negative_finite(
     field: &'static str,
@@ -336,6 +354,7 @@ mod tests {
             default.belief_half_saturation
         );
         assert_eq!(shipped.min_anchor_belief, default.min_anchor_belief);
+        assert_eq!(shipped.relay_per_hop, default.relay_per_hop);
     }
 
     /// Belief equal to the half-saturation lever weighs exactly one half.
@@ -356,6 +375,18 @@ mod tests {
             WellbeingConfig::from_json_str(json),
             Err(WellbeingConfigError::Invalid {
                 field: "culture.belief_half_saturation",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_relay_per_hop_above_one_is_refused() {
+        let json = r#"{ "culture": { "relay_per_hop": 1.5 } }"#;
+        assert!(matches!(
+            WellbeingConfig::from_json_str(json),
+            Err(WellbeingConfigError::Invalid {
+                field: "culture.relay_per_hop",
                 ..
             })
         ));

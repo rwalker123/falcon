@@ -4377,6 +4377,9 @@
       "belief_anchor_y": 67,
       "belief_reach_x": {"__packed": "PackedInt32Array", "len": 3, "items": [114, 109, 120]},
       "belief_reach_y": {"__packed": "PackedInt32Array", "len": 3, "items": [101, 106, 179]},
+      "belief_relay_hops": 122,
+      "belief_relay_reach_x": {"__packed": "PackedInt32Array", "len": 3, "items": [76, 47, 86]},
+      "belief_relay_reach_y": {"__packed": "PackedInt32Array", "len": 3, "items": [143, 76, 65]},
       "bench": {
         "blocked_reason": "populations[0].bench.blocked_reason",
         "blocked_severity": "populations[0].bench.blocked_severity",
@@ -5647,6 +5650,9 @@
       "belief_anchor_y": 60,
       "belief_reach_x": {"__packed": "PackedInt32Array", "len": 3, "items": [29, 50, 115]},
       "belief_reach_y": {"__packed": "PackedInt32Array", "len": 3, "items": [74, 157, 72]},
+      "belief_relay_hops": 5,
+      "belief_relay_reach_x": {"__packed": "PackedInt32Array", "len": 3, "items": [63, 92, 81]},
+      "belief_relay_reach_y": {"__packed": "PackedInt32Array", "len": 3, "items": [180, 63, 182]},
       "bench": {
         "blocked_reason": "populations[1].bench.blocked_reason",
         "blocked_severity": "populations[1].bench.blocked_severity",
@@ -6878,6 +6884,9 @@
       "belief_anchor_y": 113,
       "belief_reach_x": {"__packed": "PackedInt32Array", "len": 3, "items": [52, 15, 54]},
       "belief_reach_y": {"__packed": "PackedInt32Array", "len": 3, "items": [175, 92, 89]},
+      "belief_relay_hops": 172,
+      "belief_relay_reach_x": {"__packed": "PackedInt32Array", "len": 3, "items": [30, 121, 36]},
+      "belief_relay_reach_y": {"__packed": "PackedInt32Array", "len": 3, "items": [33, 158, 119]},
       "bench": {
         "blocked_reason": "populations[2].bench.blocked_reason",
         "blocked_severity": "populations[2].bench.blocked_severity",
