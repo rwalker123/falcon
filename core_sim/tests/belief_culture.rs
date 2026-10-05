@@ -17,11 +17,13 @@ mod faction_support;
 use core_sim::save::{decode_save, encode_save};
 use core_sim::sim_state::{capture_sim_state, restore_sim_state};
 use core_sim::{
-    publish_baseline_snapshot, run_turn, scalar_from_f32, simulate_population,
-    split_band_from_parent, trace_path, traffic_ceiling, BandId, BandTravel, BeliefRegistry,
-    CultureConfig, LadderConfigHandle, MoraleCause, PopulationCohort, ResidentBand, RoadRegistry,
-    Scalar, SettleConfig, SimulationConfig, SnapshotHistory, Tile, TileRegistry, WellbeingConfig,
-    WellbeingConfigHandle,
+    publish_baseline_snapshot, reconcile_band_culture_layers, reconcile_culture_layers, run_turn,
+    scalar_from_f32, sedentarization_tick, simulate_population, split_band_from_parent,
+    telling_tick, trace_path, traffic_ceiling, BandId, BandTravel, BeatLedger, BeliefConfig,
+    BeliefConfigHandle, BeliefRegistry, CultureConfig, CultureManager, CultureOwner,
+    CultureTraitAxis, LadderConfigHandle, MoraleCause, PopulationCohort, ResidentBand,
+    RoadRegistry, Scalar, SedentarizationConfigHandle, SedentarizationScore, SettleConfig,
+    SimulationConfig, SnapshotHistory, Tile, TileRegistry, WellbeingConfig, WellbeingConfigHandle,
 };
 use faction_support::{one_faction_world, two_faction_world, HOME, RIVAL};
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
@@ -1082,4 +1084,313 @@ fn the_published_hop_count_is_the_one_the_term_was_priced_from() {
         "moraleCulture {morale_culture} is the one-hop blend {}",
         blend.raw()
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// The ancestor pull (issue #701, `.claude/rules/core_sim/belief.md` → "The ancestor pull"): honouring
+// the dead pulls a band's own culture layer toward Devout and Traditionalist by `tie × ancestor_pull`,
+// a stateless TARGET offset the band's elasticity lags behind. Each arm is a PAIR of worlds staged
+// identically but for the one thing under test, so the gap is the pull and nothing else (a band's
+// character offset is seeded from its id and is the same in both).
+// ---------------------------------------------------------------------------------------------
+
+/// Culture reconcile turns each pair of worlds runs — enough for a band's elasticity to close most
+/// of the distance to its target.
+const PULL_TURNS: u32 = 60;
+/// The least gap, in axis units, a saturated direct tie must open between the pulled band and its
+/// unpulled twin after [`PULL_TURNS`] — liveness: a dead pull would read `0`. Full tie is `0.3`.
+const MIN_PULL_GAP: f32 = 0.1;
+/// How close two gaps (or two layers that must be identical) must read, in axis units.
+const GAP_TOLERANCE: f32 = 1.0e-3;
+/// The least a faction's rolled-up Devout signal must rise when every band is tied to its dead.
+const MIN_SIGNAL_RISE: f32 = 0.05;
+
+fn devout() -> usize {
+    CultureTraitAxis::SecularDevout.index()
+}
+
+fn traditionalist() -> usize {
+    CultureTraitAxis::TraditionalistRevisionist.index()
+}
+
+/// Turn the pull off for this world: an empty `ancestor_pull` map.
+fn pull_off(app: &mut App) {
+    let config = BeliefConfig {
+        ancestor_pull: Default::default(),
+        ..BeliefConfig::default()
+    };
+    app.world
+        .insert_resource(BeliefConfigHandle::new(std::sync::Arc::new(config)));
+}
+
+/// Run the culture pass `turns` times through the real systems, on the anchors and hop counts the
+/// last `simulate_population` stored on the cohorts.
+fn culture_turns(app: &mut App, turns: u32) {
+    app.world.run_system_once(reconcile_band_culture_layers);
+    for _ in 0..turns {
+        app.world.run_system_once(reconcile_culture_layers);
+    }
+}
+
+fn band_axes(app: &App, band: BandId) -> (f32, f32) {
+    let layer = app
+        .world
+        .resource::<CultureManager>()
+        .band_layer_by_owner(CultureOwner::from_band(band))
+        .expect("the band has a culture layer");
+    let values = layer.traits.values();
+    (values[devout()].to_f32(), values[traditionalist()].to_f32())
+}
+
+/// A band standing within reach of a saturated anchor (`r = 1`) — or, unanchored, standing on bare
+/// ground — after the culture pass.
+fn direct_band_world(pull: bool, anchored: bool) -> (App, BandId) {
+    let mut app = one_faction_world();
+    let fx = fixture(&mut app);
+    if !pull {
+        pull_off(&mut app);
+    }
+    if anchored {
+        stage_belief(&mut app, fx.at, GREAT_CEMETERY);
+    }
+    morale_turn(&mut app);
+    assert_eq!(
+        cohort(&app, fx.band).belief_anchor.is_some(),
+        anchored,
+        "fixture: the anchor is held exactly when belief was staged"
+    );
+    culture_turns(&mut app, PULL_TURNS);
+    (app, fx.band_id)
+}
+
+/// **The pull is live:** a band tied to a saturated anchor sits measurably more Devout and more
+/// Traditionalist than the same band with no ancestors.
+#[test]
+fn a_band_tied_to_its_dead_sits_more_devout_and_more_traditionalist() {
+    let (anchored, id) = direct_band_world(true, true);
+    let (bare, _) = direct_band_world(true, false);
+    let (devout_with, trad_with) = band_axes(&anchored, id);
+    let (devout_without, trad_without) = band_axes(&bare, id);
+    assert!(
+        devout_with - devout_without > MIN_PULL_GAP,
+        "devout {devout_with} vs {devout_without}"
+    );
+    assert!(
+        trad_without - trad_with > MIN_PULL_GAP,
+        "traditionalist (lower is more traditionalist) {trad_with} vs {trad_without}"
+    );
+}
+
+/// **A band no chain reaches is not pulled** (`r = 0`), though it still holds its anchor.
+#[test]
+fn an_anchored_band_reached_by_no_chain_gets_no_pull() {
+    let stranded = |anchored: bool| -> (App, BandId) {
+        let mut app = one_faction_world();
+        let fx = fixture(&mut app);
+        let place = along_row(&app, fx.at, NEARBY_STEPS);
+        if anchored {
+            stage_belief(&mut app, place, GREAT_CEMETERY);
+            morale_turn(&mut app);
+        }
+        let far = along_row(&app, place, base_reach(&app) + JUST_OUT_OF_REACH);
+        stand_on(&mut app, fx.band, far);
+        morale_turn(&mut app);
+        assert_eq!(cohort(&app, fx.band).belief_anchor.is_some(), anchored);
+        culture_turns(&mut app, PULL_TURNS);
+        (app, fx.band_id)
+    };
+    let (held, id) = stranded(true);
+    let (none, _) = stranded(false);
+    let (a, b) = (band_axes(&held, id), band_axes(&none, id));
+    assert!((a.0 - b.0).abs() < GAP_TOLERANCE && (a.1 - b.1).abs() < GAP_TOLERANCE);
+}
+
+/// **One hop of kin halves the pull:** the band beyond the anchor's reach but within A's is pulled
+/// half as far as A, which stands within reach itself.
+#[test]
+fn one_hop_of_kin_gets_half_the_pull_of_a_direct_band() {
+    let world = |pull: bool| -> (App, BandId, BandId) {
+        let mut app = one_faction_world();
+        if !pull {
+            pull_off(&mut app);
+        }
+        let (a, b, layout) = two_kin(&mut app);
+        // Deepen the anchor so `s` is near one and the gap clears the liveness floor.
+        stage_belief(&mut app, layout.anchor, GREAT_CEMETERY);
+        morale_turn(&mut app);
+        assert_eq!(
+            cohort(&app, b).last_belief_relay_hops,
+            1,
+            "fixture: B is one hop out"
+        );
+        culture_turns(&mut app, PULL_TURNS);
+        let ia = *app.world.get::<BandId>(a).unwrap();
+        let ib = *app.world.get::<BandId>(b).unwrap();
+        (app, ia, ib)
+    };
+    let (with, a, b) = world(true);
+    let (without, _, _) = world(false);
+    let gap = |band: BandId| band_axes(&with, band).0 - band_axes(&without, band).0;
+    let (direct, kin) = (gap(a), gap(b));
+    assert!(
+        direct > MIN_PULL_GAP,
+        "fixture: the direct band is pulled ({direct})"
+    );
+    // Both bands tie to the same anchor at the same belief, so `s` cancels: the gaps are in the
+    // ratio of `r` — one over `relay_per_hop`.
+    let relay = wellbeing(&with).culture.relay_per_hop;
+    assert!(
+        (kin - direct * relay).abs() < GAP_TOLERANCE,
+        "kin {kin} vs {relay} of direct {direct}"
+    );
+}
+
+/// **An empty `ancestor_pull` is the unpulled culture, exactly.**
+#[test]
+fn an_empty_ancestor_pull_reproduces_the_unpulled_culture() {
+    let (off, id) = direct_band_world(false, true);
+    let (bare, _) = direct_band_world(true, false);
+    assert_eq!(band_axes(&off, id), band_axes(&bare, id));
+}
+
+/// The faction's rolled-up `culture.axis.secular_devout` Telling signal, as the ledger records it
+/// (`BeatLedger::to_state` history), after one Telling turn.
+fn devout_signal(app: &mut App) -> f32 {
+    app.world.run_system_once(telling_tick);
+    let state = app.world.resource::<BeatLedger>().to_state();
+    let series = state
+        .history
+        .iter()
+        .find(|h| h.signal == "culture.axis.secular_devout")
+        .expect("the signal is sampled");
+    Scalar::from_raw(*series.samples.last().expect("a sample")).to_f32()
+}
+
+/// **The shipped representation:** the signal The Telling reads rises for a faction whose bands are
+/// tied to their dead.
+#[test]
+fn the_secular_devout_signal_rises_for_a_faction_tied_to_its_dead() {
+    let world = |anchored: bool| -> App {
+        let mut app = one_faction_world();
+        app.world.insert_resource(BeliefRegistry::default());
+        let bands: Vec<(Entity, Entity)> = app
+            .world
+            .query_filtered::<(Entity, &PopulationCohort), With<ResidentBand>>()
+            .iter(&app.world)
+            .filter(|(_, c)| c.faction == HOME)
+            .map(|(e, c)| (e, c.current_tile))
+            .collect();
+        for (band, tile) in bands {
+            let at = app.world.get::<Tile>(tile).unwrap().position;
+            app.world
+                .get_mut::<PopulationCohort>(band)
+                .unwrap()
+                .stores
+                .reset_food("dry", scalar_from_f32(DEEP_LARDER));
+            if anchored {
+                stage_belief(&mut app, at, GREAT_CEMETERY);
+            }
+        }
+        morale_turn(&mut app);
+        culture_turns(&mut app, PULL_TURNS);
+        app
+    };
+    let mut tied = world(true);
+    let mut bare = world(false);
+    let (with, without) = (devout_signal(&mut tied), devout_signal(&mut bare));
+    assert!(
+        with - without > MIN_SIGNAL_RISE,
+        "signal {with} vs {without}"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Belief feeds the tether (`SedentarizationScore`'s belief input).
+// ---------------------------------------------------------------------------------------------
+
+/// Where, relative to each band's standing tile, belief is staged for the tether arm.
+#[derive(Clone, Copy)]
+enum Stage {
+    Nowhere,
+    OnStandingTile,
+    BesideStandingTile,
+}
+
+/// The least a saturated belief tether must add to the score, in score points (full is `5`).
+const MIN_TETHER_GAIN: f32 = 1.0;
+/// A belief far past the reference.
+const OVERSHOOT: f32 = 5.0;
+
+/// A fresh world's HOME faction score after one `sedentarization_tick`, with `amount` of belief
+/// staged per `stage` for every resident band.
+fn tether_score(stage: Stage, amount: f32) -> f32 {
+    let mut app = one_faction_world();
+    app.world.insert_resource(BeliefRegistry::default());
+    let standing_tiles: Vec<Entity> = app
+        .world
+        .query_filtered::<&PopulationCohort, With<ResidentBand>>()
+        .iter(&app.world)
+        .filter(|c| c.faction == HOME)
+        .map(|c| c.current_tile)
+        .collect();
+    let standing: Vec<UVec2> = standing_tiles
+        .into_iter()
+        .map(|t| app.world.get::<Tile>(t).unwrap().position)
+        .collect();
+    for at in &standing {
+        match stage {
+            Stage::Nowhere => {}
+            Stage::OnStandingTile => stage_belief(&mut app, *at, amount),
+            Stage::BesideStandingTile => {
+                let beside = along_row(&app, *at, NEARBY_STEPS);
+                assert!(
+                    !standing.contains(&beside),
+                    "fixture: the beside tile is nobody's standing tile"
+                );
+                stage_belief(&mut app, beside, amount);
+            }
+        }
+    }
+    app.world.run_system_once(sedentarization_tick);
+    app.world.resource::<SedentarizationScore>().score(HOME)
+}
+
+fn tether_config(app: &App) -> std::sync::Arc<core_sim::SedentarizationConfig> {
+    app.world.resource::<SedentarizationConfigHandle>().get()
+}
+
+/// **A band standing on belief scores higher; one standing beside it adds nothing.**
+#[test]
+fn belief_underfoot_raises_the_sedentarization_score_and_belief_beside_does_not() {
+    let config = tether_config(&one_faction_world());
+    let reference = config.references.belief;
+    let bare = tether_score(Stage::Nowhere, 0.0);
+    let on = tether_score(Stage::OnStandingTile, reference);
+    let beside = tether_score(Stage::BesideStandingTile, reference);
+    assert!(on - bare > MIN_TETHER_GAIN, "on {on} vs bare {bare}");
+    assert!(
+        (beside - bare).abs() < GAP_TOLERANCE,
+        "beside {beside} vs bare {bare}"
+    );
+    // One tick from a zero score, the EMA keeps `1 − smoothing` of the raw blend, and the belief
+    // input is `weights.belief` of it at saturation.
+    let expected = (1.0 - config.smoothing) * 100.0 * config.weights.belief;
+    assert!(
+        ((on - bare) - expected).abs() < GAP_TOLERANCE,
+        "gain {} vs {expected}",
+        on - bare
+    );
+}
+
+/// **The contribution saturates at `references.belief`:** five times the reference scores the same
+/// as the reference, and half the reference scores half.
+#[test]
+fn the_belief_contribution_saturates_at_the_reference() {
+    let reference = tether_config(&one_faction_world()).references.belief;
+    let bare = tether_score(Stage::Nowhere, 0.0);
+    let at_reference = tether_score(Stage::OnStandingTile, reference) - bare;
+    let beyond = tether_score(Stage::OnStandingTile, reference * OVERSHOOT) - bare;
+    let half = tether_score(Stage::OnStandingTile, reference * HALF_STRENGTH) - bare;
+    assert!((beyond - at_reference).abs() < GAP_TOLERANCE);
+    assert!((half - at_reference * HALF_STRENGTH).abs() < GAP_TOLERANCE);
 }

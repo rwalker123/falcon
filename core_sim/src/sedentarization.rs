@@ -2,8 +2,9 @@
 //!
 //! Each turn `sedentarization_tick` blends normalized inputs (domestication — the Phase E
 //! `HerdRegistry::domesticated_count` seam — plus surplus, map resource density, and
-//! population) into a 0–100 score (config-weighted, EMA-smoothed) and, on a *rising* crossing
-//! of the soft (~40) / hard (~70) thresholds, pushes a `SedentarizationPrompt` to the command
+//! population, and the belief on the ground its bands stand on — the ancestors are a reason to
+//! stay, `.claude/rules/core_sim/belief.md` → "Belief feeds the tether") into a 0–100 score
+//! (config-weighted, EMA-smoothed) and, on a *rising* crossing of the soft (~40) / hard (~70) thresholds, pushes a `SedentarizationPrompt` to the command
 //! feed. The score is exported per-faction in the snapshot (a HUD meter). No new entities —
 //! this is the first slice of the pastoral→settlement chain (`Camp`, corrals, and wiring
 //! `found_settlement` to the hard prompt stay deferred).
@@ -15,7 +16,8 @@ use bevy::prelude::*;
 use tracing::info;
 
 use crate::{
-    components::{PopulationCohort, ResidentBand, FOOD},
+    belief::BeliefRegistry,
+    components::{PopulationCohort, ResidentBand, Tile, FOOD},
     fauna::{HerdDensityMap, HerdRegistry},
     forage::ForageRegistry,
     orders::FactionId,
@@ -121,22 +123,36 @@ pub fn sedentarization_tick(
     // `With<ResidentBand>`: the sedentarization score aggregates real bands' surplus/population; a
     // detached expedition's carried larder is not settled "tether".
     cohorts: Query<&PopulationCohort, With<ResidentBand>>,
+    // The belief input reads the tile a band STANDS on (`current_tile`), never its home.
+    tiles: Query<&Tile>,
+    belief: Res<BeliefRegistry>,
 ) {
     let cfg = config.get();
+    let refs = &cfg.references;
 
     // Per-faction total population + carried food surplus (the set of active factions to score).
     // Food is band-local, so the faction's surplus is the sum of its bands' larders.
     let mut population: HashMap<FactionId, u64> = HashMap::new();
     let mut surplus: HashMap<FactionId, f32> = HashMap::new();
+    // Per-faction sum of (normalized standing belief × band size); divided by the faction's
+    // population below, it is the population-weighted mean over its resident bands.
+    let mut belief_weighted: HashMap<FactionId, f32> = HashMap::new();
     for cohort in cohorts.iter() {
         *population.entry(cohort.faction).or_insert(0) += cohort.size as u64;
         *surplus.entry(cohort.faction).or_insert(0.0) += cohort.stores.get(FOOD).to_f32().max(0.0);
+        // The ancestors under the band's feet, saturating at `references.belief`, weighted by the
+        // band's people so a large band standing on its dead pulls harder than a small one. A band
+        // whose standing tile does not resolve reads no belief.
+        let standing_belief = tiles
+            .get(cohort.current_tile)
+            .map_or(0.0, |tile| belief.get(tile.position));
+        let belief_norm = (standing_belief / refs.belief.max(f32::EPSILON)).clamp(0.0, 1.0);
+        *belief_weighted.entry(cohort.faction).or_insert(0.0) += belief_norm * cohort.size as f32;
     }
 
     // Map-wide game richness (v1 environmental baseline; per-faction-local density is a
     // documented future refinement).
     let resource_density = density.normalized_average().clamp(0.0, 1.0);
-    let refs = &cfg.references;
     let w = &cfg.weights;
     // Guard against a malformed env-override config: `< 0` would make the update term
     // negative, and `>= 1.0` would zero it and freeze the score forever — so cap strictly
@@ -160,11 +176,18 @@ pub fn sedentarization_tick(
         let sur_norm = (faction_surplus / refs.surplus.max(f32::EPSILON)).clamp(0.0, 1.0);
         let pop_norm = (pop as f32 / refs.population.max(f32::EPSILON)).clamp(0.0, 1.0);
 
+        let belief_norm = if pop == 0 {
+            0.0
+        } else {
+            belief_weighted.get(&faction).copied().unwrap_or(0.0) / pop as f32
+        };
+
         let raw = 100.0
             * (w.domestication * dom_norm
                 + w.surplus * sur_norm
                 + w.resource_density * resource_density
-                + w.population * pop_norm);
+                + w.population * pop_norm
+                + w.belief * belief_norm);
 
         let entry = score.entries.entry(faction).or_default();
         // EMA smoothing (victory_tick pattern) so the pressure builds gradually.

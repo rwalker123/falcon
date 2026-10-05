@@ -10,6 +10,10 @@ paths:
   - "core_sim/src/snapshot/population.rs"
   - "core_sim/src/wellbeing_config.rs"
   - "core_sim/src/data/wellbeing_config.json"
+  - "core_sim/src/culture.rs"
+  - "core_sim/src/sedentarization.rs"
+  - "core_sim/src/sedentarization_config.rs"
+  - "core_sim/src/data/sedentarization_config.json"
   - "core_sim/tests/belief.rs"
   - "core_sim/tests/belief_culture.rs"
 ---
@@ -20,7 +24,8 @@ Design of record: `docs/plan_civilization_steps.md` §"Belief is a property of a
 first pulls are not productive" (issue #697). Engine: `core_sim/src/belief.rs` (the store),
 `core_sim/src/belief_config.rs` (the lever), the deaths source in `systems/population.rs` and the
 combat sites in `systems/labor.rs`. What belief DOES — the culture morale term (issue #699,
-§"What belief does, through seams that exist") — is "The culture morale term" below.
+§"What belief does, through seams that exist") — is "The culture morale term" below; the other two
+consumers (issue #701) are "The ancestor pull" and "Belief feeds the tether".
 
 ## Config files
 
@@ -32,6 +37,8 @@ combat sites in `systems/labor.rs`. What belief DOES — the culture morale term
 | | `min_anchor_belief` (**1.0**) — the least belief a place must hold before a band adopts it as its anchor: one whole death's worth. Gates adoption only. PLAYTEST DIAL; validated finite and `>= 0` |
 | | `relay_per_hop` (**0.5**) — how much of the reach each hop of kin relays: a band tied in through `n` bands of its own people is near at `relay_per_hop ^ n`. PLAYTEST DIAL; validated finite and in `[0, 1]`; `0` turns relaying off and reproduces the unrelayed term exactly |
 | `src/data/belief_config.json` | `belief_per_death` (**1.0**) — belief added to the tile a band stands on, per person who dies there. At `1.0` the unit of belief **is** the dead-equivalent: a place reading `12` holds twelve people's worth of ancestors, and later sources are priced in that unit. Loader `belief_config.rs` on the shared boot seam (`config-loading.md`), env override `BELIEF_CONFIG_PATH`. No hot-reload kind. **There is deliberately no decay lever** |
+| | `ancestor_pull` (**`{ secular_devout: 0.3, traditionalist_revisionist: -0.3 }`**) — the signed offset each named culture axis takes at full tie (`s → 1`, `r = 1`). Keys are the `culture.axis.*` snake_case keys (`culture::culture_axis_key`, the one mapping); an unknown key or a non-finite value is a parse error; an axis not named takes no pull, so `{}` turns the pull off. PLAYTEST DIAL: at `0.3` a band stays under the `0.6` band soft divergence threshold on the pull alone |
+| `src/data/sedentarization_config.json` | `weights.belief` (**0.10**) and `references.belief` (**20.0** dead-equivalents) — the tether's belief input (see "Belief feeds the tether"); `weights.resource_density` went `0.20 → 0.10` to keep the weights summing to `1.0` |
 
 ## The store: `BeliefRegistry`
 
@@ -190,6 +197,52 @@ tie-break order is Terrain ≥ Climate ≥ Unrest ≥ Culture (`MoraleContributi
 - **Every other cohort starts `None`**: the opening bands at worldgen, and a detached party
   (`belief_anchor` cleared at launch — a party keeps no morale of its own).
 
+## The ancestor pull — belief moves the culture axes
+
+Honouring the dead pulls a band's OWN culture layer toward **Devout** (`SecularDevout`, positive is
+devout) and **Traditionalist** (`TraditionalistRevisionist`, NEGATIVE is traditionalist). Issue #701;
+design in `docs/plan_civilization_steps.md` §"What belief does, through seams that exist".
+
+**The tie.** `tie = s × r` — the two factors the culture morale term already prices. `s` is
+`CultureConfig::anchor_weight` of the belief on the band's anchor; `r = relay_per_hop ^ hops`, `0`
+when no chain reaches the band. Both come from what the band already stores
+(`PopulationCohort::belief_anchor`, `last_belief_relay_hops` decoded by
+`belief_relay::hops_from_wire`): no new search, no new cohort field, no new checkpointed state. `r`
+is computed in ONE place, `CultureConfig::relay_strength`, and `CultureConfig::ancestor_tie` is `s × r`
+on top of it; the morale term and the pull both call them, so the formula is not stated twice. With
+no anchor the tie is `0`. The hop count is the one `simulate_population` priced the morale term from
+(it runs after the culture pass in the same turn), so the pull lags the relay by the one turn the
+cohort field holds.
+
+**The pull.** `pull[axis] = tie × ancestor_pull[axis]`, built per resident band by
+`culture::band_ancestor_pulls` inside `reconcile_culture_layers` and handed to
+`CultureManager::reconcile` as a `BTreeMap<u64, [Scalar; 15]>` keyed by the band's culture owner key.
+A band absent from the map takes no pull. `reconcile` passes the entry through the same extra-offset
+slot `resolve_against` gives influencer resonance — it is NOT influencer resonance (bands still have
+no channel of their own for that) — so the band layer's target is `parent + modifier + pull`.
+
+**Why a stateless target offset.** The band's elasticity already supplies the lag, so nothing
+accumulates: a band that walks away from its dead (`r → 0`) relaxes back to its province at the band
+scope's elasticity, and a band that returns is pulled again. An accumulating drift would need its own
+state, its own checkpoint, and its own decay lever. Gatherings (#698) and the monument (#692) add
+belief through `BeliefRegistry::add`; they raise `s`, and so the pull, with no further code.
+
+**Where it shows.** The faction's `culture.axis.secular_devout` / `…traditionalist_revisionist`
+Telling signals read the population-weighted rollup of the band layers
+(`CultureManager::faction_trait_average`), so a people tied to its dead reads more devout and more
+traditionalist to The Telling's `when` / `gloss` / stance calls with no further wiring.
+
+## Belief feeds the tether
+
+`sedentarization_tick` takes a fifth input, **belief**: per faction, the population-weighted mean over
+its resident bands of `clamp(belief at the band's STANDING tile / references.belief, 0, 1)`. The
+standing tile is `current_tile`, never `home` — the same rule as the deaths source — so a band
+beside its dead (not on them) adds nothing and a band that walks off loses the term. `weights.belief`
+(**0.10**) and `references.belief` (**20** dead-equivalents) are in `sedentarization_config.json`;
+the weights sum to `1.0` after `resource_density` fell `0.20 → 0.10` (the map-wide baseline, identical
+across factions, so the input that differentiates least). The rest of the score is in `campaign.md`
+§Sedentarization.
+
 ## On the wire and in the checkpoint
 
 - **`TileState.belief:float`** (appended last on `snapshot.fbs`'s `TileState`) carries the registry's
@@ -272,3 +325,11 @@ tie-break order is Terrain ≥ Climate ≥ Unrest ≥ Culture (`MoraleContributi
 | `belief_culture::the_published_relayed_region_agrees_with_the_term_at_every_tile` | a kin band on every published relayed tile reads `r > 0`, and on every bordering tile outside both regions `r == 0` |
 | `belief_relay::tests::*` | the search on its own: a chain halves per hop, another people relays nothing, an anchorless band reaches nothing, a band is not its own relayer |
 | `labor_allocation::a_far_work_partys_hunt_dead_credit_no_belief` | a party posted past `band_work_range` loses people and the registry stays empty — neither the camp nor the herd tile gains belief |
+| `belief_culture::a_band_tied_to_its_dead_sits_more_devout_and_more_traditionalist` | a band tied to a saturated anchor, after 60 culture turns, is above its unanchored twin on Devout and below it on `TraditionalistRevisionist` by more than a named floor |
+| `belief_culture::an_anchored_band_reached_by_no_chain_gets_no_pull` | a band holding an anchor no chain reaches (`r = 0`) reads exactly its unanchored twin |
+| `belief_culture::one_hop_of_kin_gets_half_the_pull_of_a_direct_band` | the one-hop band's gap over the pull-off world is `relay_per_hop` times the direct band's |
+| `belief_culture::an_empty_ancestor_pull_reproduces_the_unpulled_culture` | `ancestor_pull: {}` with an anchor held equals the no-anchor culture exactly |
+| `belief_culture::the_secular_devout_signal_rises_for_a_faction_tied_to_its_dead` | the `culture.axis.secular_devout` sample The Telling records rises when every band is tied to its dead |
+| `belief_culture::belief_underfoot_raises_the_sedentarization_score_and_belief_beside_does_not` | belief on every band's standing tile adds exactly `(1 − smoothing) × 100 × weights.belief` on the first tick; belief on a tile beside adds nothing |
+| `belief_culture::the_belief_contribution_saturates_at_the_reference` | five times `references.belief` scores the same as `references.belief`; half scores half |
+| `belief_config::tests::*` | an unknown `ancestor_pull` key and a non-finite value are parse errors; the vector places each value on its axis; the shipped JSON equals the default |
