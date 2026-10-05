@@ -250,16 +250,29 @@ const TRAVEL_DEST_RETICLE_FACTOR := 0.62      # reticle radius as a factor of he
 # the outline the culture term is positive, outside it negative. The region is road-aware and so
 # irregular: the outline is traced from the tile SET, never a radius.
 #
-# Both ride `HudStyle.VOICE_PIGMENT` — the Telling's earth-pigment ink, the band's memory of its dead
-# — read at the DRAW SITE for the theme reason above. It is a hue no worked-source mark (forage green,
-# hunt red, extraction slate), range border (green / azure) or pending style (dashed amber) wears.
+# Both ride `HudStyle.BELIEF` — the ancestors' violet, a hue no worked-source mark (forage green,
+# hunt red, extraction slate), range border (green / azure) or pending style (dashed amber) wears —
+# read at the DRAW SITE for the theme reason above.
+#
+# THE OUTLINE is the violet line over a wider DARK under-stroke (`HudStyle.GROUND`), so it holds over
+# light ground (sand, snow) as well as dark (water, forest), where the violet alone carries it.
+const ANCESTORS_REACH_WIDTH := 4.0
+const ANCESTORS_REACH_ALPHA := 0.95
+const ANCESTORS_REACH_UNDER_WIDTH := 7.0
+const ANCESTORS_REACH_UNDER_ALPHA := 0.7
+# THE ANCHOR MARKER is the `BeliefSprites` urn at true marker size, on a dark backing disc ringed in
+# violet — the expedition marker's composite (`BandMarkerRenderer._draw_expedition_body`), so it reads
+# over any terrain. The disc is a band token's radius and the sprite spans `ANCESTORS_SPRITE_FACTOR`
+# of the disc's DIAMETER, which lands the urn in the 24–41 px band the other map markers draw at.
+# `ANCESTORS_GLYPH` in violet is the fallback when the sprite does not load.
 const ANCESTORS_GLYPH := "⚱"
-const ANCESTORS_REACH_WIDTH := 3.0
-const ANCESTORS_REACH_ALPHA := 0.85
-const ANCESTORS_GLYPH_ALPHA := 1.0
-const ANCESTORS_GLYPH_FONT_FACTOR := 1.4      # of hex radius — the urn sits small in its em box
+const ANCESTORS_DISC_FACTOR := 0.34           # disc radius, of hex radius (= BAND_TOKEN_RADIUS_FACTOR)
+const ANCESTORS_DISC_ALPHA := 0.55
+const ANCESTORS_RING_WIDTH := 2.0
+const ANCESTORS_SPRITE_FACTOR := 0.95         # sprite size, of the disc's diameter
+const ANCESTORS_SPRITE_MIN_SIZE := 12.0       # px
+const ANCESTORS_GLYPH_FONT_FACTOR := 1.4      # of disc diameter — the ⚱ sits small in its em box
 const ANCESTORS_GLYPH_FONT_MIN := 14
-const ANCESTORS_GLYPH_FONT_MAX := 72
 
 var _view: MapView = null
 # Optimistic pending-labor map (per band entity), pushed from the HUD via set_labor_pending.
@@ -1493,7 +1506,11 @@ func _draw_travel_destination(unit: Dictionary, band_col: int, band_row: int, ef
 func _draw_band_ancestors(band: Dictionary, band_col: int, eff_col: int, radius: float, origin: Vector2) -> void:
 	if not bool(band.get("has_belief_anchor", false)):
 		return
-	var color := Color(HudStyle.VOICE_PIGMENT, ANCESTORS_REACH_ALPHA)
+	var color := Color(HudStyle.BELIEF, ANCESTORS_REACH_ALPHA)
+	var under := Color(HudStyle.GROUND, ANCESTORS_REACH_UNDER_ALPHA)
+	# Perimeter edges are collected first, so the whole dark under-stroke lands before any violet —
+	# drawn edge by edge, one edge's under-stroke would cut the violet of the edge before it.
+	var edges: Array[PackedVector2Array] = []
 	var xs: PackedInt32Array = PackedInt32Array(band.get("belief_reach_x", PackedInt32Array()))
 	var ys: PackedInt32Array = PackedInt32Array(band.get("belief_reach_y", PackedInt32Array()))
 	var count := mini(xs.size(), ys.size())
@@ -1510,15 +1527,32 @@ func _draw_band_ancestors(band: Dictionary, band_col: int, eff_col: int, radius:
 			var noff := _view._axial_to_offset(axial.x + d.x, axial.y + d.y)
 			if _in_reach_region(region, noff.x, noff.y):
 				continue
-			_view.draw_line(pts[edge], pts[(edge + 1) % 6], color, ANCESTORS_REACH_WIDTH, true)
+			edges.append(PackedVector2Array([pts[edge], pts[(edge + 1) % 6]]))
+	for seg in edges:
+		_view.draw_line(seg[0], seg[1], under, ANCESTORS_REACH_UNDER_WIDTH, true)
+	for seg in edges:
+		_view.draw_line(seg[0], seg[1], color, ANCESTORS_REACH_WIDTH, true)
 	var anchor_y := int(band.get("belief_anchor_y", 0))
 	if anchor_y < 0 or anchor_y >= _view.grid_height:
 		return
 	var anchor_col := eff_col + _view._wrapped_col_delta(band_col, int(band.get("belief_anchor_x", 0)))
-	var font_size := clampi(int(round(radius * ANCESTORS_GLYPH_FONT_FACTOR)),
-		ANCESTORS_GLYPH_FONT_MIN, ANCESTORS_GLYPH_FONT_MAX)
-	_view._draw_marker_glyph(_view._hex_center(anchor_col, anchor_y, radius, origin), ANCESTORS_GLYPH,
-		font_size, Color(HudStyle.VOICE_PIGMENT, ANCESTORS_GLYPH_ALPHA))
+	_draw_ancestors_marker(_view._hex_center(anchor_col, anchor_y, radius, origin), radius)
+
+## The belief place's MARKER: dark disc, violet ring, then the `BeliefSprites` urn — or the violet ⚱
+## glyph when the sprite does not load.
+func _draw_ancestors_marker(center: Vector2, radius: float) -> void:
+	var disc_radius := radius * ANCESTORS_DISC_FACTOR
+	_view.draw_circle(center, disc_radius, Color(HudStyle.GROUND, ANCESTORS_DISC_ALPHA))
+	_view.draw_arc(center, disc_radius, 0.0, TAU, WORKED_RING_SEGMENTS, HudStyle.BELIEF,
+		ANCESTORS_RING_WIDTH, true)
+	var urn := BeliefSprites.urn()
+	if urn != null:
+		_view._draw_marker_sprite(center, urn,
+			int(maxf(ANCESTORS_SPRITE_MIN_SIZE, disc_radius * 2.0 * ANCESTORS_SPRITE_FACTOR)))
+		return
+	_view._draw_marker_glyph(center, ANCESTORS_GLYPH,
+		maxi(ANCESTORS_GLYPH_FONT_MIN, int(round(disc_radius * 2.0 * ANCESTORS_GLYPH_FONT_FACTOR))),
+		HudStyle.BELIEF)
 
 ## Membership in the ancestors' reach region for a tile given in the band's EFFECTIVE column frame:
 ## the column is folded back onto the map (wrap) before the lookup, and an off-map tile is outside.

@@ -1,7 +1,7 @@
 # Bundled Icon Generation Prompts
 #
 # The icon twin of assets/terrain/texture_prompts.txt. These prompts generate the
-# bundled PNG art behind the nine icon families:
+# bundled PNG art behind the ten icon families:
 #
 #   assets/icons/fauna/    herd map markers      (ui/FaunaSprites.gd)
 #   assets/icons/sites/    food-site markers     (ui/SiteSprites.gd)
@@ -12,9 +12,10 @@
 #   assets/icons/hud/      HUD chrome marks      (ui/HudSprites.gd)
 #   assets/icons/workings/ worked-deposit markers (ui/WorkingsSprites.gd)
 #   assets/icons/expeditions/ party markers      (ui/ExpeditionSprites.gd)
+#   assets/icons/belief/   belief-place marker   (ui/BeliefSprites.gd)
 #
-# THE SIX MAP-MARKER FAMILIES — `fauna/`, `sites/`, `wonders/`, `stages/`, `workings/`,
-# `expeditions/` — share ONE pipeline and ONE house style, so both are documented once here
+# THE SEVEN MAP-MARKER FAMILIES — `fauna/`, `sites/`, `wonders/`, `stages/`, `workings/`,
+# `expeditions/`, `belief/` — share ONE pipeline and ONE house style, so both are documented once here
 # rather than per family.
 # THE OTHER THREE DO NOT. `crops/`, `flora/` and `hud/` are not map markers: they are small
 # marks drawn over a DARK HUD PANEL, in a text row or on a button face, and they override
@@ -1951,3 +1952,37 @@ deny: Flat vector game icon of an animal skull seen straight on from the front i
 # trade.png — a trade shipment out on the map.
 # A gathered cloth bundle, never a box: a squared crate centred in the frame reads as a tile.
 trade: Flat vector game icon of a bound cloth bundle of trade goods, a plump rounded sack gathered into a knotted neck at the top with two short tie ends flicking outward, clearly wider at the bottom than at the top and taller than it is wide, no box, no crate, no slats, no barrel, no coin, no scale, no animal, no pole, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire bundle, flat limited color palette in warm gold sackcloth with a light cream knotted neck, simple two-tone shading that stays clearly lighter than the outline, crisp clean edges, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the bundle on every side, no ground, no shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# ============================================================================
+# BELIEF PLACE MARKER  ->  assets/icons/belief/   (ui/BeliefSprites.gd)
+# ============================================================================
+#
+# The mark on a selected band's belief place: the tile it remembers as where its dead lie, inside
+# the purple outline of the reach region it can stand in and still count as near
+# (`.claude/rules/client/overlay-channels.md`). Issue #699.
+#
+# STATUS: SHIPPED AND WIRED. `ui/BeliefSprites.urn()` resolves the PNG; `BandOverlayRenderer`
+# draws it on a dark disc inside a `HudStyle.BELIEF` ring and falls back to a violet ⚱ on `null`.
+#
+# CHOSEN RENDER: -1, keyed `--size 256 --lo 55 --hi 170`. Its brighter clay holds on the dark disc
+# at 24px where -0 went muddy brown. Widening `--hi` to 200/230 removed little rim and ate most of
+# the opaque body (8769 -> 3964 -> 1601 px), so 170 stands.
+#
+# THIS TAKES THE HOUSE STYLE, the EXPEDITION MARKERS' way: it draws over the MAP, at marker size,
+# over whatever terrain lies under it, so it keeps the thick dark charcoal outline. Front-on, since
+# an urn has no facing.
+#
+# AN URN, NEVER A GRAVESTONE OR A SKULL. The place holds the dead as a pull to come back to, not a
+# threat — a skull is already `deny`'s, and a headstone or cross reads as a modern cemetery.
+#
+# NO PURPLE IN THE SUBJECT, even though the outline around it is purple. Purple and plum sit close
+# to the magenta key colour, and `--hi 170` would eat a plum band into a half-transparent smear. The
+# contrast against the purple outline comes from the warm clay instead.
+#
+# Pipeline: the fauna pipeline at the top of this file — key at `--size 256 --lo 55 --hi 170`, fix
+# the `.import` sidecar (mipmaps on, `size_limit=64`) and judge at true marker size (24-41px)
+# composited over terrain, never at 1024. Then run the `--import` pass before any harness, or it
+# renders the fallback glyph and still exits 0.
+
+# urn.png — the belief place, where a band's dead lie.
+urn: Flat vector game icon of a squat ancient clay funerary urn seen straight on from the front in a symmetrical upright pose, a round swelling belly narrowing to a short neck with a flared rim, two small loop handles on the shoulders, a fitted domed lid with a small round knob, one plain broad band painted around the belly, no other decoration, no pattern, no flowers, no smoke, no flames, no bones, no skull, no cross, no text, no pedestal, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire urn, flat limited color palette in warm terracotta clay with a dark umber-brown painted band and a pale sandy-cream lid, no purple, no pink, simple two-tone shading that stays clearly lighter than the outline, crisp clean edges, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the urn on every side, no ground, no shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon

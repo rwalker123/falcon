@@ -7368,6 +7368,20 @@ const ANCESTORS_ROAD_TILES := [[6, 4], [7, 4], [8, 4], [9, 4], [10, 4], [11, 4],
 const ANCESTORS_BEND_TILE := Vector2i(13, 9)
 ## The probe box around a hex, in hex radii — wide enough to take a perimeter edge on any side.
 const ANCESTORS_PROBE_RADII := 1.2
+## The SECOND frame's ground: the same region over four column bands — glacier · prairie · mixed
+## woodland · deep ocean — so the outline and the marker are judged over snow, grass, forest and water,
+## not only the desert the first frame stands on. The anchor sits on the glacier/prairie seam.
+const ANCESTORS_GROUND_IDS := [22, 11, 12, 0]   # glacier · prairie_steppe · mixed_woodland · deep_ocean
+const ANCESTORS_GROUND_BAND_COLS := 4            # GRID_W (16) / 4 bands
+
+func _ancestors_ground_terrain() -> Array:
+	var arr: Array = []
+	arr.resize(GRID_W * GRID_H)
+	for y in range(GRID_H):
+		for x in range(GRID_W):
+			arr[y * GRID_W + x] = ANCESTORS_GROUND_IDS[mini(x / ANCESTORS_GROUND_BAND_COLS,
+				ANCESTORS_GROUND_IDS.size() - 1)]
+	return arr
 
 func _ancestors_reach_tiles() -> Array[Vector2i]:
 	var tiles: Array[Vector2i] = []
@@ -7437,3 +7451,10 @@ func _band_ancestors_states() -> void:
 	await _settle()
 	_assert_map("ancestors — a band with no anchor draws no mark and no outline",
 		_count_changed_pixels(bare, await _capture(), Rect2i()) == 0)
+	# The same anchored region over snow, grass, forest and water.
+	var over_ground := _snapshot_band_ancestors(true)
+	over_ground["overlays"] = {"terrain": _ancestors_ground_terrain()}
+	_map.display_snapshot(over_ground)
+	_map.selected_unit_id = BAND_ENTITY
+	await _settle()
+	await _save("map_band_ancestors_ground")

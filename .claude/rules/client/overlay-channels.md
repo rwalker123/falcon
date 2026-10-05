@@ -990,12 +990,19 @@ draws nothing.
   (`_wrapped_col_delta`) and folded back with `posmod` for the membership test
   (`_in_reach_region`), so the region stays contiguous across the wrap seam. Inside the outline the
   band's `morale_culture` term is positive; outside it, negative.
-- **The anchor mark** is the `ANCESTORS_GLYPH` urn on the anchor tile (`belief_anchor_x/y`), through
-  `MapView._draw_marker_glyph`, sized at `ANCESTORS_GLYPH_FONT_FACTOR` of the hex radius (the urn sits
-  small in its em box).
-- **Both ride `HudStyle.VOICE_PIGMENT`**, the Telling's earth-pigment ink, read at the draw site so a
-  theme swap re-tints them. No worked-source ring (green / red / slate), range border (green / azure)
-  or pending style (dashed amber) wears it.
+  The violet line (`ANCESTORS_REACH_WIDTH`) is drawn over a wider dark under-stroke
+  (`HudStyle.GROUND`, `ANCESTORS_REACH_UNDER_WIDTH`) — every edge's under-stroke first, then every
+  violet edge, so no under-stroke cuts a neighbouring edge's colour. The under-stroke carries it over
+  light ground (sand, snow); the violet's lightness carries it over dark (forest, water).
+- **The anchor mark** (`_draw_ancestors_marker`) is the expedition marker's composite: a dark disc
+  (`HudStyle.GROUND`, a band token's radius) ringed in violet, with the `BeliefSprites.urn()` sprite
+  centred on it through `MapView._draw_marker_sprite`, sized at `ANCESTORS_SPRITE_FACTOR` of the disc's
+  diameter — the 24–41 px band the other map markers draw at. When the sprite does not load, the
+  violet `ANCESTORS_GLYPH` ⚱ is drawn on the same disc.
+- **Both ride `HudStyle.BELIEF`**, a light violet authored in every theme (ember `#bf86f2`, loam
+  `#b08cf5`, kiln `#c987ea`, console `#b679ff`) and read at the draw site so a theme swap re-tints
+  them. Purple is the ancestors' hue; no worked-source ring (green / red / slate), range border
+  (green / azure) or pending style (dashed amber) wears it.
 
 ## Worked-source marks — one ring grammar for both food webs
 

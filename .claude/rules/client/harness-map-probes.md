@@ -1403,8 +1403,12 @@ follow. The road is in the snapshot, so the frame shows the outline following it
 blending on. Three claims, each a pixel DIFF against the same band rendered with no anchor: the anchor
 hex changed (the mark), the hex just below the bend changed (`ANCESTORS_BEND_TILE` — perimeter that
 exists only because the road bends), and the no-anchor band re-rendered is byte-identical to its
-control (nothing drawn without an anchor). Appended after `map_exchange_network*`, so it is now the
-LAST state in the run.
+control (nothing drawn without an anchor). Appended after `map_exchange_network*`.
+
+**`map_band_ancestors_ground`** follows it, PNG-less of claims: the same anchored region over four
+column bands of ground (`ANCESTORS_GROUND_IDS` — glacier · prairie · mixed woodland · deep ocean, the
+anchor on the glacier/prairie seam), so the violet outline and the urn marker are judged over snow,
+grass, forest and water and not only the desert. It is the LAST state in the run.
 
 ### `map_band_names*` — the fixed-screen-size BAND NAME PILL (`map-markers.md`)
 
