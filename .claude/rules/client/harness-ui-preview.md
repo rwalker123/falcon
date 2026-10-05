@@ -1060,7 +1060,7 @@ a DISJOINT subset — dropping the `blockedReason`
 half of the gate fails the short bench's two line claims ALONE, the crew-of-zero frame staying green
 because its rate is zero; re-deriving the rate off the crew fails the five rate/estimate claims and
 nothing else; a floor in place of the ceiling fails only the non-dividing remainder; drawing the ✕
-unconditionally fails only the idle bench's absence claim; wiring the ✕ to `make_requested` fails
+unconditionally fails only the idle bench's absence claim; wiring the ✕ to Make's signal fails
 both halves of the verb pair (`[]` against `[{…recipe_id: "baskets"}]`); and composing the tooltip
 out of the recipe's inputs — the forbidden implementation — fails both tooltip halves at *"20 fibre
 already cut"* against the 5 fibre · 1 hide the store really lost.
@@ -2463,7 +2463,7 @@ inspection.
 `pressed.emit()` being unable to see a covered, disabled, zero-size or IGNORE-filtered control. The
 command is asserted on the LINE through `MAIN_SCRIPT.format_bench_priority`, the work board's own
 idiom, for **all three** levels: a commit hard-wired to `normal` satisfies any single-level claim.
-Beside each, what did NOT go out — a mis-wired rung emitting `bench_crew` or `clear_bench` satisfies
+Beside each, what did NOT go out — a mis-wired rung emitting `bench_crew` or `bench_remove` satisfies
 a bare *something was emitted*.
 
 **The LIT test is the SAME one `band_panel_preview._assert_work_priority_picker_lit` makes** — the
@@ -3707,3 +3707,34 @@ re-sent opening raising the card again. `EXIT=1`.
 
 **A clean run is 470 frames / 2540 `PASS`, exit 0 — MEASURED windowed on this tree.**
 `band_panel_preview` 1518 `PASS`, exit 0, on the same tree.
+
+## The bench queue and the suggestions (`chapters/crafting_bench.gd`, issue #776)
+
+Two frames appended LAST in the chapter — `crafting_queue_suggestions` and
+`crafting_suggestion_picker` — and 26 claims; the behaviour and each claim's pairing are
+`crafting-panel.md`'s. **`crafting_bench`'s `EXPECTED_CHECKPOINTS` moved 187 → 218, RE-MEASURED**: the
+const was raised to an impossible number, the run read back `reached 218 checkpoints`, and 218 was
+set. **Run totals on this tree: 2653 `PASS` / 0 `FAIL` / 482 frames, exit 0 (2662 / 0 / 483 after the short-head follow-up).**
+
+**EVERY STATE BUILT ON `_crafting_band()` MOVED IN CONTENT, NONE IN COUNT.** The running bench now
+publishes its one-order queue (`orders[0]`, `1/2`), so the well carries the head's `Made` stepper, the
+progress line lost its `· 1 finished` clause (that count's one home is the stepper's `made/count`
+face), the running Baskets row's Make reads live `Make` rather than the retired spent *On the bench*,
+and the idle bench's crew `+` is live (the crew stays with the bench across orders).
+
+⛔ **A HEAD ROW UNDER THE WELL FAILED `crafting_panel_band_dock_collapsed`'s FIT PRECONDITION**, which
+is why the well is the head's row: with every order — head included — drawn as a row, the one-order
+reference bench grew ~26px and that state's ledger, which fits its room with under 20px to spare,
+began scrolling. Measured by the run (`FAIL — precondition: the collapsed BOTTOM-dock ledger fits
+inside its room`), not estimated.
+
+**`_crew_button_disabled` skips the queue's own steppers** (`ORDER_DECREMENT_META` /
+`ORDER_INCREMENT_META`): they wear the crew stepper's `−` / `+` glyphs, so a face search would read a
+live COUNT `+` as a live crew `+` and pass the benchable-ceiling claim on the wrong control.
+
+**THE SHORT-HEAD FOLLOW-UP added one frame and nine claims** — `crafting_queue_short_head`
+(`_short_head_state`, after the queue state): the well follows `BenchState.worked`, the skipped head
+is a `WAITING` queue row with its tinted reason, and the head row's `+`/✕ send `order 0` while the
+well's send `order 1`. Every fixture bench now carries `worked` and every order `blocked_reason` /
+`blocked_severity`. **`EXPECTED_CHECKPOINTS` moved 218 → 228, RE-MEASURED** the same way (the run read
+back `reached 228`); the PR #784 review's pausing-raise pair (a WAITING order's ↑ claims no pause) took it to 230 and the run to 2664 `PASS` / 0 `FAIL` / 483 frames.

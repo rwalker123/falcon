@@ -26,14 +26,19 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use sim_runtime::{
-    BenchState, CharacteristicBandState, CharacteristicReadingState, CraftKnowledgeState,
-    CraftOfferState, DrawnInputState, EquipmentBatchState, MaterialBatchState, MaterialDefState,
+    BenchOrderState, BenchState, CharacteristicBandState, CharacteristicReadingState,
+    CraftKnowledgeState, CraftOfferState, CraftSuggestionSourceState, CraftSuggestionState,
+    DrawnInputState, EquipmentBatchState, MaterialBatchState, MaterialDefState,
     MaterialShortfallState, RecipeDefState, RecipeInputState, RecipeOutputState,
     SourcePriorityState, OWNED_AT_TIER_UNATTRIBUTED,
 };
 
 use crate::{
-    components::{BandBench, BandEquipment, EquipmentBatch, LocalStore, SourcePriority},
+    components::{
+        BandBench, BandEquipment, BuildSource, EquipmentBatch, LocalStore, SourcePriority,
+        HEAD_ORDER,
+    },
+    craft_suggestions::SupplySource,
     crafting::{craft_discovery_id, title_from_id},
     equipment_config::{
         EffectTier, EquipmentConfig, EquipmentStat, EquipmentTier, ItemDefinition, WearQuantum,
@@ -296,7 +301,23 @@ pub(crate) fn band_craft_state(
                 .or_insert_with(|| bench_tiers(material, inputs.materials, inputs.equipment, wear));
         }
     }
-    let running = bench.and_then(|bench| bench.recipe_id.as_deref());
+    // **THE ORDER THE BENCH ROW DESCRIBES** — the worked order, else the head (a fully stuck queue
+    // reads as its head, blocked). One resolution, shared by the bench row and `onBench`.
+    let described = bench.and_then(|bench| {
+        crate::systems::worked_order(
+            bench,
+            store,
+            inputs.recipes,
+            inputs.materials,
+            inputs.equipment,
+            wear,
+        )
+        .or_else(|| bench.head().map(|_| HEAD_ORDER))
+    });
+    let running = bench
+        .zip(described)
+        .and_then(|(bench, index)| bench.orders.get(index))
+        .map(|order| order.recipe_id.as_str());
     let mut craft_offers: Vec<CraftOfferState> = inputs
         .plans
         .iter()
@@ -309,7 +330,7 @@ pub(crate) fn band_craft_state(
         })
         .collect();
     mark_suggested(&mut craft_offers, inputs.plans, bench);
-    let bench_row = bench_state(bench, store, inputs, &tiers_by_material);
+    let bench_row = bench_state(bench, described, store, wear, inputs, &tiers_by_material);
     let bench_material_rate = crate::systems::bench_material_rate(
         bench,
         store,
@@ -403,12 +424,17 @@ fn published_bench_priority(priority: SourcePriority) -> SourcePriorityState {
 /// An idle bench publishes an all-default row rather than nothing, because *"idle"* and *"blocked"*
 /// are different states and a client must be able to tell them apart without a second field.
 ///
+/// **The row's scalars describe ONE order** — `described`, the worked order, or the head when no
+/// order can be worked — and `worked` says which. Every order also carries its own skip reason.
+///
 /// **Once the pile is drawn only two things can stop the job**: nobody at the bench, and a zero
 /// craft rate (the bounding tool wore out mid-craft on a material that cannot be worked bare-handed
 /// — the one genuine *"a running job is stopped"* case). See [`NOTHING_SHORT_STOPS_A_DRAWN_PILE`].
 fn bench_state(
     bench: Option<&BandBench>,
+    described: Option<usize>,
     store: &LocalStore,
+    wear: &BandEquipment,
     inputs: &BandCraftInputs<'_>,
     tiers_by_material: &BTreeMap<&str, BenchTiers>,
 ) -> BenchState {
@@ -420,12 +446,20 @@ fn bench_state(
     // bench — that is the moment a player is most likely to state it — and a row that dropped the
     // mark here would make the control look like it had done nothing.
     let published_priority = published_bench_priority(bench.priority);
-    let Some(recipe_id) = bench.recipe_id.as_deref() else {
+    // **THE QUEUE, head first**, published on an idle bench too (as an empty list) — every order's
+    // recipe, count and made, plus the progress and pile a displaced order is holding at rest.
+    let orders = bench_orders(bench, store, wear, inputs, tiers_by_material);
+    let Some((worked, head)) =
+        described.and_then(|index| bench.orders.get(index).map(|order| (index, order)))
+    else {
         return BenchState {
             priority: published_priority,
+            orders,
             ..BenchState::default()
         };
     };
+    let worked = worked as u32;
+    let recipe_id = head.recipe_id.as_str();
     let Some(plan) = inputs.plans.iter().find(|plan| plan.id == recipe_id) else {
         // A recipe the book no longer carries — reachable only through a config edit under a running
         // world, and the bench stalls rather than clearing itself. The row states the id so the
@@ -436,6 +470,8 @@ fn bench_state(
             blocked_reason: format!("Recipe '{recipe_id}' is not in the book"),
             blocked_severity: SEVERITY_DANGER.to_string(),
             priority: published_priority,
+            orders,
+            worked,
             ..BenchState::default()
         };
     };
@@ -449,7 +485,7 @@ fn bench_state(
     // answers *"could this be made"*, not *"is anyone making it"*.
     //
     // **Except a shortage, once the pile is DRAWN** — see [`NOTHING_SHORT_STOPS_A_DRAWN_PILE`].
-    let blocking = if bench.drawn.is_some() {
+    let blocking = if head.drawn.is_some() {
         NOTHING_SHORT_STOPS_A_DRAWN_PILE
     } else {
         shortfalls.as_slice()
@@ -479,18 +515,17 @@ fn bench_state(
         // one recipe of the item, and the row's name alone would not say which.
         display_name: plan.recipe.full_name(inputs.equipment),
         workers: bench.workers,
-        progress: bench.progress.to_f32(),
+        progress: head.progress.to_f32(),
         work: plan.recipe.work,
         teaches: plan.recipe.craft.clone(),
         blocked_reason: reasons.join(REASON_JOIN),
         blocked_severity: severity.to_string(),
         shortfalls,
-        items_completed: bench.items_completed,
-        drawn: bench.drawn.is_some(),
+        drawn: head.drawn.is_some(),
         // **The grade the pile in flight FIXED**, not the one the next draw would pick — the two
         // differ the moment the store changes under a running job, and this row is about the item
         // being made.
-        output_grade: bench
+        output_grade: head
             .drawn
             .as_ref()
             .and_then(|drawn| drawn.grade.clone())
@@ -503,7 +538,7 @@ fn bench_state(
         // **What the store already lost for the job in flight** — the withdrawn amounts, not the
         // recipe's stated inputs, so a clear or a swap can name what it destroys. Empty on an
         // undrawn bench, which is the honest answer: nothing has been cut yet.
-        drawn_inputs: bench
+        drawn_inputs: head
             .drawn
             .as_ref()
             .map(|drawn| {
@@ -517,7 +552,149 @@ fn bench_state(
                     .collect()
             })
             .unwrap_or_default(),
+        orders,
+        worked,
     }
+}
+
+/// **THE BENCH'S QUEUE ON THE WIRE**, head first — one [`BenchOrderState`] per order.
+///
+/// Every order carries its own `progress` and whether it holds a cut pile, not only the worked one:
+/// an order overtaken after it had drawn — raised over, or passed by an earlier order whose stock
+/// arrived — is **paused** with its pile, and a removal of it destroys what it cut — so the readout
+/// that offers the removal must be able to say so.
+///
+/// **Each order also says why it is being SKIPPED** — `blockedReason` / `blockedSeverity`, empty for
+/// an order that holds a pile or can draw one ([`crate::systems::order_is_workable`], the rule the
+/// bench picks its worked order by), otherwise the bench's own refusal vocabulary for that order's
+/// recipe (*"Short 4.9 bone"*).
+fn bench_orders(
+    bench: &BandBench,
+    store: &LocalStore,
+    wear: &BandEquipment,
+    inputs: &BandCraftInputs<'_>,
+    tiers_by_material: &BTreeMap<&str, BenchTiers>,
+) -> Vec<BenchOrderState> {
+    bench
+        .orders
+        .iter()
+        .map(|order| {
+            let (blocked_reason, blocked_severity) =
+                order_skip_reason(order, store, wear, inputs, tiers_by_material);
+            BenchOrderState {
+                blocked_reason,
+                blocked_severity: blocked_severity.to_string(),
+                recipe_id: order.recipe_id.clone(),
+                count: order.count,
+                made: order.made,
+                progress: order.progress.to_f32(),
+                drawn: order.drawn.is_some(),
+            }
+        })
+        .collect()
+}
+
+/// **WHY ONE QUEUED ORDER IS BEING SKIPPED**, `("", "")` when it is not — see [`bench_orders`].
+fn order_skip_reason(
+    order: &crate::components::BenchOrder,
+    store: &LocalStore,
+    wear: &BandEquipment,
+    inputs: &BandCraftInputs<'_>,
+    tiers_by_material: &BTreeMap<&str, BenchTiers>,
+) -> (String, &'static str) {
+    if crate::systems::order_is_workable(
+        order,
+        store,
+        inputs.recipes,
+        inputs.materials,
+        inputs.equipment,
+        wear,
+    ) {
+        return (String::new(), SEVERITY_NONE);
+    }
+    let Some(plan) = inputs.plans.iter().find(|plan| plan.id == order.recipe_id) else {
+        return (
+            format!("Recipe '{}' is not in the book", order.recipe_id),
+            SEVERITY_DANGER,
+        );
+    };
+    let tiers = plan
+        .bench_material
+        .and_then(|material| tiers_by_material.get(material).copied())
+        .unwrap_or(NO_BENCH_TIERS);
+    let shortfalls = shortfalls_for(plan.recipe, &tiers, store);
+    let reasons = refusal_reasons(plan, &tiers, &shortfalls, inputs);
+    if reasons.is_empty() {
+        return (String::new(), SEVERITY_NONE);
+    }
+    (reasons.join(REASON_JOIN), SEVERITY_DANGER)
+}
+
+/// **A SUGGESTION'S CONSUMER KIND, in the wire's spelling** — `snapshot.fbs`'s
+/// `CraftSuggestionSource.kind`. Opaque keys the client joins on, spelled once here.
+const SUGGESTION_SOURCE_POOL: &str = "pool";
+/// See [`SUGGESTION_SOURCE_POOL`]. A site crew keeping its source.
+const SUGGESTION_SOURCE_SITE: &str = "site";
+/// See [`SUGGESTION_SOURCE_POOL`]. A take row.
+const SUGGESTION_SOURCE_TAKE: &str = "take";
+
+/// **THE CRAFT SUGGESTIONS ON THE WIRE** — numbers and join keys only; the client owns the words, as
+/// it does for the craft offers.
+pub(crate) fn craft_suggestion_states(
+    suggestions: Vec<crate::craft_suggestions::CraftSuggestion>,
+) -> Vec<CraftSuggestionState> {
+    suggestions
+        .into_iter()
+        .map(|suggestion| CraftSuggestionState {
+            item_id: suggestion.item,
+            count: suggestion.count,
+            workers_without: suggestion.workers_without,
+            work_per_turn: suggestion.work_per_turn,
+            sources: suggestion
+                .sources
+                .into_iter()
+                .map(|line| {
+                    let mut state = CraftSuggestionSourceState {
+                        missing_units: line.missing_units,
+                        workers_without: line.workers_without,
+                        work_per_turn: line.work_per_turn,
+                        ..CraftSuggestionSourceState::default()
+                    };
+                    let target = match &line.source {
+                        SupplySource::Pool(job) => {
+                            state.kind = SUGGESTION_SOURCE_POOL.to_string();
+                            state.job = job.as_str().to_string();
+                            None
+                        }
+                        SupplySource::Site(source) => {
+                            state.kind = SUGGESTION_SOURCE_SITE.to_string();
+                            state.job = source.kind().to_string();
+                            Some(source)
+                        }
+                        SupplySource::Take { job, source } => {
+                            state.kind = SUGGESTION_SOURCE_TAKE.to_string();
+                            state.job = (*job).to_string();
+                            source.as_ref()
+                        }
+                    };
+                    match target {
+                        Some(BuildSource::Patch(tile)) | Some(BuildSource::Road(tile)) => {
+                            state.target_x = tile.x;
+                            state.target_y = tile.y;
+                        }
+                        Some(BuildSource::Herd(id)) => state.fauna_id = id.clone(),
+                        Some(BuildSource::Deposit { tile, material }) => {
+                            state.target_x = tile.x;
+                            state.target_y = tile.y;
+                            state.material = material.clone();
+                        }
+                        None => {}
+                    }
+                    state
+                })
+                .collect(),
+        })
+        .collect()
 }
 
 /// **What one pass of `recipe` is short**, after the tool's material efficiency. Empty when the pile

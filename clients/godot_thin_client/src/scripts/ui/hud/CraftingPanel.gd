@@ -42,14 +42,18 @@ class_name CraftingPanel
 ## group) rather than a step-down. Owning units reads **one line per GRADE**, because a band may hold one item at two and
 ## `×5 · excellent` would be a lie.
 ##
-## **MAKE STAGES THE JOB; THE PLAYER STAFFS IT.** Pressing Make emits `make_requested` (→
-## `set_bench`) and recruits nobody, so *"No one at the bench"* is the ordinary state one click later
-## and the `− n +` stepper (`crew_changed` → `bench_crew`) is the only thing that picks the number. The
-## running row's button reads *On the bench* and is spent, and the well's ✕ emits
-## `clear_bench_requested` (→ `clear_bench`) — the only way off a bench that is not "make something
-## else", which spends the drawn pile without saying so. One job at a time, so this panel never has to
-## explain a queue — and there is no Crafter role card on the Band panel: crafting always has a
-## subject, so it is staffed at the bench like a worked source rather than through a standing role.
+## **MAKE QUEUES AN ORDER; THE PLAYER STAFFS THE BENCH.** Pressing Make emits `enqueue_requested`
+## with a count of one (→ `bench_enqueue`) and recruits nobody, so *"No one at the bench"* is the
+## ordinary state one click later and the crew `− n +` stepper (`crew_changed` → `bench_crew`) is the
+## only thing that picks the number — live on an idle bench too, the crew staying with the bench across
+## orders. **The bench works ONE order at a time — the first in queue order that holds a pile or can
+## draw (`BenchState.worked`)**: the well describes that WORKED order, and the queue rows under it list
+## every other order with its own `made/count` stepper (`order_count_changed` → `bench_order_count`), a
+## `↑` (`order_raise_requested` → `bench_raise`, never on index 0) and a `✕` (`order_remove_requested` →
+## `bench_remove`). The well's own ✕ and stepper address `order <worked>`. **SUGGESTIONS open the main column** — the sim's ranked list of what the
+## band's workers are going without, each with a Queue that enqueues its whole count. There is no
+## Crafter role card on the Band panel: crafting always has a subject, so it is staffed at the bench
+## like a worked source rather than through a standing role.
 ##
 ## **THIS IS THE FREE-FLOATING CASE, hence `AutoSizingPanel`** (`.claude/rules/client/panel-framework.md`):
 ## the card is measured against the ROOM — the viewport MINUS every reserved edge strip, which is the
@@ -75,13 +79,19 @@ signal closed
 signal band_selected(entity: int)
 ## An arrow was pressed: -1 walks back, +1 walks forward.
 signal cycle_requested(delta: int)
-## Make was pressed on a row — `set_bench <faction> <band> recipe <id>`.
-signal make_requested(recipe_id: String)
-## The bench stepper moved — `bench_crew <faction> <band> workers <n>`.
+## Make (count 1) or a suggestion's Queue (its whole count) was pressed —
+## `bench_enqueue <faction> <band> recipe <id> count <n>`.
+signal enqueue_requested(recipe_id: String, count: int)
+## The bench's crew stepper moved — `bench_crew <faction> <band> workers <n>`.
 signal crew_changed(workers: int)
-## The bench's ✕ was pressed — `clear_bench <faction> <band>`. The job comes off, the crew returns to
-## the idle pool and the pile already drawn is spent, which is why the button's tooltip names it.
-signal clear_bench_requested
+## A queued order's `− n +` moved — `bench_order_count <faction> <band> order <i> count <n>`. `order`
+## is the order's index in the published `bench.orders`, 0 the head of the queue.
+signal order_count_changed(order: int, count: int)
+## An order's ✕ was pressed — `bench_remove <faction> <band> order <i>`. The well's ✕ is `order <worked>`. A
+## drawn pile is lost, which is why every ✕'s tooltip says whether there is one.
+signal order_remove_requested(order: int)
+## An order's ↑ was pressed — `bench_raise <faction> <band> order <i>`, never index 0.
+signal order_raise_requested(order: int)
 ## A rung of the bench's rank picker was pressed — `bench_priority <faction> <band> high|normal|low`
 ## (`docs/plan_standing_upkeep.md` §4.9 item 9b). `level` is one of `HudWorkVocab`'s three tokens,
 ## already normalized, so nothing between here and the socket re-spells it.
@@ -157,10 +167,16 @@ var _popup_closed_frame: int = -1
 var _popup_closed_row: String = NO_ROW
 
 ## **WHICH ROW'S MAKE PICKER IS OPEN, AND WHICH RECIPE IS CHOSEN IN IT.** One picker at a time. Dropped
-## on a render whose row has disappeared or gone on the bench, and a chosen recipe that is no longer
+## on a render whose row has disappeared or dropped to one recipe, and a chosen recipe that is no longer
 ## available falls back to the default rule (`_default_choice`).
 var _picker_row: String = NO_ROW
 var _picker_choice: String = ""
+## **THE COUNT START SENDS, AND WHICH LIST THE PICKER HANGS UNDER.** A picker opened from a ledger row's
+## Make queues `MAKE_ORDER_COUNT`; one opened from a suggestion's Queue queues that suggestion's whole
+## count and is drawn under the SUGGESTION row rather than the ledger row — both are keyed by the item
+## id, so `_picker_row` alone cannot say which surface asked.
+var _picker_count: int = HudCraftingVocab.MAKE_ORDER_COUNT
+var _picker_in_suggestions: bool = false
 
 ## **IS THE BENCH'S RANK PICKER SHOWING?** VIEW state with exactly the standing of `_folded` above and
 ## of the scroll offset: it is not on the wire, it survives the per-snapshot rebuild, and `render` is
@@ -273,6 +289,7 @@ func render(payload: Dictionary) -> void:
 	_reconcile_recipe_view(payload)
 	_build_header(payload)
 	_build_rail(payload)
+	_build_suggestions(payload)
 	_build_bench(payload)
 	_build_ledger(payload)
 	# **VISIBLE BEFORE THE FIT, and that is load-bearing**: `Container._sort_children` early-returns
@@ -300,8 +317,7 @@ func dismiss() -> void:
 	# at a ledger group means it.
 	_priority_open = false
 	# …and so are an item's popup and its picker: both are transient readings of one ledger.
-	_picker_row = NO_ROW
-	_picker_choice = ""
+	_reset_picker()
 	_close_recipes_popup()
 	if _scroll != null:
 		_scroll.scroll_vertical = 0
@@ -668,12 +684,22 @@ func _build_bench(payload: Dictionary) -> void:
 		reason.set_meta(HudCraftingVocab.BENCH_BLOCKED_META, true)
 		words.add_child(reason)
 	top.add_child(words)
-	# **NOTHING TO CLEAR ON AN IDLE BENCH**, so the control is absent rather than dead — and it is
+	# **NOTHING TO REMOVE ON AN IDLE BENCH**, so the control is absent rather than dead — and it is
 	# built BEFORE the stepper, which insets it from the card's right edge and keeps it away from the
 	# header's own ✕. See `_build_clear_button`.
+	#
+	# **THE WELL IS THE WORKED ORDER'S ROW** — `orders[worked]`, the order every bench scalar
+	# describes — so its `made/count` stepper rides here, beside its ✕, rather than on a second row
+	# under the well repeating its name and its ✕. See `_build_queue`.
+	var orders: Array = bench.get(HudCraftingVocab.BENCH_ORDERS_KEY, [])
+	var worked := _worked_index(bench)
+	if recipe_id != "" and worked < orders.size() and orders[worked] is Dictionary:
+		top.add_child(_build_head_count_stepper(worked, orders[worked]))
 	if recipe_id != "":
 		top.add_child(_build_clear_button(bench))
-	top.add_child(_build_crew_stepper(bench, payload, recipe_id != ""))
+	# **THE CREW STEPPER IS LIVE ON AN IDLE BENCH TOO** — the crew stays with the bench across orders,
+	# so a player may staff an empty bench ahead of the order that will use it.
+	top.add_child(_build_crew_stepper(bench, payload))
 	inner.add_child(top)
 
 	var work := float(bench.get(HudCraftingVocab.BENCH_WORK_KEY, 0.0))
@@ -699,11 +725,16 @@ func _build_bench(payload: Dictionary) -> void:
 			_commit_priority(level), priority))
 
 	section.add_child(well)
+	# **THE REST OF THE QUEUE, under the well that IS its worked order.** A bench with one order — or
+	# none — draws nothing here.
+	if orders.size() > 1:
+		section.add_child(_build_queue(orders, bench, payload))
 	_main.add_child(section)
 
 ## The bench's second line, in the units the sim keeps the job in: the recipe's own `work` accrued
-## against the pass's cost, then what a turn adds and when that finishes it, then what the job has
-## already delivered and the grade the pile in flight fixed.
+## against the pass's cost, then what a turn adds and when that finishes it, then the grade the pile in
+## flight fixed. **How many the order has delivered is not here**: it is the well's own `made/count`
+## stepper face, the one home that fact has.
 ##
 ## **THE UNIT IS `work`, AND THAT RENAME IS THE POINT OF THE OTHER TWO CLAUSES.** It read
 ## `worker-turns`, and a player with two crafters divided 6 by 2, expected three turns and measured
@@ -727,9 +758,6 @@ func _bench_sub_line(bench: Dictionary) -> String:
 	if rate > 0.0 and blocked == "":
 		parts.append(HudCraftingVocab.BENCH_RATE_FORMAT % rate)
 		parts.append(_bench_estimate_clause(work - progress, rate))
-	var completed := int(bench.get(HudCraftingVocab.BENCH_ITEMS_COMPLETED_KEY, 0))
-	if completed > 0:
-		parts.append(HudCraftingVocab.BENCH_ITEMS_COMPLETED_FORMAT % completed)
 	var grade := String(bench.get(HudCraftingVocab.BENCH_OUTPUT_GRADE_KEY, ""))
 	if grade != "":
 		parts.append(HudCraftingVocab.BENCH_GRADE_FORMAT % grade)
@@ -746,9 +774,8 @@ func _bench_estimate_clause(remaining: float, rate: float) -> String:
 		return HudCraftingVocab.BENCH_ESTIMATE_NEXT_TURN
 	return HudCraftingVocab.BENCH_ESTIMATE_FORMAT % turns
 
-## **THE WAY OFF THE BENCH THAT IS NOT "MAKE SOMETHING ELSE".** Until this existed the only exit was
-## pressing Make on another row, which silently spends the committed pile; `clear_bench` has been a
-## complete sim verb the whole time with nothing here to emit it.
+## **THE WORKED ORDER'S WAY OFF THE BENCH** — `bench_remove … order <worked>`, the retired
+## `clear_bench`'s control. The bench then works the next order it can, if any.
 ##
 ## **THE TOOLTIP NAMES WHAT IT DESTROYS, off the published `drawn_inputs`** — the amounts the store
 ## really lost, never the recipe's inputs, which differ from the withdrawal the moment a bench tool's
@@ -772,7 +799,8 @@ func _build_clear_button(bench: Dictionary) -> Control:
 	HudStyle.apply_button(button, "armed")
 	# Found by identity rather than by face — the header's close button is the same glyph.
 	button.set_meta(HudCraftingVocab.CLEAR_BENCH_META, true)
-	button.pressed.connect(func() -> void: clear_bench_requested.emit())
+	var worked := _worked_index(bench)
+	button.pressed.connect(func() -> void: order_remove_requested.emit(worked))
 	return button
 
 ## The pile a clear would spend, in the cost cell's own clause shape. Empty `drawn_inputs` is an
@@ -833,7 +861,7 @@ func _commit_priority(level: String) -> void:
 ## does not have to free those hands first: the crew already standing at the bench stays put while
 ## the job is swapped, which is `BandWorkforce::benchable()`. The payload therefore carries
 ## `idle + bench.workers`, and capping the stepper at idle alone would pin it to the crew on it.
-func _build_crew_stepper(bench: Dictionary, payload: Dictionary, running: bool) -> Control:
+func _build_crew_stepper(bench: Dictionary, payload: Dictionary) -> Control:
 	var column := VBoxContainer.new()
 	column.alignment = BoxContainer.ALIGNMENT_CENTER
 	column.add_theme_constant_override("separation", HudCraftingVocab.ROW_SEPARATION)
@@ -845,7 +873,7 @@ func _build_crew_stepper(bench: Dictionary, payload: Dictionary, running: bool) 
 	stepper.add_theme_constant_override("separation", HudCraftingVocab.ROW_SEPARATION)
 
 	var minus := _crew_button(HudCraftingVocab.BENCH_CREW_DECREMENT)
-	minus.disabled = not running or workers <= 0
+	minus.disabled = workers <= 0
 	minus.pressed.connect(func() -> void: crew_changed.emit(workers - 1))
 	stepper.add_child(minus)
 
@@ -858,7 +886,7 @@ func _build_crew_stepper(bench: Dictionary, payload: Dictionary, running: bool) 
 	stepper.add_child(count)
 
 	var plus := _crew_button(HudCraftingVocab.BENCH_CREW_INCREMENT)
-	plus.disabled = not running or workers >= ceiling
+	plus.disabled = workers >= ceiling
 	plus.pressed.connect(func() -> void: crew_changed.emit(workers + 1))
 	stepper.add_child(plus)
 	column.add_child(stepper)
@@ -910,7 +938,7 @@ func _build_ledger(payload: Dictionary) -> void:
 			# **THE PICKER OPENS DIRECTLY UNDER ITS ROW, INSIDE THE LEDGER**, spanning the table's width —
 			# the choice sits beside the thing being chosen for, and it pushes the rows below it down
 			# rather than floating over them.
-			if String(row["key"]) == _picker_row:
+			if String(row["key"]) == _picker_row and not _picker_in_suggestions:
 				table.add_child(_build_make_picker(row, payload))
 			# A hairline UNDER each row rather than separation between them: the rule is what makes a
 			# four-column row read across, and separation alone leaves four stacks side by side.
@@ -1021,17 +1049,23 @@ func _choice_is_available(row: Dictionary, recipe_id: String) -> bool:
 	return false
 
 ## **THE VIEW STATE IS CHECKED AGAINST EVERY NEW PAYLOAD BEFORE IT IS DRAWN.** A picker whose row has
-## gone, or whose item has gone on the bench, closes — there is nothing left to choose; a chosen
-## recipe that is no longer available falls back to the default rule rather than leaving Start
-## pointed at a build the sim would refuse; a popup whose row is gone or has one recipe left closes.
+## gone or dropped to one recipe closes — there is nothing left to choose — and so does one opened from
+## a suggestion the sim no longer publishes (the queue now covers it); a suggestion's picker takes the
+## suggestion's CURRENT count, so Start never queues a shortfall that has since shrunk; a chosen recipe
+## that is no longer available falls back to the default rule rather than leaving Start pointed at a
+## build the sim would refuse; a popup whose row is gone or has one recipe left closes.
 func _reconcile_recipe_view(payload: Dictionary) -> void:
 	if _picker_row != NO_ROW:
 		var row := _row_in(payload, _picker_row)
-		if row.is_empty() or (row["offers"] as Array).size() < 2 or _row_on_bench(row):
-			_picker_row = NO_ROW
-			_picker_choice = ""
-		elif not _choice_is_available(row, _picker_choice):
-			_picker_choice = _default_choice(row)
+		var suggestion := _suggestion_in(payload, _picker_row) if _picker_in_suggestions else {}
+		if row.is_empty() or (row["offers"] as Array).size() < 2 \
+				or (_picker_in_suggestions and suggestion.is_empty()):
+			_reset_picker()
+		else:
+			if _picker_in_suggestions:
+				_picker_count = int(suggestion.get(HudCraftingVocab.SUGGESTION_COUNT_KEY, _picker_count))
+			if not _choice_is_available(row, _picker_choice):
+				_picker_choice = _default_choice(row)
 	if _popup_row != NO_ROW:
 		var popped := _row_in(payload, _popup_row)
 		if popped.is_empty() or (popped["offers"] as Array).size() < 2:
@@ -1492,11 +1526,12 @@ func _build_cost_cell(offer: Dictionary, payload: Dictionary) -> Control:
 		cell.add_child(made)
 	return cell
 
-## **MAKE STAGES THE JOB, AND A REFUSAL NAMES ITS NUMBER.** On a single-recipe row the button puts that
-## recipe on the bench at once and leaves the crew to the stepper; on a row with several it opens the
-## picker under the row instead (`_toggle_picker`), because the recipe cannot be changed once the
-## build starts. The button is LIVE when ANY of the row's recipes can be made — the suggested one may
-## be the one that cannot — and a row with a recipe on the bench is spent and reads *On the bench*.
+## **MAKE QUEUES AN ORDER OF ONE, AND A REFUSAL NAMES ITS NUMBER.** On a single-recipe row the button
+## adds that recipe to the bench's queue at once and leaves the crew to the stepper; on a row with
+## several it opens the picker under the row instead (`_toggle_picker`), because the recipe cannot be
+## changed once the build starts. The button is LIVE when ANY of the row's recipes can be made — the
+## suggested one may be the one that cannot — **and it stays live on a row already queued or on the
+## bench**: another press is another order, which is what a queue is for.
 ## Under it, the suggested offer's `reason` VERBATIM in the tint its published `severity` picked —
 ## *"Short 4.9 bone"*, never *"cannot craft"*, and never a sentence composed here.
 ##
@@ -1509,19 +1544,19 @@ func _build_action_cell(ledger_row: Dictionary, shrug: bool) -> Control:
 	var column := VBoxContainer.new()
 	column.alignment = BoxContainer.ALIGNMENT_BEGIN
 	column.add_theme_constant_override("separation", HudCraftingVocab.ROW_SEPARATION)
-	var running := _row_on_bench(ledger_row)
 	var button := Button.new()
-	button.text = HudCraftingVocab.ON_BENCH_LABEL if running else HudCraftingVocab.MAKE_LABEL
+	button.text = HudCraftingVocab.MAKE_LABEL
 	button.focus_mode = Control.FOCUS_NONE
 	button.add_theme_font_size_override("font_size", HudCraftingVocab.ACTION_FONT_SIZE)
 	HudStyle.apply_button(button, "primary")
-	button.disabled = running or not _row_available(ledger_row)
+	button.disabled = not _row_available(ledger_row)
 	# Found by IDENTITY, valued the row key — every row's button wears the same face.
 	button.set_meta(HudCraftingVocab.MAKE_BUTTON_META, key)
 	if not button.disabled:
 		if offers.size() == 1:
 			var recipe_id := String(offer.get(HudCraftingVocab.OFFER_RECIPE_ID_KEY, ""))
-			button.pressed.connect(func() -> void: make_requested.emit(recipe_id))
+			button.pressed.connect(func() -> void:
+				enqueue_requested.emit(recipe_id, HudCraftingVocab.MAKE_ORDER_COUNT))
 		else:
 			button.pressed.connect(func() -> void: _toggle_picker(key))
 	column.add_child(button)
@@ -1717,13 +1752,40 @@ func _popup_text(text: String, ink: Color, font_size: int) -> Label:
 ## mind. **One picker at a time**, and opening one closes the popup: the picker is where the choice is
 ## made, so a comparison table left hanging over it would only cover it.
 func _toggle_picker(key: String) -> void:
-	if _picker_row == key:
-		_picker_row = NO_ROW
-		_picker_choice = ""
+	if _picker_row == key and not _picker_in_suggestions:
+		_reset_picker()
 	else:
-		_picker_row = key
-		_picker_choice = _default_choice(_row_in(_payload, key))
-		_close_recipes_popup()
+		_open_picker(key, HudCraftingVocab.MAKE_ORDER_COUNT, false)
+	if not _payload.is_empty():
+		render(_payload)
+
+## **THE SAME PICKER, OPENED FROM A SUGGESTION** — drawn under the suggestion row, and Start queues the
+## suggestion's WHOLE count. Queue pressed again on the same suggestion is a change of mind and closes it.
+func _toggle_suggestion_picker(item_id: String, count: int) -> void:
+	if _picker_row == item_id and _picker_in_suggestions:
+		_reset_picker()
+	else:
+		_open_picker(item_id, count, true)
+	if not _payload.is_empty():
+		render(_payload)
+
+func _open_picker(key: String, count: int, in_suggestions: bool) -> void:
+	_picker_row = key
+	_picker_count = count
+	_picker_in_suggestions = in_suggestions
+	_picker_choice = _default_choice(_row_in(_payload, key))
+	_close_recipes_popup()
+
+## No picker open. One place, so the four members cannot be cleared out of step.
+func _reset_picker() -> void:
+	_picker_row = NO_ROW
+	_picker_choice = ""
+	_picker_count = HudCraftingVocab.MAKE_ORDER_COUNT
+	_picker_in_suggestions = false
+
+## Cancel closes whichever picker is open, from either list.
+func _cancel_picker() -> void:
+	_reset_picker()
 	if not _payload.is_empty():
 		render(_payload)
 
@@ -1772,7 +1834,7 @@ func _build_make_picker(row: Dictionary, payload: Dictionary) -> Control:
 	cancel.add_theme_font_size_override("font_size", HudCraftingVocab.ACTION_FONT_SIZE)
 	HudStyle.apply_button(cancel, "ghost")
 	cancel.set_meta(HudCraftingVocab.PICKER_CANCEL_META, key)
-	cancel.pressed.connect(func() -> void: _toggle_picker(key))
+	cancel.pressed.connect(func() -> void: _cancel_picker())
 	footer.add_child(cancel)
 	var start := Button.new()
 	start.text = HudCraftingVocab.PICKER_START
@@ -1841,16 +1903,427 @@ func _picker_summary(offer: Dictionary) -> String:
 		parts.append(HudCraftingVocab.PICKER_LASTS_FORMAT % lasts)
 	return HudCraftingVocab.PICKER_SUMMARY_SEPARATOR.join(parts)
 
-## **START SENDS THE CHOSEN RECIPE AND CLOSES THE PICKER.** `set_bench` with the recipe the radio names,
-## which is the same command a single-recipe row's Make sends — the picker only decides which one.
+## **START QUEUES THE CHOSEN RECIPE AND CLOSES THE PICKER.** `bench_enqueue` with the recipe the radio
+## names and the count the picker was opened with — one from a ledger row's Make, the suggestion's whole
+## count from its Queue — which is the same command the single-recipe buttons send; the picker only
+## decides which recipe.
 func _start_chosen_recipe() -> void:
 	var chosen := _picker_choice
-	_picker_row = NO_ROW
-	_picker_choice = ""
+	var count := _picker_count
+	_reset_picker()
 	if chosen != "":
-		make_requested.emit(chosen)
+		enqueue_requested.emit(chosen, count)
 	if not _payload.is_empty():
 		render(_payload)
+
+# ---- suggestions: what to make next, ranked by who is going without ---------
+
+## **THE SIM'S LIST, IN THE SIM'S ORDER** (`docs/plan_crafting_and_materials.md` §7 → "Suggestions"),
+## at the top of the main column: it is the panel's opening answer to *what should I make*. Ranked
+## sim-side by the workers going without the item — this panel neither re-sorts nor re-scores — and
+## NOT capped: every suggestion gets a row, inside the card's own internal scroll.
+##
+## **AN EMPTY LIST DRAWS NOTHING**, not even its head: nobody going without is the ordinary state, and
+## a line saying so would be a row spent on every frame to report good news.
+func _build_suggestions(payload: Dictionary) -> void:
+	var band: Dictionary = payload.get(PAYLOAD_BAND, {})
+	var suggestions: Array = band.get(HudCraftingVocab.BAND_CRAFT_SUGGESTIONS_KEY, [])
+	if suggestions.is_empty():
+		return
+	var section := VBoxContainer.new()
+	section.add_theme_constant_override("separation", HudCraftingVocab.ROW_SEPARATION)
+	section.add_child(_zone_head(HudCraftingVocab.SUGGESTIONS_HEAD))
+	var table := VBoxContainer.new()
+	table.add_theme_constant_override("separation", 0)
+	table.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	table.add_child(_rule(HudStyle.LINE))
+	for suggestion_variant in suggestions:
+		if not (suggestion_variant is Dictionary):
+			continue
+		var suggestion: Dictionary = suggestion_variant
+		var item_id := String(suggestion.get(HudCraftingVocab.SUGGESTION_ITEM_ID_KEY, ""))
+		table.add_child(_build_suggestion_row(suggestion, payload))
+		# The recipe picker, when this suggestion's Queue opened it — under the suggestion, where the
+		# choice was asked, never under the ledger row of the same item.
+		if _picker_in_suggestions and item_id == _picker_row:
+			var row := _row_in(payload, item_id)
+			if not row.is_empty():
+				table.add_child(_build_make_picker(row, payload))
+		table.add_child(_rule(HudStyle.LINE_SOFT))
+	section.add_child(table)
+	_main.add_child(section)
+
+## **ONE SUGGESTION, TWO LINES**: the item and its count, then the ONE consequence the shortage costs
+## (`_suggestion_consequence`). Its sources — which consumers are short — ride the row's hover, one line
+## each, because a list of them would take the row past the panel's two-line copy.
+##
+## **WHETHER IT CAN BE MADE IS THE OFFER'S QUESTION**, so the row joins the item's ledger row: Queue is
+## live when any of its recipes can be made, sends the suggestion's WHOLE count, and on an item with
+## several recipes opens the same picker Make opens. A refused item keeps its row with the offer's own
+## refusal words under a dead button, in the faint ink — the suggestion still says who is going without,
+## and the refusal says why queueing it would not help yet.
+func _build_suggestion_row(suggestion: Dictionary, payload: Dictionary) -> Control:
+	var item_id := String(suggestion.get(HudCraftingVocab.SUGGESTION_ITEM_ID_KEY, ""))
+	var count := int(suggestion.get(HudCraftingVocab.SUGGESTION_COUNT_KEY, 0))
+	var ledger_row := _row_in(payload, item_id)
+	var row := _ledger_row_container()
+	row.set_meta(HudCraftingVocab.SUGGESTION_META, item_id)
+	row.tooltip_text = _suggestion_tooltip(suggestion)
+	row.mouse_filter = Control.MOUSE_FILTER_PASS
+
+	var words := VBoxContainer.new()
+	words.add_theme_constant_override("separation", 0)
+	var title := Label.new()
+	title.text = HudCraftingVocab.SUGGESTION_TITLE_FORMAT % [_suggestion_item_name(item_id, ledger_row), count]
+	title.add_theme_font_size_override("font_size", HudCraftingVocab.SUGGESTION_NAME_FONT_SIZE)
+	title.add_theme_color_override("font_color", HudStyle.INK)
+	words.add_child(title)
+	var consequence := Label.new()
+	consequence.text = _suggestion_consequence(suggestion)
+	consequence.add_theme_font_size_override("font_size", HudCraftingVocab.SUGGESTION_LINE_FONT_SIZE)
+	# AMBER: people are working short right now — a warning beside the number it explains.
+	consequence.add_theme_color_override("font_color", HudStyle.WARN)
+	words.add_child(consequence)
+	row.add_child(_column_cell(words, 0.0, true))
+
+	var action := VBoxContainer.new()
+	action.add_theme_constant_override("separation", HudCraftingVocab.ROW_SEPARATION)
+	var button := Button.new()
+	button.text = HudCraftingVocab.SUGGESTION_QUEUE_LABEL
+	button.focus_mode = Control.FOCUS_NONE
+	button.add_theme_font_size_override("font_size", HudCraftingVocab.ACTION_FONT_SIZE)
+	HudStyle.apply_button(button, "primary")
+	button.set_meta(HudCraftingVocab.SUGGESTION_QUEUE_META, item_id)
+	button.disabled = ledger_row.is_empty() or count < 1 or not _row_available(ledger_row)
+	if not button.disabled:
+		var offers: Array = ledger_row["offers"]
+		if offers.size() == 1:
+			var recipe_id := String((offers[0] as Dictionary).get(HudCraftingVocab.OFFER_RECIPE_ID_KEY, ""))
+			button.pressed.connect(func() -> void: enqueue_requested.emit(recipe_id, count))
+		else:
+			button.pressed.connect(func() -> void: _toggle_suggestion_picker(item_id, count))
+	action.add_child(button)
+	if button.disabled and not ledger_row.is_empty():
+		var reason := String((ledger_row["offer"] as Dictionary).get(HudCraftingVocab.OFFER_REASON_KEY, ""))
+		if reason != "":
+			var why := Label.new()
+			why.text = reason
+			why.add_theme_font_size_override("font_size", HudCraftingVocab.REASON_FONT_SIZE)
+			why.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+			why.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			why.custom_minimum_size = Vector2(HudCraftingVocab.SUGGESTION_ACTION_WIDTH, 0.0)
+			why.set_meta(HudCraftingVocab.SUGGESTION_REASON_META, item_id)
+			action.add_child(why)
+	row.add_child(_column_cell(action, HudCraftingVocab.SUGGESTION_ACTION_WIDTH, false))
+	return row
+
+## The item's name — the sim's `displayName` on the item's offers, which the ledger row already
+## carries. An item this band has no offer for (the catalogues not yet ingested) names itself by id
+## rather than going blank.
+func _suggestion_item_name(item_id: String, ledger_row: Dictionary) -> String:
+	if not ledger_row.is_empty():
+		var name := String((ledger_row["offer"] as Dictionary).get(HudCraftingVocab.OFFER_DISPLAY_NAME_KEY, ""))
+		if name != "":
+			return name
+	return HudCraftingVocab.SUGGESTION_ITEM_FALLBACK_FORMAT % item_id
+
+## **WHAT THE SHORTAGE COSTS, IN ITS OWN UNIT** — work a turn on gear that adds build or keeping work
+## (`work_per_turn > 0`, published), else the people going without, because a missing spear costs
+## attack and carry and no single unit of output ranks it against a missing hoe. Both numbers are the
+## sim's, rendered as they arrive.
+func _suggestion_consequence(suggestion: Dictionary) -> String:
+	var work := float(suggestion.get(HudCraftingVocab.SUGGESTION_WORK_PER_TURN_KEY, 0.0))
+	if work > 0.0:
+		return HudCraftingVocab.SUGGESTION_WORK_FORMAT % _amount_text(work)
+	return HudCraftingVocab.SUGGESTION_WITHOUT_FORMAT % [
+		_amount_text(float(suggestion.get(HudCraftingVocab.SUGGESTION_WORKERS_WITHOUT_KEY, 0.0))),
+		_suggestion_crew_noun(suggestion)]
+
+## The crew noun for `N … without`: the job's own word where EVERY source shares one job that has one
+## (`3 hunters without`), else `workers` — a suggestion drawn from hunters and builders at once is
+## about workers, and naming one of the two jobs would undercount the other.
+func _suggestion_crew_noun(suggestion: Dictionary) -> String:
+	var noun := ""
+	for source_variant in suggestion.get(HudCraftingVocab.SUGGESTION_SOURCES_KEY, []):
+		if not (source_variant is Dictionary):
+			continue
+		var this := _job_crew_noun(String((source_variant as Dictionary).get(
+			HudCraftingVocab.SOURCE_JOB_KEY, "")))
+		if this == "" or (noun != "" and this != noun):
+			return HudCraftingVocab.SUGGESTION_WORKER_NOUN
+		noun = this
+	return noun.to_lower() if noun != "" else HudCraftingVocab.SUGGESTION_WORKER_NOUN
+
+## **THE CREW NOUN THE WORK VOCABULARY ALREADY SPEAKS**, never a new one: the hunt sheet's `Hunters`,
+## the plant web's `Harvesters`, the build pool's `Builders`. A job with no plural crew noun anywhere
+## in the client (`scout`, `warrior`, `extract`, `roadwork`) answers `""`, and the caller falls back to
+## `workers` rather than minting one here.
+static func _job_crew_noun(job: String) -> String:
+	match job:
+		SourceForecast.LABOR_KIND_HUNT:
+			return HudComposeVocab.HUNT_CREW_LABEL
+		SourceForecast.LABOR_KIND_FORAGE:
+			return HudComposeVocab.HARVEST_CREW_LABEL
+		HudConst.LABOR_KIND_BUILDERS:
+			return HudWorkVocab.ROLE_NAME_BUILDERS
+	return ""
+
+## **THE SOURCES, ONE LINE EACH, ON THE ROW'S HOVER** — who is short, where, by how many units, how
+## many people that leaves without, and the work a turn where the shortage costs work.
+func _suggestion_tooltip(suggestion: Dictionary) -> String:
+	var lines: Array[String] = []
+	for source_variant in suggestion.get(HudCraftingVocab.SUGGESTION_SOURCES_KEY, []):
+		if source_variant is Dictionary:
+			lines.append(_suggestion_source_line(source_variant))
+	return HudCraftingVocab.SUGGESTION_TOOLTIP_SEPARATOR.join(lines)
+
+func _suggestion_source_line(source: Dictionary) -> String:
+	var job := String(source.get(HudCraftingVocab.SOURCE_JOB_KEY, ""))
+	var who := _job_crew_noun(job)
+	if who == "":
+		who = _job_source_name(job)
+	var fauna := String(source.get(HudCraftingVocab.SOURCE_FAUNA_ID_KEY, ""))
+	var kind := String(source.get(HudCraftingVocab.SOURCE_KIND_KEY, ""))
+	if fauna != "":
+		who = HudCraftingVocab.SUGGESTION_SOURCE_ON_FAUNA_FORMAT % [who, fauna.capitalize()]
+	elif kind != HudCraftingVocab.SOURCE_KIND_POOL and _source_names_a_tile(job):
+		who = HudCraftingVocab.SUGGESTION_SOURCE_AT_TILE_FORMAT % [who,
+			int(source.get(HudCraftingVocab.SOURCE_TARGET_X_KEY, 0)),
+			int(source.get(HudCraftingVocab.SOURCE_TARGET_Y_KEY, 0))]
+	var material := String(source.get(HudCraftingVocab.SOURCE_MATERIAL_KEY, ""))
+	if material != "":
+		who = HudCraftingVocab.SUGGESTION_SOURCE_MATERIAL_FORMAT % [who, material]
+	if kind == HudCraftingVocab.SOURCE_KIND_SITE:
+		who = HudCraftingVocab.SUGGESTION_SOURCE_KEEPING_FORMAT % who
+	var line := HudCraftingVocab.SUGGESTION_SOURCE_FORMAT % [who,
+		_amount_text(float(source.get(HudCraftingVocab.SOURCE_MISSING_UNITS_KEY, 0.0))),
+		_amount_text(float(source.get(HudCraftingVocab.SOURCE_WORKERS_WITHOUT_KEY, 0.0)))]
+	var work := float(source.get(HudCraftingVocab.SOURCE_WORK_PER_TURN_KEY, 0.0))
+	if work > 0.0:
+		line += HudCraftingVocab.SUGGESTION_SOURCE_WORK_FORMAT % _amount_text(work)
+	return line
+
+## A source's name where no crew noun exists: the role card's own name for the band-wide roles and the
+## road pool, else the job token as it arrives, capitalised.
+static func _job_source_name(job: String) -> String:
+	match job:
+		HudConst.LABOR_KIND_ROADWORK:
+			return HudWorkVocab.ROLE_NAME_ROADWORK
+		HudConst.LABOR_KIND_SCOUT:
+			return HudWorkVocab.ROLE_NAME_SCOUT
+		HudConst.LABOR_KIND_WARRIOR:
+			return HudWorkVocab.ROLE_NAME_WARRIOR
+	return job.capitalize()
+
+## Whether a source's target tile is part of its name: a site or take row on a patch or a working is
+## worked AT a tile; a band-wide role (`scout`, `warrior`) carries no target.
+static func _source_names_a_tile(job: String) -> bool:
+	return job != HudConst.LABOR_KIND_SCOUT and job != HudConst.LABOR_KIND_WARRIOR
+
+## The suggestion for `item_id` in the payload's band, `{}` when the sim no longer publishes one.
+func _suggestion_in(payload: Dictionary, item_id: String) -> Dictionary:
+	var band: Dictionary = payload.get(PAYLOAD_BAND, {})
+	for suggestion_variant in band.get(HudCraftingVocab.BAND_CRAFT_SUGGESTIONS_KEY, []):
+		if suggestion_variant is Dictionary and String((suggestion_variant as Dictionary).get(
+				HudCraftingVocab.SUGGESTION_ITEM_ID_KEY, "")) == item_id:
+			return suggestion_variant
+	return {}
+
+# ---- the queue: one bench works its orders in turn --------------------------
+
+## **THE WELL IS THE WORKED ORDER'S ROW; THESE ARE EVERY OTHER ORDER, UNCAPPED** (§7 → "The queue").
+## The well already says everything about `orders[worked]` — its name, its progress, its refusal, its
+## crew, its `made/count` stepper and its ✕ (`bench_remove … order <worked>`). A second row repeating
+## it would state its name twice and carry a second ✕ for the same act, and measured it cost ~26px on
+## EVERY running bench, which pushed `crafting_panel_band_dock_collapsed` into an internal scroll its
+## state asserts it does not need. So one row per OTHER order — a skipped head included, above the
+## rest — each keeping its published index, which is the `order` the queue verbs address.
+func _build_queue(orders: Array, bench: Dictionary, payload: Dictionary) -> Control:
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", 0)
+	var worked := _worked_index(bench)
+	for index in range(orders.size()):
+		if index != worked and orders[index] is Dictionary:
+			column.add_child(_build_queue_row(index, orders[index], bench, payload))
+	return column
+
+## **THE WORKED ORDER'S `made/count` STEPPER**, in the crew stepper's own shape and metrics so the well
+## reads as two captioned steppers — how many to make, and who is making them. `−` is dead at
+## `made + 1` for the server's reason (a count at or below `made` would finish the order; stopping it
+## is the ✕ beside it).
+func _build_head_count_stepper(index: int, order: Dictionary) -> Control:
+	var count := int(order.get(HudCraftingVocab.ORDER_COUNT_KEY, 0))
+	var made := int(order.get(HudCraftingVocab.ORDER_MADE_KEY, 0))
+	var column := VBoxContainer.new()
+	column.alignment = BoxContainer.ALIGNMENT_CENTER
+	column.add_theme_constant_override("separation", HudCraftingVocab.ROW_SEPARATION)
+	var stepper := HBoxContainer.new()
+	stepper.alignment = BoxContainer.ALIGNMENT_CENTER
+	stepper.add_theme_constant_override("separation", HudCraftingVocab.ROW_SEPARATION)
+	var minus := _crew_button(HudCraftingVocab.ORDER_COUNT_DECREMENT)
+	_wire_count_decrement(minus, index, count, made)
+	stepper.add_child(minus)
+	var face := Label.new()
+	face.text = HudCraftingVocab.ORDER_MADE_OF_COUNT_FORMAT % [made, count]
+	face.add_theme_font_size_override("font_size", HudCraftingVocab.CREW_COUNT_FONT_SIZE)
+	face.add_theme_color_override("font_color", HudStyle.INK)
+	face.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	face.custom_minimum_size = Vector2(HudCraftingVocab.HEAD_COUNT_FACE_WIDTH, 0.0)
+	HudWidgets.set_label_tooltip(face, HudCraftingVocab.ORDER_COUNT_TOOLTIP)
+	stepper.add_child(face)
+	var plus := _crew_button(HudCraftingVocab.ORDER_COUNT_INCREMENT)
+	_wire_count_increment(plus, index, count)
+	stepper.add_child(plus)
+	column.add_child(stepper)
+	var caption := Label.new()
+	caption.text = HudCraftingVocab.HEAD_COUNT_CAPTION.to_upper()
+	caption.add_theme_font_size_override("font_size", HudCraftingVocab.CREW_CAPTION_FONT_SIZE)
+	caption.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	column.add_child(caption)
+	return column
+
+## The `−` of any order's count, wherever it is drawn: dead at `made + 1`, valued the order index.
+func _wire_count_decrement(minus: Button, index: int, count: int, made: int) -> void:
+	minus.disabled = count - 1 <= made
+	minus.tooltip_text = HudCraftingVocab.ORDER_COUNT_FLOOR_TOOLTIP if minus.disabled \
+		else HudCraftingVocab.ORDER_COUNT_TOOLTIP
+	minus.set_meta(HudCraftingVocab.ORDER_DECREMENT_META, index)
+	minus.pressed.connect(func() -> void: order_count_changed.emit(index, count - 1))
+
+func _wire_count_increment(plus: Button, index: int, count: int) -> void:
+	plus.tooltip_text = HudCraftingVocab.ORDER_COUNT_TOOLTIP
+	plus.set_meta(HudCraftingVocab.ORDER_INCREMENT_META, index)
+	plus.pressed.connect(func() -> void: order_count_changed.emit(index, count + 1))
+
+## **ONE ORDER THE WELL DOES NOT DESCRIBE**: WAITING (skipped, its reason beneath), PAUSED or QUEUED;
+## what it makes; `made/count` inside its own `− n +`; `↑` (not on index 0); `✕`.
+##
+## **PAUSED IS `drawn` ON AN ORDER THE BENCH IS NOT WORKING** — it was raised over while holding a cut
+## pile, and keeps the pile and its progress until it is worked again. The worked order is never
+## "paused": one that is not moving is BLOCKED, and the well's refusal line is where that is said.
+func _build_queue_row(index: int, order: Dictionary, bench: Dictionary, payload: Dictionary) -> Control:
+	var drawn := bool(order.get(HudCraftingVocab.ORDER_DRAWN_KEY, false))
+	var count := int(order.get(HudCraftingVocab.ORDER_COUNT_KEY, 0))
+	var made := int(order.get(HudCraftingVocab.ORDER_MADE_KEY, 0))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", HudCraftingVocab.QUEUE_ROW_SEPARATION)
+	row.set_meta(HudCraftingVocab.QUEUE_ROW_META, index)
+
+	var status := Label.new()
+	status.custom_minimum_size = Vector2(HudCraftingVocab.ORDER_STATUS_WIDTH, 0.0)
+	status.add_theme_font_size_override("font_size", HudCraftingVocab.ORDER_STATUS_FONT_SIZE)
+	status.set_meta(HudCraftingVocab.ORDER_STATUS_META, index)
+	var blocked := String(order.get(HudCraftingVocab.ORDER_BLOCKED_REASON_KEY, ""))
+	if blocked != "":
+		status.text = HudCraftingVocab.ORDER_STATUS_WAITING.to_upper()
+		status.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+	elif drawn:
+		status.text = HudCraftingVocab.ORDER_STATUS_PAUSED.to_upper()
+		status.add_theme_color_override("font_color", HudStyle.WARN)
+		HudWidgets.set_label_tooltip(status, HudCraftingVocab.ORDER_STATUS_PAUSED_TOOLTIP)
+	else:
+		status.text = HudCraftingVocab.ORDER_STATUS_QUEUED.to_upper()
+		status.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+	row.add_child(status)
+
+	# The name, and — on an order the bench is SKIPPING — the sim's reason on a second line, VERBATIM
+	# and tinted by its published severity through the SAME `REASON_COLORS` the well's blocked line
+	# uses. Two lines at most, the panel's copy limit.
+	var words := VBoxContainer.new()
+	words.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	words.add_theme_constant_override("separation", 0)
+	var name_label := Label.new()
+	name_label.text = _order_name(order, payload)
+	name_label.add_theme_font_size_override("font_size", HudCraftingVocab.QUEUE_ROW_FONT_SIZE)
+	name_label.add_theme_color_override("font_color", HudStyle.INK_DIM)
+	words.add_child(name_label)
+	if blocked != "":
+		var reason := Label.new()
+		reason.text = blocked
+		reason.add_theme_font_size_override("font_size", HudCraftingVocab.ORDER_REASON_FONT_SIZE)
+		reason.add_theme_color_override("font_color", HudCraftingVocab.REASON_COLORS.get(
+			String(order.get(HudCraftingVocab.ORDER_BLOCKED_SEVERITY_KEY, "")),
+			HudCraftingVocab.REASON_COLOR_QUIET))
+		reason.set_meta(HudCraftingVocab.ORDER_REASON_META, index)
+		words.add_child(reason)
+	row.add_child(words)
+
+	var minus := _queue_button(HudCraftingVocab.ORDER_COUNT_DECREMENT, "")
+	_wire_count_decrement(minus, index, count, made)
+	row.add_child(minus)
+	var face := Label.new()
+	face.text = HudCraftingVocab.ORDER_MADE_OF_COUNT_FORMAT % [made, count]
+	face.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	face.custom_minimum_size = Vector2(HudCraftingVocab.ORDER_COUNT_WIDTH, 0.0)
+	face.add_theme_font_size_override("font_size", HudCraftingVocab.QUEUE_ROW_FONT_SIZE)
+	face.add_theme_color_override("font_color", HudStyle.INK)
+	HudWidgets.set_label_tooltip(face, HudCraftingVocab.ORDER_COUNT_TOOLTIP)
+	row.add_child(face)
+	var plus := _queue_button(HudCraftingVocab.ORDER_COUNT_INCREMENT, "")
+	_wire_count_increment(plus, index, count)
+	row.add_child(plus)
+
+	var raise := _queue_button(HudCraftingVocab.ORDER_RAISE_GLYPH, _raise_tooltip(index, order, bench))
+	if index == HudCraftingVocab.ORDER_HEAD_INDEX:
+		# The head has nowhere to go up to (the server refuses it). The button stays as an INVISIBLE,
+		# dead placeholder so the ✕ column lines up down the queue — a bare gap of the nominal size does
+		# not, the button's stylebox padding being wider than its minimum.
+		raise.disabled = true
+		raise.modulate = Color(1.0, 1.0, 1.0, 0.0)
+		raise.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		raise.tooltip_text = ""
+	else:
+		raise.set_meta(HudCraftingVocab.ORDER_RAISE_META, index)
+		raise.pressed.connect(func() -> void: order_raise_requested.emit(index))
+	row.add_child(raise)
+
+	var remove := _queue_button(HudCraftingVocab.ORDER_REMOVE_GLYPH,
+		HudCraftingVocab.ORDER_REMOVE_TOOLTIP_DRAWN if drawn else HudCraftingVocab.ORDER_REMOVE_TOOLTIP_UNDRAWN)
+	remove.set_meta(HudCraftingVocab.ORDER_REMOVE_META, index)
+	remove.pressed.connect(func() -> void: order_remove_requested.emit(index))
+	row.add_child(remove)
+	return row
+
+## **AN ORDER THE WELL DOES NOT DESCRIBE PUBLISHES NO NAME** (the worked one's is the well's title,
+## `BenchState.displayName`), so
+## it is the recipe book's `display_name` plus its `label` in the sim's own `full_name` shape — the two
+## cannot read differently for one recipe. An unknown recipe names itself by id.
+func _order_name(order: Dictionary, payload: Dictionary) -> String:
+	var recipe_id := String(order.get(HudCraftingVocab.ORDER_RECIPE_ID_KEY, ""))
+	var recipe := _recipe_of(recipe_id, payload)
+	var name := String(recipe.get(HudCraftingVocab.RECIPE_DISPLAY_NAME_KEY, ""))
+	if name == "":
+		return recipe_id
+	var label := String(recipe.get(HudCraftingVocab.RECIPE_LABEL_KEY, ""))
+	return name if label == "" else HudCraftingVocab.ORDER_NAME_WITH_LABEL_FORMAT % [name, label]
+
+## Raising the order straight under the WORKED order, when that one has CUT ITS PILE, pauses it — say
+## so before. **Only if the raised order could itself be worked**: one carrying a `blocked_reason` is
+## still skipped once it is above, so raising it changes nothing about what the bench works.
+func _raise_tooltip(index: int, order: Dictionary, bench: Dictionary) -> String:
+	if index - 1 == _worked_index(bench) and bool(bench.get(HudCraftingVocab.BENCH_DRAWN_KEY, false)) \
+			and String(order.get(HudCraftingVocab.ORDER_BLOCKED_REASON_KEY, "")) == "":
+		return HudCraftingVocab.ORDER_RAISE_PAUSES_TOOLTIP
+	return HudCraftingVocab.ORDER_RAISE_TOOLTIP
+
+## **THE ORDER THE WELL DESCRIBES** — `BenchState.worked`, the first order in queue order that holds a
+## pile or can draw. `0` (the head) when nothing can be worked, so a fully stuck bench reads as its
+## blocked head exactly as before.
+func _worked_index(bench: Dictionary) -> int:
+	return maxi(int(bench.get(HudCraftingVocab.BENCH_WORKED_KEY, HudCraftingVocab.ORDER_HEAD_INDEX)),
+		HudCraftingVocab.ORDER_HEAD_INDEX)
+
+func _queue_button(glyph: String, tooltip: String) -> Button:
+	var button := Button.new()
+	button.text = glyph
+	button.tooltip_text = tooltip
+	button.focus_mode = Control.FOCUS_NONE
+	button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	button.custom_minimum_size = Vector2(HudCraftingVocab.QUEUE_BUTTON_SIZE, HudCraftingVocab.QUEUE_BUTTON_SIZE)
+	button.add_theme_font_size_override("font_size", HudCraftingVocab.QUEUE_ROW_FONT_SIZE)
+	HudStyle.apply_button(button, "ghost")
+	return button
 
 # ---- the joins --------------------------------------------------------------
 

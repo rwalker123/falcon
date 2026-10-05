@@ -562,7 +562,7 @@ what lifts it (#689, not built).
 - **On the wire**, appended to `PopulationCohortState`: `fertilityCeiling:long` (fixed point,
   neutral at 1e6, in the zero-reserve not-projected sentinel with its three siblings),
   `breedingPopulation:uint`, `breedingCeiling:uint`. Not on the redaction allow-list, so a rival's
-  redacted row publishes `0` for all three. Checkpointed with the cohort; `SAVE_FORMAT_VERSION` 22.
+  redacted row publishes `0` for all three. Checkpointed with the cohort; `SAVE_FORMAT_VERSION` 23.
 
 Pinned by `core_sim/tests/breeding_ceiling.rs` (a lone band grows to and holds at `L × K`; a tied
 pair shares the union's one ceiling and a member may exceed its own lines' share; an unlinked

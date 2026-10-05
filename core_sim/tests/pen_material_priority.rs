@@ -27,6 +27,22 @@ use bevy::math::UVec2;
 use bevy::prelude::Entity;
 use bevy::MinimalPlugins;
 
+/// **An order no fixture finishes** — what the retired repeat-until-cleared job was, as a count.
+const NEVER_FINISHED: u32 = u32::MAX;
+
+/// **The bench works `recipe` and nothing else, with `workers` on it** — the queue holding one
+/// [`NEVER_FINISHED`] order, discarding whatever was there (and any pile it had drawn).
+trait PutOnBench {
+    fn put_on(&mut self, recipe: &str, workers: u32);
+}
+
+impl PutOnBench for core_sim::BandBench {
+    fn put_on(&mut self, recipe: &str, workers: u32) {
+        self.orders = vec![core_sim::BenchOrder::new(recipe, NEVER_FINISHED)];
+        self.workers = workers;
+    }
+}
+
 use core_sim::{
     advance_labor_allocation, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_graze,
     spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
@@ -1061,7 +1077,7 @@ fn run_two_pen_turn_with_bench(bench: Option<(u32, f32)>, units: f32) -> (App, E
             &[("toughness", 0.5), ("suppleness", 0.6)],
         );
         let mut bench = core_sim::BandBench::default();
-        bench.set_job(BENCH_RECIPE, hands);
+        bench.put_on(BENCH_RECIPE, hands);
         app.world.entity_mut(keeper).insert(bench);
     }
     app.world.run_system_once(advance_labor_allocation);

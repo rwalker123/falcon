@@ -1317,9 +1317,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     }
     let _ = dict.insert("material_batches", &material_batches);
 
-    // WHAT IS ON THIS BAND'S BENCH — one job at a time, so the panel never has to explain a queue.
-    // An empty `recipe_id` is an IDLE bench, which is a different statement from a BLOCKED one: a
-    // blocked bench has a recipe AND a `blocked_reason`.
+    // WHAT IS ON THIS BAND'S BENCH — the scalars describe the WORKED order, `orders[worked]` (below):
+    // the first order in queue order that holds a pile or can draw, so a short head no longer stalls
+    // the queue. When nothing can be worked `worked` is 0 and the scalars describe the head. An empty
+    // `recipe_id` is an IDLE bench, which is a different statement from a BLOCKED one: a blocked bench
+    // has a recipe AND a `blocked_reason`.
     let mut bench_dict = VarDictionary::new();
     let _ = bench_dict.insert(
         "recipe_id",
@@ -1364,10 +1366,6 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = bench_dict.insert(
         "shortfalls",
         &shortfalls_to_array(cohort.bench().and_then(|b| b.shortfalls())),
-    );
-    let _ = bench_dict.insert(
-        "items_completed",
-        cohort.bench().map_or(0, |b| b.itemsCompleted()) as i64,
     );
     let _ = bench_dict.insert("drawn", cohort.bench().is_some_and(|b| b.drawn()));
     // The grade the pile in flight FIXED — `""` before the draw, or on an ungraded recipe.
@@ -1417,7 +1415,74 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             _ => "normal",
         },
     );
+    // **THE QUEUE, HEAD FIRST** (`docs/plan_crafting_and_materials.md` §7 → "The queue"). Every
+    // scalar above describes `orders[worked]`; this array is every order, and an order's INDEX here is
+    // the `order` argument the queue verbs (`bench_order_count`, `bench_remove`, `bench_raise`)
+    // address. Empty on an idle bench. The worked order's `made` is what the retired `BenchState.
+    // itemsCompleted` carried, which is why that field is no longer read.
+    let _ = bench_dict.insert("worked", cohort.bench().map_or(0, |b| b.worked()) as i64);
+    //
+    // **`drawn` on an order the bench is NOT working is a PAUSED order** — raised over while holding a
+    // cut pile, it keeps that pile and its progress until it is worked again, or until it is removed, which
+    // destroys the pile exactly as removing the head does.
+    let mut bench_orders = VarArray::new();
+    if let Some(orders) = cohort.bench().and_then(|b| b.orders()) {
+        for order in orders.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("recipe_id", order.recipeId().unwrap_or(""));
+            let _ = row.insert("count", order.count() as i64);
+            let _ = row.insert("made", order.made() as i64);
+            let _ = row.insert("progress", order.progress() as f64);
+            let _ = row.insert("drawn", order.drawn());
+            // WHY THE BENCH IS SKIPPING THIS ORDER (`"Short 3.0 fibre"`), sim-resolved and rendered
+            // verbatim, with its severity in the offer vocabulary; both `""` when the order holds a
+            // pile or can draw. The crew's refusal stays on the bench row's own `blocked_reason`.
+            let _ = row.insert("blocked_reason", order.blockedReason().unwrap_or(""));
+            let _ = row.insert("blocked_severity", order.blockedSeverity().unwrap_or(""));
+            bench_orders.push(&row.to_variant());
+        }
+    }
+    let _ = bench_dict.insert("orders", &bench_orders);
     let _ = dict.insert("bench", &bench_dict);
+
+    // **WHAT TO MAKE NEXT, RANKED SIM-SIDE BY WHO IS GOING WITHOUT** (§7 → "Suggestions"). In rank
+    // order, which this decoder preserves; the client never re-sorts or re-scores it. `count` is the
+    // whole shortfall net of what is already queued, so a suggestion netted to zero is simply absent.
+    // Whether the item can be MADE is not here — the panel joins the item's `CraftOffer` for that.
+    let mut craft_suggestions = VarArray::new();
+    if let Some(suggestions) = cohort.craftSuggestions() {
+        for suggestion in suggestions.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("item_id", suggestion.itemId().unwrap_or(""));
+            let _ = row.insert("count", suggestion.count() as i64);
+            let _ = row.insert("workers_without", suggestion.workersWithout() as f64);
+            // `> 0` only for gear that adds build or keeping work; `0` reads as the people going
+            // without, which is the score's own unit.
+            let _ = row.insert("work_per_turn", suggestion.workPerTurn() as f64);
+            let mut sources = VarArray::new();
+            if let Some(list) = suggestion.sources() {
+                for source in list.iter() {
+                    let mut entry = VarDictionary::new();
+                    // "pool" | "site" | "take"
+                    let _ = entry.insert("kind", source.kind().unwrap_or(""));
+                    // A pool token ("roadwork" | "builders") or a labor-row kind ("hunt", "forage",
+                    // "extract", "scout", "warrior") — the `LaborAssignment` spelling.
+                    let _ = entry.insert("job", source.job().unwrap_or(""));
+                    let _ = entry.insert("target_x", source.targetX() as i64);
+                    let _ = entry.insert("target_y", source.targetY() as i64);
+                    let _ = entry.insert("fauna_id", source.faunaId().unwrap_or(""));
+                    let _ = entry.insert("material", source.material().unwrap_or(""));
+                    let _ = entry.insert("missing_units", source.missingUnits() as f64);
+                    let _ = entry.insert("workers_without", source.workersWithout() as f64);
+                    let _ = entry.insert("work_per_turn", source.workPerTurn() as f64);
+                    sources.push(&entry.to_variant());
+                }
+            }
+            let _ = row.insert("sources", &sources);
+            craft_suggestions.push(&row.to_variant());
+        }
+    }
+    let _ = dict.insert("craft_suggestions", &craft_suggestions);
 
     // **ONE ROW PER RECIPE, ALWAYS**, and `reason` + `severity` are the contract rather than
     // `available`: "Not needed yet" is a SHRUG and "Short 4.9 bone" is a PROBLEM, and a client

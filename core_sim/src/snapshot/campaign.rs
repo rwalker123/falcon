@@ -183,7 +183,7 @@ pub(crate) fn snapshot_opening_loadout(
                 units: *units,
             })
             .collect(),
-        // The same test `handle_set_bench` applies: every craft a recipe requires must be learned.
+        // The same test `handle_bench_enqueue` applies: every craft a recipe requires must be learned.
         // A recipe requiring nothing is craftable by anyone, which is what puts the four opening
         // recipes on the list and keeps the three knowledge-gated bench tools off it.
         craftable_recipe_ids: recipes
