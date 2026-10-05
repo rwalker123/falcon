@@ -173,9 +173,10 @@ group descends from.
   ceilings rise. That is what lifts a faction past ~150 (#689). Contact with your own split bands
   adds nothing — they hold your lines already.
 - **Lines do not decay.**
-- **A line held by several separate groups splits its `K` between them**, so splitting never
-  raises a people's total ceiling — even a one-line band, whose split gives both halves a copy
-  of its line.
+- **A line held by several separate groups of one people splits its `K` between them**, so
+  splitting never raises a people's total ceiling — even a one-line band, whose split gives both
+  halves a copy of its line. A copy another people holds does not divide it: that copy is what
+  contact gives, and dividing it would leave two peoples who met no higher than before.
 - **The ceiling lifts at ~500** (`lineage.free_breeding_at`). Once a breeding population's
   lines × `K` reaches it, the inbreeding ceiling no longer applies at all: ~500 is the forager
   mating-network size (Birdsell's dialect tribe; Wobst's 175–475) at which a people finds mates
