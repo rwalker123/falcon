@@ -44,6 +44,5 @@ pub(crate) fn fragment_to_dict(fragment: fb::KnownTechFragment<'_>) -> VarDictio
     let _ = dict.insert("discovery", fragment.discoveryId() as i64);
     let _ = dict.insert("progress", fixed64_to_f64(fragment.progress()));
     let _ = dict.insert("progress_raw", fragment.progress());
-    let _ = dict.insert("fidelity", fixed64_to_f64(fragment.fidelity()));
     dict
 }

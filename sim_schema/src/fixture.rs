@@ -895,6 +895,8 @@ fn seed_snapshot() -> WorldSnapshot {
     }
 
     // --- knowledge -------------------------------------------------------
+    // The knowledge rider's readout (#531). Seeded for the reason every repeated field here is.
+    s.contact_lessons = rows();
     s.discovered_sites = rows();
     for entry in &mut s.discovered_sites {
         entry.sites = rows();

@@ -3548,7 +3548,6 @@ fn starting_knowledge_fragments(
             fragments.push(KnowledgeFragment::new(
                 definition.discovery_id(),
                 scalar_from_f32(definition.progress()),
-                scalar_from_f32(definition.fidelity()),
             ));
         } else {
             warn!(

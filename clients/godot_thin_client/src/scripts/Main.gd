@@ -970,6 +970,9 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         _hud_invoke("update_deposit_rungs", [snapshot["deposit_rungs"]])
     if snapshot.has("intensification_knowledge") and SnapshotSections.changed(snapshot, "intensification_knowledge"):
         _hud_invoke("update_intensification", [snapshot["intensification_knowledge"]])
+    # …and what the player's people is learning by CONTACT, read against that same progress row.
+    if snapshot.has("contact_lessons") and SnapshotSections.changed(snapshot, "contact_lessons"):
+        _hud_invoke("update_contact_lessons", [snapshot["contact_lessons"]])
     if snapshot.has("discovered_sites") and SnapshotSections.changed(snapshot, "discovered_sites"):
         _hud_invoke("update_discoveries", [snapshot["discovered_sites"]])
     if snapshot.has("grid"):

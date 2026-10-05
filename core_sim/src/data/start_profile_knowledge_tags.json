@@ -2,53 +2,67 @@
   "nomadic_wayfinding": {
     "discovery_id": 2001,
     "progress": 0.65,
-    "fidelity": 0.9
+    "observability": 0.4
   },
   "portable_forge": {
     "discovery_id": 2002,
     "progress": 0.55,
-    "fidelity": 0.85
+    "observability": 0.8
   },
   "cultivation": {
-    "discovery_id": 2003
+    "discovery_id": 2003,
+    "observability": 0.9
   },
   "herding": {
-    "discovery_id": 2004
+    "discovery_id": 2004,
+    "observability": 0.9
   },
   "seed_selection": {
-    "discovery_id": 2005
+    "discovery_id": 2005,
+    "observability": 0.2
   },
   "penning": {
-    "discovery_id": 2006
+    "discovery_id": 2006,
+    "observability": 1.0
   },
   "foddering": {
-    "discovery_id": 2007
+    "discovery_id": 2007,
+    "observability": 0.4
   },
   "tanning": {
-    "discovery_id": 2008
+    "discovery_id": 2008,
+    "observability": 0.5
   },
   "weaving": {
-    "discovery_id": 2009
+    "discovery_id": 2009,
+    "observability": 0.7
   },
   "bone_working": {
-    "discovery_id": 2010
+    "discovery_id": 2010,
+    "observability": 0.6
   },
   "roadbuilding": {
-    "discovery_id": 2012
+    "discovery_id": 2012,
+    "observability": 1.0
   },
   "paving": {
-    "discovery_id": 2013
+    "discovery_id": 2013,
+    "observability": 1.0
   },
   "woodcraft": {
-    "discovery_id": 2014
+    "discovery_id": 2014,
+    "observability": 0.6
   },
   "conservationism": {
-    "discovery_id": 2015
+    "discovery_id": 2015,
+    "observability": 0.3
   },
   "quarrying": {
-    "discovery_id": 2016
+    "discovery_id": 2016,
+    "observability": 0.9
   },
   "knapping": {
-    "discovery_id": 2017
+    "discovery_id": 2017,
+    "observability": 0.7
   }
 }

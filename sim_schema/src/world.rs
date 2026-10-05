@@ -19,9 +19,10 @@ use crate::state::governance::{
     CorruptionLedger, CrisisOverlayState, CrisisTelemetryState, PowerNodeState, PowerTelemetryState,
 };
 use crate::state::knowledge::{
-    DiscoveredSitesState, DiscoveryProgressEntry, GreatDiscoveryDefinitionState,
-    GreatDiscoveryProgressState, GreatDiscoveryState, GreatDiscoveryTelemetryState,
-    KnowledgeLedgerEntryState, KnowledgeMetricsState, KnowledgeTimelineEventState,
+    ContactLessonState, DiscoveredSitesState, DiscoveryProgressEntry,
+    GreatDiscoveryDefinitionState, GreatDiscoveryProgressState, GreatDiscoveryState,
+    GreatDiscoveryTelemetryState, KnowledgeLedgerEntryState, KnowledgeMetricsState,
+    KnowledgeTimelineEventState,
 };
 use crate::state::map::{
     ClimateBandsState, ElevationOverlayState, FloatRasterState, ScalarRasterState,
@@ -303,6 +304,11 @@ pub struct WorldSnapshot {
     /// `(y, x)`, the registry's own row-major key order.
     #[serde(default)]
     pub routes: Vec<RouteState>,
+    /// **What the viewer's people is learning by contact this turn** — one row per discovery, the
+    /// strongest source (`docs/plan_contact_and_logistics.md` §Settled by #531). Ordered by
+    /// discovery id. Rides `KnowledgeSection.contactLessons`.
+    #[serde(default)]
+    pub contact_lessons: Vec<ContactLessonState>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -461,6 +467,9 @@ pub struct WorldDelta {
     pub connections: Option<Vec<ConnectionState>>,
     /// `None` = unchanged this frame, on `connections`' own rules.
     pub routes: Option<Vec<RouteState>>,
+    /// `None` = unchanged this frame, on `connections`' own rules.
+    #[serde(default)]
+    pub contact_lessons: Option<Vec<ContactLessonState>>,
 }
 
 pub fn hash_snapshot(snapshot: &WorldSnapshot) -> u64 {

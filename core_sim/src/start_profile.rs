@@ -204,13 +204,26 @@ impl StartProfileOverrides {
     }
 }
 
+/// One row of `start_profile_knowledge_tags.json` — the table that maps every knowledge tag to its
+/// discovery id.
+///
+/// `deny_unknown_fields` so a retired key fails loudly instead of being silently ignored: the
+/// `fidelity` this row used to carry was deleted by #531, and a stale copy of it must not parse.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct KnowledgeTagDefinition {
     pub discovery_id: u32,
     #[serde(default = "default_tag_progress")]
     pub progress: f32,
-    #[serde(default = "default_tag_fidelity")]
-    pub fidelity: f32,
+    /// **How much being around this discovery teaches**, `0..=1` — the knowledge rider's per-discovery
+    /// term (`crate::knowledge_contact`, `docs/plan_contact_and_logistics.md` §Settled by #531). A
+    /// pen is impossible to miss (`1.0`); seed selection happens in the ground and in someone's
+    /// judgment (`0.2`).
+    ///
+    /// **Required, with no default** — a defaulted observability would pace a lesson off a number
+    /// nobody chose. Named apart from the fog's `Seen`/`Discovered` vocabulary on purpose: this is
+    /// about an idea, not a tile.
+    pub observability: f32,
 }
 
 impl KnowledgeTagDefinition {
@@ -222,17 +235,13 @@ impl KnowledgeTagDefinition {
         self.progress
     }
 
-    pub fn fidelity(&self) -> f32 {
-        self.fidelity
+    pub fn observability(&self) -> f32 {
+        self.observability
     }
 }
 
 fn default_tag_progress() -> f32 {
     0.5
-}
-
-fn default_tag_fidelity() -> f32 {
-    0.75
 }
 
 #[derive(Debug, Clone)]
@@ -249,7 +258,25 @@ impl StartProfileKnowledgeTags {
 
     pub fn from_json_str(input: &str) -> Result<Self, KnowledgeTagCatalogError> {
         let tags: HashMap<String, KnowledgeTagDefinition> = serde_json::from_str(input)?;
+        for (tag, definition) in &tags {
+            let observability = definition.observability;
+            if !observability.is_finite() || !(0.0..=1.0).contains(&observability) {
+                return Err(KnowledgeTagCatalogError::Invalid {
+                    tag: tag.clone(),
+                    reason: format!(
+                        "observability must be a fraction in 0..=1 (was {observability})"
+                    ),
+                });
+            }
+        }
         Ok(Self { tags })
+    }
+
+    /// Every tag, in no particular order — callers that need a stable order sort.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &KnowledgeTagDefinition)> {
+        self.tags
+            .iter()
+            .map(|(tag, definition)| (tag.as_str(), definition))
     }
 
     pub fn from_file(path: &Path) -> Result<Self, KnowledgeTagCatalogError> {
@@ -278,6 +305,8 @@ impl StartProfileKnowledgeTags {
 pub enum KnowledgeTagCatalogError {
     #[error("failed to parse start profile knowledge tags: {0}")]
     Parse(#[from] serde_json::Error),
+    #[error("invalid start profile knowledge tag {tag:?}: {reason}")]
+    Invalid { tag: String, reason: String },
     #[error("failed to read start profile knowledge tags from {path:?}: {source}")]
     ReadFailed {
         path: PathBuf,

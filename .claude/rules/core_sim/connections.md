@@ -8,6 +8,11 @@ paths:
   - "core_sim/src/systems/expeditions.rs"
   - "core_sim/src/components.rs"
   - "core_sim/tests/connections.rs"
+  - "core_sim/src/knowledge_contact.rs"
+  - "core_sim/src/knowledge_contact_config.rs"
+  - "core_sim/src/data/knowledge_contact_config.json"
+  - "core_sim/src/data/start_profile_knowledge_tags.json"
+  - "core_sim/tests/knowledge_contact.rs"
 ---
 
 # Contact & connections — the tie two groups leave behind
@@ -21,6 +26,8 @@ directed, persisting, decaying tie. Logistics, culture, knowledge and cargo are 
 | File | Purpose |
 |------|---------|
 | `src/data/connections_config.json` | `strength.gain_per_contact` (0.25 — four turns of contact reach a full tie), `strength.decay_per_turn` (0.02 — a full tie bleeds to nothing over fifty quiet turns), `forget_turns` (200 — how long after the last contact the edge itself is reaped). The `1.0` ceiling is **not** here: strength is a `0..=1` fraction by definition, so its top is the named constant `connections::FULL_TIE`, and tuning it would change the unit rather than the balance. No hot-reload kind. |
+| `src/data/knowledge_contact_config.json` | **The knowledge rider's channel rates**, in practice units per turn (the unit `learn_rate` 1.0 is paid in): `channel_rates.watching` (**0.1**), `.trade` (**0.4**), `.road` (**0.6**). All three required, validated finite and `>= 0` (`0` switches a channel off); no global multiplier on top. Loader `knowledge_contact_config.rs` on the shared boot seam, env override `KNOWLEDGE_CONTACT_CONFIG_PATH`. No hot-reload kind. **Never `connections_config.json`**, which has no rider vocabulary |
+| `src/data/start_profile_knowledge_tags.json` | Each knowledge tag's `discovery_id`, its start-profile seed `progress`, and **`observability`** (`0..=1`, required, no default — how much being around the discovery teaches: a pen `1.0`, seed selection `0.2`). `deny_unknown_fields`, so the retired `fidelity` key fails to parse. Every tag must also have an `intensification_ladder.json` `knowledge.lesson_costs` entry — a boot panic otherwise |
 
 ## A connection is a RAW primitive, and that is the whole discipline
 
@@ -274,6 +281,86 @@ live tie"* is a second answer free to drift.
 
 There is deliberately **no faction-level contact question** (*"has any band of ours met any band of
 theirs"*): a people-to-people contact test is exactly the widening defection must not make.
+
+## Knowledge is the third rider
+
+Design of record: `docs/plan_contact_and_logistics.md` §Settled by #531. **A people learns what
+another people knows by being around it**: per observer people, per discovery it does not know, per
+turn,
+
+```text
+credit = max over channel instances( tie × channel_rate × observability ) / lesson_cost
+```
+
+credited to the observer people's `DiscoveryProgressLedger` entry through `add_progress`, the same
+entry practice credits. `knowledge_contact::contact_lessons` is the rule; `learn_over_connections`
+applies it.
+
+| Term | As built |
+|---|---|
+| channel instance | an `(observer band, subject band, channel)` triple present this turn. **Watching** — every ledger edge. **Trade** — a `TransferCause::ShipmentIn` crossing on a band's own `last_transfer_crossings` this window, whose counterparty is the sender; it yields an instance **each way**, so both bands are observer of the other. **Road** — the band's tile holds a road whose `grants_sight()` is true (built rung, keeping met — the `light_kept_routes` predicate itself, not a copy) and whose keeper is the subject |
+| `tie` | `ConnectionLedger::get(observer → subject).strength`, on **every** channel. Absent or parked (`NO_TIE`) and the instance teaches nothing — one direction is enough, but it must be the observer's |
+| "knows" | `intensification::knows` at the ladder's `completion_threshold`, read off the **subject band's** faction. A people halfway to a discovery teaches nothing of it |
+| `observability` | the tag's own, `start_profile_knowledge_tags.json` |
+| `/ lesson_cost` | `LadderKnowledge::ledger_credit` — the one place practice units become ledger progress, shared with rungs and benches |
+
+**What contact can teach is the tag table.** `TeachableLessons::resolve` joins every tag in
+`start_profile_knowledge_tags.json` (its discovery id and observability) to the ladder's price for
+it, and refuses an unpriced tag; boot panics on the refusal. A ledger entry with no tag — a great
+discovery, an espionage fragment — has no observability and is not taught by contact.
+
+**There is no faction branch, and none is needed.** A band watching a band of its own people
+already knows everything that people knows, so *"credit what they know and you don't"* credits
+nothing. Faction is read off each endpoint band for the one question the rule asks of it — whose
+ledger row — which is this module's discipline above applied to a rider.
+
+**Max, never sum, and the max is per `(observer people, discovery)`** — across every band of the
+observer's people, every subject band and every channel. Ties between equal credits go to the
+first instance in `(observer, subject, channel)` order; they teach the same amount either way and
+the order only picks which source the readout names.
+
+**All credits are computed off one ledger state, then applied.** Nothing learned in a pass can
+teach onward in the same pass, and iteration order changes nothing.
+
+**It runs in `TurnStage::Visibility`, behind the stage's chain.** The tie it multiplies by is the one
+this turn's sight sweep just refreshed (`advance_connections`); a shipment lands in
+`advance_expeditions` and a road's keeping is paid inside `advance_labor_allocation`, both in
+`Population`, so all three channels' inputs are final. The edge is declared against
+`sites::discover_sites`, the chain's last system, because that system takes `PopulationCohort`
+mutably and the ambiguity gate requires the order stated.
+
+**`KnowledgeFragment.fidelity` is retired with this rider**, end to end: the component field, the
+schema field (`KnownTechFragment.fidelity`, deleted rather than deprecated), the native dict key,
+the tag-table key, `migration_fidelity_floor` (it floored nothing else), and the unmounted
+`sim_runtime::TradeLeakCurve` whose timer this rider's rate replaced. Partial transmission is what a
+rate building up over turns already is.
+
+### The readout, and why the first frame after a load is right
+
+`KnowledgeSection.contactLessons` (`ContactLessonState`, appended last; `WorldSnapshot` /
+`WorldDelta` field `contact_lessons`, diffed whole): per discovery the **viewer's** people is
+learning by contact, `discoveryId`, `knowledgeId` (the tag), `subjectFaction`, `channel`
+(`0` watching, `1` trade, `2` road — `ContactChannel::wire_code`) and `credit` (ledger progress per
+turn). Filtered on the **observer** people, the connection section's own rule; the subject people is
+named whatever it is. Its display name is the `factionNames` row for `subjectFaction` — the frame
+already carries every faction's name, so the row does not carry a second copy.
+
+**The capture calls the same pure function the system does** (`snapshot::knowledge::
+contact_lesson_states`) rather than publishing a resource the system filled. Every input is
+checkpointed — both ledgers, the road registry, and each band's cohort, whose
+`last_turn_transfer_crossings` is the published copy of the trade record — so a loaded world's
+first frame needs nothing carried for it, which is the trap `SupplyNetworkMembership` fell into
+(`checkpoints.md`). The capture reads the cohort's copy rather than `LaborAllocation`'s accumulator
+because the accumulator is cleared behind the capture, and a recapture after a command must publish
+the same rows.
+
+**The capture reads the ledger after this turn's credit**, so the readout is the rule evaluated
+against the world as published: a discovery the viewer completed this turn has left the list, and
+one a subject people completed this turn is already on it — the credit the next turn will pay.
+
+Pinned: the rule's arithmetic and every edge case by `knowledge_contact`'s unit tests; the
+scheduled system and the encoded readout by `core_sim/tests/knowledge_contact.rs`, which asserts
+the exact ledger rise off a real turn's tie and reads the row through `root_as_envelope`.
 
 ## Metrics
 

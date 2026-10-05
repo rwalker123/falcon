@@ -417,11 +417,8 @@ fn the_knowledge_that_crosses_is_the_share_of_the_band_that_left() {
     );
     let config = app.world.resource::<SimulationConfig>().clone();
     let contract: Vec<_> = before.knowledge.iter().map(|f| f.to_contract()).collect();
-    let scaled = sim_runtime::scale_migration_fragments(
-        &contract,
-        config.migration_fragment_scaling.raw(),
-        config.migration_fidelity_floor.raw(),
-    );
+    let scaled =
+        sim_runtime::scale_migration_fragments(&contract, config.migration_fragment_scaling.raw());
     assert!(!scaled.is_empty(), "fixture: something is worth carrying");
     for fragment in &scaled {
         let expected = Scalar::from_raw(fragment.progress) * share;

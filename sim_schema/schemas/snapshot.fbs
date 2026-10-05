@@ -4549,10 +4549,11 @@ table SnapshotHeader {
   baseFrameSeq:ulong = 0;
 }
 
+// No `fidelity` field: it was retired by #531 (docs/plan_contact_and_logistics.md §Settled by #531)
+// and DELETED rather than deprecated — partial transmission is what `progress` already is.
 table KnownTechFragment {
   discoveryId:uint;
   progress:long;
-  fidelity:long;
 }
 
 table DiscoveryProgressEntry {
@@ -5641,6 +5642,30 @@ table SubsistenceSection {
   defaultExtractKitId:string;
 }
 
+// ONE discovery the VIEWER'S people is learning BY CONTACT this turn — the knowledge rider on a
+// connection (docs/plan_contact_and_logistics.md §Settled by #531; core_sim `knowledge_contact`).
+// "Learning Wheel from the Red Hill people — by trade" is `knowledgeId` + `subjectFaction` + `channel`.
+//
+// Filtered to the viewer: only the viewer's own people's lessons are published. One row per
+// discovery, naming the STRONGEST source this turn (the rule takes the max over channels, never the
+// sum), and absent where contact teaches nothing — a discovery the viewer already knows, or one no
+// people it has a live tie to knows. Ordered by `discoveryId`.
+table ContactLessonState {
+  // The ledger's discovery id — `DiscoveryProgressEntry.discovery`'s key.
+  discoveryId:uint;
+  // The knowledge tag (`start_profile_knowledge_tags.json`) — `LadderKnowledgeProgress.knowledgeId`'s
+  // key for every ladder knowledge.
+  knowledgeId:string;
+  // The people being learned FROM — the subject band's faction. Its name is `factionNames`' row.
+  subjectFaction:uint;
+  // How: 0 = watching (a live tie), 1 = trade (a shipment landed between the two bands this turn),
+  // 2 = their road (the observer band stands on a road the subject band keeps). Append-only.
+  channel:ubyte;
+  // Ledger progress this credits per turn, in the ledger's own 0..1 units (`progress` / the ladder's
+  // completion threshold reads off the same scale).
+  credit:float;
+}
+
 table KnowledgeSection {
   greatDiscoveryDefinitions:[GreatDiscoveryDefinition];
   greatDiscoveries:[GreatDiscoveryState];
@@ -5652,6 +5677,8 @@ table KnowledgeSection {
   discoveredSites:[DiscoveredSitesState];
   discoveryProgress:[DiscoveryProgressEntry];
   removedKnowledgeLedger:[ulong]; // delta-only
+  // Appended LAST. Whole-vector on both snapshot and delta: absent on a delta = unchanged.
+  contactLessons:[ContactLessonState];
 }
 
 table GovernanceSection {
