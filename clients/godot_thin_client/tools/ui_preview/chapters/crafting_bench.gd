@@ -17,7 +17,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 230
+const EXPECTED_CHECKPOINTS := 236
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
@@ -758,6 +758,7 @@ func _crafting_states() -> void:
 	await _shrug_with_a_link_state()
 	await _queue_and_suggestion_states()
 	await _short_head_state()
+	await _material_shortage_state()
 
 	# Hand everything back: the panel closed, the roster restored to the reference band.
 	h._hud.close_crafting_panel()
@@ -947,6 +948,80 @@ func _short_head_state() -> void:
 		sled_raise != null and sled_raise.tooltip_text == HudCraftingVocab.ORDER_RAISE_TOOLTIP)
 	h._hud.close_crafting_panel()
 	await h._settle()
+
+# ---- the MATERIAL SHORTAGE forecast (issue #777) -------------------------------------------------
+
+const FORECAST_ONE_SHORT := 6.0
+const FORECAST_TWO_SHORT_A := 3.0
+const FORECAST_TWO_SHORT_B := 1.5
+const FORECAST_SUGGEST_SHORT := 12.0
+const FORECAST_SUGGEST_ITEM := "clubs"
+## The stock a shortfall row says is on hand; `required` is stock plus the shortfall.
+const FORECAST_HELD := 1.0
+
+func _shortfall_row(material_id: String, short: float) -> Dictionary:
+	return {"material_id": material_id, "required": short + FORECAST_HELD, "held": FORECAST_HELD,
+		"short": short}
+
+## **A FORECAST IS NOT A BLOCK.** The paused spears read one material, the waiting sled two; the Clubs
+## suggestion carries its whole-count shortfall. The sim's `short` is rendered verbatim to one decimal,
+## the tail once, amber, and never on an order that also carries a blocked reason.
+func _material_shortage_state() -> void:
+	var band := _queued_band()
+	var bench: Dictionary = band["bench"]
+	var orders: Array = bench["orders"]
+	(orders[QUEUE_PAUSED_INDEX] as Dictionary)["short_to_finish"] = [
+		_shortfall_row("wood", FORECAST_ONE_SHORT)]
+	(orders[QUEUE_WAITING_INDEX] as Dictionary)["short_to_finish"] = [
+		_shortfall_row("wood", FORECAST_TWO_SHORT_A), _shortfall_row("fibre", FORECAST_TWO_SHORT_B)]
+	var suggestions: Array = band["craft_suggestions"]
+	for suggestion_variant in suggestions:
+		var suggestion: Dictionary = suggestion_variant
+		if String(suggestion["item_id"]) == FORECAST_SUGGEST_ITEM:
+			suggestion["shortfalls"] = [_shortfall_row("wood", FORECAST_SUGGEST_SHORT)]
+	h._hud.update_band_alerts([band])
+	h._hud.open_crafting_panel(band)
+	await h._settle()
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting/forecast — the panel is open", false)
+		return
+	var one := _forecast_label(panel, HudCraftingVocab.ORDER_SHORT_TO_FINISH_META, QUEUE_PAUSED_INDEX)
+	h._assert_hud("crafting/forecast — one material reads the sentence (%s)" % [one.text if one != null else "none"],
+		one != null and one.text == "Short 6.0 wood to finish · send a crew for more"
+			and one.get_theme_color(FONT_COLOR_THEME_ITEM) == HudStyle.WARN
+			and one.tooltip_text == one.text)
+	var two := _forecast_label(panel, HudCraftingVocab.ORDER_SHORT_TO_FINISH_META, QUEUE_WAITING_INDEX)
+	h._assert_hud("crafting/forecast — two materials join, the tail ONCE (%s)" % [two.text if two != null else "none"],
+		two != null and two.text == "Short 3.0 wood · Short 1.5 fibre to finish · send a crew for more")
+	var sug := _forecast_label(panel, HudCraftingVocab.SUGGESTION_SHORTFALL_META, FORECAST_SUGGEST_ITEM)
+	h._assert_hud("crafting/forecast — the suggestion says it for the whole count (%s)" % [sug.text if sug != null else "none"],
+		sug != null and sug.text == "Short 12.0 wood for all %d · send a crew for more" % SUGGEST_CLUBS_COUNT
+			and sug.get_theme_color(FONT_COLOR_THEME_ITEM) == HudStyle.WARN)
+	h._assert_hud("crafting/forecast — a covered suggestion carries no line",
+		_forecast_label(panel, HudCraftingVocab.SUGGESTION_SHORTFALL_META, "spears") == null)
+	await h._save("crafting_material_forecast")
+
+	# Exclusive with the blocked reason: a skipped order says why it is skipped, not the forecast.
+	(orders[QUEUE_WAITING_INDEX] as Dictionary)["blocked_reason"] = SHORT_HEAD_REASON
+	h._hud.update_band_alerts([band])
+	h._hud.crafting_panel().refresh_snapshot()
+	await h._settle()
+	panel = h._hud.crafting_panel().panel()
+	h._assert_hud("crafting/forecast — a blocked order shows its reason and NO forecast line",
+		panel != null and _forecast_label(panel, HudCraftingVocab.ORDER_SHORT_TO_FINISH_META, QUEUE_WAITING_INDEX) == null
+			and _reason_label(panel) != null)
+	h._hud.close_crafting_panel()
+	await h._settle()
+
+func _forecast_label(node: Node, meta: String, value: Variant) -> Label:
+	if node is Label and node.has_meta(meta) and node.get_meta(meta) == value:
+		return node as Label
+	for child in node.get_children():
+		var found := _forecast_label(child, meta, value)
+		if found != null:
+			return found
+	return null
 
 func _reason_label(node: Node) -> Label:
 	if node is Label and node.has_meta(HudCraftingVocab.ORDER_REASON_META):

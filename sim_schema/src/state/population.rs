@@ -2098,6 +2098,10 @@ pub struct BenchOrderState {
     /// `danger` when [`Self::blocked_reason`] is set, `""` otherwise.
     #[serde(default)]
     pub blocked_severity: String,
+    /// **What the stock on hand cannot cover of this order's whole run** — a forecast, not a block;
+    /// empty when every pass still to draw is covered. See `snapshot.fbs`.
+    #[serde(default)]
+    pub short_to_finish: Vec<MaterialShortfallState>,
 }
 
 /// **One craft suggestion** — an item the band's consumers went without, and how many to make. A row
@@ -2115,6 +2119,10 @@ pub struct CraftSuggestionState {
     /// that adds no build or keeping work.
     pub work_per_turn: f32,
     pub sources: Vec<CraftSuggestionSourceState>,
+    /// What the whole [`Self::count`] would need that the stock left after the queue cannot cover;
+    /// empty when covered or when no recipe makes the item.
+    #[serde(default)]
+    pub shortfalls: Vec<MaterialShortfallState>,
 }
 
 /// **One consumer going without a suggested item** — a row of [`CraftSuggestionState::sources`].

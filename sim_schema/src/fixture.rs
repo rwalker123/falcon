@@ -460,7 +460,10 @@ fn seed_snapshot() -> WorldSnapshot {
             // like the shortfalls above it, so it needs elements or the guard never decodes a row.
             drawn_inputs: rows_of(DrawnInputState::default()),
             // The queue, head first — a repeated field inside the bench, seeded for the same reason.
-            orders: rows_of(BenchOrderState::default()),
+            orders: rows_of(BenchOrderState {
+                short_to_finish: rows_of(MaterialShortfallState::default()),
+                ..Default::default()
+            }),
             ..Default::default()
         };
         // **WHAT TO MAKE NEXT** — a repeated field whose rows carry a repeated field of their own
@@ -470,6 +473,7 @@ fn seed_snapshot() -> WorldSnapshot {
             .map(|item| CraftSuggestionState {
                 item_id: (*item).to_string(),
                 sources: rows_of(CraftSuggestionSourceState::default()),
+                shortfalls: rows_of(MaterialShortfallState::default()),
                 ..Default::default()
             })
             .collect();

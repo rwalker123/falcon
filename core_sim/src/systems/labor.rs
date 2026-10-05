@@ -11502,6 +11502,101 @@ fn announce_material_shortfall(
     allocation.material_shortfall_warned = names;
 }
 
+/// What [`announce_bench_material_short`] reads off a band: its store, bench and ledger, and the
+/// allocation that holds the edge gate.
+type BenchShortBand = (
+    &'static PopulationCohort,
+    &'static BandBench,
+    &'static BandEquipment,
+    &'static mut LaborAllocation,
+    Option<&'static BandId>,
+);
+
+/// **THE BENCH-QUEUE SHORTAGE NOTICE** — once per turn, after [`advance_crafting`] has drawn, each
+/// band with a bench is told which materials its whole queue will run short of.
+///
+/// The gap is [`crate::systems::queue_material_shortfalls`] summed per material across every order —
+/// the same function the wire's `BenchOrder.shortToFinish` reads, so the notice and the readout
+/// cannot disagree. **It fires whether or not the bench is staffed**: a short queue is short either
+/// way. Scheduled right after `advance_crafting` so the stock it judges is what the draw left.
+pub fn announce_bench_material_short(
+    mut event_log: ResMut<CommandEventLog>,
+    tick: Res<SimulationTick>,
+    materials_handle: Res<crate::materials_config::MaterialsConfigHandle>,
+    recipes_handle: Res<crate::recipes_config::RecipesConfigHandle>,
+    equipment_handle: Res<EquipmentConfigHandle>,
+    mut bands: Query<BenchShortBand, With<ResidentBand>>,
+) {
+    let materials = materials_handle.get();
+    let recipes = recipes_handle.get();
+    let equipment = equipment_handle.get();
+    for (cohort, bench, wear, mut allocation, band_id) in bands.iter_mut() {
+        let forecast = crate::systems::queue_material_shortfalls(
+            Some(bench),
+            &cohort.stores,
+            &recipes,
+            &materials,
+            &equipment,
+            wear,
+        );
+        let short: Vec<(String, f32)> = forecast
+            .short_by_material()
+            .into_iter()
+            .map(|(id, gap)| (id.to_string(), gap.to_f32()))
+            .collect();
+        // Read-only probe first, so a band with nothing to say does not trip change detection.
+        if short
+            .iter()
+            .map(|(id, _)| id)
+            .eq(allocation.bench_short_warned.iter())
+        {
+            continue;
+        }
+        announce_bench_short(
+            &mut event_log,
+            tick.0,
+            cohort.faction,
+            band_id.copied(),
+            &mut allocation,
+            &cohort.stores,
+            &short,
+        );
+    }
+}
+
+/// **The edge gate of [`announce_bench_material_short`]** — one line per material newly in the
+/// set, then the set is replaced, so a material that recovers and runs short again re-announces.
+fn announce_bench_short(
+    event_log: &mut CommandEventLog,
+    tick: u64,
+    faction: FactionId,
+    band: Option<BandId>,
+    allocation: &mut LaborAllocation,
+    stores: &LocalStore,
+    short: &[(String, f32)],
+) {
+    for (id, gap) in short {
+        if allocation.bench_short_warned.contains(id) {
+            continue;
+        }
+        let name = crate::crafting::title_from_id(id);
+        event_log.push(CommandEventEntry::new(
+            tick,
+            CommandEventKind::BenchMaterialShort,
+            faction,
+            format!("{name} will run short at the bench"),
+            Some(band_detail_token(
+                format!(
+                    "status=bench_short material={id} short={gap:.2} held={:.2}",
+                    stores.material_total(id).to_f32()
+                ),
+                band,
+            )),
+        ));
+    }
+    allocation.bench_short_warned = short.iter().map(|(id, _)| id.clone()).collect();
+}
+
 /// **SPEND THIS SITE'S KEEPING TOOLS ON THE WORK ITS KEEPERS ACTUALLY DID** — the
 /// [`crate::equipment_config::WearQuantum::UpkeepWork`] charge.
 ///

@@ -542,6 +542,29 @@ Each queue row (`_build_queue_row`, keyed `QUEUE_ROW_META` = the order's PUBLISH
   so its hover says only whether a pile is cut — and lost (`ORDER_REMOVE_TOOLTIP_DRAWN` / `_UNDRAWN`);
   the worked order's ✕ is the well's, which names the withdrawn pile off `drawn_inputs`.
 
+### A RAW MATERIAL THAT WILL STOP A CRAFT IS WARNED AMBER, ON THE ORDER AND ON THE SUGGESTION
+
+Issue #777. `blocked_reason` says an order is being SKIPPED now; it says nothing of an order that is
+running but will run dry. Two published fields carry the forecast, both in the `shortfalls` row shape
+(`material_id` / `required` / `held` / `short`):
+
+- **`orders[].short_to_finish`** — the stock on hand will not cover every pass the order still has to
+  draw (queue-order claims). **It is a FORECAST, not a block**: `blocked_reason` stays the only
+  "skipped" field. A queue row with an EMPTY `blocked_reason` and a non-empty `short_to_finish` carries a
+  second line in the slot the blocked reason uses — the two are mutually exclusive, so the row stays at
+  two lines (`ORDER_SHORT_TO_FINISH_META` = the order index).
+- **`craft_suggestions[].shortfalls`** — the WHOLE suggested count against the stock the queue leaves.
+  An amber line in the words column under the consequence (`SUGGESTION_SHORTFALL_META` = the item id).
+  The refusal under a disabled Queue button is unchanged; this is the material story for the count.
+
+**The words** (`hud_crafting_vocab.gd`): `Short 6.0 wood to finish · send a crew for more` on an order;
+`Short 12.0 wood for all 6 · send a crew for more` on a suggestion (6 = the suggestion's count). Several
+materials join their `Short X m` parts with ` · ` and the tail appears ONCE. The number is the sim's
+`short` formatted to one decimal (`SHORTFALL_DECIMALS`, so `6.0`, not `_amount_text`'s `6`), never
+summed or recomputed — formatting a published figure is rendering. **Amber `HudStyle.WARN`**, because a
+forecast is not the danger of a stopped bench. A line wider than its column trims with an ellipsis and
+carries the full text as its tooltip, so nothing is dropped.
+
 **The delivered count has ONE home, the `made/count` face.** The well's progress line said
 `· 1 finished` off `BenchState.itemsCompleted`; that clause is gone, and no client surface reads
 `itemsCompleted` — the worked order's `made` is the same number.

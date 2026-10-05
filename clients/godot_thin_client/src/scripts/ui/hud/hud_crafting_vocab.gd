@@ -118,6 +118,10 @@ const BENCH_WORKED_KEY := "worked"
 ## refusal is never here — it stays on the bench's `blocked_reason`.
 const ORDER_BLOCKED_REASON_KEY := "blocked_reason"
 const ORDER_BLOCKED_SEVERITY_KEY := "blocked_severity"
+## **A FORECAST, NOT A BLOCK** — the stock on hand will not cover every pass this order still has to
+## draw (queue-order claims). Same row shape as `shortfalls`; empty when covered. `blocked_reason` stays
+## the only "skipped" field, so a row never carries both lines.
+const ORDER_SHORT_TO_FINISH_KEY := "short_to_finish"
 
 ## **WHAT TO MAKE NEXT** (`PopulationCohortState.craftSuggestions`, §7 → "Suggestions") — ranked
 ## SIM-SIDE by the workers going without the item, published in that order, and rendered in it. The
@@ -131,6 +135,9 @@ const SUGGESTION_WORKERS_WITHOUT_KEY := "workers_without"
 ## the people going without, the score's own unit.
 const SUGGESTION_WORK_PER_TURN_KEY := "work_per_turn"
 const SUGGESTION_SOURCES_KEY := "sources"
+## The materials the WHOLE suggested count is short of, against the stock the queue leaves — the
+## `MaterialShortfall` row shape. Empty when the stock covers it.
+const SUGGESTION_SHORTFALLS_KEY := "shortfalls"
 ## One consumer going without the item: a standing pool, a site crew's keeping, or a take row.
 const SOURCE_KIND_KEY := "kind"
 const SOURCE_KIND_POOL := "pool"
@@ -510,6 +517,15 @@ const ORDER_DECREMENT_META := "crafting_order_decrement"
 const ORDER_INCREMENT_META := "crafting_order_increment"
 const ORDER_RAISE_META := "crafting_order_raise"
 const ORDER_REMOVE_META := "crafting_order_remove"
+## The amber forecast line on a running order, valued the ORDER INDEX.
+const ORDER_SHORT_TO_FINISH_META := "crafting_order_short_to_finish"
+## What it says: one `Short X material` part per published row (the sim's `short`, formatted to
+## `SHORTFALL_DECIMALS`, never summed), joined, then the tail ONCE.
+const SHORTFALL_PART_FORMAT := "Short %s %s"
+const SHORTFALL_PART_SEPARATOR := " · "
+const SHORTFALL_DECIMALS := 1
+const ORDER_SHORT_TO_FINISH_TAIL_FORMAT := "%s to finish · send a crew for more"
+const SUGGESTION_SHORTFALL_TAIL_FORMAT := "%s for all %d · send a crew for more"
 
 # ---- the suggestions at the top of the main column -----------------------------------------------
 ## **WHAT TO MAKE NEXT, RANKED BY WHO IS GOING WITHOUT** — the sim's list, in its order. Each row is the
@@ -541,6 +557,8 @@ const SUGGESTION_META := "crafting_suggestion"
 const SUGGESTION_QUEUE_META := "crafting_suggestion_queue"
 ## The refusal line under a refused suggestion's dead button.
 const SUGGESTION_REASON_META := "crafting_suggestion_reason"
+## The amber material-shortfall line in a suggestion's words column, valued the ITEM ID.
+const SUGGESTION_SHORTFALL_META := "crafting_suggestion_shortfall"
 
 ## **WHEN THE BAND OWNS NO UNITS, ONE WORDING FOR EVERY ROW**, keyed off `count` — never off
 ## `remaining == 0`, since a spent batch is REMOVED and worn-out and never-made both read zero

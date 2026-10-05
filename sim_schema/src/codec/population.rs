@@ -1200,6 +1200,7 @@ fn create_bench_orders<'a>(
             let recipe_id = builder.create_string(&order.recipe_id);
             let blocked_reason = builder.create_string(&order.blocked_reason);
             let blocked_severity = builder.create_string(&order.blocked_severity);
+            let short_to_finish = create_shortfalls(builder, &order.short_to_finish);
             fb::BenchOrder::create(
                 builder,
                 &fb::BenchOrderArgs {
@@ -1210,6 +1211,7 @@ fn create_bench_orders<'a>(
                     drawn: order.drawn,
                     blockedReason: Some(blocked_reason),
                     blockedSeverity: Some(blocked_severity),
+                    shortToFinish: Some(short_to_finish),
                 },
             )
         })
@@ -1251,6 +1253,7 @@ fn create_craft_suggestions<'a>(
                 .collect();
             let sources = builder.create_vector(&sources);
             let item_id = builder.create_string(&suggestion.item_id);
+            let shortfalls = create_shortfalls(builder, &suggestion.shortfalls);
             fb::CraftSuggestion::create(
                 builder,
                 &fb::CraftSuggestionArgs {
@@ -1259,6 +1262,7 @@ fn create_craft_suggestions<'a>(
                     workersWithout: suggestion.workers_without,
                     workPerTurn: suggestion.work_per_turn,
                     sources: Some(sources),
+                    shortfalls: Some(shortfalls),
                 },
             )
         })
@@ -1500,6 +1504,7 @@ fn decode_bench(bench: fb::BenchState<'_>) -> Result<BenchState, DecodeError> {
             drawn: order.drawn(),
             blocked_reason: text(order.blockedReason()),
             blocked_severity: text(order.blockedSeverity()),
+            short_to_finish: decode_shortfalls(order.shortToFinish()),
         }),
         worked: bench.worked(),
     })
@@ -1813,6 +1818,7 @@ fn decode_population(
                     workers_without: source.workersWithout(),
                     work_per_turn: source.workPerTurn(),
                 }),
+                shortfalls: decode_shortfalls(suggestion.shortfalls()),
             }
         }),
         fertility_ceiling: cohort.fertilityCeiling(),

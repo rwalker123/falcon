@@ -5041,6 +5041,11 @@ pub struct LaborAllocation {
     /// concession that mechanic already makes. Excluded from equality below with the rest of the
     /// per-turn telemetry — a warning already given is not *intent*.
     pub material_shortfall_warned: Vec<String>,
+    /// **THE MATERIALS THE BENCH'S QUEUE HAS ALREADY WARNED THIS BAND IT WILL RUN SHORT OF**, in id
+    /// order — the edge gate on the `bench_material_short` notice, replaced each turn so a material
+    /// that recovers and then runs short again re-announces. Transient and excluded from equality
+    /// exactly as [`Self::material_shortfall_warned`] is.
+    pub bench_short_warned: Vec<String>,
     /// **HOW THIS BAND SPLITS A MAINTENANCE POOL IT CANNOT STRETCH** — the player's own choice
     /// between *everything degrades a little* and *the biggest investments stay whole*
     /// ([`crate::intensification::UpkeepFundMode`], `docs/plan_standing_upkeep.md` §2.5).

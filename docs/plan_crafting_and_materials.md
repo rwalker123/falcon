@@ -362,6 +362,13 @@ to send anyone home — and an empty queue leaves the crew standing at an idle b
 - **A skipped order says why.** Each queued order carries the bench's own refusal for it
   (*"Short 4.9 bone"*), empty when it can be worked; when no order can be worked the bench reads as
   its blocked head.
+- **An order that will run dry says so before it stalls** (#777). Each order carries
+  `shortToFinish`: what the stock on hand will not cover across every pass it still has to draw
+  (`Short 6.0 wood to finish · send a crew for more`, amber). The queue spends stock in queue
+  order, so a later order is judged against what the earlier ones leave. It is a forecast, not a
+  block — `blockedReason` stays the one field that says an order is skipped, and the two lines
+  never show together. The bench also posts one Notable event-dock line per material on the
+  crossing (*"Wood will run short at the bench"*), linking to the Work tab where the crew is sent.
 - **One bench, one queue.** Crafting in parallel comes from **more benches** — a bench growing toward
   a workshop and a factory, each with its own queue — never from splitting one bench into per-recipe
   crews (#595, closed for that reason).
@@ -380,7 +387,8 @@ AI's Craft specialist (#668) and auto-craft (#779) read the same list rather tha
   `equipped` value); gear that does not reads as the people going without (`3 hunters bare`).
 - **The count is the WHOLE shortfall**, never capped by what the band can afford to make now. The
   shortfall is what later turns into "go and fetch wood" (#777); capping it to today's stock would
-  hide exactly the gap that warning exists to name.
+  hide exactly the gap that warning exists to name. A suggestion carries that warning as its own
+  `shortfalls`: what the whole count needs, struck against the stock the queue leaves.
 - **What is already queued is netted out.** A suggestion asks for `shortfall − queued`, and drops off
   the list at zero — so the click does not keep re-offering the same spears.
 - **Its sources are the consumers that draw on the band's stock each turn**: the standing pools

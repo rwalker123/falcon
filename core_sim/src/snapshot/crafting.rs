@@ -283,6 +283,11 @@ pub(crate) struct BandCraftState {
     /// the pen's `hurdles` have **no producer but a bench**, so a ledger without this term would read
     /// zero income for ever for the one material a pen actually eats.
     pub(crate) bench_material_rate: BTreeMap<String, f32>,
+    /// **WHAT THE WHOLE QUEUE NEEDS AGAINST THE STOCK ON HAND** — struck once by
+    /// [`crate::systems::queue_material_shortfalls`], which both each order's `shortToFinish` and the
+    /// suggestions' `shortfalls` read (the suggestions are built after this row, off
+    /// [`suggestion_shortfalls`]), so the two cannot spend one pile twice.
+    pub(crate) queue_forecast: crate::systems::QueueForecast,
 }
 
 pub(crate) fn band_craft_state(
@@ -330,7 +335,23 @@ pub(crate) fn band_craft_state(
         })
         .collect();
     mark_suggested(&mut craft_offers, inputs.plans, bench);
-    let bench_row = bench_state(bench, described, store, wear, inputs, &tiers_by_material);
+    let queue_forecast = crate::systems::queue_material_shortfalls(
+        bench,
+        store,
+        inputs.recipes,
+        inputs.materials,
+        inputs.equipment,
+        wear,
+    );
+    let bench_row = bench_state(
+        bench,
+        described,
+        store,
+        wear,
+        inputs,
+        &tiers_by_material,
+        &queue_forecast,
+    );
     let bench_material_rate = crate::systems::bench_material_rate(
         bench,
         store,
@@ -345,6 +366,7 @@ pub(crate) fn band_craft_state(
         craft_offers,
         equipment_batches: equipment_batches(wear, inputs.equipment, inputs.reference_build_cost),
         bench_material_rate,
+        queue_forecast,
     }
 }
 
@@ -437,6 +459,7 @@ fn bench_state(
     wear: &BandEquipment,
     inputs: &BandCraftInputs<'_>,
     tiers_by_material: &BTreeMap<&str, BenchTiers>,
+    forecast: &crate::systems::QueueForecast,
 ) -> BenchState {
     let Some(bench) = bench else {
         return BenchState::default();
@@ -448,7 +471,7 @@ fn bench_state(
     let published_priority = published_bench_priority(bench.priority);
     // **THE QUEUE, head first**, published on an idle bench too (as an empty list) — every order's
     // recipe, count and made, plus the progress and pile a displaced order is holding at rest.
-    let orders = bench_orders(bench, store, wear, inputs, tiers_by_material);
+    let orders = bench_orders(bench, store, wear, inputs, tiers_by_material, forecast);
     let Some((worked, head)) =
         described.and_then(|index| bench.orders.get(index).map(|order| (index, order)))
     else {
@@ -574,11 +597,13 @@ fn bench_orders(
     wear: &BandEquipment,
     inputs: &BandCraftInputs<'_>,
     tiers_by_material: &BTreeMap<&str, BenchTiers>,
+    forecast: &crate::systems::QueueForecast,
 ) -> Vec<BenchOrderState> {
     bench
         .orders
         .iter()
-        .map(|order| {
+        .enumerate()
+        .map(|(index, order)| {
             let (blocked_reason, blocked_severity) =
                 order_skip_reason(order, store, wear, inputs, tiers_by_material);
             BenchOrderState {
@@ -589,9 +614,61 @@ fn bench_orders(
                 made: order.made,
                 progress: order.progress.to_f32(),
                 drawn: order.drawn.is_some(),
+                short_to_finish: forecast
+                    .orders
+                    .get(index)
+                    .map(|rows| shortfall_states(rows))
+                    .unwrap_or_default(),
             }
         })
         .collect()
+}
+
+/// **A forecast's rows in the wire's shape** — see [`crate::systems::MaterialNeed`].
+fn shortfall_states(rows: &[crate::systems::MaterialNeed]) -> Vec<MaterialShortfallState> {
+    rows.iter()
+        .map(|need| MaterialShortfallState {
+            material_id: need.material.clone(),
+            required: need.required.to_f32(),
+            held: need.held.to_f32(),
+            short: need.short.to_f32(),
+        })
+        .collect()
+}
+
+/// **WHAT EACH SUGGESTION'S WHOLE COUNT WOULD NEED THAT THE QUEUE LEAVES UNCOVERED** — fills
+/// [`CraftSuggestionState::shortfalls`] once [`mark_suggested`] has run, because the recipe a
+/// suggestion would queue is the offer marked `suggested` on that item's ledger row. A suggestion no
+/// recipe makes keeps an empty list.
+pub(crate) fn suggestion_shortfalls(
+    suggestions: &mut [CraftSuggestionState],
+    offers: &[CraftOfferState],
+    forecast: &crate::systems::QueueForecast,
+    store: &LocalStore,
+    wear: &BandEquipment,
+    inputs: &BandCraftInputs<'_>,
+) {
+    for suggestion in suggestions {
+        let Some(recipe) = offers
+            .iter()
+            .find(|offer| offer.suggested && offer.output_item_id == suggestion.item_id)
+            .and_then(|offer| inputs.recipes.recipe(&offer.recipe_id))
+        else {
+            continue;
+        };
+        let Some(material) = recipe.bench_material() else {
+            continue;
+        };
+        let tiers = crate::systems::bench_tiers(material, inputs.materials, inputs.equipment, wear);
+        suggestion.shortfalls = shortfall_states(&crate::systems::suggestion_material_shortfalls(
+            forecast,
+            store,
+            recipe,
+            &suggestion.item_id,
+            suggestion.count,
+            &tiers,
+        ));
+    }
 }
 
 /// **WHY ONE QUEUED ORDER IS BEING SKIPPED**, `("", "")` when it is not — see [`bench_orders`].
@@ -650,6 +727,8 @@ pub(crate) fn craft_suggestion_states(
             count: suggestion.count,
             workers_without: suggestion.workers_without,
             work_per_turn: suggestion.work_per_turn,
+            // Filled by [`suggestion_shortfalls`] once the offers are marked.
+            shortfalls: Vec::new(),
             sources: suggestion
                 .sources
                 .into_iter()

@@ -1984,6 +1984,12 @@ func _build_suggestion_row(suggestion: Dictionary, payload: Dictionary) -> Contr
 	# AMBER: people are working short right now — a warning beside the number it explains.
 	consequence.add_theme_color_override("font_color", HudStyle.WARN)
 	words.add_child(consequence)
+	var short_text := _shortfall_text(suggestion.get(HudCraftingVocab.SUGGESTION_SHORTFALLS_KEY, []),
+		HudCraftingVocab.SUGGESTION_SHORTFALL_TAIL_FORMAT, count)
+	if short_text != "":
+		var short_line := _forecast_label(short_text, HudCraftingVocab.SUGGESTION_LINE_FONT_SIZE)
+		short_line.set_meta(HudCraftingVocab.SUGGESTION_SHORTFALL_META, item_id)
+		words.add_child(short_line)
 	row.add_child(_column_cell(words, 0.0, true))
 
 	var action := VBoxContainer.new()
@@ -2247,6 +2253,13 @@ func _build_queue_row(index: int, order: Dictionary, bench: Dictionary, payload:
 			HudCraftingVocab.REASON_COLOR_QUIET))
 		reason.set_meta(HudCraftingVocab.ORDER_REASON_META, index)
 		words.add_child(reason)
+	else:
+		var forecast := _shortfall_text(order.get(HudCraftingVocab.ORDER_SHORT_TO_FINISH_KEY, []),
+			HudCraftingVocab.ORDER_SHORT_TO_FINISH_TAIL_FORMAT)
+		if forecast != "":
+			var forecast_label := _forecast_label(forecast, HudCraftingVocab.ORDER_REASON_FONT_SIZE)
+			forecast_label.set_meta(HudCraftingVocab.ORDER_SHORT_TO_FINISH_META, index)
+			words.add_child(forecast_label)
 	row.add_child(words)
 
 	var minus := _queue_button(HudCraftingVocab.ORDER_COUNT_DECREMENT, "")
@@ -2511,6 +2524,36 @@ func _wrap_padded(content: Control, padding_h: int, padding_v: int) -> MarginCon
 	host.add_theme_constant_override("margin_bottom", padding_v)
 	host.add_child(content)
 	return host
+
+## The amber forecast line: the sim's published `short` rows, one `Short X material` part each, joined,
+## then `tail_format` once (`%s` is the joined parts; a second `%d` takes `count`). Empty rows → "".
+## Rendering only — the numbers are never summed or recomputed here.
+func _shortfall_text(rows: Variant, tail_format: String, count: int = 0) -> String:
+	if not (rows is Array):
+		return ""
+	var parts: Array[String] = []
+	for row_variant in rows:
+		if row_variant is Dictionary:
+			var row: Dictionary = row_variant
+			parts.append(HudCraftingVocab.SHORTFALL_PART_FORMAT % [
+				String.num(float(row.get(HudCraftingVocab.SHORTFALL_SHORT_KEY, 0.0)), HudCraftingVocab.SHORTFALL_DECIMALS),
+				String(row.get(HudCraftingVocab.SHORTFALL_MATERIAL_ID_KEY, ""))])
+	if parts.is_empty():
+		return ""
+	var joined := HudCraftingVocab.SHORTFALL_PART_SEPARATOR.join(parts)
+	return tail_format % [joined, count] if tail_format.contains("%d") else tail_format % joined
+
+## One amber forecast label: ellipsis when it overflows, the full text in its tooltip so nothing is lost.
+func _forecast_label(text: String, font_size: int) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.add_theme_font_size_override("font_size", font_size)
+	label.add_theme_color_override("font_color", HudStyle.WARN)
+	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	label.clip_text = true
+	label.mouse_filter = Control.MOUSE_FILTER_STOP
+	label.tooltip_text = text
+	return label
 
 ## A cost/output amount, whole where it is whole — a recipe asking for 12 fibre should not say 12.0.
 func _amount_text(amount: float) -> String:

@@ -5113,6 +5113,13 @@ table BenchOrder {
   blockedReason:string;
   // `danger` when `blockedReason` is set, "" otherwise - the BenchState.blockedSeverity vocabulary.
   blockedSeverity:string;
+  // WHAT THE STOCK ON HAND CANNOT COVER OF THIS ORDER'S WHOLE RUN. One MaterialShortfall per input
+  // material the passes still to DRAW need more of than the queue left for this order (the queue
+  // spends in its own order, so an earlier order's claim is already out of `held`). `required` is
+  // every pass still to draw at the band's current tiers, `held` what was left for this order, `short`
+  // the gap. Empty when the stock on hand covers every pass still to draw. A FORECAST, not a block:
+  // `blockedReason` stays the only "why this order is skipped" field. Appended last.
+  shortToFinish:[MaterialShortfall];
 }
 
 // ONE SUGGESTION — an item the band's consumers are short of, and how many to make.
@@ -5136,6 +5143,11 @@ table CraftSuggestion {
   // adds no build or keeping work (a spear's cost is food, not work): read `workersWithout` instead.
   workPerTurn:float = 0;
   sources:[CraftSuggestionSource];
+  // WHAT THE WHOLE `count` WOULD NEED THAT THE STOCK CANNOT COVER. The suggested recipe's passes
+  // (ceil(count / the recipe's per-pass output)) at the band's current tiers, against the stock LEFT
+  // after the whole queue's claims (a queued suggestion lands at the queue's end). Empty when no
+  // recipe makes the item or the stock covers it. Appended last.
+  shortfalls:[MaterialShortfall];
 }
 
 // ONE CONSUMER GOING WITHOUT AN ITEM — a row of CraftSuggestion.sources, keyed so the client can

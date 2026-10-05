@@ -474,15 +474,15 @@ pub use systems::spawn_initial_world;
 pub use systems::{
     advance_band_independence, advance_band_movement, advance_crafting, advance_expeditions,
     advance_labor_allocation, advance_party_defection, advance_population_migration,
-    advance_predator_raids, advance_tick, bench_material_rate, bench_tiers, bill_and_stock_roads,
-    bring_the_dropped_party_home, deliver_bench_output, denial_forecast, expedition_returned_event,
-    fold_party_into_band, grow_faction_roster, hunt_per_worker_provisions, hunt_report_event,
-    hunt_take, output_multiplier, party_owes_a_report, prospective_keep_hands,
-    publish_turn_transfers, settle_bands_roadwork, settle_scarce_tools, simulate_population,
-    simulate_power, source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers,
-    DenialForecast, DenialOutcome, HeartLedger, HeartReading, HuntOutcome, PartyGear,
-    PartySightings, PoolToolPlan, PowerSimParams, RaidRoll, SplitBand, SplitRefusal, SplitRefusals,
-    ToolClaimStage, TradeDiffusionEvent,
+    advance_predator_raids, advance_tick, announce_bench_material_short, bench_material_rate,
+    bench_tiers, bill_and_stock_roads, bring_the_dropped_party_home, deliver_bench_output,
+    denial_forecast, expedition_returned_event, fold_party_into_band, grow_faction_roster,
+    hunt_per_worker_provisions, hunt_report_event, hunt_take, output_multiplier,
+    party_owes_a_report, prospective_keep_hands, publish_turn_transfers, settle_bands_roadwork,
+    settle_scarce_tools, simulate_population, simulate_power, source_has_a_meter_at_risk,
+    split_band_from_parent, split_refusals, BenchTiers, DenialForecast, DenialOutcome, HeartLedger,
+    HeartReading, HuntOutcome, PartyGear, PartySightings, PoolToolPlan, PowerSimParams, RaidRoll,
+    SplitBand, SplitRefusal, SplitRefusals, ToolClaimStage, TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,
@@ -1261,6 +1261,9 @@ pub fn build_headless_app() -> App {
                     // draws on the materials THIS turn's take just delivered, and its crew came out
                     // of the same worker pool the assignment loop above spends.
                     systems::advance_crafting,
+                    // The bench-queue shortage notice reads the stock the draw just left, so it
+                    // follows the draw directly.
+                    systems::announce_bench_material_short,
                     // Predator raids fire right after labor so warrior counts and band positions are
                     // current: a carnivore with `aggression > 0` within `predators.raid_radius` of a band
                     // raids its camp, the band defended by its Warriors (the role's first live consumer).

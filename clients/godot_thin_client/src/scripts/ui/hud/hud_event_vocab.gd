@@ -227,6 +227,10 @@ const RUNG_BY_KIND := {
 	# **THE SIM EDGE-GATES IT**, so this rung never means "every turn": one line per band per material
 	# on the crossing, not a level test.
 	"material_shortfall": RUNG_ALERT,
+	# **A BENCH THAT WILL RUN SHORT OF A RAW MATERIAL IS NOTABLE, NOT ALERT** — nothing is lost yet: the
+	# bench stalls and recovers when stock arrives. Contrast `material_shortfall`'s Alert above, where an
+	# investment is falling down. Edge-gated sim-side like it.
+	"bench_material_short": RUNG_NOTABLE,
 	# **A KIT CROSSING A `life_readout` SEAM** — and its RUNG is the seam, not the kind, so this entry
 	# is the FALLBACK for a line carrying no `severity=` token at all. `DETAIL_STATUS_STYLE` below
 	# claims `severity=warn` (Notable) and `severity=danger` (Alert); the quieter of the two is the
@@ -289,6 +293,7 @@ const CHANNEL_BY_KIND := {
 	# something the PLAYER does.
 	"kit_life": DEFAULT_CHANNEL,
 	"material_shortfall": DEFAULT_CHANNEL,
+	"bench_material_short": DEFAULT_CHANNEL,
 }
 
 # ---- rung → glyph + accent -------------------------------------------------
@@ -456,6 +461,9 @@ static func apply_palette() -> void:
 
 		"status=outrunning": {"glyph": STATUS_SHED_GLYPH, "color": HudStyle.WARN,
 			"rung": RUNG_ALERT},
+		# The bench forecast: less than you asked for, nothing lost — the reduced mark of its rung.
+		"status=bench_short": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN,
+			"rung": RUNG_NOTABLE},
 
 		# **A DEATH'S RUNG IS ITS BRACKET** (issue #614). `bracket=elder` is deliberately NOT here:
 		# it falls through to `died`'s own `RUNG_NOTABLE`, which is the half of the old rule that
@@ -516,6 +524,9 @@ const DETAIL_STATUS_WORK_LINK := {
 	# bench that makes the good, or stop holding a rung. `announce_material_shortfall` writes `band=`
 	# as the durable `BandId`, so the link has the one token it needs.
 	"status=outrunning": true,
+	# **`status=bench_short`'s remedy is a crew gathering the material** — sent from the Work tab. The
+	# sim writes `band=<BandId>` on it, the one token the link needs.
+	"status=bench_short": true,
 }
 
 ## The link's own words. Deliberately the same string as `HudComposeVocab.WORK_TAB_LINK_TEXT` and

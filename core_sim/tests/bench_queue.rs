@@ -10,11 +10,11 @@ use bevy::prelude::{App, Entity, UVec2};
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
 use core_sim::{
-    advance_crafting, build_test_app, deliver_bench_output, recapture_snapshot_in_place,
-    scalar_from_f32, BandBench, BandEquipment, BenchOrder, BuildSource, EquipmentConfigHandle,
-    Expedition, ExpeditionMission, ExpeditionPhase, KeepingIssue, KitJob, LaborAllocation,
-    LocalStore, MaterialsConfigHandle, PoolToeLine, PopulationCohort, ResidentBand,
-    SnapshotHistory,
+    advance_crafting, announce_bench_material_short, build_test_app, deliver_bench_output,
+    recapture_snapshot_in_place, scalar_from_f32, BandBench, BandEquipment, BenchOrder,
+    BuildSource, CommandEventKind, CommandEventLog, EquipmentConfigHandle, Expedition,
+    ExpeditionMission, ExpeditionPhase, KeepingIssue, KitJob, LaborAllocation, LocalStore,
+    MaterialsConfigHandle, PoolToeLine, PopulationCohort, ResidentBand, SnapshotHistory,
 };
 use std::collections::BTreeMap;
 
@@ -681,5 +681,257 @@ fn a_suggestion_does_not_rise_on_the_turn_its_item_is_made() {
         sled_count(&after),
         Some(SUGGESTED),
         "the sled just made is still coming — the suggestion must not rise by it"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// WHAT THE WHOLE QUEUE WILL NEED — `BenchOrder.shortToFinish`, `CraftSuggestion.shortfalls` and the
+// `bench_material_short` notice (issue #777).
+// ---------------------------------------------------------------------------------------------
+
+/// One published `MaterialShortfall` row: `(material, required, held, short)`.
+type PublishedShortfall = (String, f32, f32, f32);
+
+/// `(per-order shortToFinish, per-suggestion (item id, shortfalls))`.
+type PublishedForecast = (
+    Vec<Vec<PublishedShortfall>>,
+    Vec<(String, Vec<PublishedShortfall>)>,
+);
+
+fn shortfall_rows<'a>(
+    rows: Option<impl IntoIterator<Item = fb::MaterialShortfall<'a>>>,
+) -> Vec<PublishedShortfall> {
+    rows.map(|rows| {
+        rows.into_iter()
+            .map(|row| {
+                (
+                    row.materialId().unwrap_or_default().to_string(),
+                    row.required(),
+                    row.held(),
+                    row.short(),
+                )
+            })
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+/// `(per-order shortToFinish, per-suggestion (item id, shortfalls))` off the ENCODED envelope.
+fn publish_forecast(app: &mut App, band: Entity) -> PublishedForecast {
+    recapture_snapshot_in_place(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let cohort = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.entity() == band.to_bits())
+        .expect("the band is on the wire");
+    let orders = cohort
+        .bench()
+        .and_then(|bench| bench.orders())
+        .map(|orders| {
+            orders
+                .iter()
+                .map(|order| shortfall_rows(order.shortToFinish()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let suggestions = cohort
+        .craftSuggestions()
+        .map(|rows| {
+            rows.iter()
+                .map(|row| {
+                    (
+                        row.itemId().unwrap_or_default().to_string(),
+                        shortfall_rows(row.shortfalls()),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    (orders, suggestions)
+}
+
+/// Three sleds want 18 hide and 6 fibre; the band holds 4 fibre. A SECOND order behind it (baskets,
+/// 5 fibre a pass) sees none left. **Read off the encoded frame.**
+#[test]
+fn short_to_finish_forecasts_the_whole_run_and_a_later_order_sees_what_the_first_left() {
+    /// Three sleds at 2 fibre a pass; the band holds two passes' worth.
+    const SLEDS: u32 = 3;
+    const FIBRE_HELD: f32 = 4.0;
+    const FIBRE_FOR_THREE_SLEDS: f32 = 6.0;
+    const FIBRE_SHORT: f32 = 2.0;
+    /// One basket pass: 5 fibre.
+    const BASKET_FIBRE: f32 = 5.0;
+    let (mut app, band) = world();
+    bench_with(&mut app, band, FIBRE_HELD, &[(SLED_RECIPE, SLEDS)]);
+    let (orders, _) = publish_forecast(&mut app, band);
+    assert_eq!(
+        orders,
+        vec![vec![(
+            FIBRE.to_string(),
+            FIBRE_FOR_THREE_SLEDS,
+            FIBRE_HELD,
+            FIBRE_SHORT
+        )]],
+        "the pass the stock can draw is not the whole run; only the short material is listed"
+    );
+
+    app.world
+        .get_mut::<BandBench>(band)
+        .expect("a spawned band carries a bench")
+        .enqueue(BASKETS_RECIPE, ONE);
+    let (orders, _) = publish_forecast(&mut app, band);
+    assert_eq!(
+        orders[1],
+        vec![(FIBRE.to_string(), BASKET_FIBRE, 0.0, BASKET_FIBRE)],
+        "the head claimed the fibre first, so the baskets behind it hold none"
+    );
+    assert_eq!(orders[0].len(), 1, "the head's own forecast is unchanged");
+}
+
+/// **A SUGGESTION'S FORECAST DRAWS AGAINST WHAT THE QUEUE LEAVES.** Two earthmoving sets are
+/// suggested (3 wood + 2 stone a pass). With 4 wood and 10 stone banked the whole count is short
+/// 2 wood; queueing one set nets the suggestion to one and leaves 1 wood, so the one set it still
+/// names is short 2 wood — and the stone is covered either way.
+#[test]
+fn a_suggestions_shortfalls_are_struck_against_the_stock_the_queue_leaves() {
+    const WOOD_HELD: f32 = 4.0;
+    const STONE_HELD: f32 = 10.0;
+    const WOOD_PER_SET: f32 = 3.0;
+    const WOOD_AXES: [(&str, f32); 2] = [("hardness", 0.5), ("pliancy", 0.5)];
+    const STONE_AXES: [(&str, f32); 2] = [("hardness", 0.5), ("workability", 0.5)];
+    const SETS_SUGGESTED: f32 = 2.0;
+    let (mut app, band) = world();
+    bench_with(&mut app, band, 0.0, &[]);
+    bank(&mut app, band, "wood", WOOD_HELD, &WOOD_AXES);
+    bank(&mut app, band, "stone", STONE_HELD, &STONE_AXES);
+    {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("a spawned band carries an allocation");
+        short_of_earthmoving_and_hoes(&mut allocation);
+    }
+    let (_, suggestions) = publish_forecast(&mut app, band);
+    let earthmoving = suggestions
+        .iter()
+        .find(|(item, _)| item == EARTHMOVING)
+        .expect("earthmoving is suggested");
+    assert_eq!(
+        earthmoving.1,
+        vec![(
+            "wood".to_string(),
+            WOOD_PER_SET * SETS_SUGGESTED,
+            WOOD_HELD,
+            WOOD_PER_SET * SETS_SUGGESTED - WOOD_HELD
+        )],
+        "two sets need 6 wood against 4 held; the stone covers both"
+    );
+
+    app.world
+        .get_mut::<BandBench>(band)
+        .expect("a spawned band carries a bench")
+        .enqueue(EARTHMOVING, ONE);
+    let (_, suggestions) = publish_forecast(&mut app, band);
+    let earthmoving = suggestions
+        .iter()
+        .find(|(item, _)| item == EARTHMOVING)
+        .expect("one set is still suggested");
+    assert_eq!(
+        earthmoving.1,
+        vec![(
+            "wood".to_string(),
+            WOOD_PER_SET,
+            WOOD_HELD - WOOD_PER_SET,
+            WOOD_PER_SET - (WOOD_HELD - WOOD_PER_SET)
+        )],
+        "the queued set claimed 3 of the 4 wood, so the suggestion sees 1"
+    );
+}
+
+/// How many `bench_material_short` lines the log holds.
+fn bench_short_events(app: &App) -> Vec<String> {
+    app.world
+        .resource::<CommandEventLog>()
+        .iter()
+        .filter(|entry| entry.kind == CommandEventKind::BenchMaterialShort)
+        .map(|entry| entry.label.clone())
+        .collect()
+}
+
+/// **THE NOTICE FIRES ON THE CROSSING, NOT EVERY TURN, AND RE-FIRES AFTER A RECOVERY.**
+#[test]
+fn the_bench_short_notice_is_edge_gated_and_refires_after_recovering() {
+    const SLEDS: u32 = 3;
+    const SHORT_FIBRE: f32 = 4.0;
+    const COVERED_FIBRE: f32 = 6.0;
+    let (mut app, band) = world();
+    // An unstaffed bench: the notice does not depend on a crew.
+    bench_with(&mut app, band, SHORT_FIBRE, &[(SLED_RECIPE, SLEDS)]);
+    app.world
+        .get_mut::<BandBench>(band)
+        .expect("a spawned band carries a bench")
+        .workers = 0;
+    let before = bench_short_events(&app).len();
+
+    app.world.run_system_once(announce_bench_material_short);
+    let fired = bench_short_events(&app);
+    assert_eq!(fired.len(), before + 1, "the crossing announces once");
+    assert_eq!(
+        fired.last().map(String::as_str),
+        Some("Fibre will run short at the bench")
+    );
+
+    app.world.run_system_once(announce_bench_material_short);
+    assert_eq!(
+        bench_short_events(&app).len(),
+        before + 1,
+        "still short next turn: no second line"
+    );
+
+    bank(
+        &mut app,
+        band,
+        FIBRE,
+        COVERED_FIBRE - SHORT_FIBRE,
+        &FIBRE_AXES,
+    );
+    app.world.run_system_once(announce_bench_material_short);
+    assert_eq!(
+        bench_short_events(&app).len(),
+        before + 1,
+        "recovering announces nothing"
+    );
+
+    app.world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the band has a cohort")
+        .stores
+        .clear_materials();
+    bank(
+        &mut app,
+        band,
+        HIDE,
+        PLENTY,
+        &[("toughness", 0.6), ("suppleness", 0.5)],
+    );
+    bank(&mut app, band, FIBRE, SHORT_FIBRE, &FIBRE_AXES);
+    app.world.run_system_once(announce_bench_material_short);
+    assert_eq!(
+        bench_short_events(&app).len(),
+        before + 2,
+        "going short again after a recovery re-fires"
     );
 }
