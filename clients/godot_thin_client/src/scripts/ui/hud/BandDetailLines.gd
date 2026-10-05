@@ -278,6 +278,9 @@ const MORALE_CONTRIB_LABEL_CULTURE := "culture"
 # A positive `morale_culture` (within walking reach of the remembered belief place) reads as "near the
 # ancestors"; a negative one reads `DetailFormat.MORALE_CAUSE_LABEL_CULTURE` ("far from the ancestors").
 const MORALE_CONTRIB_LABEL_ANCESTORS_NEAR := "near the ancestors"
+# The negative row NAMES THE PLACE — "far from the ancestors (x, y)", the anchor tile in the `Position`
+# row's coordinate form — so the player knows where to walk back to. Only when the band has an anchor.
+const MORALE_CONTRIB_ANCESTORS_FAR_FORMAT := "%s (%d, %d)"
 
 # --- Collaborators handed in by HudLayer (the SAME instances it holds) ---
 # The snapshot herd list, for a raiding party's migrating target.
@@ -953,6 +956,14 @@ func _fertility_breakdown_lines(unit_data: Dictionary) -> Array[String]:
         lines.append(DetailFormat.fertility_breakdown_row(factor, entry[1]))
     return lines
 
+## The negative culture row's label: `far from the ancestors (x, y)` naming the band's belief anchor,
+## or the bare label when the cohort carries no anchor.
+func _ancestors_far_label(unit_data: Dictionary) -> String:
+    if not bool(unit_data.get("has_belief_anchor", false)):
+        return DetailFormat.MORALE_CAUSE_LABEL_CULTURE
+    return MORALE_CONTRIB_ANCESTORS_FAR_FORMAT % [DetailFormat.MORALE_CAUSE_LABEL_CULTURE,
+        int(unit_data.get("belief_anchor_x", 0)), int(unit_data.get("belief_anchor_y", 0))]
+
 ## Itemized morale breakdown: the five signed Layer-1 contributions (their sum IS morale_delta) as
 ## indented sub-lines, each above the breakdown epsilon rendered as `    ▲ +1.0%  settling`
 ## (`DetailFormat.detail_bbcode` tints by sign glyph). Now a click-to-expand disclosure (like Food): the
@@ -972,7 +983,7 @@ func _morale_breakdown_lines(unit_data: Dictionary, terrain_label: String) -> Ar
         [float(unit_data.get("morale_terrain", 0.0)), terrain_row_label],
         [float(unit_data.get("morale_climate", 0.0)), DetailFormat.MORALE_CAUSE_LABEL_COLD],
         [unrest_value, MORALE_CONTRIB_LABEL_CULTURE if unrest_value > 0.0 else DetailFormat.MORALE_CAUSE_LABEL_UNREST],
-        [culture_value, MORALE_CONTRIB_LABEL_ANCESTORS_NEAR if culture_value > 0.0 else DetailFormat.MORALE_CAUSE_LABEL_CULTURE],
+        [culture_value, MORALE_CONTRIB_LABEL_ANCESTORS_NEAR if culture_value > 0.0 else _ancestors_far_label(unit_data)],
     ]
     var epsilon := BandFoodStatus.morale_breakdown_epsilon()
     for entry in contributions:

@@ -12222,14 +12222,14 @@ pub fn advance_population_migration(
 
     // **Reach is hex steps, and a road shortens them** — `supply::WalkReach`, the one road-aware
     // walk test, shared with the culture morale term so "how far people walk" is one notion.
-    let walk = crate::supply::WalkReach {
-        base_reach: mig_cfg.base_reach,
-        free_reach: gates.supply.get().reach_tiles,
-        widest_route_reach: crate::routes::max_route_reach_tiles(&gates.ladder.get()),
+    let walk = crate::supply::WalkReach::for_people(
+        mig_cfg.base_reach,
+        &gates.supply.get(),
+        &gates.ladder.get(),
         width,
-        height: tile_registry.height,
+        tile_registry.height,
         wrap,
-    };
+    );
     let attractive_morale = scalar_from_f32(mig_cfg.attractive_morale);
     let min_gap = scalar_from_f32(mig_cfg.min_morale_gap);
     let dependent_weight = scalar_from_f32(mig_cfg.dependent_weight);

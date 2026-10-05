@@ -2841,6 +2841,17 @@ pub fn capture_snapshot(
             .as_deref()
             .map(|handle| handle.get())
             .unwrap_or_else(crate::supply_network_config::SupplyNetworkConfig::builtin);
+        // **How far a band's people walk** — the one `WalkReach` the culture morale term and
+        // migration read, built here from the same levers so each band's published anchor reach
+        // region is exactly the set of tiles that term would call near.
+        let walk = crate::supply::WalkReach::for_people(
+            wellbeing_config.migration.base_reach,
+            &supply_network_cfg,
+            &ladder_config,
+            tile_registry.width,
+            tile_registry.height,
+            config.map_topology.wrap_horizontal,
+        );
         let fauna_config = fauna.get();
         // **The minimal TOE levers**, resolved once for every cohort: the kit table plus the two
         // *equipped* tiers that live outside `equipment.json` (one home per fact) — the bare-handed
@@ -3042,6 +3053,12 @@ pub fn capture_snapshot(
                         .unwrap_or(0);
                     let scout_vantage_distance = labor_config.scout.vantage_distance(scout_workers);
                     Some(population_state(PopulationStateInputs {
+                        // Derived, never checkpointed: a road built or an anchor moved is
+                        // re-read here on the next capture and rides that frame's delta.
+                        belief_reach: cohort
+                            .belief_anchor
+                            .map(|anchor| walk.region_around(&roads, anchor))
+                            .unwrap_or_default(),
                         entity,
                         band_id,
                         band_name,

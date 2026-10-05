@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 132
+const EXPECTED_CHECKPOINTS := 134
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -1112,7 +1112,16 @@ const BAND_DISCLOSURE_MORALE_ANCESTORS_FAR := "morale:911"
 ## The row text, spelled as LITERALS — a needle composed through the format under test can only agree
 ## with itself.
 const ANCESTORS_NEAR_ROW := "+0.6%  near the ancestors"
-const ANCESTORS_FAR_ROW := "−0.9%  far from the ancestors"
+const ANCESTORS_FAR_ROW := "−0.9%  far from the ancestors (12, 7)"
+## The far band's belief anchor — the row names it in the `Position` row's coordinate form.
+const ANCESTORS_ANCHOR_X := 12
+const ANCESTORS_ANCHOR_Y := 7
+## The tile card's Ancestors row (`TileState.belief`, dead-equivalents): a whole count rounds, under one
+## person reads `<1`, and zero draws no row.
+const ANCESTORS_TILE_BELIEF := 12.4
+const ANCESTORS_TILE_ROW := "Ancestors: 12 dead"
+const ANCESTORS_TILE_BELIEF_UNDER_ONE := 0.4
+const ANCESTORS_TILE_ROW_UNDER_ONE := "Ancestors: <1 dead"
 const ANCESTORS_FAR_HEADLINE_CAUSE := "— far from the ancestors"
 
 func _ancestors_states() -> void:
@@ -1140,9 +1149,25 @@ func _ancestors_states() -> void:
 	far["morale_culture"] = ANCESTORS_FAR_CONTRIB
 	far["morale_delta"] = float(far["morale_delta"]) + ANCESTORS_FAR_CONTRIB
 	far["morale_cause"] = DetailFormat.MORALE_CAUSE_CULTURE
+	far["has_belief_anchor"] = true
+	far["belief_anchor_x"] = ANCESTORS_ANCHOR_X
+	far["belief_anchor_y"] = ANCESTORS_ANCHOR_Y
+	# …and the hex it stands on holds dead of its own, so the same frame shows the tile card's row.
+	var far_tile: Dictionary = (far["tile_info"] as Dictionary).duplicate()
+	far_tile["belief"] = ANCESTORS_TILE_BELIEF
+	far["tile_info"] = far_tile
 	h._hud.show_unit_selection(far)
 	await h._settle()
 	var far_vitals := String(h._hud.occupant_detail.get_parsed_text())
+	var tile_card := "\n".join(h._hud._drawer._tile_terrain_lines(far_tile))
+	h._assert_hud("the tile card states the dead the hex holds — `%s`" % ANCESTORS_TILE_ROW,
+		tile_card.contains(ANCESTORS_TILE_ROW))
+	h._assert_hud("…`%s` under one whole person, and no row at all on a hex with none"
+			% ANCESTORS_TILE_ROW_UNDER_ONE,
+		DetailFormat.ancestors_line({"belief": ANCESTORS_TILE_BELIEF_UNDER_ONE})
+			== ANCESTORS_TILE_ROW_UNDER_ONE
+		and DetailFormat.ancestors_line({"belief": 0.0}) == ""
+		and DetailFormat.ancestors_line({}) == "")
 	h._assert_hud("the morale headline names the cause `%s`" % ANCESTORS_FAR_HEADLINE_CAUSE,
 		far_vitals.contains(ANCESTORS_FAR_HEADLINE_CAUSE))
 	_click_disclosure(BAND_DISCLOSURE_MORALE_ANCESTORS_FAR)

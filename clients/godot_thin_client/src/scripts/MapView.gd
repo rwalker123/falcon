@@ -964,6 +964,10 @@ var tile_habitability: Dictionary = {}
 # Per-tile temperature (°, latitude + elevation climate, decoded from TileState),
 # keyed by Vector2i(x, y); read by `_tile_info_at` for the Tile-card Climate row.
 var tile_temperature: Dictionary = {}
+# Per-tile BELIEF (dead-equivalents held by the place, decoded from TileState; never decays), keyed
+# by Vector2i(x, y) and held only where it is above zero; read by `_tile_info_at` for the Tile-card
+# Ancestors row. A place keeps its dead, so it is not in `FOW_DISCOVERED_HIDDEN_KEYS`.
+var tile_belief: Dictionary = {}
 # Per-tile GRAZE — the pasture layer (decoded from TileState: graze_biomass / graze_capacity /
 # graze_ecology_phase), keyed by Vector2i(x, y). Read by `_tile_info_at` for the Tile-card Pasture
 # rows and by `_build_pasture_legend` for the map-wide standing-stock figure. Entries are stored ONLY
@@ -1621,6 +1625,7 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 		tile_lookup.clear()
 		tile_habitability.clear()
 		tile_temperature.clear()
+		tile_belief.clear()
 		tile_graze.clear()
 		tile_forage.clear()
 		tile_river_edges.clear()
@@ -1740,6 +1745,11 @@ func _ingest_tile(tile_dict: Dictionary) -> void:
 		tile_temperature[cell] = float(tile_dict["temperature"])
 	else:
 		tile_temperature.erase(cell)
+	var belief: float = float(tile_dict.get("belief", 0.0))
+	if belief > 0.0:
+		tile_belief[cell] = belief
+	else:
+		tile_belief.erase(cell)
 	# Graze: only a tile whose biome actually carries pasture gets an entry (see `tile_graze`). A
 	# zero-capacity tile is a *dead* one, and the Tile card must print nothing there rather than
 	# "0 / 0" — so a tile whose capacity fell to zero must lose its entry, not keep a stale one.
@@ -3344,6 +3354,8 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		info["habitability"] = float(tile_habitability[tile_key])
 	if tile_temperature.has(tile_key):
 		info["temperature"] = float(tile_temperature[tile_key])
+	if tile_belief.has(tile_key):
+		info["belief"] = float(tile_belief[tile_key])
 	# Pasture (graze). SPLIT across FOW_DISCOVERED_HIDDEN_KEYS rather than kept whole: `graze_capacity`
 	# is a property of the GROUND — you can read a steppe's carrying capacity from a ridge, and the
 	# biome above it is already remembered — while `graze_biomass` and the phase derived from it are

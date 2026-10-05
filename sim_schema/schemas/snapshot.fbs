@@ -1434,8 +1434,19 @@ table PopulationCohortState {
   // while the band stands within walking reach of its belief anchor, -away_drag x s beyond it, 0 with
   // no anchor; s = b / (b + belief_half_saturation) for the anchor's belief b. Signed, fixed-point
   // (FIXED_POINT_SCALE = 1e6), part of the moraleSettling/Terrain/Climate/Unrest breakdown whose
-  // signed sum IS moraleDelta. Derived per-turn. The anchor itself is not on the wire.
+  // signed sum IS moraleDelta. Derived per-turn.
   moraleCulture:long = 0;
+  // THE BAND'S ANCESTORS' PLACE - its belief anchor, the tile moraleCulture is measured against
+  // (`hasBeliefAnchor` gates it; `0,0` with no anchor - the `isTraveling`/`travelTarget` idiom).
+  hasBeliefAnchor:bool = false;
+  beliefAnchorX:uint = 0;
+  beliefAnchorY:uint = 0;
+  // Every tile a band could STAND on and still count as near its anchor (zipped x/y, row-major, the
+  // `pendingRevealX/Y` idiom) - derived at capture from the same road-aware walk test the culture
+  // term uses (core_sim `supply::WalkReach::within(standing, anchor)`), so the drawn region and the
+  // term cannot disagree. Inside it moraleCulture is +near; outside it, -away. Empty with no anchor.
+  beliefReachX:[uint];
+  beliefReachY:[uint];
 }
 
 // One band's outfitting window. THE TWO SUPPLIES ARE MUTUALLY EXCLUSIVE and `parentBandId` says which

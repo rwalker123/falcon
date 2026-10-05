@@ -2582,6 +2582,23 @@ static func expedition_mission_label(mission: String) -> String:
         return HudExpeditionVocab.EXPEDITION_MISSION_LABELS[key]
     return key.capitalize() if key != "" else "Expedition"
 
+# The tile card's BELIEF row (issue #699): the dead a place holds, in whole people (`TileState.belief`,
+# 1.0 per person who died there; it never decays). Below one whole person it reads "<1" rather than a
+# rounded "0", which would claim the place holds no dead.
+const ANCESTORS_ROW := "Ancestors"
+const ANCESTORS_DEAD_FORMAT := "%s dead"
+const ANCESTORS_UNDER_ONE := "<1"
+const ANCESTORS_WHOLE_PERSON := 1.0
+
+## The tile card's `Ancestors: 12 dead` row, or `""` where the place holds no dead (`belief` absent
+## or zero — no row, never a `0 dead`).
+static func ancestors_line(tile_info: Dictionary) -> String:
+    var belief := float(tile_info.get("belief", 0.0))
+    if belief <= 0.0:
+        return ""
+    var count := ANCESTORS_UNDER_ONE if belief < ANCESTORS_WHOLE_PERSON else str(int(round(belief)))
+    return "%s: %s" % [ANCESTORS_ROW, ANCESTORS_DEAD_FORMAT % count]
+
 ## Plain-language label for a morale cause (0=None,1=Terrain,2=Cold,3=Unrest,4=Culture); "" for None or
 ## unknown. Shared by the drawer morale line and the losing-population alert reason.
 static func morale_cause_label(cause: int) -> String:

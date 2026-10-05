@@ -608,7 +608,11 @@ which is a property of the tier and not of the merge.
     = `0.002`) list. Labels: `settling`, `harsh terrain (<terrain_label>)` (matches the headline cause
     treatment), `harsh climate`, `unrest`/`culture` by sign, and the culture term `morale_culture` as
     `near the ancestors` (positive, `BandDetailLines.MORALE_CONTRIB_LABEL_ANCESTORS_NEAR`) / `far from
-    the ancestors` (negative, `DetailFormat.MORALE_CAUSE_LABEL_CULTURE`). The culture term never reads
+    the ancestors (x, y)` (negative, `DetailFormat.MORALE_CAUSE_LABEL_CULTURE` plus the band's belief
+    anchor in the `Position` row's coordinate form, `MORALE_CONTRIB_ANCESTORS_FAR_FORMAT`, read off
+    `has_belief_anchor` / `belief_anchor_x/y`; the bare label when the cohort carries no anchor). The
+    morale HEADLINE's cause stays the bare `far from the ancestors` — no coordinates on that line. The
+    culture term never reads
     as the word `culture`: that word is the positive-unrest (cohesion) row's. A band with no belief
     place sends `0` and draws no row, under the same epsilon. `DetailFormat.detail_bbcode` tints each
     row two-tone by its sign glyph (▲ = HEALTHY green, ▼ = WARN amber — deliberately not a rainbow);
@@ -685,6 +689,13 @@ which is a property of the tier and not of the merge.
   mid-latitudes read "Hospitable", the equator "Hospitable/Fair", and poles/high-alt/caverns
   "Harsh/Hostile" — the config buckets (`0.02`/`0.05`/`0.09`) spread cleanly across that range,
   so no re-tune was needed.
+- **Tile-card Ancestors** (snapshot `TileState.belief`, dead-equivalents — 1.0 per person who died
+  there, never decaying — decoded in `native/src/dict/map.rs` `tile_to_dict` as `belief`, held in
+  `MapView.tile_belief` only where it is above zero and copied onto the `_tile_info_at` dict as
+  `belief`): `SubjectDrawerController._tile_terrain_lines` adds `Ancestors: <N> dead` from
+  `DetailFormat.ancestors_line` — rounded to whole people, `<1` below one person, NO row at zero.
+  Emitted beside the deposit rows, above the FoW discovered early-return: a place keeps its dead, so a
+  remembered hex states them, and `belief` is not in `MapView.FOW_DISCOVERED_HIDDEN_KEYS`.
 - **Tile-card Climate** (snapshot `TileState.temperature`, decoded in `native/src/lib.rs`
   `tile_to_dict` as `temperature` (°); temperature is now a **latitude + elevation** climate
   (equator-in-the-middle, poles cold) with a small element jitter, NOT the old element

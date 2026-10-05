@@ -6,6 +6,8 @@ paths:
   - "core_sim/src/systems/population.rs"
   - "core_sim/src/systems/labor.rs"
   - "core_sim/src/systems/fission.rs"
+  - "core_sim/src/snapshot/capture.rs"
+  - "core_sim/src/snapshot/population.rs"
   - "core_sim/src/wellbeing_config.rs"
   - "core_sim/src/data/wellbeing_config.json"
   - "core_sim/tests/belief.rs"
@@ -77,7 +79,9 @@ Belief's first consumer: a Layer-1 morale contributor (`MoraleContributions::cul
 within walking reach of. **The band holds it, not the registry**: belief stays ownerless (nothing on
 the registry names a people), and which place a band counts as its ancestors' is a fact about the
 band. It is a tile **position**, not an `Entity`, so the checkpoint carries it inside the cohort with
-no remap (`BandRecord::cohort`; `SAVE_FORMAT_VERSION` 22). It is not on the wire.
+no remap (`BandRecord::cohort`; `SAVE_FORMAT_VERSION` 22). It is published, with the ground near it,
+so a player told "far from the ancestors" can find where they are — see "On the wire and in the
+checkpoint".
 
 Each turn, before morale is computed, `refresh_belief_anchor` (`systems/population.rs`) walks the
 sparse registry and takes every tile within walking reach of where the band **stands**
@@ -100,7 +104,8 @@ no anchor and no term, however much belief lies elsewhere on the map.
 ancestors exactly as it lengthens how far its people will move. One lever, `base_reach`; there is no
 second radius. A pair inside plain reach is never traced, and a pair past
 `base_reach + (max_route_reach_tiles − reach_tiles)` is out without a trace. `simulate_population`
-builds it from `WalkReachInputs` (roads, supply config, route ladder, tile registry).
+builds it from `WalkReachInputs` (roads, supply config, route ladder, tile registry), and every
+reader constructs it through the one `WalkReach::for_people`.
 
 ### The formula
 
@@ -141,7 +146,21 @@ tie-break order is Terrain ≥ Climate ≥ Unrest ≥ Culture (`MoraleContributi
   metadata as config resources.
 - **`PopulationCohortState.moraleCulture:long`** (appended last on the table, fixed-point like its
   `moraleSettling/Terrain/Climate/Unrest` siblings) carries the band's culture contribution;
-  `moraleCause` `4` is Culture. The anchor itself rides only the checkpoint, inside the cohort.
+  `moraleCause` `4` is Culture.
+- **The anchor**: `hasBeliefAnchor:bool` gating `beliefAnchorX` / `beliefAnchorY:uint` (`0,0` with no
+  anchor — the `isTraveling` / `travelTargetX/Y` idiom on the same table).
+- **The reach region**: `beliefReachX` / `beliefReachY:[uint]`, zipped and row-major (the
+  `pendingRevealX/Y` idiom) — every tile a band could stand on and still count as near its anchor.
+  **It is the same test the term runs, not a second rule**: `WalkReach::region_around(roads, anchor)`
+  keeps exactly the tiles `t` for which `within(roads, t, anchor)` holds, standing tile first, and
+  scans only the hex disk of `WalkReach::max_reach_tiles` (`base_reach` plus the widest road bonus,
+  the same bound `within` refuses past). Inside the region the term reads `+near`, outside it `−away`.
+  Empty with no anchor.
+- Both are **derived at capture** (`snapshot/capture.rs` builds one `WalkReach` per capture from the
+  live configs and the live roads) and never checkpointed — the anchor itself rides the cohort. Both
+  live on `PopulationCohortState`, whose delta comparison is its derived `PartialEq`, so a road built
+  or an anchor moved rides the next delta. A foreign band's redacted row publishes neither (the
+  allow-list redaction defaults them).
 
 ## Tests
 
@@ -163,4 +182,8 @@ tie-break order is Terrain ≥ Climate ≥ Unrest ≥ Culture (`MoraleContributi
 | `belief_culture::a_fission_daughter_inherits_the_anchor` | the splinter carries its parent's anchor |
 | `belief_culture::the_anchor_round_trips_the_checkpoint_and_the_save` | `SimState` capture → restore, and the save payload's `BandRecord` |
 | `belief_culture::the_culture_contribution_is_on_the_encoded_snapshot` | `moraleCulture` on the encoded envelope equals the cohort's contribution |
+| `belief_culture::the_anchor_and_its_reach_region_are_on_the_encoded_snapshot` | the anchor's tile and its gate on the envelope; the region holds the anchor and the band's own tile and not a tile past `base_reach` |
+| `belief_culture::a_band_with_no_anchor_publishes_an_empty_region` | no anchor: the gate is off, `0,0`, and the region is empty |
+| `belief_culture::a_road_brings_a_just_out_of_reach_tile_into_the_published_region` | a tile one step past `base_reach` joins the region only once a road connects it, and the change rides the delta |
+| `belief_culture::the_published_region_agrees_with_the_term_at_every_tile` | with a road bending the region, a band on every published tile reads near and on every bordering tile reads away |
 | `labor_allocation::a_far_work_partys_hunt_dead_credit_no_belief` | a party posted past `band_work_range` loses people and the registry stays empty — neither the camp nor the herd tile gains belief |

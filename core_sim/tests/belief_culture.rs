@@ -399,3 +399,181 @@ fn the_culture_contribution_is_on_the_encoded_snapshot() {
         .moraleCulture();
     assert_eq!(published, contribution.raw());
 }
+
+/// What one band's row publishes about its ancestors' place, read off the encoded envelope.
+struct PublishedAnchor {
+    has_anchor: bool,
+    anchor: UVec2,
+    region: Vec<UVec2>,
+}
+
+fn published_anchor(app: &mut App, band: Entity) -> PublishedAnchor {
+    publish_baseline_snapshot(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let row = envelope
+        .payload_as_snapshot()
+        .expect("a snapshot payload")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the cohort list is published")
+        .iter()
+        .find(|row| row.entity() == band.to_bits())
+        .expect("the band is on the wire");
+    let xs: Vec<u32> = row
+        .beliefReachX()
+        .map(|v| v.iter().collect())
+        .unwrap_or_default();
+    let ys: Vec<u32> = row
+        .beliefReachY()
+        .map(|v| v.iter().collect())
+        .unwrap_or_default();
+    assert_eq!(xs.len(), ys.len(), "the region's x and y lists zip");
+    PublishedAnchor {
+        has_anchor: row.hasBeliefAnchor(),
+        anchor: UVec2::new(row.beliefAnchorX(), row.beliefAnchorY()),
+        region: xs
+            .into_iter()
+            .zip(ys)
+            .map(|(x, y)| UVec2::new(x, y))
+            .collect(),
+    }
+}
+
+/// A band anchored to a place `NEARBY_STEPS` along its row.
+fn anchored_band(app: &mut App) -> (Fixture, UVec2) {
+    let fx = fixture(app);
+    let place = along_row(app, fx.at, NEARBY_STEPS);
+    stage_belief(app, place, SOME_BELIEF);
+    morale_turn(app);
+    assert_eq!(cohort(app, fx.band).belief_anchor, Some(place));
+    (fx, place)
+}
+
+/// **The anchor and its reach region ride the encoded frame**: the anchor's tile, gated, and a
+/// region that holds the anchor itself and the tile the band stands on.
+#[test]
+fn the_anchor_and_its_reach_region_are_on_the_encoded_snapshot() {
+    let mut app = one_faction_world();
+    let (fx, place) = anchored_band(&mut app);
+
+    let published = published_anchor(&mut app, fx.band);
+    assert!(published.has_anchor);
+    assert_eq!(published.anchor, place);
+    assert!(
+        published.region.contains(&place),
+        "standing on the anchor is near it"
+    );
+    assert!(
+        published.region.contains(&fx.at),
+        "the band stands within reach, so its tile is in the region"
+    );
+    let far = along_row(&app, place, base_reach(&app) + JUST_OUT_OF_REACH);
+    assert!(
+        !published.region.contains(&far),
+        "a tile past base_reach with no road is outside the region"
+    );
+}
+
+/// **A band with no anchor ships no anchor and an empty region.**
+#[test]
+fn a_band_with_no_anchor_publishes_an_empty_region() {
+    let mut app = one_faction_world();
+    let fx = fixture(&mut app);
+    morale_turn(&mut app);
+    assert_eq!(cohort(&app, fx.band).belief_anchor, None);
+
+    let published = published_anchor(&mut app, fx.band);
+    assert!(!published.has_anchor);
+    assert_eq!(published.anchor, UVec2::ZERO);
+    assert!(published.region.is_empty());
+}
+
+/// **A road widens the published region exactly as it widens the term**: a tile one step past
+/// `base_reach` from the anchor joins the region only once a road connects it.
+#[test]
+fn a_road_brings_a_just_out_of_reach_tile_into_the_published_region() {
+    let mut app = one_faction_world();
+    let (fx, place) = anchored_band(&mut app);
+    let beyond = along_row(&app, place, base_reach(&app) + JUST_OUT_OF_REACH);
+
+    assert!(
+        !published_anchor(&mut app, fx.band).region.contains(&beyond),
+        "no road: the tile is outside the region"
+    );
+    trail_between(&mut app, beyond, place);
+    assert!(
+        published_anchor(&mut app, fx.band).region.contains(&beyond),
+        "a road between them brings it in"
+    );
+    // And the change rode the stream's delta, not only the full frame.
+    let delta = app
+        .world
+        .resource::<SnapshotHistory>()
+        .last_delta()
+        .expect("a delta per publication");
+    let row = delta
+        .populations
+        .iter()
+        .find(|row| row.entity == fx.band.to_bits())
+        .expect("a band whose reach region moved rides the delta");
+    assert!(row
+        .belief_reach_x
+        .iter()
+        .zip(&row.belief_reach_y)
+        .any(|(&x, &y)| UVec2::new(x, y) == beyond));
+}
+
+/// **The drawn region and the term cannot disagree.** With a road bending the region out of a plain
+/// disk, a band standing on EVERY published tile reads the near value, and on every tile bordering
+/// the region reads the away value.
+#[test]
+fn the_published_region_agrees_with_the_term_at_every_tile() {
+    let mut app = one_faction_world();
+    let (fx, place) = anchored_band(&mut app);
+    let beyond = along_row(&app, place, base_reach(&app) + JUST_OUT_OF_REACH);
+    trail_between(&mut app, beyond, place);
+
+    let region = published_anchor(&mut app, fx.band).region;
+    let config = app.world.resource::<SimulationConfig>().clone();
+    let (width, height, wrap) = (
+        config.grid_size.x,
+        config.grid_size.y,
+        config.map_topology.wrap_horizontal,
+    );
+    // Every tile one step outside the region: the region's neighbourhood minus the region.
+    let mut border: Vec<UVec2> = region
+        .iter()
+        .flat_map(|&tile| core_sim::grid_utils::hex_range_tiles(tile, 1, width, height, wrap))
+        .filter(|tile| !region.contains(tile))
+        .collect();
+    border.sort_by_key(|tile| (tile.y, tile.x));
+    border.dedup();
+    assert!(!border.is_empty(), "fixture: the region has an edge");
+
+    let zero = Scalar::from_i64(0);
+    for &tile in &region {
+        stand_on(&mut app, fx.band, tile);
+        morale_turn(&mut app);
+        assert_eq!(cohort(&app, fx.band).belief_anchor, Some(place));
+        assert!(
+            culture_of(&app, fx.band) > zero,
+            "standing on {tile} inside the region must read near"
+        );
+    }
+    for &tile in &border {
+        stand_on(&mut app, fx.band, tile);
+        morale_turn(&mut app);
+        assert_eq!(cohort(&app, fx.band).belief_anchor, Some(place));
+        assert!(
+            culture_of(&app, fx.band) < zero,
+            "standing on {tile} just outside the region must read away"
+        );
+    }
+}

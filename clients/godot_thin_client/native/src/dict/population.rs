@@ -6,7 +6,7 @@ use shadow_scale_flatbuffers::shadow_scale::sim as fb;
 
 use crate::dict::campaign::{kit_allocations_to_array, material_allocations_to_array};
 use crate::dict::economy::fragment_to_dict;
-use crate::dict::fixed64_to_f64;
+use crate::dict::{fixed64_to_f64, u32_vector_to_packed_int32};
 
 /// **ONE TABLE OF EQUIPMENT** — `[{item_id, required, filled}]`, one dict per `KitToeLine`, `[]` when
 /// the vector is absent or empty (nothing claimed). Shared by a take row's `kit_toe` and a site's
@@ -135,6 +135,23 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // draws a wrap-aware reticle + line to it for the selected traveling unit.
     let _ = dict.insert("travel_target_x", i64::from(cohort.travelTargetX()));
     let _ = dict.insert("travel_target_y", i64::from(cohort.travelTargetY()));
+    // The band's ancestors' place — its belief anchor, the tile `morale_culture` is measured against
+    // (`hasBeliefAnchor` gates it; `0,0` with no anchor, the `isTraveling`/`travelTarget` idiom). Own
+    // bands only: a foreign band's redacted row leaves all three at their defaults.
+    let _ = dict.insert("has_belief_anchor", cohort.hasBeliefAnchor());
+    let _ = dict.insert("belief_anchor_x", i64::from(cohort.beliefAnchorX()));
+    let _ = dict.insert("belief_anchor_y", i64::from(cohort.beliefAnchorY()));
+    // Every tile the band can STAND on and still count as near its anchor, as two zipped packed
+    // arrays (index i of each is one tile). Road-aware, so the set is irregular — the map draws its
+    // perimeter, never a circle. Empty with no anchor.
+    let _ = dict.insert(
+        "belief_reach_x",
+        &u32_vector_to_packed_int32(cohort.beliefReachX()),
+    );
+    let _ = dict.insert(
+        "belief_reach_y",
+        &u32_vector_to_packed_int32(cohort.beliefReachY()),
+    );
     let _ = dict.insert("size", cohort.size() as i64);
     // Every Scalar field below comes from `cohort_scalars` — see its doc comment for why.
     let scalars = cohort_scalars(cohort);

@@ -2035,19 +2035,28 @@ Each fails a DISJOINT set, and each names the defect in its own words:
 
 ## `chapters/band_expedition.gd` — the culture morale term (#699)
 
-`EXPECTED_CHECKPOINTS` **132**, RE-MEASURED: two frames and four claims, appended after
+`EXPECTED_CHECKPOINTS` **134**, RE-MEASURED: two frames and six claims, appended after
 `_carry_states` (`_ancestors_states`) so no earlier frame moves.
 
 - **NEAR** — the reference band (entity 910) with `morale_culture` +0.006, its Morale disclosure
   opened: the popover itemizes `▲ +0.6%  near the ancestors` — frame
   **`band_morale_ancestors_near`**.
-- **FAR** — the low-morale band (entity 911) with `morale_culture` −0.009 and `morale_cause` 4
-  (`DetailFormat.MORALE_CAUSE_CULTURE`): the Morale headline reads `— far from the ancestors`, and
-  the popover itemizes `▼ −0.9%  far from the ancestors` and never the word `culture`, which the
-  positive-unrest row owns — frame **`band_morale_ancestors_far`**.
+- **FAR** — the low-morale band (entity 911) with `morale_culture` −0.009, `morale_cause` 4
+  (`DetailFormat.MORALE_CAUSE_CULTURE`) and a belief anchor at (12, 7): the Morale headline reads
+  `— far from the ancestors` with no coordinates, and the popover itemizes
+  `▼ −0.9%  far from the ancestors (12, 7)` and never the word `culture`, which the positive-unrest
+  row owns — frame **`band_morale_ancestors_far`**. Its hex carries `belief` 12.4, and the tile-card
+  producer (`_tile_terrain_lines`) is asserted to state `Ancestors: 12 dead`; `<1 dead` under one
+  person and no row at zero are asserted on `DetailFormat.ancestors_line` directly.
 
 The row needles are LITERALS, matched within one popover line, so a row that drew the other sign's
 label or glyph fails.
+
+## `chapters/land_readouts.gd` — the tile card's Ancestors row (#699)
+
+`EXPECTED_CHECKPOINTS` **121**, RE-MEASURED: one frame and one claim, appended after the road-kit
+roster claim and before the roster restore. The food tile with `belief` 23.6 —
+frame **`tile_ancestors`**, the card reading `Ancestors: 24 dead` among its land rows.
 
 ## The ⚠'s one producer, and the biomass quantiser (this arc)
 

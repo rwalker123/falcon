@@ -1679,6 +1679,20 @@ pub struct PopulationCohortState {
     /// `morale_delta`. Fixed-point raw. Derived at capture. Appended last.
     #[serde(default)]
     pub morale_culture: i64,
+    /// Whether the band has a belief anchor — gates [`Self::belief_anchor_x`] /
+    /// [`Self::belief_anchor_y`] (`0,0` without one). Derived at capture.
+    #[serde(default)]
+    pub has_belief_anchor: bool,
+    #[serde(default)]
+    pub belief_anchor_x: u32,
+    #[serde(default)]
+    pub belief_anchor_y: u32,
+    /// The anchor's reach region (zipped `x`/`y`, row-major): every tile a band could stand on and
+    /// still count as near its anchor. Empty with no anchor. Derived at capture.
+    #[serde(default)]
+    pub belief_reach_x: Vec<u32>,
+    #[serde(default)]
+    pub belief_reach_y: Vec<u32>,
 }
 
 /// **ONE GOOD THAT CROSSED A BAND'S STORE, BY CAUSE** — a row of

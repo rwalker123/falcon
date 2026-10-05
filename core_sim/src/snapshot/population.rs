@@ -683,6 +683,10 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// [`band_loadout_windows`] — `None` for a band with nothing to outfit, which is every band on
     /// every turn after the windows shut.
     pub(crate) loadout_window: Option<BandLoadoutWindowState>,
+    /// **The band's belief-anchor reach region** — every tile it could stand on and still count as
+    /// near its anchor, resolved at capture by [`crate::supply::WalkReach::region_around`], the same
+    /// walk test the culture morale term reads. Empty with no anchor.
+    pub(crate) belief_reach: Vec<UVec2>,
 }
 
 /// The two webs' registries, for resolving a queue entry's **live** rung. No ladder: both
@@ -943,6 +947,7 @@ pub(crate) fn redacted_population_state(
 
 pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationCohortState {
     let PopulationStateInputs {
+        belief_reach,
         entity,
         band_id,
         band_name,
@@ -1806,6 +1811,12 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         morale_climate: cohort.last_morale_contributions.climate.raw(),
         morale_unrest: cohort.last_morale_contributions.unrest.raw(),
         morale_culture: cohort.last_morale_contributions.culture.raw(),
+        // **The ancestors' place and the ground near it** — `0,0` and empty with no anchor.
+        has_belief_anchor: cohort.belief_anchor.is_some(),
+        belief_anchor_x: cohort.belief_anchor.map_or(0, |anchor| anchor.x),
+        belief_anchor_y: cohort.belief_anchor.map_or(0, |anchor| anchor.y),
+        belief_reach_x: belief_reach.iter().map(|tile| tile.x).collect(),
+        belief_reach_y: belief_reach.iter().map(|tile| tile.y).collect(),
         morale: cohort.morale.raw(),
         generation: cohort.generation,
         faction: cohort.faction.0,
@@ -2668,6 +2679,7 @@ mod tests {
         expedition: Option<&Expedition>,
     ) -> PopulationCohortState {
         population_state(PopulationStateInputs {
+            belief_reach: Vec::new(),
             entity: Entity::from_raw(1),
             // These fixtures assert on the derived readouts, not on band identity.
             band_id: None,

@@ -1440,6 +1440,7 @@ mod tests {
             move_ferry_reach_tiles: 0,
         };
         population_state(PopulationStateInputs {
+            belief_reach: Vec::new(),
             entity: Entity::from_raw(1),
             // This fixture asserts on the derived readouts, not on band identity.
             band_id: None,

@@ -919,14 +919,14 @@ pub struct WalkReachInputs<'w> {
 impl WalkReachInputs<'_> {
     /// The walk test at `base_reach` (`migration.base_reach`) on this world's grid.
     fn walk_reach(&self, base_reach: f32, wrap: bool) -> crate::supply::WalkReach {
-        crate::supply::WalkReach {
+        crate::supply::WalkReach::for_people(
             base_reach,
-            free_reach: self.supply.get().reach_tiles,
-            widest_route_reach: crate::routes::max_route_reach_tiles(&self.ladder.get()),
-            width: self.tile_registry.width,
-            height: self.tile_registry.height,
+            &self.supply.get(),
+            &self.ladder.get(),
+            self.tile_registry.width,
+            self.tile_registry.height,
             wrap,
-        }
+        )
     }
 }
 

@@ -367,6 +367,37 @@ pub struct WalkReach {
 }
 
 impl WalkReach {
+    /// **The one construction** every reader uses: `base_reach` (`migration.base_reach`) over the
+    /// supply network's free reach and the widest reach any road rung holds open, on this grid.
+    pub fn for_people(
+        base_reach: f32,
+        supply: &crate::supply_network_config::SupplyNetworkConfig,
+        ladder: &crate::intensification::LadderConfig,
+        width: u32,
+        height: u32,
+        wrap: bool,
+    ) -> Self {
+        Self {
+            base_reach,
+            free_reach: supply.reach_tiles,
+            widest_route_reach: crate::routes::max_route_reach_tiles(ladder),
+            width,
+            height,
+            wrap,
+        }
+    }
+
+    /// No road can shorten a walk by more than this many hex steps.
+    fn max_road_bonus(&self) -> u32 {
+        self.widest_route_reach.saturating_sub(self.free_reach)
+    }
+
+    /// The farthest hex distance [`Self::within`] can ever accept — `base_reach` plus the widest
+    /// road bonus, the same bound its early-out refuses past.
+    pub fn max_reach_tiles(&self) -> u32 {
+        (self.base_reach + self.max_road_bonus() as f32).floor() as u32
+    }
+
     /// Whether `b` is within walking reach of `a` over the roads in `roads`.
     pub fn within(&self, roads: &crate::routes::RoadRegistry, a: UVec2, b: UVec2) -> bool {
         let distance = hex_distance_wrapped(a, b, self.width, self.wrap);
@@ -374,8 +405,7 @@ impl WalkReach {
             return true;
         }
         // Past plain reach: only a road can bring it in, and only within the widest bonus.
-        let max_road_bonus = self.widest_route_reach.saturating_sub(self.free_reach);
-        if distance as f32 > self.base_reach + max_road_bonus as f32 {
+        if distance > self.max_reach_tiles() {
             return false;
         }
         let road_bonus = free_pooling_reach_tiles(
@@ -390,6 +420,25 @@ impl WalkReach {
         )
         .saturating_sub(self.free_reach);
         distance.saturating_sub(road_bonus) as f32 <= self.base_reach
+    }
+
+    /// **Every tile a band could stand on and still be within reach of `target`**, row-major —
+    /// exactly the tiles `t` for which `self.within(roads, t, target)` holds, with the standing tile
+    /// FIRST as every reader calls it. Bounded: the candidates are the hex disk of
+    /// [`Self::max_reach_tiles`] around `target`, the same bound `within` refuses past.
+    pub fn region_around(&self, roads: &crate::routes::RoadRegistry, target: UVec2) -> Vec<UVec2> {
+        let mut region: Vec<UVec2> = crate::grid_utils::hex_range_tiles(
+            target,
+            self.max_reach_tiles(),
+            self.width,
+            self.height,
+            self.wrap,
+        )
+        .into_iter()
+        .filter(|&standing| self.within(roads, standing, target))
+        .collect();
+        region.sort_by_key(|tile| (tile.y, tile.x));
+        region
     }
 }
 

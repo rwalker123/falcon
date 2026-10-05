@@ -976,6 +976,27 @@ the floor-alone reading asserted as the premise.
 
 ---
 
+## The selected band's ANCESTORS — anchor mark and reach outline (issue #699)
+
+`BandOverlayRenderer._draw_band_ancestors`, called from `draw_band_work_highlights` right after the
+range borders, so it draws only for the SELECTED PLAYER band (`_selected_player_band`) and never for a
+foreign one — whose redacted row carries no anchor anyway. A band whose `has_belief_anchor` is false
+draws nothing.
+
+- **The reach outline** is the PERIMETER of the tile set `belief_reach_x/y` (zipped packed arrays off
+  `PopulationCohortState.beliefReachX/Y`): every edge between a tile in the set and one outside it,
+  off-map counting as outside. The set is the sim's road-aware walk test, so it is irregular and is
+  traced from the set, never from a radius. Columns are drawn in the band's effective frame
+  (`_wrapped_col_delta`) and folded back with `posmod` for the membership test
+  (`_in_reach_region`), so the region stays contiguous across the wrap seam. Inside the outline the
+  band's `morale_culture` term is positive; outside it, negative.
+- **The anchor mark** is the `ANCESTORS_GLYPH` urn on the anchor tile (`belief_anchor_x/y`), through
+  `MapView._draw_marker_glyph`, sized at `ANCESTORS_GLYPH_FONT_FACTOR` of the hex radius (the urn sits
+  small in its em box).
+- **Both ride `HudStyle.VOICE_PIGMENT`**, the Telling's earth-pigment ink, read at the draw site so a
+  theme swap re-tints them. No worked-source ring (green / red / slate), range border (green / azure)
+  or pending style (dashed amber) wears it.
+
 ## Worked-source marks — one ring grammar for both food webs
 
 `docs/plan_worked_source_marks.md` (issue #412). Two passes, and the split between them is the whole
