@@ -90,6 +90,15 @@ it renders an empty detail phrase and no `Work tab` link: the party is out of co
 says only that it is gone. The gained row (`A party of N from Faction F joined Band Y`, `band=
 count= from= side=gained`) takes the ordinary `band=` join and the `from=` people join below.
 
+**`band_broke_away` is ALERT on both sides, and `lost_touch` is NOTABLE** (issue #284,
+`docs/plan_band_fission.md` §Independence). A break-away is a cut-off group of bands becoming its own
+people: irreversible, not player-initiated, and two rows (`side=lost|gained`, detail `band= from= to=`)
+on `band_changed_hands`' shape. The gained side stays Alert for `party_defected`'s reason — the only
+per-row override matches a `key=value` fragment on ANY kind, so a `side=gained` demotion would reach
+the other two handover kinds. `lost_touch` (detail `band=`) is the warning one step before it: nothing
+is lost yet and a visit restores contact, so it is Notable. All four tokens are already in
+`DETAIL_KEY_HIDDEN`, so both kinds render an empty detail column.
+
 **A cross-people `migrated` line takes the handover's treatment exactly.** The source side reads
 `N left Band X to join Faction F` with `to=<faction>`, the destination side `N from Faction F joined
 Band Y` with `from=<faction>`; `DETAIL_KEY_HIDDEN` drops `to` / `from` for every kind, and the label's

@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 139
+const EXPECTED_CHECKPOINTS := 154
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -818,6 +818,10 @@ func run(harness) -> void:
 	# **APPENDED**, for the reason the blocks above state.
 	await _carry_states()
 
+	# ---- THE BAND'S STANDING TOWARD ITS PEOPLE'S HEART (#284) -------------------------------------
+	# **APPENDED**, for the reason the blocks above state.
+	await _heart_states()
+
 	# ---- THE CULTURE MORALE TERM (#699) ------------------------------------------------------------
 	# **APPENDED**, for the reason the blocks above state.
 	await _ancestors_states()
@@ -1098,6 +1102,116 @@ func _carry_states() -> void:
 			CARRY_VALUE_OVER]))
 	h._assert_hud("…and the block's hover states the move rule (\"%s\")" % CARRY_HOVER,
 		String(h._hud.occupant_detail.tooltip_text).contains(CARRY_HOVER))
+
+## ---- THE BAND'S STANDING TOWARD ITS PEOPLE'S HEART (#284) -----------------------------------------
+## How long ago the draining band last touched its heart, and the bond its strongest tie still holds.
+const HEART_DRAINING_AGO := 3
+const HEART_DRAINING_BOND := 0.45
+## How long ago the cut-off band was last seen, and its grievance against a threshold of 1.0 (the
+## shipped `independence.grievance_threshold`).
+const HEART_CUT_OFF_AGO := 12
+const HEART_CUT_OFF_GRIEVANCE := 0.42
+const HEART_GRIEVANCE_THRESHOLD := 1.0
+## The turn the block stages its readings at, so every "last seen" turn is one a server can send (the
+## walk's own turn is 0 here, and `turn − ago` would be negative). Handed back on the way out.
+const HEART_FIXTURE_TURN := 40
+## The four lines the PEOPLE block draws for these fixtures, spelled out rather than composed through
+## `HudWorkVocab` — an expectation built from the vocabulary under test can only agree with itself.
+const HEART_DRAINING_LINE := "Bond ▰▰▰▰▱▱▱▱ · last seen 3 turns ago"
+const HEART_OUT_OF_TOUCH_LINE := "Out of touch · last seen 12 turns ago"
+const HEART_DRIFTING_LINE := "Drifting away — grievance 0.42 / 1.00"
+
+## One band carrying a heart reading, stamped on the reference band.
+func _heart_band_fixture(cut_off: bool, bond: float, ago: int, grievance: float) -> Dictionary:
+	var band := BandFx.band_fixture()
+	band["cut_off"] = cut_off
+	band["heart_bond"] = bond
+	band["heart_last_contact_turn"] = h._hud._band_labor.current_turn() - ago
+	band["grievance"] = grievance
+	band["independence_grievance_threshold"] = HEART_GRIEVANCE_THRESHOLD
+	return band
+
+## Show `band` in the drawer and answer the drawer's allocation host for the label walk.
+func _show_heart_band(band: Dictionary) -> Control:
+	h._hud._band_labor._player_band = band
+	h._hud.show_unit_selection(band)
+	await h._settle()
+	return h._hud.allocation_panel
+
+## The heart rows under the PEOPLE block, as a set of states:
+##   (a) a band in the heart whose tie is draining — the Bond meter and "last seen";
+##   (b) a cut-off band with grievance — amber "Out of touch" and "Drifting away";
+##   (c) a lone heart (bond 1.0) and a band with no reading (-1) — NO row, the paired negatives,
+##       without which "the row is drawn" passes on a block that draws it for every band.
+func _heart_states() -> void:
+	var prev_turn: int = h._hud._band_labor.current_turn()
+	h._hud._band_labor.set_turn(HEART_FIXTURE_TURN)
+	var draining := _heart_band_fixture(false, HEART_DRAINING_BOND, HEART_DRAINING_AGO, 0.0)
+	var host: Control = await _show_heart_band(draining)
+	await h._save("band_heart_draining")
+	var bond_line := Q.label_containing(host, "Bond ")
+	h._assert_hud("a draining heart band draws a Bond meter (got \"%s\")" % bond_line,
+		bond_line != "")
+	h._assert_hud("…reading \"%s\" (got \"%s\")" % [HEART_DRAINING_LINE, bond_line],
+		bond_line == HEART_DRAINING_LINE)
+	h._assert_hud("…and no out-of-touch line",
+		not Q.has_label_containing(host, "Out of touch"))
+
+	var cut := _heart_band_fixture(true, 0.0, HEART_CUT_OFF_AGO, HEART_CUT_OFF_GRIEVANCE)
+	host = await _show_heart_band(cut)
+	await h._save("band_heart_cut_off")
+	h._assert_hud("a cut-off band reads \"%s\" (got \"%s\")"
+			% [HEART_OUT_OF_TOUCH_LINE, Q.label_containing(host, "Out of touch")],
+		Q.label_containing(host, "Out of touch") == HEART_OUT_OF_TOUCH_LINE)
+	h._assert_hud("…and \"%s\" (got \"%s\")"
+			% [HEART_DRIFTING_LINE, Q.label_containing(host, "Drifting away")],
+		Q.label_containing(host, "Drifting away") == HEART_DRIFTING_LINE)
+	h._assert_hud("…and no Bond meter in its place", not Q.has_label_containing(host, "Bond "))
+	var drifting := _find_label_with_text(host, HEART_DRIFTING_LINE)
+	h._assert_hud("…the drifting line is amber",
+		drifting != null and drifting.get_theme_color("font_color") == HudStyle.WARN)
+
+	var lone := _heart_band_fixture(false, 1.0, 0, 0.0)
+	host = await _show_heart_band(lone)
+	h._assert_hud("a LONE heart band draws no heart row",
+		not Q.has_label_containing(host, "Bond ") and not Q.has_label_containing(host, "Out of touch"))
+	var unjudged := BandFx.band_fixture()
+	unjudged["heart_last_contact_turn"] = -1
+	host = await _show_heart_band(unjudged)
+	h._assert_hud("an unjudged band / party (false / 0 / -1) draws no heart row",
+		not Q.has_label_containing(host, "Bond ") and not Q.has_label_containing(host, "Out of touch"))
+	# A FOREIGN (redacted) row is the schema defaults — contact 0, not -1 — so a gate keyed on the
+	# contact sentinel would draw it a zero Bond; the gate keys on the bond.
+	var redacted := BandFx.band_fixture()
+	redacted["cut_off"] = false
+	redacted["heart_bond"] = 0.0
+	redacted["heart_last_contact_turn"] = 0
+	host = await _show_heart_band(redacted)
+	h._assert_hud("a foreign REDACTED row (false / 0 / 0) draws no heart row",
+		not Q.has_label_containing(host, "Bond ") and not Q.has_label_containing(host, "Out of touch"))
+	# The never-seen cut-off band: "never seen" rather than a turn count.
+	var never := _heart_band_fixture(true, 0.0, 0, 0.0)
+	never["heart_last_contact_turn"] = -1
+	host = await _show_heart_band(never)
+	h._assert_hud("a cut-off band never tied to its heart reads \"never seen\", and no drifting line at 0 grievance",
+		Q.label_containing(host, "Out of touch") == "Out of touch · never seen"
+			and not Q.has_label_containing(host, "Drifting away"))
+	# The two event kinds the arc added take their rungs: a break-away is an Alert (on both sides —
+	# the vocabulary can rung only by kind), losing touch is Notable.
+	h._assert_hud("`band_broke_away` is an Alert",
+		HudEventVocab.RUNG_BY_KIND.get("band_broke_away", "") == HudEventVocab.RUNG_ALERT)
+	h._assert_hud("`lost_touch` is Notable",
+		HudEventVocab.RUNG_BY_KIND.get("lost_touch", "") == HudEventVocab.RUNG_NOTABLE)
+	h._hud._band_labor.set_turn(prev_turn)
+
+func _find_label_with_text(node: Node, text: String) -> Label:
+	if node is Label and (node as Label).text == text:
+		return node as Label
+	for child in node.get_children():
+		var found := _find_label_with_text(child, text)
+		if found != null:
+			return found
+	return null
 
 ## ---- THE CULTURE MORALE TERM (#699) — `morale_culture`, the signed pull of the strongest belief place
 ## (where the band's dead lie) the band remembers: positive within walking reach of it, negative beyond

@@ -78,7 +78,10 @@ pub struct FactionRegistry {
 
 **`control` is keyed by exactly the ids in `factions`.** `FactionRegistry::with_ai_factions(n)` is
 the only constructor there is, and it derives *both* fields from one count, so the two cannot be
-written apart; a `debug_assert!` there states the invariant. `Default` is exactly
+written apart; a `debug_assert!` there states the invariant. **The one mutator is
+`add_ai_faction`** — a people breaking away mid-game (`independence.md`) — which appends the next
+positional id under `FactionControl::Ai` to both fields from that one id, and asserts the invariant
+plus positional ids after it. `Default` is exactly
 `with_ai_factions(0)`, so "the default world" has one statement rather than two, and
 `ai_faction_count()` reads the count back off the roster.
 Readers ask through `factions()`, `control_of`, `is_ai` and `contains` rather than touching either
@@ -142,7 +145,7 @@ read, because the next person infers the short list is the whole list.
 
 | Resource | `new_game` / `ResetMap` | A load |
 |---|---|---|
-| `FactionRegistry` | re-seeded in `seed_faction_roster` | restored — `WorldStatics` |
+| `FactionRegistry` | re-seeded in `seed_faction_roster` | restored — `SimState` |
 | `TurnQueue` | rebuilt from that registry | **rebuilt in `apply_save`** — server-side order intake, so no payload carries it |
 | `CounterIntelBudgets` | re-seeded, through `CounterIntelBudgets::new` | restored — `SimState` |
 | `FactionSecurityPolicies` | re-seeded, through `FactionSecurityPolicies::new(.., Standard)` | restored — `SimState` |
@@ -152,6 +155,13 @@ read, because the next person infers the short list is the whole list.
 
 Every re-seed goes through the **boot path's own constructors**, so a fresh faction's starting state
 has one definition rather than two.
+
+**The runtime path is `systems::independence::grow_faction_roster`**, and it owes all six too: a
+people born mid-game is extended through each resource's `seed_faction` (the seam its `new` loops
+over), `FactionNames::mint_faction` (worldgen's permutation), `EspionageRoster::seed_from_catalog`
+and `TurnQueue::add_faction` (awaited from the next turn). The registry is therefore **checkpoint
+state** (`SimState::factions`), no longer a world static. The per-resource table and the sweep of
+every other faction-keyed map are `independence.md` → "The roster grows at runtime".
 
 **None of `CounterIntelBudgets`, `FactionSecurityPolicies` or `FactionBorderPolicies` can report its
 own omission.**
@@ -1152,14 +1162,14 @@ The control arm is not optional: it is what distinguishes *"the second faction g
 
 ## Saves win over profile edits
 
-`FactionRegistry` is **ground truth in the save** — a field of `WorldStatics`, captured whole and
-restored whole. The AI count, by contrast, is a *request*: `simulation_config.json`'s
+`FactionRegistry` is **ground truth in the save** — `SimState::factions`, captured whole and restored
+whole (checkpoint state since a people can break away mid-game, `independence.md`). The AI count, by contrast, is a *request*: `simulation_config.json`'s
 `default_ai_faction_count` is re-read on every world build, and the pick that built this world is not
 recorded anywhere except in the registry itself.
 
 So the two can drift, and the rule is that **the save's registry wins**: a world loaded from a save
-has the roster it was created with, whatever the config default says now. That is the same reason the
-rest of `WorldStatics` is saved rather than recomputed — re-deriving a world's ground truth from
+has the roster it was created with, whatever the config default says now. That is the same reason
+`WorldStatics` is saved rather than recomputed — re-deriving a world's ground truth from
 tuning that has moved produces a *different world*.
 
 ## AI tuning is not a start-profile field

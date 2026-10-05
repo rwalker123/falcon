@@ -88,27 +88,23 @@ This is the arc's central decision and it is not a placeholder for multi-faction
   answering) would have been skipped entirely.
 - **Independence has to be earned by the world, not declared at the split.** The push that
   historically breaks a polity apart is that the bonds stop working: too far to trade with, too far
-  to help, and nothing coming back. The sim already measures that, in two live signals — the supply
-  network's connected components (`balance_supply_networks` links same-faction bands within a
-  configurable reach and auto-balances stores; beyond reach a band lives off its own larder) and
-  per-cohort `grievance`.
+  to help, and nothing coming back. The sim already measures that, in two live signals — the
+  contact tie between bands (`ConnectionLedger`, which fills in sight and bleeds over fifty quiet
+  turns) and per-cohort `grievance`.
 
-So: **one verb, two outcomes, and the second one is decided later by the sim.** A band that has been
-outside its faction's supply network for a sustained stretch, and whose grievance is high, drifts
-toward independence and eventually forks into a polity of its own. That is #284's emergent fission
-and this doc hands it the trigger: **disconnection + grievance over time, never distance alone.**
-
-**Sequencing.** The emergent half is **blocked on #513** (multi-faction support) — a band cannot
-become independent when the registry holds one faction and every worldgen band is hardcoded into it.
-Build the same-faction case first and completely.
+So: **one verb, two outcomes, and the second one is decided later by the sim.** A band that has lost
+touch with the heart of its people for a sustained stretch, and whose grievance is high, drifts
+toward independence and eventually forks into a polity of its own. That is #284's emergent fission:
+**disconnection + grievance over time, never distance alone.** §Independence makes it a rule — and
+records why the signal is the contact tie and not the supply network this section first named.
 
 ### In plain terms: a local split is not a second band
 
 A split that stays within the supply network's reach (`supply_network_config.json` → `reach_tiles`)
 is part of your band working "over there" — it pools its larder with yours, it is in contact, it did
-not leave. Nothing about it drifts. A split that walks beyond reach and stays there is the one the
-rule above applies to: off the network, stewing, and eventually its own people. Distance is never
-the trigger; being cut off is. `docs/plan_civilization_steps.md` builds on this — the same reach
+not leave. Nothing about it drifts. A split that walks out of sight of its people and stays there is
+the one the rule above applies to: out of touch, stewing, and eventually its own people. Distance is
+never the trigger; being cut off is. `docs/plan_civilization_steps.md` builds on this — the same reach
 decides whether a far band keeps growing (its founding lines merge with yours only while in contact)
 and whether a store is still yours.
 
@@ -408,6 +404,130 @@ Every other number is the wellbeing trickle's own (`migration.*`), deliberately:
 of dials. The party lever ships as an `expedition` row in the Workbench tuning manifest, beside the
 `settle` rows.
 
+## Independence — a cut-off, aggrieved band becomes its own people (#284)
+
+Defection is your people choosing a better-off people. Independence is your people choosing **no
+one** — a far band that has stopped hearing from you and stopped caring. §Q1 decided the kind of
+trigger (*disconnection + grievance over time, never distance alone*); this section makes it a rule.
+
+### The clock is the contact tie, not the supply network
+
+§Q1 first named the supply network as the "disconnected" signal. It is the wrong one, twice over:
+
+- **A faction with one band is never in a network** — a network is a multi-band component, so the
+  founding band of every people would read as cut off from turn 1.
+- **The network's reach is a pooling distance, not a contact distance.** A band five tiles away, in
+  plain sight every turn, is off the network (`reach_tiles` 3) and obviously not estranged.
+
+The signal is the **contact tie** (`ConnectionLedger`, `.claude/rules/core_sim/connections.md`) —
+the contact notion `docs/plan_civilization_steps.md` §The gathering already says drift must reuse
+rather than duplicate. A tie fills at `gain_per_contact` (0.25, four turns in sight to full) and
+bleeds at `decay_per_turn` (0.02, fifty quiet turns to nothing). **That bleed is the "sustained
+stretch"** — there is no new counter.
+
+- **A people's heart** is the set of its resident bands joined by live ties (either direction —
+  pooling reads ties undirected for the same reason), taking the component that holds **the most
+  people**. A people with one band is its own heart, so it can never be cut off.
+- **A band is cut off** when it holds no live tie, in either direction, to any band of its people's
+  heart.
+- **Reconnection resets it by itself.** Bring any band of the heart into sight and the tie refills;
+  a scout that visits them and comes home credits one contact to its home band. Nothing is reset by
+  hand, because nothing was counted by hand.
+
+The heart is where the people are, not where they started. If a splinter outgrows the band it left,
+and the original band is the far, unhappy one, **the original band is the one that goes**. A people
+is its people, not its first camp.
+
+### The gate is grievance
+
+`PopulationCohort.grievance` is already a severity × duration accumulator — it gains
+`grievance_gain × discontent_fraction` a turn (× `trapped_multiplier` when the band wants to leave
+and has nowhere to go) and decays only while the band is fully content
+(`wellbeing_config.json` → `discontent`). It was populated and reserved for a consequence;
+independence is that consequence, and its first reader.
+
+**A cut-off group breaks away when its people-weighted mean grievance reaches
+`independence.grievance_threshold`.** Opening value **1.0**, which at the shipped `discontent` dials
+reads as:
+
+| The far band | Turns to reach 1.0 |
+|---|---|
+| Content (morale ≥ `content_morale` 0.6) | never — grievance does not grow |
+| Mildly unhappy (morale 0.35, discontent 0.5) | ~40 |
+| Starving with nowhere to go (morale 0.2, discontent 0.8, trapped) | ~17 |
+
+Grievance accrues whether or not the band is cut off, so in practice **the ~50-turn tie bleed is
+the clock and grievance is the gate**: an unhappy far band leaves about fifty turns after anyone of
+its people last saw it, and a well-fed one stays yours indefinitely — §Q1's decision, kept. The
+figures above are the dials' arithmetic, not a measured game. Whether 1.0 is right is a playtest
+question, which is why the lever ships in the Workbench.
+
+### The unit is the cut-off group, not the band
+
+Two far bands still in touch with each other but not with the heart are **one** cut-off component.
+They break away together, as **one** new people, when their people-weighted grievance crosses the
+threshold. Judging band by band would turn one far cluster into two peoples on two different turns.
+
+### What the new people is
+
+- **A new `FactionId`, driven by the AI — always.** Ids are positional, so it is the next one. Id 0
+  is the human by construction (`.claude/rules/core_sim/factions.md`), so even a band that leaves
+  the player is the sim's to play.
+- **The roster grows at runtime.** Today the registry is built once per world. A new people extends
+  every roster-derived resource — `TurnQueue`, `CounterIntelBudgets`, `FactionSecurityPolicies`,
+  `FactionBorderPolicies` (open, like every people), `FactionNames`, `EspionageRoster` — through the
+  boot path's own constructors, and announces the new roster as a `seats.roster` event. The launcher
+  already spawns a `sim_ai` for any seated faction with no running child
+  (`.claude/rules/core_sim/launcher.md`), so the new people has a player the turn it exists.
+- **The band changes hands on #512's path.** A break-away is a band flip into a people that did not
+  exist a turn earlier: `cohort.faction` moves and `follow_the_band_to_its_new_people` takes its
+  roads, the improvements only it works, its parties, and its name (re-minted only on a clash).
+  Both peoples are told with their own event, `band_broke_away` (`push_band_broke_away_events`),
+  not `band_changed_hands` — nobody was joined.
+- **Name:** the people is named the way worldgen names one (`FactionNames`); each band keeps its
+  own. Nothing waits on #271.
+- **Knowledge:** the new people's discovery progress is seeded from the old people's ledger in full,
+  and from the bands' own `knowledge`, each discovery at the best either holds — they keep everything
+  they knew. The ledger half is what carries the lessons a people earns by practice (Cultivation,
+  Herding, Foddering), which never reach a band's own `knowledge`. Defection's proportional share
+  does not apply: nobody left them, and the old people forgets nothing.
+- **The map they remember** is the old people's `Discovered` tiles, copied — they lived there. This
+  hands the new AI the old people's explored map, and that is correct.
+- **Ties carry over untouched.** A connection is band-to-band and faction-blind, so they still know
+  you, and you them.
+- **Grievance resets to zero.** It was a grievance against the people they left.
+
+### What the player sees
+
+| When | Where | What |
+|---|---|---|
+| the tie is draining | band panel | *Last seen N turns ago* and a **Bond** bar — the tie to the heart |
+| cut off and aggrieved | band panel | amber *Drifting away* — grievance against the threshold |
+| the last live tie to the heart parks | event feed | *We have lost touch with ‹Band›.* |
+| the break | event feed, both peoples | *‹Band› no longer answers to us — they call themselves ‹People›.* |
+
+The levers are the ones that cause it: visit them, send a scout that comes back, keep them fed — or
+let them go. Like defection, the break is not a prompt.
+
+### What is not this
+
+- **Wandering off** — the issue's *"do some wander off?"* — is a roaming band's movement, owned by
+  #251 (Roaming Bands).
+- **Culture schism is not the trigger.** A band's culture layer measures divergence from the
+  **province it stands in**, not from its own people, and `CultureSchismEvent` today only nudges
+  sentiment. Wiring culture convergence to the heart is `plan_civilization_steps.md`'s gathering
+  work.
+
+### Independence levers
+
+| Lever | Opening | What it means | Too low | Too high |
+|---|---|---|---|---|
+| `wellbeing_config.json` → `independence.grievance_threshold` | **1.0** | People-weighted grievance at which a cut-off group becomes its own people. | Any far band that has a bad season leaves the moment the tie parks. | Only a starving band ever leaves; drift is never felt. |
+
+The clock's dials are the connection ledger's own (`strength.*`) and the gate's are the discontent
+block's (`discontent.*`), deliberately: the trigger adds one number, not a second clock. The lever
+ships as a Workbench tuning-manifest row.
+
 ## Sequencing
 
 1. **Design doc (this document).** ✅ #509.
@@ -421,7 +541,7 @@ of dials. The party lever ships as an `expedition` row in the Workbench tuning m
    judged during one.
 4. **Naming** — #271, generalized so it serves a split band and not only the player's first one.
 5. **The emergent half, now that #513 put rivals on the map:** #512 (§Defection above), #284
-   (drift → independent polity, on the Q1 trigger), #458 (cross-faction proximity trade).
+   (§Independence), #458 (cross-faction proximity trade).
 
 ## Cross-cutting touchpoints
 
@@ -438,16 +558,13 @@ of dials. The party lever ships as an `expedition` row in the Workbench tuning m
   happens.
 - **Supply network** (`supply.rs`): two same-faction bands within reach pool their food automatically,
   so a band that stays close is a logistics extension of its parent and one that walks away is on its
-  own. The player will feel this without being told, and it is also the signal Q1's independence
-  trigger reads.
+  own. The player will feel this without being told. It is **not** the independence signal — that
+  is the contact tie (§Independence), which outlasts pooling reach by the distance a band can see.
 - **Client**: the compose sheet, the dock entry, the new band on the band/city dock's band list, and
   the two `settle` rows on the Workbench config tuning page.
 
 ## Open items
 
-- **The independence trigger's shape** (turns disconnected × grievance, and where the threshold sits)
-  is specified here in kind but not in numbers. It cannot be tuned before #513 makes a second faction
-  reachable — #284 sets them when it can measure them.
 - **Merging is not designed here.** The manual says *"Split/merge is allowed"*; this doc covers the
   split. Merge is two resident bands on one tile becoming one, and is a separate slice — worth filing
   once fission ships and there are two bands to merge.

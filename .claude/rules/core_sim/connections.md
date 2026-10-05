@@ -279,6 +279,15 @@ live tie"* is a second answer free to drift.
   not make every band of both peoples eligible (`factions.md` → "Defection is the unhappy trickle
   with the same-people filter lifted").
 
+- **`edges_between(a, b)`** — the two directed edges as they stand, for a reader that folds them
+  itself. Independence reads the strongest strength and the latest `last_contact_turn` between a band
+  and its people's heart off it (`independence.md`), and groups a people's bands with `tie_is_live`.
+
+**One writer outside the sight sweep: a split.** `insert_full_tie` forms parent ↔ splinter at
+`FULL_TIE` — kinship, not contact; the two were one band — so a splinter is never read as out of touch
+before the next sweep sees it. Every other tie is formed by contact. `tests/connections.rs` forgets
+the split's ties in its fixture, because every arm there is about ties contact forms.
+
 There is deliberately **no faction-level contact question** (*"has any band of ours met any band of
 theirs"*): a people-to-people contact test is exactly the widening defection must not make.
 

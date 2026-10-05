@@ -1238,7 +1238,66 @@ func _build_people_block(band: Dictionary) -> VBoxContainer:
     block.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_PEOPLE, str(total)))
     block.add_child(HudWidgets.build_composition_bar(segments))
     block.add_child(HudWidgets.build_composition_key(segments, _build_dependency_chip(children, working, elders)))
+    var heart := _build_heart_rows(band)
+    if heart != null:
+        block.add_child(heart)
     return block
+
+## **THE BAND'S STANDING TOWARD ITS PEOPLE'S HEART** (issue #284, `docs/plan_band_fission.md`
+## §Independence) — at most two lines under the PEOPLE key, every figure the sim's own reading:
+##   • in the heart, tie draining — `Bond ▰▰▰▱▱ · last seen N turns ago`, ink.
+##   • cut off — `Out of touch · last seen N turns ago` (or `never seen`), WARN amber.
+##   • cut off with grievance — a second amber line, `Drifting away — grievance X / Y`, the threshold
+##     the sim's own `independence_grievance_threshold` echo.
+## **Null for a lone heart** (`heart_bond >= HEART_BOND_FULL` and not cut off — nothing to watch) **and
+## for a band with no reading** (not cut off and a zero bond: an unjudged band or a party publishes
+## `false / 0 / -1`, a foreign redacted row `false / 0 / 0`; a heart member always holds a live tie, so
+## the gate keys on the bond — drawing either as a zero Bond would claim a tie is gone).
+func _build_heart_rows(band: Dictionary) -> VBoxContainer:
+    var cut_off := bool(band.get("cut_off", false))
+    var bond := float(band.get("heart_bond", 0.0))
+    var last := int(band.get("heart_last_contact_turn", HudWorkVocab.HEART_NO_CONTACT))
+    if not cut_off and (bond <= HudWorkVocab.HEART_BOND_NONE or bond >= HudWorkVocab.HEART_BOND_FULL):
+        return null
+    var threshold := float(band.get("independence_grievance_threshold", 0.0))
+    var tooltip := HudWorkVocab.HEART_TOOLTIP_FORMAT % threshold
+    var rows := VBoxContainer.new()
+    rows.add_theme_constant_override("separation", 0)
+    var seen := _heart_last_seen_text(last)
+    if cut_off:
+        rows.add_child(_heart_row_label(HudWorkVocab.HEART_OUT_OF_TOUCH_TEXT
+            + HudWorkVocab.HEART_SEGMENT_SEPARATOR + seen, HudStyle.WARN, tooltip))
+        var grievance := float(band.get("grievance", 0.0))
+        if grievance > 0.0:
+            rows.add_child(_heart_row_label(
+                HudWorkVocab.HEART_DRIFTING_FORMAT % [grievance, threshold], HudStyle.WARN, tooltip))
+    else:
+        var meter := HudFormat.meter_bar(bond * HudWorkVocab.HEART_BOND_METER_SCALE,
+            HudWorkVocab.HEART_BOND_METER_CELLS)
+        rows.add_child(_heart_row_label(HudWorkVocab.HEART_BOND_FORMAT % meter
+            + HudWorkVocab.HEART_SEGMENT_SEPARATOR + seen, HudStyle.INK_DIM, tooltip))
+    return rows
+
+## "last seen N turns ago" against the current turn, or `never seen` for `HEART_NO_CONTACT`.
+func _heart_last_seen_text(last_contact_turn: int) -> String:
+    if last_contact_turn == HudWorkVocab.HEART_NO_CONTACT:
+        return HudWorkVocab.HEART_NEVER_SEEN_TEXT
+    var ago := _band_labor.current_turn() - last_contact_turn
+    if ago <= 0:
+        return HudWorkVocab.HEART_LAST_SEEN_NOW_TEXT
+    if ago == HudWorkVocab.HEART_LAST_SEEN_SINGULAR:
+        return HudWorkVocab.HEART_LAST_SEEN_ONE_TEXT
+    return HudWorkVocab.HEART_LAST_SEEN_FORMAT % ago
+
+## One heart line, at the PEOPLE key's type size, carrying the block's one-sentence tooltip.
+func _heart_row_label(text: String, ink: Color, tooltip: String) -> Label:
+    var label := Label.new()
+    label.text = text
+    label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    label.add_theme_font_size_override("font_size", HudWorkVocab.COMPOSITION_KEY_FONT_SIZE)
+    label.add_theme_color_override("font_color", ink)
+    HudWidgets.set_label_tooltip(label, tooltip)
+    return label
 
 ## The dependency ratio chip: dependents (children + elders) per 100 working-age adults, WARN-tinted
 ## once the band carries more mouths than hands. Null when there is no working-age cohort to divide by.

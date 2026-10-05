@@ -42,7 +42,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Mutated across turns, and a later turn reads it. A checkpoint that omits any of these produces
 /// a world that diverges from the one it claims to restore.
-const SIM_STATE_RESOURCES: [&str; 47] = [
+const SIM_STATE_RESOURCES: [&str; 49] = [
     "ActiveCrisisLedger",
     // Belief on every place. Only ever grows and outlives the bands whose dead put it there, so
     // nothing rebuilds it — the roads' reason exactly.
@@ -76,6 +76,13 @@ const SIM_STATE_RESOURCES: [&str; 47] = [
     "FactionBorderPolicies",
     // Minted once by worldgen and carried: the save wins over a later pool edit.
     "FactionNames",
+    // **The roster.** A world static while it was built once per world; a cut-off group of bands
+    // now becomes a people of its own mid-game, so a rewind past that must put the shorter roster
+    // back — or the replay grows it a second time.
+    "FactionRegistry",
+    // Every band's standing toward its people's heart. The lost-touch line is an edge read off the
+    // previous turn's reading, and the capture publishes it before a restored world runs a turn.
+    "HeartLedger",
     "FactionInventory",
     // Mutated only by command handlers, which is still state a rollback has to put back.
     "FactionSecurityPolicies",
@@ -171,14 +178,14 @@ const DERIVED_RESOURCES: [(&str, &str); 5] = [
 /// rollback restores into the same live `World`, which still holds the map worldgen built — and a
 /// save file is loaded into a fresh process where none of that exists. So every entry here now has
 /// a stated treatment in `core_sim/src/save.rs`: **saved** as ground truth (the rasters, the
-/// province assignment, the curated sites, the seed, the faction list, the profile id), **rebuilt**
+/// province assignment, the curated sites, the seed, the profile id), **rebuilt**
 /// from the restored entities (`TileRegistry`, `PowerTopology`), **re-derived** from seed and
 /// preset (`BiomePalette`), or **re-resolved from live config by id** (`ActiveStartProfile`,
 /// `CampaignLabel`, `GreatDiscoveryRegistry` — these are config, and saving them would reinstall
 /// the tuning that was live at capture).
 ///
 /// A new entry in this table therefore needs one of those four answers, not just a place to sit.
-const WORLD_STATIC_RESOURCES: [&str; 18] = [
+const WORLD_STATIC_RESOURCES: [&str; 17] = [
     "ActiveStartProfile",
     "BiomePalette",
     "CampaignLabel",
@@ -189,7 +196,6 @@ const WORLD_STATIC_RESOURCES: [&str; 18] = [
     // decoding a world.
     "ConfigFingerprint",
     "ElevationField",
-    "FactionRegistry",
     "FoodSiteRegistry",
     "FoodSiteWaterBiasReport",
     "GenerationRegistry",

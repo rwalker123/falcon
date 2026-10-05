@@ -752,6 +752,8 @@ enum ConfigOverrideKind {
   // The crafting arc's two tables. Append-only: 6 and 7 are the next free numbers.
   CONFIG_OVERRIDE_KIND_MATERIALS = 6;
   CONFIG_OVERRIDE_KIND_RECIPES = 7;
+  // The wellbeing spine — staged for the independence threshold (#284).
+  CONFIG_OVERRIDE_KIND_WELLBEING = 8;
 }
 
 // Stage a config-tuning override that takes effect at the NEXT new_game — `build_headless_app`

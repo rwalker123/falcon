@@ -1479,6 +1479,9 @@ pub enum ConfigOverrideKind {
     Materials,
     /// The recipe book (`recipes.json`) — the costs, the `work` values and the grade seams.
     Recipes,
+    /// The wellbeing spine (`wellbeing_config.json`) — staged for the independence threshold, the
+    /// one lever a playtest moves on a cut-off band's break-away (#284).
+    Wellbeing,
 }
 
 impl ConfigOverrideKind {
@@ -1492,6 +1495,7 @@ impl ConfigOverrideKind {
         ConfigOverrideKind::Combat,
         ConfigOverrideKind::Materials,
         ConfigOverrideKind::Recipes,
+        ConfigOverrideKind::Wellbeing,
     ];
 
     /// The wire spelling, shared with the client's `tuning_manifest.json` `kind` field.
@@ -1504,6 +1508,7 @@ impl ConfigOverrideKind {
             ConfigOverrideKind::Combat => "combat",
             ConfigOverrideKind::Materials => "materials",
             ConfigOverrideKind::Recipes => "recipes",
+            ConfigOverrideKind::Wellbeing => "wellbeing",
         }
     }
 
@@ -3270,6 +3275,7 @@ fn config_override_kind_to_proto(kind: ConfigOverrideKind) -> pb::ConfigOverride
         ConfigOverrideKind::Combat => pb::ConfigOverrideKind::Combat,
         ConfigOverrideKind::Materials => pb::ConfigOverrideKind::Materials,
         ConfigOverrideKind::Recipes => pb::ConfigOverrideKind::Recipes,
+        ConfigOverrideKind::Wellbeing => pb::ConfigOverrideKind::Wellbeing,
     }
 }
 
@@ -3282,6 +3288,7 @@ fn config_override_kind_from_proto(value: i32) -> Result<ConfigOverrideKind, Com
         Ok(pb::ConfigOverrideKind::Combat) => Ok(ConfigOverrideKind::Combat),
         Ok(pb::ConfigOverrideKind::Materials) => Ok(ConfigOverrideKind::Materials),
         Ok(pb::ConfigOverrideKind::Recipes) => Ok(ConfigOverrideKind::Recipes),
+        Ok(pb::ConfigOverrideKind::Wellbeing) => Ok(ConfigOverrideKind::Wellbeing),
         Ok(pb::ConfigOverrideKind::Unspecified) | Err(_) => Err(CommandDecodeError::InvalidEnum {
             field: "ConfigOverrideKind",
             value,

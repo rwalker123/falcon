@@ -539,6 +539,19 @@ stretch, and widening it into that gap would put it over a live HUD column.
   decision moved to the sim, which is the only place it can be made once.
   **Absent age data OMITS the whole block** — never a fabricated split; the header total is the
   band's own `size`, so the two bars cannot disagree about how many people are in it.
+  **THE PEOPLE BLOCK ENDS ON THE BAND'S STANDING TOWARD ITS PEOPLE'S HEART** (issue #284,
+  `BandPanelController._build_heart_rows`, words in `HudWorkVocab.HEART_*`), at most two lines at the
+  key's type size. In the heart with its tie draining: `Bond ▰▰▰▰▱▱▱▱ · last seen 3 turns ago` in
+  `INK_DIM`. Cut off: amber `Out of touch · last seen 12 turns ago` (`never seen` where the contact
+  turn is `-1`), and, when the band carries grievance, a second amber line `Drifting away — grievance
+  0.42 / 1.00` — the warning beside the number it explains, the threshold being the sim's
+  `independence_grievance_threshold` echo. Both lines carry one tooltip naming the lever (a visit by
+  another band or a returning scout restores contact) and the threshold. **No row for a LONE heart**
+  (`heart_bond >= 1` and not cut off — nothing to watch) **and none for a band with no reading** (not
+  cut off and a zero bond: an unjudged band or a party publishes `false / 0 / -1`, a foreign redacted
+  row `false / 0 / 0`; a heart member always holds a live tie, so the gate keys on the bond, never on
+  the contact sentinel — drawing either as a zero Bond would claim a tie is gone). Every figure is the sim's; the client
+  computes only `current turn − contact turn`.
   Its palette is deliberately MUTED (`VOICE_PIGMENT` / `INK_DIM` / `VOICE_INK`) against
   **WORKFORCE**'s saturated one (`HEALTHY` / `SIGNAL` / `VOICE_INK` / `WARN` / `VOICE_PIGMENT` /
   `INK_FAINT`): two bars,

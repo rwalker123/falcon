@@ -1496,6 +1496,23 @@ table PopulationCohortState {
   // in, a different question from the turn's hop count. Empty with no anchor.
   beliefRelayReachX:[uint];
   beliefRelayReachY:[uint];
+  // THE BAND'S STANDING TOWARD ITS PEOPLE'S HEART (#284, `systems::independence`) - appended last.
+  // A people's HEART is the group of its bands joined by live contact ties holding the most people.
+  // `cutOff`: this band holds no live tie, in either direction, to any band of the heart. A cut-off
+  // band whose group's people-weighted grievance reaches `independenceGrievanceThreshold` becomes a
+  // people of its own. Own-band fields: a foreign (redacted) row carries the defaults.
+  cutOff:bool = false;
+  // The strongest tie (0..1, either direction) between this band and any OTHER band of its heart -
+  // the Bond bar, draining while nobody visits. A band that is its people's whole heart reads 1.0.
+  heartBond:float = 0;
+  // The latest turn any tie between this band and its heart was refreshed by contact - "last seen N
+  // turns ago". -1 (`NO_HEART_CONTACT`) = no tie joins them at all. A band that is its people's
+  // whole heart reads the current turn.
+  heartLastContactTurn:long = 0;
+  // Echo of wellbeing_config.json -> `independence.grievance_threshold`: the grievance (the units
+  // `grievance` decodes to) at which a cut-off group breaks away. Echoed per cohort (the
+  // `foundingMinWorkers` idiom) so the band panel can draw grievance against it.
+  independenceGrievanceThreshold:float = 0;
 }
 
 // One band's outfitting window. THE TWO SUPPLIES ARE MUTUALLY EXCLUSIVE and `parentBandId` says which

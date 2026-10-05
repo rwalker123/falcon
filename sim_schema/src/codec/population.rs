@@ -1177,6 +1177,11 @@ fn create_populations<'a>(
                     beliefRelayHops: cohort.belief_relay_hops,
                     beliefRelayReachX: belief_relay_reach_x,
                     beliefRelayReachY: belief_relay_reach_y,
+                    // THE BAND'S STANDING TOWARD ITS PEOPLE'S HEART — appended last (#284).
+                    cutOff: cohort.cut_off,
+                    heartBond: cohort.heart_bond,
+                    heartLastContactTurn: cohort.heart_last_contact_turn,
+                    independenceGrievanceThreshold: cohort.independence_grievance_threshold,
                 },
             )
         })
@@ -1822,6 +1827,10 @@ fn decode_population(
         belief_relay_hops: cohort.beliefRelayHops(),
         belief_relay_reach_x: decode_scalars(cohort.beliefRelayReachX()),
         belief_relay_reach_y: decode_scalars(cohort.beliefRelayReachY()),
+        cut_off: cohort.cutOff(),
+        heart_bond: cohort.heartBond(),
+        heart_last_contact_turn: cohort.heartLastContactTurn(),
+        independence_grievance_threshold: cohort.independenceGrievanceThreshold(),
     })
 }
 

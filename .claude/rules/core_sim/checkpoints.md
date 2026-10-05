@@ -485,7 +485,7 @@ needs one of those answers rather than just a place to sit:
 
 | Treatment | Resources | Why |
 |---|---|---|
-| **Saved** | `ElevationField`, `MoistureRaster`, `HydrologyState`, `ProvinceMap`, `FoodSiteRegistry`, `FoodSiteWaterBiasReport`, `StartLocation`, `WorldGenSeed`, `FactionRegistry` | Ground truth nothing can recompute |
+| **Saved** | `ElevationField`, `MoistureRaster`, `HydrologyState`, `ProvinceMap`, `FoodSiteRegistry`, `FoodSiteWaterBiasReport`, `StartLocation`, `WorldGenSeed` | Ground truth nothing can recompute. (`FactionRegistry` was here until a people could break away mid-game; it is `SimState` now — `independence.md`) |
 | **Rebuilt from the restored entities** | `TileRegistry`, `PowerTopology` | Both were `Entity`-bearing, and a handle cannot cross a process |
 | **Re-derived** | `BiomePalette` | A pure function of preset, world seed and tile count — all three of which the save carries |
 | **Re-resolved from live config by id** | `StartProfileLookup`, `ActiveStartProfile`, `CampaignLabel`, `GreatDiscoveryRegistry` | Config in disguise; the save carries the **profile id**, never the profile. `StartProfileLookup` *is* that id, and it rides in the **header** (`world.start_profile_id`) because a slot row must render without a payload — so a second copy in the payload would be a second authority for one string, and it was one: it was written into every blob and never read back |

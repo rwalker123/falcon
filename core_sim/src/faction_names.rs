@@ -192,6 +192,21 @@ impl FactionNames {
         )
     }
 
+    /// **Mint one faction's name, the way worldgen mints the roster's** — the same per-world
+    /// permutation under the same seed, so a people born mid-game takes exactly the name position
+    /// `faction` would have had at world creation, and two factions of one world still never share
+    /// one. A faction already named keeps its name (the save wins).
+    pub fn mint_faction(
+        &mut self,
+        faction: FactionId,
+        map_seed: u64,
+        catalog: &FactionNameCatalog,
+    ) {
+        self.0
+            .entry(faction)
+            .or_insert_with(|| catalog.name_for(faction, map_seed));
+    }
+
     /// This faction's name, or `None` for a faction the world never minted.
     pub fn name(&self, faction: FactionId) -> Option<&str> {
         self.0.get(&faction).map(String::as_str)

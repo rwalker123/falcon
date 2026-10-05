@@ -194,6 +194,37 @@ impl ConnectionLedger {
             })
     }
 
+    /// **The two edges between `a` and `b`, as they stand** — `a → b` then `b → a`, each `None` where
+    /// that direction has no edge. A reader that wants the undirected answer folds the pair; the
+    /// ledger does not choose a fold for it.
+    pub fn edges_between(&self, a: BandId, b: BandId) -> [Option<&Connection>; 2] {
+        [
+            self.get(&ConnectionKey::new(a, b)),
+            self.get(&ConnectionKey::new(b, a)),
+        ]
+    }
+
+    /// **Form (or overwrite) the tie `key` at full strength, as of `turn`.**
+    ///
+    /// For two groups that were ONE group a moment ago — a band and the splinter that walked out of
+    /// it (`systems::split_band_from_parent`). They have not *found* each other; they have always
+    /// known each other, so the tie starts where a long acquaintance ends rather than at one
+    /// contact's `gain_per_contact`, and it then bleeds on the ordinary clock like any other. Both
+    /// turns are `turn` and the sighting is where they stood together.
+    pub fn insert_full_tie(&mut self, key: ConnectionKey, sighting: &Sighting, turn: u64) {
+        self.edges.insert(
+            key,
+            Connection {
+                strength: FULL_TIE,
+                last_seen_position: sighting.position,
+                last_seen_turn: sighting.observed_turn,
+                subject_name: sighting.subject_name.clone(),
+                last_contact_turn: turn,
+                first_contact_turn: turn,
+            },
+        );
+    }
+
     /// Refresh (or form) the tie `key` from a report that the subject was at `sighting.position`
     /// under `sighting.subject_name` on `sighting.observed_turn`, which reached the observer on
     /// `contact_turn`.

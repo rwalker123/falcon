@@ -33,6 +33,7 @@ use crate::{
     materials_config::{MaterialsConfig, BUILTIN_MATERIALS_CONFIG},
     recipes_config::{RecipesConfig, BUILTIN_RECIPES_CONFIG},
     resources::{SimulationConfig, BUILTIN_SIMULATION_CONFIG},
+    wellbeing_config::{WellbeingConfig, BUILTIN_WELLBEING_CONFIG},
 };
 
 /// Everything the override path needs to know about one tunable config: where it loads from, what
@@ -114,6 +115,13 @@ pub fn spec_for(kind: ConfigOverrideKind) -> ConfigKindSpec {
             default_rel_path: "src/data/recipes.json",
             builtin_json: BUILTIN_RECIPES_CONFIG,
             validate: |json| erase(RecipesConfig::from_json_str(json)),
+        },
+        ConfigOverrideKind::Wellbeing => ConfigKindSpec {
+            kind,
+            env_var: "WELLBEING_CONFIG_PATH",
+            default_rel_path: "src/data/wellbeing_config.json",
+            builtin_json: BUILTIN_WELLBEING_CONFIG,
+            validate: |json| erase(WellbeingConfig::from_json_str(json)),
         },
     }
 }

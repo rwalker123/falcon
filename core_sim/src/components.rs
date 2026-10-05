@@ -1477,8 +1477,9 @@ pub struct PopulationCohort {
     /// the client wire as `PopulationCohortState.discontent_fraction`.
     pub discontent_fraction: Scalar,
     /// Layer 2 — the severity × duration grievance accumulator: rises with sustained discontent
-    /// (faster when trapped with nowhere to migrate), decays while content. Phase 1 only populates
-    /// it (reserved for a future revolution consequence — no consequence reads it yet). Accumulated
+    /// (faster when trapped with nowhere to migrate), decays while content. Read by independence: a cut-off group whose
+    /// people-weighted grievance reaches the threshold breaks away (`systems::independence`), which
+    /// resets it to zero. Accumulated
     /// by `advance_population_migration`; on the client wire as `PopulationCohortState.grievance`.
     pub grievance: Scalar,
     /// How many people emigrated **from** this band last turn via discontent-driven migration

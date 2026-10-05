@@ -36,7 +36,7 @@
 //!
 //! | Treatment | Resources | Why |
 //! |---|---|---|
-//! | **Saved** | [`ElevationField`], [`MoistureRaster`], [`HydrologyState`], [`ProvinceMap`], [`FoodSiteRegistry`], [`FoodSiteWaterBiasReport`], [`StartLocation`], [`WorldGenSeed`], [`FactionRegistry`] | Ground truth that nothing can recompute — re-running worldgen would produce a *different map* if any tuning moved |
+//! | **Saved** | [`ElevationField`], [`MoistureRaster`], [`HydrologyState`], [`ProvinceMap`], [`FoodSiteRegistry`], [`FoodSiteWaterBiasReport`], [`StartLocation`], [`WorldGenSeed`] | Ground truth that nothing can recompute — re-running worldgen would produce a *different map* if any tuning moved |
 //! | **Rebuilt from the restored entities** | `TileRegistry`, `PowerTopology` | Both were `Entity`-bearing; a handle cannot cross a process. `restore_sim_state` already rebuilds the registry in its pass 4a |
 //! | **Re-derived** | `BiomePalette` | A pure function of (preset, world seed, tile count), all three of which the save carries |
 //! | **Re-resolved from live config by id** | [`StartProfileLookup`], `ActiveStartProfile`, `CampaignLabel`, `GreatDiscoveryRegistry` | Config in disguise. Saving them would reinstall the tuning that was live at capture, which is the second construction rule. `StartProfileLookup` is the *id itself*, and it rides in [`SaveHeader`] (`world.start_profile_id`) because a slot row needs it without a payload — so a copy in the payload would be a second authority for one string |
@@ -120,7 +120,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 23 | The breeding ceiling (#688): `FertilityFactors` gained `ceiling` (the fourth fertility factor) and `PopulationCohort` gained `last_breeding` (the band's breeding population and its ceiling, `crate::lineage::BreedingReading`), which the wire publishes as `PopulationCohortState.fertilityCeiling` / `breedingPopulation` / `breedingCeiling`. The cohort rides `BandRecord`, so a version-22 blob has no such fields |
 /// | 24 | `PopulationCohort` gained `belief_anchor` — the one belief tile a band remembers as its ancestors' place, which the culture morale term reads (issue #699, `.claude/rules/core_sim/belief.md` → "The culture morale term"). The cohort rides `BandRecord`, so a version-23 blob has no such field |
 /// | 25 | `PopulationCohort` gained `last_belief_relay_hops` — the kin-relay hop count the culture term was priced from this turn (issue #699), which the wire publishes as `PopulationCohortState.beliefRelayHops`. The cohort rides `BandRecord`, so a version-24 blob has no such field |
-pub const SAVE_FORMAT_VERSION: u32 = 25;
+/// | 26 | Independence (#284): `FactionRegistry` moved from `WorldStatics.factions` to `SimState.factions` — the roster grows mid-game when a cut-off group of bands becomes its own people, so it rewinds with the turn — and `SimState` gained `hearts` (`HeartLedger`, every band's standing toward its people's heart). `CommandEventKind` gained `BandBrokeAway` and `LostTouch`, appended. |
+pub const SAVE_FORMAT_VERSION: u32 = 26;
 
 /// gzip level for the payload document.
 ///
@@ -177,7 +178,6 @@ pub struct WorldStatics {
     pub food_site_water_bias: FoodSiteWaterBiasReport,
     pub start_location: StartLocation,
     pub world_seed: WorldGenSeed,
-    pub factions: FactionRegistry,
 }
 
 /// The world itself: the checkpoint, plus the ground it stands on.
@@ -234,7 +234,6 @@ pub fn capture_world_statics(world: &World) -> WorldStatics {
         food_site_water_bias: world.resource::<FoodSiteWaterBiasReport>().clone(),
         start_location: world.resource::<StartLocation>().clone(),
         world_seed: *world.resource::<WorldGenSeed>(),
-        factions: world.resource::<FactionRegistry>().clone(),
     }
 }
 
@@ -396,16 +395,6 @@ pub fn apply_save(world: &mut World, header: &SaveHeader, payload: &SavePayload)
     world.insert_resource(statics.food_site_water_bias.clone());
     world.insert_resource(statics.start_location.clone());
     world.insert_resource(statics.world_seed);
-    world.insert_resource(statics.factions.clone());
-    // ⛔ **The queue is rebuilt from the RESTORED roster, here rather than in the caller.**
-    // `TurnQueue` is server-side order intake, so it is not checkpoint state and no payload carries
-    // it — but the app a load is applied into was built from whatever start profile the *file*
-    // named, and its queue awaits that profile's factions. A two-faction save opened on a
-    // one-faction profile would then resolve turns without ever awaiting faction 1. The rollback
-    // path rebuilds it from the registry for the same reason; putting it beside the registry
-    // restore is what keeps the next caller of `apply_save` from having to remember.
-    let factions = world.resource::<FactionRegistry>().factions().to_vec();
-    world.insert_resource(TurnQueue::new(factions));
 
     // --- 4: the palette, re-derived rather than carried ---------------------------------------
     let tile_count = (header.world.width * header.world.height).max(1);
@@ -428,6 +417,16 @@ pub fn apply_save(world: &mut World, header: &SaveHeader, payload: &SavePayload)
 
     // --- 5: the checkpoint --------------------------------------------------------------------
     restore_sim_state(world, &payload.sim);
+    // ⛔ **The queue is rebuilt from the RESTORED roster, here rather than in the caller.** The
+    // roster is checkpoint state (`SimState::factions` — it grows when a people breaks away), so
+    // this follows the restore. `TurnQueue` is server-side order intake, so it is not checkpoint
+    // state and no payload carries it — but the app a load is applied into was built from whatever
+    // start profile the *file* named, and its queue awaits that profile's factions. A two-faction
+    // save opened on a one-faction profile would then resolve turns without ever awaiting faction
+    // 1. The rollback path rebuilds it from the registry for the same reason; putting it beside the
+    // registry restore is what keeps the next caller of `apply_save` from having to remember.
+    let factions = world.resource::<FactionRegistry>().factions().to_vec();
+    world.insert_resource(TurnQueue::new(factions));
 
     // --- 6: the power grid's adjacency, sized from the tiles pass 5 spawned --------------------
     let node_count = world.resource::<TileRegistry>().tiles.len();

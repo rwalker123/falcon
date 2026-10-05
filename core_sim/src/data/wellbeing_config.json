@@ -30,5 +30,8 @@
     "min_anchor_belief": 1.0,
     "_comment_relay_per_hop": "How much of the ancestors' reach each hop of KIN relays. A band of the same people within walking reach of a band that is near is itself near at this strength, and each further hop multiplies by it again (no hop cap - it dies out). The term blends near and far by that strength r: s x (r x near_bonus - (1 - r) x away_drag), so r = 1 (direct) and r = 0 (unreached) are the two plain values. Same people and resident bands only; relaying never adopts a place. Must be finite and in [0, 1]; 0 turns relaying off. PLAYTEST DIAL.",
     "relay_per_hop": 0.5
+  },
+  "independence": {
+    "grievance_threshold": 1.0
   }
 }

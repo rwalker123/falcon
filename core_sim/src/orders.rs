@@ -78,6 +78,35 @@ impl FactionRegistry {
         Self { factions, control }
     }
 
+    /// **Register one more people, driven by the AI, at the next positional id** — the runtime half
+    /// of the roster (`docs/plan_band_fission.md` §Independence: a cut-off, aggrieved group of bands
+    /// becomes its own people mid-game).
+    ///
+    /// Ids stay positional because the new id is `factions.len()`, so this can neither duplicate an
+    /// id nor leave a gap, and both fields are written from that one id — the invariant
+    /// [`Self::with_ai_factions`] states holds after it as before. A people born at runtime is
+    /// always the sim's: id 0 is the human by construction, so even a band that leaves the player
+    /// is the AI's to play.
+    ///
+    /// The registry is only the first of the roster-derived resources; the runtime path that calls
+    /// this extends the rest (`systems::independence::grow_faction_roster`).
+    pub fn add_ai_faction(&mut self) -> FactionId {
+        let faction = FactionId(self.factions.len() as u32);
+        self.factions.push(faction);
+        self.control.insert(faction, FactionControl::Ai);
+        debug_assert!(
+            self.factions.len() == self.control.len()
+                && self.factions.iter().all(|id| self.control.contains_key(id))
+                && self
+                    .factions
+                    .iter()
+                    .enumerate()
+                    .all(|(index, id)| id.0 as usize == index),
+            "faction registry control map must be keyed by exactly the registered, positional factions"
+        );
+        faction
+    }
+
     /// How many of the registered factions the sim drives — the count
     /// [`Self::with_ai_factions`] was built from, read back.
     pub fn ai_faction_count(&self) -> u32 {
@@ -163,6 +192,23 @@ impl TurnQueue {
             submissions: HashMap::new(),
             current_turn: 0,
         }
+    }
+
+    /// **Await `faction` from the NEXT turn on** — the runtime roster's queue half.
+    ///
+    /// Only the roster grows: the turn in flight was already collected and drained, so `awaiting`
+    /// and `submissions` are left alone and [`Self::advance_turn`] picks the new id up when it
+    /// re-arms the await set. Adding it to `awaiting` mid-turn would stall a turn nobody could
+    /// submit for. Idempotent — a faction already on the roster is not added twice.
+    pub fn add_faction(&mut self, faction: FactionId) {
+        if !self.factions.contains(&faction) {
+            self.factions.push(faction);
+        }
+    }
+
+    /// Every faction this queue awaits each turn, in roster order.
+    pub fn factions(&self) -> &[FactionId] {
+        &self.factions
     }
 
     pub fn current_turn(&self) -> u64 {
@@ -303,6 +349,36 @@ mod tests {
         assert!(!registry.contains(FactionId(7)));
         assert_eq!(registry.control_of(FactionId(7)), None);
         assert!(!registry.is_ai(FactionId(7)));
+    }
+
+    /// **A runtime people is the next positional id, and it is the AI's.** The control map stays
+    /// keyed by exactly the roster, so `contains` and `control_of` agree with `factions()`.
+    #[test]
+    fn adding_an_ai_faction_appends_the_next_id_under_ai_control() {
+        let mut registry = FactionRegistry::with_ai_factions(1);
+        let added = registry.add_ai_faction();
+        assert_eq!(added, FactionId(2));
+        assert_eq!(
+            registry.factions(),
+            [FactionId(0), FactionId(1), FactionId(2)]
+        );
+        assert!(registry.contains(added));
+        assert!(registry.is_ai(added));
+        let control_keys: Vec<FactionId> = registry.control.keys().copied().collect();
+        assert_eq!(control_keys, registry.factions());
+    }
+
+    /// **A faction added mid-turn is awaited from the next turn, not the one in flight** — adding
+    /// it to the in-flight await set would hold a turn nobody can submit for.
+    #[test]
+    fn a_faction_added_to_the_queue_is_awaited_from_the_next_turn() {
+        let mut queue = TurnQueue::new(vec![FactionId(0)]);
+        queue.add_faction(FactionId(1));
+        assert_eq!(queue.awaiting(), vec![FactionId(0)]);
+        queue.advance_turn();
+        let mut awaiting = queue.awaiting();
+        awaiting.sort();
+        assert_eq!(awaiting, vec![FactionId(0), FactionId(1)]);
     }
 
     /// The turn queue is built from the registry's ids, so a seeded second faction is awaited

@@ -1124,7 +1124,29 @@ fn retain_claimed_seats(app: &bevy::prelude::App, seats: &mut SeatRegistry) {
             "seat.dropped=the new roster does not hold this seat"
         );
     }
-    let faction_ids: Vec<u32> = roster.iter().map(|faction| faction.0).collect();
+    announce_roster(app);
+    // A world now exists to view, and this is the log line nearest to the game being played.
+    if let Some(recorder) = run_recorder() {
+        log_record_view(recorder.dir());
+    }
+}
+
+/// **Announce the world's roster** — the `seats.roster` event the launcher supervises rivals off
+/// (shape: [`retain_claimed_seats`]), and the run record's world description beside it, so the two
+/// can never name different rosters.
+///
+/// Called by every world build ([`retain_claimed_seats`]) and whenever the roster **changes under a
+/// live world**: a people breaking away mid-game (`systems::independence`) grows it during a turn,
+/// and the launcher starts a `sim_ai` for the new seat off this line the turn it is born. A rollback
+/// across that turn announces the roster it restored.
+fn announce_roster(app: &bevy::prelude::App) {
+    let faction_ids: Vec<u32> = app
+        .world
+        .resource::<FactionRegistry>()
+        .factions()
+        .iter()
+        .map(|faction| faction.0)
+        .collect();
     let world_epoch = app.world.resource::<WorldEpoch>().0;
     core_sim::log_stream::emit_seats_roster(&faction_ids, world_epoch);
     // The record's world description, at the same moment: the run is self-describing from the
@@ -1140,8 +1162,6 @@ fn retain_claimed_seats(app: &bevy::prelude::App, seats: &mut SeatRegistry) {
             roster: faction_ids,
             world_epoch,
         });
-        // A world now exists to view, and this is the log line nearest to the game being played.
-        log_record_view(recorder.dir());
     }
 }
 
@@ -11357,6 +11377,8 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::BandChangedHands => "Band changed hands",
         CommandEventKind::PartyDefected => "Party defected",
         CommandEventKind::StartingLoadout => "Outfit",
+        CommandEventKind::BandBrokeAway => "Band broke away",
+        CommandEventKind::LostTouch => "Lost touch",
     }
 }
 
@@ -12584,7 +12606,15 @@ fn resolve_ready_turn(app: &mut bevy::prelude::App) {
         let _s = turn_profile::scope("orders.apply");
         apply_orders(&ready_orders);
     }
+    let roster_before = app.world.resource::<FactionRegistry>().factions().len();
     run_turn(app);
+    // **A people broke away this turn** (`systems::independence`): the launcher learns of the new
+    // seat the turn it exists. A replay re-grows a roster the rollback already announces once it
+    // has finished, so it stays quiet here.
+    let roster_grew = app.world.resource::<FactionRegistry>().factions().len() != roster_before;
+    if roster_grew && !app.world.resource::<Replaying>().0 {
+        announce_roster(app);
+    }
 
     {
         let mut queue = app.world.resource_mut::<TurnQueue>();
@@ -12714,6 +12744,9 @@ fn handle_rollback(
         return;
     };
 
+    // The roster is checkpoint state now (a people can break away mid-game), so a rewind can change
+    // it; the launcher is told once the replay lands, if it did.
+    let roster_before = app.world.resource::<FactionRegistry>().factions().to_vec();
     // Restore the origin, then re-apply the timeline up to `tick`. `Replaying` suppresses both
     // publication and logging: a rollback is ONE publication, and re-logging what it replays would
     // make the log grow every time it was read.
@@ -12735,6 +12768,9 @@ fn handle_rollback(
         }
     }
     app.world.resource_mut::<Replaying>().0 = false;
+    if app.world.resource::<FactionRegistry>().factions() != roster_before.as_slice() {
+        announce_roster(app);
+    }
 
     // The futures after this point did not happen.
     log.entries.truncate(prefix);

@@ -34,7 +34,8 @@ pub const BUILTIN_WELLBEING_CONFIG: &str = include_str!("data/wellbeing_config.j
 /// `floor_morale`. This drives **productivity only** (0.6 onset). The `grievance` accumulator gains
 /// `grievance_gain × discontent_fraction` per turn (× `trapped_multiplier` when the band is *trapped*
 /// — below the migration threshold with no reachable destination) and decays by `grievance_decay`
-/// while content — reserved for a future revolution consequence; Phase 1 only populates it.
+/// while content. Its one consequence is independence: a cut-off group whose people-weighted grievance
+/// reaches `independence.grievance_threshold` breaks away (`systems::independence`).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct DiscontentConfig {
@@ -204,6 +205,30 @@ fn require_non_negative_finite(
     Ok(())
 }
 
+/// **Independence** — when a cut-off group of a people's bands becomes a people of its own
+/// (`docs/plan_band_fission.md` §Independence, `systems::independence`).
+///
+/// The clock is the contact tie's own bleed (`connections_config.json` → `strength.*`) and the
+/// pressure is the discontent block's `grievance`; this block adds the ONE number that joins them:
+/// the people-weighted mean grievance at which a group no longer tied to its people's heart breaks
+/// away.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct IndependenceConfig {
+    /// People-weighted mean `grievance` at which a cut-off group becomes its own people. At the
+    /// shipped `discontent` dials a mildly unhappy far band takes ~40 turns to reach `1.0`, a starving
+    /// trapped one ~17, and a content one never does. Validated finite and non-negative; `0` means
+    /// any cut-off group leaves the turn it is cut off.
+    pub grievance_threshold: f32,
+}
+
+impl Default for IndependenceConfig {
+    fn default() -> Self {
+        Self {
+            grievance_threshold: 1.0,
+        }
+    }
+}
 /// Root wellbeing configuration.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -211,6 +236,7 @@ pub struct WellbeingConfig {
     pub discontent: DiscontentConfig,
     pub productivity: ProductivityConfig,
     pub migration: MigrationConfig,
+    pub independence: IndependenceConfig,
     pub culture: CultureConfig,
 }
 
@@ -222,10 +248,23 @@ impl WellbeingConfig {
         )
     }
 
+    /// Parse **and validate** — every load path (boot, the staged tuning override) funnels through
+    /// here, so a value the sim cannot honour is refused at the edit rather than read in play.
     pub fn from_json_str(json: &str) -> Result<Self, WellbeingConfigError> {
-        let config: WellbeingConfig = serde_json::from_str(json)?;
-        config.culture.validate()?;
+        let config: Self = serde_json::from_str(json)?;
+        config.validate()?;
         Ok(config)
+    }
+
+    /// The invariants a parsed config must hold: the culture levers, and the independence
+    /// threshold (every band's grievance is `>= 0`, so a negative threshold would break every
+    /// cut-off group away on its first turn while reading like a strict setting).
+    pub fn validate(&self) -> Result<(), WellbeingConfigError> {
+        self.culture.validate()?;
+        require_non_negative_finite(
+            "independence.grievance_threshold",
+            self.independence.grievance_threshold,
+        )
     }
 
     pub fn from_file(path: &Path) -> Result<Self, WellbeingConfigError> {
@@ -343,7 +382,35 @@ mod tests {
         assert!((0.0..=1.0).contains(&m.morale_threshold));
         assert!((0.0..=1.0).contains(&m.dependent_weight));
         assert!((0.0..=1.0).contains(&m.attractive_morale));
-        assert!(config.culture.validate().is_ok());
+        assert!(config.validate().is_ok());
+    }
+
+    /// A negative or non-finite independence threshold is refused at parse, never read in play.
+    #[test]
+    fn a_negative_independence_threshold_is_rejected() {
+        let rejected =
+            WellbeingConfig::from_json_str(r#"{"independence": {"grievance_threshold": -0.5}}"#);
+        assert!(matches!(
+            rejected,
+            Err(WellbeingConfigError::Invalid {
+                field: "independence.grievance_threshold",
+                ..
+            })
+        ));
+        let accepted =
+            WellbeingConfig::from_json_str(r#"{"independence": {"grievance_threshold": 0.0}}"#)
+                .expect("zero is a real setting: leave the turn you are cut off");
+        assert_eq!(accepted.independence.grievance_threshold, 0.0);
+    }
+
+    /// An absent block takes the shipped default, like every other wellbeing block.
+    #[test]
+    fn an_absent_independence_block_takes_the_default() {
+        let config = WellbeingConfig::from_json_str("{}").expect("an empty object parses");
+        assert_eq!(
+            config.independence.grievance_threshold,
+            IndependenceConfig::default().grievance_threshold
+        );
     }
 
     #[test]

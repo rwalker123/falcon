@@ -182,7 +182,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("discontent_fraction", scalars.discontent_fraction);
     let _ = dict.insert("last_emigrated", cohort.lastEmigrated() as i64);
     let _ = dict.insert("last_immigrated", cohort.lastImmigrated() as i64);
-    // grievance: telemetry only (reserved for a future revolution consequence) — not displayed in P1.
+    // grievance: the band panel draws it against `independence_grievance_threshold` on a cut-off band.
     let _ = dict.insert("grievance", scalars.grievance);
     let _ = dict.insert("morale_settling", scalars.morale_settling);
     let _ = dict.insert("morale_terrain", scalars.morale_terrain);
@@ -1844,6 +1844,21 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         f64::from(cohort.longMoveLeavesMaterials()),
     );
     let _ = dict.insert("food_left_behind", f64::from(cohort.foodLeftBehind()));
+    // THIS BAND'S STANDING TOWARD ITS PEOPLE'S HEART (#284, `systems::independence`):
+    //   cut_off                — no live tie to any band of the heart.
+    //   heart_bond             — strongest tie (0..1) to another heart band; a lone heart band reads 1.0.
+    //   heart_last_contact_turn — latest turn a heart tie was refreshed; -1 = no tie at all.
+    //   independence_grievance_threshold — config echo: the `grievance` at which a cut-off group
+    //                            breaks away (same units as the decoded `grievance`).
+    // An unjudged band or a party carries false / 0 / -1; a foreign (redacted) row carries the
+    // schema defaults, false / 0 / 0. Both have a zero bond, which is what the panel keys on.
+    let _ = dict.insert("cut_off", cohort.cutOff());
+    let _ = dict.insert("heart_bond", f64::from(cohort.heartBond()));
+    let _ = dict.insert("heart_last_contact_turn", cohort.heartLastContactTurn());
+    let _ = dict.insert(
+        "independence_grievance_threshold",
+        f64::from(cohort.independenceGrievanceThreshold()),
+    );
 
     // **THIS BAND'S OUTFITTING WINDOW**, and it is a fact about ONE band rather than about the world
     // — which is the whole shape of the per-band loadout arc. `open` and `carryCapacity` live here;

@@ -11979,8 +11979,9 @@ pub struct MigrationKnowledgeSinks<'w> {
 }
 
 /// **Everything that belongs to a band and must go with it when it changes people** — the state a
-/// remnant flip (`advance_population_migration`) re-points at the band's new people, bundled so the
-/// system stays inside Bevy's argument budget. See [`follow_the_band_to_its_new_people`].
+/// remnant flip (`advance_population_migration`) and a break-away (`advance_band_independence`)
+/// re-point at the band's new people, bundled so each system stays inside Bevy's argument budget.
+/// See [`follow_the_band_to_its_new_people`].
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct BandFlipFollowers<'w, 's> {
     /// The roads the band keeps. A keeper's `faction` is what lights a road's fog, so it names the
@@ -12008,11 +12009,11 @@ pub struct BandFlipFollowers<'w, 's> {
 }
 
 /// One band that changed people this turn.
-struct BandFlip {
-    entity: Entity,
-    band: BandId,
-    from: FactionId,
-    to: FactionId,
+pub(crate) struct BandFlip {
+    pub(crate) entity: Entity,
+    pub(crate) band: BandId,
+    pub(crate) from: FactionId,
+    pub(crate) to: FactionId,
 }
 
 /// A source a labor row works that can carry an improvement — the patch's tile or the herd's id.
@@ -12066,7 +12067,7 @@ fn ownable_sources(allocation: &LaborAllocation) -> BTreeSet<OwnableSource> {
 ///
 /// The shared-source test reads factions after every earlier flip this turn, so two bands of one
 /// people going over together take a patch they both worked.
-fn follow_the_band_to_its_new_people(
+pub(crate) fn follow_the_band_to_its_new_people(
     followers: &mut BandFlipFollowers,
     cohorts: &Query<(Entity, &mut PopulationCohort, Option<&BandId>), With<ResidentBand>>,
     mut flips: Vec<BandFlip>,

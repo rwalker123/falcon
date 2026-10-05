@@ -620,6 +620,41 @@ pub fn split_band_from_parent(
         let parent_region = culture.upsert_regional(region_id);
         culture.attach_band_from_source(band, parent_region, parent_band);
     }
+    // **The two halves were ONE band a moment ago, so they start fully tied, both ways** — a split
+    // is not two strangers finding each other. Without this the splinter would open with no tie at
+    // all and the next turn's heart computation (`systems::independence`) — which runs before that
+    // turn's sight sweep — would read it as cut off and tell the player they had lost touch with a
+    // band standing on their own tile. The ties then bleed on the ordinary clock. The splinter also
+    // inherits its parent's standing toward the heart, so its first turn has a previous reading.
+    if let Some(parent_band) = parent_band {
+        let turn = world
+            .get_resource::<crate::resources::SimulationTick>()
+            .map(|tick| tick.0)
+            .unwrap_or_default();
+        let parent_name = world
+            .get::<crate::components::BandName>(parent)
+            .map(|name| name.0.clone())
+            .unwrap_or_default();
+        let child_name = world
+            .get::<crate::components::BandName>(child_entity)
+            .map(|name| name.0.clone())
+            .unwrap_or_default();
+        if let Some(mut ledger) = world.get_resource_mut::<crate::connections::ConnectionLedger>() {
+            ledger.insert_full_tie(
+                crate::connections::ConnectionKey::new(parent_band, band),
+                &crate::connections::Sighting::new(site, turn, child_name),
+                turn,
+            );
+            ledger.insert_full_tie(
+                crate::connections::ConnectionKey::new(band, parent_band),
+                &crate::connections::Sighting::new(site, turn, parent_name),
+                turn,
+            );
+        }
+        if let Some(mut hearts) = world.get_resource_mut::<super::HeartLedger>() {
+            hearts.inherit(band, parent_band);
+        }
+    }
     let parent_carry_after = world
         .get::<PopulationCohort>(parent)
         .map(|cohort| crate::carry::band_carry_capacity(cohort, carry_cfg))

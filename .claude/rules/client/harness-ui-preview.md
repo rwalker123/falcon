@@ -3738,6 +3738,28 @@ re-sent opening raising the card again. `EXIT=1`.
 **A clean run is 470 frames / 2540 `PASS`, exit 0 — MEASURED windowed on this tree.**
 `band_panel_preview` 1518 `PASS`, exit 0, on the same tree.
 
+<<<<<<< HEAD
+## The band's standing toward its people's heart (`chapters/band_expedition.gd`, issue #284)
+
+Two frames and twelve assertions, appended after the carry states (`_heart_states`). The behaviour is
+`band-city-panel.md` → "THE PEOPLE BLOCK ENDS ON THE BAND'S STANDING TOWARD ITS PEOPLE'S HEART".
+
+- **`band_heart_draining`** — a heart band at bond 0.45, last seen 3 turns ago: the Bond line by
+  EQUALITY and no out-of-touch line.
+- **`band_heart_cut_off`** — a cut-off band at grievance 0.42 of 1.00: both amber lines by equality,
+  the drifting line's ink, and no Bond meter in their place.
+- **The paired negatives, PNG-less**: a LONE heart (bond 1.0), an unjudged band or party
+  (`false / 0 / -1`) and a foreign REDACTED row (`false / 0 / 0`, the schema defaults — the case a gate
+  keyed on the contact sentinel draws as a zero Bond) draw no row — without them "the row is drawn" passes on a block that draws it for
+  every band — and a cut-off band never tied reads `never seen` with no drifting line at 0 grievance.
+- **The block sets the labor model's turn to 40 and hands the walk's turn back**, so every contact
+  turn is one a server can send (the walk's own turn is 0, and `turn − ago` would be negative).
+- Two vocabulary claims ride the block: `band_broke_away` is Alert and `lost_touch` is Notable.
+
+`EXPECTED_CHECKPOINTS` **154**, re-measured by raising the const to an impossible number and
+reading `reached 154 checkpoints` back (the chapter also carries main's `_ancestors_states`). **A clean
+run on the merged tree is 491 frames / 2707 `PASS` / 0 `FAIL`, exit 0.**
+=======
 ## The bench queue and the suggestions (`chapters/crafting_bench.gd`, issue #776)
 
 Two frames appended LAST in the chapter — `crafting_queue_suggestions` and
@@ -3768,3 +3790,4 @@ is a `WAITING` queue row with its tinted reason, and the head row's `+`/✕ send
 well's send `order 1`. Every fixture bench now carries `worked` and every order `blocked_reason` /
 `blocked_severity`. **`EXPECTED_CHECKPOINTS` moved 218 → 228, RE-MEASURED** the same way (the run read
 back `reached 228`); the PR #784 review's pausing-raise pair (a WAITING order's ↑ claims no pause) took it to 230 and the run to 2664 `PASS` / 0 `FAIL` / 483 frames.
+>>>>>>> origin/main

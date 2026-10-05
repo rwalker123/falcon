@@ -183,6 +183,13 @@ fn grow_to_and_hold(app: &mut App, bands: &[Entity], ceiling: u32) -> usize {
     reached_at
 }
 
+/// A split now seeds a full tie both ways (a splinter was one band a moment ago, #284), so the
+/// fixtures that mean "two separate groups" drop it: a supply network is made by ties, and these
+/// tests choose whether one exists (`tie`).
+fn forget_ties(app: &mut App) {
+    *app.world.resource_mut::<ConnectionLedger>() = ConnectionLedger::default();
+}
+
 /// A seeded full-strength tie both ways between two bands, so the supply pass links them.
 fn tie(app: &mut App, a: Entity, b: Entity) {
     const SEEDED_ON_TURN: u64 = 0;
@@ -223,6 +230,7 @@ fn split_pair(app: &mut App, linked: bool) -> (Entity, Entity) {
     seat_lines(app, parent, id, lines);
     let split = split_band_from_parent(&mut app.world, parent, SPLIT_WORKERS, &SETTLE)
         .expect("the fixture band can spare the splinter");
+    forget_ties(app);
     let child = app
         .world
         .query::<(Entity, &BandId)>()
@@ -560,6 +568,7 @@ const SHARED_LINE_TURNS: usize = 120;
 fn split_off(app: &mut App, band: Entity, workers: u32) -> Entity {
     let split = split_band_from_parent(&mut app.world, band, workers, &SETTLE)
         .expect("the fixture band can spare the splinter");
+    forget_ties(app);
     app.world
         .query::<(Entity, &BandId)>()
         .iter(&app.world)

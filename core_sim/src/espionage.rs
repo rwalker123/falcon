@@ -1435,12 +1435,29 @@ pub struct CounterIntelBudgets {
 
 impl CounterIntelBudgets {
     pub fn new(factions: &[FactionId], config: &CounterIntelBudgetConfig) -> Self {
-        let mut reserves = HashMap::new();
-        let initial = config.initial_reserve();
+        let mut budgets = Self {
+            reserves: HashMap::new(),
+        };
         for faction in factions {
-            reserves.insert(*faction, initial);
+            budgets.seed_faction(*faction, config);
         }
-        Self { reserves }
+        budgets
+    }
+
+    /// **Seed one faction's reserve at the starting value** — the one statement of a fresh
+    /// faction's budget, shared by [`Self::new`] and the runtime roster path
+    /// (`systems::independence::grow_faction_roster`). A faction already seeded keeps what it has.
+    pub fn seed_faction(&mut self, faction: FactionId, config: &CounterIntelBudgetConfig) {
+        self.reserves
+            .entry(faction)
+            .or_insert_with(|| config.initial_reserve());
+    }
+
+    /// Whether this faction was **seeded a row of its own**. [`Self::available`] answers zero for a
+    /// faction with no row, which reads exactly like an emptied reserve; the seeding paths are
+    /// asserted through this instead (`FactionSecurityPolicies::contains`'s reason).
+    pub fn contains(&self, faction: FactionId) -> bool {
+        self.reserves.contains_key(&faction)
     }
 
     pub fn regenerate(&mut self, config: &CounterIntelBudgetConfig) {
@@ -1565,14 +1582,22 @@ pub struct CounterIntelScheduleParams<'w> {
 
 impl FactionSecurityPolicies {
     pub fn new(factions: &[FactionId], default_policy: SecurityPolicy) -> Self {
-        let mut policies = HashMap::new();
-        for faction in factions {
-            policies.insert(*faction, default_policy);
-        }
-        Self {
-            policies,
+        let mut policies = Self {
+            policies: HashMap::new(),
             default_policy,
+        };
+        for faction in factions {
+            policies.seed_faction(*faction);
         }
+        policies
+    }
+
+    /// **Seed one faction at the default posture** — the one statement of a fresh faction's row,
+    /// shared by [`Self::new`] and the runtime roster path. A faction already seeded keeps its
+    /// posture.
+    pub fn seed_faction(&mut self, faction: FactionId) {
+        let default_policy = self.default_policy;
+        self.policies.entry(faction).or_insert(default_policy);
     }
 
     pub fn policy(&self, faction: FactionId) -> SecurityPolicy {
