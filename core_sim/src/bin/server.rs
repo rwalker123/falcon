@@ -598,6 +598,7 @@ fn main() {
                     &mut app,
                     &mut world_active,
                     &mut world_epoch,
+                    &mut command_log,
                     preset_id,
                     width,
                     height,
@@ -2620,6 +2621,7 @@ fn handle_new_game(
     app: &mut bevy::prelude::App,
     world_active: &mut bool,
     world_epoch: &mut u32,
+    command_log: &mut Option<CommandLog>,
     preset_id: String,
     width: u32,
     height: u32,
@@ -2722,6 +2724,10 @@ fn handle_new_game(
         },
     );
     *world_active = true;
+    // **A new world re-bases the origin**: nothing before this point is reachable. Left holding the
+    // outgoing world's log, a rollback would restore a different map into this app; on a fresh boot
+    // there would be no log at all, and rollback would have nothing to replay from.
+    *command_log = Some(CommandLog::new(app));
 
     info!(
         target: "shadow_scale::server",
@@ -13044,6 +13050,7 @@ mod tests {
             &mut app,
             world_active,
             world_epoch,
+            &mut None,
             "earthlike".to_string(),
             24,
             16,
@@ -13309,6 +13316,7 @@ mod tests {
             &mut app,
             &mut world_active,
             &mut world_epoch,
+            &mut None,
             WORLD_PRESET.to_string(),
             WORLD_GRID.x,
             WORLD_GRID.y,
@@ -13567,6 +13575,85 @@ mod tests {
         );
 
         std::env::remove_var(core_sim::save_store::SAVE_DIR_ENV);
+    }
+
+    /// **A new game re-bases the command log, and a refused one leaves it alone.** Left holding the
+    /// outgoing world's log, a rollback restored that world's origin — a different map, at a
+    /// different grid — into the new app; on a fresh boot there was no log at all, so a rollback in
+    /// the first game of a session had nothing to replay from.
+    #[test]
+    fn a_new_game_rebases_the_command_log_and_a_refused_one_does_not() {
+        /// A grid other than the fixture's 24×16, so the origin's tile count says which world it is.
+        const NEXT_GRID: UVec2 = UVec2::new(20, 14);
+        /// A seed other than the fixture's, so the second world is a different map.
+        const NEXT_SEED: u64 = 11;
+
+        let flat = loopback_snapshot_server();
+        let (mut world_active, mut world_epoch) = (false, 0u32);
+        let mut app = a_world_for_saving(&mut world_active, &mut world_epoch, &flat);
+
+        // The outgoing world's log, with history in it.
+        let mut log = CommandLog::new(&app);
+        for _ in 0..3 {
+            resolve_turn_with_auto_orders(&mut app);
+            log.push(LogEntry::Turn);
+        }
+        let outgoing_tiles = log.origin.tiles.len();
+        let mut command_log = Some(log);
+
+        // A refused request builds no world, so the log still describes the world that is running.
+        handle_new_game(
+            &mut app,
+            &mut world_active,
+            &mut world_epoch,
+            &mut command_log,
+            "earthlike".to_string(),
+            NEXT_GRID.x,
+            NEXT_GRID.y,
+            NEXT_SEED,
+            "no_such_profile".to_string(),
+            None,
+            &flat,
+        );
+        let kept = command_log
+            .as_ref()
+            .expect("a refused new game keeps the log");
+        assert_eq!(kept.entries.len(), 3, "a refused new game must not re-base");
+        assert_eq!(kept.origin.tiles.len(), outgoing_tiles);
+
+        handle_new_game(
+            &mut app,
+            &mut world_active,
+            &mut world_epoch,
+            &mut command_log,
+            "earthlike".to_string(),
+            NEXT_GRID.x,
+            NEXT_GRID.y,
+            NEXT_SEED,
+            "late_forager_tribe".to_string(),
+            None,
+            &flat,
+        );
+        let log = command_log.expect("a new game leaves a log in place");
+        assert!(
+            log.entries.is_empty(),
+            "a re-based log carries no entries from the outgoing world"
+        );
+        assert_eq!(
+            log.origin_tick,
+            app.world.resource::<SimulationTick>().0,
+            "the new origin is the new world as it stands"
+        );
+        assert_eq!(
+            log.origin.tiles.len(),
+            (NEXT_GRID.x * NEXT_GRID.y) as usize,
+            "the origin is the NEW map, not the outgoing one"
+        );
+        assert_ne!(
+            log.origin.tiles.len(),
+            outgoing_tiles,
+            "fixture: the grids must differ"
+        );
     }
 
     /// **The autosave slot is the hook's alone.** An explicit save naming it is refused, because a
@@ -13848,6 +13935,7 @@ mod tests {
             &mut app,
             &mut world_active,
             &mut world_epoch,
+            &mut None,
             "earthlike".to_string(),
             48,
             32,
@@ -13871,6 +13959,7 @@ mod tests {
             &mut app,
             &mut world_active,
             &mut world_epoch,
+            &mut None,
             "earthlike".to_string(),
             0,
             32,
@@ -13891,6 +13980,7 @@ mod tests {
             &mut app,
             &mut world_active,
             &mut world_epoch,
+            &mut None,
             "earthlike".to_string(),
             48,
             32,
@@ -13929,6 +14019,7 @@ mod tests {
             &mut app,
             &mut world_active,
             &mut world_epoch,
+            &mut None,
             "earthlike".to_string(),
             48,
             32,
@@ -14003,6 +14094,7 @@ mod tests {
             &mut app,
             &mut world_active,
             &mut world_epoch,
+            &mut None,
             "earthlike".to_string(),
             48,
             32,
@@ -14085,6 +14177,7 @@ mod tests {
             &mut app,
             &mut world_active,
             &mut world_epoch,
+            &mut None,
             "earthlike".to_string(),
             48,
             32,
@@ -14139,6 +14232,7 @@ mod tests {
             &mut app,
             &mut world_active,
             &mut world_epoch,
+            &mut None,
             "earthlike".to_string(),
             grid.x,
             grid.y,
