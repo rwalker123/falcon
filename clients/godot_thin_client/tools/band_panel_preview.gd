@@ -25575,6 +25575,78 @@ func _work_party_spoil_band_fixture() -> Dictionary:
 	band[HudWorkVocab.HOMEWARD_ALL_HOME_IN_KEY] = HOMEWARD_ALL_HOME_IN
 	return band
 
+## **THE ROW SAYS WHO IS WALKING HOME FROM IT** — the per-row `homeward_*` keys. The pelt posting was
+## stood down to crew 0 and its row KEPT (the sim's `keep_holding`): its three hands walk home with a
+## load, free next turn — the reported case, where the row read 0 and nothing said where they went.
+## The near posting keeps its party and has two more hands walking home, carrying nothing, free in
+## three turns — the plural, food-less form, closing a party block.
+const ROW_HOMEWARD_PELT_WORKERS := PARTY_PELT_WORKERS
+const ROW_HOMEWARD_PELT_FOOD := HOMEWARD_FOOD
+const ROW_HOMEWARD_PELT_ALL_HOME_IN := 1
+const ROW_HOMEWARD_NEAR_WORKERS := 2
+const ROW_HOMEWARD_NEAR_ALL_HOME_IN := 3
+
+func _row_homeward_band_fixture() -> Dictionary:
+	var band := _work_party_spoil_band_fixture()
+	var rows: Array = band["labor_assignments"]
+	for row_variant in rows:
+		var row: Dictionary = row_variant
+		if String(row.get("fauna_id", "")) == PARTY_NEAR_HERD_ID:
+			row[HudWorkVocab.HOMEWARD_WORKERS_KEY] = ROW_HOMEWARD_NEAR_WORKERS
+			row[HudWorkVocab.HOMEWARD_ALL_HOME_IN_KEY] = ROW_HOMEWARD_NEAR_ALL_HOME_IN
+			row[HudWorkVocab.HOMEWARD_FOOD_KEY] = 0.0
+	# The stood-down pelt row: no crew, no party, no take — only its walkers.
+	rows.append({
+		"kind": "hunt", "workers": 0, "fauna_id": PARTY_PELT_HERD_ID, "floor": 0.5,
+		"target_x": PARTY_SOURCE_X, "target_y": PARTY_SOURCE_Y,
+		"actual_yield": 0.0, "sustainable_yield": 0.0, "realized_yield": 0.0,
+		"kit_id": BandFx.KIT_DEFAULT_HUNT,
+		HudWorkVocab.HOMEWARD_WORKERS_KEY: ROW_HOMEWARD_PELT_WORKERS,
+		HudWorkVocab.HOMEWARD_ALL_HOME_IN_KEY: ROW_HOMEWARD_PELT_ALL_HOME_IN,
+		HudWorkVocab.HOMEWARD_FOOD_KEY: ROW_HOMEWARD_PELT_FOOD,
+	})
+	# The band's keys stay the TOTAL: the near row's two walkers join the pelt row's three.
+	band[HudWorkVocab.HOMEWARD_WORKERS_KEY] = ROW_HOMEWARD_PELT_WORKERS + ROW_HOMEWARD_NEAR_WORKERS
+	band["working_age"] = int(band["working_age"]) + ROW_HOMEWARD_NEAR_WORKERS
+	band["size"] = int(band["size"]) + ROW_HOMEWARD_NEAR_WORKERS
+	return band
+
+## `band_panel_work_row_homeward`: each row's walker line, in the quiet ink, under the right row.
+func _render_work_row_homeward_state() -> void:
+	_set_world_herds(_herd_fixtures() + [{"id": PARTY_PELT_HERD_ID, "species": "Grey Wolf",
+		"x": 75, "y": 17, "population": 24, "ecology_phase": "thriving"}])
+	_push_bands([_row_homeward_band_fixture()])
+	await _pin_canvas(Vector2i(ULTRAWIDE_WIDTH, DOCKROW_CANVAS.y))
+	_panel.set_dock(SIDE_BOTTOM)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	await _save("band_panel_work_row_homeward")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	var pelt_row := _work_row_for_herd(PARTY_PELT_HERD_ID)
+	var pelt := _work_party_lines(pelt_row)
+	var want_pelt := HudWorkVocab.ROW_HOMEWARD_LINE_FORMAT % [ROW_HOMEWARD_PELT_WORKERS,
+		HudWorkVocab.HOMEWARD_FOOD_CLAUSE_FORMAT % SourceForecast.format_magnitude(
+			ROW_HOMEWARD_PELT_FOOD), HudWorkVocab.ROW_HOMEWARD_FREE_NEXT_TURN]
+	_assert_band_panel("band_panel_work_row_homeward: a crew-0 row with hands walking home stays on the board and says so — want [%s], got %s"
+			% [want_pelt, str(pelt)], pelt_row != null and pelt == [want_pelt])
+	var ink_ok := false
+	if pelt_row != null:
+		for control in _collect_meta_controls(pelt_row, HudWorkVocab.WORK_ROW_PARTY_META, []):
+			ink_ok = (control as Label).get_theme_color(FONT_COLOR_THEME_KEY) \
+				.is_equal_approx(HudStyle.INK_DIM)
+	_assert_band_panel("…in the Workforce zone's quiet ink", ink_ok)
+	var near := _work_party_lines(_work_row_for_herd(PARTY_NEAR_HERD_ID))
+	var want_near := HudWorkVocab.ROW_HOMEWARD_LINE_FORMAT % [ROW_HOMEWARD_NEAR_WORKERS, "",
+		HudWorkVocab.ROW_HOMEWARD_FREE_IN_FORMAT % ROW_HOMEWARD_NEAR_ALL_HOME_IN]
+	_assert_band_panel("…and closes a posted row's party block, food-less and plural — want %s last, got %s"
+			% [want_near, str(near)], near.size() > 1 and near[near.size() - 1] == want_near)
+	# The format leads with its count, so the needle is its words up to the food clause.
+	var far := _work_party_lines(_work_row_for_herd(PARTY_FAR_HERD_ID))
+	_assert_band_panel("…while a row nobody walks home from grows no walker line (%s)" % str(far),
+		not far.any(func(line: String) -> bool: return line.contains(
+			HudWorkVocab.ROW_HOMEWARD_LINE_FORMAT.get_slice("%s", 0).trim_prefix("%d"))))
+
 ## **THE TWO #706 READOUTS ON THE BAND PANEL**: the work row's amber spoil line under its party block
 ## (`band_panel_work_party_spoils`), and the WORKFORCE zone's walking-home lines over a bar that counts
 ## those hands (`band_panel_homeward`).
@@ -25654,6 +25726,10 @@ func _render_work_party_spoil_states() -> void:
 	]
 	_assert_band_panel("…and the WORKFORCE zone says who walks home, with what, and what will spoil — want %s, got %s"
 			% [str(want_lines), str(drawn)], drawn == want_lines)
+
+	# Each ROW's own walkers (the per-row `homeward_*` keys) — before the hand-back, so no later
+	# frame moves.
+	await _render_work_row_homeward_state()
 
 	# Hand the world and the reference band back.
 	_set_forage_patches([])

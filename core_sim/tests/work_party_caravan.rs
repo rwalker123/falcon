@@ -140,6 +140,7 @@ fn spawn_band_camped_at(
                 last_morale_cause: MoraleCause::None,
                 last_morale_contributions: Default::default(),
                 last_fertility_factors: Default::default(),
+                last_breeding: Default::default(),
                 discontent_fraction: scalar_zero(),
                 grievance: scalar_zero(),
                 last_emigrated: 0,
@@ -1932,6 +1933,127 @@ fn cutting_a_far_crew_walks_the_dropped_hands_home() {
             assert_eq!(now.idle, before.idle + CREW - KEPT, "…and back in the pool");
         }
     }
+}
+
+/// The fixture hunt row's own walkers, off the ENCODED row — `None` when the row is gone.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct RowWalkingHome {
+    crew: u32,
+    workers: u32,
+    all_home_in: u32,
+    food: f32,
+}
+
+fn published_row_walking_home(app: &App) -> Option<RowWalkingHome> {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let cohort = envelope
+        .payload_as_snapshot()
+        .and_then(|snapshot| snapshot.population())
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.bandId() == BAND)
+        .expect("the fixture band is on the wire");
+    cohort
+        .laborAssignments()
+        .into_iter()
+        .flatten()
+        .find(|row| row.kind().unwrap_or_default() == "hunt")
+        .map(|row| RowWalkingHome {
+            crew: row.workers(),
+            workers: row.homewardWorkers(),
+            all_home_in: row.homewardAllHomeIn(),
+            food: row.homewardFood(),
+        })
+}
+
+/// **A far row unassigned to zero publishes its own walkers.** The row survives at a crew of `0`,
+/// and it carries the hands that left it walking home — the same count, last-home turn and food as
+/// the band's total, which is all of them here. Read off the ENCODED row.
+#[test]
+fn a_far_row_unassigned_to_zero_publishes_the_hands_walking_home_from_it() {
+    let (mut app, band) = world_hunting_at(5);
+    a_party_arrived_at_the_herd(&mut app);
+    let assignable = core_sim::BandWorkforce::resolve(
+        app.world.get::<PopulationCohort>(band),
+        app.world.get::<LaborAllocation>(band),
+        None,
+    )
+    .assignable();
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the band keeps its allocation")
+        .set_assignment(hunt_target(), 0, assignable, None);
+    recapture_snapshot_in_place(&mut app.world);
+
+    let band_total = published_homeward(&app);
+    let row = published_row_walking_home(&app).expect("the unassigned row is still on the wire");
+    assert_eq!(row.crew, 0);
+    assert_eq!(row.workers, CREW, "every hand that left the row walks home");
+    assert_eq!(row.workers, band_total.workers);
+    assert_eq!(row.all_home_in, band_total.all_home_in);
+    assert!(row.all_home_in > 0, "liveness: they are still on the road");
+    assert_eq!(row.food, band_total.food);
+}
+
+/// **A partial cut shows the row's crew AND its walkers**, and once they arrive the row reads
+/// nobody walking.
+#[test]
+fn a_partly_cut_far_row_shows_its_crew_and_its_walkers_until_they_arrive() {
+    /// The crew the row is cut to.
+    const KEPT: u32 = 2;
+    let (mut app, band) = world_hunting_at(5);
+    a_party_arrived_at_the_herd(&mut app);
+    let assignable = core_sim::BandWorkforce::resolve(
+        app.world.get::<PopulationCohort>(band),
+        app.world.get::<LaborAllocation>(band),
+        None,
+    )
+    .assignable();
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the band keeps its allocation")
+        .set_assignment(hunt_target(), KEPT, assignable, None);
+    recapture_snapshot_in_place(&mut app.world);
+
+    let row = published_row_walking_home(&app).expect("the cut row is on the wire");
+    assert_eq!(row.crew, KEPT);
+    assert_eq!(row.workers, CREW - KEPT);
+    assert_eq!(row.all_home_in, published_homeward(&app).all_home_in);
+
+    for _ in 0..TURNS_TO_WALK_HOME {
+        if homeward_walks(&app, band).is_empty() {
+            break;
+        }
+        resolve_a_turn(&mut app);
+    }
+    let row = published_row_walking_home(&app).expect("the cut row is on the wire");
+    assert_eq!(row.crew, KEPT);
+    assert_eq!((row.workers, row.all_home_in), (0, 0), "everyone is home");
+    assert_eq!(row.food, 0.0);
+}
+
+/// **An abandoned row's walkers are on the band only** — the row is gone, so no row carries them,
+/// and the band's total still does.
+#[test]
+fn an_abandoned_rows_walkers_appear_on_the_band_only() {
+    let (mut app, band) = world_hunting_at(5);
+    a_party_arrived_at_the_herd(&mut app);
+    cancel_the_hunt(&mut app, band);
+    assert_eq!(published_row_walking_home(&app), None, "the row is gone");
+    assert!(
+        published_homeward(&app).workers > 0,
+        "the band still counts its hands walking home"
+    );
 }
 
 /// ⛔ **THE STARVATION SHED'S HANDS LEAVE WITHOUT WALKING HOME — IT SHEDS ONCE.** A far party of six

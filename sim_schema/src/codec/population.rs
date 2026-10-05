@@ -8,9 +8,10 @@ use crate::codec::{
 use crate::state::campaign::{OpeningKitDefaultState, OpeningMaterialDefaultState};
 use crate::state::population::{
     AccessibleStockpileEntryState, AccessibleStockpileState, BandKitCrewState, BandKitTiersState,
-    BandLoadoutSupplyRowState, BandLoadoutWindowState, BenchState, BuildQueueEntryState,
-    CharacteristicReadingState, CohortStoreState, CraftOfferState, DrawnInputState,
-    EquipmentBatchState, GenerationState, HarvestTaskState, KitItemConditionState, KitToeLineState,
+    BandLoadoutSupplyRowState, BandLoadoutWindowState, BenchOrderState, BenchState,
+    BuildQueueEntryState, CharacteristicReadingState, CohortStoreState, CraftOfferState,
+    CraftSuggestionSourceState, CraftSuggestionState, DrawnInputState, EquipmentBatchState,
+    GenerationState, HarvestTaskState, KitItemConditionState, KitToeLineState,
     LaborAssignmentState, MaterialBatchState, MaterialShortfallState, PoolCrewLineState,
     PoolToeLineState, PoolingLinkState, PopulationCohortState, PopulationDemographicsState,
     ScoutTaskState, SettlementStageViewState, SourcePriorityState, TransferCrossingState,
@@ -453,6 +454,10 @@ fn create_populations<'a>(
                                 // **A FAR FORAGE ROW'S OTHER ACCOUNTS, HOME** (#706). Appended last.
                                 fodderRateHome: assignment.fodder_rate_home,
                                 materialsRateHome: Some(materials_rate_home),
+                                // THIS ROW'S HANDS STILL WALKING HOME. Appended last.
+                                homewardWorkers: assignment.homeward_workers,
+                                homewardAllHomeIn: assignment.homeward_all_home_in,
+                                homewardFood: assignment.homeward_food,
                             },
                         )
                     })
@@ -723,6 +728,7 @@ fn create_populations<'a>(
                     })
                     .collect();
                 let drawn_inputs = builder.create_vector(&drawn_inputs);
+                let orders = create_bench_orders(builder, &cohort.bench.orders);
                 fb::BenchState::create(
                     builder,
                     &fb::BenchStateArgs {
@@ -734,7 +740,6 @@ fn create_populations<'a>(
                         teaches: Some(teaches),
                         blockedReason: Some(blocked_reason),
                         shortfalls: Some(shortfalls),
-                        itemsCompleted: cohort.bench.items_completed,
                         drawn: cohort.bench.drawn,
                         outputGrade: Some(output_grade),
                         ratePerTurn: cohort.bench.rate_per_turn,
@@ -749,6 +754,10 @@ fn create_populations<'a>(
                             SourcePriorityState::High => fb::SourcePriority::High,
                             SourcePriorityState::Low => fb::SourcePriority::Low,
                         },
+                        // **THE QUEUE, head first** — appended last.
+                        orders: Some(orders),
+                        // The index the scalars above describe — appended last.
+                        worked: cohort.bench.worked,
                     },
                 )
             };
@@ -792,6 +801,7 @@ fn create_populations<'a>(
                     .collect();
                 builder.create_vector(&rows)
             };
+            let craft_suggestions = create_craft_suggestions(builder, &cohort.craft_suggestions);
             let equipment_batches = {
                 let rows: Vec<_> = cohort
                     .equipment_batches
@@ -1132,11 +1142,94 @@ fn create_populations<'a>(
                     longMoveLeavesItems: cohort.long_move_leaves_items,
                     longMoveLeavesMaterials: cohort.long_move_leaves_materials,
                     foodLeftBehind: cohort.food_left_behind,
+                    // WHAT TO MAKE NEXT — appended last. Always written; empty is a real answer.
+                    craftSuggestions: Some(craft_suggestions),
+                    // THE BREEDING CEILING — appended last (#688).
+                    fertilityCeiling: cohort.fertility_ceiling,
+                    breedingPopulation: cohort.breeding_population,
+                    breedingCeiling: cohort.breeding_ceiling,
                 },
             )
         })
         .collect();
     builder.create_vector(&offsets)
+}
+
+/// `BenchState.orders` — the bench's queue, head first.
+fn create_bench_orders<'a>(
+    builder: &mut FbBuilder<'a>,
+    orders: &[BenchOrderState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::BenchOrder<'a>>>> {
+    let rows: Vec<_> = orders
+        .iter()
+        .map(|order| {
+            let recipe_id = builder.create_string(&order.recipe_id);
+            let blocked_reason = builder.create_string(&order.blocked_reason);
+            let blocked_severity = builder.create_string(&order.blocked_severity);
+            fb::BenchOrder::create(
+                builder,
+                &fb::BenchOrderArgs {
+                    recipeId: Some(recipe_id),
+                    count: order.count,
+                    made: order.made,
+                    progress: order.progress,
+                    drawn: order.drawn,
+                    blockedReason: Some(blocked_reason),
+                    blockedSeverity: Some(blocked_severity),
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&rows)
+}
+
+/// `PopulationCohortState.craftSuggestions` — the ranked list, each with its per-consumer lines.
+fn create_craft_suggestions<'a>(
+    builder: &mut FbBuilder<'a>,
+    suggestions: &[CraftSuggestionState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::CraftSuggestion<'a>>>> {
+    let rows: Vec<_> = suggestions
+        .iter()
+        .map(|suggestion| {
+            let sources: Vec<_> = suggestion
+                .sources
+                .iter()
+                .map(|source| {
+                    let kind = builder.create_string(&source.kind);
+                    let job = builder.create_string(&source.job);
+                    let fauna_id = builder.create_string(&source.fauna_id);
+                    let material = builder.create_string(&source.material);
+                    fb::CraftSuggestionSource::create(
+                        builder,
+                        &fb::CraftSuggestionSourceArgs {
+                            kind: Some(kind),
+                            job: Some(job),
+                            targetX: source.target_x,
+                            targetY: source.target_y,
+                            faunaId: Some(fauna_id),
+                            material: Some(material),
+                            missingUnits: source.missing_units,
+                            workersWithout: source.workers_without,
+                            workPerTurn: source.work_per_turn,
+                        },
+                    )
+                })
+                .collect();
+            let sources = builder.create_vector(&sources);
+            let item_id = builder.create_string(&suggestion.item_id);
+            fb::CraftSuggestion::create(
+                builder,
+                &fb::CraftSuggestionArgs {
+                    itemId: Some(item_id),
+                    count: suggestion.count,
+                    workersWithout: suggestion.workers_without,
+                    workPerTurn: suggestion.work_per_turn,
+                    sources: Some(sources),
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&rows)
 }
 
 /// **What a draw is short, as numbers** — shared by the bench and by every craft offer, so the two
@@ -1310,6 +1403,9 @@ fn decode_labor_assignment(
         transit_keeps_turns: assignment.transitKeepsTurns(),
         fodder_rate_home: assignment.fodderRateHome(),
         materials_rate_home: decode_material_payoffs(assignment.materialsRateHome()),
+        homeward_workers: assignment.homewardWorkers(),
+        homeward_all_home_in: assignment.homewardAllHomeIn(),
+        homeward_food: assignment.homewardFood(),
     })
 }
 
@@ -1353,7 +1449,6 @@ fn decode_bench(bench: fb::BenchState<'_>) -> Result<BenchState, DecodeError> {
         teaches: text(bench.teaches()),
         blocked_reason: text(bench.blockedReason()),
         shortfalls: decode_shortfalls(bench.shortfalls()),
-        items_completed: bench.itemsCompleted(),
         drawn: bench.drawn(),
         output_grade: text(bench.outputGrade()),
         rate_per_turn: bench.ratePerTurn(),
@@ -1363,6 +1458,16 @@ fn decode_bench(bench: fb::BenchState<'_>) -> Result<BenchState, DecodeError> {
         }),
         blocked_severity: text(bench.blockedSeverity()),
         priority: to_state_source_priority(bench.priority())?,
+        orders: map_rows(bench.orders(), |order| BenchOrderState {
+            recipe_id: text(order.recipeId()),
+            count: order.count(),
+            made: order.made(),
+            progress: order.progress(),
+            drawn: order.drawn(),
+            blocked_reason: text(order.blockedReason()),
+            blocked_severity: text(order.blockedSeverity()),
+        }),
+        worked: bench.worked(),
     })
 }
 
@@ -1657,6 +1762,28 @@ fn decode_population(
         long_move_leaves_items: cohort.longMoveLeavesItems(),
         long_move_leaves_materials: cohort.longMoveLeavesMaterials(),
         food_left_behind: cohort.foodLeftBehind(),
+        craft_suggestions: map_rows(cohort.craftSuggestions(), |suggestion| {
+            CraftSuggestionState {
+                item_id: text(suggestion.itemId()),
+                count: suggestion.count(),
+                workers_without: suggestion.workersWithout(),
+                work_per_turn: suggestion.workPerTurn(),
+                sources: map_rows(suggestion.sources(), |source| CraftSuggestionSourceState {
+                    kind: text(source.kind()),
+                    job: text(source.job()),
+                    target_x: source.targetX(),
+                    target_y: source.targetY(),
+                    fauna_id: text(source.faunaId()),
+                    material: text(source.material()),
+                    missing_units: source.missingUnits(),
+                    workers_without: source.workersWithout(),
+                    work_per_turn: source.workPerTurn(),
+                }),
+            }
+        }),
+        fertility_ceiling: cohort.fertilityCeiling(),
+        breeding_population: cohort.breedingPopulation(),
+        breeding_ceiling: cohort.breedingCeiling(),
     })
 }
 

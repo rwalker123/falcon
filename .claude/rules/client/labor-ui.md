@@ -4366,6 +4366,12 @@ A far posting that ends hands nothing over at once: its hands walk home carrying
 `BandWorkforce::idle()` nets them out until their walk ends — so `effective_idle` subtracts
 `HudBandLaborState.homeward_workers` too, or every `+` would offer hands the sim refuses.
 
+The per-ROW share (`HudWorkVocab.ROW_HOMEWARD_KEYS`: `homeward_workers` / `homeward_all_home_in` /
+`homeward_food` on each `labor_assignments` entry) rides `effective_worker_map` blind, as the party
+keys do (absent and `0` are one reading), and survives a pending crew edit off the settled row — a
+pending `−` sends nobody home until the turn answers. It feeds the row's walker line only; idle is
+still netted by the band's total.
+
 ### `effective_idle` SUMS `staffed_total`, AND FOR ONE RELEASE IT DID NOT
 
 That helper summed each merged row's `workers` — the TAKE crew alone — so a band with three hands on

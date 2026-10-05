@@ -5,6 +5,7 @@ paths:
   - "core_sim/src/starting_loadout.rs"
   - "core_sim/src/systems/fission.rs"
   - "core_sim/src/bin/server.rs"
+  - "core_sim/src/systems/expeditions.rs"
   - "core_sim/src/data/expedition_config.json"
 ---
 
@@ -162,13 +163,18 @@ left would re-mint the scout's kit.
 
 ## A long move leaves behind what the band cannot carry
 
-`handle_move_band`, for a resident band (never an `Expedition`, whose packs have their own rules):
+`handle_move_band` only places the order (`BandTravel`, `departed: false`); the shed is applied at
+**departure** — the order's first step in `systems::advance_band_movement`, when the turn advances —
+for a resident band (never an `Expedition`, whose packs have their own rules):
 
 - **Within `carry::move_ferry_reach_tiles` the band keeps everything.** It can ferry its goods
   across in trips. The base is `supply_network_config.json` `reach_tiles` (3), the radius within
   which same-faction bands already pool for free, so it needs no lever of its own.
-- **Past it, the band sheds down to its carry the moment the order is accepted**, and what it drops
-  is **lost**: there is no storage object to leave it in. When storage exists, that becomes where the
+- **Past it, the band sheds down to its carry as it departs**, measured from the tile it stands on
+  then to that order's target, and what it drops is **lost**: there is no storage object to leave it
+  in. An order cancelled or replaced before the turn advances sheds nothing; a replacement is
+  measured afresh (every new `BandTravel` starts undeparted). The pending flag rides the order
+  (`BandRecord::travel`), so a save between the order and the turn keeps the shed pending. When storage exists, that becomes where the
   leftover goes.
 - **Food first, then tools before materials.** If the food tier alone overfills the packs, food and
   hay scale down to fit and every item and material is left. Otherwise, in the room left: if the
@@ -182,10 +188,16 @@ left would re-mint the scout's kit.
   against a 28 load), and dropping a whole tool for 0.07 is a punishment for rounding, not a choice.
   So a sub-unit overage is taken from the continuous food tier and every item and material stays; a
   real overage keeps the order above, whole units apportioned by largest remainder.
-- **A long move ends the band's turn-one outfitting.** `StartingLoadout::close_for_a_long_move`
-  closes the mover's window — and every take or dowry window that draws on it — the moment the order
-  is accepted, whether or not anything was shed. A grant apply rebuilds the ledger from empty, so a
-  window left open would re-mint everything the move left behind. Short moves leave it open.
+- **A long move never closes an outfitting window.** Ordering one on turn one leaves the band's
+  window open for the rest of that turn — it has not left yet, and its card may still change what it
+  takes. Every window shuts on the first turn advance (`starting_loadout::close_opening_window`,
+  registered before `TurnStage::Influence`), and the departure shed runs in `TurnStage::Population`,
+  so by the time a band sheds its window is already gone and a grant cannot re-mint what was left
+  behind. `server::long_move_tests::a_turn_one_split_band_on_a_long_move_keeps_its_window_until_it_departs`
+  pins it off the encoded frame, with a probe system ordered after the close and before the movement
+  (a reversed order would be a schedule cycle); `::a_cancelled_long_move_sheds_nothing` and
+  `::a_short_move_keeps_everything` pin the two no-shed cases. *(The window used to be shut the
+  moment the order was accepted — the outfit tab vanished from a band that had not moved.)*
 - **Distance is measured per order.** A band that crosses the map in reach-sized hops keeps
   everything. That reads as ferrying in relays and is accepted, not an exploit to close.
 
@@ -195,7 +207,7 @@ left would re-mint the scout's kit.
 > published forecast) asks the function, so a reach that later grows with roads, pack animals or a
 > cart is one body changing and no call site moving.
 
-**One function plans the shed** (`carry::plan_long_move_shed`). The move applies its plan and
+**One function plans the shed** (`carry::plan_long_move_shed`). The departure applies its plan and
 the snapshot publishes the same plan as the band's long-move forecast
 (`PopulationCohortState.longMoveLeavesFood` / `longMoveLeavesItems` / `longMoveLeavesMaterials`).
 So the warning the client shows before a move and what the move then drops cannot disagree, and the

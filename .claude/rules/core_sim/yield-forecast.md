@@ -1602,12 +1602,12 @@ same rule already pinned for rows, where an unimproved `High` row is emptied at 
 improved `Normal` one is a candidate at step 9. **The steps encode consequence; the mark orders
 candidates within a step.**
 
-> #### ⛔ THE SHED MUST NEVER CALL `clear_job`
+> #### ⛔ THE SHED MUST NEVER CALL `remove_order`
 >
-> `BandBench::clear_job` is `*self = Self::default()`, which **forfeits the drawn pile** — the
-> materials are dropped, not returned to the store. The shed uses `shed_one_worker`, which takes one
-> hand and leaves the recipe, the progress, the finished count, the last grade and the drawn pile
-> standing, so re-staffing **resumes** rather than restarts. That is also the crafting system's own
+> `BandBench::remove_order` **forfeits the order's drawn pile** — the materials are dropped, not
+> returned to the store. The shed uses `shed_one_worker`, which takes one hand and leaves the whole
+> queue (every order's progress, made count and drawn pile) and the last grade standing, so
+> re-staffing **resumes** rather than restarts. That is also the crafting system's own
 > shipped answer to a pass it cannot advance: *"the player chose this job, and silently emptying
 > their bench is a worse answer than a job that makes no progress."*
 

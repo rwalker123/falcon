@@ -1053,6 +1053,12 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 		for party_key in SourceForecast.ASSIGNMENT_PARTY_KEYS:
 			if (a as Dictionary).has(party_key):
 				(merged[key] as Dictionary)[party_key] = (a as Dictionary)[party_key]
+		# **AND THE HANDS WALKING HOME FROM THIS ROW'S SOURCE** (`HudWorkVocab.row_homeward_line`) —
+		# copied blind for the party's reason: `homeward_workers == 0` is the sim's *nobody walking
+		# home*, so absent and zero are one reading. They are on no row, so `workers` never counts them.
+		for homeward_key in HudWorkVocab.ROW_HOMEWARD_KEYS:
+			if (a as Dictionary).has(homeward_key):
+				(merged[key] as Dictionary)[homeward_key] = (a as Dictionary)[homeward_key]
 	var pend := pending_assigns_for(int(band.get("entity", -1)))
 	for key in pend:
 		var pd: Dictionary = pend[key]
@@ -1125,6 +1131,11 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 		for party_key in SourceForecast.ASSIGNMENT_PARTY_KEYS:
 			if settled_party.has(party_key):
 				(merged[key] as Dictionary)[party_key] = settled_party[party_key]
+		# …and so do the hands already walking home from it: a pending crew edit sends no one home
+		# until the turn answers, so the walk on the settled row is still the one under way.
+		for homeward_key in HudWorkVocab.ROW_HOMEWARD_KEYS:
+			if settled_party.has(homeward_key):
+				(merged[key] as Dictionary)[homeward_key] = settled_party[homeward_key]
 	# **A WITHDRAWAL BLANKS THE IMPROVEMENT AND TOUCHES NOTHING ELSE** (`docs/plan_standing_upkeep.md`
 	# §4.7b ④). `unqueue` withdraws a DECLARATION: the crew stays, the floor stays, the banked meter
 	# stays — so the one thing that must stop being true on the frame the `✕` is pressed is that this

@@ -210,7 +210,7 @@ judged on the number it exists to move.
 | `Land` | where the people are | `MoveBand`, `AssignLabor … scout`, `SplitBand`, `FoundSettlement`, `FollowHerd` | **yes** |
 | `Herd` | animals | `Tame`, `Corral`, `ExtendPen`, `SetHerdOutput` | later |
 | `Build` | improvements and their upkeep | `BuildOrder`, `BuildKit`, `UpkeepMode`, `UpkeepKit`, `Abandon`, `Unqueue` | later |
-| `Craft` | the bench | `SetBench`, `BenchCrew`, `BenchPriority` | later |
+| `Craft` | the bench | `BenchEnqueue`, `BenchOrderCount`, `BenchRemoveOrder`, `BenchRaiseOrder`, `BenchCrew`, `BenchPriority` | later |
 | `Contact` | other people | `SendExpedition`, `SendTradeExpedition`, `SendDenialRaid` | later (#231, #369) |
 | `Scripted` | the test fixture | whatever the script says, at the fixed `SCRIPT_SCORE` | **yes** |
 

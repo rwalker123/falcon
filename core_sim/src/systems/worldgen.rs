@@ -3480,6 +3480,7 @@ fn spawn_population_entity(
         last_morale_cause: MoraleCause::None,
         last_morale_contributions: MoraleContributions::default(),
         last_fertility_factors: Default::default(),
+        last_breeding: Default::default(),
         discontent_fraction: scalar_zero(),
         grievance: scalar_zero(),
         last_emigrated: 0,

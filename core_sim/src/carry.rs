@@ -12,7 +12,8 @@
 //!
 //! **The long move** is the last part: a short move keeps everything — within
 //! [`move_ferry_reach_tiles`] the band can ferry its goods across in trips. A move farther than that
-//! sheds the band down to its carry **the moment the order is accepted**, and what is left behind is
+//! sheds the band down to its carry **as it departs** — the order's first step, in
+//! `systems::advance_band_movement` — and what is left behind is
 //! **lost**: there is no storage object to leave it in. The shedding order is **food first**: if
 //! the food tier alone (`food + fodder_carry_weight × fodder`) overfills the packs, food and hay
 //! scale down to fit and every item and material is left. **An overage smaller than one whole unit

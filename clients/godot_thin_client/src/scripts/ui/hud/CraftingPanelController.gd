@@ -3,13 +3,13 @@ extends RefCounted
 
 ## The MATERIALS & CRAFTING cluster (`docs/plan_crafting_and_materials.md` §7) — the controller half
 ## of `CraftingPanel`: it owns the panel node, holds the per-world crafting catalogues, resolves which
-## band the panel is showing, and turns the panel's six signals into the three commands the bench
-## takes.
+## band the panel is showing, and turns the panel's signals into the six commands the bench takes —
+## `bench_enqueue`, `bench_crew`, `bench_order_count`, `bench_remove`, `bench_raise`, `bench_priority`.
 ##
 ## Built on the `TurnOrbController` / `DisclosureController` idiom: `HudLayer` holds one as
 ## `_crafting`, hands it the shared `HudBandLaborState` BY REFERENCE and a HOST `Node` (a `RefCounted`
 ## cannot `add_child`), keeps thin delegators for the entry points reached BY NAME, and RELAYS this
-## controller's three signals onto its own so `Main` can format the commands.
+## controller's signals onto its own so `Main` can format the commands.
 ##
 ## **THE CATALOGUES LIVE HERE, NOT ON A STATE MODEL.** `hud-modules.md`'s test is whether two or more
 ## clusters read a field; exactly one reads these, so they are this controller's own state — the same
@@ -22,22 +22,26 @@ extends RefCounted
 ## keeps the dock one. A band that leaves the roster closes the panel rather than stranding it on a
 ## band that no longer exists.
 
-## Stage a recipe on the band's bench — `set_bench <faction> <band> recipe <id>`. **The player staffs
-## the bench**: no crew rides here, so an idle bench stages at zero and waits for the `− n +` stepper
-## (a swap keeps the crew already standing there). The bench is staffed like a worked source rather
-## than through a standing role, which is why there is no Crafter role card anywhere.
-signal set_bench_requested(payload: Dictionary)
-## Re-crew the running bench, leaving the job and its progress alone — `bench_crew <faction> <band>
-## workers <n>`.
+## Add an order to the back of the band's bench queue — `bench_enqueue <faction> <band> recipe <id>
+## count <n>`: Make sends a count of one, a suggestion's Queue its whole count. **The player staffs
+## the bench**: no crew rides here, so an idle bench takes the order at zero and waits for the `− n +`
+## stepper (the crew stays with the bench across orders). The bench is staffed like a worked source
+## rather than through a standing role, which is why there is no Crafter role card anywhere.
+signal bench_enqueue_requested(payload: Dictionary)
+## Re-crew the bench, leaving its queue and progress alone — `bench_crew <faction> <band> workers <n>`.
 signal bench_crew_requested(payload: Dictionary)
-## Take the job off the bench — `clear_bench <faction> <band>`. The crew returns to the idle pool and
-## the pile already drawn is spent, which is what the button's tooltip names before it is pressed.
-signal clear_bench_requested(payload: Dictionary)
+## Change one order's count — `bench_order_count <faction> <band> order <i> count <n>`.
+signal bench_order_count_requested(payload: Dictionary)
+## Take one order off the queue — `bench_remove <faction> <band> order <i>`. A drawn pile is lost,
+## which is what the control's tooltip names before it is pressed. The well's ✕ is `order <worked>`.
+signal bench_remove_requested(payload: Dictionary)
+## Move one order up a place — `bench_raise <faction> <band> order <i>`, never index 0.
+signal bench_raise_requested(payload: Dictionary)
 ## Rank the bench against the band's other work — `bench_priority <faction> <band> high|normal|low`
 ## (`docs/plan_standing_upkeep.md` §4.9 item 9b). **A SIBLING VERB, not a `work_priority` token**:
 ## that grammar reads a lone trailing token as a herd id, so `work_priority … bench low` would be
-## ambiguous with a herd named `bench`. It names the band and nothing else, one bench at a time meaning
-## there is no job argument to disambiguate — and it is legal on an IDLE bench, a rank being a standing
+## ambiguous with a herd named `bench`. It names the band and nothing else, one bench per band meaning
+## there is no order argument to disambiguate — and it is legal on an IDLE bench, a rank being a standing
 ## statement about the bench rather than about the job on it.
 signal bench_priority_requested(payload: Dictionary)
 
@@ -180,9 +184,11 @@ func _ensure_panel() -> void:
 	_panel.closed.connect(close)
 	_panel.band_selected.connect(_on_band_selected)
 	_panel.cycle_requested.connect(_on_cycle_requested)
-	_panel.make_requested.connect(_on_make_requested)
+	_panel.enqueue_requested.connect(_on_enqueue_requested)
 	_panel.crew_changed.connect(_on_crew_changed)
-	_panel.clear_bench_requested.connect(_on_clear_bench_requested)
+	_panel.order_count_changed.connect(_on_order_count_changed)
+	_panel.order_remove_requested.connect(_on_order_remove_requested)
+	_panel.order_raise_requested.connect(_on_order_raise_requested)
 	_panel.bench_priority_requested.connect(_on_bench_priority_requested)
 
 func _on_band_selected(entity: int) -> void:
@@ -202,14 +208,16 @@ func _on_cycle_requested(delta: int) -> void:
 	_open_entity = int((bands[next] as Dictionary).get("entity", NO_BAND_ENTITY))
 	render()
 
-func _on_make_requested(recipe_id: String) -> void:
+## **EVERY ORDER HAS A COUNT**, so a count below one is not an order and nothing goes out.
+func _on_enqueue_requested(recipe_id: String, count: int) -> void:
 	var band := _open_band()
-	if band.is_empty() or recipe_id == "":
+	if band.is_empty() or recipe_id == "" or count < 1:
 		return
-	set_bench_requested.emit({
+	bench_enqueue_requested.emit({
 		"faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
 		"band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
 		"recipe_id": recipe_id,
+		"count": count,
 	})
 
 func _on_crew_changed(workers: int) -> void:
@@ -222,20 +230,42 @@ func _on_crew_changed(workers: int) -> void:
 		"workers": maxi(workers, 0),
 	})
 
-## **THE VERB TAKES NO SUBJECT BEYOND THE BAND** — one job at a time, so `clear_bench` names the band
-## and nothing else. It goes out through the same seam the other two do; this launcher gets no branch
-## of its own.
-func _on_clear_bench_requested() -> void:
+## **THE QUEUE EDITS NAME AN ORDER BY ITS PLACE** in the published `bench.orders` (0 = the head of the queue), the
+## index the server's queue verbs address. All three go out through the same seam the crew does.
+func _on_order_count_changed(order: int, count: int) -> void:
 	var band := _open_band()
-	if band.is_empty():
+	if band.is_empty() or order < 0 or count < 1:
 		return
-	clear_bench_requested.emit({
+	bench_order_count_requested.emit({
 		"faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
 		"band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
+		"order": order,
+		"count": count,
 	})
 
-## **THE RANK NAMES THE BAND AND THE LEVEL, and nothing else** — one bench at a time, so the verb has
-## no job argument. The level arrives already normalized through `HudWorkVocab.work_priority_of`, so
+func _on_order_remove_requested(order: int) -> void:
+	var band := _open_band()
+	if band.is_empty() or order < 0:
+		return
+	bench_remove_requested.emit({
+		"faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+		"band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
+		"order": order,
+	})
+
+## Index 0 cannot be raised — the server refuses it — so the panel draws no ↑ there and this drops it.
+func _on_order_raise_requested(order: int) -> void:
+	var band := _open_band()
+	if band.is_empty() or order < 1:
+		return
+	bench_raise_requested.emit({
+		"faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+		"band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
+		"order": order,
+	})
+
+## **THE RANK NAMES THE BAND AND THE LEVEL, and nothing else** — one bench per band, so the verb has
+## no order argument. The level arrives already normalized through `HudWorkVocab.work_priority_of`, so
 ## this seam re-spells nothing; it goes out through the same relay the other three verbs do.
 func _on_bench_priority_requested(level: String) -> void:
 	var band := _open_band()

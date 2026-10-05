@@ -552,7 +552,8 @@ Every path that ends a posting routes through the one step:
   the rows it is about to clear and stands each one's party down through
   `bring_the_dropped_party_home`.
 
-**The wire carries the walks on the band, not a row** (`PopulationCohortState`, appended):
+**The band carries the total; each row carries its own share.** A walk outlives its row, so the
+band's fields (`PopulationCohortState`, appended) count every walk:
 
 | field | what it is |
 |---|---|
@@ -561,6 +562,24 @@ Every path that ends a posting routes through the one step:
 | `homewardFoodSpoils` | of `homewardFood`, what rots before it lands (`HomewardWalk::food_that_rots`) |
 | `homewardNextLoadIn` | turns until the soonest homeward load lands; `0` = none — the row's `nextLoadHomeIn`, carried past the row's end |
 | `homewardAllHomeIn` | turns until the last homeward hand is back; `0` = nobody walking home |
+
+A row still on the board (`LaborAssignment`, appended) carries the walks whose `target` is its own
+source, by `LaborTarget::same_source` — the identity a row keeps across a floor or crew edit — so a
+cut or unassigned far row can say *"3 walking home"* under itself:
+
+| field | what it is |
+|---|---|
+| `homewardWorkers` | hands from this row walking home |
+| `homewardAllHomeIn` | turns until the last of those hands is back; `0` = none |
+| `homewardFood` | the food they carry, gross of the walk's rot |
+
+**Both readings are one summation** (`work_party::HomewardTotals::of`, the row's through
+`HomewardTotals::for_source`), so they cannot disagree. A walk whose row is gone (abandoned, lapsed,
+cancelled) matches no row and appears on the band only, so the rows' `homewardWorkers` sum to at most
+the band's. Pinned off the encoded row by
+`work_party_caravan::{a_far_row_unassigned_to_zero_publishes_the_hands_walking_home_from_it,
+a_partly_cut_far_row_shows_its_crew_and_its_walkers_until_they_arrive,
+an_abandoned_rows_walkers_appear_on_the_band_only}`.
 
 > #### ⛔ CARGO A STOOD-DOWN PARTY BRINGS HOME GOES ON THE LEDGER'S ROUTE ARM
 >

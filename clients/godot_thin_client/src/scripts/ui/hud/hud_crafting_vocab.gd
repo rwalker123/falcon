@@ -36,8 +36,9 @@ const READING_AXIS_KEY := "axis"
 const READING_VALUE_KEY := "value"
 const READING_BAND_NAME_KEY := "band_name"
 
-## `PopulationCohortState.bench` — one job at a time, so the panel never has to explain a queue. An
-## empty `recipe_id` is an IDLE bench, which is a different statement from a BLOCKED one.
+## `PopulationCohortState.bench` — every scalar describes the WORKED order of the bench's queue,
+## `orders[worked]` (`BENCH_ORDERS_KEY`, `BENCH_WORKED_KEY`). An empty `recipe_id` is an IDLE bench (an empty queue), which is a different
+## statement from a BLOCKED one.
 const BAND_BENCH_KEY := "bench"
 const BENCH_RECIPE_ID_KEY := "recipe_id"
 const BENCH_DISPLAY_NAME_KEY := "display_name"
@@ -55,7 +56,8 @@ const BENCH_BLOCKED_REASON_KEY := "blocked_reason"
 ## ledger's offer rows resolve through, so the bench and the ledger cannot disagree about what a
 ## published severity looks like.
 const BENCH_BLOCKED_SEVERITY_KEY := "blocked_severity"
-const BENCH_ITEMS_COMPLETED_KEY := "items_completed"
+## The worked order has cut its pile for the pass in flight — which is what raising an order over it pauses.
+const BENCH_DRAWN_KEY := "drawn"
 const BENCH_OUTPUT_GRADE_KEY := "output_grade"
 ## **WHAT ONE TURN ADDS, RESOLVED SIM-SIDE** — `workers × progress_per_worker_turn × craft_speed`,
 ## where `craft_speed` is the equipped bench tool's rate or the material's bare-handed one. **Never
@@ -89,6 +91,61 @@ const BENCH_PRIORITY_META := "crafting_bench_priority"
 ## the same word the work inspector's link wears, so a search by text finds a control in two panels and
 ## cannot say which — the `CLEAR_BENCH_META` argument, one control over.
 const BENCH_PRIORITY_LINK_META := "crafting_bench_priority_link"
+
+## **THE QUEUE** (`BenchState.orders`, `docs/plan_crafting_and_materials.md` §7 → "The queue") — every
+## order on the bench, HEAD FIRST, `[]` on an idle bench. An order's INDEX in this array is the `order`
+## argument the three queue verbs address, so the panel never renumbers it. The worked order's `made` is what
+## the retired `BenchState.itemsCompleted` carried; no surface reads that field any more.
+const BENCH_ORDERS_KEY := "orders"
+const ORDER_RECIPE_ID_KEY := "recipe_id"
+## How many items the order asks for — always `>= 1`; the repeat-until-cleared job is retired.
+const ORDER_COUNT_KEY := "count"
+## How many it has finished. The server refuses a count at or below this (it would finish the order),
+## which is what the row's `−` greys against.
+const ORDER_MADE_KEY := "made"
+const ORDER_PROGRESS_KEY := "progress"
+## **`drawn` ON AN ORDER THE BENCH IS NOT WORKING IS A PAUSED ORDER** — raised over while it held a cut
+## pile, which it keeps, with its progress, until it is worked again. Removing it destroys that pile.
+const ORDER_DRAWN_KEY := "drawn"
+## The head's index — the one order that cannot be raised.
+const ORDER_HEAD_INDEX := 0
+## **WHICH ORDER THE BENCH IS WORKING** (`BenchState.worked`) — the first in queue order that holds a
+## pile or can draw, so a short head no longer stalls the queue. EVERY bench scalar describes
+## `orders[worked]`, and so does the well; `0` when nothing can be worked.
+const BENCH_WORKED_KEY := "worked"
+## Why the bench is SKIPPING an order (`"Short 3.0 fibre"`), sim-resolved and rendered verbatim, with
+## its severity in the offer vocabulary; `""` on an order that holds a pile or can draw. The crew's own
+## refusal is never here — it stays on the bench's `blocked_reason`.
+const ORDER_BLOCKED_REASON_KEY := "blocked_reason"
+const ORDER_BLOCKED_SEVERITY_KEY := "blocked_severity"
+
+## **WHAT TO MAKE NEXT** (`PopulationCohortState.craftSuggestions`, §7 → "Suggestions") — ranked
+## SIM-SIDE by the workers going without the item, published in that order, and rendered in it. The
+## panel never re-sorts or re-scores. `count` is the WHOLE shortfall net of what is already queued, so a
+## suggestion the queue covers is simply absent.
+const BAND_CRAFT_SUGGESTIONS_KEY := "craft_suggestions"
+const SUGGESTION_ITEM_ID_KEY := "item_id"
+const SUGGESTION_COUNT_KEY := "count"
+const SUGGESTION_WORKERS_WITHOUT_KEY := "workers_without"
+## `> 0` only on gear that adds build or keeping work — the shortage then reads in WORK; `0` reads as
+## the people going without, the score's own unit.
+const SUGGESTION_WORK_PER_TURN_KEY := "work_per_turn"
+const SUGGESTION_SOURCES_KEY := "sources"
+## One consumer going without the item: a standing pool, a site crew's keeping, or a take row.
+const SOURCE_KIND_KEY := "kind"
+const SOURCE_KIND_POOL := "pool"
+const SOURCE_KIND_SITE := "site"
+const SOURCE_KIND_TAKE := "take"
+## A pool token (`roadwork` | `builders`) or a labor-row kind (`hunt`, `forage`, `extract`, `scout`,
+## `warrior`) — the `LaborAssignment` spelling.
+const SOURCE_JOB_KEY := "job"
+const SOURCE_TARGET_X_KEY := "target_x"
+const SOURCE_TARGET_Y_KEY := "target_y"
+const SOURCE_FAUNA_ID_KEY := "fauna_id"
+const SOURCE_MATERIAL_KEY := "material"
+const SOURCE_MISSING_UNITS_KEY := "missing_units"
+const SOURCE_WORKERS_WITHOUT_KEY := "workers_without"
+const SOURCE_WORK_PER_TURN_KEY := "work_per_turn"
 
 ## `PopulationCohortState.craftOffers` — ONE ROW PER RECIPE, ALWAYS. `reason` + `severity` are the
 ## contract rather than `available`: *"Not needed yet"* is a shrug and *"Short 4.9 bone"* is a
@@ -265,7 +322,7 @@ const BATCH_AMOUNT_FORMAT := "%.1f"
 const CHARACTERISTIC_CHIP_FORMAT := "%s: %s"
 
 const BENCH_IDLE_TITLE := "Nothing on the bench"
-const BENCH_IDLE_SUB := "Press Make on a row below to put it up."
+const BENCH_IDLE_SUB := "Press Make on a row below to queue it."
 ## What the bench is making: **the THING first, then the craft, with a separator between them.** The
 ## two nouns were juxtaposed (`Tanning Hurdles`) until it was reported as a different item from the
 ## `Hurdles` row in the ledger below — and the collision is not that row's bad luck, it is the shape:
@@ -291,15 +348,15 @@ const BENCH_ESTIMATE_NEXT_TURN := "done next turn"
 ## A bench about to finish still owes a turn to do it in, so the estimate floors at one rather than
 ## claiming a job is already done.
 const BENCH_ESTIMATE_MIN_TURNS := 1
-const BENCH_ITEMS_COMPLETED_FORMAT := "%d finished"
 const BENCH_GRADE_FORMAT := "this pile → %s"
 const BENCH_SUB_SEPARATOR := " · "
 const BENCH_CREW_CAPTION := "Crafters"
 const BENCH_CREW_DECREMENT := "−"
 const BENCH_CREW_INCREMENT := "+"
 
-## **TAKING THE JOB OFF THE BENCH — `clear_bench <faction> <band>`.** Offered only on a bench that
-## HAS a job: an idle bench has nothing to clear, so the control is absent rather than dead.
+## **TAKING THE WORKED ORDER OFF THE BENCH — `bench_remove <faction> <band> order <worked>`**, the
+## retired `clear_bench`'s control. The bench then works the next order it can, if any. Offered only on a bench that HAS
+## an order: an idle bench has nothing to remove, so the control is absent rather than dead.
 ##
 ## **IT WEARS THE `armed` TREATMENT, WHICH IS WHAT KEEPS IT APART FROM THE HEADER'S ✕.** The card
 ## header carries the same glyph for "close this panel"; this one destroys committed materials. They
@@ -311,10 +368,10 @@ const CLEAR_BENCH_GLYPH := "✕"
 ## it states what the store really loses; a tooltip built from the recipe's inputs would name a
 ## different number the moment a bench tool's material efficiency applies. There is no confirmation
 ## dialog — the cost is stated in text, which is this panel's idiom for a consequence.
-const CLEAR_BENCH_TOOLTIP_FORMAT := "Clear the bench — %s already cut are spent"
-## What it says when nothing has been withdrawn yet: the bench can still be cleared, and clearing it
+const CLEAR_BENCH_TOOLTIP_FORMAT := "Take this order off the bench — %s already cut are lost"
+## What it says when nothing has been withdrawn yet: the order can still be removed, and removing it
 ## costs nothing.
-const CLEAR_BENCH_TOOLTIP_NOTHING := "Clear the bench — nothing has been cut yet"
+const CLEAR_BENCH_TOOLTIP_NOTHING := "Take this order off the bench — nothing has been cut yet"
 ## One drawn material, and the separator between two of them — the cost cell's own clause shape, so
 ## the pile reads the way a rebuild cost does.
 const CLEAR_BENCH_CLAUSE_FORMAT := "%s %s"
@@ -347,11 +404,12 @@ const LEDGER_COLUMN_COST := "Rebuild costs"
 ## The action column's head is deliberately blank — a column of buttons names itself.
 const LEDGER_COLUMN_ACTION := ""
 
+## **MAKE ADDS AN ORDER OF ONE** (`bench_enqueue … count 1`) to the back of the queue — onto an empty
+## bench it is the job at once. It stays live on a row whose recipe is already queued or being worked:
+## another press is another order, and the queued row's own `− n +` is how an order is raised instead.
 const MAKE_LABEL := "Make"
-## The running row's button is SPENT — one job at a time, so the row already on the bench has nothing
-## left to ask for. (What it is missing is a CREW, not a second press of Make, and the well's stepper
-## is where that is asked.)
-const ON_BENCH_LABEL := "On the bench"
+## The count Make's order carries — ONE item; the queued row's `− n +` is how it asks for more.
+const MAKE_ORDER_COUNT := 1
 ## The empty cell. A recipe with no inputs has no cost to report, and a dash is the honest reading of
 ## that — never a zero.
 const EMPTY_CELL := "—"
@@ -391,7 +449,7 @@ const PICKER_HEADING_FORMAT := "Make %s with which recipe?"
 const PICKER_SUMMARY_SEPARATOR := " · "
 const PICKER_LASTS_FORMAT := "lasts %s"
 ## **THE RECIPE IS LOCKED ONCE THE BUILD STARTS**, and the picker says so before it starts it. To
-## change the recipe afterwards the player clears the bench with its ✕ and starts again.
+## change the recipe afterwards the player removes the order with its ✕ and queues another.
 const PICKER_LOCK_NOTE := "The recipe can't be changed once the build starts."
 const PICKER_CANCEL := "Cancel"
 const PICKER_START := "Start"
@@ -411,6 +469,78 @@ const LEDGER_STOCK_ROW_KEY_FORMAT := "recipe:%s"
 ## How a row's Make button is found by IDENTITY, valued the row key — a face search finds every Make
 ## on the ledger, and the picker's claims are about ONE row's button.
 const MAKE_BUTTON_META := "crafting_make_button"
+
+# ---- the queue rows under the bench well ---------------------------------------------------------
+## **THE WELL IS THE WORKED ORDER'S ROW** — its title, progress, crew, ✕ and a `made/count` stepper
+## captioned `Made`. **One row per OTHER order** (a skipped head included), each stating what it makes,
+## `made/count` inside its own `− n +`, a `↑` (not on index 0) and a `✕`. The leading status word says
+## which is WAITING (skipped), PAUSED (holding a cut pile) or merely QUEUED.
+const HEAD_COUNT_CAPTION := "Made"
+const ORDER_STATUS_PAUSED := "Paused"
+const ORDER_STATUS_QUEUED := "Queued"
+## An order the bench is SKIPPING because it cannot draw — its reason sits under its name.
+const ORDER_STATUS_WAITING := "Waiting"
+const ORDER_STATUS_PAUSED_TOOLTIP := "Raised over while its pile was cut — the pile and its progress wait for it."
+## A queued order's name. The worked order's is the sim's `BenchState.displayName` verbatim; any other
+## publishes no name, so it is the recipe book's `display_name` with the recipe's `label` — the sim's
+## own `RecipeDef::full_name` shape (`Spears (Flint)`), so the two cannot read differently.
+const ORDER_NAME_WITH_LABEL_FORMAT := "%s (%s)"
+## The stepper's face: made of count, `1/3`. `−` and `+` change the COUNT.
+const ORDER_MADE_OF_COUNT_FORMAT := "%d/%d"
+const ORDER_COUNT_DECREMENT := "−"
+const ORDER_COUNT_INCREMENT := "+"
+const ORDER_COUNT_TOOLTIP := "Made / asked for. − and + change how many this order asks for."
+## `−` is dead at `made + 1`: the server refuses a count that would finish the order — removing it is
+## the ✕.
+const ORDER_COUNT_FLOOR_TOOLTIP := "Already at the fewest it can ask for — use ✕ to stop it."
+const ORDER_RAISE_GLYPH := "↑"
+const ORDER_RAISE_TOOLTIP := "Move this order up one place."
+## Raising an order over the WORKED order when that one has cut its pile pauses it with its pile intact.
+const ORDER_RAISE_PAUSES_TOOLTIP := "Move this order to the top — the order being worked pauses and keeps its cut pile."
+const ORDER_REMOVE_GLYPH := "✕"
+const ORDER_REMOVE_TOOLTIP_DRAWN := "Remove this order — its cut pile is lost."
+const ORDER_REMOVE_TOOLTIP_UNDRAWN := "Remove this order — nothing has been cut for it yet."
+## How the queue's parts are found by IDENTITY, each valued the ORDER INDEX (the worked order's stepper in
+## the well carries the decrement/increment pair at index `worked`) — the stepper glyphs are the crew stepper's
+## own, and every row's ✕ is the well's and the header's glyph too.
+const QUEUE_ROW_META := "crafting_queue_row"
+const ORDER_STATUS_META := "crafting_order_status"
+const ORDER_REASON_META := "crafting_order_reason"
+const ORDER_DECREMENT_META := "crafting_order_decrement"
+const ORDER_INCREMENT_META := "crafting_order_increment"
+const ORDER_RAISE_META := "crafting_order_raise"
+const ORDER_REMOVE_META := "crafting_order_remove"
+
+# ---- the suggestions at the top of the main column -----------------------------------------------
+## **WHAT TO MAKE NEXT, RANKED BY WHO IS GOING WITHOUT** — the sim's list, in its order. Each row is the
+## item and its count, ONE consequence line, and a Queue button that enqueues the WHOLE count. Nothing
+## at all renders when the list is empty: no shortage is the ordinary state, and a line saying so would
+## be a permanent row spent on good news.
+const SUGGESTIONS_HEAD := "Make next"
+const SUGGESTION_TITLE_FORMAT := "%s ×%d"
+## The consequence, in the shortage's own unit: work a turn on gear that adds build or keeping work…
+const SUGGESTION_WORK_FORMAT := "+%s work a turn"
+## …else the people going without — `3 hunters without`, the job's crew noun where every source shares
+## one, else this word.
+const SUGGESTION_WITHOUT_FORMAT := "%s %s without"
+const SUGGESTION_WORKER_NOUN := "workers"
+const SUGGESTION_QUEUE_LABEL := "Queue"
+## The tooltip: one line per source — who, where, how many units short, and what it costs.
+const SUGGESTION_SOURCE_FORMAT := "%s: %s missing, %s without"
+const SUGGESTION_SOURCE_WORK_FORMAT := ", +%s work a turn"
+const SUGGESTION_SOURCE_AT_TILE_FORMAT := "%s at (%d, %d)"
+const SUGGESTION_SOURCE_ON_FAUNA_FORMAT := "%s on %s"
+const SUGGESTION_SOURCE_MATERIAL_FORMAT := "%s · %s"
+## A site source is a crew's KEEPING claim, which a take row's kit is not — the tooltip says which.
+const SUGGESTION_SOURCE_KEEPING_FORMAT := "%s (keeping)"
+const SUGGESTION_TOOLTIP_SEPARATOR := "\n"
+## An item with no offer on this band (the catalogues not yet ingested) still names itself.
+const SUGGESTION_ITEM_FALLBACK_FORMAT := "%s"
+## How a suggestion row and its button are found by IDENTITY, valued the ITEM ID.
+const SUGGESTION_META := "crafting_suggestion"
+const SUGGESTION_QUEUE_META := "crafting_suggestion_queue"
+## The refusal line under a refused suggestion's dead button.
+const SUGGESTION_REASON_META := "crafting_suggestion_reason"
 
 ## **WHEN THE BAND OWNS NO UNITS, ONE WORDING FOR EVERY ROW**, keyed off `count` — never off
 ## `remaining == 0`, since a spent batch is REMOVED and worn-out and never-made both read zero
@@ -601,6 +731,22 @@ const BENCH_SUB_FONT_SIZE := 12
 ## footnote to the job rather than as the reason it is not moving.
 const BENCH_BLOCKED_FONT_SIZE := 12
 const BENCH_TEACH_FONT_SIZE := 11
+## The queue rows: one font for the name and the stepper face, a smaller one for the status word, and
+## a fixed status column so the names line up whatever the word.
+const QUEUE_ROW_FONT_SIZE := 12
+const ORDER_STATUS_FONT_SIZE := 10
+const ORDER_REASON_FONT_SIZE := 11
+const ORDER_STATUS_WIDTH := 56.0
+const ORDER_COUNT_WIDTH := 40.0
+## The worked order's `made/count` face in the well, at the crew count's size — wide enough for `12/20`.
+const HEAD_COUNT_FACE_WIDTH := 52.0
+const QUEUE_BUTTON_SIZE := 22.0
+const QUEUE_ROW_SEPARATION := 6
+## The suggestion rows: the item's name over its one consequence line.
+const SUGGESTION_NAME_FONT_SIZE := 13
+const SUGGESTION_LINE_FONT_SIZE := 11
+## The Queue button's column — wide enough for a refusal under it to wrap rather than stretch the card.
+const SUGGESTION_ACTION_WIDTH := 150.0
 const CREW_COUNT_FONT_SIZE := 18
 const CREW_CAPTION_FONT_SIZE := 10
 const CREW_BUTTON_SIZE := 24.0

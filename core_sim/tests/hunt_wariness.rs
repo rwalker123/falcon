@@ -264,6 +264,7 @@ fn spawn_hunters(app: &mut App, pos: UVec2, fauna_id: &str, floor: f32) -> bevy:
                 home: tile,
                 current_tile: tile,
                 last_fertility_factors: Default::default(),
+                last_breeding: Default::default(),
                 size: 200,
                 children: scalar_zero(),
                 working: scalar_from_f32(CREW as f32),

@@ -965,8 +965,8 @@ func source_total_text() -> String:
 ## never be the row that got cut.**
 ##
 ## ⛔ **THERE IS STILL NO "NOBODY IS ON IT" CLASS, AND `ATTENTION_OVERSTAFFED` IS NOT IT.** A working
-## with NO crew (`HudDepositVocab.DEPOSIT_RUNWAY_IDLE`) by construction never appears in this list,
-## every row having `workers > 0`, and `idle_workers` is a BAND-level turn-orb row. The class below is
+## with NO crew (`HudDepositVocab.DEPOSIT_RUNWAY_IDLE`) never appears in this list as an idle-crew
+## row — a row has `workers > 0` or hands walking home from it — and `idle_workers` is a BAND-level turn-orb row. The class below is
 ## the opposite reading — a crew that IS here and is bigger than its source can use — which every web
 ## can answer per source. **What the retired note said was that the design's idle-crew class had no
 ## shipped predicate; this one has, and it is `SourceForecast.crew_is_wasted`.**
@@ -1027,7 +1027,10 @@ func compute_source_rows(radius: float, origin: Vector2) -> Array[Dictionary]:
 		if not (entry_variant is Dictionary):
 			continue
 		var entry: Dictionary = entry_variant
-		if int(entry.get("workers", 0)) <= 0:
+		# **A CREW-0 ROW WITH HANDS STILL WALKING HOME FROM IT KEEPS ITS ROW** — the source the player
+		# just unassigned states where those hands are (`HudWorkVocab.row_homeward_line`) until the last
+		# is back. It drew no marker, so its leader line falls back to the hex centre (`_label_anchor`).
+		if int(entry.get("workers", 0)) <= 0 and HudWorkVocab.row_homeward_workers(entry) <= 0:
 			continue
 		var kind := String(entry.get("kind", "")).strip_edges().to_lower()
 		# **WHICH ACCOUNT'S ZERO THIS ROW MAY PRINT**, resolved once for every arm off the SHARED seam
@@ -1210,6 +1213,8 @@ func _source_row(key: String, tile: Vector2i, anchor: Vector2, face: Dictionary,
 		"rate_text": rate_text,
 		"overdraw": overdraw,
 		"build_text": String(badge.get("build_text", "")),
+		# The hands walking home from this source, `""` while nobody is — the work board row's own line.
+		"homeward_text": HudWorkVocab.row_homeward_line(entry),
 		"attention": attention,
 		"attention_text": attention_text,
 		# **THE SORT KEY IS THE FIGURE THE ROW HEADLINES, not a second reading of the entry.** It was

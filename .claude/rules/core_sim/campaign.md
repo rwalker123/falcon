@@ -27,7 +27,7 @@ paths:
 | File | Purpose |
 |------|---------|
 | `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population), and saturation `references` |
-| `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), **`keeping`** (how food keeps, #706 — `classes`, each `{ id, shelf_life_turns }`: **`flesh` 4.0**, **`fresh_plant` 8.0**, **`dry` 60.0**; `startup_class` **`dry`**, the class the opening reserve is seeded into; `plant_fallback_class` **`fresh_plant`** / `kill_fallback_class` **`flesh`**, where a take's food lands when no species says. Validated at parse — unique ids, finite positive shelf lives, every named class present — and every fauna/flora species' `keeping` is reconciled against it at boot; see "Food spoils by keeping class" below), `births` (`birth_rate` + the `reserve` stock factor (`bonus`/`saturation_turns`) + the `trend` flow factor (`surplus_gain`/`surplus_saturation`/`deficit_penalty`/`deficit_saturation`); morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `lineage.founding_lines` (`L`, **8**, a `NonZeroU16` so `0` is a parse error — how many founding lines a starting band holds; see "Founding lines" below), `cold` and `heat` (the two temperature tails — `onset_temp` / `mortality_scale` / `max_mortality` plus each tail's own `child_vulnerability` 1.25 / `working_vulnerability` 1.0 / `elder_vulnerability` 1.5, a different ordering from `scarcity`'s; see “The cold/heat death model is PUBLISHED” below for why the two tails differ in all three parameters and why both are calibrated ahead of the map's current range). **This file is the SOLE source of demographics tuning** (#350): `demographics_config.rs` has no hand-written `Default` impls — `DemographicsConfig::default()` parses the builtin JSON, and every field is required with `deny_unknown_fields`, so a missing or unknown key is a parse error rather than a silent fallback to a second set of numbers that can drift (it did: `per_capita_draw` was 0.03 in Rust against 0.16 here). Do not re-add `#[serde(default)]` — the root `Default` parses through serde, so a container-level default would make it recurse. **The loader is strict to match**, and that strictness is no longer demographics-specific: it now lives in the shared `config_load.rs` seam and applies to every boot config (see `.claude/rules/core_sim/config-loading.md`). Strictness without a loud loader would only move the silent substitution one layer out — the whole file instead of one key |
+| `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), **`keeping`** (how food keeps, #706 — `classes`, each `{ id, shelf_life_turns }`: **`flesh` 4.0**, **`fresh_plant` 8.0**, **`dry` 60.0**; `startup_class` **`dry`**, the class the opening reserve is seeded into; `plant_fallback_class` **`fresh_plant`** / `kill_fallback_class` **`flesh`**, where a take's food lands when no species says. Validated at parse — unique ids, finite positive shelf lives, every named class present — and every fauna/flora species' `keeping` is reconciled against it at boot; see "Food spoils by keeping class" below), `births` (`birth_rate` + the `reserve` stock factor (`bonus`/`saturation_turns`) + the `trend` flow factor (`surplus_gain`/`surplus_saturation`/`deficit_penalty`/`deficit_saturation`); morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `lineage.founding_lines` (`L`, **8**, a `NonZeroU16` so `0` is a parse error — how many founding lines a starting band holds; see "Founding lines" below), `lineage.people_per_line` (`K`, **19**, a `NonZeroU16` — how many people one line carries before births stop; an isolated starting band ceilings at `L × K` = 152, pinned above the shipped `band_size` by `demographics_config::tests::the_shipped_starting_band_opens_below_its_breeding_ceiling`; see "The breeding ceiling" below), `lineage.free_breeding_at` (**500** people, a `NonZeroU32` — once a breeding population's `|lines| × K` reaches it the inbreeding ceiling is lifted; pinned above the shipped `L × K` by `demographics_config::tests::the_shipped_lone_band_ceiling_sits_below_the_free_breeding_size`, so a lone band opens capped), `cold` and `heat` (the two temperature tails — `onset_temp` / `mortality_scale` / `max_mortality` plus each tail's own `child_vulnerability` 1.25 / `working_vulnerability` 1.0 / `elder_vulnerability` 1.5, a different ordering from `scarcity`'s; see “The cold/heat death model is PUBLISHED” below for why the two tails differ in all three parameters and why both are calibrated ahead of the map's current range). **This file is the SOLE source of demographics tuning** (#350): `demographics_config.rs` has no hand-written `Default` impls — `DemographicsConfig::default()` parses the builtin JSON, and every field is required with `deny_unknown_fields`, so a missing or unknown key is a parse error rather than a silent fallback to a second set of numbers that can drift (it did: `per_capita_draw` was 0.03 in Rust against 0.16 here). Do not re-add `#[serde(default)]` — the root `Default` parses through serde, so a container-level default would make it recurse. **The loader is strict to match**, and that strictness is no longer demographics-specific: it now lives in the shared `config_load.rs` seam and applies to every boot config (see `.claude/rules/core_sim/config-loading.md`). Strictness without a loud loader would only move the silent substitution one layer out — the whole file instead of one key |
 | `src/data/start_profiles.json` | Campaign initialization. Per profile: `starting_units` (`kind`/`count`/`band_size`), `starting_knowledge_tags`, `inventory`, `food_modules`, `victory_modes_enabled` (AI tuning is per seat and lives in `sim_ai/data/ai_profiles.json`, not here) — plus the **required** `opening_loadout` block: `pickable_materials` (`bone`, `fibre`, `hide`, `wood`, `stone` — the picker's list, in the order it is drawn), `material_defaults` (`bone 2` / `fibre 12` / `hide 6`) and **`kit_defaults`** (`big_game 5` / `trapping 5` / `gathering 7` — one kit per hand on the shipped 30-person band). Together they are the **opening band's** default outfit (load 47 against its ≈ 47 goods allowance), APPLIED after the world-build meal, not suggested; a splinter's default is `split_default_outfit`, not these. ⛔ **There is no budget in this file**: what a band may outfit is its CARRY less its larder (`.claude/rules/core_sim/band-carry.md`), and the retired `material_points` key is **refused at load**, not ignored (`start_profile::the_retired_material_points_key_is_refused`). `StartProfiles::validate_against_materials` rejects a pickable or default naming a material the roster does not carry, and `validate_against_equipment` rejects a `kit_defaults` key the equipment roster does not carry **or one whose `uses` is empty** — both run from `build_headless_app`. Defaults over the band's allowance are fitted at apply (`fit_to_carry`, materials cut before tools); the full rules are `starting-loadout.md` |
 | `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius, in **hex steps**), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer_fraction` (the dead-band, as a fraction of the node's own per-capita fair share of that commodity — see "The dead-band is RELATIVE, because one balancer serves food and a bone pile" below) |
 | `src/data/wellbeing_config.json` | Civilization Wellbeing tuning: `discontent` (`content_morale`/`floor_morale` productivity curve, `grievance_gain`/`grievance_decay`/`trapped_multiplier`), `productivity` (`floor_mult`, `discontent_weight`), `migration` (own morale-scaled onset: `morale_threshold`, `max_rate`, `base_reach`, `attractive_morale`, `min_morale_gap`, `dependent_weight`) |
@@ -101,10 +101,10 @@ The bedrock number the rest of the economy builds on. Each `PopulationCohort` (a
    weights); temperature kills past `cold.onset_temp` or `heat.onset_temp`, weighted by that tail's
    own vulnerabilities. A bracket dies of the **larger** of the two terms, never their sum — see
    below.
-3. **Births → children** — `birth_rate × working × hunger × reserve × trend` (see "Fertility is
-   stock **and** flow" below). Births are **morale-independent** (Civilization Wellbeing — see
-   below): contentment doesn't change procreation, and morale **never** causes faction population
-   loss. `advance_demographics` no longer takes morale; the retired `births.morale_floor` lever is
+3. **Births → children** — `birth_rate × working × hunger × reserve × trend × ceiling` (see
+   "Fertility is stock **and** flow" below; `ceiling` is "The breeding ceiling"). Births are
+   **morale-independent** (Civilization Wellbeing — see below): contentment doesn't change
+   procreation, and morale **never** causes faction population loss. `advance_demographics` no longer takes morale; the retired `births.morale_floor` lever is
    gone.
 4. **Maturation** children→working, **aging** working→elders, **elder mortality**. All flows use
    the turn's *opening* values and apply together (a newborn doesn't mature the same turn); the
@@ -475,7 +475,7 @@ the whole runway: the turns after are walked as before. A detached party reads i
 
 #### Founding lines — the relatedness proxy, carried as a SET
 
-Design: `docs/plan_civilization_steps.md` §"The mechanism: a breeding population cannot grow past
+Design: `docs/plan_civilization_steps.md` §"The mechanism: an isolated people cannot grow past
 its lines". The sim has no individuals, sexes or kinship, so relatedness is proxied by **founding
 lines** — the unrelated families a band descends from. `PopulationCohort.founding_lines`
 (`lineage::FoundingLines`) is a `BTreeSet<LineId>`, and `LineId` is
@@ -504,6 +504,75 @@ lines** — the unrelated families a band descends from. `PopulationCohort.found
 
 Pinned by `core_sim/tests/founding_lines.rs` (starting bands of both factions, the split share and
 its clamp, the one-line case, save/load and restore, the count off the encoded envelope).
+
+#### The breeding ceiling — births stop at `|lines| × K`, and nobody is removed by it
+
+Design: `docs/plan_civilization_steps.md` §"The mechanism: an isolated people cannot grow past its
+lines" (#688). An isolated people grows only to `|its lines| × K`; contact with other peoples is
+what lifts it (#689, not built).
+
+- **The capped unit is the breeding population** — a supply-network connected component
+  (`SupplyNetworkMembership::network_of`, written by `balance_supply_networks` in
+  `TurnStage::Logistics` earlier the same turn). A band in no multi-band network (`0`) is its own
+  breeding population. Only resident bands count: a detached expedition is absent from the
+  head-count and holds no lines of its own.
+- **Ceiling = `lineage::breeding_ceiling(|union of the members' line SETS|, K)`.** A union, not a
+  sum: a line two members share (a one-line split) counts once. A same-people network's lines are
+  its starting band's `L` however often it split, so splitting while connected changes nothing; a
+  band that walks off the network takes its lines and both ceilings fall.
+- **A line held by several breeding populations shares its `K` between them.** A one-line
+  band's split gives both halves a copy of its line (`split_off_share` cannot partition it), so
+  counting the line whole in each unlinked half would let an isolated people split and scatter
+  past `L × K` with no contact. So the pre-pass counts, per `LineId`, how many distinct
+  populations hold it, and a population's ceiling is `lineage::shared_breeding_ceiling` —
+  `floor(Σ K / holders(line))` over its union, summed in fixed point. Across the world the
+  ceilings sum to at most `distinct lines × K` however bands split: two unlinked halves of one
+  line get `floor(19 / 2)` = 9 each, and relinked they are one holder again at 19. With every
+  line held once it is plain `|union| × K`. The `free_breeding_at` lift compares against this
+  shared figure.
+- **It lifts at `free_breeding_at` (500).** `lineage::inbreeding_ceiling` answers `None` once
+  the population's (shared) ceiling reaches `lineage.free_breeding_at`: ~500 is the forager mating-network size
+  (Birdsell's dialect tribe; Wobst's 175–475) at which a people finds mates without outside
+  contact, so past it growth is not restricted by mixing. A lifted population's factor is `1`
+  at any head-count (`breeding_factor`), and it publishes `breedingCeiling` `0`
+  (`lineage::NO_INBREEDING_CEILING`), which the wire documents as "no inbreeding ceiling".
+  Below the threshold the rule is exactly the ceiling above.
+- **Births only, through a pre-pass factor.** `simulate_population` first groups the resident
+  bands (`BreedingGroup`, a `BTreeMap` key, so every walk has a stated order) and resolves per
+  population: the opening head-count, the headroom `max(0, ceiling − opening)`, and each member's
+  **would-be births** — priced by `meal_and_births`, the same pure function `advance_demographics`
+  prices them with, so the pre-pass and the resolve cannot diverge. The factor is
+  `ceiling_factor(headroom, Σ would-be births)`: `1` when they fit (or nobody would be born),
+  `headroom / Σ` when they do not, `0` at or above the ceiling. Every member takes the same factor,
+  and `advance_demographics` multiplies its would-be births by it. Fixed point truncates toward
+  zero, so `Σ births × factor ≤ headroom` exactly and `opening − deaths + births ≤ ceiling` holds
+  with no epsilon. Deaths, maturation, aging and the bracket floors are untouched: **the ceiling
+  never kills**, and a population above it (a lifter lapsed) bears nobody and shrinks only by its
+  ordinary deaths. Shedding above the ceiling along routes is #690.
+- **It is the fourth fertility factor.** `FertilityFactors.ceiling` sits beside `hunger`, `reserve`
+  and `trend` and is in `multiplier()`, so `last_fertility_factors` attributes a withheld birth to
+  the ceiling exactly as it attributes a hungry one to `hunger`. `food_multiplier()` is the three
+  food factors alone — what the would-be births are priced on. `flows.births` (and so the `born`
+  feed line) is the post-ceiling count; the `population_cap` clamp after it is still the aggregate
+  safety net.
+- **Parked for publication** on `PopulationCohort::last_breeding` (`lineage::BreedingReading`):
+  the population's **post-turn** head-count (members' fixed-point totals summed, rounded once — the
+  same rounding as `size`) and its ceiling in people, the same figures on every member. Rewritten
+  every turn; reset to the default on a fresh splinter, like the fertility factors.
+- **On the wire**, appended to `PopulationCohortState`: `fertilityCeiling:long` (fixed point,
+  neutral at 1e6, in the zero-reserve not-projected sentinel with its three siblings),
+  `breedingPopulation:uint`, `breedingCeiling:uint`. Not on the redaction allow-list, so a rival's
+  redacted row publishes `0` for all three. Checkpointed with the cohort; `SAVE_FORMAT_VERSION` 23.
+
+Pinned by `core_sim/tests/breeding_ceiling.rs` (a lone band grows to and holds at `L × K`; a tied
+pair shares the union's one ceiling and a member may exceed its own lines' share; an unlinked
+splinter caps at its own lines; a band above its ceiling bears nobody and loses no one the open arm
+keeps; the three fields off the encoded envelope on a partial-room turn; a population whose
+`lines × K` reaches `free_breeding_at` grows past it and publishes ceiling `0`, one line short of
+it still caps; two unlinked halves of one line each publish 9 and together never pass 19,
+relinked they publish 19; a people scattered by repeated splits, one-line copies included,
+publishes ceilings summing to at most `L × K`), `lineage::tests` (the per-line share) and `systems::population::breeding_ceiling_tests` (the factor's math, the
+threshold edge, and a capped turn's attribution).
 
 ### Supply Network (logistics from turn 0)
 Bands are small logistics nodes: `balance_supply_networks` (`supply.rs`, `TurnStage::Logistics`,
