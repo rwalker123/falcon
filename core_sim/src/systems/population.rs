@@ -1237,7 +1237,7 @@ fn resolve_culture_terms(
     walk: &crate::supply::WalkReach,
     roads: &crate::routes::RoadRegistry,
     culture: &crate::wellbeing_config::CultureConfig,
-) -> BTreeMap<Entity, Scalar> {
+) -> BTreeMap<Entity, CultureReading> {
     let mut relay_input: Vec<((u64, u64), Entity, crate::belief_relay::RelayBand)> = Vec::new();
     for (entity, mut cohort, _, band_id, _) in cohorts.iter_mut() {
         let Ok(standing) = tiles.get(cohort.current_tile).map(|tile| tile.position) else {
@@ -1272,10 +1272,21 @@ fn resolve_culture_terms(
             let strength = relay.strength(index, culture.relay_per_hop);
             (
                 *entity,
-                culture_morale_contribution(band.anchor, strength, belief, culture),
+                CultureReading {
+                    term: culture_morale_contribution(band.anchor, strength, belief, culture),
+                    relay_hops: crate::belief_relay::wire_hops(band.anchor, relay.hops(index)),
+                },
             )
         })
         .collect()
+}
+
+/// One band's culture term and the relay hop count it was priced from.
+#[derive(Debug, Clone, Copy)]
+struct CultureReading {
+    term: Scalar,
+    /// `crate::belief_relay::wire_hops` of the search that priced `term`.
+    relay_hops: u8,
 }
 
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
@@ -1342,11 +1353,12 @@ pub fn simulate_population(
             tile_morale_pressure(&terrain_profile, tile.temperature, &morale_pressure_cfg);
         // **Near / far from the ancestors**, resolved by the pre-pass: where the band STANDS —
         // `current_tile`, never `home`, for the reason the deaths source gives — and how its own
-        // people tie it to its anchor. A band the pre-pass could not place reads `0`.
-        let culture = culture_terms
-            .get(&entity)
-            .copied()
-            .unwrap_or_else(scalar_zero);
+        // people tie it to its anchor. A band the pre-pass could not place reads `0` and a hop count
+        // of `0`.
+        let (culture, relay_hops) = culture_terms.get(&entity).map_or(
+            (scalar_zero(), crate::belief_relay::DIRECT_HOPS as u8),
+            |reading| (reading.term, reading.relay_hops),
+        );
         // Layer 1 (wellbeing): the morale delta is the signed sum of named contributors, so a
         // future factor is a new `MoraleFactor` variant + one field here — not a rewrite. The
         // contribution set doubles as the client's per-band morale breakdown. `unrest` = crisis
@@ -1369,6 +1381,9 @@ pub fn simulate_population(
             MoraleCause::None
         };
         cohort.last_morale_contributions = contributions;
+        // The hop count `culture` was priced from — what the frame publishes, so it cannot be a
+        // recount on positions this turn's movement changes later.
+        cohort.last_belief_relay_hops = relay_hops;
         cohort.morale = (cohort.morale + morale_delta).clamp(scalar_zero(), scalar_one());
 
         // Layer 2 (wellbeing): map morale → the discontented share of the band. `0` at/above
@@ -3133,6 +3148,7 @@ mod wellbeing_tests {
                 crate::lineage::MIN_BAND_LINES,
             ),
             belief_anchor: None,
+            last_belief_relay_hops: 0,
         };
         cohort.sync_size();
         cohort

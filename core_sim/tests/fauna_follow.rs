@@ -166,6 +166,7 @@ fn spawn_hunter(app: &mut App, herd_id: &str, policy: f32) -> bevy::prelude::Ent
                     core_sim::MIN_BAND_LINES,
                 ),
                 belief_anchor: None,
+                last_belief_relay_hops: 0,
             },
             StartingUnit {
                 kind: "BandHunter".to_string(),

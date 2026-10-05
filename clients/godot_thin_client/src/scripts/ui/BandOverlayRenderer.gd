@@ -247,8 +247,9 @@ const TRAVEL_DEST_RETICLE_FACTOR := 0.62      # reticle radius as a factor of he
 # THE BAND'S ANCESTORS (issue #699): the selected player band's remembered belief place — where its
 # dead lie, the tile `morale_culture` is measured against — and the PERIMETER of its reach region
 # (`belief_reach_x/y`, every tile the band can stand on and still count as near its anchor). Inside
-# the outline the culture term is positive, outside it negative. The region is road-aware and so
-# irregular: the outline is traced from the tile SET, never a radius.
+# the strong outline the band is near; inside the faint one it is tied in through kin at reduced
+# strength. The region is road-aware and so irregular: the outline is traced from the tile SET,
+# never a radius.
 #
 # Both ride `HudStyle.BELIEF` — the ancestors' violet, a hue no worked-source mark (forage green,
 # hunt red, extraction slate), range border (green / azure) or pending style (dashed amber) wears —

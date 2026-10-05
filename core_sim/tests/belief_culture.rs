@@ -1,7 +1,8 @@
 //! **Near / far from the ancestors** (issue #699, `docs/plan_civilization_steps.md` §"What belief
 //! does, through seams that exist"): each band remembers one belief tile — its anchor — and its
-//! morale gains `near_bonus × s` while it stands within walking reach of it and loses
-//! `away_drag × s` beyond it, `s = b / (b + belief_half_saturation)`.
+//! morale moves by `s × (r × near_bonus − (1 − r) × away_drag)`, `s = b / (b + belief_half_saturation)`
+//! and `r` its kin-relay strength: `1` within its own walking reach (`+near_bonus × s`),
+//! `relay_per_hop ^ n` through `n` bands of kin, `0` unreached (`−away_drag × s`).
 //!
 //! Driven through the **real** `simulate_population` on a generated world. Every arm starts from an
 //! empty registry and a band with no anchor, then stages belief directly on the registry's own
@@ -16,10 +17,11 @@ mod faction_support;
 use core_sim::save::{decode_save, encode_save};
 use core_sim::sim_state::{capture_sim_state, restore_sim_state};
 use core_sim::{
-    publish_baseline_snapshot, scalar_from_f32, simulate_population, split_band_from_parent,
-    trace_path, traffic_ceiling, BandId, BeliefRegistry, CultureConfig, LadderConfigHandle,
-    MoraleCause, PopulationCohort, ResidentBand, RoadRegistry, Scalar, SettleConfig,
-    SimulationConfig, SnapshotHistory, Tile, TileRegistry, WellbeingConfig, WellbeingConfigHandle,
+    publish_baseline_snapshot, run_turn, scalar_from_f32, simulate_population,
+    split_band_from_parent, trace_path, traffic_ceiling, BandId, BandTravel, BeliefRegistry,
+    CultureConfig, LadderConfigHandle, MoraleCause, PopulationCohort, ResidentBand, RoadRegistry,
+    Scalar, SettleConfig, SimulationConfig, SnapshotHistory, Tile, TileRegistry, WellbeingConfig,
+    WellbeingConfigHandle,
 };
 use faction_support::{one_faction_world, two_faction_world, HOME, RIVAL};
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
@@ -1011,4 +1013,73 @@ fn the_published_relayed_region_agrees_with_the_term_at_every_tile() {
             &format!("standing on {tile} outside both regions must read r == 0"),
         );
     }
+}
+
+/// **The frame's hop count is the one its `moraleCulture` was priced from.** B starts one hop out
+/// and walks into direct reach during the turn (`advance_band_movement` runs after
+/// `simulate_population`): the term was priced at one hop, so the frame must publish `1` beside the
+/// blended term — not the `0` a recount on B's new tile would give.
+#[test]
+fn the_published_hop_count_is_the_one_the_term_was_priced_from() {
+    let mut app = one_faction_world();
+    let (_, b, layout) = two_kin(&mut app);
+    let reach = base_reach(&app);
+    // One step past the anchor's reach, still within A's; the order walks it one tile closer.
+    let start = UVec2::new(layout.anchor.x + reach + JUST_OUT_OF_REACH, layout.anchor.y);
+    let inside = UVec2::new(layout.anchor.x + reach, layout.anchor.y);
+    place(&mut app, b, start, Some(layout.anchor));
+    app.world.entity_mut(b).insert(BandTravel {
+        target: inside,
+        departed: false,
+    });
+
+    run_turn(&mut app);
+
+    let standing = app
+        .world
+        .get::<Tile>(cohort(&app, b).current_tile)
+        .unwrap()
+        .position;
+    assert_eq!(
+        standing, inside,
+        "fixture: B walked into direct reach this turn"
+    );
+    let published = published_relay(&mut app, b);
+    assert!(
+        published.direct.contains(&inside),
+        "fixture: on the frame's positions B now stands in the direct region"
+    );
+    assert_eq!(published.hops, 1, "the hop count the term was priced from");
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let morale_culture = envelope
+        .payload_as_snapshot()
+        .expect("a snapshot payload")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the cohort list is published")
+        .iter()
+        .find(|row| row.entity() == b.to_bits())
+        .expect("B is on the wire")
+        .moraleCulture();
+    let culture = wellbeing(&app).culture.clone();
+    let anchor_belief = app.world.resource::<BeliefRegistry>().get(layout.anchor);
+    let weight = culture.anchor_weight(anchor_belief);
+    let blend = scalar_from_f32(
+        weight
+            * (HALF_STRENGTH * culture.near_bonus
+                - (FULL_STRENGTH - HALF_STRENGTH) * culture.away_drag),
+    );
+    assert!(
+        (morale_culture - blend.raw()).abs() <= RAW_TOLERANCE,
+        "moraleCulture {morale_culture} is the one-hop blend {}",
+        blend.raw()
+    );
 }

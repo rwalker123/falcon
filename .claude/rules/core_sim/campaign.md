@@ -337,8 +337,9 @@ sum IS
 rewrite of the morale update. The dominant *negative* contributor becomes `last_morale_cause`
 (`MoraleCause` ∈ `None | Terrain | Cold | Unrest | Culture`) when the delta is negative, else `None`. Drivers:
 `Terrain` = terrain attrition + logistics hardness, `Cold` = temperature-difference penalty,
-`Unrest` = crisis impacts + cultural sentiment, `Culture` = standing beyond walking reach of the
-band's ancestors' place.
+`Unrest` = crisis impacts + cultural sentiment, `Culture` = the away side of the near / far from
+the ancestors term — a band not tied to its ancestors' place at full strength (`belief.md` → "The
+formula").
 Starvation is deliberately **not** a morale cause — it stays on the days-of-food path. The two
 place-based (negative) terms come from the shared **`tile_morale_pressure(terrain, temperature,
 &MoralePressureConfig)`** helper (`systems.rs`), which returns the tile-intrinsic per-turn morale

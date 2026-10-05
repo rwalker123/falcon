@@ -26,8 +26,8 @@ combat sites in `systems/labor.rs`. What belief DOES — the culture morale term
 
 | File | Purpose |
 |------|---------|
-| `src/data/wellbeing_config.json` → `culture` | `near_bonus` (**0.01**) — morale per turn a band gains standing within walking reach of a saturated anchor. PLAYTEST DIAL; validated finite and `>= 0` at parse |
-| | `away_drag` (**0.02**) — morale per turn a band loses standing beyond reach of a saturated anchor. PLAYTEST DIAL; validated finite and `>= 0` |
+| `src/data/wellbeing_config.json` → `culture` | `near_bonus` (**0.01**) — morale per turn a band gains at full strength (`r = 1`, within its own walking reach) of a saturated anchor; scaled by `r` through kin. PLAYTEST DIAL; validated finite and `>= 0` at parse |
+| | `away_drag` (**0.02**) — morale per turn a band loses when nothing ties it to a saturated anchor (`r = 0`); scaled by `1 − r` through kin. PLAYTEST DIAL; validated finite and `>= 0` |
 | | `belief_half_saturation` (**10.0**) — the belief at which the anchor weighs one half, in dead-equivalents: ten people's worth of ancestors. PLAYTEST DIAL; validated finite and `> 0` (it is the weight's denominator at zero belief). Loader `wellbeing_config.rs` (`CultureConfig`), env override `WELLBEING_CONFIG_PATH` |
 | | `min_anchor_belief` (**1.0**) — the least belief a place must hold before a band adopts it as its anchor: one whole death's worth. Gates adoption only. PLAYTEST DIAL; validated finite and `>= 0` |
 | | `relay_per_hop` (**0.5**) — how much of the reach each hop of kin relays: a band tied in through `n` bands of its own people is near at `relay_per_hop ^ n`. PLAYTEST DIAL; validated finite and in `[0, 1]`; `0` turns relaying off and reproduces the unrelayed term exactly |
@@ -131,7 +131,16 @@ bands: hop 0 is every band with `walk.within(roads, its standing, anchor)` — t
 band joins at hop `h + 1` when `walk.within(roads, its standing, a hop-h band's standing)` (standing
 tile first, the term's argument order). A relayer need not hold that anchor itself. The input is
 ordered by `relay_order_key` (`BandId`, then entity), and `simulate_population` and the capture both
-call it, so the term and the drawn region cannot disagree.
+call it.
+
+**What is guaranteed to agree, and what is not.** The hop count and the term come from ONE search on
+the same turn: `simulate_population` stores the count it priced the term from on the cohort
+(`PopulationCohort::last_belief_relay_hops`, beside `last_morale_contributions`), and the frame
+publishes that stored count. It runs before `advance_band_movement` and
+`advance_population_migration`, so a recount at capture on the moved positions would contradict
+`moraleCulture` on any turn a band or its kin walk — which is why nothing recounts it. The drawn
+regions answer a different question — where could this band walk NOW and be near or tied in — so
+they are the same test applied to the frame's positions, struck at capture.
 
 - **Same people only.** Another people's band beside you is not kin. Crossing between peoples belongs
   to the single neighbour-mixing system #765 calls for — culture, belief and later quantities
@@ -201,23 +210,29 @@ tie-break order is Terrain ≥ Climate ≥ Unrest ≥ Culture (`MoraleContributi
   **It is the same test the term runs, not a second rule**: `WalkReach::region_around(roads, anchor)`
   keeps exactly the tiles `t` for which `within(roads, t, anchor)` holds, standing tile first, and
   scans only the hex disk of `WalkReach::max_reach_tiles` (`base_reach` plus the widest road bonus,
-  the same bound `within` refuses past). Inside the region the term reads `+near`, outside it `−away`.
-  Empty with no anchor.
-- Both are **derived at capture** (`snapshot/capture.rs` builds one `WalkReach` per capture from the
+  the same bound `within` refuses past). Standing inside it a band is direct (`r = 1`,
+  `+near_bonus × s`); outside it the band reads the blend if its kin tie it in (the relayed region
+  below) and `−away_drag × s` if nothing reaches it. Empty with no anchor.
+- The anchor and both regions are **derived at capture** (`snapshot/capture.rs` builds one
+  `WalkReach` per capture from the
   live configs and the live roads) and never checkpointed — the anchor itself rides the cohort. Both
   live on `PopulationCohortState`, whose delta comparison is its derived `PartialEq`, so a road built
   or an anchor moved rides the next delta. A foreign band's redacted row publishes neither (the
   allow-list redaction defaults them).
-- **The relay**: `beliefRelayHops:ubyte` — `0` direct (and `0` with no anchor; read
-  `hasBeliefAnchor`), `n` reached through `n` bands of kin, **`255` unreached**
-  (`sim_schema::BELIEF_RELAY_UNREACHED`: an anchor is held and no chain reaches it); a chain longer
-  than `254` publishes `254` (`BELIEF_RELAY_MAX_HOPS`).
+- **The relay**: `beliefRelayHops:ubyte` — the hop count `moraleCulture` was priced from, published
+  off `PopulationCohort::last_belief_relay_hops` (per-turn derived telemetry like the morale
+  contributions; it rides the cohort into the checkpoint, `SAVE_FORMAT_VERSION` 25). `0` direct (and
+  `0` with no anchor; read `hasBeliefAnchor`), `n` reached through `n` bands of kin, **`255`
+  unreached** (`sim_schema::BELIEF_RELAY_UNREACHED`: an anchor is held and no chain reaches it); a
+  chain longer than `254` publishes `254` (`BELIEF_RELAY_MAX_HOPS`). One encoding,
+  `belief_relay::wire_hops`. A split's daughter and a launched party start at `0`.
 - **The relayed region**: `beliefRelayReachX` / `beliefRelayReachY:[uint]`, zipped and row-major —
   every tile NOT in the direct region from which this band would be tied in through its OTHER kin:
   the union of `region_around(relayer)` over every band the anchor's reach gets to **with this band
   left out of the search** (`BeliefRelay::relayers_without`). Leaving the band out is what makes the
   region a statement about where it could walk: a band cannot relay to itself, nor through bands
-  reached only through it. Derived at capture from the same search, never saved; own bands only.
+  reached only through it. Derived at capture from the same search on the frame's positions, never
+  saved; own bands only.
 
 ## Tests
 
@@ -232,7 +247,7 @@ tie-break order is Terrain ≥ Climate ≥ Unrest ≥ Culture (`MoraleContributi
 | `raiding_party::a_raiding_partys_dead_credit_no_belief` | a lethal raid by a detached `Deny` party leaves the registry untouched (with a liveness assertion that people died) |
 | `labor_yield_tests::a_resident_hunts_dead_credit_belief_to_the_tile_the_band_stands_on` | the hunt seam credits the band's tile, and only the people actually lost |
 | `belief_culture::a_band_within_reach_of_belief_gains_near_bonus_times_its_weight` | a band standing within reach of a belief tile anchors to it and gains exactly `near_bonus × s` |
-| `belief_culture::a_band_beyond_reach_of_its_anchor_loses_away_drag_and_names_culture` | walked beyond reach it keeps the anchor and gains `−away_drag × s`; with the drag dominant the turn's cause is Culture, wire `4` |
+| `belief_culture::a_band_beyond_reach_of_its_anchor_loses_away_drag_and_names_culture` | walked beyond reach with no kin to tie it in (`r = 0`) it keeps the anchor and gains `−away_drag × s`; with the drag dominant the turn's cause is Culture, wire `4` |
 | `belief_culture::a_band_that_never_stood_near_belief_has_no_anchor_and_no_term` | the stranger's-cemetery guard: belief out of reach leaves no anchor and a zero term |
 | `belief_culture::a_road_brings_a_just_out_of_reach_anchor_into_reach` | a tile one step past `base_reach` is out of reach with no road and in reach over a laid trail |
 | `belief_culture::the_anchor_moves_to_a_stronger_tile_but_not_an_equal_one` | an equal tile earlier in row-major order does not take the anchor; a stronger one does |
@@ -253,6 +268,7 @@ tie-break order is Terrain ≥ Climate ≥ Unrest ≥ Culture (`MoraleContributi
 | `belief_culture::relay_per_hop_zero_reproduces_the_unrelayed_term` | at `relay_per_hop = 0` the direct band reads `w × near` and the kin band `−w × away` |
 | `belief_culture::a_band_does_not_adopt_a_place_through_kin` | an anchorless band within reach of a near kin band gains no anchor and no term |
 | `belief_culture::the_relay_hops_and_region_are_on_the_encoded_snapshot` | on the envelope: A `0`, B `1` with its own tile in a relayed region disjoint from the direct one, a far kin band `255` |
+| `belief_culture::the_published_hop_count_is_the_one_the_term_was_priced_from` | B, one hop out, walks into direct reach during the turn: the encoded frame publishes hops `1` beside the one-hop blend in `moraleCulture`, not the `0` a recount on its new tile would give |
 | `belief_culture::the_published_relayed_region_agrees_with_the_term_at_every_tile` | a kin band on every published relayed tile reads `r > 0`, and on every bordering tile outside both regions `r == 0` |
 | `belief_relay::tests::*` | the search on its own: a chain halves per hop, another people relays nothing, an anchorless band reaches nothing, a band is not its own relayer |
 | `labor_allocation::a_far_work_partys_hunt_dead_credit_no_belief` | a party posted past `band_work_range` loses people and the registry stays empty — neither the camp nor the herd tile gains belief |

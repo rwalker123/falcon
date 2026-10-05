@@ -2878,8 +2878,9 @@ pub fn capture_snapshot(
             config.map_topology.wrap_horizontal,
         );
         // **Kin relay the reach** — the ONE relay search (`crate::belief_relay`) over every resident
-        // band, in the order `simulate_population` hands it, so the published hops and relayed
-        // region are the ties the culture term is priced from.
+        // band, in the order `simulate_population` hands it, struck on THIS frame's positions for the
+        // relayed region each own band publishes. The hop count is not read off it: the frame
+        // publishes the one the turn's term was priced from (`last_belief_relay_hops`).
         let (belief_relay, relay_index) = {
             let mut input: Vec<((u64, u64), Entity, crate::belief_relay::RelayBand)> = populations
                 .iter()
@@ -3118,7 +3119,10 @@ pub fn capture_snapshot(
                         .belief_anchor
                         .map(|anchor| walk.region_around(&roads, anchor))
                         .unwrap_or_default();
-                    let belief_relay = match relay_index.get(&entity) {
+                    // The relayed REGION is "where could this band walk NOW and be tied in", so it
+                    // is struck on the frame's positions; the hop count is the turn's own reading
+                    // off the cohort, never recounted here.
+                    let belief_relay_region: Vec<UVec2> = match relay_index.get(&entity) {
                         Some(&index) if cohort.belief_anchor.is_some() => {
                             let direct: std::collections::BTreeSet<(u32, u32)> =
                                 belief_reach.iter().map(|tile| (tile.y, tile.x)).collect();
@@ -3129,16 +3133,13 @@ pub fn capture_snapshot(
                                 .map(|tile| (tile.y, tile.x))
                                 .filter(|key| !direct.contains(key))
                                 .collect();
-                            crate::snapshot::population::BeliefRelayReading {
-                                hops: belief_relay.hops(index),
-                                region: region.into_iter().map(|(y, x)| UVec2::new(x, y)).collect(),
-                            }
+                            region.into_iter().map(|(y, x)| UVec2::new(x, y)).collect()
                         }
-                        _ => Default::default(),
+                        _ => Vec::new(),
                     };
                     Some(population_state(PopulationStateInputs {
                         belief_reach,
-                        belief_relay,
+                        belief_relay_region,
                         entity,
                         band_id,
                         band_name,

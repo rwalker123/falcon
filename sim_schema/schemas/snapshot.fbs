@@ -1462,9 +1462,11 @@ table PopulationCohortState {
   // without outside contact) the ceiling is lifted, fertilityCeiling reads 1e6 at any head-count,
   // and this publishes 0. A client reads 0 as unrestricted, never as a ceiling of nobody.
   breedingCeiling:uint = 0;
-  // Layer-1 CULTURE morale contribution - near / far from the ancestors (issue #699): +near_bonus x s
-  // while the band stands within walking reach of its belief anchor, -away_drag x s beyond it, 0 with
-  // no anchor; s = b / (b + belief_half_saturation) for the anchor's belief b. Signed, fixed-point
+  // Layer-1 CULTURE morale contribution - near / far from the ancestors (issue #699):
+  // s x (r x near_bonus - (1 - r) x away_drag), where s = b / (b + belief_half_saturation) for the
+  // anchor's belief b and r is the kin-relay strength the term was priced from (beliefRelayHops): r = 1
+  // standing within walking reach of the anchor (+near_bonus x s), r = relay_per_hop^n tied in through
+  // n bands of kin (the blend), r = 0 unreached (-away_drag x s); 0 with no anchor. Signed, fixed-point
   // (FIXED_POINT_SCALE = 1e6), part of the moraleSettling/Terrain/Climate/Unrest breakdown whose
   // signed sum IS moraleDelta. Derived per-turn.
   moraleCulture:long = 0;
@@ -1473,13 +1475,16 @@ table PopulationCohortState {
   hasBeliefAnchor:bool = false;
   beliefAnchorX:uint = 0;
   beliefAnchorY:uint = 0;
-  // Every tile a band could STAND on and still count as near its anchor (zipped x/y, row-major, the
-  // `pendingRevealX/Y` idiom) - derived at capture from the same road-aware walk test the culture
-  // term uses (core_sim `supply::WalkReach::within(standing, anchor)`), so the drawn region and the
-  // term cannot disagree. Inside it moraleCulture is +near; outside it, -away. Empty with no anchor.
+  // Every tile a band could STAND on and be within reach of its anchor itself (zipped x/y, row-major,
+  // the `pendingRevealX/Y` idiom) - derived at capture on the frame's positions from the same
+  // road-aware walk test the culture term uses (core_sim `supply::WalkReach::within(standing,
+  // anchor)`). Standing inside it r = 1 (+near_bonus x s); outside it the band is tied in through kin
+  // (beliefRelayReachX/Y, the blend) or unreached (-away_drag x s). Empty with no anchor.
   beliefReachX:[uint];
   beliefReachY:[uint];
-  // KIN RELAY THE REACH (issue #699): how many hops of this band's own people tie it to its anchor.
+  // KIN RELAY THE REACH (issue #699): how many hops of this band's own people tied it to its anchor
+  // when this turn's culture term was priced - the count moraleCulture was priced from, stored by the
+  // sim (PopulationCohort.last_belief_relay_hops), never recounted at capture on moved positions.
   // 0 = it stands within reach of the anchor itself (and 0 with no anchor - read hasBeliefAnchor);
   // n = reached through n bands of kin, near at relay_per_hop^n; 255 = UNREACHED (an anchor is held
   // and no chain of kin reaches it - the band is fully away). A chain longer than 254 publishes 254.
@@ -1487,7 +1492,8 @@ table PopulationCohortState {
   // The RELAYED region (zipped x/y, row-major): every tile NOT in beliefReachX/Y where THIS band,
   // standing there, would be within walking reach of some other band of its people that the anchor's
   // reach gets to without it (any hop) - where kin keep it tied in. Derived at capture from the same
-  // relay search the culture term reads. Empty with no anchor.
+  // relay search, run on the frame's positions: it answers where the band could walk NOW and be tied
+  // in, a different question from the turn's hop count. Empty with no anchor.
   beliefRelayReachX:[uint];
   beliefRelayReachY:[uint];
 }

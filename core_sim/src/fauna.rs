@@ -14055,6 +14055,7 @@ mod tests {
                     crate::lineage::MIN_BAND_LINES,
                 ),
                 belief_anchor: None,
+                last_belief_relay_hops: 0,
             },
         ));
     }

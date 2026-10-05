@@ -201,6 +201,7 @@ fn cohort(tile: bevy::prelude::Entity, working: u32) -> PopulationCohort {
             core_sim::MIN_BAND_LINES,
         ),
         belief_anchor: None,
+        last_belief_relay_hops: 0,
     }
 }
 

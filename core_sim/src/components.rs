@@ -1453,6 +1453,14 @@ pub struct PopulationCohort {
     /// `simulate_population`; on the client wire as `PopulationCohortState.morale_{settling,terrain,
     /// climate,unrest,culture}`.
     pub last_morale_contributions: MoraleContributions,
+    /// **The kin-relay hop count the culture term was priced from this turn** — the reading off the
+    /// one relay search `simulate_population` ran (`crate::belief_relay`), in the wire's encoding:
+    /// `0` direct or no anchor, `n` hops of kin, `sim_schema::BELIEF_RELAY_UNREACHED` (`255`) for an
+    /// anchor no chain reaches, a longer chain capped at `sim_schema::BELIEF_RELAY_MAX_HOPS`.
+    /// Recomputed each turn beside `last_morale_contributions` and published as
+    /// `PopulationCohortState.beliefRelayHops`, so the hop count a frame shows is the one its
+    /// `moraleCulture` was priced from — not a recount on positions the turn's movement changed.
+    pub last_belief_relay_hops: u8,
     /// The three named fertility factors behind this turn's births — `hunger` (did we eat) ×
     /// `reserve` (is there a cushion) × `trend` (is the cushion growing or shrinking), the
     /// `birth_rate` multiplier from `docs/plan_population_growth_model.md`. The birth path's
@@ -1529,7 +1537,9 @@ pub enum MoraleCause {
     Cold,
     /// Crisis impacts + cultural sentiment (unrest) dominated.
     Unrest,
-    /// The band stands beyond walking reach of its ancestors' place (its `belief_anchor`).
+    /// The culture term's away side dominated: the band is not tied in to its ancestors' place (its
+    /// `belief_anchor`) at full strength — beyond its own walking reach and reached only weakly (or
+    /// not at all) through its kin.
     Culture,
 }
 
@@ -1692,9 +1702,10 @@ pub struct MoraleContributions {
     pub climate: Scalar,
     /// crisis impacts + cultural sentiment bias (signed).
     pub unrest: Scalar,
-    /// near / far from the ancestors: `+near_bonus × s` within walking reach of the band's
-    /// `belief_anchor`, `−away_drag × s` beyond it, `0` with no anchor (signed;
-    /// `wellbeing_config.json` → `culture`).
+    /// near / far from the ancestors: `s × (r × near_bonus − (1 − r) × away_drag)` for the band's
+    /// `belief_anchor`, `r` its kin-relay strength — `1` within its own walking reach
+    /// (`+near_bonus × s`), `relay_per_hop ^ n` tied in through `n` bands of kin, `0` unreached
+    /// (`−away_drag × s`); `0` with no anchor (signed; `wellbeing_config.json` → `culture`).
     pub culture: Scalar,
 }
 

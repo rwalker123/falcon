@@ -6,8 +6,10 @@
 //! it again — no hop cap, the strength simply dies out.
 //!
 //! [`resolve_belief_relay`] is the ONE search. `simulate_population` reads a band's hop count off it
-//! to blend the culture term, and the snapshot capture reads the same result to publish the hop count
-//! and the relayed region — so the morale term and the drawn region cannot disagree.
+//! to blend the culture term and stores that count on the cohort, which the frame publishes — so the
+//! hop count and the term come from one search on the same turn. The snapshot capture runs the same
+//! search on the frame's positions for the relayed region: the same test, applied to where the bands
+//! stand now.
 //!
 //! **Same people only, resident bands only.** A detached party is not a camp a band can be tied in
 //! through, and another people's band is not your kin. Crossing between peoples belongs to the
@@ -26,6 +28,20 @@ use crate::supply::WalkReach;
 
 /// The hop count of a band standing within walking reach of its anchor itself.
 pub const DIRECT_HOPS: u32 = 0;
+
+/// **A band's hop count in the wire's encoding** (`PopulationCohortState.beliefRelayHops`): `0`
+/// direct or with no anchor, `n` hops of kin, `sim_schema::BELIEF_RELAY_UNREACHED` for an anchor no
+/// chain reaches, and a longer chain capped at `sim_schema::BELIEF_RELAY_MAX_HOPS`. The one
+/// encoding — `simulate_population` stores it on the cohort and the capture publishes what it stored.
+pub fn wire_hops(anchor: Option<UVec2>, hops: Option<u32>) -> u8 {
+    match (anchor, hops) {
+        (None, _) => DIRECT_HOPS as u8,
+        (Some(_), None) => sim_schema::BELIEF_RELAY_UNREACHED,
+        (Some(_), Some(hops)) => u8::try_from(hops)
+            .unwrap_or(sim_schema::BELIEF_RELAY_MAX_HOPS)
+            .min(sim_schema::BELIEF_RELAY_MAX_HOPS),
+    }
+}
 
 /// Where a band with no durable id sorts — after every band that has one.
 const NO_BAND_ID_ORDER: u64 = u64::MAX;

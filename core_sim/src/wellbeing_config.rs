@@ -115,17 +115,20 @@ impl Default for MigrationConfig {
 
 /// Layer 1 — the **culture** morale term: near / far from the ancestors
 /// (`docs/plan_civilization_steps.md` §"What belief does, through seams that exist"). With `b` the
-/// belief on the band's anchor tile and `s = b / (b + belief_half_saturation)` its saturating weight,
-/// the term is `+near_bonus × s` while the band stands within walking reach of the anchor
-/// (`supply::WalkReach`, the migration reach) and `−away_drag × s` beyond it; `0` with no anchor.
-/// In or out of reach is binary — the drag does not grow with distance. All three are PLAYTEST
-/// DIALs.
+/// belief on the band's anchor tile, `s = b / (b + belief_half_saturation)` its saturating weight and
+/// `r` the band's kin-relay strength (`crate::belief_relay`), the term is
+/// `s × (r × near_bonus − (1 − r) × away_drag)`: `r = 1` within the band's own walking reach of the
+/// anchor (`supply::WalkReach`, the migration reach) gives `+near_bonus × s`, `r = relay_per_hop ^ n`
+/// through `n` bands of kin gives the blend, and `r = 0` (unreached) gives `−away_drag × s`; `0` with
+/// no anchor. The drag does not grow with distance. Every lever is a PLAYTEST DIAL.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct CultureConfig {
-    /// Morale per turn a band gains standing within reach of a saturated anchor.
+    /// Morale per turn a band gains at full strength (`r = 1`, standing within its own reach) of a
+    /// saturated anchor; scaled by `r` through kin.
     pub near_bonus: f32,
-    /// Morale per turn a band loses standing beyond reach of a saturated anchor.
+    /// Morale per turn a band loses when nothing ties it to a saturated anchor (`r = 0`); scaled by
+    /// `1 − r` through kin.
     pub away_drag: f32,
     /// Belief (dead-equivalents) at which the anchor's weight is one half.
     pub belief_half_saturation: f32,

@@ -493,6 +493,7 @@ fn spawn_forager_of(
                     core_sim::MIN_BAND_LINES,
                 ),
                 belief_anchor: None,
+                last_belief_relay_hops: 0,
             },
             StartingUnit {
                 kind: "BandForager".to_string(),
@@ -1493,6 +1494,7 @@ fn a_field_worked_by(crew: u32, ledger: core_sim::BandEquipment) -> (App, Entity
                     core_sim::MIN_BAND_LINES,
                 ),
                 belief_anchor: None,
+                last_belief_relay_hops: 0,
             },
             StartingUnit {
                 kind: "BandForager".to_string(),

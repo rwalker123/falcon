@@ -222,6 +222,7 @@ fn spawn_the_farming_band(app: &mut App, tile: bevy::prelude::Entity, source: UV
                 core_sim::MIN_BAND_LINES,
             ),
             belief_anchor: None,
+            last_belief_relay_hops: 0,
         },
         StartingUnit {
             kind: "BandForager".to_string(),

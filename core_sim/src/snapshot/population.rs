@@ -687,18 +687,11 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// near its anchor, resolved at capture by [`crate::supply::WalkReach::region_around`], the same
     /// walk test the culture morale term reads. Empty with no anchor.
     pub(crate) belief_reach: Vec<UVec2>,
-    /// **How the band's own people tie it to its anchor** — the relay search's hops and the relayed
-    /// region, resolved at capture by [`crate::belief_relay`], the search the culture term reads.
-    pub(crate) belief_relay: BeliefRelayReading,
-}
-
-/// One band's reading off the relay search, for the wire.
-#[derive(Debug, Clone, Default)]
-pub(crate) struct BeliefRelayReading {
-    /// `None` = unreached (or no anchor); `Some(0)` = direct.
-    pub(crate) hops: Option<u32>,
-    /// Tiles outside the direct region from which a band of this people would be tied in.
-    pub(crate) region: Vec<UVec2>,
+    /// **The band's relayed region** — tiles outside the direct region from which it would be tied
+    /// in through its other kin, resolved at capture by [`crate::belief_relay`] on the frame's
+    /// positions. (The hop count is NOT recounted here: the frame publishes the one the turn's term
+    /// was priced from, `PopulationCohort::last_belief_relay_hops`.)
+    pub(crate) belief_relay_region: Vec<UVec2>,
 }
 
 /// The two webs' registries, for resolving a queue entry's **live** rung. No ladder: both
@@ -960,7 +953,7 @@ pub(crate) fn redacted_population_state(
 pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationCohortState {
     let PopulationStateInputs {
         belief_reach,
-        belief_relay,
+        belief_relay_region,
         entity,
         band_id,
         band_name,
@@ -1869,13 +1862,12 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         belief_anchor_y: cohort.belief_anchor.map_or(0, |anchor| anchor.y),
         belief_reach_x: belief_reach.iter().map(|tile| tile.x).collect(),
         belief_reach_y: belief_reach.iter().map(|tile| tile.y).collect(),
-        belief_relay_hops: match (cohort.belief_anchor, belief_relay.hops) {
-            (None, _) => crate::belief_relay::DIRECT_HOPS as u8,
-            (Some(_), None) => sim_schema::BELIEF_RELAY_UNREACHED,
-            (Some(_), Some(hops)) => hops.min(u32::from(sim_schema::BELIEF_RELAY_MAX_HOPS)) as u8,
-        },
-        belief_relay_reach_x: belief_relay.region.iter().map(|tile| tile.x).collect(),
-        belief_relay_reach_y: belief_relay.region.iter().map(|tile| tile.y).collect(),
+        // The hop count the turn's culture term was priced from (`simulate_population`), never a
+        // recount: a band or its kin that moved after the term was priced would otherwise publish a
+        // count that contradicts `morale_culture`.
+        belief_relay_hops: cohort.last_belief_relay_hops,
+        belief_relay_reach_x: belief_relay_region.iter().map(|tile| tile.x).collect(),
+        belief_relay_reach_y: belief_relay_region.iter().map(|tile| tile.y).collect(),
         morale: cohort.morale.raw(),
         generation: cohort.generation,
         faction: cohort.faction.0,
@@ -2717,6 +2709,7 @@ mod tests {
                 crate::lineage::MIN_BAND_LINES,
             ),
             belief_anchor: None,
+            last_belief_relay_hops: 0,
         }
     }
 
@@ -2737,7 +2730,7 @@ mod tests {
     ) -> PopulationCohortState {
         population_state(PopulationStateInputs {
             belief_reach: Vec::new(),
-            belief_relay: Default::default(),
+            belief_relay_region: Vec::new(),
             entity: Entity::from_raw(1),
             // These fixtures assert on the derived readouts, not on band identity.
             band_id: None,

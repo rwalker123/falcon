@@ -324,6 +324,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                     core_sim::MIN_BAND_LINES,
                 ),
                 belief_anchor: None,
+                last_belief_relay_hops: 0,
             },
             StartingUnit {
                 kind: "BandKeeper".to_string(),

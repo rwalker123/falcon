@@ -309,6 +309,7 @@ fn spawn_forager_with_workers(
                     core_sim::MIN_BAND_LINES,
                 ),
                 belief_anchor: None,
+                last_belief_relay_hops: 0,
             },
             StartingUnit {
                 kind: "BandForager".to_string(),
