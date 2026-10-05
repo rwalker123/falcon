@@ -935,17 +935,23 @@ impl WalkReachInputs<'_> {
 /// the strongest — the first in the registry's row-major order among equals — replaces the anchor
 /// only when it holds strictly more belief than the anchor holds now (no anchor holds
 /// [`NO_BELIEF`]). Ties keep the anchor the band already has.
+///
+/// **A place qualifies only once it holds `min_anchor_belief`** (`culture.min_anchor_belief`, one
+/// whole death's worth at the shipped `1.0`). Belief accrues FRACTIONAL deaths every turn, so without
+/// the gate every band would adopt the tile it stands on after its first turn of old-age mortality.
+/// Accrual is untouched — the gate decides only adoption.
 pub fn refresh_belief_anchor(
     anchor: Option<UVec2>,
     standing: UVec2,
     belief: &BeliefRegistry,
     walk: &crate::supply::WalkReach,
     roads: &crate::routes::RoadRegistry,
+    min_anchor_belief: f32,
 ) -> Option<UVec2> {
     let held = anchor.map_or(NO_BELIEF, |tile| belief.get(tile));
     let mut strongest: Option<(UVec2, f32)> = None;
     for (tile, value) in belief.iter() {
-        if strongest.is_some_and(|(_, best)| value <= best) {
+        if value < min_anchor_belief || strongest.is_some_and(|(_, best)| value <= best) {
             continue;
         }
         if walk.within(roads, standing, tile) {
@@ -1045,6 +1051,7 @@ pub fn simulate_population(
                     &belief,
                     &walk,
                     &walk_inputs.roads,
+                    wellbeing.culture.min_anchor_belief,
                 );
                 culture_morale_contribution(
                     cohort.belief_anchor,

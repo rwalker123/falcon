@@ -129,6 +129,9 @@ pub struct CultureConfig {
     pub away_drag: f32,
     /// Belief (dead-equivalents) at which the anchor's weight is one half.
     pub belief_half_saturation: f32,
+    /// The least belief (dead-equivalents) a place must hold before a band adopts it as its anchor —
+    /// one whole death's worth at `1.0`. Gates adoption only; belief still accrues fractional deaths.
+    pub min_anchor_belief: f32,
 }
 
 impl Default for CultureConfig {
@@ -137,6 +140,7 @@ impl Default for CultureConfig {
             near_bonus: 0.01,
             away_drag: 0.02,
             belief_half_saturation: 10.0,
+            min_anchor_belief: 1.0,
         }
     }
 }
@@ -148,11 +152,12 @@ impl CultureConfig {
         belief / (belief + self.belief_half_saturation)
     }
 
-    /// `near_bonus` and `away_drag` must be finite and non-negative; `belief_half_saturation` must be
+    /// `near_bonus`, `away_drag` and `min_anchor_belief` must be finite and non-negative; `belief_half_saturation` must be
     /// finite and `> 0` (it is the weight's denominator at zero belief).
     pub fn validate(&self) -> Result<(), WellbeingConfigError> {
         require_non_negative_finite("culture.near_bonus", self.near_bonus)?;
         require_non_negative_finite("culture.away_drag", self.away_drag)?;
+        require_non_negative_finite("culture.min_anchor_belief", self.min_anchor_belief)?;
         if !self.belief_half_saturation.is_finite() || self.belief_half_saturation <= 0.0 {
             return Err(WellbeingConfigError::Invalid {
                 field: "culture.belief_half_saturation",
@@ -330,6 +335,7 @@ mod tests {
             shipped.belief_half_saturation,
             default.belief_half_saturation
         );
+        assert_eq!(shipped.min_anchor_belief, default.min_anchor_belief);
     }
 
     /// Belief equal to the half-saturation lever weighs exactly one half.
@@ -350,6 +356,18 @@ mod tests {
             WellbeingConfig::from_json_str(json),
             Err(WellbeingConfigError::Invalid {
                 field: "culture.belief_half_saturation",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_negative_min_anchor_belief_is_refused() {
+        let json = r#"{ "culture": { "min_anchor_belief": -1.0 } }"#;
+        assert!(matches!(
+            WellbeingConfig::from_json_str(json),
+            Err(WellbeingConfigError::Invalid {
+                field: "culture.min_anchor_belief",
                 ..
             })
         ));

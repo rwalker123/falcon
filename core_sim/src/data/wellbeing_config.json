@@ -25,6 +25,8 @@
     "_comment_away_drag": "Morale per turn lost standing beyond reach of a saturated anchor. PLAYTEST DIAL.",
     "away_drag": 0.02,
     "_comment_belief_half_saturation": "Belief at which the anchor weighs one half. Belief is in dead-equivalents, so 10 = ten people's worth of ancestors: a single death barely registers and a great cemetery caps the term. Must be > 0. PLAYTEST DIAL.",
-    "belief_half_saturation": 10.0
+    "belief_half_saturation": 10.0,
+    "_comment_min_anchor_belief": "The least belief a place must hold before a band adopts it as its anchor - one whole death's worth at 1.0 (belief is in dead-equivalents). Belief accrues FRACTIONAL deaths every turn, so without this gate every band would anchor to its start tile on turn one. Gates adoption only; accrual is unchanged, so a tile can still read under one dead. Must be finite and >= 0. PLAYTEST DIAL.",
+    "min_anchor_belief": 1.0
   }
 }

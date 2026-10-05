@@ -29,6 +29,7 @@ combat sites in `systems/labor.rs`. What belief DOES — the culture morale term
 | `src/data/wellbeing_config.json` → `culture` | `near_bonus` (**0.01**) — morale per turn a band gains standing within walking reach of a saturated anchor. PLAYTEST DIAL; validated finite and `>= 0` at parse |
 | | `away_drag` (**0.02**) — morale per turn a band loses standing beyond reach of a saturated anchor. PLAYTEST DIAL; validated finite and `>= 0` |
 | | `belief_half_saturation` (**10.0**) — the belief at which the anchor weighs one half, in dead-equivalents: ten people's worth of ancestors. PLAYTEST DIAL; validated finite and `> 0` (it is the weight's denominator at zero belief). Loader `wellbeing_config.rs` (`CultureConfig`), env override `WELLBEING_CONFIG_PATH` |
+| | `min_anchor_belief` (**1.0**) — the least belief a place must hold before a band adopts it as its anchor: one whole death's worth. Gates adoption only. PLAYTEST DIAL; validated finite and `>= 0` |
 | `src/data/belief_config.json` | `belief_per_death` (**1.0**) — belief added to the tile a band stands on, per person who dies there. At `1.0` the unit of belief **is** the dead-equivalent: a place reading `12` holds twelve people's worth of ancestors, and later sources are priced in that unit. Loader `belief_config.rs` on the shared boot seam (`config-loading.md`), env override `BELIEF_CONFIG_PATH`. No hot-reload kind. **There is deliberately no decay lever** |
 
 ## The store: `BeliefRegistry`
@@ -85,11 +86,20 @@ checkpoint".
 
 Each turn, before morale is computed, `refresh_belief_anchor` (`systems/population.rs`) walks the
 sparse registry and takes every tile within walking reach of where the band **stands**
-(`current_tile`, never `home` — the deaths source's reason). The strongest such tile replaces the
+(`current_tile`, never `home` — the deaths source's reason) that holds at least
+`culture.min_anchor_belief` (one whole death's worth). The strongest such tile replaces the
 anchor only when it holds **strictly more** belief than the anchor holds now (`registry.get(anchor)`;
 no anchor holds `NO_BELIEF`). Ties keep the existing anchor; among equal candidates the first in the
 registry's row-major order wins. Because belief is monotone, the anchor's own value never falls, so
 an anchor only ever moves to a stronger place.
+
+**A place qualifies only once it holds one whole death's worth.** The deaths source credits the
+turn's FRACTIONAL deaths every turn, old age included, so the tile a band stands on reads above zero
+after its first turn. Without the line, "strictly more than the anchor holds" against a band holding
+nothing adopted that tile at once — every band carried an anchor, and the map an urn, on its start
+tile after two quiet turns. The line gates **adoption only**: accrual is unchanged, so a tile can
+still read under one dead on its card, and the reach region and the anchor on the wire follow the
+anchor (no anchor, no region).
 
 **A stranger's cemetery is not yours.** A band that has never stood within reach of any belief has
 no anchor and no term, however much belief lies elsewhere on the map.
@@ -182,6 +192,9 @@ tie-break order is Terrain ≥ Climate ≥ Unrest ≥ Culture (`MoraleContributi
 | `belief_culture::a_fission_daughter_inherits_the_anchor` | the splinter carries its parent's anchor |
 | `belief_culture::the_anchor_round_trips_the_checkpoint_and_the_save` | `SimState` capture → restore, and the save payload's `BandRecord` |
 | `belief_culture::the_culture_contribution_is_on_the_encoded_snapshot` | `moraleCulture` on the encoded envelope equals the cohort's contribution |
+| `belief_culture::fractional_deaths_on_the_start_tile_do_not_anchor_the_band` | the reported bug: two quiet turns leave the start tile holding a fraction of a death, and the band has no anchor, no term, no anchor on the wire and no region |
+| `belief_culture::a_place_is_adopted_only_once_it_holds_one_whole_death` | a place at 0.9 in reach gives no anchor and a zero term; at 1.0 it is adopted |
+| `belief_culture::min_anchor_belief_scales_the_adoption_line` | at a lever of 3.0, a place holding 2.0 is refused and one holding 3.0 is adopted |
 | `belief_culture::the_anchor_and_its_reach_region_are_on_the_encoded_snapshot` | the anchor's tile and its gate on the envelope; the region holds the anchor and the band's own tile and not a tile past `base_reach` |
 | `belief_culture::a_band_with_no_anchor_publishes_an_empty_region` | no anchor: the gate is off, `0,0`, and the region is empty |
 | `belief_culture::a_road_brings_a_just_out_of_reach_tile_into_the_published_region` | a tile one step past `base_reach` joins the region only once a road connects it, and the change rides the delta |

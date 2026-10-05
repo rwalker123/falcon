@@ -577,3 +577,87 @@ fn the_published_region_agrees_with_the_term_at_every_tile() {
         );
     }
 }
+
+/// Just under one whole death's worth of belief.
+const UNDER_ONE_DEATH: f32 = 0.9;
+/// Exactly one whole death's worth — the shipped `min_anchor_belief`.
+const ONE_DEATH: f32 = 1.0;
+/// A retuned `min_anchor_belief`, and a place that falls short of it and one that meets it.
+const RAISED_MIN_ANCHOR: f32 = 3.0;
+const SHORT_OF_RAISED_MIN: f32 = 2.0;
+/// Turns of ordinary mortality the reported bug took to anchor a band to its start tile.
+const QUIET_TURNS: usize = 2;
+
+fn with_min_anchor_belief(app: &mut App, min_anchor_belief: f32) {
+    let mut tuned = (*wellbeing(app)).clone();
+    tuned.culture.min_anchor_belief = min_anchor_belief;
+    app.world
+        .insert_resource(WellbeingConfigHandle::new(std::sync::Arc::new(tuned)));
+}
+
+/// **The reported bug.** Turns of ordinary mortality credit the band's start tile a FRACTION of a
+/// death; that fraction must not anchor the band, put an anchor on the wire, or draw a region.
+#[test]
+fn fractional_deaths_on_the_start_tile_do_not_anchor_the_band() {
+    let mut app = one_faction_world();
+    let fx = fixture(&mut app);
+    for _ in 0..QUIET_TURNS {
+        morale_turn(&mut app);
+    }
+    let accrued = app.world.resource::<BeliefRegistry>().get(fx.at);
+    assert!(
+        accrued > 0.0 && accrued < ONE_DEATH,
+        "fixture: the start tile holds a fraction of a death ({accrued})"
+    );
+    assert_eq!(cohort(&app, fx.band).belief_anchor, None);
+    assert_eq!(culture_of(&app, fx.band), Scalar::from_i64(0));
+    let published = published_anchor(&mut app, fx.band);
+    assert!(!published.has_anchor, "no anchor on the wire");
+    assert!(published.region.is_empty(), "no region drawn");
+}
+
+/// **One whole death is the line**: a place at 0.9 in reach is not adopted and gives no term; the
+/// same place at 1.0 is.
+#[test]
+fn a_place_is_adopted_only_once_it_holds_one_whole_death() {
+    let under = {
+        let mut app = one_faction_world();
+        let fx = fixture(&mut app);
+        let place = along_row(&app, fx.at, NEARBY_STEPS);
+        stage_belief(&mut app, place, UNDER_ONE_DEATH);
+        morale_turn(&mut app);
+        (
+            cohort(&app, fx.band).belief_anchor,
+            culture_of(&app, fx.band),
+        )
+    };
+    assert_eq!(under, (None, Scalar::from_i64(0)));
+
+    let mut app = one_faction_world();
+    let fx = fixture(&mut app);
+    let place = along_row(&app, fx.at, NEARBY_STEPS);
+    stage_belief(&mut app, place, ONE_DEATH);
+    morale_turn(&mut app);
+    assert_eq!(cohort(&app, fx.band).belief_anchor, Some(place));
+    assert!(culture_of(&app, fx.band) > Scalar::from_i64(0));
+}
+
+/// **`min_anchor_belief` is honoured**: raised to 3.0, a place holding 2.0 is not adopted and one
+/// holding 3.0 is.
+#[test]
+fn min_anchor_belief_scales_the_adoption_line() {
+    let adopted = |belief: f32| -> bool {
+        let mut app = one_faction_world();
+        with_min_anchor_belief(&mut app, RAISED_MIN_ANCHOR);
+        let fx = fixture(&mut app);
+        let place = along_row(&app, fx.at, NEARBY_STEPS);
+        stage_belief(&mut app, place, belief);
+        morale_turn(&mut app);
+        cohort(&app, fx.band).belief_anchor == Some(place)
+    };
+    assert!(
+        !adopted(SHORT_OF_RAISED_MIN),
+        "2.0 falls short of a 3.0 line"
+    );
+    assert!(adopted(RAISED_MIN_ANCHOR), "3.0 meets it");
+}
