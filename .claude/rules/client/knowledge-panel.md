@@ -705,8 +705,11 @@ people rather than to any hex. Tags that are not on the roster (`nomadic_wayfind
   road); a code it does not know drops the tail and keeps the who.
 - **Three carriers, the unspent state's rule**: the `⇄` mark on the chip (`CONTACT_MARK`, in
   `SIGNAL`), the sentence plus its per-turn rate appended to the chip's tooltip, and the clause on the
-  reading's state line, whose own tooltip is the rate (`contact_rate`: the credit in the chip's whole
-  percent scale, the ladder's completion threshold being `KNOWLEDGE_COMPLETE`).
+  reading's state line, whose own tooltip is the rate.
+- **The rate is TURNS TO LEARN, never a percent a turn** — `contact_rate`: what is left of the track
+  (`KNOWLEDGE_COMPLETE` less the node's progress) over the credit, rounded up, as *"~3280 turns at
+  this rate"*. Shipped credits run under 0.0005 a turn, which a one-decimal percent printed as `+0.0%`
+  beside a chip saying the people is learning it. A credit at or below zero draws no rate line.
 - **The clause rides ON the state line, never under it.** A row of its own grows the open reading
   past `DETAIL_BLOCK_MIN_HEIGHT` for exactly the nodes that carry one, and the card breathes on open.
   Measured with three lessons staged: 820 × 648 open, closed and for every node on the roster.

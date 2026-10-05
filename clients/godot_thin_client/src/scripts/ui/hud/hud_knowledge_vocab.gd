@@ -275,9 +275,14 @@ const CONTACT_CHANNEL_CLAUSES := {
 const CONTACT_LINE_FORMAT := "Learning %s from the %s people"
 ## Joins the channel clause onto the line.
 const CONTACT_CLAUSE_SEPARATOR := " — "
-## The tooltip's per-turn rate: the credit in the same whole-percent scale the chip's percent reads
-## (the ledger's `0..1`, against a completion threshold of `HudConst.KNOWLEDGE_COMPLETE`).
-const CONTACT_RATE_FORMAT := "+%.1f%% a turn from contact"
+## The tooltip's rate, said as TURNS TO LEARN at it — what is left of the track (`KNOWLEDGE_COMPLETE`
+## less the node's progress) over the per-turn credit, rounded UP.
+##
+## ⛔ **NOT A PERCENT A TURN.** Shipped credits run well under 0.0005 a turn (Seed Selection by
+## watching at a tie of 0.25 is 0.00025), which a one-decimal percent prints as `+0.0%` beside a chip
+## saying the people IS learning it — the screen contradicting itself. A turn count stays legible at
+## any rate, and rounding up means it can never read 0 while something is still left to learn.
+const CONTACT_RATE_FORMAT := "~%d turns at this rate"
 ## The chip's mark. `⇄` is the glyph this HUD already draws for goods passing between two bands
 ## (`DetailFormat.TRANSFER_GLYPH`, in the Arrows block the carets come from), and a lesson is knowledge
 ## passing between two peoples. Typed rather than aliased so this leaf takes no load-time dependency.
@@ -295,13 +300,17 @@ static func contact_line(node: Dictionary) -> String:
 		int(lesson.get(CONTACT_LESSON_CHANNEL, -1)), ""))
 	return line if clause == "" else line + CONTACT_CLAUSE_SEPARATOR + clause
 
-## The per-turn rate for a node's tooltip. `""` for a node nothing teaches by contact.
+## The rate line for a node's tooltip — `CONTACT_RATE_FORMAT`. `""` for a node nothing teaches by
+## contact, AND for a credit at or below zero: no rate line at all rather than a division by it.
 static func contact_rate(node: Dictionary) -> String:
 	var lesson: Dictionary = node.get(NODE_CONTACT_LESSON, {})
 	if lesson.is_empty():
 		return ""
-	return CONTACT_RATE_FORMAT % (float(lesson.get(CONTACT_LESSON_CREDIT, 0.0)) \
-		* HudConst.PROGRESS_PERCENT_SCALE)
+	var credit := float(lesson.get(CONTACT_LESSON_CREDIT, 0.0))
+	if credit <= 0.0:
+		return ""
+	var remaining := maxf(HudConst.KNOWLEDGE_COMPLETE - float(node.get(NODE_PROGRESS, 0.0)), 0.0)
+	return CONTACT_RATE_FORMAT % int(ceil(remaining / credit))
 
 # ---- the filters -----------------------------------------------------------------------------
 # **COUNTS OVER ONE LIST, AND A NON-MATCHING NODE DIMS RATHER THAN DISAPPEARS.** The shape of the

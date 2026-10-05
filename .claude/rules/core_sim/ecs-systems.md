@@ -235,8 +235,9 @@ still shipped whole and masked by the raster client-side.
 > `openness` with the tie's strength, so `TradeLeakCurve` and `KnowledgeFragment.fidelity` were
 > deleted — `connections.md` → "Knowledge is the third rider".
 
-**Migration is the live path, and it rides people.** Knowledge crosses between peoples only when
-people do: a cross-people move under the wellbeing trickle (`advance_population_migration`,
+**Migration is one of two paths between peoples, and it rides people.** The other is contact
+(`connections.md` → "Knowledge is the third rider"), which teaches with nobody moving. Here, knowledge
+crosses when people do: a cross-people move under the wellbeing trickle (`advance_population_migration`,
 `factions.md` → "Defection is the unhappy trickle with the same-people filter lifted") credits the
 destination people's `DiscoveryProgressLedger` with `scale_migration_fragments(source knowledge)`,
 each fragment further scaled by the share of the source band that left (`moved / total`), and merges
