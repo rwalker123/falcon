@@ -11443,11 +11443,15 @@ impl CommandLog {
 
     /// Re-base: this world is a new starting point and nothing before it is reachable.
     ///
-    /// `new_game`, `reset_map` and **every config reload** land here. The reload is the interesting
-    /// one and it is the deliberate answer to a hole this arc flagged early: a `SimState` carries no
-    /// config *by design*, so replaying across a reload would run turns under whatever tuning is
-    /// live rather than the tuning of that tick. Re-basing is consistent with that decision and
-    /// needs no config serialization at all.
+    /// `load_game` and **every config reload** land here, and warn as they do. `new_game` and
+    /// `reset_map` build a fresh world and take a fresh [`CommandLog::new`] instead: the origin moves
+    /// just the same, but on the first game of a session there was no log to lose, so a warning
+    /// would cry wolf.
+    ///
+    /// The reload is the interesting one and it is the deliberate answer to a hole this arc flagged
+    /// early: a `SimState` carries no config *by design*, so replaying across a reload would run
+    /// turns under whatever tuning is live rather than the tuning of that tick. Re-basing is
+    /// consistent with that decision and needs no config serialization at all.
     fn rebase(&mut self, app: &bevy::prelude::App, reason: &str) {
         *self = Self::new(app);
         warn!(
