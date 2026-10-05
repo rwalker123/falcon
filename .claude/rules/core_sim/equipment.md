@@ -2221,7 +2221,7 @@ party that never engaged.
 - ~~The Crafter role and replenishment/upgrade are out of scope.~~ ~~What remains of #494 is the
   **count** and the quality **tier**.~~ **All three are wired**: replenishment (`crafting.md` → "The
   bench"), counts (batches, above) and tiers. **There is no Crafter role** — crafting always has a
-  subject, so `set_bench` staffs it like a worked source rather than like a standing role. What
+  subject, so `bench_enqueue` staffs it like a worked source rather than like a standing role. What
   remains of the arc is the **panel** (§7). ~~Nothing publishes a batch's count, tier or grade to a
   client yet.~~ **The wire is landed**: `PopulationCohortState.equipmentBatches` carries the count,
   the tier, the grade and the life wording, and `crafting.md` → "On the wire" is its rationale.

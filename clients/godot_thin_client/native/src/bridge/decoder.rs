@@ -22,9 +22,9 @@ use crate::dict::governance::{
     power_nodes_to_array,
 };
 use crate::dict::knowledge::{
-    discovered_sites_to_array, discovery_progress_to_array, great_discovery_definitions_to_array,
-    great_discovery_progress_states_to_array, great_discovery_states_to_array,
-    great_discovery_telemetry_to_dict,
+    contact_lessons_to_array, discovered_sites_to_array, discovery_progress_to_array,
+    great_discovery_definitions_to_array, great_discovery_progress_states_to_array,
+    great_discovery_states_to_array, great_discovery_telemetry_to_dict,
 };
 use crate::dict::map::tiles_to_array;
 use crate::dict::population::{demographics_to_array, generations_to_array, populations_to_array};
@@ -795,6 +795,11 @@ fn decode_delta_against(
             "discovered_sites",
             &discovered_sites_to_array(discovered_sites),
         );
+    }
+
+    // Whole-vector, like `discovered_sites`: absent on a delta = unchanged.
+    if let Some(lessons) = delta.knowledge().and_then(|s| s.contactLessons()) {
+        frame.insert_changed("contact_lessons", &contact_lessons_to_array(lessons));
     }
 
     if let Some(definitions) = delta

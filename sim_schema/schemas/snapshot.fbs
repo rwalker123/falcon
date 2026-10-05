@@ -1430,6 +1430,38 @@ table PopulationCohortState {
   // - foodLeftBehind + transferReceived - transferSent. A move is a command, so this accumulates
   // between captures on the transfer pair's snapshot window and is cleared after the turn capture.
   foodLeftBehind:float = 0;
+  // --- WHAT TO MAKE NEXT, RANKED BY WHO IS GOING WITHOUT (appended last) -----------------------
+  // The crafting panel's suggestion list, beside `craftOffers` in meaning (docs/plan_crafting_and_
+  // materials.md §7 "Suggestions"). Computed IN core_sim (`craft_suggestions`) so the AI's Craft
+  // specialist and auto-craft read the same list. Ranked by `workersWithout` descending, ties by
+  // `itemId` ascending. NUMBERS ONLY - the client owns the words, exactly as with craftOffers - and
+  // whether the item can be made at all is the CraftOffer's question: join on `itemId` ==
+  // `CraftOffer.outputItemId` for the recipe and the refusal. An item no recipe makes is still
+  // published. Empty on a detached party (it is never resupplied) and on a foreign band.
+  craftSuggestions:[CraftSuggestion];
+  // --- THE BREEDING CEILING (appended last, issue #688) ------------------------------------------
+  // An isolated people cannot grow past its founding lines (docs/plan_civilization_steps.md). The
+  // capped unit is the BREEDING POPULATION - the bands in this band's supply network, or this band
+  // alone when it is in none - and its ceiling is |union of its members' foundingLines| x
+  // demographics_config.json lineage.people_per_line. Births stop there; nobody is ever removed by
+  // it.
+  //
+  // THE FOURTH FERTILITY FACTOR, beside fertilityHunger/Reserve/Trend and in their fixed-point
+  // encoding (FIXED_POINT_SCALE = 1e6, NEUTRAL AT 1e6): the share of this turn's would-be births the
+  // breeding population had room for. 1e6 with room to spare, 0 at or above the ceiling, between
+  // where the room is short of the births. fertility = birth_rate x hunger x reserve x trend x
+  // ceiling. All-zero with the other three on a cohort that has not ticked (zero reserve is the
+  // not-projected sentinel).
+  fertilityCeiling:long = 0;
+  // The breeding population's head-count after this turn's demographics, whole people (the members'
+  // fixed-point totals summed, then rounded once). The same figure on every member band.
+  breedingPopulation:uint = 0;
+  // The breeding population's ceiling, in people. The same figure on every member band.
+  // 0 MEANS "NO INBREEDING CEILING": once |union of lines| x people_per_line reaches
+  // demographics_config.json lineage.free_breeding_at (~500, the size at which a people finds mates
+  // without outside contact) the ceiling is lifted, fertilityCeiling reads 1e6 at any head-count,
+  // and this publishes 0. A client reads 0 as unrestricted, never as a ceiling of nobody.
+  breedingCeiling:uint = 0;
   // Layer-1 CULTURE morale contribution - near / far from the ancestors (issue #699): +near_bonus x s
   // while the band stands within walking reach of its belief anchor, -away_drag x s beyond it, 0 with
   // no anchor; s = b / (b + belief_half_saturation) for the anchor's belief b. Signed, fixed-point
@@ -2148,6 +2180,18 @@ table LaborAssignment {
   fodderRateHome:float = 0;
   // One row per material id. NEVER summed into one figure.
   materialsRateHome:[MaterialPayoff];
+  // --- THIS ROW'S HANDS STILL WALKING HOME (appended last) ---------------------------------------
+  // A far crew cut or stood down walks home (PopulationCohortState.homeward*); these are the walks
+  // whose source is THIS row's, summed exactly as the band's fields are. The band fields remain the
+  // TOTAL: a walk whose row is gone (abandoned, lapsed, cancelled) appears only there, so the sum
+  // of every row's homewardWorkers is <= the band's. All 0 = nobody from this row walking home.
+  //
+  // Hands from this row walking home - on no row's crew, not idle, back the turn they arrive.
+  homewardWorkers:uint = 0;
+  // Turns until the last of THOSE hands is back; 0 = none walking.
+  homewardAllHomeIn:uint = 0;
+  // The food they carry, gross of the walk's rot (a deposit's material is not counted).
+  homewardFood:float = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).
@@ -4523,10 +4567,11 @@ table SnapshotHeader {
   baseFrameSeq:ulong = 0;
 }
 
+// No `fidelity` field: it was retired by #531 (docs/plan_contact_and_logistics.md §Settled by #531)
+// and DELETED rather than deprecated — partial transmission is what `progress` already is.
 table KnownTechFragment {
   discoveryId:uint;
   progress:long;
-  fidelity:long;
 }
 
 table DiscoveryProgressEntry {
@@ -4927,10 +4972,12 @@ table DrawnInput {
   amount:float;
 }
 
-// WHAT IS ON THIS BAND'S BENCH — one job at a time, so there is no queue to explain.
+// WHAT IS ON THIS BAND'S BENCH — ONE BENCH, ONE QUEUE, worked one order at a time.
 //
-// `recipeId` empty = an idle bench. That is a different statement from a blocked one: a blocked
-// bench has a recipe AND a `blockedReason`.
+// Every scalar field below describes the HEAD order (`orders[0]`), the one being worked; `orders`
+// is the whole queue. `recipeId` empty = an idle bench (an empty queue) - a different statement
+// from a blocked one: a blocked bench has a recipe AND a `blockedReason`. The crew (`workers`) and
+// `priority` belong to the BENCH and survive every queue edit; an idle bench may still have a crew.
 table BenchState {
   recipeId:string;
   displayName:string;
@@ -4943,7 +4990,6 @@ table BenchState {
   // refusal, because a bench with a full pile and nobody on it is also stopped.
   blockedReason:string;
   shortfalls:[MaterialShortfall];
-  itemsCompleted:uint;    // items finished on THIS job — the same count the wear and lesson charged
   drawn:bool;             // the pile for the pass in flight is already cut
   // The grade that pile FIXED. "" before the draw, and "" on a recipe that resolves no grade — the
   // same two cases as `CraftOffer.outputGrade` below (reads no characteristic, or outputs only
@@ -5000,6 +5046,83 @@ table BenchState {
   // Captured LIVE off the bench, exactly as `LaborAssignment.priority` is, so an edit lands on the
   // command's own recapture and no optimistic overlay is needed. Appended last (append-only).
   priority:SourcePriority = Normal;
+  // --- THE QUEUE (appended last) -----------------------------------------------------------------
+  // Every order on the bench, HEAD FIRST. Empty on an idle bench. An order's index here is the
+  // `order` the queue verbs (`bench_order_count`, `bench_remove`, `bench_raise`) address.
+  orders:[BenchOrder];
+  // --- WHICH ORDER THE SCALARS ABOVE DESCRIBE (appended last) -----------------------------------
+  // THE WORKED ORDER: the bench works the FIRST order, in queue order, that holds a pile or can draw
+  // one now. A short order keeps its place and is skipped (its own `BenchOrder.blockedReason` says
+  // why). Every scalar above describes `orders[worked]`; when no order can be worked they describe
+  // the head and `worked` is 0, so a fully stuck bench reads as its blocked head. 0 on an idle bench.
+  worked:uint = 0;
+}
+
+// ONE ORDER ON A BENCH'S QUEUE — `recipe x count`. Every order has a count (>= 1); the
+// repeat-until-cleared job is retired. When `made` reaches `count` the order leaves the queue and
+// the next one starts, drawing its own inputs.
+//
+// `progress` and `drawn` are the ORDER's pass in flight. Only the head is worked, but an order
+// raised over a head that had already drawn leaves that head PAUSED with its pile and progress - so
+// a non-head order can hold a cut pile, and removing it destroys that pile exactly as removing the
+// head does.
+table BenchOrder {
+  recipeId:string;
+  count:uint;          // items this order asks for (finished passes)
+  made:uint;           // items it has finished — the count the wear and lesson were charged
+  progress:float;      // worker-turns accrued toward the recipe's `work` on the pass in flight
+  drawn:bool;          // this order holds a pile already cut for its pass in flight
+  // WHY THIS ORDER IS BEING SKIPPED, resolved sim-side in the CraftOffer vocabulary ("Short 4.9
+  // bone", joined with " · "). "" for an order that holds a pile or can draw one now - it is not
+  // skipped. The crew's own refusal is NOT here: it is the bench's, on BenchState.blockedReason.
+  // Appended last.
+  blockedReason:string;
+  // `danger` when `blockedReason` is set, "" otherwise - the BenchState.blockedSeverity vocabulary.
+  blockedSeverity:string;
+}
+
+// ONE SUGGESTION — an item the band's consumers are short of, and how many to make.
+// A row of PopulationCohortState.craftSuggestions.
+//
+// SCORE: `workersWithout` - workers whose job needs this tool and who went without it this turn,
+// summed over the band's consumers (the standing pools' poolToe, the site crews' keeping TOE, the
+// take rows' kitToe). A detached party is NOT a source: it is never resupplied. A SPENT unit counts
+// (it is gone from stock, so it was not issued); a worn one does not (a tool performs at full
+// strength until it expires).
+//
+// `count` is the WHOLE shortfall in units, never capped by what the band can afford to make now,
+// MINUS what is already queued for the item (sum of `count - made` x the recipe's output amount over
+// orders whose recipe makes it). A suggestion netted to zero is not published.
+table CraftSuggestion {
+  itemId:string;               // the equipment.json item id
+  count:uint;                  // units to make: whole shortfall − already queued, always >= 1
+  workersWithout:float;        // the score — summed over `sources`
+  // Work a turn the missing units would add back, summed over `sources` - `workersWithout` on the
+  // pools and site crews x the item's `build_work` `equipped` value (default tier). 0 for gear that
+  // adds no build or keeping work (a spear's cost is food, not work): read `workersWithout` instead.
+  workPerTurn:float = 0;
+  sources:[CraftSuggestionSource];
+}
+
+// ONE CONSUMER GOING WITHOUT AN ITEM — a row of CraftSuggestion.sources, keyed so the client can
+// join it to the row it renders:
+//   kind "pool"  — a standing pool's poolToe line. `job` is the pool token ("roadwork" | "builders"),
+//                  the same spelling as PoolToeLine.pool.
+//   kind "site"  — a site crew's keeping-tool claim. `job` + target keys name the labor row that
+//                  keeps it ("forage" + targetX/Y | "hunt" + faunaId | "extract" + targetX/Y +
+//                  material), the LaborAssignment spelling.
+//   kind "take"  — a take row's kitToe. Same `job` + target keys as a site; a band-wide role
+//                  ("scout" | "warrior") carries no target.
+table CraftSuggestionSource {
+  kind:string;
+  job:string;
+  targetX:uint = 0;
+  targetY:uint = 0;
+  faunaId:string;
+  material:string;
+  missingUnits:float;          // (required − filled), never below 0, in units of the item
+  workersWithout:float;        // missingUnits x the item's workers_per_unit
+  workPerTurn:float = 0;       // workersWithout x build_work on a pool or site; 0 on a take row
 }
 
 // ONE ROW PER RECIPE, ALWAYS — a row of PopulationCohortState.craftOffers.
@@ -5537,6 +5660,30 @@ table SubsistenceSection {
   defaultExtractKitId:string;
 }
 
+// ONE discovery the VIEWER'S people is learning BY CONTACT this turn — the knowledge rider on a
+// connection (docs/plan_contact_and_logistics.md §Settled by #531; core_sim `knowledge_contact`).
+// "Learning Wheel from the Red Hill people — by trade" is `knowledgeId` + `subjectFaction` + `channel`.
+//
+// Filtered to the viewer: only the viewer's own people's lessons are published. One row per
+// discovery, naming the STRONGEST source this turn (the rule takes the max over channels, never the
+// sum), and absent where contact teaches nothing — a discovery the viewer already knows, or one no
+// people it has a live tie to knows. Ordered by `discoveryId`.
+table ContactLessonState {
+  // The ledger's discovery id — `DiscoveryProgressEntry.discovery`'s key.
+  discoveryId:uint;
+  // The knowledge tag (`start_profile_knowledge_tags.json`) — `LadderKnowledgeProgress.knowledgeId`'s
+  // key for every ladder knowledge.
+  knowledgeId:string;
+  // The people being learned FROM — the subject band's faction. Its name is `factionNames`' row.
+  subjectFaction:uint;
+  // How: 0 = watching (a live tie), 1 = trade (a shipment landed between the two bands this turn),
+  // 2 = their road (the observer band stands on a road the subject band keeps). Append-only.
+  channel:ubyte;
+  // Ledger progress this credits per turn, in the ledger's own 0..1 units (`progress` / the ladder's
+  // completion threshold reads off the same scale).
+  credit:float;
+}
+
 table KnowledgeSection {
   greatDiscoveryDefinitions:[GreatDiscoveryDefinition];
   greatDiscoveries:[GreatDiscoveryState];
@@ -5548,6 +5695,8 @@ table KnowledgeSection {
   discoveredSites:[DiscoveredSitesState];
   discoveryProgress:[DiscoveryProgressEntry];
   removedKnowledgeLedger:[ulong]; // delta-only
+  // Appended LAST. Whole-vector on both snapshot and delta: absent on a delta = unchanged.
+  contactLessons:[ContactLessonState];
 }
 
 table GovernanceSection {

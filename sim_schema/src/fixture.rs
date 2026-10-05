@@ -459,8 +459,20 @@ fn seed_snapshot() -> WorldSnapshot {
             // The pile already cut for the job in flight — a repeated field inside a repeated field
             // like the shortfalls above it, so it needs elements or the guard never decodes a row.
             drawn_inputs: rows_of(DrawnInputState::default()),
+            // The queue, head first — a repeated field inside the bench, seeded for the same reason.
+            orders: rows_of(BenchOrderState::default()),
             ..Default::default()
         };
+        // **WHAT TO MAKE NEXT** — a repeated field whose rows carry a repeated field of their own
+        // (the per-consumer lines), so both levels need elements or the guard never decodes one.
+        cohort.craft_suggestions = ["hoes", "spears"]
+            .iter()
+            .map(|item| CraftSuggestionState {
+                item_id: (*item).to_string(),
+                sources: rows_of(CraftSuggestionSourceState::default()),
+                ..Default::default()
+            })
+            .collect();
         // **One row per recipe, always** — the contract this field exists for, so the fixture
         // carries a real book's worth rather than one row.
         cohort.craft_offers = ["sled", "baskets", "spears", "loom"]
@@ -885,6 +897,8 @@ fn seed_snapshot() -> WorldSnapshot {
     }
 
     // --- knowledge -------------------------------------------------------
+    // The knowledge rider's readout (#531). Seeded for the reason every repeated field here is.
+    s.contact_lessons = rows();
     s.discovered_sites = rows();
     for entry in &mut s.discovered_sites {
         entry.sites = rows();

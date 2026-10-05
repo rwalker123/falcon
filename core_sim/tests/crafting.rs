@@ -13,14 +13,23 @@ use bevy::MinimalPlugins;
 
 use core_sim::{
     advance_crafting, deliver_bench_output, scalar_from_f32, scalar_one, scalar_zero, BandBench,
-    BandEquipment, BandId, DiscoveryProgressLedger, EquipmentConfig, EquipmentConfigHandle,
-    FactionId, GenerationId, LadderConfigHandle, LocalStore, MaterialsConfig,
-    MaterialsConfigHandle, MoraleCause, PopulationCohort, RecipesConfig, RecipesConfigHandle,
-    Scalar, WearQuantum,
+    BandEquipment, BandId, BenchOrder, DiscoveryProgressLedger, EquipmentConfig,
+    EquipmentConfigHandle, FactionId, GenerationId, LadderConfigHandle, LocalStore,
+    MaterialsConfig, MaterialsConfigHandle, MoraleCause, PopulationCohort, RecipesConfig,
+    RecipesConfigHandle, Scalar, WearQuantum, HEAD_ORDER,
 };
 use std::collections::BTreeMap;
 
 const FACTION: FactionId = FactionId(0);
+/// **An order no fixture finishes** — what the retired repeat-until-cleared job was, as a count.
+const NEVER_FINISHED: u32 = u32::MAX;
+
+/// **The bench works `recipe` and nothing else, with `workers` on it** — the queue holding one
+/// [`NEVER_FINISHED`] order.
+fn put_on_bench(bench: &mut BandBench, recipe: &str, workers: u32) {
+    bench.orders = vec![BenchOrder::new(recipe, NEVER_FINISHED)];
+    bench.workers = workers;
+}
 const BAND_POP: u32 = 30;
 /// A crew big enough that the bench finishes in a small number of turns at the bare-handed rate, so
 /// a test can measure a completion without simulating a season.
@@ -90,6 +99,7 @@ fn cohort(working: f32, stores: LocalStore) -> PopulationCohort {
         last_morale_cause: MoraleCause::None,
         last_morale_contributions: Default::default(),
         last_fertility_factors: Default::default(),
+        last_breeding: Default::default(),
         discontent_fraction: scalar_zero(),
         grievance: scalar_zero(),
         last_emigrated: 0,
@@ -177,13 +187,27 @@ impl Bench {
         self
     }
 
+    /// **Put `recipe` on the bench as its only order, with `workers` on it** — an order long enough
+    /// ([`NEVER_FINISHED`]) that no fixture here pops it, so a test about one recipe's passes is
+    /// never about the queue moving on.
     fn start(&mut self, recipe: &str, workers: u32) -> &mut Self {
-        self.app
-            .world
-            .get_mut::<BandBench>(self.band)
-            .expect("the band has a bench")
-            .set_job(recipe, workers);
+        put_on_bench(
+            &mut self
+                .app
+                .world
+                .get_mut::<BandBench>(self.band)
+                .expect("the band has a bench"),
+            recipe,
+            workers,
+        );
         self
+    }
+
+    /// The head order — the one every fixture here works.
+    fn head(&self) -> &BenchOrder {
+        self.bench()
+            .head()
+            .expect("the fixture's order is still on the bench")
     }
 
     /// **`count` turns of the bench, in the schedule's order** — each opens with
@@ -297,7 +321,7 @@ fn a_material_that_cannot_be_worked_by_hand_makes_no_progress_without_its_tool()
             bench.give_tool("crucible");
         }
         bench.start("ingot", CREW).turns(4);
-        (bench.bench().progress, bench.bench().items_completed)
+        (bench.head().progress, bench.head().made)
     };
 
     assert_eq!(
@@ -328,7 +352,7 @@ fn the_grade_a_draw_selects_does_not_move_when_the_bands_stock_does() {
         .start(SLED, 1)
         .turns(1);
 
-    let drawn = bench.bench().drawn.clone().expect("the draw succeeded");
+    let drawn = bench.head().drawn.clone().expect("the draw succeeded");
     assert_eq!(
         drawn.grade.as_deref(),
         Some(EXCELLENT),
@@ -339,7 +363,7 @@ fn the_grade_a_draw_selects_does_not_move_when_the_bands_stock_does() {
     bench.stock(HIDE, 40.0, &[(TOUGHNESS, 0.05), (SUPPLENESS, 0.9)]);
     bench.turns(1);
     assert_eq!(
-        bench.bench().drawn.as_ref().and_then(|d| d.grade.as_deref()),
+        bench.head().drawn.as_ref().and_then(|d| d.grade.as_deref()),
         Some(EXCELLENT),
         "the grade was fixed when the materials left the store - it is not a taper and it does not \
          re-read the pile"
@@ -367,7 +391,7 @@ fn the_bare_handed_ceiling_caps_an_excellent_hide_to_the_anchor_band() {
         }
         bench.start(SLED, CREW).turns(4);
         assert_eq!(
-            bench.bench().items_completed,
+            bench.head().made,
             1,
             "the fixture must finish exactly one sled, or the grade being read is not the one the \
              excellent hide bought"
@@ -407,7 +431,7 @@ fn the_lesson_and_the_tools_wear_are_charged_the_same_number_of_times() {
         .start(SLED, CREW)
         .turns(12);
 
-    let completed = bench.bench().items_completed;
+    let completed = bench.head().made;
     assert!(
         completed >= 2,
         "the fixture must finish more than one item, or 'the same number of times' is vacuous \
@@ -461,9 +485,9 @@ fn a_short_draw_withdraws_nothing_at_all() {
         "the hide must be untouched - a short draw is a no-op, never a half-spent pile"
     );
     assert_eq!(bench.stock_of("fibre"), scalar_from_f32(1.0));
-    assert_eq!(bench.bench().progress, scalar_zero());
-    assert_eq!(bench.bench().items_completed, 0);
-    assert!(bench.bench().drawn.is_none());
+    assert_eq!(bench.head().progress, scalar_zero());
+    assert_eq!(bench.head().made, 0);
+    assert!(bench.head().drawn.is_none());
 }
 
 /// The bench delivers: a finished sled lands in the band's ledger as **its own batch**, unworn.
@@ -492,13 +516,10 @@ fn a_finished_item_lands_in_the_bands_equipment_ledger_unworn() {
     assert_eq!(bench.count_of(SLED), 1, "the band starts with one sled");
 
     bench.start(SLED, CREW).turns(6).deliver();
-    assert!(
-        bench.bench().items_completed >= 1,
-        "the bench must finish one"
-    );
+    assert!(bench.head().made >= 1, "the bench must finish one");
     assert_eq!(
         bench.count_of(SLED),
-        1 + bench.bench().items_completed,
+        1 + bench.head().made,
         "every delivered sled is a NEW one, not a repair of the first"
     );
     assert_eq!(
@@ -524,11 +545,7 @@ fn the_draw_spends_the_poor_stock_before_the_good() {
         .turns(1);
 
     assert_eq!(
-        bench
-            .bench()
-            .drawn
-            .as_ref()
-            .and_then(|d| d.grade.as_deref()),
+        bench.head().drawn.as_ref().and_then(|d| d.grade.as_deref()),
         Some(POOR),
         "the poor hide must be spent first, or the player's best stock is silently burned on the \
          first thing they make"
@@ -568,11 +585,11 @@ fn the_hurdles_draw_still_spends_hide_by_suppleness_and_not_by_its_first_axis() 
         .turns(1);
 
     assert!(
-        bench.bench().drawn.is_some(),
+        bench.head().drawn.is_some(),
         "fixture: the pass must have drawn its pile, or nothing has been spent to have an order"
     );
     assert_eq!(
-        bench.bench().drawn.as_ref().and_then(|d| d.grade.as_deref()),
+        bench.head().drawn.as_ref().and_then(|d| d.grade.as_deref()),
         None,
         "a material-only recipe stamps no grade - which is why this test observes the piles instead"
     );
@@ -762,7 +779,7 @@ fn a_completion_delivers_the_recipes_whole_output_amount() {
         .turns(6)
         .deliver();
 
-    let completed = bench.bench().items_completed;
+    let completed = bench.head().made;
     assert!(completed >= 1, "the bench must finish at least one pass");
     assert_eq!(
         bench.count_of(SLED),
@@ -939,7 +956,7 @@ fn crafted_build_gear_grades_its_build_work_and_keeps_its_branch() {
                 .turns(TURNS_TO_FINISH)
                 .deliver();
             assert_eq!(
-                bench.bench().items_completed,
+                bench.head().made,
                 1,
                 "{}: the fixture must finish exactly one item",
                 case.recipe
@@ -1002,7 +1019,7 @@ fn a_delivered_item_carries_the_tier_that_ships_known() {
         .start(SLED, CREW)
         .turns(6)
         .deliver();
-    assert!(bench.bench().items_completed >= 1, "the bench finishes one");
+    assert!(bench.head().made >= 1, "the bench finishes one");
 
     let ledger = bench
         .app
@@ -1075,11 +1092,11 @@ fn an_unstaffed_bench_draws_nothing_from_the_store() {
          untouched across {TURNS} turns"
     );
     assert!(
-        bench.bench().drawn.is_none(),
+        bench.head().drawn.is_none(),
         "…and nothing was cut, so there is no pile sitting on a bench nobody is at"
     );
     assert_eq!(
-        bench.bench().recipe_id.as_deref(),
+        bench.bench().head_recipe(),
         Some(SLED),
         "the job is still the player's — a stalled bench is not a cleared one"
     );
@@ -1102,11 +1119,11 @@ fn a_bench_that_had_already_drawn_keeps_its_pile_when_the_crew_goes() {
         .start(SLED, 1)
         .turns(1);
     assert!(
-        bench.bench().drawn.is_some(),
+        bench.head().drawn.is_some(),
         "fixture: the staffed turn drew a pile, or this test is about nothing"
     );
     let after_draw = (bench.stock_of(HIDE), bench.stock_of(FIBRE));
-    let banked = bench.bench().progress;
+    let banked = bench.head().progress;
 
     bench
         .app
@@ -1117,7 +1134,7 @@ fn a_bench_that_had_already_drawn_keeps_its_pile_when_the_crew_goes() {
     bench.turns(3);
 
     assert!(
-        bench.bench().drawn.is_some(),
+        bench.head().drawn.is_some(),
         "the materials already cut stay on the bench — they were spent for THIS job"
     );
     assert_eq!(
@@ -1126,7 +1143,7 @@ fn a_bench_that_had_already_drawn_keeps_its_pile_when_the_crew_goes() {
         "…and no further draw happened while nobody was at it"
     );
     assert_eq!(
-        bench.bench().progress,
+        bench.head().progress,
         banked,
         "nobody at the bench banks nothing, so the item does not creep forward"
     );
@@ -1157,8 +1174,14 @@ fn a_finished_item_waits_on_the_bench_and_survives_a_job_change() {
 
     type JobChange = fn(&mut BandBench);
     let changes: [(&str, JobChange); 2] = [
-        ("cleared", |bench| bench.clear_job()),
-        ("re-tasked", |bench| bench.set_job(RETASKED_RECIPE, CREW)),
+        ("cleared", |bench| {
+            bench
+                .remove_order(HEAD_ORDER)
+                .expect("the fixture's order is on the bench");
+        }),
+        ("re-tasked", |bench| {
+            put_on_bench(bench, RETASKED_RECIPE, CREW)
+        }),
     ];
     for (label, change) in changes {
         let mut bench = Bench::shipped();
@@ -1175,12 +1198,12 @@ fn a_finished_item_waits_on_the_bench_and_survives_a_job_change() {
             )
             .start(SLED, CREW);
         let mut turns = 0;
-        while bench.bench().items_completed == 0 && turns < TURN_LIMIT {
+        while bench.head().made == 0 && turns < TURN_LIMIT {
             bench.turns(1);
             turns += 1;
         }
         assert_eq!(
-            bench.bench().items_completed,
+            bench.head().made,
             1,
             "{label}: fixture — the bench must finish the sled"
         );

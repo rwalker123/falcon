@@ -71,3 +71,59 @@ pub(crate) fn snapshot_discovered_sites(
         })
         .collect()
 }
+
+/// Everything the knowledge rider's readout reads, borrowed off the capture.
+pub(crate) struct ContactLessonInputs<'a> {
+    pub bands: Vec<crate::knowledge_contact::ContactBand>,
+    pub landings: Vec<crate::knowledge_contact::TradeLanding>,
+    pub connections: &'a crate::connections::ConnectionLedger,
+    pub roads: &'a crate::routes::RoadRegistry,
+    pub progress: &'a DiscoveryProgressLedger,
+    pub tags: std::sync::Arc<crate::start_profile::StartProfileKnowledgeTags>,
+    pub knowledge: &'a crate::intensification::LadderKnowledge,
+    pub config: std::sync::Arc<crate::knowledge_contact_config::KnowledgeContactConfig>,
+}
+
+/// **What the viewer's people is learning by contact this turn** — one row per discovery, naming
+/// the strongest source (`docs/plan_contact_and_logistics.md` §Settled by #531).
+///
+/// It is [`crate::knowledge_contact::contact_lessons`] itself, filtered to the rows whose
+/// **observer** people is the viewer — the connection section's own filter one rider over: you see
+/// what *your* people is learning, not what a rival's is. The subject people is published whatever
+/// faction it is, since naming who you learn from is the point; its name is `factionNames`' row.
+///
+/// Evaluated against the world as published, so it reads the ledger **after** this turn's contact
+/// credit: a discovery the viewer completed this turn has left the list, and one a subject people
+/// completed this turn is already on it — the credit the next turn will pay.
+pub(crate) fn contact_lesson_states(
+    inputs: &ContactLessonInputs<'_>,
+    viewer: FactionId,
+) -> Vec<ContactLessonState> {
+    let lessons =
+        match crate::knowledge_contact::TeachableLessons::resolve(&inputs.tags, inputs.knowledge) {
+            Ok(lessons) => lessons,
+            // Boot refuses an unpriced tag, so this is reachable only from a hand-rolled world
+            // pairing a tag table with a ladder that does not price it — which teaches nothing.
+            Err(_) => return Vec::new(),
+        };
+    crate::knowledge_contact::contact_lessons(&crate::knowledge_contact::ContactWorld {
+        bands: &inputs.bands,
+        landings: &inputs.landings,
+        connections: inputs.connections,
+        roads: inputs.roads,
+        progress: inputs.progress,
+        lessons: &lessons,
+        knowledge: inputs.knowledge,
+        rates: &inputs.config.channel_rates,
+    })
+    .into_iter()
+    .filter(|((observer, _), _)| *observer == viewer)
+    .map(|((_, discovery), lesson)| ContactLessonState {
+        discovery_id: discovery,
+        knowledge_id: lessons.tag(discovery).unwrap_or_default().to_string(),
+        subject_faction: lesson.subject_faction.0,
+        channel: lesson.channel.wire_code(),
+        credit: lesson.credit,
+    })
+    .collect()
+}

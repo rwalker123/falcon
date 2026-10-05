@@ -680,6 +680,49 @@ full block re-measured at **531px** with it in (`band_panel_faction`), past the 
 moved from 1569 to the 1190 a band's three cost. The harness's equality claim now pins the SEPARATOR
 COUNT — two gaps between three columns — which is the term that was wrong when the page had four.
 
+## LEARNING BY CONTACT IS READ HERE, ON THE NODE IT TEACHES
+
+Issue #531 (`docs/plan_contact_and_logistics.md` §Settled by #531; the sim's as-built is
+`connections.md` → "Knowledge is the third rider"). A people learns a discovery it lacks by being
+around another people that knows it, and the wire's `contact_lessons` carries one row per discovery
+the VIEWER's people is being taught that way: `{discovery_id, knowledge_id, subject_faction,
+channel, credit}`, naming the strongest source.
+
+**This screen is its home because it is where the player already reads progress toward a knowledge.**
+Every tag contact can teach is a ladder knowledge or a craft, which is to say a node here; the
+subsistence rows carry a `knowledge_id` too, but they speak about a SOURCE, and a lesson belongs to the
+people rather than to any hex. Tags that are not on the roster (`nomadic_wayfinding`,
+`portable_forge`) have no node and draw nothing.
+
+- **The join is by knowledge id, on the node.** `KnowledgeRoster.contact_lesson_for` attaches the row
+  as `NODE_CONTACT_LESSON`; a ladder node keys on its `knowledge_id`, a craft on its craft id, which
+  is the same tag. **A KNOWN node never carries one**, whatever the list says: the sim already drops
+  a discovery the viewer knows, and the guard covers a frame where progress has landed and the list
+  has not.
+- **One sentence, composed once** — `HudKnowledgeVocab.contact_line`: *"Learning Penning from the Red
+  Hill people — by trade"*. The people's name is `FactionMark.faction_name` over `faction_names`; the
+  row carries only the id. The channel tail is `CONTACT_CHANNEL_CLAUSES` (0 watching, 1 trade, 2 their
+  road); a code it does not know drops the tail and keeps the who.
+- **Three carriers, the unspent state's rule**: the `⇄` mark on the chip (`CONTACT_MARK`, in
+  `SIGNAL`), the sentence plus its per-turn rate appended to the chip's tooltip, and the clause on the
+  reading's state line, whose own tooltip is the rate.
+- **The rate is TURNS TO LEARN, never a percent a turn** — `contact_rate`: what is left of the track
+  (`KNOWLEDGE_COMPLETE` less the node's progress) over the credit, rounded up, as *"~3280 turns at
+  this rate"*. Shipped credits run under 0.0005 a turn, which a one-decimal percent printed as `+0.0%`
+  beside a chip saying the people is learning it. A credit at or below zero draws no rate line.
+- **The clause rides ON the state line, never under it.** A row of its own grows the open reading
+  past `DETAIL_BLOCK_MIN_HEIGHT` for exactly the nodes that carry one, and the card breathes on open.
+  Measured with three lessons staged: 820 × 648 open, closed and for every node on the roster.
+
+**The ingest is `FactionReadouts.update_contact_lessons`**, reached from `Main` through
+`HudLayer.update_contact_lessons`, which re-runs the knowledge readouts because the list can move on
+a turn that moves nobody. Whole-vector on both wire paths: absent on a delta means unchanged, and
+`reset_world_state` clears it with the other per-world knowledge.
+
+Asserted in the `knowledge_panel` chapter's `_contact_lesson_frames` (the sentence, the four node
+states, the unknown channel, the marks, the clause's node and tooltip, and the whole-roster
+no-breathe walk re-run with the lessons staged); the frame is `knowledge_panel_contact.png`.
+
 ## Verification
 
 `tools/ui_preview/chapters/knowledge_panel.gd`, and **most of it is PNG-less on purpose**. Every claim

@@ -245,6 +245,73 @@ const UNSPENT_MARK := "◇"
 ## capsule for exactly that reason, the synthetic branches being in no rung table.
 const CAPABILITY_CAPSULE := "gates nothing"
 
+# ---- learning by contact (#531) ------------------------------------------------------------------
+# A people learns a discovery it lacks by being around another people that knows it
+# (`docs/plan_contact_and_logistics.md` §Settled by #531). The wire's `contact_lessons` list carries
+# one row per discovery the VIEWER'S people is being taught this way, naming the strongest source.
+# Like the unspent state it has THREE carriers: the `CONTACT_MARK` on the chip, a line appended to
+# the chip's tooltip, and the clause on the reading's state line.
+
+## The `contact_lessons` row keys, as the native decoder emits them.
+const CONTACT_LESSON_KNOWLEDGE_ID := "knowledge_id"
+const CONTACT_LESSON_SUBJECT_FACTION := "subject_faction"
+const CONTACT_LESSON_CHANNEL := "channel"
+const CONTACT_LESSON_CREDIT := "credit"
+## A node's contact lesson — the wire row, `{}` when nothing teaches it by contact.
+const NODE_CONTACT_LESSON := "contact_lesson"
+
+## The wire's channel codes (`ContactLessonState.channel`, `ContactChannel::wire_code`).
+const CONTACT_CHANNEL_WATCHING := 0
+const CONTACT_CHANNEL_TRADE := 1
+const CONTACT_CHANNEL_ROAD := 2
+## How each channel reads as the tail of the line. A code this table has never heard of drops the
+## tail rather than the line: the who is still true when the how is unknown.
+const CONTACT_CHANNEL_CLAUSES := {
+	CONTACT_CHANNEL_WATCHING: "by watching",
+	CONTACT_CHANNEL_TRADE: "by trade",
+	CONTACT_CHANNEL_ROAD: "by their road",
+}
+## *"Learning Penning from the Red Hill people"* — discovery name, then the people's name.
+const CONTACT_LINE_FORMAT := "Learning %s from the %s people"
+## Joins the channel clause onto the line.
+const CONTACT_CLAUSE_SEPARATOR := " — "
+## The tooltip's rate, said as TURNS TO LEARN at it — what is left of the track (`KNOWLEDGE_COMPLETE`
+## less the node's progress) over the per-turn credit, rounded UP.
+##
+## ⛔ **NOT A PERCENT A TURN.** Shipped credits run well under 0.0005 a turn (Seed Selection by
+## watching at a tie of 0.25 is 0.00025), which a one-decimal percent prints as `+0.0%` beside a chip
+## saying the people IS learning it — the screen contradicting itself. A turn count stays legible at
+## any rate, and rounding up means it can never read 0 while something is still left to learn.
+const CONTACT_RATE_FORMAT := "~%d turns at this rate"
+## The chip's mark. `⇄` is the glyph this HUD already draws for goods passing between two bands
+## (`DetailFormat.TRANSFER_GLYPH`, in the Arrows block the carets come from), and a lesson is knowledge
+## passing between two peoples. Typed rather than aliased so this leaf takes no load-time dependency.
+const CONTACT_MARK := "⇄"
+
+## The one sentence, composed in one place so the chip's tooltip and the reading cannot word it
+## differently. `""` for a node nothing teaches by contact.
+static func contact_line(node: Dictionary) -> String:
+	var lesson: Dictionary = node.get(NODE_CONTACT_LESSON, {})
+	if lesson.is_empty():
+		return ""
+	var line := CONTACT_LINE_FORMAT % [String(node.get(NODE_LABEL, "")),
+		FactionMark.faction_name(int(lesson.get(CONTACT_LESSON_SUBJECT_FACTION, 0)))]
+	var clause := String(CONTACT_CHANNEL_CLAUSES.get(
+		int(lesson.get(CONTACT_LESSON_CHANNEL, -1)), ""))
+	return line if clause == "" else line + CONTACT_CLAUSE_SEPARATOR + clause
+
+## The rate line for a node's tooltip — `CONTACT_RATE_FORMAT`. `""` for a node nothing teaches by
+## contact, AND for a credit at or below zero: no rate line at all rather than a division by it.
+static func contact_rate(node: Dictionary) -> String:
+	var lesson: Dictionary = node.get(NODE_CONTACT_LESSON, {})
+	if lesson.is_empty():
+		return ""
+	var credit := float(lesson.get(CONTACT_LESSON_CREDIT, 0.0))
+	if credit <= 0.0:
+		return ""
+	var remaining := maxf(HudConst.KNOWLEDGE_COMPLETE - float(node.get(NODE_PROGRESS, 0.0)), 0.0)
+	return CONTACT_RATE_FORMAT % int(ceil(remaining / credit))
+
 # ---- the filters -----------------------------------------------------------------------------
 # **COUNTS OVER ONE LIST, AND A NON-MATCHING NODE DIMS RATHER THAN DISAPPEARS.** The shape of the
 # tree is most of what the screen teaches — two short ladders and a fan — and a filter that removed
@@ -482,7 +549,8 @@ const RAIL_THICKNESS := 1.0
 ## inside these margins — so selecting a knowledge never reflows its row.
 const CHIP_PADDING_H := 9
 const CHIP_PADDING_V := 5
-## Between the chip's own parts: glyph, name, percent, unspent mark, capability capsule.
+## Between the chip's own parts: glyph, name, percent, unspent mark, contact mark, capability
+## capsule — and between the reading's state line and its contact clause.
 const CHIP_SEPARATION := 6
 const CHIP_BORDER_THICKNESS := 1
 
@@ -565,6 +633,9 @@ const AREA_META := "knowledge_area"
 ## with nothing selected — so a harness can ask both *how many are mounted* (exactly one, always)
 ## and *which row is it sitting under*, which is the pair of claims the toggle rests on.
 const DETAIL_META := "knowledge_detail"
+## The reading's contact clause, carrying the node's key — so a harness asks which reading says
+## *"Learning … from …"* rather than reading the sentence back.
+const CONTACT_META := "knowledge_contact"
 
 ## The tint each state's name and glyph take. `not_begun` is `INK_FAINT` — GREYED, not hidden.
 ##

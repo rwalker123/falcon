@@ -5,7 +5,7 @@ use crate::codec::{
     map_rows_if_present, text, unknown_enum, DecodeError, FbBuilder,
 };
 use crate::state::knowledge::{
-    DiscoveredSiteState, DiscoveredSitesState, DiscoveryProgressEntry,
+    ContactLessonState, DiscoveredSiteState, DiscoveredSitesState, DiscoveryProgressEntry,
     GreatDiscoveryDefinitionState, GreatDiscoveryProgressState, GreatDiscoveryRequirementState,
     GreatDiscoveryState, GreatDiscoveryTelemetryState, KnowledgeCountermeasureKind,
     KnowledgeCountermeasureState, KnowledgeField, KnowledgeInfiltrationState, KnowledgeLeakFlags,
@@ -33,6 +33,7 @@ pub(crate) fn serialize_knowledge_section<'a>(
     let knowledge_metrics = create_knowledge_metrics(builder, &snapshot.knowledge_metrics);
     let discovered_sites = create_discovered_sites(builder, &snapshot.discovered_sites);
     let discovery_progress = create_discovery_progress(builder, &snapshot.discovery_progress);
+    let contact_lessons = create_contact_lessons(builder, &snapshot.contact_lessons);
     fb::KnowledgeSection::create(
         builder,
         &fb::KnowledgeSectionArgs {
@@ -46,6 +47,7 @@ pub(crate) fn serialize_knowledge_section<'a>(
             discoveredSites: Some(discovered_sites),
             discoveryProgress: Some(discovery_progress),
             removedKnowledgeLedger: None,
+            contactLessons: Some(contact_lessons),
         },
     )
 }
@@ -82,6 +84,11 @@ pub(crate) fn serialize_knowledge_section_delta<'a>(
         .as_ref()
         .map(|entries| create_discovered_sites(builder, entries));
     let discovery_progress = create_discovery_progress(builder, &delta.discovery_progress);
+    // `None` is "unchanged this frame" — the whole vector is re-sent when any row moves.
+    let contact_lessons = delta
+        .contact_lessons
+        .as_ref()
+        .map(|lessons| create_contact_lessons(builder, lessons));
     fb::KnowledgeSection::create(
         builder,
         &fb::KnowledgeSectionArgs {
@@ -95,8 +102,42 @@ pub(crate) fn serialize_knowledge_section_delta<'a>(
             discoveredSites: discovered_sites,
             discoveryProgress: Some(discovery_progress),
             removedKnowledgeLedger: Some(removed_knowledge_ledger),
+            contactLessons: contact_lessons,
         },
     )
+}
+
+fn create_contact_lessons<'a>(
+    builder: &mut FbBuilder<'a>,
+    lessons: &[ContactLessonState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::ContactLessonState<'a>>>> {
+    let offsets: Vec<_> = lessons
+        .iter()
+        .map(|lesson| {
+            let knowledge_id = builder.create_string(&lesson.knowledge_id);
+            fb::ContactLessonState::create(
+                builder,
+                &fb::ContactLessonStateArgs {
+                    discoveryId: lesson.discovery_id,
+                    knowledgeId: Some(knowledge_id),
+                    subjectFaction: lesson.subject_faction,
+                    channel: lesson.channel,
+                    credit: lesson.credit,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
+}
+
+fn decode_contact_lesson(lesson: fb::ContactLessonState<'_>) -> ContactLessonState {
+    ContactLessonState {
+        discovery_id: lesson.discoveryId(),
+        knowledge_id: text(lesson.knowledgeId()),
+        subject_faction: lesson.subjectFaction(),
+        channel: lesson.channel(),
+        credit: lesson.credit(),
+    }
 }
 
 fn create_discovered_sites<'a>(
@@ -557,6 +598,7 @@ pub(crate) fn decode_knowledge_section(
         .unwrap_or_default();
     snapshot.discovered_sites = map_rows(section.discoveredSites(), decode_discovered_sites);
     snapshot.discovery_progress = map_rows(section.discoveryProgress(), decode_discovery_progress);
+    snapshot.contact_lessons = map_rows(section.contactLessons(), decode_contact_lesson);
     Ok(())
 }
 
@@ -585,6 +627,8 @@ pub(crate) fn decode_knowledge_section_delta(
     delta.discovered_sites =
         map_rows_if_present(section.discoveredSites(), decode_discovered_sites);
     delta.discovery_progress = map_rows(section.discoveryProgress(), decode_discovery_progress);
+    // Absent is "unchanged"; present-and-empty is "now empty".
+    delta.contact_lessons = map_rows_if_present(section.contactLessons(), decode_contact_lesson);
     Ok(())
 }
 

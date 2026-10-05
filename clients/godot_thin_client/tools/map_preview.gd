@@ -6592,6 +6592,50 @@ func _worn_working_assignment(tile: Vector2i, crew: int) -> Dictionary:
 		],
 	}
 
+## **THE STOOD-DOWN HUNT** — the source list's band with its wolf crew unassigned to 0 and those
+## hands walking home (the per-row `homeward_*` keys): the reported case, where the source vanished
+## from the list and nothing said where its hunters went.
+const SOURCE_LIST_HOMEWARD_WORKERS := 3
+const SOURCE_LIST_HOMEWARD_ALL_HOME_IN := 1
+const SOURCE_LIST_HOMEWARD_FOOD := 2.4
+
+func _snapshot_source_list_homeward() -> Dictionary:
+	var snap := _snapshot_source_list()
+	for entry_variant in snap["populations"][0]["labor_assignments"]:
+		var entry: Dictionary = entry_variant
+		if String(entry.get("fauna_id", "")) == WOLF_HERD_ID:
+			entry["workers"] = 0
+			entry[HudWorkVocab.HOMEWARD_WORKERS_KEY] = SOURCE_LIST_HOMEWARD_WORKERS
+			entry[HudWorkVocab.HOMEWARD_ALL_HOME_IN_KEY] = SOURCE_LIST_HOMEWARD_ALL_HOME_IN
+			entry[HudWorkVocab.HOMEWARD_FOOD_KEY] = SOURCE_LIST_HOMEWARD_FOOD
+	return snap
+
+## `map_source_list_homeward`: the crew-0 source KEEPS its row, and the row's detail cell states its
+## walkers in the quiet ink, the whole line on the row's hover.
+func _source_list_homeward_state() -> void:
+	_map.display_snapshot(_snapshot_source_list_homeward())
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_source_list_homeward")
+	var want := HudWorkVocab.ROW_HOMEWARD_LINE_FORMAT % [SOURCE_LIST_HOMEWARD_WORKERS,
+		HudWorkVocab.HOMEWARD_FOOD_CLAUSE_FORMAT % SourceForecast.format_magnitude(
+			SOURCE_LIST_HOMEWARD_FOOD), HudWorkVocab.ROW_HOMEWARD_FREE_NEXT_TURN]
+	var wolf_key: String = _map.secondary_herd_key(WOLF_HERD_ID)
+	var list: BandSourceList = _map._source_list
+	var slot := -1
+	var page := list.page_rows()
+	for i in range(page.size()):
+		if String((page[i] as Dictionary).get("key", "")) == wolf_key:
+			slot = i
+	_assert_map("map_source_list_homeward — the crew-0 source with hands walking home keeps its row (slot %d)"
+			% slot, slot >= 0 and int((page[slot] as Dictionary).get("crew", -1)) == 0)
+	_assert_map("map_source_list_homeward — …its detail cell states the walkers (`%s`), in the quiet ink, the whole line on its hover"
+			% (list._row_details[slot].text if slot >= 0 else ""),
+		slot >= 0 and list._row_details[slot].text == want
+		and list._row_details[slot].get_theme_color("font_color").is_equal_approx(HudStyle.INK_DIM)
+		and list._rows[slot].tooltip_text.contains(want))
+
 ## …and the same band with `PAGED_EXTRA_SOURCES` bolted on, so the list runs past one page. Each extra
 ## is a forage patch with its own food SITE, for `map_band_work`'s own load-bearing reason: a forage
 ## assignment on a tile with no site has no marker to ring and no face for its row's icon.
@@ -7040,6 +7084,8 @@ func _source_list_states() -> void:
 			% [account_count, expected_total],
 		list.total_text() == expected_total
 		and account_count >= MULTI_ACCOUNT_MIN)
+
+	await _source_list_homeward_state()
 
 	# State "build arc" (issue #650) — **THE RING CARRIES THE BUILD NOW.** Three sources in one frame:
 	# a rung in flight, a worked source with none, and a build the wire says is rotting.

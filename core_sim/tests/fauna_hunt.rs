@@ -136,6 +136,7 @@ fn hunt_assignment_takes_biomass_and_yields() {
                 last_morale_cause: MoraleCause::None,
                 last_morale_contributions: Default::default(),
                 last_fertility_factors: Default::default(),
+                last_breeding: Default::default(),
                 discontent_fraction: scalar_zero(),
                 grievance: scalar_zero(),
                 last_emigrated: 0,

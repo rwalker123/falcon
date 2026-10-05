@@ -158,7 +158,6 @@ pub struct SimulationConfig {
     pub power_instability_critical: Scalar,
 
     pub migration_fragment_scaling: Scalar,
-    pub migration_fidelity_floor: Scalar,
     pub corruption_military_penalty: Scalar,
     /// Host and **base port** of the server's port block. Slot 0 itself is
     /// **reserved and never bound** — it carried the retired bincode snapshot
@@ -360,7 +359,6 @@ struct SimulationConfigData {
     power_instability_warn: f32,
     power_instability_critical: f32,
     migration_fragment_scaling: f32,
-    migration_fidelity_floor: f32,
     corruption_military_penalty: f32,
     port_base_bind: String,
     snapshot_flat_bind: String,
@@ -565,7 +563,6 @@ impl SimulationConfigData {
             power_instability_warn: scalar_from_f32(self.power_instability_warn),
             power_instability_critical: scalar_from_f32(self.power_instability_critical),
             migration_fragment_scaling: scalar_from_f32(self.migration_fragment_scaling),
-            migration_fidelity_floor: scalar_from_f32(self.migration_fidelity_floor),
             corruption_military_penalty: scalar_from_f32(self.corruption_military_penalty),
             port_base_bind: parse_socket(self.port_base_bind, "port_base_bind")?,
             snapshot_flat_bind: parse_socket(self.snapshot_flat_bind, "snapshot_flat_bind")?,

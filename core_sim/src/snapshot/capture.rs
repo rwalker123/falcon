@@ -75,6 +75,13 @@ pub struct SnapshotContext<'w> {
     /// The directed ties contact left behind. Published filtered to the viewer's own edges; the
     /// checkpoint carries the ledger itself.
     pub connections: Res<'w, crate::connections::ConnectionLedger>,
+    /// The knowledge-tag table — each teachable discovery's id and `observability`, read for the
+    /// knowledge rider's readout (`crate::knowledge_contact`). `Option` on `faction_names`' rule; a
+    /// hand-rolled capture world reads the builtin.
+    pub knowledge_tags: Option<Res<'w, crate::start_profile::StartProfileKnowledgeTagsHandle>>,
+    /// The knowledge rider's channel rates. `Option` for the same reason.
+    pub knowledge_contact:
+        Option<Res<'w, crate::knowledge_contact_config::KnowledgeContactConfigHandle>>,
     /// Every road in the world. Published filtered to the roads the viewer has explored; the
     /// checkpoint carries the ledger itself.
     pub roads: Res<'w, crate::routes::RoadRegistry>,
@@ -274,6 +281,7 @@ pub(crate) struct SeatPublishState {
     sedentarization: Whole<Vec<SchemaSedentarizationState>>,
     discovered_sites: Whole<Vec<SchemaDiscoveredSitesState>>,
     connections: Whole<Vec<ConnectionState>>,
+    contact_lessons: Whole<Vec<ContactLessonState>>,
     routes: Whole<Vec<RouteState>>,
     demographics: Whole<Vec<SchemaPopulationDemographicsState>>,
     forage_patches: Whole<Vec<ForagePatchState>>,
@@ -641,6 +649,7 @@ struct CampaignParts {
     sedentarization: Option<Vec<SchemaSedentarizationState>>,
     discovered_sites: Option<Vec<SchemaDiscoveredSitesState>>,
     connections: Option<Vec<ConnectionState>>,
+    contact_lessons: Option<Vec<ContactLessonState>>,
     routes: Option<Vec<RouteState>>,
     demographics: Option<Vec<SchemaPopulationDemographicsState>>,
     intensification_knowledge: Option<Vec<IntensificationKnowledgeState>>,
@@ -664,6 +673,7 @@ struct CampaignBaselines<'a> {
     sedentarization: &'a mut Whole<Vec<SchemaSedentarizationState>>,
     discovered_sites: &'a mut Whole<Vec<SchemaDiscoveredSitesState>>,
     connections: &'a mut Whole<Vec<ConnectionState>>,
+    contact_lessons: &'a mut Whole<Vec<ContactLessonState>>,
     routes: &'a mut Whole<Vec<RouteState>>,
     demographics: &'a mut Whole<Vec<SchemaPopulationDemographicsState>>,
     intensification_knowledge: &'a mut Whole<Vec<IntensificationKnowledgeState>>,
@@ -702,6 +712,7 @@ fn diff_campaign(
         sedentarization: diff_whole(baseline.sedentarization, &snapshot.sedentarization, write),
         discovered_sites: diff_whole(baseline.discovered_sites, &snapshot.discovered_sites, write),
         connections: diff_whole(baseline.connections, &snapshot.connections, write),
+        contact_lessons: diff_whole(baseline.contact_lessons, &snapshot.contact_lessons, write),
         routes: diff_whole(baseline.routes, &snapshot.routes, write),
         demographics: diff_whole(baseline.demographics, &snapshot.demographics, write),
         intensification_knowledge: diff_whole(
@@ -926,6 +937,7 @@ impl SeatPublishState {
             sedentarization: Whole::default(),
             discovered_sites: Whole::default(),
             connections: Whole::default(),
+            contact_lessons: Whole::default(),
             routes: Whole::default(),
             demographics: Whole::default(),
             forage_patches: Whole::default(),
@@ -1091,6 +1103,7 @@ impl SeatPublishState {
             sedentarization,
             discovered_sites,
             connections,
+            contact_lessons,
             routes,
             demographics,
             intensification_knowledge,
@@ -1209,6 +1222,7 @@ impl SeatPublishState {
                             sedentarization,
                             discovered_sites,
                             connections,
+                            contact_lessons,
                             routes,
                             demographics,
                             intensification_knowledge,
@@ -1316,6 +1330,7 @@ impl SeatPublishState {
             sedentarization: campaign_parts.sedentarization,
             discovered_sites: campaign_parts.discovered_sites,
             connections: campaign_parts.connections,
+            contact_lessons: campaign_parts.contact_lessons,
             routes: campaign_parts.routes,
             demographics: campaign_parts.demographics,
             intensification_knowledge: campaign_parts.intensification_knowledge,
@@ -1518,6 +1533,8 @@ impl SeatPublishState {
         self.discovered_sites
             .reset(entry.snapshot.discovered_sites.clone());
         self.connections.reset(entry.snapshot.connections.clone());
+        self.contact_lessons
+            .reset(entry.snapshot.contact_lessons.clone());
         self.routes.reset(entry.snapshot.routes.clone());
         self.demographics.reset(entry.snapshot.demographics.clone());
         self.forage_patches
@@ -1747,6 +1764,7 @@ impl SeatPublishState {
             sedentarization: None,
             discovered_sites: None,
             connections: None,
+            contact_lessons: None,
             routes: None,
             demographics: None,
             forage_patches: None,
@@ -1894,6 +1912,7 @@ impl SeatPublishState {
             sedentarization: None,
             discovered_sites: None,
             connections: None,
+            contact_lessons: None,
             routes: None,
             demographics: None,
             forage_patches: None,
@@ -2025,6 +2044,7 @@ impl SeatPublishState {
             sedentarization: None,
             discovered_sites: None,
             connections: None,
+            contact_lessons: None,
             routes: None,
             demographics: None,
             forage_patches: None,
@@ -2591,6 +2611,8 @@ pub fn capture_snapshot(
         capability_flags,
         visibility_ledger,
         connections,
+        knowledge_tags,
+        knowledge_contact,
         roads,
         deposits,
         extraction,
@@ -3593,6 +3615,53 @@ pub fn capture_snapshot(
             .collect();
         let connections_state =
             crate::snapshot::connections::connection_states(&connections, &band_factions, viewer);
+        // **What the viewer's people is learning by contact** — the knowledge rider's own rule,
+        // evaluated here off the same checkpointed inputs the turn system reads, so a loaded world's
+        // first frame carries it with no derived resource to go missing
+        // (`crate::knowledge_contact` → "One rule, two callers").
+        let contact_lessons_state = crate::snapshot::knowledge::contact_lesson_states(
+            &crate::snapshot::knowledge::ContactLessonInputs {
+                bands: populations
+                    .iter()
+                    .filter_map(|(_, cohort, _, _, _, band_id, _, _, _)| {
+                        band_id.map(|band| crate::knowledge_contact::ContactBand {
+                            band: *band,
+                            faction: cohort.faction,
+                            tile: tiles
+                                .get(cohort.current_tile)
+                                .ok()
+                                .map(|(_, tile, _)| tile.position),
+                        })
+                    })
+                    .collect(),
+                landings: populations
+                    .iter()
+                    .flat_map(|(_, cohort, _, _, _, band_id, _, _, _)| {
+                        band_id.into_iter().flat_map(|band| {
+                            crate::knowledge_contact::trade_landings(
+                                *band,
+                                &cohort.last_turn_transfer_crossings,
+                            )
+                        })
+                    })
+                    .collect(),
+                connections: &connections,
+                roads: &roads,
+                progress: &discovery_progress,
+                tags: knowledge_tags
+                    .as_deref()
+                    .map(|handle| handle.get())
+                    .unwrap_or_else(crate::start_profile::StartProfileKnowledgeTags::builtin),
+                knowledge: &ladder_config.knowledge,
+                config: knowledge_contact
+                    .as_deref()
+                    .map(|handle| handle.get())
+                    .unwrap_or_else(
+                        crate::knowledge_contact_config::KnowledgeContactConfig::builtin,
+                    ),
+            },
+            viewer,
+        );
         // **THE ROADS THE VIEWER HAS EXPLORED** — fog-gated on `Discovered` rather than the herd list's
         // `Active`, because a road does not wander off. See `snapshot::routes::route_states`.
         let route_states = crate::snapshot::routes::route_states(
@@ -3796,6 +3865,7 @@ pub fn capture_snapshot(
             sedentarization: sedentarization_state.clone(),
             discovered_sites: discovered_sites_state.clone(),
             connections: connections_state.clone(),
+            contact_lessons: contact_lessons_state,
             routes: route_states.clone(),
             demographics: demographics_state.clone(),
             forage_patches: forage_patches_state.clone(),

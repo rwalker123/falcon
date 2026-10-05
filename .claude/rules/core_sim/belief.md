@@ -80,7 +80,7 @@ Belief's first consumer: a Layer-1 morale contributor (`MoraleContributions::cul
 within walking reach of. **The band holds it, not the registry**: belief stays ownerless (nothing on
 the registry names a people), and which place a band counts as its ancestors' is a fact about the
 band. It is a tile **position**, not an `Entity`, so the checkpoint carries it inside the cohort with
-no remap (`BandRecord::cohort`; `SAVE_FORMAT_VERSION` 22). It is published, with the ground near it,
+no remap (`BandRecord::cohort`; `SAVE_FORMAT_VERSION` 24). It is published, with the ground near it,
 so a player told "far from the ancestors" can find where they are — see "On the wire and in the
 checkpoint".
 

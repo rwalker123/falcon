@@ -229,6 +229,7 @@ fn spawn_hunters(
                 home: tile,
                 current_tile: tile,
                 last_fertility_factors: Default::default(),
+                last_breeding: Default::default(),
                 size: 200,
                 children: scalar_zero(),
                 working: scalar_from_f32(workers as f32),
@@ -692,6 +693,7 @@ fn spawn_resident_crew(
                 home: tile,
                 current_tile: tile,
                 last_fertility_factors: Default::default(),
+                last_breeding: Default::default(),
                 size: 200,
                 // **BIG ENOUGH TO FIELD EVERY ROW IT STAFFS.** The hunters and the builders draw on
                 // one pool (`docs/plan_standing_upkeep.md` §2.2), so a band sized at `workers` while

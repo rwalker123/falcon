@@ -319,6 +319,7 @@ func model() -> Dictionary:
 		KnowledgeRoster.MODEL_BENCH_RECIPES: _bench_recipes(bands),
 		KnowledgeRoster.MODEL_LEARNED_THIS_TURN: _learned_this_turn,
 		KnowledgeRoster.MODEL_AREA_ORDER: _topbar.ladder_areas() if _topbar != null else [],
+		KnowledgeRoster.MODEL_CONTACT_LESSONS: _topbar.contact_lessons() if _topbar != null else [],
 	}
 
 ## The panel node, for the harnesses. `null` until the screen has been opened once.

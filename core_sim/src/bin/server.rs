@@ -33,14 +33,14 @@ use core_sim::{
     resolve_active_profile, resolve_committed_species, resolve_take_selection, rung_site_refusal,
     species_stands_in, tile_flora_composition, tile_is_fresh_watered, ActiveStartProfile,
     BandBench, BandEquipment, BandTravel, BandWorkforce, BeatCatalogHandle, BeatConfigHandle,
-    BeatLedger, BuildJob, BuildSource, CampaignLabel, CombatConfigHandle, CreaturesConfigHandle,
-    Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, ExtractionConfigHandle,
-    FloraConfigHandle, FoodMix, FoodModuleTag, ForkAnswerError, HuntingParty, KitChoice, KitJob,
-    LaborAllocation, LaborTarget, LadderConfigHandle, LocalStore, MaterialDraw,
-    MaterialsConfigHandle, RecipesConfigHandle, ResidentBand, RungKey, SiteRefusal, SourcePriority,
-    SpeciesRefusal, StartProfile, StartProfileOverrides, TakeSelection, TransferCause,
-    TransferCrossing, TransferDirection, UpkeepFundMode, WellbeingConfigHandle,
-    DEFAULT_ESCAPEMENT_FLOOR, NO_FORAGE_SEASON,
+    BeatLedger, BenchQueueError, BuildJob, BuildSource, CampaignLabel, CombatConfigHandle,
+    CreaturesConfigHandle, Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase,
+    ExtractionConfigHandle, FloraConfigHandle, FoodMix, FoodModuleTag, ForkAnswerError,
+    HuntingParty, KitChoice, KitJob, LaborAllocation, LaborTarget, LadderConfigHandle, LocalStore,
+    MaterialDraw, MaterialsConfigHandle, RecipesConfigHandle, ResidentBand, RungKey, SiteRefusal,
+    SourcePriority, SpeciesRefusal, StartProfile, StartProfileOverrides, TakeSelection,
+    TransferCause, TransferCrossing, TransferDirection, UpkeepFundMode, WellbeingConfigHandle,
+    DEFAULT_ESCAPEMENT_FLOOR, MIN_ORDER_COUNT, NO_FORAGE_SEASON,
 };
 use core_sim::{
     build_headless_app, clear_config_overrides, denial_forecast, expedition_returned_event,
@@ -598,6 +598,7 @@ fn main() {
                     &mut app,
                     &mut world_active,
                     &mut world_epoch,
+                    &mut command_log,
                     preset_id,
                     width,
                     height,
@@ -1584,21 +1585,24 @@ enum Command {
         herd_id: String,
         fraction: f32,
     },
-    /// Put a recipe on a band's crafting bench and draw idle workers onto it. See
-    /// `handle_set_bench` — **make IS the assignment**, so there is no Crafter role card and no
+    /// Add an order — `recipe × count` — to the back of a band's bench queue. See
+    /// `handle_bench_enqueue` — **make IS the assignment**, so there is no Crafter role card and no
     /// `LaborTarget` variant.
-    SetBench {
+    BenchEnqueue {
         faction: FactionId,
         band_id: Option<u64>,
         recipe_id: String,
+        count: u32,
         workers: u32,
     },
-    /// Take the job off a band's bench and hand its crew back.
-    ClearBench {
+    /// Set, remove or raise one order on a band's bench queue. See `handle_bench_queue_edit`.
+    BenchQueueEdit {
         faction: FactionId,
         band_id: Option<u64>,
+        order: u32,
+        edit: BenchQueueEdit,
     },
-    /// Re-crew a band's running bench, leaving the job and its progress alone.
+    /// Re-crew a band's bench, leaving the queue and every order's progress alone.
     BenchCrew {
         faction: FactionId,
         band_id: Option<u64>,
@@ -2617,6 +2621,7 @@ fn handle_new_game(
     app: &mut bevy::prelude::App,
     world_active: &mut bool,
     world_epoch: &mut u32,
+    command_log: &mut Option<CommandLog>,
     preset_id: String,
     width: u32,
     height: u32,
@@ -2719,6 +2724,10 @@ fn handle_new_game(
         },
     );
     *world_active = true;
+    // **A new world re-bases the origin**: nothing before this point is reachable. Left holding the
+    // outgoing world's log, a rollback would restore a different map into this app; on a fresh boot
+    // there would be no log at all, and rollback would have nothing to replay from.
+    *command_log = Some(CommandLog::new(app));
 
     info!(
         target: "shadow_scale::server",
@@ -5385,13 +5394,14 @@ fn handle_move_band(
     ) else {
         return;
     };
+    // **A long move leaves behind what the band cannot carry** (#732) — but not here. The band
+    // leaves when the turn advances, so the shed runs at DEPARTURE, on the order's first step
+    // (`systems::advance_band_movement`), measured from where the band then stands. Accepting the
+    // order changes nothing else: a turn-one outfitting window stays open until the turn advance
+    // shuts it, and an order cancelled or replaced before then sheds nothing.
     app.world
         .entity_mut(band.entity)
-        .insert(BandTravel { target });
-
-    // **A long move leaves behind what the band cannot carry** (#732) — at the moment the order is
-    // accepted, because the band is leaving now.
-    shed_for_a_long_move(app, faction, band.entity, &band.label, target);
+        .insert(BandTravel::to(target));
 
     // If the moved entity is an expedition, a fresh `move_band` un-latches AwaitingOrders (or
     // redirects a Returning party back out to explore): re-arm it Outbound and re-open the
@@ -5411,136 +5421,6 @@ fn handle_move_band(
         Some(format!(
             "status=queued action=move_band band={}",
             band.label
-        )),
-    );
-}
-
-/// **Shed a RESIDENT band down to what its workers can carry, when it is ordered farther than it can
-/// ferry** (#732, `core_sim::carry`).
-///
-/// Within [`core_sim::carry::move_ferry_reach_tiles`] the band keeps everything — it can carry
-/// its goods across in trips. Past it, it walks off with
-/// [`core_sim::carry::band_carry_capacity`] — priced on its actual working-age value, never a floored
-/// head count: food loads first, then materials are cut before tools in what the food leaves, the
-/// **most worn** units are the ones dropped, and what is left behind is **lost**. A re-target to another long move re-checks, which is
-/// a no-op once the band is already under its cap.
-///
-/// **A detached party is untouched** — parties keep their own rules (their pack is their pack). The
-/// dropped food is booked on the food ledger's `left_behind` term so the identity still closes, and
-/// one feed line names roughly what was left; nothing is said when nothing is shed.
-fn shed_for_a_long_move(
-    app: &mut bevy::prelude::App,
-    faction: FactionId,
-    entity: Entity,
-    label: &str,
-    target: UVec2,
-) {
-    if app.world.get::<ResidentBand>(entity).is_none()
-        || app.world.get::<Expedition>(entity).is_some()
-    {
-        return;
-    }
-    let Some(current_tile) = app
-        .world
-        .get::<PopulationCohort>(entity)
-        .map(|cohort| cohort.current_tile)
-    else {
-        return;
-    };
-    let Some(from) = app
-        .world
-        .get::<Tile>(current_tile)
-        .map(|tile| tile.position)
-    else {
-        return;
-    };
-    let width = app.world.resource::<TileRegistry>().width;
-    let wrap = app
-        .world
-        .resource::<SimulationConfig>()
-        .map_topology
-        .wrap_horizontal;
-    let reach = core_sim::carry::move_ferry_reach_tiles(
-        &app.world
-            .resource::<core_sim::SupplyNetworkConfigHandle>()
-            .get(),
-    );
-    if hex_distance_wrapped(from, target, width, wrap) <= reach {
-        return;
-    }
-    // ⛔ **A long move ends the band's outfitting window**, whether or not it sheds anything: the
-    // band has walked away, and its outfit is what it carried. Left open, an unchanged card would
-    // re-mint everything the shed below leaves behind.
-    if let Some(band_id) = app.world.get::<BandId>(entity).copied() {
-        let closed = app
-            .world
-            .resource_mut::<core_sim::StartingLoadout>()
-            .close_for_a_long_move(band_id);
-        if !closed.is_empty() {
-            info!(
-                target: "shadow_scale::campaign",
-                band = band_id.0,
-                windows = closed.len(),
-                "starting_loadout.window.closed=long_move"
-            );
-        }
-    }
-    let carry_cfg = app
-        .world
-        .resource::<ExpeditionConfigHandle>()
-        .get()
-        .carry
-        .clone();
-    let Some(cohort) = app.world.get::<PopulationCohort>(entity) else {
-        return;
-    };
-    let plan = core_sim::carry::plan_long_move_shed(
-        &cohort.stores,
-        app.world.get::<BandEquipment>(entity),
-        core_sim::carry::band_carry_workers(cohort),
-        &carry_cfg,
-    );
-    if plan.is_empty() {
-        return;
-    }
-    let mut holdings = app
-        .world
-        .query::<(&mut PopulationCohort, Option<&mut BandEquipment>)>();
-    let Ok((mut cohort, equipment)) = holdings.get_mut(&mut app.world, entity) else {
-        return;
-    };
-    let food_left = core_sim::carry::shed_for_long_move(
-        &mut cohort.stores,
-        equipment.map(|equipment| equipment.into_inner()),
-        &plan,
-    );
-    // **Booked on the food ledger, or the identity is false on the turn a band walks away** — the
-    // larder fell by food that passed through no income, meal, rot or transfer.
-    if let Some(mut allocation) = app.world.get_mut::<LaborAllocation>(entity) {
-        allocation.last_food_left_behind += food_left.to_f32();
-    }
-    let tick = app.world.resource::<SimulationTick>().0;
-    let food = food_left.to_f32();
-    let items = plan.item_units();
-    let materials = plan.material_units().to_f32();
-    // `band=` is the durable `BandId`, never the entity — the token the client joins on.
-    let band_token = app
-        .world
-        .get::<BandId>(entity)
-        .map(|band| format!(" band={}", band.0))
-        .unwrap_or_default();
-    push_command_event(
-        app,
-        tick,
-        CommandEventKind::CancelOrder,
-        faction,
-        format!(
-            "{label} left behind {food:.0} food, {items} gear, {materials:.0} material - too far \
-             to carry"
-        ),
-        Some(format!(
-            "status=left_behind action=move_band food={food:.2} items={items} \
-             materials={materials:.2}{band_token}"
         )),
     );
 }
@@ -5753,7 +5633,7 @@ fn handle_send_expedition(
                 cargo: LocalStore::new(),
                 defection_pull: Scalar::zero(),
             },
-            BandTravel { target },
+            BandTravel::to(target),
         ))
         .id();
 
@@ -6266,9 +6146,7 @@ fn launch_party_from_band(
                 cargo: orders.cargo,
                 defection_pull: Scalar::zero(),
             },
-            BandTravel {
-                target: orders.target,
-            },
+            BandTravel::to(orders.target),
         ))
         .id();
     Some(expedition_entity)
@@ -8600,33 +8478,128 @@ fn band_bench_mut(app: &mut bevy::prelude::App, band: Entity) -> bevy::prelude::
         .expect("bench inserted above")
 }
 
-/// **Put a recipe on a band's bench and draw idle workers onto it** — `set_bench <faction> <band>
-/// recipe <id> [workers <n>]`.
+/// **Add an order to a band's bench queue** — `bench_enqueue <faction> <band> recipe <id> count <n>
+/// [workers <n>]` (`docs/plan_crafting_and_materials.md` §7, "The queue").
 ///
-/// Two refusals, both **command failures with a reason** rather than silent no-ops, for the same
+/// Three refusals, all **command failures with a reason** rather than silent no-ops, for the same
 /// reason an unknown kit id is one: the player is choosing between recipes, so a quiet substitution
 /// or a quiet nothing answers a different question than the one asked.
 ///
-/// - an id the book does not carry, and
+/// - an id the book does not carry,
 /// - a recipe whose `requires_knowledge` this faction has not learned — which is only ever a **tool**
 ///   (see `recipes.json`), so *"you cannot build a loom yet"* is a sentence the player is told, not
-///   a bench that sits there doing nothing.
+///   a bench that sits there doing nothing, and
+/// - a count below [`MIN_ORDER_COUNT`] — every order has a count.
 ///
-/// **There is no third refusal for material.** A band that is short simply makes no progress — the
-/// draw takes nothing and the turn is a no-op — which is `docs/plan_crafting_and_materials.md` §5's
+/// **There is no refusal for material.** A band that is short simply makes no progress — the draw
+/// takes nothing and the turn is a no-op — which is `docs/plan_crafting_and_materials.md` §5's
 /// *"no 'you cannot craft that' branch in the sim"*: the panel names the shortfall, the sim just
 /// does not move.
 ///
 /// **The crew is the player's to name, never the sim's to guess** — see [`BENCH_CREW_UNSPECIFIED`]
 /// at the clamp below. Naming no crew leaves the crew where it is; `bench_crew` is what takes a
 /// number.
-fn handle_set_bench(
+fn handle_bench_enqueue(
     app: &mut bevy::prelude::App,
     faction: FactionId,
     band_id: Option<u64>,
     recipe_id: &str,
+    count: u32,
     workers: u32,
 ) {
+    let event_kind = CommandEventKind::Craft;
+    let Some(display_name) = bench_recipe_refusal(app, faction, recipe_id, "bench_enqueue") else {
+        return;
+    };
+    if count < MIN_ORDER_COUNT {
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            format!(
+                "bench_enqueue: an order of {display_name} needs a count of at least \
+                 {MIN_ORDER_COUNT}."
+            ),
+        );
+        return;
+    }
+    // **Which row this order belongs to** — what the ledger's per-item suggestion is keyed by.
+    let row_key = app
+        .world
+        .resource::<RecipesConfigHandle>()
+        .get()
+        .recipe(recipe_id)
+        .and_then(|recipe| recipe.row_key().map(str::to_string));
+
+    let Some(band) = select_starting_band(app, faction, band_id, "bench_enqueue", event_kind)
+    else {
+        return;
+    };
+    // The band's OWN crew stays on the bench through every queue edit, so the pool this is clamped
+    // against is the free hands PLUS the crew already standing there — [`BandWorkforce::benchable`],
+    // which is the one place that decides not to count them twice.
+    let benchable = band_workforce(app, band.entity).benchable();
+    // **A crew of zero changes nothing about the crew.** The command arrives over a proto3 scalar,
+    // which cannot tell an absent `workers` from an explicit `0`, and the client sends neither —
+    // so this verb keeps whoever is already standing at the bench and recruits nobody. An idle
+    // bench therefore stages at zero and the player staffs it, which is the point: labor is the
+    // scarce currency and dividing the band is the decision the game is made of, so the one number
+    // the sim must not pick is how many hands stop hunting. `bench_crew <n>` sets the crew, zero
+    // included, so no reachable intent is lost.
+    let standing = band_bench_mut(app, band.entity).workers;
+    let applied = if workers == BENCH_CREW_UNSPECIFIED {
+        standing.min(benchable)
+    } else {
+        workers.min(benchable)
+    };
+    let position = {
+        let mut bench = band_bench_mut(app, band.entity);
+        bench.workers = applied;
+        bench.enqueue(recipe_id, count);
+        // **Written HERE and nowhere else** — queueing an order is the one event that says which of
+        // an item's recipes this band chose, and the ledger suggests that one again next time. A
+        // readout must never write it: it would be the panel deciding what the player picked.
+        if let Some(row) = row_key.as_deref() {
+            bench.record_started(row, recipe_id);
+        }
+        bench.orders.len() - ONE_ORDER
+    };
+    let tick = app.world.resource::<SimulationTick>().0;
+    let clamp_note = if applied < workers {
+        format!(" (clamped from {workers} — the band has only {benchable} hands off other work)")
+    } else {
+        String::new()
+    };
+    push_command_event(
+        app,
+        tick,
+        event_kind,
+        faction,
+        format!(
+            "{} queued {display_name} x{count}, crew {applied}{clamp_note}",
+            band.label
+        ),
+        Some(format!(
+            "status=applied action=bench_enqueue recipe={recipe_id} count={count} \
+             order={position} workers={applied} benchable={benchable}"
+        )),
+    );
+}
+
+/// **ONE ORDER** — what an enqueue adds to the queue's length, so the new order's index is
+/// `len − ONE_ORDER`.
+const ONE_ORDER: usize = 1;
+
+/// **The two recipe refusals every order-adding verb shares** — an unknown id and an unlearned
+/// craft. Emits the failure and returns `None`, or returns the recipe's display name (*Spears
+/// (Flint)*: the row's name plus its label, because the item owns its name and a recipe owns only
+/// the word that tells it from its siblings).
+fn bench_recipe_refusal(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    recipe_id: &str,
+    verb: &str,
+) -> Option<String> {
     let event_kind = CommandEventKind::Craft;
     let recipes = app.world.resource::<RecipesConfigHandle>().get();
     let Some(recipe) = recipes.recipe(recipe_id) else {
@@ -8635,11 +8608,11 @@ fn handle_set_bench(
             event_kind,
             faction,
             format!(
-                "set_bench: unknown recipe '{recipe_id}' — the book offers {}.",
+                "{verb}: unknown recipe '{recipe_id}' — the book offers {}.",
                 recipes.recipe_ids_for_message()
             ),
         );
-        return;
+        return None;
     };
     let threshold = app
         .world
@@ -8647,8 +8620,6 @@ fn handle_set_bench(
         .get()
         .knowledge
         .completion_threshold;
-    // **The recipe's name in a sentence is the ROW's name plus its label** — *Spears (Flint)* —
-    // because the item owns its name and a recipe owns only the word that tells it from its siblings.
     let display_name = recipe.full_name(&app.world.resource::<EquipmentConfigHandle>().get());
     let unknown_craft = {
         let ledger = app.world.resource::<DiscoveryProgressLedger>();
@@ -8667,104 +8638,124 @@ fn handle_set_bench(
             event_kind,
             faction,
             format!(
-                "set_bench: {display_name} needs {craft}, which this people has not learned — a \
+                "{verb}: {display_name} needs {craft}, which this people has not learned — a \
                  craft is learned by practising it bare-handed."
             ),
         );
-        return;
+        return None;
     }
-    // **Which row this job belongs to** — what the ledger's per-item suggestion is keyed by.
-    let row_key = recipe.row_key().map(str::to_string);
-
-    let Some(band) = select_starting_band(app, faction, band_id, "set_bench", event_kind) else {
-        return;
-    };
-    // The band's OWN crew stays on the bench while the job is swapped, so the pool this is clamped
-    // against is the free hands PLUS the crew already standing there — [`BandWorkforce::benchable`],
-    // which is the one place that decides not to count them twice.
-    let benchable = band_workforce(app, band.entity).benchable();
-    // **A crew of zero changes nothing about the crew.** The command arrives over a proto3 scalar,
-    // which cannot tell an absent `workers` from an explicit `0`, and the client sends neither —
-    // so this verb keeps whoever is already standing at the bench and recruits nobody. An idle
-    // bench therefore stages at zero and the player staffs it, which is the point: labor is the
-    // scarce currency and dividing the band is the decision the game is made of, so the one number
-    // the sim must not pick is how many hands stop hunting. `bench_crew <n>` sets the crew, zero
-    // included, so no reachable intent is lost.
-    let standing = band_bench_mut(app, band.entity).workers;
-    let applied = if workers == BENCH_CREW_UNSPECIFIED {
-        standing.min(benchable)
-    } else {
-        workers.min(benchable)
-    };
-    {
-        let mut bench = band_bench_mut(app, band.entity);
-        bench.set_job(recipe_id, applied);
-        // **Written HERE and nowhere else** — a job starting is the one event that says which of an
-        // item's recipes this band chose, and the ledger suggests that one again next time. A
-        // readout must never write it: it would be the panel deciding what the player picked.
-        if let Some(row) = row_key.as_deref() {
-            bench.record_started(row, recipe_id);
-        }
-    }
-    let tick = app.world.resource::<SimulationTick>().0;
-    let clamp_note = if applied < workers {
-        format!(" (clamped from {workers} — the band has only {benchable} hands off other work)")
-    } else {
-        String::new()
-    };
-    push_command_event(
-        app,
-        tick,
-        event_kind,
-        faction,
-        format!(
-            "{} is making {display_name} x{applied}{clamp_note}",
-            band.label
-        ),
-        Some(format!(
-            "status=applied action=set_bench recipe={recipe_id} workers={applied} \
-             benchable={benchable}"
-        )),
-    );
+    Some(display_name)
 }
 
-/// **Take the job off a band's bench** — `clear_bench <faction> <band>`. The crew returns to the
-/// idle pool.
+/// **A queue edit's refusal, in a sentence that names the number** — the index the player asked
+/// for against the queue it has, or the count against what the order already made.
+fn bench_queue_refusal(verb: &str, band_label: &str, order: u32, error: BenchQueueError) -> String {
+    match error {
+        BenchQueueError::NoSuchOrder { len } => format!(
+            "{verb}: {band_label} has no order {order} — its bench queue holds {len} order(s)."
+        ),
+        BenchQueueError::CountTooSmall => format!(
+            "{verb}: an order needs a count of at least {MIN_ORDER_COUNT} — remove the order to \
+             stop it."
+        ),
+        BenchQueueError::CountAtOrBelowMade { made } => format!(
+            "{verb}: order {order} has already made {made} — a count of {made} or fewer would \
+             finish it; remove the order to stop it."
+        ),
+        BenchQueueError::AlreadyAtHead => {
+            format!("{verb}: order {order} is already being made — it cannot move up.")
+        }
+    }
+}
+
+/// **The three single-order edits** — set a count, remove, raise. One enum so the band lookup, the
+/// refusal and the event are written once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BenchQueueEdit {
+    /// `bench_order_count … order <i> count <n>`.
+    Count(u32),
+    /// `bench_remove … order <i>`.
+    Remove,
+    /// `bench_raise … order <i>`.
+    Raise,
+}
+
+impl BenchQueueEdit {
+    fn verb(self) -> &'static str {
+        match self {
+            BenchQueueEdit::Count(_) => "bench_order_count",
+            BenchQueueEdit::Remove => "bench_remove",
+            BenchQueueEdit::Raise => "bench_raise",
+        }
+    }
+}
+
+/// **Edit one order on a band's bench queue** — `bench_order_count`, `bench_remove`, `bench_raise`.
 ///
-/// **Materials already drawn for the pass in flight are spent.** They were cut for the thing the
-/// player has just stopped making, and the store has no representation for a half-worked pile; the
-/// command's help text says so rather than the sim pretending otherwise.
-fn handle_clear_bench(app: &mut bevy::prelude::App, faction: FactionId, band_id: Option<u64>) {
+/// **Removing the head spends what it drew, exactly as clearing the bench always has.** The
+/// materials were cut for the thing the player has just stopped making, and the store has no
+/// representation for a half-worked pile; `BenchState.drawnInputs` names what goes beforehand, and
+/// the command's help text says so. The crew stays at the bench for the next order.
+///
+/// **Raising keeps every pile.** The displaced head is paused, not cleared: its progress and its
+/// drawn pile ride on the order itself ([`core_sim::BenchOrder`]).
+fn handle_bench_queue_edit(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: Option<u64>,
+    order: u32,
+    edit: BenchQueueEdit,
+) {
     let event_kind = CommandEventKind::Craft;
-    let Some(band) = select_starting_band(app, faction, band_id, "clear_bench", event_kind) else {
+    let verb = edit.verb();
+    let Some(band) = select_starting_band(app, faction, band_id, verb, event_kind) else {
         return;
     };
-    let running = {
+    let index = order as usize;
+    let outcome = {
         let mut bench = band_bench_mut(app, band.entity);
-        let running = bench.recipe_id.clone();
-        bench.clear_job();
-        running
+        match edit {
+            BenchQueueEdit::Count(count) => bench.set_order_count(index, count).map(|()| {
+                let recipe = bench.orders[index].recipe_id.clone();
+                (
+                    format!("{}: order {order} ({recipe}) now x{count}", band.label),
+                    format!(
+                        "status=applied action={verb} order={order} recipe={recipe} count={count}"
+                    ),
+                )
+            }),
+            BenchQueueEdit::Remove => bench.remove_order(index).map(|removed| {
+                let spent = removed.drawn.is_some();
+                (
+                    format!("{} stopped making {}", band.label, removed.recipe_id),
+                    format!(
+                        "status=applied action={verb} order={order} recipe={} made={} \
+                         count={} pile_spent={spent}",
+                        removed.recipe_id, removed.made, removed.count
+                    ),
+                )
+            }),
+            BenchQueueEdit::Raise => bench.raise_order(index).map(|()| {
+                let recipe = bench.orders[index - ONE_ORDER].recipe_id.clone();
+                (
+                    format!("{}: {recipe} moved up the bench queue", band.label),
+                    format!("status=applied action={verb} order={order} recipe={recipe}"),
+                )
+            }),
+        }
     };
-    let Some(recipe_id) = running else {
-        emit_command_failure(
+    match outcome {
+        Ok((sentence, detail)) => {
+            let tick = app.world.resource::<SimulationTick>().0;
+            push_command_event(app, tick, event_kind, faction, sentence, Some(detail));
+        }
+        Err(error) => emit_command_failure(
             app,
             event_kind,
             faction,
-            format!("clear_bench: {} has nothing on its bench.", band.label),
-        );
-        return;
-    };
-    let tick = app.world.resource::<SimulationTick>().0;
-    push_command_event(
-        app,
-        tick,
-        event_kind,
-        faction,
-        format!("{} stopped making {recipe_id}", band.label),
-        Some(format!(
-            "status=cleared action=clear_bench recipe={recipe_id}"
-        )),
-    );
+            bench_queue_refusal(verb, &band.label, order, error),
+        ),
+    }
 }
 
 /// **MARK A BAND'S CRAFTING BENCH WITH THE PLAYER'S OWN RANK** — `bench_priority <faction> <band>
@@ -8850,9 +8841,13 @@ fn handle_bench_priority(
     );
 }
 
-/// **Re-crew a band's running bench** — `bench_crew <faction> <band> workers <n>`. The job and its
-/// progress are untouched, exactly as `assign_labor` leaves an improvement in flight alone: editing
-/// the crew is a crew-side edit and must not restart a build the player committed to.
+/// **Re-crew a band's bench** — `bench_crew <faction> <band> workers <n>`. The queue and every
+/// order's progress are untouched, exactly as `assign_labor` leaves an improvement in flight alone:
+/// editing the crew is a crew-side edit and must not restart a build the player committed to.
+///
+/// **It applies to an IDLE bench too.** The crew belongs to the bench, not to an order, so when the
+/// last order leaves the queue the crew is still standing there — and this verb is how the player
+/// sends them home. Refusing it on an empty queue would strand them.
 fn handle_bench_crew(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -8863,30 +8858,17 @@ fn handle_bench_crew(
     let Some(band) = select_starting_band(app, faction, band_id, "bench_crew", event_kind) else {
         return;
     };
-    if app
-        .world
-        .get::<BandBench>(band.entity)
-        .is_none_or(|bench| !bench.is_running())
-    {
-        emit_command_failure(
-            app,
-            event_kind,
-            faction,
-            format!("bench_crew: {} has nothing on its bench.", band.label),
-        );
-        return;
-    }
-    // Same ceiling `set_bench` clamps against, and for the same reason: the crew already on the
+    // Same ceiling `bench_enqueue` clamps against, and for the same reason: the crew already on the
     // bench is being re-set, not added to.
     let benchable = band_workforce(app, band.entity).benchable();
     // **Zero is an order here, not a question.** This verb exists to name a crew, so it is the one
-    // way to stand the bench down without taking the job off it — the opposite reading from
-    // `set_bench`'s [`BENCH_CREW_UNSPECIFIED`].
+    // way to stand the bench down without taking an order off it — the opposite reading from
+    // `bench_enqueue`'s [`BENCH_CREW_UNSPECIFIED`].
     let applied = workers.min(benchable);
     let recipe_id = {
         let mut bench = band_bench_mut(app, band.entity);
         bench.workers = applied;
-        bench.recipe_id.clone().unwrap_or_default()
+        bench.head_recipe().unwrap_or_default().to_string()
     };
     let tick = app.world.resource::<SimulationTick>().0;
     let clamp_note = if applied < workers {
@@ -10871,23 +10853,49 @@ fn command_from_payload(
             herd_id,
             fraction,
         }),
-        ProtoCommandPayload::SetBench {
+        ProtoCommandPayload::BenchEnqueue {
             faction_id,
             band_id,
             recipe_id,
+            count,
             workers,
-        } => Some(Command::SetBench {
+        } => Some(Command::BenchEnqueue {
             faction: FactionId(faction_id),
             band_id: Some(band_id),
             recipe_id,
+            count,
             workers,
         }),
-        ProtoCommandPayload::ClearBench {
+        ProtoCommandPayload::BenchOrderCount {
             faction_id,
             band_id,
-        } => Some(Command::ClearBench {
+            order,
+            count,
+        } => Some(Command::BenchQueueEdit {
             faction: FactionId(faction_id),
             band_id: Some(band_id),
+            order,
+            edit: BenchQueueEdit::Count(count),
+        }),
+        ProtoCommandPayload::BenchRemoveOrder {
+            faction_id,
+            band_id,
+            order,
+        } => Some(Command::BenchQueueEdit {
+            faction: FactionId(faction_id),
+            band_id: Some(band_id),
+            order,
+            edit: BenchQueueEdit::Remove,
+        }),
+        ProtoCommandPayload::BenchRaiseOrder {
+            faction_id,
+            band_id,
+            order,
+        } => Some(Command::BenchQueueEdit {
+            faction: FactionId(faction_id),
+            band_id: Some(band_id),
+            order,
+            edit: BenchQueueEdit::Raise,
         }),
         ProtoCommandPayload::BenchCrew {
             faction_id,
@@ -11438,11 +11446,15 @@ impl CommandLog {
 
     /// Re-base: this world is a new starting point and nothing before it is reachable.
     ///
-    /// `new_game`, `reset_map` and **every config reload** land here. The reload is the interesting
-    /// one and it is the deliberate answer to a hole this arc flagged early: a `SimState` carries no
-    /// config *by design*, so replaying across a reload would run turns under whatever tuning is
-    /// live rather than the tuning of that tick. Re-basing is consistent with that decision and
-    /// needs no config serialization at all.
+    /// `load_game` and **every config reload** land here, and warn as they do. `new_game` and
+    /// `reset_map` build a fresh world and take a fresh [`CommandLog::new`] instead: the origin moves
+    /// just the same, but on the first game of a session there was no log to lose, so a warning
+    /// would cry wolf.
+    ///
+    /// The reload is the interesting one and it is the deliberate answer to a hole this arc flagged
+    /// early: a `SimState` carries no config *by design*, so replaying across a reload would run
+    /// turns under whatever tuning is live rather than the tuning of that tick. Re-basing is
+    /// consistent with that decision and needs no config serialization at all.
     fn rebase(&mut self, app: &bevy::prelude::App, reason: &str) {
         *self = Self::new(app);
         warn!(
@@ -11607,8 +11619,8 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
         Command::UpkeepMode { faction, .. } => Some((*faction, "upkeep_mode")),
         Command::ExtendPen { faction, .. } => Some((*faction, "extend_pen")),
         Command::SetHerdOutput { faction, .. } => Some((*faction, "set_herd_output")),
-        Command::SetBench { faction, .. } => Some((*faction, "set_bench")),
-        Command::ClearBench { faction, .. } => Some((*faction, "clear_bench")),
+        Command::BenchEnqueue { faction, .. } => Some((*faction, "bench_enqueue")),
+        Command::BenchQueueEdit { faction, edit, .. } => Some((*faction, edit.verb())),
         Command::BenchCrew { faction, .. } => Some((*faction, "bench_crew")),
         Command::CancelOrder { faction, .. } => Some((*faction, "cancel_order")),
         Command::SetStartingLoadout { faction, .. } => Some((*faction, "set_starting_loadout")),
@@ -12119,16 +12131,22 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
         } => {
             handle_set_herd_output(app, faction, &herd_id, fraction);
         }
-        Command::SetBench {
+        Command::BenchEnqueue {
             faction,
             band_id,
             recipe_id,
+            count,
             workers,
         } => {
-            handle_set_bench(app, faction, band_id, &recipe_id, workers);
+            handle_bench_enqueue(app, faction, band_id, &recipe_id, count, workers);
         }
-        Command::ClearBench { faction, band_id } => {
-            handle_clear_bench(app, faction, band_id);
+        Command::BenchQueueEdit {
+            faction,
+            band_id,
+            order,
+            edit,
+        } => {
+            handle_bench_queue_edit(app, faction, band_id, order, edit);
         }
         Command::BenchCrew {
             faction,
@@ -12926,6 +12944,7 @@ mod tests {
                     last_morale_cause: Default::default(),
                     last_morale_contributions: Default::default(),
                     last_fertility_factors: Default::default(),
+                    last_breeding: Default::default(),
                     discontent_fraction: core_sim::scalar_zero(),
                     grievance: core_sim::scalar_zero(),
                     last_emigrated: 0,
@@ -13040,6 +13059,7 @@ mod tests {
             &mut app,
             world_active,
             world_epoch,
+            &mut None,
             "earthlike".to_string(),
             24,
             16,
@@ -13305,6 +13325,7 @@ mod tests {
             &mut app,
             &mut world_active,
             &mut world_epoch,
+            &mut None,
             WORLD_PRESET.to_string(),
             WORLD_GRID.x,
             WORLD_GRID.y,
@@ -13563,6 +13584,85 @@ mod tests {
         );
 
         std::env::remove_var(core_sim::save_store::SAVE_DIR_ENV);
+    }
+
+    /// **A new game re-bases the command log, and a refused one leaves it alone.** Left holding the
+    /// outgoing world's log, a rollback restored that world's origin — a different map, at a
+    /// different grid — into the new app; on a fresh boot there was no log at all, so a rollback in
+    /// the first game of a session had nothing to replay from.
+    #[test]
+    fn a_new_game_rebases_the_command_log_and_a_refused_one_does_not() {
+        /// A grid other than the fixture's 24×16, so the origin's tile count says which world it is.
+        const NEXT_GRID: UVec2 = UVec2::new(20, 14);
+        /// A seed other than the fixture's, so the second world is a different map.
+        const NEXT_SEED: u64 = 11;
+
+        let flat = loopback_snapshot_server();
+        let (mut world_active, mut world_epoch) = (false, 0u32);
+        let mut app = a_world_for_saving(&mut world_active, &mut world_epoch, &flat);
+
+        // The outgoing world's log, with history in it.
+        let mut log = CommandLog::new(&app);
+        for _ in 0..3 {
+            resolve_turn_with_auto_orders(&mut app);
+            log.push(LogEntry::Turn);
+        }
+        let outgoing_tiles = log.origin.tiles.len();
+        let mut command_log = Some(log);
+
+        // A refused request builds no world, so the log still describes the world that is running.
+        handle_new_game(
+            &mut app,
+            &mut world_active,
+            &mut world_epoch,
+            &mut command_log,
+            "earthlike".to_string(),
+            NEXT_GRID.x,
+            NEXT_GRID.y,
+            NEXT_SEED,
+            "no_such_profile".to_string(),
+            None,
+            &flat,
+        );
+        let kept = command_log
+            .as_ref()
+            .expect("a refused new game keeps the log");
+        assert_eq!(kept.entries.len(), 3, "a refused new game must not re-base");
+        assert_eq!(kept.origin.tiles.len(), outgoing_tiles);
+
+        handle_new_game(
+            &mut app,
+            &mut world_active,
+            &mut world_epoch,
+            &mut command_log,
+            "earthlike".to_string(),
+            NEXT_GRID.x,
+            NEXT_GRID.y,
+            NEXT_SEED,
+            "late_forager_tribe".to_string(),
+            None,
+            &flat,
+        );
+        let log = command_log.expect("a new game leaves a log in place");
+        assert!(
+            log.entries.is_empty(),
+            "a re-based log carries no entries from the outgoing world"
+        );
+        assert_eq!(
+            log.origin_tick,
+            app.world.resource::<SimulationTick>().0,
+            "the new origin is the new world as it stands"
+        );
+        assert_eq!(
+            log.origin.tiles.len(),
+            (NEXT_GRID.x * NEXT_GRID.y) as usize,
+            "the origin is the NEW map, not the outgoing one"
+        );
+        assert_ne!(
+            log.origin.tiles.len(),
+            outgoing_tiles,
+            "fixture: the grids must differ"
+        );
     }
 
     /// **The autosave slot is the hook's alone.** An explicit save naming it is refused, because a
@@ -13844,6 +13944,7 @@ mod tests {
             &mut app,
             &mut world_active,
             &mut world_epoch,
+            &mut None,
             "earthlike".to_string(),
             48,
             32,
@@ -13867,6 +13968,7 @@ mod tests {
             &mut app,
             &mut world_active,
             &mut world_epoch,
+            &mut None,
             "earthlike".to_string(),
             0,
             32,
@@ -13887,6 +13989,7 @@ mod tests {
             &mut app,
             &mut world_active,
             &mut world_epoch,
+            &mut None,
             "earthlike".to_string(),
             48,
             32,
@@ -13925,6 +14028,7 @@ mod tests {
             &mut app,
             &mut world_active,
             &mut world_epoch,
+            &mut None,
             "earthlike".to_string(),
             48,
             32,
@@ -13999,6 +14103,7 @@ mod tests {
             &mut app,
             &mut world_active,
             &mut world_epoch,
+            &mut None,
             "earthlike".to_string(),
             48,
             32,
@@ -14081,6 +14186,7 @@ mod tests {
             &mut app,
             &mut world_active,
             &mut world_epoch,
+            &mut None,
             "earthlike".to_string(),
             48,
             32,
@@ -14135,6 +14241,7 @@ mod tests {
             &mut app,
             &mut world_active,
             &mut world_epoch,
+            &mut None,
             "earthlike".to_string(),
             grid.x,
             grid.y,
@@ -20817,6 +20924,16 @@ mod tests {
             .expect("worldgen spawned a resident band")
     }
 
+    /// **The count every bench fixture below queues** — any count at all; none of these fixtures
+    /// runs a turn, so none finishes an item.
+    const BENCH_TEST_ORDER: u32 = 3;
+    /// The head of a bench queue, as the queue verbs address it.
+    const HEAD: u32 = 0;
+    /// The order behind the head.
+    const SECOND: u32 = 1;
+    /// A crew of nobody — how `bench_crew` stands a bench down.
+    const NOBODY_AT_THE_BENCH: u32 = 0;
+
     /// **A crew at the bench is published as BUSY** — the same hands `assign_labor` refuses to send
     /// anywhere.
     ///
@@ -20835,9 +20952,16 @@ mod tests {
             "the fixture band must have the hands to staff the bench at all"
         );
 
-        handle_set_bench(&mut app, faction, None, BENCH_IDLE_RECIPE, BENCH_IDLE_CREW);
+        handle_bench_enqueue(
+            &mut app,
+            faction,
+            None,
+            BENCH_IDLE_RECIPE,
+            BENCH_TEST_ORDER,
+            BENCH_IDLE_CREW,
+        );
         // Liveness: the crew really is standing there. Without this the assertion below passes on a
-        // bench that silently refused the job — and on a sim that stopped publishing idle at all.
+        // bench that silently refused the order — and on a sim that stopped publishing idle at all.
         assert_eq!(
             app.world
                 .get::<BandBench>(band)
@@ -20853,13 +20977,14 @@ mod tests {
             "the bench's crew must leave the published idle count"
         );
 
-        // …and handing them back restores it, so the subtraction is a live one rather than a band
-        // that simply lost workers.
-        handle_clear_bench(&mut app, faction, None);
+        // …and standing them down restores it, so the subtraction is a live one rather than a band
+        // that simply lost workers. The crew belongs to the BENCH, so `bench_crew 0` is how — taking
+        // the order off would leave them standing at an idle bench.
+        handle_bench_crew(&mut app, faction, None, NOBODY_AT_THE_BENCH);
         assert_eq!(
             published_idle_workers(&mut app, band),
             idle_before,
-            "clearing the job returns the crew to the idle pool"
+            "standing the crew down returns it to the idle pool"
         );
     }
 
@@ -20875,7 +21000,14 @@ mod tests {
         app.update();
         let faction = FactionId(0);
         let band = first_resident_band(&mut app);
-        handle_set_bench(&mut app, faction, None, BENCH_IDLE_RECIPE, BENCH_IDLE_CREW);
+        handle_bench_enqueue(
+            &mut app,
+            faction,
+            None,
+            BENCH_IDLE_RECIPE,
+            BENCH_TEST_ORDER,
+            BENCH_IDLE_CREW,
+        );
         let published = published_idle_workers(&mut app, band);
         assert!(
             published > 0,
@@ -20913,8 +21045,8 @@ mod tests {
         );
     }
 
-    /// A **second** ungated recipe, so a swap is a real change of job rather than a re-set of the
-    /// same one.
+    /// A **second** ungated recipe, so a second order is a real change of recipe rather than a
+    /// re-queue of the same one.
     const BENCH_SWAP_RECIPE: &str = "baskets";
 
     /// What is actually standing at a band's bench.
@@ -20925,6 +21057,24 @@ mod tests {
             .unwrap_or(0)
     }
 
+    /// The band's bench, which every fixture below has.
+    fn the_bench(app: &bevy::prelude::App, band: Entity) -> &BandBench {
+        app.world
+            .get::<BandBench>(band)
+            .expect("a campaign band carries a bench")
+    }
+
+    /// Whether any Craft-channel event's detail mentions `needle` — how a refusal is read back.
+    fn craft_event_mentions(app: &bevy::prelude::App, needle: &str) -> bool {
+        app.world.resource::<CommandEventLog>().iter().any(|entry| {
+            matches!(entry.kind, CommandEventKind::Craft)
+                && entry
+                    .detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains(needle))
+        })
+    }
+
     /// **Naming no crew recruits nobody; naming one is obeyed to the head.**
     ///
     /// A pairing, because every other bench fixture passes an explicit crew — which is the one call
@@ -20933,7 +21083,7 @@ mod tests {
     /// idle bench stages at zero and waits for the stepper. The second half is what keeps that from
     /// meaning *"a named crew is ignored too"*.
     #[test]
-    fn a_set_bench_with_no_crew_named_recruits_nobody() {
+    fn a_bench_enqueue_with_no_crew_named_recruits_nobody() {
         let mut app = build_test_app();
         app.update();
         let faction = FactionId(0);
@@ -20945,17 +21095,18 @@ mod tests {
              below cannot be told apart"
         );
 
-        handle_set_bench(
+        handle_bench_enqueue(
             &mut app,
             faction,
             None,
             BENCH_IDLE_RECIPE,
+            BENCH_TEST_ORDER,
             BENCH_CREW_UNSPECIFIED,
         );
         assert_eq!(
             bench_crew(&app, band),
             0,
-            "a set_bench that names no crew stages the recipe with nobody on it — the sim does not \
+            "an enqueue that names no crew stages the order with nobody on it — the sim does not \
              pick how many hands stop hunting"
         );
         assert_eq!(
@@ -20964,68 +21115,280 @@ mod tests {
             "…so the band's idle count is untouched: every hand is still free to be spent elsewhere"
         );
 
-        handle_set_bench(&mut app, faction, None, BENCH_IDLE_RECIPE, BENCH_IDLE_CREW);
+        handle_bench_enqueue(
+            &mut app,
+            faction,
+            None,
+            BENCH_IDLE_RECIPE,
+            BENCH_TEST_ORDER,
+            BENCH_IDLE_CREW,
+        );
         assert_eq!(
             bench_crew(&app, band),
             BENCH_IDLE_CREW,
-            "a set_bench that DOES name a crew applies exactly that crew — an absent number means \
+            "an enqueue that DOES name a crew applies exactly that crew — an absent number means \
              leave the crew alone, not ignore the one that is there"
         );
     }
 
-    /// **Swapping the job on a running bench keeps the crew standing there.**
-    ///
-    /// `BandBench::set_job` overwrites `workers`, so a swap that applied the proto's `0` dismissed a
-    /// crew the player never asked to send home — the exact case `BandWorkforce::benchable()` (pool
-    /// − assigned, deliberately *not* netting the bench) exists to preserve.
+    /// **The crew stays with the BENCH across every queue edit** — a second order queued with no
+    /// crew named, the head removed, and the queue emptied entirely all leave it standing.
     #[test]
-    fn swapping_the_job_on_a_running_bench_keeps_its_crew() {
+    fn the_crew_stays_with_the_bench_across_queue_edits() {
         let mut app = build_test_app();
         app.update();
         let faction = FactionId(0);
         let band = first_resident_band(&mut app);
 
-        handle_set_bench(&mut app, faction, None, BENCH_IDLE_RECIPE, BENCH_IDLE_CREW);
-        assert_eq!(
-            bench_crew(&app, band),
+        handle_bench_enqueue(
+            &mut app,
+            faction,
+            None,
+            BENCH_IDLE_RECIPE,
+            BENCH_TEST_ORDER,
             BENCH_IDLE_CREW,
-            "the fixture must have a crew at the bench, or the swap below proves nothing"
         );
-
-        handle_set_bench(
+        handle_bench_enqueue(
             &mut app,
             faction,
             None,
             BENCH_SWAP_RECIPE,
+            BENCH_TEST_ORDER,
             BENCH_CREW_UNSPECIFIED,
         );
+        let queue: Vec<&str> = the_bench(&app, band)
+            .orders
+            .iter()
+            .map(|order| order.recipe_id.as_str())
+            .collect();
         assert_eq!(
-            app.world
-                .get::<BandBench>(band)
-                .and_then(|bench| bench.recipe_id.clone())
-                .unwrap_or_default(),
-            BENCH_SWAP_RECIPE,
-            "the swap must actually have changed the job"
+            queue,
+            vec![BENCH_IDLE_RECIPE, BENCH_SWAP_RECIPE],
+            "the second order goes to the BACK — the head is still the first"
         );
         assert_eq!(
             bench_crew(&app, band),
             BENCH_IDLE_CREW,
-            "the crew already at the bench stays put across the swap — an absent number is not an \
-             order to send them home"
+            "queueing kept the crew"
+        );
+
+        handle_bench_queue_edit(&mut app, faction, None, HEAD, BenchQueueEdit::Remove);
+        assert_eq!(
+            the_bench(&app, band).head_recipe(),
+            Some(BENCH_SWAP_RECIPE),
+            "removing the head makes the next order the head"
+        );
+        assert_eq!(
+            bench_crew(&app, band),
+            BENCH_IDLE_CREW,
+            "…and the crew stays"
+        );
+
+        handle_bench_queue_edit(&mut app, faction, None, HEAD, BenchQueueEdit::Remove);
+        assert!(
+            !the_bench(&app, band).is_running(),
+            "fixture: the queue is empty"
+        );
+        assert_eq!(
+            bench_crew(&app, band),
+            BENCH_IDLE_CREW,
+            "an empty queue leaves the crew standing at an idle bench"
+        );
+
+        // …and the bench's own verb still reaches them, or they would be stranded there.
+        handle_bench_crew(&mut app, faction, None, NOBODY_AT_THE_BENCH);
+        assert_eq!(
+            bench_crew(&app, band),
+            0,
+            "bench_crew works on an idle bench"
         );
     }
 
-    /// **STARTING A JOB RECORDS WHICH OF THE ITEM'S RECIPES THE BAND CHOSE — and clearing the bench
-    /// does not forget it.**
-    ///
-    /// The crafting ledger suggests the recipe a band last started for an item
-    /// (`BandBench::last_started`), and `set_bench` is the ONE writer. Paired: the map is empty
-    /// before the command (so a map filled by something else could not pass), the knapped recipe is
-    /// recorded against the item's row key, a second start for the same item overwrites it, and a
-    /// `clear_bench` — which drops the job — keeps the choice, because what a band last made its
-    /// spears from is a fact about the band rather than about the job on the bench.
+    /// **REMOVING THE HEAD SPENDS ITS PILE, exactly as clearing the bench always has** — the store
+    /// does not get the drawn materials back. Paired with the raise: a displaced head KEEPS its pile
+    /// and progress, so moving an order up never costs what was cut.
     #[test]
-    fn starting_a_job_records_the_recipe_and_clearing_the_bench_keeps_it() {
+    fn removing_the_head_spends_its_pile_and_raising_over_it_keeps_it() {
+        const CUT: f32 = 4.0;
+        const BANKED: f32 = 2.5;
+        let mut app = build_test_app();
+        app.update();
+        let faction = FactionId(0);
+        let band = first_resident_band(&mut app);
+        handle_bench_enqueue(
+            &mut app,
+            faction,
+            None,
+            BENCH_IDLE_RECIPE,
+            BENCH_TEST_ORDER,
+            BENCH_IDLE_CREW,
+        );
+        handle_bench_enqueue(
+            &mut app,
+            faction,
+            None,
+            BENCH_SWAP_RECIPE,
+            BENCH_TEST_ORDER,
+            BENCH_CREW_UNSPECIFIED,
+        );
+        {
+            let mut bench = app
+                .world
+                .get_mut::<BandBench>(band)
+                .expect("a campaign band carries a bench");
+            let head = bench.head_mut().expect("the fixture queued an order");
+            head.progress = core_sim::scalar_from_f32(BANKED);
+            head.drawn = Some(core_sim::DrawnInputs {
+                reading: None,
+                grade: None,
+                withdrawn: vec![core_sim::DrawnMaterial {
+                    material: "hide".to_string(),
+                    amount: core_sim::scalar_from_f32(CUT),
+                }],
+            });
+        }
+
+        handle_bench_queue_edit(&mut app, faction, None, SECOND, BenchQueueEdit::Raise);
+        let bench = the_bench(&app, band);
+        assert_eq!(
+            bench.head_recipe(),
+            Some(BENCH_SWAP_RECIPE),
+            "the raise took"
+        );
+        let paused = &bench.orders[SECOND as usize];
+        assert!(
+            paused.drawn.is_some() && paused.progress == core_sim::scalar_from_f32(BANKED),
+            "the displaced head keeps its pile and its progress — it is paused, not cleared"
+        );
+
+        let hide_before = app
+            .world
+            .get::<PopulationCohort>(band)
+            .expect("a campaign band carries a cohort")
+            .stores
+            .material_total("hide");
+        handle_bench_queue_edit(&mut app, faction, None, SECOND, BenchQueueEdit::Remove);
+        assert_eq!(
+            the_bench(&app, band).orders.len(),
+            1,
+            "the order holding the pile is gone"
+        );
+        assert_eq!(
+            app.world
+                .get::<PopulationCohort>(band)
+                .expect("a campaign band carries a cohort")
+                .stores
+                .material_total("hide"),
+            hide_before,
+            "its pile is spent, not returned — the store has no representation for a half-worked one"
+        );
+        assert!(
+            craft_event_mentions(&app, "pile_spent=true"),
+            "the event says the pile went with it"
+        );
+    }
+
+    /// **Every refusal names its number and changes nothing** — a zero count, an index with no
+    /// order, a count at or below what the order already made, and raising the head.
+    #[test]
+    fn queue_edits_that_cannot_apply_are_refused_by_name() {
+        const NOTHING: u32 = 0;
+        const ALREADY_MADE: u32 = 2;
+        const NO_SUCH_ORDER: u32 = 5;
+        const A_LARGER_COUNT: u32 = 7;
+        let mut app = build_test_app();
+        app.update();
+        let faction = FactionId(0);
+        let band = first_resident_band(&mut app);
+
+        handle_bench_enqueue(
+            &mut app,
+            faction,
+            None,
+            BENCH_IDLE_RECIPE,
+            NOTHING,
+            BENCH_CREW_UNSPECIFIED,
+        );
+        assert!(
+            !the_bench(&app, band).is_running(),
+            "an order of zero is not queued"
+        );
+        assert!(
+            craft_event_mentions(&app, "needs a count of at least"),
+            "…and the refusal says why"
+        );
+
+        handle_bench_enqueue(
+            &mut app,
+            faction,
+            None,
+            BENCH_IDLE_RECIPE,
+            BENCH_TEST_ORDER,
+            BENCH_CREW_UNSPECIFIED,
+        );
+        app.world
+            .get_mut::<BandBench>(band)
+            .expect("a campaign band carries a bench")
+            .head_mut()
+            .expect("the fixture queued an order")
+            .made = ALREADY_MADE;
+
+        handle_bench_queue_edit(
+            &mut app,
+            faction,
+            None,
+            NO_SUCH_ORDER,
+            BenchQueueEdit::Remove,
+        );
+        assert!(craft_event_mentions(
+            &app,
+            &format!("has no order {NO_SUCH_ORDER}")
+        ));
+        handle_bench_queue_edit(
+            &mut app,
+            faction,
+            None,
+            HEAD,
+            BenchQueueEdit::Count(ALREADY_MADE),
+        );
+        assert!(craft_event_mentions(
+            &app,
+            &format!("has already made {ALREADY_MADE}")
+        ));
+        handle_bench_queue_edit(&mut app, faction, None, HEAD, BenchQueueEdit::Raise);
+        assert!(craft_event_mentions(&app, "already being made"));
+        assert_eq!(
+            the_bench(&app, band).orders[HEAD as usize].count,
+            BENCH_TEST_ORDER,
+            "no refused edit touched the order"
+        );
+
+        // The liveness half: a count above `made` applies.
+        handle_bench_queue_edit(
+            &mut app,
+            faction,
+            None,
+            HEAD,
+            BenchQueueEdit::Count(A_LARGER_COUNT),
+        );
+        assert_eq!(
+            the_bench(&app, band).orders[HEAD as usize].count,
+            A_LARGER_COUNT,
+            "a valid count applies"
+        );
+    }
+
+    /// **QUEUEING AN ORDER RECORDS WHICH OF THE ITEM'S RECIPES THE BAND CHOSE — and emptying the
+    /// queue does not forget it.**
+    ///
+    /// The crafting ledger suggests the recipe a band last queued for an item
+    /// (`BandBench::last_started`), and `bench_enqueue` is the ONE writer. Paired: the map is empty
+    /// before the command (so a map filled by something else could not pass), the knapped recipe is
+    /// recorded against the item's row key, a second order for the same item overwrites it, and
+    /// removing both orders keeps the choice, because what a band last made its spears from is a
+    /// fact about the band rather than about the queue.
+    #[test]
+    fn queueing_an_order_records_the_recipe_and_emptying_the_queue_keeps_it() {
         const SPEARS_ROW: &str = "spears";
         const KNAPPED: &str = "spears_flint";
         const BONE: &str = "spears";
@@ -21041,26 +21404,41 @@ mod tests {
         };
         assert_eq!(last_started(&app), None, "a fresh band has started nothing");
 
-        handle_set_bench(&mut app, faction, None, KNAPPED, BENCH_CREW_UNSPECIFIED);
+        handle_bench_enqueue(
+            &mut app,
+            faction,
+            None,
+            KNAPPED,
+            BENCH_TEST_ORDER,
+            BENCH_CREW_UNSPECIFIED,
+        );
         assert_eq!(
             last_started(&app).as_deref(),
             Some(KNAPPED),
-            "starting the knapped recipe records it against the spears row"
+            "queueing the knapped recipe records it against the spears row"
         );
 
-        handle_set_bench(&mut app, faction, None, BONE, BENCH_CREW_UNSPECIFIED);
+        handle_bench_enqueue(
+            &mut app,
+            faction,
+            None,
+            BONE,
+            BENCH_TEST_ORDER,
+            BENCH_CREW_UNSPECIFIED,
+        );
         assert_eq!(
             last_started(&app).as_deref(),
             Some(BONE),
-            "a second start for the same item overwrites the first — it is the LAST started"
+            "a second order for the same item overwrites the first — it is the LAST queued"
         );
 
-        handle_clear_bench(&mut app, faction, None);
+        handle_bench_queue_edit(&mut app, faction, None, HEAD, BenchQueueEdit::Remove);
+        handle_bench_queue_edit(&mut app, faction, None, HEAD, BenchQueueEdit::Remove);
         assert!(
             app.world
                 .get::<BandBench>(band)
                 .is_some_and(|bench| !bench.is_running()),
-            "the clear really took the job off the bench"
+            "the removals really emptied the queue"
         );
         assert_eq!(
             last_started(&app).as_deref(),
@@ -26475,8 +26853,9 @@ mod tests {
     }
 }
 
-/// **A long move leaves behind what the band cannot carry** (#732) — `shed_for_a_long_move`, driven
-/// through the real `move_band` handler and read back off the **encoded** frame.
+/// **A long move leaves behind what the band cannot carry** (#732) — ordered through the real
+/// `move_band` handler, applied at DEPARTURE by `advance_band_movement`, and read back off the
+/// **encoded** frame.
 #[cfg(test)]
 mod long_move_tests {
     use super::*;
@@ -26717,6 +27096,7 @@ mod long_move_tests {
             reach + 1..=reach + 1 + LONG_MOVE_EXTRA_TILES,
         );
         handle_move_band(&mut app, faction, Some(band_id), target.x, target.y);
+        depart(&mut app);
 
         let after = holdings(&app, band);
         assert_eq!(after.0, before.0, "the food rode first and none was left");
@@ -26792,6 +27172,7 @@ mod long_move_tests {
             reach + 1..=reach + 1 + LONG_MOVE_EXTRA_TILES,
         );
         handle_move_band(&mut app, faction, Some(band_id), target.x, target.y);
+        depart(&mut app);
         let (food, items, hide) = holdings(&app, band);
         assert!(
             (larder_before - food - forecast.leaves_food).abs() < FOOD_EPSILON,
@@ -26815,7 +27196,7 @@ mod long_move_tests {
         );
         assert!(
             (published_carry(&mut app, band_id).food_left_behind - left).abs() < FOOD_EPSILON,
-            "and published on the recapture the command triggers"
+            "and published on the next capture"
         );
 
         // **The identity, turn frame to turn frame, across the shedding move.**
@@ -26851,6 +27232,7 @@ mod long_move_tests {
         let reach = ferry_reach(&app);
         let target = land_tile_within(&mut app, from, 1..=reach);
         handle_move_band(&mut app, faction, Some(band_id), target.x, target.y);
+        depart(&mut app);
         assert_eq!(holdings(&app, band), before, "nothing is left behind");
         assert_eq!(
             app.world
@@ -26890,6 +27272,7 @@ mod long_move_tests {
             reach + 1..=reach + 1 + LONG_MOVE_EXTRA_TILES,
         );
         handle_move_band(&mut app, faction, Some(party_id), target.x, target.y);
+        depart(&mut app);
         assert_eq!(holdings(&app, party), before, "the party keeps its pack");
     }
 
@@ -27396,24 +27779,192 @@ mod long_move_tests {
         .expect("an order at the party-held count is accepted");
     }
 
-    /// ⛔ **A LONG MOVE ENDS THE BAND'S OUTFITTING WINDOW.** A turn-one band overloaded walks off
-    /// past the ferry reach and leaves goods behind; re-sending its unchanged card is then refused
-    /// `WindowClosed`, so nothing that was left behind is re-minted, and the band keeps only what it
-    /// carried.
+    /// **The band departs** — one pass of the movement system, which is where an order's first step
+    /// applies the long-move shed. Isolated from the rest of the turn so a holdings comparison is
+    /// about the shed alone, not the meal or the take.
+    fn depart(app: &mut bevy::prelude::App) {
+        use bevy::ecs::system::RunSystemOnce;
+        app.world.run_system_once(core_sim::advance_band_movement);
+    }
+
+    /// Whether `band_id`'s row publishes an OPEN outfitting window, off the encoded envelope.
+    fn published_window_open(app: &mut bevy::prelude::App, band_id: u64) -> bool {
+        recapture_snapshot_in_place(&mut app.world);
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+        let envelope = fb::root_as_envelope(&bytes).expect("the snapshot encodes");
+        envelope
+            .payload_as_snapshot()
+            .and_then(|snapshot| snapshot.population())
+            .and_then(|section| section.populations())
+            .expect("the population section is published")
+            .iter()
+            .find(|cohort| cohort.bandId() == band_id)
+            .and_then(|cohort| cohort.loadoutWindow())
+            .is_some_and(|window| window.open())
+    }
+
+    /// **What the departure probe saw** — written by [`departure_probe`], which the schedule places
+    /// after the window closes and before the band moves.
+    #[derive(bevy::prelude::Resource, Default)]
+    struct DepartureProbe {
+        /// The splinter's window was shut when the probe ran.
+        window_shut: Option<bool>,
+        /// The splinter still held everything when the probe ran — nothing shed yet.
+        unshed_items: Option<u32>,
+        band: Option<(Entity, BandId)>,
+    }
+
+    fn departure_probe(
+        loadout: bevy::prelude::Res<core_sim::StartingLoadout>,
+        ledgers: bevy::prelude::Query<&BandEquipment>,
+        mut probe: bevy::prelude::ResMut<DepartureProbe>,
+    ) {
+        let Some((entity, band)) = probe.band else {
+            return;
+        };
+        probe.window_shut = Some(!loadout.is_open(band));
+        probe.unshed_items = ledgers.get(entity).ok().map(BandEquipment::total_units);
+    }
+
+    /// Split `half` of the home band's working-age people off into a splinter, returning it.
+    fn split_off(app: &mut bevy::prelude::App, home: Entity, home_id: u64) -> (Entity, u64) {
+        let (faction, workers) = {
+            let cohort = app.world.get::<PopulationCohort>(home).expect("a cohort");
+            (
+                cohort.faction,
+                core_sim::available_workers(cohort.working) / SPLIT_IN_HALF,
+            )
+        };
+        handle_split_band(app, faction, Some(home_id), workers);
+        let mut query = app
+            .world
+            .query_filtered::<(Entity, &BandId), (With<ResidentBand>, bevy::prelude::Without<Expedition>)>();
+        query
+            .iter(&app.world)
+            .filter(|(_, id)| id.0 != home_id)
+            .max_by_key(|(_, id)| id.0)
+            .map(|(entity, id)| (entity, id.0))
+            .expect("the split founded a splinter")
+    }
+
+    /// A split sends half the band's working-age people.
+    const SPLIT_IN_HALF: u32 = 2;
+
+    /// ⛔ **A TURN-ONE SPLIT BAND ORDERED ON A LONG MOVE KEEPS ITS OUTFIT WINDOW UNTIL IT DEPARTS.**
+    /// The reported bug: accepting the order shed the band and shut its window that instant, so the
+    /// outfit tab vanished before the band had moved a step. Now the order changes nothing that turn
+    /// — the window is OPEN on the encoded frame and the band holds everything — and the shed lands
+    /// when the turn advances, after the window has shut, so the card can never re-mint what was
+    /// left behind.
+    ///
+    /// **The schedule order is asserted, not assumed**: a probe system is registered AFTER
+    /// `close_opening_window` and BEFORE `advance_band_movement`. Were the movement ordered ahead of
+    /// the close, that pair of constraints would be a cycle and the schedule would refuse to build;
+    /// and what the probe reads — window shut, nothing shed yet — is the state the shed starts from.
     #[test]
-    fn a_long_move_closes_the_outfitting_window() {
-        let (mut app, band, band_id) = world();
+    fn a_turn_one_split_band_on_a_long_move_keeps_its_window_until_it_departs() {
+        let (mut app, home, home_id) = world();
+        let (splinter, splinter_id) = split_off(&mut app, home, home_id);
         let faction = app
             .world
-            .get::<PopulationCohort>(band)
-            .expect("the band keeps a cohort")
+            .get::<PopulationCohort>(splinter)
+            .expect("the splinter keeps a cohort")
             .faction;
-        let (kits, materials) = window_rows(&app, band_id);
+        assert!(
+            published_window_open(&mut app, splinter_id),
+            "fixture: the turn-one splinter holds an open window"
+        );
+        // The card as it stands — what an untouched card re-sends after the turn.
+        let (kits, materials) = window_rows(&app, splinter_id);
+        overload(&mut app, splinter, MODEST_LARDER);
+        let held_before = holdings(&app, splinter);
+        let from = position(&app, splinter);
+        let reach = ferry_reach(&app);
+        let target = land_tile_within(
+            &mut app,
+            from,
+            reach + 1..=reach + 1 + LONG_MOVE_EXTRA_TILES,
+        );
+        handle_move_band(&mut app, faction, Some(splinter_id), target.x, target.y);
+
+        assert!(
+            published_window_open(&mut app, splinter_id),
+            "accepting the order does not shut the window — the band has not left"
+        );
+        assert_eq!(
+            holdings(&app, splinter),
+            held_before,
+            "and nothing is shed until it departs"
+        );
+
+        app.insert_resource(DepartureProbe {
+            band: Some((splinter, BandId(splinter_id))),
+            ..Default::default()
+        });
+        use bevy::prelude::IntoSystemConfigs;
+        app.add_systems(
+            bevy::prelude::Update,
+            departure_probe
+                .after(core_sim::starting_loadout::close_opening_window)
+                .before(core_sim::advance_band_movement)
+                // A read-only observer: its two edges are the whole claim, and its order against
+                // every other system is irrelevant to it.
+                .ambiguous_with_all(),
+        );
+        core_sim::run_turn(&mut app);
+
+        let probe = app.world.resource::<DepartureProbe>();
+        assert_eq!(
+            probe.window_shut,
+            Some(true),
+            "the window is shut before the band moves"
+        );
+        assert_eq!(
+            probe.unshed_items,
+            Some(held_before.1),
+            "and the band still held everything at that point"
+        );
+        let held_after = holdings(&app, splinter);
+        assert!(
+            held_after.1 < held_before.1,
+            "**LIVENESS**: departing on the long move left gear behind: {held_before:?} → \
+             {held_after:?}"
+        );
+        assert!(
+            !published_window_open(&mut app, splinter_id),
+            "the turn advance shut the window"
+        );
+        assert_eq!(
+            core_sim::apply_starting_loadout(
+                &mut app.world,
+                faction,
+                BandId(splinter_id),
+                &kits,
+                &materials
+            ),
+            Err(core_sim::LoadoutRejection::WindowClosed),
+            "re-sending the unchanged card is refused — the window is shut"
+        );
+        assert_eq!(
+            holdings(&app, splinter).1,
+            held_after.1,
+            "so nothing left behind is re-minted"
+        );
+    }
+
+    /// **AN ORDER CANCELLED BEFORE THE TURN ADVANCES SHEDS NOTHING** — the band never left.
+    #[test]
+    fn a_cancelled_long_move_sheds_nothing() {
+        let (mut app, band, band_id) = world();
+        let faction = app.world.get::<PopulationCohort>(band).unwrap().faction;
         overload(&mut app, band, MODEST_LARDER);
-        let held_before = app
-            .world
-            .get::<BandEquipment>(band)
-            .map_or(0, BandEquipment::total_units);
+        let before = holdings(&app, band);
         let from = position(&app, band);
         let reach = ferry_reach(&app);
         let target = land_tile_within(
@@ -27422,37 +27973,16 @@ mod long_move_tests {
             reach + 1..=reach + 1 + LONG_MOVE_EXTRA_TILES,
         );
         handle_move_band(&mut app, faction, Some(band_id), target.x, target.y);
-        let held_after = app
-            .world
-            .get::<BandEquipment>(band)
-            .map_or(0, BandEquipment::total_units);
+        handle_cancel_order(&mut app, faction, Some(band_id), CancelScope::All);
         assert!(
-            held_after < held_before,
-            "**LIVENESS**: the long move left goods behind: {held_before} → {held_after}"
+            app.world.get::<BandTravel>(band).is_none(),
+            "fixture: the cancel took the order off"
         );
-        assert!(
-            !app.world
-                .resource::<core_sim::StartingLoadout>()
-                .is_open(BandId(band_id)),
-            "the band's window is shut"
-        );
+        depart(&mut app);
         assert_eq!(
-            core_sim::apply_starting_loadout(
-                &mut app.world,
-                faction,
-                BandId(band_id),
-                &kits,
-                &materials
-            ),
-            Err(core_sim::LoadoutRejection::WindowClosed),
-            "re-sending the unchanged card is refused"
-        );
-        assert_eq!(
-            app.world
-                .get::<BandEquipment>(band)
-                .map_or(0, BandEquipment::total_units),
-            held_after,
-            "and the band keeps only what it carried"
+            holdings(&app, band),
+            before,
+            "the band never left, so it keeps it all"
         );
     }
 

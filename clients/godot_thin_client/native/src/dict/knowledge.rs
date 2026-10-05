@@ -40,6 +40,25 @@ pub(crate) fn discovered_sites_to_array(
     array
 }
 
+/// The viewer's contact lessons — one row per discovery its people is learning by being around
+/// another people that knows it (`KnowledgeSection.contactLessons`, #531). Whole-vector on both
+/// paths: a delta that carries it replaces the list, one that omits it leaves it unchanged.
+pub(crate) fn contact_lessons_to_array(
+    list: Vector<'_, ForwardsUOffset<fb::ContactLessonState<'_>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    for row in list {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("discovery_id", row.discoveryId() as i64);
+        let _ = dict.insert("knowledge_id", row.knowledgeId().unwrap_or_default());
+        let _ = dict.insert("subject_faction", row.subjectFaction() as i64);
+        let _ = dict.insert("channel", row.channel() as i64);
+        let _ = dict.insert("credit", row.credit() as f64);
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
 fn knowledge_field_label(field: fb::KnowledgeField) -> &'static str {
     match field {
         fb::KnowledgeField::Physics => "Physics",

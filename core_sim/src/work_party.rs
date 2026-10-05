@@ -705,6 +705,50 @@ impl WorkParty {
 /// One porter — a [`Walker`] is one hand.
 const ONE_PORTER: u32 = 1;
 
+/// **What a set of [`HomewardWalk`]s adds up to** — the band's whole set, or one row's share.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HomewardTotals {
+    /// Hands walking home.
+    pub workers: u32,
+    /// The food they carry, gross of the walk's rot — food-carrying walks only (a deposit's
+    /// material is not counted).
+    pub food: f32,
+    /// Turns until the last of these hands is back; [`NO_WALK`] when nobody is walking.
+    pub all_home_in: u32,
+}
+
+impl HomewardTotals {
+    /// **The one summation behind both readings of the wire** — the band's whole set
+    /// (`PopulationCohortState.homeward*`) and one row's share ([`Self::for_source`],
+    /// `LaborAssignment.homeward*`) — so the two cannot disagree.
+    pub fn of<'a>(walks: impl IntoIterator<Item = &'a HomewardWalk>) -> Self {
+        walks.into_iter().fold(
+            Self {
+                workers: NOBODY_ON_THE_ROAD,
+                food: NOTHING_CARRIED,
+                all_home_in: NO_WALK,
+            },
+            |mut totals, walk| {
+                totals.workers += walk.workers;
+                if walk.carries_food() {
+                    totals.food += walk.cargo;
+                }
+                if walk.workers > NOBODY_ON_THE_ROAD {
+                    totals.all_home_in = totals.all_home_in.max(walk.turns_left);
+                }
+                totals
+            },
+        )
+    }
+
+    /// **One row's share** — the walks whose source is `target`, by
+    /// [`crate::components::LaborTarget::same_source`], the identity a row keeps across a floor or
+    /// crew edit. A walk whose row is gone matches no row and is counted only in the band's total.
+    pub fn for_source(walks: &[HomewardWalk], target: &crate::components::LaborTarget) -> Self {
+        Self::of(walks.iter().filter(|walk| walk.target.same_source(target)))
+    }
+}
+
 /// ⛔ **ONE GROUP OF A STOOD-DOWN PARTY, WALKING HOME** ([`WorkParty::walk_home`]) — on the band's
 /// `LaborAllocation::homeward`, because the row that posted it is gone (or holds no party) and the
 /// walk is not over. Its hands are away from the band's pool until it lands; its cargo lands where

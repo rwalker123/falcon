@@ -159,21 +159,28 @@ signal upkeep_mode_requested(payload: Dictionary)
 ## `set_open_borders <faction> open|closed`. A FACTION policy — whether another people's leavers and
 ## defecting parties may join this people's bands. RELAYED from `BandPanelController`, its only emitter.
 signal open_borders_requested(payload: Dictionary)
-## Emitted when the player presses **Make** in Materials & Crafting — the recipe is STAGED on the
-## band's bench and nobody is recruited onto it. **The player staffs the bench and the sim never
-## does**, so there is no crew argument here: the `− n +` stepper is the one thing that picks the
-## number, and the bench is staffed like a worked source rather than through a standing role, which is
-## why there is no Crafter role card anywhere. Payload keys: { faction, band_id, recipe_id }.
-## Main formats `set_bench <faction> <band> recipe <id>`. RELAYED from `CraftingPanelController`.
-signal set_bench_requested(payload: Dictionary)
-## Emitted when the bench's `− n +` stepper moves — the job and its progress are left alone. Payload
-## keys: { faction, band_id, workers }. Main formats `bench_crew <faction> <band> workers <n>`.
+## Emitted when the player presses **Make** (count 1) or a suggestion's **Queue** (its whole count) in
+## Materials & Crafting — an ORDER joins the back of the band's bench queue and nobody is recruited
+## onto it. **The player staffs the bench and the sim never does**, so there is no crew argument here:
+## the `− n +` stepper is the one thing that picks the number, and the bench is staffed like a worked
+## source rather than through a standing role, which is why there is no Crafter role card anywhere.
+## Payload keys: { faction, band_id, recipe_id, count }. Main formats
+## `bench_enqueue <faction> <band> recipe <id> count <n>`. RELAYED from `CraftingPanelController`.
+signal bench_enqueue_requested(payload: Dictionary)
+## Emitted when the bench's crew `− n +` stepper moves — the queue and its progress are left alone.
+## Payload keys: { faction, band_id, workers }. Main formats `bench_crew <faction> <band> workers <n>`.
 signal bench_crew_requested(payload: Dictionary)
-## Emitted when the bench's ✕ is pressed — the job comes off, the crew returns to the idle pool and
-## the pile already drawn is spent (the button's tooltip names it, off `drawnInputs`). Payload keys:
-## { faction, band_id }. Main formats `clear_bench <faction> <band>`. RELAYED from
-## `CraftingPanelController`.
-signal clear_bench_requested(payload: Dictionary)
+## Emitted when a queued order's own `− n +` moves. Payload keys: { faction, band_id, order, count },
+## `order` the order's index in `bench.orders` (0 = the head). Main formats
+## `bench_order_count <faction> <band> order <i> count <n>`. RELAYED from `CraftingPanelController`.
+signal bench_order_count_requested(payload: Dictionary)
+## Emitted when an order's ✕ is pressed — the well's ✕ is `order <worked>`. A drawn pile is lost (the control's
+## tooltip says so). Payload keys: { faction, band_id, order }. Main formats
+## `bench_remove <faction> <band> order <i>`. RELAYED from `CraftingPanelController`.
+signal bench_remove_requested(payload: Dictionary)
+## Emitted when an order's ↑ is pressed — never on index 0. Payload keys: { faction, band_id, order }.
+## Main formats `bench_raise <faction> <band> order <i>`. RELAYED from `CraftingPanelController`.
+signal bench_raise_requested(payload: Dictionary)
 ## Emitted when a rung of the bench's rank picker is pressed — the player's own answer to what the band
 ## gives up first when it cannot cover everything it holds (`docs/plan_standing_upkeep.md` §4.9 item
 ## 9b). Payload keys: { faction, band_id, level }, `level` one of `high` / `normal` / `low`. Main
@@ -805,12 +812,16 @@ func _ready() -> void:
     # viewport describes.
     _crafting = CraftingPanelController.new()
     _crafting.setup(self, _band_labor, floating_room)
-    _crafting.set_bench_requested.connect(
-        func(payload: Dictionary) -> void: set_bench_requested.emit(payload))
+    _crafting.bench_enqueue_requested.connect(
+        func(payload: Dictionary) -> void: bench_enqueue_requested.emit(payload))
     _crafting.bench_crew_requested.connect(
         func(payload: Dictionary) -> void: bench_crew_requested.emit(payload))
-    _crafting.clear_bench_requested.connect(
-        func(payload: Dictionary) -> void: clear_bench_requested.emit(payload))
+    _crafting.bench_order_count_requested.connect(
+        func(payload: Dictionary) -> void: bench_order_count_requested.emit(payload))
+    _crafting.bench_remove_requested.connect(
+        func(payload: Dictionary) -> void: bench_remove_requested.emit(payload))
+    _crafting.bench_raise_requested.connect(
+        func(payload: Dictionary) -> void: bench_raise_requested.emit(payload))
     _crafting.bench_priority_requested.connect(
         func(payload: Dictionary) -> void: bench_priority_requested.emit(payload))
     _bandpanel.crafting_requested.connect(
@@ -1130,6 +1141,13 @@ func update_intensification(intensification_variant: Variant) -> void:
     # `Main` dispatches `update_overlay` (which sets the live turn) BEFORE this section, so the diff
     # rolls against the right turn; the roll is turn-keyed and idempotent within a turn, so the
     # snapshot seam's own call stays and costs nothing.
+    _refresh_knowledge_readouts()
+
+## **WHAT THE PLAYER'S PEOPLE IS LEARNING BY CONTACT** (#531) — a thin delegator for
+## `update_ladder_knowledge`'s reason (`Main` reaches it BY NAME, and a failed probe fails silently),
+## re-running the knowledge readouts because the list can move on a turn that moves nobody.
+func update_contact_lessons(lessons_variant: Variant) -> void:
+    _topbar.update_contact_lessons(lessons_variant)
     _refresh_knowledge_readouts()
 
 func update_discoveries(discovered_variant: Variant) -> void:

@@ -550,6 +550,7 @@ fn spawn_camp(world: &mut World, at: UVec2, faction: FactionId) {
             last_morale_cause: MoraleCause::None,
             last_morale_contributions: Default::default(),
             last_fertility_factors: Default::default(),
+            last_breeding: Default::default(),
             discontent_fraction: scalar_zero(),
             grievance: scalar_zero(),
             last_emigrated: 0,

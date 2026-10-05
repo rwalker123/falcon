@@ -264,6 +264,7 @@ func _ready() -> void:
 	_drive_abandon_working()
 	await _drive_road_abandon()
 	await _drive_set_starting_loadout()
+	await _drive_bench_queue()
 
 	_assert_every_command_emitted()
 	_assert_every_role_is_emittable()
@@ -279,6 +280,49 @@ func _ready() -> void:
 #
 # **THE BAND VERBS ARE DRIVEN FORM-FIRST** (issue #529): the verb opens its sheet in the band's own
 # drawer (`_hud.allocation_panel`), its Send arms the map pick, and the click on the target commits.
+
+## **THE BENCH QUEUE'S FOUR VERBS** (`docs/plan_crafting_and_materials.md` §7 → "The queue") —
+## `bench_enqueue`, `bench_order_count`, `bench_remove`, `bench_raise`, each naming the band by its
+## durable `band_id`. Driven from the crafting PANEL's own signals through the real controller and
+## `HudLayer` relay, so the payload under test is the one `Main` receives; the buttons that emit those
+## signals are pressed in `ui_preview`'s `crafting_bench` chapter, which renders them.
+##
+## ⛔ **AND THE TWO LINES THE SERVER WOULD REFUSE ARE NOT BUILT**: an order of zero, and a raise of the
+## head (`order 0`), which `bench_raise` refuses by name.
+func _drive_bench_queue() -> void:
+	var band: Dictionary = _hud._band_labor.panel_band()
+	_hud.open_crafting_panel(band)
+	await _settle()
+	var crafting: CraftingPanel = _hud.crafting_panel().panel()
+	if crafting == null:
+		_fail("bench queue: the crafting panel did not open on the fixture band")
+		return
+	crafting.enqueue_requested.emit(BENCH_RECIPE_ID, HudCraftingVocab.MAKE_ORDER_COUNT)
+	crafting.enqueue_requested.emit(BENCH_RECIPE_ID, BENCH_SUGGESTED_COUNT)
+	crafting.order_count_changed.emit(BENCH_ORDER_INDEX, BENCH_SUGGESTED_COUNT)
+	crafting.order_remove_requested.emit(BENCH_ORDER_INDEX)
+	crafting.order_raise_requested.emit(BENCH_ORDER_INDEX)
+	await _settle()
+	_hud.close_crafting_panel()
+	var faction := HudConst.PLAYER_FACTION_ID
+	if not MAIN_SCRIPT.format_bench_enqueue({"faction": faction, "band_id": BAND_ID,
+			"recipe_id": BENCH_RECIPE_ID, "count": 0}).is_empty():
+		_fail("bench_enqueue: a line was built for an order of ZERO, which is not an order")
+	if not MAIN_SCRIPT.format_bench_raise({"faction": faction, "band_id": BAND_ID,
+			"order": HudCraftingVocab.ORDER_HEAD_INDEX}).is_empty():
+		_fail("bench_raise: a line was built for the HEAD, which the server refuses")
+	for retired in ["format_set_bench", "format_clear_bench"]:
+		if _main_has_static(retired):
+			_fail("the retired `%s` builder still exists on Main" % retired)
+
+## A recipe id for the bench drive. The guard parses the line and checks its BAND; the recipe is any
+## token the grammar accepts.
+const BENCH_RECIPE_ID := "spears"
+## A suggestion's whole count — anything above Make's one, so the two enqueue lines differ.
+const BENCH_SUGGESTED_COUNT := 3
+## The order the edits name. NOT the head (0), which is what an uninitialised int and a dropped field
+## both look like — and `bench_raise` refuses the head outright.
+const BENCH_ORDER_INDEX := 1
 
 ## ⛔ **`set_starting_loadout` NAMES A BAND NOW, WHICH IS WHY IT IS HERE AT ALL.** It used to address a
 ## faction and default to its band; every band has an outfitting window of its own since the per-band
@@ -886,6 +930,14 @@ func _connect_recorders() -> void:
 		_record("abandon", p, MAIN_SCRIPT.format_abandon(p)))
 	_hud.set_starting_loadout_requested.connect(func(p: Dictionary) -> void:
 		_record("set_starting_loadout", p, MAIN_SCRIPT.format_set_starting_loadout(p)))
+	_hud.bench_enqueue_requested.connect(func(p: Dictionary) -> void:
+		_record("bench_enqueue", p, MAIN_SCRIPT.format_bench_enqueue(p)))
+	_hud.bench_order_count_requested.connect(func(p: Dictionary) -> void:
+		_record("bench_order_count", p, MAIN_SCRIPT.format_bench_order_count(p)))
+	_hud.bench_remove_requested.connect(func(p: Dictionary) -> void:
+		_record("bench_remove", p, MAIN_SCRIPT.format_bench_remove(p)))
+	_hud.bench_raise_requested.connect(func(p: Dictionary) -> void:
+		_record("bench_raise", p, MAIN_SCRIPT.format_bench_raise(p)))
 	# **THE SHIPMENT RECORDS ITS PILES BESIDE ITS LINE.** They are the only thing the emitted amounts
 	# mean anything against, and they are stated in the sim's own TICKS so the comparison is exact —
 	# see the header. The cargo ids are the sender's own store keys, which is what the parser rebuilds.
@@ -1259,6 +1311,13 @@ const EXPECTED_KINDS := {
 	# ONE — the outfitting card's commit, the only emitter of the verb. It names a band positionally
 	# since every band has a window of its own; see `_drive_set_starting_loadout`.
 	"set_starting_loadout": 1,
+	# TWO — Make's order of one and a suggestion's whole count; then one of each queue edit. Every one
+	# names the band positionally, which is the handle this gate exists to check. See
+	# `_drive_bench_queue`.
+	"bench_enqueue": 2,
+	"bench_order_count": 1,
+	"bench_remove": 1,
+	"bench_raise": 1,
 }
 
 func _assert_every_command_emitted() -> void:

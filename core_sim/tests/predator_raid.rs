@@ -189,6 +189,7 @@ fn resident_band(app: &mut App, tile: Entity, working: u32, warriors: u32) -> En
                 last_morale_cause: MoraleCause::None,
                 last_morale_contributions: Default::default(),
                 last_fertility_factors: Default::default(),
+                last_breeding: Default::default(),
                 discontent_fraction: scalar_zero(),
                 grievance: scalar_zero(),
                 last_emigrated: 0,
