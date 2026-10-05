@@ -540,16 +540,55 @@ static func homeward_lines(band: Dictionary) -> Array[String]:
     var workers := int(band.get(HOMEWARD_WORKERS_KEY, 0))
     if workers <= 0:
         return []
-    var food := float(band.get(HOMEWARD_FOOD_KEY, 0.0))
-    var food_clause := HOMEWARD_FOOD_CLAUSE_FORMAT % SourceForecast.format_magnitude(food) \
-        if SourceForecast.has_component(food) else ""
     var all_home := int(band.get(HOMEWARD_ALL_HOME_IN_KEY, 0))
     var lines: Array[String] = [
-        HOMEWARD_LINE_FORMAT % [workers, food_clause, _homeward_turns(all_home)]]
+        HOMEWARD_LINE_FORMAT % [workers, _homeward_food_clause(band), _homeward_turns(all_home)]]
     var next_load := int(band.get(HOMEWARD_NEXT_LOAD_IN_KEY, 0))
     if next_load > 0 and next_load < all_home:
         lines.append(HOMEWARD_FIRST_LOAD_FORMAT % _homeward_turns(next_load))
     return lines
+
+## ` with 2.40 food`, or `""` when the walkers carry none — the ONE food clause both homeward
+## sentences (the band's and a row's) are spelled with, read off whichever dict carries the keys.
+static func _homeward_food_clause(walk: Dictionary) -> String:
+    var food := float(walk.get(HOMEWARD_FOOD_KEY, 0.0))
+    return HOMEWARD_FOOD_CLAUSE_FORMAT % SourceForecast.format_magnitude(food) \
+        if SourceForecast.has_component(food) else ""
+
+## **THE HANDS WALKING HOME FROM ONE ROW'S SOURCE** — the row's share of the band's walk, on the work
+## board's row and on the map's source list. A player who unassigns a far crew sees the row drop to 0
+## at once; the hands are not free until they are back, so the row the player acted on says where
+## they went and when they can be posted again. The stepper's count stays the ASSIGNMENT: walkers are
+## on no row (`HudBandLaborState.effective_idle` nets them out of idle, as the sim does).
+##
+## Same key names as the band's (`HOMEWARD_*_KEY`), published per `labor_assignments` entry; the band
+## keys stay the TOTAL, so a walk whose row is gone is stated on the Workforce zone alone.
+## `homeward_food_spoils` / `homeward_next_load_in` are band-only: the row's line is one line, and the
+## band's zone carries the rot and the first-load lines.
+const ROW_HOMEWARD_KEYS: Array[String] = [
+    HOMEWARD_WORKERS_KEY, HOMEWARD_ALL_HOME_IN_KEY, HOMEWARD_FOOD_KEY]
+## `3 walking home with 2.40 food — free next turn`; the food clause only when they carry any. It says
+## *free* where the band's line says *all home*, because the row's question is when these hands can be
+## put back to work. Args: `[workers, (food clause), free phrase]`.
+const ROW_HOMEWARD_LINE_FORMAT := "%d walking home%s — free %s"
+const ROW_HOMEWARD_FREE_NEXT_TURN := "next turn"
+const ROW_HOMEWARD_FREE_IN_FORMAT := "in %d turns"
+
+## Does this row (a wire `labor_assignments` entry or a work-board model) have hands walking home?
+static func row_homeward_workers(row: Dictionary) -> int:
+    return int(row.get(HOMEWARD_WORKERS_KEY, 0))
+
+## The row's one walker line, or `""` while nobody is walking home from its source. An
+## `homeward_all_home_in` of 0 or 1 both read *next turn* — the sim's 0 means *no walk*, which the
+## worker gate above has already ruled out, so a 0 beside walkers is the soonest answer there is.
+static func row_homeward_line(row: Dictionary) -> String:
+    var workers := row_homeward_workers(row)
+    if workers <= 0:
+        return ""
+    var all_home := int(row.get(HOMEWARD_ALL_HOME_IN_KEY, 0))
+    var free := ROW_HOMEWARD_FREE_IN_FORMAT % all_home \
+        if all_home > WORK_ROW_PARTY_TURNS_SINGULAR else ROW_HOMEWARD_FREE_NEXT_TURN
+    return ROW_HOMEWARD_LINE_FORMAT % [workers, _homeward_food_clause(row), free]
 
 ## What of the homeward load rots before it lands, or `""` when nobody is walking home or none of it
 ## rots.

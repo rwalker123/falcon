@@ -1073,6 +1073,7 @@ fn spawn_crew_of(
                 last_morale_cause: MoraleCause::None,
                 last_morale_contributions: Default::default(),
                 last_fertility_factors: Default::default(),
+                last_breeding: Default::default(),
                 discontent_fraction: scalar_zero(),
                 grievance: scalar_zero(),
                 last_emigrated: 0,
@@ -1085,6 +1086,8 @@ fn spawn_crew_of(
                     core_sim::BandId(0),
                     core_sim::MIN_BAND_LINES,
                 ),
+                belief_anchor: None,
+                last_belief_relay_hops: 0,
             },
             StartingUnit {
                 kind: "BandHunter".to_string(),
@@ -5224,6 +5227,7 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
                 last_morale_cause: MoraleCause::None,
                 last_morale_contributions: Default::default(),
                 last_fertility_factors: Default::default(),
+                last_breeding: Default::default(),
                 discontent_fraction: scalar_zero(),
                 grievance: scalar_zero(),
                 last_emigrated: 0,
@@ -5236,6 +5240,8 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
                     core_sim::BandId(0),
                     core_sim::MIN_BAND_LINES,
                 ),
+                belief_anchor: None,
+                last_belief_relay_hops: 0,
             },
             StartingUnit {
                 kind: "BandHunter".to_string(),

@@ -773,31 +773,58 @@ message SetConfigOverrideCommand {
 // Drop every staged override, so the next new_game boots on the shipped configs again.
 message ClearConfigOverridesCommand {}
 
-// Put a recipe on a band's crafting bench and draw idle workers onto it. MAKE IS THE ASSIGNMENT:
-// there is no Crafter role and no labor target — crafting always has a subject, so it is staffed
-// like a worked source. ONE JOB AT A TIME, so this replaces whatever was on the bench.
+// ADD AN ORDER TO THE BACK OF A BAND'S BENCH QUEUE - `recipe x count`. MAKE IS THE ASSIGNMENT:
+// there is no Crafter role and no labor target - crafting always has a subject, so it is staffed
+// like a worked source. ONE BENCH, ONE QUEUE: the bench works the head order, and when its count is
+// met the next order starts, drawing its own inputs. Onto an empty bench the order is the head at
+// once.
 //
-// An unknown recipe id, or one whose `requires_knowledge` the faction has not learned, is a command
-// FAILURE with a reason — never a silent no-op, for the same reason an unknown kit id is.
-message SetBenchCommand {
+// An unknown recipe id, one whose `requires_knowledge` the faction has not learned, or a `count` of
+// 0 is a command FAILURE with a reason - never a silent no-op. Every order has a count; the
+// repeat-until-cleared job (`set_bench`, 52) is retired.
+message BenchEnqueueCommand {
   uint32 faction_id = 1;
   uint64 band_id = 2;
   string recipe_id = 3;
-  // Workers to put on the bench, clamped to the band's hands off other work. Absent — which for a
-  // proto3 scalar is indistinguishable from an explicit 0, and is the shape the client always sends
-  // — means "do not change the crew": an idle bench stages the recipe with NOBODY on it, and a
-  // bench already running a job keeps the crew standing there through the swap. The sim never picks
-  // a crew; `BenchCrewCommand` is how one is set, zero included.
-  uint32 workers = 4;
+  uint32 count = 4;     // items to make, >= 1
+  // Workers to put on the bench, clamped to the band's hands off other work. Absent (which for a
+  // proto3 scalar is indistinguishable from an explicit 0, and is the shape the client always sends)
+  // means "do not change the crew": an idle bench stages the order with NOBODY on it, and a bench
+  // already crewed keeps its crew. The sim never picks a crew; `BenchCrewCommand` is how one is set,
+  // zero included.
+  uint32 workers = 5;
 }
 
-// Take the job off a band's bench and hand its crew back to the idle pool.
-message ClearBenchCommand {
+// SET ONE QUEUED ORDER'S COUNT. `order` is the index in `BenchState.orders` (0 = the head). Refused
+// for an index with no order, a count of 0, or a count at or below what the order has already made:
+// that would finish the order, and `BenchRemoveOrderCommand` is how an order is stopped.
+message BenchOrderCountCommand {
   uint32 faction_id = 1;
   uint64 band_id = 2;
+  uint32 order = 3;
+  uint32 count = 4;
 }
 
-// Change the crew on a band's running bench, leaving the job and its progress alone.
+// TAKE ONE ORDER OFF THE QUEUE. Removing the head does exactly what clearing the bench always did:
+// the materials it had already drawn are spent (they were cut for the thing you stopped making, and
+// the store has no representation for a half-worked pile), and the crew stays at the bench. Refused
+// for an index with no order.
+message BenchRemoveOrderCommand {
+  uint32 faction_id = 1;
+  uint64 band_id = 2;
+  uint32 order = 3;
+}
+
+// MOVE ONE ORDER UP ONE PLACE. Raising order 1 makes it the head; the displaced head keeps its
+// progress and any pile it cut, and resumes when it is the head again. Refused for the head itself
+// and for an index with no order.
+message BenchRaiseOrderCommand {
+  uint32 faction_id = 1;
+  uint64 band_id = 2;
+  uint32 order = 3;
+}
+
+// Change the crew on a band's bench, leaving the queue and every order's progress alone.
 message BenchCrewCommand {
   uint32 faction_id = 1;
   uint64 band_id = 2;
@@ -807,7 +834,7 @@ message BenchCrewCommand {
 // Mark one band's CRAFTING BENCH with the player's own rank - `high` | `normal` | `low`.
 //
 // The bench's own verb rather than a `work_priority` token, because every other bench command
-// (`set_bench`, `clear_bench`, `bench_crew`) is addressed `<faction> <band>` with no source, and
+// (`bench_enqueue`, `bench_crew`, the queue edits) is addressed `<faction> <band>` with no source, and
 // `work_priority`'s grammar reads a bare single token as a HERD ID - so `work_priority <f> <b> bench
 // low` would be ambiguous with a herd literally named `bench`.
 //
@@ -1507,8 +1534,13 @@ message CommandEnvelope {
   //   60 `build_kit` and 63 `upkeep_kit` - retired with the per-entry and per-site kit overrides
   //      (docs/plan_pool_toe.md 4): a pool's tools follow from the rung each of its sites stands on
   //      and are settled band-wide, so nothing read either stored kit any more.
-  reserved 2, 5, 6, 7, 8, 9, 10, 24, 30, 46, 60, 63;
+  //   52 `set_bench` and 53 `clear_bench` - retired when the bench became a QUEUE of counted orders
+  //      (docs/plan_crafting_and_materials.md 7, "The queue"): the repeat-until-cleared job is gone,
+  //      `bench_enqueue` adds an order and `bench_remove` takes one off (the head's removal is what a
+  //      clear used to be).
+  reserved 2, 5, 6, 7, 8, 9, 10, 24, 30, 46, 52, 53, 60, 63;
   reserved "found_camp", "domesticate", "abandon_improvement", "build_kit", "upkeep_kit";
+  reserved "set_bench", "clear_bench";
   reserved "heat", "axis_bias", "support_influencer", "suppress_influencer";
   reserved "support_channel", "spawn_influencer", "inject_corruption";
 
@@ -1563,9 +1595,8 @@ message CommandEnvelope {
     // framing is retired (docs/plan_band_fission.md → "Why not an expedition that settles") and the
     // slot was reused rather than burned, there being no shipped client to keep compatible with.
     SplitBandCommand split_band = 51;
-    // 51 is held by `split_band`, so the crafting bench's three take 52-54 (append-only).
-    SetBenchCommand set_bench = 52;
-    ClearBenchCommand clear_bench = 53;
+    // 51 is held by `split_band`, so the crafting bench's three took 52-54 (append-only). 52
+    // `set_bench` and 53 `clear_bench` are RESERVED - retired with the bench queue, see above.
     BenchCrewCommand bench_crew = 54;
     // 54 is held by `bench_crew`, so the trade expedition takes 55 (append-only; never renumber).
     SendTradeExpeditionCommand send_trade_expedition = 55;
@@ -1614,5 +1645,11 @@ message CommandEnvelope {
     // 76 is held by `set_open_borders`, so the queued build's mark takes 77 (append-only; never
     // renumber).
     BuildPriorityCommand build_priority = 77;
+    // 77 is held by `build_priority`, so the bench queue's four verbs take 78-81 (append-only;
+    // never renumber). They replace the retired `set_bench` (52) / `clear_bench` (53).
+    BenchEnqueueCommand bench_enqueue = 78;
+    BenchOrderCountCommand bench_order_count = 79;
+    BenchRemoveOrderCommand bench_remove = 80;
+    BenchRaiseOrderCommand bench_raise = 81;
   }
 }

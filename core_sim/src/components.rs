@@ -1451,8 +1451,16 @@ pub struct PopulationCohort {
     /// The Layer-1 named morale contributors whose signed sum IS `last_morale_delta` (the wellbeing
     /// model's per-band morale breakdown — see `docs/plan_civ_wellbeing.md`). Recomputed each turn by
     /// `simulate_population`; on the client wire as `PopulationCohortState.morale_{settling,terrain,
-    /// climate,unrest}`.
+    /// climate,unrest,culture}`.
     pub last_morale_contributions: MoraleContributions,
+    /// **The kin-relay hop count the culture term was priced from this turn** — the reading off the
+    /// one relay search `simulate_population` ran (`crate::belief_relay`), in the wire's encoding:
+    /// `0` direct or no anchor, `n` hops of kin, `sim_schema::BELIEF_RELAY_UNREACHED` (`255`) for an
+    /// anchor no chain reaches, a longer chain capped at `sim_schema::BELIEF_RELAY_MAX_HOPS`.
+    /// Recomputed each turn beside `last_morale_contributions` and published as
+    /// `PopulationCohortState.beliefRelayHops`, so the hop count a frame shows is the one its
+    /// `moraleCulture` was priced from — not a recount on positions the turn's movement changed.
+    pub last_belief_relay_hops: u8,
     /// The three named fertility factors behind this turn's births — `hunger` (did we eat) ×
     /// `reserve` (is there a cushion) × `trend` (is the cushion growing or shrinking), the
     /// `birth_rate` multiplier from `docs/plan_population_growth_model.md`. The birth path's
@@ -1494,6 +1502,23 @@ pub struct PopulationCohort {
     /// band's cohort and carries the same set: it is those same people walking somewhere. On the
     /// client wire as `PopulationCohortState.founding_lines` (the count).
     pub founding_lines: crate::lineage::FoundingLines,
+    /// **This band's breeding population and the ceiling its births stop at** (issue #688,
+    /// `crate::lineage::BreedingReading`). Rewritten every turn by `simulate_population`, the same
+    /// per-turn telemetry idiom as [`Self::last_fertility_factors`]; on the client wire as
+    /// `PopulationCohortState.breedingPopulation` / `breedingCeiling`.
+    pub last_breeding: crate::lineage::BreedingReading,
+    /// **The one place this band remembers as its ancestors'** — the culture morale term's anchor
+    /// (`docs/plan_civilization_steps.md` §"What belief does, through seams that exist";
+    /// `.claude/rules/core_sim/belief.md` → "The culture morale term"). The strongest belief tile the
+    /// band has ever stood within walking reach of; `None` until it has stood within reach of any.
+    /// Re-chosen each turn by `simulate_population` before morale is computed, and only ever moved
+    /// to a tile holding strictly more belief than the anchor now holds.
+    ///
+    /// **Band state, not the registry's**: belief stays a place's, ownerless; which place a band
+    /// counts as its own is a fact about the band. A tile POSITION, not an `Entity`, so the
+    /// checkpoint carries it with the rest of the cohort and no restore has to remap it. A fission
+    /// daughter inherits it (same people, same dead); a migrant joins its destination's anchor.
+    pub belief_anchor: Option<UVec2>,
 }
 
 /// The dominant negative driver of a cohort's morale on a given turn, surfaced so the client can
@@ -1501,7 +1526,7 @@ pub struct PopulationCohort {
 /// Starvation is deliberately excluded — it is surfaced through the days-of-food path, not morale.
 ///
 /// Snapshot wire encoding (see [`MoraleCause::as_u8`]): `0 = None, 1 = Terrain, 2 = Cold,
-/// 3 = Unrest`.
+/// 3 = Unrest, 4 = Culture`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum MoraleCause {
     /// Morale rose or held this turn — no dominant negative driver.
@@ -1513,6 +1538,10 @@ pub enum MoraleCause {
     Cold,
     /// Crisis impacts + cultural sentiment (unrest) dominated.
     Unrest,
+    /// The culture term's away side dominated: the band is not tied in to its ancestors' place (its
+    /// `belief_anchor`) at full strength — beyond its own walking reach and reached only weakly (or
+    /// not at all) through its kin.
+    Culture,
 }
 
 /// Which mortality term did most of the killing in one age bracket on one turn.
@@ -1628,13 +1657,15 @@ impl DemographicFlowAccumulator {
 }
 
 impl MoraleCause {
-    /// Encode for the snapshot's `moraleCause:ubyte` field: `0=None, 1=Terrain, 2=Cold, 3=Unrest`.
+    /// Encode for the snapshot's `moraleCause:ubyte` field: `0=None, 1=Terrain, 2=Cold, 3=Unrest,
+    /// 4=Culture`.
     pub fn as_u8(self) -> u8 {
         match self {
             MoraleCause::None => 0,
             MoraleCause::Terrain => 1,
             MoraleCause::Cold => 2,
             MoraleCause::Unrest => 3,
+            MoraleCause::Culture => 4,
         }
     }
 }
@@ -1654,6 +1685,8 @@ pub enum MoraleFactor {
     Climate,
     /// Crisis impacts + cultural sentiment (signed).
     Unrest,
+    /// Near (`+`) or far (`−`) from the band's ancestors — its `belief_anchor` (signed).
+    Culture,
 }
 
 /// The Phase-1 named morale contributions for a cohort this turn (each signed; their sum IS
@@ -1670,6 +1703,11 @@ pub struct MoraleContributions {
     pub climate: Scalar,
     /// crisis impacts + cultural sentiment bias (signed).
     pub unrest: Scalar,
+    /// near / far from the ancestors: `s × (r × near_bonus − (1 − r) × away_drag)` for the band's
+    /// `belief_anchor`, `r` its kin-relay strength — `1` within its own walking reach
+    /// (`+near_bonus × s`), `relay_per_hop ^ n` tied in through `n` bands of kin, `0` unreached
+    /// (`−away_drag × s`); `0` with no anchor (signed; `wellbeing_config.json` → `culture`).
+    pub culture: Scalar,
 }
 
 /// The three named fertility factors behind a cohort's births this turn — the `birth_rate`
@@ -1692,16 +1730,27 @@ pub struct FertilityFactors {
     pub reserve: Scalar,
     /// **Flow** — is the larder growing or shrinking.
     pub trend: Scalar,
+    /// **Lines** — the share of the would-be births the band's breeding population still has room
+    /// for under its inbreeding ceiling (issue #688, `crate::lineage`). `1` with headroom to spare,
+    /// `0` at or above the ceiling, between where the room is short of the births.
+    pub ceiling: Scalar,
 }
 
 impl FertilityFactors {
-    /// The `birth_rate` multiplier: the product of the three factors.
+    /// The `birth_rate` multiplier: the product of the four factors.
     ///
-    /// Only `hunger` can reach 0 — it is the gate that makes an empty larder yield zero births.
-    /// `reserve` and `trend` are modifiers bracketing 1.0 (`[1, 1.5]` and `[0.25, 1.25]` at shipped
-    /// defaults), so neither can zero the product alone and the stack needs no floor lever; how far
-    /// a collapsed income may damp growth is `trend.deficit_penalty`'s job.
+    /// `hunger` and `ceiling` can reach 0 — the two gates: an empty larder, and a breeding
+    /// population at its ceiling, each yield zero births. `reserve` and `trend` are modifiers
+    /// bracketing 1.0 (`[1, 1.5]` and `[0.25, 1.25]` at shipped defaults), so neither can zero the
+    /// product alone and the stack needs no floor lever; how far a collapsed income may damp growth
+    /// is `trend.deficit_penalty`'s job.
     pub fn multiplier(&self) -> Scalar {
+        self.food_multiplier() * self.ceiling
+    }
+
+    /// The three food factors' product, `hunger × reserve × trend` — the multiplier before the
+    /// ceiling. The would-be births the ceiling is sized against are priced on this.
+    pub fn food_multiplier(&self) -> Scalar {
         self.hunger * self.reserve * self.trend
     }
 }
@@ -1709,13 +1758,14 @@ impl FertilityFactors {
 impl MoraleContributions {
     /// The active contributions as `(factor, signed value)` pairs — the itemized breakdown the
     /// client can render and the single source both `total` and cause attribution iterate. Ordered
-    /// by the historical tie-break priority (Terrain ≥ Climate ≥ Unrest) so the dominant-cause scan
+    /// by the tie-break priority (Terrain ≥ Climate ≥ Unrest ≥ Culture) so the dominant-cause scan
     /// is a stable first-max.
-    pub fn contributions(&self) -> [(MoraleFactor, Scalar); 4] {
+    pub fn contributions(&self) -> [(MoraleFactor, Scalar); 5] {
         [
             (MoraleFactor::Terrain, self.terrain),
             (MoraleFactor::Climate, self.climate),
             (MoraleFactor::Unrest, self.unrest),
+            (MoraleFactor::Culture, self.culture),
             (MoraleFactor::Settling, self.settling),
         ]
     }
@@ -1729,7 +1779,7 @@ impl MoraleContributions {
 
     /// The dominant *negative* contributor as a [`MoraleCause`] (the "why morale fell" label). The
     /// most-negative labeled contribution wins; `Settling` is base growth (never a negative cause),
-    /// and ties resolve by `contributions()` order (Terrain ≥ Climate ≥ Unrest).
+    /// and ties resolve by `contributions()` order (Terrain ≥ Climate ≥ Unrest ≥ Culture).
     pub fn dominant_negative_cause(&self) -> MoraleCause {
         let mut best: Option<(MoraleFactor, Scalar)> = None;
         for (factor, value) in self.contributions() {
@@ -1744,6 +1794,7 @@ impl MoraleContributions {
             Some((MoraleFactor::Terrain, _)) => MoraleCause::Terrain,
             Some((MoraleFactor::Climate, _)) => MoraleCause::Cold,
             Some((MoraleFactor::Unrest, _)) => MoraleCause::Unrest,
+            Some((MoraleFactor::Culture, _)) => MoraleCause::Culture,
             _ => MoraleCause::None,
         }
     }
@@ -4323,27 +4374,29 @@ pub struct FinishedBatch {
     pub grade: Option<BatchGrade>,
 }
 
-/// **A band's crafting bench — ONE job at a time.**
+/// **ONE ORDER ON A BENCH'S QUEUE** — `recipe × count` (`docs/plan_crafting_and_materials.md` §7,
+/// "The queue").
 ///
-/// Design: `docs/plan_crafting_and_materials.md` §5/§7. **Make IS the assignment**: putting a recipe
-/// on the bench draws idle workers onto it, so there is no Crafter role card and no
-/// [`LaborTarget`] variant. Crafting always has a subject, so it is staffed like a worked source
-/// rather than like a standing role.
+/// **Every order has a count.** The repeat-until-cleared job is retired: *"keep making cordage"* is
+/// an order with a number on it, which is also what lets the craft suggestions net out what is
+/// already coming ([`crate::craft_suggestions`]).
 ///
-/// **The crew is its own number and it comes out of the same pool `assign_labor` spends**
-/// ([`crate::components::available_workers`] minus what the bench holds), so a band cannot staff the
-/// bench and the range with the same people. Clearing the job returns them.
-///
-/// **Persisted** (`SimState`'s `BandRecord::bench`) — a checkpoint that forgot a half-finished craft
-/// would silently hand back the materials it had already drawn.
-#[derive(Component, Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct BandBench {
-    /// The recipe on the bench, or `None` for an idle bench. An id from `recipes.json`, resolved at
-    /// the command boundary so an unknown one is a command failure rather than a bench that quietly
-    /// does nothing.
-    pub recipe_id: Option<String>,
-    /// How many of the band's workers are on it.
-    pub workers: u32,
+/// **The pass in flight belongs to the ORDER, not to the bench** — its progress and the pile it drew.
+/// Only one order is worked a turn (the **worked order**, `systems::crafting::worked_order`), so on
+/// every other order both are at rest; they live on the order rather than the bench so that an order
+/// overtaken mid-item — raised over, or passed by one ahead of it whose inputs arrived — **pauses**
+/// rather than losing what it cut, and resumes, pile and progress intact, when it is worked again.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BenchOrder {
+    /// The recipe this order makes — an id from `recipes.json`, resolved at the command boundary.
+    pub recipe_id: String,
+    /// **How many items this order asks for** — finished passes, the same unit [`Self::made`]
+    /// counts. Never below [`MIN_ORDER_COUNT`]: the command refuses a zero.
+    pub count: u32,
+    /// **How many items this order has finished** — the same count the bench tool's wear and the
+    /// craft's lesson were charged, so a readout of one is a readout of the others. When it reaches
+    /// [`Self::count`] the order leaves the queue.
+    pub made: u32,
     /// Progress toward this pass's `work`. Fixed-point, so a slow bench accumulates instead of
     /// rounding to nothing each turn.
     pub progress: Scalar,
@@ -4351,10 +4404,92 @@ pub struct BandBench {
     /// before the draw — a **short draw withdraws nothing at all**, so this stays `None` and the
     /// turn is a no-op rather than a half-spent pile.
     pub drawn: Option<DrawnInputs>,
-    /// **How many items this bench has finished on the current job** — the same count the wear and
-    /// the lesson were charged, so a readout of one is a readout of the others.
-    pub items_completed: u32,
-    /// The grade of the last item this bench finished, for the readout. Cleared with the job.
+}
+
+/// **THE SMALLEST COUNT AN ORDER MAY CARRY** — one item. An order of zero is not an order.
+pub const MIN_ORDER_COUNT: u32 = 1;
+
+/// **THE HEAD OF THE QUEUE** — the one order the bench works. Named because the queue's index `0`
+/// is a statement (*"the order being made"*), not a magnitude.
+pub const HEAD_ORDER: usize = 0;
+
+/// **ONE FINISHED ITEM**, counted against an order's [`BenchOrder::made`].
+const ONE_ITEM_MADE: u32 = 1;
+
+/// **ONE PLACE UP THE QUEUE** — what [`BandBench::raise_order`] moves an order by.
+const ONE_PLACE: usize = 1;
+
+/// **AN ORDER THAT HAS MADE NOTHING YET** — the `made` a fresh order starts at.
+const NOTHING_MADE: u32 = 0;
+
+impl BenchOrder {
+    /// A fresh order: nothing made, nothing drawn, no progress.
+    pub fn new(recipe_id: &str, count: u32) -> Self {
+        Self {
+            recipe_id: recipe_id.to_string(),
+            count,
+            made: NOTHING_MADE,
+            progress: scalar_zero(),
+            drawn: None,
+        }
+    }
+
+    /// **Items this order still owes** — `count − made`, never below zero.
+    pub fn remaining(&self) -> u32 {
+        self.count.saturating_sub(self.made)
+    }
+
+    /// Whether the order has made everything it asked for.
+    pub fn is_done(&self) -> bool {
+        self.made >= self.count
+    }
+}
+
+/// **WHY A QUEUE EDIT WAS REFUSED** — the reasons [`BandBench`]'s queue editors give, so the command
+/// handler can name the number rather than a bare "no".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BenchQueueError {
+    /// No order stands at that index. Carries the queue's length.
+    NoSuchOrder { len: usize },
+    /// A count below [`MIN_ORDER_COUNT`].
+    CountTooSmall,
+    /// A count at or below what the order has already made — the edit would finish the order.
+    /// Carries `made`. Removing the order is how an order is stopped.
+    CountAtOrBelowMade { made: u32 },
+    /// The order is already at the head and cannot move up.
+    AlreadyAtHead,
+}
+
+/// **A band's crafting bench — ONE BENCH, ONE QUEUE, worked one order at a time.**
+///
+/// Design: `docs/plan_crafting_and_materials.md` §5/§7. **Make IS the assignment**: queueing a recipe
+/// is what a band crafts, so there is no Crafter role card and no [`LaborTarget`] variant. Crafting
+/// always has a subject, so it is staffed like a worked source rather than like a standing role.
+///
+/// **The bench holds an ordered queue of [`BenchOrder`]s and works ONE of them a turn** — the first,
+/// in queue order, that holds a pile or can draw one now (`systems::crafting::worked_order`). A short
+/// order keeps its place and is skipped until its inputs are there. Each finished item counts against
+/// the worked order, and when its count is met the order leaves and the next worked order draws its
+/// own inputs. **The crew stays with the bench** across orders — a new worked order
+/// is not an order to send anyone home — and an empty queue leaves the crew standing at an idle
+/// bench. Parallel crafting comes from more benches, never from splitting one bench's crew.
+///
+/// **The crew is its own number and it comes out of the same pool `assign_labor` spends**
+/// ([`crate::components::available_workers`] minus what the bench holds), so a band cannot staff the
+/// bench and the range with the same people.
+///
+/// **Persisted** (`SimState`'s `BandRecord::bench`) — a checkpoint that forgot a half-finished craft
+/// would silently hand back the materials it had already drawn.
+#[derive(Component, Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct BandBench {
+    /// **The queue, head first.** Empty = an idle bench (with its crew, if any, still standing).
+    /// Every id is from `recipes.json`, resolved at the command boundary so an unknown one is a
+    /// command failure rather than a bench that quietly does nothing.
+    pub orders: Vec<BenchOrder>,
+    /// How many of the band's workers are on it. **A property of the bench, not of an order** — it
+    /// survives every queue edit.
+    pub workers: u32,
+    /// The grade of the last item this bench finished, whichever order made it.
     pub last_output_grade: Option<String>,
     /// **WHERE THE PLAYER PUT THE BENCH WHEN THE BAND RUNS SHORT** — the same mark a worked row
     /// carries ([`SourcePriority`]), because the bench competes for hands with those rows and a rank
@@ -4362,14 +4497,15 @@ pub struct BandBench {
     ///
     /// **Inside this type's `PartialEq`** (it is derived) and **persisted with the rest of the
     /// bench** (`SimState`'s `BandRecord::bench`): a checkpoint that forgot the mark would silently
-    /// re-rank a band's work on rollback.
+    /// re-rank a band's work on rollback. **A property of the bench**, so it survives every queue
+    /// edit.
     ///
     /// Set by `bench_priority <faction> <band> high|normal|low` — the bench's own verb rather than a
-    /// `work_priority` token, because every other bench command (`set_bench`, `clear_bench`,
-    /// `bench_crew`) is addressed `<faction> <band>` with no source, and squeezing the bench into
-    /// `work_priority`'s source grammar would make the bare token `bench` ambiguous with a herd id.
+    /// `work_priority` token, because every other bench command is addressed `<faction> <band>` with
+    /// no source, and squeezing the bench into `work_priority`'s source grammar would make the bare
+    /// token `bench` ambiguous with a herd id.
     pub priority: SourcePriority,
-    /// **WHICH RECIPE THIS BAND LAST STARTED, PER THING IT MAKES** — row key
+    /// **WHICH RECIPE THIS BAND LAST QUEUED, PER THING IT MAKES** — row key
     /// ([`crate::recipes_config::RecipeDef::row_key`], the item or material id) → recipe id.
     ///
     /// It is what the crafting ledger **suggests** on an item's row when the item has more than one
@@ -4378,16 +4514,14 @@ pub struct BandBench {
     /// knapped recipe, and one that points them with bone keeps being offered bone, without the
     /// player re-choosing every time.
     ///
-    /// ⛔ **Written ONLY when a job starts** ([`Self::record_started`], called by `set_bench`) and
-    /// **never by a readout** — the capture reads it and must not decide it, or the panel would be
-    /// choosing on the player's behalf. It **outlives the job**: clearing the bench does not clear it
-    /// ([`Self::clear_job`]), because *"what did I last make spears from"* is a standing fact about the
-    /// band rather than about the thing on the bench now.
+    /// ⛔ **Written ONLY when an order is queued** ([`Self::record_started`], called by
+    /// `bench_enqueue`) and **never by a readout** — the capture reads it and must not decide it, or
+    /// the panel would be choosing on the player's behalf. It **outlives the order**: removing it
+    /// does not clear this, because *"what did I last make spears from"* is a standing fact about the
+    /// band rather than about the queue now.
     ///
-    /// **Persisted** with the rest of the bench (`BandRecord::bench`), so a save or a rollback does
-    /// not forget a band's habits — and that changed the bench's encoded shape, which is why
-    /// `SAVE_FORMAT_VERSION` moved. `BTreeMap` so the checkpoint and any readout iterate in a stable
-    /// order.
+    /// **Persisted** with the rest of the bench (`BandRecord::bench`). `BTreeMap` so the checkpoint
+    /// and any readout iterate in a stable order.
     pub last_started: BTreeMap<String, String>,
     /// **FINISHED EQUIPMENT NOT YET IN THE STORE** — batches this bench completed during the turn
     /// just resolved, in completion order, waiting for [`crate::systems::deliver_bench_output`] to
@@ -4399,60 +4533,125 @@ pub struct BandBench {
     /// ledger that already held the hoe. Parking it here keeps the one-turn lag (the tool did not
     /// exist while that turn's work was done) and makes the store and the issue agree.
     ///
-    /// ⛔ **A job change never touches it** — [`Self::set_job`] and [`Self::clear_job`] carry it
-    /// across, because the items are already made. **Persisted** with the rest of the bench
-    /// (`BandRecord::bench`), so a save taken between the finishing turn and the next keeps them.
+    /// ⛔ **A queue edit never touches it** — the items are already made. **Persisted** with the
+    /// rest of the bench (`BandRecord::bench`), so a save taken between the finishing turn and the
+    /// next keeps them.
     pub finished: Vec<FinishedBatch>,
 }
 
 impl BandBench {
-    /// **Remember that this band started `recipe_id` for `row`** — see [`Self::last_started`].
+    /// **Remember that this band queued `recipe_id` for `row`** — see [`Self::last_started`].
     /// Overwrites the previous choice for that row; every other row is untouched.
     pub fn record_started(&mut self, row: &str, recipe_id: &str) {
         self.last_started
             .insert(row.to_string(), recipe_id.to_string());
     }
 
-    /// The recipe this band last started for `row`, if it has started one.
+    /// The recipe this band last queued for `row`, if it has queued one.
     pub fn last_started_for(&self, row: &str) -> Option<&str> {
         self.last_started.get(row).map(String::as_str)
     }
 
-    /// **Put a recipe on the bench**, discarding whatever was there. Progress and the drawn pile go
-    /// with it: a job swapped out mid-pass has to draw again, because the materials it drew were for
-    /// the thing it is no longer making.
-    ///
-    /// **[`Self::finished`] is untouched** — a batch the old job completed is still delivered.
-    pub fn set_job(&mut self, recipe_id: &str, workers: u32) {
-        self.recipe_id = Some(recipe_id.to_string());
-        self.workers = workers;
-        self.progress = scalar_zero();
-        self.drawn = None;
-        self.items_completed = 0;
-        self.last_output_grade = None;
+    /// **The head of the queue** — the first order, or `None` on an idle bench. Not necessarily the
+    /// order being worked: that is the first order that holds a pile or can draw one
+    /// (`systems::crafting::worked_order`).
+    pub fn head(&self) -> Option<&BenchOrder> {
+        self.orders.get(HEAD_ORDER)
     }
 
-    /// Take the job off the bench and hand the crew back.
+    /// The head, mutably.
+    pub fn head_mut(&mut self) -> Option<&mut BenchOrder> {
+        self.orders.get_mut(HEAD_ORDER)
+    }
+
+    /// The recipe the head order makes, or `None` on an idle bench.
+    pub fn head_recipe(&self) -> Option<&str> {
+        self.head().map(|order| order.recipe_id.as_str())
+    }
+
+    /// **Add an order to the BACK of the queue.** Onto an empty bench it is the head at once. The
+    /// crew is untouched — naming no number is not an order to send anyone home.
     ///
-    /// ⛔ **THIS FORFEITS THE DRAWN PILE**, which is why the shed must never call it: `*self =
-    /// default()` drops [`Self::drawn`] on the floor rather than returning it to the store, so a
-    /// band that lost people would silently lose the materials it had already cut. The shed uses
-    /// [`Self::shed_one_worker`] instead.
+    /// **No count check here** — the command boundary refuses a count below [`MIN_ORDER_COUNT`]
+    /// with a reason.
+    pub fn enqueue(&mut self, recipe_id: &str, count: u32) {
+        self.orders.push(BenchOrder::new(recipe_id, count));
+    }
+
+    /// **Change one order's count.** Refused below [`MIN_ORDER_COUNT`], and at or below what the
+    /// order has already made — an edit that would finish the order is a removal, which has its own
+    /// verb (and its own warning about the pile).
+    pub fn set_order_count(&mut self, index: usize, count: u32) -> Result<(), BenchQueueError> {
+        let len = self.orders.len();
+        let order = self
+            .orders
+            .get_mut(index)
+            .ok_or(BenchQueueError::NoSuchOrder { len })?;
+        if count < MIN_ORDER_COUNT {
+            return Err(BenchQueueError::CountTooSmall);
+        }
+        if count <= order.made {
+            return Err(BenchQueueError::CountAtOrBelowMade { made: order.made });
+        }
+        order.count = count;
+        Ok(())
+    }
+
+    /// **Take one order off the queue** and return it.
     ///
-    /// **[`Self::last_started`] survives it**, deliberately: which recipe a band last chose for an item
-    /// is a fact about the band, not about the job being taken off the bench, and a bench cleared
-    /// between two batches of spears must still suggest the recipe it was making them from.
+    /// ⛔ **THIS FORFEITS THE ORDER'S DRAWN PILE**, exactly as clearing the bench always has: the
+    /// materials were cut for the thing the player stopped making, and a `LocalStore` has no
+    /// representation for a half-worked pile. What is lost is stated on the wire beforehand:
+    /// `BenchState::drawnInputs` names the pile of the order the bench row describes (the worked
+    /// order), and every order's `BenchOrder::drawn` says whether it holds one. The shed must never
+    /// call this — it uses
+    /// [`Self::shed_one_worker`].
     ///
-    /// **[`Self::finished`] survives it too**: those items are already made, and clearing the job
-    /// only stops the next one.
-    pub fn clear_job(&mut self) {
-        let last_started = std::mem::take(&mut self.last_started);
-        let finished = std::mem::take(&mut self.finished);
-        *self = Self {
-            last_started,
-            finished,
-            ..Self::default()
+    /// **The crew, [`Self::last_started`] and [`Self::finished`] all survive it**: the crew is the
+    /// bench's, the choice is the band's, and finished items are already made.
+    pub fn remove_order(&mut self, index: usize) -> Result<BenchOrder, BenchQueueError> {
+        if index >= self.orders.len() {
+            return Err(BenchQueueError::NoSuchOrder {
+                len: self.orders.len(),
+            });
+        }
+        Ok(self.orders.remove(index))
+    }
+
+    /// **Move one order up one place.** Raising the second order makes it the head; the order it
+    /// displaces keeps its progress and its pile ([`BenchOrder`]) and resumes when it is worked again.
+    pub fn raise_order(&mut self, index: usize) -> Result<(), BenchQueueError> {
+        if index >= self.orders.len() {
+            return Err(BenchQueueError::NoSuchOrder {
+                len: self.orders.len(),
+            });
+        }
+        if index == HEAD_ORDER {
+            return Err(BenchQueueError::AlreadyAtHead);
+        }
+        self.orders.swap(index, index - ONE_PLACE);
+        Ok(())
+    }
+
+    /// **THE WORKED ORDER FINISHED ONE ITEM** — count it against the order at `index`, reset its
+    /// pass, and pop it if its count is met. Returns `true` when the order left the queue, so the
+    /// caller knows the next worked order has to draw its own inputs. An index with no order is a
+    /// no-op returning `false`.
+    ///
+    /// **The overflow past `work` is dropped, not carried**: progress past a completion was done on
+    /// an item whose materials have not been drawn yet.
+    pub fn complete_item(&mut self, index: usize) -> bool {
+        let Some(order) = self.orders.get_mut(index) else {
+            return false;
         };
+        order.made = order.made.saturating_add(ONE_ITEM_MADE);
+        order.progress = scalar_zero();
+        order.drawn = None;
+        if order.is_done() {
+            self.orders.remove(index);
+            return true;
+        }
+        false
     }
 
     /// **Hand every parked batch to the band's store, in the order the bench finished them** —
@@ -4467,21 +4666,22 @@ impl BandBench {
     /// **TAKE ONE HAND OFF THE BENCH AND LEAVE EVERYTHING ELSE STANDING** — what the shedding order
     /// does to a bench, and the whole of it.
     ///
-    /// The recipe, the progress, the drawn pile, the finished count and the last grade are all
-    /// untouched, so the crew coming back resumes rather than restarts. At zero the **job stalls**:
-    /// it is still the job the player chose, making no progress, which is the crafting system's own
-    /// shipped answer to a pass it cannot advance (*"silently emptying their bench is a worse answer
-    /// than a job that makes no progress"*).
+    /// The queue — every order's progress, drawn pile and made count — and the last grade are all
+    /// untouched, so the crew coming back resumes rather than restarts. At zero the **worked order
+    /// stalls**:
+    /// it is still the order the player chose, making no progress, which is the crafting system's
+    /// own shipped answer to a pass it cannot advance (*"silently emptying their bench is a worse
+    /// answer than a job that makes no progress"*).
     ///
-    /// Returns the crew left. Saturating, so a call on an idle bench is a no-op rather than a wrap.
+    /// Returns the crew left. Saturating, so a call on an empty bench is a no-op rather than a wrap.
     pub fn shed_one_worker(&mut self) -> u32 {
         self.workers = self.workers.saturating_sub(ONE_WORKER);
         self.workers
     }
 
-    /// Whether anything is on the bench at all.
+    /// Whether anything is queued on the bench at all.
     pub fn is_running(&self) -> bool {
-        self.recipe_id.is_some()
+        !self.orders.is_empty()
     }
 }
 
@@ -4605,7 +4805,7 @@ pub struct LaborAllocation {
     /// and **excluded from equality** below.
     pub last_raid_forfeit: f32,
     /// **THE FOOD THIS BAND LEFT BEHIND ON A LONG MOVE THIS WINDOW** (#732) — a band ordered farther
-    /// than it can ferry sheds down to what its workers can carry the moment the order is accepted
+    /// than it can ferry sheds down to what its workers can carry as it departs
     /// (`crate::band_carry`), and what it drops is **lost**: it passes through neither income,
     /// consumption, rot nor a transfer. So it is its own term of the food identity:
     ///
@@ -4958,6 +5158,11 @@ pub struct KeepingIssue {
     pub item: String,
     /// Units issued — whole per site, because a site crew is a group of one in the settlement.
     pub units: f32,
+    /// **Units the site's keeping hands claimed** — the requirement the settlement was struck
+    /// against, so `(required − units).max(0)` is what this site's crew went without. It is what the
+    /// craft suggestions read a site crew's shortfall off ([`crate::craft_suggestions`]); a line the
+    /// settlement reached with nothing reads `units 0` against its claim rather than being absent.
+    pub required: f32,
 }
 
 /// **ONE LINE OF ONE STANDING POOL'S TABLE OF EQUIPMENT** — a row of
@@ -6084,8 +6289,9 @@ impl LaborAllocation {
                     }
                     (ShedSubject::Row(target), remaining)
                 }
-                // ⛔ **NEVER `clear_job`** — that forfeits the drawn pile. The job, its progress and
-                // the materials already cut all stand; at zero the bench simply stalls.
+                // ⛔ **NEVER `remove_order`** — that forfeits the drawn pile. The queue, every
+                // order's progress and the materials already cut all stand; at zero the bench simply
+                // stalls.
                 ShedPick::Bench => {
                     let remaining = bench
                         .as_deref_mut()
@@ -6538,6 +6744,23 @@ impl LaborAllocation {
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BandTravel {
     pub target: UVec2,
+    /// **Whether this order has taken its first step.** `false` from the moment the order is given
+    /// until `systems::advance_band_movement` first moves the band on it — which is the **departure**,
+    /// where a resident band's long-move shed is applied (`.claude/rules/core_sim/band-carry.md`).
+    /// Every new order starts undeparted, so a re-target is measured afresh from where the band then
+    /// stands. Persisted with the order (`BandRecord::travel`), so a save taken between the order
+    /// and the turn keeps the shed pending rather than skipping it.
+    pub departed: bool,
+}
+
+impl BandTravel {
+    /// **A fresh order toward `target`**, not yet departed.
+    pub fn to(target: UVec2) -> Self {
+        Self {
+            target,
+            departed: false,
+        }
+    }
 }
 
 /// **THE floor a fresh assignment gets when the player named none** — `0.50`, the food peak, so the
@@ -6878,19 +7101,21 @@ impl Default for PowerNode {
 }
 
 /// Knowledge fragment payload carried between factions by migration.
+///
+/// **There is no `fidelity`, and there must not be one again** (`docs/plan_contact_and_logistics.md`
+/// §Settled by #531). Partial transmission is what `progress` building up over turns already *is*; a
+/// second "garbled" figure beside it described the same thing twice, and nothing ever read it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KnowledgeFragment {
     pub discovery_id: u32,
     pub progress: Scalar,
-    pub fidelity: Scalar,
 }
 
 impl KnowledgeFragment {
-    pub fn new(discovery_id: u32, progress: Scalar, fidelity: Scalar) -> Self {
+    pub fn new(discovery_id: u32, progress: Scalar) -> Self {
         Self {
             discovery_id,
             progress,
-            fidelity,
         }
     }
 
@@ -6898,7 +7123,6 @@ impl KnowledgeFragment {
         Self {
             discovery_id: fragment.discovery_id,
             progress: Scalar::from_raw(fragment.progress),
-            fidelity: Scalar::from_raw(fragment.fidelity),
         }
     }
 
@@ -6906,7 +7130,6 @@ impl KnowledgeFragment {
         ContractKnowledgeFragment {
             discovery_id: self.discovery_id,
             progress: self.progress.raw(),
-            fidelity: self.fidelity.raw(),
         }
     }
 }
@@ -7770,11 +7993,16 @@ mod tests {
         );
     }
 
+    /// **An order long enough that no shed fixture finishes it** — the shed never advances the bench,
+    /// so any count would do; one is the smallest that is an order at all.
+    #[cfg(test)]
+    const SHED_FIXTURE_ORDER_COUNT: u32 = MIN_ORDER_COUNT;
+
     /// A running bench holding `crafters`, carrying the player's `priority`.
     #[cfg(test)]
     fn staffed_bench(crafters: u32, priority: SourcePriority) -> BandBench {
         BandBench {
-            recipe_id: Some("sled".to_string()),
+            orders: vec![BenchOrder::new("sled", SHED_FIXTURE_ORDER_COUNT)],
             workers: crafters,
             priority,
             ..Default::default()
@@ -7871,7 +8099,8 @@ mod tests {
         assert_eq!(bench.workers, 0, "it stalled");
         assert!(
             bench.is_running(),
-            "…and the job is still on it — the shed must never `clear_job`, which forfeits the pile"
+            "…and the order is still on it — the shed must never `remove_order`, which forfeits \
+             the pile"
         );
         assert_eq!(
             allocation.assignments.len(),

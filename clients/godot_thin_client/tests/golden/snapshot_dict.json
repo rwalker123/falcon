@@ -256,6 +256,29 @@
       "subject_name": "connections[2].subject_name"
     }
   ],
+  "contact_lessons": [
+    {
+      "channel": 57,
+      "credit": 78.099998,
+      "discovery_id": 48,
+      "knowledge_id": "contact_lessons[0].knowledge_id",
+      "subject_faction": 125
+    },
+    {
+      "channel": 166,
+      "credit": 4.5,
+      "discovery_id": 61,
+      "knowledge_id": "contact_lessons[1].knowledge_id",
+      "subject_faction": 86
+    },
+    {
+      "channel": 127,
+      "credit": 95.169998,
+      "discovery_id": 182,
+      "knowledge_id": "contact_lessons[2].knowledge_id",
+      "subject_faction": 99
+    }
+  ],
   "corruption": {
     "audit_capacity": 55,
     "entries": [
@@ -4350,6 +4373,13 @@
       "activity": "populations[0].activity",
       "band_id": 141,
       "band_move_tiles_per_turn": 65.150002,
+      "belief_anchor_x": 78,
+      "belief_anchor_y": 67,
+      "belief_reach_x": {"__packed": "PackedInt32Array", "len": 3, "items": [114, 109, 120]},
+      "belief_reach_y": {"__packed": "PackedInt32Array", "len": 3, "items": [101, 106, 179]},
+      "belief_relay_hops": 122,
+      "belief_relay_reach_x": {"__packed": "PackedInt32Array", "len": 3, "items": [76, 47, 86]},
+      "belief_relay_reach_y": {"__packed": "PackedInt32Array", "len": 3, "items": [143, 76, 65]},
       "bench": {
         "blocked_reason": "populations[0].bench.blocked_reason",
         "blocked_severity": "populations[0].bench.blocked_severity",
@@ -4369,7 +4399,35 @@
             "material_id": "populations[0].bench.drawn_inputs[2].material_id"
           }
         ],
-        "items_completed": 180,
+        "orders": [
+          {
+            "blocked_reason": "populations[0].bench.orders[0].blocked_reason",
+            "blocked_severity": "populations[0].bench.orders[0].blocked_severity",
+            "count": 198,
+            "drawn": true,
+            "made": 140,
+            "progress": 66.239998,
+            "recipe_id": "populations[0].bench.orders[0].recipe_id"
+          },
+          {
+            "blocked_reason": "populations[0].bench.orders[1].blocked_reason",
+            "blocked_severity": "populations[0].bench.orders[1].blocked_severity",
+            "count": 157,
+            "drawn": false,
+            "made": 1,
+            "progress": 75.010002,
+            "recipe_id": "populations[0].bench.orders[1].recipe_id"
+          },
+          {
+            "blocked_reason": "populations[0].bench.orders[2].blocked_reason",
+            "blocked_severity": "populations[0].bench.orders[2].blocked_severity",
+            "count": 172,
+            "drawn": false,
+            "made": 10,
+            "progress": 22.700001,
+            "recipe_id": "populations[0].bench.orders[2].recipe_id"
+          }
+        ],
         "output_grade": "populations[0].bench.output_grade",
         "priority": "high",
         "progress": 103.739998,
@@ -4397,6 +4455,7 @@
         ],
         "teaches": "populations[0].bench.teaches",
         "work": 77.519997,
+        "worked": 72,
         "workers": 95
       },
       "build_queue": [
@@ -4580,6 +4639,90 @@
           "suggested": false
         }
       ],
+      "craft_suggestions": [
+        {
+          "count": 85,
+          "item_id": "hoes",
+          "sources": [
+            {
+              "fauna_id": "populations[0].craft_suggestions[0].sources[0].fauna_id",
+              "job": "populations[0].craft_suggestions[0].sources[0].job",
+              "kind": "populations[0].craft_suggestions[0].sources[0].kind",
+              "material": "populations[0].craft_suggestions[0].sources[0].material",
+              "missing_units": 24.57,
+              "target_x": 28,
+              "target_y": 17,
+              "work_per_turn": 14.15,
+              "workers_without": 66.580002
+            },
+            {
+              "fauna_id": "populations[0].craft_suggestions[0].sources[1].fauna_id",
+              "job": "populations[0].craft_suggestions[0].sources[1].job",
+              "kind": "populations[0].craft_suggestions[0].sources[1].kind",
+              "material": "populations[0].craft_suggestions[0].sources[1].material",
+              "missing_units": 73.300003,
+              "target_x": 189,
+              "target_y": 200,
+              "work_per_turn": 93.330002,
+              "workers_without": 26.9
+            },
+            {
+              "fauna_id": "populations[0].craft_suggestions[0].sources[2].fauna_id",
+              "job": "populations[0].craft_suggestions[0].sources[2].job",
+              "kind": "populations[0].craft_suggestions[0].sources[2].kind",
+              "material": "populations[0].craft_suggestions[0].sources[2].material",
+              "missing_units": 72.07,
+              "target_x": 62,
+              "target_y": 51,
+              "work_per_turn": 90.730003,
+              "workers_without": 11.57
+            }
+          ],
+          "work_per_turn": 19.709999,
+          "workers_without": 65.790001
+        },
+        {
+          "count": 126,
+          "item_id": "spears",
+          "sources": [
+            {
+              "fauna_id": "populations[0].craft_suggestions[1].sources[0].fauna_id",
+              "job": "populations[0].craft_suggestions[1].sources[0].job",
+              "kind": "populations[0].craft_suggestions[1].sources[0].kind",
+              "material": "populations[0].craft_suggestions[1].sources[0].material",
+              "missing_units": 83.980003,
+              "target_x": 43,
+              "target_y": 54,
+              "work_per_turn": 47.610001,
+              "workers_without": 44.82
+            },
+            {
+              "fauna_id": "populations[0].craft_suggestions[1].sources[1].fauna_id",
+              "job": "populations[0].craft_suggestions[1].sources[1].job",
+              "kind": "populations[0].craft_suggestions[1].sources[1].kind",
+              "material": "populations[0].craft_suggestions[1].sources[1].material",
+              "missing_units": 24.99,
+              "target_x": 42,
+              "target_y": 31,
+              "work_per_turn": 16.120001,
+              "workers_without": 24.950001
+            },
+            {
+              "fauna_id": "populations[0].craft_suggestions[1].sources[2].fauna_id",
+              "job": "populations[0].craft_suggestions[1].sources[2].job",
+              "kind": "populations[0].craft_suggestions[1].sources[2].kind",
+              "material": "populations[0].craft_suggestions[1].sources[2].material",
+              "missing_units": 95.769997,
+              "target_x": 89,
+              "target_y": 100,
+              "work_per_turn": 48.09,
+              "workers_without": 55.669998
+            }
+          ],
+          "work_per_turn": 58.299999,
+          "workers_without": 22.379999
+        }
+      ],
       "current_x": 0,
       "current_y": 1,
       "cut_off": true,
@@ -4678,6 +4821,7 @@
       "founding_parent_min_workers": 132,
       "generation": 178,
       "grievance": 0.000154,
+      "has_belief_anchor": false,
       "heart_bond": 1.43,
       "heart_last_contact_turn": 78,
       "home": 193,
@@ -4709,7 +4853,7 @@
       "hunter_attack": 45.5,
       "idle_workers": 54,
       "independence_grievance_threshold": 59.740002,
-      "is_expedition": false,
+      "is_expedition": true,
       "is_traveling": true,
       "kit_id": "populations[0].kit_id",
       "kit_item_conditions": [
@@ -4823,19 +4967,16 @@
       "knowledge_fragments": [
         {
           "discovery": 18,
-          "fidelity": 0.000014,
           "progress": 0.000061,
           "progress_raw": 61
         },
         {
           "discovery": 71,
-          "fidelity": 0.000195,
           "progress": 0.000168,
           "progress_raw": 168
         },
         {
           "discovery": 60,
-          "fidelity": 0.00018,
           "progress": 0.000199,
           "progress_raw": 199
         }
@@ -4850,6 +4991,9 @@
           "floor": 110.599998,
           "fodder_rate_home": 27.309999,
           "fodder_yield": 46.790001,
+          "homeward_all_home_in": 104,
+          "homeward_food": 9.24,
+          "homeward_workers": 148,
           "hunt_useful_workers": 43,
           "hunters_on_the_road": 119,
           "improvement": "populations[0].labor_assignments[0].improvement",
@@ -4960,6 +5104,9 @@
           "floor": 48.369999,
           "fodder_rate_home": 107.879997,
           "fodder_yield": 0.25,
+          "homeward_all_home_in": 89,
+          "homeward_food": 83.559998,
+          "homeward_workers": 1,
           "hunt_useful_workers": 144,
           "hunters_on_the_road": 12,
           "improvement": "populations[0].labor_assignments[1].improvement",
@@ -5070,6 +5217,9 @@
           "floor": 97.739998,
           "fodder_rate_home": 71.980003,
           "fodder_yield": 99.410004,
+          "homeward_all_home_in": 14,
+          "homeward_food": 13.97,
+          "homeward_workers": 58,
           "hunt_useful_workers": 121,
           "hunters_on_the_road": 121,
           "improvement": "populations[0].labor_assignments[2].improvement",
@@ -5331,6 +5481,7 @@
       "morale": 0.000022,
       "morale_cause": 86,
       "morale_climate": 0.00015,
+      "morale_culture": 0.000061,
       "morale_delta": 0.000129,
       "morale_settling": 0.000027,
       "morale_terrain": 0.000096,
@@ -5499,6 +5650,13 @@
       "activity": "populations[1].activity",
       "band_id": 42,
       "band_move_tiles_per_turn": 61.23,
+      "belief_anchor_x": 49,
+      "belief_anchor_y": 60,
+      "belief_reach_x": {"__packed": "PackedInt32Array", "len": 3, "items": [29, 50, 115]},
+      "belief_reach_y": {"__packed": "PackedInt32Array", "len": 3, "items": [74, 157, 72]},
+      "belief_relay_hops": 5,
+      "belief_relay_reach_x": {"__packed": "PackedInt32Array", "len": 3, "items": [63, 92, 81]},
+      "belief_relay_reach_y": {"__packed": "PackedInt32Array", "len": 3, "items": [180, 63, 182]},
       "bench": {
         "blocked_reason": "populations[1].bench.blocked_reason",
         "blocked_severity": "populations[1].bench.blocked_severity",
@@ -5518,7 +5676,35 @@
             "material_id": "populations[1].bench.drawn_inputs[2].material_id"
           }
         ],
-        "items_completed": 59,
+        "orders": [
+          {
+            "blocked_reason": "populations[1].bench.orders[0].blocked_reason",
+            "blocked_severity": "populations[1].bench.orders[0].blocked_severity",
+            "count": 189,
+            "drawn": true,
+            "made": 17,
+            "progress": 84.480003,
+            "recipe_id": "populations[1].bench.orders[0].recipe_id"
+          },
+          {
+            "blocked_reason": "populations[1].bench.orders[1].blocked_reason",
+            "blocked_severity": "populations[1].bench.orders[1].blocked_severity",
+            "count": 46,
+            "drawn": false,
+            "made": 180,
+            "progress": 38.209999,
+            "recipe_id": "populations[1].bench.orders[1].recipe_id"
+          },
+          {
+            "blocked_reason": "populations[1].bench.orders[2].blocked_reason",
+            "blocked_severity": "populations[1].bench.orders[2].blocked_severity",
+            "count": 75,
+            "drawn": false,
+            "made": 15,
+            "progress": 27.290001,
+            "recipe_id": "populations[1].bench.orders[2].recipe_id"
+          }
+        ],
         "output_grade": "populations[1].bench.output_grade",
         "priority": "low",
         "progress": 89.18,
@@ -5546,6 +5732,7 @@
         ],
         "teaches": "populations[1].bench.teaches",
         "work": 5.62,
+        "worked": 89,
         "workers": 4
       },
       "build_queue": [
@@ -5729,6 +5916,90 @@
           "suggested": false
         }
       ],
+      "craft_suggestions": [
+        {
+          "count": 100,
+          "item_id": "hoes",
+          "sources": [
+            {
+              "fauna_id": "populations[1].craft_suggestions[0].sources[0].fauna_id",
+              "job": "populations[1].craft_suggestions[0].sources[0].job",
+              "kind": "populations[1].craft_suggestions[0].sources[0].kind",
+              "material": "populations[1].craft_suggestions[0].sources[0].material",
+              "missing_units": 98.639999,
+              "target_x": 125,
+              "target_y": 136,
+              "work_per_turn": 71.769997,
+              "workers_without": 58.66
+            },
+            {
+              "fauna_id": "populations[1].craft_suggestions[0].sources[1].fauna_id",
+              "job": "populations[1].craft_suggestions[0].sources[1].job",
+              "kind": "populations[1].craft_suggestions[0].sources[1].kind",
+              "material": "populations[1].craft_suggestions[0].sources[1].material",
+              "missing_units": 92.110001,
+              "target_x": 76,
+              "target_y": 65,
+              "work_per_turn": 29.49,
+              "workers_without": 80.940002
+            },
+            {
+              "fauna_id": "populations[1].craft_suggestions[0].sources[2].fauna_id",
+              "job": "populations[1].craft_suggestions[0].sources[2].job",
+              "kind": "populations[1].craft_suggestions[0].sources[2].kind",
+              "material": "populations[1].craft_suggestions[0].sources[2].material",
+              "missing_units": 107.169998,
+              "target_x": 159,
+              "target_y": 170,
+              "work_per_turn": 38.130001,
+              "workers_without": 77.43
+            }
+          ],
+          "work_per_turn": 21.93,
+          "workers_without": 44.080002
+        },
+        {
+          "count": 131,
+          "item_id": "spears",
+          "sources": [
+            {
+              "fauna_id": "populations[1].craft_suggestions[1].sources[0].fauna_id",
+              "job": "populations[1].craft_suggestions[1].sources[0].job",
+              "kind": "populations[1].craft_suggestions[1].sources[0].kind",
+              "material": "populations[1].craft_suggestions[1].sources[0].material",
+              "missing_units": 77.639999,
+              "target_x": 38,
+              "target_y": 27,
+              "work_per_turn": 95.019997,
+              "workers_without": 51.419998
+            },
+            {
+              "fauna_id": "populations[1].craft_suggestions[1].sources[1].fauna_id",
+              "job": "populations[1].craft_suggestions[1].sources[1].job",
+              "kind": "populations[1].craft_suggestions[1].sources[1].kind",
+              "material": "populations[1].craft_suggestions[1].sources[1].material",
+              "missing_units": 63.540001,
+              "target_x": 55,
+              "target_y": 66,
+              "work_per_turn": 16.92,
+              "workers_without": 48.119999
+            },
+            {
+              "fauna_id": "populations[1].craft_suggestions[1].sources[2].fauna_id",
+              "job": "populations[1].craft_suggestions[1].sources[2].job",
+              "kind": "populations[1].craft_suggestions[1].sources[2].kind",
+              "material": "populations[1].craft_suggestions[1].sources[2].material",
+              "missing_units": 59.040001,
+              "target_x": 116,
+              "target_y": 105,
+              "work_per_turn": 75.739998,
+              "workers_without": 103.510002
+            }
+          ],
+          "work_per_turn": 55.919998,
+          "workers_without": 55.77
+        }
+      ],
       "current_x": 1,
       "current_y": 2,
       "cut_off": false,
@@ -5827,6 +6098,7 @@
       "founding_parent_min_workers": 115,
       "generation": 195,
       "grievance": 0.000053,
+      "has_belief_anchor": true,
       "heart_bond": 22.93,
       "heart_last_contact_turn": 101,
       "home": 148,
@@ -5858,8 +6130,8 @@
       "hunter_attack": 43.43,
       "idle_workers": 151,
       "independence_grievance_threshold": 24.59,
-      "is_expedition": true,
-      "is_traveling": false,
+      "is_expedition": false,
+      "is_traveling": true,
       "kit_id": "populations[1].kit_id",
       "kit_item_conditions": [
         {
@@ -5972,19 +6244,16 @@
       "knowledge_fragments": [
         {
           "discovery": 89,
-          "fidelity": 0.000145,
           "progress": 0.000122,
           "progress_raw": 122
         },
         {
           "discovery": 4,
-          "fidelity": 0.000132,
           "progress": 0.000023,
           "progress_raw": 23
         },
         {
           "discovery": 143,
-          "fidelity": 0.000075,
           "progress": 0.000024,
           "progress_raw": 24
         }
@@ -5999,6 +6268,9 @@
           "floor": 71.43,
           "fodder_rate_home": 48.48,
           "fodder_yield": 0.66,
+          "homeward_all_home_in": 159,
+          "homeward_food": 111.660004,
+          "homeward_workers": 175,
           "hunt_useful_workers": 30,
           "hunters_on_the_road": 118,
           "improvement": "populations[1].labor_assignments[0].improvement",
@@ -6109,6 +6381,9 @@
           "floor": 95.239998,
           "fodder_rate_home": 47.799999,
           "fodder_yield": 2.93,
+          "homeward_all_home_in": 110,
+          "homeward_food": 105.349998,
+          "homeward_workers": 50,
           "hunt_useful_workers": 41,
           "hunters_on_the_road": 1,
           "improvement": "populations[1].labor_assignments[1].improvement",
@@ -6219,6 +6494,9 @@
           "floor": 20.67,
           "fodder_rate_home": 36.439999,
           "fodder_yield": 59.09,
+          "homeward_all_home_in": 169,
+          "homeward_food": 15.3,
+          "homeward_workers": 25,
           "hunt_useful_workers": 184,
           "hunters_on_the_road": 68,
           "improvement": "populations[1].labor_assignments[2].improvement",
@@ -6424,6 +6702,7 @@
       "morale": 0.000167,
       "morale_cause": 171,
       "morale_climate": 0.000195,
+      "morale_culture": 0.000164,
       "morale_delta": 0.00018,
       "morale_settling": 0.00012,
       "morale_terrain": 0.000157,
@@ -6609,6 +6888,13 @@
       "activity": "populations[2].activity",
       "band_id": 87,
       "band_move_tiles_per_turn": 100.839996,
+      "belief_anchor_x": 124,
+      "belief_anchor_y": 113,
+      "belief_reach_x": {"__packed": "PackedInt32Array", "len": 3, "items": [52, 15, 54]},
+      "belief_reach_y": {"__packed": "PackedInt32Array", "len": 3, "items": [175, 92, 89]},
+      "belief_relay_hops": 172,
+      "belief_relay_reach_x": {"__packed": "PackedInt32Array", "len": 3, "items": [30, 121, 36]},
+      "belief_relay_reach_y": {"__packed": "PackedInt32Array", "len": 3, "items": [33, 158, 119]},
       "bench": {
         "blocked_reason": "populations[2].bench.blocked_reason",
         "blocked_severity": "populations[2].bench.blocked_severity",
@@ -6628,7 +6914,35 @@
             "material_id": "populations[2].bench.drawn_inputs[2].material_id"
           }
         ],
-        "items_completed": 90,
+        "orders": [
+          {
+            "blocked_reason": "populations[2].bench.orders[0].blocked_reason",
+            "blocked_severity": "populations[2].bench.orders[0].blocked_severity",
+            "count": 40,
+            "drawn": true,
+            "made": 142,
+            "progress": 34.880001,
+            "recipe_id": "populations[2].bench.orders[0].recipe_id"
+          },
+          {
+            "blocked_reason": "populations[2].bench.orders[1].blocked_reason",
+            "blocked_severity": "populations[2].bench.orders[1].blocked_severity",
+            "count": 183,
+            "drawn": false,
+            "made": 147,
+            "progress": 31.74,
+            "recipe_id": "populations[2].bench.orders[1].recipe_id"
+          },
+          {
+            "blocked_reason": "populations[2].bench.orders[2].blocked_reason",
+            "blocked_severity": "populations[2].bench.orders[2].blocked_severity",
+            "count": 170,
+            "drawn": false,
+            "made": 72,
+            "progress": 57.529999,
+            "recipe_id": "populations[2].bench.orders[2].recipe_id"
+          }
+        ],
         "output_grade": "populations[2].bench.output_grade",
         "priority": "high",
         "progress": 110.019997,
@@ -6656,6 +6970,7 @@
         ],
         "teaches": "populations[2].bench.teaches",
         "work": 80.669998,
+        "worked": 130,
         "workers": 69
       },
       "build_queue": [
@@ -6839,6 +7154,90 @@
           "suggested": false
         }
       ],
+      "craft_suggestions": [
+        {
+          "count": 135,
+          "item_id": "hoes",
+          "sources": [
+            {
+              "fauna_id": "populations[2].craft_suggestions[0].sources[0].fauna_id",
+              "job": "populations[2].craft_suggestions[0].sources[0].job",
+              "kind": "populations[2].craft_suggestions[0].sources[0].kind",
+              "material": "populations[2].craft_suggestions[0].sources[0].material",
+              "missing_units": 57.02,
+              "target_x": 130,
+              "target_y": 119,
+              "work_per_turn": 90.349998,
+              "workers_without": 73.940002
+            },
+            {
+              "fauna_id": "populations[2].craft_suggestions[0].sources[1].fauna_id",
+              "job": "populations[2].craft_suggestions[0].sources[1].job",
+              "kind": "populations[2].craft_suggestions[0].sources[1].kind",
+              "material": "populations[2].craft_suggestions[0].sources[1].material",
+              "missing_units": 12.59,
+              "target_x": 11,
+              "target_y": 22,
+              "work_per_turn": 15.98,
+              "workers_without": 98.029999
+            },
+            {
+              "fauna_id": "populations[2].craft_suggestions[0].sources[2].fauna_id",
+              "job": "populations[2].craft_suggestions[0].sources[2].job",
+              "kind": "populations[2].craft_suggestions[0].sources[2].kind",
+              "material": "populations[2].craft_suggestions[0].sources[2].material",
+              "missing_units": 29.52,
+              "target_x": 168,
+              "target_y": 157,
+              "work_per_turn": 0.97,
+              "workers_without": 66.57
+            }
+          ],
+          "work_per_turn": 86.199997,
+          "workers_without": 96.959999
+        },
+        {
+          "count": 184,
+          "item_id": "spears",
+          "sources": [
+            {
+              "fauna_id": "populations[2].craft_suggestions[1].sources[0].fauna_id",
+              "job": "populations[2].craft_suggestions[1].sources[0].job",
+              "kind": "populations[2].craft_suggestions[1].sources[0].kind",
+              "material": "populations[2].craft_suggestions[1].sources[0].material",
+              "missing_units": 85.589996,
+              "target_x": 121,
+              "target_y": 132,
+              "work_per_turn": 84.330002,
+              "workers_without": 77.870003
+            },
+            {
+              "fauna_id": "populations[2].craft_suggestions[1].sources[1].fauna_id",
+              "job": "populations[2].craft_suggestions[1].sources[1].job",
+              "kind": "populations[2].craft_suggestions[1].sources[1].kind",
+              "material": "populations[2].craft_suggestions[1].sources[1].material",
+              "missing_units": 38.009998,
+              "target_x": 176,
+              "target_y": 165,
+              "work_per_turn": 72.0,
+              "workers_without": 81.860001
+            },
+            {
+              "fauna_id": "populations[2].craft_suggestions[1].sources[2].fauna_id",
+              "job": "populations[2].craft_suggestions[1].sources[2].job",
+              "kind": "populations[2].craft_suggestions[1].sources[2].kind",
+              "material": "populations[2].craft_suggestions[1].sources[2].material",
+              "missing_units": 12.56,
+              "target_x": 171,
+              "target_y": 182,
+              "work_per_turn": 59.509998,
+              "workers_without": 4.36
+            }
+          ],
+          "work_per_turn": 85.519997,
+          "workers_without": 102.519997
+        }
+      ],
       "current_x": 2,
       "current_y": 0,
       "cut_off": false,
@@ -6937,6 +7336,7 @@
       "founding_parent_min_workers": 118,
       "generation": 72,
       "grievance": 0.00018,
+      "has_belief_anchor": false,
       "heart_bond": 70.870003,
       "heart_last_contact_turn": 24,
       "home": 95,
@@ -6968,8 +7368,8 @@
       "hunter_attack": 69.129997,
       "idle_workers": 68,
       "independence_grievance_threshold": 50.919998,
-      "is_expedition": false,
-      "is_traveling": true,
+      "is_expedition": true,
+      "is_traveling": false,
       "kit_id": "populations[2].kit_id",
       "kit_item_conditions": [
         {
@@ -7082,19 +7482,16 @@
       "knowledge_fragments": [
         {
           "discovery": 84,
-          "fidelity": 0.000124,
           "progress": 0.000191,
           "progress_raw": 191
         },
         {
           "discovery": 97,
-          "fidelity": 0.000161,
           "progress": 0.00001,
           "progress_raw": 10
         },
         {
           "discovery": 98,
-          "fidelity": 0.000022,
           "progress": 0.000045,
           "progress_raw": 45
         }
@@ -7109,6 +7506,9 @@
           "floor": 7.88,
           "fodder_rate_home": 28.66,
           "fodder_yield": 102.470001,
+          "homeward_all_home_in": 6,
+          "homeward_food": 28.629999,
+          "homeward_workers": 146,
           "hunt_useful_workers": 17,
           "hunters_on_the_road": 153,
           "improvement": "populations[2].labor_assignments[0].improvement",
@@ -7219,6 +7619,9 @@
           "floor": 26.209999,
           "fodder_rate_home": 112.059998,
           "fodder_yield": 20.6,
+          "homeward_all_home_in": 183,
+          "homeward_food": 84.739998,
+          "homeward_workers": 151,
           "hunt_useful_workers": 102,
           "hunters_on_the_road": 22,
           "improvement": "populations[2].labor_assignments[1].improvement",
@@ -7329,6 +7732,9 @@
           "floor": 94.800003,
           "fodder_rate_home": 71.290001,
           "fodder_yield": 96.949997,
+          "homeward_all_home_in": 24,
+          "homeward_food": 77.099998,
+          "homeward_workers": 52,
           "hunt_useful_workers": 51,
           "hunters_on_the_road": 23,
           "improvement": "populations[2].labor_assignments[2].improvement",
@@ -7590,6 +7996,7 @@
       "morale": 0.000096,
       "morale_cause": 196,
       "morale_climate": 0.000176,
+      "morale_culture": 0.000083,
       "morale_delta": 0.000111,
       "morale_settling": 0.000057,
       "morale_terrain": 0.000138,
@@ -8285,6 +8692,7 @@
   ],
   "tiles": [
     {
+      "belief": 23.15,
       "culture_layer": 111,
       "element": 155,
       "entity": 0,
@@ -8305,6 +8713,7 @@
       "y": 0
     },
     {
+      "belief": 20.17,
       "culture_layer": 156,
       "element": 68,
       "entity": 1,
@@ -8325,6 +8734,7 @@
       "y": 0
     },
     {
+      "belief": 74.18,
       "culture_layer": 105,
       "element": 153,
       "entity": 2,
@@ -8345,6 +8755,7 @@
       "y": 0
     },
     {
+      "belief": 2.45,
       "culture_layer": 126,
       "element": 122,
       "entity": 3,
@@ -8365,6 +8776,7 @@
       "y": 0
     },
     {
+      "belief": 87.919998,
       "culture_layer": 3,
       "element": 159,
       "entity": 4,
@@ -8385,6 +8797,7 @@
       "y": 1
     },
     {
+      "belief": 33.77,
       "culture_layer": 144,
       "element": 184,
       "entity": 5,
@@ -8405,6 +8818,7 @@
       "y": 1
     },
     {
+      "belief": 39.369999,
       "culture_layer": 165,
       "element": 197,
       "entity": 6,
@@ -8425,6 +8839,7 @@
       "y": 1
     },
     {
+      "belief": 25.219999,
       "culture_layer": 2,
       "element": 110,
       "entity": 7,
@@ -8445,6 +8860,7 @@
       "y": 1
     },
     {
+      "belief": 64.879997,
       "culture_layer": 95,
       "element": 115,
       "entity": 8,
@@ -8465,6 +8881,7 @@
       "y": 2
     },
     {
+      "belief": 66.779999,
       "culture_layer": 84,
       "element": 12,
       "entity": 9,
@@ -8485,6 +8902,7 @@
       "y": 2
     },
     {
+      "belief": 37.73,
       "culture_layer": 200,
       "element": 184,
       "entity": 10,
@@ -8505,6 +8923,7 @@
       "y": 2
     },
     {
+      "belief": 47.860001,
       "culture_layer": 67,
       "element": 111,
       "entity": 11,

@@ -186,6 +186,7 @@ fn spawn_hunters(app: &mut App, pos: UVec2, fauna_id: &str, floor: f32) -> bevy:
                 home: tile,
                 current_tile: tile,
                 last_fertility_factors: Default::default(),
+                last_breeding: Default::default(),
                 size: 200,
                 children: scalar_zero(),
                 working: scalar_from_f32(CREW as f32),
@@ -213,6 +214,8 @@ fn spawn_hunters(app: &mut App, pos: UVec2, fauna_id: &str, floor: f32) -> bevy:
                     core_sim::BandId(0),
                     core_sim::MIN_BAND_LINES,
                 ),
+                belief_anchor: None,
+                last_belief_relay_hops: 0,
             },
             LaborAllocation {
                 assignments: vec![LaborAssignment {
@@ -882,6 +885,7 @@ fn a_gather_reports_a_point_and_pays_it() {
             home: tile,
             current_tile: tile,
             last_fertility_factors: Default::default(),
+            last_breeding: Default::default(),
             size: 200,
             children: scalar_zero(),
             working: scalar_from_f32(CREW as f32),
@@ -909,6 +913,8 @@ fn a_gather_reports_a_point_and_pays_it() {
                 core_sim::BandId(0),
                 core_sim::MIN_BAND_LINES,
             ),
+            belief_anchor: None,
+            last_belief_relay_hops: 0,
         };
         app.world
             .spawn((

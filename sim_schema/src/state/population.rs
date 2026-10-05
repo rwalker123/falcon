@@ -453,6 +453,16 @@ pub struct LaborAssignmentState {
     /// bone and sinew — one row per material id. Appended last.
     #[serde(default)]
     pub materials_rate_home: Vec<MaterialPayoff>,
+    /// **Hands from this row still walking home** — the band's homeward walks whose source is this
+    /// row's; the band's `homeward_workers` is the total. Appended last.
+    #[serde(default)]
+    pub homeward_workers: u32,
+    /// Turns until the last of those hands is back; `0` = none. Appended last.
+    #[serde(default)]
+    pub homeward_all_home_in: u32,
+    /// The food they carry, gross of the walk's rot. Appended last.
+    #[serde(default)]
+    pub homeward_food: f32,
 }
 
 /// **ONE LINE OF ONE TAKE ROW'S TABLE OF EQUIPMENT** — a row of [`LaborAssignmentState::kit_toe`].
@@ -906,7 +916,8 @@ pub struct PopulationCohortState {
     /// (`PopulationCohort::last_morale_delta`).
     #[serde(default)]
     pub morale_delta: i64,
-    /// Dominant negative morale driver this turn: `0 = None, 1 = Terrain, 2 = Cold, 3 = Unrest`.
+    /// Dominant negative morale driver this turn: `0 = None, 1 = Terrain, 2 = Cold, 3 = Unrest,
+    /// 4 = Culture`.
     /// Names *why* morale is falling. Recomputed each turn alongside [`Self::morale_delta`].
     #[serde(default)]
     pub morale_cause: u8,
@@ -930,7 +941,7 @@ pub struct PopulationCohortState {
     #[serde(default)]
     pub grievance: i64,
     /// Layer-1 named morale contributions whose signed sum IS `morale_delta` — the itemized
-    /// breakdown. Fixed-point raw. Derived at capture.
+    /// breakdown (with [`Self::morale_culture`], appended last). Fixed-point raw. Derived at capture.
     #[serde(default)]
     pub morale_settling: i64,
     #[serde(default)]
@@ -1673,6 +1684,60 @@ pub struct PopulationCohortState {
     /// larder ledger identity (`snapshot.fbs` → `foodLeftBehind`). Appended last.
     #[serde(default)]
     pub food_left_behind: f32,
+    /// **WHAT TO MAKE NEXT, RANKED BY WHO IS GOING WITHOUT** — the crafting panel's suggestion list
+    /// (`docs/plan_crafting_and_materials.md` §7 "Suggestions"), computed in `core_sim` so the AI
+    /// reads the same list the panel does. Ranked by [`CraftSuggestionState::workers_without`]
+    /// descending, ties by item id. Numbers only — the client owns the words, as with
+    /// [`Self::craft_offers`], and joins on the item id for makeability. Empty on a detached party.
+    /// Appended last.
+    #[serde(default)]
+    pub craft_suggestions: Vec<CraftSuggestionState>,
+    /// **The fourth fertility factor** (#688) — the share of this turn's would-be births the band's
+    /// breeding population had room for under its inbreeding ceiling. Fixed-point raw
+    /// (`Scalar::SCALE`), **neutral at 1.0** like its three siblings; `0` on a cohort that has not
+    /// ticked. Appended last.
+    #[serde(default)]
+    pub fertility_ceiling: i64,
+    /// **The band's breeding population, in whole people** — every band in its supply network, or
+    /// the band alone in none, after this turn's demographics. Appended last.
+    #[serde(default)]
+    pub breeding_population: u32,
+    /// **The breeding population's ceiling, in people** — `|union of founding lines| ×
+    /// people_per_line`; **`0` means no inbreeding ceiling** (lifted once it reaches
+    /// `lineage.free_breeding_at`). Appended last.
+    #[serde(default)]
+    pub breeding_ceiling: u32,
+    /// Layer-1 **culture** morale contribution — near (+) / far (−) from the band's ancestors
+    /// (`snapshot.fbs` → `moraleCulture`), part of the `morale_*` breakdown whose signed sum IS
+    /// `morale_delta`. Fixed-point raw. Derived at capture. Appended last.
+    #[serde(default)]
+    pub morale_culture: i64,
+    /// Whether the band has a belief anchor — gates [`Self::belief_anchor_x`] /
+    /// [`Self::belief_anchor_y`] (`0,0` without one). Derived at capture.
+    #[serde(default)]
+    pub has_belief_anchor: bool,
+    #[serde(default)]
+    pub belief_anchor_x: u32,
+    #[serde(default)]
+    pub belief_anchor_y: u32,
+    /// The anchor's reach region (zipped `x`/`y`, row-major): every tile a band could stand on and
+    /// still count as near its anchor. Empty with no anchor. Derived at capture.
+    #[serde(default)]
+    pub belief_reach_x: Vec<u32>,
+    #[serde(default)]
+    pub belief_reach_y: Vec<u32>,
+    /// How many hops of kin tie the band to its anchor: `0` direct (or no anchor), `n` through `n`
+    /// bands of its own people, [`BELIEF_RELAY_UNREACHED`] when an anchor is held and nothing reaches
+    /// it. Derived at capture.
+    #[serde(default)]
+    pub belief_relay_hops: u8,
+    /// The relayed region (zipped `x`/`y`, row-major): tiles outside [`Self::belief_reach_x`] from
+    /// which this band would be tied in through its OTHER kin bands. Empty with no anchor. Derived at
+    /// capture.
+    #[serde(default)]
+    pub belief_relay_reach_x: Vec<u32>,
+    #[serde(default)]
+    pub belief_relay_reach_y: Vec<u32>,
     /// **Cut off from the heart of its people** — no live contact tie, in either direction, to any
     /// band of the group that holds the most of its people (`snapshot.fbs` → `cutOff`, #284).
     /// Appended last.
@@ -1691,6 +1756,12 @@ pub struct PopulationCohortState {
     #[serde(default)]
     pub independence_grievance_threshold: f32,
 }
+
+/// `PopulationCohortState::belief_relay_hops` for a band that holds an anchor no chain of its own
+/// people reaches — fully away.
+pub const BELIEF_RELAY_UNREACHED: u8 = u8::MAX;
+/// The longest relay chain the wire can state; a longer one publishes this.
+pub const BELIEF_RELAY_MAX_HOPS: u8 = BELIEF_RELAY_UNREACHED - 1;
 
 /// `PopulationCohortState.heartLastContactTurn` when no tie joins the band to its people's heart.
 pub const NO_HEART_CONTACT: i64 = -1;
@@ -1914,7 +1985,9 @@ pub struct MaterialShortfallState {
     pub short: f32,
 }
 
-/// **What is on a band's bench** — one job at a time, so no surface has to explain a queue.
+/// **What is on a band's bench** — one queue, worked one order at a time. Every scalar field
+/// describes the **head** order (`orders[0]`); [`Self::orders`] is the whole queue. The crew and the
+/// priority belong to the bench and survive every queue edit.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct BenchState {
     /// `""` = an idle bench, which is a *different* state from a blocked one.
@@ -1933,9 +2006,6 @@ pub struct BenchState {
     /// on it is also stopped.
     pub blocked_reason: String,
     pub shortfalls: Vec<MaterialShortfallState>,
-    /// Items finished on **this** job — the same count the tool's wear and the craft's lesson were
-    /// charged, so a readout of one is a readout of the others.
-    pub items_completed: u32,
     /// The pile for the pass in flight is already cut. A short draw takes **nothing**, so this stays
     /// `false` rather than leaving a half-spent pile.
     pub drawn: bool,
@@ -1996,6 +2066,75 @@ pub struct BenchState {
     /// the command's own recapture and no optimistic overlay is needed. Appended last (append-only).
     #[serde(default)]
     pub priority: SourcePriorityState,
+    /// **THE QUEUE, head first.** Empty on an idle bench. An order's index here is the `order` the
+    /// queue verbs address. Appended last (append-only).
+    #[serde(default)]
+    pub orders: Vec<BenchOrderState>,
+    /// **The index into [`Self::orders`] the scalars above describe** — the worked order (the first
+    /// that holds a pile or can draw one), else the head. `0` on an idle bench. Appended last.
+    #[serde(default)]
+    pub worked: u32,
+}
+
+/// **One order on a bench's queue** — `recipe × count`, a row of [`BenchState::orders`].
+///
+/// `progress` and `drawn` are the order's own pass in flight: an order raised over a head that had
+/// already drawn leaves that head paused with its pile, so a non-head order can hold one.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct BenchOrderState {
+    pub recipe_id: String,
+    /// Items the order asks for — always `>= 1`.
+    pub count: u32,
+    /// Items it has finished. The order leaves the queue when this reaches [`Self::count`].
+    pub made: u32,
+    /// Worker-turns accrued toward the recipe's `work` on the pass in flight.
+    pub progress: f32,
+    /// The order holds a pile already cut for its pass in flight.
+    pub drawn: bool,
+    /// **Why the bench is skipping this order**, in the craft-offer vocabulary; `""` when it holds a
+    /// pile or can draw one.
+    #[serde(default)]
+    pub blocked_reason: String,
+    /// `danger` when [`Self::blocked_reason`] is set, `""` otherwise.
+    #[serde(default)]
+    pub blocked_severity: String,
+}
+
+/// **One craft suggestion** — an item the band's consumers went without, and how many to make. A row
+/// of [`PopulationCohortState::craft_suggestions`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct CraftSuggestionState {
+    /// The `equipment.json` item id.
+    pub item_id: String,
+    /// Units to make — the whole shortfall less what is already queued, always `>= 1`.
+    pub count: u32,
+    /// **The score** — workers whose job needs the item and who went without it, summed over
+    /// [`Self::sources`].
+    pub workers_without: f32,
+    /// Work a turn the missing units would add back, summed over [`Self::sources`]; `0` for gear
+    /// that adds no build or keeping work.
+    pub work_per_turn: f32,
+    pub sources: Vec<CraftSuggestionSourceState>,
+}
+
+/// **One consumer going without a suggested item** — a row of [`CraftSuggestionState::sources`].
+/// The `kind` / `job` / target keys are spelled as `snapshot.fbs`'s `CraftSuggestionSource` states.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct CraftSuggestionSourceState {
+    /// `"pool"` | `"site"` | `"take"`.
+    pub kind: String,
+    /// The pool token, or the labor row's kind.
+    pub job: String,
+    pub target_x: u32,
+    pub target_y: u32,
+    pub fauna_id: String,
+    pub material: String,
+    /// `(required − filled)`, never below zero, in units of the item.
+    pub missing_units: f32,
+    /// `missing_units × workers_per_unit`.
+    pub workers_without: f32,
+    /// `workers_without × build_work` on a pool or site; `0` on a take row.
+    pub work_per_turn: f32,
 }
 
 /// **One material of the pile a bench has already withdrawn** for the item in flight — a row of

@@ -127,6 +127,9 @@ fn tile_to_dict(tile: fb::TileState<'_>) -> VarDictionary {
     // not mirrored back). MapView packs it into its own R8 river-channel splatmap.
     let _ = dict.insert("river_channel", tile.riverChannel() as i64);
     let _ = dict.insert("culture_layer", tile.cultureLayer() as i64);
+    // BELIEF — the dead-equivalents held by this place (1.0 per person who died here; never decays).
+    // A plain float on the wire. 0 = no belief here; the tile card's Ancestors row shows only above 0.
+    let _ = dict.insert("belief", tile.belief() as f64);
     let _ = dict.insert("mountain_kind", i64::from(tile.mountainKind().0));
     let _ = dict.insert("mountain_relief", tile.mountainRelief());
     // The GRAZE (pasture) layer — the ANIMAL-edible vegetal stock, on nearly every land tile

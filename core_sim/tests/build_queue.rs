@@ -239,6 +239,7 @@ fn world_with_a_queue_knowing(
                 last_morale_cause: MoraleCause::None,
                 last_morale_contributions: Default::default(),
                 last_fertility_factors: Default::default(),
+                last_breeding: Default::default(),
                 discontent_fraction: scalar_zero(),
                 grievance: scalar_zero(),
                 last_emigrated: 0,
@@ -251,6 +252,8 @@ fn world_with_a_queue_knowing(
                     core_sim::BandId(0),
                     core_sim::MIN_BAND_LINES,
                 ),
+                belief_anchor: None,
+                last_belief_relay_hops: 0,
             },
             ResidentBand,
             // **A durable id, because a checkpoint keys bands by it** — a band without one is not
@@ -994,6 +997,7 @@ fn world_with_a_half_tamed_herd(crew: u32, floor: f32) -> (App, Entity, String) 
                 last_morale_cause: MoraleCause::None,
                 last_morale_contributions: Default::default(),
                 last_fertility_factors: Default::default(),
+                last_breeding: Default::default(),
                 discontent_fraction: scalar_zero(),
                 grievance: scalar_zero(),
                 last_emigrated: 0,
@@ -1006,6 +1010,8 @@ fn world_with_a_half_tamed_herd(crew: u32, floor: f32) -> (App, Entity, String) 
                     core_sim::BandId(0),
                     core_sim::MIN_BAND_LINES,
                 ),
+                belief_anchor: None,
+                last_belief_relay_hops: 0,
             },
             ResidentBand,
             core_sim::BandId(FIXTURE_BAND),
@@ -1863,6 +1869,7 @@ fn fixture_cohort(tile: Entity, staffed: u32) -> PopulationCohort {
         last_morale_cause: MoraleCause::None,
         last_morale_contributions: Default::default(),
         last_fertility_factors: Default::default(),
+        last_breeding: Default::default(),
         discontent_fraction: scalar_zero(),
         grievance: scalar_zero(),
         last_emigrated: 0,
@@ -1875,6 +1882,8 @@ fn fixture_cohort(tile: Entity, staffed: u32) -> PopulationCohort {
             core_sim::BandId(0),
             core_sim::MIN_BAND_LINES,
         ),
+        belief_anchor: None,
+        last_belief_relay_hops: 0,
     }
 }
 

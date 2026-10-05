@@ -131,6 +131,7 @@ fn spawn_band_of(app: &mut App, x: u32, y: u32, food: i64, faction: FactionId) -
                 last_morale_cause: MoraleCause::None,
                 last_morale_contributions: Default::default(),
                 last_fertility_factors: Default::default(),
+                last_breeding: Default::default(),
                 discontent_fraction: scalar_zero(),
                 grievance: scalar_zero(),
                 last_emigrated: 0,
@@ -143,6 +144,8 @@ fn spawn_band_of(app: &mut App, x: u32, y: u32, food: i64, faction: FactionId) -
                     core_sim::BandId(0),
                     core_sim::MIN_BAND_LINES,
                 ),
+                belief_anchor: None,
+                last_belief_relay_hops: 0,
             },
             // Real bands carry `ResidentBand`; the supply network filters `With<ResidentBand>`.
             ResidentBand,

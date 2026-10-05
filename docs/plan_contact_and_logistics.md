@@ -297,7 +297,7 @@ Each rider defines its own use of a connection. The connection does not know the
 |---|---|---|
 | **Logistics** | a connection | holds a route; climbs the ladder; **its tiles stay `Seen` while the route is kept — confirmed, see below** |
 | **Culture** | a **mutual** connection | two bands that know each other grow alike, the lighter one more — §Settled by #530 |
-| **Knowledge** | a connection | **open** — the `openness → leak_timer → partial fragment` model is worth keeping (§As-built) |
+| **Knowledge** | a connection, **one direction is enough** | what another people knows is learned by being around it — slowly by watching, faster through trade and roads — at a rate set by how **observable** the discovery is — §Settled by #531 |
 | **Cargo** (food, fodder, materials) | a **logistics link** | mass moves, throughput-limited, friction-lossy |
 
 > **⛔ THAT ROW LOOKS LIKE IT WALKS INTO THE KEYSTONE, AND IT DOES NOT. CONFIRMED 2026-08-29.**
@@ -446,7 +446,9 @@ without anyone deleting it.
 
 - **The per-terrain cost table** (`terrain.rs`), all five columns — see §Q4.
 - **The knowledge leak model** — a timer that fires more slowly the more closed you are, delivering a
-  partial `KnowledgeFragment` with a fidelity. A real mechanism, mounted on the wrong object. The
+  partial `KnowledgeFragment` with a fidelity. A real mechanism, mounted on the wrong object.
+  **Superseded by #531**: the timer became a continuous per-turn rate and `openness` became the
+  tie's strength — §Settled by #531. The
   `KnowledgeFragment` type itself stays live regardless: migration already carries fragments between
   bands (`systems/population.rs`), which is the one knowledge-diffusion path that was never dead.
 - **`TradeTelemetry` / `TradeDiffusionRecord` / `TradeDiffusionEvent`** — misleadingly named, but
@@ -502,7 +504,7 @@ deleted from the schema.
    proves the substrate by consuming it.
 5. **The route ladder (#532)** — the `route` branch, its standing-upkeep term, and #215's game trails.
 6. **The overlay (#232)** — the logistics network drawn on the map.
-7. **The remaining riders** — #530 (culture), #531 (knowledge).
+7. **The remaining riders** — #530 (culture), #531 (knowledge). Both settled — see §Open items.
 8. **Blocked on #513, then:** the cross-faction riders — #458 (proximity trade), #512 (defection).
    By construction these should be small.
 
@@ -524,7 +526,6 @@ connections this arc owns.
 
 ## Open items
 
-- **How knowledge uses a connection** — #531, beyond the decision to keep the leak-timer model.
 - **Standing upkeep on the route ladder** — #532, which owns the `route` branch and the standing-cost
   term the intensification engine does not yet have.
 - **Whether a large group is detectable beyond anyone's range** — #533 (§Q1).
@@ -619,6 +620,93 @@ rider owns only the first reading.
 drifted band behaves as it did. Giving band culture an effect, what sets a band's culture with
 nobody around (#701), what the strain becomes (#702) and how culture meets morale (#699) all belong
 to the culture arc.
+
+### Settled by #531 — knowledge over a connection
+
+Knowledge is the third rider, and it does one thing with a tie: **a people learns what another
+people knows by being around it.** Meet a people with wheels and you learn wheels far faster than
+you would have invented them; never meet them and you invent wheels yourself. Ray: *"If I contact
+you and see wheels, I don't have wheels, but by seeing yours, obviously I will learn them quickly."*
+
+**One direction is enough.** The scouts on the ridge come home knowing what they saw, whether or not
+anyone saw them. The rider reads the directed edge `observer → subject`: the **observer's** people
+learns what the **subject's** people knows. That is this rider's column in §Q5, and the opposite
+answer from culture's.
+
+**It needs no faction branch.** A band and the band it watches are often the same people, and then
+there is nothing to learn: knowledge is faction-level (`DiscoveryProgressLedger`), so the observer's
+people already knows everything the subject's does. Cross-people learning falls out of *"credit what
+they know and you don't"*, and the module discipline — faction is a property of the endpoint, never
+a branch — holds without a filter.
+
+**Watching is weak; the deeper the channel, the more is learned.** Each way two bands can be together
+is a **channel** with its own strength:
+
+| Channel | Present this turn when | Strength |
+|---|---|---|
+| **Watching** | the observer holds a live tie toward the subject | weakest |
+| **Trade** | a shipment between the two bands lands, in either direction | stronger |
+| **Their road** | the observer band stands on a road tile the subject band keeps | stronger again |
+| **Diplomats** | — not built; a row when they exist | strongest |
+
+**How observable a discovery is, is per-discovery.** A wheel is impossible to miss; seed selection
+happens in the ground and in someone's judgment. Each discovery carries:
+
+- **`observability`** (0..1) — how much being around it teaches. Named apart from the fog-of-war's
+  `Seen`/`Discovered` vocabulary on purpose: this is about an idea, not a tile.
+- **`secret_floor`** (0..1, ≤ `observability`) — what stays observable when its people **keeps it a
+  secret**. A cart cannot be hidden; a way of drying fodder can. **It ships with the keep-it-secret
+  verb, not before** — a floor nothing reads is a dead field.
+
+**Keeping a secret is a later verb, and the floor is its whole seam:** a people that keeps a
+discovery secret has its observability read at the floor instead. **No channel gets past a floor** — diplomats
+learn more of what is visible, not what is hidden. Learning what a people is actively hiding is
+espionage (`espionage.rs`), not this rider.
+
+**The rule — per observer people, per discovery it does not yet know, per turn:**
+
+```
+credit = max over channels( tie × channel_rate × observability_seen ) / lesson_cost
+```
+
+- **`tie`** — the strength of the `observer → subject` edge the channel rides.
+- **`channel_rate`** — the channel's strength, in the **practice units per turn** that `learn_rate`
+  is paid in. One lever per channel and no global multiplier on top: a full tie to a people that
+  knows a fully observable discovery, over a channel at `learn_rate`, learns it exactly as fast as
+  practising it would.
+- **`observability_seen`** — the discovery's `observability`, or its `secret_floor` where the
+  subject's people keeps it secret.
+- **Only discoveries the subject's people KNOWS teach** — at the ladder's `completion_threshold`, the
+  same bar every gate reads. A neighbour halfway to Penning shows you nothing of it.
+- **The strongest channel counts, not the sum** — across every band of the observer's people and
+  every foreign band they are around. Ten bands that each glimpsed a camp do not learn ten times
+  faster than one that trades with it.
+- **`/ lesson_cost`** — the cost from `intensification_ladder.json`'s `lesson_costs`, the same divisor
+  practice is paid in, so a dear lesson is dear to learn by watching too. Watching and practising
+  credit **one** ledger entry, and whichever gets there first wins: contact shortens the road, it
+  never replaces it. `nomadic_wayfinding` and `portable_forge`, which only a start profile grants,
+  had no lesson cost; contact is the first thing that can teach them, so they are priced like every
+  other lesson rather than defaulted.
+- **It is a rate, not a timer.** The ledger is already a continuous `0..1` per discovery, so the old
+  leak timer (§As-built) reduces to a per-turn credit with no lump to schedule. `openness` became the
+  tie's strength.
+
+**What is retired with it:** `KnowledgeFragment.fidelity`, and the `fidelity` keys in
+`start_profile_knowledge_tags.json`. Nothing reads them, and partial transmission is already what a
+rate building up over turns *is* — a second "garbled" figure would describe the same thing twice.
+
+**Not this rider:** map exchange. Telling someone your coastline is a different act from them seeing
+your wheels; the primitive owns that grant (`Discovered`, never `Seen` — §Q3).
+
+**Config homes:** `observability` sits on each entry of `start_profile_knowledge_tags.json`, the
+table that already maps every knowledge tag to its discovery id, and load-time validation requires it
+on every entry — a defaulted observability would pace a lesson off a number nobody chose. The
+per-channel rates are a knowledge config, never `connections_config.json`, which has no rider
+vocabulary. All are first guesses tuned from play.
+
+**What the player sees:** where a discovery is listed, the strongest source this turn and its
+channel — *"Learning Wheel from the Red Hill people — by trade"* — which needs, per discovery the
+viewer's people is learning by contact, the subject people and the channel on the wire.
 
 ## See Also
 

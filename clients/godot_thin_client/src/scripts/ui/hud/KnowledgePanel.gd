@@ -604,6 +604,12 @@ func _build_node_chip(node: Dictionary, filter: StringName, selected: String) ->
 		face.add_child(_chip_label(HudKnowledgeVocab.UNSPENT_MARK, HudStyle.WARN,
 			HudKnowledgeVocab.NODE_NAME_FONT_SIZE))
 
+	# **A DISCOVERY BEING TAUGHT BY CONTACT SAYS SO WITHOUT A CLICK** (#531), the unspent mark's rule:
+	# the mark here, the sentence appended to the tooltip, the clause on the reading's state line.
+	if not (node.get(HudKnowledgeVocab.NODE_CONTACT_LESSON, {}) as Dictionary).is_empty():
+		face.add_child(_chip_label(HudKnowledgeVocab.CONTACT_MARK, HudStyle.SIGNAL,
+			HudKnowledgeVocab.NODE_NAME_FONT_SIZE))
+
 	# **A KNOWLEDGE THAT GATES NOTHING SAYS SO ON ITS FACE.** `foddering` hangs off the end of its
 	# ladder, and the capsule is what stops it reading as one more step. Off `NODE_UNSPENT_TESTABLE` —
 	# never a client list of exceptions. Crafts publish it `true`, so the capsule cannot land on one.
@@ -627,11 +633,18 @@ func _build_node_chip(node: Dictionary, filter: StringName, selected: String) ->
 ## unspent clause is APPENDED to it rather than replacing it, because the two say different things
 ## and the clause has lost its own row on the face.
 func _chip_tooltip(node: Dictionary) -> String:
+	var lines: Array[String] = []
 	var note := String(node.get(HudKnowledgeVocab.NODE_NOTE, ""))
-	if not bool(node.get(HudKnowledgeVocab.NODE_UNSPENT, false)):
-		return note
-	var clause := "%s %s" % [HudKnowledgeVocab.UNSPENT_MARK, HudKnowledgeVocab.UNSPENT_CLAUSE]
-	return clause if note == "" else "%s\n%s" % [note, clause]
+	if note != "":
+		lines.append(note)
+	if bool(node.get(HudKnowledgeVocab.NODE_UNSPENT, false)):
+		lines.append("%s %s" % [HudKnowledgeVocab.UNSPENT_MARK, HudKnowledgeVocab.UNSPENT_CLAUSE])
+	# The contact sentence is APPENDED for the unspent clause's reason, with its per-turn rate after it.
+	var contact := HudKnowledgeVocab.contact_line(node)
+	if contact != "":
+		lines.append("%s %s" % [HudKnowledgeVocab.CONTACT_MARK, contact])
+		lines.append(HudKnowledgeVocab.contact_rate(node))
+	return "\n".join(lines)
 
 ## The `gates nothing` tag — a fully-rounded outline around a faint caption, so it reads as something
 ## hanging off the chip rather than as another word in the knowledge's name.
@@ -768,7 +781,24 @@ func _detail_state_line(node: Dictionary) -> Control:
 			HudFormat.meter_bar(progress * HudConst.PROGRESS_PERCENT_SCALE,
 				HudKnowledgeVocab.METER_CELLS),
 			HudFormat.progress_percent(progress)]
-	return _caption(text, HudStyle.INK_DIM, HudKnowledgeVocab.DETAIL_BODY_FONT_SIZE)
+	var state_caption := _caption(text, HudStyle.INK_DIM, HudKnowledgeVocab.DETAIL_BODY_FONT_SIZE)
+	var contact := HudKnowledgeVocab.contact_line(node)
+	if contact == "":
+		return state_caption
+	# **THE CONTACT CLAUSE RIDES ON THIS LINE, NOT UNDER IT** (#531). A row of its own would grow the
+	# open reading past `DETAIL_BLOCK_MIN_HEIGHT` for exactly the nodes that carry one, and the card
+	# would breathe on open. Its per-turn rate is the clause's tooltip.
+	var line := HBoxContainer.new()
+	line.add_theme_constant_override("separation", HudKnowledgeVocab.CHIP_SEPARATION)
+	line.add_child(state_caption)
+	line.add_child(_caption(HudKnowledgeVocab.TALLY_SEPARATOR.strip_edges(), HudStyle.INK_FAINT,
+		HudKnowledgeVocab.DETAIL_BODY_FONT_SIZE))
+	var clause := _caption("%s %s" % [HudKnowledgeVocab.CONTACT_MARK, contact], HudStyle.INK,
+		HudKnowledgeVocab.DETAIL_BODY_FONT_SIZE)
+	clause.set_meta(HudKnowledgeVocab.CONTACT_META, String(node.get(HudKnowledgeVocab.NODE_KEY, "")))
+	HudWidgets.set_label_tooltip(clause, HudKnowledgeVocab.contact_rate(node))
+	line.add_child(clause)
+	return line
 
 ## The three sections, side by side, in the prototype's order: **does · where · how**.
 ##

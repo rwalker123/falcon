@@ -3113,6 +3113,18 @@ the same `_build_role_card`; nothing about the keeping is a parallel surface.
   elides in the left dock. `homeward_spoils_line` adds `0.80 of it will spoil on the way` in `WARN`
   when `homeward_food_spoils` is non-zero. All absent while `homeward_workers` is 0.
   `band_panel_preview`'s `band_panel_homeward` asserts the segment, idle, and the drawn lines.
+- **THE WORK ROW SAYS WHO IS WALKING HOME FROM IT.** Each `labor_assignments` entry carries its own
+  `homeward_workers` / `homeward_all_home_in` / `homeward_food` (the row's share; the band keys stay
+  the total, so a walk whose row is gone is stated on the Workforce zone alone). When
+  `homeward_workers > 0` the row's party block closes on one `INK_DIM` line,
+  `HudWorkVocab.row_homeward_line`: `3 walking home with 2.40 food — free next turn` (`free in 3
+  turns` past one; the food clause is `homeward_lines`' own `_homeward_food_clause`). It is counted
+  in `_work_row_party_lines_text`, so the row's height and the board's reservation pay for it. The
+  stepper stays the ASSIGNMENT — walkers are on no row. **A row at crew 0 with walkers is admitted
+  to the board** (`_work_source_models`, beside the queued-source exception): unassigning a far crew
+  takes the row to 0 at once, and hiding the row the player acted on read as the unassign failing.
+  `band_panel_work_row_homeward` asserts the crew-0 row's line and ink, the plural food-less line
+  closing a posted row's block, and no line on a row nobody walks home from.
 - **The keeping roles are in the WORKFORCE bar's `Roles` SEGMENT even though their cards are not in
   that block.** The segments partition `working_age`, `effective_idle` already nets these hands out
   of Idle, and a segment that omitted them would stop the key adding up to the head the zone states.

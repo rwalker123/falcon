@@ -260,6 +260,7 @@ fn spawn_keepers_of(
                 home: tile,
                 current_tile: tile,
                 last_fertility_factors: Default::default(),
+                last_breeding: Default::default(),
                 size: 200,
                 children: scalar_zero(),
                 // **THE BAND MUST BE ABLE TO AFFORD BOTH CREWS.** The take and the build are
@@ -294,6 +295,8 @@ fn spawn_keepers_of(
                     core_sim::BandId(0),
                     core_sim::MIN_BAND_LINES,
                 ),
+                belief_anchor: None,
+                last_belief_relay_hops: 0,
             },
             ResidentBand,
             match gear {
@@ -1374,6 +1377,7 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                 last_morale_cause: MoraleCause::None,
                 last_morale_contributions: Default::default(),
                 last_fertility_factors: Default::default(),
+                last_breeding: Default::default(),
                 discontent_fraction: scalar_zero(),
                 grievance: scalar_zero(),
                 last_emigrated: 0,
@@ -1386,6 +1390,8 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                     core_sim::BandId(0),
                     core_sim::MIN_BAND_LINES,
                 ),
+                belief_anchor: None,
+                last_belief_relay_hops: 0,
             },
             ResidentBand,
             // **THE LEDGER IS STATED, NOT LEFT ABSENT.** An absent component resolves to one reference

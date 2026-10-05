@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 119
+const EXPECTED_CHECKPOINTS := 121
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -2643,10 +2643,25 @@ func run(harness) -> void:
 	# would test the control's chrome instead of the answer.
 	_assert_the_roster_names_one_road_kit_per_rung()
 
+	# ---- THE DEAD A PLACE HOLDS (#699) — APPENDED. The tile card's `Ancestors` row on a hex whose
+	# `belief` is above zero, in whole people. Rendered on the food tile so the row sits among the
+	# land rows it belongs with.
+	var ancestors_tile := BaseFx.food_tile_fixture()
+	ancestors_tile["belief"] = ANCESTORS_TILE_BELIEF
+	h._show_tile(ancestors_tile)
+	await h._settle()
+	await h._save("tile_ancestors")
+	h._assert_hud("the tile card states the dead the hex holds — `%s`" % ANCESTORS_TILE_ROW_TEXT,
+		"\n".join(h._hud._drawer._tile_terrain_lines(ancestors_tile)).contains(ANCESTORS_TILE_ROW_TEXT))
+
 	# **PUT THE ROSTER BACK.** Everything after this chapter renders against whatever roster it
 	# inherits, and a band left standing here is a band the next chapter never asked for.
 	_restore_band_roster(inherited_bands)
 	await h._settle()
+
+## The `tile_ancestors` frame's hex: 23.6 dead-equivalents, which the row rounds to whole people.
+const ANCESTORS_TILE_BELIEF := 23.6
+const ANCESTORS_TILE_ROW_TEXT := "Ancestors: 24 dead"
 
 # ---- THE ROAD LADDER'S OWN FIXTURE NUMBERS AND ITS EXPECTED SENTENCES ---------------------------
 #

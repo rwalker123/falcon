@@ -19,7 +19,7 @@
 
 use std::{
     fs, io,
-    num::NonZeroU16,
+    num::{NonZeroU16, NonZeroU32},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -304,6 +304,20 @@ pub struct DemographicsLineage {
     /// parent's. **At least one**, enforced by the type: a band of people descends from someone,
     /// and a `0` is a parse error rather than a band with no lines.
     pub founding_lines: NonZeroU16,
+    /// `K` — **how many people one founding line can carry** before inbreeding stops a breeding
+    /// population's births (issue #688). A breeding population — the bands in one supply network,
+    /// or a lone band — ceilings at `|union of its members' lines| × K`. With the shipped `L` an
+    /// isolated starting band ceilings at `L × K`, which must sit above the starting band's size
+    /// (pinned by a test, not by load-time validation). **At least one**, enforced by the type: a
+    /// `0` would ceiling every people at nobody, so it is a parse error.
+    pub people_per_line: NonZeroU16,
+    /// **The size at which inbreeding stops binding**, in people (issue #688). A breeding
+    /// population whose ceiling (`|union of lines| × K`) reaches this is large enough to find mates
+    /// without outside contact — ~500 is the forager mating-network size (Birdsell's dialect tribe;
+    /// Wobst's 175–475) — so the inbreeding ceiling no longer applies to it at all. Must sit above
+    /// the shipped `L × K`, or a lone starting band would open unrestricted (pinned by a test, not by
+    /// load-time validation). **At least one**, enforced by the type.
+    pub free_breeding_at: NonZeroU32,
 }
 
 /// Root demographic configuration.
@@ -678,6 +692,72 @@ mod tests {
         assert!(
             DemographicsConfig::from_json_str(&value.to_string()).is_err(),
             "a starting band must descend from at least one line"
+        );
+    }
+
+    /// A line that carries **nobody** would ceiling every people at zero, so
+    /// `lineage.people_per_line = 0` is a parse error.
+    #[test]
+    fn zero_people_per_line_is_rejected() {
+        let mut value = builtin_value();
+        value["lineage"]["people_per_line"] = serde_json::json!(0);
+        assert!(
+            DemographicsConfig::from_json_str(&value.to_string()).is_err(),
+            "a founding line must carry at least one person"
+        );
+    }
+
+    /// **The game never opens capped** (issue #688): an isolated starting band's breeding ceiling,
+    /// the shipped `L × K`, sits above every shipped starting unit's head-count. A test rather than
+    /// load-time cross-config validation — the two files load independently, and what this pins is
+    /// the shipped tuning, not a rule a modder's config must obey.
+    #[test]
+    fn the_shipped_starting_band_opens_below_its_breeding_ceiling() {
+        let lineage = DemographicsConfig::default().lineage;
+        let ceiling = crate::lineage::breeding_ceiling(
+            usize::from(lineage.founding_lines.get()),
+            lineage.people_per_line,
+        );
+        let profiles = crate::start_profile::StartProfiles::builtin();
+        let mut checked = 0;
+        for profile in profiles.iter() {
+            for unit in &profile.overrides().starting_units {
+                assert!(
+                    unit.band_size() < ceiling,
+                    "profile '{}' opens a {}-person band at or above its breeding ceiling {ceiling}",
+                    profile.id,
+                    unit.band_size()
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 0, "the shipped profiles carry a starting unit");
+    }
+
+    /// `lineage.free_breeding_at = 0` would lift every ceiling, so it is a parse error.
+    #[test]
+    fn zero_free_breeding_at_is_rejected() {
+        let mut value = builtin_value();
+        value["lineage"]["free_breeding_at"] = serde_json::json!(0);
+        assert!(
+            DemographicsConfig::from_json_str(&value.to_string()).is_err(),
+            "the free-breeding size must be at least one person"
+        );
+    }
+
+    /// **A lone starting band opens capped** (issue #688): the shipped `L × K` sits below
+    /// `free_breeding_at`, so an isolated people is held by its lines and only contact lifts it.
+    #[test]
+    fn the_shipped_lone_band_ceiling_sits_below_the_free_breeding_size() {
+        let lineage = DemographicsConfig::default().lineage;
+        let ceiling = crate::lineage::breeding_ceiling(
+            usize::from(lineage.founding_lines.get()),
+            lineage.people_per_line,
+        );
+        assert!(
+            ceiling < lineage.free_breeding_at.get(),
+            "a lone band's ceiling {ceiling} must sit below free_breeding_at {}",
+            lineage.free_breeding_at
         );
     }
 }

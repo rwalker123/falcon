@@ -34,7 +34,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 194
+const EXPECTED_CHECKPOINTS := 215
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 ## The ladder's KNOWLEDGE ROSTER and its progress row, in the wire's own shapes. Shared with the
@@ -115,6 +115,167 @@ func run(harness) -> void:
 	_assert_the_areas_gather_the_domains()
 	_assert_the_fold_rule()
 	await _area_frames()
+	await _contact_lesson_frames()
+
+# ---- learning by contact (#531) ---------------------------------------------
+
+## The people the contact fixture is learning FROM, and the name the sim minted for it.
+const CONTACT_SUBJECT_FACTION := 4
+const CONTACT_SUBJECT_NAME := "Red Hill"
+const CONTACT_FACTION_NAMES := [{"faction": CONTACT_SUBJECT_FACTION, "name": CONTACT_SUBJECT_NAME}]
+## One lesson's per-turn credit, and the tooltip it reads as on Penning: 82% of the track left
+## (`_tracks_mixed` has it at `PROGRESS_EARLY`, 0.18) over 0.025 a turn is 32.8, rounded UP to 33.
+const CONTACT_CREDIT := 0.025
+const CONTACT_RATE_TEXT := "~33 turns at this rate"
+## A SHIPPED-SCALE credit — Seed Selection by watching at a tie of 0.25 — which a one-decimal percent
+## printed as `+0.0%`. At `PROGRESS_EARLY` it is 0.82 / 0.00025 = 3280 turns; asserted as a FLOOR,
+## since that quotient lands on a whole number and float rounding may carry the ceiling one past it.
+const CONTACT_CREDIT_TINY := 0.00025
+const CONTACT_TINY_TURNS_FLOOR := 3280
+## A channel code no build has assigned — the line must keep its WHO and drop only its HOW.
+const CONTACT_CHANNEL_UNASSIGNED := 99
+## The craft the contact fixture teaches, by the display name `_craft_knowledge_mixed` gives it.
+const CONTACT_CRAFT_LABEL := "Weaving"
+
+## One `contact_lessons` row, in the native decoder's own shape.
+func _contact_lesson(knowledge_id: String, channel: int) -> Dictionary:
+	return {
+		"discovery_id": 0,
+		HudKnowledgeVocab.CONTACT_LESSON_KNOWLEDGE_ID: knowledge_id,
+		HudKnowledgeVocab.CONTACT_LESSON_SUBJECT_FACTION: CONTACT_SUBJECT_FACTION,
+		HudKnowledgeVocab.CONTACT_LESSON_CHANNEL: channel,
+		HudKnowledgeVocab.CONTACT_LESSON_CREDIT: CONTACT_CREDIT,
+	}
+
+## A LEARNING ladder node, a LEARNING craft, a NOT-BEGUN node and a KNOWN one — the last a row the sim
+## never sends, staged so the roster's own guard is what keeps it off the screen.
+func _contact_lessons() -> Array:
+	return [
+		_contact_lesson(KnowledgeFx.KNOWLEDGE_PENNING, HudKnowledgeVocab.CONTACT_CHANNEL_TRADE),
+		_contact_lesson(CRAFT_WEAVING, HudKnowledgeVocab.CONTACT_CHANNEL_ROAD),
+		_contact_lesson(KnowledgeFx.KNOWLEDGE_PAVING, HudKnowledgeVocab.CONTACT_CHANNEL_WATCHING),
+		_contact_lesson(KnowledgeFx.KNOWLEDGE_CULTIVATION, HudKnowledgeVocab.CONTACT_CHANNEL_WATCHING),
+	]
+
+## The turn count a `CONTACT_RATE_FORMAT` line states, or `0` when it states none.
+func _turns_in(rate_text: String) -> int:
+	var digits := ""
+	for ch in rate_text:
+		if ch >= "0" and ch <= "9":
+			digits += ch
+		elif digits != "":
+			break
+	return int(digits) if digits != "" else 0
+
+func _expected_contact_line(knowledge_label: String, channel: int) -> String:
+	return (HudKnowledgeVocab.CONTACT_LINE_FORMAT % [knowledge_label, CONTACT_SUBJECT_NAME]) \
+		+ HudKnowledgeVocab.CONTACT_CLAUSE_SEPARATOR \
+		+ String(HudKnowledgeVocab.CONTACT_CHANNEL_CLAUSES[channel])
+
+## **WHAT THE PLAYER'S PEOPLE IS LEARNING FROM ANOTHER PEOPLE** — the `contact_lessons` rows joined
+## onto the knowledge screen's nodes by knowledge id, the `⇄` mark on the chip, and the clause on the
+## reading's state line. The sentence is asked of the roster PNG-less (a frame naming the wrong people
+## is a plausible frame); the frame is for where the clause sits.
+func _contact_lesson_frames() -> void:
+	var controller: KnowledgePanelController = h._hud.knowledge_panel()
+	# The people's NAME is staged the way `Main` ingests `faction_names`, and reset at the end.
+	FactionNames.update(CONTACT_FACTION_NAMES)
+	h._hud.update_ladder_knowledge(KnowledgeFx.ladder_roster())
+	h._hud.update_crafting_catalogues([], [], _recipes(), _craft_knowledge_mixed())
+	h._hud.update_intensification([_wire_tracks(_tracks_mixed())])
+	h._hud.update_contact_lessons(_contact_lessons())
+	controller.open()
+	await h._settle()
+
+	var by_key := {}
+	for node in controller.nodes():
+		by_key[String(node[HudKnowledgeVocab.NODE_KEY])] = node
+	var penning: Dictionary = by_key.get(KnowledgeFx.KNOWLEDGE_PENNING, {})
+	var expected_penning := _expected_contact_line(
+		KnowledgeFx.label_for(KnowledgeFx.KNOWLEDGE_PENNING), HudKnowledgeVocab.CONTACT_CHANNEL_TRADE)
+	h._assert_hud("contact — a learning ladder node names its teacher and channel (got `%s`)"
+			% HudKnowledgeVocab.contact_line(penning),
+		HudKnowledgeVocab.contact_line(penning) == expected_penning)
+	h._assert_hud("contact — …and its rate rides the tooltip (got `%s`)"
+			% HudKnowledgeVocab.contact_rate(penning),
+		HudKnowledgeVocab.contact_rate(penning) == CONTACT_RATE_TEXT)
+	var weaving: Dictionary = by_key.get(CRAFT_WEAVING, {})
+	h._assert_hud("contact — a learning CRAFT joins by its craft id, by their road (got `%s`)"
+			% HudKnowledgeVocab.contact_line(weaving),
+		HudKnowledgeVocab.contact_line(weaving) == _expected_contact_line(
+			CONTACT_CRAFT_LABEL, HudKnowledgeVocab.CONTACT_CHANNEL_ROAD))
+	var paving: Dictionary = by_key.get(KnowledgeFx.KNOWLEDGE_PAVING, {})
+	h._assert_hud("contact — a NOT-BEGUN node can be taught, by watching (got `%s`)"
+			% HudKnowledgeVocab.contact_line(paving),
+		HudKnowledgeVocab.contact_line(paving) == _expected_contact_line(
+			KnowledgeFx.label_for(KnowledgeFx.KNOWLEDGE_PAVING),
+			HudKnowledgeVocab.CONTACT_CHANNEL_WATCHING))
+	h._assert_hud("contact — a KNOWN node never reads as being learned, whatever the list says",
+		HudKnowledgeVocab.contact_line(by_key.get(KnowledgeFx.KNOWLEDGE_CULTIVATION, {})) == "")
+	h._assert_hud("contact — a node with no lesson says nothing",
+		HudKnowledgeVocab.contact_line(by_key.get(CRAFT_BONE, {})) == "")
+	var tiny := penning.duplicate()
+	var tiny_lesson := _contact_lesson(KnowledgeFx.KNOWLEDGE_PENNING,
+		HudKnowledgeVocab.CONTACT_CHANNEL_WATCHING)
+	tiny_lesson[HudKnowledgeVocab.CONTACT_LESSON_CREDIT] = CONTACT_CREDIT_TINY
+	tiny[HudKnowledgeVocab.NODE_CONTACT_LESSON] = tiny_lesson
+	var tiny_text := HudKnowledgeVocab.contact_rate(tiny)
+	var tiny_turns := _turns_in(tiny_text)
+	h._assert_hud("contact — a shipped-scale credit reads as a finite, non-zero turn count (got `%s`)"
+			% tiny_text,
+		tiny_turns >= CONTACT_TINY_TURNS_FLOOR and tiny_turns <= CONTACT_TINY_TURNS_FLOOR + 1
+			and tiny_text == HudKnowledgeVocab.CONTACT_RATE_FORMAT % tiny_turns)
+	var stalled := tiny.duplicate()
+	var stalled_lesson := tiny_lesson.duplicate()
+	stalled_lesson[HudKnowledgeVocab.CONTACT_LESSON_CREDIT] = 0.0
+	stalled[HudKnowledgeVocab.NODE_CONTACT_LESSON] = stalled_lesson
+	h._assert_hud("contact — a zero credit draws no rate line at all (got `%s`)"
+			% HudKnowledgeVocab.contact_rate(stalled),
+		HudKnowledgeVocab.contact_rate(stalled) == "")
+	var unassigned := penning.duplicate()
+	unassigned[HudKnowledgeVocab.NODE_CONTACT_LESSON] = _contact_lesson(
+		KnowledgeFx.KNOWLEDGE_PENNING, CONTACT_CHANNEL_UNASSIGNED)
+	h._assert_hud("contact — an unknown channel keeps the WHO and drops only the HOW (got `%s`)"
+			% HudKnowledgeVocab.contact_line(unassigned),
+		HudKnowledgeVocab.contact_line(unassigned) == HudKnowledgeVocab.CONTACT_LINE_FORMAT % [
+			KnowledgeFx.label_for(KnowledgeFx.KNOWLEDGE_PENNING), CONTACT_SUBJECT_NAME])
+
+	# **THE MARK IS ON THE CHIP, so the state is legible without a click.**
+	var penning_chip := _rendered_chip(KnowledgeFx.KNOWLEDGE_PENNING)
+	h._assert_hud("contact — the taught chip wears the contact mark",
+		penning_chip != null
+			and NodeQuery.has_label_containing(penning_chip, HudKnowledgeVocab.CONTACT_MARK))
+	var bone_chip := _rendered_chip(CRAFT_BONE)
+	h._assert_hud("contact — …and a chip nothing teaches does not",
+		bone_chip != null
+			and not NodeQuery.has_label_containing(bone_chip, HudKnowledgeVocab.CONTACT_MARK))
+	h._assert_hud("contact — …and the chip's tooltip carries the sentence",
+		penning_chip != null and expected_penning in penning_chip.tooltip_text)
+
+	# **THE READING'S STATE LINE CARRIES THE CLAUSE.**
+	await _press_node(KnowledgeFx.KNOWLEDGE_PENNING)
+	var clause := NodeQuery.find_meta_node(controller.panel(), HudKnowledgeVocab.CONTACT_META) as Label
+	h._assert_hud("contact — the open reading carries the clause for its own node",
+		clause != null and String(clause.get_meta(HudKnowledgeVocab.CONTACT_META, ""))
+			== KnowledgeFx.KNOWLEDGE_PENNING and expected_penning in clause.text)
+	h._assert_hud("contact — …with the per-turn rate as its tooltip",
+		clause != null and clause.tooltip_text == CONTACT_RATE_TEXT)
+	await h._save("knowledge_panel_contact")
+	await _press_node(KnowledgeFx.KNOWLEDGE_PENNING)
+
+	# ⛔ **THE CLAUSE RIDES ON THE STATE LINE, SO NO READING GROWS THE CARD.** The whole-roster walk is
+	# re-run with the lessons staged: a clause on a row of its own would breathe on exactly these nodes.
+	await _assert_card_does_not_breathe()
+
+	h._hud.update_contact_lessons([])
+	await h._settle()
+	var cleared_chip := _rendered_chip(KnowledgeFx.KNOWLEDGE_PENNING)
+	h._assert_hud("contact — an empty list clears the mark",
+		cleared_chip != null
+			and not NodeQuery.has_label_containing(cleared_chip, HudKnowledgeVocab.CONTACT_MARK))
+	FactionNames.reset()
+	controller.close()
+	await h._settle()
 
 # ---- the greyed `0.0` track --------------------------------------------------
 

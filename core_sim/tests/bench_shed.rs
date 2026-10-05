@@ -18,9 +18,9 @@ use bevy::prelude::Entity;
 use core_sim::sim_state::{capture_sim_state, restore_sim_state};
 use core_sim::{
     advance_labor_allocation, build_test_app, scalar_from_f32, scalar_one, scalar_zero, BandBench,
-    BandId, DrawnInputs, DrawnMaterial, FactionId, GenerationId, LaborAllocation, LaborAssignment,
-    LaborTarget, LocalStore, MoraleCause, PopulationCohort, ResidentBand, Scalar, SourcePriority,
-    StartingUnit, TileRegistry, DEFAULT_ESCAPEMENT_FLOOR,
+    BandId, BenchOrder, DrawnInputs, DrawnMaterial, FactionId, GenerationId, LaborAllocation,
+    LaborAssignment, LaborTarget, LocalStore, MoraleCause, PopulationCohort, ResidentBand, Scalar,
+    SourcePriority, StartingUnit, TileRegistry, DEFAULT_ESCAPEMENT_FLOOR,
 };
 
 const FACTION: FactionId = FactionId(0);
@@ -31,6 +31,9 @@ const RECIPE: &str = "sled";
 /// The bench's crew, and the gatherers beside it. **Different numbers**, so an assertion that read
 /// one for the other could not pass.
 const CRAFTERS: u32 = 4;
+/// **The fixture's order count** — the shed never advances the bench, so any count would do; a long
+/// one says *"nothing here finishes an order"*.
+const ORDER_COUNT: u32 = 10;
 const GATHERERS: u32 = 3;
 
 /// The tile the fixture band works and lives on.
@@ -77,6 +80,7 @@ fn world_with_a_band_at_the_bench(bench_priority: SourcePriority) -> (App, Entit
                 last_morale_cause: MoraleCause::None,
                 last_morale_contributions: Default::default(),
                 last_fertility_factors: Default::default(),
+                last_breeding: Default::default(),
                 discontent_fraction: scalar_zero(),
                 grievance: scalar_zero(),
                 last_emigrated: 0,
@@ -89,6 +93,8 @@ fn world_with_a_band_at_the_bench(bench_priority: SourcePriority) -> (App, Entit
                     core_sim::BandId(0),
                     core_sim::MIN_BAND_LINES,
                 ),
+                belief_anchor: None,
+                last_belief_relay_hops: 0,
             },
             StartingUnit {
                 kind: "BandForager".to_string(),
@@ -112,11 +118,8 @@ fn world_with_a_band_at_the_bench(bench_priority: SourcePriority) -> (App, Entit
                 ..Default::default()
             },
             BandBench {
-                recipe_id: Some(RECIPE.to_string()),
+                orders: vec![BenchOrder::new(RECIPE, ORDER_COUNT)],
                 workers: CRAFTERS,
-                progress: scalar_zero(),
-                drawn: None,
-                items_completed: 0,
                 last_output_grade: None,
                 priority: bench_priority,
                 last_started: Default::default(),
@@ -254,9 +257,9 @@ fn the_benchs_last_hand_goes_before_a_source_is_emptied_whatever_the_marks_say()
 
 /// **THE LAST HAND STALLS THE JOB; IT DOES NOT CLEAR IT.**
 ///
-/// `BandBench::clear_job` is `*self = default()`, which **forfeits the drawn pile** — the materials
-/// are dropped rather than returned to the store. The shed must never call it, so everything the
-/// player had is still there afterwards and re-staffing resumes rather than restarts.
+/// `BandBench::remove_order` **forfeits the order's drawn pile** — the materials are dropped rather
+/// than returned to the store. The shed must never call it, so everything the player had is still
+/// there afterwards and re-staffing resumes rather than restarts.
 #[test]
 fn a_stalled_bench_keeps_its_recipe_its_progress_and_the_pile_it_drew() {
     const PROGRESS: f32 = 3.5;
@@ -269,9 +272,10 @@ fn a_stalled_bench_keeps_its_recipe_its_progress_and_the_pile_it_drew() {
             .get_mut::<BandBench>(band)
             .expect("the fixture band keeps its bench");
         bench.workers = 1;
-        bench.progress = scalar_from_f32(PROGRESS);
-        bench.items_completed = ITEMS_DONE;
-        bench.drawn = Some(DrawnInputs {
+        let head = bench.head_mut().expect("the fixture bench has an order");
+        head.progress = scalar_from_f32(PROGRESS);
+        head.made = ITEMS_DONE;
+        head.drawn = Some(DrawnInputs {
             reading: Some(0.5),
             grade: Some("good".to_string()),
             withdrawn: vec![DrawnMaterial {
@@ -301,23 +305,23 @@ fn a_stalled_bench_keeps_its_recipe_its_progress_and_the_pile_it_drew() {
         .expect("the fixture band keeps its bench");
     assert_eq!(bench.workers, 0, "the bench stalled");
     assert_eq!(
-        bench.recipe_id.as_deref(),
+        bench.head_recipe(),
         Some(RECIPE),
-        "the job is still the job the player chose"
+        "the order is still the order the player chose"
     );
+    let head = bench
+        .head()
+        .expect("the shed never takes an order off the bench");
     assert_eq!(
-        bench.progress,
+        head.progress,
         scalar_from_f32(PROGRESS),
         "its progress stands, so re-crewing RESUMES rather than restarting"
     );
-    assert_eq!(
-        bench.items_completed, ITEMS_DONE,
-        "and the finished count is intact"
-    );
-    let withdrawn = bench
+    assert_eq!(head.made, ITEMS_DONE, "and the finished count is intact");
+    let withdrawn = head
         .drawn
         .as_ref()
-        .expect("⛔ the drawn pile is FORFEITED by clear_job — the shed must never call it");
+        .expect("⛔ the drawn pile is FORFEITED by remove_order — the shed must never call it");
     assert_eq!(
         withdrawn.withdrawn.len(),
         1,
@@ -343,7 +347,10 @@ fn a_re_crewed_bench_resumes_from_the_progress_it_stalled_on() {
             .get_mut::<BandBench>(band)
             .expect("the fixture band keeps its bench");
         bench.workers = 0;
-        bench.progress = scalar_from_f32(BANKED);
+        bench
+            .head_mut()
+            .expect("the fixture bench has an order")
+            .progress = scalar_from_f32(BANKED);
     }
     // The player puts hands back on it. Nothing else about the job changed.
     {
@@ -358,7 +365,7 @@ fn a_re_crewed_bench_resumes_from_the_progress_it_stalled_on() {
         .get::<BandBench>(band)
         .expect("the fixture band keeps its bench");
     assert_eq!(
-        bench.progress,
+        bench.head().expect("the stall kept the order").progress,
         scalar_from_f32(BANKED),
         "the banked progress survived the stall, so the crew coming back continues the same item"
     );
@@ -382,7 +389,7 @@ fn the_benchs_mark_survives_a_checkpoint_round_trip() {
         .world
         .query::<&BandBench>()
         .iter(&app.world)
-        .find(|bench| bench.recipe_id.as_deref() == Some(RECIPE))
+        .find(|bench| bench.head_recipe() == Some(RECIPE))
         .expect("the restored world carries the fixture band's bench");
     assert_eq!(
         restored.priority,

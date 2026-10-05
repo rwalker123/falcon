@@ -1,0 +1,9 @@
+{
+  "_comment": "THE KNOWLEDGE RIDER ON A CONNECTION (docs/plan_contact_and_logistics.md §Settled by #531; core_sim/src/knowledge_contact.rs). A people learns what another people knows by being around it. Per observer people, per discovery it does not yet know, per turn: credit = max over channel instances( tie x channel_rate x observability ) / lesson_cost. `tie` is the observer -> subject edge's strength (one direction is enough; a parked tie teaches nothing). `observability` is per discovery in start_profile_knowledge_tags.json; `lesson_cost` is intensification_ladder.json's knowledge.lesson_costs, the same divisor practice is paid in. Only discoveries the subject's people KNOWS (at the ladder's completion_threshold) teach, and the STRONGEST channel counts, never the sum.",
+  "_comment_channel_rates": "Each channel's strength in PRACTICE UNITS PER TURN, the unit learn_rate is paid in (1.0 = one worked turn at the food peak), so a full tie to a people that knows a fully observable discovery, over a channel at 1.0, learns it exactly as fast as practising it. `watching` = the observer band holds a live tie toward the subject band. `trade` = a shipment landed between the two bands this turn, in either direction (each is observer of the other). `road` = the observer band stands on a road tile the subject band keeps, at a built rung with its keeping met (the same roads that are lit `Seen`). No global multiplier, no default: a missing rate fails the load. 0 switches a channel off. First guesses, tuned from play.",
+  "channel_rates": {
+    "watching": 0.1,
+    "trade": 0.4,
+    "road": 0.6
+  }
+}

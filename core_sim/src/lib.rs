@@ -18,6 +18,7 @@ pub(crate) const BUILD_ID: &str = match option_env!("CORE_SIM_BUILD_ID") {
 mod band_names;
 pub mod belief;
 mod belief_config;
+pub mod belief_relay;
 mod biome_palette;
 pub mod carry;
 pub mod climate;
@@ -29,6 +30,7 @@ mod config_load;
 pub mod config_override;
 pub mod connections;
 mod connections_config;
+pub mod craft_suggestions;
 pub mod crafting;
 mod creatures_config;
 mod crisis;
@@ -57,6 +59,8 @@ pub mod heightfield;
 mod hydrology;
 mod influencers;
 mod intensification;
+pub mod knowledge_contact;
+mod knowledge_contact_config;
 mod knowledge_ledger;
 mod labor_config;
 mod lineage;
@@ -122,6 +126,7 @@ pub use belief_config::{
     load_belief_config_from_env, BeliefConfig, BeliefConfigHandle, BeliefConfigMetadata,
     BUILTIN_BELIEF_CONFIG,
 };
+pub use belief_relay::{resolve_belief_relay, BeliefRelay, RelayBand};
 pub use carry::{carry_capacity, per_worker_carry, CarryConfig, CarryLoad};
 pub use combat::{
     attacks_landed_at, landed_strikes_seeded, resolve_fight, strike_damage, units_brought_down,
@@ -135,15 +140,16 @@ pub use combat_config::{
 };
 pub use components::{
     available_workers, floor_is_valid, floor_overdraws, take_overdraws, BandBench, BandEquipment,
-    BandId, BandName, BandTravel, BandWorkforce, BatchGrade, BuildJob, BuildQueueEntry,
-    BuildSource, DeathCause, DemographicFlowAccumulator, DrawnInputs, DrawnMaterial, ElementKind,
-    EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase, FinishedBatch, FoodMix,
-    Improvement, KeepingToolLine, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget,
-    LocalStore, MaterialBatch, MaterialDraw, MoraleCause, PopulationCohort, PowerNode,
-    ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep, ShedSubject, SourcePriority,
-    SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile, TownCenter, TransferCause,
-    TransferCounterparty, TransferCrossing, TransferDirection, TransferLedger, TransferLink,
-    YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
+    BandId, BandName, BandTravel, BandWorkforce, BatchGrade, BenchOrder, BenchQueueError, BuildJob,
+    BuildQueueEntry, BuildSource, DeathCause, DemographicFlowAccumulator, DrawnInputs,
+    DrawnMaterial, ElementKind, EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase,
+    FinishedBatch, FoodMix, Improvement, KeepingIssue, KeepingToolLine, KnowledgeFragment,
+    LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch, MaterialDraw,
+    MoraleCause, PoolToeLine, PopulationCohort, PowerNode, ResidentBand, Settlement, ShedCrew,
+    ShedFacts, ShedStep, ShedSubject, SourcePriority, SourceShedFacts, SourceYield, StartingUnit,
+    TakeSelection, Tile, TownCenter, TransferCause, TransferCounterparty, TransferCrossing,
+    TransferDirection, TransferLedger, TransferLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER,
+    FOOD, HEAD_ORDER, MIN_ORDER_COUNT, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
 };
 pub use config_fingerprint::{
     current_config_fingerprint, drift_between, ConfigDigest, ConfigFingerprint,
@@ -289,7 +295,20 @@ pub use great_discovery::{
     GreatDiscoveryResolvedEvent, GreatDiscoveryTelemetry, ObservationLedger,
 };
 pub use hydrology::{generate_hydrology, HydrologyState};
-pub use lineage::{FoundingLines, LineId, MIN_BAND_LINES};
+pub use knowledge_contact::{
+    apply_contact_lessons, contact_lessons, learn_over_connections, trade_landings, ContactBand,
+    ContactChannel, ContactLesson, ContactLessons, ContactWorld, KnowledgeContactError,
+    TeachableLesson, TeachableLessons, TradeLanding,
+};
+pub use knowledge_contact_config::{
+    load_knowledge_contact_config_from_env, ContactChannelRates, KnowledgeContactConfig,
+    KnowledgeContactConfigError, KnowledgeContactConfigHandle, KnowledgeContactConfigMetadata,
+    BUILTIN_KNOWLEDGE_CONTACT_CONFIG,
+};
+pub use lineage::{
+    breeding_ceiling, inbreeding_ceiling, shared_breeding_ceiling, BreedingReading, FoundingLines,
+    LineId, MIN_BAND_LINES, NO_INBREEDING_CEILING,
+};
 // The drainage-network measurement instrument (consumed by the `#[ignore]`d census test).
 pub use extraction::{
     advance_deposits, deposit_at_risk_rung, deposit_keeper_loads, deposit_keeping_basis,
@@ -390,7 +409,7 @@ pub use starting_loadout::{
 };
 pub use supply::{
     balance_supply_networks, free_pooling_reach_tiles, BandSupplyMembership, PoolingLink,
-    SupplyNetworkMembership,
+    SupplyNetworkMembership, WalkReach,
 };
 pub use supply_network_config::{
     load_supply_network_config_from_env, SupplyNetworkConfig, SupplyNetworkConfigHandle,
@@ -415,8 +434,9 @@ pub use visibility_config::{
     VisibilityConfigMetadata, BUILTIN_VISIBILITY_CONFIG,
 };
 pub use wellbeing_config::{
-    load_wellbeing_config_from_env, DiscontentConfig, MigrationConfig, ProductivityConfig,
-    WellbeingConfig, WellbeingConfigHandle, WellbeingConfigMetadata, BUILTIN_WELLBEING_CONFIG,
+    load_wellbeing_config_from_env, CultureConfig, DiscontentConfig, MigrationConfig,
+    ProductivityConfig, WellbeingConfig, WellbeingConfigHandle, WellbeingConfigMetadata,
+    BUILTIN_WELLBEING_CONFIG,
 };
 pub use work_party::{CaravanForecast, SourceTake, Walker, WorkParty};
 
@@ -623,6 +643,12 @@ pub fn build_headless_app() -> App {
     let (connections_config, connections_metadata) =
         connections_config::load_connections_config_from_env();
     let connections_handle = connections_config::ConnectionsConfigHandle::new(connections_config);
+    // The knowledge rider's channel rates — a knowledge config, never `connections_config.json`,
+    // which has no rider vocabulary.
+    let (knowledge_contact_config, knowledge_contact_metadata) =
+        knowledge_contact_config::load_knowledge_contact_config_from_env();
+    let knowledge_contact_handle =
+        knowledge_contact_config::KnowledgeContactConfigHandle::new(knowledge_contact_config);
     // Belief on a place — what each source adds to a tile's stock (`belief::BeliefRegistry`).
     let (belief_config, belief_metadata) = belief_config::load_belief_config_from_env();
     let belief_handle = belief_config::BeliefConfigHandle::new(belief_config);
@@ -671,6 +697,15 @@ pub fn build_headless_app() -> App {
     // (`docs/plan_standing_upkeep.md` §2.7).
     if let Err(err) = ladder_config.validate_against_materials(&materials_config) {
         panic!("intensification ladder does not reconcile with the materials table: {err}");
+    }
+    // **Every knowledge tag contact can teach is priced** (`docs/plan_contact_and_logistics.md`
+    // §Settled by #531): the rider can teach any tag in `start_profile_knowledge_tags.json`, so a
+    // tag the ladder's `lesson_costs` does not price is a boot panic rather than a lesson paced off a
+    // default nobody chose.
+    if let Err(err) =
+        knowledge_contact::TeachableLessons::resolve(&knowledge_tags, &ladder_config.knowledge)
+    {
+        panic!("knowledge tags do not reconcile with the intensification ladder: {err}");
     }
     let ladder_handle = intensification::LadderConfigHandle::new(ladder_config);
     let (sedentarization_config, sedentarization_metadata) =
@@ -822,6 +857,8 @@ pub fn build_headless_app() -> App {
         .insert_resource(visibility_metadata)
         .insert_resource(connections_handle)
         .insert_resource(connections_metadata)
+        .insert_resource(knowledge_contact_handle)
+        .insert_resource(knowledge_contact_metadata)
         .insert_resource(belief_handle)
         .insert_resource(belief_metadata)
         .insert_resource(materials_handle)
@@ -1312,6 +1349,15 @@ pub fn build_headless_app() -> App {
                 // than sitting between the two.
                 visibility_systems::prune_sweep_tracker
                     .before(visibility_systems::calculate_visibility),
+                // **The knowledge rider** reads the tie this turn's contact just refreshed, so it
+                // follows the system that folds contact into the ledger. Its other two channels'
+                // inputs — a shipment landing, a road's keeping paid — are final by this stage
+                // (both settle in `Population`). It sits behind the whole chain rather than
+                // directly behind `advance_connections` because `discover_sites` takes
+                // `PopulationCohort` mutably, and the ambiguity gate wants that edge declared; the
+                // site sweep touches nothing the rider reads. See
+                // `knowledge_contact::learn_over_connections`.
+                knowledge_contact::learn_over_connections.after(sites::discover_sites),
             )
                 .in_set(TurnStage::Visibility)
                 .run_if(capability_enabled(CapabilityFlags::ALWAYS_ON)),

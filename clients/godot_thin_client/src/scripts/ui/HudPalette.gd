@@ -58,7 +58,7 @@ const EARTH_MAP := {
 	"FORAGE_BARREN_COLOR": Color("26241f"),
 }
 
-## Every theme: `name` is what the Options row says, `hud` is the 28 authored `HudStyle` colours and
+## Every theme: `name` is what the Options row says, `hud` is the 29 authored `HudStyle` colours and
 ## `map` the 16 authored `MapView` data-ramp colours. Everything else in either script is DERIVED —
 ## see the rule at the top of this file.
 ##
@@ -109,6 +109,11 @@ const THEMES := {
 			# brighter than this theme's amber WARN so a trade mark never reads as a warning, and clear of
 			# the blue rivers, the brown roads and the desaturated sand it is drawn over.
 			"TRADE": Color("f2c230"),
+			# BELIEF — the ancestors on the map (a band's belief place and its reach). A light, saturated
+			# VIOLET: purple is the ancestors' hue, and no other mark on the map wears it. Light enough to
+			# read over deep water and green, saturated enough to read over sand and snow (it is drawn
+			# over a dark under-stroke, which carries it over the light ground).
+			"BELIEF": Color("bf86f2"),
 		},
 		"map": EARTH_MAP,
 	},
@@ -150,6 +155,9 @@ const THEMES := {
 			# loam's SIGNAL is a pale blue — on the map they read as RIVERS. A warm gold is the one hue
 			# that can be neither water (blue) nor road (brown) nor this theme's teal READY.
 			"TRADE": Color("f5c542"),
+			# Pushed a little bluer than ember's, away from loam's warm reds — still clear of its teal
+			# READY and pale-blue SIGNAL by lightness and chroma.
+			"BELIEF": Color("b08cf5"),
 		},
 		"map": EARTH_MAP,
 	},
@@ -188,6 +196,8 @@ const THEMES := {
 			# Kiln's WARN is already a pale gold, so TRADE goes deeper and more saturated rather than
 			# lighter — separated from WARN by chroma, and from the terracotta SIGNAL by hue.
 			"TRADE": Color("ffc21a"),
+			# Pushed a little redder (an orchid violet), the warm side of purple beside kiln's terracotta.
+			"BELIEF": Color("c987ea"),
 		},
 		"map": EARTH_MAP,
 	},
@@ -229,6 +239,9 @@ const THEMES := {
 			# NEW key, so written in hex like `READY` above (no original literal to preserve). A clean
 			# gold, yellower than console's amber WARN and far from its cyan SIGNAL.
 			"TRADE": Color("ffd23f"),
+			# NEW key, so written in hex like `READY` above. A frank electric violet, the console way, and
+			# clear of its cyan SIGNAL and azure READY by hue.
+			"BELIEF": Color("b679ff"),
 		},
 		"map": {
 			"SENTIMENT_COLOR": Color(1.0, 0.35, 0.25, 1.0),

@@ -17,6 +17,22 @@ use core_sim::{
 };
 use std::collections::BTreeMap;
 
+/// **An order no fixture finishes** — what the retired repeat-until-cleared job was, as a count.
+const NEVER_FINISHED: u32 = u32::MAX;
+
+/// **The bench works `recipe` and nothing else, with `workers` on it** — the queue holding one
+/// [`NEVER_FINISHED`] order, discarding whatever was there (and any pile it had drawn).
+trait PutOnBench {
+    fn put_on(&mut self, recipe: &str, workers: u32);
+}
+
+impl PutOnBench for BandBench {
+    fn put_on(&mut self, recipe: &str, workers: u32) {
+        self.orders = vec![core_sim::BenchOrder::new(recipe, NEVER_FINISHED)];
+        self.workers = workers;
+    }
+}
+
 /// The `route:dirt_road` rung's tool, and the bench recipe that makes it.
 const EARTHMOVING: &str = "earthmoving";
 /// The Roadwork pool's wire token on a `poolToe` line.
@@ -78,7 +94,7 @@ fn a_band_making_its_own_earthmoving_gear() -> (App, Entity) {
     app.world
         .get_mut::<BandBench>(band)
         .expect("a spawned band carries a bench")
-        .set_job(EARTHMOVING, CREW_THAT_FINISHES_IN_ONE_TURN);
+        .put_on(EARTHMOVING, CREW_THAT_FINISHES_IN_ONE_TURN);
     (app, band)
 }
 
@@ -94,7 +110,10 @@ fn a_tool_finished_this_turn_is_stocked_and_issued_on_the_next() {
 
     app.update();
     assert_eq!(
-        bench(&app, band).items_completed,
+        bench(&app, band)
+            .head()
+            .expect("the fixture's order is on the bench")
+            .made,
         1,
         "fixture: the bench must finish the set on this turn"
     );
@@ -133,9 +152,13 @@ fn a_job_change_between_turns_still_delivers_the_finished_tool() {
 
     type JobChange = fn(&mut BandBench);
     let changes: [(&str, JobChange); 2] = [
-        ("cleared", |bench| bench.clear_job()),
+        ("cleared", |bench| {
+            bench
+                .remove_order(core_sim::HEAD_ORDER)
+                .expect("the fixture's order is on the bench");
+        }),
         ("re-tasked", |bench| {
-            bench.set_job(RETASKED_RECIPE, CREW_THAT_FINISHES_IN_ONE_TURN)
+            bench.put_on(RETASKED_RECIPE, CREW_THAT_FINISHES_IN_ONE_TURN)
         }),
     ];
     for (label, change) in changes {

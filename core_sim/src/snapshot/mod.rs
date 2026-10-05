@@ -11,9 +11,9 @@ use sim_runtime::{
     encode_delta_flatbuffer, encode_snapshot_flatbuffer, AxisBiasState,
     BuildQueueEntryState as SchemaBuildQueueEntryState, CampaignProfileState,
     CharacteristicBandState, ClimateBandsState, CohortStoreState, CommandEventState,
-    ConnectionState, CorruptionLedger, CorruptionSubsystem, CraftKnowledgeState, CrisisGaugeState,
-    CrisisMetricKind as SchemaCrisisMetricKind, CrisisOverlayState,
-    CrisisSeverityBand as SchemaCrisisSeverityBand, CrisisTelemetryState,
+    ConnectionState, ContactLessonState, CorruptionLedger, CorruptionSubsystem,
+    CraftKnowledgeState, CrisisGaugeState, CrisisMetricKind as SchemaCrisisMetricKind,
+    CrisisOverlayState, CrisisSeverityBand as SchemaCrisisSeverityBand, CrisisTelemetryState,
     CrisisTrendSample as SchemaCrisisTrendSample, CultureLayerState, CultureTensionState,
     CultureTraitEntry, DepositRungState, DepositState,
     DiscoveredSiteState as SchemaDiscoveredSiteState,
@@ -1161,6 +1161,7 @@ mod tests {
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),
             discovered_sites: Vec::new(),
+            contact_lessons: Vec::new(),
             connections: Vec::new(),
             routes: Vec::new(),
             deposits: Vec::new(),
@@ -1244,6 +1245,7 @@ mod tests {
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),
             discovered_sites: Vec::new(),
+            contact_lessons: Vec::new(),
             connections: Vec::new(),
             routes: Vec::new(),
             deposits: Vec::new(),
@@ -1322,6 +1324,7 @@ mod tests {
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),
             discovered_sites: Vec::new(),
+            contact_lessons: Vec::new(),
             connections: Vec::new(),
             routes: Vec::new(),
             deposits: Vec::new(),
@@ -1378,6 +1381,7 @@ mod tests {
             last_morale_cause: MoraleCause::None,
             last_morale_contributions: Default::default(),
             last_fertility_factors: Default::default(),
+            last_breeding: Default::default(),
             discontent_fraction: crate::scalar::scalar_zero(),
             grievance: crate::scalar::scalar_zero(),
             last_emigrated: 0,
@@ -1390,6 +1394,8 @@ mod tests {
                 crate::components::BandId(0),
                 crate::lineage::MIN_BAND_LINES,
             ),
+            belief_anchor: None,
+            last_belief_relay_hops: 0,
         };
         (cohort, allocation)
     }
@@ -1439,6 +1445,8 @@ mod tests {
             move_ferry_reach_tiles: 0,
         };
         population_state(PopulationStateInputs {
+            belief_reach: Vec::new(),
+            belief_relay_region: Vec::new(),
             entity: Entity::from_raw(1),
             // This fixture asserts on the derived readouts, not on band identity.
             band_id: None,

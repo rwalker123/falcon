@@ -479,6 +479,7 @@ fn spawn_forager_of(
                 last_morale_cause: MoraleCause::None,
                 last_morale_contributions: Default::default(),
                 last_fertility_factors: Default::default(),
+                last_breeding: Default::default(),
                 discontent_fraction: scalar_zero(),
                 grievance: scalar_zero(),
                 last_emigrated: 0,
@@ -491,6 +492,8 @@ fn spawn_forager_of(
                     core_sim::BandId(0),
                     core_sim::MIN_BAND_LINES,
                 ),
+                belief_anchor: None,
+                last_belief_relay_hops: 0,
             },
             StartingUnit {
                 kind: "BandForager".to_string(),
@@ -1477,6 +1480,7 @@ fn a_field_worked_by(crew: u32, ledger: core_sim::BandEquipment) -> (App, Entity
                 last_morale_cause: MoraleCause::None,
                 last_morale_contributions: Default::default(),
                 last_fertility_factors: Default::default(),
+                last_breeding: Default::default(),
                 discontent_fraction: scalar_zero(),
                 grievance: scalar_zero(),
                 last_emigrated: 0,
@@ -1489,6 +1493,8 @@ fn a_field_worked_by(crew: u32, ledger: core_sim::BandEquipment) -> (App, Entity
                     core_sim::BandId(0),
                     core_sim::MIN_BAND_LINES,
                 ),
+                belief_anchor: None,
+                last_belief_relay_hops: 0,
             },
             StartingUnit {
                 kind: "BandForager".to_string(),

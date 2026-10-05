@@ -49,6 +49,10 @@ static var READY         := Color("4373e8")                   # #4373e8  satisfi
 ## because the map already spends blue on rivers and brown on roads, and loam's pale-blue `SIGNAL`
 ## made the links read as water. It is NOT `WARN`: a camp sharing its food is not a warning.
 static var TRADE         := Color("ffd23f")                   # #ffd23f  trade / goods flowing
+## BELIEF — the ancestors on the MAP: a band's belief place (the urn marker's ring and its fallback
+## glyph) and the outline of the region within walking reach of it (`BandOverlayRenderer`). A light
+## VIOLET in every palette — purple is the ancestors' hue, and no other map mark wears it.
+static var BELIEF        := Color("b679ff")                   # #b679ff  the ancestors / belief
 # The two DANGER-overlay hues (Predators Phase 3), shared by the HUD alert surfaces so the command
 # feed's threat/casualty accents and the band panel's predator-nearby warning speak the SAME danger
 # language as the map's `threat` / `hunt_danger` washes. Values MIRROR MapView.THREAT_OVERLAY_COLOR /
@@ -122,7 +126,7 @@ static var INK_DIM_HEX := "9db0ad"
 ## which runs before the first Control exists; from the Options pane it is a reloaded scene, and
 ## `GameLaunch.apply_theme_now` installs the palette first and reloads second for exactly that reason.
 ##
-## `p` carries the **26 AUTHORED** colours; everything below the assignment block is **DERIVED**, and
+## `p` carries the **29 AUTHORED** colours; everything below the assignment block is **DERIVED**, and
 ## the derivation lives HERE rather than in a static-var initializer on purpose. An initializer runs
 ## when this script is loaded, which is before `apply_palette` has ever been called, so a derived
 ## initializer would freeze at the default theme's value and silently never update.
@@ -145,6 +149,7 @@ static func apply_palette(p: Dictionary) -> void:
 	HEALTHY = p["HEALTHY"]
 	READY = p["READY"]
 	TRADE = p["TRADE"]
+	BELIEF = p["BELIEF"]
 	THREAT_ACCENT = p["THREAT_ACCENT"]
 	HUNT_DANGER_ACCENT = p["HUNT_DANGER_ACCENT"]
 	BUTTON_PRIMARY_BG = p["BUTTON_PRIMARY_BG"]

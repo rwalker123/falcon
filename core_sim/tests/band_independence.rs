@@ -375,7 +375,6 @@ fn the_new_people_remembers_the_map_sees_nothing_and_keeps_what_it_knew() {
         c.knowledge = vec![KnowledgeFragment::new(
             KNOWN_DISCOVERY,
             scalar_from_f32(KNOWN_PROGRESS),
-            Scalar::one(),
         )];
     });
     let (width, height) = {
@@ -441,7 +440,6 @@ fn a_lesson_the_old_people_earned_by_practice_goes_with_the_break_away() {
         c.knowledge = vec![KnowledgeFragment::new(
             core_sim::CULTIVATION_DISCOVERY_ID,
             scalar_from_f32(LESSER_PROGRESS),
-            Scalar::one(),
         )];
     });
 
@@ -475,7 +473,6 @@ fn a_group_seeds_the_best_any_of_its_bands_knew() {
             c.knowledge = vec![KnowledgeFragment::new(
                 KNOWN_DISCOVERY,
                 scalar_from_f32(progress),
-                Scalar::one(),
             )];
         });
     }

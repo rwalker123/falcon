@@ -355,6 +355,7 @@ fn witness_snapshot_is_fully_decoded(snapshot: &WorldSnapshot) {
         knowledge_ledger: _,
         knowledge_metrics: _,
         knowledge_timeline: _,
+        contact_lessons: _,
         // `decode_governance_section`
         corruption: _,
         corruption_raster: _,
@@ -449,6 +450,7 @@ fn witness_delta_is_fully_decoded(delta: &WorldDelta) {
         knowledge_metrics: _,
         knowledge_timeline: _,
         removed_knowledge_ledger: _,
+        contact_lessons: _,
         // `decode_governance_section_delta`
         corruption: _,
         corruption_raster: _,
@@ -666,7 +668,6 @@ pub(crate) fn create_known_fragments<'a>(
                 &fb::KnownTechFragmentArgs {
                     discoveryId: fragment.discovery_id,
                     progress: fragment.progress,
-                    fidelity: fragment.fidelity,
                 },
             )
         })
@@ -805,7 +806,6 @@ pub(crate) fn decode_known_fragments(
     map_rows(fragments, |fragment| KnownTechFragment {
         discovery_id: fragment.discoveryId(),
         progress: fragment.progress(),
-        fidelity: fragment.fidelity(),
     })
 }
 
@@ -1148,6 +1148,7 @@ mod round_trip_tests {
             discovery_progress: world.discovery_progress.clone(),
             connections: Some(world.connections.clone()),
             routes: Some(world.routes.clone()),
+            contact_lessons: Some(world.contact_lessons.clone()),
         }
     }
 
@@ -1212,6 +1213,7 @@ mod round_trip_tests {
             culture_tensions: Some(Vec::new()),
             connections: Some(Vec::new()),
             routes: Some(Vec::new()),
+            contact_lessons: Some(Vec::new()),
             ..Default::default()
         }
     }

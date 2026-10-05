@@ -1372,10 +1372,15 @@ impl PoolToolPlan {
         &self.roadwork
     }
 
-    /// **THE KEEPING TOOLS EACH SITE CREW WAS ISSUED** — the units the settlement paid every site
-    /// fill, one line per `(site, item)`; what [`LaborAllocation::last_keeping_issued`] parks for the
-    /// take crews' item budget to be struck less. `asks` are the ones the plan was struck from, in
-    /// their order, and `allocation` names each ask's site.
+    /// **THE KEEPING TOOLS EACH SITE CREW WAS ISSUED, BESIDE WHAT IT CLAIMED** — one line per
+    /// `(site, item)` the site either claimed or was paid; what [`LaborAllocation::last_keeping_issued`]
+    /// parks for the take crews' item budget to be struck less, and what the craft suggestions read a
+    /// site crew's shortfall off. `asks` are the ones the plan was struck from, in their order, and
+    /// `allocation` names each ask's site.
+    ///
+    /// **A claimed item the settlement reached with nothing still writes its line**, at `units 0` —
+    /// that is the site crew going without, and an absent line could not say so. Every reader that
+    /// sums `units` reads such a line as the zero it is.
     fn keeping_issued(
         &self,
         asks: &[SiteKeepingAsk],
@@ -1388,14 +1393,33 @@ impl PoolToolPlan {
                     .assignments
                     .get(ask.claim.index)
                     .and_then(|row| BuildSource::of(&row.target))?;
+                let claimed = fill
+                    .required
+                    .iter()
+                    .filter(|(_, required)| *required > NO_UNITS_SETTLED)
+                    .map(|(item, required)| (item.clone(), *required, fill.units_of(item)));
+                // A unit paid against no stated claim keeps its line too — the reservation the take
+                // crews are struck less must not lose a tool the settlement did hand out.
+                let unclaimed = fill
+                    .units
+                    .iter()
+                    .filter(|(item, _)| {
+                        !fill.required.iter().any(|(claimed, required)| {
+                            claimed == item && *required > NO_UNITS_SETTLED
+                        })
+                    })
+                    .map(|(item, units)| (item.clone(), NO_UNITS_SETTLED, *units));
                 Some(
-                    fill.units
-                        .iter()
-                        .map(move |(item, units)| crate::components::KeepingIssue {
-                            source: source.clone(),
-                            item: item.to_string(),
-                            units: *units,
-                        }),
+                    claimed
+                        .chain(unclaimed)
+                        .map(
+                            move |(item, required, units)| crate::components::KeepingIssue {
+                                source: source.clone(),
+                                item: item.to_string(),
+                                units,
+                                required,
+                            },
+                        ),
                 )
             })
             .flatten()
@@ -12221,17 +12245,16 @@ pub fn advance_population_migration(
     let wrap = sim_config.map_topology.wrap_horizontal;
     let parent_min_workers = gates.expedition.get().settle.parent_min_workers;
 
-    // **Reach is hex steps, and a road shortens them.** A candidate is in reach when
-    // `hex_distance − road_bonus <= base_reach`, where the road bonus is the one every other
-    // distance-shortener reads — `supply::free_pooling_reach_tiles − reach_tiles`, the work party's
-    // walk seam — so a road does for people moving camp what it does for a caravan and for pooling.
-    let height = tile_registry.height;
-    let reach = mig_cfg.base_reach;
-    let supply_reach = gates.supply.get().reach_tiles;
-    let widest_route_reach = crate::routes::max_route_reach_tiles(&gates.ladder.get());
-    // No road can shorten a walk by more than the widest route reach over the free reach, so a pair
-    // past `base_reach + max_road_bonus` is out of reach without tracing a path.
-    let max_road_bonus = widest_route_reach.saturating_sub(supply_reach);
+    // **Reach is hex steps, and a road shortens them** — `supply::WalkReach`, the one road-aware
+    // walk test, shared with the culture morale term so "how far people walk" is one notion.
+    let walk = crate::supply::WalkReach::for_people(
+        mig_cfg.base_reach,
+        &gates.supply.get(),
+        &gates.ladder.get(),
+        width,
+        tile_registry.height,
+        wrap,
+    );
     let attractive_morale = scalar_from_f32(mig_cfg.attractive_morale);
     let min_gap = scalar_from_f32(mig_cfg.min_morale_gap);
     let dependent_weight = scalar_from_f32(mig_cfg.dependent_weight);
@@ -12318,26 +12341,8 @@ pub fn advance_population_migration(
             if dest.morale < attractive_morale || dest.morale <= bands[i].morale + min_gap {
                 continue;
             }
-            let distance = crate::grid_utils::hex_distance_wrapped(src_pos, dest_pos, width, wrap);
-            if distance as f32 > reach {
-                // Past plain reach: only a road can bring it in, and only within the widest bonus.
-                if distance as f32 > reach + max_road_bonus as f32 {
-                    continue;
-                }
-                let road_bonus = crate::supply::free_pooling_reach_tiles(
-                    &followers.roads,
-                    src_pos,
-                    dest_pos,
-                    supply_reach,
-                    widest_route_reach,
-                    width,
-                    height,
-                    wrap,
-                )
-                .saturating_sub(supply_reach);
-                if distance.saturating_sub(road_bonus) as f32 > reach {
-                    continue;
-                }
+            if !walk.within(&followers.roads, src_pos, dest_pos) {
+                continue;
             }
             let best = if dest.faction == bands[i].faction {
                 &mut best_own
@@ -12402,7 +12407,7 @@ pub fn advance_population_migration(
         *dst_tally.immigrated_foreign.entry(from_people).or_default() += moved_head;
         tallies.entry(src_entity).or_default().joined_people = Some(to_people);
         // **Knowledge travels with people, in proportion.** The source band's knowledge is scaled
-        // by the migration fidelity levers, then by the share of the band that left — so a brain
+        // by `migration_fragment_scaling`, then by the share of the band that left — so a brain
         // drain is proportional, never all-or-nothing.
         let Ok((_, source_cohort, _)) = cohorts.get(src_entity) else {
             continue;
@@ -12411,7 +12416,6 @@ pub fn advance_population_migration(
         let scaled = scale_migration_fragments(
             &fragments_to_contract(&source_cohort.knowledge),
             sim_config.migration_fragment_scaling.raw(),
-            sim_config.migration_fidelity_floor.raw(),
         );
         for mut fragment in scaled {
             fragment.progress = (Scalar::from_raw(fragment.progress) * share).raw();
@@ -13820,6 +13824,7 @@ mod labor_yield_tests {
                     last_morale_cause: MoraleCause::None,
                     last_morale_contributions: Default::default(),
                     last_fertility_factors: Default::default(),
+                    last_breeding: Default::default(),
                     discontent_fraction: scalar_zero(),
                     grievance: scalar_zero(),
                     last_emigrated: 0,
@@ -13832,6 +13837,8 @@ mod labor_yield_tests {
                         crate::components::BandId(0),
                         crate::lineage::MIN_BAND_LINES,
                     ),
+                    belief_anchor: None,
+                    last_belief_relay_hops: 0,
                 },
                 LaborAllocation {
                     assignments,

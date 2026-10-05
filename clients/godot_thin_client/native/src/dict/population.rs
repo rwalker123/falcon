@@ -6,7 +6,7 @@ use shadow_scale_flatbuffers::shadow_scale::sim as fb;
 
 use crate::dict::campaign::{kit_allocations_to_array, material_allocations_to_array};
 use crate::dict::economy::fragment_to_dict;
-use crate::dict::fixed64_to_f64;
+use crate::dict::{fixed64_to_f64, u32_vector_to_packed_int32};
 
 /// **ONE TABLE OF EQUIPMENT** — `[{item_id, required, filled}]`, one dict per `KitToeLine`, `[]` when
 /// the vector is absent or empty (nothing claimed). Shared by a take row's `kit_toe` and a site's
@@ -77,6 +77,7 @@ struct CohortScalars {
     morale_terrain: f64,
     morale_climate: f64,
     morale_unrest: f64,
+    morale_culture: f64,
     fertility_hunger: f64,
     fertility_reserve: f64,
     fertility_trend: f64,
@@ -93,6 +94,7 @@ fn cohort_scalars(cohort: fb::PopulationCohortState<'_>) -> CohortScalars {
         morale_terrain: fixed64_to_f64(cohort.moraleTerrain()),
         morale_climate: fixed64_to_f64(cohort.moraleClimate()),
         morale_unrest: fixed64_to_f64(cohort.moraleUnrest()),
+        morale_culture: fixed64_to_f64(cohort.moraleCulture()),
         fertility_hunger: fixed64_to_f64(cohort.fertilityHunger()),
         fertility_reserve: fixed64_to_f64(cohort.fertilityReserve()),
         fertility_trend: fixed64_to_f64(cohort.fertilityTrend()),
@@ -133,17 +135,48 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // draws a wrap-aware reticle + line to it for the selected traveling unit.
     let _ = dict.insert("travel_target_x", i64::from(cohort.travelTargetX()));
     let _ = dict.insert("travel_target_y", i64::from(cohort.travelTargetY()));
+    // The band's ancestors' place — its belief anchor, the tile `morale_culture` is measured against
+    // (`hasBeliefAnchor` gates it; `0,0` with no anchor, the `isTraveling`/`travelTarget` idiom). Own
+    // bands only: a foreign band's redacted row leaves all three at their defaults.
+    let _ = dict.insert("has_belief_anchor", cohort.hasBeliefAnchor());
+    let _ = dict.insert("belief_anchor_x", i64::from(cohort.beliefAnchorX()));
+    let _ = dict.insert("belief_anchor_y", i64::from(cohort.beliefAnchorY()));
+    // Every tile the band can STAND on and still count as near its anchor, as two zipped packed
+    // arrays (index i of each is one tile). Road-aware, so the set is irregular — the map draws its
+    // perimeter, never a circle. Empty with no anchor.
+    let _ = dict.insert(
+        "belief_reach_x",
+        &u32_vector_to_packed_int32(cohort.beliefReachX()),
+    );
+    let _ = dict.insert(
+        "belief_reach_y",
+        &u32_vector_to_packed_int32(cohort.beliefReachY()),
+    );
+    // THE KIN RELAY. `belief_relay_hops`: 0 = direct (also 0 with no anchor — read
+    // `has_belief_anchor` to tell them apart), n = tied in through n bands of kin, 254 = a chain of 254
+    // or longer, 255 = unreached (holds an anchor, no chain reaches it). `belief_relay_reach_x/y`:
+    // every tile OUTSIDE the direct reach region from which the band would be tied in through its
+    // other kin, as two zipped packed arrays. Empty with no anchor.
+    let _ = dict.insert("belief_relay_hops", i64::from(cohort.beliefRelayHops()));
+    let _ = dict.insert(
+        "belief_relay_reach_x",
+        &u32_vector_to_packed_int32(cohort.beliefRelayReachX()),
+    );
+    let _ = dict.insert(
+        "belief_relay_reach_y",
+        &u32_vector_to_packed_int32(cohort.beliefRelayReachY()),
+    );
     let _ = dict.insert("size", cohort.size() as i64);
     // Every Scalar field below comes from `cohort_scalars` — see its doc comment for why.
     let scalars = cohort_scalars(cohort);
     let _ = dict.insert("morale", scalars.morale);
     // Signed per-turn morale trend + the dominant negative driver when falling
-    // (0=None, 1=Terrain, 2=Cold, 3=Unrest). A rehydrated save reports 0/None for
+    // (0=None, 1=Terrain, 2=Cold, 3=Unrest, 4=Culture). A rehydrated save reports 0/None for
     // one turn (the sim doesn't persist them) — the HUD handles that gracefully.
     let _ = dict.insert("morale_delta", scalars.morale_delta);
     let _ = dict.insert("morale_cause", i64::from(cohort.moraleCause()));
     // Civilization Wellbeing (docs/plan_civ_wellbeing.md). Productivity + discontent +
-    // migration counters + the four signed Layer-1 morale contributions (their sum IS
+    // migration counters + the five signed Layer-1 morale contributions (their sum IS
     // morale_delta) that drive the itemized morale breakdown in the band drawer.
     let _ = dict.insert("output_multiplier", scalars.output_multiplier);
     let _ = dict.insert("discontent_fraction", scalars.discontent_fraction);
@@ -155,6 +188,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("morale_terrain", scalars.morale_terrain);
     let _ = dict.insert("morale_climate", scalars.morale_climate);
     let _ = dict.insert("morale_unrest", scalars.morale_unrest);
+    let _ = dict.insert("morale_culture", scalars.morale_culture);
     // The birth path's parallel of the morale contributions: the three named fertility factors whose
     // PRODUCT (not sum) is the birth_rate multiplier — hunger (did we eat) x reserve (is there a
     // cushion) x trend (is the cushion growing or shrinking). NEUTRAL AT 1.0, not at 0, so the
@@ -1014,6 +1048,14 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                     assignment.materialsRateHome(),
                 ),
             );
+            // This row's hands still walking home — its share of the band's `homeward_*`, which
+            // stay the total (a walk whose row is gone is only there). 0 = nobody walking.
+            let _ = entry.insert("homeward_workers", i64::from(assignment.homewardWorkers()));
+            let _ = entry.insert(
+                "homeward_all_home_in",
+                i64::from(assignment.homewardAllHomeIn()),
+            );
+            let _ = entry.insert("homeward_food", f64::from(assignment.homewardFood()));
             array.push(&entry.to_variant());
         }
     }
@@ -1309,9 +1351,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     }
     let _ = dict.insert("material_batches", &material_batches);
 
-    // WHAT IS ON THIS BAND'S BENCH — one job at a time, so the panel never has to explain a queue.
-    // An empty `recipe_id` is an IDLE bench, which is a different statement from a BLOCKED one: a
-    // blocked bench has a recipe AND a `blocked_reason`.
+    // WHAT IS ON THIS BAND'S BENCH — the scalars describe the WORKED order, `orders[worked]` (below):
+    // the first order in queue order that holds a pile or can draw, so a short head no longer stalls
+    // the queue. When nothing can be worked `worked` is 0 and the scalars describe the head. An empty
+    // `recipe_id` is an IDLE bench, which is a different statement from a BLOCKED one: a blocked bench
+    // has a recipe AND a `blocked_reason`.
     let mut bench_dict = VarDictionary::new();
     let _ = bench_dict.insert(
         "recipe_id",
@@ -1356,10 +1400,6 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = bench_dict.insert(
         "shortfalls",
         &shortfalls_to_array(cohort.bench().and_then(|b| b.shortfalls())),
-    );
-    let _ = bench_dict.insert(
-        "items_completed",
-        cohort.bench().map_or(0, |b| b.itemsCompleted()) as i64,
     );
     let _ = bench_dict.insert("drawn", cohort.bench().is_some_and(|b| b.drawn()));
     // The grade the pile in flight FIXED — `""` before the draw, or on an ungraded recipe.
@@ -1409,7 +1449,74 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             _ => "normal",
         },
     );
+    // **THE QUEUE, HEAD FIRST** (`docs/plan_crafting_and_materials.md` §7 → "The queue"). Every
+    // scalar above describes `orders[worked]`; this array is every order, and an order's INDEX here is
+    // the `order` argument the queue verbs (`bench_order_count`, `bench_remove`, `bench_raise`)
+    // address. Empty on an idle bench. The worked order's `made` is what the retired `BenchState.
+    // itemsCompleted` carried, which is why that field is no longer read.
+    let _ = bench_dict.insert("worked", cohort.bench().map_or(0, |b| b.worked()) as i64);
+    //
+    // **`drawn` on an order the bench is NOT working is a PAUSED order** — raised over while holding a
+    // cut pile, it keeps that pile and its progress until it is worked again, or until it is removed, which
+    // destroys the pile exactly as removing the head does.
+    let mut bench_orders = VarArray::new();
+    if let Some(orders) = cohort.bench().and_then(|b| b.orders()) {
+        for order in orders.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("recipe_id", order.recipeId().unwrap_or(""));
+            let _ = row.insert("count", order.count() as i64);
+            let _ = row.insert("made", order.made() as i64);
+            let _ = row.insert("progress", order.progress() as f64);
+            let _ = row.insert("drawn", order.drawn());
+            // WHY THE BENCH IS SKIPPING THIS ORDER (`"Short 3.0 fibre"`), sim-resolved and rendered
+            // verbatim, with its severity in the offer vocabulary; both `""` when the order holds a
+            // pile or can draw. The crew's refusal stays on the bench row's own `blocked_reason`.
+            let _ = row.insert("blocked_reason", order.blockedReason().unwrap_or(""));
+            let _ = row.insert("blocked_severity", order.blockedSeverity().unwrap_or(""));
+            bench_orders.push(&row.to_variant());
+        }
+    }
+    let _ = bench_dict.insert("orders", &bench_orders);
     let _ = dict.insert("bench", &bench_dict);
+
+    // **WHAT TO MAKE NEXT, RANKED SIM-SIDE BY WHO IS GOING WITHOUT** (§7 → "Suggestions"). In rank
+    // order, which this decoder preserves; the client never re-sorts or re-scores it. `count` is the
+    // whole shortfall net of what is already queued, so a suggestion netted to zero is simply absent.
+    // Whether the item can be MADE is not here — the panel joins the item's `CraftOffer` for that.
+    let mut craft_suggestions = VarArray::new();
+    if let Some(suggestions) = cohort.craftSuggestions() {
+        for suggestion in suggestions.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("item_id", suggestion.itemId().unwrap_or(""));
+            let _ = row.insert("count", suggestion.count() as i64);
+            let _ = row.insert("workers_without", suggestion.workersWithout() as f64);
+            // `> 0` only for gear that adds build or keeping work; `0` reads as the people going
+            // without, which is the score's own unit.
+            let _ = row.insert("work_per_turn", suggestion.workPerTurn() as f64);
+            let mut sources = VarArray::new();
+            if let Some(list) = suggestion.sources() {
+                for source in list.iter() {
+                    let mut entry = VarDictionary::new();
+                    // "pool" | "site" | "take"
+                    let _ = entry.insert("kind", source.kind().unwrap_or(""));
+                    // A pool token ("roadwork" | "builders") or a labor-row kind ("hunt", "forage",
+                    // "extract", "scout", "warrior") — the `LaborAssignment` spelling.
+                    let _ = entry.insert("job", source.job().unwrap_or(""));
+                    let _ = entry.insert("target_x", source.targetX() as i64);
+                    let _ = entry.insert("target_y", source.targetY() as i64);
+                    let _ = entry.insert("fauna_id", source.faunaId().unwrap_or(""));
+                    let _ = entry.insert("material", source.material().unwrap_or(""));
+                    let _ = entry.insert("missing_units", source.missingUnits() as f64);
+                    let _ = entry.insert("workers_without", source.workersWithout() as f64);
+                    let _ = entry.insert("work_per_turn", source.workPerTurn() as f64);
+                    sources.push(&entry.to_variant());
+                }
+            }
+            let _ = row.insert("sources", &sources);
+            craft_suggestions.push(&row.to_variant());
+        }
+    }
+    let _ = dict.insert("craft_suggestions", &craft_suggestions);
 
     // **ONE ROW PER RECIPE, ALWAYS**, and `reason` + `severity` are the contract rather than
     // `available`: "Not needed yet" is a SHRUG and "Short 4.9 bone" is a PROBLEM, and a client
@@ -1950,8 +2057,8 @@ mod cohort_decode_tests {
                 workingAge: 17,
                 eldersCount: 4,
                 morale: 820_000,
-                // == the four Layer-1 contributions below, which the test asserts.
-                moraleDelta: -11_000,
+                // == the five Layer-1 contributions below, which the test asserts.
+                moraleDelta: -3_000,
                 outputMultiplier: 1_000_000,
                 discontentFraction: 250_000,
                 grievance: 40_000,
@@ -1959,6 +2066,7 @@ mod cohort_decode_tests {
                 moraleTerrain: -26_000,
                 moraleClimate: -6_000,
                 moraleUnrest: 11_000,
+                moraleCulture: 8_000,
                 // The three fertility factors: a band eating short (0.6) off a fat larder (1.5)
                 // with its income collapsed (0.25) — the case the model exists for, and the one
                 // where all three sit off their neutral 1.0.
@@ -1990,15 +2098,16 @@ mod cohort_decode_tests {
         );
 
         assert!((scalars.morale - 0.82).abs() < 1e-9);
-        assert!((scalars.morale_delta - -0.011).abs() < 1e-9);
+        assert!((scalars.morale_delta - -0.003).abs() < 1e-9);
         assert!((scalars.output_multiplier - 1.0).abs() < 1e-9);
         assert!((scalars.discontent_fraction - 0.25).abs() < 1e-9);
         assert!((scalars.grievance - 0.04).abs() < 1e-9);
-        // The four signed Layer-1 contributions must sum to the reported morale trend.
+        // The five signed Layer-1 contributions must sum to the reported morale trend.
         let contributions = scalars.morale_settling
             + scalars.morale_terrain
             + scalars.morale_climate
-            + scalars.morale_unrest;
+            + scalars.morale_unrest
+            + scalars.morale_culture;
         assert!(
             (contributions - scalars.morale_delta).abs() < 1e-9,
             "contributions {contributions} != morale_delta {}",
@@ -2033,6 +2142,7 @@ mod cohort_decode_tests {
             ("output_multiplier", scalars.output_multiplier),
             ("discontent_fraction", scalars.discontent_fraction),
             ("grievance", scalars.grievance),
+            ("morale_culture", scalars.morale_culture),
             ("fertility_hunger", scalars.fertility_hunger),
             ("fertility_reserve", scalars.fertility_reserve),
             ("fertility_trend", scalars.fertility_trend),

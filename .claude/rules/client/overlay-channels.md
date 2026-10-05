@@ -872,10 +872,19 @@ separate arguments rather than asking the composer to rank them: `deposit_row_va
 one-line ROSTER cell, and a list row's own ladder is what ranks them here.
 
 **THE PREVIOUS NOTE HERE SAID NOT TO INVENT AN IDLE-CREW CLASS, AND IT IS STILL TRUE OF WHAT IT MEANT.**
-A working with NO crew never appears in this list at all — every row has `workers > 0` — and
-`idle_workers` remains a BAND-level turn-orb row. `ATTENTION_OVERSTAFFED` is the opposite reading: a
+A working with NO crew never appears in this list as an idle-crew row — a row has `workers > 0`
+or hands walking home from it (below) — and `idle_workers` remains a BAND-level turn-orb row. `ATTENTION_OVERSTAFFED` is the opposite reading: a
 crew that IS here and is too big for the ground, which every web can answer per source. The design's
 idle-crew class had no shipped predicate; this one does.
+
+**A CREW-0 SOURCE WITH HANDS WALKING HOME KEEPS ITS ROW.** `compute_source_rows` admits an entry
+with `workers > 0` OR `HudWorkVocab.row_homeward_workers(entry) > 0`, and stamps
+`homeward_text` (`HudWorkVocab.row_homeward_line`, the work board row's own sentence). It drew no
+marker, so it reads `⚒0` and its leader line falls back to the hex centre. `BandSourceList` puts
+the walker line in the detail cell in `INK_DIM` where neither an attention clause nor a build
+countdown has taken it, and always carries it on the row's hover; in the 122px column it elides
+(`3 walking home wit…`), the whole line on the hover. `map_preview`'s `map_source_list_homeward`
+asserts the row, the cell's text and ink, and the hover.
 
 ### ⛔ A ROW'S `⚒N` AND ITS MARKER'S `⚒N` ARE ONE NUMBER, AND THE EXTRACTION ARM DID NOT FILL IT
 
@@ -975,6 +984,40 @@ the floor-alone reading asserted as the premise.
 
 
 ---
+
+## The selected band's ANCESTORS — anchor mark and reach outline (issue #699)
+
+`BandOverlayRenderer._draw_band_ancestors`, called from `draw_band_work_highlights` right after the
+range borders, so it draws only for the SELECTED PLAYER band (`_selected_player_band`) and never for a
+foreign one — whose redacted row carries no anchor anyway. A band whose `has_belief_anchor` is false
+draws nothing.
+
+- **The reach outline** is the PERIMETER of the tile set `belief_reach_x/y` (zipped packed arrays off
+  `PopulationCohortState.beliefReachX/Y`): every edge between a tile in the set and one outside it,
+  off-map counting as outside. The set is the sim's road-aware walk test, so it is irregular and is
+  traced from the set, never from a radius. Columns are drawn in the band's effective frame
+  (`_wrapped_col_delta`) and folded back with `posmod` for the membership test
+  (`_in_reach_region`), so the region stays contiguous across the wrap seam. Inside the outline the
+  band's `morale_culture` term is positive; outside it, negative.
+  The violet line (`ANCESTORS_REACH_WIDTH`) is drawn over a wider dark under-stroke
+  (`HudStyle.GROUND`, `ANCESTORS_REACH_UNDER_WIDTH`) — every edge's under-stroke first, then every
+  violet edge, so no under-stroke cuts a neighbouring edge's colour. The under-stroke carries it over
+  light ground (sand, snow); the violet's lightness carries it over dark (forest, water).
+- **The kin-relay outline** is a SECOND perimeter, of `belief_relay_reach_x/y` — the tiles OUTSIDE
+  the direct region from which the band would be tied in through its other kin. Same perimeter code
+  (`_reach_perimeter`) and the same violet, thinner and fainter (`ANCESTORS_RELAY_*`), and solid —
+  dashes mean a pending action on this map. Edges the relayed region shares with the direct one are
+  dropped from it (the direct set is passed as `skip`), and the direct outline is drawn after it, so a
+  shared border reads as the strong "near" line and the faint line marks only "near through kin".
+- **The anchor mark** (`_draw_ancestors_marker`) is the expedition marker's composite: a dark disc
+  (`HudStyle.GROUND`, a band token's radius) ringed in violet, with the `BeliefSprites.urn()` sprite
+  centred on it through `MapView._draw_marker_sprite`, sized at `ANCESTORS_SPRITE_FACTOR` of the disc's
+  diameter — the 24–41 px band the other map markers draw at. When the sprite does not load, the
+  violet `ANCESTORS_GLYPH` ⚱ is drawn on the same disc.
+- **Both ride `HudStyle.BELIEF`**, a light violet authored in every theme (ember `#bf86f2`, loam
+  `#b08cf5`, kiln `#c987ea`, console `#b679ff`) and read at the draw site so a theme swap re-tints
+  them. Purple is the ancestors' hue; no worked-source ring (green / red / slate), range border
+  (green / azure) or pending style (dashed amber) wears it.
 
 ## Worked-source marks — one ring grammar for both food webs
 

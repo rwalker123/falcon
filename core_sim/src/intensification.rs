@@ -3597,7 +3597,7 @@ pub struct LadderKnowledge {
     /// rungs' `earns_knowledge` *and* for every craft: a missing entry would make the pace whatever
     /// a fallback happened to be, which is the parked-`0` failure in a new costume.
     ///
-    /// All eight are **20** today, which is this slice's own pacing proof (`1.0 / 20` reproduces the
+    /// Every entry is **20** today, which is this slice's own pacing proof (`1.0 / 20` reproduces the
     /// retired `progress_per_turn` of `0.05` exactly). The spread — rung-3's lessons dearer, and
     /// `foddering` dearer again — is a later config-only slice.
     pub lesson_costs: BTreeMap<String, f32>,

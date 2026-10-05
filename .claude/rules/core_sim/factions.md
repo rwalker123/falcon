@@ -932,6 +932,7 @@ apply only where the row describes something that can be *seen*.
 | `intensificationKnowledge` | `snapshot/subsistence.rs` | **Viewer** |
 | `craftKnowledge` | `snapshot/crafting.rs` | **Viewer** |
 | `discoveryProgress` | `snapshot/knowledge.rs` | **Viewer** |
+| `contactLessons` | `snapshot/knowledge.rs` | **Viewer** — lessons whose *observer* people is the viewer's; the subject people is named whatever faction it is, on `connections`' exemption |
 | `discoveredSites` | `snapshot/knowledge.rs` | **Viewer** — the row is whose scouts have been there, not what is on the ground |
 | `greatDiscoveryProgress` | `great_discovery.rs` | **Viewer** — it carries `covert` and an ETA |
 | `greatDiscoveries` | `great_discovery.rs` | **Viewer + any record flagged `publicly_deployed`** — see the exemption below |

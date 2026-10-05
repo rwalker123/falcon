@@ -557,9 +557,7 @@ fn spawn_shipment(
                 cargo,
                 defection_pull: core_sim::Scalar::zero(),
             },
-            BandTravel {
-                target: destination_pos,
-            },
+            BandTravel::to(destination_pos),
         ))
         .id()
 }

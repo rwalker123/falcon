@@ -244,6 +244,43 @@ const TRAVEL_DEST_ALPHA := 0.85
 const TRAVEL_DEST_LINE_WIDTH := 2.0
 const TRAVEL_DEST_LINE_ALPHA := 0.6           # line reads fainter than the reticle
 const TRAVEL_DEST_RETICLE_FACTOR := 0.62      # reticle radius as a factor of hex radius
+# THE BAND'S ANCESTORS (issue #699): the selected player band's remembered belief place — where its
+# dead lie, the tile `morale_culture` is measured against — and the PERIMETER of its reach region
+# (`belief_reach_x/y`, every tile the band can stand on and still count as near its anchor). Inside
+# the strong outline the band is near; inside the faint one it is tied in through kin at reduced
+# strength. The region is road-aware and so irregular: the outline is traced from the tile SET,
+# never a radius.
+#
+# Both ride `HudStyle.BELIEF` — the ancestors' violet, a hue no worked-source mark (forage green,
+# hunt red, extraction slate), range border (green / azure) or pending style (dashed amber) wears —
+# read at the DRAW SITE for the theme reason above.
+#
+# THE OUTLINE is the violet line over a wider DARK under-stroke (`HudStyle.GROUND`), so it holds over
+# light ground (sand, snow) as well as dark (water, forest), where the violet alone carries it.
+const ANCESTORS_REACH_WIDTH := 4.0
+const ANCESTORS_REACH_ALPHA := 0.95
+const ANCESTORS_REACH_UNDER_WIDTH := 7.0
+const ANCESTORS_REACH_UNDER_ALPHA := 0.7
+# THE KIN RELAY's outline (`belief_relay_reach_x/y`, the tiles outside the direct region from which
+# the band is tied in through its kin): the same violet, thinner and fainter, so the two read as
+# "near" and "near through kin". Solid — a dashed line means a pending action on this map.
+const ANCESTORS_RELAY_WIDTH := 3.0
+const ANCESTORS_RELAY_ALPHA := 0.7
+const ANCESTORS_RELAY_UNDER_WIDTH := 5.5
+const ANCESTORS_RELAY_UNDER_ALPHA := 0.5
+# THE ANCHOR MARKER is the `BeliefSprites` urn at true marker size, on a dark backing disc ringed in
+# violet — the expedition marker's composite (`BandMarkerRenderer._draw_expedition_body`), so it reads
+# over any terrain. The disc is a band token's radius and the sprite spans `ANCESTORS_SPRITE_FACTOR`
+# of the disc's DIAMETER, which lands the urn in the 24–41 px band the other map markers draw at.
+# `ANCESTORS_GLYPH` in violet is the fallback when the sprite does not load.
+const ANCESTORS_GLYPH := "⚱"
+const ANCESTORS_DISC_FACTOR := 0.34           # disc radius, of hex radius (= BAND_TOKEN_RADIUS_FACTOR)
+const ANCESTORS_DISC_ALPHA := 0.55
+const ANCESTORS_RING_WIDTH := 2.0
+const ANCESTORS_SPRITE_FACTOR := 0.95         # sprite size, of the disc's diameter
+const ANCESTORS_SPRITE_MIN_SIZE := 12.0       # px
+const ANCESTORS_GLYPH_FONT_FACTOR := 1.4      # of disc diameter — the ⚱ sits small in its em box
+const ANCESTORS_GLYPH_FONT_MIN := 14
 
 var _view: MapView = null
 # Optimistic pending-labor map (per band entity), pushed from the HUD via set_labor_pending.
@@ -909,6 +946,10 @@ func draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 	if scout_reveal_radius > 0:
 		_draw_range_border(eff_col, band_row, scout_reveal_radius, SCOUT_RANGE_OUTLINE, SCOUT_RANGE_OUTLINE_WIDTH, radius, origin)
 
+	# 1b. The band's ancestors: the reach-region perimeter and the anchor mark (nothing without an
+	#     anchor). Drawn under the source rows / pending / travel layers that follow.
+	_draw_band_ancestors(band, band_col, eff_col, radius, origin)
+
 	# 2. THE SOURCE ROWS — the model behind the docked `BandSourceList` (issue #650), one entry per
 	#    staffed source across all three webs. The rates left the map: a pill is ~90px and two markers
 	#    in one hex's edge slots sit ~55px apart, so a rate could not live above its own marker.
@@ -965,8 +1006,8 @@ func source_total_text() -> String:
 ## never be the row that got cut.**
 ##
 ## ⛔ **THERE IS STILL NO "NOBODY IS ON IT" CLASS, AND `ATTENTION_OVERSTAFFED` IS NOT IT.** A working
-## with NO crew (`HudDepositVocab.DEPOSIT_RUNWAY_IDLE`) by construction never appears in this list,
-## every row having `workers > 0`, and `idle_workers` is a BAND-level turn-orb row. The class below is
+## with NO crew (`HudDepositVocab.DEPOSIT_RUNWAY_IDLE`) never appears in this list as an idle-crew
+## row — a row has `workers > 0` or hands walking home from it — and `idle_workers` is a BAND-level turn-orb row. The class below is
 ## the opposite reading — a crew that IS here and is bigger than its source can use — which every web
 ## can answer per source. **What the retired note said was that the design's idle-crew class had no
 ## shipped predicate; this one has, and it is `SourceForecast.crew_is_wasted`.**
@@ -1027,7 +1068,10 @@ func compute_source_rows(radius: float, origin: Vector2) -> Array[Dictionary]:
 		if not (entry_variant is Dictionary):
 			continue
 		var entry: Dictionary = entry_variant
-		if int(entry.get("workers", 0)) <= 0:
+		# **A CREW-0 ROW WITH HANDS STILL WALKING HOME FROM IT KEEPS ITS ROW** — the source the player
+		# just unassigned states where those hands are (`HudWorkVocab.row_homeward_line`) until the last
+		# is back. It drew no marker, so its leader line falls back to the hex centre (`_label_anchor`).
+		if int(entry.get("workers", 0)) <= 0 and HudWorkVocab.row_homeward_workers(entry) <= 0:
 			continue
 		var kind := String(entry.get("kind", "")).strip_edges().to_lower()
 		# **WHICH ACCOUNT'S ZERO THIS ROW MAY PRINT**, resolved once for every arm off the SHARED seam
@@ -1210,6 +1254,8 @@ func _source_row(key: String, tile: Vector2i, anchor: Vector2, face: Dictionary,
 		"rate_text": rate_text,
 		"overdraw": overdraw,
 		"build_text": String(badge.get("build_text", "")),
+		# The hands walking home from this source, `""` while nobody is — the work board row's own line.
+		"homeward_text": HudWorkVocab.row_homeward_line(entry),
 		"attention": attention,
 		"attention_text": attention_text,
 		# **THE SORT KEY IS THE FIGURE THE ROW HEADLINES, not a second reading of the entry.** It was
@@ -1464,6 +1510,94 @@ func _draw_travel_destination(unit: Dictionary, band_col: int, band_row: int, ef
 	# Reticle marks the destination hex; no pulse (this is a steady, confirmed heading, unlike the
 	# animated targeting reticle).
 	_view._draw_reticle(dest_center, radius * TRAVEL_DEST_RETICLE_FACTOR, dest_color, 1.0)
+
+## THE BAND'S ANCESTORS — the reach-region PERIMETER (every edge between a tile in
+## `belief_reach_x/y` and one outside it, off-map counting as outside) and the anchor glyph, both in
+## the band's effective column frame so the region stays contiguous across the wrap seam. Nothing for
+## a band with no anchor; a foreign band never reaches here (`_selected_player_band`), and its
+## redacted row carries no anchor anyway.
+func _draw_band_ancestors(band: Dictionary, band_col: int, eff_col: int, radius: float, origin: Vector2) -> void:
+	if not bool(band.get("has_belief_anchor", false)):
+		return
+	var direct := _tile_set(band, "belief_reach_x", "belief_reach_y")
+	var relayed := _tile_set(band, "belief_relay_reach_x", "belief_relay_reach_y")
+	# THE RELAYED REGION FIRST, fainter, and WITHOUT the edges it shares with the direct region — those
+	# are the direct region's boundary, drawn strong on top, so a shared border reads as "near".
+	_draw_reach_outline(_reach_perimeter(relayed, direct, band_col, eff_col, radius, origin),
+		Color(HudStyle.BELIEF, ANCESTORS_RELAY_ALPHA), ANCESTORS_RELAY_WIDTH,
+		Color(HudStyle.GROUND, ANCESTORS_RELAY_UNDER_ALPHA), ANCESTORS_RELAY_UNDER_WIDTH)
+	_draw_reach_outline(_reach_perimeter(direct, {}, band_col, eff_col, radius, origin),
+		Color(HudStyle.BELIEF, ANCESTORS_REACH_ALPHA), ANCESTORS_REACH_WIDTH,
+		Color(HudStyle.GROUND, ANCESTORS_REACH_UNDER_ALPHA), ANCESTORS_REACH_UNDER_WIDTH)
+	var anchor_y := int(band.get("belief_anchor_y", 0))
+	if anchor_y < 0 or anchor_y >= _view.grid_height:
+		return
+	var anchor_col := eff_col + _view._wrapped_col_delta(band_col, int(band.get("belief_anchor_x", 0)))
+	_draw_ancestors_marker(_view._hex_center(anchor_col, anchor_y, radius, origin), radius)
+
+## A zipped x/y tile list off the band as a `Vector2i → true` set.
+func _tile_set(band: Dictionary, x_key: String, y_key: String) -> Dictionary:
+	var xs: PackedInt32Array = PackedInt32Array(band.get(x_key, PackedInt32Array()))
+	var ys: PackedInt32Array = PackedInt32Array(band.get(y_key, PackedInt32Array()))
+	var tiles := {}
+	for i in range(mini(xs.size(), ys.size())):
+		tiles[Vector2i(xs[i], ys[i])] = true
+	return tiles
+
+## The PERIMETER of a tile set as line segments: every edge between a tile in `region` and one outside
+## it (off-map counts as outside), in the band's effective column frame. An edge whose outside tile is
+## in `skip` is left out — the relayed outline passes the direct region here, whose boundary it shares.
+func _reach_perimeter(region: Dictionary, skip: Dictionary, band_col: int, eff_col: int,
+		radius: float, origin: Vector2) -> Array[PackedVector2Array]:
+	var edges: Array[PackedVector2Array] = []
+	for tile in region.keys():
+		var row: int = tile.y
+		var col: int = eff_col + _view._wrapped_col_delta(band_col, tile.x)
+		var axial := _view._offset_to_axial(col, row)
+		var pts := _view._hex_points(_view._hex_center(col, row, radius, origin), radius)
+		for edge in range(6):
+			var d: Vector2i = RANGE_BORDER_EDGE_AXIAL[edge]
+			var noff := _view._axial_to_offset(axial.x + d.x, axial.y + d.y)
+			if _in_reach_region(region, noff.x, noff.y) or _in_reach_region(skip, noff.x, noff.y):
+				continue
+			edges.append(PackedVector2Array([pts[edge], pts[(edge + 1) % 6]]))
+	return edges
+
+## One outline: the whole dark under-stroke first, then the whole violet line — drawn edge by edge,
+## one edge's under-stroke would cut the violet of the edge before it.
+func _draw_reach_outline(edges: Array[PackedVector2Array], color: Color, width: float,
+		under: Color, under_width: float) -> void:
+	for seg in edges:
+		_view.draw_line(seg[0], seg[1], under, under_width, true)
+	for seg in edges:
+		_view.draw_line(seg[0], seg[1], color, width, true)
+
+## The belief place's MARKER: dark disc, violet ring, then the `BeliefSprites` urn — or the violet ⚱
+## glyph when the sprite does not load.
+func _draw_ancestors_marker(center: Vector2, radius: float) -> void:
+	var disc_radius := radius * ANCESTORS_DISC_FACTOR
+	_view.draw_circle(center, disc_radius, Color(HudStyle.GROUND, ANCESTORS_DISC_ALPHA))
+	_view.draw_arc(center, disc_radius, 0.0, TAU, WORKED_RING_SEGMENTS, HudStyle.BELIEF,
+		ANCESTORS_RING_WIDTH, true)
+	var urn := BeliefSprites.urn()
+	if urn != null:
+		_view._draw_marker_sprite(center, urn,
+			int(maxf(ANCESTORS_SPRITE_MIN_SIZE, disc_radius * 2.0 * ANCESTORS_SPRITE_FACTOR)))
+		return
+	_view._draw_marker_glyph(center, ANCESTORS_GLYPH,
+		maxi(ANCESTORS_GLYPH_FONT_MIN, int(round(disc_radius * 2.0 * ANCESTORS_GLYPH_FONT_FACTOR))),
+		HudStyle.BELIEF)
+
+## Membership in the ancestors' reach region for a tile given in the band's EFFECTIVE column frame:
+## the column is folded back onto the map (wrap) before the lookup, and an off-map tile is outside.
+func _in_reach_region(region: Dictionary, col: int, row: int) -> bool:
+	if row < 0 or row >= _view.grid_height:
+		return false
+	if _view._wrap_horizontal and _view.grid_width > 0:
+		col = posmod(col, _view.grid_width)
+	elif col < 0 or col >= _view.grid_width:
+		return false
+	return region.has(Vector2i(col, row))
 
 ## A dashed line a→b (used for pending links). `dash`/`gap` are pixel lengths.
 func _draw_dashed_line(a: Vector2, b: Vector2, color: Color, width: float, dash: float, gap: float) -> void:

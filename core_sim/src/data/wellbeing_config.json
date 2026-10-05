@@ -18,6 +18,19 @@
     "min_morale_gap": 0.05,
     "dependent_weight": 0.4
   },
+  "culture": {
+    "_comment": "Near / far from the ancestors (docs/plan_civilization_steps.md 'What belief does, through seams that exist'; .claude/rules/core_sim/belief.md 'The culture morale term'). Each band remembers one belief tile, its anchor. With b = the anchor's belief, s = b / (b + belief_half_saturation) and r the band's kin-relay strength, the morale term is s x (r x near_bonus - (1 - r) x away_drag): r = 1 while the band stands within its own walking reach of the anchor (migration.base_reach, lengthened by roads exactly as migration's reach is), giving +near_bonus x s; r = relay_per_hop^n when n bands of its own people tie it in, giving the blend; r = 0 when nothing reaches it, giving -away_drag x s; 0 with no anchor. The drag does not grow with distance. PLAYTEST DIALs.",
+    "_comment_near_bonus": "Morale per turn gained at full strength (r = 1, standing within the band's own reach) of a saturated anchor; scaled by r when kin tie the band in. PLAYTEST DIAL.",
+    "near_bonus": 0.01,
+    "_comment_away_drag": "Morale per turn lost when nothing ties the band to a saturated anchor (r = 0); scaled by 1 - r when kin tie it in. PLAYTEST DIAL.",
+    "away_drag": 0.02,
+    "_comment_belief_half_saturation": "Belief at which the anchor weighs one half. Belief is in dead-equivalents, so 10 = ten people's worth of ancestors: a single death barely registers and a great cemetery caps the term. Must be > 0. PLAYTEST DIAL.",
+    "belief_half_saturation": 10.0,
+    "_comment_min_anchor_belief": "The least belief a place must hold before a band adopts it as its anchor - one whole death's worth at 1.0 (belief is in dead-equivalents). Belief accrues FRACTIONAL deaths every turn, so without this gate every band would anchor to its start tile on turn one. Gates adoption only; accrual is unchanged, so a tile can still read under one dead. Must be finite and >= 0. PLAYTEST DIAL.",
+    "min_anchor_belief": 1.0,
+    "_comment_relay_per_hop": "How much of the ancestors' reach each hop of KIN relays. A band of the same people within walking reach of a band that is near is itself near at this strength, and each further hop multiplies by it again (no hop cap - it dies out). The term blends near and far by that strength r: s x (r x near_bonus - (1 - r) x away_drag), so r = 1 (direct) and r = 0 (unreached) are the two plain values. Same people and resident bands only; relaying never adopts a place. Must be finite and in [0, 1]; 0 turns relaying off. PLAYTEST DIAL.",
+    "relay_per_hop": 0.5
+  },
   "independence": {
     "grievance_threshold": 1.0
   }

@@ -319,7 +319,13 @@ pub fn split_band_from_parent(
     child.last_morale_delta = scalar_zero();
     child.last_morale_cause = MoraleCause::default();
     child.last_morale_contributions = MoraleContributions::default();
+    child.last_belief_relay_hops = crate::belief_relay::DIRECT_HOPS as u8;
+    // `belief_anchor` is deliberately NOT reset: the splinter is the same people with the same dead,
+    // so it remembers the parent's ancestors' place (`belief.md` → "The culture morale term").
     child.last_fertility_factors = crate::components::FertilityFactors::default();
+    // The parent's breeding population is not the splinter's until a turn says which network it is
+    // in; it reads "no reading yet" until then, like the fertility factors above.
+    child.last_breeding = crate::lineage::BreedingReading::default();
     child.discontent_fraction = scalar_zero();
     child.last_emigrated = 0;
     child.last_immigrated = 0;

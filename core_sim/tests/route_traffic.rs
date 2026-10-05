@@ -97,6 +97,12 @@ fn spawn_world() -> App {
     // The movement pass reads `band_move_tiles_per_turn` off it — a marching party is the second
     // source of route traffic.
     app.world.insert_resource(LaborConfigHandle::default());
+    // …and a resident band's departure on a long move sheds to its carry there, which reads the
+    // pack config and files its `left_behind` line on the event log.
+    app.world
+        .insert_resource(core_sim::ExpeditionConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::CommandEventLog::default());
 
     app.add_systems(bevy::app::Startup, spawn_initial_world);
     app.update();
@@ -132,6 +138,7 @@ fn spawn_band(app: &mut App, (x, y): (u32, u32), food: i64) -> Entity {
                 last_morale_cause: MoraleCause::None,
                 last_morale_contributions: Default::default(),
                 last_fertility_factors: Default::default(),
+                last_breeding: Default::default(),
                 discontent_fraction: scalar_zero(),
                 grievance: scalar_zero(),
                 last_emigrated: 0,
@@ -144,6 +151,8 @@ fn spawn_band(app: &mut App, (x, y): (u32, u32), food: i64) -> Entity {
                     core_sim::BandId(0),
                     core_sim::MIN_BAND_LINES,
                 ),
+                belief_anchor: None,
+                last_belief_relay_hops: 0,
             },
             ResidentBand,
             BandId(NEXT_TEST_BAND_ID.fetch_add(1, Ordering::Relaxed)),
@@ -1120,7 +1129,7 @@ fn a_marching_band_wears_its_journey_in_on_the_next_turn_and_banks_it_once() {
     let band = spawn_band(&mut app, CAMP_A, 100);
     let from = position_of(&app, band);
     let to = UVec2::new(CAMP_A.0 + 1, CAMP_A.1);
-    app.world.entity_mut(band).insert(BandTravel { target: to });
+    app.world.entity_mut(band).insert(BandTravel::to(to));
 
     // Turn 1 — Logistics finds an empty log; the march is recorded afterwards, in Population.
     resolve_turn(&mut app);

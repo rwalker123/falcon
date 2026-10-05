@@ -75,6 +75,13 @@ pub struct SnapshotContext<'w> {
     /// The directed ties contact left behind. Published filtered to the viewer's own edges; the
     /// checkpoint carries the ledger itself.
     pub connections: Res<'w, crate::connections::ConnectionLedger>,
+    /// The knowledge-tag table — each teachable discovery's id and `observability`, read for the
+    /// knowledge rider's readout (`crate::knowledge_contact`). `Option` on `faction_names`' rule; a
+    /// hand-rolled capture world reads the builtin.
+    pub knowledge_tags: Option<Res<'w, crate::start_profile::StartProfileKnowledgeTagsHandle>>,
+    /// The knowledge rider's channel rates. `Option` for the same reason.
+    pub knowledge_contact:
+        Option<Res<'w, crate::knowledge_contact_config::KnowledgeContactConfigHandle>>,
     /// Every road in the world. Published filtered to the roads the viewer has explored; the
     /// checkpoint carries the ledger itself.
     pub roads: Res<'w, crate::routes::RoadRegistry>,
@@ -278,6 +285,7 @@ pub(crate) struct SeatPublishState {
     sedentarization: Whole<Vec<SchemaSedentarizationState>>,
     discovered_sites: Whole<Vec<SchemaDiscoveredSitesState>>,
     connections: Whole<Vec<ConnectionState>>,
+    contact_lessons: Whole<Vec<ContactLessonState>>,
     routes: Whole<Vec<RouteState>>,
     demographics: Whole<Vec<SchemaPopulationDemographicsState>>,
     forage_patches: Whole<Vec<ForagePatchState>>,
@@ -645,6 +653,7 @@ struct CampaignParts {
     sedentarization: Option<Vec<SchemaSedentarizationState>>,
     discovered_sites: Option<Vec<SchemaDiscoveredSitesState>>,
     connections: Option<Vec<ConnectionState>>,
+    contact_lessons: Option<Vec<ContactLessonState>>,
     routes: Option<Vec<RouteState>>,
     demographics: Option<Vec<SchemaPopulationDemographicsState>>,
     intensification_knowledge: Option<Vec<IntensificationKnowledgeState>>,
@@ -668,6 +677,7 @@ struct CampaignBaselines<'a> {
     sedentarization: &'a mut Whole<Vec<SchemaSedentarizationState>>,
     discovered_sites: &'a mut Whole<Vec<SchemaDiscoveredSitesState>>,
     connections: &'a mut Whole<Vec<ConnectionState>>,
+    contact_lessons: &'a mut Whole<Vec<ContactLessonState>>,
     routes: &'a mut Whole<Vec<RouteState>>,
     demographics: &'a mut Whole<Vec<SchemaPopulationDemographicsState>>,
     intensification_knowledge: &'a mut Whole<Vec<IntensificationKnowledgeState>>,
@@ -706,6 +716,7 @@ fn diff_campaign(
         sedentarization: diff_whole(baseline.sedentarization, &snapshot.sedentarization, write),
         discovered_sites: diff_whole(baseline.discovered_sites, &snapshot.discovered_sites, write),
         connections: diff_whole(baseline.connections, &snapshot.connections, write),
+        contact_lessons: diff_whole(baseline.contact_lessons, &snapshot.contact_lessons, write),
         routes: diff_whole(baseline.routes, &snapshot.routes, write),
         demographics: diff_whole(baseline.demographics, &snapshot.demographics, write),
         intensification_knowledge: diff_whole(
@@ -930,6 +941,7 @@ impl SeatPublishState {
             sedentarization: Whole::default(),
             discovered_sites: Whole::default(),
             connections: Whole::default(),
+            contact_lessons: Whole::default(),
             routes: Whole::default(),
             demographics: Whole::default(),
             forage_patches: Whole::default(),
@@ -1095,6 +1107,7 @@ impl SeatPublishState {
             sedentarization,
             discovered_sites,
             connections,
+            contact_lessons,
             routes,
             demographics,
             intensification_knowledge,
@@ -1213,6 +1226,7 @@ impl SeatPublishState {
                             sedentarization,
                             discovered_sites,
                             connections,
+                            contact_lessons,
                             routes,
                             demographics,
                             intensification_knowledge,
@@ -1320,6 +1334,7 @@ impl SeatPublishState {
             sedentarization: campaign_parts.sedentarization,
             discovered_sites: campaign_parts.discovered_sites,
             connections: campaign_parts.connections,
+            contact_lessons: campaign_parts.contact_lessons,
             routes: campaign_parts.routes,
             demographics: campaign_parts.demographics,
             intensification_knowledge: campaign_parts.intensification_knowledge,
@@ -1522,6 +1537,8 @@ impl SeatPublishState {
         self.discovered_sites
             .reset(entry.snapshot.discovered_sites.clone());
         self.connections.reset(entry.snapshot.connections.clone());
+        self.contact_lessons
+            .reset(entry.snapshot.contact_lessons.clone());
         self.routes.reset(entry.snapshot.routes.clone());
         self.demographics.reset(entry.snapshot.demographics.clone());
         self.forage_patches
@@ -1751,6 +1768,7 @@ impl SeatPublishState {
             sedentarization: None,
             discovered_sites: None,
             connections: None,
+            contact_lessons: None,
             routes: None,
             demographics: None,
             forage_patches: None,
@@ -1898,6 +1916,7 @@ impl SeatPublishState {
             sedentarization: None,
             discovered_sites: None,
             connections: None,
+            contact_lessons: None,
             routes: None,
             demographics: None,
             forage_patches: None,
@@ -2029,6 +2048,7 @@ impl SeatPublishState {
             sedentarization: None,
             discovered_sites: None,
             connections: None,
+            contact_lessons: None,
             routes: None,
             demographics: None,
             forage_patches: None,
@@ -2552,6 +2572,9 @@ pub fn capture_snapshot(
     gds: GreatDiscoverySnapshotParam,
     culture: Res<CultureManager>,
     mut history: ResMut<SnapshotHistory>,
+    // **Who relays the ancestors' reach** — resident bands only, `simulate_population`'s own filter,
+    // so a detached party in `populations` is never a relayer.
+    resident_bands: Query<Entity, With<crate::components::ResidentBand>>,
 ) {
     // Whole-capture profiling. `snapshot.build` covers assembling the `WorldSnapshot` and CONTAINS
     // its `snapshot.build.*` sub-scopes — the profiler's labels nest flat, so a parent includes its
@@ -2595,6 +2618,8 @@ pub fn capture_snapshot(
         capability_flags,
         visibility_ledger,
         connections,
+        knowledge_tags,
+        knowledge_contact,
         roads,
         deposits,
         extraction,
@@ -2846,6 +2871,53 @@ pub fn capture_snapshot(
             .as_deref()
             .map(|handle| handle.get())
             .unwrap_or_else(crate::supply_network_config::SupplyNetworkConfig::builtin);
+        // **How far a band's people walk** — the one `WalkReach` the culture morale term and
+        // migration read, built here from the same levers so each band's published anchor reach
+        // region is exactly the set of tiles that term would call near.
+        let walk = crate::supply::WalkReach::for_people(
+            wellbeing_config.migration.base_reach,
+            &supply_network_cfg,
+            &ladder_config,
+            tile_registry.width,
+            tile_registry.height,
+            config.map_topology.wrap_horizontal,
+        );
+        // **Kin relay the reach** — the ONE relay search (`crate::belief_relay`) over every resident
+        // band, in the order `simulate_population` hands it, struck on THIS frame's positions for the
+        // relayed region each own band publishes. The hop count is not read off it: the frame
+        // publishes the one the turn's term was priced from (`last_belief_relay_hops`).
+        let (belief_relay, relay_index) = {
+            let mut input: Vec<((u64, u64), Entity, crate::belief_relay::RelayBand)> = populations
+                .iter()
+                .filter(|(entity, ..)| resident_bands.contains(*entity))
+                .filter_map(|(entity, cohort, _, _, _, band_id, _, _, _)| {
+                    let standing = tile_positions
+                        .get(&cohort.current_tile.to_bits())
+                        .copied()?;
+                    Some((
+                        crate::belief_relay::relay_order_key(band_id.copied(), entity),
+                        entity,
+                        crate::belief_relay::RelayBand {
+                            faction: cohort.faction,
+                            standing,
+                            anchor: cohort.belief_anchor,
+                        },
+                    ))
+                })
+                .collect();
+            input.sort_by_key(|(key, _, _)| *key);
+            let bands: Vec<crate::belief_relay::RelayBand> =
+                input.iter().map(|(_, _, band)| *band).collect();
+            let index: HashMap<Entity, usize> = input
+                .iter()
+                .enumerate()
+                .map(|(index, (_, entity, _))| (*entity, index))
+                .collect();
+            (
+                crate::belief_relay::resolve_belief_relay(&bands, &walk, &roads),
+                index,
+            )
+        };
         let fauna_config = fauna.get();
         // **The minimal TOE levers**, resolved once for every cohort: the kit table plus the two
         // *equipped* tiers that live outside `equipment.json` (one home per fact) — the bare-handed
@@ -3046,7 +3118,33 @@ pub fn capture_snapshot(
                         .map(|alloc| alloc.workers_on(&LaborTarget::Scout))
                         .unwrap_or(0);
                     let scout_vantage_distance = labor_config.scout.vantage_distance(scout_workers);
+                    // Derived, never checkpointed: a road built, an anchor moved or a kin band
+                    // walked off is re-read here on the next capture and rides that frame's delta.
+                    let belief_reach: Vec<UVec2> = cohort
+                        .belief_anchor
+                        .map(|anchor| walk.region_around(&roads, anchor))
+                        .unwrap_or_default();
+                    // The relayed REGION is "where could this band walk NOW and be tied in", so it
+                    // is struck on the frame's positions; the hop count is the turn's own reading
+                    // off the cohort, never recounted here.
+                    let belief_relay_region: Vec<UVec2> = match relay_index.get(&entity) {
+                        Some(&index) if cohort.belief_anchor.is_some() => {
+                            let direct: std::collections::BTreeSet<(u32, u32)> =
+                                belief_reach.iter().map(|tile| (tile.y, tile.x)).collect();
+                            let region: std::collections::BTreeSet<(u32, u32)> = belief_relay
+                                .relayers_without(index, &walk, &roads)
+                                .into_iter()
+                                .flat_map(|relayer| walk.region_around(&roads, relayer))
+                                .map(|tile| (tile.y, tile.x))
+                                .filter(|key| !direct.contains(key))
+                                .collect();
+                            region.into_iter().map(|(y, x)| UVec2::new(x, y)).collect()
+                        }
+                        _ => Vec::new(),
+                    };
                     Some(population_state(PopulationStateInputs {
+                        belief_reach,
+                        belief_relay_region,
                         entity,
                         band_id,
                         band_name,
@@ -3584,6 +3682,53 @@ pub fn capture_snapshot(
             .collect();
         let connections_state =
             crate::snapshot::connections::connection_states(&connections, &band_factions, viewer);
+        // **What the viewer's people is learning by contact** — the knowledge rider's own rule,
+        // evaluated here off the same checkpointed inputs the turn system reads, so a loaded world's
+        // first frame carries it with no derived resource to go missing
+        // (`crate::knowledge_contact` → "One rule, two callers").
+        let contact_lessons_state = crate::snapshot::knowledge::contact_lesson_states(
+            &crate::snapshot::knowledge::ContactLessonInputs {
+                bands: populations
+                    .iter()
+                    .filter_map(|(_, cohort, _, _, _, band_id, _, _, _)| {
+                        band_id.map(|band| crate::knowledge_contact::ContactBand {
+                            band: *band,
+                            faction: cohort.faction,
+                            tile: tiles
+                                .get(cohort.current_tile)
+                                .ok()
+                                .map(|(_, tile, _)| tile.position),
+                        })
+                    })
+                    .collect(),
+                landings: populations
+                    .iter()
+                    .flat_map(|(_, cohort, _, _, _, band_id, _, _, _)| {
+                        band_id.into_iter().flat_map(|band| {
+                            crate::knowledge_contact::trade_landings(
+                                *band,
+                                &cohort.last_turn_transfer_crossings,
+                            )
+                        })
+                    })
+                    .collect(),
+                connections: &connections,
+                roads: &roads,
+                progress: &discovery_progress,
+                tags: knowledge_tags
+                    .as_deref()
+                    .map(|handle| handle.get())
+                    .unwrap_or_else(crate::start_profile::StartProfileKnowledgeTags::builtin),
+                knowledge: &ladder_config.knowledge,
+                config: knowledge_contact
+                    .as_deref()
+                    .map(|handle| handle.get())
+                    .unwrap_or_else(
+                        crate::knowledge_contact_config::KnowledgeContactConfig::builtin,
+                    ),
+            },
+            viewer,
+        );
         // **THE ROADS THE VIEWER HAS EXPLORED** — fog-gated on `Discovered` rather than the herd list's
         // `Active`, because a road does not wander off. See `snapshot::routes::route_states`.
         let route_states = crate::snapshot::routes::route_states(
@@ -3787,6 +3932,7 @@ pub fn capture_snapshot(
             sedentarization: sedentarization_state.clone(),
             discovered_sites: discovered_sites_state.clone(),
             connections: connections_state.clone(),
+            contact_lessons: contact_lessons_state,
             routes: route_states.clone(),
             demographics: demographics_state.clone(),
             forage_patches: forage_patches_state.clone(),

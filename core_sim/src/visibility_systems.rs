@@ -1289,6 +1289,7 @@ mod tests {
                     last_morale_cause: MoraleCause::None,
                     last_morale_contributions: MoraleContributions::default(),
                     last_fertility_factors: Default::default(),
+                    last_breeding: Default::default(),
                     discontent_fraction: scalar_zero(),
                     grievance: scalar_zero(),
                     last_emigrated: 0,
@@ -1301,6 +1302,8 @@ mod tests {
                         crate::components::BandId(0),
                         crate::lineage::MIN_BAND_LINES,
                     ),
+                    belief_anchor: None,
+                    last_belief_relay_hops: 0,
                 },
                 StartingUnit::new("BandScout".to_string(), vec![]),
                 allocation,
@@ -1395,6 +1398,7 @@ mod tests {
                 last_morale_cause: MoraleCause::None,
                 last_morale_contributions: MoraleContributions::default(),
                 last_fertility_factors: Default::default(),
+                last_breeding: Default::default(),
                 discontent_fraction: scalar_zero(),
                 grievance: scalar_zero(),
                 last_emigrated: 0,
@@ -1407,6 +1411,8 @@ mod tests {
                     crate::components::BandId(0),
                     crate::lineage::MIN_BAND_LINES,
                 ),
+                belief_anchor: None,
+                last_belief_relay_hops: 0,
             },
             // BandCrafter: base_range 2, so the band center can't reveal the far worked tiles.
             StartingUnit::new("BandCrafter".to_string(), vec![]),
@@ -1903,6 +1909,7 @@ mod hex_sight_range_tests {
             last_morale_cause: MoraleCause::None,
             last_morale_contributions: MoraleContributions::default(),
             last_fertility_factors: Default::default(),
+            last_breeding: Default::default(),
             discontent_fraction: scalar_zero(),
             grievance: scalar_zero(),
             last_emigrated: 0,
@@ -1915,6 +1922,8 @@ mod hex_sight_range_tests {
                 crate::components::BandId(0),
                 crate::lineage::MIN_BAND_LINES,
             ),
+            belief_anchor: None,
+            last_belief_relay_hops: 0,
         }
     }
 

@@ -561,24 +561,30 @@ which is a property of the tier and not of the merge.
   stash-then-tint pattern as the Food row, using `_selected_band_morale`).
 - **Morale trend + named cause** (snapshot `PopulationCohortState.moraleDelta` / `moraleCause`, decoded in
   `native/src/lib.rs` `population_to_dict` as `morale_delta` (raw Scalar/1e6, signed) / `morale_cause`
-  (int; `0=None,1=Terrain,2=Cold,3=Unrest`), flowed into the MapView unit marker): "low morale" named the
+  (int; `0=None,1=Terrain,2=Cold,3=Unrest,4=Culture`), flowed into the MapView unit marker): "low morale" named the
   symptom, not the cause — the morale drivers live server-side and were discarded each turn until the
   cohort started exporting the per-turn trend + dominant negative driver. `Hud._band_morale_line` appends
   a trend arrow (`▼` falling / `▲` rising / none when `|morale_delta| < MORALE_TREND_EPSILON`) and, when
   falling, the plain-language cause via `_morale_cause_label` — `Terrain`→"harsh terrain", `Cold`→"harsh
   climate" (the server penalty fires on hot **or** cold deviation, so not literally "cold"),
-  `Unrest`→"unrest". `Terrain` appends the band's `_selected_tile_info.terrain_label` in parens
+  `Unrest`→"unrest", `Culture`→"far from the ancestors" (`DetailFormat.MORALE_CAUSE_CULTURE` /
+  `MORALE_CAUSE_LABEL_CULTURE`: the band stands beyond walking reach of the belief place it remembers).
+  Every surface that names a cause — this headline, the faction morale rollup, the turn orb's
+  `AttentionController._decline_reason` — reads it through the one `DetailFormat.morale_cause_label`.
+  `Terrain` appends the band's `_selected_tile_info.terrain_label` in parens
   (`Morale: 22% ▼ — harsh terrain (Karst Cavern Mouth)`) — the "it's the hex you're on" payload. A
   band that has not ticked yet reports `morale_delta 0 / cause None` and the row degrades to a bare
   percentage. **That is not a rollback case** — the checkpoint clones `PopulationCohort` whole, so a
   restored band keeps its delta and cause; the sentinel answers for a cohort no turn has resolved.
 - **Civilization Wellbeing — productivity, itemized morale, recovery** (see
   `docs/plan_civ_wellbeing.md`; snapshot `PopulationCohortState.outputMultiplier` /
-  `discontentFraction` / `lastEmigrated` / `lastImmigrated` / `grievance` + the four signed
-  Layer-1 contributions `moraleSettling` / `moraleTerrain` / `moraleClimate` / `moraleUnrest`,
+  `discontentFraction` / `lastEmigrated` / `lastImmigrated` / `grievance` + the five signed
+  Layer-1 contributions `moraleSettling` / `moraleTerrain` / `moraleClimate` / `moraleUnrest` /
+  `moraleCulture`,
   decoded in `native/src/lib.rs population_to_dict` as `output_multiplier` / `discontent_fraction`
   / `last_emigrated` / `last_immigrated` / `grievance` (telemetry only, not displayed in P1) /
-  `morale_settling` / `morale_terrain` / `morale_climate` / `morale_unrest`, all flowed onto the
+  `morale_settling` / `morale_terrain` / `morale_climate` / `morale_unrest` / `morale_culture`, all
+  flowed onto the
   MapView unit marker in `_rebuild_unit_markers`). Player-band drawer only (`_unit_summary_lines`):
   - **Productivity is NOT a detail row — it reads on the Band panel's WORK zone head** as
     `Output 62%`, still only when `output_multiplier < OUTPUT_FULL` (1.0) and still graded ink →
@@ -596,11 +602,27 @@ which is a property of the tier and not of the merge.
     renderer's `"Output"` tint branch and `hex_for_output` itself all went with the row — no emitter
     or caller survived — so nothing in the detail path carries the scalar any more. The head item's placement, gate and vocabulary are
     specified in `band-city-panel.md` → Zone `work`.
-  - **Itemized morale breakdown** (`_morale_breakdown_lines`): the four signed contributions
+  - **Itemized morale breakdown** (`_morale_breakdown_lines`): the five signed contributions
     (their sum IS `morale_delta`) as indented sub-lines (e.g. `    ▲ +1.0%  settling`). Only
     contributions above `BandFoodStatus.morale_breakdown_epsilon()` (config `morale.breakdown_epsilon`
     = `0.002`) list. Labels: `settling`, `harsh terrain (<terrain_label>)` (matches the headline cause
-    treatment), `harsh climate`, and `unrest`/`culture` by sign. `DetailFormat.detail_bbcode` tints each
+    treatment), `harsh climate`, `unrest`/`culture` by sign, and the culture term `morale_culture` as
+    `near the ancestors` (positive, `BandDetailLines.MORALE_CONTRIB_LABEL_ANCESTORS_NEAR`) / `far from
+    the ancestors (x, y)` (negative, `DetailFormat.MORALE_CAUSE_LABEL_CULTURE` plus the band's belief
+    anchor in the `Position` row's coordinate form, `MORALE_CONTRIB_ANCESTORS_FAR_FORMAT`, read off
+    `has_belief_anchor` / `belief_anchor_x/y`; the bare label when the cohort carries no anchor). The
+    morale HEADLINE's cause stays the bare `far from the ancestors` — no coordinates on that line.
+    **The kin relay** (`belief_relay_hops`, off `PopulationCohortState.beliefRelayHops`): a band with
+    an anchor and `1 ≤ hops ≤ 254` is tied to its belief place through that many bands of kin, and the
+    row says so — `near the ancestors, through kin (1 hop)` / `(n hops)` / `(254+ hops)` (254 is "254
+    or longer"), or `far from the ancestors (x, y), through kin`. The relayed term is a blend, so it is
+    often negative but softer; the SIGN still picks near vs far. The far row carries no hop count: the
+    coordinates already take the popover's second line, and the count yields before `through kin` does.
+    `0` (direct — also what a band with no anchor sends, so `has_belief_anchor` tells them apart) and
+    `255` (`BELIEF_RELAY_UNREACHED`: holds an anchor, no chain of kin reaches it) keep the plain
+    wording. The culture term never reads
+    as the word `culture`: that word is the positive-unrest (cohesion) row's. A band with no belief
+    place sends `0` and draws no row, under the same epsilon. `DetailFormat.detail_bbcode` tints each
     row two-tone by its sign glyph (▲ = HEALTHY green, ▼ = WARN amber — deliberately not a rainbow);
     the indented breakdown lines are intercepted before the KV split. The **Morale row is a
     click-to-open disclosure identical to Food, opening in the SAME popover** (the `▸/▾` caret +
@@ -675,6 +697,13 @@ which is a property of the tier and not of the merge.
   mid-latitudes read "Hospitable", the equator "Hospitable/Fair", and poles/high-alt/caverns
   "Harsh/Hostile" — the config buckets (`0.02`/`0.05`/`0.09`) spread cleanly across that range,
   so no re-tune was needed.
+- **Tile-card Ancestors** (snapshot `TileState.belief`, dead-equivalents — 1.0 per person who died
+  there, never decaying — decoded in `native/src/dict/map.rs` `tile_to_dict` as `belief`, held in
+  `MapView.tile_belief` only where it is above zero and copied onto the `_tile_info_at` dict as
+  `belief`): `SubjectDrawerController._tile_terrain_lines` adds `Ancestors: <N> dead` from
+  `DetailFormat.ancestors_line` — rounded to whole people, `<1` below one person, NO row at zero.
+  Emitted beside the deposit rows, above the FoW discovered early-return: a place keeps its dead, so a
+  remembered hex states them, and `belief` is not in `MapView.FOW_DISCOVERED_HIDDEN_KEYS`.
 - **Tile-card Climate** (snapshot `TileState.temperature`, decoded in `native/src/lib.rs`
   `tile_to_dict` as `temperature` (°); temperature is now a **latitude + elevation** climate
   (equator-in-the-middle, poles cold) with a small element jitter, NOT the old element

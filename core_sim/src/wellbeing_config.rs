@@ -9,6 +9,8 @@
 //!   Π(modifiers)`); future education/tech/government modifiers slot in alongside it.
 //! - `migration` — tech-gated relocation: discontented people move to a better reachable
 //!   same-faction band or stay (population conserved within the faction).
+//! - `culture` — the Layer-1 "near / far from the ancestors" morale term, read off the band's belief
+//!   anchor (`.claude/rules/core_sim/belief.md` → "The culture morale term").
 //!
 //! Mirrors the `demographics_config.rs` / `sedentarization_config.rs` loader (baked-in builtin +
 //! optional file/env override).
@@ -85,7 +87,7 @@ impl Default for ProductivityConfig {
 /// proportional to `bracket_size × weight` (working = 1.0, dependents = `dependent_weight` 0.4), so
 /// the headline fraction stays exact while workers dominate. They seek the highest-morale eligible
 /// band within reach — their own people's first — where reach is `base_reach` hex steps less the road
-/// bonus between the two camps (`advance_population_migration`; the work party's walk seam). Eligible
+/// bonus between the two camps (`supply::WalkReach`, also the culture term's reach). Eligible
 /// = `morale ≥ attractive_morale` AND
 /// `morale > source_morale + min_morale_gap`.
 #[derive(Debug, Clone, Deserialize)]
@@ -112,6 +114,97 @@ impl Default for MigrationConfig {
     }
 }
 
+/// Layer 1 — the **culture** morale term: near / far from the ancestors
+/// (`docs/plan_civilization_steps.md` §"What belief does, through seams that exist"). With `b` the
+/// belief on the band's anchor tile, `s = b / (b + belief_half_saturation)` its saturating weight and
+/// `r` the band's kin-relay strength (`crate::belief_relay`), the term is
+/// `s × (r × near_bonus − (1 − r) × away_drag)`: `r = 1` within the band's own walking reach of the
+/// anchor (`supply::WalkReach`, the migration reach) gives `+near_bonus × s`, `r = relay_per_hop ^ n`
+/// through `n` bands of kin gives the blend, and `r = 0` (unreached) gives `−away_drag × s`; `0` with
+/// no anchor. The drag does not grow with distance. Every lever is a PLAYTEST DIAL.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct CultureConfig {
+    /// Morale per turn a band gains at full strength (`r = 1`, standing within its own reach) of a
+    /// saturated anchor; scaled by `r` through kin.
+    pub near_bonus: f32,
+    /// Morale per turn a band loses when nothing ties it to a saturated anchor (`r = 0`); scaled by
+    /// `1 − r` through kin.
+    pub away_drag: f32,
+    /// Belief (dead-equivalents) at which the anchor's weight is one half.
+    pub belief_half_saturation: f32,
+    /// The least belief (dead-equivalents) a place must hold before a band adopts it as its anchor —
+    /// one whole death's worth at `1.0`. Gates adoption only; belief still accrues fractional deaths.
+    pub min_anchor_belief: f32,
+    /// How much of the reach each hop of kin relays — a band of the same people within walking reach
+    /// of a near band is near at this strength, and each further hop multiplies by it again
+    /// (`crate::belief_relay`). In `[0, 1]`; `0` turns relaying off.
+    pub relay_per_hop: f32,
+}
+
+impl Default for CultureConfig {
+    fn default() -> Self {
+        Self {
+            near_bonus: 0.01,
+            away_drag: 0.02,
+            belief_half_saturation: 10.0,
+            min_anchor_belief: 1.0,
+            relay_per_hop: 0.5,
+        }
+    }
+}
+
+impl CultureConfig {
+    /// The anchor's saturating weight `s = b / (b + belief_half_saturation)`, in `[0, 1)`: a single
+    /// death's worth barely registers and a great cemetery approaches the full term.
+    pub fn anchor_weight(&self, belief: f32) -> f32 {
+        belief / (belief + self.belief_half_saturation)
+    }
+
+    /// `near_bonus`, `away_drag` and `min_anchor_belief` must be finite and non-negative,
+    /// `relay_per_hop` finite and in `[0, 1]`; `belief_half_saturation` must be
+    /// finite and `> 0` (it is the weight's denominator at zero belief).
+    pub fn validate(&self) -> Result<(), WellbeingConfigError> {
+        require_non_negative_finite("culture.near_bonus", self.near_bonus)?;
+        require_non_negative_finite("culture.away_drag", self.away_drag)?;
+        require_non_negative_finite("culture.min_anchor_belief", self.min_anchor_belief)?;
+        require_non_negative_finite("culture.relay_per_hop", self.relay_per_hop)?;
+        if self.relay_per_hop > MAX_RELAY_PER_HOP {
+            return Err(WellbeingConfigError::Invalid {
+                field: "culture.relay_per_hop",
+                constraint: "be at most 1",
+                value: self.relay_per_hop.to_string(),
+            });
+        }
+        if !self.belief_half_saturation.is_finite() || self.belief_half_saturation <= 0.0 {
+            return Err(WellbeingConfigError::Invalid {
+                field: "culture.belief_half_saturation",
+                constraint: "be finite and greater than 0",
+                value: self.belief_half_saturation.to_string(),
+            });
+        }
+        Ok(())
+    }
+}
+
+/// The most a hop of kin can relay — a full-strength relay; above it a far band would be nearer than
+/// a direct one.
+const MAX_RELAY_PER_HOP: f32 = 1.0;
+
+fn require_non_negative_finite(
+    field: &'static str,
+    value: f32,
+) -> Result<(), WellbeingConfigError> {
+    if !value.is_finite() || value < 0.0 {
+        return Err(WellbeingConfigError::Invalid {
+            field,
+            constraint: "be finite and at least 0",
+            value: value.to_string(),
+        });
+    }
+    Ok(())
+}
+
 /// **Independence** — when a cut-off group of a people's bands becomes a people of its own
 /// (`docs/plan_band_fission.md` §Independence, `systems::independence`).
 ///
@@ -136,7 +229,6 @@ impl Default for IndependenceConfig {
         }
     }
 }
-
 /// Root wellbeing configuration.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -145,13 +237,14 @@ pub struct WellbeingConfig {
     pub productivity: ProductivityConfig,
     pub migration: MigrationConfig,
     pub independence: IndependenceConfig,
+    pub culture: CultureConfig,
 }
 
 impl WellbeingConfig {
     pub fn builtin() -> Arc<Self> {
         Arc::new(
             Self::from_json_str(BUILTIN_WELLBEING_CONFIG)
-                .expect("builtin wellbeing config should parse"),
+                .expect("builtin wellbeing config should parse and validate"),
         )
     }
 
@@ -163,18 +256,15 @@ impl WellbeingConfig {
         Ok(config)
     }
 
-    /// The invariants a parsed config must hold. Only the independence threshold is checked here:
-    /// it is the one lever a negative or non-finite value would turn into a nonsense comparison
-    /// (every band's grievance is `>= 0`, so a negative threshold would break every cut-off group
-    /// away on its first turn while reading like a strict setting).
+    /// The invariants a parsed config must hold: the culture levers, and the independence
+    /// threshold (every band's grievance is `>= 0`, so a negative threshold would break every
+    /// cut-off group away on its first turn while reading like a strict setting).
     pub fn validate(&self) -> Result<(), WellbeingConfigError> {
-        let threshold = self.independence.grievance_threshold;
-        if !threshold.is_finite() || threshold < 0.0 {
-            return Err(WellbeingConfigError::Invalid(format!(
-                "independence.grievance_threshold must be finite and >= 0, got {threshold}"
-            )));
-        }
-        Ok(())
+        self.culture.validate()?;
+        require_non_negative_finite(
+            "independence.grievance_threshold",
+            self.independence.grievance_threshold,
+        )
     }
 
     pub fn from_file(path: &Path) -> Result<Self, WellbeingConfigError> {
@@ -196,8 +286,12 @@ pub enum WellbeingConfigError {
     },
     #[error("failed to parse wellbeing config: {0}")]
     Parse(#[from] serde_json::Error),
-    #[error("invalid wellbeing config: {0}")]
-    Invalid(String),
+    #[error("wellbeing config `{field}` must {constraint}, got {value}")]
+    Invalid {
+        field: &'static str,
+        constraint: &'static str,
+        value: String,
+    },
 }
 
 impl ConfigLoadError for WellbeingConfigError {
@@ -288,7 +382,7 @@ mod tests {
         assert!((0.0..=1.0).contains(&m.morale_threshold));
         assert!((0.0..=1.0).contains(&m.dependent_weight));
         assert!((0.0..=1.0).contains(&m.attractive_morale));
-        assert!(config.independence.grievance_threshold >= 0.0);
+        assert!(config.validate().is_ok());
     }
 
     /// A negative or non-finite independence threshold is refused at parse, never read in play.
@@ -296,7 +390,13 @@ mod tests {
     fn a_negative_independence_threshold_is_rejected() {
         let rejected =
             WellbeingConfig::from_json_str(r#"{"independence": {"grievance_threshold": -0.5}}"#);
-        assert!(matches!(rejected, Err(WellbeingConfigError::Invalid(_))));
+        assert!(matches!(
+            rejected,
+            Err(WellbeingConfigError::Invalid {
+                field: "independence.grievance_threshold",
+                ..
+            })
+        ));
         let accepted =
             WellbeingConfig::from_json_str(r#"{"independence": {"grievance_threshold": 0.0}}"#)
                 .expect("zero is a real setting: leave the turn you are cut off");
@@ -311,5 +411,78 @@ mod tests {
             config.independence.grievance_threshold,
             IndependenceConfig::default().grievance_threshold
         );
+    }
+
+    #[test]
+    fn the_shipped_culture_levers_are_the_documented_defaults() {
+        let shipped = &WellbeingConfig::builtin().culture;
+        let default = CultureConfig::default();
+        assert_eq!(shipped.near_bonus, default.near_bonus);
+        assert_eq!(shipped.away_drag, default.away_drag);
+        assert_eq!(
+            shipped.belief_half_saturation,
+            default.belief_half_saturation
+        );
+        assert_eq!(shipped.min_anchor_belief, default.min_anchor_belief);
+        assert_eq!(shipped.relay_per_hop, default.relay_per_hop);
+    }
+
+    /// Belief equal to the half-saturation lever weighs exactly one half.
+    #[test]
+    fn the_anchor_weight_is_one_half_at_the_half_saturation_belief() {
+        const ONE_HALF: f32 = 0.5;
+        let culture = CultureConfig::default();
+        assert_eq!(
+            culture.anchor_weight(culture.belief_half_saturation),
+            ONE_HALF
+        );
+    }
+
+    #[test]
+    fn a_non_positive_half_saturation_is_refused() {
+        let json = r#"{ "culture": { "belief_half_saturation": 0.0 } }"#;
+        assert!(matches!(
+            WellbeingConfig::from_json_str(json),
+            Err(WellbeingConfigError::Invalid {
+                field: "culture.belief_half_saturation",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_relay_per_hop_above_one_is_refused() {
+        let json = r#"{ "culture": { "relay_per_hop": 1.5 } }"#;
+        assert!(matches!(
+            WellbeingConfig::from_json_str(json),
+            Err(WellbeingConfigError::Invalid {
+                field: "culture.relay_per_hop",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_negative_min_anchor_belief_is_refused() {
+        let json = r#"{ "culture": { "min_anchor_belief": -1.0 } }"#;
+        assert!(matches!(
+            WellbeingConfig::from_json_str(json),
+            Err(WellbeingConfigError::Invalid {
+                field: "culture.min_anchor_belief",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_negative_culture_lever_is_refused() {
+        let json = r#"{ "culture": { "away_drag": -0.01 } }"#;
+        assert!(matches!(
+            WellbeingConfig::from_json_str(json),
+            Err(WellbeingConfigError::Invalid {
+                field: "culture.away_drag",
+                ..
+            })
+        ));
     }
 }

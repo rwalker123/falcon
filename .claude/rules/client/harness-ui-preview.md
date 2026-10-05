@@ -1060,7 +1060,7 @@ a DISJOINT subset — dropping the `blockedReason`
 half of the gate fails the short bench's two line claims ALONE, the crew-of-zero frame staying green
 because its rate is zero; re-deriving the rate off the crew fails the five rate/estimate claims and
 nothing else; a floor in place of the ceiling fails only the non-dividing remainder; drawing the ✕
-unconditionally fails only the idle bench's absence claim; wiring the ✕ to `make_requested` fails
+unconditionally fails only the idle bench's absence claim; wiring the ✕ to Make's signal fails
 both halves of the verb pair (`[]` against `[{…recipe_id: "baskets"}]`); and composing the tooltip
 out of the recipe's inputs — the forbidden implementation — fails both tooltip halves at *"20 fibre
 already cut"* against the 5 fibre · 1 hide the store really lost.
@@ -2033,6 +2033,36 @@ Each fails a DISJOINT set, and each names the defect in its own words:
   claim: the row is itemized AND the net differs from the same band with the term zeroed by exactly
   `DetailFormat.band_food_left_behind`.
 
+## `chapters/band_expedition.gd` — the culture morale term (#699)
+
+`EXPECTED_CHECKPOINTS` **139**, RE-MEASURED: four frames and nine claims, appended after
+`_carry_states` (`_ancestors_states`) so no earlier frame moves.
+
+- **NEAR** — the reference band (entity 910) with `morale_culture` +0.006, its Morale disclosure
+  opened: the popover itemizes `▲ +0.6%  near the ancestors` — frame
+  **`band_morale_ancestors_near`**.
+- **FAR** — the low-morale band (entity 911) with `morale_culture` −0.009, `morale_cause` 4
+  (`DetailFormat.MORALE_CAUSE_CULTURE`) and a belief anchor at (12, 7): the Morale headline reads
+  `— far from the ancestors` with no coordinates, and the popover itemizes
+  `▼ −0.9%  far from the ancestors (12, 7)` and never the word `culture`, which the positive-unrest
+  row owns — frame **`band_morale_ancestors_far`**. Its hex carries `belief` 12.4, and the tile-card
+  producer (`_tile_terrain_lines`) is asserted to state `Ancestors: 12 dead`; `<1 dead` under one
+  person and no row at zero are asserted on `DetailFormat.ancestors_line` directly.
+- **KIN** — the same two bands tied in through kin (entities 912 / 913): `belief_relay_hops` 1 reads
+  `+0.6%  near the ancestors, through kin (1 hop)` — frame **`band_morale_ancestors_kin_near`** — and
+  3 on the far band reads `−0.9%  far from the ancestors (12, 7), through kin` with no hop count —
+  frame **`band_morale_ancestors_kin_far`**. One PNG-less claim on `_morale_breakdown_lines`: 2 hops
+  reads `(2 hops)`, 254 reads `(254+ hops)`, and 255 (unreached) keeps the plain `near the ancestors`.
+
+The row needles are LITERALS, matched within one popover line, so a row that drew the other sign's
+label or glyph fails.
+
+## `chapters/land_readouts.gd` — the tile card's Ancestors row (#699)
+
+`EXPECTED_CHECKPOINTS` **121**, RE-MEASURED: one frame and one claim, appended after the road-kit
+roster claim and before the roster restore. The food tile with `belief` 23.6 —
+frame **`tile_ancestors`**, the card reading `Ancestors: 24 dead` among its land rows.
+
 ## The ⚠'s one producer, and the biomass quantiser (this arc)
 
 Two PNG-less blocks appended to `chapters/hunt.gd`, one 2x2 re-pointed in
@@ -2463,7 +2493,7 @@ inspection.
 `pressed.emit()` being unable to see a covered, disabled, zero-size or IGNORE-filtered control. The
 command is asserted on the LINE through `MAIN_SCRIPT.format_bench_priority`, the work board's own
 idiom, for **all three** levels: a commit hard-wired to `normal` satisfies any single-level claim.
-Beside each, what did NOT go out — a mis-wired rung emitting `bench_crew` or `clear_bench` satisfies
+Beside each, what did NOT go out — a mis-wired rung emitting `bench_crew` or `bench_remove` satisfies
 a bare *something was emitted*.
 
 **The LIT test is the SAME one `band_panel_preview._assert_work_priority_picker_lit` makes** — the
@@ -3708,6 +3738,7 @@ re-sent opening raising the card again. `EXIT=1`.
 **A clean run is 470 frames / 2540 `PASS`, exit 0 — MEASURED windowed on this tree.**
 `band_panel_preview` 1518 `PASS`, exit 0, on the same tree.
 
+<<<<<<< HEAD
 ## The band's standing toward its people's heart (`chapters/band_expedition.gd`, issue #284)
 
 Two frames and twelve assertions, appended after the carry states (`_heart_states`). The behaviour is
@@ -3725,4 +3756,38 @@ Two frames and twelve assertions, appended after the carry states (`_heart_state
   turn is one a server can send (the walk's own turn is 0, and `turn − ago` would be negative).
 - Two vocabulary claims ride the block: `band_broke_away` is Alert and `lost_touch` is Notable.
 
-`EXPECTED_CHECKPOINTS` **141**, re-measured.
+`EXPECTED_CHECKPOINTS` **154**, re-measured by raising the const to an impossible number and
+reading `reached 154 checkpoints` back (the chapter also carries main's `_ancestors_states`). **A clean
+run on the merged tree is 491 frames / 2707 `PASS` / 0 `FAIL`, exit 0.**
+=======
+## The bench queue and the suggestions (`chapters/crafting_bench.gd`, issue #776)
+
+Two frames appended LAST in the chapter — `crafting_queue_suggestions` and
+`crafting_suggestion_picker` — and 26 claims; the behaviour and each claim's pairing are
+`crafting-panel.md`'s. **`crafting_bench`'s `EXPECTED_CHECKPOINTS` moved 187 → 218, RE-MEASURED**: the
+const was raised to an impossible number, the run read back `reached 218 checkpoints`, and 218 was
+set. **Run totals on this tree: 2653 `PASS` / 0 `FAIL` / 482 frames, exit 0 (2662 / 0 / 483 after the short-head follow-up).**
+
+**EVERY STATE BUILT ON `_crafting_band()` MOVED IN CONTENT, NONE IN COUNT.** The running bench now
+publishes its one-order queue (`orders[0]`, `1/2`), so the well carries the head's `Made` stepper, the
+progress line lost its `· 1 finished` clause (that count's one home is the stepper's `made/count`
+face), the running Baskets row's Make reads live `Make` rather than the retired spent *On the bench*,
+and the idle bench's crew `+` is live (the crew stays with the bench across orders).
+
+⛔ **A HEAD ROW UNDER THE WELL FAILED `crafting_panel_band_dock_collapsed`'s FIT PRECONDITION**, which
+is why the well is the head's row: with every order — head included — drawn as a row, the one-order
+reference bench grew ~26px and that state's ledger, which fits its room with under 20px to spare,
+began scrolling. Measured by the run (`FAIL — precondition: the collapsed BOTTOM-dock ledger fits
+inside its room`), not estimated.
+
+**`_crew_button_disabled` skips the queue's own steppers** (`ORDER_DECREMENT_META` /
+`ORDER_INCREMENT_META`): they wear the crew stepper's `−` / `+` glyphs, so a face search would read a
+live COUNT `+` as a live crew `+` and pass the benchable-ceiling claim on the wrong control.
+
+**THE SHORT-HEAD FOLLOW-UP added one frame and nine claims** — `crafting_queue_short_head`
+(`_short_head_state`, after the queue state): the well follows `BenchState.worked`, the skipped head
+is a `WAITING` queue row with its tinted reason, and the head row's `+`/✕ send `order 0` while the
+well's send `order 1`. Every fixture bench now carries `worked` and every order `blocked_reason` /
+`blocked_severity`. **`EXPECTED_CHECKPOINTS` moved 218 → 228, RE-MEASURED** the same way (the run read
+back `reached 228`); the PR #784 review's pausing-raise pair (a WAITING order's ↑ claims no pause) took it to 230 and the run to 2664 `PASS` / 0 `FAIL` / 483 frames.
+>>>>>>> origin/main

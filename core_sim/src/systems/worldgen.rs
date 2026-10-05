@@ -3480,6 +3480,7 @@ fn spawn_population_entity(
         last_morale_cause: MoraleCause::None,
         last_morale_contributions: MoraleContributions::default(),
         last_fertility_factors: Default::default(),
+        last_breeding: Default::default(),
         discontent_fraction: scalar_zero(),
         grievance: scalar_zero(),
         last_emigrated: 0,
@@ -3491,6 +3492,8 @@ fn spawn_population_entity(
         // **A starting band is where lines are minted** — `L` of them, each originating on this
         // band's own id, which is what makes a line id unique without an allocator of its own.
         founding_lines: FoundingLines::founded(band_id, start_kit.founding_lines),
+        belief_anchor: None,
+        last_belief_relay_hops: 0,
     });
     // Every band carries a labor allocation (default empty = fully idle). The client drives
     // assignment; the startup food reserve covers the ramp before the first orders land.
@@ -3547,7 +3550,6 @@ fn starting_knowledge_fragments(
             fragments.push(KnowledgeFragment::new(
                 definition.discovery_id(),
                 scalar_from_f32(definition.progress()),
-                scalar_from_f32(definition.fidelity()),
             ));
         } else {
             warn!(

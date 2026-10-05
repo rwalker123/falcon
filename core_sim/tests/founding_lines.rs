@@ -1,5 +1,5 @@
-//! **Founding lines on a band** (issue #687, `docs/plan_civilization_steps.md` §"The mechanism: a
-//! breeding population cannot grow past its lines").
+//! **Founding lines on a band** (issue #687, `docs/plan_civilization_steps.md` §"The mechanism: an
+//! isolated people cannot grow past its lines").
 //!
 //! A band carries the SET of unrelated families it descends from. This file pins the state alone —
 //! where lines are minted, how a split divides them, that the checkpoint carries them and that the

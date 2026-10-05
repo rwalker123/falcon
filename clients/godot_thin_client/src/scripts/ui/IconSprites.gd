@@ -1,8 +1,8 @@
 extends RefCounted
 class_name IconSprites
 
-## Shared texture cache behind ALL NINE bundled-art families — `FaunaSprites`, `SiteSprites`,
-## `WonderSprites`, `StageSprites`, `WorkingsSprites` and `ExpeditionSprites` (map markers),
+## Shared texture cache behind ALL TEN bundled-art families — `FaunaSprites`, `SiteSprites`,
+## `WonderSprites`, `StageSprites`, `WorkingsSprites`, `ExpeditionSprites` and `BeliefSprites` (map markers),
 ## `CropRoleSprites` (the tile card's basket-row role marks), `FloraSprites` (that row's per-species
 ## tier) and `HudSprites` (marks on the HUD's own chrome — a button face, a popover row).
 ##

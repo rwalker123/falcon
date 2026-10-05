@@ -230,13 +230,14 @@ still shipped whole and masked by the raster client-side.
 > `TradeDiffusionEvent`, and `publish_trade_telemetry`. Misleadingly named, but live — the migration
 > path below writes them with `via_migration: true`, and it is the one knowledge-diffusion path that
 > was never dormant. `advance_population_migration` owns the per-turn `TradeTelemetry::reset_turn()`
-> as the resource's only writer, and `publish_trade_telemetry` is ordered after it. **The leak-timer MODEL survived too**, as
-> `sim_runtime::TradeLeakCurve` — a timer that fires more slowly the more closed you are, with a
-> partial `KnowledgeFragment` at a fidelity. Currently unmounted; it is the shape §Q5 of the design
-> intends for a connection's knowledge rider.
+> as the resource's only writer, and `publish_trade_telemetry` is ordered after it. **The leak-timer
+> model did not survive**: the knowledge rider (#531) replaced its timer with a per-turn rate and its
+> `openness` with the tie's strength, so `TradeLeakCurve` and `KnowledgeFragment.fidelity` were
+> deleted — `connections.md` → "Knowledge is the third rider".
 
-**Migration is the live path, and it rides people.** Knowledge crosses between peoples only when
-people do: a cross-people move under the wellbeing trickle (`advance_population_migration`,
+**Migration is one of two paths between peoples, and it rides people.** The other is contact
+(`connections.md` → "Knowledge is the third rider"), which teaches with nobody moving. Here, knowledge
+crosses when people do: a cross-people move under the wellbeing trickle (`advance_population_migration`,
 `factions.md` → "Defection is the unhappy trickle with the same-people filter lifted") credits the
 destination people's `DiscoveryProgressLedger` with `scale_migration_fragments(source knowledge)`,
 each fragment further scaled by the share of the source band that left (`moved / total`), and merges
@@ -275,7 +276,7 @@ real name for each rendering by joining on them.
 same turn's log under each `ViewerFaction` in turn, with a negative-control arm: a turn in which
 nobody changes hands publishes no row to either people.
 
-**Config**: `migration_fragment_scaling`, `migration_fidelity_floor` (`simulation_config.json`); who moves, and where, is the wellbeing trickle's `migration.*` block in `wellbeing_config.json` (`campaign.md`), and the remnant floor is `expedition_config.json` → `settle.parent_min_workers`.
+**Config**: `migration_fragment_scaling` (`simulation_config.json`); who moves, and where, is the wellbeing trickle's `migration.*` block in `wellbeing_config.json` (`campaign.md`), and the remnant floor is `expedition_config.json` → `settle.parent_min_workers`.
 
 ---
 

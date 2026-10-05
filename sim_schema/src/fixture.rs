@@ -459,8 +459,20 @@ fn seed_snapshot() -> WorldSnapshot {
             // The pile already cut for the job in flight — a repeated field inside a repeated field
             // like the shortfalls above it, so it needs elements or the guard never decodes a row.
             drawn_inputs: rows_of(DrawnInputState::default()),
+            // The queue, head first — a repeated field inside the bench, seeded for the same reason.
+            orders: rows_of(BenchOrderState::default()),
             ..Default::default()
         };
+        // **WHAT TO MAKE NEXT** — a repeated field whose rows carry a repeated field of their own
+        // (the per-consumer lines), so both levels need elements or the guard never decodes one.
+        cohort.craft_suggestions = ["hoes", "spears"]
+            .iter()
+            .map(|item| CraftSuggestionState {
+                item_id: (*item).to_string(),
+                sources: rows_of(CraftSuggestionSourceState::default()),
+                ..Default::default()
+            })
+            .collect();
         // **One row per recipe, always** — the contract this field exists for, so the fixture
         // carries a real book's worth rather than one row.
         cohort.craft_offers = ["sled", "baskets", "spears", "loom"]
@@ -602,6 +614,10 @@ fn seed_snapshot() -> WorldSnapshot {
         cohort.pooling_links = rows();
         cohort.pending_reveal_x = vec![0u32; ROWS];
         cohort.pending_reveal_y = vec![0u32; ROWS];
+        cohort.belief_reach_x = vec![0u32; ROWS];
+        cohort.belief_reach_y = vec![0u32; ROWS];
+        cohort.belief_relay_reach_x = vec![0u32; ROWS];
+        cohort.belief_relay_reach_y = vec![0u32; ROWS];
         cohort.knowledge_fragments = rows();
         // The cohort's optional tables, on the even rows only — see [`seeded_on`].
         cohort.harvest_task = seeded_on(row).then(HarvestTaskState::default);
@@ -883,6 +899,8 @@ fn seed_snapshot() -> WorldSnapshot {
     }
 
     // --- knowledge -------------------------------------------------------
+    // The knowledge rider's readout (#531). Seeded for the reason every repeated field here is.
+    s.contact_lessons = rows();
     s.discovered_sites = rows();
     for entry in &mut s.discovered_sites {
         entry.sites = rows();
