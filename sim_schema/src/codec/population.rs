@@ -454,6 +454,10 @@ fn create_populations<'a>(
                                 // **A FAR FORAGE ROW'S OTHER ACCOUNTS, HOME** (#706). Appended last.
                                 fodderRateHome: assignment.fodder_rate_home,
                                 materialsRateHome: Some(materials_rate_home),
+                                // THIS ROW'S HANDS STILL WALKING HOME. Appended last.
+                                homewardWorkers: assignment.homeward_workers,
+                                homewardAllHomeIn: assignment.homeward_all_home_in,
+                                homewardFood: assignment.homeward_food,
                             },
                         )
                     })
@@ -1140,6 +1144,10 @@ fn create_populations<'a>(
                     foodLeftBehind: cohort.food_left_behind,
                     // WHAT TO MAKE NEXT — appended last. Always written; empty is a real answer.
                     craftSuggestions: Some(craft_suggestions),
+                    // THE BREEDING CEILING — appended last (#688).
+                    fertilityCeiling: cohort.fertility_ceiling,
+                    breedingPopulation: cohort.breeding_population,
+                    breedingCeiling: cohort.breeding_ceiling,
                 },
             )
         })
@@ -1395,6 +1403,9 @@ fn decode_labor_assignment(
         transit_keeps_turns: assignment.transitKeepsTurns(),
         fodder_rate_home: assignment.fodderRateHome(),
         materials_rate_home: decode_material_payoffs(assignment.materialsRateHome()),
+        homeward_workers: assignment.homewardWorkers(),
+        homeward_all_home_in: assignment.homewardAllHomeIn(),
+        homeward_food: assignment.homewardFood(),
     })
 }
 
@@ -1770,6 +1781,9 @@ fn decode_population(
                 }),
             }
         }),
+        fertility_ceiling: cohort.fertilityCeiling(),
+        breeding_population: cohort.breedingPopulation(),
+        breeding_ceiling: cohort.breedingCeiling(),
     })
 }
 

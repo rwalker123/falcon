@@ -971,6 +971,9 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     } = inputs;
     let homeward: &[crate::work_party::HomewardWalk] =
         allocation.map_or(&[], |allocation| allocation.homeward.as_slice());
+    // **The band's whole set of walks home** — the total; each row below carries its own share
+    // through the same summation.
+    let homeward_totals = crate::work_party::HomewardTotals::of(homeward);
     // The hands a band's own carry is struck on — its actual working-age value, unfloored, the
     // same count the long move itself prices on.
     let carry_workers = crate::carry::band_carry_workers(cohort);
@@ -1447,6 +1450,16 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     // **WHICH OF ITS KIT ITEMS ARE SHORT, BY NAME** — resolved with the coverage
                     // above, off the one budget, so the line and the reach beside it agree.
                     row.kit_toe = row_gear[i].2.clone();
+                    // **THIS ROW'S HANDS STILL WALKING HOME** — its share of the band's walks, by
+                    // the same summation as the band's total. A walk whose row is gone is in the
+                    // band's figures only.
+                    let walking_home = crate::work_party::HomewardTotals::for_source(
+                        &a.homeward,
+                        &assignment.target,
+                    );
+                    row.homeward_workers = walking_home.workers;
+                    row.homeward_all_home_in = walking_home.all_home_in;
+                    row.homeward_food = walking_home.food;
                     // **HOW MANY CUTTERS THIS WORKING CAN USE, GEAR INCLUDED** (#663) — the crew
                     // whose capacity reaches the room above the row's floor, crew-independent
                     // (`extraction::useful_cutters`). `0` on every non-extract row.
@@ -2129,17 +2142,18 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // set operations (contact merge, the split partition); a reader wants how many.
         // A set minted from a `u16` count and only ever partitioned cannot outgrow `u32`.
         founding_lines: cohort.founding_lines.len() as u32,
+        // The fourth fertility factor and the breeding population it was resolved for (#688) —
+        // read off the cohort as the other three factors are, never re-derived at capture.
+        fertility_ceiling: cohort.last_fertility_factors.ceiling.raw(),
+        breeding_population: cohort.last_breeding.headcount,
+        breeding_ceiling: cohort.last_breeding.ceiling,
         // **What rotted this turn** (#706) — the ledger identity's `spoiled` term, set by the larder
         // rot and added to by any caravan pack's transit rot.
         food_spoiled: cohort.last_food_spoiled,
         // **The band's stood-down parties, walking home** (#706) — read off the allocation, since
         // they outlive the rows that posted them.
-        homeward_workers: homeward.iter().map(|walk| walk.workers).sum(),
-        homeward_food: homeward
-            .iter()
-            .filter(|walk| walk.carries_food())
-            .map(|walk| walk.cargo)
-            .sum(),
+        homeward_workers: homeward_totals.workers,
+        homeward_food: homeward_totals.food,
         homeward_food_spoils: homeward
             .iter()
             .map(|walk| walk.food_that_rots(&demographics.keeping))
@@ -2150,12 +2164,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             .map(|walk| walk.turns_left)
             .min()
             .unwrap_or(crate::work_party::NO_LOAD_ON_THE_ROAD),
-        homeward_all_home_in: homeward
-            .iter()
-            .filter(|walk| walk.workers > crate::work_party::NOBODY_ON_THE_ROAD)
-            .map(|walk| walk.turns_left)
-            .max()
-            .unwrap_or(crate::work_party::NO_WALK),
+        homeward_all_home_in: homeward_totals.all_home_in,
         // **WHAT THIS BAND CAN CARRY** (#732) — its whole working-age hands × one worker's pack, and
         // the load of everything it holds. Dependants add nothing.
         carry_capacity: crate::carry::band_carry_capacity(cohort, expedition_levers.carry).to_f32(),
@@ -2662,6 +2671,7 @@ mod tests {
             last_morale_cause: MoraleCause::None,
             last_morale_contributions: MoraleContributions::default(),
             last_fertility_factors: Default::default(),
+            last_breeding: Default::default(),
             discontent_fraction: scalar_zero(),
             grievance: scalar_zero(),
             last_emigrated: 0,
@@ -2772,12 +2782,14 @@ mod tests {
             hunger: scalar_from_f32(0.6),
             reserve: scalar_from_f32(1.5),
             trend: scalar_from_f32(0.25),
+            ceiling: scalar_from_f32(0.4),
         };
         cohort.last_fertility_factors = factors;
         let state = captured(&cohort, None, None);
         assert_eq!(state.fertility_hunger, factors.hunger.raw());
         assert_eq!(state.fertility_reserve, factors.reserve.raw());
         assert_eq!(state.fertility_trend, factors.trend.raw());
+        assert_eq!(state.fertility_ceiling, factors.ceiling.raw());
     }
 
     /// **The no-data rule on the wire.** A cohort that has not yet been through a turn has no
@@ -2792,9 +2804,10 @@ mod tests {
             (
                 state.fertility_hunger,
                 state.fertility_reserve,
-                state.fertility_trend
+                state.fertility_trend,
+                state.fertility_ceiling
             ),
-            (0, 0, 0),
+            (0, 0, 0, 0),
             "a cohort that has not ticked must publish no reading, not a fabricated one"
         );
     }

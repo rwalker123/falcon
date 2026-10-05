@@ -291,7 +291,10 @@ pub use great_discovery::{
     GreatDiscoveryResolvedEvent, GreatDiscoveryTelemetry, ObservationLedger,
 };
 pub use hydrology::{generate_hydrology, HydrologyState};
-pub use lineage::{FoundingLines, LineId, MIN_BAND_LINES};
+pub use lineage::{
+    breeding_ceiling, inbreeding_ceiling, shared_breeding_ceiling, BreedingReading, FoundingLines,
+    LineId, MIN_BAND_LINES, NO_INBREEDING_CEILING,
+};
 // The drainage-network measurement instrument (consumed by the `#[ignore]`d census test).
 pub use extraction::{
     advance_deposits, deposit_at_risk_rung, deposit_keeper_loads, deposit_keeping_basis,

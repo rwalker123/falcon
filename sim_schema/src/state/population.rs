@@ -453,6 +453,16 @@ pub struct LaborAssignmentState {
     /// bone and sinew — one row per material id. Appended last.
     #[serde(default)]
     pub materials_rate_home: Vec<MaterialPayoff>,
+    /// **Hands from this row still walking home** — the band's homeward walks whose source is this
+    /// row's; the band's `homeward_workers` is the total. Appended last.
+    #[serde(default)]
+    pub homeward_workers: u32,
+    /// Turns until the last of those hands is back; `0` = none. Appended last.
+    #[serde(default)]
+    pub homeward_all_home_in: u32,
+    /// The food they carry, gross of the walk's rot. Appended last.
+    #[serde(default)]
+    pub homeward_food: f32,
 }
 
 /// **ONE LINE OF ONE TAKE ROW'S TABLE OF EQUIPMENT** — a row of [`LaborAssignmentState::kit_toe`].
@@ -1681,6 +1691,21 @@ pub struct PopulationCohortState {
     /// Appended last.
     #[serde(default)]
     pub craft_suggestions: Vec<CraftSuggestionState>,
+    /// **The fourth fertility factor** (#688) — the share of this turn's would-be births the band's
+    /// breeding population had room for under its inbreeding ceiling. Fixed-point raw
+    /// (`Scalar::SCALE`), **neutral at 1.0** like its three siblings; `0` on a cohort that has not
+    /// ticked. Appended last.
+    #[serde(default)]
+    pub fertility_ceiling: i64,
+    /// **The band's breeding population, in whole people** — every band in its supply network, or
+    /// the band alone in none, after this turn's demographics. Appended last.
+    #[serde(default)]
+    pub breeding_population: u32,
+    /// **The breeding population's ceiling, in people** — `|union of founding lines| ×
+    /// people_per_line`; **`0` means no inbreeding ceiling** (lifted once it reaches
+    /// `lineage.free_breeding_at`). Appended last.
+    #[serde(default)]
+    pub breeding_ceiling: u32,
 }
 
 /// **ONE GOOD THAT CROSSED A BAND'S STORE, BY CAUSE** — a row of

@@ -1014,6 +1014,14 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                     assignment.materialsRateHome(),
                 ),
             );
+            // This row's hands still walking home — its share of the band's `homeward_*`, which
+            // stay the total (a walk whose row is gone is only there). 0 = nobody walking.
+            let _ = entry.insert("homeward_workers", i64::from(assignment.homewardWorkers()));
+            let _ = entry.insert(
+                "homeward_all_home_in",
+                i64::from(assignment.homewardAllHomeIn()),
+            );
+            let _ = entry.insert("homeward_food", f64::from(assignment.homewardFood()));
             array.push(&entry.to_variant());
         }
     }

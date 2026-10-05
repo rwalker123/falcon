@@ -1186,6 +1186,7 @@ model or of `place()` directly.
 | `map_source_list` | one band working SIX sources — both food webs plus a wood working — selected | the panel at 1:1: six rows of `icon · ⚒N · rate · build-or-attention`, the attention row above the divider, and a leader line from each row to its own hex |
 | `map_source_list_quadrant` | the same band, zoomed in and panned so the camp sits well off centre | the placement rule as a PICTURE — the panel opens into the diagonally opposite direction, clear of the band's nameplate |
 | `map_source_list_paged` | twelve sources, four of them overdrawing | ten rows and a `1/2` pager, every attention row on page 1, and a footer total that is the BAND's |
+| `map_source_list_homeward` | the six-source band with its wolf crew unassigned to 0 and three hands walking home with 2.40 food, free next turn | the wolf row kept at `⚒0`, its detail cell reading `3 walking home wit…` in the quiet ink, the whole line on its hover |
 | `map_build_arc` | a rung in flight, a worked source with none, and a build the wire says is ROTTING | the ring carries the meter now: a green arc at 42% beside a DANGER arc at 75%, and a `🌱⚠` plate beside a plain `🌱` one — no percent on either |
 
 **THE PLACEMENT RULE IS ASKED AS ARITHMETIC, NOT BY PANNING.** `place()` is driven directly against a

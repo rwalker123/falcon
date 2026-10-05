@@ -320,6 +320,9 @@ pub fn split_band_from_parent(
     child.last_morale_cause = MoraleCause::default();
     child.last_morale_contributions = MoraleContributions::default();
     child.last_fertility_factors = crate::components::FertilityFactors::default();
+    // The parent's breeding population is not the splinter's until a turn says which network it is
+    // in; it reads "no reading yet" until then, like the fertility factors above.
+    child.last_breeding = crate::lineage::BreedingReading::default();
     child.discontent_fraction = scalar_zero();
     child.last_emigrated = 0;
     child.last_immigrated = 0;
