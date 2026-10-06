@@ -17,7 +17,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 230
+const EXPECTED_CHECKPOINTS := 241
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
@@ -758,6 +758,8 @@ func _crafting_states() -> void:
 	await _shrug_with_a_link_state()
 	await _queue_and_suggestion_states()
 	await _short_head_state()
+	await _material_shortage_state()
+	await _worked_forecast_state()
 
 	# Hand everything back: the panel closed, the roster restored to the reference band.
 	h._hud.close_crafting_panel()
@@ -899,9 +901,10 @@ func _short_head_state() -> void:
 		head_texts.has(HudCraftingVocab.ORDER_STATUS_WAITING.to_upper())
 			and head_texts.has(SHORT_HEAD_REASON) and head_texts.has(BENCH_TWO_RECIPE_NAME))
 	var reason := _reason_label(rows[0])
-	h._assert_hud("crafting/short-head — …tinted by its published severity, the bench line's own table",
-		reason != null and reason.get_theme_color(FONT_COLOR_THEME_ITEM)
-			== HudCraftingVocab.REASON_COLORS[HudCraftingVocab.SEVERITY_DANGER])
+	h._assert_hud("crafting/short-head — …the reason line is MUTED and the colour rides the WAITING status word",
+		reason != null and reason.get_theme_color(FONT_COLOR_THEME_ITEM) == HudStyle.INK_FAINT
+			and _forecast_label(panel, HudCraftingVocab.ORDER_STATUS_META,
+				HudCraftingVocab.ORDER_HEAD_INDEX).get_theme_color(FONT_COLOR_THEME_ITEM) == HudStyle.DANGER)
 	h._assert_hud("crafting/short-head — the head row still has no ↑",
 		_queue_control(panel, HudCraftingVocab.ORDER_RAISE_META, HudCraftingVocab.ORDER_HEAD_INDEX) == null)
 	await h._save("crafting_queue_short_head")
@@ -947,6 +950,124 @@ func _short_head_state() -> void:
 		sled_raise != null and sled_raise.tooltip_text == HudCraftingVocab.ORDER_RAISE_TOOLTIP)
 	h._hud.close_crafting_panel()
 	await h._settle()
+
+# ---- the MATERIAL SHORTAGE forecast (issue #777) -------------------------------------------------
+
+const FORECAST_ONE_SHORT := 6.0
+const FORECAST_TWO_SHORT_A := 3.0
+const FORECAST_TWO_SHORT_B := 1.5
+const FORECAST_SUGGEST_SHORT := 12.0
+const FORECAST_SUGGEST_ITEM := "clubs"
+## The stock a shortfall row says is on hand; `required` is stock plus the shortfall.
+const FORECAST_HELD := 1.0
+
+func _shortfall_row(material_id: String, short: float) -> Dictionary:
+	return {"material_id": material_id, "required": short + FORECAST_HELD, "held": FORECAST_HELD,
+		"short": short}
+
+## **A FORECAST IS NOT A BLOCK.** The paused spears read one material, the waiting sled two; the Clubs
+## suggestion carries its whole-count shortfall. The sim's `short` is rendered verbatim to one decimal,
+## muted (`INK_FAINT`), and never on an order that also carries a blocked reason.
+func _material_shortage_state() -> void:
+	var band := _queued_band()
+	var bench: Dictionary = band["bench"]
+	var orders: Array = bench["orders"]
+	(orders[QUEUE_PAUSED_INDEX] as Dictionary)["short_to_finish"] = [
+		_shortfall_row("wood", FORECAST_ONE_SHORT)]
+	(orders[QUEUE_WAITING_INDEX] as Dictionary)["short_to_finish"] = [
+		_shortfall_row("wood", FORECAST_TWO_SHORT_A), _shortfall_row("fibre", FORECAST_TWO_SHORT_B)]
+	var suggestions: Array = band["craft_suggestions"]
+	for suggestion_variant in suggestions:
+		var suggestion: Dictionary = suggestion_variant
+		if String(suggestion["item_id"]) == FORECAST_SUGGEST_ITEM:
+			suggestion["shortfalls"] = [_shortfall_row("wood", FORECAST_SUGGEST_SHORT)]
+	h._hud.update_band_alerts([band])
+	h._hud.open_crafting_panel(band)
+	await h._settle()
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting/forecast — the panel is open", false)
+		return
+	var one := _forecast_label(panel, HudCraftingVocab.ORDER_SHORT_TO_FINISH_META, QUEUE_PAUSED_INDEX)
+	h._assert_hud("crafting/forecast — one material reads the sentence (%s)" % [one.text if one != null else "none"],
+		one != null and one.text == "Short 6.0 wood"
+			and one.get_theme_color(FONT_COLOR_THEME_ITEM) == HudStyle.INK_FAINT
+			and one.tooltip_text == one.text)
+	h._assert_hud("crafting/forecast — the status words carry the colour: PAUSED amber, QUEUED a step brighter than faint",
+		_forecast_label(panel, HudCraftingVocab.ORDER_STATUS_META, QUEUE_PAUSED_INDEX)
+				.get_theme_color(FONT_COLOR_THEME_ITEM) == HudStyle.WARN
+			and _forecast_label(panel, HudCraftingVocab.ORDER_STATUS_META, QUEUE_WAITING_INDEX)
+				.get_theme_color(FONT_COLOR_THEME_ITEM) == HudStyle.INK_DIM)
+	var two := _forecast_label(panel, HudCraftingVocab.ORDER_SHORT_TO_FINISH_META, QUEUE_WAITING_INDEX)
+	h._assert_hud("crafting/forecast — two materials join with a middle dot (%s)" % [two.text if two != null else "none"],
+		two != null and two.text == "Short 3.0 wood · Short 1.5 fibre")
+	var sug := _forecast_label(panel, HudCraftingVocab.SUGGESTION_SHORTFALL_META, FORECAST_SUGGEST_ITEM)
+	h._assert_hud("crafting/forecast — the suggestion says it for the whole count (%s)" % [sug.text if sug != null else "none"],
+		sug != null and sug.text == "Short 12.0 wood for all %d" % SUGGEST_CLUBS_COUNT
+			and sug.get_theme_color(FONT_COLOR_THEME_ITEM) == HudStyle.INK_FAINT)
+	h._assert_hud("crafting/forecast — a covered suggestion carries no line",
+		_forecast_label(panel, HudCraftingVocab.SUGGESTION_SHORTFALL_META, "spears") == null)
+	await h._save("crafting_material_forecast")
+
+	# Exclusive with the blocked reason: a skipped order says why it is skipped, not the forecast.
+	(orders[QUEUE_WAITING_INDEX] as Dictionary)["blocked_reason"] = SHORT_HEAD_REASON
+	h._hud.update_band_alerts([band])
+	h._hud.crafting_panel().refresh_snapshot()
+	await h._settle()
+	panel = h._hud.crafting_panel().panel()
+	h._assert_hud("crafting/forecast — a blocked order shows its reason and NO forecast line",
+		panel != null and _forecast_label(panel, HudCraftingVocab.ORDER_SHORT_TO_FINISH_META, QUEUE_WAITING_INDEX) == null
+			and _reason_label(panel) != null)
+	h._hud.close_crafting_panel()
+	await h._settle()
+
+const WORKED_FORECAST_SHORT := 10.0
+
+## **THE WORKED ORDER HAS NO QUEUE ROW, SO THE WELL CARRIES ITS FORECAST** — a lone order, affordable for
+## one pass, short for the whole run. Paired with the same bench BLOCKED: the well's blocked line already
+## quotes the queue-aware numbers, so the forecast line must not appear beside it.
+func _worked_forecast_state() -> void:
+	var band := _crafting_band()
+	var bench: Dictionary = band["bench"]
+	var order := _order(BASKETS_REED_RECIPE, QUEUE_HEAD_COUNT, QUEUE_HEAD_MADE, BENCH_PROGRESS, true)
+	order["short_to_finish"] = [_shortfall_row("fibre", WORKED_FORECAST_SHORT)]
+	bench["orders"] = [order]
+	bench["worked"] = 0
+	h._hud.update_band_alerts([band])
+	h._hud.open_crafting_panel(band)
+	await h._settle()
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting/worked-forecast — the panel is open", false)
+		return
+	var line := _forecast_label(panel, HudCraftingVocab.BENCH_SHORT_TO_FINISH_META, true)
+	h._assert_hud("crafting/worked-forecast — the well names the lone worked order's shortage (%s)"
+			% [line.text if line != null else "none"],
+		line != null and line.text == "Short 10.0 fibre"
+			and line.get_theme_color(FONT_COLOR_THEME_ITEM) == HudStyle.INK_FAINT
+			and line.tooltip_text == line.text)
+	await h._save("crafting_worked_forecast")
+
+	bench["blocked_reason"] = SHORT_HEAD_REASON
+	bench["blocked_severity"] = HudCraftingVocab.SEVERITY_DANGER
+	h._hud.update_band_alerts([band])
+	h._hud.crafting_panel().refresh_snapshot()
+	await h._settle()
+	panel = h._hud.crafting_panel().panel()
+	h._assert_hud("crafting/worked-forecast — a BLOCKED well shows its refusal and NO forecast line",
+		panel != null and _forecast_label(panel, HudCraftingVocab.BENCH_SHORT_TO_FINISH_META, true) == null
+			and _blocked_line(panel) != null)
+	h._hud.close_crafting_panel()
+	await h._settle()
+
+func _forecast_label(node: Node, meta: String, value: Variant) -> Label:
+	if node is Label and node.has_meta(meta) and node.get_meta(meta) == value:
+		return node as Label
+	for child in node.get_children():
+		var found := _forecast_label(child, meta, value)
+		if found != null:
+			return found
+	return null
 
 func _reason_label(node: Node) -> Label:
 	if node is Label and node.has_meta(HudCraftingVocab.ORDER_REASON_META):
@@ -1056,8 +1177,8 @@ func _assert_the_suggestions_read(panel: CraftingPanel) -> void:
 			and texts[1].has(SUGGEST_SPEARS_TITLE) and texts[1].has(SUGGEST_SPEARS_LINE)
 			and texts[2].has(SUGGEST_SLED_TITLE) and texts[2].has(SUGGEST_SLED_LINE))
 	var clubs := _suggestion_queue_button(panel, "clubs")
-	h._assert_hud("crafting/suggest — a refused item's Queue is dead and its offer's own words sit under it",
-		clubs != null and clubs.disabled and texts[0].has("Short 6.9 bone"))
+	h._assert_hud("crafting/suggest — a KNOWN item short of material has a LIVE Queue and no refusal under it",
+		clubs != null and not clubs.disabled and not texts[0].has("Short 6.9 bone"))
 	var spears := _suggestion_queue_button(panel, "spears")
 	var sled := _suggestion_queue_button(panel, "sled")
 	h._assert_hud("crafting/suggest — a makeable item's Queue is live",
@@ -2487,7 +2608,7 @@ func _offer(recipe_id: String, display_name: String, group: String, output_item_
 		on_bench: bool = false, recipe: Dictionary = {}) -> Dictionary:
 	var offer := {
 		"recipe_id": recipe_id, "display_name": display_name, "group": group,
-		"output_item_id": output_item_id, "available": available, "reason": reason,
+		"output_item_id": output_item_id, "available": available, "queueable": true, "reason": reason,
 		"severity": severity, "shortfalls": shortfalls, "output_grade": "", "on_bench": on_bench,
 		"recipe_label": "", "makes": "", "lasts": "", "suggested": true,
 		"owned_at_tier": HudCraftingVocab.OWNED_AT_TIER_UNATTRIBUTED,
@@ -3203,12 +3324,12 @@ func _make_states(panel: CraftingPanel) -> void:
 		picker != null and _label_texts(picker).has(SPEARS_PICKER_HEADING))
 	var bone := _picker_option(panel, SPEARS_BONE_RECIPE)
 	var flint := _picker_option(panel, SPEARS_FLINT_RECIPE)
-	h._assert_hud("crafting/recipes — the recipe that cannot be made has its radio DISABLED",
-		bone != null and bone.disabled)
-	h._assert_hud("crafting/recipes — …while the one that can is live and chosen, being the suggestion",
+	h._assert_hud("crafting/recipes — a known recipe short of material has a LIVE radio (queueable, not available)",
+		bone != null and not bone.disabled)
+	h._assert_hud("crafting/recipes — …and the suggested one is live and chosen",
 		flint != null and not flint.disabled and flint.button_pressed)
-	h._assert_hud("crafting/recipes — the disabled line states the sim's reason",
-		picker != null and _label_texts(picker).has("Short 4.9 bone"))
+	h._assert_hud("crafting/recipes — …the short recipe states no refusal line",
+		picker != null and not _label_texts(picker).has("Short 4.9 bone"))
 	await h._save("crafting_make_picker")
 
 	await _press_control(_make_button(panel, "spears"))
@@ -3249,11 +3370,11 @@ func _start_sends_the_chosen_recipe() -> void:
 		_picker(panel) == null and sent.is_empty())
 	h._hud.bench_enqueue_requested.disconnect(on_bench)
 
-## **MAKE IS LIVE WHEN ANY RECIPE CAN BE MADE**, and the Costs cell still describes the suggestion. The
-## fixture suggests the bone recipe while only the flint one can be made — a shape the shipped sim's
-## own rule does not produce (it suggests an available recipe whenever one exists), staged because the
-## client's rule is "any", not "the suggested one", and nothing else can tell the two apart. Paired with
-## the clubs row in the same ledger, whose only recipe is short: its Make stays disabled.
+## **MAKE IS LIVE WHEN ANY RECIPE IS QUEUEABLE**, and the Costs cell still describes the suggestion. The
+## fixture suggests the bone recipe (short of material) while the flint one can run — a shape the shipped
+## sim's own rule does not produce, staged because the client's rule is "any", not "the suggested one".
+## The clubs row, whose only recipe is short but KNOWN, keeps a live Make; with its craft unlearned
+## (`queueable=false`) the button goes dead and the reason shows.
 func _make_is_live_when_any_recipe_is() -> void:
 	var band := _crafting_band()
 	var offers: Array = band["craft_offers"]
@@ -3276,8 +3397,22 @@ func _make_is_live_when_any_recipe_is() -> void:
 			% [texts],
 		texts.has(SPEARS_BONE_COST_LEAD))
 	var clubs := _make_button(panel, "clubs")
-	h._assert_hud("crafting/recipes — …and a row whose every recipe is short keeps Make disabled",
-		clubs != null and clubs.disabled)
+	h._assert_hud("crafting/recipes — …and a row whose only recipe is short but KNOWN has Make LIVE",
+		clubs != null and not clubs.disabled)
+	# An UNLEARNED craft is the one thing that gates the queue now: Make dead, the sim's reason under it.
+	var unlearned := _crafting_band()
+	for offer in unlearned["craft_offers"]:
+		var candidate_offer: Dictionary = offer
+		if String(candidate_offer.get("recipe_id", "")) == "clubs":
+			candidate_offer["queueable"] = false
+	h._hud.update_band_alerts([unlearned])
+	h._hud.crafting_panel().refresh_snapshot()
+	await h._settle()
+	panel = h._hud.crafting_panel().panel()
+	clubs = _make_button(panel, "clubs") if panel != null else null
+	h._assert_hud("crafting/recipes — an UNLEARNED recipe keeps Make disabled, with its reason under it",
+		clubs != null and clubs.disabled
+			and _label_texts(_ledger_row(panel, "Clubs")).has("Short 6.9 bone"))
 
 ## **A SINGLE-RECIPE JOB'S BENCH NAMES THE ITEM ALONE**, the other half of the verbatim pair: the sim
 ## publishes `Crook`, and the title is that and the craft, with nothing appended.

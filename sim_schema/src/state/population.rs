@@ -2098,6 +2098,10 @@ pub struct BenchOrderState {
     /// `danger` when [`Self::blocked_reason`] is set, `""` otherwise.
     #[serde(default)]
     pub blocked_severity: String,
+    /// **What the stock on hand cannot cover of this order's whole run** — a forecast, not a block;
+    /// empty when every pass still to draw is covered. See `snapshot.fbs`.
+    #[serde(default)]
+    pub short_to_finish: Vec<MaterialShortfallState>,
 }
 
 /// **One craft suggestion** — an item the band's consumers went without, and how many to make. A row
@@ -2115,6 +2119,10 @@ pub struct CraftSuggestionState {
     /// that adds no build or keeping work.
     pub work_per_turn: f32,
     pub sources: Vec<CraftSuggestionSourceState>,
+    /// What the whole [`Self::count`] would need that the stock left after the queue cannot cover;
+    /// empty when covered or when no recipe makes the item.
+    #[serde(default)]
+    pub shortfalls: Vec<MaterialShortfallState>,
 }
 
 /// **One consumer going without a suggested item** — a row of [`CraftSuggestionState::sources`].
@@ -2221,6 +2229,9 @@ pub struct CraftOfferState {
     /// when every recipe making the item makes the **same** tier — the ledger never recorded which
     /// recipe made a unit, so a count per recipe there would be invented. `0` is a real count.
     pub owned_at_tier: i32,
+    /// **May this recipe be queued** — every craft it requires is known; the Make button's gate.
+    /// Materials and tools do not gate it (`available` is "a pass can run now").
+    pub queueable: bool,
 }
 
 /// **What [`CraftOfferState::owned_at_tier`] publishes when a per-recipe count would be invented** —
@@ -2246,6 +2257,7 @@ impl Default for CraftOfferState {
             lasts: String::new(),
             suggested: false,
             owned_at_tier: OWNED_AT_TIER_UNATTRIBUTED,
+            queueable: false,
         }
     }
 }

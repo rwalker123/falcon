@@ -5108,11 +5108,19 @@ table BenchOrder {
   drawn:bool;          // this order holds a pile already cut for its pass in flight
   // WHY THIS ORDER IS BEING SKIPPED, resolved sim-side in the CraftOffer vocabulary ("Short 4.9
   // bone", joined with " · "). "" for an order that holds a pile or can draw one now - it is not
-  // skipped. The crew's own refusal is NOT here: it is the bench's, on BenchState.blockedReason.
+  // skipped. The "Short n material" numbers are this order's `shortToFinish` rows: the WHOLE remaining
+  // run against what the orders ahead of it leave, not one pass. The crew's own refusal is NOT here: it is the bench's, on BenchState.blockedReason.
   // Appended last.
   blockedReason:string;
   // `danger` when `blockedReason` is set, "" otherwise - the BenchState.blockedSeverity vocabulary.
   blockedSeverity:string;
+  // WHAT THE STOCK ON HAND CANNOT COVER OF THIS ORDER'S WHOLE RUN. One MaterialShortfall per input
+  // material the passes still to DRAW need more of than the queue left for this order (the queue
+  // spends in its own order, so an earlier order's claim is already out of `held`). `required` is
+  // every pass still to draw at the band's current tiers, `held` what was left for this order, `short`
+  // the gap. Empty when the stock on hand covers every pass still to draw. A FORECAST, not a block:
+  // `blockedReason` stays the only "why this order is skipped" field. Appended last.
+  shortToFinish:[MaterialShortfall];
 }
 
 // ONE SUGGESTION — an item the band's consumers are short of, and how many to make.
@@ -5136,6 +5144,11 @@ table CraftSuggestion {
   // adds no build or keeping work (a spear's cost is food, not work): read `workersWithout` instead.
   workPerTurn:float = 0;
   sources:[CraftSuggestionSource];
+  // WHAT THE WHOLE `count` WOULD NEED THAT THE STOCK CANNOT COVER. The suggested recipe's passes
+  // (ceil(count / the recipe's per-pass output)) at the band's current tiers, against the stock LEFT
+  // after the whole queue's claims (a queued suggestion lands at the queue's end). Empty when no
+  // recipe makes the item or the stock covers it. Appended last.
+  shortfalls:[MaterialShortfall];
 }
 
 // ONE CONSUMER GOING WITHOUT AN ITEM — a row of CraftSuggestion.sources, keyed so the client can
@@ -5246,6 +5259,12 @@ table CraftOffer {
   // So spears/clubs/hoes publish counts and baskets/sled/traps/crook/wayfinding publish -1 on BOTH
   // offers. -1 is not "none": 0 is a real count.
   ownedAtTier:int = -1;
+  // MAY THIS RECIPE BE QUEUED — the Make/Queue button's gate (appended last). True when every craft
+  // in the recipe's `requires_knowledge` is known to the faction, EXACTLY the test `bench_enqueue`
+  // applies, so a `queueable` offer is never refused. Materials and tools do NOT gate it: the bench
+  // skips a short order and `BenchOrder.shortToFinish` speaks for it. Distinct from `available`,
+  // which says a pass can run NOW (drives the readouts and which recipe a row suggests).
+  queueable:bool;
 }
 
 // ONE BATCH OF ONE ITEM a band owns, plus the CONFIG's items it owns none of (one row each, count 0)

@@ -1768,6 +1768,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         craft_offers,
         equipment_batches,
         bench_material_rate,
+        queue_forecast,
     } = crate::snapshot::crafting::band_craft_state(&cohort.stores, bench, &kit, craft_inputs);
     // **WHAT TO MAKE NEXT** (`docs/plan_crafting_and_materials.md` §7 "Suggestions") — scored off the
     // same settled lines the wire publishes: the pools' and site crews' off the allocation, the take
@@ -1784,14 +1785,25 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                         .map(move |line| (row, line.item_id.as_str(), line.required, line.filled))
                 });
             let lines = crate::craft_suggestions::band_tool_shortfall_lines(alloc, take_rows);
-            crate::snapshot::crafting::craft_suggestion_states(
+            let mut states = crate::snapshot::crafting::craft_suggestion_states(
                 crate::craft_suggestions::craft_suggestions(
                     &lines,
                     bench,
                     craft_inputs.recipes,
                     craft_inputs.equipment,
                 ),
-            )
+            );
+            // **What the whole count needs that the stock cannot cover**, off the same forecast the
+            // bench's orders publish — a suggestion lands at the queue's end.
+            crate::snapshot::crafting::suggestion_shortfalls(
+                &mut states,
+                &craft_offers,
+                &queue_forecast,
+                &cohort.stores,
+                &kit,
+                craft_inputs,
+            );
+            states
         }
         _ => Vec::new(),
     };

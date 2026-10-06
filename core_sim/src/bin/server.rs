@@ -8644,14 +8644,12 @@ fn bench_recipe_refusal(
     let display_name = recipe.full_name(&app.world.resource::<EquipmentConfigHandle>().get());
     let unknown_craft = {
         let ledger = app.world.resource::<DiscoveryProgressLedger>();
-        recipe
-            .requires_knowledge
-            .iter()
-            .find(|craft| {
-                core_sim::crafting::craft_discovery_id(craft)
-                    .is_none_or(|id| !knows(ledger, faction, id, threshold))
-            })
-            .cloned()
+        // The one predicate the published `CraftOffer.queueable` also reads.
+        core_sim::crafting::first_unknown_craft(recipe, |craft| {
+            core_sim::crafting::craft_discovery_id(craft)
+                .is_some_and(|id| knows(ledger, faction, id, threshold))
+        })
+        .map(str::to_string)
     };
     if let Some(craft) = unknown_craft {
         emit_command_failure(
@@ -11352,6 +11350,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::Craft => "Craft",
         CommandEventKind::KitLife => "Kit life",
         CommandEventKind::MaterialShortfall => "Material shortfall",
+        CommandEventKind::BenchMaterialShort => "Bench material short",
         CommandEventKind::HuntDanger => "Dangerous hunt",
         CommandEventKind::HuntReport => "Hunt report",
         CommandEventKind::PredatorRaid => "Predator raid",
@@ -21413,6 +21412,51 @@ mod tests {
             the_bench(&app, band).orders[HEAD as usize].count,
             A_LARGER_COUNT,
             "a valid count applies"
+        );
+    }
+
+    /// **ANY RECIPE THE BAND KNOWS MAY BE QUEUED, SHORT OF MATERIAL OR NOT** — only an unlearned craft
+    /// is refused. A sled (ungated) queues against an empty store; a tanning frame (gated on crafts
+    /// no fresh faction holds) does not. Paired so a handler refusing everything passes neither half.
+    #[test]
+    fn a_known_recipe_queues_short_of_material_and_an_unlearned_one_is_refused() {
+        const UNLEARNED_RECIPE: &str = "tanning_frame";
+        let mut app = build_test_app();
+        app.update();
+        let faction = FactionId(0);
+        let band = first_resident_band(&mut app);
+        app.world
+            .get_mut::<PopulationCohort>(band)
+            .expect("a campaign band carries a cohort")
+            .stores
+            .clear_materials();
+
+        handle_bench_enqueue(
+            &mut app,
+            faction,
+            None,
+            UNLEARNED_RECIPE,
+            BENCH_TEST_ORDER,
+            BENCH_CREW_UNSPECIFIED,
+        );
+        assert!(
+            the_bench(&app, band).orders.is_empty(),
+            "an unlearned craft is refused"
+        );
+        assert!(craft_event_mentions(&app, "has not learned"));
+
+        handle_bench_enqueue(
+            &mut app,
+            faction,
+            None,
+            BENCH_IDLE_RECIPE,
+            BENCH_TEST_ORDER,
+            BENCH_CREW_UNSPECIFIED,
+        );
+        assert_eq!(
+            the_bench(&app, band).orders.len(),
+            1,
+            "a known recipe queues with an empty store"
         );
     }
 
