@@ -17,7 +17,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 238
+const EXPECTED_CHECKPOINTS := 241
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
@@ -759,6 +759,7 @@ func _crafting_states() -> void:
 	await _queue_and_suggestion_states()
 	await _short_head_state()
 	await _material_shortage_state()
+	await _worked_forecast_state()
 
 	# Hand everything back: the panel closed, the roster restored to the reference band.
 	h._hud.close_crafting_panel()
@@ -966,7 +967,7 @@ func _shortfall_row(material_id: String, short: float) -> Dictionary:
 
 ## **A FORECAST IS NOT A BLOCK.** The paused spears read one material, the waiting sled two; the Clubs
 ## suggestion carries its whole-count shortfall. The sim's `short` is rendered verbatim to one decimal,
-## the tail once, amber, and never on an order that also carries a blocked reason.
+## muted (`INK_FAINT`), and never on an order that also carries a blocked reason.
 func _material_shortage_state() -> void:
 	var band := _queued_band()
 	var bench: Dictionary = band["bench"]
@@ -1017,6 +1018,45 @@ func _material_shortage_state() -> void:
 	h._assert_hud("crafting/forecast — a blocked order shows its reason and NO forecast line",
 		panel != null and _forecast_label(panel, HudCraftingVocab.ORDER_SHORT_TO_FINISH_META, QUEUE_WAITING_INDEX) == null
 			and _reason_label(panel) != null)
+	h._hud.close_crafting_panel()
+	await h._settle()
+
+const WORKED_FORECAST_SHORT := 10.0
+
+## **THE WORKED ORDER HAS NO QUEUE ROW, SO THE WELL CARRIES ITS FORECAST** — a lone order, affordable for
+## one pass, short for the whole run. Paired with the same bench BLOCKED: the well's blocked line already
+## quotes the queue-aware numbers, so the forecast line must not appear beside it.
+func _worked_forecast_state() -> void:
+	var band := _crafting_band()
+	var bench: Dictionary = band["bench"]
+	var order := _order(BASKETS_REED_RECIPE, QUEUE_HEAD_COUNT, QUEUE_HEAD_MADE, BENCH_PROGRESS, true)
+	order["short_to_finish"] = [_shortfall_row("fibre", WORKED_FORECAST_SHORT)]
+	bench["orders"] = [order]
+	bench["worked"] = 0
+	h._hud.update_band_alerts([band])
+	h._hud.open_crafting_panel(band)
+	await h._settle()
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting/worked-forecast — the panel is open", false)
+		return
+	var line := _forecast_label(panel, HudCraftingVocab.BENCH_SHORT_TO_FINISH_META, true)
+	h._assert_hud("crafting/worked-forecast — the well names the lone worked order's shortage (%s)"
+			% [line.text if line != null else "none"],
+		line != null and line.text == "Short 10.0 fibre"
+			and line.get_theme_color(FONT_COLOR_THEME_ITEM) == HudStyle.INK_FAINT
+			and line.tooltip_text == line.text)
+	await h._save("crafting_worked_forecast")
+
+	bench["blocked_reason"] = SHORT_HEAD_REASON
+	bench["blocked_severity"] = HudCraftingVocab.SEVERITY_DANGER
+	h._hud.update_band_alerts([band])
+	h._hud.crafting_panel().refresh_snapshot()
+	await h._settle()
+	panel = h._hud.crafting_panel().panel()
+	h._assert_hud("crafting/worked-forecast — a BLOCKED well shows its refusal and NO forecast line",
+		panel != null and _forecast_label(panel, HudCraftingVocab.BENCH_SHORT_TO_FINISH_META, true) == null
+			and _blocked_line(panel) != null)
 	h._hud.close_crafting_panel()
 	await h._settle()
 
@@ -3330,11 +3370,11 @@ func _start_sends_the_chosen_recipe() -> void:
 		_picker(panel) == null and sent.is_empty())
 	h._hud.bench_enqueue_requested.disconnect(on_bench)
 
-## **MAKE IS LIVE WHEN ANY RECIPE CAN BE MADE**, and the Costs cell still describes the suggestion. The
-## fixture suggests the bone recipe while only the flint one can be made — a shape the shipped sim's
-## own rule does not produce (it suggests an available recipe whenever one exists), staged because the
-## client's rule is "any", not "the suggested one", and nothing else can tell the two apart. Paired with
-## the clubs row in the same ledger, whose only recipe is short: its Make stays disabled.
+## **MAKE IS LIVE WHEN ANY RECIPE IS QUEUEABLE**, and the Costs cell still describes the suggestion. The
+## fixture suggests the bone recipe (short of material) while the flint one can run — a shape the shipped
+## sim's own rule does not produce, staged because the client's rule is "any", not "the suggested one".
+## The clubs row, whose only recipe is short but KNOWN, keeps a live Make; with its craft unlearned
+## (`queueable=false`) the button goes dead and the reason shows.
 func _make_is_live_when_any_recipe_is() -> void:
 	var band := _crafting_band()
 	var offers: Array = band["craft_offers"]

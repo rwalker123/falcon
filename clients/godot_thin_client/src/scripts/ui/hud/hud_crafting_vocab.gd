@@ -397,6 +397,8 @@ const CLEAR_BENCH_META := "crafting_clear_bench"
 ## refusal that matched on wording would be matching on the sim's spelling, and one that scanned for
 ## the danger ink would also catch every refused row in the ledger below.
 const BENCH_BLOCKED_META := "crafting_bench_blocked"
+## The muted forecast line in the well for the WORKED order (never beside a blocked line).
+const BENCH_SHORT_TO_FINISH_META := "crafting_bench_short_to_finish"
 const BENCH_TEACH_FORMAT := "Teaching %s — every one finished teaches it."
 ## Crafting is the FOURTH TEACHER, but a bench with no lesson to credit says nothing rather than
 ## saying "teaches nothing".
@@ -561,7 +563,7 @@ const SUGGESTION_META := "crafting_suggestion"
 const SUGGESTION_QUEUE_META := "crafting_suggestion_queue"
 ## The refusal line under a refused suggestion's dead button.
 const SUGGESTION_REASON_META := "crafting_suggestion_reason"
-## The amber material-shortfall line in a suggestion's words column, valued the ITEM ID.
+## The muted material-shortfall line in a suggestion's words column, valued the ITEM ID.
 const SUGGESTION_SHORTFALL_META := "crafting_suggestion_shortfall"
 
 ## **WHEN THE BAND OWNS NO UNITS, ONE WORDING FOR EVERY ROW**, keyed off `count` — never off

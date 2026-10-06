@@ -168,7 +168,7 @@ var _popup_closed_row: String = NO_ROW
 
 ## **WHICH ROW'S MAKE PICKER IS OPEN, AND WHICH RECIPE IS CHOSEN IN IT.** One picker at a time. Dropped
 ## on a render whose row has disappeared or dropped to one recipe, and a chosen recipe that is no longer
-## available falls back to the default rule (`_default_choice`).
+## queueable falls back to the default rule (`_default_choice`).
 var _picker_row: String = NO_ROW
 var _picker_choice: String = ""
 ## **THE COUNT START SENDS, AND WHICH LIST THE PICKER HANGS UNDER.** A picker opened from a ledger row's
@@ -683,6 +683,19 @@ func _build_bench(payload: Dictionary) -> void:
 		# predict, so a claim about the blocked line can only be scoped to the node that carries it.
 		reason.set_meta(HudCraftingVocab.BENCH_BLOCKED_META, true)
 		words.add_child(reason)
+	elif recipe_id != "":
+		# **THE WORKED ORDER'S FORECAST** — the queue rows skip `worked`, so without this the lone
+		# order that is affordable for one pass shows nothing until it stalls. Never beside a blocked
+		# line: that one already quotes the same queue-aware numbers.
+		var well_orders: Array = bench.get(HudCraftingVocab.BENCH_ORDERS_KEY, [])
+		var well_worked := _worked_index(bench)
+		if well_worked < well_orders.size() and well_orders[well_worked] is Dictionary:
+			var well_forecast := _shortfall_text((well_orders[well_worked] as Dictionary).get(
+				HudCraftingVocab.ORDER_SHORT_TO_FINISH_KEY, []))
+			if well_forecast != "":
+				var well_label := _forecast_label(well_forecast, HudCraftingVocab.BENCH_BLOCKED_FONT_SIZE)
+				well_label.set_meta(HudCraftingVocab.BENCH_SHORT_TO_FINISH_META, true)
+				words.add_child(well_label)
 	top.add_child(words)
 	# **NOTHING TO REMOVE ON AN IDLE BENCH**, so the control is absent rather than dead — and it is
 	# built BEFORE the stepper, which insets it from the card's right edge and keeps it away from the
@@ -1030,9 +1043,9 @@ func _row_queueable(row: Dictionary) -> bool:
 			return true
 	return false
 
-## **THE RECIPE THE PICKER OPENS ON**: the suggested one when it can be made now, else the first that
-## can, else nothing. The sim's own pick already prefers an available recipe, so the fallback matters
-## only when the suggestion and the store disagree.
+## **THE RECIPE THE PICKER OPENS ON**: the suggested one when it is `queueable`, else the first that
+## is, else nothing. The sim's own pick already prefers a runnable recipe, so the fallback matters
+## only when the suggestion and the queue gate disagree.
 func _default_choice(row: Dictionary) -> String:
 	var suggested: Dictionary = row["offer"]
 	if bool(suggested.get(HudCraftingVocab.OFFER_QUEUEABLE_KEY, false)):
@@ -1053,7 +1066,7 @@ func _choice_is_available(row: Dictionary, recipe_id: String) -> bool:
 ## gone or dropped to one recipe closes — there is nothing left to choose — and so does one opened from
 ## a suggestion the sim no longer publishes (the queue now covers it); a suggestion's picker takes the
 ## suggestion's CURRENT count, so Start never queues a shortfall that has since shrunk; a chosen recipe
-## that is no longer available falls back to the default rule rather than leaving Start pointed at a
+## that is no longer queueable falls back to the default rule rather than leaving Start pointed at a
 ## build the sim would refuse; a popup whose row is gone or has one recipe left closes.
 func _reconcile_recipe_view(payload: Dictionary) -> void:
 	if _picker_row != NO_ROW:
@@ -1791,7 +1804,7 @@ func _cancel_picker() -> void:
 		render(_payload)
 
 ## **THE MAKE PICKER**, spanning the ledger under its row. One radio line per recipe — its label, its
-## cost, and either what it makes or, when it cannot be made now, the sim's own reason with the radio
+## cost, and either what it makes or, when it is not queueable, the sim's own reason with the radio
 ## DISABLED. The footer says the recipe is fixed once the build starts, and Start sends the CHOSEN
 ## recipe, which is the only way a row's non-suggested recipe ever reaches the bench.
 func _build_make_picker(row: Dictionary, payload: Dictionary) -> Control:
@@ -1849,8 +1862,8 @@ func _build_make_picker(row: Dictionary, payload: Dictionary) -> Control:
 	column.add_child(footer)
 	return host
 
-## One recipe as a radio line. The radio is DISABLED when the recipe cannot be made now, and its line
-## then states the sim's reason where a buildable one states what it would make.
+## One recipe as a radio line. The radio is DISABLED when the recipe is not `queueable` (a craft is
+## unlearned), and its line then states the sim's reason where a queueable one states what it makes.
 func _build_picker_option(offer: Dictionary, group: ButtonGroup, payload: Dictionary) -> Control:
 	var recipe_id := String(offer.get(HudCraftingVocab.OFFER_RECIPE_ID_KEY, ""))
 	var available := bool(offer.get(HudCraftingVocab.OFFER_QUEUEABLE_KEY, false))
