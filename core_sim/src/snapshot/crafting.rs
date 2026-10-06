@@ -508,10 +508,13 @@ fn bench_state(
     // answers *"could this be made"*, not *"is anyone making it"*.
     //
     // **Except a shortage, once the pile is DRAWN** — see [`NOTHING_SHORT_STOPS_A_DRAWN_PILE`].
+    //
+    // **And the NUMBERS are the order's own** — see [`queue_aware_shortfalls`].
+    let queue_aware = queue_aware_shortfalls(&shortfalls, forecast.orders.get(worked as usize));
     let blocking = if head.drawn.is_some() {
         NOTHING_SHORT_STOPS_A_DRAWN_PILE
     } else {
-        shortfalls.as_slice()
+        queue_aware.as_slice()
     };
     let mut reasons = refusal_reasons(plan, &tiers, blocking, inputs);
     // **A fault reads differently from a prompt, and only the sim can tell them apart.** Everything
@@ -604,8 +607,14 @@ fn bench_orders(
         .iter()
         .enumerate()
         .map(|(index, order)| {
-            let (blocked_reason, blocked_severity) =
-                order_skip_reason(order, store, wear, inputs, tiers_by_material);
+            let (blocked_reason, blocked_severity) = order_skip_reason(
+                order,
+                store,
+                wear,
+                inputs,
+                tiers_by_material,
+                forecast.orders.get(index),
+            );
             BenchOrderState {
                 blocked_reason,
                 blocked_severity: blocked_severity.to_string(),
@@ -671,6 +680,26 @@ pub(crate) fn suggestion_shortfalls(
     }
 }
 
+/// **ONE MATERIAL STORY PER ORDER** — what an order's blocked reason says it is short of is its
+/// `shortToFinish` rows (the whole remaining run against what the orders ahead leave), in the same
+/// `Short {:.1} {material}` wording, never the per-pass gap. `per_pass` only decides **whether**
+/// material is what blocks the order: a shortage that does not stop the next draw is not a reason, so
+/// a workable order's forecast never reads as a block. A material-blocked order always has forecast
+/// rows (stock below one pass is below its whole need), so the fallback to `per_pass` is unreachable
+/// in practice and only keeps a mismatched caller honest.
+fn queue_aware_shortfalls(
+    per_pass: &[MaterialShortfallState],
+    forecast_rows: Option<&Vec<crate::systems::MaterialNeed>>,
+) -> Vec<MaterialShortfallState> {
+    if per_pass.is_empty() {
+        return Vec::new();
+    }
+    match forecast_rows {
+        Some(rows) if !rows.is_empty() => shortfall_states(rows),
+        _ => per_pass.to_vec(),
+    }
+}
+
 /// **WHY ONE QUEUED ORDER IS BEING SKIPPED**, `("", "")` when it is not — see [`bench_orders`].
 fn order_skip_reason(
     order: &crate::components::BenchOrder,
@@ -678,6 +707,7 @@ fn order_skip_reason(
     wear: &BandEquipment,
     inputs: &BandCraftInputs<'_>,
     tiers_by_material: &BTreeMap<&str, BenchTiers>,
+    forecast_rows: Option<&Vec<crate::systems::MaterialNeed>>,
 ) -> (String, &'static str) {
     if crate::systems::order_is_workable(
         order,
@@ -700,7 +730,12 @@ fn order_skip_reason(
         .and_then(|material| tiers_by_material.get(material).copied())
         .unwrap_or(NO_BENCH_TIERS);
     let shortfalls = shortfalls_for(plan.recipe, &tiers, store);
-    let reasons = refusal_reasons(plan, &tiers, &shortfalls, inputs);
+    let reasons = refusal_reasons(
+        plan,
+        &tiers,
+        &queue_aware_shortfalls(&shortfalls, forecast_rows),
+        inputs,
+    );
     if reasons.is_empty() {
         return (String::new(), SEVERITY_NONE);
     }

@@ -520,12 +520,15 @@ precondition asserts it does not need. A one-order bench costs the well no row a
 Each queue row (`_build_queue_row`, keyed `QUEUE_ROW_META` = the order's PUBLISHED index, which is the
 `order` the queue verbs address):
 
-- **A status word** — `WAITING` (faint) when the order carries a `blocked_reason`: the bench is
-  SKIPPING it, and the sim's reason (`Short 3.0 fibre`) renders VERBATIM on a second line under the
-  name, tinted by its `blocked_severity` through the SAME `REASON_COLORS` table the well's blocked line
-  uses — two lines, the panel's copy limit. Else `PAUSED` (WARN, hover-explained) when `drawn`: it was
-  raised over while holding a cut pile and keeps the pile and its progress until it is worked again.
-  Else `QUEUED` (faint). The crew's refusal is never on an order row — it stays the well's.
+- **A status word, and IT CARRIES THE COLOUR** — `WAITING` in `HudStyle.DANGER` when the order carries
+  a `blocked_reason` (the bench is SKIPPING it); `PAUSED` in `WARN`, hover-explained, when `drawn` (it
+  was raised over while holding a cut pile and keeps the pile and its progress until it is worked
+  again); else `QUEUED` in `INK_DIM`. The word is the signal because Ray found the old faint status
+  words invisible and two colours for two shortage stories too much. The second line under the name is
+  ONE muted (`INK_FAINT`) line whatever the status: the sim's `blocked_reason` VERBATIM (no severity
+  tint — the well's blocked line is the one that keeps it), else the `short_to_finish` forecast. The two
+  are mutually exclusive — two lines, the panel's copy limit. The crew's refusal is never on an order
+  row — it stays the well's.
 - **The name.** The worked order's is the well's title, `BenchState.displayName` verbatim. **Any other
   order publishes no name**, so it is the recipe book's `display_name` + `label` in the sim's own
   `RecipeDef::full_name` shape (`ORDER_NAME_WITH_LABEL_FORMAT`, `Spears (Flint)`).
@@ -566,16 +569,17 @@ running but will run dry. Two published fields carry the forecast, both in the `
   second line in the slot the blocked reason uses — the two are mutually exclusive, so the row stays at
   two lines (`ORDER_SHORT_TO_FINISH_META` = the order index).
 - **`craft_suggestions[].shortfalls`** — the WHOLE suggested count against the stock the queue leaves.
-  An amber line in the words column under the consequence (`SUGGESTION_SHORTFALL_META` = the item id).
+  A muted line in the words column under the consequence (`SUGGESTION_SHORTFALL_META` = the item id).
   The refusal under a disabled Queue button is unchanged; this is the material story for the count.
 
-**The words** (`hud_crafting_vocab.gd`): `Short 6.0 wood to finish · send a crew for more` on an order;
-`Short 12.0 wood for all 6 · send a crew for more` on a suggestion (6 = the suggestion's count). Several
-materials join their `Short X m` parts with ` · ` and the tail appears ONCE. The number is the sim's
-`short` formatted to one decimal (`SHORTFALL_DECIMALS`, so `6.0`, not `_amount_text`'s `6`), never
-summed or recomputed — formatting a published figure is rendering. **Amber `HudStyle.WARN`**, because a
-forecast is not the danger of a stopped bench. A line wider than its column trims with an ellipsis and
-carries the full text as its tooltip, so nothing is dropped.
+**The words** (`hud_crafting_vocab.gd`): `Short 6.0 wood` on an order; `Short 12.0 wood for all 6` on a
+suggestion (6 = the suggestion's count). Several materials join their `Short X m` parts with ` · ` (the
+suggestion's `for all N` follows ONCE). No "send a crew" tail: the Work-tab remedy is the event dock's
+link, not copy on every row. The number is the sim's `short` formatted to one decimal
+(`SHORTFALL_DECIMALS`, so `6.0`, not `_amount_text`'s `6`), never summed or recomputed. **Both lines are
+`INK_FAINT`, the same muted ink as the order's blocked reason** — colour belongs to the status word, and a
+second tint for a second shortage story was rejected. A line wider than its column trims with an
+ellipsis and carries the full text as its tooltip, so nothing is dropped.
 
 **The delivered count has ONE home, the `made/count` face.** The well's progress line said
 `· 1 finished` off `BenchState.itemsCompleted`; that clause is gone, and no client surface reads

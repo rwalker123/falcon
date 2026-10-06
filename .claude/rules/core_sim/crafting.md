@@ -1401,6 +1401,12 @@ nothing until it stalled. `systems::queue_material_shortfalls` looks at the whol
   order** against a running copy of the store, each claiming `min(need, left)`, so a later order sees
   only what the earlier ones left. **Stock on hand only** — no inflow, no tier change from wear: the
   remedy it names is fetching more.
+- **ONE material wording per order.** The `Short n material` parts of an order's `blockedReason` — and
+  of the bench row's own, for the described order — are that order's `shortToFinish` numbers (whole
+  remaining run, queue-order claims), via `snapshot::crafting::queue_aware_shortfalls`; non-material
+  parts (`Needs X`, `No loom`) are unchanged. The per-pass shortfall only decides WHETHER material
+  blocks (workability is untouched). The ledger's `CraftOffer.reason` stays per-pass: it describes
+  one pass, not an order. Pinned by `bench_queue::a_skipped_orders_reason_quotes_its_forecast_not_one_pass`.
 - **`BenchOrder.shortToFinish`** is that order's rows (empty when covered). A **forecast, not a
   block** — `blockedReason` stays the only "why it is skipped" field.
 - **`CraftSuggestion.shortfalls`** is the whole suggested count (`ceil(count / the recipe's per-pass

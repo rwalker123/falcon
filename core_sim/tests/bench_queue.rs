@@ -935,3 +935,34 @@ fn the_bench_short_notice_is_edge_gated_and_refires_after_recovering() {
         "going short again after a recovery re-fires"
     );
 }
+
+/// **ONE MATERIAL STORY PER ORDER** — a skipped order's `blockedReason` and the bench's own quote the
+/// order's `shortToFinish` numbers (the whole remaining run against what earlier orders leave), not
+/// one pass. Three sleds at 2 fibre a pass with 1 fibre held: the per-pass gap is 1.0 but the run is
+/// short 5.0; the baskets behind (5 a pass) see the head's claim and read the full 5.0, not 4.0.
+/// Also holds the sanity that a material-skipped order always has forecast rows.
+#[test]
+fn a_skipped_orders_reason_quotes_its_forecast_not_one_pass() {
+    const SLEDS: u32 = 3;
+    const FIBRE_HELD: f32 = 1.0;
+    let (mut app, band) = world();
+    bench_with(&mut app, band, FIBRE_HELD, &[(SLED_RECIPE, SLEDS)]);
+    app.world
+        .get_mut::<BandBench>(band)
+        .expect("a spawned band carries a bench")
+        .enqueue(BASKETS_RECIPE, ONE);
+    let published = publish_worked(&mut app, band);
+    let (_, forecast_orders) = (0, publish_forecast(&mut app, band).0);
+    assert_eq!(published.orders[0].3, "Short 5.0 fibre");
+    assert_eq!(published.orders[1].3, "Short 5.0 fibre");
+    assert_eq!(
+        published.blocked_reason, "Short 5.0 fibre",
+        "the bench row agrees with the head's queue row"
+    );
+    for (order, (_, _, _, reason, _)) in published.orders.iter().enumerate() {
+        assert!(
+            reason.is_empty() || !forecast_orders[order].is_empty(),
+            "a material-skipped order always has forecast rows"
+        );
+    }
+}

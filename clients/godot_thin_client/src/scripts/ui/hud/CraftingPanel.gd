@@ -2224,19 +2224,19 @@ func _build_queue_row(index: int, order: Dictionary, bench: Dictionary, payload:
 	var blocked := String(order.get(HudCraftingVocab.ORDER_BLOCKED_REASON_KEY, ""))
 	if blocked != "":
 		status.text = HudCraftingVocab.ORDER_STATUS_WAITING.to_upper()
-		status.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+		status.add_theme_color_override("font_color", HudStyle.DANGER)
 	elif drawn:
 		status.text = HudCraftingVocab.ORDER_STATUS_PAUSED.to_upper()
 		status.add_theme_color_override("font_color", HudStyle.WARN)
 		HudWidgets.set_label_tooltip(status, HudCraftingVocab.ORDER_STATUS_PAUSED_TOOLTIP)
 	else:
 		status.text = HudCraftingVocab.ORDER_STATUS_QUEUED.to_upper()
-		status.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+		status.add_theme_color_override("font_color", HudStyle.INK_DIM)
 	row.add_child(status)
 
-	# The name, and — on an order the bench is SKIPPING — the sim's reason on a second line, VERBATIM
-	# and tinted by its published severity through the SAME `REASON_COLORS` the well's blocked line
-	# uses. Two lines at most, the panel's copy limit.
+	# The name, and ONE muted second line: the sim's blocked reason VERBATIM when the bench is SKIPPING
+	# the order, else the `short_to_finish` forecast. The colour rides the STATUS word above, so the
+	# line is the quiet ink whatever it says. Two lines at most, the panel's copy limit.
 	var words := VBoxContainer.new()
 	words.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	words.add_theme_constant_override("separation", 0)
@@ -2249,14 +2249,11 @@ func _build_queue_row(index: int, order: Dictionary, bench: Dictionary, payload:
 		var reason := Label.new()
 		reason.text = blocked
 		reason.add_theme_font_size_override("font_size", HudCraftingVocab.ORDER_REASON_FONT_SIZE)
-		reason.add_theme_color_override("font_color", HudCraftingVocab.REASON_COLORS.get(
-			String(order.get(HudCraftingVocab.ORDER_BLOCKED_SEVERITY_KEY, "")),
-			HudCraftingVocab.REASON_COLOR_QUIET))
+		reason.add_theme_color_override("font_color", HudStyle.INK_FAINT)
 		reason.set_meta(HudCraftingVocab.ORDER_REASON_META, index)
 		words.add_child(reason)
 	else:
-		var forecast := _shortfall_text(order.get(HudCraftingVocab.ORDER_SHORT_TO_FINISH_KEY, []),
-			HudCraftingVocab.ORDER_SHORT_TO_FINISH_TAIL_FORMAT)
+		var forecast := _shortfall_text(order.get(HudCraftingVocab.ORDER_SHORT_TO_FINISH_KEY, []))
 		if forecast != "":
 			var forecast_label := _forecast_label(forecast, HudCraftingVocab.ORDER_REASON_FONT_SIZE)
 			forecast_label.set_meta(HudCraftingVocab.ORDER_SHORT_TO_FINISH_META, index)
@@ -2526,10 +2523,10 @@ func _wrap_padded(content: Control, padding_h: int, padding_v: int) -> MarginCon
 	host.add_child(content)
 	return host
 
-## The amber forecast line: the sim's published `short` rows, one `Short X material` part each, joined,
-## then `tail_format` once (`%s` is the joined parts; a second `%d` takes `count`). Empty rows → "".
+## The forecast line: the sim's published `short` rows, one `Short X material` part each, joined, then
+## `tail_format` once when given (`%s` is the joined parts; `%d` takes `count`). Empty rows → "".
 ## Rendering only — the numbers are never summed or recomputed here.
-func _shortfall_text(rows: Variant, tail_format: String, count: int = 0) -> String:
+func _shortfall_text(rows: Variant, tail_format: String = "", count: int = 0) -> String:
 	if not (rows is Array):
 		return ""
 	var parts: Array[String] = []
@@ -2542,14 +2539,16 @@ func _shortfall_text(rows: Variant, tail_format: String, count: int = 0) -> Stri
 	if parts.is_empty():
 		return ""
 	var joined := HudCraftingVocab.SHORTFALL_PART_SEPARATOR.join(parts)
+	if tail_format == "":
+		return joined
 	return tail_format % [joined, count] if tail_format.contains("%d") else tail_format % joined
 
-## One amber forecast label: ellipsis when it overflows, the full text in its tooltip so nothing is lost.
+## One muted forecast label: ellipsis when it overflows, the full text in its tooltip so nothing is lost.
 func _forecast_label(text: String, font_size: int) -> Label:
 	var label := Label.new()
 	label.text = text
 	label.add_theme_font_size_override("font_size", font_size)
-	label.add_theme_color_override("font_color", HudStyle.WARN)
+	label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
 	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	label.clip_text = true
 	label.mouse_filter = Control.MOUSE_FILTER_STOP

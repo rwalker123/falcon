@@ -521,15 +521,15 @@ const ORDER_DECREMENT_META := "crafting_order_decrement"
 const ORDER_INCREMENT_META := "crafting_order_increment"
 const ORDER_RAISE_META := "crafting_order_raise"
 const ORDER_REMOVE_META := "crafting_order_remove"
-## The amber forecast line on a running order, valued the ORDER INDEX.
+## The muted forecast line on a running order, valued the ORDER INDEX.
 const ORDER_SHORT_TO_FINISH_META := "crafting_order_short_to_finish"
 ## What it says: one `Short X material` part per published row (the sim's `short`, formatted to
 ## `SHORTFALL_DECIMALS`, never summed), joined, then the tail ONCE.
 const SHORTFALL_PART_FORMAT := "Short %s %s"
 const SHORTFALL_PART_SEPARATOR := " · "
 const SHORTFALL_DECIMALS := 1
-const ORDER_SHORT_TO_FINISH_TAIL_FORMAT := "%s to finish · send a crew for more"
-const SUGGESTION_SHORTFALL_TAIL_FORMAT := "%s for all %d · send a crew for more"
+## An order's line is the joined parts alone; a suggestion's adds the whole count it is short for.
+const SUGGESTION_SHORTFALL_TAIL_FORMAT := "%s for all %d"
 
 # ---- the suggestions at the top of the main column -----------------------------------------------
 ## **WHAT TO MAKE NEXT, RANKED BY WHO IS GOING WITHOUT** — the sim's list, in its order. Each row is the

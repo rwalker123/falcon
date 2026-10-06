@@ -17,7 +17,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 237
+const EXPECTED_CHECKPOINTS := 238
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
@@ -900,9 +900,10 @@ func _short_head_state() -> void:
 		head_texts.has(HudCraftingVocab.ORDER_STATUS_WAITING.to_upper())
 			and head_texts.has(SHORT_HEAD_REASON) and head_texts.has(BENCH_TWO_RECIPE_NAME))
 	var reason := _reason_label(rows[0])
-	h._assert_hud("crafting/short-head — …tinted by its published severity, the bench line's own table",
-		reason != null and reason.get_theme_color(FONT_COLOR_THEME_ITEM)
-			== HudCraftingVocab.REASON_COLORS[HudCraftingVocab.SEVERITY_DANGER])
+	h._assert_hud("crafting/short-head — …the reason line is MUTED and the colour rides the WAITING status word",
+		reason != null and reason.get_theme_color(FONT_COLOR_THEME_ITEM) == HudStyle.INK_FAINT
+			and _forecast_label(panel, HudCraftingVocab.ORDER_STATUS_META,
+				HudCraftingVocab.ORDER_HEAD_INDEX).get_theme_color(FONT_COLOR_THEME_ITEM) == HudStyle.DANGER)
 	h._assert_hud("crafting/short-head — the head row still has no ↑",
 		_queue_control(panel, HudCraftingVocab.ORDER_RAISE_META, HudCraftingVocab.ORDER_HEAD_INDEX) == null)
 	await h._save("crafting_queue_short_head")
@@ -988,16 +989,21 @@ func _material_shortage_state() -> void:
 		return
 	var one := _forecast_label(panel, HudCraftingVocab.ORDER_SHORT_TO_FINISH_META, QUEUE_PAUSED_INDEX)
 	h._assert_hud("crafting/forecast — one material reads the sentence (%s)" % [one.text if one != null else "none"],
-		one != null and one.text == "Short 6.0 wood to finish · send a crew for more"
-			and one.get_theme_color(FONT_COLOR_THEME_ITEM) == HudStyle.WARN
+		one != null and one.text == "Short 6.0 wood"
+			and one.get_theme_color(FONT_COLOR_THEME_ITEM) == HudStyle.INK_FAINT
 			and one.tooltip_text == one.text)
+	h._assert_hud("crafting/forecast — the status words carry the colour: PAUSED amber, QUEUED a step brighter than faint",
+		_forecast_label(panel, HudCraftingVocab.ORDER_STATUS_META, QUEUE_PAUSED_INDEX)
+				.get_theme_color(FONT_COLOR_THEME_ITEM) == HudStyle.WARN
+			and _forecast_label(panel, HudCraftingVocab.ORDER_STATUS_META, QUEUE_WAITING_INDEX)
+				.get_theme_color(FONT_COLOR_THEME_ITEM) == HudStyle.INK_DIM)
 	var two := _forecast_label(panel, HudCraftingVocab.ORDER_SHORT_TO_FINISH_META, QUEUE_WAITING_INDEX)
-	h._assert_hud("crafting/forecast — two materials join, the tail ONCE (%s)" % [two.text if two != null else "none"],
-		two != null and two.text == "Short 3.0 wood · Short 1.5 fibre to finish · send a crew for more")
+	h._assert_hud("crafting/forecast — two materials join with a middle dot (%s)" % [two.text if two != null else "none"],
+		two != null and two.text == "Short 3.0 wood · Short 1.5 fibre")
 	var sug := _forecast_label(panel, HudCraftingVocab.SUGGESTION_SHORTFALL_META, FORECAST_SUGGEST_ITEM)
 	h._assert_hud("crafting/forecast — the suggestion says it for the whole count (%s)" % [sug.text if sug != null else "none"],
-		sug != null and sug.text == "Short 12.0 wood for all %d · send a crew for more" % SUGGEST_CLUBS_COUNT
-			and sug.get_theme_color(FONT_COLOR_THEME_ITEM) == HudStyle.WARN)
+		sug != null and sug.text == "Short 12.0 wood for all %d" % SUGGEST_CLUBS_COUNT
+			and sug.get_theme_color(FONT_COLOR_THEME_ITEM) == HudStyle.INK_FAINT)
 	h._assert_hud("crafting/forecast — a covered suggestion carries no line",
 		_forecast_label(panel, HudCraftingVocab.SUGGESTION_SHORTFALL_META, "spears") == null)
 	await h._save("crafting_material_forecast")
