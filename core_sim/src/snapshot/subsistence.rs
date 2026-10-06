@@ -334,6 +334,7 @@ pub(crate) fn snapshot_sedentarization(
             faction: faction.0,
             score: entry.score,
             stage: entry.stage.as_str().to_string(),
+            belief_points: entry.belief_points,
         })
         .collect()
 }

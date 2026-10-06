@@ -614,6 +614,11 @@ pub struct CultureManager {
     /// driver fixes the cause; lowering elasticity would only have added lag, because in steady
     /// state a chaser's step size equals its target's velocity no matter how slowly it chases.
     smoothed_resonance: InfluencerCultureResonance,
+    /// The ancestor pull the last [`Self::reconcile`] applied to each band, keyed like `bands`. What
+    /// the snapshot publishes as `cultureAncestorPull`: stored, not recomputed at capture, because
+    /// `simulate_population` moves anchors, hop counts and belief AFTER the reconcile, so a
+    /// recompute from the cohort would be next turn's pull, not the one the layer was just given.
+    applied_band_pull: BTreeMap<u64, [Scalar; CULTURE_TRAIT_AXES]>,
 }
 
 /// Everything [`CultureManager`] holds **except its settings** — see
@@ -633,6 +638,7 @@ pub struct CultureManagerCheckpoint {
     bands: HashMap<u64, CultureLayer>,
     tension_events: Vec<CultureTensionRecord>,
     smoothed_resonance: InfluencerCultureResonance,
+    applied_band_pull: BTreeMap<u64, [Scalar; CULTURE_TRAIT_AXES]>,
 }
 
 impl CultureManager {
@@ -646,6 +652,7 @@ impl CultureManager {
             bands: self.bands.clone(),
             tension_events: self.tension_events.clone(),
             smoothed_resonance: self.smoothed_resonance,
+            applied_band_pull: self.applied_band_pull.clone(),
         }
     }
 
@@ -658,6 +665,7 @@ impl CultureManager {
         self.bands = checkpoint.bands.clone();
         self.tension_events = checkpoint.tension_events.clone();
         self.smoothed_resonance = checkpoint.smoothed_resonance;
+        self.applied_band_pull = checkpoint.applied_band_pull.clone();
     }
 }
 
@@ -676,6 +684,7 @@ impl CultureManager {
             tension_events: Vec::new(),
             settings,
             smoothed_resonance: InfluencerCultureResonance::default(),
+            applied_band_pull: BTreeMap::new(),
         }
     }
 
@@ -822,6 +831,12 @@ impl CultureManager {
         self.bands.get(&owner.0)
     }
 
+    /// The ancestor pull the last reconcile applied to the band layer `owner`, per axis; `None` when
+    /// that band took no pull.
+    pub fn applied_band_pull(&self, owner: CultureOwner) -> Option<&[Scalar; CULTURE_TRAIT_AXES]> {
+        self.applied_band_pull.get(&owner.0)
+    }
+
     pub fn band_layer_mut_by_owner(&mut self, owner: CultureOwner) -> Option<&mut CultureLayer> {
         self.bands.get_mut(&owner.0)
     }
@@ -863,6 +878,7 @@ impl CultureManager {
         resonance: &InfluencerCultureResonance,
         band_pull: &BTreeMap<u64, [Scalar; CULTURE_TRAIT_AXES]>,
     ) {
+        self.applied_band_pull = band_pull.clone();
         if self.global.is_none()
             && self.regional.is_empty()
             && self.locals.is_empty()
@@ -1422,7 +1438,8 @@ pub fn band_ancestor_pulls<'a>(
             cohort.last_belief_relay_hops,
         );
         let tie = culture.ancestor_tie(cohort.belief_anchor.map(|anchor| belief.get(anchor)), hops);
-        if tie <= 0.0 {
+        // No tie, or a lever that names no axis, is no pull: the band is left out, not given zeros.
+        if tie <= 0.0 || full_tie_pull.iter().all(|offset| *offset == 0.0) {
             continue;
         }
         pulls.insert(

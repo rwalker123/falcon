@@ -25,6 +25,9 @@ use crate::{
     sedentarization_config::{SedentarizationConfig, SedentarizationConfigHandle},
 };
 
+/// The raw blend of normalized inputs and weights (which sum to 1) is scaled to a 0–100 score.
+const RAW_SCALE: f32 = 100.0;
+
 /// Which settle-prompt threshold a faction has currently crossed. Ordered so a *rising* stage
 /// (`new > stored`) edge-gates the prompt emission.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
@@ -66,6 +69,10 @@ pub struct SedentarizationEntry {
     pub score: f32,
     /// Highest prompt threshold currently crossed (edge-gates re-prompting).
     pub stage: SedentarizationStage,
+    /// The belief input's raw points this turn — `100 × weights.belief × belief_norm`, before the
+    /// EMA that smooths `score`; `0` when no band stands on belief. Published as
+    /// `SedentarizationState.beliefPoints`.
+    pub belief_points: f32,
 }
 
 /// Per-faction sedentarization scores (mirrors `FactionInventory`'s per-faction map shape).
@@ -182,7 +189,7 @@ pub fn sedentarization_tick(
             belief_weighted.get(&faction).copied().unwrap_or(0.0) / pop as f32
         };
 
-        let raw = 100.0
+        let raw = RAW_SCALE
             * (w.domestication * dom_norm
                 + w.surplus * sur_norm
                 + w.resource_density * resource_density
@@ -190,6 +197,7 @@ pub fn sedentarization_tick(
                 + w.belief * belief_norm);
 
         let entry = score.entries.entry(faction).or_default();
+        entry.belief_points = RAW_SCALE * w.belief * belief_norm;
         // EMA smoothing (victory_tick pattern) so the pressure builds gradually.
         entry.score = (smoothing * entry.score + (1.0 - smoothing) * raw).clamp(0.0, 100.0);
 

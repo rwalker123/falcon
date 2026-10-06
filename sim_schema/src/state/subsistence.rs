@@ -139,6 +139,10 @@ pub struct SedentarizationState {
     pub score: f32,
     #[serde(default)]
     pub stage: String,
+    /// The belief input's raw points this turn (`100 × weights.belief × belief_norm`), before the
+    /// EMA that smooths `score`. Appended last.
+    #[serde(default)]
+    pub belief_points: f32,
 }
 
 /// A fully-fed pen — the neutral value of [`HerdTelemetryState::pen_fed_fraction`], so an un-penned

@@ -453,6 +453,7 @@ fn create_sedentarization<'a>(
                 faction: state.faction,
                 score: state.score,
                 stage: Some(stage),
+                beliefPoints: state.belief_points,
             },
         );
         entries.push(entry);
@@ -1479,6 +1480,7 @@ fn decode_sedentarization(state: fb::SedentarizationState<'_>) -> Sedentarizatio
         faction: state.faction(),
         score: state.score(),
         stage: text(state.stage()),
+        belief_points: state.beliefPoints(),
     }
 }
 

@@ -692,6 +692,11 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// positions. (The hop count is NOT recounted here: the frame publishes the one the turn's term
     /// was priced from, `PopulationCohort::last_belief_relay_hops`.)
     pub(crate) belief_relay_region: Vec<UVec2>,
+    /// **The band's own culture layer** — its resolved values per axis, and the ancestor pull the
+    /// last reconcile applied (`CultureManager::applied_band_pull`, stored there rather than
+    /// recomputed: the cohort has moved on since). Both empty when absent.
+    pub(crate) culture_traits: Vec<f32>,
+    pub(crate) culture_ancestor_pull: Vec<f32>,
     /// **This band's standing toward its people's heart** (`systems::independence`), off the
     /// checkpointed [`crate::systems::HeartLedger`]. `None` for a band no turn has judged (a fresh
     /// world, or a detached party, which is never a member), which publishes as in touch.
@@ -958,6 +963,8 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     let PopulationStateInputs {
         belief_reach,
         belief_relay_region,
+        culture_traits,
+        culture_ancestor_pull,
         entity,
         band_id,
         band_name,
@@ -2220,6 +2227,8 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             .and_then(|reading| reading.last_contact_turn)
             .map_or(sim_schema::state::NO_HEART_CONTACT, |turn| turn as i64),
         independence_grievance_threshold: wellbeing.independence.grievance_threshold,
+        culture_traits,
+        culture_ancestor_pull,
     }
 }
 
@@ -2749,6 +2758,8 @@ mod tests {
         population_state(PopulationStateInputs {
             belief_reach: Vec::new(),
             belief_relay_region: Vec::new(),
+            culture_traits: Vec::new(),
+            culture_ancestor_pull: Vec::new(),
             entity: Entity::from_raw(1),
             // These fixtures assert on the derived readouts, not on band identity.
             band_id: None,

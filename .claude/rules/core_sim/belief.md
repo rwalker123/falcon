@@ -207,7 +207,7 @@ design in `docs/plan_civilization_steps.md` §"What belief does, through seams t
 `CultureConfig::anchor_weight` of the belief on the band's anchor; `r = relay_per_hop ^ hops`, `0`
 when no chain reaches the band. Both come from what the band already stores
 (`PopulationCohort::belief_anchor`, `last_belief_relay_hops` decoded by
-`belief_relay::hops_from_wire`): no new search, no new cohort field, no new checkpointed state. `r`
+`belief_relay::hops_from_wire`): no new search and no new cohort field. `r`
 is computed in ONE place, `CultureConfig::relay_strength`, and `CultureConfig::ancestor_tie` is `s × r`
 on top of it; the morale term and the pull both call them, so the formula is not stated twice. With
 no anchor the tie is `0`. The hop count is the one `simulate_population` priced the morale term from
@@ -217,14 +217,16 @@ cohort field holds.
 **The pull.** `pull[axis] = tie × ancestor_pull[axis]`, built per resident band by
 `culture::band_ancestor_pulls` inside `reconcile_culture_layers` and handed to
 `CultureManager::reconcile` as a `BTreeMap<u64, [Scalar; 15]>` keyed by the band's culture owner key.
-A band absent from the map takes no pull. `reconcile` passes the entry through the same extra-offset
+A band absent from the map takes no pull (a band with no tie, or whose lever names no axis, is left
+out rather than given zeros). `reconcile` passes the entry through the same extra-offset
 slot `resolve_against` gives influencer resonance — it is NOT influencer resonance (bands still have
 no channel of their own for that) — so the band layer's target is `parent + modifier + pull`.
 
 **Why a stateless target offset.** The band's elasticity already supplies the lag, so nothing
 accumulates: a band that walks away from its dead (`r → 0`) relaxes back to its province at the band
 scope's elasticity, and a band that returns is pulled again. An accumulating drift would need its own
-state, its own checkpoint, and its own decay lever. Gatherings (#698) and the monument (#692) add
+state, its own checkpoint, and its own decay lever. (What IS stored is only the map the last reconcile
+applied, `CultureManager::applied_band_pull` — a record for the wire, never read back into the layer.) Gatherings (#698) and the monument (#692) add
 belief through `BeliefRegistry::add`; they raise `s`, and so the pull, with no further code.
 
 **Where it shows.** The faction's `culture.axis.secular_devout` / `…traditionalist_revisionist`
@@ -240,8 +242,10 @@ standing tile is `current_tile`, never `home` — the same rule as the deaths so
 beside its dead (not on them) adds nothing and a band that walks off loses the term. `weights.belief`
 (**0.10**) and `references.belief` (**20** dead-equivalents) are in `sedentarization_config.json`;
 the weights sum to `1.0` after `resource_density` fell `0.20 → 0.10` (the map-wide baseline, identical
-across factions, so the input that differentiates least). The rest of the score is in `campaign.md`
-§Sedentarization.
+across factions, so the input that differentiates least). `SedentarizationEntry::belief_points` keeps
+the input's raw points this turn (`100 × weights.belief × belief_norm`, before the EMA) so the client
+can show how much of the tether is the dead; it is checkpointed with the score. The rest of the score
+is in `campaign.md` §Sedentarization.
 
 ## On the wire and in the checkpoint
 
@@ -256,6 +260,21 @@ across factions, so the input that differentiates least). The rest of the score 
 - **`PopulationCohortState.moraleCulture:long`** (appended last on the table, fixed-point like its
   `moraleSettling/Terrain/Climate/Unrest` siblings) carries the band's culture contribution;
   `moraleCause` `4` is Culture.
+- **The band's own culture and the pull on it** (issue #701), appended last on
+  `PopulationCohortState`: `cultureTraits:[float]` — the band's own culture layer's resolved values,
+  15 entries in `CultureTraitAxis::index()` order (Rust `culture_traits: Vec<f32>`); and
+  `cultureAncestorPull:[float]` — `tie × ancestor_pull[axis]`, the offset the last reconcile applied
+  to that layer, same order (`culture_ancestor_pull: Vec<f32>`). Each is empty when absent (no layer;
+  no pull). Own bands only: a foreign redacted row takes the defaults. **The pull is read from
+  `CultureManager::applied_band_pull`, not recomputed at capture**: `simulate_population` moves
+  anchors, hop counts and belief AFTER the reconcile, so a recompute off the cohort would be NEXT
+  turn's pull, not the one the layer was given. The map is therefore checkpointed
+  (`CultureManagerCheckpoint::applied_band_pull`), so a restored world publishes the frame an
+  uninterrupted one would. A changed pull rides the delta by `PopulationCohortState`'s derived
+  `PartialEq`.
+- **`SedentarizationState.beliefPoints:float`** (appended last) — `SedentarizationEntry::belief_points`,
+  the belief input's raw pre-EMA points, `0` when no band stands on belief. `SedentarizationEntry`
+  is in `SimState`, so adding it bumped `SAVE_FORMAT_VERSION` to 27.
 - **The anchor**: `hasBeliefAnchor:bool` gating `beliefAnchorX` / `beliefAnchorY:uint` (`0,0` with no
   anchor — the `isTraveling` / `travelTargetX/Y` idiom on the same table).
 - **The reach region**: `beliefReachX` / `beliefReachY:[uint]`, zipped and row-major (the
@@ -333,3 +352,8 @@ across factions, so the input that differentiates least). The rest of the score 
 | `belief_culture::belief_underfoot_raises_the_sedentarization_score_and_belief_beside_does_not` | belief on every band's standing tile adds exactly `(1 − smoothing) × 100 × weights.belief` on the first tick; belief on a tile beside adds nothing |
 | `belief_culture::the_belief_contribution_saturates_at_the_reference` | five times `references.belief` scores the same as `references.belief`; half scores half |
 | `belief_config::tests::*` | an unknown `ancestor_pull` key and a non-finite value are parse errors; the vector places each value on its axis; the shipped JSON equals the default |
+| `belief_culture::a_tied_bands_ancestor_pull_and_traits_are_on_the_encoded_snapshot` | on the envelope, `cultureAncestorPull` equals `applied_band_pull` and `tie × ancestor_pull` on Devout/Traditionalist, and `cultureTraits[SecularDevout]` is the layer's value |
+| `belief_culture::an_untied_bands_pull_is_empty_on_the_encoded_snapshot` | a band with no anchor publishes 15 traits and an empty pull |
+| `belief_culture::a_change_in_the_pull_rides_the_delta` | switching `ancestor_pull` off empties a band's published pull and its row is in the next delta |
+| `belief_culture::belief_points_are_on_the_encoded_snapshot` | `beliefPoints` is `100 × weights.belief` on the reference, half at half, `0` beside the belief tile |
+| `foreign_band_redaction::*` | the redacted-row pin counts `cultureTraits` and `cultureAncestorPull` and requires `0` on a foreign band |
