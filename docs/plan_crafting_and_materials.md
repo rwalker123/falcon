@@ -366,11 +366,11 @@ to send anyone home — and an empty queue leaves the crew standing at an idle b
   (*"Short 4.9 bone"*), empty when it can be worked; when no order can be worked the bench reads as
   its blocked head.
 - **An order that will run dry says so before it stalls** (#777). Each order carries
-  `shortToFinish`: what the stock on hand will not cover across every pass it still has to draw
-  (`Short 6.0 wood to finish · send a crew for more`, amber). The queue spends stock in queue
-  order, so a later order is judged against what the earlier ones leave. It is a forecast, not a
-  block — `blockedReason` stays the one field that says an order is skipped, and the two lines
-  never show together. The bench also posts one Notable event-dock line per material on the
+  `shortToFinish`: what the stock on hand will not cover across every pass it still has to draw.
+  The queue spends stock in queue order, so a later order is judged against what the earlier ones
+  leave. **One shortage story per order**: a skipped order's `blockedReason` quotes these same
+  numbers, and the row reads one muted line (`Short 2.0 bone`) whatever its status. The colour is on
+  the status word — WAITING (skipped) red, PAUSED amber, QUEUED plain. The bench also posts one Notable event-dock line per material on the
   crossing (*"Wood will run short at the bench"*), linking to the Work tab where the crew is sent.
 - **One bench, one queue.** Crafting in parallel comes from **more benches** — a bench growing toward
   a workshop and a factory, each with its own queue — never from splitting one bench into per-recipe
