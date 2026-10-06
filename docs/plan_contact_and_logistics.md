@@ -505,8 +505,9 @@ deleted from the schema.
 5. **The route ladder (#532)** — the `route` branch, its standing-upkeep term, and #215's game trails.
 6. **The overlay (#232)** — the logistics network drawn on the map.
 7. **The remaining riders** — #530 (culture), #531 (knowledge). Both settled — see §Open items.
-8. **Blocked on #513, then:** the cross-faction riders — #458 (proximity trade), #512 (defection).
-   By construction these should be small.
+8. **Blocked on #513, then:** the cross-faction riders — #546 (priced exchange), #512 (defection).
+   There is no separate proximity case: free pooling is a same-people affordance (`pools_freely`),
+   and exchange with a nearby foreign band is a #546 trade route at short range.
 
 **#231 (Early Diplomacy)** was narrowed to match: the route-network half moved here, and what remains
 there — treaties (#233) and cultural-reach victory metrics (#234) — is a *policy* layer that governs
