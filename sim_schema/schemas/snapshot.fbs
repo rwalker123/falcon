@@ -1804,8 +1804,9 @@ table LaborAssignment {
   // is what the source hands over this turn (the policy ceiling on a wild/tended source, the managed
   // rate on a Field/pen) and collection is workers × per-worker throughput. So the pair answers both
   // halves of "is this correctly staffed?": workers > workersNeeded ⇒ drop some, wastedYield > 0 ⇒
-  // add some. On a Field or a pen it is genuinely food left standing; on the drawn-down rungs it
-  // stays in the stock and regrows. Derived per-turn at capture (0 on a rehydrated save before the
+  // add some. On a Field it is genuinely food left standing; on the drawn-down rungs it stays in
+  // the stock and regrows. A hunt or a pen slaughter keeps every animal it kills (a camp kill lands
+  // in the larder, a far one walks home in the party's packs), so it reads 0. Derived per-turn at capture (0 on a rehydrated save before the
   // next tick). Appended (append-only).
   wastedYield:float = 0;
   // THE overhunting ⚠, answered by the sim rather than derived by the client from

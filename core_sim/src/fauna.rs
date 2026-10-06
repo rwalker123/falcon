@@ -6053,8 +6053,6 @@ pub fn project_realized_hunt(
             output_multiplier,
             workers,
             floor,
-            // The resident band's headline — it keeps what its packs carry.
-            CarcassKept::Carried,
         ) else {
             break; // the herd is gone or the source is spent — stop before diluting the average.
         };
@@ -6072,45 +6070,11 @@ pub fn project_realized_hunt(
 /// the crew keeps and what it is worth.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ProjectedHuntTurn {
-    /// Biomass the crew keeps this turn ([`CarcassKept`]) — the carry unit a work party's pack is
-    /// measured in. **Not** what the herd lost: that is every animal killed, carried or not.
+    /// Biomass the crew keeps this turn — every animal killed ([`AnimalTake::killed_biomass`]), the
+    /// carry unit a work party's pack is measured in.
     pub biomass: f32,
     /// The take's yield vector — the kept biomass valued, the standing half (milk, eggs) included.
     pub yields: YieldAccounts,
-}
-
-/// **WHAT OF A TAKE THE CREW KEEPS** — the one reading the live hunt arm and every projection of it
-/// share, so the two cannot disagree about what a take pays.
-///
-/// The herd loses every animal **killed** either way ([`AnimalTake::killed_biomass`]); what differs
-/// is what the crew brings home. A resident band walks away from what its packs cannot seat, so it
-/// keeps the **carried** share and the rest is waste. A work party's load is still standing at the
-/// source, so what one porter cannot shoulder waits for the next and it keeps the **whole carcass**.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CarcassKept {
-    /// A resident band — [`AnimalTake::carried`].
-    Carried,
-    /// A work party — [`AnimalTake::killed_biomass`].
-    Whole,
-}
-
-impl CarcassKept {
-    /// The reading for a row whose party (if it has one) is standing at the source.
-    pub fn for_posting(party_keeps_the_carcass: bool) -> Self {
-        if party_keeps_the_carcass {
-            Self::Whole
-        } else {
-            Self::Carried
-        }
-    }
-
-    /// The biomass of `take` this crew keeps.
-    pub fn of(self, take: &AnimalTake) -> f32 {
-        match self {
-            Self::Carried => take.carried,
-            Self::Whole => take.killed_biomass(),
-        }
-    }
 }
 
 /// **A HUNT, PROJECTED FORWARD ONE TURN AT A TIME, AT WHATEVER CREW IS STANDING THERE.**
@@ -6211,8 +6175,6 @@ impl HuntProjection {
         output_multiplier: f32,
         workers: f32,
         floor: f32,
-        // **What the crew keeps of the take** — see [`CarcassKept`].
-        kept: CarcassKept,
     ) -> Option<ProjectedHuntTurn> {
         let quarry = &mut self.quarry;
         // **`workers` IS THE TAKE CREW** (`docs/plan_standing_upkeep.md` §2.2) — the same term
@@ -6276,11 +6238,8 @@ impl HuntProjection {
         }
         // **The live take's own quantiser** ([`quantise_animal_take`], the call `systems::hunt_take`
         // makes): the bodies the fight brought down, bounded by what the packs seat. **The herd loses
-        // every animal KILLED and the crew keeps what [`CarcassKept`] says** — the live arm's two
-        // readings of the one take. Removing only the carried share (as this step once did) left
-        // the projected herd fatter than the live one by every wasted carcass, so a carry-bound hunt
-        // on a heavy body re-landed its kills sooner and over-read: Thunder Mammoths at fourteen
-        // hunters projected `7.06` food a turn against `4.93` paid.
+        // every animal KILLED and the crew keeps every animal killed** — every hunt keeps the whole
+        // kill, so the projected herd and the live one lose and bank the same carcass.
         let take = quantise_animal_take(
             collection,
             quarry.body_mass,
@@ -6288,7 +6247,7 @@ impl HuntProjection {
             EngagementStop::WhenPackFull,
         );
         quarry.biomass -= take.killed_biomass();
-        let kept_biomass = kept.of(&take);
+        let kept_biomass = take.killed_biomass();
         // **Both products are projected from the same simulated take**, so the steady trade
         // headline can never drift from the steady food one (`docs/plan_hunt_yield_model.md` §9).
         let yields = self
@@ -6430,7 +6389,7 @@ pub fn project_arrivals_hunt(
                 EngagementStop::WhenPackFull,
             );
             quarry.biomass -= take.killed_biomass();
-            take.carried
+            take.killed_biomass()
         };
         // **Milk lands every turn, meat lands in lumps** — which is exactly what this schedule
         // exists to show, so the standing half is added to each slot rather than averaged into
@@ -6467,7 +6426,7 @@ pub enum TakeReading {
 ///
 /// That keeps `wasted = production − actual` — slice 7's one formula — meaning exactly one thing at
 /// every rung: *food this source gave up that the crew did not bring home*. On the drawn-down plant
-/// rungs it stays in the stock and regrows; on an animal rung it is meat left to rot.
+/// rungs it stays in the stock and regrows; on an animal rung every kill is kept, so it is `0`.
 ///
 /// **`reading` decides WHICH point of the take's distribution this is** — its mean over the
 /// retreat's outcomes, or one edge of the reported range (§6.4), read by [`retreat_band_edge`] off
@@ -6577,8 +6536,8 @@ pub(crate) fn forecast_take_outcomes(
                 ForecastTakeOutcome {
                     probability: CERTAIN_OUTCOME,
                     production: quantum.rescaled_to(axis, take.killed_biomass()),
-                    actual: quantum.rescaled_to(axis, take.carried),
-                    rank: take.carried,
+                    actual: quantum.rescaled_to(axis, take.killed_biomass()),
+                    rank: take.killed_biomass(),
                 }
             };
             // **Each source runs the stages ITS take path runs, and no others** — that is the whole
@@ -7159,17 +7118,19 @@ pub fn herd_standing_provisions(herd: &Herd, fauna: &FaunaConfig) -> f32 {
 
 /// **One turn's whole-animal hunt take** — the result of [`quantise_animal_take`].
 ///
-/// The herd loses [`AnimalTake::killed_biomass`] (you cannot un-kill an animal you could not carry);
-/// the party banks `carried`; `wasted` is the difference, and it is a **real loss** — meat left to rot
-/// on the range, not stock left standing.
+/// The herd loses [`AnimalTake::killed_biomass`], and **a hunt or a pen slaughter keeps all of it** —
+/// within `band_work_range` the beast is a camp kill, beyond it the work party's porters ferry it
+/// home. `carried` is what the pack seats and `wasted` the remainder: the split a **denial raid**
+/// and an **expedition** still read, because their party walks away from the rest.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct AnimalTake {
     /// Whole animals killed this turn. `0` = the herd could not spare one and the hunt **waited**.
     pub killed: u32,
-    /// Biomass carried home — what the larder is paid for.
+    /// Biomass the pack seats — what a raid or an expedition carries home. A hunt or pen slaughter
+    /// keeps [`Self::killed_biomass`], not this.
     pub carried: f32,
-    /// Biomass killed but **not** carried: the party could not haul the whole animal. The player's
-    /// call, never hidden — it is what `SourceYield.wasted` reports on a hunt.
+    /// Biomass killed but **not** seated in the pack. A raid's or an expedition's loss; a hunt or
+    /// pen slaughter keeps it.
     pub wasted: f32,
 }
 
@@ -8846,8 +8807,8 @@ pub const FORECAST_FIGHT_SEED: u64 = 0;
 /// ```text
 /// carryable = ceil(collection / body_mass), never below 1   // whole animals the party can haul
 /// killed    = min(carryable, brought_down)                  // …of the ones it put on the ground
-/// carried   = min(killed × body_mass, collection)
-/// wasted    = killed × body_mass − carried
+/// carried   = min(killed × body_mass, collection)   // what the pack seats
+/// wasted    = killed × body_mass − carried          // a raid's / expedition's loss; a hunt keeps it
 /// ```
 ///
 /// # ⛔ THE ESCAPEMENT ROOM IS NOT A BOUND HERE — EVERY CALLER SPENDS IT BEFORE THE TAKE
@@ -8899,7 +8860,7 @@ pub const FORECAST_FIGHT_SEED: u64 = 0;
 /// clears the error by an order of magnitude while staying far below any *real* gap: a take genuinely
 /// this close to a whole animal would need `body_mass` tuned to seven significant figures. And it is
 /// self-correcting either way — `carried` is clamped to `collection` regardless, so at worst one more
-/// animal is counted killed and its meat reported wasted.
+/// animal is counted killed.
 const ANIMAL_COUNT_EPSILON: f32 = 1e-6;
 
 /// **How many whole animals the source can spare** — [`whole_animals`] of a policy ceiling, exposed
@@ -9017,9 +8978,9 @@ fn whole_units(count: f32) -> f32 {
 ///
 /// The carry arm used [`whole_animals`], and flooring it left the pack's last part-load **unused**:
 /// a party able to carry `1.5` bodies killed `1`, carried `1`, and left half its capacity idle every
-/// turn of the game. Rounding up kills the animal the pack cannot seat whole, carries what fits and
-/// wastes the rest — which is not a new rule but the general form of the `max(1)` arm that has
-/// always said *"a party that cannot carry one still takes one and wastes the rest"*. `ceil` and
+/// turn of the game. Rounding up kills the animal the pack cannot seat whole — the general form of the
+/// `max(1)` arm that has always said *"a party that cannot carry one still takes one"*. A hunt keeps
+/// the whole carcass; a raid or an expedition carries what fits and wastes the rest. `ceil` and
 /// that floor are the same statement about the indivisibility of the animal, one of them stated for
 /// every load rather than only for a load under one body.
 ///
@@ -9044,8 +9005,7 @@ fn animals_the_pack_seats(collection: f32, body_mass: f32) -> f32 {
 /// kill-stop reading [`animals_the_pack_seats`] answers:
 ///
 /// - **That one rounds UP**, because it answers *how many animals does a pack stop a party killing*
-///   — the animal the load cannot seat whole is still killed whole, and a resident band that walks
-///   away from the carcass wastes the rest.
+///   — the animal the load cannot seat whole is still killed whole (and a hunt keeps all of it).
 /// - **This one rounds DOWN** ([`whole_animals`]), because it answers *what does one porter
 ///   actually shoulder*. Nobody walks away from a party's load: what one porter cannot seat whole
 ///   stays in the load for the next one, so there is no remainder to round up into.
@@ -10273,7 +10233,7 @@ pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTak
                 (workers * per_worker / quarry.body_mass)
                     // **The carry arm still cannot bind below one body**, exactly as
                     // `quantise_animal_take`'s `carryable.max(1.0)` does not: a keeper who cannot
-                    // haul a whole beast still walks one out and wastes the rest. That is a fact
+                    // haul a whole beast still walks one out and keeps the whole kill. That is a fact
                     // about the animal, not a rounding, so it survives the rate.
                     .max(ONE_WHOLE_ANIMAL)
             });

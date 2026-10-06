@@ -37,8 +37,8 @@ const BARREN_DESTINATION_CAPACITY := 0.0
 # **THE ANIMAL WEB'S HALF OF THE SAME DEFECT**, and it fails DIFFERENTLY from the plant one, which is
 # why it needs its own frame. A hunt take is quantised to whole animals AFTER the crew's collection is
 # dipped (`hunt_take` → `quantise_animal_take`), and that rule's `max(1, carryable)` means a crew the
-# build drops below one body does NOT simply take a fraction less: it still kills one animal and
-# WASTES what it cannot haul. So the dip moves the waste line, not merely the take, and a fixture whose
+# build drops below one body does NOT simply take a fraction less: it still kills one animal. So the dip
+# moves the shape of the take, not merely its size, and a fixture whose
 # crew stays above one body the whole way through cannot see it.
 #
 # Every constant is a SHIPPED one. The species is the roster's heaviest TAMEABLE animal — a Steppe
@@ -85,11 +85,6 @@ const HERD_DIP_IDLE_WORKERS := 12
 ## people's larder. So both faces are the bare rung, and the pair is what would catch the clause
 ## growing back on one of them.
 const UPKEEP_NEEDLE := "upkeep"
-
-## The invariant TAIL of `SourceForecast.HUNT_WASTE_NOTE_FORMAT` (`⚠ %d%% wasted`) — the only part of
-## that note a percentage-free ABSENCE test can name. The present-case assertion uses the whole
-## formatted note instead, so the pair cannot both be satisfied by a note that lost its number.
-const HUNT_WASTE_NEEDLE := "wasted"
 
 ## THE BUILDING HERD — a Steppe Runner mid-TAME, at the shipped rates (see the `HERD_DIP_*` block).
 ## It is the ONLY fixture on either web where the build dip changes the SHAPE of the take rather than

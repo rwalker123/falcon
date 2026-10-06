@@ -499,7 +499,7 @@ impl WorkParty {
     /// ([`crate::fauna::one_pack_biomass`] on the animal web, continuous on the plant web, the haul
     /// carry over the material's weight on the deposit web — [`material_pack`]). What one
     /// pack cannot hold stays in the load for the next porter — nobody walks away from it, so
-    /// nothing a resident band would waste is wasted here. An unbounded carry takes the whole load.
+    /// nothing is wasted. An unbounded carry takes the whole load.
     pub fn close_turn(&mut self, take: SourceTake, pack_bulk: f32) -> f32 {
         self.close_turn_classed(
             take,
@@ -1268,8 +1268,6 @@ pub fn forecast_hunt_caravan(
             output_multiplier,
             take_hands_present(present, keep_hands),
             floor,
-            // A party's load waits at the source for the next porter — it keeps every carcass.
-            crate::fauna::CarcassKept::Whole,
         );
         let (food, carcass) = match culled {
             Some(turn) => (turn.yields.provisions, turn.biomass),

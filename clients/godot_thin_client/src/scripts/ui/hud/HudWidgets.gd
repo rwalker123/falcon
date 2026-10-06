@@ -91,9 +91,7 @@ static func build_worker_stepper(label_text: String, count: int, plus_enabled: b
     # `SourceForecast.source_yield_readout`). The tooltip carries the full explanation.
     if note != "":
         row.add_child(build_row_note_label(note, HudStyle.WARN, row_tooltip))
-    # Understaffing note ("· 1.7 wasted"): MUTED (INK_FAINT), the low-key mirror of the WARN overstaff
-    # note — it says "the source offered more than the crew carried home" (add workers), a softer nudge
-    # than the ecological ⚠. Fed by `wasted_yield`; tooltip carries the full explanation.
+    # Muted (INK_FAINT) small print: the forecast's yield BAND (`SourceForecast.yield_range_clause`).
     if muted_note != "":
         row.add_child(build_row_note_label(muted_note, HudStyle.INK_FAINT, row_tooltip))
     # A spacer (not name_label's expand) pushes the −/+ stepper to the right edge, keeping the
@@ -1906,7 +1904,7 @@ static func build_readout_box(parent: Container) -> VBoxContainer:
 ## line that carries a band, and the caption is the only thing that can say which point of it they are
 ## quoted at. It is appended to a caller-supplied `header` too, so the two never fight.
 static func build_yields_row(rows: Array, number_tint: Color, note: String, note_tint: Color,
-        waste: String, header: String = "", header_suffix: String = "") -> VBoxContainer:
+        header: String = "", header_suffix: String = "") -> VBoxContainer:
     var block := VBoxContainer.new()
     block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     block.add_theme_constant_override("separation", HudComposeVocab.READOUT_YIELD_V_SEPARATION)
@@ -1924,8 +1922,6 @@ static func build_yields_row(rows: Array, number_tint: Color, note: String, note
         flow.add_child(_yield_reading(row, number_tint))
     if note != "":
         flow.add_child(_readout_unit_label(note, note_tint))
-    if waste != "":
-        flow.add_child(_readout_unit_label(waste, HudStyle.WARN))
     block.add_child(flow)
     return block
 

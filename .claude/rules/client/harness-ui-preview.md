@@ -3437,7 +3437,7 @@ is held to the same rule (19 tiles / 19 turns, one harvester, first load at 42).
 | the section's ONE line, by EQUALITY through the shipped formats | `6 tiles away · first load home in 19 turns` — and NO rate line |
 | no rot bullet in the PER TURN box | a walk nothing rots on draws none |
 | the PER TURN food headline EQUALS the reply's `rate_home` | one food number per source: the sheet promises the `netRateHome` the committed row prints |
-| …with no `now → after` and no waste note | a steady rate home has no walk to the floor, and a caravan walks away from nothing |
+| …with no `now → after` | a steady rate home has no walk to the floor|
 | the caption reads `ONCE RUNNING · PER TURN`, with no likely-take suffix | the caption fits the number shown — `next turn` a far party delivers nothing |
 | no retired eating text ANYWHERE on the sheet (`RETIRED_EATING_NEEDLES`, every label, not just the section) | the eat-first rule's lines — `Party ate`, `Needs … food a turn from home`, the eats-everything reasons, `don't eat`, `unsupplied`, `deficit` — did not survive the rule's retirement |
 | (on `herd_hunt_band_near` / `food_forage_band_near`) the caption still begins `NEXT TURN` | inside the apron the caption is untouched |
@@ -3510,9 +3510,9 @@ subtracted.
   recorded);
 - the forage commit re-gated on `_mount_work_range_refusal` → exactly the far patch's live-commit claim
   fails;
-- `_with_home_rate` returning the model unchanged → **EXIT=1, exactly 4 failures**: both webs' headline
-  claims (the far boar reading `0.12 → 0.00` against `0.08`, the far patch `0.32` against `0.12`), the
-  no-transition claim and the no-waste claim (`⚠ 60% WASTED` back); the identity claim stays green;
+- `_with_home_rate` returning the model unchanged → **EXIT=1, exactly 3 failures**: both webs' headline
+  claims (the far boar reading `0.12 → 0.00` against `0.08`, the far patch `0.32` against `0.12`) and the
+  no-transition claim; the identity claim stays green;
 - the caption forced back to the default past the apron → **EXIT=1, exactly 2 failures**, both webs'
   caption claims reading `NEXT TURN`; the two inside-the-apron caption claims stay green;
 - a retired `They eat everything they catch` label mounted on the sheet OUTSIDE the party section →

@@ -41,6 +41,22 @@ fn crew_is_working_the_source(standing_above_floor: f32) -> bool {
 /// because `0.0` as a bare literal there reads as an arbitrary epsilon rather than as the exact
 /// boundary `max(0, B − floor·K)` is clamped at.
 const NOTHING_STANDS_ABOVE_THE_FLOOR: f32 = 0.0;
+/// **A CAMP KILL HAULS NOTHING** — a hunt or slaughter within `band_work_range` is carried no
+/// distance, so the sled ([`crate::equipment_config::WearQuantum::BiomassHauled`]) is charged for no
+/// biomass. A posted kill is charged for what its packs seat ([`crate::fauna::AnimalTake::carried`]).
+const NO_BIOMASS_HAULED: f32 = 0.0;
+/// **A HUNT OR PEN ROW WASTES NO MEAT** — every kill is kept whole, so the row's `wasted` signal
+/// (what the wire publishes as `wastedYield`) is a structural zero on the animal web.
+const NO_MEAT_WASTED: f32 = 0.0;
+
+/// The biomass of `take` the sled hauls: what a posting's packs seat, and nothing for a camp kill.
+fn biomass_hauled(posted: bool, take: &fauna::AnimalTake) -> f32 {
+    if posted {
+        take.carried
+    } else {
+        NO_BIOMASS_HAULED
+    }
+}
 
 /// **A CLAIM THAT ASKS FOR NOTHING** — the boundary [`settle_scarce_store`] skips a tier at and the
 /// value it settles an unserved claim to. Named for [`NOTHING_STANDS_ABOVE_THE_FLOOR`]'s reason: a
@@ -7831,7 +7847,7 @@ pub fn advance_labor_allocation(
                                 &equipment_cfg,
                                 &crew_kit,
                                 crate::equipment_config::WearQuantum::BiomassHauled,
-                                take.carried,
+                                biomass_hauled(postings.contains_key(&idx), &take),
                             );
                             kit.wear_kit(
                                 &equipment_cfg,
@@ -7844,12 +7860,11 @@ pub fn advance_labor_allocation(
                         // this herd's own species vector, so a penned wolf yields pelts and no meat
                         // exactly as a wild one does (`docs/plan_hunt_yield_model.md`).
                         let pen_yield = herd_hunt_yield(herd, &fauna);
-                        // ⛔ **A PARTY KEEPS THE WHOLE CARCASS.** A resident band walks away from
-                        // what its packs cannot seat; a party's load is still standing at the
-                        // source, so what one porter cannot shoulder waits for the next one. Its
-                        // take is therefore every animal brought down, not the part carried.
-                        let loaded =
-                            fauna::CarcassKept::for_posting(postings.contains_key(&idx)).of(&take);
+                        // ⛔ **EVERY HUNT KEEPS THE WHOLE KILL.** Within `band_work_range` the beast
+                        // was killed in camp, so it lands in the larder this turn with no walk and
+                        // no haul; beyond it a work party's load waits at the source for the next
+                        // porter. Either way the take is every animal brought down.
+                        let loaded = take.killed_biomass();
                         let paid = pen_yield.apply(loaded, mult_f);
                         // **THE MILK, THE EGGS AND THE DOWN** — what the herd pays for standing
                         // there, at the species' own per-head rates
@@ -7973,7 +7988,7 @@ pub fn advance_labor_allocation(
                                     &mut cohort.stores,
                                     &materials_cfg,
                                     fauna.hunt_materials_for(&herd.species),
-                                    take.carried,
+                                    loaded,
                                     mult_f,
                                 )
                                 .into_iter()
@@ -8224,10 +8239,9 @@ pub fn advance_labor_allocation(
                         // so `sustainable == actual` (no overdraw ⚠). The two staffing signals are
                         // derived like every other rung's: how many keepers the take really needed,
                         // and how much of the harvest went uncollected for want of hands. **`wasted`
-                        // is measured against the animals SLAUGHTERED, not against the pen's offered
-                        // escapement** (slice 8): a beast the keeper never killed is still standing in
-                        // the pen, alive and breeding — it was never produced, so it cannot have been
-                        // wasted. What `killed_biomass − carried` measures is meat that really rotted.
+                        // is a structural zero here** ([`NO_MEAT_WASTED`]): every animal slaughtered
+                        // is kept whole, and a beast the keeper never killed is still standing in
+                        // the pen, alive and breeding — it was never produced.
                         // **The arrival schedule — computed POST-take, unlike `realized`.** It
                         // answers "when does the next food land", so it must start from the state the
                         // turn leaves behind: projecting from the pre-take state would re-promise the
@@ -8270,7 +8284,7 @@ pub fn advance_labor_allocation(
                             // all"* until §4.9 item 12b; a pen retreats and fights now, so its
                             // **quote** carries a real distribution like any other hunting row.)
                             range: YieldRange::certain(tended),
-                            wasted: pen_yield.apply(take.wasted, mult_f).provisions,
+                            wasted: NO_MEAT_WASTED,
                             // **THE SAME THREE-UNIT CREW THE RANGE ROW SIZES**
                             // ([`fauna::hunt_take_workers`]): hands enough to *reach* the drop and to
                             // *carry* it, off the pen's per-turn `production` rather than this turn's
@@ -8349,7 +8363,7 @@ pub fn advance_labor_allocation(
                     // Take food via the shared primitive: the per-policy escapement ceiling, rounded
                     // to **whole animals** against the crew's collection (slice 8). It hands back the
                     // kill in biomass — killed / carried / wasted — and has already drawn every animal
-                    // killed off the herd.
+                    // killed off the herd. The hunt keeps `killed_biomass()`, the whole kill.
                     let biomass_before = herd.biomass;
                     // **The escapement room, resolved PRE-take** — the stock standing above this
                     // assignment's floor, in biomass and before the whole-animal quantiser. Two
@@ -8420,7 +8434,7 @@ pub fn advance_labor_allocation(
                             &equipment_cfg,
                             &crew_kit,
                             crate::equipment_config::WearQuantum::BiomassHauled,
-                            take.carried,
+                            biomass_hauled(postings.contains_key(&idx), &take),
                         );
                     }
                     // **THE earn path, rungs 1–2** — the drawn-down half of the split above, and the
@@ -8445,13 +8459,8 @@ pub fn advance_labor_allocation(
                     // species' `HuntYield` decides WHAT that biomass is worth, in one call that
                     // yields both products so neither can be converted without the other.
                     let hunt_yield = herd_hunt_yield(herd, &fauna);
-                    // ⛔ **A PARTY KEEPS THE WHOLE CARCASS** — see the pen branch above.
-                    let party_keeps_the_carcass = postings.contains_key(&idx);
-                    let loaded = if party_keeps_the_carcass {
-                        take.killed_biomass()
-                    } else {
-                        take.carried
-                    };
+                    // ⛔ **EVERY HUNT KEEPS THE WHOLE KILL** — see the pen branch above.
+                    let loaded = take.killed_biomass();
                     let paid = hunt_yield.apply(loaded, mult_f);
                     // **The milk half, at the pastoral share** — see `standing_scale` above. A wild
                     // herd's share is zero, so this arm is byte-identical on the range.
@@ -8876,7 +8885,7 @@ pub fn advance_labor_allocation(
                                 &mut cohort.stores,
                                 &materials_cfg,
                                 fauna.hunt_materials_for(&herd.species),
-                                take.carried,
+                                loaded,
                                 mult_f,
                             )
                             .into_iter()
@@ -8997,11 +9006,10 @@ pub fn advance_labor_allocation(
                         + standing_provisions;
                     // The two staffing signals, from the same take. **Overstaffing**: invert the
                     // carried biomass by the per-hunter throughput (hunt has no seasonal factor,
-                    // unlike forage). **Understaffing** (`wasted`): the meat the crew killed but could
-                    // not haul — **a real loss**, left to rot on the range. Measured against the
-                    // animals *slaughtered*, never against the escapement the herd could have spared:
-                    // an animal nobody killed is still alive out there, so it was never produced and
-                    // cannot have been wasted (`fauna::forecast_production_and_take`).
+                    // unlike forage). **Understaffing** (`wasted`): a structural zero on the animal web
+                    // ([`NO_MEAT_WASTED`]) — every hunt keeps the whole kill, so no meat is left
+                    // to rot at the kill, and an animal nobody killed is still alive out there
+                    // (`fauna::forecast_production_and_take`).
                     //
                     // **A MANAGED herd used to report its whole CREW** — the retired
                     // `intensification::source_crew_needed` blended `max(herders, haulers)`, on the
@@ -9110,7 +9118,7 @@ pub fn advance_labor_allocation(
                         // `credit_material_yield` deposited (the discipline `fodder` above carries).
                         materials: credited_materials,
                         sustainable,
-                        wasted: hunt_yield.apply(take.wasted, mult_f).provisions,
+                        wasted: NO_MEAT_WASTED,
                         workers_needed,
                         // **The ⚠ — intent AND ability**, through the animal web's one producer
                         // ([`fauna::hunt_take_overdraws`]). A floor below the food peak is only an

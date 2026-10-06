@@ -243,7 +243,7 @@ pub use fauna::{
     regrowth_delta_at, repopulate_fauna, resolve_hunt_engagement, resolve_hunt_fight,
     retreat_band_edge, retreat_mean, retreat_seed, spawn_initial_herds, species_requires_denial,
     stamp_migratory_game_trails, stay_fraction, sustainable_yield, unqueue_build_and_cancel_ring,
-    would_be_herders_needed, AnimalTake, CarcassKept, CrewKeeping, EcologyPhase, EngagementQuantum,
+    would_be_herders_needed, AnimalTake, CrewKeeping, EcologyPhase, EngagementQuantum,
     EngagementStop, FightCasualties, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
     HerdTelemetryEntry, HuntCrew, HuntCrewCurveInputs, HuntCrewTake, HuntDraw, HuntEngagement,
     HuntFight, HuntProjection, HuntTakeBound, HuntingParty, OutcomeKills, PartyResolution,

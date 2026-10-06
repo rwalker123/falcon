@@ -209,10 +209,11 @@ and its party with it.
 **One pack is one hunter's carry, seated by the web's own rule** — `fauna::one_pack_biomass` on the
 animal web (whole animals, **rounded down**), continuous on the plant web. It is deliberately **not**
 `fauna::animals_the_pack_seats`, which rounds **up** because it answers the kill-stop question — the
-animal the pack cannot seat whole is still killed whole, and a resident band walks away from the rest.
-**A party walks away from nothing**: a carcass too big for one pack goes a pack's worth at a time and
-the remainder stays in the load for the next porter. So a far hunt's take is `take.killed_biomass()`,
-not `take.carried`, and its row's `wasted` is `0`. An unbounded carry (a pen that is a larder) takes
+animal the pack cannot seat whole is still killed whole.
+**Nothing is walked away from**: a carcass too big for one pack goes a pack's worth at a time and
+the remainder stays in the load for the next porter. Every hunt — a far posting and a camp kill
+within `band_work_range` alike — keeps `take.killed_biomass()`, not `take.carried`, and its row's
+`wasted` is `0`; a camp kill differs only in that its walk is zero and it charges no sled wear. An unbounded carry (a pen that is a larder) takes
 the whole load in one pack.
 
 **A pack is filled by BULK — everything the crew cut — and lands whatever it is worth as food.** A
@@ -619,7 +620,7 @@ the arm reach this row"* is the question the settlements must go on asking.
 | `work_party::tests::more_hunters_land_the_first_load_sooner` | the first pack fills at the whole party's rate |
 | `work_party::tests::a_road_shortens_the_walk_and_one_covering_the_run_takes_it_to_zero` | over a real road registry, through `free_pooling_reach_tiles` |
 | `work_party::tests::departures_never_exceed_the_hunters_present` | a take wanting more packs than hunters leaves the rest in the load |
-| `work_party::tests::a_carcass_heavier_than_one_pack_goes_home_over_several_porters` | the big carcass: nothing wasted that the resident take would waste |
+| `work_party::tests::a_carcass_heavier_than_one_pack_goes_home_over_several_porters` | the big carcass: nothing wasted |
 | `work_party::tests::a_stood_down_party_walks_every_pack_and_the_load_home`, `…::a_party_walking_out_walks_back_what_it_covered` | `walk_home`'s groups: each porter's remaining walk, the load on the whole walk, and a load nobody is at the source to carry left behind |
 | `work_party_caravan::a_cancelled_far_hunt_walks_every_pack_home_and_rots_it_by_its_walk` | the cancel lands nothing; the wire's homeward fields; hands rejoin `idleWorkers` only as their group arrives; last home after the whole walk; a 3-turn walk keeps, a 6-turn walk rots every flesh pack into `spoiled` |
 | `work_party_caravan::a_herd_back_inside_the_apron_walks_its_caravan_home_once` | a re-entered source stands its caravan down once, clears `party`, publishes none on the row and the walk on the band |

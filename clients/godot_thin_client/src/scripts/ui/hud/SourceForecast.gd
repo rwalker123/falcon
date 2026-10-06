@@ -284,12 +284,6 @@ const OVERSTAFF_NOTE_FORMAT := " · only %d of %d bring anything home"
 const OVERSTAFF_TOOLTIP := "Overstaffed — this source's yield is capped by the stock standing above its escapement floor; the extra workers produce nothing here. Reassign them to another source."
 # Joins the yield readout and the overstaffing explanation into one row tooltip.
 const TOOLTIP_LINE_SEPARATOR := "\n"
-# UNDERSTAFFING (`LaborAssignment.wastedYield`): provisions the source OFFERED that the crew could not
-# collect — the party is under-crewed for the kill (an animal too big to fully carry, or an
-# over-abundant pulse) and food is left standing. Muted (INK_FAINT), the low-key mirror of the
-# WARN-amber overstaff note. Below FOOD_FLOW_MIN ⇒ hidden (0 on a rehydrated save).
-const WASTED_NOTE_FORMAT := " · %s wasted"
-const WASTED_TOOLTIP := "Under-crewed — this source offered %s the party couldn't carry home. Add workers to collect it."
 # Band food flow gate: a rate below this reads as absent rather than as a zero. A claim about the
 # SIM — is this band moving food at all — and deliberately NOT the gate a rendered component goes
 # through; see `has_component` and `COMPONENT_RENDER_MIN` for why the two are different numbers.
@@ -1750,9 +1744,6 @@ static func forecast_horizon_turns(cohort: Dictionary) -> int:
         int(cohort.get(COHORT_FORECAST_HORIZON_KEY, FORECAST_HORIZON_UNKNOWN)))
 
 const HUNT_FORECAST_WARN_GLYPH := "⚠ "
-# When a kill can't be fully carried (a big animal the crew is too small to haul) the surplus meat rots.
-# A WARN-tinted suffix flags the fraction wasted — its OWN concern, rendered amber even on a green line.
-const HUNT_WASTE_NOTE_FORMAT := "⚠ %d%% wasted"
 
 ## **A STANDING STOCK, in the units the rest of the HUD reads one in** — whole biomass, matching the
 ## drawer's own `Forage biomass 35 / 100` pair. It is NOT `format_magnitude`, which is the food-RATE
@@ -3467,8 +3458,8 @@ const DENIAL_VERDICTS := {
 }
 
 # **THE WASTE READOUT — stated, never hidden, and never dressed as a warning** (§3). On a hunt
-# `wasted` is the occasional overflow of an animal too big to haul and wears `HUNT_WASTE_NOTE_FORMAT`'s
-# `⚠`; on a raid it is essentially the whole take, and it is the POINT of the mission. So it is a
+# `wasted` on a hunt is always 0 (a kill is kept whole); on a raid it is essentially the whole take, and
+# it is the POINT of the mission. So it is a
 # quiet factual line — what the party kills, the little it hauls home, and what it leaves standing
 # dead on the range — in the aside's own ink rather than amber.
 #
@@ -3899,13 +3890,13 @@ static func herd_axis_rates(herd: Dictionary, floor: float) -> Dictionary:
         # `min(room, crew carry, what stays) ÷ one body`, and every one of those is a BIOMASS — so
         # stating them in food is a conversion the quantiser does not need and that an inedible quarry
         # cannot make. `body_mass` is the quantum, `carry` the crew's throughput, and the two rooms the
-        # numerators; `DrawerComposeController._hunt_delivered_and_waste` is their one consumer.
+        # numerators; `DrawerComposeController._hunt_delivered` is their one consumer.
         "body_mass": body_quantum(herd, ""),
         "carry": per_worker_biomass(herd, ""),
         "hold_room": float(forecast["hold_room_biomass"]),
         "next_room": float(forecast["next_room_biomass"]),
         # **THE ENGAGEMENT PAIR, so the delivered take can bound itself on the party's REACH.** The
-        # quantised take (`DrawerComposeController._hunt_delivered_and_waste`) composes its own
+        # quantised take (`DrawerComposeController._hunt_delivered`) composes its own
         # `collection` rather than calling `expected_yield_account`, so the third arm has to reach it
         # here or the sheet's headline stays carry-bound while the worker cap beside it is not. It
         # bounds the whole-animal COUNT with `animals_engaged`, which is why the pair travels raw and
@@ -5869,7 +5860,7 @@ static func max_useful_workers(forecast: Dictionary) -> int:
         return maxi(off_axis, hold)
     # WHOLE-ANIMAL HUNT: the cap is the carriers needed to HAUL the animals that drop on the worst turn,
     # not ceil(smoothed-rate / per_worker). An 80-biomass aurochs drops all at once; one hunter carrying
-    # <per_worker> food wastes the rest, so the smoothed rate under-counts. Worst case the kill-credit
+    # <per_worker> food is too few hands for the drop, so the smoothed rate under-counts. Worst case the kill-credit
     # bank holds just under one body when the turn's rate lands, so floor(ceiling / food_per_animal) + 1
     # whole animals drop, each worth food_per_animal — carry that peak, not the average flow. It is
     # `haul_workers`, the ONE mirror of the sim's rounding, in the paid account's units rather than in
@@ -6247,29 +6238,11 @@ static func source_yield_readout(m: Dictionary, kind: String, overstaff_ceiling:
         note = OVERSTAFF_NOTE_FORMAT % [overstaff_ceiling, workers]
         tooltip = OVERSTAFF_TOOLTIP if tooltip == "" \
             else tooltip + TOOLTIP_LINE_SEPARATOR + OVERSTAFF_TOOLTIP
-    # UNDERSTAFFING: `wasted_yield` is food the source offered that the crew could not collect — the
-    # party is under-crewed for the kill. A muted note (the low-key mirror of the overstaff note); the
-    # tooltip spells it out. Below FOOD_FLOW_MIN ⇒ hidden (0 on a rehydrated save).
-    #
-    # **THE ANIMAL WEB ONLY, and that is a claim about the NUMBER rather than about any one surface.**
-    # One wire field carries two opposite facts. On a herd it is `killed_biomass − carried`: meat the
-    # crew killed and left to rot, gone for good, and a genuine call to send more hands. On a patch it
-    # is `escapement_room − take` — stock the crew simply did not reach, which the sim's own note says
-    # outright is "not lost, it simply stays in the stock and regrows". Nothing rots and nothing is
-    # owed.
-    #
-    # It also fired on the WRONG SIDE of the condition there. `max(0, room − take)` is positive
-    # whenever a crew does not clear the whole escapement room in ONE turn — the ordinary state on a
-    # patch, and the state the compose sheet actively recommends: its `hold it after` target is by
-    # construction far below its `clear it now` one, so a player who staffs the sustainable number was
-    # told they were wasting food every turn, forever, with no action that would ever clear it. On a
-    # herd `killed > carried` is genuinely exceptional, which is why the note never read wrong there.
-    #
-    # Understaffing a BUILD is a real loss and a real prompt — a Cultivate or a Tame accrues at
-    # `min(workers / crew_needed, 1)` and decays when neglected — but this note has never carried that
-    # signal, so nothing is lost by silencing it here.
+    # There is no understaffing ("wasted") note: a hunt or pen kill is kept WHOLE (landed in the larder
+    # or ferried home), so a herd's `wasted_yield` is always 0, and on a patch the same wire field is
+    # stock the crew did not reach — still standing and regrowing, nothing owed — so no row states it.
     # **THE BAND, ON THE ROW ITSELF** (§6.4) — the same clause the tooltip carries, in the muted
-    # register the wasted note already uses, so all three hosts of this readout (the work board's
+    # register the overstaff note's counterpart uses, so all three hosts of this readout (the work board's
     # rows, the drawer's standing summary, the stepper's status line) show it without a channel of
     # their own. `""` while the distribution is degenerate, so no row grows a band where there is
     # none: that emptiness is the assertion, not a hope.
@@ -6279,17 +6252,6 @@ static func source_yield_readout(m: Dictionary, kind: String, overstaff_ceiling:
     # either.
     var muted_note := yield_range_clause(m) \
         if states_food and bool(m.get("has_yield", false)) else ""
-    var wasted := float(m.get("wasted_yield", 0.0))
-    # ⛔ **THE TEST IS THE HUNT WEB, NOT "NOT THE PLANT WEB"** (issue #650). The paragraph above says
-    # ANIMAL WEB ONLY and the condition said *every kind but forage*, which admitted `extract` the day
-    # a third source kind existed — and `wasted_yield` on a working is the same structural food zero
-    # every other scalar here is, spelled through `format_yield`'s `/turn`. It is inert today (the
-    # `Extract` arm publishes `SourceYield::ZERO`), so this asserts the intent rather than fixing a
-    # visible line: the note is about meat left to rot, which is a thing only a kill can do.
-    if kind == LABOR_KIND_HUNT and wasted >= FOOD_FLOW_MIN:
-        muted_note += WASTED_NOTE_FORMAT % format_magnitude(wasted)
-        var wasted_tip := WASTED_TOOLTIP % format_yield(wasted)
-        tooltip = wasted_tip if tooltip == "" else tooltip + TOOLTIP_LINE_SEPARATOR + wasted_tip
     return {
         "label_suffix": label_suffix, "warn": warn, "note": note,
         "muted_note": muted_note, "tooltip": tooltip, "rate": rate,

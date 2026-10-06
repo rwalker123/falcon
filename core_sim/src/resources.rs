@@ -1621,7 +1621,7 @@ pub enum CommandEventKind {
     /// **A hunt happened, and these are its facts** (`docs/plan_hunt_through_combat.md` §6.6) —
     /// animals engaged, how many fled before contact, animals killed, hunters lost or wounded,
     /// **which bound ran out first** (engagement / the floor / carry / the fight), and what came home
-    /// (carried) against what was left to rot (wasted).
+    /// (carried) against what the pack could not seat (wasted).
     ///
     /// **Facts, never a composed judgement.** Issue #272's notification system owns importance and
     /// phrasing; the hunt owns what happened. Every number rides the `key=value` detail so a consumer

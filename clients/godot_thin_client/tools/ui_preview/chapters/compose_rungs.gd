@@ -145,9 +145,9 @@ func _hunt_rhythm_herds_fixture() -> Array:
 	]
 
 ## A band worked on TWO hunt sources — the render-honesty frame for the summary row's honest per-turn
-## FOOD rate (fix #1) and the under-crewed `wastedYield` note (fix #5). Row 1 is a FAST animal; row 2 a
-## BIG animal whose `actualYield` is 0.00 THIS turn — the "+0.00 /turn" lie the row used to headline —
-## and which is under-crewed, so the muted "· N wasted" note shows. Neither row shows a `≈… /turn`
+## FOOD rate (fix #1). Row 1 is a FAST animal; row 2 a
+## BIG animal whose `actualYield` is 0.00 THIS turn — the "+0.00 /turn" lie the row used to headline.
+## Neither row shows a `≈… /turn`
 ## animals-per-turn cadence: on a summary row the sustainable food rate is enough.
 func _hunt_actions_band_fixture() -> Dictionary:
 	var band := BandFx.band_fixture()
@@ -157,11 +157,10 @@ func _hunt_actions_band_fixture() -> Dictionary:
 			"target_x": 71, "target_y": 18, "actual_yield": 2.60, "sustainable_yield": 2.60,
 			"workers_needed": 3, "overdraws": false},
 		# Big: honest rate 2.40/turn (the sim's measured Mammoth Sustain). actual_yield 0.00 = a wait turn
-		# of the kill pulse (the old lie the row used to headline). Under-crewed → the muted "· 1.9 wasted".
-		# Sustain → overdraws false, so no ⚠.
+		# of the kill pulse (the old lie the row used to headline). Sustain → overdraws false, so no ⚠.
 		{"kind": "hunt", "workers": 2, "fauna_id": "game_mammoth_01", "floor": 0.5,
 			"target_x": 70, "target_y": 17, "actual_yield": 0.00, "sustainable_yield": 2.40,
-			"workers_needed": 5, "wasted_yield": 1.9, "overdraws": false},
+			"workers_needed": 5, "overdraws": false},
 	]
 	return band
 
@@ -169,42 +168,29 @@ func run(harness) -> void:
 	h = harness
 
 	# ---- Hunt/husbandry render-honesty pass (intensification ladder client UX) ----------------------
-	# Fix #1 + #5 — CURRENT ACTIONS rows: a summary row headlines the honest per-turn FOOD rate
+	# Fix #1 — CURRENT ACTIONS rows: a summary row headlines the honest per-turn FOOD rate
 	# (sustainable, not the 0.00 pulse) + the policy/status glyphs, with NO `≈… /turn` animals-per-turn
 	# cadence (that lives on the compose-preview line). Both rows must read `Hunt <species> +X /turn ♻ ●`;
-	# the big-game (under-crewed) row also keeps its muted "· 1.9 wasted" note (yld.muted_note, not cadence).
+	# the big-game row's 0.00 pulse never headlines.
 	h._set_world_herds(_hunt_rhythm_herds_fixture())
 	h._hud.show_unit_selection(_hunt_actions_band_fixture())
 	await h._settle()
 	await h._save("hunt_actions_rhythm")
 	h._set_world_herds(HerdFx.world_herds_fixture())
-	# **THE WASTED NOTE IS THE ANIMAL WEB'S, AND THE SAME NUMBER MEANS THE OPPOSITE ON A PATCH.** One
-	# wire field, two facts: on a herd `wasted_yield` is `killed − carried`, meat that really rotted;
-	# on a patch it is `room − take`, stock the crew did not reach, which the sim's own note says
-	# "stays in the stock and regrows". Reported from play as `0.75 wasted` sitting permanently on a
-	# well-run Alluvial Plain — and permanent is the word, because `room > take` is the state the
-	# compose sheet RECOMMENDS (its `hold it after` target is far below its `clear it now` one).
-	#
-	# **Asserted as a PAIR against ONE readout call**, not on a rendered frame: no forage fixture
-	# carries a non-zero `wasted_yield`, so a frame assertion would pass with the bug fully present.
-	# The hunt half is what stops the fix from being "silence the note everywhere", and the tooltip is
-	# checked beside the note because the wasted text was appended to both.
+	# **NO ROW STATES A WASTE.** A hunt or pen kill is kept whole, so a herd's `wasted_yield` is 0, and on
+	# a patch the same wire field is stock the crew did not reach — still standing and regrowing, nothing
+	# owed. Asserted against ONE readout call per web with a non-zero `wasted_yield` on the model (no
+	# forage fixture carries one, so a frame assertion would pass vacuously). The claim is about the
+	# waste NOTE, not an empty channel: `muted_note` is a shared small-print slot (the forecast's BAND
+	# rides it too), so it reads the text the same way the tooltip half does.
 	var wasted_model := {"has_yield": true, "workers": 2, "workers_needed": 0,
 		"actual_yield": 0.30, "sustainable_yield": 0.30, "wasted_yield": 0.75, "overdraws": false}
-	var wasted_forage := SourceForecast.source_yield_readout(
-		wasted_model, SourceForecast.LABOR_KIND_FORAGE, SourceForecast.MAX_USEFUL_UNBOUNDED)
-	var wasted_hunt := SourceForecast.source_yield_readout(
-		wasted_model, SourceForecast.LABOR_KIND_HUNT, SourceForecast.MAX_USEFUL_UNBOUNDED)
-	# **THE CLAIM IS ABOUT THE WASTE NOTE, NOT ABOUT AN EMPTY CHANNEL.** `muted_note` is a shared
-	# small-print slot — the forecast's BAND rides it too since §6.4 — so an `== ""` here would start
-	# failing on a patch that merely reports a stochastic take, i.e. for a reason this assertion has
-	# nothing to say about. It reads the note the same way the tooltip half beside it already does.
-	h._assert_hud("a PATCH states no waste — the stock it did not reach is still standing",
-		not String(wasted_forage.get("muted_note", "")).contains("wasted")
-			and not String(wasted_forage.get("tooltip", "")).contains("wasted"))
-	h._assert_hud("…while a HERD still does, where the meat really rotted",
-		String(wasted_hunt.get("muted_note", "")).contains("wasted")
-			and String(wasted_hunt.get("tooltip", "")) != "")
+	for kind in [SourceForecast.LABOR_KIND_FORAGE, SourceForecast.LABOR_KIND_HUNT]:
+		var readout := SourceForecast.source_yield_readout(
+			wasted_model, kind, SourceForecast.MAX_USEFUL_UNBOUNDED)
+		h._assert_hud("a %s row states no waste — nothing the player can act on" % kind,
+			not String(readout.get("muted_note", "")).contains("wasted")
+				and not String(readout.get("tooltip", "")).contains("wasted"))
 
 	# Fix #2 + #1(forecast) + #6 — the LOCAL hunt compose view: the policy picker shows each rung's
 	# per-turn take so Sustain < Surplus < Deplete < Eradicate reads as ASCENDING, and the live preview
