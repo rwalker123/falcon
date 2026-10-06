@@ -65,6 +65,8 @@ pub(crate) fn sedentarization_to_array(
         let mut dict = VarDictionary::new();
         let _ = dict.insert("faction", state.faction() as i64);
         let _ = dict.insert("score", state.score());
+        // How many of the score's 100 points come from the band standing on its dead (pre-smoothing).
+        let _ = dict.insert("belief_points", state.beliefPoints());
         if let Some(stage) = state.stage() {
             let _ = dict.insert("stage", stage);
         }
