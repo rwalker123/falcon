@@ -138,15 +138,18 @@ ties (`docs/plan_contact_and_logistics.md` §Settled by #530). Moving well is ho
 - **The score's formula** — the weights of skills against distance travelled, and the victory
   threshold. Opening values are Workbench levers, settled by playtest.
 
-## Slices (proposed)
+## Slices
 
-1. **Camp kill** — shipped with this doc.
-2. **Migration mode** — the band's standing order on a migratory herd: camp in the herd while it
-   loiters, move with it while it migrates, move to a kill outside reach. The wire field and the
+Sub-issues of the arc, #251.
+
+1. **Camp kill** — shipped with this doc (#796).
+2. **Migration mode** (#797) — the band's standing order on a migratory herd: camp in the herd while
+   it loiters, move with it while it migrates, move to a kill outside reach. The wire field and the
    client verb. Waits on the UX pass.
-3. **Hunting by need** — the need-paced trigger for a band in migration mode.
-4. **The roaming skills** — Herd lore, travois, drives, on the knowledge ledger. Drying is #708's.
-5. **The mobility score** — the readout, and its input to Cultural Diffusion.
+3. **Hunting by need** (#798) — the need-paced trigger for a band in migration mode.
+4. **The roaming skills** (#799) — Herd lore, travois, drives, on the knowledge ledger. Drying is
+   #708's.
+5. **The mobility score** (#800) — the readout, and its input to Cultural Diffusion.
 
 ## See Also
 
