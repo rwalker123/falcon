@@ -2229,6 +2229,9 @@ pub struct CraftOfferState {
     /// when every recipe making the item makes the **same** tier — the ledger never recorded which
     /// recipe made a unit, so a count per recipe there would be invented. `0` is a real count.
     pub owned_at_tier: i32,
+    /// **May this recipe be queued** — every craft it requires is known; the Make button's gate.
+    /// Materials and tools do not gate it (`available` is "a pass can run now").
+    pub queueable: bool,
 }
 
 /// **What [`CraftOfferState::owned_at_tier`] publishes when a per-recipe count would be invented** —
@@ -2254,6 +2257,7 @@ impl Default for CraftOfferState {
             lasts: String::new(),
             suggested: false,
             owned_at_tier: OWNED_AT_TIER_UNATTRIBUTED,
+            queueable: false,
         }
     }
 }

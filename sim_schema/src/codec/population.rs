@@ -795,6 +795,7 @@ fn create_populations<'a>(
                                 lasts: Some(lasts),
                                 suggested: offer.suggested,
                                 ownedAtTier: offer.owned_at_tier,
+                                queueable: offer.queueable,
                             },
                         )
                     })
@@ -1689,6 +1690,7 @@ fn decode_population(
             lasts: text(offer.lasts()),
             suggested: offer.suggested(),
             owned_at_tier: offer.ownedAtTier(),
+            queueable: offer.queueable(),
         }),
         equipment_batches: map_rows(cohort.equipmentBatches(), |batch| EquipmentBatchState {
             item_id: text(batch.itemId()),

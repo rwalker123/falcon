@@ -892,6 +892,11 @@ fn craft_offer(
         // Decided across the whole row, once every offer is built — see [`mark_suggested`].
         suggested: false,
         owned_at_tier,
+        // The same predicate `bench_enqueue` refuses on — see `crate::crafting::first_unknown_craft`.
+        queueable: crate::crafting::first_unknown_craft(plan.recipe, |craft| {
+            inputs.known_crafts.get(craft).copied().unwrap_or(false)
+        })
+        .is_none(),
     }
 }
 

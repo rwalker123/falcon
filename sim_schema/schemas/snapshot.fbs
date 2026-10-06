@@ -5258,6 +5258,12 @@ table CraftOffer {
   // So spears/clubs/hoes publish counts and baskets/sled/traps/crook/wayfinding publish -1 on BOTH
   // offers. -1 is not "none": 0 is a real count.
   ownedAtTier:int = -1;
+  // MAY THIS RECIPE BE QUEUED — the Make/Queue button's gate (appended last). True when every craft
+  // in the recipe's `requires_knowledge` is known to the faction, EXACTLY the test `bench_enqueue`
+  // applies, so a `queueable` offer is never refused. Materials and tools do NOT gate it: the bench
+  // skips a short order and `BenchOrder.shortToFinish` speaks for it. Distinct from `available`,
+  // which says a pass can run NOW (drives the readouts and which recipe a row suggests).
+  queueable:bool;
 }
 
 // ONE BATCH OF ONE ITEM a band owns, plus the CONFIG's items it owns none of (one row each, count 0)

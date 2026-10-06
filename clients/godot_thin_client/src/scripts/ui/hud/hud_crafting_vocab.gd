@@ -164,7 +164,11 @@ const OFFER_GROUP_KEY := "group"
 ## The equipment id this recipe makes, `""` for a material recipe — the JOIN key onto the band's
 ## `equipment_batches`, which is what supplies the row's tier, count and life.
 const OFFER_OUTPUT_ITEM_ID_KEY := "output_item_id"
+## `available` = a pass can run NOW; `queueable` = every required craft is learned (the server's own
+## enqueue test). **Whether the player MAY QUEUE reads `queueable`** — materials and tools no longer gate
+## the queue. `available` stays for readouts only.
 const OFFER_AVAILABLE_KEY := "available"
+const OFFER_QUEUEABLE_KEY := "queueable"
 const OFFER_REASON_KEY := "reason"
 const OFFER_SEVERITY_KEY := "severity"
 const OFFER_SHORTFALLS_KEY := "shortfalls"

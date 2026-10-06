@@ -1381,6 +1381,15 @@ to zero, fractional shortfalls) and, off the encoded frame, by
 `::a_suggestion_does_not_rise_on_the_turn_its_item_is_made` and
 `::a_detached_party_publishes_no_suggestions` (paired with its home band carrying the same lines).
 
+## `queueable` — the Make button's gate is KNOWLEDGE ONLY
+
+`CraftOffer.queueable` is true when every craft in the recipe's `requires_knowledge` is known — the
+**one predicate** `crafting::first_unknown_craft`, which `bench_recipe_refusal` (`bench_enqueue`) and
+the capture both call, so a `queueable` offer is never refused. Materials and tools do not gate the
+queue: a short order is skipped and `shortToFinish` speaks for it. `available` stays "a pass can run
+NOW" (readouts, `mark_suggested`). Pinned by `crafting_wire::a_short_offer_is_queueable_and_an_unlearned_one_is_not`
+and `server::tests::a_known_recipe_queues_short_of_material_and_an_unlearned_one_is_refused`.
+
 ## The queue's FORECAST — `shortToFinish`, `CraftSuggestion.shortfalls` and the dock notice
 
 `pass_is_affordable` only ever asks about ONE pass, so a six-sled order that can draw pass 1 said

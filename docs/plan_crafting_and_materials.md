@@ -323,7 +323,10 @@ and recipes that make stock.
 
 Pressing **Make** adds that recipe to the bench's **queue** (below) — onto an empty bench it is the
 job at once, **with nobody on it**; the bench's `− 2 +` stepper is how the crew is set. The bench
-works **one order at a time**, top of the queue first.
+works **one order at a time**, top of the queue first. **Any recipe the band knows may be queued,
+short of material or not** — only an unlearned craft is refused; the bench skips a short order and the
+queue forecast (`shortToFinish`) says what it will run short of. The wire's `CraftOffer.queueable` is
+that gate, distinct from `available` ("a pass can run now").
 
 **The sim never picks the crew.** A crafter is a hunter who is not hunting — the bench spends from
 the same pool the labor allocation does — and dividing the band is the decision this game is made of

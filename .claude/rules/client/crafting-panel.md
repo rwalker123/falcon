@@ -542,6 +542,18 @@ Each queue row (`_build_queue_row`, keyed `QUEUE_ROW_META` = the order's PUBLISH
   so its hover says only whether a pile is cut — and lost (`ORDER_REMOVE_TOOLTIP_DRAWN` / `_UNDRAWN`);
   the worked order's ✕ is the well's, which names the withdrawn pile off `drawn_inputs`.
 
+### THE QUEUE GATE IS `queueable`, NOT `available`
+
+Anything the band KNOWS how to make may be queued; materials and tools no longer gate the queue. Each
+craft offer publishes two booleans: **`queueable`** (every required craft is learned — the server's own
+enqueue test) and **`available`** (a pass can run NOW). Every "may the player queue this" gate reads
+`queueable`: the ledger's Make (`_row_queueable`), the suggestion's Queue, the Make picker's radios and
+its default/validity choice (`_default_choice`, `_choice_is_available`). `available` is no longer read by
+any panel gate. A queueable-but-short SUGGESTION therefore shows a LIVE Queue and no refusal under it (that line renders
+only under a disabled button, i.e. an unlearned craft) and its amber `shortfalls` line tells the material
+story; a ledger row keeps the suggested offer's `reason` under Make as before, live button or not, and an
+order's `short_to_finish` covers the queue.
+
 ### A RAW MATERIAL THAT WILL STOP A CRAFT IS WARNED AMBER, ON THE ORDER AND ON THE SUGGESTION
 
 Issue #777. `blocked_reason` says an order is being SKIPPED now; it says nothing of an order that is

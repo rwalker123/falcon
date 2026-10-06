@@ -1023,9 +1023,10 @@ func _row_on_bench(row: Dictionary) -> bool:
 			return true
 	return false
 
-func _row_available(row: Dictionary) -> bool:
+## Whether the player MAY QUEUE any recipe of the row — `queueable` (every craft learned), not `available`.
+func _row_queueable(row: Dictionary) -> bool:
 	for offer in row["offers"]:
-		if bool((offer as Dictionary).get(HudCraftingVocab.OFFER_AVAILABLE_KEY, false)):
+		if bool((offer as Dictionary).get(HudCraftingVocab.OFFER_QUEUEABLE_KEY, false)):
 			return true
 	return false
 
@@ -1034,10 +1035,10 @@ func _row_available(row: Dictionary) -> bool:
 ## only when the suggestion and the store disagree.
 func _default_choice(row: Dictionary) -> String:
 	var suggested: Dictionary = row["offer"]
-	if bool(suggested.get(HudCraftingVocab.OFFER_AVAILABLE_KEY, false)):
+	if bool(suggested.get(HudCraftingVocab.OFFER_QUEUEABLE_KEY, false)):
 		return String(suggested.get(HudCraftingVocab.OFFER_RECIPE_ID_KEY, ""))
 	for offer in row["offers"]:
-		if bool((offer as Dictionary).get(HudCraftingVocab.OFFER_AVAILABLE_KEY, false)):
+		if bool((offer as Dictionary).get(HudCraftingVocab.OFFER_QUEUEABLE_KEY, false)):
 			return String((offer as Dictionary).get(HudCraftingVocab.OFFER_RECIPE_ID_KEY, ""))
 	return ""
 
@@ -1045,7 +1046,7 @@ func _choice_is_available(row: Dictionary, recipe_id: String) -> bool:
 	for offer in row["offers"]:
 		var candidate: Dictionary = offer
 		if String(candidate.get(HudCraftingVocab.OFFER_RECIPE_ID_KEY, "")) == recipe_id:
-			return bool(candidate.get(HudCraftingVocab.OFFER_AVAILABLE_KEY, false))
+			return bool(candidate.get(HudCraftingVocab.OFFER_QUEUEABLE_KEY, false))
 	return false
 
 ## **THE VIEW STATE IS CHECKED AGAINST EVERY NEW PAYLOAD BEFORE IT IS DRAWN.** A picker whose row has
@@ -1549,7 +1550,7 @@ func _build_action_cell(ledger_row: Dictionary, shrug: bool) -> Control:
 	button.focus_mode = Control.FOCUS_NONE
 	button.add_theme_font_size_override("font_size", HudCraftingVocab.ACTION_FONT_SIZE)
 	HudStyle.apply_button(button, "primary")
-	button.disabled = not _row_available(ledger_row)
+	button.disabled = not _row_queueable(ledger_row)
 	# Found by IDENTITY, valued the row key — every row's button wears the same face.
 	button.set_meta(HudCraftingVocab.MAKE_BUTTON_META, key)
 	if not button.disabled:
@@ -1852,7 +1853,7 @@ func _build_make_picker(row: Dictionary, payload: Dictionary) -> Control:
 ## then states the sim's reason where a buildable one states what it would make.
 func _build_picker_option(offer: Dictionary, group: ButtonGroup, payload: Dictionary) -> Control:
 	var recipe_id := String(offer.get(HudCraftingVocab.OFFER_RECIPE_ID_KEY, ""))
-	var available := bool(offer.get(HudCraftingVocab.OFFER_AVAILABLE_KEY, false))
+	var available := bool(offer.get(HudCraftingVocab.OFFER_QUEUEABLE_KEY, false))
 	var line := HBoxContainer.new()
 	line.add_theme_constant_override("separation", HudCraftingVocab.COLUMN_SEPARATION)
 	var radio := CheckBox.new()
@@ -2000,7 +2001,7 @@ func _build_suggestion_row(suggestion: Dictionary, payload: Dictionary) -> Contr
 	button.add_theme_font_size_override("font_size", HudCraftingVocab.ACTION_FONT_SIZE)
 	HudStyle.apply_button(button, "primary")
 	button.set_meta(HudCraftingVocab.SUGGESTION_QUEUE_META, item_id)
-	button.disabled = ledger_row.is_empty() or count < 1 or not _row_available(ledger_row)
+	button.disabled = ledger_row.is_empty() or count < 1 or not _row_queueable(ledger_row)
 	if not button.disabled:
 		var offers: Array = ledger_row["offers"]
 		if offers.size() == 1:

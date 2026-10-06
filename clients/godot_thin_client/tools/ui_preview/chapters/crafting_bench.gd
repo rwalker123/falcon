@@ -17,7 +17,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 236
+const EXPECTED_CHECKPOINTS := 237
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
@@ -1131,8 +1131,8 @@ func _assert_the_suggestions_read(panel: CraftingPanel) -> void:
 			and texts[1].has(SUGGEST_SPEARS_TITLE) and texts[1].has(SUGGEST_SPEARS_LINE)
 			and texts[2].has(SUGGEST_SLED_TITLE) and texts[2].has(SUGGEST_SLED_LINE))
 	var clubs := _suggestion_queue_button(panel, "clubs")
-	h._assert_hud("crafting/suggest — a refused item's Queue is dead and its offer's own words sit under it",
-		clubs != null and clubs.disabled and texts[0].has("Short 6.9 bone"))
+	h._assert_hud("crafting/suggest — a KNOWN item short of material has a LIVE Queue and no refusal under it",
+		clubs != null and not clubs.disabled and not texts[0].has("Short 6.9 bone"))
 	var spears := _suggestion_queue_button(panel, "spears")
 	var sled := _suggestion_queue_button(panel, "sled")
 	h._assert_hud("crafting/suggest — a makeable item's Queue is live",
@@ -2562,7 +2562,7 @@ func _offer(recipe_id: String, display_name: String, group: String, output_item_
 		on_bench: bool = false, recipe: Dictionary = {}) -> Dictionary:
 	var offer := {
 		"recipe_id": recipe_id, "display_name": display_name, "group": group,
-		"output_item_id": output_item_id, "available": available, "reason": reason,
+		"output_item_id": output_item_id, "available": available, "queueable": true, "reason": reason,
 		"severity": severity, "shortfalls": shortfalls, "output_grade": "", "on_bench": on_bench,
 		"recipe_label": "", "makes": "", "lasts": "", "suggested": true,
 		"owned_at_tier": HudCraftingVocab.OWNED_AT_TIER_UNATTRIBUTED,
@@ -3278,12 +3278,12 @@ func _make_states(panel: CraftingPanel) -> void:
 		picker != null and _label_texts(picker).has(SPEARS_PICKER_HEADING))
 	var bone := _picker_option(panel, SPEARS_BONE_RECIPE)
 	var flint := _picker_option(panel, SPEARS_FLINT_RECIPE)
-	h._assert_hud("crafting/recipes — the recipe that cannot be made has its radio DISABLED",
-		bone != null and bone.disabled)
-	h._assert_hud("crafting/recipes — …while the one that can is live and chosen, being the suggestion",
+	h._assert_hud("crafting/recipes — a known recipe short of material has a LIVE radio (queueable, not available)",
+		bone != null and not bone.disabled)
+	h._assert_hud("crafting/recipes — …and the suggested one is live and chosen",
 		flint != null and not flint.disabled and flint.button_pressed)
-	h._assert_hud("crafting/recipes — the disabled line states the sim's reason",
-		picker != null and _label_texts(picker).has("Short 4.9 bone"))
+	h._assert_hud("crafting/recipes — …the short recipe states no refusal line",
+		picker != null and not _label_texts(picker).has("Short 4.9 bone"))
 	await h._save("crafting_make_picker")
 
 	await _press_control(_make_button(panel, "spears"))
@@ -3351,8 +3351,22 @@ func _make_is_live_when_any_recipe_is() -> void:
 			% [texts],
 		texts.has(SPEARS_BONE_COST_LEAD))
 	var clubs := _make_button(panel, "clubs")
-	h._assert_hud("crafting/recipes — …and a row whose every recipe is short keeps Make disabled",
-		clubs != null and clubs.disabled)
+	h._assert_hud("crafting/recipes — …and a row whose only recipe is short but KNOWN has Make LIVE",
+		clubs != null and not clubs.disabled)
+	# An UNLEARNED craft is the one thing that gates the queue now: Make dead, the sim's reason under it.
+	var unlearned := _crafting_band()
+	for offer in unlearned["craft_offers"]:
+		var candidate_offer: Dictionary = offer
+		if String(candidate_offer.get("recipe_id", "")) == "clubs":
+			candidate_offer["queueable"] = false
+	h._hud.update_band_alerts([unlearned])
+	h._hud.crafting_panel().refresh_snapshot()
+	await h._settle()
+	panel = h._hud.crafting_panel().panel()
+	clubs = _make_button(panel, "clubs") if panel != null else null
+	h._assert_hud("crafting/recipes — an UNLEARNED recipe keeps Make disabled, with its reason under it",
+		clubs != null and clubs.disabled
+			and _label_texts(_ledger_row(panel, "Clubs")).has("Short 6.9 bone"))
 
 ## **A SINGLE-RECIPE JOB'S BENCH NAMES THE ITEM ALONE**, the other half of the verbatim pair: the sim
 ## publishes `Crook`, and the title is that and the craft, with nothing appended.

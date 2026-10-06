@@ -1568,6 +1568,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // same tier and no count per recipe exists (`OWNED_AT_TIER_UNATTRIBUTED`). `-1` is not
             // "none": `0` is a real count.
             let _ = row.insert("owned_at_tier", offer.ownedAtTier() as i64);
+            // The Make/Queue button's gate: every craft the recipe needs is known. Materials and
+            // tools do not gate it — `available` is "a pass can run now".
+            let _ = row.insert("queueable", offer.queueable());
             craft_offers.push(&row.to_variant());
         }
     }
