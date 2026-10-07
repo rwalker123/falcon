@@ -475,8 +475,9 @@ fn a_crew_with_no_kit_takes_less_and_spends_no_durability_on_any_component() {
     );
     assert!(
         bare_yield.actual < kitted_yield.actual,
-        "a bare-handed crew hauls the sled's unequipped rate and fights at the person's own attack, \
-         so it must bring home less: {bare_yield:?} vs {kitted_yield:?}"
+        "a bare-handed crew fights at the person's own attack, so it must bring home less — on a camp \
+         kill the sled bounds nothing (nothing is hauled), so the whole gap is the fight, and the \
+         sled's own carry-tier effect belongs to a POSTED hunt: {bare_yield:?} vs {kitted_yield:?}"
     );
 }
 

@@ -215,7 +215,7 @@ pub struct SpeciesDef {
     ///
     /// **This is what makes a herd a herd and not a fluid.** Every hunt take is
     /// [`crate::fauna::quantise_animal_take`]: you kill `floor(escapement / body_mass)` whole
-    /// animals, and a party that cannot carry a whole one still takes it and **wastes** the rest.
+    /// animals, and the kill-stop seats whole bodies in a posted party's pack while a camp kill has no carry cap.
     /// Two consequences fall straight out of the ratio against the herd's MSY (`r × K / 4`):
     /// - **Rhythm** — `body_mass / MSY` turns per animal at the operating point. Small game
     ///   (fowl 1 / rabbit 2) is a near-continuous trickle; a mammoth is one kill every ~7 turns and
@@ -1096,7 +1096,7 @@ impl HuntYield {
     /// the retired `hunt_provisions` applied it to food.
     ///
     /// **The MATERIALS a carcass gives are NOT here**, and cannot be: they are per-material batches
-    /// with a characteristic vector each, credited off `take.carried` at the take site
+    /// with a characteristic vector each, credited off the whole kill (`AnimalTake::killed_biomass`) at the take site
     /// (`systems::labor`'s `credit_material_yield`). This type is the flat, addable half.
     ///
     /// **Do NOT invert this to count animals.** Whole-animal quantisation stays in *biomass* space —

@@ -4493,6 +4493,7 @@ pub(crate) fn forage_forecast_at_rate(
         // And a stand is not a larder: a gather really is bounded by what the baskets hold, which is
         // why every plant row in the measurement harness reads 100% carry utilisation.
         larder: false,
+        camp_kill: false,
         per_worker_yield: plant_food_only(forage_provisions(
             per_worker_gather_biomass,
             rate,

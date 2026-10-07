@@ -7507,6 +7507,15 @@ pub fn advance_labor_allocation(
                     // (`yield-forecast.md`) is exactly the promise that the number the seed quoted
                     // and the number the turn pays came from one place.
                     let herd_carry_per_worker = hunt_per_worker_biomass;
+                    // ⛔ **A CAMP KILL HAS NO CARRY CAP ON ITS COUNT.** A herd within `band_work_range`
+                    // posts no party and nothing is hauled, so the pack bounds nothing — only the
+                    // fight and what the herd can spare decide the kill, and the sled tier moves
+                    // neither count nor yield. A posted kill is carried home and keeps the sled's
+                    // rate as its kill-stop. Decided per kill, off where the herd stands THIS turn
+                    // (the same `postings` entry `biomass_hauled` reads). The staffing plan
+                    // (`workers_needed`) below reads the sled rate directly and keeps its carriers.
+                    let kill_carry =
+                        fauna::kill_carry_rate(!postings.contains_key(&idx), herd_carry_per_worker);
                     // **THE LIVE VERB, DERIVED** — the animal twin of the Forage arm's: the
                     // declaration counts only where the meter it names is at zero, and both animal
                     // meters are monotone, so a part-built rung stays in flight until it completes.
@@ -7577,7 +7586,7 @@ pub fn advance_labor_allocation(
                     let hunt_realized = fauna::project_realized_hunt(
                         herd,
                         &fauna,
-                        herd_carry_per_worker,
+                        kill_carry,
                         &party_for(herd.body_mass),
                         mult_f,
                         take_hands,
@@ -7741,8 +7750,8 @@ pub fn advance_labor_allocation(
                         //
                         // **And it is butchered in WHOLE ANIMALS** (slice 8 — the same
                         // `quantise_animal_take` a wild hunt runs): you cannot slaughter half a cow
-                        // any more than you can half-kill a mammoth. A keeper who cannot haul a whole
-                        // beast still takes one and wastes the rest.
+                        // any more than you can half-kill a mammoth. A pen is a camp kill unless
+                        // posted: no carry cap on its count, and the whole beast is kept.
                         //
                         // **The pen nonetheless reads steady — emergently, not by exemption.** It
                         // breeds at up to 3× the wild rate (`pen_gain`), so its MSY clears one body's
@@ -7803,7 +7812,7 @@ pub fn advance_labor_allocation(
                             herd,
                             take_hands,
                             *floor,
-                            herd_carry_per_worker,
+                            kill_carry,
                             &party_for(herd.body_mass),
                             &fauna,
                             f32::INFINITY,
@@ -8250,7 +8259,7 @@ pub fn advance_labor_allocation(
                         let arrivals = fauna::project_arrivals_hunt(
                             herd,
                             &fauna,
-                            herd_carry_per_worker,
+                            kill_carry,
                             &party_for(herd.body_mass),
                             mult_f,
                             take_hands,
@@ -8400,7 +8409,7 @@ pub fn advance_labor_allocation(
                         herd,
                         take_hands,
                         *floor,
-                        herd_carry_per_worker,
+                        kill_carry,
                         &party_for(herd.body_mass),
                         &fauna,
                         f32::INFINITY,
@@ -9096,7 +9105,7 @@ pub fn advance_labor_allocation(
                     let arrivals = fauna::project_arrivals_hunt(
                         herd,
                         &fauna,
-                        herd_carry_per_worker,
+                        kill_carry,
                         &party_for(herd.body_mass),
                         mult_f,
                         take_hands,
@@ -9130,7 +9139,7 @@ pub fn advance_labor_allocation(
                             herd,
                             &fauna,
                             biomass_before,
-                            herd_carry_per_worker,
+                            kill_carry,
                             &party_for(herd.body_mass),
                             take_hands,
                             *floor,
@@ -14942,6 +14951,8 @@ mod labor_yield_tests {
                 labor.yield_average_horizon_turns,
                 labor.arrivals_horizon_turns,
                 SHIPPED_FORECAST_RANGE_SIGMAS,
+                // The resolved row above is local — a camp kill.
+                true,
             )
         };
         assert_eq!(
@@ -15556,13 +15567,15 @@ mod labor_yield_tests {
                         );
                         let fauna = world.resource::<FaunaConfigHandle>().get();
                         let per_worker = equipped_haul_rate();
-                        let forecast = hunt_forecast(
+                        let mut forecast = hunt_forecast(
                             &herd,
                             &fauna,
                             per_worker,
                             &crate::fauna::HuntingParty::builtin_equipped(),
                             NEUTRAL_OUTPUT_MULT,
                         );
+                        // The resolved row below is local, so its kill is a camp kill.
+                        forecast.camp_kill = true;
                         drop(fauna);
 
                         let band = spawn_band(

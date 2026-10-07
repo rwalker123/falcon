@@ -111,8 +111,8 @@ static func raid_boar_herd() -> Dictionary:
 ##
 ## Food and biomass differ only by the species' constant provisions rate, which divides out of every
 ## comparison the sim makes — `collection / body_mass` is `collection_food / food_per_animal` — so this
-## is the same arithmetic in cheaper units. The carry arm is `animals_the_pack_seats` —
-## `ceil(collection / body × (1 − ε)).max(1)` — and every animal killed lands WHOLE, so `wasted` is
+## is the same arithmetic in cheaper units. The carry arm — posted kills only — is `animals_the_pack_seats`:
+## `ceil(collection / body × (1 − ε)).max(1)`; a camp kill has none. Every animal killed lands WHOLE, so `wasted` is
 ## always 0: carry sizes the kill count, never what a kill delivers.
 ##
 ## **IT IS THEREFORE UNIT-FREE, AND AN INEDIBLE QUARRY'S CALLER STATES IT IN BIOMASS.** Nothing here
@@ -129,7 +129,13 @@ static func raid_boar_herd() -> Dictionary:
 const PACK_SEATS_EPSILON := 1e-6
 
 static func hunt_take_oracle(collection: float, ceiling: float, food_per_animal: float,
-		engaged: float = INF) -> Dictionary:
+		engaged: float = INF, camp: bool = true) -> Dictionary:
+	# A CAMP kill (herd inside the band's work range) has NO carry arm: only the room and the fight bound
+	# it, and the sheet quotes the room's long-run (fractional) rate. A POSTED kill (`camp = false`)
+	# keeps the pack's kill-stop, and its per-turn whole-animal floor on the room.
+	if camp:
+		return {"delivered": minf(ceiling / food_per_animal, engaged) * food_per_animal,
+			"wasted": 0.0}
 	var affordable := floorf(ceiling / food_per_animal)
 	if affordable < 1.0:
 		return {"delivered": 0.0, "wasted": 0.0}

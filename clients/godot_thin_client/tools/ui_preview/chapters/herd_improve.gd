@@ -307,7 +307,11 @@ func run(harness) -> void:
 		HudComposeVocab.BARE_FORECAST_PREFIX, HERD_DIP_FLOOR) \
 		* float(dip_herd["provisions_per_biomass"])
 	var bare_collection := float(HERD_DIP_CREW) * float(dip_herd["per_worker_yield"])
-	var bare_take := HerdFx.hunt_take_oracle(bare_collection, dip_ceiling, dip_fpa)
+	# A camp kill is bound by the herd's room alone: NEXT turn's ceiling (regrowth lands before the
+	# harvest), whatever the crew carries.
+	var dip_next_ceiling := float(SourceForecast.herd_axis_rates(dip_herd,
+		HERD_DIP_FLOOR)["next_ceiling"])
+	var bare_take := HerdFx.hunt_take_oracle(bare_collection, dip_next_ceiling, dip_fpa)
 	# THE NEEDLE IS THE ACCOUNT MAGNITUDE THE ROW STATES, spelled through `format_magnitude` exactly as
 	# `HudWidgets._yield_reading` spells the number it is aimed at.
 	var bare_face := SourceForecast.format_magnitude(float(bare_take["delivered"]))

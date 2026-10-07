@@ -382,7 +382,7 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
 ## `holding` asks the same question of the steady state — the ceiling becomes one turn's regrowth at
 ## this floor instead of the room above it. Same swap, same reason, as `_hunt_delivered`'s.
 func _hunt_take_rate(herd: Dictionary, floor: float, workers: int,
-        holding: bool = false) -> Dictionary:
+        holding: bool = false, camp: bool = false) -> Dictionary:
     var rates := SourceForecast.herd_axis_rates(herd, floor)
     var per_worker_rate := float(rates["per_worker"])
     # **THE `now` READING IS NEXT TURN'S ROOM, NOT THE STANDING ONE** — the sim regrows before it
@@ -392,10 +392,20 @@ func _hunt_take_rate(herd: Dictionary, floor: float, workers: int,
     var ceiling := float(rates["hold_ceiling" if holding else "next_ceiling"])
     if workers <= 0 or per_worker_rate <= 0.0 or ceiling < 0.0:
         return {"available": false}
+    # A camp row has no carry cap (see `_hunt_delivered`): the herd's room is the only bound the
+    # smoothed rate has, so the crew's throughput does not enter it.
+    var crew_bound := ceiling if camp else minf(float(workers) * per_worker_rate, ceiling)
     return {
         "available": true,
-        "rate": maxf(minf(float(workers) * per_worker_rate, ceiling), 0.0),
+        "rate": maxf(crew_bound, 0.0),
     }
+
+## **IS THIS HUNT A POSTED ONE?** — the herd lies past the band's apron (`_is_past_apron`, the one
+## threshold a caravan has), so a party is posted and the pack's kill-stop applies. Everything inside
+## the work range is a CAMP kill. Distance, not the reply's `walk_tiles` (a posted row on a road can
+## have a zero walk); an unknown distance reads as camp, like `_is_past_apron`'s own `-1`.
+func _hunt_is_posted(band: Dictionary, herd: Dictionary) -> bool:
+    return _is_past_apron(band, int(herd.get("x", -1)), int(herd.get("y", -1)))
 
 
 ## The averaging WINDOW (turns) for the whole-animal disclaimer — a STABLE, worker-independent property
@@ -543,7 +553,14 @@ func _hunt_delivered(band: Dictionary, herd: Dictionary, floor: float, workers: 
     # home by porters), so the crew's `collection` only bounds how many animals are brought down
     # (`haulable`); each one delivers its full body. Below one body per turn `killed` is a CADENCE (a
     # body every `1/killed` turns).
-    var haulable := maxf(ceilf(collection / body * (1.0 - ANIMAL_COUNT_EPSILON)), ONE_WHOLE_ANIMAL)
+    #
+    # **A CAMP KILL HAS NO CARRY ARM AT ALL** — a herd inside the band's work range lands whole in the
+    # larder with no party posted, so only the fight (`brought_down`) and the room bound its kill
+    # count and the sled changes nothing. Only a POSTED kill (past the apron) keeps the pack's
+    # kill-stop. `workers_needed` is deliberately a different question: it plans the carriers.
+    var haulable := INF
+    if _hunt_is_posted(band, herd):
+        haulable = maxf(ceilf(collection / body * (1.0 - ANIMAL_COUNT_EPSILON)), ONE_WHOLE_ANIMAL)
     var brought_down := float(crew_row[SourceForecast.CREW_TAKE_LIKELY_KEY])
     # BODIES PER TURN — the herd's own offer, the crew's haul, and what the party puts on the ground,
     # whichever is least. Fractional below one: a body every `1/killed` turns.
@@ -885,7 +902,7 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
         # the quantised path does**, through the same rescale: the two paths differ in whether the
         # take is quantised, never in what a take pays, and a model whose two branches stated
         # different accounts for one herd is the defect one branch above records.
-        var take := _hunt_take_rate(herd, floor, workers)
+        var take := _hunt_take_rate(herd, floor, workers, false, not _hunt_is_posted(band, herd))
         if not bool(take.get("available", false)):
             # **NO TAKE THIS CLIENT CAN QUANTISE AND NO FOOD RATE EITHER — but a material one may still
             # stand.** A `{}` model renders no readout at all, which is the `+0.00` this arm exists to
@@ -921,7 +938,8 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
         var account := SourceForecast.YIELD_ACCOUNT_FOOD
         var smooth_after := {}
         if _walks_to_the_floor(reaches, improvement):
-            var smooth_hold := _hunt_take_rate(herd, floor, workers, true)
+            var smooth_hold := _hunt_take_rate(herd, floor, workers, true,
+                not _hunt_is_posted(band, herd))
             if bool(smooth_hold.get("available", false)):
                 smooth_after = SourceForecast.rescaled_accounts(herd,
                     HudComposeVocab.BARE_FORECAST_PREFIX, float(smooth_hold["rate"]) * output)

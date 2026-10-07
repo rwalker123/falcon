@@ -165,13 +165,14 @@ is what keeps a hunt from blunting the camp's clubs; that test asserts it direct
 - **`build_progress` is the handling gear's SECOND quantum** — see "An item may wear on several
   quanta" and "The build axis" below.
 - **`biomass_collected` is the pen's, and a pen charges it and `biomass_hauled` over DIFFERENT
-  numbers.** The sled is charged for what it **hauled** (`take.carried`); the handling gear is
-  charged for what it **butchered** (`take.killed_biomass()`). Hurdles, halters, a butchering stone
-  and vessels are worked on the whole beast brought out of the pen and killed, not on the fraction
-  that made it home — and the gap is reachable rather than theoretical: waste needs
-  `workers × hunt_carry < body_mass`, and a Wild Aurochs (`body_mass 120`, pennable, one required
-  keeper) at the equipped carry of 40 kills 120 and carries 40, so a single basis would
-  under-charge the gear threefold on the animal it did the most work on.
+  numbers.** The sled is charged for what it **hauled** — what a *posted* pen's
+  packs seat (`take.carried`), and nothing for a camp slaughter, which hauls nothing
+  (`systems::labor::biomass_hauled`); the handling gear is charged for what it **butchered**
+  (`take.killed_biomass()`). Hurdles, halters, a butchering stone and vessels are worked on the whole
+  beast brought out of the pen and killed, not on the fraction a pack seats — and the gap is
+  reachable: a Wild Aurochs (`body_mass 120`, pennable, one required keeper) at the equipped carry
+  of 40 is killed whole (120) against 40 seated, so a single basis would under-charge the gear
+  threefold on the animal it did the most work on.
 
   **Two quanta rather than one is a SECOND, independent reason** and is worth keeping distinct from
   the basis question: it is what lets a band that only keeps pens leave a sled it never took onto the
@@ -223,11 +224,12 @@ invariant is broken on the one surface a player commits from.
 > beautifully-made sled used to buy nothing at a pen, which is the very fault #543 names; it does now.
 > A spawn stocks ungraded batches, so **turn-one behaviour is unchanged** and only crafted gear moves.
 >
-> Pinned end-to-end by `equipment_toe::a_pen_is_not_carry_bound_while_a_range_hunt_still_is`, which
+> Pinned end-to-end by `equipment_toe::a_pen_is_not_carry_bound_while_a_posted_hunt_still_is`, which
 > runs the turn on four worlds ({penned, wild} × {sledded, sledless}). ⛔ **It used to assert that the
 > two sledless arms collect the SAME amount, and that consequence is SUPERSEDED**: `pen_is_a_larder`
 > removed carry as a *bound* on a pen, so the pen arms are blind to the sled and waste nothing while
-> the range arms are not and do. **What #543 actually said survives and is still asserted there**: the
+> the posted range arms are not blind to it (their packs bound the kill and their porters' loads
+> are the haul); a camp kill is blind to it too. **What #543 actually said survives and is still asserted there**: the
 > published per-worker rate is the band's one number on both grounds — no source participates in
 > deciding carry capacity, a pen simply does not *apply* it.
 
@@ -236,9 +238,10 @@ something else.** Neither picks a rate:
 
 - **`fauna::hunt_crew_take_curve`** uses it to decide *whether the curve carries a carry bound at
   all* — **and it asks `herd_collection` beside it**, because `husbandry.pen_is_a_larder` retires the
-  bound at a pen outright. A wild party's carry limit is expressed downstream through the waste path
-  (`a_sledless_party_wastes_the_kill_it_cannot_carry`); a pen has no haul ceiling to express. It is a
-  statement about **where** the bound is applied, and the rate inside it is the band's `hunt_carry`.
+  bound at a pen outright. The curve is a **staffing plan, not this turn's need** — a posted party's pack is what bounds
+  a kill (the kill-stop), a camp kill has no carry cap, and the curve keeps its carriers because a herd
+  near camp today may be beyond reach tomorrow; a pen has no haul ceiling at all. It is a statement
+  about **where** the bound is applied, and the rate inside it is the band's `hunt_carry`.
   **A bare `is_corralled()` here was a divergence** and shipped one: the flag is one infinity at
   `herd_collection` and this curve was composing its own carry instead, so a penned row published a
   `huntUsefulWorkers` plateaued on a ceiling the take does not apply — the Work board's `+` gate
@@ -1392,9 +1395,10 @@ the declaration keeps the answer right the day something does.
 the **#500** Combat engine arc, and it needs the resolver's reserved ranged pre-phase, wound-driven
 degradation and per-item hit chance. None of it is required for anything above.
 
-**The sledless hunt needs no new mechanic.** A party that cannot haul its kill leaves more of it,
-which `AnimalTake::wasted` has always computed and the client already displays — see "Waste came
-back" below.
+**The sledless hunt needs no new mechanic.** The sled raises a **posted** party's carry — its
+kill-stop (`fauna::animals_the_pack_seats`) and its haul — so a sledless posted party kills and
+ferries less. A **camp kill** (within `band_work_range`) hauls nothing: no carry cap on its count, no
+sled wear, and every hunt keeps its whole kill — see "A camp kill is not carry-bound" below.
 
 ## Config files
 
@@ -2202,19 +2206,18 @@ is the seam the basket tier rides; sites with no band to resolve against (the pa
 `HerdTelemetryState::per_worker_biomass`. See "THE EQUIPPED CARRY RATES CAME OUT OF
 `labor_config.json`".
 
-## Waste came back, and it is pinned
+## A camp kill is not carry-bound, and every hunt keeps its whole kill
 
-Slice 4 made the wild hunt's forced-partial waste branch **unreachable** at the shipped tier: any
-crew that could make the kill could also carry it. Waste of a *whole* body needs
-`workers × per_worker_carry < body_mass`, and the sledless rate puts that regime back within reach.
-(Since the carry arm rounds **up** — `fauna::animals_the_pack_seats` — a *part*-body waste is now
-ordinary at any crew whose pack does not divide evenly into bodies; this fixture is about the extreme
-case, where less than half of one kill comes home.)
-`a_sledless_party_wastes_the_kill_it_cannot_carry` pins it on **both** sides of the same fixture — 2
-hunters on a 50-biomass body collect `2 × 40 = 80` sledded (whole body seated, `wasted == 0`) and
-`2 × 12 = 24` sledless (one body down, less than half of it home, `wasted > 0`) — with a liveness
-assertion that each party actually killed, or "wasted nothing" would be the trivial truth about a
-party that never engaged.
+`AnimalTake::wasted` is a raid's and an expedition's loss; a hunt or pen slaughter keeps
+`killed_biomass()`. **Where the pack matters is a POSTED hunt** (a herd past `band_work_range`): the
+sled raises the party's carry, which is its kill-stop (`fauna::animals_the_pack_seats`) and what its
+porters ferry, so a sledless posted party kills and lands less
+(`both_hunt_carry_tiers_are_live_and_a_sledless_party_hauls_less`). **A camp kill hauls nothing**:
+`fauna::kill_carry_rate` hands the quantiser no carry bound, the sled tier moves neither the count nor
+the yield (`a_camp_kill_is_not_capped_by_the_sled`), and no sled wear is charged
+(`systems::labor::biomass_hauled`). A sledless camp party keeps the whole body it cannot seat
+(`a_sledless_party_keeps_the_whole_kill_it_cannot_seat`). The decision is per kill, off where the herd
+stands that turn.
 
 ## What is NOT wired yet, deliberately
 

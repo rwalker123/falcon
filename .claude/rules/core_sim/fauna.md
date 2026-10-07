@@ -713,11 +713,16 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 > lands in the larder the same turn (walk `0`) and charges **no** sled wear
 > (`WearQuantum::BiomassHauled` — `systems::labor::biomass_hauled`). A kill beyond it posts a work
 > party and the porters ferry the same whole carcass home, charging haul wear on what the packs
-> seat. Locality is decided **per kill, every turn**, off the herd's position that turn
+> seat. **A camp kill has no carry cap on its count** — the pack bounds nothing when nothing is
+> hauled, so only the fight and what the herd can spare decide it, and the sled tier moves neither
+> count nor yield (`fauna::kill_carry_rate` → `NO_CARRY_BOUND`; `SourceYieldForecast::camp_kill`;
+> `systems::labor` passes it as the hunt arm's `kill_carry`). Locality is decided **per kill, every turn**, off the herd's position that turn
 > (`party_source_position` → `post_a_party` → `work_party::resolve_walk`): a herd that wanders past
 > the range goes through the posted path on that turn's kill and a camp kill when it wanders back.
-> The kill-stop (`quantise_animal_take` / `EngagementStop::WhenPackFull`) is unchanged — a hunt stops
-> engaging once the pack seats the take — and `carried`/`wasted` survive on `AnimalTake` only for the
+> The kill-stop (`quantise_animal_take` / `EngagementStop::WhenPackFull`) still binds a **posted**
+> kill — a party stops engaging once its pack seats the take — and the staffing plan
+> (`workers_needed`, `hunt_haul_workers`, `huntUsefulWorkers`) keeps its carriers on a camp row too,
+> because a herd near camp today may be beyond reach tomorrow; and `carried`/`wasted` survive on `AnimalTake` only for the
 > denial raid and expeditions, whose party walks away from the rest. A hunt's and a pen's row
 > `wasted` (`wastedYield` on the wire) is a structural `0`; a big camp kill spoils in the larder
 > (`spoilage::larder_rot`) rather than at the kill. The projections (`HuntProjection::step`,

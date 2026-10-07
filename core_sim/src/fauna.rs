@@ -5720,6 +5720,16 @@ pub struct SourceYieldForecast {
     /// [`Self::fight`]: they are different stages, and this one is behind a lever while that one is
     /// not.
     pub larder: bool,
+    /// **IS THIS A CAMP KILL?** — a herd within `band_work_range` of the band, which posts no party
+    /// and hauls nothing, so the pack bounds nothing: **no carry cap on the kill's count**. Only the
+    /// fight and what the herd can spare decide it, and the sled tier moves neither count nor
+    /// yield. A posted kill keeps its carry kill-stop (`false`).
+    ///
+    /// It is a field of its own rather than a second reading of [`Self::larder`] because the two
+    /// answer different questions: `larder` also drops the haul term out of the staffing plan
+    /// ([`hunt_take_workers`]), and a camp row's `workers_needed` must keep its carriers — a herd
+    /// near camp today may be beyond reach tomorrow. This flag reaches the **quantiser** only.
+    pub camp_kill: bool,
 }
 
 /// **The biomass an investment rung a source does not offer would harvest: none.** The biomass twin
@@ -6521,10 +6531,11 @@ pub(crate) fn forecast_take_outcomes(
             // both axes.
             let pair_for = |brought_down: f32| {
                 let take = quantise_animal_take(
-                    // **A larder is not carried home** ([`SourceYieldForecast::larder`]) — the same
+                    // **A larder is not carried home** ([`SourceYieldForecast::larder`]), **and a
+                    // camp kill is not hauled** ([`SourceYieldForecast::camp_kill`]) — the same
                     // infinity `herd_collection` hands the take path, so the preview and the turn
                     // agree about whether the sled is a bound at all.
-                    if forecast.larder {
+                    if forecast.larder || forecast.camp_kill {
                         NO_CARRY_BOUND
                     } else {
                         collection.component(axis)
@@ -6771,7 +6782,7 @@ pub(crate) fn forecast_source_yield(
         fodder: actual.fodder,
         // **A pre-commit row quotes NO material, and that is a stated gap rather than a claim of
         // zero** (arc #527). Projecting materials needs the take in *biomass* — `credit_material_yield`
-        // is paid off `take.carried`, and this path resolves the take in currency space, where an
+        // is paid off the whole kill, and this path resolves the take in currency space, where an
         // inedible species has no positive axis to count on. The **resolved** row does carry it
         // (`systems::labor` hands over exactly what the credit deposited), and the number a player
         // decides on rides the herd row's own `material_per_biomass` / `per_worker_material`, which
@@ -6901,15 +6912,22 @@ pub fn hunt_source_yield_preview(
     // `combat_config.forecast_range_sigmas` — how wide a band the seeded row reports around its
     // expected take (`docs/plan_hunt_through_combat.md` §6.4). Last, matching the forage twin.
     range_sigmas: f32,
+    // **A camp kill** — the herd stands within `band_work_range` and no party is posted, so nothing
+    // is hauled and the pack bounds nothing ([`SourceYieldForecast::camp_kill`]).
+    camp_kill: bool,
 ) -> SourceYield {
     let take_hands = (workers as f32 - keep_hands).max(NO_HANDS);
-    let forecast = hunt_forecast(
+    let mut forecast = hunt_forecast(
         herd,
         fauna,
         per_worker_biomass_capacity,
         party,
         output_multiplier,
     );
+    forecast.camp_kill = camp_kill;
+    // The carry the KILL is bounded by — unbounded for a camp kill, the sled for a posted one. The
+    // staffing plan (`workers_needed`) is struck off the real carry by the caller, deliberately.
+    let kill_carry = kill_carry_rate(camp_kill, per_worker_biomass_capacity);
     let sustainable = herd_hunt_yield(herd, fauna)
         .apply(
             sustainable_yield(
@@ -6926,7 +6944,7 @@ pub fn hunt_source_yield_preview(
     let realized = project_realized_hunt(
         herd,
         fauna,
-        per_worker_biomass_capacity,
+        kill_carry,
         party,
         output_multiplier,
         take_hands,
@@ -6939,7 +6957,7 @@ pub fn hunt_source_yield_preview(
     let arrivals = project_arrivals_hunt(
         herd,
         fauna,
-        per_worker_biomass_capacity,
+        kill_carry,
         party,
         output_multiplier,
         take_hands,
@@ -6965,7 +6983,7 @@ pub fn hunt_source_yield_preview(
             herd,
             fauna,
             herd.biomass,
-            per_worker_biomass_capacity,
+            kill_carry,
             party,
             take_hands,
             floor,
@@ -9357,6 +9375,11 @@ pub fn hunt_engage_workers(ceiling: f32, body: f32, engage_rate: f32, stay: f32)
     (peak_animal_drop(ceiling, body) / brought_down).ceil() as u32
 }
 
+/// **A STAFFING PLAN, NOT THIS TURN'S NEED** — the carriers in this crew cover the turns the herd is
+/// beyond `band_work_range`; a camp kill hauls nothing and has no carry cap, but a herd near camp
+/// today may be far tomorrow, so [`hunt_haul_workers`], [`hunt_take_workers`],
+/// [`hunt_useful_take_hands`] and `huntUsefulWorkers` deliberately keep the haul term.
+///
 /// **THE take-side crew for a whole-animal (hunt) source** — `max(`[`hunt_haul_workers`]`,
 /// `[`hunt_engage_workers`]`)`, and the single seam every `workers_needed` on the animal web sizes
 /// its take half with (the assign-time seed in [`forecast_source_yield`] and the resolved Hunt arm of
@@ -9656,6 +9679,23 @@ pub fn herd_collection(
         return NO_CARRY_BOUND;
     }
     workers * per_worker_biomass_capacity
+}
+
+/// **THE CARRY RATE A KILL IS BOUNDED BY — NONE FOR A CAMP KILL.** Within `band_work_range` the
+/// beast is killed in camp and nothing is hauled, so the pack bounds nothing and "the kill is the
+/// kill": only the fight and what the herd can spare decide it, and the sled tier moves neither
+/// count nor yield. A posted kill is carried home, so it keeps the sled's `carry`
+/// (`animals_the_pack_seats`). Decided per kill, every turn, from where the herd stands.
+///
+/// **It is the KILL's carry, not the staffing plan's:** `workers_needed`, `hunt_haul_workers` and
+/// `huntUsefulWorkers` read the sled rate directly and keep their carriers, because a herd near
+/// camp today may be beyond reach tomorrow.
+pub fn kill_carry_rate(camp_kill: bool, per_worker_biomass_capacity: f32) -> f32 {
+    if camp_kill {
+        NO_CARRY_BOUND
+    } else {
+        per_worker_biomass_capacity
+    }
 }
 
 /// **WHAT ONE WORKER CARRIES AT THE RUNG THIS HERD STANDS ON** — [`herd_collection`] asked at
@@ -10168,9 +10208,10 @@ fn curve_useful_take_hands(inputs: &HuntCrewCurveInputs<'_>, quarry: &Herd) -> f
 pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTake> {
     let quarry = next_turns_quarry(inputs.herd, inputs.fauna);
     let sigmas = inputs.range_sigmas.abs();
-    // **WHETHER THIS CURVE CARRIES A HAUL BOUND AT ALL** — a fact about the rung, since a wild
-    // party's carry limit is expressed downstream through the waste path
-    // (`a_sledless_party_wastes_the_kill_it_cannot_carry`) instead of as a term of the kill rate.
+    // **WHETHER THIS CURVE CARRIES A HAUL BOUND AT ALL** — a fact about the rung. The curve is a
+    // STAFFING plan, not this turn's need: it keeps its carriers because a herd near camp today may
+    // be beyond reach tomorrow, and a posted party's pack is what bounds that kill
+    // (`equipment_toe::a_pen_is_not_carry_bound_while_a_posted_hunt_still_is`).
     // It selects no rate: what a keeper carries is the band's own `hunt_carry`, the same number a
     // stalking party hauls at (issue #543). Resolved once, out here, because the *rate* is per crew
     // size (coverage stretches a band's sleds differently over four keepers than over twelve).
@@ -10584,6 +10625,9 @@ pub(crate) fn hunt_forecast(
         // **AND A PEN MAY BE A LARDER** ([`herd_collection`]) — resolved off the same herd, so the
         // preview's quantiser is handed the same collection the turn's is.
         larder: herd_collection(herd, fauna, ONE_WORKER, per_worker_biomass_capacity).is_infinite(),
+        // **A camp kill is the CALLER's fact** (where the herd stands against the band), so the
+        // forecast starts as a posted one and [`hunt_source_yield_preview`] sets it.
+        camp_kill: false,
         // **The TERMS of the take, not a set of answers.** `ceiling_at(floor, improvement)` composes
         // them into exactly what `hunt_take` computes — the herd's own `K` (`herd_capacity`, never
         // the raw field) and the stock the take will find, so the forecast and the take read one
@@ -10896,7 +10940,12 @@ pub fn hunt_take_overdraws(
 ) -> bool {
     let cap = herd_capacity(herd, fauna);
     let ecology = herd_ecology(herd, fauna);
-    let carry = workers * per_worker_biomass_capacity.max(0.0);
+    // [`NO_HANDS`] short of the product: `0 × NO_CARRY_BOUND` is NaN, and a camp kill's carry is that.
+    let carry = if workers <= NO_HANDS {
+        NOTHING_COLLECTED
+    } else {
+        workers * per_worker_biomass_capacity.max(0.0)
+    };
     // What the party puts on the ground in a turn: reached, less what breaks off, in biomass —
     // both terms at the herd's **own rung** ([`herd_engage_rate`], [`herd_wariness`]), so the ⚠ is
     // answered against the take that will really be paid. Identities on a wild herd.
@@ -13521,6 +13570,8 @@ mod tests {
             SHORT_HORIZON,
             SHORT_HORIZON,
             RANGE_SIGMAS,
+            // The sampled live take below runs at the sled's carry — a posted kill.
+            false,
         );
 
         // **THE LIVE TAKE'S MEAN, SAMPLED.** A boar carries `wariness 0.25`, so the retreat is a real

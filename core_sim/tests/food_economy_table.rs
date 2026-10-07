@@ -715,6 +715,8 @@ fn hunt_preview(
         shipped.labor.yield_average_horizon_turns,
         shipped.labor.arrivals_horizon_turns,
         shipped.combat.forecast_range_sigmas,
+        // A local fixture row is a camp kill: nothing is hauled.
+        true,
     )
 }
 

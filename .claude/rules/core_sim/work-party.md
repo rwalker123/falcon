@@ -213,7 +213,7 @@ animal the pack cannot seat whole is still killed whole.
 **Nothing is walked away from**: a carcass too big for one pack goes a pack's worth at a time and
 the remainder stays in the load for the next porter. Every hunt — a far posting and a camp kill
 within `band_work_range` alike — keeps `take.killed_biomass()`, not `take.carried`, and its row's
-`wasted` is `0`; a camp kill differs only in that its walk is zero and it charges no sled wear. An unbounded carry (a pen that is a larder) takes
+`wasted` is `0`; a camp kill differs in that its walk is zero, it charges no sled wear and its kill count has no carry cap (only a posted kill is stopped by what its pack seats). An unbounded carry (a pen that is a larder) takes
 the whole load in one pack.
 
 **A pack is filled by BULK — everything the crew cut — and lands whatever it is worth as food.** A
@@ -265,7 +265,7 @@ the species' `hunt_materials_for` rows — plus a pen's standing rows (fleece) o
 (`systems::labor::hunt_goods_cut`, the same `material_yield_batches` → `CarriedGoods` path the forage
 arm takes), instead of crediting them; they land with the pack through the same landings above. A
 hunt yields no fodder. A pen can be far: it stands where its herd does, so it posts a party like any
-other row. A local hunt or pen still credits at the kill, off `take.carried`. The deposit web's
+other row. A local hunt or pen still credits at the kill, off the whole kill (`killed_biomass`). The deposit web's
 material is not a side good but the cargo itself (below).
 
 **A far pen's standing yield walks home and is in its forecast.** Its milk or eggs ride the pack's

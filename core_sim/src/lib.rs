@@ -237,7 +237,7 @@ pub use fauna::{
     herd_upkeep_shortfall, herd_upkeep_supply, herd_upkeep_workers_needed, herd_wariness,
     hunt_armed_crew, hunt_crew_needed, hunt_crew_room, hunt_crew_take_curve, hunt_engage_workers,
     hunt_escapement_ceiling, hunt_haul_workers, hunt_source_yield_preview, hunt_take_bound,
-    hunt_take_overdraws, hunt_take_workers, hunt_useful_crew, kill_over_retreat,
+    hunt_take_overdraws, hunt_take_workers, hunt_useful_crew, kill_carry_rate, kill_over_retreat,
     migratory_corridor_tiles, next_turns_quarry, per_hunter_take_biomass, project_arrivals_hunt,
     project_realized_hunt, quantise_animal_take, quarry_default_hunt_kit, regrow_biomass,
     regrowth_delta_at, repopulate_fauna, resolve_hunt_engagement, resolve_hunt_fight,

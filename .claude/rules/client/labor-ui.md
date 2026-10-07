@@ -1067,8 +1067,12 @@ engageCrew      = ceil((floor(ceiling / bodyMass) + 1) / engageRate)
 - **THE CARRY ARM ROUNDS UP, AND THE `max(1.0)` SITS ON IT ALONE, INSIDE THE `min`** — the sim's own
   `animals_the_pack_seats = ceil(collection / body × (1 − ANIMAL_COUNT_EPSILON)).max(1)` (the epsilon
   and the one-animal floor are named constants on `DrawerComposeController`, mirroring
-  `core_sim/src/fauna.rs`), so a crew carrying 2.4 bodies kills THREE, each whole;
-  `chapters/hunt.gd` pins it. This is the reason
+  `core_sim/src/fauna.rs`), so a POSTED crew carrying 2.4 bodies kills THREE, each whole, and a sled raises it.
+  **A CAMP KILL HAS NO CARRY ARM**: a herd inside the band's work range (`_hunt_is_posted` false —
+  `_is_past_apron`, never `walk_tiles`, since a posted row on a road can walk zero tiles) is bound by
+  the fight and the room alone, so sledded and sledless crews read the same take; the smoothed degrade
+  rate (`_hunt_take_rate`) drops its crew term the same way. `workers_needed` and the crew caps are
+  unchanged — they plan the carriers for a herd beyond reach. `chapters/hunt.gd` pins both. This is the reason
   `_hunt_delivered` is ONE expression rather than a carryable-versus-partial-body pair. A
   party that cannot carry a whole animal still kills one and lands it whole, which is a fact about
   the PACK; a party that brings down three quarters of an animal has brought down three quarters of
@@ -6007,11 +6011,12 @@ spelled and never a raw count.
     - ui_preview (slice-8b UX + the local-hunt cleanup): `hunt_actions_rhythm` (two Current-actions Hunt
       SUMMARY rows — each `Hunt <species> +X /turn ♻ ●` with NO `≈… /turn` animals-per-turn cadence; the
       big-game row's 0.00 pulse never headlines) / `hunt_picker_ascending` (the local picker + the preview's per-crew line,
-      "Hunters" stepper on a wild herd) / **`herd_hunt_delivered_clean`** (2 hunters → `≈1 Red Deer/turn ·
-      renewable` + the four ascending `up to +2.33/+3.50/+5.00/+7.00 /turn` cap buttons) /
+      "Hunters" stepper on a wild herd) / **`herd_hunt_delivered_clean`** (2 hunters at camp → `2.36 → 0.07 FOOD · renewable`, the herd's
+      room, which every crew size reads there + the four ascending `up to +2.33/+3.50/+5.00/+7.00 /turn` cap buttons) /
       **`herd_hunt_automax`** (a policy click auto-fills the crew to
-      the max-useful cap — count sits at 4) / **`herd_hunt_big_game_window`** (mammoth: auto-max staffs the
-      20 carriers, `≈0.15 Woolly Mammoth/turn`; its Sustain rung's TOOLTIP carries the averaging-window
+      the max-useful cap — count sits at 4, still `2.36`) / **`herd_hunt_big_game_window`** (mammoth: auto-max staffs the
+      20 carriers — a staffing plan for when the herd is beyond reach; at camp the take is the room's
+      `2.43`; its Sustain rung's TOOLTIP carries the averaging-window
       disclaimer, `This estimate is a long-run average over ~7 turns — you take whole animals, so
       per-turn delivery varies.`, which a rendered frame cannot show — the deer states' rungs carry the
       same note reading ~2 turns, at every worker count) /
