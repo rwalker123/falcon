@@ -1005,8 +1005,14 @@ draws nothing.
   light ground (sand, snow); the violet's lightness carries it over dark (forest, water).
 - **The kin-relay outline** is a SECOND perimeter, of `belief_relay_reach_x/y` — the tiles OUTSIDE
   the direct region from which the band would be tied in through its other kin. Same perimeter code
-  (`_reach_perimeter`) and the same violet, thinner and fainter (`ANCESTORS_RELAY_*`), and solid —
-  dashes mean a pending action on this map. Edges the relayed region shares with the direct one are
+  (`_reach_perimeter`) and the same violet, thinner and fainter (`ANCESTORS_RELAY_*`), and **DASHED**
+  — line and under-stroke both, through `_draw_reach_outline`'s `dash`/`gap` (the existing
+  `_draw_dashed_line`). Width and alpha alone read as one outline in a live game; a dash says "a
+  different kind of region" at a glance. The pending-action overlay is dashed too, but amber, so
+  the colour keeps the two apart. Dash and gap are fractions of the hex radius
+  (`ANCESTORS_RELAY_DASH_FACTOR` / `_GAP_FACTOR`, an edge being one radius long), so an edge shows
+  2.5 dashes at any zoom; edges are already in the band's effective column frame, so a dashed edge
+  across the wrap seam needs no handling of its own. The direct outline stays solid. Edges the relayed region shares with the direct one are
   dropped from it (the direct set is passed as `skip`), and the direct outline is drawn after it, so a
   shared border reads as the strong "near" line and the faint line marks only "near through kin".
 - **The anchor mark** (`_draw_ancestors_marker`) is the expedition marker's composite: a dark disc
