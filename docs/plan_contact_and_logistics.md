@@ -506,7 +506,8 @@ deleted from the schema.
 6. **The overlay (#232)** — the logistics network drawn on the map.
 7. **The remaining riders** — #530 (culture), #531 (knowledge). Both settled — see §Open items.
 8. **Blocked on #513, then:** the cross-faction riders — #458 (proximity trade), #512 (defection).
-   By construction these should be small.
+   By construction these should be small. #458 is only the proximity case; the long-haul
+   exchange — a shipment becomes an offer — is #546, settled in §Open items.
 
 **#231 (Early Diplomacy)** was narrowed to match: the route-network half moved here, and what remains
 there — treaties (#233) and cultural-reach victory metrics (#234) — is a *policy* layer that governs
@@ -526,8 +527,6 @@ connections this arc owns.
 
 ## Open items
 
-- **Standing upkeep on the route ladder** — #532, which owns the `route` branch and the standing-cost
-  term the intensification engine does not yet have.
 - **Whether a large group is detectable beyond anyone's range** — #533 (§Q1).
 
 ### Settled by #538 — connection strength
@@ -707,6 +706,86 @@ vocabulary. All are first guesses tuned from play.
 **What the player sees:** where a discovery is listed, the strongest source this turn and its
 channel — *"Learning Wheel from the Red Hill people — by trade"* — which needs, per discovery the
 viewer's people is learning by contact, the subject people and the channel on the wire.
+
+### Settled by #546 — exchange: a shipment is an offer, and the stages differ by who prices it
+
+#517 shipped a shipment as a party that walks cargo to another band and drops it. Nothing is priced,
+nothing comes back, and nobody can refuse. #546 settles what turns that into trade. It was filed
+blocked on #513; #513 has since landed, and so have defection (#512) and independence (#284).
+
+**A shipment becomes an offer, and the gift survives as one kind of offer.** The cargo arrives as a
+proposal the receiving people may accept or refuse. An offer that asks nothing back is a gift, and
+your own bands always accept one, so a parent supplying a splinter beyond free reach works exactly as
+it does today. That "always yes" comes from the receiver being your own people answering, never from
+a same-faction branch in the code: faction stays a property of the endpoint (§Q2). #458's proximity
+trade asks the same consent question, and this is its answer too.
+
+**Refused cargo goes home.** A refusal sends the party back with what it brought, over the
+`ShipmentReturned` path that already books undelivered cargo.
+
+**What comes back rides the same party home.** The exchange is one round trip, never a simultaneous
+swap. The payment walks home in the same pack, so it can be lost on the way, which is part of what a
+road is for.
+
+**A price is a list of goods, never a number.** Both legs are food, fodder and material batches with
+their quality readings, kept per material exactly as the cargo is. Nothing sums them into a value:
+that scalar was `trade_goods`, retired in #537 (§Q5). Whether a deal is fair is each side's own
+judgement, the player's or the AI's, so the sim decides only accept or refuse on a concrete offer.
+
+#### The four stages
+
+Every stage is the same verb: a party walks the goods over, carrying them in the same pack model as
+every other carrier, and the receiver may refuse. **What changes is who sets the return, and when.**
+
+| Stage | Who sets the return | When | What it needs |
+|---|---|---|---|
+| **1. Scouts at first contact** | the receiver | when the scouts arrive | contact only |
+| **2. Blind trade party** | the receiver | when the party arrives | a live connection |
+| **3. Diplomat** | both sides | before the party leaves | a diplomat — not in this arc |
+| **4. Standing link** | both sides, haggling | any time | a logistics link held by a road |
+
+- **Stage 1 is decided when the scouts leave.** The player does not know contact happened until the
+  scouts come home, so a gift or a trade cannot be a choice made at the moment of meeting. The
+  scouting launch loads a small pack and sets a standing order for strangers: **give** it,
+  **offer it for trade** (the strangers name the return), or **keep** it. The result comes home with
+  the scouts, the same way news of the contact does.
+- **Stage 2 is the blind party.** You know a people exist but have no way to talk to them, so you
+  send goods and see what, if anything, they give back.
+- **Stage 3 is not built here.** A diplomat who agrees terms before the party sets out is treaty work
+  (#231/#233). The offer model leaves room for it: stage 3 is an offer whose return was agreed before
+  departure.
+- **Stage 4 needs a built road.** Proposing and haggling over a trade at any time needs a logistics
+  link held by a route at rung 2 or above — a dirt road, and every rung above it (paved road, and
+  rail when it exists). The bar is a config lever, `min_route_rung`, starting at 2. **A trail does not
+  qualify.** The bar is the condition §Q5 already uses to light a road's tiles `Seen`: a built rung
+  with its upkeep paid means people are on that road, so word travels along it. Nobody maintains a
+  trail.
+
+#### A gift builds goodwill
+
+A gift raises the receiving people's **goodwill** toward the giver. Goodwill is directional, held per
+pair of peoples, and is **not** the tie's strength: the connection carries no rider vocabulary
+(`connections.rs` module doc). Goodwill is what a receiver weighs when it answers an offer, and what
+the treaty layer will later read. A stage 1 gift is the first thing that ever sets it.
+
+#### How a receiver answers: one turn, and AI and human alike
+
+Turns are simultaneous: every faction submits its orders, then one resolution runs (`TurnQueue`,
+`core_sim/src/orders.rs`). An AI receiver answers exactly as a human does, by submitting a command on
+its turn, so the design has no AI/human split.
+
+1. **Turn N resolves:** the party arrives, and a pending offer addressed to the receiving people
+   appears in what they see next.
+2. **Turn N+1:** the receiver answers with an ordinary command, or does not.
+3. **Turn N+1 resolves:** the exchange happens, and the party starts home with whatever it was given,
+   or with its own goods if it was refused.
+
+**Silence is a refusal.** The party waits at the destination for `offer_wait_turns` (a config lever,
+starting at 1) and then goes home with its goods. It cannot wait forever, because its food runs out.
+
+A pending offer is "an item addressed to a people, answered by a command". That is the shape a
+future trade proposal would reuse. A general inbox is not designed here, and an attack does not fit
+the shape, because its target does not answer it.
 
 ## See Also
 
