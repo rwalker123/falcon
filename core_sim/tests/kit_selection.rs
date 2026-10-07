@@ -461,15 +461,23 @@ fn a_crew_with_no_kit_takes_less_and_spends_no_durability_on_any_component() {
          makes a bare-handed comparison free to run (compared against the ledger the fixture band \
          is OUTFITTED with, which is a party's worth)"
     );
+    // **The fixture hunts inside `band_work_range`, a camp kill, which hauls nothing** — so the
+    // sled is not charged; the spears and the handling gear are.
     assert!(
-        kitted_wear.wear_of("spears") > 0.0 && kitted_wear.wear_of("sled") > 0.0,
-        "…and the kitted arm beside it must genuinely wear both, or the assertion above is vacuous: \
-         {kitted_wear:?}"
+        kitted_wear.wear_of("spears") > 0.0,
+        "…and the kitted arm beside it must genuinely wear its spears, or the assertion above is \
+         vacuous: {kitted_wear:?}"
+    );
+    assert_eq!(
+        kitted_wear.wear_of("sled"),
+        0.0,
+        "a camp kill is not hauled, so the sled is not worn: {kitted_wear:?}"
     );
     assert!(
         bare_yield.actual < kitted_yield.actual,
-        "a bare-handed crew hauls the sled's unequipped rate and fights at the person's own attack, \
-         so it must bring home less: {bare_yield:?} vs {kitted_yield:?}"
+        "a bare-handed crew fights at the person's own attack, so it must bring home less — on a camp \
+         kill the sled bounds nothing (nothing is hauled), so the whole gap is the fight, and the \
+         sled's own carry-tier effect belongs to a POSTED hunt: {bare_yield:?} vs {kitted_yield:?}"
     );
 }
 

@@ -218,7 +218,10 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
                  same snapshot published"
             );
 
-            for workers in BAND_HUNT_WORKER_COUNTS {
+            for (workers, camp_kill) in BAND_HUNT_WORKER_COUNTS
+                .into_iter()
+                .flat_map(|workers| [(workers, true), (workers, false)])
+            {
                 // What the client renders: the sim's own exported preview for this staffing.
                 let preview = {
                     let registry = app.world.resource::<HerdRegistry>();
@@ -238,6 +241,7 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
                             .resource::<CombatConfigHandle>()
                             .get()
                             .forecast_range_sigmas,
+                        camp_kill,
                     )
                     .actual
                 };
@@ -257,7 +261,9 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
                     &mut herd,
                     workers as f32,
                     policy,
-                    equipped_haul_rate(),
+                    // A camp kill hauls nothing, so the pack bounds nothing; a posted one keeps the
+                    // sled's rate as its kill-stop (`fauna::kill_carry_rate`).
+                    core_sim::kill_carry_rate(camp_kill, equipped_haul_rate()),
                     &hunting_party(),
                     &fauna,
                     f32::INFINITY,
@@ -267,13 +273,15 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
                 )
                 .take;
                 let sim_rate = herd_hunt_yield(&herd, &fauna)
-                    .apply(take.carried, output_multiplier)
+                    .apply(take.killed_biomass(), output_multiplier)
                     .provisions;
 
                 assert_provisions_eq(
                     preview,
                     sim_rate,
-                    &format!("{case}: {id} {policy:?} ×{workers} (mult {output_multiplier})"),
+                    &format!(
+                        "{case}: {id} {policy:?} ×{workers} camp={camp_kill} (mult {output_multiplier})"
+                    ),
                 );
             }
         }

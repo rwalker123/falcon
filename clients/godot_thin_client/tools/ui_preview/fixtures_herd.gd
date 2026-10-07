@@ -11,9 +11,8 @@ const RungFx := preload("res://tools/ui_preview/fixtures_rung.gd")
 
 const BOAR_FOOD_PER_ANIMAL := 4.0
 # The Thunder Mammoth's food quantum — big enough that no fieldable party can carry a whole one, which
-# is what makes `_partial_waste_mammoth` the WASTE fixture: a party of `w` hauls ~`w` of the 16 and
-# rots the rest. Named here rather than left a local because the waste assertion computes the same
-# percentage the readout prints, and two spellings of one quantum would drift.
+# is what makes `_partial_waste_mammoth` the partial-haul fixture: a party of `w` hauls ~`w` of the 16
+# per body. Named here rather than left a local so two spellings of one quantum cannot drift.
 
 # **THE DENIAL RAID's carry** (`docs/plan_denial_raid.md`) — food ONE party member hauls home over the
 # whole raid. Deliberately tiny beside what the raid kills, because that ratio IS the mission: a party
@@ -112,8 +111,9 @@ static func raid_boar_herd() -> Dictionary:
 ##
 ## Food and biomass differ only by the species' constant provisions rate, which divides out of every
 ## comparison the sim makes — `collection / body_mass` is `collection_food / food_per_animal` — so this
-## is the same arithmetic in cheaper units. `max(1.0, carryable)` is the load-bearing line: a crew that
-## cannot carry one whole animal still kills one and wastes the difference.
+## is the same arithmetic in cheaper units. The carry arm — posted kills only — is `animals_the_pack_seats`:
+## `ceil(collection / body × (1 − ε)).max(1)`; a camp kill has none. Every animal killed lands WHOLE, so `wasted` is
+## always 0: carry sizes the kill count, never what a kill delivers.
 ##
 ## **IT IS THEREFORE UNIT-FREE, AND AN INEDIBLE QUARRY'S CALLER STATES IT IN BIOMASS.** Nothing here
 ## names an account: pass a room, a carry and a quantum all in biomass and `delivered` comes back in
@@ -124,15 +124,24 @@ static func raid_boar_herd() -> Dictionary:
 ## party can bring into CONTACT, which `quantise_animal_take` mins in beside the affordable and the
 ## carryable. It defaults to `INF`, the reading the sim itself passes for a pen and the one the wire's
 ## `NO_ENGAGEMENT_STAGE` stands for, so every caller that predates the engagement stage is unchanged.
+## The relative slop `animals_the_pack_seats` applies downward before its `ceil` — `ANIMAL_COUNT_EPSILON`
+## in `core_sim/src/fauna.rs`.
+const PACK_SEATS_EPSILON := 1e-6
+
 static func hunt_take_oracle(collection: float, ceiling: float, food_per_animal: float,
-		engaged: float = INF) -> Dictionary:
+		engaged: float = INF, camp: bool = true) -> Dictionary:
+	# A CAMP kill (herd inside the band's work range) has NO carry arm: only the room and the fight bound
+	# it, and the sheet quotes the room's long-run (fractional) rate. A POSTED kill (`camp = false`)
+	# keeps the pack's kill-stop, and its per-turn whole-animal floor on the room.
+	if camp:
+		return {"delivered": minf(ceiling / food_per_animal, engaged) * food_per_animal,
+			"wasted": 0.0}
 	var affordable := floorf(ceiling / food_per_animal)
 	if affordable < 1.0:
 		return {"delivered": 0.0, "wasted": 0.0}
-	var killed := minf(minf(affordable, maxf(1.0, floorf(collection / food_per_animal))), engaged)
-	var killed_food := killed * food_per_animal
-	var carried := minf(killed_food, collection)
-	return {"delivered": carried, "wasted": killed_food - carried}
+	var seats := maxf(1.0, ceilf(collection / food_per_animal * (1.0 - PACK_SEATS_EPSILON)))
+	var killed := minf(minf(affordable, seats), engaged)
+	return {"delivered": killed * food_per_animal, "wasted": 0.0}
 
 ## A NON-food hex under the herd, so the Tile card drops its "Assign foragers" block and the herd's
 ## assign controls (stepper + policy + forecast + button) sit fully in-frame.

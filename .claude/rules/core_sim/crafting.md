@@ -111,8 +111,9 @@ ever existed.
 
 ## Where a take credits it
 
-The material account is credited **on the same seam the provisions are**, off what came **home**
-(`take.carried`, never `killed_biomass`): you cannot tan a hide you left on the range. Four sites in
+The material account is credited **on the same seam the provisions are**, off what the take **keeps** —
+the whole kill (`killed_biomass`), since every hunt keeps its carcass (a camp kill lands it at the
+camp, a posted one's porters ferry it). Four sites in
 `systems/labor.rs` — the wild/pastoral hunt, the pen harvest, the rung-1/2 forage take, and the
 rung-3 Field harvest.
 

@@ -1137,6 +1137,8 @@ fn seed_the_hunt_row(app: &mut App, keeper: Entity, herd_id: &str) {
         labor.yield_average_horizon_turns,
         labor.arrivals_horizon_turns,
         sigmas,
+        // A local fixture row is a camp kill: nothing is hauled.
+        true,
     );
     let target = LaborTarget::Hunt {
         fauna_id: herd_id.to_string(),

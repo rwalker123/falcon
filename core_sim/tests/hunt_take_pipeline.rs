@@ -4,12 +4,12 @@
 //! 1. engage   reach (`workers × engage_rate`), bounded by what the herd can spare above the floor
 //! 2. retreat  a fraction of what was reached gets away (`wariness`)
 //! 3. fight    whole animals dead, the remainder banked on the quarry's wound ledger
-//! 4. carry    min(pack, killed) in BIOMASS, unrounded — the rest is left on the ground
+//! 4. carry    min(pack, killed) in BIOMASS, unrounded — a raid's or expedition's loss; a hunt keeps the whole kill
 //! ```
 //!
 //! **An animal dies whole; meat divides.** The whole-animal quantum belongs on the *kill*, never on
-//! the haul: hunters field-dress and take what they can carry, and what they cannot carry is waste
-//! rather than an animal they declined to kill.
+//! the haul: the pack seats what a posted party can carry, and an animal is never declined for want
+//! of a pack.
 //!
 //! Each test here pins one step against the defect it replaced. What is **not** here: the fight's own
 //! arithmetic (`hunt_fight.rs`), the retreat's distribution (`hunt_wariness.rs`), and the crew curve's

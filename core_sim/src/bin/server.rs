@@ -3681,6 +3681,8 @@ fn seed_source_yield(
                 labor.yield_average_horizon_turns,
                 labor.arrivals_horizon_turns,
                 range_sigmas,
+                // No posting ⇒ a camp kill: nothing is hauled, so the pack bounds nothing.
+                caravan.is_none(),
             );
             // ⛔ **THE TAKE CREW, STRUCK AS THE TURN STRIKES IT** — crew-independent, the haul
             // walked over this row's own units ([`core_sim::hunt_crew_needed`]), on the herd as the
@@ -19617,6 +19619,8 @@ mod tests {
                 .resource::<CombatConfigHandle>()
                 .get()
                 .forecast_range_sigmas,
+            // A local fixture row is a camp kill: nothing is hauled.
+            true,
         );
         assert!(
             (seeded - expected.actual).abs() < SEED_EPSILON,

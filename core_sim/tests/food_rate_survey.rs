@@ -36,11 +36,11 @@ use core_sim::{
     herd_upkeep_demand, hunt_take, patch_carrying_capacity, patch_composition, patch_ecology,
     patch_provisions_per_biomass_taking, patch_upkeep_demand, project_realized_forage,
     regrow_biomass, retreat_seed, selected_biomass_share, sustainable_yield, BandEquipment,
-    CarcassKept, CombatConfig, CreaturesConfig, CultivationCeiling, DemographicsConfig,
-    EquipmentConfig, FactionId, FaunaConfig, FloraConfig, FloraShare, ForagePatch, GrazePatch,
-    GrazeRegistry, Herd, HuntDraw, HuntProjection, HuntTakeBound, HuntingParty, HusbandryCeiling,
-    KitChoice, KitCoverage, LaborConfig, LadderConfig, PartyResolution, PreyDatum, ProjectionStart,
-    Quarry, RungKey, SpeciesDef, TakeSelection, DEFAULT_ESCAPEMENT_FLOOR, NO_BUILD_GEAR,
+    CombatConfig, CreaturesConfig, CultivationCeiling, DemographicsConfig, EquipmentConfig,
+    FactionId, FaunaConfig, FloraConfig, FloraShare, ForagePatch, GrazePatch, GrazeRegistry, Herd,
+    HuntDraw, HuntProjection, HuntTakeBound, HuntingParty, HusbandryCeiling, KitChoice,
+    KitCoverage, LaborConfig, LadderConfig, PartyResolution, PreyDatum, ProjectionStart, Quarry,
+    RungKey, SpeciesDef, TakeSelection, DEFAULT_ESCAPEMENT_FLOOR, NO_BUILD_GEAR,
 };
 use sim_runtime::TerrainType;
 
@@ -569,8 +569,6 @@ fn settle_hunt(
             UNIT_OUTPUT_MULTIPLIER,
             workers as f32,
             DEFAULT_ESCAPEMENT_FLOOR,
-            // A resident band keeps what its packs carry, exactly as `hunt_take` pays it.
-            CarcassKept::Carried,
         ) else {
             break;
         };

@@ -132,7 +132,7 @@ fn drive(species: &str, capacity: f32, hunters: u32, carry: f32) -> Readings {
         if tick >= WARMUP_TURNS {
             readings.live.push(
                 hunt_yield
-                    .apply(outcome.take.carried, NEUTRAL_OUTPUT)
+                    .apply(outcome.take.killed_biomass(), NEUTRAL_OUTPUT)
                     .provisions,
             );
             readings.realized.push(realized);
@@ -185,10 +185,10 @@ fn a_steady_hunts_published_rate_is_the_takes_mean() {
 /// **A carry-bound hunt on a heavy body — the projection removes what the TAKE removes.**
 ///
 /// Fourteen speared hunters on Thunder Mammoths: their packs seat `14 × 40 = 560` biomass against an
-/// `800`-unit body, so every kill leaves `240` on the ground. The live take removes the whole carcass
-/// from the herd and brings home the carried share. The projection used to remove only the carried
-/// share, so its herd stood `240` fatter after every kill, re-cleared a body sooner, and quoted
-/// `6.85` food a turn against `4.94` paid on this herd (`7.06` / `4.93` on the survey's).
+/// `800`-unit body, so the pack seats less than the carcass. Every hunt keeps the whole kill: the
+/// live take removes the whole carcass from the herd and brings the whole carcass home, and the
+/// projection must remove and bank the same, or its herd stands fatter than the live one and it
+/// over-quotes the rate.
 ///
 /// **The take is deterministic here**, which is what lets the tolerance be tight: fourteen hunters
 /// reach `0.7` of a mammoth, under one whole body, so the retreat keeps that part body at its

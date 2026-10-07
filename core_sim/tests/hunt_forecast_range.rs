@@ -256,6 +256,8 @@ fn seed_the_forecast(app: &mut App, band: bevy::prelude::Entity, fauna_id: &str,
             labor.yield_average_horizon_turns,
             labor.arrivals_horizon_turns,
             combat.forecast_range_sigmas,
+            // A local fixture row is a camp kill: nothing is hauled.
+            true,
         )
     };
     let target = LaborTarget::Hunt {
@@ -780,6 +782,8 @@ fn the_exported_terms_compose_the_gate_and_the_forecast_agrees() {
             labor.yield_average_horizon_turns,
             labor.arrivals_horizon_turns,
             combat.forecast_range_sigmas,
+            // A local fixture row is a camp kill: nothing is hauled.
+            true,
         )
     };
     let bare_handed = quote(
