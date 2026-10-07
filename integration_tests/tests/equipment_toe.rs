@@ -57,12 +57,10 @@ const HORSE: &str = "Wild Horses";
 /// `Wild Horses` body mass (`fauna_config.json`).
 const HORSE_BODY_MASS: f32 = 40.0;
 
-/// **A body one small party can bring down but cannot carry** — the regime `AnimalTake::wasted` lives
-/// in, and the one slice 4 made unreachable at the shipped tier (any crew that could make the kill
-/// could carry it). Waste needs `workers × per_worker_carry < body_mass`, because
-/// `quantise_animal_take`'s `max(1, carryable)` is the only site that kills more than it hauls. With
-/// [`WASTE_CREW`] hunters: kitted collects `2 × 40 = 80 ≥ 50`, so nothing is left; sledless collects
-/// `2 × 12 = 24 < 50`, so one body goes down and less than half of it comes home.
+/// **A body one small party can bring down but whose pack cannot seat it** —
+/// `workers × per_worker_carry < body_mass`, the regime `quantise_animal_take`'s `max(1, carryable)`
+/// still bounds a *posted* kill by. With [`WASTE_CREW`] hunters: kitted seats `2 × 40 = 80 ≥ 50`;
+/// sledless seats `2 × 12 = 24 < 50`. A camp kill keeps the whole body either way.
 ///
 /// Seated on the `Red Deer` fight dials (the herd carries its own `body_mass`), so the *fight* is the
 /// same on both sides and the only thing that varies is the haul.
@@ -70,6 +68,11 @@ const WASTE_BODY_MASS: f32 = 50.0;
 /// Small enough that the sledless crew cannot seat one body, big enough that the fight still puts one
 /// down (`2 hunters × (20 − 1) = 38` damage against a 25-durability body).
 const WASTE_CREW: u32 = 2;
+
+/// The herd stands on the camp itself — a camp kill.
+const ON_THE_CAMP: u32 = 0;
+/// One hex past `band_work_range` (2): the row posts a work party and the kill is hauled.
+const BEYOND_THE_APRON: u32 = 3;
 
 /// A shallow floor: the hunt is allowed to draw the herd down, so nothing about escapement is under
 /// test here.
@@ -95,6 +98,11 @@ fn hunting_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
     hunting_world_of(DEER, DEER_BODY_MASS, None, kit)
 }
 
+/// [`hunting_world`] with the herd past `band_work_range`, so the sled is in play.
+fn posted_hunting_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
+    posted_hunting_world_of(DEER, DEER_BODY_MASS, None, kit)
+}
+
 /// [`hunting_world`] against a named quarry — the fight's dials are resolved off the species
 /// (`FaunaConfig::quarry_fight_for`), so a test about which *bound* binds has to say which animal it
 /// means. `crew` overrides the head-count where the binding term is `workers × per_worker_carry`.
@@ -104,8 +112,36 @@ fn hunting_world_of(
     crew: Option<u32>,
     kit: BandEquipment,
 ) -> (bevy::prelude::App, Entity) {
+    hunting_world_at(species, body_mass, crew, kit, ON_THE_CAMP)
+}
+
+/// **A herd past `band_work_range` posts a work party**, whose porters ferry the kill home — the one
+/// shape in which the SLED is in play. A kill inside the range is a camp kill: nothing is hauled, so
+/// it wears no sled and the carry tier bounds neither its count nor its yield.
+fn posted_hunting_world_of(
+    species: &str,
+    body_mass: f32,
+    crew: Option<u32>,
+    kit: BandEquipment,
+) -> (bevy::prelude::App, Entity) {
+    hunting_world_at(species, body_mass, crew, kit, BEYOND_THE_APRON)
+}
+
+/// [`hunting_world_of`] with the herd seated `distance` hexes east of the camp.
+fn hunting_world_at(
+    species: &str,
+    body_mass: f32,
+    crew: Option<u32>,
+    kit: BandEquipment,
+    distance: u32,
+) -> (bevy::prelude::App, Entity) {
     let (mut app, band, workers, band_pos) = booted_band();
-    seat_quarry(&mut app, band_pos, species, body_mass);
+    seat_quarry(
+        &mut app,
+        UVec2::new(band_pos.x + distance, band_pos.y),
+        species,
+        body_mass,
+    );
     app.world.entity_mut(band).insert((
         LaborAllocation {
             assignments: vec![LaborAssignment {
@@ -249,8 +285,8 @@ fn exported(app: &bevy::prelude::App, band: Entity) -> PopulationCohortState {
         .clone()
 }
 
-/// The exported `wasted_yield` of the band's one assignment — meat killed and left on the range for a
-/// hunt, stock left standing for a gather.
+/// The exported `wasted_yield` of the band's one assignment — always `0` for a hunt (every hunt keeps
+/// its whole kill), stock left standing for a gather.
 fn exported_waste(app: &bevy::prelude::App, band: Entity) -> f32 {
     exported(app, band)
         .labor_assignments
@@ -265,6 +301,17 @@ fn herd_biomass(app: &bevy::prelude::App) -> f32 {
         .find(HERD_ID)
         .expect("the seeded herd")
         .biomass
+}
+
+/// Run `turns` and sum the exported `food_income` of each — a posted party's food lands over its
+/// walk, so a single turn's row is not what the crew brought home.
+fn income_over(app: &mut bevy::prelude::App, band: Entity, turns: u32) -> f32 {
+    let mut total = 0.0;
+    for _ in 0..turns {
+        run_turn(app);
+        total += exported(app, band).food_income;
+    }
+    total
 }
 
 fn kit_of(app: &bevy::prelude::App, band: Entity) -> BandEquipment {
@@ -496,11 +543,13 @@ fn a_spawned_band_arms_every_worker_and_keeps_a_reserve() {
 /// meaning the model broke.
 #[test]
 fn both_hunt_carry_tiers_are_live_and_a_sledless_party_hauls_less() {
-    let (mut kitted, kitted_band) = hunting_world_of(HORSE, HORSE_BODY_MASS, None, outfitted());
-    let (mut dry, dry_band) = hunting_world_of(HORSE, HORSE_BODY_MASS, None, dry_sled());
+    // **Posted**: the sled hauls only what a work party carries home; a camp kill is kept whole.
+    let (mut kitted, kitted_band) =
+        posted_hunting_world_of(HORSE, HORSE_BODY_MASS, None, outfitted());
+    let (mut dry, dry_band) = posted_hunting_world_of(HORSE, HORSE_BODY_MASS, None, dry_sled());
 
-    run_turn(&mut kitted);
-    run_turn(&mut dry);
+    let kitted_income = income_over(&mut kitted, kitted_band, RUN_TURNS);
+    let dry_income = income_over(&mut dry, dry_band, RUN_TURNS);
 
     let kitted_row = exported(&kitted, kitted_band);
     let dry_row = exported(&dry, dry_band);
@@ -519,15 +568,13 @@ fn both_hunt_carry_tiers_are_live_and_a_sledless_party_hauls_less() {
     let kitted_haul = kit_of(&kitted, kitted_band).wear_of(SLED) / per_biomass;
 
     assert!(
-        kitted_haul > 0.0 && kitted_row.food_income > 0.0,
-        "the equipped tier must actually bring game home (haul={kitted_haul}, income={})",
-        kitted_row.food_income
+        kitted_haul > 0.0 && kitted_income > 0.0,
+        "the equipped tier must actually bring game home (haul={kitted_haul}, income={kitted_income})"
     );
     assert!(
-        dry_row.food_income > 0.0,
+        dry_income > 0.0,
         "the UNEQUIPPED tier must STILL bring game home — a sledless band is a worse hauler, not a \
-         non-hunter (income={})",
-        dry_row.food_income
+         non-hunter (income={dry_income})"
     );
     assert_eq!(
         kit_of(&dry, dry_band).wear_of(SLED),
@@ -536,11 +583,9 @@ fn both_hunt_carry_tiers_are_live_and_a_sledless_party_hauls_less() {
          predicate that put this band on the unequipped tier"
     );
     assert!(
-        dry_row.food_income < kitted_row.food_income,
-        "a sledless party hauls strictly less, and the player sees it as less food: dry={} vs \
-         kitted={}",
-        dry_row.food_income,
-        kitted_row.food_income
+        dry_income < kitted_income,
+        "a sledless party hauls strictly less, and the player sees it as less food: dry={dry_income} \
+         vs kitted={kitted_income}"
     );
 
     // ...and the wire carries both tiers explicitly, so the client never re-derives them.
@@ -561,18 +606,16 @@ fn both_hunt_carry_tiers_are_live_and_a_sledless_party_hauls_less() {
     );
 }
 
-/// **A party that cannot haul its kill leaves the rest on the range — and that is the sledless case's
-/// whole mechanic** (§4.8: "the sledless hunt needs no new mechanic"). `AnimalTake::wasted` has always
-/// expressed it and the client already displays it; what slice 4 did was make it *unreachable* at the
-/// shipped tier, because any crew that could make the kill could also carry it. A lower sledless carry
-/// puts it back.
+/// **A sledless party keeps the WHOLE kill it cannot seat** — every hunt does. A body one small party
+/// brings down but whose pack cannot seat it (`workers × per_worker_carry < body_mass`) is kept
+/// whole on a camp kill, which hauls nothing, so the sled changes neither what is kept nor what is
+/// wasted.
 ///
-/// Asserted on **both** sides: the sledless party wastes something, and the equipped party on the
-/// *same* quarry with the *same* crew wastes nothing — so the reading is about the sled and not about
-/// the fixture being too small in general. Both must still have killed, or "wasted 0" would be the
+/// Asserted on **both** sides: the sledded and the sledless party each kill the same body and each
+/// bring all of it home with nothing wasted. Both must still have killed, or "wasted 0" would be the
 /// trivial truth about a party that never engaged.
 #[test]
-fn a_sledless_party_wastes_the_kill_it_cannot_carry() {
+fn a_sledless_party_keeps_the_whole_kill_it_cannot_seat() {
     let (mut kitted, kitted_band) =
         hunting_world_of(DEER, WASTE_BODY_MASS, Some(WASTE_CREW), outfitted());
     let (mut dry, dry_band) = hunting_world_of(DEER, WASTE_BODY_MASS, Some(WASTE_CREW), dry_sled());
@@ -591,17 +634,67 @@ fn a_sledless_party_wastes_the_kill_it_cannot_carry() {
         "the sledless party must have killed, or its waste is not a haul failure"
     );
 
-    let kitted_waste = exported_waste(&kitted, kitted_band);
-    let dry_waste = exported_waste(&dry, dry_band);
-    assert_eq!(
-        kitted_waste, 0.0,
-        "a sledded party seats the whole body: nothing should be left on the range (got \
-         {kitted_waste})"
+    for (label, app, band) in [
+        ("sledded", &kitted, kitted_band),
+        ("sledless", &dry, dry_band),
+    ] {
+        assert_eq!(
+            exported_waste(app, band),
+            0.0,
+            "every hunt keeps its whole kill, so the {label} party wastes nothing"
+        );
+    }
+    let kitted_income = exported(&kitted, kitted_band).food_income;
+    let dry_income = exported(&dry, dry_band).food_income;
+    assert!(
+        kitted_income > 0.0 && (kitted_income - dry_income).abs() < EPSILON,
+        "a camp kill is kept whole whatever the sled: sledded={kitted_income} sledless={dry_income}"
+    );
+}
+
+/// **A CAMP KILL HAS NO CARRY CAP ON ITS COUNT** — within `band_work_range` nothing is hauled, so
+/// the pack bounds nothing and only the fight and what the herd can spare decide the kill. Three
+/// hunters on 50-biomass deer reach three and bring down two; a sledless crew's pack seats
+/// `ceil(36 / 50) = 1`, a sledded one's `ceil(120 / 50) = 3`, so a carry kill-stop would split the two
+/// crews. On a camp kill they kill the same number and keep the same food.
+#[test]
+fn a_camp_kill_is_not_capped_by_the_sled() {
+    /// Hunters whose fight puts two bodies down while the sledless pack seats one.
+    const THREE_HUNTERS: u32 = 3;
+    let (mut kitted, kitted_band) =
+        hunting_world_of(DEER, WASTE_BODY_MASS, Some(THREE_HUNTERS), outfitted());
+    let (mut dry, dry_band) =
+        hunting_world_of(DEER, WASTE_BODY_MASS, Some(THREE_HUNTERS), dry_sled());
+    run_turn(&mut kitted);
+    run_turn(&mut dry);
+
+    let per_kill = equipment()
+        .item(SPEARS)
+        .expect("spears")
+        .headline_wear()
+        .amount;
+    let kitted_kills = kit_of(&kitted, kitted_band).wear_of(SPEARS) / per_kill;
+    let dry_kills = kit_of(&dry, dry_band).wear_of(SPEARS) / per_kill;
+    assert!(
+        kitted_kills >= 2.0,
+        "liveness: the fight must put two bodies down, or a carry cap of one is invisible \
+         ({kitted_kills} kills)"
     );
     assert!(
-        dry_waste > 0.0,
-        "a sledless party kills more than it hauls — the meat it leaves is the shortfall's whole \
-         mechanic (got {dry_waste})"
+        (kitted_kills - dry_kills).abs() < EPSILON,
+        "the sled tier must not change a camp kill's count: sledded {kitted_kills} vs sledless \
+         {dry_kills}"
+    );
+    let kitted_income = exported(&kitted, kitted_band).food_income;
+    let dry_income = exported(&dry, dry_band).food_income;
+    assert!(
+        kitted_income > 0.0 && (kitted_income - dry_income).abs() < EPSILON,
+        "…nor what it keeps: sledded {kitted_income} vs sledless {dry_income}"
+    );
+    assert_eq!(
+        kit_of(&kitted, kitted_band).wear_of(SLED),
+        outfitted().wear_of(SLED),
+        "…and a camp kill hauls nothing, so it wears no sled"
     );
 }
 
@@ -812,10 +905,13 @@ fn the_sled_does_not_touch_foraging() {
 /// asserted positive so the untouched one is a real absence rather than a dead system.
 #[test]
 fn the_sled_and_the_baskets_wear_on_different_quanta() {
-    let (mut hunting, hunting_band) = hunting_world(outfitted());
+    // The hunt is posted (a herd past `band_work_range`), because only a hauled kill wears the sled.
+    let (mut hunting, hunting_band) = posted_hunting_world(outfitted());
     let (mut gathering, gathering_band) = gathering_world(outfitted());
-    for _ in 0..GATHER_TURNS {
+    for _ in 0..RUN_TURNS {
         run_turn(&mut hunting);
+    }
+    for _ in 0..GATHER_TURNS {
         run_turn(&mut gathering);
     }
 
@@ -961,7 +1057,8 @@ fn the_durability_cliff_is_a_step_not_a_taper() {
 /// as a slaughter, which would make denial free. Same world, same turn count, different *work*.
 #[test]
 fn wear_is_charged_for_work_not_for_turns_elapsed() {
-    let (mut hunting, hunting_band) = hunting_world(outfitted());
+    // Posted, so the hunt hauls and its sled is in play beside its spears.
+    let (mut hunting, hunting_band) = posted_hunting_world(outfitted());
     let (mut scouting, scouting_band) = scouting_world(outfitted());
     for _ in 0..RUN_TURNS {
         run_turn(&mut hunting);
@@ -1030,7 +1127,8 @@ fn a_kit_run_dry_stays_dry() {
     // One deer's worth of sled life left: this run crosses the cliff mid-flight.
     let almost =
         sled_limit - equipment.item(SLED).expect("sled").headline_wear().amount * DEER_BODY_MASS;
-    let (mut app, band) = hunting_world(worn(&[(SLED, almost)]));
+    // Posted: only a hauled kill wears the sled across its cliff.
+    let (mut app, band) = posted_hunting_world(worn(&[(SLED, almost)]));
 
     let mut wear_series = Vec::new();
     let mut rate_series = Vec::new();
@@ -1040,11 +1138,21 @@ fn a_kit_run_dry_stays_dry() {
         rate_series.push(exported(&app, band).hunt_carry_per_worker_biomass);
     }
 
-    // Monotonic: nothing in this slice ever gives condition back.
-    for pair in wear_series.windows(2) {
+    // Monotonic: nothing in this slice ever gives condition back. **The one step down is the last
+    // batch retiring** (its wear leaves the ledger with it and reads `0`), which a posted party
+    // reaches a turn or more into the run; after it the reading stays `0`, never climbs back.
+    let spent_at = wear_series.iter().position(|wear| *wear == 0.0);
+    let before_retirement = &wear_series[..spent_at.unwrap_or(wear_series.len())];
+    for pair in before_retirement.windows(2) {
         assert!(
             pair[1] >= pair[0],
             "wear must never decrease (no replenishment exists): {pair:?}"
+        );
+    }
+    if let Some(spent_at) = spent_at {
+        assert!(
+            wear_series[spent_at..].iter().all(|wear| *wear == 0.0),
+            "once the last batch retires nothing wears back in: {wear_series:?}"
         );
     }
     // The cliff was actually crossed (liveness), and once crossed it is absorbing.
@@ -2062,7 +2170,7 @@ const PENNABLE: &str = "Wild Boar";
 const PEN_AND_RANGE_CREW: u32 = 4;
 
 /// **`husbandry.pen_is_a_larder`, stated by this fixture** — see
-/// [`a_pen_is_not_carry_bound_while_a_range_hunt_still_is`], which is the pair it decides.
+/// [`a_pen_is_not_carry_bound_while_a_posted_hunt_still_is`], which is the pair it decides.
 const PINNED_PEN_IS_A_LARDER: bool = true;
 
 /// **[`hunting_world_of`] with the herd FENCED before the turn runs** — the same band, the same
@@ -2118,29 +2226,30 @@ fn penned_world_of(crew: u32, kit: BandEquipment) -> (bevy::prelude::App, Entity
 /// take it all at once and haul it home*, and behind a fence you never do. What is not butchered this
 /// turn is not wasted meat — it is next turn's stock, still breeding. So a pen has no haul ceiling and
 /// **no carry waste**, and the take is decided by the herd's production and the keepers' handling
-/// instead. Out on the range nothing changed: a party really does have to carry what it kills, and
-/// what it cannot carry it leaves.
+/// instead. Out on the range a **posted** party still has to carry what it kills home, so its pack
+/// is the kill-stop and its porters' loads are the haul; what a porter cannot shoulder waits in the
+/// load for the next one, and nothing is wasted.
 ///
 /// The four arms now assert the *asymmetry*, which is a stronger fixture than the equality was —
 /// an equality passes on a sim that collects nothing anywhere, whereas this cannot:
 ///
 /// 1. **liveness** — all four arms brought something home;
 /// 2. **the pen is blind to the sled** — sledded and sledless collect the same, and neither wastes;
-/// 3. **the range is not** — sledded out-collects sledless, and the sledless arm leaves meat behind;
+/// 3. **a posted hunt is not** — sledded out-collects sledless, and neither wastes a thing;
 /// 4. **#543's surviving half** — the published per-worker rate is the band's one number on both.
 #[test]
-fn a_pen_is_not_carry_bound_while_a_range_hunt_still_is() {
+fn a_pen_is_not_carry_bound_while_a_posted_hunt_still_is() {
     let (mut penned_sledded, penned_sledded_band) =
         penned_world_of(PEN_AND_RANGE_CREW, outfitted());
     let (mut penned_sledless, penned_sledless_band) =
         penned_world_of(PEN_AND_RANGE_CREW, dry_sled());
-    let (mut wild_sledded, wild_sledded_band) = hunting_world_of(
+    let (mut wild_sledded, wild_sledded_band) = posted_hunting_world_of(
         PENNABLE,
         WASTE_BODY_MASS,
         Some(PEN_AND_RANGE_CREW),
         outfitted(),
     );
-    let (mut wild_sledless, wild_sledless_band) = hunting_world_of(
+    let (mut wild_sledless, wild_sledless_band) = posted_hunting_world_of(
         PENNABLE,
         WASTE_BODY_MASS,
         Some(PEN_AND_RANGE_CREW),
@@ -2149,20 +2258,19 @@ fn a_pen_is_not_carry_bound_while_a_range_hunt_still_is() {
 
     run_turn(&mut penned_sledded);
     run_turn(&mut penned_sledless);
-    run_turn(&mut wild_sledded);
-    run_turn(&mut wild_sledless);
+    // A posted party's food lands over its walk, so the wild arms are summed over the run.
+    let wild_sledded_income = income_over(&mut wild_sledded, wild_sledded_band, RUN_TURNS);
+    let wild_sledless_income = income_over(&mut wild_sledless, wild_sledless_band, RUN_TURNS);
 
     let penned_sledded_row = exported(&penned_sledded, penned_sledded_band);
     let penned_sledless_row = exported(&penned_sledless, penned_sledless_band);
-    let wild_sledded_row = exported(&wild_sledded, wild_sledded_band);
-    let wild_sledless_row = exported(&wild_sledless, wild_sledless_band);
 
     // 1. LIVENESS, first: four hunts that all took nothing agree perfectly and prove nothing.
     for (label, income) in [
         ("penned, sledded", penned_sledded_row.food_income),
         ("penned, sledless", penned_sledless_row.food_income),
-        ("wild, sledded", wild_sledded_row.food_income),
-        ("wild, sledless", wild_sledless_row.food_income),
+        ("wild, sledded", wild_sledded_income),
+        ("wild, sledless", wild_sledless_income),
     ] {
         assert!(
             income > 0.0,
@@ -2193,16 +2301,14 @@ fn a_pen_is_not_carry_bound_while_a_range_hunt_still_is() {
     // 3. **THE RANGE STILL IS CARRY-BOUND**, which is what keeps the claim above about the FENCE
     //    rather than about a carry model that has stopped working anywhere.
     assert!(
-        wild_sledded_row.food_income > wild_sledless_row.food_income,
-        "out on the range a party hauls what it kills, so a sledded crew must out-collect a \
-         sledless one: {} vs {}",
-        wild_sledded_row.food_income,
-        wild_sledless_row.food_income
+        wild_sledded_income > wild_sledless_income,
+        "out on the range a posted party's porters haul what it kills, so a sledded crew must \
+         out-collect a sledless one: {wild_sledded_income} vs {wild_sledless_income}"
     );
-    assert!(
-        exported_waste(&wild_sledless, wild_sledless_band) > 0.0,
-        "…and the sledless range arm must leave meat behind, or the waste path is inert and the \
-         zeroes above are about nothing"
+    assert_eq!(
+        exported_waste(&wild_sledless, wild_sledless_band),
+        0.0,
+        "…and it wastes nothing: the load a porter cannot seat waits for the next one"
     );
 
     // 4. **#543'S SURVIVING HALF, UNCHANGED**: the published rate is the band's one number. No

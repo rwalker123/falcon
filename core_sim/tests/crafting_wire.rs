@@ -513,6 +513,7 @@ struct PublishedOffer {
     lasts: String,
     suggested: bool,
     owned_at_tier: i32,
+    queueable: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -655,6 +656,7 @@ fn publish(app: &mut App, band: Entity) -> Published {
                     lasts: offer.lasts().unwrap_or_default().to_string(),
                     suggested: offer.suggested(),
                     owned_at_tier: offer.ownedAtTier(),
+                    queueable: offer.queueable(),
                 },
             )
         })
@@ -1005,6 +1007,24 @@ fn a_knowledge_refusal_names_the_craft_and_an_ungated_recipe_beside_it_does_not(
         "**tools are earned, never a prerequisite** — a sled is craftable bare-handed on turn one"
     );
     assert_eq!(offer(&published, SLED_RECIPE).group, "kit");
+}
+
+/// **`queueable` IS THE MAKE BUTTON'S GATE, NOT `available`** — a recipe short of material is
+/// `available = false, queueable = true` (the bench skips it and the forecast speaks for it), while a
+/// recipe needing an unlearned craft is `queueable = false`. Off the encoded frame.
+#[test]
+fn a_short_offer_is_queueable_and_an_unlearned_one_is_not() {
+    let (mut app, band) = world();
+    strip(&mut app, band, HIDE);
+    let published = publish(&mut app, band);
+    let sled = offer(&published, SLED_RECIPE);
+    assert!(!sled.available, "no hide: a pass cannot run now");
+    assert!(sled.queueable, "…but a known recipe may still be queued");
+    let tool = offer(&published, TANNING_FRAME_RECIPE);
+    assert!(
+        !tool.queueable,
+        "a tool gated on unlearned crafts cannot be queued"
+    );
 }
 
 /// **An item the band has NEVER OWNED is distinguishable from one worn dry** — both read `count 0`,

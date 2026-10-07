@@ -237,13 +237,13 @@ pub use fauna::{
     herd_upkeep_shortfall, herd_upkeep_supply, herd_upkeep_workers_needed, herd_wariness,
     hunt_armed_crew, hunt_crew_needed, hunt_crew_room, hunt_crew_take_curve, hunt_engage_workers,
     hunt_escapement_ceiling, hunt_haul_workers, hunt_source_yield_preview, hunt_take_bound,
-    hunt_take_overdraws, hunt_take_workers, hunt_useful_crew, kill_over_retreat,
+    hunt_take_overdraws, hunt_take_workers, hunt_useful_crew, kill_carry_rate, kill_over_retreat,
     migratory_corridor_tiles, next_turns_quarry, per_hunter_take_biomass, project_arrivals_hunt,
     project_realized_hunt, quantise_animal_take, quarry_default_hunt_kit, regrow_biomass,
     regrowth_delta_at, repopulate_fauna, resolve_hunt_engagement, resolve_hunt_fight,
     retreat_band_edge, retreat_mean, retreat_seed, spawn_initial_herds, species_requires_denial,
     stamp_migratory_game_trails, stay_fraction, sustainable_yield, unqueue_build_and_cancel_ring,
-    would_be_herders_needed, AnimalTake, CarcassKept, CrewKeeping, EcologyPhase, EngagementQuantum,
+    would_be_herders_needed, AnimalTake, CrewKeeping, EcologyPhase, EngagementQuantum,
     EngagementStop, FightCasualties, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
     HerdTelemetryEntry, HuntCrew, HuntCrewCurveInputs, HuntCrewTake, HuntDraw, HuntEngagement,
     HuntFight, HuntProjection, HuntTakeBound, HuntingParty, OutcomeKills, PartyResolution,
@@ -474,15 +474,16 @@ pub use systems::spawn_initial_world;
 pub use systems::{
     advance_band_independence, advance_band_movement, advance_crafting, advance_expeditions,
     advance_labor_allocation, advance_party_defection, advance_population_migration,
-    advance_predator_raids, advance_tick, bench_material_rate, bench_tiers, bill_and_stock_roads,
-    bring_the_dropped_party_home, deliver_bench_output, denial_forecast, expedition_returned_event,
-    fold_party_into_band, grow_faction_roster, hunt_per_worker_provisions, hunt_report_event,
-    hunt_take, merge_founding_lines_on_contact, output_multiplier, party_owes_a_report,
-    prospective_keep_hands, publish_turn_transfers, settle_bands_roadwork, settle_scarce_tools,
-    simulate_population, simulate_power, source_has_a_meter_at_risk, split_band_from_parent,
-    split_refusals, BenchTiers, DenialForecast, DenialOutcome, HeartLedger, HeartReading,
-    HuntOutcome, PartyGear, PartySightings, PoolToolPlan, PowerSimParams, RaidRoll, SplitBand,
-    SplitRefusal, SplitRefusals, ToolClaimStage, TradeDiffusionEvent,
+    advance_predator_raids, advance_tick, announce_bench_material_short, bench_material_rate,
+    bench_tiers, bill_and_stock_roads, bring_the_dropped_party_home, deliver_bench_output,
+    denial_forecast, expedition_returned_event, fold_party_into_band, grow_faction_roster,
+    hunt_per_worker_provisions, hunt_report_event, hunt_take, merge_founding_lines_on_contact,
+    output_multiplier, party_owes_a_report, prospective_keep_hands, publish_turn_transfers,
+    settle_bands_roadwork, settle_scarce_tools, simulate_population, simulate_power,
+    source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers, DenialForecast,
+    DenialOutcome, HeartLedger, HeartReading, HuntOutcome, PartyGear, PartySightings, PoolToolPlan,
+    PowerSimParams, RaidRoll, SplitBand, SplitRefusal, SplitRefusals, ToolClaimStage,
+    TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,
@@ -1261,6 +1262,9 @@ pub fn build_headless_app() -> App {
                     // draws on the materials THIS turn's take just delivered, and its crew came out
                     // of the same worker pool the assignment loop above spends.
                     systems::advance_crafting,
+                    // The bench-queue shortage notice reads the stock the draw just left, so it
+                    // follows the draw directly.
+                    systems::announce_bench_material_short,
                     // Predator raids fire right after labor so warrior counts and band positions are
                     // current: a carnivore with `aggression > 0` within `predators.raid_radius` of a band
                     // raids its camp, the band defended by its Warriors (the role's first live consumer).

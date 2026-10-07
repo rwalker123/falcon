@@ -1473,6 +1473,12 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // pile or can draw. The crew's refusal stays on the bench row's own `blocked_reason`.
             let _ = row.insert("blocked_reason", order.blockedReason().unwrap_or(""));
             let _ = row.insert("blocked_severity", order.blockedSeverity().unwrap_or(""));
+            // WHAT THE STOCK ON HAND CANNOT COVER OF THE WHOLE RUN — a forecast, not a block; empty
+            // when every pass still to draw is covered. Same row shape as `shortfalls`.
+            let _ = row.insert(
+                "short_to_finish",
+                &shortfalls_to_array(order.shortToFinish()),
+            );
             bench_orders.push(&row.to_variant());
         }
     }
@@ -1513,6 +1519,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                 }
             }
             let _ = row.insert("sources", &sources);
+            // What the whole `count` needs that the stock left after the queue cannot cover; empty
+            // when covered. Same row shape as the offers' `shortfalls`.
+            let _ = row.insert("shortfalls", &shortfalls_to_array(suggestion.shortfalls()));
             craft_suggestions.push(&row.to_variant());
         }
     }
@@ -1559,6 +1568,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // same tier and no count per recipe exists (`OWNED_AT_TIER_UNATTRIBUTED`). `-1` is not
             // "none": `0` is a real count.
             let _ = row.insert("owned_at_tier", offer.ownedAtTier() as i64);
+            // The Make/Queue button's gate: every craft the recipe needs is known. Materials and
+            // tools do not gate it — `available` is "a pass can run now".
+            let _ = row.insert("queueable", offer.queueable());
             craft_offers.push(&row.to_variant());
         }
     }

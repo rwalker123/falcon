@@ -1871,7 +1871,7 @@ const LOCAL_OVERDRAW_NOTES := {
 # CARRY-AWARE ANIMALS-FIRST preview. A hunt delivers WHOLE animals via a kill-credit bank, so an
 # unquantized food/turn rate credits fractional-animal throughput the crew can never carry home (the sim
 # itself quantizes to whole bodies). The line instead leads with the honest carry-aware delivered rate in
-# ANIMALS: `≈<rate> <animal>/turn`, rate = delivered ÷ food_per_animal (`_hunt_delivered_and_waste`).
+# ANIMALS: `≈<rate> <animal>/turn`, rate = delivered ÷ food_per_animal (`_hunt_delivered`).
 # **THE LINE AND THE READOUT'S ROW ARE THE SAME UTTERANCE SPLIT AT THE SPACE.** The sentence form
 # joins them; the readout's yields row sets the rate as a big number beside its unit as small print,
 # so it needs the two halves separately. Written structurally, so the split and the joined line can

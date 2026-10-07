@@ -111,8 +111,9 @@ ever existed.
 
 ## Where a take credits it
 
-The material account is credited **on the same seam the provisions are**, off what came **home**
-(`take.carried`, never `killed_biomass`): you cannot tan a hide you left on the range. Four sites in
+The material account is credited **on the same seam the provisions are**, off what the take **keeps** —
+the whole kill (`killed_biomass`), since every hunt keeps its carcass (a camp kill lands it at the
+camp, a posted one's porters ferry it). Four sites in
 `systems/labor.rs` — the wild/pastoral hunt, the pen harvest, the rung-1/2 forage take, and the
 rung-3 Field harvest.
 
@@ -1380,6 +1381,49 @@ to zero, fractional shortfalls) and, off the encoded frame, by
 `bench_queue::suggestions_rank_by_workers_without_and_net_out_the_queue`,
 `::a_suggestion_does_not_rise_on_the_turn_its_item_is_made` and
 `::a_detached_party_publishes_no_suggestions` (paired with its home band carrying the same lines).
+
+## `queueable` — the Make button's gate is KNOWLEDGE ONLY
+
+`CraftOffer.queueable` is true when every craft in the recipe's `requires_knowledge` is known — the
+**one predicate** `crafting::first_unknown_craft`, which `bench_recipe_refusal` (`bench_enqueue`) and
+the capture both call, so a `queueable` offer is never refused. Materials and tools do not gate the
+queue: a short order is skipped and `shortToFinish` speaks for it. `available` stays "a pass can run
+NOW" (readouts, `mark_suggested`). Pinned by `crafting_wire::a_short_offer_is_queueable_and_an_unlearned_one_is_not`
+and `server::tests::a_known_recipe_queues_short_of_material_and_an_unlearned_one_is_refused`.
+
+## The queue's FORECAST — `shortToFinish`, `CraftSuggestion.shortfalls` and the dock notice
+
+`pass_is_affordable` only ever asks about ONE pass, so a six-sled order that can draw pass 1 said
+nothing until it stalled. `systems::queue_material_shortfalls` looks at the whole queue and is the
+**one function** the wire and the event read:
+
+- **An order's need** is, per input material, the passes still to DRAW (`remaining()`, less one when
+  the order holds its pile) × `required` at the band's current tiers. Orders are walked **in queue
+  order** against a running copy of the store, each claiming `min(need, left)`, so a later order sees
+  only what the earlier ones left. **Stock on hand only** — no inflow, no tier change from wear: the
+  remedy it names is fetching more.
+- **ONE material wording per order.** The `Short n material` parts of an order's `blockedReason` — and
+  of the bench row's own, for the described order — are that order's `shortToFinish` numbers (whole
+  remaining run, queue-order claims), via `snapshot::crafting::queue_aware_shortfalls`; non-material
+  parts (`Needs X`, `No loom`) are unchanged. The per-pass shortfall only decides WHETHER material
+  blocks (workability is untouched). The ledger's `CraftOffer.reason` stays per-pass: it describes
+  one pass, not an order. Pinned by `bench_queue::a_skipped_orders_reason_quotes_its_forecast_not_one_pass`.
+- **`BenchOrder.shortToFinish`** is that order's rows (empty when covered). A **forecast, not a
+  block** — `blockedReason` stays the only "why it is skipped" field.
+- **`CraftSuggestion.shortfalls`** is the whole suggested count (`ceil(count / the recipe's per-pass
+  output)` passes of the offer marked `suggested` on that item's row) against the stock **left after
+  the whole queue's claims** — a queued suggestion lands at the queue's end. Filled after
+  `mark_suggested` by `snapshot::crafting::suggestion_shortfalls`.
+- **`CommandEventKind::BenchMaterialShort`** (`bench_material_short`, "Bench material short") —
+  `systems::labor::announce_bench_material_short`, scheduled directly after `advance_crafting` so it
+  judges the stock the draw left. Sums `short` per material across orders, fires staffed or not, and
+  is edge-gated on the transient `LaborAllocation::bench_short_warned` (replaced each turn, excluded
+  from equality, like `material_shortfall_warned`). Detail: `status=bench_short material= short=
+  held=` plus `band=`.
+
+Pinned off the encoded frame by `bench_queue::short_to_finish_forecasts_…` and
+`::a_suggestions_shortfalls_are_struck_…`, the edge gate by `::the_bench_short_notice_is_edge_gated_…`,
+the arithmetic by `systems::crafting::forecast_tests`.
 
 ## What is deliberately not wired
 

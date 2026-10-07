@@ -488,13 +488,15 @@ rather than being two shapes. Pinned by
 >
 > **AND THE PROJECTED HERD LOSES WHAT THE LIVE HERD LOSES.** `HuntProjection::step` hands its landed
 > bodies to the live take's own quantiser (`quantise_animal_take`, `EngagementStop::WhenPackFull`),
-> removes every animal **killed** from the projected herd, and pays what `fauna::CarcassKept` says the
-> crew keeps — the carried share for a resident band, the whole carcass for a work party. That enum
-> is the live hunt arm's own reading of the take (`systems::labor` asks it too), so the two cannot
-> disagree about what a take pays. The step used to remove only the carried share, so a carry-bound
-> hunt on a heavy body kept a projected herd fatter by every wasted carcass and re-cleared a body
-> sooner: fourteen speared hunters on Thunder Mammoths projected `6.85` food a turn against `4.94`
-> paid. Pinned by `hunt_realized_matches_take::a_carry_bound_heavy_hunt_projects_what_the_take_pays`,
+> removes every animal **killed** from the projected herd, and pays the **whole kill**
+> (`AnimalTake::killed_biomass`) — every hunt keeps it, so the projection and the live arm bank the
+> same carcass. **Whether the pack bounds the kill's count is the caller's fact, decided per kill from
+> where the herd stands:** a camp kill (within `band_work_range`, no posting) hauls nothing and has
+> **no carry cap** (`fauna::kill_carry_rate` hands the quantiser `NO_CARRY_BOUND`;
+> `SourceYieldForecast::camp_kill` carries it through the forecast), while a posted kill keeps the
+> sled's carry as its kill-stop. The step once removed only the carried share, so a carry-bound hunt
+> on a heavy body kept a projected herd fatter by every wasted carcass and re-cleared a body sooner:
+> fourteen speared hunters on Thunder Mammoths projected `6.85` food a turn against `4.94` paid. Pinned by `hunt_realized_matches_take::a_carry_bound_heavy_hunt_projects_what_the_take_pays`,
 > where the take draws nothing and the tolerance is 1%. `project_arrivals_hunt`, the seeded row's
 > outcomes and the raid and denial projections already ran the quantiser and removed the kill.
 >

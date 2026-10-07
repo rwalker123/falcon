@@ -1612,6 +1612,15 @@ pub enum CommandEventKind {
     /// the `material_upkeep_income` row's own producer — bench included), so the event and the
     /// disclosure row cannot describe different turns **or different inflows**.
     MaterialShortfall,
+    /// **A MATERIAL THE BENCH'S QUEUE WILL RUN SHORT OF** (`docs/plan_crafting_and_materials.md` §7,
+    /// "Queue"). Looks past one pass: the stock on hand against every pass still to draw across the
+    /// whole queue (`systems::queue_material_shortfalls`, the one function the wire's
+    /// `BenchOrder.shortToFinish` reads too), so a band hears it before the bench stalls.
+    ///
+    /// **Edge-gated per band per material** on `LaborAllocation::bench_short_warned`, and fired
+    /// whether or not the bench is staffed — a short queue is short either way. It names the band,
+    /// and the detail carries `status=bench_short material= short= held=`.
+    BenchMaterialShort,
     /// A **dangerous hunt** produced band casualties (Predators Phase 0, `docs/plan_predators.md`). The
     /// hunt-danger combat resolution pushes this whenever hunting an animal that fights back
     /// (`attack × ferocity > 0` — mammoth, ox) costs the party casualties (killed and/or wounded; the
@@ -1621,7 +1630,7 @@ pub enum CommandEventKind {
     /// **A hunt happened, and these are its facts** (`docs/plan_hunt_through_combat.md` §6.6) —
     /// animals engaged, how many fled before contact, animals killed, hunters lost or wounded,
     /// **which bound ran out first** (engagement / the floor / carry / the fight), and what came home
-    /// (carried) against what was left to rot (wasted).
+    /// (carried) against what the pack could not seat (wasted).
     ///
     /// **Facts, never a composed judgement.** Issue #272's notification system owns importance and
     /// phrasing; the hunt owns what happened. Every number rides the `key=value` detail so a consumer
@@ -1781,6 +1790,7 @@ impl CommandEventKind {
             CommandEventKind::Craft => "craft",
             CommandEventKind::KitLife => "kit_life",
             CommandEventKind::MaterialShortfall => "material_shortfall",
+            CommandEventKind::BenchMaterialShort => "bench_material_short",
             CommandEventKind::HuntDanger => "hunt_danger",
             CommandEventKind::HuntReport => "hunt_report",
             CommandEventKind::PredatorRaid => "predator_raid",

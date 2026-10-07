@@ -380,9 +380,9 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
 ## the verb quoted ~4× what the herd handed over. The build has its own crew now, so the hunters' take
 ## is the plain one whether or not a rung is going up.
 ## `holding` asks the same question of the steady state — the ceiling becomes one turn's regrowth at
-## this floor instead of the room above it. Same swap, same reason, as `_hunt_delivered_and_waste`'s.
+## this floor instead of the room above it. Same swap, same reason, as `_hunt_delivered`'s.
 func _hunt_take_rate(herd: Dictionary, floor: float, workers: int,
-        holding: bool = false) -> Dictionary:
+        holding: bool = false, camp: bool = false) -> Dictionary:
     var rates := SourceForecast.herd_axis_rates(herd, floor)
     var per_worker_rate := float(rates["per_worker"])
     # **THE `now` READING IS NEXT TURN'S ROOM, NOT THE STANDING ONE** — the sim regrows before it
@@ -392,10 +392,20 @@ func _hunt_take_rate(herd: Dictionary, floor: float, workers: int,
     var ceiling := float(rates["hold_ceiling" if holding else "next_ceiling"])
     if workers <= 0 or per_worker_rate <= 0.0 or ceiling < 0.0:
         return {"available": false}
+    # A camp row has no carry cap (see `_hunt_delivered`): the herd's room is the only bound the
+    # smoothed rate has, so the crew's throughput does not enter it.
+    var crew_bound := ceiling if camp else minf(float(workers) * per_worker_rate, ceiling)
     return {
         "available": true,
-        "rate": maxf(minf(float(workers) * per_worker_rate, ceiling), 0.0),
+        "rate": maxf(crew_bound, 0.0),
     }
+
+## **IS THIS HUNT A POSTED ONE?** — the herd lies past the band's apron (`_is_past_apron`, the one
+## threshold a caravan has), so a party is posted and the pack's kill-stop applies. Everything inside
+## the work range is a CAMP kill. Distance, not the reply's `walk_tiles` (a posted row on a road can
+## have a zero walk); an unknown distance reads as camp, like `_is_past_apron`'s own `-1`.
+func _hunt_is_posted(band: Dictionary, herd: Dictionary) -> bool:
+    return _is_past_apron(band, int(herd.get("x", -1)), int(herd.get("y", -1)))
 
 
 ## The averaging WINDOW (turns) for the whole-animal disclaimer — a STABLE, worker-independent property
@@ -431,13 +441,12 @@ func _hunt_avg_window_turns(herd: Dictionary, floor: float, improvement: String)
     return clampi(x, 1, HudComposeVocab.HUNT_WINDOW_MAX_TURNS)
 
 ## The HONEST carry-aware delivery model for a local hunt: what a crew of `workers` from `band` actually
-## lands off `herd` under `policy` per turn, and how much of the kill they can't carry (which rots). A
+## lands off `herd` under `policy` per turn. A
 ## hunt takes WHOLE animals via a kill-credit bank, so the take is ONE quantised expression — the sim's
-## `killed = min(the stock above the floor, max(1, whole bodies haulable), animals brought down)`,
-## in bodies per turn — and delivery is `killed × min(one body, the crew's carry)`, the pack's hold
-## charged PER BODY. Fractional carry capacity is idle (NOT waste, no animal having been dropped); a
-## body killed and left behind is. Returns
-## `{available, delivered_biomass, body_mass, waste, waste_pct}` (`waste_pct` 0..1) or
+## `killed = min(the stock above the floor, animals the pack seats, animals brought down)`,
+## in bodies per turn — and delivery is `killed × body`: every animal killed lands WHOLE (the sim's
+## `AnimalTake::killed_biomass()`), so carry sizes how many animals die, never what each one delivers. Returns
+## `{available, delivered_biomass, body_mass}` or
 ## `{available=false}` when a term is absent (caller degrades to the smoothed per-turn line). NEVER
 ## re-derives the ecology model — `body_mass`, the curve and the room are sim exports.
 ##
@@ -465,7 +474,7 @@ func _hunt_avg_window_turns(herd: Dictionary, floor: float, improvement: String)
 ## **`herd` ARRIVES ALREADY KIT-PRICED** — `_hunt_yield_model` is its only caller and prices at its own
 ## top. Pricing again here would apply the ratio twice (`KitRoster.repriced_source` is not idempotent),
 ## and reaching for a raw dict instead would quote the equipped reference to a bare-handed crew.
-func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, floor: float, workers: int,
+func _hunt_delivered(band: Dictionary, herd: Dictionary, floor: float, workers: int,
         improvement: String, per_crew: Array, holding: bool = false) -> Dictionary:
     # **WHAT THE CREW BRINGS DOWN IS THE SIM'S ANSWER, LOOKED UP** — one row per crew size off
     # `ForecastQuery.KIND_HUNT_CREW_TAKE`, with the engagement, the retreat and the FIGHT already
@@ -487,8 +496,8 @@ func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, floor: float,
     # order (`hunt_take` composes `workers × per_worker`, THEN
     # `fauna::quantise_animal_take`). It arrives here on `per_worker`, so `collection` below carries it
     # and the quantisation runs against the dipped throughput. That is not a scaling of the answer:
-    # below one body of carry the crew still kills one animal (the `max(1.0)` on the haul arm) and
-    # wastes most of it — so a build moves the WASTE line, not merely the take. Dipping the ceiling, or
+    # below one body of carry the crew still kills one animal (the `max(1.0)` on the haul arm), so
+    # a build moves the SHAPE of the take, not merely its size. Dipping the ceiling, or
     # the delivered figure after quantisation, produces a number that is wrong in a way that still
     # looks plausible.
     var rates := SourceForecast.herd_axis_rates(herd, floor)
@@ -511,9 +520,12 @@ func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, floor: float,
     # had: one hunter's 40 biomass of carry read **307 Wild Fowl a turn** against a take of ten — the
     # sheet promising 30× what the sim pays, for the whole life of the wire field's absence.
     #
+    # **THE CARRY ARM ROUNDS UP** — `fauna::animals_the_pack_seats`, `ceil(collection / body × (1 − ε))`
+    # floored at one: a pack that seats 2.4 bodies stops the party at THREE kills, because the third
+    # animal is killed whole and the pack only decides when the killing stops.
     # **THE `max(1.0)` BELONGS TO THE CARRY ARM ALONE, INSIDE THE `min`, AND THAT IS THE WHOLE OF WHY
     # THIS IS ONE EXPRESSION RATHER THAN TWO BRANCHES.** A party that cannot carry one whole animal
-    # still kills one and wastes the rest — a fact about the PACK. A party that brings down three
+    # still kills one, landed whole — a fact about the PACK. A party that brings down three
     # quarters of an animal has brought down three quarters of an animal, and floors at nothing. While
     # the only bound below one body was the carry quotient the two were indistinguishable, so a
     # `carryable < 1` branch could price delivery as the crew's whole raw `collection`; with the
@@ -537,15 +549,18 @@ func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, floor: float,
     # biomass. The client cannot close that gap: `combat_config.hit_chance` is unpublished and the
     # damage-over-durability division is one of the halves the schema keeps as the sim's answer.
     #
-    # **AND THE CARRY CLAMP IS PER BODY, NOT PER TURN** — which is the other half of why one expression
-    # replaces two branches. A body lands WHOLE on the turn it drops and the crew hauls `collection`
-    # that turn; the remainder rots where it fell. Below one body per turn `killed` is a CADENCE (a
-    # body every `1/killed` turns), so clamping the AVERAGED kill by the carry credits the crew a whole
-    # body's worth of meat no single turn could hold: a party whose collection, whose ceiling and whose
-    # 0.6-of-a-body cadence all coincide really lands `0.6 × collection` and wastes 40% of what it
-    # kills, where the averaged-then-clamped form reads the full ceiling with no waste at all — 1.67×
-    # too high, and silent about the meat left on the ground.
-    var haulable := maxf(floorf(collection / body), 1.0)
+    # **CARRY SIZES THE KILL COUNT, NOT THE DELIVERY** — a body lands WHOLE (in the larder, or ferried
+    # home by porters), so the crew's `collection` only bounds how many animals are brought down
+    # (`haulable`); each one delivers its full body. Below one body per turn `killed` is a CADENCE (a
+    # body every `1/killed` turns).
+    #
+    # **A CAMP KILL HAS NO CARRY ARM AT ALL** — a herd inside the band's work range lands whole in the
+    # larder with no party posted, so only the fight (`brought_down`) and the room bound its kill
+    # count and the sled changes nothing. Only a POSTED kill (past the apron) keeps the pack's
+    # kill-stop. `workers_needed` is deliberately a different question: it plans the carriers.
+    var haulable := INF
+    if _hunt_is_posted(band, herd):
+        haulable = maxf(ceilf(collection / body * (1.0 - ANIMAL_COUNT_EPSILON)), ONE_WHOLE_ANIMAL)
     var brought_down := float(crew_row[SourceForecast.CREW_TAKE_LIKELY_KEY])
     # BODIES PER TURN — the herd's own offer, the crew's haul, and what the party puts on the ground,
     # whichever is least. Fractional below one: a body every `1/killed` turns.
@@ -555,12 +570,8 @@ func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, floor: float,
     # room-and-haul pair is all it would take for the band to stop bracketing the figure it brackets.
     var room_and_haul := minf(room / body, haulable)
     var killed := minf(room_and_haul, brought_down)
-    var delivered := killed * minf(body, collection)
-    var killed_biomass := killed * body
-    var waste := maxf(killed_biomass - delivered, 0.0)
-    var waste_pct := (waste / killed_biomass) if killed_biomass > 0.0 else 0.0
-    return {"available": true, "delivered_biomass": delivered, "waste": waste,
-        "waste_pct": waste_pct, "body_mass": body,
+    var delivered := killed * body
+    return {"available": true, "delivered_biomass": delivered, "body_mass": body,
         # **THE TAKE AND ITS BAND, IN ANIMALS** — the readout's own line. The two client-side arms are
         # the caller's and are not stochastic, so they apply to every quantile unchanged; the spread
         # that survives them is the sim's.
@@ -644,7 +655,7 @@ func _hunt_binding_limit(herd: Dictionary, band: Dictionary, floor: float, dw: D
         return {"severity": SourceForecast.VERDICT_OK,
             "text": HudComposeVocab.HUNT_LIMIT_BELOW_FLOOR}
     # The band's productivity rides the herd-side arms exactly as it rides the take itself
-    # (`_hunt_delivered_and_waste` scales the room by it), or the comparison would weigh a full-rate
+    # (`_hunt_delivered` scales the room by it), or the comparison would weigh a full-rate
     # regrowth against a discounted crew.
     var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
     var rates := SourceForecast.herd_axis_rates(herd, floor)
@@ -877,7 +888,7 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
     # `_source_overdraws`.
     var overdraws := _source_overdraws(SourceForecast.LABOR_KIND_HUNT, -1, -1,
         String(herd_raw.get("id", "")))
-    var dw := _hunt_delivered_and_waste(band, herd, floor, workers, improvement, per_crew)
+    var dw := _hunt_delivered(band, herd, floor, workers, improvement, per_crew)
     # **THE ANSWER HAS NOT LANDED — SO THIS SHEET STATES NO TAKE AT ALL.** Falling through to the
     # degrade branch below would answer with `_hunt_take_rate`, a smoothed `min(crew × per_worker,
     # ceiling)` carrying neither the engagement, the retreat nor the fight — a bigger overstatement
@@ -891,7 +902,7 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
         # the quantised path does**, through the same rescale: the two paths differ in whether the
         # take is quantised, never in what a take pays, and a model whose two branches stated
         # different accounts for one herd is the defect one branch above records.
-        var take := _hunt_take_rate(herd, floor, workers)
+        var take := _hunt_take_rate(herd, floor, workers, false, not _hunt_is_posted(band, herd))
         if not bool(take.get("available", false)):
             # **NO TAKE THIS CLIENT CAN QUANTISE AND NO FOOD RATE EITHER — but a material one may still
             # stand.** A `{}` model renders no readout at all, which is the `+0.00` this arm exists to
@@ -917,7 +928,6 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
                 # that suppressed it because IT could not judge the drawdown would be gating a field
                 # the contract says not to gate.
                 YIELD_MODEL_OVERDRAW: overdraws,
-                YIELD_MODEL_WASTE: "",
             }
         var actual := float(take["rate"]) * output
         # **ONE CROSSING, EVERY ACCOUNT** — food, fodder AND materials out of this one smoothed take,
@@ -928,7 +938,8 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
         var account := SourceForecast.YIELD_ACCOUNT_FOOD
         var smooth_after := {}
         if _walks_to_the_floor(reaches, improvement):
-            var smooth_hold := _hunt_take_rate(herd, floor, workers, true)
+            var smooth_hold := _hunt_take_rate(herd, floor, workers, true,
+                not _hunt_is_posted(band, herd))
             if bool(smooth_hold.get("available", false)):
                 smooth_after = SourceForecast.rescaled_accounts(herd,
                     HudComposeVocab.BARE_FORECAST_PREFIX, float(smooth_hold["rate"]) * output)
@@ -947,7 +958,6 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
                     float(smooth[SourceForecast.YIELD_ACCOUNT_FOOD]),
                     float(smooth[SourceForecast.YIELD_ACCOUNT_FODDER]), account, materials)),
             YIELD_MODEL_OVERDRAW: overdraws,
-            YIELD_MODEL_WASTE: "",
         }
     # The crew's honest carry-aware delivered take. `delivered` is already carry-quantized, so this
     # credits no throughput the crew can't haul home — and it is a take in an ACCOUNT, which is what
@@ -962,9 +972,7 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
     var animal_rate := delivered / body if body > 0.0 else 0.0
     var rate_text := DetailFormat.animal_rate_face(animal_rate)
     var quarry := SourceForecast.herd_display_name(herd)
-    # Overdraw and waste are DIFFERENT flags and may co-occur — render both. Overdraw = the delivered take
-    # exceeds the herd's food-peak ceiling; waste = a kill the crew couldn't carry.
-    var waste_pct := float(dw["waste_pct"])
+    # Overdraw = the delivered take exceeds the herd's food-peak ceiling.
     # **THE COUNT IS TAKEN IN BODIES, HAULED IN BIOMASS AND VALUED IN EVERY ACCOUNT** — the sim's own
     # order (`forecast_production_and_take`: quantise, then `YieldPair::rescaled_to`, both off one
     # `take.carried`). `yield_rows` is the one place the "render only where the vector pays" rule
@@ -994,7 +1002,7 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
     # as a number.
     var after := {}
     if _walks_to_the_floor(reaches, improvement):
-        var held := _hunt_delivered_and_waste(band, herd, floor, workers, improvement, per_crew,
+        var held := _hunt_delivered(band, herd, floor, workers, improvement, per_crew,
             true)
         if bool(held.get("available", false)):
             after = SourceForecast.rescaled_from_biomass(herd,
@@ -1015,8 +1023,6 @@ func _hunt_yield_model(band: Dictionary, herd_raw: Dictionary, floor: float, wor
         YIELD_MODEL_LIMIT: _hunt_binding_limit(herd, band, floor, dw,
             _hunt_crew_noun(herd, improvement)),
         YIELD_MODEL_OVERDRAW: overdraws,
-        YIELD_MODEL_WASTE: SourceForecast.HUNT_WASTE_NOTE_FORMAT % int(round(waste_pct * 100.0)) \
-            if waste_pct > 0.0 else "",
     }
 
 ## **THE INEDIBLE QUARRY'S MATERIAL TAKE, AND NOTHING ELSE'S** —
@@ -1108,6 +1114,15 @@ func _local_forage_preview_bbcode(band: Dictionary, tile_info: Dictionary, floor
     return _yield_preview_bbcode(_forage_yield_model(band, tile_info, floor, workers, improvement),
         HudComposeVocab.LOCAL_FORAGE_OVERDRAW_SUFFIX)
 
+## The relative slop on a whole-animal count, mirroring `ANIMAL_COUNT_EPSILON` in `core_sim/src/fauna.rs`
+## (used by `animals_the_pack_seats`, applied DOWNWARD because that rounding is upward: a collection of
+## exactly three bodies seats three, not four on a last-mantissa-bit overshoot).
+const ANIMAL_COUNT_EPSILON := 1e-6
+
+## The fewest animals a pack ever seats — `ONE_WHOLE_ANIMAL` in `core_sim/src/fauna.rs`: a party that
+## cannot carry one still kills one.
+const ONE_WHOLE_ANIMAL := 1.0
+
 ## The structured half of the line above — and the SHARED shape both webs answer in, so the readout's
 ## yields row is built from the same numbers the sentence quotes rather than from a second derivation.
 ## `{}` is the graceful degrade (an unknown forecast, or a source that pays into no account at all);
@@ -1116,7 +1131,6 @@ func _local_forage_preview_bbcode(band: Dictionary, tile_info: Dictionary, floor
 const YIELD_MODEL_ROWS := "rows"
 const YIELD_MODEL_TEXT := "text"
 const YIELD_MODEL_OVERDRAW := "overdraw"
-const YIELD_MODEL_WASTE := "waste"
 ## WHY one of this model's accounts renders as a dash instead of a number — `""` when every account
 ## this take pays is bankable. It rides the MODEL rather than being resolved at the render, so the
 ## muted row and the sentence explaining it are two readings of one model dict: whoever evaluates this
@@ -1174,7 +1188,7 @@ const YIELD_MODEL_HOME_RATE := "home_rate"
 ## `""`. Rendered as an amber verdict-style bullet directly under the PER TURN numbers.
 const YIELD_MODEL_ROT := "rot"
 
-# ---- WHAT `_hunt_delivered_and_waste` ANSWERS BESIDE THE DELIVERED BIOMASS ----------------------
+# ---- WHAT `_hunt_delivered` ANSWERS BESIDE THE DELIVERED BIOMASS ----------------------
 ## **THE REPLY HAS NOT LANDED**, told apart from an unavailable take so the caller can state nothing
 ## instead of degrading to a smoothed rate composed without the fight. See that function's guard.
 const CREW_TAKE_UNANSWERED := "crew_take_unanswered"
@@ -1306,7 +1320,6 @@ func _forage_model_rows(tile_info: Dictionary, actual: float, actual_fodder: flo
         # **THE FODDER LOCK DOES NOT REACH THE ⚠, AND IT NEVER SHOULD HAVE.** The take draws the same
         # biomass down whether or not the crew banks the hay, and the drawdown is the sim's to state.
         YIELD_MODEL_OVERDRAW: overdraws,
-        YIELD_MODEL_WASTE: "",
         YIELD_MODEL_LOCKED_REASON: locked,
         YIELD_MODEL_NOTES: notes,
     }
@@ -1665,7 +1678,6 @@ func _wordless_take_model(notes: Array[String]) -> Dictionary:
         YIELD_MODEL_ROWS: ([] as Array[Dictionary]),
         YIELD_MODEL_TEXT: "",
         YIELD_MODEL_OVERDRAW: false,
-        YIELD_MODEL_WASTE: "",
         YIELD_MODEL_LOCKED_REASON: "",
         YIELD_MODEL_NOTES: notes,
     }
@@ -1840,8 +1852,7 @@ func _wild_fodder_lock(tile_info: Dictionary) -> String:
 
 ## One yield model → the one-line BBCode preview, for both webs. Green + `· renewable` inside the
 ## source's own regrowth, WARN-amber with the shared ⚠ and the web's own overdraw clause outside it;
-## the waste note, where a web has one, is ALWAYS amber even when the line around it is green,
-## because a kill the crew could not carry is its own concern.
+## no waste note rides it: a kill is kept whole, so a hunt has nothing to flag as wasted.
 func _yield_preview_bbcode(model: Dictionary, overdraw_suffix: String) -> String:
     if model.is_empty():
         return ""
@@ -1853,10 +1864,6 @@ func _yield_preview_bbcode(model: Dictionary, overdraw_suffix: String) -> String
     else:
         body = "[color=#%s]%s%s[/color]" % [
             HudStyle.HEALTHY_HEX, text, SourceForecast.YIELD_TOOLTIP_RENEWABLE]
-    var waste := String(model[YIELD_MODEL_WASTE])
-    if waste != "":
-        body += "[color=#%s]%s%s[/color]" % [
-            HudStyle.WARN_HEX, SourceForecast.COMPONENT_SEPARATOR, waste]
     return body
 
 ## A "Band: [▼]" dropdown row for the assign controls: lists every player band by the client's one
@@ -2906,8 +2913,7 @@ func _live_reaches(live: Dictionary) -> bool:
 
 ## One yields model into the readout's first register. **The overdraw state moves the NUMBER, not just
 ## a suffix**: the row is the loudest thing in the box, so a take the source cannot pay forever has to
-## read amber where the player is already looking. The waste note is always amber, even under a green
-## take — a kill the crew could not carry is its own concern.
+## read amber where the player is already looking.
 ##
 ## **NO `while_building` KEY REACHES THE CAPTION ANY MORE** (`docs/plan_standing_upkeep.md` §2.2).
 ## It said *these readings are the DIPPED take*; the build has its own crew, so these are the plain
@@ -2950,7 +2956,6 @@ func _fill_yields_host(host: Container, model: Dictionary, labor_kind: String) -
         HudStyle.WARN if overdraws else HudStyle.INK,
         note,
         HudStyle.WARN if overdraws else HudStyle.HEALTHY,
-        String(model[YIELD_MODEL_WASTE]),
         # **PAST THE APRON THE CAPTION NAMES THE RATE HOME**, and takes no likely-take suffix: that
         # figure is the caravan forecast's mean, not a point of the curve's band.
         HudComposeVocab.YIELD_HEADER_ONCE_RUNNING if home_rate else "",
@@ -4385,12 +4390,6 @@ func _with_home_rate(model: Dictionary, party_view: Dictionary,
     if carries_by_products:
         rows = _with_home_by_products(rows, account, answer)
     out[YIELD_MODEL_ROWS] = rows
-    # **AND THE WASTE NOTE GOES WITH THE AT-SOURCE FIGURE.** It is the resident take's
-    # whole-animal overflow — meat a crew too small to haul leaves where it fell — and a caravan walks
-    # away from nothing: a carcass too big for one pack goes home a pack at a time, which is why the
-    # sim publishes a far row's `wasted` as `0`. Beside the home rate it would state a loss the
-    # committed row will never show.
-    out[YIELD_MODEL_WASTE] = ""
     out[YIELD_MODEL_HOME_RATE] = true
     # **AND WHAT THE WALK ROTS, RIGHT UNDER THE NUMBER IT IS ALREADY NET OF** (#706) — the amber
     # bullet `_fill_yields_host` mounts. `""` when nothing rots.
@@ -6082,7 +6081,6 @@ func _deposit_yield_model(deposit: Dictionary, floor: float, crew: int,
                 _standing_assignment_extract(HudDepositVocab.tile_of(deposit).x,
                     HudDepositVocab.tile_of(deposit).y, material))
                 > HudDepositVocab.sustainable_take_of(deposit),
-        YIELD_MODEL_WASTE: "",
     }
 
 ## **THE DEPOSIT'S YIELDS, AND ON A FAR WORKING BOTH OF ITS FIGURES.** `_with_home_rate` puts the

@@ -823,6 +823,8 @@ fn precommit_food_at_band_morale(
             .resource::<CombatConfigHandle>()
             .get()
             .forecast_range_sigmas,
+        // A local fixture row is a camp kill: nothing is hauled.
+        true,
     );
     seed.actual
 }
@@ -854,6 +856,8 @@ fn precommit_food_building(
             .resource::<CombatConfigHandle>()
             .get()
             .forecast_range_sigmas,
+        // A local fixture row is a camp kill: nothing is hauled.
+        true,
     );
     seed.actual
 }

@@ -168,7 +168,7 @@ var _popup_closed_row: String = NO_ROW
 
 ## **WHICH ROW'S MAKE PICKER IS OPEN, AND WHICH RECIPE IS CHOSEN IN IT.** One picker at a time. Dropped
 ## on a render whose row has disappeared or dropped to one recipe, and a chosen recipe that is no longer
-## available falls back to the default rule (`_default_choice`).
+## queueable falls back to the default rule (`_default_choice`).
 var _picker_row: String = NO_ROW
 var _picker_choice: String = ""
 ## **THE COUNT START SENDS, AND WHICH LIST THE PICKER HANGS UNDER.** A picker opened from a ledger row's
@@ -683,6 +683,19 @@ func _build_bench(payload: Dictionary) -> void:
 		# predict, so a claim about the blocked line can only be scoped to the node that carries it.
 		reason.set_meta(HudCraftingVocab.BENCH_BLOCKED_META, true)
 		words.add_child(reason)
+	elif recipe_id != "":
+		# **THE WORKED ORDER'S FORECAST** — the queue rows skip `worked`, so without this the lone
+		# order that is affordable for one pass shows nothing until it stalls. Never beside a blocked
+		# line: that one already quotes the same queue-aware numbers.
+		var well_orders: Array = bench.get(HudCraftingVocab.BENCH_ORDERS_KEY, [])
+		var well_worked := _worked_index(bench)
+		if well_worked < well_orders.size() and well_orders[well_worked] is Dictionary:
+			var well_forecast := _shortfall_text((well_orders[well_worked] as Dictionary).get(
+				HudCraftingVocab.ORDER_SHORT_TO_FINISH_KEY, []))
+			if well_forecast != "":
+				var well_label := _forecast_label(well_forecast, HudCraftingVocab.BENCH_BLOCKED_FONT_SIZE)
+				well_label.set_meta(HudCraftingVocab.BENCH_SHORT_TO_FINISH_META, true)
+				words.add_child(well_label)
 	top.add_child(words)
 	# **NOTHING TO REMOVE ON AN IDLE BENCH**, so the control is absent rather than dead — and it is
 	# built BEFORE the stepper, which insets it from the card's right edge and keeps it away from the
@@ -1023,21 +1036,22 @@ func _row_on_bench(row: Dictionary) -> bool:
 			return true
 	return false
 
-func _row_available(row: Dictionary) -> bool:
+## Whether the player MAY QUEUE any recipe of the row — `queueable` (every craft learned), not `available`.
+func _row_queueable(row: Dictionary) -> bool:
 	for offer in row["offers"]:
-		if bool((offer as Dictionary).get(HudCraftingVocab.OFFER_AVAILABLE_KEY, false)):
+		if bool((offer as Dictionary).get(HudCraftingVocab.OFFER_QUEUEABLE_KEY, false)):
 			return true
 	return false
 
-## **THE RECIPE THE PICKER OPENS ON**: the suggested one when it can be made now, else the first that
-## can, else nothing. The sim's own pick already prefers an available recipe, so the fallback matters
-## only when the suggestion and the store disagree.
+## **THE RECIPE THE PICKER OPENS ON**: the suggested one when it is `queueable`, else the first that
+## is, else nothing. The sim's own pick already prefers a runnable recipe, so the fallback matters
+## only when the suggestion and the queue gate disagree.
 func _default_choice(row: Dictionary) -> String:
 	var suggested: Dictionary = row["offer"]
-	if bool(suggested.get(HudCraftingVocab.OFFER_AVAILABLE_KEY, false)):
+	if bool(suggested.get(HudCraftingVocab.OFFER_QUEUEABLE_KEY, false)):
 		return String(suggested.get(HudCraftingVocab.OFFER_RECIPE_ID_KEY, ""))
 	for offer in row["offers"]:
-		if bool((offer as Dictionary).get(HudCraftingVocab.OFFER_AVAILABLE_KEY, false)):
+		if bool((offer as Dictionary).get(HudCraftingVocab.OFFER_QUEUEABLE_KEY, false)):
 			return String((offer as Dictionary).get(HudCraftingVocab.OFFER_RECIPE_ID_KEY, ""))
 	return ""
 
@@ -1045,14 +1059,14 @@ func _choice_is_available(row: Dictionary, recipe_id: String) -> bool:
 	for offer in row["offers"]:
 		var candidate: Dictionary = offer
 		if String(candidate.get(HudCraftingVocab.OFFER_RECIPE_ID_KEY, "")) == recipe_id:
-			return bool(candidate.get(HudCraftingVocab.OFFER_AVAILABLE_KEY, false))
+			return bool(candidate.get(HudCraftingVocab.OFFER_QUEUEABLE_KEY, false))
 	return false
 
 ## **THE VIEW STATE IS CHECKED AGAINST EVERY NEW PAYLOAD BEFORE IT IS DRAWN.** A picker whose row has
 ## gone or dropped to one recipe closes — there is nothing left to choose — and so does one opened from
 ## a suggestion the sim no longer publishes (the queue now covers it); a suggestion's picker takes the
 ## suggestion's CURRENT count, so Start never queues a shortfall that has since shrunk; a chosen recipe
-## that is no longer available falls back to the default rule rather than leaving Start pointed at a
+## that is no longer queueable falls back to the default rule rather than leaving Start pointed at a
 ## build the sim would refuse; a popup whose row is gone or has one recipe left closes.
 func _reconcile_recipe_view(payload: Dictionary) -> void:
 	if _picker_row != NO_ROW:
@@ -1549,7 +1563,7 @@ func _build_action_cell(ledger_row: Dictionary, shrug: bool) -> Control:
 	button.focus_mode = Control.FOCUS_NONE
 	button.add_theme_font_size_override("font_size", HudCraftingVocab.ACTION_FONT_SIZE)
 	HudStyle.apply_button(button, "primary")
-	button.disabled = not _row_available(ledger_row)
+	button.disabled = not _row_queueable(ledger_row)
 	# Found by IDENTITY, valued the row key — every row's button wears the same face.
 	button.set_meta(HudCraftingVocab.MAKE_BUTTON_META, key)
 	if not button.disabled:
@@ -1790,7 +1804,7 @@ func _cancel_picker() -> void:
 		render(_payload)
 
 ## **THE MAKE PICKER**, spanning the ledger under its row. One radio line per recipe — its label, its
-## cost, and either what it makes or, when it cannot be made now, the sim's own reason with the radio
+## cost, and either what it makes or, when it is not queueable, the sim's own reason with the radio
 ## DISABLED. The footer says the recipe is fixed once the build starts, and Start sends the CHOSEN
 ## recipe, which is the only way a row's non-suggested recipe ever reaches the bench.
 func _build_make_picker(row: Dictionary, payload: Dictionary) -> Control:
@@ -1848,11 +1862,11 @@ func _build_make_picker(row: Dictionary, payload: Dictionary) -> Control:
 	column.add_child(footer)
 	return host
 
-## One recipe as a radio line. The radio is DISABLED when the recipe cannot be made now, and its line
-## then states the sim's reason where a buildable one states what it would make.
+## One recipe as a radio line. The radio is DISABLED when the recipe is not `queueable` (a craft is
+## unlearned), and its line then states the sim's reason where a queueable one states what it makes.
 func _build_picker_option(offer: Dictionary, group: ButtonGroup, payload: Dictionary) -> Control:
 	var recipe_id := String(offer.get(HudCraftingVocab.OFFER_RECIPE_ID_KEY, ""))
-	var available := bool(offer.get(HudCraftingVocab.OFFER_AVAILABLE_KEY, false))
+	var available := bool(offer.get(HudCraftingVocab.OFFER_QUEUEABLE_KEY, false))
 	var line := HBoxContainer.new()
 	line.add_theme_constant_override("separation", HudCraftingVocab.COLUMN_SEPARATION)
 	var radio := CheckBox.new()
@@ -1984,6 +1998,12 @@ func _build_suggestion_row(suggestion: Dictionary, payload: Dictionary) -> Contr
 	# AMBER: people are working short right now — a warning beside the number it explains.
 	consequence.add_theme_color_override("font_color", HudStyle.WARN)
 	words.add_child(consequence)
+	var short_text := _shortfall_text(suggestion.get(HudCraftingVocab.SUGGESTION_SHORTFALLS_KEY, []),
+		HudCraftingVocab.SUGGESTION_SHORTFALL_TAIL_FORMAT, count)
+	if short_text != "":
+		var short_line := _forecast_label(short_text, HudCraftingVocab.SUGGESTION_LINE_FONT_SIZE)
+		short_line.set_meta(HudCraftingVocab.SUGGESTION_SHORTFALL_META, item_id)
+		words.add_child(short_line)
 	row.add_child(_column_cell(words, 0.0, true))
 
 	var action := VBoxContainer.new()
@@ -1994,7 +2014,7 @@ func _build_suggestion_row(suggestion: Dictionary, payload: Dictionary) -> Contr
 	button.add_theme_font_size_override("font_size", HudCraftingVocab.ACTION_FONT_SIZE)
 	HudStyle.apply_button(button, "primary")
 	button.set_meta(HudCraftingVocab.SUGGESTION_QUEUE_META, item_id)
-	button.disabled = ledger_row.is_empty() or count < 1 or not _row_available(ledger_row)
+	button.disabled = ledger_row.is_empty() or count < 1 or not _row_queueable(ledger_row)
 	if not button.disabled:
 		var offers: Array = ledger_row["offers"]
 		if offers.size() == 1:
@@ -2217,19 +2237,19 @@ func _build_queue_row(index: int, order: Dictionary, bench: Dictionary, payload:
 	var blocked := String(order.get(HudCraftingVocab.ORDER_BLOCKED_REASON_KEY, ""))
 	if blocked != "":
 		status.text = HudCraftingVocab.ORDER_STATUS_WAITING.to_upper()
-		status.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+		status.add_theme_color_override("font_color", HudStyle.DANGER)
 	elif drawn:
 		status.text = HudCraftingVocab.ORDER_STATUS_PAUSED.to_upper()
 		status.add_theme_color_override("font_color", HudStyle.WARN)
 		HudWidgets.set_label_tooltip(status, HudCraftingVocab.ORDER_STATUS_PAUSED_TOOLTIP)
 	else:
 		status.text = HudCraftingVocab.ORDER_STATUS_QUEUED.to_upper()
-		status.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+		status.add_theme_color_override("font_color", HudStyle.INK_DIM)
 	row.add_child(status)
 
-	# The name, and — on an order the bench is SKIPPING — the sim's reason on a second line, VERBATIM
-	# and tinted by its published severity through the SAME `REASON_COLORS` the well's blocked line
-	# uses. Two lines at most, the panel's copy limit.
+	# The name, and ONE muted second line: the sim's blocked reason VERBATIM when the bench is SKIPPING
+	# the order, else the `short_to_finish` forecast. The colour rides the STATUS word above, so the
+	# line is the quiet ink whatever it says. Two lines at most, the panel's copy limit.
 	var words := VBoxContainer.new()
 	words.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	words.add_theme_constant_override("separation", 0)
@@ -2242,11 +2262,15 @@ func _build_queue_row(index: int, order: Dictionary, bench: Dictionary, payload:
 		var reason := Label.new()
 		reason.text = blocked
 		reason.add_theme_font_size_override("font_size", HudCraftingVocab.ORDER_REASON_FONT_SIZE)
-		reason.add_theme_color_override("font_color", HudCraftingVocab.REASON_COLORS.get(
-			String(order.get(HudCraftingVocab.ORDER_BLOCKED_SEVERITY_KEY, "")),
-			HudCraftingVocab.REASON_COLOR_QUIET))
+		reason.add_theme_color_override("font_color", HudStyle.INK_FAINT)
 		reason.set_meta(HudCraftingVocab.ORDER_REASON_META, index)
 		words.add_child(reason)
+	else:
+		var forecast := _shortfall_text(order.get(HudCraftingVocab.ORDER_SHORT_TO_FINISH_KEY, []))
+		if forecast != "":
+			var forecast_label := _forecast_label(forecast, HudCraftingVocab.ORDER_REASON_FONT_SIZE)
+			forecast_label.set_meta(HudCraftingVocab.ORDER_SHORT_TO_FINISH_META, index)
+			words.add_child(forecast_label)
 	row.add_child(words)
 
 	var minus := _queue_button(HudCraftingVocab.ORDER_COUNT_DECREMENT, "")
@@ -2511,6 +2535,38 @@ func _wrap_padded(content: Control, padding_h: int, padding_v: int) -> MarginCon
 	host.add_theme_constant_override("margin_bottom", padding_v)
 	host.add_child(content)
 	return host
+
+## The forecast line: the sim's published `short` rows, one `Short X material` part each, joined, then
+## `tail_format` once when given (`%s` is the joined parts; `%d` takes `count`). Empty rows → "".
+## Rendering only — the numbers are never summed or recomputed here.
+func _shortfall_text(rows: Variant, tail_format: String = "", count: int = 0) -> String:
+	if not (rows is Array):
+		return ""
+	var parts: Array[String] = []
+	for row_variant in rows:
+		if row_variant is Dictionary:
+			var row: Dictionary = row_variant
+			parts.append(HudCraftingVocab.SHORTFALL_PART_FORMAT % [
+				String.num(float(row.get(HudCraftingVocab.SHORTFALL_SHORT_KEY, 0.0)), HudCraftingVocab.SHORTFALL_DECIMALS),
+				String(row.get(HudCraftingVocab.SHORTFALL_MATERIAL_ID_KEY, ""))])
+	if parts.is_empty():
+		return ""
+	var joined := HudCraftingVocab.SHORTFALL_PART_SEPARATOR.join(parts)
+	if tail_format == "":
+		return joined
+	return tail_format % [joined, count] if tail_format.contains("%d") else tail_format % joined
+
+## One muted forecast label: ellipsis when it overflows, the full text in its tooltip so nothing is lost.
+func _forecast_label(text: String, font_size: int) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.add_theme_font_size_override("font_size", font_size)
+	label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	label.clip_text = true
+	label.mouse_filter = Control.MOUSE_FILTER_STOP
+	label.tooltip_text = text
+	return label
 
 ## A cost/output amount, whole where it is whole — a recipe asking for 12 fibre should not say 12.0.
 func _amount_text(amount: float) -> String:

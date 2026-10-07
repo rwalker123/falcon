@@ -2339,3 +2339,154 @@ fn a_far_hunt_lands_its_hides_with_its_packs_and_prints_a_smoothed_rate_home() {
         "a turn with no pack landing still prints the smoothed hide rate home"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// EVERY HUNT KEEPS THE WHOLE KILL — LOCALITY IS DECIDED PER KILL, OFF WHERE THE HERD STANDS
+// ---------------------------------------------------------------------------------------------
+
+/// A body heavier than the whole crew's pack, so every kill leaves part of the carcass the pack
+/// cannot seat — the case a resident hunt used to waste.
+const CARCASS_BIGGER_THAN_THE_PACKS: f32 = 1_000.0;
+/// A standing stock deep enough that the escapement floor leaves many bodies to take.
+const DEEP_STOCK: f32 = 40_000.0;
+/// The share of a body the herd must lose in a turn for that turn to count as a kill (its own
+/// regrowth is a small fraction of one).
+const A_KILL_IS_AT_LEAST: f32 = 0.5;
+/// A hex past the band's own range (`band_work_range` 2), on the camp's row.
+const BEYOND_THE_APRON: u32 = 5;
+/// Turns a fixture waits for a kill before the guard trips.
+const TURNS_TO_SEE_A_KILL: usize = 80;
+/// The band's output multiplier the fixture's takes are paid at.
+const NEUTRAL_OUTPUT: f32 = 1.0;
+
+fn the_fixture_herd(app: &App) -> Herd {
+    app.world
+        .resource::<HerdRegistry>()
+        .herds
+        .iter()
+        .find(|herd| herd.id == HERD_ID)
+        .cloned()
+        .expect("the fixture herd is seated")
+}
+
+/// Walk the fixture herd to `distance` hexes from the camp, mid-run.
+fn move_the_herd_to(app: &mut App, distance: u32) {
+    let mut registry = app.world.resource_mut::<HerdRegistry>();
+    let herd = registry
+        .herds
+        .iter_mut()
+        .find(|herd| herd.id == HERD_ID)
+        .expect("the fixture herd is seated");
+    let tile = UVec2::new(CAMP.x + distance, CAMP.y);
+    herd.route = vec![tile];
+    herd.step_index = 0;
+    herd.current_pos = tile;
+}
+
+fn sled_wear(app: &App, band: Entity) -> f32 {
+    app.world
+        .get::<BandEquipment>(band)
+        .expect("the band keeps its kit")
+        .wear_of("sled")
+}
+
+fn lost_a_body(before: f32, app: &App) -> bool {
+    before - the_fixture_herd(app).biomass > CARCASS_BIGGER_THAN_THE_PACKS * A_KILL_IS_AT_LEAST
+}
+
+/// Resolve turns until the herd has lost a body, handing back the food the row credited on that
+/// turn, whether the row held a party, and the sled wear that turn cost.
+fn until_a_kill(app: &mut App, band: Entity) -> (f32, bool, f32) {
+    for _ in 0..TURNS_TO_SEE_A_KILL {
+        let wear_before = sled_wear(app, band);
+        let biomass_before = the_fixture_herd(app).biomass;
+        resolve_a_turn(app);
+        if lost_a_body(biomass_before, app) {
+            let row = app
+                .world
+                .get::<LaborAllocation>(band)
+                .expect("the band keeps its allocation");
+            assert_eq!(
+                row.last_yields[0].wasted, 0.0,
+                "a hunt keeps its whole kill, so its row wastes nothing"
+            );
+            return (
+                row.last_yields[0].actual,
+                row.assignments[0].party.is_some(),
+                sled_wear(app, band) - wear_before,
+            );
+        }
+    }
+    panic!("liveness: the crew must bring a body down within {TURNS_TO_SEE_A_KILL} turns");
+}
+
+/// ⛔ **EVERY HUNT KEEPS THE WHOLE KILL, AND WHETHER IT IS HAULED IS DECIDED PER KILL.** A herd
+/// inside `band_work_range` is a camp kill: the whole carcass lands in the larder the turn it
+/// falls and the sled is not worn. The same herd wandered past the range posts a party and its kill
+/// is hauled (the sled wears). Wandering back inside makes the next kill a camp kill again. Each
+/// kill is decided off where the herd stands that turn, never off where it stood before.
+#[test]
+fn a_herd_crossing_the_apron_changes_how_each_kill_is_taken_but_never_what_is_kept() {
+    let (mut app, band) = world_hunting_at(INSIDE_THE_APRON);
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == HERD_ID).unwrap();
+        herd.body_mass = CARCASS_BIGGER_THAN_THE_PACKS;
+        herd.carrying_capacity = DEEP_STOCK;
+        herd.biomass = DEEP_STOCK;
+    }
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let full_body = core_sim::herd_hunt_yield(&the_fixture_herd(&app), &fauna)
+        .apply(CARCASS_BIGGER_THAN_THE_PACKS, NEUTRAL_OUTPUT)
+        .provisions;
+    assert!(full_body > 0.0, "liveness: a body is worth food");
+
+    // Inside the range: a camp kill.
+    let (camp_credit, camp_posted, camp_haul_wear) = until_a_kill(&mut app, band);
+    assert!(!camp_posted, "inside the range the row posts no party");
+    assert_eq!(
+        camp_haul_wear, 0.0,
+        "a camp kill hauls nothing: no sled wear"
+    );
+    assert!(
+        camp_credit >= full_body * (1.0 - SAME_FOOD),
+        "the camp kill keeps the whole body ({full_body}), not the part the packs seat: {camp_credit}"
+    );
+
+    // The herd wanders past the range: a posted kill, hauled.
+    move_the_herd_to(&mut app, BEYOND_THE_APRON);
+    let wear_before_the_far_hunt = sled_wear(&app, band);
+    let mut far_posted = false;
+    for _ in 0..TURNS_TO_SEE_A_KILL {
+        let biomass_before = the_fixture_herd(&app).biomass;
+        resolve_a_turn(&mut app);
+        far_posted |= app
+            .world
+            .get::<LaborAllocation>(band)
+            .is_some_and(|allocation| allocation.assignments[0].party.is_some());
+        if lost_a_body(biomass_before, &app) {
+            break;
+        }
+    }
+    assert!(far_posted, "past the range the row posts a work party");
+    assert!(
+        sled_wear(&app, band) > wear_before_the_far_hunt,
+        "a posted kill is hauled, so it wears the sled"
+    );
+
+    // Back inside: the next kill is a camp kill once more.
+    move_the_herd_to(&mut app, INSIDE_THE_APRON);
+    let (second_credit, second_posted, second_wear) = until_a_kill(&mut app, band);
+    assert!(
+        !second_posted,
+        "wandered back inside, the row is local again"
+    );
+    assert_eq!(
+        second_wear, 0.0,
+        "the second camp kill hauls nothing either"
+    );
+    assert!(
+        second_credit >= full_body * (1.0 - SAME_FOOD),
+        "and keeps the whole body: {second_credit} against {full_body}"
+    );
+}

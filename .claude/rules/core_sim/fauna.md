@@ -692,7 +692,8 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 > a hunt bounds the kill by what its pack seats (`fauna::animals_the_pack_seats`) — *hunters do not
 > kill what they cannot use* — and a **denial raid** does not, which is the single line separating
 > the two missions. `carried` is the same expression under both, so a raid still banks what it can
-> haul and the rest is `wasted`. The
+> haul and the rest is `wasted`. (A hunt or pen slaughter reads only the kill-stop half of this: it
+> keeps `killed_biomass()`, never `carried` — see below.) The
 > escapement floor is a *number* and the pack is a *bound*, so no value of the first reaches the
 > second — which is why denial is a mission and not a floor preset. `fauna::herd_past_recovery` is
 > its win condition (`collapse_fraction · K`, read through `classify_ecology_phase`). Rationale:
@@ -704,8 +705,29 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 > 1. engage    reach = workers × engage_rate, bounded by what the herd can spare above the floor
 > 2. retreat   a fraction of what was reached gets away (wariness)
 > 3. fight     whole animals dead; the unfinished remainder banks on Herd::wounds
-> 4. carry     min(pack, killed) in BIOMASS, unrounded — the rest is wasted on the ground
+> 4. keep      the whole kill, in BIOMASS, unrounded — `AnimalTake::killed_biomass()`
 > ```
+>
+> **EVERY HUNT KEEPS THE WHOLE KILL; LOCALITY ONLY ZEROES THE WALK AND THE HAUL.** A kill within
+> `band_work_range` of the band is a *camp kill*: the animal was killed in camp, so its whole carcass
+> lands in the larder the same turn (walk `0`) and charges **no** sled wear
+> (`WearQuantum::BiomassHauled` — `systems::labor::biomass_hauled`). A kill beyond it posts a work
+> party and the porters ferry the same whole carcass home, charging haul wear on what the packs
+> seat. **A camp kill has no carry cap on its count** — the pack bounds nothing when nothing is
+> hauled, so only the fight and what the herd can spare decide it, and the sled tier moves neither
+> count nor yield (`fauna::kill_carry_rate` → `NO_CARRY_BOUND`; `SourceYieldForecast::camp_kill`;
+> `systems::labor` passes it as the hunt arm's `kill_carry`). Locality is decided **per kill, every turn**, off the herd's position that turn
+> (`party_source_position` → `post_a_party` → `work_party::resolve_walk`): a herd that wanders past
+> the range goes through the posted path on that turn's kill and a camp kill when it wanders back.
+> The kill-stop (`quantise_animal_take` / `EngagementStop::WhenPackFull`) still binds a **posted**
+> kill — a party stops engaging once its pack seats the take — and the staffing plan
+> (`workers_needed`, `hunt_haul_workers`, `huntUsefulWorkers`) keeps its carriers on a camp row too,
+> because a herd near camp today may be beyond reach tomorrow; and `carried`/`wasted` survive on `AnimalTake` only for the
+> denial raid and expeditions, whose party walks away from the rest. A hunt's and a pen's row
+> `wasted` (`wastedYield` on the wire) is a structural `0`; a big camp kill spoils in the larder
+> (`spoilage::larder_rot`) rather than at the kill. The projections (`HuntProjection::step`,
+> `forecast_take_outcomes`, the arrival schedule) read `killed_biomass()` too, so forecast and turn
+> agree.
 >
 > *An animal dies whole; meat divides.* The quantum belongs on the **kill** (step 3), because that is
 > the step that produces bodies; a hunter field-dresses and takes what fits. Three roundings sat
@@ -1015,9 +1037,10 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   than one body drops **zero** animals on a wait turn, so inverting `carried` collapses
 >   `workers_needed` to `0` — and, for a managed herd, to the bare herder count via `max()`. That made
 >   the panel contradict itself: `workersNeeded: 1` beside a 50%-`wastedYield` at one worker — *drop
->   workers* and *add workers* on the same row, with half an aurochs rotting. Sizing the crew off the
->   ceiling makes it **equal to `wasted_yield`'s answer** by construction: `workers > workers_needed` ⇒
->   overstaffed, `wasted_yield > 0` ⇒ understaffed, and the two never disagree.
+>   workers* and *add workers* on the same row. Sizing the crew off the ceiling kept the two
+>   consistent by construction: `workers > workers_needed` ⇒ overstaffed, `wasted_yield > 0` ⇒
+>   understaffed. (An animal row's `wasted_yield` is now always `0` — a hunt keeps its whole kill —
+>   but `workersNeeded` is still sized off the ceiling.)
 >   **On a full herd that count is large — the crew that would clear it to the floor in ONE turn — and
 >   it is deliberately not clamped** (`docs/plan_harvest_floor.md` §7.6): it is what makes *"this crew
 >   cannot draw the herd that low"* expressible instead of silently true.

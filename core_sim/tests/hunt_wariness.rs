@@ -334,6 +334,8 @@ fn seed_the_forecast(app: &mut App, band: bevy::prelude::Entity, fauna_id: &str,
             labor.yield_average_horizon_turns,
             labor.arrivals_horizon_turns,
             combat.forecast_range_sigmas,
+            // A local fixture row is a camp kill: nothing is hauled.
+            true,
         )
     };
     let target = LaborTarget::Hunt {
