@@ -13,6 +13,8 @@ paths:
   - "core_sim/src/data/{demographics_config,supply_network_config,sedentarization_config}.json"
   - "core_sim/tests/{supply_network,sedentarization,founding_lines}.rs"
   - "core_sim/src/lineage.rs"
+  - "core_sim/src/systems/lineage_contact.rs"
+  - "core_sim/tests/lineage_contact.rs"
 ---
 
 <!-- Extracted verbatim from lines 48-51;4382-4760 of core_sim/CLAUDE.md at blob dcc757587f8c9308590997ee600abc64a34e6712
@@ -512,8 +514,8 @@ its clamp, the one-line case, save/load and restore, the count off the encoded e
 #### The breeding ceiling — births stop at `|lines| × K`, and nobody is removed by it
 
 Design: `docs/plan_civilization_steps.md` §"The mechanism: an isolated people cannot grow past its
-lines" (#688). An isolated people grows only to `|its lines| × K`; contact with other peoples is
-what lifts it (#689, not built).
+lines" (#688). An isolated people grows only to `|its lines| × K`; contact with another people is
+what lifts it (#689, "Contact merges lines" below).
 
 - **The capped unit is the breeding population** — a supply-network connected component
   (`SupplyNetworkMembership::network_of`, written by `balance_supply_networks` in
@@ -524,16 +526,19 @@ what lifts it (#689, not built).
   sum: a line two members share (a one-line split) counts once. A same-people network's lines are
   its starting band's `L` however often it split, so splitting while connected changes nothing; a
   band that walks off the network takes its lines and both ceilings fall.
-- **A line held by several breeding populations shares its `K` between them.** A one-line
-  band's split gives both halves a copy of its line (`split_off_share` cannot partition it), so
-  counting the line whole in each unlinked half would let an isolated people split and scatter
-  past `L × K` with no contact. So the pre-pass counts, per `LineId`, how many distinct
-  populations hold it, and a population's ceiling is `lineage::shared_breeding_ceiling` —
-  `floor(Σ K / holders(line))` over its union, summed in fixed point. Across the world the
-  ceilings sum to at most `distinct lines × K` however bands split: two unlinked halves of one
-  line get `floor(19 / 2)` = 9 each, and relinked they are one holder again at 19. With every
-  line held once it is plain `|union| × K`. The `free_breeding_at` lift compares against this
-  shared figure.
+- **A line held by several breeding populations of one people shares its `K` between them.** A
+  one-line band's split gives both halves a copy of its line (`split_off_share` cannot partition
+  it), so counting the line whole in each unlinked half would let an isolated people split and
+  scatter past `L × K` with no contact. So the pre-pass counts, per `(FactionId, LineId)`, how
+  many distinct populations of that people hold it (a breeding group is one people: the supply
+  union only joins bands that pool freely), and a population's ceiling is
+  `lineage::shared_breeding_ceiling` — `floor(Σ K / holders(line))` over its union, summed in
+  fixed point. **Another people holding a copy of a line does not divide it** — that copy is what
+  contact gives, and counting it world-wide would leave a merged 8 + 8 pair at 16 × 19 / 2 = 152,
+  no higher than before they met. Per people the ceilings sum to at most `distinct lines × K`
+  however its bands split: two unlinked halves of one line get `floor(19 / 2)` = 9 each, and
+  relinked they are one holder again at 19. With every line held once it is plain `|union| × K`.
+  The `free_breeding_at` lift compares against this shared figure.
 - **It lifts at `free_breeding_at` (500).** `lineage::inbreeding_ceiling` answers `None` once
   the population's (shared) ceiling reaches `lineage.free_breeding_at`: ~500 is the forager mating-network size
   (Birdsell's dialect tribe; Wobst's 175–475) at which a people finds mates without outside
@@ -567,6 +572,19 @@ what lifts it (#689, not built).
   neutral at 1e6, in the zero-reserve not-projected sentinel with its three siblings),
   `breedingPopulation:uint`, `breedingCeiling:uint`. Not on the redaction allow-list, so a rival's
   redacted row publishes `0` for all three. Checkpointed with the cohort; `SAVE_FORMAT_VERSION` 23.
+
+#### Contact merges lines — `merge_founding_lines_on_contact` (#689)
+
+`systems/lineage_contact.rs`, `TurnStage::Visibility` directly after
+`connections::advance_connections`.
+Every ledger edge with `last_contact_turn == SimulationTick.0` (the ledger's own contact-this-turn
+stamp; an expedition's flushed sighting counts) whose two endpoints resolve to resident bands of
+**different** peoples makes each side gain the other's lines (`FoundingLines::absorb`, a set union,
+so repeats are idempotent). The faction check lives here, never in `connections.rs`. Sets are
+snapshotted before any merge, so within a turn the merge is order-independent and non-transitive
+(A–B and B–C: C gains B's lines, not A's, until next turn). Lines never decay with the tie.
+`TurnStage::Population` precedes Visibility, so a merge lifts the ceiling on the **next** turn's
+population pass. Pinned by `core_sim/tests/lineage_contact.rs`.
 
 Pinned by `core_sim/tests/breeding_ceiling.rs` (a lone band grows to and holds at `L × K`; a tied
 pair shares the union's one ceiling and a member may exceed its own lines' share; an unlinked
