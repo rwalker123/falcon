@@ -215,6 +215,7 @@ fn spawn_hunter(
                     target: LaborTarget::Hunt {
                         fauna_id: herd_id.to_string(),
                         floor: policy,
+                        move_with_herd: false,
                     },
                     workers: HUNT_WORKERS,
                     kit: None,

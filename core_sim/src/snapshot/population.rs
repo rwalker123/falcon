@@ -187,9 +187,14 @@ pub(crate) fn labor_assignment_to_state(
             // order it has. **Empty is "take everything"**, the default, never "unknown".
             state.take_species = take_species.keys().map(str::to_string).collect();
         }
-        LaborTarget::Hunt { fauna_id, floor } => {
+        LaborTarget::Hunt {
+            fauna_id,
+            floor,
+            move_with_herd,
+        } => {
             state.fauna_id = fauna_id.clone();
             state.floor = *floor;
+            state.move_with_herd = *move_with_herd;
         }
         // **THE TILE AND THE MATERIAL — BOTH HALVES OF THE WORKING'S KEY.** One tile can hold two
         // workings, so the coords alone cannot tell a felling crew from a quarrying crew standing on
@@ -269,7 +274,10 @@ fn assigned_hunt_useful_crew(
     hunt_crew_levers: &HuntCrewLevers<'_>,
     herds: &crate::fauna::HerdRegistry,
 ) -> u32 {
-    let LaborTarget::Hunt { fauna_id, floor } = target else {
+    let LaborTarget::Hunt {
+        fauna_id, floor, ..
+    } = target
+    else {
         return crate::fauna::NO_USEFUL_CREW;
     };
     let Some(herd) = herds.find(fauna_id) else {
@@ -2815,6 +2823,7 @@ mod tests {
                 target: LaborTarget::Hunt {
                     fauna_id: "test-herd".to_string(),
                     floor: 0.5,
+                    move_with_herd: false,
                 },
                 workers: 4,
                 kit: None,
@@ -3231,6 +3240,7 @@ mod tests {
                         BuildSource::Herd(fauna_id) => LaborTarget::Hunt {
                             fauna_id: fauna_id.clone(),
                             floor: 0.5,
+                            move_with_herd: false,
                         },
                         // A road carries no take row at all — its keeper is on the road, not on a
                         // labor target — so a fixture that queued one would be describing a band

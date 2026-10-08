@@ -1697,6 +1697,7 @@ mod tests {
         let target = crate::components::LaborTarget::Hunt {
             fauna_id: "boar".to_string(),
             floor: 0.0,
+            move_with_herd: false,
         };
         let walks = party.walk_home(&target);
         let porters: Vec<_> = walks.iter().filter(|w| w.workers == ONE_PORTER).collect();

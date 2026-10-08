@@ -147,6 +147,7 @@ fn hunting_band(
         target: LaborTarget::Hunt {
             fauna_id: fauna_id.to_string(),
             floor: 0.3,
+            move_with_herd: false,
         },
         workers: hunters,
         kit: None,

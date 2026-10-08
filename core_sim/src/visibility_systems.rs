@@ -1494,6 +1494,7 @@ mod tests {
             LaborTarget::Hunt {
                 fauna_id: "herd-1".to_string(),
                 floor: 0.5,
+                move_with_herd: false,
             },
             2,
             4,
@@ -1518,6 +1519,7 @@ mod tests {
             LaborTarget::Hunt {
                 fauna_id: "ghost".to_string(),
                 floor: 0.5,
+                move_with_herd: false,
             },
             2,
             4,

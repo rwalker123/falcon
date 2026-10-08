@@ -495,6 +495,7 @@ fn begin_a_ring(app: &mut App, band: Entity) {
         target: LaborTarget::Hunt {
             fauna_id: CORRALLED_HERD.to_string(),
             floor: KEEPER_FLOOR,
+            move_with_herd: false,
         },
         workers: RING_BUILDERS,
         kit: None,

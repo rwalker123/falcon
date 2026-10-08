@@ -2974,21 +2974,21 @@ fn resolve_shed_facts(
                         keeping_need,
                     })
             }
-            LaborTarget::Hunt { fauna_id, floor } => {
-                herds
-                    .find(fauna_id)
-                    .map_or(SourceShedFacts::default(), |herd| SourceShedFacts {
-                        accruing_knowledge: source_is_still_teaching(
-                            fauna::herd_rung(herd, ladder),
-                            *floor,
-                            faction,
-                            discovery,
-                            knowledge_threshold,
-                        ),
-                        improved: fauna::herd_at_risk_cost(herd) > RUNG_UNSTARTED,
-                        keeping_need,
-                    })
-            }
+            LaborTarget::Hunt {
+                fauna_id, floor, ..
+            } => herds
+                .find(fauna_id)
+                .map_or(SourceShedFacts::default(), |herd| SourceShedFacts {
+                    accruing_knowledge: source_is_still_teaching(
+                        fauna::herd_rung(herd, ladder),
+                        *floor,
+                        faction,
+                        discovery,
+                        knowledge_threshold,
+                    ),
+                    improved: fauna::herd_at_risk_cost(herd) > RUNG_UNSTARTED,
+                    keeping_need,
+                }),
             LaborTarget::Extract {
                 tile,
                 material,
@@ -7444,7 +7444,9 @@ pub fn advance_labor_allocation(
                         ),
                     };
                 }
-                LaborTarget::Hunt { fauna_id, floor } => {
+                LaborTarget::Hunt {
+                    fauna_id, floor, ..
+                } => {
                     if registry.find(fauna_id).is_none() {
                         // Herd despawned (extinction / another hunter) → lapse.
                         lapsed.push(idx);
@@ -14086,6 +14088,7 @@ mod labor_yield_tests {
                     target: LaborTarget::Hunt {
                         fauna_id: HERD_ID.to_string(),
                         floor: 0.5,
+                        move_with_herd: false,
                     },
                     workers: WORKERS,
                     kit: None,
@@ -14159,6 +14162,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.0,
+                    move_with_herd: false,
                 },
                 workers: WORKERS,
                 kit: None,
@@ -14201,6 +14205,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
+                    move_with_herd: false,
                 },
                 workers: WORKERS,
                 kit: None,
@@ -14377,6 +14382,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
+                    move_with_herd: false,
                 },
                 workers: assigned,
                 kit: None,
@@ -14593,6 +14599,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: PEN_FLOOR,
+                    move_with_herd: false,
                 },
                 workers: WORKERS,
                 // The keeper carries the hunt job's own kit, which is what a pen is collected on
@@ -14999,6 +15006,7 @@ mod labor_yield_tests {
                     target: LaborTarget::Hunt {
                         fauna_id: HERD_ID.to_string(),
                         floor: crate::fauna::MSY_BIOMASS_FRACTION,
+                        move_with_herd: false,
                     },
                     workers: WORKERS,
                     kit: None,
@@ -15114,6 +15122,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
+                    move_with_herd: false,
                 },
                 workers,
                 kit: None,
@@ -15137,6 +15146,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor,
+                    move_with_herd: false,
                 },
                 workers: WORKERS,
                 kit: None,
@@ -15370,6 +15380,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
+                    move_with_herd: false,
                 },
                 workers: assigned,
                 kit: None,
@@ -15681,6 +15692,7 @@ mod labor_yield_tests {
                                 target: LaborTarget::Hunt {
                                     fauna_id: HERD_ID.to_string(),
                                     floor: policy,
+                                    move_with_herd: false,
                                 },
                                 workers,
                                 kit: None,
@@ -15912,6 +15924,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
+                    move_with_herd: false,
                 },
                 // **One hunter, and the hands its pen's keeping takes first** (§2.2).
                 workers: SHORT_HANDED_HUNTERS + pen_keepers,
@@ -16622,6 +16635,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
+                    move_with_herd: false,
                 },
                 workers: WORKERS,
                 kit: None,
@@ -16660,6 +16674,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
+                    move_with_herd: false,
                 },
                 workers: WORKERS,
                 kit: None,
@@ -16734,6 +16749,7 @@ mod labor_yield_tests {
                     target: LaborTarget::Hunt {
                         fauna_id: HERD_ID.to_string(),
                         floor: 0.5,
+                        move_with_herd: false,
                     },
                     workers: SOLE_HUNTER + keepers,
                     kit: None,
@@ -17214,6 +17230,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: BUILDER_FLOOR,
+                    move_with_herd: false,
                 },
                 workers: WORKERS + keepers,
                 kit: None,
@@ -17277,7 +17294,10 @@ mod labor_yield_tests {
             None,
             "completion retires the entry"
         );
-        let LaborTarget::Hunt { fauna_id, floor } = &completed.target else {
+        let LaborTarget::Hunt {
+            fauna_id, floor, ..
+        } = &completed.target
+        else {
             panic!("completion must not change the target's KIND: {completed:?}");
         };
         assert_eq!(
@@ -17387,6 +17407,7 @@ mod labor_yield_tests {
                     target: LaborTarget::Hunt {
                         fauna_id: HERD_ID.to_string(),
                         floor: BUILDER_FLOOR,
+                        move_with_herd: false,
                     },
                     workers: WORKERS,
                     kit: Some(take_kit),
@@ -17624,6 +17645,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: BUILDER_FLOOR,
+                    move_with_herd: false,
                 },
                 workers: WORKERS,
                 kit: Some(equipment.default_kit(crate::equipment_config::KitJob::Hunt)),
@@ -17808,6 +17830,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: BUILDER_FLOOR,
+                    move_with_herd: false,
                 },
                 workers: WORKERS,
                 kit: None,
@@ -18834,6 +18857,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: BUILDER_FLOOR,
+                    move_with_herd: false,
                 },
                 workers: WORKERS,
                 kit: None,
@@ -18892,7 +18916,10 @@ mod labor_yield_tests {
             None,
             "completion retires the entry"
         );
-        let LaborTarget::Hunt { fauna_id, floor } = &completed.target else {
+        let LaborTarget::Hunt {
+            fauna_id, floor, ..
+        } = &completed.target
+        else {
             panic!("completion must not change the target's KIND: {completed:?}");
         };
         assert_eq!(
@@ -18950,6 +18977,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
+                    move_with_herd: false,
                 },
                 workers: WORKERS,
                 kit: None,
@@ -18982,6 +19010,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
+                    move_with_herd: false,
                 },
                 workers: WORKERS,
                 kit: None,
@@ -19027,6 +19056,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: policy,
+                    move_with_herd: false,
                 },
                 workers: WORKERS,
                 kit: None,

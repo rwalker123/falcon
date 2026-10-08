@@ -67,8 +67,10 @@ const MUST_BE_ORDERED: [(&str, &str); 3] = [
 /// as independent while their auto-inserted `apply_deferred` sync point depends entirely on the
 /// edge between them. Bevy will happily run them in either order and nothing will complain.
 ///
-/// Today all three entries sit inside the fully-serial `Population` chain, so their sync points are
-/// pinned by edges that exist for other reasons. `advance_party_defection` despawns a party that
+/// Today all four entries sit inside the fully-serial `Population` chain, so their sync points are
+/// pinned by edges that exist for other reasons. `follow_hunted_herds` only inserts or removes a
+/// band's `BandTravel`, which the very next system (`advance_band_movement`) reads; no other system
+/// reads it between the two. `advance_party_defection` despawns a party that
 /// joined another people; the only systems after it in the turn are `sedentarization_tick`
 /// (`With<ResidentBand>`, so never a party) and the later stages, which the chain's sync point
 /// already orders after the despawn. A third system taking `Commands` is not
@@ -83,10 +85,11 @@ const MUST_BE_ORDERED: [(&str, &str); 3] = [
 /// `Startup` is deliberately out of scope, both here and for the ambiguity gate: it is `.chain()`-ed
 /// wholesale, which is why `spawn_initial_world`, `reconcile_food_modules` and
 /// `place_wondrous_sites` take `Commands` without appearing below.
-const COMMANDS_SYSTEMS: [&str; 3] = [
+const COMMANDS_SYSTEMS: [&str; 4] = [
     "advance_band_movement",
     "advance_expeditions",
     "advance_party_defection",
+    "follow_hunted_herds",
 ];
 
 /// Reachability over the schedule's dependency graph, flattened the way bevy flattens it.

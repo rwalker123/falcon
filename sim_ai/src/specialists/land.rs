@@ -209,6 +209,7 @@ impl Land {
             floor: None,
             kit_id: None,
             take_species: Vec::new(),
+            move_with_herd: false,
         }];
         Some(Proposal {
             cost: Cost::claimed(self.floors.scout_workers, band.band_id, &commands),

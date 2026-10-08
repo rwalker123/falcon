@@ -162,6 +162,7 @@ fn hunt_assignment_takes_biomass_and_yields() {
                     target: LaborTarget::Hunt {
                         fauna_id: herd_id.clone(),
                         floor: 0.0,
+                        move_with_herd: false,
                     },
                     workers: HUNT_WORKERS,
                     kit: None,

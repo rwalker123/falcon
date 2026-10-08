@@ -271,6 +271,7 @@ fn spawn_hunting_band(
                     target: LaborTarget::Hunt {
                         fauna_id: fauna_id.to_string(),
                         floor: DEFAULT_ESCAPEMENT_FLOOR,
+                        move_with_herd: false,
                     },
                     workers: CREW,
                     kit,
@@ -1447,6 +1448,7 @@ fn every_labor_row_publishes_the_kit_it_is_priced_at() {
                         target: LaborTarget::Hunt {
                             fauna_id: id.clone(),
                             floor: DEFAULT_ESCAPEMENT_FLOOR,
+                            move_with_herd: false,
                         },
                         workers: CREW,
                         // Named nothing — the wire must still say which kit it is working under.
@@ -2361,6 +2363,7 @@ fn spawn_band_hunting(
             target: LaborTarget::Hunt {
                 fauna_id: (*herd).to_string(),
                 floor: DEFAULT_ESCAPEMENT_FLOOR,
+                move_with_herd: false,
             },
             workers: ROW_CREW,
             kit: EquipmentConfig::builtin().kit(kit_id),

@@ -476,13 +476,14 @@ pub use systems::{
     advance_labor_allocation, advance_party_defection, advance_population_migration,
     advance_predator_raids, advance_tick, announce_bench_material_short, bench_material_rate,
     bench_tiers, bill_and_stock_roads, bring_the_dropped_party_home, deliver_bench_output,
-    denial_forecast, expedition_returned_event, fold_party_into_band, grow_faction_roster,
-    hunt_per_worker_provisions, hunt_report_event, hunt_take, output_multiplier,
-    party_owes_a_report, prospective_keep_hands, publish_turn_transfers, settle_bands_roadwork,
-    settle_scarce_tools, simulate_population, simulate_power, source_has_a_meter_at_risk,
-    split_band_from_parent, split_refusals, BenchTiers, DenialForecast, DenialOutcome, HeartLedger,
-    HeartReading, HuntOutcome, PartyGear, PartySightings, PoolToolPlan, PowerSimParams, RaidRoll,
-    SplitBand, SplitRefusal, SplitRefusals, ToolClaimStage, TradeDiffusionEvent,
+    denial_forecast, expedition_returned_event, fold_party_into_band, follow_hunted_herds,
+    grow_faction_roster, hunt_per_worker_provisions, hunt_report_event, hunt_take,
+    output_multiplier, party_owes_a_report, prospective_keep_hands, publish_turn_transfers,
+    settle_bands_roadwork, settle_scarce_tools, simulate_population, simulate_power,
+    source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers, DenialForecast,
+    DenialOutcome, HeartLedger, HeartReading, HuntOutcome, PartyGear, PartySightings, PoolToolPlan,
+    PowerSimParams, RaidRoll, SplitBand, SplitRefusal, SplitRefusals, ToolClaimStage,
+    TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,
@@ -1250,6 +1251,11 @@ pub fn build_headless_app() -> App {
                         .run_if(starting_loadout::on_the_world_build_pass),
                     // Move first so the band's `current_tile` is current before labor reads its
                     // in-range sources, then resolve per-worker Forage/Hunt/Scout yields.
+                    //
+                    // **Migration mode re-aims the band at its herd first** — the herds moved this
+                    // turn in Logistics, so the band steps right after its herd and a band camped in
+                    // it never falls a hex behind (`follow_hunted_herds`).
+                    systems::follow_hunted_herds,
                     systems::advance_band_movement,
                     // Expedition per-turn logic (observe into the pending-reveal buffer, comm-range
                     // flush-to-Discovered, return-retarget, arrival/fold-back). Runs right after

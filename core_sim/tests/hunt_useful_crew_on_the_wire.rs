@@ -174,6 +174,7 @@ fn world_hunting_at(
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor,
+                    move_with_herd: false,
                 },
                 workers: CREW_ON_THE_ROW,
                 // No kit named — the row resolves to the hunt job's default, which is the kit the
@@ -1362,6 +1363,7 @@ fn seed_the_row(app: &mut App, band: Entity, keepers: u32, wear: &BandEquipment,
     let target = LaborTarget::Hunt {
         fauna_id: HERD_ID.to_string(),
         floor,
+        move_with_herd: false,
     };
     app.world
         .get_mut::<LaborAllocation>(band)

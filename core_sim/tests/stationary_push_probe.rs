@@ -411,6 +411,7 @@ fn assign(app: &mut bevy::app::App, band: Entity, key: &SourceKey, workers: u32)
         SourceKey::Hunt(id) => LaborTarget::Hunt {
             fauna_id: id.clone(),
             floor: DEFAULT_ESCAPEMENT_FLOOR,
+            move_with_herd: false,
         },
     };
     // `default_kit_for_target`: the herd's own default on a hunt, the job's default otherwise.

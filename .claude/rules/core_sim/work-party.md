@@ -9,6 +9,8 @@ paths:
   - "core_sim/src/forecast_query.rs"
   - "core_sim/tests/labor_allocation.rs"
   - "core_sim/tests/work_party_caravan.rs"
+  - "core_sim/src/systems/expeditions.rs"
+  - "core_sim/tests/migration_mode.rs"
 ---
 
 # The work party — hunt, forage and extract are one model, and distance is a caravan
@@ -610,6 +612,52 @@ out-of-reach row on the same `continue` every keeping draw and material spend sa
 lapses for distance now, so the only thing left that makes an arm skip is a herd the registry no
 longer carries. The type survives rather than collapsing into a bare `registry.find`, because *"will
 the arm reach this row"* is the question the settlements must go on asking.
+
+## Migration mode — the band's camp moves with a migratory herd (#797)
+
+Design: `docs/plan_roaming_bands.md` §Migration mode. This section is the as-built rationale.
+
+**It is a box on the hunt row, not an order.** `LaborTarget::Hunt::move_with_herd` (wire:
+`AssignLaborCommand.move_with_herd`, text token `follow`, snapshot `LaborAssignment.moveWithHerd`).
+`same_source` keys a hunt row on the herd id alone, so the flag is a mutable property of the row, as
+the floor is: re-sending the row without `follow` turns it off.
+
+**`follow_hunted_herds` issues the movement the band already has.** It lives beside
+`advance_band_movement` (`systems/expeditions.rs`) and is registered in the Population chain
+**immediately before it**. The herds have already moved this turn (`advance_herds`, Logistics), so
+the band re-aims at where its herd now stands and steps right after it: a band camped in the herd
+stays on the herd's tile through loiter and migration, and every kill is a camp kill. No work-party,
+porter or kill code changed — a band that turns the mode on while far away is simply an ordinary far
+hunt until it catches up. A resident band only (never a detached party), and only while the row has
+workers (`LaborAllocation::followed_herd`). If the band already stands on the herd's tile any
+`BandTravel` is removed; the herd gone from the registry does nothing.
+
+### ⛔ Re-aiming keeps `departed`
+
+A band that already carries a `BandTravel` has its `target` updated **in place**. A fresh
+`BandTravel::to()` is `departed: false`, and `advance_band_movement` re-runs the long-move carry shed
+(`.claude/rules/core_sim/band-carry.md`) on the first step of a not-yet-departed order that starts
+beyond `carry::move_ferry_reach_tiles` — so replacing the order every turn would shed the packs again
+on every step of a far catch-up. Only a band with no order gets a fresh one, and a far start sheds
+once, as any long move does. `migration_mode::a_far_start_…` refills the larder each turn and counts
+the `left_behind` lines; swapping in a fresh `BandTravel::to()` makes it fail on turn 2.
+
+### Two rules clear the flag
+
+- **One herd at a time.** `handle_assign_labor` setting `move_with_herd` on a hunt row clears it on
+  the band's other hunt rows (`LaborAllocation::clear_move_with_herd_except`).
+- **A `move_band` order ends it.** `handle_move_band` clears it on every hunt row of that band;
+  otherwise next turn's follow would pull the band back to the herd it was told to leave.
+
+### Only a migratory herd can be followed
+
+`validate_labor_policy`'s hunt arm (which runs only when workers > 0, so an unassign is never
+refused) rejects the flag unless the herd's `size_class` is `SizeClass::Migratory`, with a reason on
+the hunt channel. A resident herd never leaves its few tiles, so there is nothing to relocate for.
+
+Tests: `tests/migration_mode.rs` (loiter and migrate camps, the far start, the wire) and, for the
+command boundary, `bin/server.rs` `migration_mode_*`; the `follow` token round-trips in
+`sim_runtime::command_text`.
 
 ## The tests that carry the arc
 
