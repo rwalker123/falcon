@@ -515,6 +515,17 @@ func _drive_assign_labor_kits() -> void:
 		SourceForecast.DEFAULT_HARVEST_FLOOR, "", SourceForecast.IMPROVEMENT_NONE,
 		BandFx.KIT_ID_NONE)
 	await _settle()
+	# **MIGRATION MODE — the bare `follow` token, rendered LAST (after `kit <id>`)** on the hunt line
+	# (`docs/plan_roaming_bands.md`). Driven through the real emitter so the line the real parser
+	# reads is the one the box sends, and the position is asserted on the text: the parser lifts
+	# `follow` out of the tail, but an emitter that put it before `kit` or before the worker count
+	# would put a bare word where a positional is read.
+	_hud._emit_assign_labor(band, SourceForecast.LABOR_KIND_HUNT, PARTY_WORKERS,
+		int(band.get("current_x", 0)), int(band.get("current_y", 0)), NEAR_HERD_ID,
+		SourceForecast.DEFAULT_HARVEST_FLOOR, "", SourceForecast.IMPROVEMENT_NONE,
+		BandFx.KIT_ID_NONE, PackedStringArray(), true)
+	await _settle()
+	_assert_follow_token_is_last(band)
 	_hud._emit_assign_labor(band, SourceForecast.LABOR_KIND_FORAGE, PARTY_WORKERS,
 		TARGET_X, TARGET_Y, "", SourceForecast.DEFAULT_HARVEST_FLOOR, "",
 		SourceForecast.IMPROVEMENT_NONE, BandFx.KIT_ID_NONE)
@@ -1198,7 +1209,7 @@ const ASSIGN_LABOR_UNKNOWN_ROLE := "stonemason"
 ## a tile, a material AND an optional floor, where every role in that list takes a bare worker count. It is
 ## driven here for the reason the whole sweep exists: a grammar the server's dispatch takes and
 ## `sim_runtime::command_text` does not is refused INSIDE the client, with nothing failing anywhere.
-const ASSIGN_LABOR_GRAMMAR_DRIVES := 6
+const ASSIGN_LABOR_GRAMMAR_DRIVES := 7
 
 ## …and the BARE `builders` line beside its tailed one — the exact line the pool's `+` emits — plus the
 ## FAR HERD's commit (`_drive_far_herd_assign_labor`), the hunt line a sheet past the apron sends.
@@ -1206,7 +1217,7 @@ const ASSIGN_LABOR_BARE_DRIVES := 2
 
 ## What `EXPECTED_KINDS` must say for `assign_labor`. Spelled here because a `const` initializer
 ## cannot call `Array.size()`, and re-derived at runtime so the two cannot drift.
-const ASSIGN_LABOR_EXPECTED := 12
+const ASSIGN_LABOR_EXPECTED := 13
 
 ## **THE LIST ABOVE IS THE WHOLE OF WHAT THE CLIENT CAN SAY, ASSERTED RATHER THAN TRUSTED.**
 ##
@@ -1221,6 +1232,26 @@ const ASSIGN_LABOR_EXPECTED := 12
 ## it CAN do is fail the moment such a role is dropped from here, which is the direction the defect
 ## travelled — `builders` was in the builder and in the sim, and only the text grammar and this guard
 ## did not know it.
+func _assert_follow_token_is_last(band: Dictionary) -> void:
+	var base := {
+		"faction": HudConst.PLAYER_FACTION_ID,
+		"band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
+		"kind": SourceForecast.LABOR_KIND_HUNT, "workers": PARTY_WORKERS,
+		"herd_id": NEAR_HERD_ID, "floor": SourceForecast.DEFAULT_HARVEST_FLOOR,
+		"kit_id": BandFx.KIT_ID_NONE, "default_kit_id": "",
+	}
+	var plain := String(MAIN_SCRIPT.format_assign_labor(base).get("line", ""))
+	var followed_payload := base.duplicate()
+	followed_payload["move_with_herd"] = true
+	var followed := String(MAIN_SCRIPT.format_assign_labor(followed_payload).get("line", ""))
+	if plain == "" or plain.ends_with(" follow"):
+		_fail("a hunt line without the box ticked ended `%s` — `follow` must be absent" % plain)
+	if followed != plain + " follow":
+		_fail("a followed hunt line read `%s`, not `%s follow` — the token rides LAST, after `kit <id>`"
+			% [followed, plain])
+	if not plain.contains(" kit "):
+		_fail("the follow-token position check needs a kit token to sit after; got `%s`" % plain)
+
 func _assert_every_role_is_emittable() -> void:
 	var band := _band_fixture()
 	var missing: Array[String] = []

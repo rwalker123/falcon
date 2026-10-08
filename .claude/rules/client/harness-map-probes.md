@@ -1479,3 +1479,13 @@ assertion for an unrelated reason.
 overlay still measuring `room ÷ perWorkerBiomass` would not flag it. A premise asserts exactly that
 against a local bare quotient (`_worn_bare_cap`), beside the existing *prices a real ceiling* premise,
 and the fully-staffed twin on the published cap still carries nothing.
+
+## `map_follow_herd` — migration mode's two marks (`docs/plan_roaming_bands.md`, #797)
+
+One frame and three claims in `map_preview`, after `map_travel_band`: a player band whose hunt row has
+`move_with_herd` beside a mammoth herd on its tile (next waypoint one hex east), and a second band
+working a herd that is NOT followed as the control. The frame shows the 👣 disc at the token's
+upper-right, the dashed ring round the herd and its orange arrow drawn with nothing hovered or selected.
+The claims are `MapView.unit_follows_herd` true for the first band and false for the second, the
+followed set equal to exactly the one herd, and — on the same snapshot with the flag off — an empty set
+and no badge, the pair without which "the badge draws" passes on a renderer that draws it for everyone.

@@ -394,3 +394,24 @@ glyph.)
 | Script | Purpose |
 |--------|---------|
 | `ui/ExpeditionSprites.gd` | Bundled art for the expedition map marker, keyed by mission id (`HudExpeditionVocab.EXPEDITION_MISSION_*`). `for_mission(mission) -> Texture2D`, `null` for hunt or an unknown mission, which is the renderer's cue to draw the glyph. The family's row is in `sprites-widgets.md` |
+
+## MIGRATION MODE'S TWO MARKS — a 👣 on the band and a dashed ring on the herd (`docs/plan_roaming_bands.md`, #797)
+
+Both are STATES of the confirmed hunt row's `move_with_herd` flag, read off the `labor_assignments`
+each unit marker already carries; neither is edge-gated, and the band's own next step needs nothing
+new (its travel line covers it).
+
+- **The badge** (`BandMarkerRenderer._draw_band_follow_badge`): drawn on the active band when
+  `MapView.unit_follows_herd` — ANY hunt row with the flag. It sits at the token's upper-right, on the
+  food dot's diagonal but PAST it (`BAND_FOLLOW_BADGE_OFFSET_FACTOR`), and is gated on
+  `ICON_MIN_DETAIL_RADIUS` like the nameplate. **The disc is LIGHT (`HudStyle.INK`) with a
+  `PANEL_SOLID` rim, and that was measured**: the footprints are a dark colour-font glyph that ignores
+  the tint, so on a `PANEL_SOLID` disc they vanished on the first render.
+- **The ring and the arrow** (`SecondaryMarkerRenderer`): `MapView.followed_herd_ids()` — player bands
+  only — is pushed each frame (`set_followed_herds`, the `set_hidden_source_state` pattern). A followed
+  herd gets a thin dashed `SIGNAL` ring (`_draw_follow_ring`, `HERD_FOLLOW_RING_*`, drawn UNDER the
+  glyph like the distress ring) and its orange migration arrow is drawn ALWAYS while followed, where
+  it was drawn only on the hovered or selected herd. This supersedes the older "herds get no per-marker
+  ring" note: that rule was about a selection ring diverging from the hex outline, and this ring is a
+  standing state, not a selection.
+- Frame and claims: `map_follow_herd` (`harness-map-probes.md`).

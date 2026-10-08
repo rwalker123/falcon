@@ -3791,3 +3791,18 @@ well's send `order 1`. Every fixture bench now carries `worked` and every order 
 `blocked_severity`. **`EXPECTED_CHECKPOINTS` moved 218 → 228, RE-MEASURED** the same way (the run read
 back `reached 228`); the PR #784 review's pausing-raise pair (a WAITING order's ↑ claims no pause) took it to 230 and the run to 2664 `PASS` / 0 `FAIL` / 483 frames.
 >>>>>>> origin/main
+
+## `chapters/migration_mode.gd` — the Move camp box (`docs/plan_roaming_bands.md`, #797)
+
+Appended LAST in `CHAPTERS`, so no existing frame moves. Four frames — `herd_follow_unchecked`,
+`herd_follow_checked`, `herd_follow_resident`, `herd_follow_reopened` — and `EXPECTED_CHECKPOINTS` 17
+(frames count). The band stands 8 tiles from the herd with an apron of 2, so the WORK PARTY section is
+mounted and the box can be measured ABOVE it on the rendered layout (`global_rect` y), not assumed from
+build order. The claims are a set: the box exists on a migratory herd only (the resident frame is its
+control), worded exactly, unchecked by default, with its one dim line; a ticked commit sends ONE hunt
+line ending in the bare `follow` (`MAIN_SCRIPT.FOLLOW_TOKEN`) and an unticked one sends none; reopening a
+followed row seeds the box checked and the herd card's worked line reads `moving with the herd`. The
+commit line is captured off the real `assign_labor_requested` signal, and **each state clears the
+pending overlay first**: a commit leaves its optimistic row behind and the sheet seeds from the
+pending-aware map, so the previous state's `follow` would seed the next. The Work-tab row's frames and
+claims are `harness-band-panel.md`'s.

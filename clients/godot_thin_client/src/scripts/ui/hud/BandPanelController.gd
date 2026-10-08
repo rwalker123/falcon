@@ -722,9 +722,10 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
         floor: float, species: String = "",
         improvement: String = SourceForecast.IMPROVEMENT_NONE,
         kit_id: String = KitRoster.NO_KIT_ID,
-        take_species: PackedStringArray = PackedStringArray()) -> void:
+        take_species: PackedStringArray = PackedStringArray(),
+        move_with_herd: bool = false) -> void:
     _emit_assign_labor_fn.call(band, kind, workers, x, y, herd_id, floor, species, improvement,
-        kit_id, take_species)
+        kit_id, take_species, move_with_herd)
 
 ## A friendlier label for a herd id. Retained on HudLayer, which also feeds the targeting banner and
 ## the command feed from it.
@@ -5480,6 +5481,8 @@ func _emit_ready_declaration(band: Dictionary, model: Dictionary, rung: String) 
         # the merged row, so a declaration that omitted it would blank the kit of a row nobody
         # re-kitted — and the work inspector's take picker reads exactly that field.
         "kit_id": String(model.get("kit_id", KitRoster.NO_KIT_ID)),
+        # …and its migration-mode flag, restated for the same reason: the overlay entry replaces the row.
+        "move_with_herd": bool(model.get("move_with_herd", false)),
         "pending_entity": int(band.get("entity", -1)),
     })
 
@@ -5983,7 +5986,7 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
         HudWorkVocab.SITE_CREW_LINE_META, _crew_split_for_row(int(model.get("workers", 0)),
             float(model.get("keep_hands", SourceForecast.NO_UPKEEP_DEMAND)),
             String(model.get("kind", "")))))
-    col.add_child(_build_work_row_accounts(model))
+    col.add_child(_build_work_row_accounts(band, model))
     # **TWO PRIORITY MARKS, ON THEIR OWN LINE UNDER THE ROW** (`docs/plan_site_crews.md` §2.4).
     # `Priority` ranks the site crew's claim on scarce tools and goods and is on every row; `Build`
     # ranks a QUEUED build's claim and is on a row only while its site has a build queued. A line of
@@ -6023,7 +6026,7 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
 ## PASS shows the tooltip AND lets the press bubble to the row's `gui_input`. It does shadow the ROW's
 ## own tooltip over this line, which is the accepted cost: line one is the row's identity and most of
 ## its height, and a hover on the accounts that spells the accounts out is coherent on its own terms.
-func _build_work_row_accounts(model: Dictionary) -> MarginContainer:
+func _build_work_row_accounts(band: Dictionary, model: Dictionary) -> MarginContainer:
     var margin := MarginContainer.new()
     margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -6057,10 +6060,44 @@ func _build_work_row_accounts(model: Dictionary) -> MarginContainer:
     # the board reserved for it.
     column.add_theme_constant_override("separation", HudWorkVocab.TWO_LINE_STEPPER_SEPARATION)
     column.add_child(line_two)
+    if bool(model.get("follow_offered", false)):
+        column.add_child(_build_follow_toggle(band, model))
     for line in _work_row_party_lines_text(model):
         column.add_child(_build_work_row_party_line(String(line)))
     margin.add_child(column)
     return margin
+
+## Where the band stands against the herd it follows, as the one status line — `""` when either tile
+## is unknown. Wrap-aware through the same hex distance the rest of the board uses.
+func _follow_status_line(band: Dictionary, herd: Dictionary) -> String:
+    var band_tile := SourceForecast.band_tile(band)
+    var herd_x := int(herd.get("x", -1))
+    var herd_y := int(herd.get("y", -1))
+    var known := band_tile.x >= 0 and band_tile.y >= 0 and herd_x >= 0 and herd_y >= 0
+    var hexes := SourceForecast.hex_distance_wrapped(band_tile.x, band_tile.y, herd_x, herd_y,
+        _band_labor.grid_width(), _band_labor.wrap_horizontal()) if known else 0
+    return HudWorkVocab.follow_status_line(known, known and hexes == 0,
+        int(herd.get("next_x", -1)), int(herd.get("next_y", -1)), hexes)
+
+## The row's migration-mode toggle: pressed when the flag is on, and a press re-sends the row's own
+## `assign_labor` (same herd, floor, crew, kit) with the flag flipped, through the same emitter as the
+## sheet so the pending row carries it too.
+func _build_follow_toggle(band: Dictionary, model: Dictionary) -> Button:
+    var on := bool(model.get("move_with_herd", false))
+    var btn := Button.new()
+    btn.text = HudWorkVocab.WORK_ROW_FOLLOW_TOGGLE
+    btn.toggle_mode = true
+    btn.button_pressed = on
+    btn.focus_mode = Control.FOCUS_NONE
+    btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+    btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+    HudStyle.apply_pill_toggle(btn, on)
+    HudWidgets.compact(btn, HudWorkVocab.ALLOC_SECTION_FONT_SIZE, HudWorkVocab.WORK_PAGER_PADDING_V)
+    btn.set_meta(HudWorkVocab.WORK_ROW_FOLLOW_TOGGLE_META, on)
+    btn.pressed.connect(func() -> void:
+        _emit_work_assign(band, model, int(model.get("workers", 0)), RESTATE_STANDING_FLOOR,
+            RESTATE_STANDING_SPECIES, RESTATE_STANDING_KIT, 0 if on else 1))
+    return btn
 
 ## One line of a row's party block, in the quiet ink of the accounts above it. **None of its lines is
 ## a warning**: the home band feeds its party through its ordinary consumption, so a posting has no
@@ -6091,7 +6128,8 @@ func _build_work_row_party_line(text: String) -> Label:
 ## and the drawn block all come through this one count, so a line added to the block is paid for
 ## without a second edit anywhere.
 func _work_row_party_lines(model: Dictionary) -> int:
-    return _work_row_party_lines_text(model).size()
+    # The migration-mode toggle is one more compact line at the head of the column.
+    return _work_row_party_lines_text(model).size() + (1 if bool(model.get("follow_offered", false)) else 0)
 
 ## **THE BLOCK ITSELF, AS TEXT** (`docs/plan_civilization_steps.md` §One work party) — `[]` on the
 ## ordinary local row, which is what makes that row identical to the one that shipped before any of
@@ -6114,7 +6152,12 @@ func _work_row_party_lines(model: Dictionary) -> int:
 ## player just took to 0. It is counted here so the row's height and the board's reservation pay for
 ## it with the party lines.
 func _work_row_party_lines_text(model: Dictionary) -> Array[String]:
-    var lines := _work_row_posted_party_lines(model)
+    var lines: Array[String] = []
+    # MIGRATION MODE's status line leads the block; the work-party lines run beneath it unchanged.
+    var follow_line := String(model.get("follow_line", ""))
+    if follow_line != "":
+        lines.append(follow_line)
+    lines.append_array(_work_row_posted_party_lines(model))
     var homeward := String(model.get("homeward_line", ""))
     if homeward != "":
         lines.append(homeward)
@@ -7280,6 +7323,13 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # answer. `SourceForecast.party_readout` is the only place the wire's party keys are read and
         # the only place *"is there a party"* is decided.
         var party := SourceForecast.party_readout(m)
+        # **MIGRATION MODE ON A HUNT ROW** — whether the row offers the toggle, whether it is on, and
+        # the one status line saying where the band stands. Read once here, with the live herd in hand,
+        # so the row's block, its height and the board's reservation all ask one answer.
+        var follow_on := kind == SourceForecast.LABOR_KIND_HUNT and bool(m.get("move_with_herd", false))
+        var follow_offered := kind == SourceForecast.LABOR_KIND_HUNT and (follow_on \
+            or String(live_herd.get("size_class", "")) == HudComposeVocab.SIZE_CLASS_MIGRATORY)
+        var follow_line := _follow_status_line(band, live_herd) if follow_on else ""
         models.append({
             "key": String(key), "kind": kind, "icon": icon, "icon_texture": icon_texture,
             "label": label,
@@ -7429,6 +7479,8 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # readout in one key: `{present: false}` on the ordinary local row, whose block is not
             # drawn at all and which renders exactly as it did before the work party existed.
             "party": party,
+            "follow_offered": follow_offered, "move_with_herd": follow_on,
+            "follow_line": follow_line,
             # …and the one line saying who is walking home from this source and when they are free
             # (`HudWorkVocab.row_homeward_line`), `""` while nobody is. The party block closes on it.
             "homeward_line": HudWorkVocab.row_homeward_line(m),
@@ -7739,10 +7791,16 @@ const RESTATE_STANDING_SPECIES := "￿"
 ## thing that can be got wrong.
 const RESTATE_STANDING_KIT := RESTATE_STANDING_SPECIES
 
+## **AND MIGRATION MODE RIDES EVERY CREW EDIT TOO.** An omitted `follow` token means off, so a `+`/`−`
+## that dropped it would end the band's following. `move_with_herd` is a tri-state int (this sentinel
+## = restate the row's own flag, else 0/1 = state it) because a bool cannot say "leave it alone".
+const RESTATE_STANDING_FOLLOW := -1
+
 func _emit_work_assign(band: Dictionary, model: Dictionary, workers: int,
         floor: float = RESTATE_STANDING_FLOOR,
         species: String = RESTATE_STANDING_SPECIES,
-        kit_id: String = RESTATE_STANDING_KIT) -> void:
+        kit_id: String = RESTATE_STANDING_KIT,
+        move_with_herd: int = RESTATE_STANDING_FOLLOW) -> void:
     var kind := String(model.get("kind", ""))
     var standing := float(model.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))
     _emit_assign_labor(band, kind, workers, int(model.get("x", -1)), int(model.get("y", -1)),
@@ -7763,7 +7821,9 @@ func _emit_work_assign(band: Dictionary, model: Dictionary, workers: int,
         # to one plant. Restated off the band's OWN row rather than re-derived — the work model
         # carries no take selection, and a second derivation could disagree with the board being
         # clicked on.
-        _band_labor.take_species_for_forage(band, int(model.get("x", -1)), int(model.get("y", -1))))
+        _band_labor.take_species_for_forage(band, int(model.get("x", -1)), int(model.get("y", -1))),
+        bool(model.get("move_with_herd", false)) if move_with_herd == RESTATE_STANDING_FOLLOW \
+            else move_with_herd != 0)
 
 ## Jump the map to a worked source — a fixed forage tile, or a herd at its LIVE (migrated) tile.
 func _focus_work_source(model: Dictionary) -> void:

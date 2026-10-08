@@ -1317,6 +1317,14 @@ static func _kit_token(payload: Dictionary) -> String:
         return ""
     return " kit %s" % kit_id
 
+## **MIGRATION MODE — the bare `follow` token, rendered LAST on a hunt line (after `kit <id>`).**
+## The band's camp moves with a migratory herd while the row stands. A statement, not a delta: an
+## omitted token means off, so every restate of a followed row must carry it. The server refuses it on
+## a herd that stays where it is.
+const FOLLOW_TOKEN := " follow"
+static func _follow_token(payload: Dictionary) -> String:
+    return FOLLOW_TOKEN if bool(payload.get("move_with_herd", false)) else ""
+
 ## **THE SELECTIVE-GATHER TOKEN — `take:emmer,flax`, a PREFIX rather than a third positional.** The
 ## forage tail's two optional tokens are already told apart by shape (a floor parses as a float, a
 ## species key never does) and a third would be indistinguishable from the commit species, so the
@@ -1383,9 +1391,9 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
             if herd_id == "":
                 return {}
             return {
-                "line": "assign_labor %d %d hunt %s %s %d%s" % [
+                "line": "assign_labor %d %d hunt %s %s %d%s%s" % [
                     faction, band_id, herd_id, _format_floor(payload), workers,
-                    _kit_token(payload)],
+                    _kit_token(payload), _follow_token(payload)],
                 "message": "Assign %d hunter%s to %s, leaving %s standing." % [
                     workers, "" if workers == 1 else "s", herd_id, _floor_percent_text(payload)],
             }

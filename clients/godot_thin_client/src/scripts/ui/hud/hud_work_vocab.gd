@@ -1358,6 +1358,40 @@ const WORK_ROW_PARTY_TURNS_SINGULAR := 1
 ## collected in draw order.
 const WORK_ROW_PARTY_META := &"work_row_party"
 
+## **MIGRATION MODE ON A HUNT ROW** (`docs/plan_roaming_bands.md` §Migration mode is a choice on the
+## hunt). A migratory herd's row carries the same toggle the Assign hunters sheet's box sets, and —
+## while it is on — ONE status line above the row's work-party lines saying where the band stands.
+## Cancelling the hunt is the row's existing unassign; there is no control to end following on its own.
+const WORK_ROW_FOLLOW_TOGGLE := "👣 Move camp with the herd"
+const WORK_ROW_FOLLOW_MOVING_FORMAT := "Moving with it · next (%d, %d)"
+const WORK_ROW_FOLLOW_CAMPED := "Camped in the herd. Kills land in camp."
+const WORK_ROW_FOLLOW_BEHIND_FORMAT := "Catching up · %d hexes behind"
+const WORK_ROW_FOLLOW_BEHIND_ONE := "Catching up · 1 hex behind"
+
+## One hex behind is the singular form; `FOLLOW_ONE_HEX` names the 1 so the fork is not a bare literal.
+const FOLLOW_ONE_HEX := 1
+
+## The stable handle on the toggle button (valued with its pressed state), so a harness finds it by
+## identity rather than by its face. The status line is read off `WORK_ROW_PARTY_META`, which carries
+## every line of the block's own text.
+const WORK_ROW_FOLLOW_TOGGLE_META := &"work_row_follow_toggle"
+
+## The status line for a followed hunt row, composed once. `at_herd` is band tile == herd tile;
+## `next_x/next_y` are the herd's published next waypoint (`< 0` = not migrating this turn);
+## `hexes_behind` is the wrap-aware hex distance band to herd, used only when the band is elsewhere.
+## `""` when the band's or the herd's tile is unknown, because a status about nothing is noise.
+static func follow_status_line(known: bool, at_herd: bool, next_x: int, next_y: int,
+        hexes_behind: int) -> String:
+    if not known:
+        return ""
+    if at_herd:
+        if next_x >= 0 and next_y >= 0:
+            return WORK_ROW_FOLLOW_MOVING_FORMAT % [next_x, next_y]
+        return WORK_ROW_FOLLOW_CAMPED
+    if hexes_behind == FOLLOW_ONE_HEX:
+        return WORK_ROW_FOLLOW_BEHIND_ONE
+    return WORK_ROW_FOLLOW_BEHIND_FORMAT % hexes_behind
+
 ## **THE PARTY BLOCK'S LINES, COMPOSED ONCE FOR EVERY SURFACE THAT STATES A POSTING** — the work
 ## board's far forage and hunt rows and the workings roster's far wood and stone rows. One caravan,
 ## one sentence set: nothing about a working's party differs from a patch's but the noun it walks to.

@@ -196,6 +196,8 @@ func _draw_band_stack(group: Array, radius: float, origin: Vector2) -> void:
 		_draw_band_status(active, center, token_radius)
 		# …and the ⚠ for ground that is killing them, in the one free corner of the token.
 		_draw_band_lethal_mark(active, center, token_radius, radius)
+		# …and the 👣 for a band whose camp moves with a herd, past the food dot on the same diagonal.
+		_draw_band_follow_badge(active, center, token_radius, radius)
 	_draw_band_task_arrow(active, center, radius, origin)
 	# Count badge for hidden bands beyond the visible cap (suppressed at far zoom). Folded onto
 	# the right end of the banner (nameplate-with-count look); falls back to the old bottom-right
@@ -489,6 +491,23 @@ func _draw_band_lethal_mark(unit: Dictionary, center: Vector2, token_radius: flo
 	var mark_center := center + Vector2(-1.0, -1.0).normalized() \
 		* (token_radius + float(size) * _view.BAND_LETHAL_MARK_CLEARANCE_FACTOR)
 	_view._draw_marker_glyph(mark_center, _view.BAND_LETHAL_MARK_GLYPH, size, HudStyle.DANGER)
+
+## The migration-mode badge: a small 👣 on a dark disc at the token's upper-right, shown while any of the
+## band's hunt rows moves its camp with a herd. Gated on the detail radius like the nameplate — below
+## it the glyph is a smudge.
+func _draw_band_follow_badge(unit: Dictionary, center: Vector2, token_radius: float,
+		radius: float) -> void:
+	if radius < _view.ICON_MIN_DETAIL_RADIUS or not MapView.unit_follows_herd(unit):
+		return
+	var badge_center := center + Vector2(token_radius, -token_radius) * _view.BAND_FOLLOW_BADGE_OFFSET_FACTOR
+	var disc_radius: float = token_radius * _view.BAND_FOLLOW_BADGE_DISC_FACTOR
+	# A LIGHT disc: the footprints are a dark colour glyph (the emoji font ignores the tint), so they
+	# read on the console's ink and vanish on its panel fill — measured on the first render.
+	_view.draw_circle(badge_center, disc_radius, Color(HudStyle.INK, 0.95))
+	_view.draw_arc(badge_center, disc_radius, 0, TAU, _view.BAND_FOLLOW_BADGE_RIM_SEGMENTS,
+		HudStyle.PANEL_SOLID, _view.BAND_FOLLOW_BADGE_RIM_WIDTH)
+	var glyph_size := int(maxf(_view.SECONDARY_ICON_MIN_SIZE, token_radius * _view.BAND_FOLLOW_BADGE_SIZE_FACTOR))
+	_view._draw_marker_glyph(badge_center, _view.BAND_FOLLOW_BADGE_GLYPH, glyph_size, HudStyle.INK)
 
 ## One decoration on a player band marker: a food-runway dot (green/amber/red by
 ## the shared BandFoodStatus thresholds) up-and-right of the marker.
