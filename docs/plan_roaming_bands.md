@@ -72,6 +72,29 @@ loses nothing of the meat by leaving; what a long migration costs is the heavy g
 A camp kill is already in the larder, and the larder walks with the band (food first in the packs), so
 leaving at once costs no meat. **The band follows immediately.**
 
+### Migration mode is a choice on the hunt, not its own order
+
+Following a herd only makes sense while hunting it: a band that follows without hunters walks across
+the map and never eats from it. So migration mode is **one box on the hunt order**, never a band verb.
+Prototype: `docs/migration_mode_ux_proposal.html`.
+
+- **Turning it on.** The Assign hunters sheet of a **migratory** herd carries a **Move camp with the
+  herd** box, where the WORK PARTY section sits; a resident herd's sheet has no box. Ticked, WORK
+  PARTY goes away (no porters go out) and the yields box shows the camp-kill take, because every kill
+  is now a camp kill. Everything else on the sheet is unchanged.
+- **Turning it off.** The hunt row on the Work tab carries the same toggle: off, the band stays where
+  it is and its hunters keep working the herd as an ordinary hunt. Cancelling the hunt ends the
+  following with it.
+- **The hunt row** says where the band stands, one line: *Camped in the herd. Kills land in camp.* /
+  *Moving with it · next (x, y)* / *Catching up · N hexes behind* / *Walking to the kill · N turns*,
+  with an amber bullet for the food that rots on the walk. The herd card's worked line adds *moving
+  with the herd*.
+- **The map.** The band token wears a 👣 badge and the followed herd a dashed ring; the herd's
+  next-step arrow stays drawn while the band follows it; the band's next step is a short arrow; a kill
+  being walked to is a marker with its food and a dashed line labelled with the turns left.
+- **A band that walked to a kill trails the herd** until the herd stops at its next grounds: both move
+  one hex a turn. That follows from unchanged movement and is shown, not fixed.
+
 ### Hunting by need
 
 A band in migration mode hunts **when it needs meat**, not at its policy's fixed rate: it kills when
@@ -132,9 +155,6 @@ ties (`docs/plan_contact_and_logistics.md` §Settled by #530). Moving well is ho
 
 ## Open items
 
-- **The UX.** How a player puts a band into migration mode and takes it out, and what the band and the
-  herd show while it is on: the herd's next ground (once Herd lore is known), the band's next step, a
-  kill the band is walking to. Wants its own prototype pass.
 - **The score's formula** — the weights of skills against distance travelled, and the victory
   threshold. Opening values are Workbench levers, settled by playtest.
 
@@ -145,7 +165,7 @@ Sub-issues of the arc, #251.
 1. **Camp kill** — shipped with this doc (#796).
 2. **Migration mode** (#797) — the band's standing order on a migratory herd: camp in the herd while
    it loiters, move with it while it migrates, move to a kill outside reach. The wire field and the
-   client verb. Waits on the UX pass.
+   box on the hunt order (§Migration mode is a choice on the hunt).
 3. **Hunting by need** (#798) — the need-paced trigger for a band in migration mode.
 4. **The roaming skills** (#799) — Herd lore, travois, drives, on the knowledge ledger. Drying is
    #708's.

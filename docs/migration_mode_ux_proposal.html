@@ -1,0 +1,556 @@
+<title>Migration Mode Prototype</title>
+<style>
+  /* Layout: a plain setup strip (clearly NOT the game) above one fixed game surface —
+     map, tile card top-left with the Assign hunters sheet as its own card beside it,
+     Band/City panel docked right, turn orb bottom-right.
+     Single dark look on purpose: the HUD is the "ember" theme from HudPalette.gd. */
+  :root {
+    color-scheme: dark;
+    --page: #0f0d0b;
+    --strip: #1d2226;
+    --strip-line: #3a444b;
+    --strip-ink: #d9e2e8;
+    --strip-dim: #93a2ad;
+    --strip-accent: #7fb6e0;
+
+    --g-ground: #14100d;
+    --g-panel: rgba(34, 27, 21, 0.94);
+    --g-panel-solid: #221b15;
+    --g-line: #46372a;
+    --g-line-soft: #2f261d;
+    --g-ink: #f4ead7;
+    --g-dim: #bdab90;
+    --g-faint: #8d7e68;
+    --g-signal: #efe3cd;
+    --g-signal-deep: #a08d6d;
+    --g-warn: #e0a63c;
+    --g-danger: #c05a41;
+    --g-healthy: #94a361;
+    --g-btn: #3d3226;
+    --g-btn-ink: #fbf3e2;
+
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  body { background: var(--page); color: var(--strip-ink); font-family: var(--sans); margin: 0; }
+  .wrap { padding-inline: 16px; padding-block: 16px 32px; display: grid; gap: 14px; }
+
+  /* ---------- setup strip: deliberately looks like a dev tool, not the game ---------- */
+  .strip { background: var(--strip); border: 1px dashed var(--strip-line); border-radius: 4px;
+    padding: 10px 14px; display: grid; gap: 8px; max-width: 1260px; font-size: 13px; }
+  .strip h1 { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; margin: 0;
+    color: var(--strip-dim); font-weight: 600; }
+  .strip .try { color: var(--strip-ink); font-size: 14px; }
+  .strip .row { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; }
+  .strip .lbl { color: var(--strip-dim); font-family: var(--mono); font-size: 12px; }
+  .strip button { font: inherit; font-size: 12px; background: transparent; color: var(--strip-ink);
+    border: 1px solid var(--strip-line); border-radius: 3px; padding: 4px 9px; cursor: pointer; }
+  .strip button:hover { border-color: var(--strip-accent); }
+  .strip button[disabled] { opacity: .4; cursor: default; }
+  .strip button[aria-pressed="true"] { background: var(--strip-accent); color: #0b1620; border-color: var(--strip-accent); }
+  .strip button:focus-visible, .game button:focus-visible, .game input:focus-visible { outline: 2px solid var(--strip-accent); outline-offset: 1px; }
+
+  /* ---------- the game surface ---------- */
+  .scroller { overflow-x: auto; max-width: 100%; }
+  .game { position: relative; width: 1260px; height: 680px; background: var(--g-ground);
+    font-family: var(--sans); color: var(--g-ink); overflow: hidden; border: 1px solid #000; }
+  #map { position: absolute; left: 0; top: 0; width: 960px; height: 680px; }
+  .hex { stroke: rgba(0,0,0,.35); stroke-width: 1; }
+  .hex.sel { stroke: #fff; stroke-width: 2.2; }
+
+  .card { position: absolute; background: var(--g-panel); border: 1px solid var(--g-line);
+    border-radius: 5px; box-shadow: 0 4px 14px rgba(0,0,0,.5); }
+  .tile { left: 12px; top: 10px; width: 272px; padding: 10px; font-size: 13px; }
+  .eyebrow { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--g-faint); }
+  .eyebrow b { color: var(--g-ink); font-weight: 600; letter-spacing: 0; font-size: 11px; }
+  .occ { display: flex; align-items: center; gap: 8px; border: 1px solid var(--g-line);
+    border-radius: 4px; padding: 4px 8px; margin-top: 5px; cursor: pointer; background: transparent;
+    color: var(--g-ink); font: inherit; width: 100%; text-align: left; box-sizing: border-box; }
+  .occ.on { border-color: var(--g-signal-deep); box-shadow: inset 3px 0 0 var(--g-signal); }
+  .occ .sw { width: 7px; height: 7px; background: var(--g-healthy); }
+  .occ .n { margin-left: auto; color: var(--g-dim); font-variant-numeric: tabular-nums; }
+  .kv { display: grid; grid-template-columns: 84px 1fr; gap: 3px 8px; margin: 10px 4px 4px; }
+  .kv dt { color: var(--g-dim); } .kv dd { margin: 0; }
+  .gbtn { font: inherit; font-size: 13px; background: transparent; color: var(--g-ink);
+    border: 1px solid var(--g-line); border-radius: 4px; padding: 6px 10px; cursor: pointer; width: 100%; margin-top: 6px; }
+  .gbtn:hover { border-color: var(--g-signal-deep); }
+  .gbtn.primary { background: var(--g-btn); color: var(--g-btn-ink); }
+  .note { color: var(--g-dim); font-size: 12px; margin: 8px 4px 0; }
+  .worked { color: var(--g-dim); font-size: 12px; margin: 8px 4px 0; }
+
+  /* the Assign hunters sheet — its own card beside the tile card, copied from herd_hunt_* preview frames */
+  .compose { left: 286px; top: 12px; width: 264px; padding: 10px; font-size: 12px; display: grid; gap: 8px; }
+  .compose .hd { display: flex; align-items: center; gap: 6px; }
+  .compose .hd .x { margin-left: auto; width: 28px; height: 28px; border: 1px solid var(--g-line); border-radius: 4px;
+    background: transparent; color: var(--g-ink); cursor: pointer; }
+  .srow { display: flex; align-items: center; gap: 8px; }
+  .srow .k { width: 46px; color: var(--g-ink); font-size: 13px; }
+  .field { flex: 1; border: 1px solid var(--g-line); border-radius: 4px; padding: 6px 8px; font-size: 13px; display: flex; }
+  .field::after { content: "⌄"; margin-left: auto; color: var(--g-dim); }
+  .seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+  .seg button { font: inherit; font-size: 10.5px; border: 1px solid var(--g-line); border-radius: 4px; background: transparent;
+    color: var(--g-ink); padding: 3px 0; cursor: pointer; }
+  .seg button.on { background: var(--g-btn); border-color: var(--g-signal-deep); }
+  .cap { font-size: 8.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--g-faint); }
+  .floor { display: grid; grid-template-columns: 1fr 10px; gap: 10px; align-items: stretch; }
+  .chart { position: relative; height: 86px; border: 1px solid var(--g-line-soft);
+    background: linear-gradient(#3a3626 0 44%, #2e2a20 44% 100%); }
+  .chart .ln { position: absolute; left: 0; right: 0; top: 42px; border-top: 1.5px solid var(--g-ink); }
+  .chart .tag { position: absolute; left: 2px; top: 30px; font-size: 8px; background: rgba(20,16,13,.85); padding: 0 3px; }
+  .chart .ax { position: absolute; right: 2px; bottom: -13px; font-size: 8px; color: var(--g-faint); }
+  .lf { border: 1px solid var(--g-line); background: linear-gradient(#8d7e68, #2a2119); position: relative; }
+  .lf span { position: absolute; left: 12px; top: 8px; writing-mode: vertical-rl; font-size: 7px; color: var(--g-faint); letter-spacing: .06em; }
+  .step { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .step button { width: 26px; height: 28px; border: 1px solid var(--g-line); border-radius: 4px; background: transparent;
+    color: var(--g-ink); cursor: pointer; }
+  .step .ct { width: 24px; text-align: center; font-variant-numeric: tabular-nums; font-size: 13px; }
+  .step .pc { border: 1px solid var(--g-line); border-radius: 10px; padding: 2px 7px; font-size: 9.5px; color: var(--g-dim); }
+  .step .pc b { color: var(--g-ink); font-weight: 400; font-size: 11px; margin-right: 3px; }
+  .step .pc.on { background: var(--g-btn); }
+  .tiny { font-size: 8.5px; color: var(--g-faint); }
+  .opt { border: 1px solid var(--g-line); border-radius: 4px; padding: 6px 8px; display: grid; gap: 2px; }
+  .opt.on { border-color: var(--g-signal-deep); background: rgba(239,227,205,.05); }
+  .opt label { display: flex; gap: 7px; align-items: center; cursor: pointer; font-size: 12px; }
+  .opt input { accent-color: #a08d6d; margin: 0; }
+  .opt .sub { color: var(--g-dim); font-size: 10.5px; padding-left: 20px; }
+  .party { display: grid; gap: 1px; } .party .l { font-size: 9px; color: var(--g-dim); }
+  .yield { border: 1px solid var(--g-line-soft); border-radius: 3px; padding: 7px 8px; display: grid; gap: 4px; }
+  .yield .big { font-size: 13px; font-variant-numeric: tabular-nums; }
+  .yield .big small { font-size: 8px; color: var(--g-faint); letter-spacing: .06em; margin: 0 14px 0 4px; }
+  .yield .big em { font-style: normal; font-size: 8px; color: var(--g-healthy); letter-spacing: .06em; }
+  .yield .g, .yield .a { font-size: 10.5px; padding-left: 9px; text-indent: -9px; }
+  .yield .g { color: var(--g-healthy); } .yield .a { color: var(--g-warn); }
+  .yield .g::before, .yield .a::before { content: "•  "; }
+
+  .fire { right: 312px; top: 10px; width: 250px; padding: 9px 11px 10px; font-size: 12.5px; }
+  .fire .eyebrow { color: var(--g-warn); border-bottom: 1px solid var(--g-line); padding-bottom: 5px; margin-bottom: 6px; }
+  .fire p { margin: 4px 0; color: var(--g-ink); font-style: italic; }
+  .fire p.old { color: var(--g-faint); }
+
+  .orb { position: absolute; left: 870px; top: 590px; width: 62px; height: 62px; border-radius: 50%;
+    border: 2px solid var(--g-warn); background: #1e1711; color: var(--g-warn); font-size: 22px; cursor: pointer;
+    display: grid; place-items: center; box-shadow: 0 0 0 4px rgba(224,166,60,.12); }
+  .orb small { position: absolute; top: 8px; font-size: 7px; letter-spacing: .2em; }
+  .orb span { margin-top: 6px; }
+  .orbhint { position: absolute; left: 850px; top: 658px; width: 100px; text-align: center; font-size: 10px; color: var(--g-faint); }
+
+  /* Band / City panel, docked right */
+  .panel { position: absolute; right: 0; top: 0; width: 300px; height: 100%; background: var(--g-panel-solid);
+    border-left: 1px solid var(--g-line); padding: 10px 12px; box-sizing: border-box; font-size: 13px; }
+  .ph { display: flex; align-items: center; gap: 8px; }
+  .ph .nm { font-size: 14px; } .ph .sub { font-size: 10.5px; color: var(--g-faint); }
+  .cyc { margin-left: auto; display: flex; gap: 4px; align-items: center; color: var(--g-faint); font-size: 10px; }
+  .cyc i { width: 22px; height: 22px; border: 1px solid var(--g-line); border-radius: 4px; display: grid; place-items: center; font-style: normal; color: var(--g-ink); }
+  .verbs { display: flex; gap: 4px; margin-top: 8px; }
+  .verb { width: 34px; height: 30px; border: 1px solid var(--g-line); border-radius: 4px; background: transparent;
+    color: var(--g-ink); font-size: 15px; display: grid; place-items: center; }
+  .tabs { display: flex; gap: 16px; margin: 14px 0 10px; font-size: 12px; }
+  .tabs button { font: inherit; background: none; border: 0; padding: 0 0 2px; color: var(--g-faint); cursor: pointer; }
+  .tabs button.on { color: var(--g-ink); border-bottom: 1px solid var(--g-ink); }
+  .vit { display: grid; gap: 4px; font-size: 14px; }
+  .vit .v { color: var(--g-warn); font-variant-numeric: tabular-nums; }
+  .vit .ok { color: var(--g-healthy); }
+  .sect { margin-top: 14px; }
+  .sect > .eyebrow { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .bar { height: 6px; background: #d8cbb2; opacity: .8; border-radius: 1px; }
+  .hunt { border: 1px solid var(--g-line); border-radius: 4px; padding: 8px 9px; display: grid; gap: 4px; }
+  .hunt.moving { border-color: var(--g-signal-deep); }
+  .hunt .l1 { display: flex; align-items: center; gap: 6px; }
+  .hunt .l1 .n { margin-left: auto; color: var(--g-dim); font-variant-numeric: tabular-nums; }
+  .hunt .l2 { color: var(--g-dim); font-size: 12px; }
+  .hunt .amber { color: var(--g-warn); font-size: 12px; }
+  .hunt .amber::before { content: "• "; }
+  .hunt .acts { display: flex; gap: 6px; margin-top: 3px; }
+  .chip { font: inherit; font-size: 11px; background: transparent; color: var(--g-dim);
+    border: 1px solid var(--g-line); border-radius: 3px; padding: 2px 7px; cursor: pointer; }
+  .chip:hover { color: var(--g-ink); border-color: var(--g-signal-deep); }
+  .chip.on { color: var(--g-ink); border-color: var(--g-signal-deep); background: rgba(239,227,205,.07); }
+  .chip.x { margin-left: auto; }
+  .empty { color: var(--g-faint); font-size: 12px; }
+  .build { position: absolute; left: 380px; bottom: 6px; font-size: 10px; color: var(--g-faint); }
+</style>
+
+<div class="wrap">
+  <section class="strip" aria-label="Prototype setup (not part of the game)">
+    <h1>Prototype setup — not part of the game · #797 Migration mode</h1>
+    <div class="try"><b>Try this:</b> click the mammoths, press <b>Assign hunters ▸</b>, tick <b>Move camp with the herd</b>, press <b>Hunt Here</b>, then end turns with the orb. Fire a hunt while they migrate to see the band walk to a kill.</div>
+    <div class="row">
+      <span class="lbl">scenario</span>
+      <button type="button" id="p1" data-preset="1">Not hunting yet</button>
+      <button type="button" id="p2" data-preset="2">Moving with the herd · herd about to leave</button>
+      <button type="button" id="p3" data-preset="3">Moving with the herd · kill landed 3 hexes ahead</button>
+    </div>
+    <div class="row">
+      <span class="lbl">a hunt kills a mammoth</span>
+      <button type="button" id="kill">Fire a hunt now</button>
+      <span class="lbl" style="margin-left:auto">loiter shortened to 4 turns · numbers illustrative</span>
+    </div>
+  </section>
+
+  <div class="scroller">
+    <div class="game" id="game">
+      <svg id="map" viewBox="0 0 960 680" aria-label="Map"></svg>
+      <div class="card tile" id="tile"></div>
+      <div class="card compose" id="compose" hidden></div>
+      <div class="card fire" id="fire"></div>
+      <button type="button" class="orb" id="orb" aria-label="End turn"><small>TURN</small><span id="turnN">40</span></button>
+      <div class="orbhint">end turn</div>
+      <aside class="panel" id="panel"></aside>
+      <div class="build">build cli prototype · srv —</div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  // ---------- hex geometry (pointy-top, odd-r offset) ----------
+  const R = 31, COLS = 15, ROWS = 12, OX = 36, OY = 40, S3 = Math.sqrt(3);
+  const center = (c, r) => [OX + R * S3 * (c + 0.5 * (r & 1)), OY + R * 1.5 * r];
+  const cube = (c, r) => { const q = c - (r - (r & 1)) / 2; return [q, r, -q - r]; };
+  const dist = (a, b) => { const A = cube(a.x, a.y), B = cube(b.x, b.y);
+    return Math.max(Math.abs(A[0]-B[0]), Math.abs(A[1]-B[1]), Math.abs(A[2]-B[2])); };
+  const NB = [[[1,0],[-1,0],[0,-1],[-1,-1],[0,1],[-1,1]], [[1,0],[-1,0],[1,-1],[0,-1],[1,1],[0,1]]];
+  const neighbors = (p) => NB[p.y & 1].map(([dx,dy]) => ({x:p.x+dx, y:p.y+dy}))
+    .filter(n => n.x >= 0 && n.y >= 0 && n.x < COLS && n.y < ROWS);
+  const stepToward = (p, t) => {
+    if (p.x === t.x && p.y === t.y) return {...p};
+    let best = null, bd = 1e9;
+    for (const n of neighbors(p)) { const d = dist(n, t); if (d < bd) { bd = d; best = n; } }
+    return best;
+  };
+  const same = (a, b) => a && b && a.x === b.x && a.y === b.y;
+  const hexPts = (c, r) => { const [cx, cy] = center(c, r); let s = "";
+    for (let i = 0; i < 6; i++) { const a = Math.PI / 180 * (60 * i - 30);
+      s += (cx + R * Math.cos(a)).toFixed(1) + "," + (cy + R * Math.sin(a)).toFixed(1) + " "; } return s; };
+
+  // ---------- world ----------
+  const ROUTE = [{x:7,y:7}, {x:12,y:3}, {x:6,y:2}];      // mammoth seasonal grounds
+  const LOITER = 4, BAND_NEED = 4.8, FORAGE = 3.2, ROT_LINE = 19.2, MAMMOTH = 48, REACH = 2;
+  const terrain = [];
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+    const h = Math.abs(Math.sin(c * 12.9898 + r * 78.233) * 43758.5453) % 1;
+    const tones = ["#4b4a33", "#545437", "#47503a", "#5a5639", "#3f4734"];
+    let col = tones[Math.floor(h * tones.length)];
+    if ((c === 2 && r > 3) || (c === 3 && r > 8)) col = "#2c4a55";     // a river
+    if (h > 0.93) col = "#6a6050";                                        // rocky rise
+    terrain.push({c, r, col, name: col === "#2c4a55" ? "River" : h > 0.93 ? "Rocky Steppe" : "Mammoth Steppe"});
+  }
+
+  let S;
+  const deer = {x: 3, y: 2, name: "Red Deer", glyph: "🦌"};
+  function preset(n) {
+    const base = {
+      turn: 40, ui: {sel: "herd", sheet: null, tab: "work"},
+      herd: {x:7, y:7, name:"Woolly Mammoth", glyph:"🦣", phase:"loiter", loiterLeft:3, leg:1, count:9},
+      // hunt: null, or {hunters, moving} — moving = "Move camp with the herd"
+      band: {x:4, y:9, name:"Saltmarch", food:22, hunt:null, kill:null, porters:null},
+      events: [],
+    };
+    if (n === 2) { base.band.x = 7; base.band.y = 7; base.band.hunt = {hunters:4, moving:true, policy:"peak"}; base.herd.loiterLeft = 1;
+      base.events = ["Saltmarch camps among the mammoths."]; base.ui.sel = "band"; }
+    if (n === 3) {
+      base.herd.phase = "migrate"; base.herd.x = 10; base.herd.y = 4;
+      base.band.x = 8; base.band.y = 6; base.band.hunt = {hunters:4, moving:true, policy:"peak"}; base.band.food = 9;
+      base.band.kill = {x:10, y:4, food:MAMMOTH, age:0};
+      base.events = ["Hunters bring down a mammoth at (10, 4).", "Saltmarch breaks camp and walks to the kill."];
+      base.ui.sel = "band";
+    }
+    S = base;
+    document.querySelectorAll("[data-preset]").forEach(b => b.setAttribute("aria-pressed", String(+b.dataset.preset === n)));
+    render();
+  }
+
+  const log = (t) => { S.events.push(t); if (S.events.length > 4) S.events.shift(); };
+  const moving = () => !!(S.band.hunt && S.band.hunt.moving);
+
+  // ---------- one turn ----------
+  function endTurn() {
+    const h = S.herd, b = S.band;
+    S.turn++;
+    // 1. rot: what sits above the larder's rot line spoils this turn
+    if (b.food > ROT_LINE) { const lost = b.food - ROT_LINE; b.food = ROT_LINE; log(`${lost.toFixed(0)} food rotted in camp.`); }
+    if (b.kill) { if (b.kill.age >= 1 && b.kill.food > ROT_LINE) b.kill.food = ROT_LINE; b.kill.age++; }
+    // 2. the herd
+    if (h.phase === "loiter") {
+      h.loiterLeft--;
+      if (h.loiterLeft <= 0) { h.phase = "migrate"; log("The mammoths move off toward their next grounds."); }
+    }
+    if (h.phase === "migrate") {
+      const t = ROUTE[h.leg]; const n = stepToward(h, t); h.x = n.x; h.y = n.y;
+      if (same(h, t)) { h.phase = "loiter"; h.loiterLeft = LOITER; h.leg = (h.leg + 1) % ROUTE.length;
+        log("The mammoths reach their seasonal grounds."); }
+    }
+    // 3. the band — only a hunt with "Move camp with the herd" moves it
+    if (moving()) {
+      if (b.kill && dist(b, b.kill) > REACH) { const n = stepToward(b, b.kill); b.x = n.x; b.y = n.y; }
+      else if (!same(b, h)) { const n = stepToward(b, h); b.x = n.x; b.y = n.y; }
+    }
+    if (b.kill && dist(b, b.kill) <= REACH) {
+      b.food += b.kill.food; log(`The kill is in camp: ${b.kill.food.toFixed(0)} food.`); b.kill = null;
+    }
+    if (b.porters) { b.porters.left--; if (b.porters.left <= 0) { b.food += b.porters.food; log(`Porters bring ${b.porters.food.toFixed(0)} food home.`); b.porters = null; } }
+    // 4. eat, forage
+    b.food = Math.max(0, b.food + FORAGE - BAND_NEED);
+    render();
+  }
+
+  function fireHunt() {
+    const h = S.herd, b = S.band;
+    if (!b.hunt || b.kill || b.porters) return;
+    if (dist(b, h) <= REACH) { b.food += MAMMOTH; log("Hunters kill a mammoth beside camp: 48 food."); }
+    else if (b.hunt.moving) {
+      b.kill = {x:h.x, y:h.y, food:MAMMOTH, age:0};
+      log(`Hunters bring down a mammoth at (${h.x}, ${h.y}).`); log("Saltmarch breaks camp and walks to the kill.");
+    } else {
+      const d = dist(b, h); b.porters = {left: d, food: Math.min(MAMMOTH, 12)};
+      log(`Hunters bring down a mammoth ${d} hexes out. Porters carry what they can.`);
+    }
+    render();
+  }
+
+  // ---------- derived status: the words the hunt row shows ----------
+  function huntStatus() {
+    const b = S.band, h = S.herd;
+    if (!b.hunt) return null;
+    if (!b.hunt.moving) {
+      const d = dist(b, h);
+      return d <= REACH ? {l2: "In reach of camp."}
+        : {l2: `${d} tiles away · first load home in ${d * 2} turns`, amber: "Most of a mammoth rots before it gets home"};
+    }
+    if (b.kill) {
+      const turns = Math.max(0, dist(b, b.kill) - REACH);
+      const rots = turns >= 1 ? b.kill.food - ROT_LINE : 0;
+      return {l2: `Walking to the kill · ${turns} turn${turns === 1 ? "" : "s"}`,
+        amber: rots > 0 ? `${rots.toFixed(0)} of its ${b.kill.food.toFixed(0)} food rots on the way` : null};
+    }
+    const gap = dist(b, h);
+    if (gap > 0) return {l2: `Catching up · ${gap} hex${gap === 1 ? "" : "es"} behind`};
+    if (h.phase === "migrate") { const n = stepToward(h, ROUTE[h.leg]); return {l2: `Moving with it · next (${n.x}, ${n.y})`}; }
+    return {l2: h.loiterLeft <= 1 ? "Camped in the herd. It is restless." : "Camped in the herd. Kills land in camp."};
+  }
+
+  // ---------- render ----------
+  const svgNS = "http://www.w3.org/2000/svg";
+  const el = (tag, attrs, parent, text) => { const e = document.createElementNS(svgNS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; parent.appendChild(e); return e; };
+
+  function renderMap() {
+    const svg = document.getElementById("map"); svg.innerHTML = "";
+    const h = S.herd, b = S.band, ui = S.ui;
+    el("rect", {x:0, y:0, width:960, height:680, fill:"#14100d"}, svg);
+    const gHex = el("g", {}, svg);
+    for (const t of terrain) {
+      const p = {x:t.c, y:t.r};
+      let cls = "hex";
+      if ((ui.sel === "herd" && same(p, h)) || (ui.sel === "band" && same(p, b)) || (ui.sel === "deer" && same(p, deer))) cls += " sel";
+      const poly = el("polygon", {points: hexPts(t.c, t.r), fill: t.col, class: cls}, gHex);
+      poly.addEventListener("click", () => clickHex(p));
+    }
+    const over = el("g", {"pointer-events":"none"}, svg);
+    const mv = moving();
+
+    // herd range ring while on its grounds (shown when selected or moved with)
+    if ((ui.sel === "herd" || mv) && h.phase === "loiter") {
+      for (const t of terrain) { const p = {x:t.c, y:t.r};
+        if (dist(p, h) <= 2) el("polygon", {points: hexPts(t.c, t.r), fill:"rgba(224,166,60,.10)", stroke:"rgba(224,166,60,.35)", "stroke-width":1}, over); }
+    }
+    // a hunt this band works: the existing red worked-ring and band→herd link
+    if (b.hunt && !mv) {
+      const [hx, hy] = center(h.x, h.y);
+      el("circle", {cx:hx, cy:hy, r:17, fill:"none", stroke:"rgba(235,87,77,.85)", "stroke-width":1.6}, over);
+      line(over, b, h, "rgba(235,87,77,.45)", 1.4, "");
+    }
+    // herd's next step (the existing orange migration arrow) — always on while the band moves with it
+    if (h.phase === "migrate" && (mv || ui.sel === "herd")) {
+      const n = stepToward(h, ROUTE[h.leg]); arrow(over, h, n, "rgba(250,148,46,.85)", 1.8, false);
+    }
+    // moving with the herd: band's next step + the kill it walks to
+    if (mv && b.kill) {
+      const [kx, ky] = center(b.kill.x, b.kill.y);
+      line(over, b, b.kill, "rgba(239,227,205,.75)", 2, "6 5");
+      const n = stepToward(b, b.kill); arrow(over, b, n, "#efe3cd", 2.4, true);
+      el("circle", {cx:kx, cy:ky, r:13, fill:"rgba(192,90,65,.25)", stroke:"#c05a41", "stroke-width":1.5}, over);
+      el("text", {x:kx, y:ky+5, "text-anchor":"middle", "font-size":15}, over, "🍖");
+      pill(over, kx + 18, ky - 16, `${b.kill.food.toFixed(0)}`, "#e0a63c");
+      const turns = Math.max(0, dist(b, b.kill) - REACH);
+      const [bx, by] = center(b.x, b.y);
+      pill(over, (bx + kx) / 2, (by + ky) / 2 - 10, `${turns} turn${turns === 1 ? "" : "s"}`, "#efe3cd");
+    } else if (mv && !same(b, h)) {
+      line(over, b, h, "rgba(239,227,205,.55)", 1.6, "4 5");
+      const n = stepToward(b, h); arrow(over, b, n, "#efe3cd", 2.4, true);
+    }
+    token(over, h, h.glyph, mv);
+    token(over, deer, deer.glyph, false);
+    const [bx, by] = center(b.x, b.y);
+    const off = same(b, h) ? -11 : 0;
+    el("circle", {cx:bx + off, cy:by - 2, r:13, fill:"#2a2119", stroke:"#e7d9bd", "stroke-width":1.4}, over);
+    el("text", {x:bx + off, y:by + 3, "text-anchor":"middle", "font-size":14}, over, "⛺");
+    if (mv) {
+      el("circle", {cx:bx + off + 11, cy:by - 13, r:7.5, fill:"#221b15", stroke:"#efe3cd", "stroke-width":1}, over);
+      el("text", {x:bx + off + 11, y:by - 9.5, "text-anchor":"middle", "font-size":9}, over, "👣");
+    }
+    pill(over, bx, by + 21, b.name, "#f4ead7", "rgba(34,27,21,.9)");
+  }
+  function token(g, p, glyph, followed) {
+    const [x, y] = center(p.x, p.y); const off = same(p, S.band) ? 11 : 0;
+    el("text", {x:x + off, y:y + 5, "text-anchor":"middle", "font-size":18}, g, glyph);
+    if (followed) el("circle", {cx:x + off, cy:y - 1, r:14, fill:"none", stroke:"rgba(239,227,205,.7)", "stroke-width":1, "stroke-dasharray":"3 3"}, g);
+  }
+  function line(g, a, b, color, w, dash) { const [x1,y1] = center(a.x,a.y), [x2,y2] = center(b.x,b.y);
+    el("line", {x1, y1, x2, y2, stroke:color, "stroke-width":w, "stroke-dasharray":dash || "", "stroke-linecap":"round"}, g); }
+  function arrow(g, a, b, color, w, short) {
+    let [x1,y1] = center(a.x,a.y), [x2,y2] = center(b.x,b.y);
+    if (short) { x1 = x1 + (x2-x1)*.35; y1 = y1 + (y2-y1)*.35; }
+    x2 = x1 + (x2-x1)*.9; y2 = y1 + (y2-y1)*.9;
+    el("line", {x1, y1, x2, y2, stroke:color, "stroke-width":w, "stroke-linecap":"round"}, g);
+    const ang = Math.atan2(y2-y1, x2-x1), s = 8;
+    const p = [[x2,y2],[x2 - s*Math.cos(ang-0.45), y2 - s*Math.sin(ang-0.45)],[x2 - s*Math.cos(ang+0.45), y2 - s*Math.sin(ang+0.45)]];
+    el("polygon", {points: p.map(q => q.join(",")).join(" "), fill:color}, g);
+  }
+  function pill(g, x, y, text, ink, bg) {
+    const w = text.length * 6.4 + 12;
+    el("rect", {x:x - w/2, y:y - 8, width:w, height:15, rx:7.5, fill:bg || "rgba(20,16,13,.92)", stroke:"rgba(70,55,42,1)"}, g);
+    el("text", {x, y:y + 3.5, "text-anchor":"middle", "font-size":10.5, fill:ink, "font-family":"system-ui, sans-serif"}, g, text);
+  }
+
+  // The real sheet, section for section (DrawerComposeController._build_herd_assign_controls,
+  // frames herd_hunt_big_game_window / herd_hunt_far_party_spoils). The ONE addition is the
+  // "Move camp with the herd" box, which sits where WORK PARTY sits because it replaces it.
+  function composeHtml() {
+    const sh = S.ui.sheet, b = S.band, h = S.herd, d = dist(b, h);
+    const far = d > REACH, porters = far && !sh.moving;
+    const pol = [["strip","💀 Everything"],["peak","♻ Best"],["learn","⬆ Learning"]];
+    const yieldBox = porters
+      ? `<div class="yield"><span class="cap">Once running · per turn</span>
+          <div class="big">0.00<small>FOOD</small><em>RENEWABLE</em></div>
+          <div class="a">Every pack rots before it gets home</div>
+          <div class="g">The herd breeds back ≈0.14 ${h.name} a turn.</div></div>`
+      : `<div class="yield"><span class="cap">Next turn · now → after · at the likely take</span>
+          <div class="big">2.43 → 0.07<small>FOOD</small><em>RENEWABLE</em></div>
+          <div class="g">The herd breeds back ≈0.14 ${h.name} a turn.</div></div>`;
+    return `<div class="hd"><span class="cap">Assign hunters</span><span style="font-size:12px">${h.name}</span>
+        <button type="button" class="x" id="shClose" aria-label="Close">✕</button></div>
+      <div class="srow"><span class="k">Band:</span><span class="field">${b.name}</span></div>
+      <div class="seg">${pol.map(([k, t]) => `<button type="button" data-pol="${k}" class="${sh.policy === k ? "on" : ""}">${t}</button>`).join("")}</div>
+      <span class="cap">Leave standing</span>
+      <div class="floor"><div class="chart"><div class="ln"></div><span class="tag">leave 50% · ≈4 ${h.name}</span><span class="ax">60 turns</span></div>
+        <div class="lf"><span>LEARNING FASTER ↑</span></div></div>
+      <span class="cap" style="margin-top:6px">Hunters</span>
+      <div class="step"><button type="button" id="shMinus" aria-label="Fewer">−</button><span class="ct">${sh.hunters}</span><button type="button" id="shPlus" aria-label="More">+</button>
+        <span class="pc"><b>3</b>clear it now</span><span class="pc ${sh.hunters === 20 ? "on" : ""}"><b>20</b>hold it after</span></div>
+      <span class="tiny">max 20 workers useful here — more would be idle</span>
+      <div class="srow"><span class="k">Kit</span><span class="field">⇣ Stalking kit</span></div>
+      <div class="opt ${sh.moving ? "on" : ""}"><label for="shMove"><input type="checkbox" id="shMove" ${sh.moving ? "checked" : ""}> Move camp with the herd</label>
+        <span class="sub">Camp in the herd and travel with it. Far kills are walked to.</span></div>
+      ${porters ? `<div class="party"><span class="cap">Work party</span><span class="l">${d} tiles away · first load home in ${d * 2} turns</span></div>` : ""}
+      ${yieldBox}
+      <button type="button" class="gbtn primary" id="shGo">Hunt Here</button>`;
+  }
+
+  function renderTile() {
+    const t = document.getElementById("tile"); const ui = S.ui, h = S.herd, b = S.band;
+    const at = ui.sel === "herd" ? h : ui.sel === "deer" ? deer : b;
+    const ter = terrain.find(q => q.c === at.x && q.r === at.y);
+    let html = `<div class="eyebrow">Tile <b>(${at.x}, ${at.y})</b></div>
+      <div class="occ" style="cursor:default"><span class="sw" style="background:#8d7e68"></span>${ter.name}<span class="n">4</span></div>`;
+    if (same(b, at)) html += `<div class="eyebrow" style="margin-top:6px">Bands (1)</div>
+      <button type="button" class="occ ${ui.sel === "band" ? "on" : ""}" data-sel="band"><span class="sw"></span>⛺ ${b.name}<span class="n">30</span></button>`;
+    if (same(h, at) || same(deer, at)) html += `<div class="eyebrow" style="margin-top:6px">Wildlife (1)</div>`;
+    if (same(h, at)) html += `<button type="button" class="occ ${ui.sel === "herd" ? "on" : ""}" data-sel="herd"><span class="sw" style="background:#e0a63c"></span>${h.glyph} ${h.name}<span class="n">${h.count}</span></button>`;
+    if (same(deer, at)) html += `<button type="button" class="occ ${ui.sel === "deer" ? "on" : ""}" data-sel="deer"><span class="sw" style="background:#e0a63c"></span>${deer.glyph} ${deer.name}<span class="n">5</span></button>`;
+    const fight = `<dt>Defense</dt><dd>▱▱▱▱▱ 2</dd><dt>Danger</dt><dd>Hunt 2 · Threat 0</dd>`;
+    if (ui.sel === "band") {
+      html += `<p class="note">Labor allocation is in the Band / City panel.</p>`;
+    } else if (ui.sel === "herd") {
+      html += `<dl class="kv"><dt>Size</dt><dd>Migratory game</dd><dt>Herd</dt><dd>${h.count} / 12 · <span style="color:var(--g-healthy)">Thriving</span></dd>
+        <dt>Range</dt><dd>2 tiles</dd>${fight}</dl><p class="note" style="color:var(--g-ink)">Wild game — hunt only</p>`;
+      if (b.hunt) html += `<p class="worked">${b.name} · ${b.hunt.hunters} hunters${b.hunt.moving ? " · 👣 moving with the herd" : ""}</p>`;
+      html += `<button type="button" class="gbtn" id="assign">Assign hunters ▸</button>`;
+    } else if (ui.sel === "deer") {
+      html += `<dl class="kv"><dt>Size</dt><dd>Big game</dd><dt>Herd</dt><dd>5 / 8 · <span style="color:var(--g-healthy)">Thriving</span></dd><dt>Range</dt><dd>1 tile</dd>${fight}</dl>
+        <button type="button" class="gbtn">Assign hunters ▸</button>`;
+    }
+    t.innerHTML = html;
+    t.querySelectorAll("[data-sel]").forEach(x => x.addEventListener("click", () => { S.ui.sel = x.dataset.sel; S.ui.sheet = null; render(); }));
+    on("assign", () => { S.ui.sheet = b.hunt ? {...b.hunt} : {hunters: 4, moving: false, policy: "peak"}; render(); });
+
+    const c = document.getElementById("compose");
+    c.hidden = !(ui.sel === "herd" && ui.sheet);
+    if (c.hidden) { c.innerHTML = ""; return; }
+    c.innerHTML = composeHtml();
+    on("shClose", () => { S.ui.sheet = null; render(); });
+    on("shMinus", () => { S.ui.sheet.hunters = Math.max(1, S.ui.sheet.hunters - 1); render(); });
+    on("shPlus", () => { S.ui.sheet.hunters = Math.min(20, S.ui.sheet.hunters + 1); render(); });
+    c.querySelectorAll("[data-pol]").forEach(x => x.addEventListener("click", () => { S.ui.sheet.policy = x.dataset.pol; render(); }));
+    const cb = document.getElementById("shMove");
+    if (cb) cb.addEventListener("change", () => { S.ui.sheet.moving = cb.checked; render(); });
+    on("shGo", () => {
+      const was = b.hunt; b.hunt = {...S.ui.sheet}; S.ui.sheet = null; S.ui.tab = "work";
+      if (b.hunt.moving && !(was && was.moving)) log(`${b.name} sets out to camp with the mammoths.`);
+      else if (!was) log(`${b.hunt.hunters} hunters set out after the mammoths.`);
+      render();
+    });
+  }
+  const on = (id, fn) => { const e = document.getElementById(id); if (e) e.addEventListener("click", fn); };
+
+  function renderPanel() {
+    const p = document.getElementById("panel"); const b = S.band, h = S.herd; const hs = huntStatus();
+    const travelling = moving() && (b.kill || !same(b, h) || h.phase === "migrate");
+    const days = b.food > 0 ? Math.floor(b.food / (BAND_NEED - FORAGE)) : 0;
+    const V = [["➜","Move"],["⚑","Scout"],["💀","Deny"],["📦","Trade"],["⌂","Split"]];
+    let html = `<div class="ph"><span>⛺</span><div><div class="nm">${b.name}</div><div class="sub">${travelling ? "On the move" : "Camp"} (${b.x}, ${b.y})</div></div>
+      <div class="cyc"><i>◀</i>1 / 1<i>▶</i></div></div>
+      <div class="verbs">${V.map(([g, t]) => `<span class="verb" title="${t}">${g}</span>`).join("")}</div>
+      <div class="tabs"><button type="button" data-tab="band" class="${S.ui.tab === "band" ? "on" : ""}">Band</button>
+        <button type="button" data-tab="work" class="${S.ui.tab === "work" ? "on" : ""}">Work</button>
+        <button type="button" data-tab="parties">Parties</button></div>`;
+    if (S.ui.tab === "band") {
+      html += `<div class="vit"><div>Food <span class="v">${b.food.toFixed(0)} (${days} turns)</span></div><div>Morale <span class="ok">58%</span></div></div>
+        <div class="sect"><div class="eyebrow"><span>People</span><span>30</span></div><div class="bar"></div></div>`;
+    } else {
+      html += `<div class="vit"><div>Food <span class="v">${b.food.toFixed(0)} (${days} turns)</span></div></div>
+        <div class="sect"><div class="eyebrow"><span>Hunting</span><span>${b.hunt ? b.hunt.hunters : 0} hunters</span></div>`;
+      if (b.hunt) {
+        html += `<div class="hunt ${b.hunt.moving ? "moving" : ""}">
+          <div class="l1">${h.glyph} ${h.name}<span class="n">${b.hunt.hunters}</span></div>
+          <div class="l2">${hs.l2}</div>${hs.amber ? `<div class="amber">${hs.amber}</div>` : ""}
+          <div class="acts"><button type="button" class="chip ${b.hunt.moving ? "on" : ""}" id="pMove" aria-pressed="${b.hunt.moving}">👣 Move camp with the herd</button>
+          <button type="button" class="chip x" id="pCancel" aria-label="Cancel hunt" title="Cancel hunt">✕</button></div></div>`;
+      } else html += `<div class="empty">No hunts. Select a herd and assign hunters.</div>`;
+      html += `</div><div class="sect"><div class="eyebrow"><span>Foraging</span><span>8 gatherers</span></div><div class="bar" style="opacity:.45"></div></div>`;
+    }
+    p.innerHTML = html;
+    p.querySelectorAll("[data-tab]").forEach(x => x.addEventListener("click", () => { if (x.dataset.tab !== "parties") { S.ui.tab = x.dataset.tab; render(); } }));
+    on("pMove", () => { b.hunt.moving = !b.hunt.moving;
+      if (!b.hunt.moving) { b.kill = null; log(`${b.name} stays put. Hunters keep working the herd.`); }
+      else log(`${b.name} sets out to camp with the mammoths.`);
+      render(); });
+    on("pCancel", () => { b.hunt = null; b.kill = null; S.ui.sheet = null; log(`${b.name} calls its hunters in.`); render(); });
+  }
+
+  function renderChrome() {
+    document.getElementById("turnN").textContent = S.turn;
+    const f = document.getElementById("fire");
+    f.innerHTML = `<div class="eyebrow">At the fire</div>` + (S.events.length
+      ? S.events.map((e, i) => `<p class="${i < S.events.length - 2 ? "old" : ""}">${e}</p>`).join("")
+      : `<p class="old">Nothing has been told yet.</p>`);
+    const k = document.getElementById("kill");
+    k.disabled = !S.band.hunt || !!S.band.kill || !!S.band.porters;
+    k.textContent = S.band.hunt ? "Fire a hunt now" : "Fire a hunt now (assign hunters first)";
+  }
+  function render() { renderMap(); renderTile(); renderPanel(); renderChrome(); }
+
+  function clickHex(p) {
+    const ui = S.ui; ui.sheet = null;
+    if (same(p, S.band) && same(p, S.herd)) ui.sel = ui.sel === "band" ? "herd" : "band";
+    else if (same(p, S.band)) ui.sel = "band";
+    else if (same(p, S.herd)) ui.sel = "herd";
+    else if (same(p, deer)) ui.sel = "deer";
+    render();
+  }
+  document.getElementById("orb").addEventListener("click", endTurn);
+  document.getElementById("kill").addEventListener("click", fireHunt);
+  document.querySelectorAll("[data-preset]").forEach(b => b.addEventListener("click", () => preset(+b.dataset.preset)));
+  preset(1);
+})();
+</script>
