@@ -505,10 +505,10 @@ deleted from the schema.
 5. **The route ladder (#532)** — the `route` branch, its standing-upkeep term, and #215's game trails.
 6. **The overlay (#232)** — the logistics network drawn on the map.
 7. **The remaining riders** — #530 (culture), #531 (knowledge). Both settled — see §Open items.
-8. **Blocked on #513, then:** the cross-faction riders — #546 (priced exchange), #512 (defection).
-   There is no separate proximity case: free pooling is a same-people affordance (`pools_freely`),
-   and exchange with a nearby foreign band is a #546 trade route at short range. #546 is settled in
-   §Open items.
+8. **The cross-faction riders** — #546 (priced exchange) and #512 (defection), which waited on #513.
+   Both settled — #546 in §Open items. There is no separate proximity case: free pooling is a
+   same-people affordance (`pools_freely`), and exchange with a nearby foreign band is a #546 trade
+   route at short range.
 
 **#231 (Early Diplomacy)** was narrowed to match: the route-network half moved here, and what remains
 there — treaties (#233) and cultural-reach victory metrics (#234) — is a *policy* layer that governs
@@ -715,10 +715,15 @@ nothing comes back, and nobody can refuse. #546 settles what turns that into tra
 blocked on #513; #513 has since landed, and so have defection (#512) and independence (#284).
 
 **A shipment becomes an offer, and the gift survives as one kind of offer.** The cargo arrives as a
-proposal the receiving people may accept or refuse. An offer that asks nothing back is a gift, and
-your own bands always accept one, so a parent supplying a splinter beyond free reach works exactly as
-it does today. That "always yes" comes from the receiver being your own people answering, never from
-a same-faction branch in the code: faction stays a property of the endpoint (§Q2). There is no
+proposal the receiving people may accept or refuse. An offer that asks nothing back is a gift.
+
+**Gifts from your own people land on arrival, through a standing answer.** Every receiving people
+holds a standing answer, **"accept gifts from my own people"**, on by default. An offer a standing
+answer covers resolves the turn the party arrives: no pending offer, no turn of waiting. So a parent
+supplying a splinter beyond free reach works exactly as it does today, cargo dropped on arrival. The
+"always yes" is the receiver's own answer, given in advance, so the shipment path has no same-faction
+branch: faction stays a property of the endpoint (§Q2). Turning the answer off is the receiver's
+choice, and every offer it does not cover takes the one-turn answer below. There is no
 separate proximity system: free pooling stays a same-people affordance (`pools_freely`), and trading
 with a nearby foreign band is this same offer, carried a short way.
 
@@ -756,12 +761,14 @@ every other carrier, and the receiver may refuse. **What changes is who sets the
 - **Stage 3 is not built here.** A diplomat who agrees terms before the party sets out is treaty work
   (#231/#233). The offer model leaves room for it: stage 3 is an offer whose return was agreed before
   departure.
-- **Stage 4 needs a built road.** Proposing and haggling over a trade at any time needs a logistics
-  link held by a route at rung 2 or above — a dirt road, and every rung above it (paved road, and
-  rail when it exists). The bar is a config lever, `min_route_rung`, starting at 2. **A trail does not
-  qualify.** The bar is the condition §Q5 already uses to light a road's tiles `Seen`: a built rung
-  with its upkeep paid means people are on that road, so word travels along it. Nobody maintains a
-  trail.
+- **Stage 4 needs a kept road, on every tile.** Proposing and haggling over a trade at any time needs
+  a logistics link whose **every** route tile is at rung `min_route_rung` or above **with its upkeep
+  paid**. The rung bar is a config lever starting at 2 — a dirt road, and every rung above it (paved
+  road, and rail when it exists). **A trail does not qualify**, and neither does a road in upkeep
+  shortfall. This is the condition §Q5 already uses to light a road's tiles `Seen` — the paid bill,
+  not the held rung — because a kept road means people are on it, so word travels along it. **Every
+  tile** because a link is as good as its weakest tile, which is already how a road's extra reach is
+  read.
 
 #### A gift builds goodwill
 
@@ -774,7 +781,8 @@ the treaty layer will later read. A stage 1 gift is the first thing that ever se
 
 Turns are simultaneous: every faction submits its orders, then one resolution runs (`TurnQueue`,
 `core_sim/src/orders.rs`). An AI receiver answers exactly as a human does, by submitting a command on
-its turn, so the design has no AI/human split.
+its turn, so the design has no AI/human split. This is the path for every offer no standing answer
+covers.
 
 1. **Turn N resolves:** the party arrives, and a pending offer addressed to the receiving people
    appears in what they see next.
