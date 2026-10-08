@@ -1688,14 +1688,36 @@ pub(crate) fn committed_to_a_fodder_crop(
 fn animal_pastoral_gate(
     knows_rung: bool,
     can_domesticate: bool,
-    working_the_herd: bool,
+    herd_room: BuildGate,
 ) -> BuildGate {
     BuildGate::first_refusal(&[
         (knows_rung, BuildGate::Knowledge),
         (can_domesticate, BuildGate::SpeciesCeiling),
-        (working_the_herd, BuildGate::Escapement),
+        (herd_room.holds(), herd_room),
     ])
 }
+
+/// **THE HERD'S ROOM TERM OF A BUILD'S GATE — AND WHO EMPTIED IT.** [`BuildGate::Open`] when the
+/// take room ([`fauna::herd_take_room`], the number `hunt_take` is bounded by) is workable; when it
+/// is empty, [`BuildGate::PredatorsAteGrowth`] if predators drew biomass off the herd this turn
+/// (`Herd::predator_eaten_this_turn`, stamped by `fauna::advance_predation` between the regrowth
+/// stamp and this gate), else [`BuildGate::Escapement`].
+///
+/// **One helper for all three sites that state this verdict** — the Tame arm, the wire gate and
+/// [`head_rung_gate`] — so the cause cannot differ between what is acted on and what is published.
+/// The old single reason blamed the player's floor when wolves had taken the growth.
+fn herd_room_gate(herd: &Herd, floor: f32, fauna: &FaunaConfig) -> BuildGate {
+    if source_is_workable(fauna::herd_take_room(herd, floor, fauna)) {
+        BuildGate::Open
+    } else if herd.predator_eaten_this_turn > NOTHING_PREDATED {
+        BuildGate::PredatorsAteGrowth
+    } else {
+        BuildGate::Escapement
+    }
+}
+
+/// **No predator drew anything off the herd** — the boundary [`herd_room_gate`] compares against.
+const NOTHING_PREDATED: f32 = 0.0;
 
 /// **THE `animal:pen` GATE** — the `Corral` arm's `eligible`. It carries **no work predicate**, for
 /// `accrue_field`'s reason: the term replaced a rung's `Thriving` gate and rung 3 never had one on
@@ -1887,8 +1909,8 @@ fn head_rung_gate(
                     // never the raw escapement room: taming raises the herd's `K`, so the floor
                     // climbs out from under a herd that started on it and the gate would refuse the
                     // very build that moved it.
-                    let workable = source_is_workable(fauna::herd_take_room(herd, *floor, fauna));
-                    animal_pastoral_gate(knows_rung(rung), herd.can_domesticate(), workable)
+                    let room = herd_room_gate(herd, *floor, fauna);
+                    animal_pastoral_gate(knows_rung(rung), herd.can_domesticate(), room)
                 }
                 Improvement::Corral => {
                     let rung = ladder.rung(RungKey::AnimalPen);
@@ -8370,8 +8392,7 @@ pub fn advance_labor_allocation(
                     // its floor by the `K` its own taming raised is still a herd, still growing, and
                     // still a legal thing to gentle. Same number `hunt_take` is bounded by, so a
                     // legal build target that yields nothing is unrepresentable.
-                    let herd_is_workable =
-                        source_is_workable(fauna::herd_take_room(herd, *floor, &fauna));
+                    let herd_room = herd_room_gate(herd, *floor, &fauna);
                     // **THE STANDING SPLIT'S OTHER HALF, MEASURED BEFORE THE TAKE** — the pen
                     // branch's own line, and the reason it is here too is
                     // `docs/plan_pen_standing_yield.md` §3: `steppe_runner` and `marsh_grazer` carry
@@ -8500,7 +8521,7 @@ pub fn advance_labor_allocation(
                                 knows(&discovery, faction, knowledge, knowledge_threshold)
                             }),
                             herd.can_domesticate(),
-                            herd_is_workable,
+                            herd_room,
                         );
                         let eligible = gate.holds();
                         // THE build seam — the same call the plant side's Cultivate arm makes, and it
@@ -8745,7 +8766,7 @@ pub fn advance_labor_allocation(
                                         // **The build's own question**, so the wire's blocked reason
                                         // and the accrual's gate cannot disagree about whether this
                                         // herd is workable.
-                                        (herd_is_workable, BuildGate::Escapement),
+                                        (herd_room.holds(), herd_room),
                                         (
                                             herd.owner.is_none_or(|owner| owner == faction),
                                             BuildGate::OwnedByOther,

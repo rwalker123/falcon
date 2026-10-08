@@ -4546,6 +4546,14 @@ table HerdTelemetryState {
   // `filled < required`, and `upkeepToolsShort` is exactly "some line is short". Item ids only - the
   // client resolves each to its roster display name. Absent = the site's keeping claimed no tool.
   upkeepToe:[KitToeLine];
+  // --- WHO ATE THE HERD'S GROWTH (appended last) --------------------------------------------------
+  // `predatorEatenBy` = the predator species KEY (fauna_config.json `species` key, e.g. "wolf") that
+  // drew the largest share off this herd THIS turn; empty when nothing preyed on it. `predatorEaten`
+  // = the BIOMASS (the unit of `biomass`; divide by the species' body mass for animals) predators
+  // drew off it this turn. Same turn as the herd's growth: a build refused `predators_ate_growth` is
+  // refused because of exactly this. Fog-filtered with the row.
+  predatorEatenBy:string;
+  predatorEaten:float = 0;
 }
 
 table CommandEventState {

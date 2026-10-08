@@ -1356,6 +1356,12 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     .is_some_and(|herd| viewer_keeping_tools_short(&herd.upkeep_toe, viewer)),
                 upkeep_toe: herd
                     .map_or_else(Vec::new, |herd| upkeep_toe_lines(&herd.upkeep_toe, viewer)),
+                // **Who ate the growth** — the same stamp `BuildGate::PredatorsAteGrowth` is judged
+                // on. This row is already fog-gated above, so it adds no disclosure of its own.
+                predator_eaten_by: herd
+                    .and_then(|herd| herd.predator_eaten_by.clone())
+                    .unwrap_or_default(),
+                predator_eaten: herd.map_or(0.0, |herd| herd.predator_eaten_this_turn),
             }
         })
         .collect()

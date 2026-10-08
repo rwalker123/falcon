@@ -2651,6 +2651,14 @@ impl FaunaConfig {
 
     /// Resolve a species row by its `display_name` (the value a `Herd` stores in `species`), so
     /// `advance_herds` can read the herd's movement cadence levers. Display names are unique.
+    pub fn species_key_by_display(&self, display: &str) -> Option<&str> {
+        self.species
+            .iter()
+            .find(|(_, def)| def.display_name == display)
+            .map(|(key, _)| key.as_str())
+    }
+
+    /// Resolve a species row by its `display_name` (see [`Self::species_key_by_display`] for the key).
     pub fn species_by_display(&self, display: &str) -> Option<&SpeciesDef> {
         self.species
             .values()

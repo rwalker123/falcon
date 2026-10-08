@@ -687,6 +687,13 @@ pub enum BuildGate {
     /// than anything on the build line (`.claude/rules/core_sim/husbandry.md` → "THE REGROWTH
     /// SUPPRESSION CLOSES A LOOP").
     Escapement,
+    /// **The herd's take room is empty BECAUSE PREDATORS ATE ITS GROWTH** — the same empty room that
+    /// refuses as [`Self::Escapement`], told apart by `Herd::predator_eaten_this_turn > 0`
+    /// (`fauna::advance_predation` stamps it between the regrowth stamp and the band's gate).
+    /// `Escapement` blames the player's floor; with wolves in range the floor is not what emptied
+    /// the room, and the remedy is not on the build line either. Animal `Tame` only — nothing preys
+    /// on a patch. See [`crate::systems::labor`]'s `herd_room_gate`.
+    PredatorsAteGrowth,
     /// **Nothing here climbs** — the patch carries no committed plant (`Cultivate`), or the tile's
     /// whole basket stops below the quoted rung (a projection's `resolve_committed_species`).
     NoCrop,
@@ -763,6 +770,7 @@ impl BuildGate {
             BuildGate::Open => BUILD_GATE_OPEN,
             BuildGate::Knowledge => "knowledge",
             BuildGate::Escapement => "escapement",
+            BuildGate::PredatorsAteGrowth => "predators_ate_growth",
             BuildGate::NoCrop => "no_crop",
             BuildGate::SpeciesCeiling => "species_ceiling",
             BuildGate::RungBelow => "rung_below",

@@ -550,6 +550,17 @@ pub struct Herd {
     /// sim-side only — not on the client wire. Defaults to `biomass` at construction so a herd that has
     /// never regrown reads a sane pre-regrowth value.
     pub biomass_before_regrowth: f32,
+    /// **The biomass predators drew off this herd this turn** (`advance_predation`, Logistics) — the
+    /// drain that sits between the regrowth stamp and the band's take, and so the reason
+    /// [`Self::growth_this_turn`] reads smaller than the herd grew. Reset where
+    /// `regrow_biomass` re-stamps [`Self::biomass_before_regrowth`], so the two describe the same
+    /// turn. It exists so a build refused for want of room can say *"wolves ate the growth"* rather
+    /// than blame the player's floor (`BuildGate::PredatorsAteGrowth`).
+    pub predator_eaten_this_turn: f32,
+    /// The predator species KEY (`fauna_config.json`'s `species` key, e.g. `wolf`) that took the
+    /// largest share of [`Self::predator_eaten_this_turn`]; the first met in `HerdRegistry` order on
+    /// a tie. `None` when nothing preyed on the herd this turn.
+    pub predator_eaten_by: Option<String>,
     /// Transient per-turn scratch: the graze biomass this herd actually drew from its footprint this
     /// turn (`advance_herd_grazing`, Logistics), read the same turn by the pen feed settlement in
     /// `advance_labor_allocation` (Population). For a penned herd it is what the fenced footprint fed
@@ -851,6 +862,8 @@ impl Herd {
             hunt_credit: 0.0,
             // No regrowth has run yet — pre-regrowth == current (slice 8b).
             biomass_before_regrowth: biomass,
+            predator_eaten_this_turn: 0.0,
+            predator_eaten_by: None,
             // Full ladder by default; the real spawn resolves the species' ceiling from its `SpeciesDef`
             // right after construction (`spawn_short_range_game` / the migratory spawn). A test-built
             // herd keeps the default `Pen` = the pre-2d-δ universal-full-ladder behaviour.
@@ -3514,9 +3527,12 @@ pub fn advance_predation(
     let radius = fauna.predators.prey_sense_radius;
     let default_defense = crate::combat::CombatStats::default().defense;
     let len = herds.herds.len();
+    // Per prey herd: what each predator species drew off it this turn, in the order the predators
+    // were met — the ledger `predator_eaten_by` is read off (largest share, first met on a tie).
+    let mut eaten_by_species: Vec<Vec<(String, f32)>> = vec![Vec::new(); len];
     for i in 0..len {
         // Read predator `i`: resolve its species; a non-carnivore (or unresolved) herd is not a hunter.
-        let (pred_pos, attack, demand) = {
+        let (pred_pos, attack, demand, pred_key) = {
             let pred = &herds.herds[i];
             let Some(def) = fauna.species_by_display(&pred.species) else {
                 continue;
@@ -3525,7 +3541,10 @@ pub fn advance_predation(
                 continue;
             }
             let demand = (def.prey_per_biomass * pred.biomass).max(0.0);
-            (pred.current_pos, def.combat.attack, demand)
+            let key = fauna
+                .species_key_by_display(&pred.species)
+                .unwrap_or_default();
+            (pred.current_pos, def.combat.attack, demand, key.to_string())
         };
         if demand <= 0.0 {
             continue;
@@ -3567,8 +3586,25 @@ pub fn advance_predation(
             let prey = &mut herds.herds[j];
             let floor = escapement_floor_fraction * prey.carrying_capacity;
             let available = (prey.biomass - floor).max(0.0);
-            prey.biomass -= available * drawn_fraction;
+            let drawn = available * drawn_fraction;
+            prey.biomass -= drawn;
+            prey.predator_eaten_this_turn += drawn;
+            let ledger = &mut eaten_by_species[j];
+            match ledger.iter_mut().find(|(key, _)| *key == pred_key) {
+                Some((_, share)) => *share += drawn,
+                None => ledger.push((pred_key.clone(), drawn)),
+            }
         }
+    }
+    for (prey, ledger) in herds.herds.iter_mut().zip(eaten_by_species) {
+        // Strictly greater, so the first species met keeps a tie.
+        let mut largest: Option<(String, f32)> = None;
+        for (key, share) in ledger {
+            if largest.as_ref().is_none_or(|(_, best)| share > *best) {
+                largest = Some((key, share));
+            }
+        }
+        prey.predator_eaten_by = largest.map(|(key, _)| key);
     }
 }
 
@@ -10970,6 +11006,9 @@ pub fn regrow_biomass(herd: &mut Herd, fauna: &FaunaConfig) {
     // Capture the pre-regrowth biomass so the Population-stage Sustain take can size its rate against
     // what the herd *was*, not what it grew to this turn (slice 8b — `Herd::biomass_before_regrowth`).
     herd.biomass_before_regrowth = herd.biomass;
+    // The predation stamp describes the same turn the pair above does, so it resets with it.
+    herd.predator_eaten_this_turn = 0.0;
+    herd.predator_eaten_by = None;
     // The herd's OWN ecology + capacity (`herd_ecology` / `herd_capacity`): wild `r` is now
     // **per-species** (fast small game ~0.35, slow megafauna ~0.04), pastoral 0.25, penned 0.90 — the
     // whole husbandry ladder is just this curve run at a different rate.
