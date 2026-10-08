@@ -1123,6 +1123,15 @@ client-side — **no schema change**.
   `danger_fraction` 0.10. ⛔ **No threshold is invented on this side.** The quieter of the two is the
   honest default for a line carrying no token at all.
 
+- **`bench_material_short` → `RUNG_NOTABLE`, `status=bench_short` → `▾` in WARN, WITH THE WORK-TAB LINK**
+  (issue #777). *"{Material} will run short at the bench"* is a forecast: nothing is lost yet, the bench
+  stalls and recovers when stock arrives — the difference from `material_shortfall`'s Alert, where an
+  investment is already coming apart. The glyph tracks the rung, so it wears the reduced mark `trimmed` /
+  `pruned` / `stalled` wear. Its remedy is a crew gathering the material, sent from the Work tab, and the
+  sim writes `band=<BandId>` (`status=bench_short material=<id> short=<n> held=<n> band=<BandId>`), so it
+  is in `DETAIL_STATUS_WORK_LINK`. `material` / `short` / `held` take the generic detail walk exactly as
+  `status=outrunning`'s keys do; none is in `DETAIL_KEY_HIDDEN`.
+
 **THE SPLIT RIDES `DETAIL_STATUS_STYLE`, NOT A PARALLEL TABLE.** That table already overrides a kind's
 rung from a whole space-delimited `key=value` fragment, which is exactly the job — so `severity=warn`
 (Notable, `▾`) and `severity=danger` (Alert, `⚠`) are rows in it, and the table's own rule that **the

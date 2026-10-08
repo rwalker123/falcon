@@ -165,6 +165,7 @@ fn belief_per_death_scales_the_accrual() {
         .world
         .insert_resource(BeliefConfigHandle::new(std::sync::Arc::new(BeliefConfig {
             belief_per_death: DOUBLED_BELIEF_PER_DEATH,
+            ..BeliefConfig::default()
         })));
     let doubled_fx = starve_away_from_home(&mut doubled);
 

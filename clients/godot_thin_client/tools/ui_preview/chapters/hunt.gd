@@ -356,9 +356,9 @@ const ORACLE_DEER_PER_WORKER := 0.8
 const ORACLE_DEER_SUSTAIN_CEILING := 2.33
 
 ## The spec oracle deer: food_per_animal 1.23, Sustain flow ceiling 2.33, per-worker 0.8, output 1.0.
-##   1 worker  → can't carry one whole 1.23 deer → delivered 0.80, ≈0.65 deer/turn · ⚠ 35% wasted
-##   2 workers → lands exactly one whole deer/turn, no waste → ≈1 deer/turn · renewable
-##   4 workers → the Sustain-max cap, delivered 2.33 → ≈1.89 deer/turn, no waste
+## The fixture's herd sits on the band's own tile — a CAMP kill, which has no carry arm — so every
+## crew size reads the herd's room alone, `2.36 → 0.07 FOOD` (next turn's ceiling, then the held rate):
+##   1, 2 or 4 workers → the same `2.36` food/turn; the crew count is a staffing plan, not a throttle
 ## Ascending `hunt_policy_ceilings` so the "up to X/turn" cap buttons read Sustain < Surplus < Deplete <
 ## Eradicate; husbandry ceiling "wild" keeps the picker to the four extractive rungs.
 func _delivered_oracle_herd() -> Dictionary:
@@ -781,10 +781,6 @@ func run(harness) -> void:
 	h._assert_hud("…under the caravan's `once running · per turn` caption, not next turn (got \"%s\")"
 			% Readout.yields_header(far_sheet),
 		Readout.yields_header(far_sheet) == HudComposeVocab.YIELD_HEADER_ONCE_RUNNING.to_upper())
-	# …and no WASTE note: that is the resident take's whole-animal overflow, and a caravan walks away
-	# from nothing — the sim publishes a far row's `wasted` as `0`.
-	h._assert_hud("…and no waste note, which a caravan never incurs (%s)" % Readout.yields_text(far_sheet),
-		not Readout.yields_text(far_sheet).to_upper().contains("WASTED"))
 	# **AND IT ASKED ABOUT THIS CREW.** The section is priced at the stepper's crew, so the ask the
 	# seam recorded must carry it — a section asked at the default crew would render a real answer
 	# about a different party.
@@ -1038,7 +1034,12 @@ func run(harness) -> void:
 	var fowl_collection := float(FOWL_HUNTERS) * FOWL_PER_WORKER_YIELD
 	var reach_take := HerdFx.hunt_take_oracle(fowl_collection, fowl_ceiling, fowl_fpa,
 		float(FOWL_HUNTERS) * FOWL_ENGAGE_RATE)
-	var carry_take := HerdFx.hunt_take_oracle(fowl_collection, fowl_ceiling, fowl_fpa)
+	# A camp kill is bound by the herd's room alone — NEXT turn's ceiling, the sim regrowing a stage
+	# before it harvests — never by what the crew carries.
+	var fowl_next_ceiling := float(SourceForecast.herd_axis_rates(
+		ForageFx.floorify(_engagement_fowl_herd(SourceForecast.NO_ENGAGEMENT_STAGE)),
+		SourceForecast.FLOOR_FOOD_PEAK)["next_ceiling"])
+	var carry_take := HerdFx.hunt_take_oracle(fowl_collection, fowl_next_ceiling, fowl_fpa)
 	var reach_face := SourceForecast.format_magnitude(float(reach_take["delivered"]))
 	var carry_face := SourceForecast.format_magnitude(float(carry_take["delivered"]))
 	# THE TWO CREW TERMS, restated from the sim's own `hunt_haul_workers` / `hunt_engage_workers`: the
@@ -1162,7 +1163,7 @@ func run(harness) -> void:
 	h._hud._band_labor._player_bands = [_delivered_oracle_band()]
 	h._hud._band_labor._player_band = h._hud._band_labor._player_bands[0]
 
-	# 3s — 2 hunters land exactly one whole 1.23 deer/turn, no waste → "≈1 Red Deer/turn · renewable",
+	# 3s — 2 hunters at camp read the herd's room, `2.36 → 0.07 FOOD · renewable` (no carry cap),
 	# and the four ascending "up to +2.33 / +3.50 / +5.00 / +7.00 /turn" cap buttons.
 	var oracle_clean := _delivered_oracle_herd()
 	h._hud._compose.reset_hunt_source()
@@ -1172,19 +1173,9 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("herd_hunt_delivered_clean")
 
-	# 3t — 1 hunter can't carry even one whole deer (0.80 < 1.23), so 35% of the kill rots →
-	# "≈0.65 Red Deer/turn · ⚠ 35% wasted" (green line, amber waste suffix).
-	var oracle_waste := _delivered_oracle_herd()
-	h._hud._compose.reset_hunt_source()
-	h._hud._compose.set_hunt_band(-1)
-	h._show_herd(oracle_waste)
-	h._compose_herd(oracle_waste, 1, SourceForecast.FLOOR_FOOD_PEAK)
-	await h._settle()
-	await h._save("herd_hunt_delivered_waste")
-
 	# 3u — AUTO-MAX on policy select: simulate the picker click path (autofill flag + policy set) starting
-	# from a count of 1; the rebuild fills the crew to the Sustain max-useful cap (4 carriers), so the
-	# stepper sits at 4 and the line reads the full ≈1.89 deer/turn with zero waste.
+	# from a count of 1; the rebuild fills the crew to the Sustain max-useful cap (4 carriers — the staffing plan
+	# for when the herd is beyond reach), so the stepper sits at 4 and the take still reads `2.36`.
 	var oracle_automax := _delivered_oracle_herd()
 	h._hud._compose.reset_hunt_source()
 	h._hud._compose.set_hunt_band(-1)
@@ -1195,8 +1186,8 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("herd_hunt_automax")
 
-	# 3v — big game (mammoth fpa 16, Sustain ceiling 2.4): auto-max staffs the 20 carriers, delivered
-	# 2.4 → ≈0.15 mammoth/turn, and the averaging-WINDOW hint appears: "≈1 Woolly Mammoth every ~7
+	# 3v — big game (mammoth fpa 16, Sustain ceiling 2.4): auto-max staffs the 20 carriers (the plan for a herd
+	# beyond reach; at camp the take is the room's `2.43`), and the averaging-WINDOW hint appears: "≈1 Woolly Mammoth every ~7
 	# turns — the rate above is averaged over that span."
 	var window_herd := _big_game_window_herd()
 	h._hud._compose.reset_hunt_source()
@@ -1561,8 +1552,14 @@ func run(harness) -> void:
 	# THE MAGNITUDE, recomposed from the sim's own step: `quantise_animal_take` for the count (the
 	# harness's `HerdFx.hunt_take_oracle`, in food). The client composes it through the per-biomass
 	# vector instead, so the two arrive at one answer by different routes rather than by construction.
-	var pair_food := float(HerdFx.hunt_take_oracle(PELT_FRAME_HUNTERS * ORACLE_DEER_PER_WORKER,
-		ORACLE_DEER_SUSTAIN_CEILING, ORACLE_DEER_FOOD_PER_ANIMAL)["delivered"])
+	# Two hunters carry 1.30 bodies, which the pack seats as TWO kills (`ceil`), so carry no longer clips
+	# the take below the herd's own room: the sheet quotes the room's long-run rate (the whole Sustain
+	# ceiling — the per-turn whole-animal floor of `hunt_take_oracle` is the kill-credit bank's to
+	# average out), not the one animal a floored carry arm used to cap it at.
+	var pair_ceiling := float(SourceForecast.herd_axis_rates(
+		ForageFx.floorify(oracle_pair), SourceForecast.FLOOR_FOOD_PEAK)["next_ceiling"])
+	var pair_food := minf(pair_ceiling, ceilf(PELT_FRAME_HUNTERS
+		* ORACLE_DEER_PER_WORKER / ORACLE_DEER_FOOD_PER_ANIMAL) * ORACLE_DEER_FOOD_PER_ANIMAL)
 	h._assert_hud("…and it is the crew's quantised take (%s)"
 		% SourceForecast.format_magnitude(pair_food),
 		is_equal_approx(_yield_take(pair_yields, food_unit),
@@ -2490,7 +2487,7 @@ func _assert_one_band_naming_rule() -> void:
 #  THE QUANTISED TAKE IS ONE EXPRESSION (`fauna::quantise_animal_take`)
 # =====================================================================================
 # Reported from play on a Wild Boar herd: **six hunters quoted 4.80 food/turn and seven quoted
-# 0.36** — the readout falling off a cliff as the crew GREW. `_hunt_delivered_and_waste` carried two
+# 0.36** — the readout falling off a cliff as the crew GREW. `_hunt_delivered` carried two
 # branches, and the `carryable < 1` one priced delivery as the crew's whole raw `collection` on the
 # premise that the only way below one body is a pack too small to hold one. Once the ENGAGEMENT arm
 # joined the same `min` that premise was false: a crew that hauls twenty boar can still bring down
@@ -2500,7 +2497,7 @@ func _assert_one_band_naming_rule() -> void:
 #
 # PNG-LESS AND DRIVEN, for the reason `compose_rungs.gd`'s kit-repricing liveness block is: this is
 # arithmetic, and a sheet quoting the wrong number renders a perfectly plausible frame. The producer
-# is called directly with a BARE fixture — `_hunt_delivered_and_waste` takes an already-kit-priced
+# is called directly with a BARE fixture — `_hunt_delivered` takes an already-kit-priced
 # herd, and the reference here is the unpriced one whose terms the constants below state.
 
 ## The reported quarry's own wire terms. Every derived figure is composed FROM these rather than
@@ -2647,12 +2644,25 @@ const CADENCE_BIOMASS := 56.0
 const CADENCE_HUNTERS := 1
 
 ## The fraction of a body the three arms agree on, named so the expectation and the fixture are one
-## number: `delivered = bodies × min(fpa, collection)` = `0.6 × 0.6` of a body's food.
+## number: `delivered = bodies × body` = `0.6` of a body's food, the whole of every animal killed.
 const CADENCE_BODIES_PER_TURN := 0.6
 
-## What rots: the party kills 0.6 of a body's worth per turn and hauls 0.6 of each body it drops, so
-## `1 − 0.6` of every kill is left where it fell.
-const CADENCE_WASTE_FRACTION := 0.4
+## The fractional-carry claim: four hunters of the cadence herd carry 4 × 0.6 = 2.4 bodies, which
+## the sim's `animals_the_pack_seats` rounds UP to three kills. The herd's stock is raised so the room
+## above the food peak holds more than three bodies and carry is the binding arm.
+const SEATS_HUNTERS := 4
+
+const SEATS_CARRY_BODIES := 2.4
+
+const SEATS_ANIMALS := 3
+
+const SEATS_BIOMASS := 100.0
+
+## A sled's multiple on one hunter's carry — 2.4 × 1.5 = 3.6 bodies, which the pack seats as four.
+const SEATS_SLED_FACTOR := 1.5
+
+## Tiles east of the band, past its `work_range`, that make the herd's kill a POSTED one.
+const SEATS_POSTED_DISTANCE := 8
 
 ## The cadence herd. It publishes NO `engage_rate`, so the engagement arm is unbounded and the claim
 ## is about the carry clamp alone — the same isolation `_engagement_fowl_herd`'s unbounded twin makes
@@ -2703,7 +2713,7 @@ func _boar_brought_down(workers: int) -> float:
 ## answers in the unit a take is actually taken in; the species' own per-biomass rate is what values
 ## it, and it is one published number rather than a second derivation.
 func _boar_delivered(band: Dictionary, herd: Dictionary, workers: int) -> float:
-	var take: Dictionary = h._hud._drawercompose._hunt_delivered_and_waste(
+	var take: Dictionary = h._hud._drawercompose._hunt_delivered(
 		band, herd, SourceForecast.FLOOR_FOOD_PEAK, workers, SourceForecast.IMPROVEMENT_NONE,
 		_crew_curve(herd))
 	if not bool(take.get("available", false)):
@@ -2788,17 +2798,14 @@ func _engagement_quantisation_assertions() -> void:
 			% [BOAR_SWEEP_MIN_CREW, BOAR_SWEEP_MAX_CREW, broke_at, broke_to, broke_from],
 		broke_at == 0)
 
-	# (3) **THE CARRY CLAMP IS CHARGED PER BODY, NOT PER TURN** — the half of the expression the
+	# (3) **CARRY SIZES THE KILL COUNT, NEVER WHAT A KILL DELIVERS** — the half of the expression the
 	#     engagement pair above cannot see, because it never puts the crew below one body of CARRY.
 	#     On the cadence herd the three terms coincide at 0.6 of a body: the crew's collection is
-	#     0.6 × fpa, the room offers 0.6 bodies a turn, and nothing breaks off. A body still lands
-	#     WHOLE on the turn it drops, so the crew hauls its 0.6 × fpa of it and the rest rots —
-	#     `0.6 × 0.6 = 0.36 fpa` delivered against `0.6 fpa` killed, i.e. 40% wasted. Averaging the
-	#     kill first and clamping THAT by the carry credits the crew the full 0.6 fpa with no waste
-	#     at all: 1.67× too high, and silent about the meat on the ground.
+	#     0.6 × fpa, the room offers 0.6 bodies a turn, and nothing breaks off. Every body lands
+	#     WHOLE, so `0.6 fpa` is delivered — the whole of what is killed, with no per-body carry clamp.
 	var cadence := _cadence_herd()
 	var cadence_fpa := CADENCE_BODY_MASS * CADENCE_PROVISIONS_PER_BIOMASS
-	var cadence_take: Dictionary = h._hud._drawercompose._hunt_delivered_and_waste(
+	var cadence_take: Dictionary = h._hud._drawercompose._hunt_delivered(
 		band, cadence, SourceForecast.FLOOR_FOOD_PEAK, CADENCE_HUNTERS,
 		SourceForecast.IMPROVEMENT_NONE, _crew_curve(cadence))
 	# The vacuity guard: the fixture must really sit at the coincidence, or the two numbers below are
@@ -2811,18 +2818,57 @@ func _engagement_quantisation_assertions() -> void:
 			% [cadence_collection, cadence_ceiling, CADENCE_BODIES_PER_TURN, cadence_fpa],
 		is_equal_approx(cadence_collection, CADENCE_BODIES_PER_TURN * cadence_fpa)
 			and is_equal_approx(cadence_ceiling, CADENCE_BODIES_PER_TURN * cadence_fpa))
-	var want_cadence := CADENCE_BODIES_PER_TURN * CADENCE_BODIES_PER_TURN * cadence_fpa
+	var want_cadence := CADENCE_BODIES_PER_TURN * cadence_fpa
 	# The producer answers in BIOMASS — see `_boar_delivered` — so the claim is valued through the
 	# species' own per-biomass rate rather than restated in a second unit.
 	var cadence_delivered := float(cadence_take["delivered_biomass"]) \
 		* CADENCE_PROVISIONS_PER_BIOMASS
-	h._assert_hud("a crew that cannot carry a whole body lands %.4f food/turn, not the room's %.4f — got %.4f"
+	h._assert_hud("a crew below one body of carry still lands every body whole — %.4f food/turn (room's %.4f) — got %.4f"
 			% [want_cadence, cadence_ceiling, cadence_delivered],
 		is_equal_approx(cadence_delivered, want_cadence))
-	h._assert_hud("…and the body it cannot finish carrying is WASTE — %d%%, got %d%%"
-			% [int(round(CADENCE_WASTE_FRACTION * 100.0)),
-				int(round(float(cadence_take["waste_pct"]) * 100.0))],
-		is_equal_approx(float(cadence_take["waste_pct"]), CADENCE_WASTE_FRACTION))
+
+	# (4) **CARRY SIZES A POSTED KILL, AND A CAMP KILL HAS NO CARRY ARM** — `animals_the_pack_seats`
+	#     (`ceil`) applies only to a herd past the band's apron; inside the work range the herd's own
+	#     room is the bound and the sled changes nothing. The herd has room for more than the posted
+	#     crew seats, so carry is the binding arm there.
+	#       posted : 2.4 bodies of carry → THREE kills; a sled (×SEATS_SLED_FACTOR) → 3.6 → FOUR.
+	#       camp   : the room (SEATS_CAMP_ANIMALS) either way — sledded or not.
+	var seats_herd := _cadence_herd()
+	seats_herd["biomass"] = SEATS_BIOMASS
+	var seats_sled := seats_herd.duplicate(true)
+	seats_sled["per_worker_yield"] = float(seats_herd["per_worker_yield"]) * SEATS_SLED_FACTOR
+	seats_sled["per_worker_biomass"] = float(seats_herd["per_worker_biomass"]) * SEATS_SLED_FACTOR
+	var seats_far := seats_herd.duplicate(true)
+	seats_far["x"] = int(seats_herd["x"]) + SEATS_POSTED_DISTANCE
+	var seats_far_sled := seats_sled.duplicate(true)
+	seats_far_sled["x"] = seats_far["x"]
+	var seats_carry_bodies := float(SEATS_HUNTERS) * CADENCE_PER_WORKER_BIOMASS / CADENCE_BODY_MASS
+	h._assert_hud("precondition: the crew carries a FRACTIONAL %.2f bodies (got %.2f)"
+			% [SEATS_CARRY_BODIES, seats_carry_bodies],
+		is_equal_approx(seats_carry_bodies, SEATS_CARRY_BODIES))
+	h._assert_hud("precondition: the near herd is a CAMP kill and the far one a POSTED kill",
+		not h._hud._drawercompose._hunt_is_posted(band, seats_herd)
+			and h._hud._drawercompose._hunt_is_posted(band, seats_far))
+	var seats_posted := _seats_killed(band, seats_far)
+	var seats_posted_sled := _seats_killed(band, seats_far_sled)
+	var seats_camp := _seats_killed(band, seats_herd)
+	var seats_camp_sled := _seats_killed(band, seats_sled)
+	h._assert_hud("a POSTED crew carrying %.1f bodies kills %d whole animals, delivering %d × body — got %.2f"
+			% [SEATS_CARRY_BODIES, SEATS_ANIMALS, SEATS_ANIMALS, seats_posted],
+		is_equal_approx(seats_posted, float(SEATS_ANIMALS)))
+	h._assert_hud("…and a sled still raises a POSTED kill (%.2f → %.2f animals)"
+			% [seats_posted, seats_posted_sled],
+		seats_posted_sled > seats_posted)
+	h._assert_hud("a CAMP crew is not carry-capped: sledded and sledless both kill %.2f (got %.2f / %.2f)"
+			% [seats_camp, seats_camp, seats_camp_sled],
+		is_equal_approx(seats_camp, seats_camp_sled) and seats_camp > float(SEATS_ANIMALS))
+
+## The animals one crew of `SEATS_HUNTERS` kills off `herd` this turn, through the real producer.
+func _seats_killed(band: Dictionary, herd: Dictionary) -> float:
+	var take: Dictionary = h._hud._drawercompose._hunt_delivered(
+		band, herd, SourceForecast.FLOOR_FOOD_PEAK, SEATS_HUNTERS,
+		SourceForecast.IMPROVEMENT_NONE, _crew_curve(herd))
+	return float(take["delivered_biomass"]) / CADENCE_BODY_MASS
 
 
 # =====================================================================================
@@ -3119,7 +3165,7 @@ func _wolf_material_take_assertions() -> void:
 ## What the crew actually LANDS off the boar, in biomass — the quantity every account beside it is a
 ## fixed conversion of, read from the same producer the accounts are read from rather than recomposed.
 func _boar_delivered_biomass(band: Dictionary, herd: Dictionary, workers: int) -> float:
-	var take: Dictionary = h._hud._drawercompose._hunt_delivered_and_waste(
+	var take: Dictionary = h._hud._drawercompose._hunt_delivered(
 		band, herd, SourceForecast.FLOOR_FOOD_PEAK, workers, SourceForecast.IMPROVEMENT_NONE,
 		_crew_curve(herd))
 	return float(take["delivered_biomass"]) if bool(take.get("available", false)) else -1.0
@@ -3138,7 +3184,7 @@ func _wolf_accounts(band: Dictionary, herd: Dictionary, workers: int) -> Diction
 ## plausible readout. This is the magnitude claim that closes it.
 ##
 ## **The expectation is the RETIRED expression, in the RETIRED units** — the food-keyed quantiser this
-## arc replaced, restated here — because the whole claim is that the two forms are one answer. The
+## arc replaced, restated here (less its retired per-body carry clamp) — because the whole claim is that the two forms are one answer. The
 ## ceiling it divides is the composed one (`herd_axis_rates`), which is not what is under test; the
 ## quantum and the crew term are the FIXTURE's own published food pair.
 ##
@@ -3161,11 +3207,12 @@ func _edible_take_is_unchanged_assertions() -> void:
 		SourceForecast.FLOOR_FOOD_PEAK)["next_ceiling"])
 	for crew in [EDIBLE_UNCHANGED_LEAN_CREW, EDIBLE_UNCHANGED_FULL_CREW]:
 		var collection := float(crew) * per_worker
-		# The retired form: `killed = min(room ÷ one body, whole bodies haulable)` — this herd states
+		# The retired form: `killed = min(room ÷ one body, animals the pack seats)` — this herd states
 		# no engagement stage, so the third arm is unbounded and drops out — then
-		# `delivered = killed × min(one body, the crew's carry)`, the pack's hold charged PER BODY.
-		var killed := minf(ceiling / fpa, maxf(floorf(collection / fpa), 1.0))
-		var want := killed * minf(fpa, collection)
+		# `delivered = killed × one body`, every animal killed landing whole.
+		var killed := minf(ceiling / fpa, maxf(ceilf(collection / fpa
+			* (1.0 - h._hud._drawercompose.ANIMAL_COUNT_EPSILON)), 1.0))
+		var want := killed * fpa
 		var got := float(_wolf_accounts(band, herd, crew).get(
 			SourceForecast.YIELD_ACCOUNT_FOOD, 0.0))
 		h._assert_hud("%d hunter(s) land the food-keyed quantiser's own %.4f — got %.4f"

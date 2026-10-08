@@ -54,7 +54,7 @@ static func install(hud: Node) -> void:
 ##
 ## **IT IS THE FIXTURE THAT COMPOSES IT NOW, AND THAT IS THE POINT OF THE ARC.** The identical
 ## `animals_stayed(animals_engaged(w, rate), stay)` used to run inside
-## `DrawerComposeController._hunt_delivered_and_waste`, where it was a CLIENT re-derivation of a take
+## `DrawerComposeController._hunt_delivered`, where it was a CLIENT re-derivation of a take
 ## the sim resolves in three stages; here it is a stand-in server answering a question, which is a
 ## fixture's business. It is deliberately the same arithmetic so every magnitude the hunt chapter
 ## already pins survives the move — what changed is who says it.

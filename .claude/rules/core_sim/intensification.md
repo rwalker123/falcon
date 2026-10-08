@@ -2044,6 +2044,7 @@ reason rather than a second guess at its own.
 |---|---|
 | `knowledge` | the rung's `unlock_discovery_id()` is not known |
 | `escapement` | `crew_is_working_the_source(biomass − floor × K)` — no room above the floor |
+| `predators_ate_growth` | the `escapement` term, when predators drew biomass off the herd this turn (`Herd::predator_eaten_this_turn > 0`) — animal `Tame` only, nothing preys on a patch. See "Who emptied the room" below |
 | `no_crop` | no committed species (Cultivate) / no commitment (Sow) |
 | `species_ceiling` | `can_domesticate()` / `can_pen()` — one fact about the animal, two rungs |
 | `rung_below` | Corral on a herd that is not tamed |
@@ -2054,6 +2055,23 @@ reason rather than a second guess at its own.
 | `undeclared` | the meter's rung is not the one this entry declared — a DEAD entry |
 | `materials` | **not a conjunct** — the rung's gate HOLDS and the stores are what stopped it, minted by the countdown off a coverage of zero |
 | `unworked` | **not a conjunct** — no quote at all, the band's row on the source having lapsed |
+
+**Who emptied the room (`predators_ate_growth`).** The animal Tame's room term is the take room
+(`fauna::herd_take_room`): the escapement room, or the share of this turn's growth the floor leaves
+takeable. `Herd::growth_this_turn()` is `biomass − biomass_before_regrowth`, so anything that draws the
+herd down between `regrow_biomass` and the band's gate (`advance_predation`, Logistics) shrinks it —
+and a wolf pack can take all of a small herd's growth. The old single `escapement` reason then blamed
+the player's floor for a room that wolves emptied, and nobody could tell why the build was blocked. So
+`systems::labor::herd_room_gate` returns `Open` when the room is workable, else
+`PredatorsAteGrowth` only if predation is what emptied it — `predator_eaten_this_turn > 0` AND the
+room **with the predation added back** (`hunt_take_room` at `biomass + eaten`, growth
+`biomass + eaten − biomass_before_regrowth`) would have been workable — else `Escapement`. The
+counterfactual keeps `floor = 1.0` (growth share `× 0`) and a herd that grew nothing for another
+reason (below Allee, husbandry shed) from blaming a wolf that took a sliver. **One helper at all three
+sites that state this verdict** (the Tame arm, the wire gate, `head_rung_gate`), so the cause cannot
+differ between what is acted on and what is published. Corral has no escapement conjunct and plant
+gates are unchanged. The herd row also carries `predatorEatenBy` / `predatorEaten`
+(`.claude/rules/core_sim/fauna.md` → "The predation stamp").
 
 **THE KEY SET IS READ OFF THE ARMS, NOT AUTHORED.** Each is a term of some rung's own `eligible`, and
 two of them (`site`, `undeclared`) are terms of `sow_permitted` assembled OUTSIDE `accrue_field` — a

@@ -157,6 +157,176 @@ fn draw_pass(
     ))
 }
 
+/// **ONE MATERIAL A QUEUED RUN WANTS MORE OF THAN THE STOCK HAS FOR IT** — a row of
+/// [`QueueForecast::orders`]. `held` is what was *left for this order* after the orders ahead of it
+/// claimed theirs, never the whole store, so `short = required - held` is this order's own gap.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MaterialNeed {
+    /// The material id.
+    pub material: String,
+    /// Every pass still to draw, at the band's current tiers.
+    pub required: Scalar,
+    /// What the queue left in the store for this order.
+    pub held: Scalar,
+    /// `required - held`; always `> 0` on an emitted row.
+    pub short: Scalar,
+}
+
+/// **WHAT THE BENCH'S WHOLE QUEUE WILL NEED, AGAINST THE STOCK** — [`queue_material_shortfalls`]'
+/// answer. Both the wire and the event-dock notice read this one value.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct QueueForecast {
+    /// One entry per order, index-aligned with [`BandBench::orders`]; each holds only the materials
+    /// that order is short of, in recipe-input order. Empty for an order the stock covers.
+    pub orders: Vec<Vec<MaterialNeed>>,
+    /// The stock left per material after the whole queue's claims — only the materials some order
+    /// claimed. [`Self::left_of`] answers for any material.
+    left: std::collections::BTreeMap<String, Scalar>,
+}
+
+impl QueueForecast {
+    /// **What the store still has of `material` once every queued order has claimed its share** — a
+    /// suggestion lands at the queue's end, so this is the stock it draws against.
+    pub fn left_of(&self, store: &LocalStore, material: &str) -> Scalar {
+        self.left
+            .get(material)
+            .copied()
+            .unwrap_or_else(|| store.material_total(material))
+    }
+
+    /// **The whole queue's gap per material** — every order's `short` summed, in id order. What the
+    /// event-dock notice judges, so it and the per-order wire rows cannot disagree.
+    pub fn short_by_material(&self) -> std::collections::BTreeMap<&str, Scalar> {
+        let mut total = std::collections::BTreeMap::new();
+        for need in self.orders.iter().flatten() {
+            let sum = total
+                .entry(need.material.as_str())
+                .or_insert_with(scalar_zero);
+            *sum = Scalar::from_raw(sum.raw().saturating_add(need.short.raw()));
+        }
+        total
+    }
+}
+
+/// **WHAT A RUN OF `passes` PASSES OF `recipe` NEEDS THAT THE STOCK CANNOT COVER**, each input's
+/// need being `passes x` [`required`] at `tiers`. The queue forecast and the suggestion forecast
+/// share it so a queued order and a suggested count are weighed by one rule. `claim` is told each
+/// material's total need and returns what it could set aside for it.
+fn run_needs(
+    recipe: &RecipeDef,
+    passes: u32,
+    tiers: &BenchTiers,
+    mut claim: impl FnMut(&str, Scalar) -> Scalar,
+) -> Vec<MaterialNeed> {
+    // One row per material even if a recipe lists it twice, so a claim is made once per material.
+    let mut wanted: Vec<(&str, Scalar)> = Vec::new();
+    for input in &recipe.inputs {
+        // **Saturating on the raw fixed-point value**: an order's count is a `u32` the player (or a
+        // test) may set arbitrarily high, and `Scalar`'s own `*` would overflow before it saturated.
+        let need = Scalar::from_raw(
+            required(input.amount, tiers.material_efficiency)
+                .raw()
+                .saturating_mul(i64::from(passes)),
+        );
+        match wanted.iter_mut().find(|(id, _)| *id == input.material) {
+            Some((_, total)) => *total = Scalar::from_raw(total.raw().saturating_add(need.raw())),
+            None => wanted.push((input.material.as_str(), need)),
+        }
+    }
+    wanted
+        .into_iter()
+        .filter_map(|(material, required)| {
+            let held = claim(material, required);
+            (required > held).then(|| MaterialNeed {
+                material: material.to_string(),
+                required,
+                held,
+                short: required - held,
+            })
+        })
+        .collect()
+}
+
+/// **WHAT THE WHOLE QUEUE WILL NEED THAT THE STOCK ON HAND CANNOT COVER** — the look past one pass
+/// that [`pass_is_affordable`] cannot take: an order of 6 spears that can draw pass 1 but not passes
+/// 2-6 is short, and the band should hear it before the bench stalls.
+///
+/// **An order's need** is, per input material, the passes it still has to DRAW x [`required`] at the
+/// band's *current* tiers for the recipe's bench material. Passes still to draw is
+/// [`BenchOrder::remaining`](crate::components::BenchOrder::remaining) less one when the order already holds its pile (that pile is in hand).
+///
+/// **The queue's order is the order the bench spends in**: orders are walked head first against a
+/// running copy of the store's per-material total, each claiming `min(need, left)`, so a later
+/// order sees only what the earlier ones left. A row is emitted only where `need > held`.
+///
+/// **Stock on hand only** — no inflow projection and no tier change from tool wear. The remedy a
+/// shortage names is *fetch more*, so a forecast that assumed the take would deliver it would hide
+/// the very thing it exists to say. An order whose recipe is gone from the book, or that has no
+/// bench material, claims nothing and has no rows.
+pub fn queue_material_shortfalls(
+    bench: Option<&BandBench>,
+    store: &LocalStore,
+    recipes: &crate::recipes_config::RecipesConfig,
+    materials: &MaterialsConfig,
+    equipment: &crate::equipment_config::EquipmentConfig,
+    wear: &BandEquipment,
+) -> QueueForecast {
+    let mut forecast = QueueForecast::default();
+    let Some(bench) = bench else {
+        return forecast;
+    };
+    for order in &bench.orders {
+        let rows = match recipes
+            .recipe(&order.recipe_id)
+            .and_then(|recipe| Some((recipe, recipe.bench_material()?)))
+        {
+            Some((recipe, material)) => {
+                let tiers = bench_tiers(material, materials, equipment, wear);
+                let passes = order
+                    .remaining()
+                    .saturating_sub(u32::from(order.drawn.is_some()));
+                let left = &mut forecast.left;
+                run_needs(recipe, passes, &tiers, |id, need| {
+                    let slot = left
+                        .entry(id.to_string())
+                        .or_insert_with(|| store.material_total(id));
+                    let claimed = need.min(*slot);
+                    *slot -= claimed;
+                    claimed
+                })
+            }
+            None => Vec::new(),
+        };
+        forecast.orders.push(rows);
+    }
+    forecast
+}
+
+/// **WHAT A SUGGESTED COUNT OF `item` WOULD NEED THAT THE QUEUE LEAVES UNCOVERED** — `count` units
+/// is `ceil(count / the recipe's per-pass output of the item)` passes of `recipe`, drawn against
+/// [`QueueForecast::left_of`]: a queued suggestion lands at the queue's end. Empty when the stock
+/// covers it. Nothing is claimed — a suggestion is a forecast, not an order.
+pub fn suggestion_material_shortfalls(
+    forecast: &QueueForecast,
+    store: &LocalStore,
+    recipe: &RecipeDef,
+    item: &str,
+    count: u32,
+    tiers: &BenchTiers,
+) -> Vec<MaterialNeed> {
+    let per_pass: f32 = recipe
+        .outputs
+        .iter()
+        .filter(|output| output.equipment_id() == Some(item))
+        .map(|output| output.amount)
+        .sum();
+    if per_pass <= 0.0 {
+        return Vec::new();
+    }
+    let passes = (count as f32 / per_pass).ceil() as u32;
+    run_needs(recipe, passes, tiers, |id, _| forecast.left_of(store, id))
+}
+
 /// **Can the store pay for one pass right now?** — the availability half of [`draw_pass`], factored
 /// out because the *projection* ([`bench_material_rate`]) has to ask the same question the draw will
 /// ask and a second reading of it would be free to drift from the one that actually spends.
@@ -700,4 +870,152 @@ fn credit_craft_lesson(
         return;
     };
     discovery.add_progress(faction, id, scalar_from_f32(amount));
+}
+
+#[cfg(test)]
+mod forecast_tests {
+    use super::*;
+    use crate::components::{BenchOrder, DrawnInputs};
+    use std::collections::BTreeMap;
+
+    /// The shipped sled recipe: 6 hide + 2 fibre a pass, bare-handed.
+    const SLED: &str = "sled";
+    const HIDE: &str = "hide";
+    const FIBRE: &str = "fibre";
+    /// One sled pass's fibre, the only fibre the fixture banks.
+    const FIBRE_FOR_ONE_PASS: f32 = 2.0;
+    const PLENTY_OF_HIDE: f32 = 100.0;
+    /// A six-sled order.
+    const SIX: u32 = 6;
+    /// One pass of the sled's bill, in the units the order draws.
+    const FIBRE_PER_PASS: f32 = 2.0;
+    const HIDE_PER_PASS: f32 = 6.0;
+    /// The reading every fixture axis is banked at.
+    const MID_READING: f32 = 0.5;
+
+    struct Fixture {
+        recipes: std::sync::Arc<crate::recipes_config::RecipesConfig>,
+        materials: std::sync::Arc<MaterialsConfig>,
+        equipment: std::sync::Arc<crate::equipment_config::EquipmentConfig>,
+        store: LocalStore,
+    }
+
+    fn fixture(fibre: f32) -> Fixture {
+        let materials = MaterialsConfig::builtin();
+        let mut store = LocalStore::default();
+        for (material, amount) in [(HIDE, PLENTY_OF_HIDE), (FIBRE, fibre)] {
+            let readings: BTreeMap<String, f32> = materials
+                .material(material)
+                .expect("the shipped table carries the material")
+                .characteristics
+                .iter()
+                .map(|axis| (axis.clone(), MID_READING))
+                .collect();
+            let key = materials
+                .band_key(material, &readings)
+                .expect("a reading on every axis keys");
+            store.deposit_material(material, key, scalar_from_f32(amount), &readings);
+        }
+        Fixture {
+            recipes: crate::recipes_config::RecipesConfig::builtin(),
+            materials,
+            equipment: crate::equipment_config::EquipmentConfig::builtin(),
+            store,
+        }
+    }
+
+    fn forecast(fixture: &Fixture, bench: &BandBench) -> QueueForecast {
+        queue_material_shortfalls(
+            Some(bench),
+            &fixture.store,
+            &fixture.recipes,
+            &fixture.materials,
+            &fixture.equipment,
+            &BandEquipment::default(),
+        )
+    }
+
+    fn bench_of(orders: Vec<BenchOrder>) -> BandBench {
+        BandBench {
+            orders,
+            ..BandBench::default()
+        }
+    }
+
+    /// **A six-sled order that can draw ONE pass reports what the other five lack.**
+    #[test]
+    fn an_order_that_can_draw_one_pass_reports_the_rest() {
+        let fixture = fixture(FIBRE_FOR_ONE_PASS);
+        let result = forecast(&fixture, &bench_of(vec![BenchOrder::new(SLED, SIX)]));
+        let rows = &result.orders[0];
+        assert_eq!(rows.len(), 1, "only fibre is short — the hide covers six");
+        assert_eq!(rows[0].material, FIBRE);
+        assert_eq!(
+            rows[0].required,
+            scalar_from_f32(FIBRE_PER_PASS * SIX as f32)
+        );
+        assert_eq!(rows[0].held, scalar_from_f32(FIBRE_FOR_ONE_PASS));
+        assert_eq!(
+            rows[0].short,
+            scalar_from_f32(FIBRE_PER_PASS * (SIX - 1) as f32),
+            "five passes' worth is missing"
+        );
+    }
+
+    /// **A pass already drawn is in hand, so it is not asked of the store again.**
+    #[test]
+    fn a_drawn_pass_is_excluded() {
+        let fixture = fixture(FIBRE_FOR_ONE_PASS);
+        let mut order = BenchOrder::new(SLED, SIX);
+        order.drawn = Some(DrawnInputs {
+            reading: None,
+            grade: None,
+            withdrawn: Vec::new(),
+        });
+        let result = forecast(&fixture, &bench_of(vec![order]));
+        assert_eq!(
+            result.orders[0][0].required,
+            scalar_from_f32(FIBRE_PER_PASS * (SIX - 1) as f32),
+            "five passes still to draw, not six"
+        );
+    }
+
+    /// **Two orders on one material: the second sees only what the first left.**
+    #[test]
+    fn a_later_order_sees_only_what_the_earlier_one_left() {
+        let fixture = fixture(FIBRE_FOR_ONE_PASS * 3.0);
+        let result = forecast(
+            &fixture,
+            &bench_of(vec![BenchOrder::new(SLED, 2), BenchOrder::new(SLED, 2)]),
+        );
+        assert!(result.orders[0].is_empty(), "the head is fully covered");
+        let second = &result.orders[1][0];
+        assert_eq!(second.held, scalar_from_f32(FIBRE_PER_PASS));
+        assert_eq!(second.short, scalar_from_f32(FIBRE_PER_PASS * 1.0));
+        assert_eq!(
+            result.left_of(&fixture.store, FIBRE),
+            scalar_zero(),
+            "the queue claimed every unit"
+        );
+        assert_eq!(
+            result.left_of(&fixture.store, HIDE),
+            scalar_from_f32(PLENTY_OF_HIDE - HIDE_PER_PASS * 4.0),
+            "hide is left net of both orders"
+        );
+    }
+
+    /// **An unknown recipe claims nothing and has no rows.**
+    #[test]
+    fn an_unknown_recipe_claims_nothing() {
+        let fixture = fixture(FIBRE_FOR_ONE_PASS);
+        let result = forecast(
+            &fixture,
+            &bench_of(vec![BenchOrder::new("no_such_recipe", SIX)]),
+        );
+        assert_eq!(result.orders, vec![Vec::new()]);
+        assert_eq!(
+            result.left_of(&fixture.store, FIBRE),
+            scalar_from_f32(FIBRE_FOR_ONE_PASS)
+        );
+    }
 }

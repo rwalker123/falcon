@@ -173,9 +173,10 @@ group descends from.
   ceilings rise. That is what lifts a faction past ~150 (#689). Contact with your own split bands
   adds nothing — they hold your lines already.
 - **Lines do not decay.**
-- **A line held by several separate groups splits its `K` between them**, so splitting never
-  raises a people's total ceiling — even a one-line band, whose split gives both halves a copy
-  of its line.
+- **A line held by several separate groups of one people splits its `K` between them**, so
+  splitting never raises a people's total ceiling — even a one-line band, whose split gives both
+  halves a copy of its line. A copy another people holds does not divide it: that copy is what
+  contact gives, and dividing it would leave two peoples who met no higher than before.
 - **The ceiling lifts at ~500** (`lineage.free_breeding_at`). Once a breeding population's
   lines × `K` reaches it, the inbreeding ceiling no longer applies at all: ~500 is the forager
   mating-network size (Birdsell's dialect tribe; Wobst's 175–475) at which a people finds mates
@@ -698,7 +699,10 @@ staffed it, so there is one place to look for every work item.*
 Every decision this doc leaves unmade is owned by an issue, so it cannot be lost:
 
 - **The founding-family levers** — `L` and `K` — are set in the ceiling slice (#688): an isolated
-  starting band ceilings near 150. The contact range belongs to the line-merge slice (#689).
+  starting band ceilings near 150. ~~The contact range~~ is **decided** on the line-merge slice
+  (#689): contact is the connection ledger's own contact-this-turn stamp (the sight sweep and an
+  expedition's flush), with no range of its own. See `.claude/rules/core_sim/campaign.md`
+  "Contact merges lines".
 - ~~**When a far party's haul is delivered, and what gates its launch**~~ — **decided** on the
   work-party slice (#684), before implementation, and it dissolved rather than resolved: a standing
   posting has no launch and no shipment, so there is nothing to gate. See "The model" above.

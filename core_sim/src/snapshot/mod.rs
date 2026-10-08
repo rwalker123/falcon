@@ -1447,6 +1447,8 @@ mod tests {
         population_state(PopulationStateInputs {
             belief_reach: Vec::new(),
             belief_relay_region: Vec::new(),
+            culture_traits: Vec::new(),
+            culture_ancestor_pull: Vec::new(),
             entity: Entity::from_raw(1),
             // This fixture asserts on the derived readouts, not on band identity.
             band_id: None,
@@ -1566,6 +1568,7 @@ mod tests {
             last_material_need: Default::default(),
             last_material_income: Default::default(),
             material_shortfall_warned: Vec::new(),
+            bench_short_warned: Vec::new(),
             last_food_transfers: Default::default(),
             last_fodder_transfers: Default::default(),
             last_transfer_crossings: Vec::new(),
@@ -1690,6 +1693,7 @@ mod tests {
             last_material_need: Default::default(),
             last_material_income: Default::default(),
             material_shortfall_warned: Vec::new(),
+            bench_short_warned: Vec::new(),
             last_food_transfers: Default::default(),
             last_fodder_transfers: Default::default(),
             last_transfer_crossings: Vec::new(),
@@ -1757,6 +1761,7 @@ mod tests {
             last_material_need: Default::default(),
             last_material_income: Default::default(),
             material_shortfall_warned: Vec::new(),
+            bench_short_warned: Vec::new(),
             last_food_transfers: Default::default(),
             last_fodder_transfers: Default::default(),
             last_transfer_crossings: Vec::new(),

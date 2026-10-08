@@ -223,6 +223,14 @@ const ATTENTION_KNOWLEDGE_LEARNED_DETAIL := "see what it lets your hands do"
 ## which is why the kind is on `ATTENTION_KINDS_WITH_A_PANEL` below.
 const ATTENTION_KIND_OPENING_LOADOUT := "opening_loadout"
 
+## **THE KITS THIS BAND HOLDS DO NOT COVER THE WORK ASSIGNED TO IT**, raised only while the band's
+## outfitting window is open: the player outfitted trapping kits and assigned a stalking hunt, or
+## changed the loadout after assigning work. NON-LOCATING (a band fact; no hex holds it), `warn` and
+## never `critical` (nothing is lost, the work just runs bare), and deliberately **NOT `blocking`**
+## for `ATTENTION_KIND_OPENING_LOADOUT`'s reasons — the window shutting is the sim's business. Its
+## `Open ▸` brings the picker back on the row's own band, so it is on the list below.
+const ATTENTION_KIND_LOADOUT_KIT_SHORT := "loadout_kit_short"
+
 ## ⛔ **WHICH SUBJECT A NON-LOCATING ROW'S PANEL MUST OPEN ON — carried by the orb and READ BY NOBODY
 ## THERE.** `panel_requested` used to say only WHICH KIND was pressed, which is all a producer with
 ## one panel-wide subject needs; the outfitting picker has one window PER BAND, so a row pressed
@@ -243,7 +251,8 @@ const ATTENTION_PANEL_SUBJECT := "panel_subject"
 ## says WHERE those hands are in words instead, and wears no affordance at all — a promise the row
 ## cannot keep is worse than no promise.
 const ATTENTION_KINDS_WITH_A_PANEL: Array[String] = [ATTENTION_KIND_DECISION,
-    ATTENTION_KIND_KNOWLEDGE_LEARNED, ATTENTION_KIND_OPENING_LOADOUT]
+    ATTENTION_KIND_KNOWLEDGE_LEARNED, ATTENTION_KIND_OPENING_LOADOUT,
+    ATTENTION_KIND_LOADOUT_KIT_SHORT]
 
 ## **SATISFIED / COMPLETE** — a standing requirement the player has finished meeting, drawn in
 ## `HudStyle.READY`. It ranks BELOW `info` (see `TurnOrb.SEVERITY_RANK`), so a row wearing it never

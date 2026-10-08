@@ -3380,11 +3380,11 @@ pub enum ShedStep {
 /// `workers × per_worker_capacity`, so the two signals answer the two halves of "is this source
 /// correctly staffed?": `workers_needed < workers` ⇒ drop some, `wasted > 0` ⇒ add some. Derived
 /// per-turn; on rung 3 (a Field) it is genuinely food left standing, on the drawn-down plant rungs it
-/// stays in the stock and regrows, and **on any animal rung it is meat left to rot** — a hunt kills
-/// *whole animals* (slice 8), so a party that cannot haul a whole one still takes it and wastes the
-/// rest. On an animal source *production* is therefore the biomass of the animals **killed**, not the
-/// escapement the herd could have spared: an animal you didn't kill was never produced, it is still
-/// alive (`fauna::forecast_production_and_take`).
+/// stays in the stock and regrows, and **on any animal rung it is `0`** — a hunt kills *whole
+/// animals* (slice 8) and keeps every one, so nothing it kills is left to rot. On an animal source
+/// *production* is the biomass of the animals **killed**, not the escapement the herd could have
+/// spared: an animal you didn't kill was never produced, it is still alive
+/// (`fauna::forecast_production_and_take`).
 ///
 /// `overdraws` = **does this take draw the stock below what it sustains** — THE ⚠ ([`take_overdraws`]),
 /// answered by the sim
@@ -5041,6 +5041,11 @@ pub struct LaborAllocation {
     /// concession that mechanic already makes. Excluded from equality below with the rest of the
     /// per-turn telemetry — a warning already given is not *intent*.
     pub material_shortfall_warned: Vec<String>,
+    /// **THE MATERIALS THE BENCH'S QUEUE HAS ALREADY WARNED THIS BAND IT WILL RUN SHORT OF**, in id
+    /// order — the edge gate on the `bench_material_short` notice, replaced each turn so a material
+    /// that recovers and then runs short again re-announces. Transient and excluded from equality
+    /// exactly as [`Self::material_shortfall_warned`] is.
+    pub bench_short_warned: Vec<String>,
     /// **HOW THIS BAND SPLITS A MAINTENANCE POOL IT CANNOT STRETCH** — the player's own choice
     /// between *everything degrades a little* and *the biggest investments stay whole*
     /// ([`crate::intensification::UpkeepFundMode`], `docs/plan_standing_upkeep.md` §2.5).

@@ -1349,6 +1349,9 @@ fn answer_work_party_forecast(
     // projection, struck on the hands the keeping leaves (`docs/plan_site_crews.md` §2.1). The steady
     // rate inside the apron, and the next turn's take on every source.
     let take_hands = ask.workers as f32 - keep_hands;
+    // **A camp kill hauls nothing** — no walk means the herd stands within `band_work_range`, so the
+    // pack bounds nothing (`fauna::kill_carry_rate`); a posted kill keeps the sled's carry.
+    let camp_kill = walk.is_none();
     let take_at_the_source = |turns: u32| -> f32 {
         match &asked {
             Asked::Hunt(herd) => {
@@ -1357,7 +1360,7 @@ fn answer_work_party_forecast(
                 crate::fauna::project_realized_hunt(
                     herd,
                     &fauna,
-                    pricing.haul_carry,
+                    crate::fauna::kill_carry_rate(camp_kill, pricing.haul_carry),
                     &hunters,
                     output_multiplier,
                     take_hands,

@@ -1513,6 +1513,17 @@ table PopulationCohortState {
   // `grievance` decodes to) at which a cut-off group breaks away. Echoed per cohort (the
   // `foundingMinWorkers` idiom) so the band panel can draw grievance against it.
   independenceGrievanceThreshold:float = 0;
+  // THE BAND'S OWN CULTURE (#701) - appended last, own-band fields (a foreign, redacted row carries
+  // the defaults). `cultureTraits`: the band's own culture layer's resolved values, one per axis in
+  // `CultureTraitAxis` order (the culture-layer `traits` order: 15 entries). Empty when the band has
+  // no layer yet.
+  cultureTraits:[float];
+  // The ancestor pull `reconcile` applied to the band layer this turn: `tie x ancestor_pull[axis]`
+  // per axis, same order as `cultureTraits`, where tie = s x r (the anchor's weight times the
+  // kin-relay strength). The layer's target this turn was parent + modifier + this. Empty when the
+  // band took no pull (no anchor, nothing reaching it, or `ancestor_pull` empty). Positive on
+  // SecularDevout is devout; NEGATIVE on TraditionalistRevisionist is traditionalist.
+  cultureAncestorPull:[float];
 }
 
 // One band's outfitting window. THE TWO SUPPLIES ARE MUTUALLY EXCLUSIVE and `parentBandId` says which
@@ -1804,8 +1815,9 @@ table LaborAssignment {
   // is what the source hands over this turn (the policy ceiling on a wild/tended source, the managed
   // rate on a Field/pen) and collection is workers × per-worker throughput. So the pair answers both
   // halves of "is this correctly staffed?": workers > workersNeeded ⇒ drop some, wastedYield > 0 ⇒
-  // add some. On a Field or a pen it is genuinely food left standing; on the drawn-down rungs it
-  // stays in the stock and regrows. Derived per-turn at capture (0 on a rehydrated save before the
+  // add some. On a Field it is genuinely food left standing; on the drawn-down rungs it stays in
+  // the stock and regrows. A hunt or a pen slaughter keeps every animal it kills (a camp kill lands
+  // in the larder, a far one walks home in the party's packs), so it reads 0. Derived per-turn at capture (0 on a rehydrated save before the
   // next tick). Appended (append-only).
   wastedYield:float = 0;
   // THE overhunting ⚠, answered by the sim rather than derived by the client from
@@ -2423,6 +2435,11 @@ table SedentarizationState {
   faction:uint;
   score:float = 0;
   stage:string;
+  // The BELIEF input's share of this turn's raw points (#701): 100 x weights.belief x belief_norm,
+  // where belief_norm is the population-weighted mean over the faction's resident bands of
+  // clamp(belief on the band's STANDING tile / references.belief, 0, 1). Pre-EMA - the score above
+  // is smoothed, this is not; 0 when no band stands on belief. Appended last.
+  beliefPoints:float = 0;
 }
 
 // ONE COMPOSITION ENTRY'S MATERIAL RATES (the selective gather) - FlatBuffers has no
@@ -4530,6 +4547,14 @@ table HerdTelemetryState {
   // `filled < required`, and `upkeepToolsShort` is exactly "some line is short". Item ids only - the
   // client resolves each to its roster display name. Absent = the site's keeping claimed no tool.
   upkeepToe:[KitToeLine];
+  // --- WHO ATE THE HERD'S GROWTH (appended last) --------------------------------------------------
+  // `predatorEatenBy` = the predator species KEY (fauna_config.json `species` key, e.g. "wolf") that
+  // drew the largest share off this herd THIS turn; empty when nothing preyed on it. `predatorEaten`
+  // = the BIOMASS (the unit of `biomass`; divide by the species' body mass for animals) predators
+  // drew off it this turn. Same turn as the herd's growth: a build refused `predators_ate_growth` is
+  // refused because of exactly this. Fog-filtered with the row.
+  predatorEatenBy:string;
+  predatorEaten:float = 0;
 }
 
 table CommandEventState {
@@ -5108,11 +5133,19 @@ table BenchOrder {
   drawn:bool;          // this order holds a pile already cut for its pass in flight
   // WHY THIS ORDER IS BEING SKIPPED, resolved sim-side in the CraftOffer vocabulary ("Short 4.9
   // bone", joined with " · "). "" for an order that holds a pile or can draw one now - it is not
-  // skipped. The crew's own refusal is NOT here: it is the bench's, on BenchState.blockedReason.
+  // skipped. The "Short n material" numbers are this order's `shortToFinish` rows: the WHOLE remaining
+  // run against what the orders ahead of it leave, not one pass. The crew's own refusal is NOT here: it is the bench's, on BenchState.blockedReason.
   // Appended last.
   blockedReason:string;
   // `danger` when `blockedReason` is set, "" otherwise - the BenchState.blockedSeverity vocabulary.
   blockedSeverity:string;
+  // WHAT THE STOCK ON HAND CANNOT COVER OF THIS ORDER'S WHOLE RUN. One MaterialShortfall per input
+  // material the passes still to DRAW need more of than the queue left for this order (the queue
+  // spends in its own order, so an earlier order's claim is already out of `held`). `required` is
+  // every pass still to draw at the band's current tiers, `held` what was left for this order, `short`
+  // the gap. Empty when the stock on hand covers every pass still to draw. A FORECAST, not a block:
+  // `blockedReason` stays the only "why this order is skipped" field. Appended last.
+  shortToFinish:[MaterialShortfall];
 }
 
 // ONE SUGGESTION — an item the band's consumers are short of, and how many to make.
@@ -5136,6 +5169,11 @@ table CraftSuggestion {
   // adds no build or keeping work (a spear's cost is food, not work): read `workersWithout` instead.
   workPerTurn:float = 0;
   sources:[CraftSuggestionSource];
+  // WHAT THE WHOLE `count` WOULD NEED THAT THE STOCK CANNOT COVER. The suggested recipe's passes
+  // (ceil(count / the recipe's per-pass output)) at the band's current tiers, against the stock LEFT
+  // after the whole queue's claims (a queued suggestion lands at the queue's end). Empty when no
+  // recipe makes the item or the stock covers it. Appended last.
+  shortfalls:[MaterialShortfall];
 }
 
 // ONE CONSUMER GOING WITHOUT AN ITEM — a row of CraftSuggestion.sources, keyed so the client can
@@ -5246,6 +5284,12 @@ table CraftOffer {
   // So spears/clubs/hoes publish counts and baskets/sled/traps/crook/wayfinding publish -1 on BOTH
   // offers. -1 is not "none": 0 is a real count.
   ownedAtTier:int = -1;
+  // MAY THIS RECIPE BE QUEUED — the Make/Queue button's gate (appended last). True when every craft
+  // in the recipe's `requires_knowledge` is known to the faction, EXACTLY the test `bench_enqueue`
+  // applies, so a `queueable` offer is never refused. Materials and tools do NOT gate it: the bench
+  // skips a short order and `BenchOrder.shortToFinish` speaks for it. Distinct from `available`,
+  // which says a pass can run NOW (drives the readouts and which recipe a row suggests).
+  queueable:bool;
 }
 
 // ONE BATCH OF ONE ITEM a band owns, plus the CONFIG's items it owns none of (one row each, count 0)

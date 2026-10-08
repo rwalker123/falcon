@@ -144,6 +144,7 @@ mod tests {
         let mut registry = BeliefRegistry::default();
         let config = BeliefConfig {
             belief_per_death: TRIPLED,
+            ..BeliefConfig::default()
         };
         registry.credit_deaths(PLACE, ONE_DEATH, &config);
         assert_eq!(registry.get(PLACE), TRIPLED);

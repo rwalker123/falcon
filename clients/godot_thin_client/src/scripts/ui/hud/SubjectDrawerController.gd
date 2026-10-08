@@ -720,7 +720,9 @@ func _tile_terrain_lines(tile_info: Dictionary,
             # gear line's own reason: the countdown is per SOURCE, so its remedy belongs on the one
             # row that countdown is about.
             lines.append_array(DetailFormat.build_blocked_lines(tile_info, prefix,
-                SourceForecast.SOURCE_KIND_FORAGE))
+                SourceForecast.SOURCE_KIND_FORAGE, DetailFormat.MORALE_BREAKDOWN_INDENT,
+                _band_labor.working_floor_forage(
+                    int(tile_info.get("x", -1)), int(tile_info.get("y", -1)))))
     # PLANT RUNG 3 — the Field, on its OWN row beside Cultivation. The patch carries TWO independent
     # build meters (a Field may stand on ground that was never tended: seed travels, so `Sow` needs no
     # prior patch), so they are two rows, never one merged "progress" number. This is the per-source
@@ -749,7 +751,9 @@ func _tile_terrain_lines(tile_info: Dictionary,
                 unstaffed_rung) == SourceForecast.IMPROVEMENT_SOW:
             lines.append_array(DetailFormat.build_gear_lines(tile_info, prefix))
             lines.append_array(DetailFormat.build_blocked_lines(tile_info, prefix,
-                SourceForecast.SOURCE_KIND_FORAGE))
+                SourceForecast.SOURCE_KIND_FORAGE, DetailFormat.MORALE_BREAKDOWN_INDENT,
+                _band_labor.working_floor_forage(
+                    int(tile_info.get("x", -1)), int(tile_info.get("y", -1)))))
     # **AND NOTHING BENEATH THEM ABOUT THE KEEPING.** The `At risk:` row that used to close this
     # producer — a shortfall, a countdown and an indented remedy — is retired: the state is on the rung
     # row (`⚠ slipping`) and the remedy is that row's hover, so the card carries one row where it
@@ -918,7 +922,8 @@ func _render_occupant_drawer(from_selection: bool = false) -> void:
         # to hang under is retired.
         lines = DetailFormat.herd_summary_lines(_selection.herd(), _band_labor.world_herds(),
             _band_labor.unstaffed_build_hunt(String(_selection.herd().get("id", ""))),
-            _band_labor.build_crew_hunt(String(_selection.herd().get("id", ""))), ctx)
+            _band_labor.build_crew_hunt(String(_selection.herd().get("id", ""))), ctx,
+            _band_labor.working_floor_hunt(String(_selection.herd().get("id", ""))))
     _occupant_detail.text = DetailFormat.detail_bbcode(lines, ctx)
     # …and the animal web's half of the same hover, on the drawer that describes one herd.
     _occupant_detail.tooltip_text = DetailFormat.block_tooltip(ctx)

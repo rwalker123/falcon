@@ -29,6 +29,7 @@ use core_sim::{
     CultureOwner, CultureTensionKind, InfluencerCultureResonance, PopulationCohort, ResidentBand,
     SimulationTick, SnapshotHistory, CULTURE_TRAIT_AXES,
 };
+use std::collections::BTreeMap;
 
 /// The axis every test below writes; any single axis would do, the rollup is per-axis.
 const AXIS: usize = 0;
@@ -70,6 +71,7 @@ fn reconcile(manager: &mut CultureManager, tick: u64) {
     manager.reconcile(
         &SimulationTick(tick),
         &InfluencerCultureResonance::default(),
+        &BTreeMap::new(),
     );
 }
 

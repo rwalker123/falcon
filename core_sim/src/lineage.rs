@@ -75,6 +75,14 @@ impl FoundingLines {
         self.0.iter()
     }
 
+    /// **Gain every line `other` holds that `self` lacks** (contact between two peoples), returning
+    /// how many were new. A set union, so absorbing again changes nothing and returns `0`.
+    pub fn absorb(&mut self, other: &FoundingLines) -> usize {
+        let before = self.0.len();
+        self.0.extend(other.0.iter().copied());
+        self.0.len() - before
+    }
+
     /// **The lines a split walks off with, removed from `self`.**
     ///
     /// The splinter takes `round(len × share)`, where `share` is the same people share the split
@@ -116,13 +124,13 @@ pub const NO_INBREEDING_CEILING: u32 = 0;
 const ONE_HOLDER: u32 = 1;
 
 /// **A breeding population's ceiling when its lines are shared** (issue #688) — `Σ K / holders`
-/// over the lines in its union, where `holders` is how many distinct breeding populations hold
-/// that line this turn, summed in fixed point and floored to whole people.
+/// over the lines in its union, where `holders` is how many distinct breeding populations **of
+/// the same people** hold that line this turn, summed in fixed point and floored to whole people.
 ///
-/// **A line held by several separate populations splits its `K` between them.** A one-line band's
+/// **A line held by several separate populations of one people splits its `K` between them.** A one-line band's
 /// split gives both halves a copy of its line ([`FoundingLines::split_off_share`]), so counting the
 /// line whole in each would let an isolated people split and scatter past `L × K` with no contact.
-/// Shared, the world's ceilings sum to at most `distinct lines × K` however bands split, and two
+/// Shared, a people's ceilings sum to at most `distinct lines × K` however its bands split, and two
 /// halves that relink are one holder again. With every line held once this is
 /// [`breeding_ceiling`]. Each term truncates toward zero and the sum is floored, so the share never
 /// rounds up past its line.
@@ -176,6 +184,26 @@ mod tests {
 
     fn k() -> NonZeroU16 {
         NonZeroU16::new(K).unwrap()
+    }
+
+    #[test]
+    fn absorb_gains_the_lines_it_lacks_and_is_idempotent() {
+        let mut ours = FoundingLines::founded(ORIGIN, LINES);
+        let theirs = FoundingLines::founded(BandId(7), LINES);
+        assert_eq!(ours.absorb(&theirs), usize::from(LINES));
+        assert_eq!(ours.len(), 2 * usize::from(LINES));
+        assert_eq!(
+            ours.absorb(&theirs),
+            0,
+            "a union absorbed twice changes nothing"
+        );
+        let overlap = FoundingLines::founded(ORIGIN, LINES);
+        assert_eq!(
+            ours.absorb(&overlap),
+            0,
+            "lines already held are not gained"
+        );
+        assert_eq!(ours.len(), 2 * usize::from(LINES));
     }
 
     #[test]

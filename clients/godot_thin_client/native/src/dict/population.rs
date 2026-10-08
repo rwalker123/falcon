@@ -6,6 +6,7 @@ use shadow_scale_flatbuffers::shadow_scale::sim as fb;
 
 use crate::dict::campaign::{kit_allocations_to_array, material_allocations_to_array};
 use crate::dict::economy::fragment_to_dict;
+use crate::dict::subsistence::regrowth_samples_packed;
 use crate::dict::{fixed64_to_f64, u32_vector_to_packed_int32};
 
 /// **ONE TABLE OF EQUIPMENT** — `[{item_id, required, filled}]`, one dict per `KitToeLine`, `[]` when
@@ -165,6 +166,18 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert(
         "belief_relay_reach_y",
         &u32_vector_to_packed_int32(cohort.beliefRelayReachY()),
+    );
+    // The band's own culture-layer values (15 entries, `CultureTraitAxis` order; index 3 =
+    // TraditionalistRevisionist, 13 = SecularDevout) and the offset its ancestors pull them by this
+    // turn (same order). Each EMPTY means "no layer" / "takes no pull" — never a run of zeros. Own
+    // bands only: a foreign band's redacted row leaves both empty.
+    let _ = dict.insert(
+        "culture_traits",
+        &regrowth_samples_packed(cohort.cultureTraits()),
+    );
+    let _ = dict.insert(
+        "culture_ancestor_pull",
+        &regrowth_samples_packed(cohort.cultureAncestorPull()),
     );
     let _ = dict.insert("size", cohort.size() as i64);
     // Every Scalar field below comes from `cohort_scalars` — see its doc comment for why.
@@ -1473,6 +1486,12 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // pile or can draw. The crew's refusal stays on the bench row's own `blocked_reason`.
             let _ = row.insert("blocked_reason", order.blockedReason().unwrap_or(""));
             let _ = row.insert("blocked_severity", order.blockedSeverity().unwrap_or(""));
+            // WHAT THE STOCK ON HAND CANNOT COVER OF THE WHOLE RUN — a forecast, not a block; empty
+            // when every pass still to draw is covered. Same row shape as `shortfalls`.
+            let _ = row.insert(
+                "short_to_finish",
+                &shortfalls_to_array(order.shortToFinish()),
+            );
             bench_orders.push(&row.to_variant());
         }
     }
@@ -1513,6 +1532,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                 }
             }
             let _ = row.insert("sources", &sources);
+            // What the whole `count` needs that the stock left after the queue cannot cover; empty
+            // when covered. Same row shape as the offers' `shortfalls`.
+            let _ = row.insert("shortfalls", &shortfalls_to_array(suggestion.shortfalls()));
             craft_suggestions.push(&row.to_variant());
         }
     }
@@ -1559,6 +1581,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // same tier and no count per recipe exists (`OWNED_AT_TIER_UNATTRIBUTED`). `-1` is not
             // "none": `0` is a real count.
             let _ = row.insert("owned_at_tier", offer.ownedAtTier() as i64);
+            // The Make/Queue button's gate: every craft the recipe needs is known. Materials and
+            // tools do not gate it — `available` is "a pass can run now".
+            let _ = row.insert("queueable", offer.queueable());
             craft_offers.push(&row.to_variant());
         }
     }

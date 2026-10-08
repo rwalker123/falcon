@@ -175,6 +175,9 @@ var _published_this_snapshot: Dictionary = {}
 ## Its display name, resolved once per snapshot through `HudFormat.band_name` — the client's ONE
 ## naming rule, so this card calls a band what every other surface calls it.
 const BAND_NAME := "name"
+## The band's COMMITTED `labor_assignments`, raw, refreshed on every roster. The kit-short row reads
+## each row's `kit_toe` off these; a pending (unechoed) assign is not among them and so says nothing.
+const BAND_ASSIGNMENTS := "labor_assignments"
 ## `HudLoadoutVocab.GRANT_PARENT_BAND_ID` for a grant; otherwise the band a take draws from.
 const BAND_PARENT := "parent"
 ## …and that band's name, for the copy that has to say where the gear comes from.
@@ -313,6 +316,7 @@ func set_bands(bands: Variant) -> void:
 			continue
 		order.append(band_id)
 		_ingest_window(band_id, window, names)
+		(_bands[band_id] as Dictionary)[BAND_ASSIGNMENTS] = HudBandLaborState.labor_assignments_of(entry)
 	# **A WINDOW THAT SHUT IS A WINDOW THAT IS GONE.** The turn advanced, so its picks are history
 	# and its budget — if it was a grant — is forfeit; keeping the state would put a card back up on
 	# a band the sim will refuse.
@@ -1142,8 +1146,10 @@ func _material_ceiling(band: Dictionary, material_id: String) -> int:
 
 # ---- the orb's rows ---------------------------------------------------------
 
-## Producer — the outfitting windows. **ONE ROW PER BAND WITH ONE OPEN**, spent or not: the card is
-## dismissible and this row's `Open ▸` is the guaranteed way back to it, so a producer that fell
+## Producer — the outfitting windows. **ONE `opening_loadout` ROW PER BAND WITH ONE OPEN**, spent or
+## not, followed by a `loadout_kit_short` row when that band's assigned work is short of kit
+## (`_kit_short_row`). The card is
+## dismissible and the first row's `Open ▸` is the guaranteed way back to it, so a producer that fell
 ## silent once the carry was full would strand a player who had finished picking, put the card away,
 ## and then wanted to revise before ending the turn.
 ##
@@ -1167,7 +1173,40 @@ func attention_rows() -> Array:
 		if band.is_empty():
 			continue
 		rows.append(_attention_row(band_id, band))
+		var short_row := _kit_short_row(band_id, band)
+		if not short_row.is_empty():
+			rows.append(short_row)
 	return rows
+
+## **THE KITS HELD DO NOT COVER THE ASSIGNED WORK** — `{}` unless at least one committed assignment
+## is short by the work board's own test (`KitRoster.row_toe_is_short`, the `kit_toe` table; never
+## `kit_workers_holding < workers`, which flags over-crewed rows falsely). Items are named by the
+## same helper the board's note uses, unioned across rows; with no names resolved the fact counts rows.
+func _kit_short_row(band_id: int, band: Dictionary) -> Dictionary:
+	var short_rows := 0
+	# Every short row's lines in one table, so the helper's own de-dup makes the union across rows.
+	var lines: Array = []
+	for row_variant in band.get(BAND_ASSIGNMENTS, []):
+		if not (row_variant is Dictionary) or not KitRoster.row_toe_is_short(row_variant):
+			continue
+		short_rows += 1
+		lines.append_array((row_variant as Dictionary).get(SourceForecast.ASSIGNMENT_KIT_TOE_KEY, []))
+	if short_rows == 0:
+		return {}
+	var names := HudWorkVocab.toe_short_item_names(lines, item_display_names())
+	var fact := HudLoadoutVocab.ATTENTION_DETAIL_KIT_SHORT_ROWS_ONE if short_rows == 1 \
+		else HudLoadoutVocab.ATTENTION_DETAIL_KIT_SHORT_ROWS_MANY % short_rows
+	if names != "":
+		fact = HudLoadoutVocab.ATTENTION_DETAIL_KIT_SHORT_ITEMS_FORMAT % names
+	return {
+		"kind": HudAttentionVocab.ATTENTION_KIND_LOADOUT_KIT_SHORT,
+		HudAttentionVocab.ATTENTION_PANEL_SUBJECT: band_id,
+		"severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
+		"label": HudLoadoutVocab.ATTENTION_LABEL_KIT_SHORT,
+		"detail": HudLoadoutVocab.ATTENTION_DETAIL_BAND_FORMAT % [_band_label(band_id, band), fact],
+		"x": HudAttentionVocab.ATTENTION_NON_LOCATING,
+		"y": HudAttentionVocab.ATTENTION_NON_LOCATING,
+	}
 
 ## ⛔ **THREE ARMS, AND THE THIRD ONE IS A FLOOR UNDER THE OTHER TWO.** A take that draws more than
 ## its home band's SUPPLY holds is a state this row has no true wording for, so it must not take the

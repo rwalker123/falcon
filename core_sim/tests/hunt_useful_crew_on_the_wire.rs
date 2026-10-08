@@ -976,8 +976,8 @@ const CARRY_BOUND_DURABILITY: f32 = 10.0;
 /// 2. the cap is **exactly** the crew the kill rate alone plateaus at, where it used to be strictly
 ///    greater — the haul is not in the expression at all;
 /// 3. the same authored quarry **out on the range** still wastes what its party cannot carry
-///    (`equipment_toe::a_sledless_party_wastes_the_kill_it_cannot_carry` owns that reading), so the
-///    carry model is alive and the *fence* is what removes it.
+///    (`equipment_toe::a_pen_is_not_carry_bound_while_a_posted_hunt_still_is` owns that reading), so
+///    the carry model is alive and the *fence* is what removes it.
 #[test]
 fn a_pens_curve_is_not_bounded_by_what_its_keepers_can_carry_home() {
     let mut app = world_keeping_a_pen(AUROCHS, stocked());
@@ -1355,6 +1355,8 @@ fn seed_the_row(app: &mut App, band: Entity, keepers: u32, wear: &BandEquipment,
             labor.yield_average_horizon_turns,
             labor.arrivals_horizon_turns,
             combat.forecast_range_sigmas,
+            // The fixture's resolved row is local — a camp kill.
+            true,
         )
     };
     let target = LaborTarget::Hunt {
@@ -1871,6 +1873,9 @@ fn seeded_workers_needed(app: &App, wear: &BandEquipment, carry_per_worker: f32)
         SEED_HORIZON_TURNS,
         SEED_HORIZON_TURNS,
         SEED_RANGE_SIGMAS,
+        // `workersNeeded` is a staffing plan that keeps its carriers whether or not the herd is in
+        // reach, so this reads the same either way.
+        false,
     )
     .workers_needed
 }

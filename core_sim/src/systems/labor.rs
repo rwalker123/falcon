@@ -41,6 +41,22 @@ fn crew_is_working_the_source(standing_above_floor: f32) -> bool {
 /// because `0.0` as a bare literal there reads as an arbitrary epsilon rather than as the exact
 /// boundary `max(0, B − floor·K)` is clamped at.
 const NOTHING_STANDS_ABOVE_THE_FLOOR: f32 = 0.0;
+/// **A CAMP KILL HAULS NOTHING** — a hunt or slaughter within `band_work_range` is carried no
+/// distance, so the sled ([`crate::equipment_config::WearQuantum::BiomassHauled`]) is charged for no
+/// biomass. A posted kill is charged for what its packs seat ([`crate::fauna::AnimalTake::carried`]).
+const NO_BIOMASS_HAULED: f32 = 0.0;
+/// **A HUNT OR PEN ROW WASTES NO MEAT** — every kill is kept whole, so the row's `wasted` signal
+/// (what the wire publishes as `wastedYield`) is a structural zero on the animal web.
+const NO_MEAT_WASTED: f32 = 0.0;
+
+/// The biomass of `take` the sled hauls: what a posting's packs seat, and nothing for a camp kill.
+fn biomass_hauled(posted: bool, take: &fauna::AnimalTake) -> f32 {
+    if posted {
+        take.carried
+    } else {
+        NO_BIOMASS_HAULED
+    }
+}
 
 /// **A CLAIM THAT ASKS FOR NOTHING** — the boundary [`settle_scarce_store`] skips a tier at and the
 /// value it settles an unserved claim to. Named for [`NOTHING_STANDS_ABOVE_THE_FLOOR`]'s reason: a
@@ -1688,14 +1704,55 @@ pub(crate) fn committed_to_a_fodder_crop(
 fn animal_pastoral_gate(
     knows_rung: bool,
     can_domesticate: bool,
-    working_the_herd: bool,
+    herd_room: BuildGate,
 ) -> BuildGate {
     BuildGate::first_refusal(&[
         (knows_rung, BuildGate::Knowledge),
         (can_domesticate, BuildGate::SpeciesCeiling),
-        (working_the_herd, BuildGate::Escapement),
+        (herd_room.holds(), herd_room),
     ])
 }
+
+/// **THE HERD'S ROOM TERM OF A BUILD'S GATE — AND WHO EMPTIED IT.** [`BuildGate::Open`] when the
+/// take room ([`fauna::herd_take_room`], the number `hunt_take` is bounded by) is workable; when it
+/// is empty, [`BuildGate::PredatorsAteGrowth`] if **predation is what emptied it**, else
+/// [`BuildGate::Escapement`].
+///
+/// **Predators are blamed only on a counterfactual.** `Herd::predator_eaten_this_turn` (stamped by
+/// `fauna::advance_predation` between the regrowth stamp and this gate) being positive is not
+/// enough: at `floor = 1.0` the growth share is `× 0`, and a herd below its Allee line or shed
+/// down grew nothing anyway, so a wolf that took a sliver would be blamed for a room that was
+/// already empty. The blame holds only if the room **with the predation added back** — the biomass
+/// and the growth `growth_this_turn` would have read had nothing been eaten — would have been
+/// workable.
+///
+/// **One helper for all three sites that state this verdict** — the Tame arm, the wire gate and
+/// [`head_rung_gate`] — so the cause cannot differ between what is acted on and what is published.
+/// The old single reason blamed the player's floor when wolves had taken the growth.
+fn herd_room_gate(herd: &Herd, floor: f32, fauna: &FaunaConfig) -> BuildGate {
+    if source_is_workable(fauna::herd_take_room(herd, floor, fauna)) {
+        return BuildGate::Open;
+    }
+    if herd.predator_eaten_this_turn <= NOTHING_PREDATED {
+        return BuildGate::Escapement;
+    }
+    let biomass_uneaten = herd.biomass + herd.predator_eaten_this_turn;
+    let growth_uneaten = (biomass_uneaten - herd.biomass_before_regrowth).max(0.0);
+    let room_uneaten = fauna::hunt_take_room(
+        floor,
+        biomass_uneaten,
+        fauna::herd_capacity(herd, fauna),
+        growth_uneaten,
+    );
+    if source_is_workable(room_uneaten) {
+        BuildGate::PredatorsAteGrowth
+    } else {
+        BuildGate::Escapement
+    }
+}
+
+/// **No predator drew anything off the herd** — the boundary [`herd_room_gate`] compares against.
+const NOTHING_PREDATED: f32 = 0.0;
 
 /// **THE `animal:pen` GATE** — the `Corral` arm's `eligible`. It carries **no work predicate**, for
 /// `accrue_field`'s reason: the term replaced a rung's `Thriving` gate and rung 3 never had one on
@@ -1887,8 +1944,8 @@ fn head_rung_gate(
                     // never the raw escapement room: taming raises the herd's `K`, so the floor
                     // climbs out from under a herd that started on it and the gate would refuse the
                     // very build that moved it.
-                    let workable = source_is_workable(fauna::herd_take_room(herd, *floor, fauna));
-                    animal_pastoral_gate(knows_rung(rung), herd.can_domesticate(), workable)
+                    let room = herd_room_gate(herd, *floor, fauna);
+                    animal_pastoral_gate(knows_rung(rung), herd.can_domesticate(), room)
                 }
                 Improvement::Corral => {
                     let rung = ladder.rung(RungKey::AnimalPen);
@@ -7491,6 +7548,15 @@ pub fn advance_labor_allocation(
                     // (`yield-forecast.md`) is exactly the promise that the number the seed quoted
                     // and the number the turn pays came from one place.
                     let herd_carry_per_worker = hunt_per_worker_biomass;
+                    // ⛔ **A CAMP KILL HAS NO CARRY CAP ON ITS COUNT.** A herd within `band_work_range`
+                    // posts no party and nothing is hauled, so the pack bounds nothing — only the
+                    // fight and what the herd can spare decide the kill, and the sled tier moves
+                    // neither count nor yield. A posted kill is carried home and keeps the sled's
+                    // rate as its kill-stop. Decided per kill, off where the herd stands THIS turn
+                    // (the same `postings` entry `biomass_hauled` reads). The staffing plan
+                    // (`workers_needed`) below reads the sled rate directly and keeps its carriers.
+                    let kill_carry =
+                        fauna::kill_carry_rate(!postings.contains_key(&idx), herd_carry_per_worker);
                     // **THE LIVE VERB, DERIVED** — the animal twin of the Forage arm's: the
                     // declaration counts only where the meter it names is at zero, and both animal
                     // meters are monotone, so a part-built rung stays in flight until it completes.
@@ -7561,7 +7627,7 @@ pub fn advance_labor_allocation(
                     let hunt_realized = fauna::project_realized_hunt(
                         herd,
                         &fauna,
-                        herd_carry_per_worker,
+                        kill_carry,
                         &party_for(herd.body_mass),
                         mult_f,
                         take_hands,
@@ -7725,8 +7791,8 @@ pub fn advance_labor_allocation(
                         //
                         // **And it is butchered in WHOLE ANIMALS** (slice 8 — the same
                         // `quantise_animal_take` a wild hunt runs): you cannot slaughter half a cow
-                        // any more than you can half-kill a mammoth. A keeper who cannot haul a whole
-                        // beast still takes one and wastes the rest.
+                        // any more than you can half-kill a mammoth. A pen is a camp kill unless
+                        // posted: no carry cap on its count, and the whole beast is kept.
                         //
                         // **The pen nonetheless reads steady — emergently, not by exemption.** It
                         // breeds at up to 3× the wild rate (`pen_gain`), so its MSY clears one body's
@@ -7787,7 +7853,7 @@ pub fn advance_labor_allocation(
                             herd,
                             take_hands,
                             *floor,
-                            herd_carry_per_worker,
+                            kill_carry,
                             &party_for(herd.body_mass),
                             &fauna,
                             f32::INFINITY,
@@ -7831,7 +7897,7 @@ pub fn advance_labor_allocation(
                                 &equipment_cfg,
                                 &crew_kit,
                                 crate::equipment_config::WearQuantum::BiomassHauled,
-                                take.carried,
+                                biomass_hauled(postings.contains_key(&idx), &take),
                             );
                             kit.wear_kit(
                                 &equipment_cfg,
@@ -7844,12 +7910,11 @@ pub fn advance_labor_allocation(
                         // this herd's own species vector, so a penned wolf yields pelts and no meat
                         // exactly as a wild one does (`docs/plan_hunt_yield_model.md`).
                         let pen_yield = herd_hunt_yield(herd, &fauna);
-                        // ⛔ **A PARTY KEEPS THE WHOLE CARCASS.** A resident band walks away from
-                        // what its packs cannot seat; a party's load is still standing at the
-                        // source, so what one porter cannot shoulder waits for the next one. Its
-                        // take is therefore every animal brought down, not the part carried.
-                        let loaded =
-                            fauna::CarcassKept::for_posting(postings.contains_key(&idx)).of(&take);
+                        // ⛔ **EVERY HUNT KEEPS THE WHOLE KILL.** Within `band_work_range` the beast
+                        // was killed in camp, so it lands in the larder this turn with no walk and
+                        // no haul; beyond it a work party's load waits at the source for the next
+                        // porter. Either way the take is every animal brought down.
+                        let loaded = take.killed_biomass();
                         let paid = pen_yield.apply(loaded, mult_f);
                         // **THE MILK, THE EGGS AND THE DOWN** — what the herd pays for standing
                         // there, at the species' own per-head rates
@@ -7973,7 +8038,7 @@ pub fn advance_labor_allocation(
                                     &mut cohort.stores,
                                     &materials_cfg,
                                     fauna.hunt_materials_for(&herd.species),
-                                    take.carried,
+                                    loaded,
                                     mult_f,
                                 )
                                 .into_iter()
@@ -8224,10 +8289,9 @@ pub fn advance_labor_allocation(
                         // so `sustainable == actual` (no overdraw ⚠). The two staffing signals are
                         // derived like every other rung's: how many keepers the take really needed,
                         // and how much of the harvest went uncollected for want of hands. **`wasted`
-                        // is measured against the animals SLAUGHTERED, not against the pen's offered
-                        // escapement** (slice 8): a beast the keeper never killed is still standing in
-                        // the pen, alive and breeding — it was never produced, so it cannot have been
-                        // wasted. What `killed_biomass − carried` measures is meat that really rotted.
+                        // is a structural zero here** ([`NO_MEAT_WASTED`]): every animal slaughtered
+                        // is kept whole, and a beast the keeper never killed is still standing in
+                        // the pen, alive and breeding — it was never produced.
                         // **The arrival schedule — computed POST-take, unlike `realized`.** It
                         // answers "when does the next food land", so it must start from the state the
                         // turn leaves behind: projecting from the pre-take state would re-promise the
@@ -8236,7 +8300,7 @@ pub fn advance_labor_allocation(
                         let arrivals = fauna::project_arrivals_hunt(
                             herd,
                             &fauna,
-                            herd_carry_per_worker,
+                            kill_carry,
                             &party_for(herd.body_mass),
                             mult_f,
                             take_hands,
@@ -8270,7 +8334,7 @@ pub fn advance_labor_allocation(
                             // all"* until §4.9 item 12b; a pen retreats and fights now, so its
                             // **quote** carries a real distribution like any other hunting row.)
                             range: YieldRange::certain(tended),
-                            wasted: pen_yield.apply(take.wasted, mult_f).provisions,
+                            wasted: NO_MEAT_WASTED,
                             // **THE SAME THREE-UNIT CREW THE RANGE ROW SIZES**
                             // ([`fauna::hunt_take_workers`]): hands enough to *reach* the drop and to
                             // *carry* it, off the pen's per-turn `production` rather than this turn's
@@ -8349,7 +8413,7 @@ pub fn advance_labor_allocation(
                     // Take food via the shared primitive: the per-policy escapement ceiling, rounded
                     // to **whole animals** against the crew's collection (slice 8). It hands back the
                     // kill in biomass — killed / carried / wasted — and has already drawn every animal
-                    // killed off the herd.
+                    // killed off the herd. The hunt keeps `killed_biomass()`, the whole kill.
                     let biomass_before = herd.biomass;
                     // **The escapement room, resolved PRE-take** — the stock standing above this
                     // assignment's floor, in biomass and before the whole-animal quantiser. Two
@@ -8370,8 +8434,7 @@ pub fn advance_labor_allocation(
                     // its floor by the `K` its own taming raised is still a herd, still growing, and
                     // still a legal thing to gentle. Same number `hunt_take` is bounded by, so a
                     // legal build target that yields nothing is unrepresentable.
-                    let herd_is_workable =
-                        source_is_workable(fauna::herd_take_room(herd, *floor, &fauna));
+                    let herd_room = herd_room_gate(herd, *floor, &fauna);
                     // **THE STANDING SPLIT'S OTHER HALF, MEASURED BEFORE THE TAKE** — the pen
                     // branch's own line, and the reason it is here too is
                     // `docs/plan_pen_standing_yield.md` §3: `steppe_runner` and `marsh_grazer` carry
@@ -8386,7 +8449,7 @@ pub fn advance_labor_allocation(
                         herd,
                         take_hands,
                         *floor,
-                        herd_carry_per_worker,
+                        kill_carry,
                         &party_for(herd.body_mass),
                         &fauna,
                         f32::INFINITY,
@@ -8420,7 +8483,7 @@ pub fn advance_labor_allocation(
                             &equipment_cfg,
                             &crew_kit,
                             crate::equipment_config::WearQuantum::BiomassHauled,
-                            take.carried,
+                            biomass_hauled(postings.contains_key(&idx), &take),
                         );
                     }
                     // **THE earn path, rungs 1–2** — the drawn-down half of the split above, and the
@@ -8445,13 +8508,8 @@ pub fn advance_labor_allocation(
                     // species' `HuntYield` decides WHAT that biomass is worth, in one call that
                     // yields both products so neither can be converted without the other.
                     let hunt_yield = herd_hunt_yield(herd, &fauna);
-                    // ⛔ **A PARTY KEEPS THE WHOLE CARCASS** — see the pen branch above.
-                    let party_keeps_the_carcass = postings.contains_key(&idx);
-                    let loaded = if party_keeps_the_carcass {
-                        take.killed_biomass()
-                    } else {
-                        take.carried
-                    };
+                    // ⛔ **EVERY HUNT KEEPS THE WHOLE KILL** — see the pen branch above.
+                    let loaded = take.killed_biomass();
                     let paid = hunt_yield.apply(loaded, mult_f);
                     // **The milk half, at the pastoral share** — see `standing_scale` above. A wild
                     // herd's share is zero, so this arm is byte-identical on the range.
@@ -8500,7 +8558,7 @@ pub fn advance_labor_allocation(
                                 knows(&discovery, faction, knowledge, knowledge_threshold)
                             }),
                             herd.can_domesticate(),
-                            herd_is_workable,
+                            herd_room,
                         );
                         let eligible = gate.holds();
                         // THE build seam — the same call the plant side's Cultivate arm makes, and it
@@ -8745,7 +8803,7 @@ pub fn advance_labor_allocation(
                                         // **The build's own question**, so the wire's blocked reason
                                         // and the accrual's gate cannot disagree about whether this
                                         // herd is workable.
-                                        (herd_is_workable, BuildGate::Escapement),
+                                        (herd_room.holds(), herd_room),
                                         (
                                             herd.owner.is_none_or(|owner| owner == faction),
                                             BuildGate::OwnedByOther,
@@ -8876,7 +8934,7 @@ pub fn advance_labor_allocation(
                                 &mut cohort.stores,
                                 &materials_cfg,
                                 fauna.hunt_materials_for(&herd.species),
-                                take.carried,
+                                loaded,
                                 mult_f,
                             )
                             .into_iter()
@@ -8997,11 +9055,10 @@ pub fn advance_labor_allocation(
                         + standing_provisions;
                     // The two staffing signals, from the same take. **Overstaffing**: invert the
                     // carried biomass by the per-hunter throughput (hunt has no seasonal factor,
-                    // unlike forage). **Understaffing** (`wasted`): the meat the crew killed but could
-                    // not haul — **a real loss**, left to rot on the range. Measured against the
-                    // animals *slaughtered*, never against the escapement the herd could have spared:
-                    // an animal nobody killed is still alive out there, so it was never produced and
-                    // cannot have been wasted (`fauna::forecast_production_and_take`).
+                    // unlike forage). **Understaffing** (`wasted`): a structural zero on the animal web
+                    // ([`NO_MEAT_WASTED`]) — every hunt keeps the whole kill, so no meat is left
+                    // to rot at the kill, and an animal nobody killed is still alive out there
+                    // (`fauna::forecast_production_and_take`).
                     //
                     // **A MANAGED herd used to report its whole CREW** — the retired
                     // `intensification::source_crew_needed` blended `max(herders, haulers)`, on the
@@ -9088,7 +9145,7 @@ pub fn advance_labor_allocation(
                     let arrivals = fauna::project_arrivals_hunt(
                         herd,
                         &fauna,
-                        herd_carry_per_worker,
+                        kill_carry,
                         &party_for(herd.body_mass),
                         mult_f,
                         take_hands,
@@ -9110,7 +9167,7 @@ pub fn advance_labor_allocation(
                         // `credit_material_yield` deposited (the discipline `fodder` above carries).
                         materials: credited_materials,
                         sustainable,
-                        wasted: hunt_yield.apply(take.wasted, mult_f).provisions,
+                        wasted: NO_MEAT_WASTED,
                         workers_needed,
                         // **The ⚠ — intent AND ability**, through the animal web's one producer
                         // ([`fauna::hunt_take_overdraws`]). A floor below the food peak is only an
@@ -9122,7 +9179,7 @@ pub fn advance_labor_allocation(
                             herd,
                             &fauna,
                             biomass_before,
-                            herd_carry_per_worker,
+                            kill_carry,
                             &party_for(herd.body_mass),
                             take_hands,
                             *floor,
@@ -11500,6 +11557,101 @@ fn announce_material_shortfall(
         ));
     }
     allocation.material_shortfall_warned = names;
+}
+
+/// What [`announce_bench_material_short`] reads off a band: its store, bench and ledger, and the
+/// allocation that holds the edge gate.
+type BenchShortBand = (
+    &'static PopulationCohort,
+    &'static BandBench,
+    &'static BandEquipment,
+    &'static mut LaborAllocation,
+    Option<&'static BandId>,
+);
+
+/// **THE BENCH-QUEUE SHORTAGE NOTICE** — once per turn, after [`advance_crafting`] has drawn, each
+/// band with a bench is told which materials its whole queue will run short of.
+///
+/// The gap is [`crate::systems::queue_material_shortfalls`] summed per material across every order —
+/// the same function the wire's `BenchOrder.shortToFinish` reads, so the notice and the readout
+/// cannot disagree. **It fires whether or not the bench is staffed**: a short queue is short either
+/// way. Scheduled right after `advance_crafting` so the stock it judges is what the draw left.
+pub fn announce_bench_material_short(
+    mut event_log: ResMut<CommandEventLog>,
+    tick: Res<SimulationTick>,
+    materials_handle: Res<crate::materials_config::MaterialsConfigHandle>,
+    recipes_handle: Res<crate::recipes_config::RecipesConfigHandle>,
+    equipment_handle: Res<EquipmentConfigHandle>,
+    mut bands: Query<BenchShortBand, With<ResidentBand>>,
+) {
+    let materials = materials_handle.get();
+    let recipes = recipes_handle.get();
+    let equipment = equipment_handle.get();
+    for (cohort, bench, wear, mut allocation, band_id) in bands.iter_mut() {
+        let forecast = crate::systems::queue_material_shortfalls(
+            Some(bench),
+            &cohort.stores,
+            &recipes,
+            &materials,
+            &equipment,
+            wear,
+        );
+        let short: Vec<(String, f32)> = forecast
+            .short_by_material()
+            .into_iter()
+            .map(|(id, gap)| (id.to_string(), gap.to_f32()))
+            .collect();
+        // Read-only probe first, so a band with nothing to say does not trip change detection.
+        if short
+            .iter()
+            .map(|(id, _)| id)
+            .eq(allocation.bench_short_warned.iter())
+        {
+            continue;
+        }
+        announce_bench_short(
+            &mut event_log,
+            tick.0,
+            cohort.faction,
+            band_id.copied(),
+            &mut allocation,
+            &cohort.stores,
+            &short,
+        );
+    }
+}
+
+/// **The edge gate of [`announce_bench_material_short`]** — one line per material newly in the
+/// set, then the set is replaced, so a material that recovers and runs short again re-announces.
+fn announce_bench_short(
+    event_log: &mut CommandEventLog,
+    tick: u64,
+    faction: FactionId,
+    band: Option<BandId>,
+    allocation: &mut LaborAllocation,
+    stores: &LocalStore,
+    short: &[(String, f32)],
+) {
+    for (id, gap) in short {
+        if allocation.bench_short_warned.contains(id) {
+            continue;
+        }
+        let name = crate::crafting::title_from_id(id);
+        event_log.push(CommandEventEntry::new(
+            tick,
+            CommandEventKind::BenchMaterialShort,
+            faction,
+            format!("{name} will run short at the bench"),
+            Some(band_detail_token(
+                format!(
+                    "status=bench_short material={id} short={gap:.2} held={:.2}",
+                    stores.material_total(id).to_f32()
+                ),
+                band,
+            )),
+        ));
+    }
+    allocation.bench_short_warned = short.iter().map(|(id, _)| id.clone()).collect();
 }
 
 /// **SPEND THIS SITE'S KEEPING TOOLS ON THE WORK ITS KEEPERS ACTUALLY DID** — the
@@ -14934,6 +15086,8 @@ mod labor_yield_tests {
                 labor.yield_average_horizon_turns,
                 labor.arrivals_horizon_turns,
                 SHIPPED_FORECAST_RANGE_SIGMAS,
+                // The resolved row above is local — a camp kill.
+                true,
             )
         };
         assert_eq!(
@@ -15548,13 +15702,15 @@ mod labor_yield_tests {
                         );
                         let fauna = world.resource::<FaunaConfigHandle>().get();
                         let per_worker = equipped_haul_rate();
-                        let forecast = hunt_forecast(
+                        let mut forecast = hunt_forecast(
                             &herd,
                             &fauna,
                             per_worker,
                             &crate::fauna::HuntingParty::builtin_equipped(),
                             NEUTRAL_OUTPUT_MULT,
                         );
+                        // The resolved row below is local, so its kill is a camp kill.
+                        forecast.camp_kill = true;
                         drop(fauna);
 
                         let band = spawn_band(

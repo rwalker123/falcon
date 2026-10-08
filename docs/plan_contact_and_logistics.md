@@ -505,9 +505,10 @@ deleted from the schema.
 5. **The route ladder (#532)** — the `route` branch, its standing-upkeep term, and #215's game trails.
 6. **The overlay (#232)** — the logistics network drawn on the map.
 7. **The remaining riders** — #530 (culture), #531 (knowledge). Both settled — see §Open items.
-8. **Blocked on #513, then:** the cross-faction riders — #458 (proximity trade), #512 (defection).
-   By construction these should be small. #458 is only the proximity case; the long-haul
-   exchange — a shipment becomes an offer — is #546, settled in §Open items.
+8. **Blocked on #513, then:** the cross-faction riders — #546 (priced exchange), #512 (defection).
+   There is no separate proximity case: free pooling is a same-people affordance (`pools_freely`),
+   and exchange with a nearby foreign band is a #546 trade route at short range. #546 is settled in
+   §Open items.
 
 **#231 (Early Diplomacy)** was narrowed to match: the route-network half moved here, and what remains
 there — treaties (#233) and cultural-reach victory metrics (#234) — is a *policy* layer that governs
@@ -717,8 +718,9 @@ blocked on #513; #513 has since landed, and so have defection (#512) and indepen
 proposal the receiving people may accept or refuse. An offer that asks nothing back is a gift, and
 your own bands always accept one, so a parent supplying a splinter beyond free reach works exactly as
 it does today. That "always yes" comes from the receiver being your own people answering, never from
-a same-faction branch in the code: faction stays a property of the endpoint (§Q2). #458's proximity
-trade asks the same consent question, and this is its answer too.
+a same-faction branch in the code: faction stays a property of the endpoint (§Q2). There is no
+separate proximity system: free pooling stays a same-people affordance (`pools_freely`), and trading
+with a nearby foreign band is this same offer, carried a short way.
 
 **Refused cargo goes home.** A refusal sends the party back with what it brought, over the
 `ShipmentReturned` path that already books undelivered cargo.

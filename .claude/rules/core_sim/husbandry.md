@@ -464,6 +464,12 @@ exactly the keepers it always asked for (`every_species_asks_for_the_keepers_it_
   staffings. *"Zero keepers last turn"* — the total-abandonment gate `regrow_biomass` and the bleed-out
   read — is simply `upkeep_supplied <= 0`.
 
+**A Tame's empty room is not always the floor's doing.** Predators draw the herd down between the
+regrowth stamp and the band's gate (`advance_predation`), and can take all the growth a small herd
+made; the gate then refuses as `predators_ate_growth` rather than `escapement`, because the old
+reason blamed the player's floor when wolves had emptied the room (`intensification.md` → "Who emptied
+the room", `fauna.md` → "The predation stamp").
+
 > #### ⛔ THE REGROWTH SUPPRESSION CLOSES A LOOP, AND AN UNKEPT BUILD DOES NOT RECOVER FROM IT
 >
 > `regrow_biomass` zeroing growth at `upkeep_supplied <= 0` is what makes an unkept **build** on the

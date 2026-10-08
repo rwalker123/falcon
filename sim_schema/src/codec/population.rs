@@ -795,6 +795,7 @@ fn create_populations<'a>(
                                 lasts: Some(lasts),
                                 suggested: offer.suggested,
                                 ownedAtTier: offer.owned_at_tier,
+                                queueable: offer.queueable,
                             },
                         )
                     })
@@ -907,6 +908,10 @@ fn create_populations<'a>(
             } else {
                 Some(builder.create_vector(&cohort.belief_relay_reach_y))
             };
+            let culture_traits = (!cohort.culture_traits.is_empty())
+                .then(|| builder.create_vector(&cohort.culture_traits));
+            let culture_ancestor_pull = (!cohort.culture_ancestor_pull.is_empty())
+                .then(|| builder.create_vector(&cohort.culture_ancestor_pull));
             let belief_reach_y = if cohort.belief_reach_y.is_empty() {
                 None
             } else {
@@ -1182,6 +1187,8 @@ fn create_populations<'a>(
                     heartBond: cohort.heart_bond,
                     heartLastContactTurn: cohort.heart_last_contact_turn,
                     independenceGrievanceThreshold: cohort.independence_grievance_threshold,
+                    cultureTraits: culture_traits,
+                    cultureAncestorPull: culture_ancestor_pull,
                 },
             )
         })
@@ -1200,6 +1207,7 @@ fn create_bench_orders<'a>(
             let recipe_id = builder.create_string(&order.recipe_id);
             let blocked_reason = builder.create_string(&order.blocked_reason);
             let blocked_severity = builder.create_string(&order.blocked_severity);
+            let short_to_finish = create_shortfalls(builder, &order.short_to_finish);
             fb::BenchOrder::create(
                 builder,
                 &fb::BenchOrderArgs {
@@ -1210,6 +1218,7 @@ fn create_bench_orders<'a>(
                     drawn: order.drawn,
                     blockedReason: Some(blocked_reason),
                     blockedSeverity: Some(blocked_severity),
+                    shortToFinish: Some(short_to_finish),
                 },
             )
         })
@@ -1251,6 +1260,7 @@ fn create_craft_suggestions<'a>(
                 .collect();
             let sources = builder.create_vector(&sources);
             let item_id = builder.create_string(&suggestion.item_id);
+            let shortfalls = create_shortfalls(builder, &suggestion.shortfalls);
             fb::CraftSuggestion::create(
                 builder,
                 &fb::CraftSuggestionArgs {
@@ -1259,6 +1269,7 @@ fn create_craft_suggestions<'a>(
                     workersWithout: suggestion.workers_without,
                     workPerTurn: suggestion.work_per_turn,
                     sources: Some(sources),
+                    shortfalls: Some(shortfalls),
                 },
             )
         })
@@ -1500,6 +1511,7 @@ fn decode_bench(bench: fb::BenchState<'_>) -> Result<BenchState, DecodeError> {
             drawn: order.drawn(),
             blocked_reason: text(order.blockedReason()),
             blocked_severity: text(order.blockedSeverity()),
+            short_to_finish: decode_shortfalls(order.shortToFinish()),
         }),
         worked: bench.worked(),
     })
@@ -1684,6 +1696,7 @@ fn decode_population(
             lasts: text(offer.lasts()),
             suggested: offer.suggested(),
             owned_at_tier: offer.ownedAtTier(),
+            queueable: offer.queueable(),
         }),
         equipment_batches: map_rows(cohort.equipmentBatches(), |batch| EquipmentBatchState {
             item_id: text(batch.itemId()),
@@ -1813,6 +1826,7 @@ fn decode_population(
                     workers_without: source.workersWithout(),
                     work_per_turn: source.workPerTurn(),
                 }),
+                shortfalls: decode_shortfalls(suggestion.shortfalls()),
             }
         }),
         fertility_ceiling: cohort.fertilityCeiling(),
@@ -1831,6 +1845,8 @@ fn decode_population(
         heart_bond: cohort.heartBond(),
         heart_last_contact_turn: cohort.heartLastContactTurn(),
         independence_grievance_threshold: cohort.independenceGrievanceThreshold(),
+        culture_traits: decode_scalars(cohort.cultureTraits()),
+        culture_ancestor_pull: decode_scalars(cohort.cultureAncestorPull()),
     })
 }
 

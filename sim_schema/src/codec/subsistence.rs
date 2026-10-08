@@ -453,6 +453,7 @@ fn create_sedentarization<'a>(
                 faction: state.faction,
                 score: state.score,
                 stage: Some(stage),
+                beliefPoints: state.belief_points,
             },
         );
         entries.push(entry);
@@ -535,6 +536,7 @@ fn create_herds<'a>(
         let corral_build_material_cost =
             create_material_payoffs(builder, &herd.corral_build_material_cost);
         let upkeep_toe = create_upkeep_toe(builder, &herd.upkeep_toe);
+        let predator_eaten_by = builder.create_string(&herd.predator_eaten_by);
         let entry = fb::HerdTelemetryState::create(
             builder,
             &fb::HerdTelemetryStateArgs {
@@ -694,6 +696,8 @@ fn create_herds<'a>(
                 // **WHAT THE HERD'S OWN CREW SPENT KEEPING IT** (`docs/plan_site_crews.md` §2.2).
                 upkeepHands: herd.upkeep_hands,
                 upkeepToolsShort: herd.upkeep_tools_short,
+                predatorEatenBy: Some(predator_eaten_by),
+                predatorEaten: herd.predator_eaten,
                 // **WHAT A PEN RING SWALLOWS TO RAISE** — appended last (append-only wire), and
                 // the material twin of `corralWorkCost`. It carries what `buildMaterialCost` above
                 // cannot on a CORRALLED herd, where the rung above the pen is none.
@@ -1479,6 +1483,7 @@ fn decode_sedentarization(state: fb::SedentarizationState<'_>) -> Sedentarizatio
         faction: state.faction(),
         score: state.score(),
         stage: text(state.stage()),
+        belief_points: state.beliefPoints(),
     }
 }
 
@@ -1593,6 +1598,8 @@ fn decode_herd(herd: fb::HerdTelemetryState<'_>) -> HerdTelemetryState {
         corral_build_material_cost: decode_material_payoffs(herd.corralBuildMaterialCost()),
         upkeep_hands: herd.upkeepHands(),
         upkeep_tools_short: herd.upkeepToolsShort(),
+        predator_eaten_by: text(herd.predatorEatenBy()),
+        predator_eaten: herd.predatorEaten(),
     }
 }
 

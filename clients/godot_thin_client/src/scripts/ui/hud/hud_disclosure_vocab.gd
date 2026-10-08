@@ -77,6 +77,10 @@ const DETAIL_ROW_MORALE := "Morale"
 
 const DETAIL_ROW_GROWTH := "Growth"
 
+# The band's culture row (`Beliefs  devout · traditional ⚱`, figures in the hover), beneath Morale. Its label IS the
+# `ctx.row_tooltips` key, so the hover and the row cannot drift.
+const DETAIL_ROW_BELIEFS := "Beliefs"
+
 # The band's fodder larder, beneath Food and spelled exactly as its own summary row is — the row
 # label IS the registration key, so the two cannot drift.
 const DETAIL_ROW_FODDER := "Fodder"

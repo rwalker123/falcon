@@ -13,6 +13,8 @@ paths:
   - "core_sim/src/data/{demographics_config,supply_network_config,sedentarization_config}.json"
   - "core_sim/tests/{supply_network,sedentarization,founding_lines}.rs"
   - "core_sim/src/lineage.rs"
+  - "core_sim/src/systems/lineage_contact.rs"
+  - "core_sim/tests/lineage_contact.rs"
 ---
 
 <!-- Extracted verbatim from lines 48-51;4382-4760 of core_sim/CLAUDE.md at blob dcc757587f8c9308590997ee600abc64a34e6712
@@ -26,7 +28,7 @@ paths:
 
 | File | Purpose |
 |------|---------|
-| `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population), and saturation `references` |
+| `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population/belief), and saturation `references` |
 | `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), **`keeping`** (how food keeps, #706 — `classes`, each `{ id, shelf_life_turns }`: **`flesh` 4.0**, **`fresh_plant` 8.0**, **`dry` 60.0**; `startup_class` **`dry`**, the class the opening reserve is seeded into; `plant_fallback_class` **`fresh_plant`** / `kill_fallback_class` **`flesh`**, where a take's food lands when no species says. Validated at parse — unique ids, finite positive shelf lives, every named class present — and every fauna/flora species' `keeping` is reconciled against it at boot; see "Food spoils by keeping class" below), `births` (`birth_rate` + the `reserve` stock factor (`bonus`/`saturation_turns`) + the `trend` flow factor (`surplus_gain`/`surplus_saturation`/`deficit_penalty`/`deficit_saturation`); morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `lineage.founding_lines` (`L`, **8**, a `NonZeroU16` so `0` is a parse error — how many founding lines a starting band holds; see "Founding lines" below), `lineage.people_per_line` (`K`, **19**, a `NonZeroU16` — how many people one line carries before births stop; an isolated starting band ceilings at `L × K` = 152, pinned above the shipped `band_size` by `demographics_config::tests::the_shipped_starting_band_opens_below_its_breeding_ceiling`; see "The breeding ceiling" below), `lineage.free_breeding_at` (**500** people, a `NonZeroU32` — once a breeding population's `|lines| × K` reaches it the inbreeding ceiling is lifted; pinned above the shipped `L × K` by `demographics_config::tests::the_shipped_lone_band_ceiling_sits_below_the_free_breeding_size`, so a lone band opens capped), `cold` and `heat` (the two temperature tails — `onset_temp` / `mortality_scale` / `max_mortality` plus each tail's own `child_vulnerability` 1.25 / `working_vulnerability` 1.0 / `elder_vulnerability` 1.5, a different ordering from `scarcity`'s; see “The cold/heat death model is PUBLISHED” below for why the two tails differ in all three parameters and why both are calibrated ahead of the map's current range). **This file is the SOLE source of demographics tuning** (#350): `demographics_config.rs` has no hand-written `Default` impls — `DemographicsConfig::default()` parses the builtin JSON, and every field is required with `deny_unknown_fields`, so a missing or unknown key is a parse error rather than a silent fallback to a second set of numbers that can drift (it did: `per_capita_draw` was 0.03 in Rust against 0.16 here). Do not re-add `#[serde(default)]` — the root `Default` parses through serde, so a container-level default would make it recurse. **The loader is strict to match**, and that strictness is no longer demographics-specific: it now lives in the shared `config_load.rs` seam and applies to every boot config (see `.claude/rules/core_sim/config-loading.md`). Strictness without a loud loader would only move the silent substitution one layer out — the whole file instead of one key |
 | `src/data/start_profiles.json` | Campaign initialization. Per profile: `starting_units` (`kind`/`count`/`band_size`), `starting_knowledge_tags`, `inventory`, `food_modules`, `victory_modes_enabled` (AI tuning is per seat and lives in `sim_ai/data/ai_profiles.json`, not here) — plus the **required** `opening_loadout` block: `pickable_materials` (`bone`, `fibre`, `hide`, `wood`, `stone` — the picker's list, in the order it is drawn), `material_defaults` (`bone 2` / `fibre 12` / `hide 6`) and **`kit_defaults`** (`big_game 5` / `trapping 5` / `gathering 7` — one kit per hand on the shipped 30-person band). Together they are the **opening band's** default outfit (load 47 against its ≈ 47 goods allowance), APPLIED after the world-build meal, not suggested; a splinter's default is `split_default_outfit`, not these. ⛔ **There is no budget in this file**: what a band may outfit is its CARRY less its larder (`.claude/rules/core_sim/band-carry.md`), and the retired `material_points` key is **refused at load**, not ignored (`start_profile::the_retired_material_points_key_is_refused`). `StartProfiles::validate_against_materials` rejects a pickable or default naming a material the roster does not carry, and `validate_against_equipment` rejects a `kit_defaults` key the equipment roster does not carry **or one whose `uses` is empty** — both run from `build_headless_app`. Defaults over the band's allowance are fitted at apply (`fit_to_carry`, materials cut before tools); the full rules are `starting-loadout.md` |
 | `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius, in **hex steps**), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer_fraction` (the dead-band, as a fraction of the node's own per-capita fair share of that commodity — see "The dead-band is RELATIVE, because one balancer serves food and a bone pile" below) |
@@ -512,8 +514,8 @@ its clamp, the one-line case, save/load and restore, the count off the encoded e
 #### The breeding ceiling — births stop at `|lines| × K`, and nobody is removed by it
 
 Design: `docs/plan_civilization_steps.md` §"The mechanism: an isolated people cannot grow past its
-lines" (#688). An isolated people grows only to `|its lines| × K`; contact with other peoples is
-what lifts it (#689, not built).
+lines" (#688). An isolated people grows only to `|its lines| × K`; contact with another people is
+what lifts it (#689, "Contact merges lines" below).
 
 - **The capped unit is the breeding population** — a supply-network connected component
   (`SupplyNetworkMembership::network_of`, written by `balance_supply_networks` in
@@ -524,16 +526,19 @@ what lifts it (#689, not built).
   sum: a line two members share (a one-line split) counts once. A same-people network's lines are
   its starting band's `L` however often it split, so splitting while connected changes nothing; a
   band that walks off the network takes its lines and both ceilings fall.
-- **A line held by several breeding populations shares its `K` between them.** A one-line
-  band's split gives both halves a copy of its line (`split_off_share` cannot partition it), so
-  counting the line whole in each unlinked half would let an isolated people split and scatter
-  past `L × K` with no contact. So the pre-pass counts, per `LineId`, how many distinct
-  populations hold it, and a population's ceiling is `lineage::shared_breeding_ceiling` —
-  `floor(Σ K / holders(line))` over its union, summed in fixed point. Across the world the
-  ceilings sum to at most `distinct lines × K` however bands split: two unlinked halves of one
-  line get `floor(19 / 2)` = 9 each, and relinked they are one holder again at 19. With every
-  line held once it is plain `|union| × K`. The `free_breeding_at` lift compares against this
-  shared figure.
+- **A line held by several breeding populations of one people shares its `K` between them.** A
+  one-line band's split gives both halves a copy of its line (`split_off_share` cannot partition
+  it), so counting the line whole in each unlinked half would let an isolated people split and
+  scatter past `L × K` with no contact. So the pre-pass counts, per `(FactionId, LineId)`, how
+  many distinct populations of that people hold it (a breeding group is one people: the supply
+  union only joins bands that pool freely), and a population's ceiling is
+  `lineage::shared_breeding_ceiling` — `floor(Σ K / holders(line))` over its union, summed in
+  fixed point. **Another people holding a copy of a line does not divide it** — that copy is what
+  contact gives, and counting it world-wide would leave a merged 8 + 8 pair at 16 × 19 / 2 = 152,
+  no higher than before they met. Per people the ceilings sum to at most `distinct lines × K`
+  however its bands split: two unlinked halves of one line get `floor(19 / 2)` = 9 each, and
+  relinked they are one holder again at 19. With every line held once it is plain `|union| × K`.
+  The `free_breeding_at` lift compares against this shared figure.
 - **It lifts at `free_breeding_at` (500).** `lineage::inbreeding_ceiling` answers `None` once
   the population's (shared) ceiling reaches `lineage.free_breeding_at`: ~500 is the forager mating-network size
   (Birdsell's dialect tribe; Wobst's 175–475) at which a people finds mates without outside
@@ -567,6 +572,19 @@ what lifts it (#689, not built).
   neutral at 1e6, in the zero-reserve not-projected sentinel with its three siblings),
   `breedingPopulation:uint`, `breedingCeiling:uint`. Not on the redaction allow-list, so a rival's
   redacted row publishes `0` for all three. Checkpointed with the cohort; `SAVE_FORMAT_VERSION` 23.
+
+#### Contact merges lines — `merge_founding_lines_on_contact` (#689)
+
+`systems/lineage_contact.rs`, `TurnStage::Visibility` directly after
+`connections::advance_connections`.
+Every ledger edge with `last_contact_turn == SimulationTick.0` (the ledger's own contact-this-turn
+stamp; an expedition's flushed sighting counts) whose two endpoints resolve to resident bands of
+**different** peoples makes each side gain the other's lines (`FoundingLines::absorb`, a set union,
+so repeats are idempotent). The faction check lives here, never in `connections.rs`. Sets are
+snapshotted before any merge, so within a turn the merge is order-independent and non-transitive
+(A–B and B–C: C gains B's lines, not A's, until next turn). Lines never decay with the tie.
+`TurnStage::Population` precedes Visibility, so a merge lifts the ceiling on the **next** turn's
+population pass. Pinned by `core_sim/tests/lineage_contact.rs`.
 
 Pinned by `core_sim/tests/breeding_ceiling.rs` (a lone band grows to and holds at `L × K`; a tied
 pair shares the union's one ceiling and a member may exceed its own lines' share; an unlinked
@@ -1178,7 +1196,16 @@ a config-weighted blend of normalized inputs, then **EMA-smooths** it (`smoothin
 - **surplus** = Σ band `stores` food larders / `references.surplus` (band-local food, Phase 1),
 - **resource density** = `HerdDensityMap::normalized_average()` (map-wide game richness — a v1
   baseline; per-faction-local density is a future refinement),
-- **population** = Σ cohort size / `references.population`.
+- **population** = Σ cohort size / `references.population`,
+- **belief** = the population-weighted mean over the faction's resident bands of
+  `clamp(BeliefRegistry::get(band's standing tile) / references.belief, 0, 1)` — the tile the band
+  STANDS on (`current_tile`), never its home. The ancestors are a reason to stay (see `belief.md` →
+  "Belief feeds the tether").
+
+Weights (sum `1.0`): domestication `0.35`, surplus `0.30`, population `0.15`, resource density
+`0.10`, belief `0.10`; `references.belief` is `20` dead-equivalents. `resource_density` fell from
+`0.20` to fund the belief input — it is the map-wide baseline, identical across factions, so it
+differentiates them least.
 
 On a **rising** crossing of `soft_threshold` (~40, "establish a seasonal base?") or
 `hard_threshold` (~70, "settle?") it pushes a `CommandEventKind::SedentarizationPrompt` to the

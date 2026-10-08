@@ -83,6 +83,20 @@ pub const CRAFTS_WITH_A_DISCOVERY: [&str; 4] = [
     KNAPPING_CRAFT,
 ];
 
+/// **THE FIRST CRAFT A RECIPE NEEDS THAT THE ASKER DOES NOT KNOW** — the one test of whether a recipe
+/// may be queued. `bench_enqueue`'s refusal and the published `CraftOffer.queueable` both call it, so
+/// the button and the verb cannot disagree. Materials and tools are deliberately not part of it.
+pub fn first_unknown_craft(
+    recipe: &crate::recipes_config::RecipeDef,
+    knows_craft: impl Fn(&str) -> bool,
+) -> Option<&str> {
+    recipe
+        .requires_knowledge
+        .iter()
+        .map(String::as_str)
+        .find(|craft| !knows_craft(craft))
+}
+
 pub fn craft_discovery_id(craft: &str) -> Option<u32> {
     match craft {
         TANNING_CRAFT => Some(TANNING_DISCOVERY_ID),
