@@ -173,12 +173,12 @@
 <div class="wrap">
   <section class="strip" aria-label="Prototype setup (not part of the game)">
     <h1>Prototype setup — not part of the game · #797 Migration mode</h1>
-    <div class="try"><b>Try this:</b> click the mammoths, press <b>Assign hunters ▸</b>, tick <b>Move camp with the herd</b>, press <b>Hunt Here</b>, then end turns with the orb. Fire a hunt while they migrate to see the band walk to a kill.</div>
+    <div class="try"><b>Try this:</b> click the mammoths, press <b>Assign hunters ▸</b>, tick <b>Move camp with the herd</b>, press <b>Hunt Here</b>, then end turns with the orb. Try “catching up” to see a band that turned it on from far away.</div>
     <div class="row">
       <span class="lbl">scenario</span>
       <button type="button" id="p1" data-preset="1">Not hunting yet</button>
       <button type="button" id="p2" data-preset="2">Moving with the herd · herd about to leave</button>
-      <button type="button" id="p3" data-preset="3">Moving with the herd · kill landed 3 hexes ahead</button>
+      <button type="button" id="p3" data-preset="3">Moving with the herd · catching up, 3 hexes behind</button>
     </div>
     <div class="row">
       <span class="lbl">a hunt kills a mammoth</span>
@@ -243,7 +243,7 @@
       turn: 40, ui: {sel: "herd", sheet: null, tab: "work"},
       herd: {x:7, y:7, name:"Woolly Mammoth", glyph:"🦣", phase:"loiter", loiterLeft:3, leg:1, count:9},
       // hunt: null, or {hunters, moving} — moving = "Move camp with the herd"
-      band: {x:4, y:9, name:"Saltmarch", food:22, hunt:null, kill:null, porters:null},
+      band: {x:4, y:9, name:"Saltmarch", food:22, hunt:null, porters:null},
       events: [],
     };
     if (n === 2) { base.band.x = 7; base.band.y = 7; base.band.hunt = {hunters:4, moving:true, policy:"peak"}; base.herd.loiterLeft = 1;
@@ -251,8 +251,7 @@
     if (n === 3) {
       base.herd.phase = "migrate"; base.herd.x = 10; base.herd.y = 4;
       base.band.x = 8; base.band.y = 6; base.band.hunt = {hunters:4, moving:true, policy:"peak"}; base.band.food = 9;
-      base.band.kill = {x:10, y:4, food:MAMMOTH, age:0};
-      base.events = ["Hunters bring down a mammoth at (10, 4).", "Saltmarch breaks camp and walks to the kill."];
+      base.events = ["Saltmarch sets out to camp with the mammoths."];
       base.ui.sel = "band";
     }
     S = base;
@@ -269,7 +268,6 @@
     S.turn++;
     // 1. rot: what sits above the larder's rot line spoils this turn
     if (b.food > ROT_LINE) { const lost = b.food - ROT_LINE; b.food = ROT_LINE; log(`${lost.toFixed(0)} food rotted in camp.`); }
-    if (b.kill) { if (b.kill.age >= 1 && b.kill.food > ROT_LINE) b.kill.food = ROT_LINE; b.kill.age++; }
     // 2. the herd
     if (h.phase === "loiter") {
       h.loiterLeft--;
@@ -282,11 +280,7 @@
     }
     // 3. the band — only a hunt with "Move camp with the herd" moves it
     if (moving()) {
-      if (b.kill && dist(b, b.kill) > REACH) { const n = stepToward(b, b.kill); b.x = n.x; b.y = n.y; }
-      else if (!same(b, h)) { const n = stepToward(b, h); b.x = n.x; b.y = n.y; }
-    }
-    if (b.kill && dist(b, b.kill) <= REACH) {
-      b.food += b.kill.food; log(`The kill is in camp: ${b.kill.food.toFixed(0)} food.`); b.kill = null;
+      if (!same(b, h)) { const n = stepToward(b, h); b.x = n.x; b.y = n.y; }
     }
     if (b.porters) { b.porters.left--; if (b.porters.left <= 0) { b.food += b.porters.food; log(`Porters bring ${b.porters.food.toFixed(0)} food home.`); b.porters = null; } }
     // 4. eat, forage
@@ -296,12 +290,9 @@
 
   function fireHunt() {
     const h = S.herd, b = S.band;
-    if (!b.hunt || b.kill || b.porters) return;
+    if (!b.hunt || b.porters) return;
     if (dist(b, h) <= REACH) { b.food += MAMMOTH; log("Hunters kill a mammoth beside camp: 48 food."); }
-    else if (b.hunt.moving) {
-      b.kill = {x:h.x, y:h.y, food:MAMMOTH, age:0};
-      log(`Hunters bring down a mammoth at (${h.x}, ${h.y}).`); log("Saltmarch breaks camp and walks to the kill.");
-    } else {
+    else {
       const d = dist(b, h); b.porters = {left: d, food: Math.min(MAMMOTH, 12)};
       log(`Hunters bring down a mammoth ${d} hexes out. Porters carry what they can.`);
     }
@@ -317,14 +308,10 @@
       return d <= REACH ? {l2: "In reach of camp."}
         : {l2: `${d} tiles away · first load home in ${d * 2} turns`, amber: "Most of a mammoth rots before it gets home"};
     }
-    if (b.kill) {
-      const turns = Math.max(0, dist(b, b.kill) - REACH);
-      const rots = turns >= 1 ? b.kill.food - ROT_LINE : 0;
-      return {l2: `Walking to the kill · ${turns} turn${turns === 1 ? "" : "s"}`,
-        amber: rots > 0 ? `${rots.toFixed(0)} of its ${b.kill.food.toFixed(0)} food rots on the way` : null};
-    }
     const gap = dist(b, h);
-    if (gap > 0) return {l2: `Catching up · ${gap} hex${gap === 1 ? "" : "es"} behind`};
+    if (gap > 0) return gap > REACH
+      ? {l2: `Catching up · ${gap} hexes behind`, l3: `${gap} tiles away · first load home in ${gap * 2} turns`, amber: "Most of a mammoth rots before it gets home"}
+      : {l2: `Catching up · ${gap} hex${gap === 1 ? "" : "es"} behind`};
     if (h.phase === "migrate") { const n = stepToward(h, ROUTE[h.leg]); return {l2: `Moving with it · next (${n.x}, ${n.y})`}; }
     return {l2: h.loiterLeft <= 1 ? "Camped in the herd. It is restless." : "Camped in the herd. Kills land in camp."};
   }
@@ -364,18 +351,8 @@
     if (h.phase === "migrate" && (mv || ui.sel === "herd")) {
       const n = stepToward(h, ROUTE[h.leg]); arrow(over, h, n, "rgba(250,148,46,.85)", 1.8, false);
     }
-    // moving with the herd: band's next step + the kill it walks to
-    if (mv && b.kill) {
-      const [kx, ky] = center(b.kill.x, b.kill.y);
-      line(over, b, b.kill, "rgba(239,227,205,.75)", 2, "6 5");
-      const n = stepToward(b, b.kill); arrow(over, b, n, "#efe3cd", 2.4, true);
-      el("circle", {cx:kx, cy:ky, r:13, fill:"rgba(192,90,65,.25)", stroke:"#c05a41", "stroke-width":1.5}, over);
-      el("text", {x:kx, y:ky+5, "text-anchor":"middle", "font-size":15}, over, "🍖");
-      pill(over, kx + 18, ky - 16, `${b.kill.food.toFixed(0)}`, "#e0a63c");
-      const turns = Math.max(0, dist(b, b.kill) - REACH);
-      const [bx, by] = center(b.x, b.y);
-      pill(over, (bx + kx) / 2, (by + ky) / 2 - 10, `${turns} turn${turns === 1 ? "" : "s"}`, "#efe3cd");
-    } else if (mv && !same(b, h)) {
+    // moving with the herd while catching up: the band's next step
+    if (mv && !same(b, h)) {
       line(over, b, h, "rgba(239,227,205,.55)", 1.6, "4 5");
       const n = stepToward(b, h); arrow(over, b, n, "#efe3cd", 2.4, true);
     }
@@ -415,10 +392,10 @@
 
   // The real sheet, section for section (DrawerComposeController._build_herd_assign_controls,
   // frames herd_hunt_big_game_window / herd_hunt_far_party_spoils). The ONE addition is the
-  // "Move camp with the herd" box, which sits where WORK PARTY sits because it replaces it.
+  // "Move camp with the herd" box; a band still catching up hunts with porters, so nothing else changes.
   function composeHtml() {
     const sh = S.ui.sheet, b = S.band, h = S.herd, d = dist(b, h);
-    const far = d > REACH, porters = far && !sh.moving;
+    const porters = d > REACH;
     const pol = [["strip","💀 Everything"],["peak","♻ Best"],["learn","⬆ Learning"]];
     const yieldBox = porters
       ? `<div class="yield"><span class="cap">Once running · per turn</span>
@@ -441,7 +418,7 @@
       <span class="tiny">max 20 workers useful here — more would be idle</span>
       <div class="srow"><span class="k">Kit</span><span class="field">⇣ Stalking kit</span></div>
       <div class="opt ${sh.moving ? "on" : ""}"><label for="shMove"><input type="checkbox" id="shMove" ${sh.moving ? "checked" : ""}> Move camp with the herd</label>
-        <span class="sub">Camp in the herd and travel with it. Far kills are walked to.</span></div>
+        <span class="sub">Camp in the herd and travel with it.</span></div>
       ${porters ? `<div class="party"><span class="cap">Work party</span><span class="l">${d} tiles away · first load home in ${d * 2} turns</span></div>` : ""}
       ${yieldBox}
       <button type="button" class="gbtn primary" id="shGo">Hunt Here</button>`;
@@ -495,7 +472,7 @@
 
   function renderPanel() {
     const p = document.getElementById("panel"); const b = S.band, h = S.herd; const hs = huntStatus();
-    const travelling = moving() && (b.kill || !same(b, h) || h.phase === "migrate");
+    const travelling = moving() && (!same(b, h) || h.phase === "migrate");
     const days = b.food > 0 ? Math.floor(b.food / (BAND_NEED - FORAGE)) : 0;
     const V = [["➜","Move"],["⚑","Scout"],["💀","Deny"],["📦","Trade"],["⌂","Split"]];
     let html = `<div class="ph"><span>⛺</span><div><div class="nm">${b.name}</div><div class="sub">${travelling ? "On the move" : "Camp"} (${b.x}, ${b.y})</div></div>
@@ -513,7 +490,7 @@
       if (b.hunt) {
         html += `<div class="hunt ${b.hunt.moving ? "moving" : ""}">
           <div class="l1">${h.glyph} ${h.name}<span class="n">${b.hunt.hunters}</span></div>
-          <div class="l2">${hs.l2}</div>${hs.amber ? `<div class="amber">${hs.amber}</div>` : ""}
+          <div class="l2">${hs.l2}</div>${hs.l3 ? `<div class="l2">${hs.l3}</div>` : ""}${hs.amber ? `<div class="amber">${hs.amber}</div>` : ""}
           <div class="acts"><button type="button" class="chip ${b.hunt.moving ? "on" : ""}" id="pMove" aria-pressed="${b.hunt.moving}">👣 Move camp with the herd</button>
           <button type="button" class="chip x" id="pCancel" aria-label="Cancel hunt" title="Cancel hunt">✕</button></div></div>`;
       } else html += `<div class="empty">No hunts. Select a herd and assign hunters.</div>`;
@@ -522,10 +499,10 @@
     p.innerHTML = html;
     p.querySelectorAll("[data-tab]").forEach(x => x.addEventListener("click", () => { if (x.dataset.tab !== "parties") { S.ui.tab = x.dataset.tab; render(); } }));
     on("pMove", () => { b.hunt.moving = !b.hunt.moving;
-      if (!b.hunt.moving) { b.kill = null; log(`${b.name} stays put. Hunters keep working the herd.`); }
+      if (!b.hunt.moving) { log(`${b.name} stays put. Hunters keep working the herd.`); }
       else log(`${b.name} sets out to camp with the mammoths.`);
       render(); });
-    on("pCancel", () => { b.hunt = null; b.kill = null; S.ui.sheet = null; log(`${b.name} calls its hunters in.`); render(); });
+    on("pCancel", () => { b.hunt = null; S.ui.sheet = null; log(`${b.name} calls its hunters in.`); render(); });
   }
 
   function renderChrome() {
@@ -535,7 +512,7 @@
       ? S.events.map((e, i) => `<p class="${i < S.events.length - 2 ? "old" : ""}">${e}</p>`).join("")
       : `<p class="old">Nothing has been told yet.</p>`);
     const k = document.getElementById("kill");
-    k.disabled = !S.band.hunt || !!S.band.kill || !!S.band.porters;
+    k.disabled = !S.band.hunt || !!S.band.porters;
     k.textContent = S.band.hunt ? "Fire a hunt now" : "Fire a hunt now (assign hunters first)";
   }
   function render() { renderMap(); renderTile(); renderPanel(); renderChrome(); }

@@ -52,13 +52,14 @@ Two phases, both the herd's own (`RoamState` in `fauna.rs`):
 **The band keeps up independently of hunting.** Staying near the herd is the mode's own movement, not
 a side effect of a kill: the herd moves, the band moves.
 
-### Moving to the kill
+### A band in the herd never makes a far kill
 
-If a kill lands **outside** the band's 2-tile reach while in migration mode, **the band moves to the
-kill** instead of sending porters. Nothing new is needed to hold the carcass while it walks: a far
-kill's carcass already waits at the source in the work party's load (`.claude/rules/core_sim/work-party.md`).
-In migration mode the camp walks to that load, and the load lands as a camp kill once the band is
-within reach. Rot on the way is the existing transit rule (`spoilage::rots_in_transit`).
+The herd moves first each turn and the band moves right after it, both one hex, so a band camped in
+the herd stays in the herd, through migration too, and **every kill is a camp kill**. The only far
+case is the start: a band that turns the mode on while several hexes off has to catch up, and a
+migrating herd moves as fast as it does, so it closes the gap when the herd stops at its next
+grounds. **While it catches up the hunt is an ordinary far hunt** — porters carry the kills home to
+the moving camp, exactly as today. No carcass waits on a tile and the band never walks to a kill.
 
 ### Band movement rules are unchanged
 
@@ -79,21 +80,22 @@ the map and never eats from it. So migration mode is **one box on the hunt order
 Prototype: `docs/migration_mode_ux_proposal.html`.
 
 - **Turning it on.** The Assign hunters sheet of a **migratory** herd carries a **Move camp with the
-  herd** box, where the WORK PARTY section sits; a resident herd's sheet has no box. Ticked, WORK
-  PARTY goes away (no porters go out) and the yields box shows the camp-kill take, because every kill
-  is now a camp kill. Everything else on the sheet is unchanged.
+  herd** box, where the WORK PARTY section sits; a resident herd's sheet has no box. Everything else
+  on the sheet is unchanged: a band still catching up hunts with porters, so the sheet's work-party
+  forecast stays true until it arrives.
 - **Turning it off.** The hunt row on the Work tab carries the same toggle: off, the band stays where
   it is and its hunters keep working the herd as an ordinary hunt. Cancelling the hunt ends the
   following with it.
 - **The hunt row** says where the band stands, one line: *Camped in the herd. Kills land in camp.* /
-  *Moving with it · next (x, y)* / *Catching up · N hexes behind* / *Walking to the kill · N turns*,
-  with an amber bullet for the food that rots on the walk. The herd card's worked line adds *moving
-  with the herd*.
+  *Moving with it · next (x, y)* / *Catching up · N hexes behind*. While it
+  catches up, the row's existing work-party lines run beneath it. The herd card's worked line adds
+  *moving with the herd*.
 - **The map.** The band token wears a 👣 badge and the followed herd a dashed ring; the herd's
-  next-step arrow stays drawn while the band follows it; the band's next step is a short arrow; a kill
-  being walked to is a marker with its food and a dashed line labelled with the turns left.
-- **A band that walked to a kill trails the herd** until the herd stops at its next grounds: both move
-  one hex a turn. That follows from unchanged movement and is shown, not fixed.
+  next-step arrow stays drawn while the band follows it; the band's own travel line shows its next
+  step.
+- **A Move order ends it.** Moving the band clears the box on its hunt, or the next turn would pull it
+  straight back to the herd. A band follows one herd at a time: ticking the box on one hunt clears it
+  on the band's others.
 
 ### Hunting by need
 
@@ -164,7 +166,7 @@ Sub-issues of the arc, #251.
 
 1. **Camp kill** — shipped with this doc (#796).
 2. **Migration mode** (#797) — the band's standing order on a migratory herd: camp in the herd while
-   it loiters, move with it while it migrates, move to a kill outside reach. The wire field and the
+   it loiters, move with it while it migrates, catch up with porters running. The wire field and the
    box on the hunt order (§Migration mode is a choice on the hunt).
 3. **Hunting by need** (#798) — the need-paced trigger for a band in migration mode.
 4. **The roaming skills** (#799) — Herd lore, travois, drives, on the knowledge ledger. Drying is
