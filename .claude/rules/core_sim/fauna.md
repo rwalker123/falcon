@@ -724,8 +724,8 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 > (`workers_needed`, `hunt_haul_workers`, `huntUsefulWorkers`) keeps its carriers on a camp row too,
 > because a herd near camp today may be beyond reach tomorrow; and `carried`/`wasted` survive on `AnimalTake` only for the
 > denial raid and expeditions, whose party walks away from the rest. A hunt's and a pen's row
-> `wasted` (`wastedYield` on the wire) is a structural `0`; a big camp kill spoils in the larder
-> (`spoilage::larder_rot`) rather than at the kill. The projections (`HuntProjection::step`,
+> `wasted` (`wastedYield` on the wire) is a structural `0`; a big camp kill rots in the larder
+> (`spoilage::rot_band_larders`, at the end of its shelf life) rather than at the kill. The projections (`HuntProjection::step`,
 > `forecast_take_outcomes`, the arrival schedule) read `killed_biomass()` too, so forecast and turn
 > agree.
 >

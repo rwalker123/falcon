@@ -29,8 +29,9 @@ herds move, so a hunt that started local is not local forever. As-built:
 
 ### Larder rot applies
 
-Meat in the larder rots by the existing line rule (`spoilage::larder_rot`; `flesh` keeps 4 turns).
-That is permanent, not a stopgap.
+Meat in the larder rots when its shelf life runs out (`flesh` keeps 4 turns): a kill is eaten from
+for 4 turns and whatever is left then rots, whole (`docs/plan_civilization_steps.md` §Step 5). That
+is permanent, not a stopgap.
 
 ### Migration mode is for MIGRATORY herds only
 
@@ -108,8 +109,8 @@ other work. A mammoth is indivisible and a whole one at once is the point — ne
 
 **The numbers.** A mammoth is 800 biomass × `hunt.provisions_per_biomass` 0.06 = **48 food**. A
 30-person band eats 30 × 0.16 = **4.8 a turn**, so a mammoth is 10 turns of food if nothing rots. But
-`flesh`'s rot line is need × 4 turns = 19.2, so about 29 of the 48 rot the turn after the kill: **today
-a mammoth feeds a 30-person band for about 4 turns.**
+`flesh` keeps 4 turns, so the band eats about 19 of the 48 and the other 29 rot on the fourth turn:
+**today a mammoth feeds a 30-person band for about 4 turns**, and a smaller band for the same 4.
 
 **That is the intended opening, not a dead end.** A band following a migration is not living on
 mammoths alone — it forages and hunts other game like any band. The rot is the lesson: the storage
@@ -120,7 +121,7 @@ mammoth kill is the biggest such signal in the game. So the loop is:
 1. The band kills a mammoth, eats what it can, and most of it rots — while its workers do other
    things.
 2. That rot teaches drying, on the knowledge ledger, by practice.
-3. After a few kills the band can dry meat. The rack lifts `flesh`'s rot line, so a mammoth becomes
+3. After a few kills the band can dry meat. The rack lengthens `flesh`'s shelf life, so a mammoth becomes
    many turns of food, and a migrating herd becomes **growth-sustaining**.
 
 **Drying is learned, never granted at start.** The rack is #708's (the storage branch); this arc
@@ -145,7 +146,7 @@ intensification ladder uses (learn a thing by doing the thing below it). Candida
 |---|---|---|
 | **Herd lore** | see a migrating herd's next seasonal ground, so the band can pre-position | the herd's `route` anchors |
 | **Travois / pack animals** | more carry per worker, so a long migration sheds less | the existing carry model (`carry.rs`) |
-| **Drying** | lifts `flesh`'s rot line | #708 |
+| **Drying** | lengthens `flesh`'s shelf life | #708 |
 | **Drives** (e.g. a bison jump) | more kills at once from a large herd | the hunt fight |
 
 **2. The score.** It reads the band's standing on that roaming track and how far it has travelled with

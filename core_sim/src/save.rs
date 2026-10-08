@@ -121,7 +121,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 24 | `PopulationCohort` gained `belief_anchor` — the one belief tile a band remembers as its ancestors' place, which the culture morale term reads (issue #699, `.claude/rules/core_sim/belief.md` → "The culture morale term"). The cohort rides `BandRecord`, so a version-23 blob has no such field |
 /// | 25 | `PopulationCohort` gained `last_belief_relay_hops` — the kin-relay hop count the culture term was priced from this turn (issue #699), which the wire publishes as `PopulationCohortState.beliefRelayHops`. The cohort rides `BandRecord`, so a version-24 blob has no such field |
 /// | 26 | Independence (#284): `FactionRegistry` moved from `WorldStatics.factions` to `SimState.factions` — the roster grows mid-game when a cut-off group of bands becomes its own people, so it rewinds with the turn — and `SimState` gained `hearts` (`HeartLedger`, every band's standing toward its people's heart). `CommandEventKind` gained `BandBrokeAway` and `LostTouch`, appended. |
-pub const SAVE_FORMAT_VERSION: u32 = 26;
+/// | 27 | Food rots at the end of its shelf life (#706): `FoodMix` holds each keeping class as age-stamped `FoodBatch` lots (`class -> [{age, amount}]`, oldest first) instead of one amount per class, so every band's larder, every party pack and every in-flight cargo serializes its lots. |
+pub const SAVE_FORMAT_VERSION: u32 = 27;
 
 /// gzip level for the payload document.
 ///

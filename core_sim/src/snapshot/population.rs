@@ -1554,20 +1554,21 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // headline rate adds (`DetailFormat.band_headline_food_rate`), so the rate and the runway beside
     // it agree. Read off the per-turn twin on the cohort, so a recapture republishes the same runway.
     //
-    // ⛔ **A RESIDENT BAND'S LARDER IS READ AFTER ONE TURN OF ROT** (#706,
-    // `crate::spoilage::larder_after_rot`) — a FIRST-TURN CORRECTION, not a model of spoilage over
-    // the whole runway. A larder above its keeping lines loses the excess on the next turn whatever
-    // the band does, so counting that food as runway would promise turns the store cannot keep; the
-    // turns after are walked as before. A detached party's pack does not rot in this slice, so it
-    // reads its pack whole.
+    // ⛔ **A RESIDENT BAND'S LARDER IS READ LESS WHAT WILL ROT UNEATEN** (#706,
+    // `crate::spoilage::rot_ahead`) — food rots at the END of its shelf life, so the larder is
+    // walked forward through the same meal-then-rot turns the sim runs, at the forward `demand`, and
+    // what would expire before the band could eat it is not runway. Income is not counted in that
+    // walk; the turns after are walked as before. A detached party's pack does not rot in this
+    // slice, so it reads its pack whole.
     let runway_larder = if expedition.is_some() {
         cohort.stores.get(FOOD)
     } else {
-        crate::spoilage::larder_after_rot(
-            cohort.stores.food(),
-            demand.to_f32(),
-            &demographics.keeping,
-        )
+        cohort.stores.get(FOOD)
+            - crate::spoilage::rot_ahead(
+                cohort.stores.food(),
+                demand.to_f32(),
+                &demographics.keeping,
+            )
     };
     let turns_of_food = if demand.raw() <= 0 {
         NOT_FOOD_LIMITED_TURNS

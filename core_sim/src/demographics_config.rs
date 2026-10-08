@@ -205,10 +205,10 @@ pub struct DemographicsTemperatureTail {
 pub struct KeepingClass {
     /// The id a species' `keeping` field names, and the key a larder holds the class under.
     pub id: String,
-    /// **Turns a unit of this class lasts.** A band eats its fastest-rotting food first, so a unit
-    /// waits about `larder ÷ need` turns to be eaten; past this many it rots
-    /// (`crate::spoilage::larder_rot`). A caravan pack whose walk home is longer than this rots
-    /// on the way (`crate::spoilage::transit_rot`).
+    /// **Turns a lot of this class lasts.** Food rots whole at the end of its shelf life: a lot
+    /// whose age (turns kept, walk included) reaches this many rots in that turn's rot pass
+    /// (`crate::spoilage::rot_band_larders`). A caravan pack whose walk home is longer than this
+    /// rots on the way (`crate::spoilage::rots_in_transit`).
     pub shelf_life_turns: f32,
 }
 

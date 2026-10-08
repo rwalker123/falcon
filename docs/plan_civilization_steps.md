@@ -322,23 +322,27 @@ the lineage/cohesion ladder, and the carry capacity that shipped is what a *work
 Spoilage is what turns a surplus into a problem instead of a number going up, and nothing below works
 without it.
 
-**Only food the band cannot eat in time rots (decided, #706).** A band eats its oldest food first, so
-a unit waits about *larder ÷ consumption* turns before it is eaten, and rots only if that wait is
-longer than its shelf life. No per-unit age is tracked; the rule is a line, not a share:
+**Food rots when its shelf life runs out (decided, #706; revised #797).** Every unit of food carries
+its age: each turn's take lands as a batch, the band eats the fastest-rotting class first and the
+oldest batch first within it, and a batch still uneaten when it reaches its class's shelf life rots
+then, whole. Nothing rots before its time, so a birth, a party coming home or a band joining in the
+meantime eats from it, and the larder shows food that really exists until it goes off. *(The first
+version tracked no age and cut the larder each turn to a line, need × shelf life — a mammoth on a
+small band lost most of its meat the turn after the kill, food nobody had had a chance to eat. Ray:
+that is wrong; it should drop at the end.)*
 
 - Each **keeping class** (config) has one property, `shelf_life_turns`. The first classes are
   `flesh` (meat and fish — short), `fresh_plant` (greens, roots, fruit — longer) and `dry` (nuts,
   seeds, later grain — long). Every fauna and flora species names the class its yield goes into, so
   a gathered shellfish bed and a hunted catfish are both `flesh`.
-- The band **eats the fastest-rotting class first**. Sorting the classes by shelf life, class *k*
-  rots by however much the stock of it and every faster class runs past *need × shelf life of k* —
-  one pass over a handful of numbers per turn.
-- A band with a small surplus stays under every line and never sees rot. The line scales with the
-  band: sixty people hold twice what thirty hold before anything spoils.
-- **Preservation is a longer shelf life, nothing else.** A drying rack lifts `flesh`'s line, a pit
-  lifts `dry`'s; "build storage" means exactly "hold more before it rots".
+- The band **eats the fastest-rotting class first**, oldest batch first within a class.
+- A band that eats its surplus before it expires never sees rot. How much a band keeps is still
+  emergent: sixty people eat twice what thirty eat before a kill expires.
+- **Preservation is a longer shelf life, nothing else.** A drying rack lengthens `flesh`'s, a pit
+  `dry`'s; "build storage" means exactly "food keeps longer before it rots".
 - **A work party's pack rots by its walk.** Cargo whose walk home is longer than its class's shelf
-  life rots on the way, which gives a far hunt a natural range that drying extends.
+  life rots on the way, which gives a far hunt a natural range that drying extends; a pack that
+  arrives lands already as old as its walk.
 - The rot is its own term on the Food line (`Spoiled`) and in the larder ledger identity.
 
 **Rot teaches storage — one signal, not two.** The intensification ladder's knowledge ledger already
@@ -396,8 +400,8 @@ first raises a band's income past its consumption.
 **There is no carry cap (decided).** The stale plan decision above argued for a hard bound on what
 a band carries, so that a fixed store would be the only way to hold more. Spoilage is enough: food
 carried spoils at the base rate, food in a fixed store spoils slower, and walking away from your
-store leaves its contents behind. The bound on a nomad's larder is **emergent** — steady state is
-*need × shelf life* per class, the fastest classes first — and no separate carry rule exists. It
+store leaves its contents behind. The bound on a nomad's larder is **emergent** — what the band can
+eat of each batch before its shelf life runs out — and no separate carry rule exists. It
 moves with band size and with technique, which is what makes it not a carry cap.
 
 **"Away from your storage" needs no distance rule.** Two things already decided give it: food

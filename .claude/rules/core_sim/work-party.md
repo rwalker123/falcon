@@ -121,7 +121,9 @@ drying — is what extends it.
   class of every pack whose walk exceeded that class's shelf life is **debited the same turn** and
   added to `PopulationCohort::last_food_spoiled`. Income therefore stays the row's `actual` (what
   *lands*), and the loss is the ledger identity's single `spoiled` term. A pack landed without a walk
-  (a local row) never rots.
+  (a local row) never rots. **A pack that survives its walk lands aged by it**: the delivery is
+  split across (class, walk) lots (`FoodMix::from_aged_weights`), so its shelf life counts from the
+  kill and a walk-*W* pack expires *W* turns sooner than a camp kill.
 - **The forecast strikes the same rot on every landing pack, so `netRateHome` is what arrives AND
   keeps.** `forecast_caravan` takes a `TransitRot` — the row's cargo shares by class (a herd's one
   class; a basket's `forage::patch_food_mix` shares) plus the keeping table — and each projected pack

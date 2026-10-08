@@ -49,6 +49,10 @@ migration code; `SAVE_FORMAT_VERSION` exists so a stale save is *rejected by a t
 both versions* rather than mis-read into a plausible wrong world. It is checked before the payload is
 looked at, which is also what lets `read_save_header` gate a listing.
 
+`SAVE_FORMAT_VERSION` is **27**: the larder's food is age-stamped lots (`FoodMix` → `FoodBatch`
+`{age, amount}`), so every band's larder, party pack and cargo serializes its lots. The row-by-row
+changelog is the table on the constant in `save.rs`.
+
 ## Four operations, three commands and one query
 
 | Operation | Proto | Why |

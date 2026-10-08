@@ -4233,27 +4233,34 @@ fn land_food_home(
             pack.classes.clone()
         }
     };
-    let mut weights = crate::work_party::CargoClasses::new();
+    // **Each pack lands AGED BY ITS WALK**, so its shelf life is counted from the kill and not from
+    // the landing: a lot is keyed by (class, walk). The whole delivery is still one exact
+    // `delivery.total`, split across those lots in proportion to what the packs carried.
+    let mut lots: std::collections::BTreeMap<(String, u32), f32> =
+        std::collections::BTreeMap::new();
     for pack in &delivery.packs {
         for (class, amount) in pack_classes(pack) {
-            *weights
-                .entry(class)
+            // A class the table does not carry never rots, so its lot carries no age.
+            let age = keeping
+                .shelf_life(&class)
+                .map_or(crate::work_party::NO_WALK, |_| pack.walk_turns);
+            *lots
+                .entry((class, age))
                 .or_insert(crate::work_party::NOTHING_CARRIED) += amount;
         }
     }
-    stores.add_food_mix(&crate::components::FoodMix::from_weights(
+    let landed = crate::components::FoodMix::from_aged_weights(
         delivery.total,
-        weights
-            .iter()
-            .map(|(class, amount)| (class.as_str(), *amount)),
+        lots.iter()
+            .map(|((class, walk), amount)| (class.as_str(), *walk, *amount)),
         fallback_class,
-    ));
+    );
+    stores.add_food_mix(&landed);
+    // Then what the walk spoiled is struck off: a lot whose class keeps less than its walk is lost.
     let mut spoiled = scalar_zero();
-    for pack in &delivery.packs {
-        for (class, amount) in pack_classes(pack) {
-            if crate::spoilage::rots_in_transit(&class, pack.walk_turns, keeping) {
-                spoiled += stores.take_food_class(&class, scalar_from_f32(amount));
-            }
+    for (class, age, amount) in landed.batches() {
+        if crate::spoilage::rots_in_transit(class, age, keeping) {
+            spoiled += stores.take_food_batch(class, age, amount);
         }
     }
     spoiled.to_f32()
@@ -19374,5 +19381,28 @@ mod transit_rot_tests {
             assert_eq!(spoiled, 0.0, "a {walk}-turn walk keeps flesh");
             assert!((stores.food().get(FLESH).to_f32() - PACK).abs() < 1e-3);
         }
+    }
+
+    /// **A pack that survives its walk lands aged by it** — its shelf life counts from the kill, so
+    /// a pack walked `W` turns expires `W` rot passes sooner than a camp kill.
+    #[test]
+    fn a_pack_lands_aged_by_its_walk_and_expires_that_much_sooner() {
+        const WALK: u32 = 2;
+        let keeping = crate::demographics_config::DemographicsConfig::default().keeping;
+        let flesh_life = keeping.shelf_life(FLESH).expect("flesh is a shipped class");
+        let passes_until_it_rots = |walk: u32| {
+            let mut stores = LocalStore::new();
+            land_food_home(
+                &mut stores,
+                &delivery(walk, &[(FLESH, PACK)]),
+                &keeping,
+                FLESH,
+            );
+            (1..)
+                .find(|_| stores.age_food(|class| keeping.shelf_life(class)) > scalar_zero())
+                .expect("it rots")
+        };
+        assert_eq!(passes_until_it_rots(NO_WALK), flesh_life as u32);
+        assert_eq!(passes_until_it_rots(WALK), flesh_life as u32 - WALK);
     }
 }
