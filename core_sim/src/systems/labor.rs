@@ -1699,17 +1699,36 @@ fn animal_pastoral_gate(
 
 /// **THE HERD'S ROOM TERM OF A BUILD'S GATE — AND WHO EMPTIED IT.** [`BuildGate::Open`] when the
 /// take room ([`fauna::herd_take_room`], the number `hunt_take` is bounded by) is workable; when it
-/// is empty, [`BuildGate::PredatorsAteGrowth`] if predators drew biomass off the herd this turn
-/// (`Herd::predator_eaten_this_turn`, stamped by `fauna::advance_predation` between the regrowth
-/// stamp and this gate), else [`BuildGate::Escapement`].
+/// is empty, [`BuildGate::PredatorsAteGrowth`] if **predation is what emptied it**, else
+/// [`BuildGate::Escapement`].
+///
+/// **Predators are blamed only on a counterfactual.** `Herd::predator_eaten_this_turn` (stamped by
+/// `fauna::advance_predation` between the regrowth stamp and this gate) being positive is not
+/// enough: at `floor = 1.0` the growth share is `× 0`, and a herd below its Allee line or shed
+/// down grew nothing anyway, so a wolf that took a sliver would be blamed for a room that was
+/// already empty. The blame holds only if the room **with the predation added back** — the biomass
+/// and the growth `growth_this_turn` would have read had nothing been eaten — would have been
+/// workable.
 ///
 /// **One helper for all three sites that state this verdict** — the Tame arm, the wire gate and
 /// [`head_rung_gate`] — so the cause cannot differ between what is acted on and what is published.
 /// The old single reason blamed the player's floor when wolves had taken the growth.
 fn herd_room_gate(herd: &Herd, floor: f32, fauna: &FaunaConfig) -> BuildGate {
     if source_is_workable(fauna::herd_take_room(herd, floor, fauna)) {
-        BuildGate::Open
-    } else if herd.predator_eaten_this_turn > NOTHING_PREDATED {
+        return BuildGate::Open;
+    }
+    if herd.predator_eaten_this_turn <= NOTHING_PREDATED {
+        return BuildGate::Escapement;
+    }
+    let biomass_uneaten = herd.biomass + herd.predator_eaten_this_turn;
+    let growth_uneaten = (biomass_uneaten - herd.biomass_before_regrowth).max(0.0);
+    let room_uneaten = fauna::hunt_take_room(
+        floor,
+        biomass_uneaten,
+        fauna::herd_capacity(herd, fauna),
+        growth_uneaten,
+    );
+    if source_is_workable(room_uneaten) {
         BuildGate::PredatorsAteGrowth
     } else {
         BuildGate::Escapement

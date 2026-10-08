@@ -157,11 +157,13 @@ const BAND_CARRY_LOAD_KEY := "carry_load"
 ## rule), and the amount is trimmed so a shelf reads `2` while a mending rate reads `0.05`.
 const BAND_MATERIAL_TERM_FORMAT := "%s %s"
 
-# ---- THE BELIEFS ROW (issue #701): `Beliefs: devout 0.42 · traditional 0.31 ⚱`, beneath Morale.
+# ---- THE BELIEFS ROW (issue #701): `Beliefs  devout · traditional ⚱`, beneath Morale.
 # What the band's culture layer reads on the two axes belief moves, and whether its ancestors are
 # pulling it this turn. **THE WORDS FOLLOW THE SIGN**: SecularDevout is devout at >= 0 and secular
-# below; TraditionalistRevisionist is traditional at <= 0 and revisionist above. The magnitude is the
-# axis value's absolute, two decimals. Own bands only (the Morale gate), and no row when the band
+# below; TraditionalistRevisionist is traditional at <= 0 and revisionist above. The ROW states the
+# words only (the figures do not fit the narrow drawer's value column on one line); the HOVER leads
+# with the magnitudes, the axis values' absolutes at one decimal (`Devout 0.4, traditional 0.3.`),
+# then the pull sentence or the untied invitation. The ⚱ mark shows only while a pull is active. Own bands only (the Morale gate), and no row when the band
 # publishes no culture layer — an empty `culture_traits` is "no layer", never a run of zeros.
 const BAND_CULTURE_TRAITS_KEY := "culture_traits"
 const BAND_CULTURE_PULL_KEY := "culture_ancestor_pull"

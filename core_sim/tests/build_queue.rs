@@ -3790,8 +3790,14 @@ fn resolve_a_predated_turn(app: &mut App) {
 /// The fixture's seated-on-its-floor, unkept half-tamed herd, with (or without) a wolf pack on it,
 /// after one predated turn. Returns the app and the herd's id.
 fn tame_stalled_at_the_floor(with_wolves: bool) -> (App, String) {
-    const FLOOR: f32 = 0.9;
-    let (mut app, _band, herd_id) = world_with_a_half_tamed_herd(NOBODY_ON_THE_HERD, FLOOR);
+    /// A shallow floor, so the growth share is real and the wolves' draw is what empties the room.
+    const SHALLOW_FLOOR: f32 = 0.9;
+    tame_at_floor(with_wolves, SHALLOW_FLOOR)
+}
+
+/// [`tame_stalled_at_the_floor`] at an arbitrary assignment floor.
+fn tame_at_floor(with_wolves: bool, floor: f32) -> (App, String) {
+    let (mut app, _band, herd_id) = world_with_a_half_tamed_herd(NOBODY_ON_THE_HERD, floor);
     let position = {
         let mut registry = app.world.resource_mut::<core_sim::HerdRegistry>();
         let herd = registry
@@ -3799,7 +3805,7 @@ fn tame_stalled_at_the_floor(with_wolves: bool) -> (App, String) {
             .iter_mut()
             .find(|herd| herd.id == herd_id)
             .expect("the fixture herd survives");
-        herd.biomass = herd.carrying_capacity * FLOOR;
+        herd.biomass = herd.carrying_capacity * floor;
         herd.position()
     };
     // **The fixture herd is the pack's only prey in range**, so the pack's whole demand lands on it
@@ -3878,4 +3884,24 @@ fn a_tame_whose_room_wolves_emptied_refuses_as_predators_ate_growth() {
     );
     assert_eq!(by, "");
     assert_eq!(eaten, 0.0);
+}
+
+/// **A wolf is not blamed for a room that was already empty.** At `floor = 1.0` the growth share is
+/// `x 0` and nothing stands above the line, so the room is empty with or without the pack: the refusal
+/// stays `escapement` even though the pack ate from the herd.
+#[test]
+fn a_full_floor_stays_escapement_even_with_wolves_eating() {
+    /// The top of the floor's range: leave the whole herd standing.
+    const WHOLE_HERD_STANDING: f32 = 1.0;
+    let (app, id) = tame_at_floor(true, WHOLE_HERD_STANDING);
+    let (reason, by, eaten) = published_predation(&app, &id);
+    assert!(
+        eaten > 0.0,
+        "fixture: the pack really did eat from the herd"
+    );
+    assert_eq!(by, "wolf");
+    assert_eq!(
+        reason, "escapement",
+        "the room was empty before the wolves ate, so the floor is the cause"
+    );
 }

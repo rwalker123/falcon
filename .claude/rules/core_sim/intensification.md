@@ -2063,7 +2063,11 @@ herd down between `regrow_biomass` and the band's gate (`advance_predation`, Log
 and a wolf pack can take all of a small herd's growth. The old single `escapement` reason then blamed
 the player's floor for a room that wolves emptied, and nobody could tell why the build was blocked. So
 `systems::labor::herd_room_gate` returns `Open` when the room is workable, else
-`PredatorsAteGrowth` if `predator_eaten_this_turn > 0`, else `Escapement`. **One helper at all three
+`PredatorsAteGrowth` only if predation is what emptied it — `predator_eaten_this_turn > 0` AND the
+room **with the predation added back** (`hunt_take_room` at `biomass + eaten`, growth
+`biomass + eaten − biomass_before_regrowth`) would have been workable — else `Escapement`. The
+counterfactual keeps `floor = 1.0` (growth share `× 0`) and a herd that grew nothing for another
+reason (below Allee, husbandry shed) from blaming a wolf that took a sliver. **One helper at all three
 sites that state this verdict** (the Tame arm, the wire gate, `head_rung_gate`), so the cause cannot
 differ between what is acted on and what is published. Corral has no escapement conjunct and plant
 gates are unchanged. The herd row also carries `predatorEatenBy` / `predatorEaten`

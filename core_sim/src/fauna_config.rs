@@ -2649,8 +2649,8 @@ impl FaunaConfig {
         out
     }
 
-    /// Resolve a species row by its `display_name` (the value a `Herd` stores in `species`), so
-    /// `advance_herds` can read the herd's movement cadence levers. Display names are unique.
+    /// The roster KEY (`fauna_config.json`'s `species` key, e.g. `wolf`) of the species whose
+    /// `display_name` is `display` — what the predation stamp and the herd telemetry publish.
     pub fn species_key_by_display(&self, display: &str) -> Option<&str> {
         self.species
             .iter()
@@ -2658,7 +2658,8 @@ impl FaunaConfig {
             .map(|(key, _)| key.as_str())
     }
 
-    /// Resolve a species row by its `display_name` (see [`Self::species_key_by_display`] for the key).
+    /// Resolve a species row by its `display_name` (the value a `Herd` stores in `species`), so
+    /// `advance_herds` can read the herd's movement cadence levers. Display names are unique.
     pub fn species_by_display(&self, display: &str) -> Option<&SpeciesDef> {
         self.species
             .values()

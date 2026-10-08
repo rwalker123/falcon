@@ -77,7 +77,7 @@ const DETAIL_ROW_MORALE := "Morale"
 
 const DETAIL_ROW_GROWTH := "Growth"
 
-# The band's culture row (`Beliefs: devout 0.42 · traditional 0.31`), beneath Morale. Its label IS the
+# The band's culture row (`Beliefs  devout · traditional ⚱`, figures in the hover), beneath Morale. Its label IS the
 # `ctx.row_tooltips` key, so the hover and the row cannot drift.
 const DETAIL_ROW_BELIEFS := "Beliefs"
 
