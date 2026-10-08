@@ -25,6 +25,7 @@ use bevy::prelude::{Entity, UVec2};
 use crate::orders::FactionId;
 use crate::routes::RoadRegistry;
 use crate::supply::WalkReach;
+use crate::wellbeing_config::CultureConfig;
 
 /// The hop count of a band standing within walking reach of its anchor itself.
 pub const DIRECT_HOPS: u32 = 0;
@@ -41,6 +42,15 @@ pub fn wire_hops(anchor: Option<UVec2>, hops: Option<u32>) -> u8 {
             .unwrap_or(sim_schema::BELIEF_RELAY_MAX_HOPS)
             .min(sim_schema::BELIEF_RELAY_MAX_HOPS),
     }
+}
+
+/// **Decode the cohort's stored wire hop count** ([`wire_hops`]'s encoding) back to a hop count:
+/// `None` with no anchor or when nothing reaches the band (`sim_schema::BELIEF_RELAY_UNREACHED`).
+/// What a reader of `PopulationCohort::last_belief_relay_hops` prices the same tie from, without a
+/// second search.
+pub fn hops_from_wire(anchor: Option<UVec2>, wire: u8) -> Option<u32> {
+    anchor?;
+    (wire != sim_schema::BELIEF_RELAY_UNREACHED).then_some(u32::from(wire))
 }
 
 /// Where a band with no durable id sorts — after every band that has one.
@@ -90,13 +100,10 @@ impl BeliefRelay {
         self.reached.get(&key)?.get(&band).copied()
     }
 
-    /// The relay strength `relay_per_hop ^ hops` toward the band's own anchor; `0` when unreached
-    /// or anchorless. At `relay_per_hop = 0` only a direct band reads `1`.
-    pub fn strength(&self, band: usize, relay_per_hop: f32) -> f32 {
-        const UNREACHED_STRENGTH: f32 = 0.0;
-        self.hops(band).map_or(UNREACHED_STRENGTH, |hops| {
-            relay_per_hop.powi(i32::try_from(hops).unwrap_or(i32::MAX))
-        })
+    /// The relay strength toward the band's own anchor — [`CultureConfig::relay_strength`] of its
+    /// hop count; `0` when unreached or anchorless.
+    pub fn strength(&self, band: usize, culture: &CultureConfig) -> f32 {
+        culture.relay_strength(self.hops(band))
     }
 
     /// **Where the bands that would tie band `band` in stand** — every band of its people the
@@ -205,6 +212,13 @@ mod tests {
     const HOME: FactionId = FactionId(0);
     const OTHER: FactionId = FactionId(1);
 
+    fn culture(relay_per_hop: f32) -> CultureConfig {
+        CultureConfig {
+            relay_per_hop,
+            ..CultureConfig::default()
+        }
+    }
+
     fn walk() -> WalkReach {
         WalkReach {
             base_reach: BASE_REACH,
@@ -237,12 +251,12 @@ mod tests {
         assert_eq!(relay.hops(0), Some(0));
         assert_eq!(relay.hops(1), Some(1));
         assert_eq!(relay.hops(2), Some(2));
-        assert_eq!(relay.strength(2, HALF), HALF * HALF);
+        assert_eq!(relay.strength(2, &culture(HALF)), HALF * HALF);
         // The other people's band at 6 has no kin within reach of the anchor, so neither it nor the
         // one beyond it is reached — the home chain does not carry them.
         assert_eq!(relay.hops(3), None);
         assert_eq!(relay.hops(4), None);
-        assert_eq!(relay.strength(4, HALF), 0.0);
+        assert_eq!(relay.strength(4, &culture(HALF)), 0.0);
     }
 
     #[test]
@@ -254,8 +268,8 @@ mod tests {
         ];
         let relay = resolve_belief_relay(&bands, &walk(), &RoadRegistry::default());
         assert_eq!(relay.hops(1), None, "no anchor, nothing to reach toward");
-        assert_eq!(relay.strength(0, NO_RELAY), 1.0);
-        assert_eq!(relay.strength(2, NO_RELAY), 0.0);
+        assert_eq!(relay.strength(0, &culture(NO_RELAY)), 1.0);
+        assert_eq!(relay.strength(2, &culture(NO_RELAY)), 0.0);
     }
 
     /// A band's relayers never include itself, nor bands reached only through it.

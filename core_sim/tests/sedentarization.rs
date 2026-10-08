@@ -54,6 +54,8 @@ fn spawn_world() -> App {
     app.world.insert_resource(CommandEventLog::default());
     app.world.insert_resource(SedentarizationScore::default());
     app.world
+        .insert_resource(core_sim::BeliefRegistry::default());
+    app.world
         .insert_resource(SedentarizationConfigHandle::default());
     app.world.insert_resource(ForageRegistry::default());
     app.world.run_system_once(spawn_initial_herds);

@@ -263,7 +263,13 @@ const ANCESTORS_REACH_UNDER_WIDTH := 7.0
 const ANCESTORS_REACH_UNDER_ALPHA := 0.7
 # THE KIN RELAY's outline (`belief_relay_reach_x/y`, the tiles outside the direct region from which
 # the band is tied in through its kin): the same violet, thinner and fainter, so the two read as
-# "near" and "near through kin". Solid — a dashed line means a pending action on this map.
+# "near" and "near through kin". DASHED, line and under-stroke alike: width and alpha alone read as
+# one outline in a live game, and a dash is the one cue that says "a different kind of region" at a
+# glance. (The pending-action overlay's dashes are amber, so the colour still tells the two apart.)
+# Dash and gap scale with the hex radius — an edge is one radius long — so an edge shows
+# 1 / (dash + gap) = 2.5 dashes at every zoom, never fewer than two.
+const ANCESTORS_RELAY_DASH_FACTOR := 0.25
+const ANCESTORS_RELAY_GAP_FACTOR := 0.15
 const ANCESTORS_RELAY_WIDTH := 3.0
 const ANCESTORS_RELAY_ALPHA := 0.7
 const ANCESTORS_RELAY_UNDER_WIDTH := 5.5
@@ -1525,7 +1531,8 @@ func _draw_band_ancestors(band: Dictionary, band_col: int, eff_col: int, radius:
 	# are the direct region's boundary, drawn strong on top, so a shared border reads as "near".
 	_draw_reach_outline(_reach_perimeter(relayed, direct, band_col, eff_col, radius, origin),
 		Color(HudStyle.BELIEF, ANCESTORS_RELAY_ALPHA), ANCESTORS_RELAY_WIDTH,
-		Color(HudStyle.GROUND, ANCESTORS_RELAY_UNDER_ALPHA), ANCESTORS_RELAY_UNDER_WIDTH)
+		Color(HudStyle.GROUND, ANCESTORS_RELAY_UNDER_ALPHA), ANCESTORS_RELAY_UNDER_WIDTH,
+		radius * ANCESTORS_RELAY_DASH_FACTOR, radius * ANCESTORS_RELAY_GAP_FACTOR)
 	_draw_reach_outline(_reach_perimeter(direct, {}, band_col, eff_col, radius, origin),
 		Color(HudStyle.BELIEF, ANCESTORS_REACH_ALPHA), ANCESTORS_REACH_WIDTH,
 		Color(HudStyle.GROUND, ANCESTORS_REACH_UNDER_ALPHA), ANCESTORS_REACH_UNDER_WIDTH)
@@ -1564,13 +1571,21 @@ func _reach_perimeter(region: Dictionary, skip: Dictionary, band_col: int, eff_c
 	return edges
 
 ## One outline: the whole dark under-stroke first, then the whole violet line — drawn edge by edge,
-## one edge's under-stroke would cut the violet of the edge before it.
+## one edge's under-stroke would cut the violet of the edge before it. `dash` > 0 draws every edge
+## (both strokes) as dashes of `dash` px with `gap` px between; 0 is the solid outline. Edges are
+## already in the band's effective column frame, so a dashed edge across the wrap seam is just an edge.
 func _draw_reach_outline(edges: Array[PackedVector2Array], color: Color, width: float,
-		under: Color, under_width: float) -> void:
+		under: Color, under_width: float, dash: float = 0.0, gap: float = 0.0) -> void:
 	for seg in edges:
-		_view.draw_line(seg[0], seg[1], under, under_width, true)
+		if dash > 0.0:
+			_draw_dashed_line(seg[0], seg[1], under, under_width, dash, gap)
+		else:
+			_view.draw_line(seg[0], seg[1], under, under_width, true)
 	for seg in edges:
-		_view.draw_line(seg[0], seg[1], color, width, true)
+		if dash > 0.0:
+			_draw_dashed_line(seg[0], seg[1], color, width, dash, gap)
+		else:
+			_view.draw_line(seg[0], seg[1], color, width, true)
 
 ## The belief place's MARKER: dark disc, violet ring, then the `BeliefSprites` urn — or the violet ⚱
 ## glyph when the sprite does not load.

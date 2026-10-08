@@ -2,7 +2,7 @@
 //!
 //! Loaded from `data/sedentarization_config.json`. The score is a per-faction 0–100
 //! "pressure to root in place" (see `sedentarization.rs`), a weighted blend of normalized
-//! inputs (domestication, surplus, resource density, population) crossing a `soft_threshold`
+//! inputs (domestication, surplus, resource density, population, belief) crossing a `soft_threshold`
 //! (~40, "establish a seasonal base?") and a `hard_threshold` (~70, "settle?"). Mirrors the
 //! `fauna_config.rs` loader (baked-in builtin + optional file/env override).
 
@@ -29,6 +29,9 @@ pub struct SedentarizationWeights {
     pub surplus: f32,
     pub resource_density: f32,
     pub population: f32,
+    /// The ancestors under the band's feet (`crate::belief`): how much of the faction stands on a
+    /// place that holds its dead.
+    pub belief: f32,
 }
 
 impl Default for SedentarizationWeights {
@@ -36,8 +39,9 @@ impl Default for SedentarizationWeights {
         Self {
             domestication: 0.35,
             surplus: 0.30,
-            resource_density: 0.20,
+            resource_density: 0.10,
             population: 0.15,
+            belief: 0.10,
         }
     }
 }
@@ -52,6 +56,8 @@ pub struct SedentarizationReferences {
     pub surplus: f32,
     /// Total population that fully satisfies the population input.
     pub population: f32,
+    /// Belief on a band's standing tile (dead-equivalents) that fully satisfies the belief input.
+    pub belief: f32,
 }
 
 impl Default for SedentarizationReferences {
@@ -60,6 +66,7 @@ impl Default for SedentarizationReferences {
             domesticated_herds: 3,
             surplus: 300.0,
             population: 300.0,
+            belief: 20.0,
         }
     }
 }
@@ -204,7 +211,7 @@ mod tests {
         assert!(config.smoothing >= 0.0 && config.smoothing < 1.0);
         // Weights blend to ~1.0 so the score scales cleanly to [0, 100].
         let w = &config.weights;
-        let sum = w.domestication + w.surplus + w.resource_density + w.population;
+        let sum = w.domestication + w.surplus + w.resource_density + w.population + w.belief;
         assert!(
             (sum - 1.0).abs() < 1e-3,
             "weights should sum to ~1.0, got {sum}"
@@ -213,5 +220,6 @@ mod tests {
         assert!(config.references.domesticated_herds >= 1);
         assert!(config.references.surplus > 0.0);
         assert!(config.references.population > 0.0);
+        assert!(config.references.belief > 0.0);
     }
 }

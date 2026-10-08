@@ -544,6 +544,18 @@ const RETIRED_KEEPING_REMEDY_NEEDLE := "put someone on this band's"
 ## rather than a presence: zero is the hole the retired suppression left, and two is that suppression's
 ## own reason for existing — one instruction printed twice.
 const BLOCKED_STATED_ONCE := 1
+## The escapement floor the cultivating band fixture works the patch at.
+const BLOCKED_FLOOR := 0.5
+## The blocked patch's stand: 20 of a ceiling of 100 against the 50 its 50% floor leaves.
+const BLOCKED_PLANT_STOCK := 20.0
+const ESCAPEMENT_BOAR_BODY_MASS := 10.0
+const ESCAPEMENT_BOAR_HEAD := 61
+const ESCAPEMENT_BOAR_CEILING := 133
+const ESCAPEMENT_PREDATED_HEAD := 9
+## The sentences, spelled as LITERALS (a needle composed through the formats under test only agrees
+## with itself).
+const ESCAPEMENT_BOAR_SENTENCE := "Builds only while you hunt it — 61 here, you leave 67 (50%) standing."
+const PREDATORS_NAMED_SENTENCE := "Grey Wolf Pack ate this turn's growth — 61 here, you leave 67 standing."
 
 ## **THE THREE STRINGS THE `At risk:` ROW TOOK WITH IT.** LITERALS, for `RETIRED_*_NEEDLE`'s own
 ## reason one block up: the vocabulary no longer holds them, so a needle recomposed from live code
@@ -1293,6 +1305,9 @@ func run(harness) -> void:
 	# hazard row, which is the state that shipped: the player covered the keeping the sub-row
 	# named, and the block stayed with nothing on any surface saying what was refusing it.
 	blocked["patch_build_blocked_reason"] = HudSelectionVocab.BUILD_BLOCKED_REASON_ESCAPEMENT
+	# **THE STOCK SITS BELOW THE LINE THE FLOOR DRAWS** — 90 over a 50 line read as if there was room,
+	# which is the opposite of why the build is refused.
+	blocked["patch_biomass"] = BLOCKED_PLANT_STOCK
 	blocked["patch_upkeep_demand"] = BLOCKED_UPKEEP_DEMAND
 	blocked["patch_upkeep_supplied"] = BLOCKED_UPKEEP_SUPPLIED
 	blocked["patch_upkeep_shortfall"] = BLOCKED_UPKEEP_DEMAND - BLOCKED_UPKEEP_SUPPLIED
@@ -1334,8 +1349,19 @@ func run(harness) -> void:
 	# Read off the rendered label rather than off the producer: a card is what the player was shown,
 	# and the `At risk:` row beneath states a role of its own that this must not be satisfied by.
 	var blocked_visible: String = h._hud.tile_detail.get_parsed_text()
-	h._assert_hud("…and the card PRINTS that one sentence",
-		blocked_visible.contains(HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT))
+	# **THE CARD'S SENTENCE CARRIES ITS NUMBERS** — the stock and the line the player's floor draws, in
+	# the units the card's own `Foraging X / Y` row prints. Composed from the fixture's own stock and
+	# ceiling and the band's own 50% floor, with the rounding spelled out (`ceil(floor × K)`).
+	var blocked_cause := HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT_FORMAT % [
+		int(round(float(blocked["patch_biomass"]))),
+		int(ceil(BLOCKED_FLOOR * round(float(blocked["patch_carrying_capacity"])))),
+		int(round(BLOCKED_FLOOR * 100.0))]
+	print("ui_preview: blocked escapement cause  %s" % blocked_cause)
+	h._assert_hud("…and the card PRINTS that one sentence, with its numbers (%s)" % blocked_cause,
+		blocked_visible.contains(blocked_cause))
+	h._assert_hud("…naming the dependency (`Builds only while you harvest it`) and the floor it used",
+		blocked_cause.begins_with("Builds only while you harvest it")
+		and blocked_cause.contains("(50%)"))
 	h._assert_hud("…and prints NEITHER the cause's retired remedy nor the retired keeping line",
 		not blocked_visible.contains(RETIRED_ESCAPEMENT_REMEDY_NEEDLE)
 		and not blocked_visible.contains(RETIRED_KEEPING_REMEDY_NEEDLE))
@@ -1372,9 +1398,27 @@ func run(harness) -> void:
 		h._hud.tile_detail.tooltip_text.contains(under_kept)
 		and blocked_visible.count(under_kept) == BLOCKED_HOVER_ABSENT)
 	h._assert_hud("…beside the cause, ONCE each — never one instruction twice on one card (%d)"
-			% blocked_visible.count(HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT),
-		blocked_visible.count(HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT)
+			% blocked_visible.count(blocked_cause),
+		blocked_visible.count(blocked_cause)
 			== BLOCKED_STATED_ONCE)
+
+	# **THE HERD TWIN, with the playtest's own numbers** (a Tame Wild Boar: 61 standing of a ceiling of
+	# 133, a 50% floor => leave `ceil(0.5 x 133)` = 67). Asked of the producer, PNG-less: bodies, not
+	# biomass, exactly as the herd card's `Herd 61 / 133` counts them.
+	var boar := {
+		"biomass": ESCAPEMENT_BOAR_BODY_MASS * ESCAPEMENT_BOAR_HEAD,
+		"carrying_capacity": ESCAPEMENT_BOAR_BODY_MASS * ESCAPEMENT_BOAR_CEILING,
+		"body_mass": ESCAPEMENT_BOAR_BODY_MASS,
+		SourceForecast.FORECAST_BUILD_TURNS_KEY: SourceForecast.BUILD_TURNS_QUEUE_BLOCKED,
+		SourceForecast.FORECAST_BUILD_BLOCKED_REASON_KEY: HudSelectionVocab.BUILD_BLOCKED_REASON_ESCAPEMENT,
+	}
+	var boar_lines := DetailFormat.build_blocked_lines(boar, "", SourceForecast.SOURCE_KIND_HERD,
+		DetailFormat.MORALE_BREAKDOWN_INDENT, BLOCKED_FLOOR)
+	h._assert_hud("a blocked herd states its dependency and its numbers (%s)" % str(boar_lines),
+		boar_lines.size() == BLOCKED_CAUSE_ONLY_LINES and String(boar_lines[0]).strip_edges()
+			== "Builds only while you hunt it — 61 here, you leave 67 (50%) standing.")
+
+	await _blocked_herd_frames()
 
 	# **AND THE CAUSE THAT NAMES A GOOD** (`docs/plan_standing_upkeep.md` §2.7 / §4.9 item 12) — the
 	# same `-4` sentinel, a different refusal, and the one stuck reason whose remedy is off the build
@@ -2920,3 +2964,68 @@ func _plant_hold_clause(work: float, goods: float) -> String:
 		HudWorkVocab.RUNG_TRACK_MATERIAL_TERM % [
 			DetailFormat.format_trimmed(goods, HudWorkVocab.RUNG_TRACK_MATERIAL_DECIMALS),
 			PLANT_HOLD_MATERIAL]])
+
+## THE TWO HERD REASONS, ON ONE BOARD OF NUMBERS: a Tame Wild Boar standing at 61 of 133 with a 50%
+## floor (the line is 67), blocked first on `escapement` and then on `predators_ate_growth` with a wolf
+## pack named. Both stocks sit BELOW the line, which is the state either reason is true of.
+func _blocked_herd_frames() -> void:
+	var boar := HerdFx.taming_herd_fixture()
+	boar["id"] = "game_boar_11"
+	boar["label"] = "Wild Boar (game_boar_11)"
+	boar["species"] = "Wild Boar"
+	# No ceilings table: `floorify` RAISES a stock under the Sustain peak to a fraction of capacity,
+	# which would lift this herd off the 61 the frame is about.
+	boar.erase("hunt_policy_ceilings")
+	boar["body_mass"] = ESCAPEMENT_BOAR_BODY_MASS
+	boar["biomass"] = ESCAPEMENT_BOAR_BODY_MASS * ESCAPEMENT_BOAR_HEAD
+	boar["carrying_capacity"] = ESCAPEMENT_BOAR_BODY_MASS * ESCAPEMENT_BOAR_CEILING
+	boar[SourceForecast.FORECAST_BUILD_TURNS_KEY] = SourceForecast.BUILD_TURNS_QUEUE_BLOCKED
+	var wolf := HerdFx.herd_fixture()
+	wolf["id"] = "game_wolf_03"
+	wolf["label"] = "Grey Wolf Pack (game_wolf_03)"
+	wolf["species"] = "Grey Wolf Pack"
+	wolf["x"] = int(wolf.get("x", 0)) + 3
+	var band := BandFx.band_fixture()
+	band["labor_assignments"] = [{"kind": "hunt", "workers": 4, "fauna_id": "game_boar_11",
+		"floor": BLOCKED_FLOOR, "target_x": int(boar.get("x", 0)), "target_y": int(boar.get("y", 0)),
+		"actual_yield": 0.0, "sustainable_yield": 0.0, "workers_needed": 4, "overdraws": false}]
+	h._hud._band_labor._player_band = band
+	h._hud._band_labor._player_bands = [band]
+	h._set_world_herds([boar, wolf])
+	h._hud.clear_selection()
+
+	boar[SourceForecast.FORECAST_BUILD_BLOCKED_REASON_KEY] = HudSelectionVocab.BUILD_BLOCKED_REASON_ESCAPEMENT
+	h._show_herd(boar)
+	await h._settle()
+	await h._save("herd_blocked_escapement")
+	var escapement_card: String = h._hud.occupant_detail.get_parsed_text()
+	h._assert_hud("a blocked herd's card states the escapement cause with its numbers",
+		escapement_card.contains(ESCAPEMENT_BOAR_SENTENCE))
+
+	boar[SourceForecast.FORECAST_BUILD_BLOCKED_REASON_KEY] = HudSelectionVocab.BUILD_BLOCKED_REASON_PREDATORS
+	boar["predator_eaten_by"] = "wolf"
+	boar["predator_eaten"] = ESCAPEMENT_BOAR_BODY_MASS * ESCAPEMENT_PREDATED_HEAD
+	h._show_herd(boar)
+	await h._settle()
+	await h._save("herd_blocked_predators")
+	var predators_card: String = h._hud.occupant_detail.get_parsed_text()
+	h._assert_hud("…and a herd whose growth a wolf pack ate says so, naming the pack and the same numbers",
+		predators_card.contains(PREDATORS_NAMED_SENTENCE) and not predators_card.contains("Builds only while"))
+
+	# The other two forms, asked of the producer: no numbers reachable, and no predator named.
+	var no_floor := DetailFormat.build_blocked_lines(boar, "", SourceForecast.SOURCE_KIND_HERD,
+		"", DetailFormat.BLOCKED_FLOOR_UNKNOWN, [wolf])
+	h._assert_hud("…without a floor it states the cause without numbers (%s)" % str(no_floor),
+		no_floor.size() == 1 and no_floor[0] == "Grey Wolf Pack ate this turn's growth, so there was none to spare.")
+	boar["predator_eaten_by"] = ""
+	var unnamed := DetailFormat.build_blocked_lines(boar, "", SourceForecast.SOURCE_KIND_HERD,
+		"", BLOCKED_FLOOR, [wolf])
+	h._assert_hud("…and with no predator named it says Predators (%s)" % str(unnamed),
+		unnamed.size() == 1 and unnamed[0] == "Predators ate this turn's growth — 61 here, you leave 67 standing.")
+	# A predator not in view still gets a name: the key, humanized.
+	boar["predator_eaten_by"] = "wolf"
+	var unseen := DetailFormat.build_blocked_lines(boar, "", SourceForecast.SOURCE_KIND_HERD,
+		"", BLOCKED_FLOOR, [])
+	h._assert_hud("…a predator no herd in view carries falls back to its key (%s)" % str(unseen),
+		unseen.size() == 1 and unseen[0].begins_with("Wolf ate"))
+	h._set_world_herds([])

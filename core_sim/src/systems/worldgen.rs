@@ -986,7 +986,11 @@ pub fn spawn_initial_world(
         height: config.grid_size.y,
     });
 
-    culture.reconcile(&tick, &InfluencerCultureResonance::default());
+    culture.reconcile(
+        &tick,
+        &InfluencerCultureResonance::default(),
+        &std::collections::BTreeMap::new(),
+    );
     let _ = culture.take_tension_events();
 }
 

@@ -157,6 +157,37 @@ const BAND_CARRY_LOAD_KEY := "carry_load"
 ## rule), and the amount is trimmed so a shelf reads `2` while a mending rate reads `0.05`.
 const BAND_MATERIAL_TERM_FORMAT := "%s %s"
 
+# ---- THE BELIEFS ROW (issue #701): `Beliefs  devout · traditional ⚱`, beneath Morale.
+# What the band's culture layer reads on the two axes belief moves, and whether its ancestors are
+# pulling it this turn. **THE WORDS FOLLOW THE SIGN**: SecularDevout is devout at >= 0 and secular
+# below; TraditionalistRevisionist is traditional at <= 0 and revisionist above. The ROW states the
+# words only (the figures do not fit the narrow drawer's value column on one line); the HOVER leads
+# with the magnitudes, the axis values' absolutes at one decimal (`Devout 0.4, traditional 0.3.`),
+# then the pull sentence or the untied invitation. The ⚱ mark shows only while a pull is active. Own bands only (the Morale gate), and no row when the band
+# publishes no culture layer — an empty `culture_traits` is "no layer", never a run of zeros.
+const BAND_CULTURE_TRAITS_KEY := "culture_traits"
+const BAND_CULTURE_PULL_KEY := "culture_ancestor_pull"
+## Indices into both vectors, in `CultureTraitAxis` order (15 entries).
+const CULTURE_AXIS_TRADITIONALIST_REVISIONIST := 3
+const CULTURE_AXIS_SECULAR_DEVOUT := 13
+const CULTURE_AXIS_COUNT := 15
+const BELIEFS_WORD_DEVOUT := "devout"
+const BELIEFS_WORD_SECULAR := "secular"
+const BELIEFS_WORD_TRADITIONAL := "traditional"
+const BELIEFS_WORD_REVISIONIST := "revisionist"
+## The hover opens with the values: `Devout 0.4, traditional 0.3.` (first word capitalised).
+const BELIEFS_VALUES_FORMAT := "%s %.1f, %s %.1f."
+const BELIEFS_TERM_SEPARATOR := " · "
+## The ancestors mark: the map's urn glyph, in the belief violet (`%s` = hex, `%s` = glyph).
+const BELIEFS_ANCESTORS_MARK_FORMAT := " [color=#%s]%s[/color]"
+## A pull below this magnitude is no pull (float noise on an untied band's zero vector).
+const BELIEFS_PULL_EPSILON := 0.0005
+const BELIEFS_PULL_TOOLTIP_FORMAT := "The ancestors pull this band %s and %s."
+## A pull is stated as a magnitude TOWARD the word its sign names, so it is always `+`.
+const BELIEFS_PULL_TERM_FORMAT := "+%.2f %s"
+const BELIEFS_UNTIED_TOOLTIP_FORMAT := \
+    "Not tied to its dead. Stand within reach of them to be drawn toward %s, %s ways."
+
 # ---- THE GROWTH ROW AS A CLAUSE ON THE MORALE LINE, for the `compact` (SHORT band-zone tier) host —
 # the second merge this tier makes, and the same trade for the same reason as the hay clause above:
 # HEIGHT is what is scarce in a height-capped horizontal dock, and it has a whole screen of width.
@@ -493,10 +524,20 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
         # tier — see `BAND_MORALE_GROWTH_CLAUSE_FORMAT` for why this pair and why a merge rather than
         # a drop. A band with no published growth reading merges nothing and keeps its bare Morale
         # row, in every tier.
+        if compact:
+            # The `compact` tier is short of HEIGHT, so Beliefs takes no row: a band taking an
+            # ancestors pull wears the violet mark as a clause on this line, and the line's hover
+            # carries the full sentence. With no pull it adds nothing.
+            morale_line += _band_beliefs_compact_clause(unit_data, context)
         if compact and growth_line != "":
             lines.append(morale_line + _band_growth_clause(unit_data, context))
         else:
             lines.append(morale_line)
+            # Beliefs sits directly beneath Morale as an ordinary key/value row.
+            if not compact:
+                var beliefs_line := _band_beliefs_line(unit_data, context)
+                if beliefs_line != "":
+                    lines.append(beliefs_line)
             if growth_line != "":
                 lines.append(growth_line)
     if with_position:
@@ -895,6 +936,82 @@ func _band_morale_line(unit_data: Dictionary, terrain_label: String, ctx: Detail
     elif delta >= DetailFormat.MORALE_TREND_EPSILON:
         text += " %s" % MORALE_TREND_RISING_GLYPH
     return text
+
+## The band's belief reading: `{terms, pulling, pull_sentence}`, or `{}` when it publishes no culture
+## layer (no row, never a fabricated zero). `terms` is `devout · traditional`; `pulling` is
+## whether the ancestors pull either axis this turn; `pull_sentence` is the hover's pull half.
+func _belief_reading(unit_data: Dictionary) -> Dictionary:
+    var traits: Array = _culture_vector(unit_data, BAND_CULTURE_TRAITS_KEY)
+    if traits.is_empty():
+        return {}
+    var devout := float(traits[CULTURE_AXIS_SECULAR_DEVOUT])
+    var traditional := float(traits[CULTURE_AXIS_TRADITIONALIST_REVISIONIST])
+    # The row states the WORDS only (the figures do not fit the narrow drawer's value column on one
+    # line); the figures lead the hover.
+    var terms := _devout_word(devout) + BELIEFS_TERM_SEPARATOR + _traditional_word(traditional)
+    var values: String = BELIEFS_VALUES_FORMAT % [
+        _devout_word(devout), absf(devout), _traditional_word(traditional), absf(traditional)]
+    values = values.substr(0, 1).to_upper() + values.substr(1)
+    var pull: Array = _culture_vector(unit_data, BAND_CULTURE_PULL_KEY)
+    var pull_devout := 0.0
+    var pull_traditional := 0.0
+    if not pull.is_empty():
+        pull_devout = float(pull[CULTURE_AXIS_SECULAR_DEVOUT])
+        pull_traditional = float(pull[CULTURE_AXIS_TRADITIONALIST_REVISIONIST])
+    var pulling := absf(pull_devout) > BELIEFS_PULL_EPSILON or absf(pull_traditional) > BELIEFS_PULL_EPSILON
+    var sentence := ""
+    if pulling:
+        sentence = BELIEFS_PULL_TOOLTIP_FORMAT % [
+            BELIEFS_PULL_TERM_FORMAT % [absf(pull_devout), _devout_word(pull_devout)],
+            BELIEFS_PULL_TERM_FORMAT % [absf(pull_traditional), _traditional_word(pull_traditional)]]
+    return {"terms": terms, "values": values, "pulling": pulling, "pull_sentence": sentence}
+
+func _belief_mark() -> String:
+    return BELIEFS_ANCESTORS_MARK_FORMAT % [
+        HudStyle.BELIEF.to_html(false), BandOverlayRenderer.ANCESTORS_GLYPH]
+
+## `Beliefs: devout · traditional ⚱` — an ordinary key/value row beneath Morale, the mark and
+## the pull hover only while the band takes a pull. Registers its hover on the render context under
+## `DETAIL_ROW_BELIEFS`. `""` when the band publishes no culture layer.
+func _band_beliefs_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> String:
+    var reading := _belief_reading(unit_data)
+    if reading.is_empty():
+        return ""
+    var value := String(reading["terms"])
+    if bool(reading["pulling"]):
+        value += _belief_mark()
+        ctx.row_tooltips[HudDisclosureVocab.DETAIL_ROW_BELIEFS] = \
+            String(reading["values"]) + " " + String(reading["pull_sentence"])
+    else:
+        ctx.row_tooltips[HudDisclosureVocab.DETAIL_ROW_BELIEFS] = String(reading["values"]) + " " \
+            + BELIEFS_UNTIED_TOOLTIP_FORMAT % [BELIEFS_WORD_DEVOUT, BELIEFS_WORD_TRADITIONAL]
+    return HudDisclosureVocab.DETAIL_ROW_BELIEFS + DetailFormat.DETAIL_KV_SEPARATOR + value
+
+## The `compact` tier's Beliefs clause: just the violet mark, and ONLY while the band takes a pull;
+## the line's hover is then the whole sentence (the values, then the pull). `""` otherwise.
+func _band_beliefs_compact_clause(unit_data: Dictionary, ctx: DetailFormat.Context) -> String:
+    var reading := _belief_reading(unit_data)
+    if reading.is_empty() or not bool(reading["pulling"]):
+        return ""
+    # The same sentence the full row's hover carries.
+    ctx.row_tooltips[HudDisclosureVocab.DETAIL_ROW_BELIEFS] = \
+        String(reading["values"]) + " " + String(reading["pull_sentence"])
+    return _belief_mark()
+
+## A culture vector off the cohort dict, `[]` unless it is a full `CULTURE_AXIS_COUNT` entries (an
+## absent or short vector is "no layer", and indexing it would be a crash, not a reading).
+static func _culture_vector(unit_data: Dictionary, key: String) -> Array:
+    var raw: Variant = unit_data.get(key, [])
+    if not (raw is Array or raw is PackedFloat32Array):
+        return []
+    var values: Array = Array(raw)
+    return values if values.size() >= CULTURE_AXIS_COUNT else []
+
+static func _devout_word(value: float) -> String:
+    return BELIEFS_WORD_DEVOUT if value >= 0.0 else BELIEFS_WORD_SECULAR
+
+static func _traditional_word(value: float) -> String:
+    return BELIEFS_WORD_TRADITIONAL if value <= 0.0 else BELIEFS_WORD_REVISIONIST
 
 ## Selection-panel band growth row: "Growth: 23% of normal" — the band's birth rate as a share of the
 ## base rate the sim would otherwise apply (`fertility_hunger × fertility_reserve × fertility_trend`,

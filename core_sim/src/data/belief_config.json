@@ -1,3 +1,7 @@
 {
-  "belief_per_death": 1.0
+  "belief_per_death": 1.0,
+  "ancestor_pull": {
+    "secular_devout": 0.3,
+    "traditionalist_revisionist": -0.3
+  }
 }

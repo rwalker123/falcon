@@ -1513,6 +1513,17 @@ table PopulationCohortState {
   // `grievance` decodes to) at which a cut-off group breaks away. Echoed per cohort (the
   // `foundingMinWorkers` idiom) so the band panel can draw grievance against it.
   independenceGrievanceThreshold:float = 0;
+  // THE BAND'S OWN CULTURE (#701) - appended last, own-band fields (a foreign, redacted row carries
+  // the defaults). `cultureTraits`: the band's own culture layer's resolved values, one per axis in
+  // `CultureTraitAxis` order (the culture-layer `traits` order: 15 entries). Empty when the band has
+  // no layer yet.
+  cultureTraits:[float];
+  // The ancestor pull `reconcile` applied to the band layer this turn: `tie x ancestor_pull[axis]`
+  // per axis, same order as `cultureTraits`, where tie = s x r (the anchor's weight times the
+  // kin-relay strength). The layer's target this turn was parent + modifier + this. Empty when the
+  // band took no pull (no anchor, nothing reaching it, or `ancestor_pull` empty). Positive on
+  // SecularDevout is devout; NEGATIVE on TraditionalistRevisionist is traditionalist.
+  cultureAncestorPull:[float];
 }
 
 // One band's outfitting window. THE TWO SUPPLIES ARE MUTUALLY EXCLUSIVE and `parentBandId` says which
@@ -2424,6 +2435,11 @@ table SedentarizationState {
   faction:uint;
   score:float = 0;
   stage:string;
+  // The BELIEF input's share of this turn's raw points (#701): 100 x weights.belief x belief_norm,
+  // where belief_norm is the population-weighted mean over the faction's resident bands of
+  // clamp(belief on the band's STANDING tile / references.belief, 0, 1). Pre-EMA - the score above
+  // is smoothed, this is not; 0 when no band stands on belief. Appended last.
+  beliefPoints:float = 0;
 }
 
 // ONE COMPOSITION ENTRY'S MATERIAL RATES (the selective gather) - FlatBuffers has no
@@ -4531,6 +4547,14 @@ table HerdTelemetryState {
   // `filled < required`, and `upkeepToolsShort` is exactly "some line is short". Item ids only - the
   // client resolves each to its roster display name. Absent = the site's keeping claimed no tool.
   upkeepToe:[KitToeLine];
+  // --- WHO ATE THE HERD'S GROWTH (appended last) --------------------------------------------------
+  // `predatorEatenBy` = the predator species KEY (fauna_config.json `species` key, e.g. "wolf") that
+  // drew the largest share off this herd THIS turn; empty when nothing preyed on it. `predatorEaten`
+  // = the BIOMASS (the unit of `biomass`; divide by the species' body mass for animals) predators
+  // drew off it this turn. Same turn as the herd's growth: a build refused `predators_ate_growth` is
+  // refused because of exactly this. Fog-filtered with the row.
+  predatorEatenBy:string;
+  predatorEaten:float = 0;
 }
 
 table CommandEventState {

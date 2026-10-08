@@ -139,6 +139,10 @@ pub struct SedentarizationState {
     pub score: f32,
     #[serde(default)]
     pub stage: String,
+    /// The belief input's raw points this turn (`100 × weights.belief × belief_norm`), before the
+    /// EMA that smooths `score`. Appended last.
+    #[serde(default)]
+    pub belief_points: f32,
 }
 
 /// A fully-fed pen — the neutral value of [`HerdTelemetryState::pen_fed_fraction`], so an un-penned
@@ -953,6 +957,13 @@ pub struct HerdTelemetryState {
     /// (`docs/plan_site_crews.md` §2.3) — its crew kept with more of its own hands. The row's `ⓘ`.
     #[serde(default)]
     pub upkeep_tools_short: bool,
+    /// The predator species key that drew the largest share off this herd this turn; empty when
+    /// nothing preyed on it. Appended last.
+    #[serde(default)]
+    pub predator_eaten_by: String,
+    /// The biomass (the unit of `biomass`) predators drew off this herd this turn. Appended last.
+    #[serde(default)]
+    pub predator_eaten: f32,
 }
 
 impl Default for HerdTelemetryState {
@@ -1062,6 +1073,8 @@ impl Default for HerdTelemetryState {
             corral_build_material_cost: Vec::new(),
             upkeep_hands: NO_UPKEEP_HANDS,
             upkeep_tools_short: false,
+            predator_eaten_by: String::new(),
+            predator_eaten: 0.0,
             corral_material: Vec::new(),
             pastoral_material: Vec::new(),
         }

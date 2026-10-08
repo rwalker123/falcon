@@ -13,7 +13,9 @@ use std::collections::BTreeMap;
 use crate::components::BandId;
 use crate::{
     components::{LaborAllocation, PopulationCohort, FOOD},
-    culture::{CultureManager, CultureOwner, CultureTraitAxis},
+    culture::{
+        culture_axis_from_key, culture_axis_key, CultureManager, CultureOwner, CultureTraitAxis,
+    },
     fauna::{EcologyPhase, HerdRegistry, HERDING_DISCOVERY_ID},
     forage::CULTIVATION_DISCOVERY_ID,
     orders::FactionId,
@@ -54,35 +56,9 @@ const BASE_SIGNALS: [&str; 9] = [
     "fauna.collapsing_group_count",
 ];
 
-/// Stable snake_case key for a culture axis, forming `culture.axis.<key>`. Written out rather
-/// than derived from the enum's debug name so the wire-visible content vocabulary can never
-/// shift under a rename.
-const fn culture_axis_key(axis: CultureTraitAxis) -> &'static str {
-    match axis {
-        CultureTraitAxis::PassiveAggressive => "passive_aggressive",
-        CultureTraitAxis::OpenClosed => "open_closed",
-        CultureTraitAxis::CollectivistIndividualist => "collectivist_individualist",
-        CultureTraitAxis::TraditionalistRevisionist => "traditionalist_revisionist",
-        CultureTraitAxis::HierarchicalEgalitarian => "hierarchical_egalitarian",
-        CultureTraitAxis::SyncreticPurist => "syncretic_purist",
-        CultureTraitAxis::AsceticIndulgent => "ascetic_indulgent",
-        CultureTraitAxis::PragmaticIdealistic => "pragmatic_idealistic",
-        CultureTraitAxis::RationalistMystical => "rationalist_mystical",
-        CultureTraitAxis::ExpansionistInsular => "expansionist_insular",
-        CultureTraitAxis::AdaptiveStubborn => "adaptive_stubborn",
-        CultureTraitAxis::HonorBoundOpportunistic => "honor_bound_opportunistic",
-        CultureTraitAxis::MeritOrientedLineageOriented => "merit_oriented_lineage_oriented",
-        CultureTraitAxis::SecularDevout => "secular_devout",
-        CultureTraitAxis::PluralisticMonocultural => "pluralistic_monocultural",
-    }
-}
-
 /// Resolve a `culture.axis.*` signal id to its axis, if it names one.
 fn culture_axis_for(signal: &str) -> Option<CultureTraitAxis> {
-    let key = signal.strip_prefix(CULTURE_AXIS_PREFIX)?;
-    CultureTraitAxis::ALL
-        .into_iter()
-        .find(|axis| culture_axis_key(*axis) == key)
+    culture_axis_from_key(signal.strip_prefix(CULTURE_AXIS_PREFIX)?)
 }
 
 /// Is `signal` a signal the engine can sample? Load-time validation for `when` / `gloss` /
