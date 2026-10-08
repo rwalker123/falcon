@@ -20795,6 +20795,11 @@ func _build_queue_forage_row(tile: Vector2i, improvement: String) -> Dictionary:
 ## The patches, carrying the two fields the block reads and nothing else — the queue POSITION and the
 ## chained countdown. `turns_override` states the same sentinel on every entry, which is the blocked
 ## state's own claim.
+## The queue fixture's stand (stock / ceiling) and the floor its rows work it at.
+const QUEUE_PATCH_BIOMASS := 12
+const QUEUE_PATCH_CAPACITY := 30
+const QUEUE_PATCH_FLOOR := 0.5
+
 func _build_queue_patches(entries: int, turns_override: int = 0,
 		blocked_reason: String = "") -> Array:
 	var tiles := [QUEUE_HEAD_PATCH, QUEUE_SECOND_PATCH, QUEUE_THIRD_PATCH]
@@ -20815,6 +20820,8 @@ func _build_queue_patches(entries: int, turns_override: int = 0,
 			# source is not a blocked build", so an unqueued or unblocked fixture states it and the
 			# no-cause negative below is a real reading rather than a missing key.
 			"build_blocked_reason": blocked_reason if queued else "",
+			# The stand the escapement reason quotes: stock and ceiling in the card's own units.
+			"biomass": QUEUE_PATCH_BIOMASS, "carrying_capacity": QUEUE_PATCH_CAPACITY,
 			# **THE BASKET IS WHAT MAKES THE CROP PICKER RENDER** (`docs/plan_standing_upkeep.md`
 			# §4.7a ③), and it is here rather than on one state's own fixture so the WIDTH it takes is
 			# inside the measured frames — a control proved only by a driven assertion is a control
@@ -20967,7 +20974,11 @@ func _assert_build_queue_states_the_cause() -> void:
 	# **THE EXPECTATION IS THE TABLE, NOT THE PRODUCER** — composed through
 	# `build_blocked_reason_text` it would only assert that the lookup agrees with itself, and a
 	# lookup answering one key for every cause would satisfy both claims.
-	var wanted_plant := HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT
+	# **THE ESCAPEMENT CAUSE CARRIES ITS NUMBERS**, off the fixture's own stand and the queue rows'
+	# 50% floor, with `ceil(floor x ceiling)` spelled out: `12 here, you leave 15 (50%) standing`.
+	var wanted_plant := HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT_FORMAT % [
+		QUEUE_PATCH_BIOMASS, int(ceil(QUEUE_PATCH_FLOOR * QUEUE_PATCH_CAPACITY)),
+		int(round(QUEUE_PATCH_FLOOR * 100.0))]
 	var wanted_herd := String(HudSelectionVocab.BUILD_BLOCKED_REASONS[QUEUE_BLOCKED_HERD_REASON])
 	var plant_rows := 0
 	var herd_rows := 0
@@ -20996,6 +21007,7 @@ func _assert_build_queue_states_no_cause() -> void:
 	# …and the ONE cause worded per web, which is not in the table above.
 	causes.append(HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_HERD)
 	causes.append(HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT)
+	causes.append("Builds only while you")
 	var offenders := 0
 	for row in _build_queue_rows():
 		var tooltip := String(row.tooltip_text)
