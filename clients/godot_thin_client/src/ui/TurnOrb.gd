@@ -107,6 +107,8 @@ const KIND_KNOWLEDGE_LEARNED := "knowledge_learned"
 # art rather than an emoji for `KIND_DECISION`'s reason: emoji presentation rasterizes to a blob at
 # row size.
 const KIND_OPENING_LOADOUT := "opening_loadout"
+# The same window, warning that the kits held do not cover the assigned work. Same pennant.
+const KIND_LOADOUT_KIT_SHORT := "loadout_kit_short"
 const KIND_ICON := {
 	KIND_IDLE_WORKERS: "🛠",
 	KIND_STARVING: "🍖",
@@ -128,6 +130,7 @@ const KIND_ICON := {
 	KIND_DECISION: "?",
 	KIND_KNOWLEDGE_LEARNED: HudKnowledgeVocab.LAUNCH_GLYPH,
 	KIND_OPENING_LOADOUT: "⚑",
+	KIND_LOADOUT_KIT_SHORT: "⚑",
 }
 const KIND_ICON_FALLBACK := "●"
 ## Kind → BUNDLED-ART mark id, resolved through `HudSprites`. A kind listed here draws a `TextureRect`
