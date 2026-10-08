@@ -1413,10 +1413,10 @@ recorded on the **Standard** `earthlike` world — the file's top-level `"map_si
 by value, conflicts per claim, free hands landing where they take more (the honest ceiling, no
 row-full reading), the pools releasing their spare hands, and *hold the ground* a standing bill
 sized by what a keeper supplies, keeping the harvesters, and defaulted on when paying it would
-starve the band. At t60, alive / hunger deaths / `patches_improved` by start kind: 54 (`stay`)
-54 / 0 / 1; 18 (`stay`) 53 / 0 / 2; 22 (`stay`) 43 / 0 / 0; 59 (`stay`) 50 / 0 / 0; 20
-(`stay`) 44 / 0 / 1; 50 (`split_far`) 46 / 0 / 1; 3 (`short`) 41 / 0 / 0; 37 (`short`)
-49 / 0 / 1. `hard` because argmax makes the run the rules' — at `normal` two proposals for one
+starve the band, and food rotting at the end of its shelf life (#797). At t60, alive / hunger
+deaths / `patches_improved` by start kind: 54 (`stay`) 55 / 0 / 1; 18 (`stay`) 52 / 0 / 2; 22
+(`stay`) 43 / 0 / 0; 59 (`stay`) 45 / 0 / 1; 20 (`stay`) 42 / 0 / 0; 50 (`split_far`) 43 / 0 / 0;
+3 (`short`) 33 / 0 / 1; 37 (`short`) 50 / 0 / 1. `hard` because argmax makes the run the rules' — at `normal` two proposals for one
 band in the top two are a seeded coin flip. Seat 2 is Pass, starves on every seed alike, and is
 marked `degenerate` on all eight by the writer. `Land` wins on all eight seeds (6 to 15 moves
 accepted), so the file's `declined` list is empty.
