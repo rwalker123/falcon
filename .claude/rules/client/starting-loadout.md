@@ -691,6 +691,30 @@ already named. The preview asserts the row's DETAIL as well as its label (and th
 because both arms carry the same label whatever the remainder is worded as, so a label-only claim
 cannot see this.
 
+### `loadout_kit_short` — a second row per band, when the kits held do not cover the assigned work
+
+While a band's window is open, `attention_rows()` follows that band's `opening_loadout` row with a
+`loadout_kit_short` row if at least one of its COMMITTED labor assignments is short. Non-locating,
+`warn`, never blocking, `Open ▸` onto the same band's picker (`TurnOrbController` routes both kinds to
+`open_band(panel_subject)`). Label `Kits short for assigned work`; detail `<band> — short of spears and
+sleds`, the short items unioned across the band's short rows.
+
+- **Short is the row's `kit_toe`**, via `KitRoster.row_toe_is_short` and
+  `HudWorkVocab.toe_short_item_names` — the work board's `Short of …` note, reused whole. Never
+  `kit_workers_holding < workers`: over-crewed rows are not short by design. Outfit orders mint kits
+  immediately and the server recaptures after every command, so the toe already reflects the latest
+  loadout on turn one; there is no `turn == 1` test.
+- **Data path**: `set_bands` already receives the cohort dicts, which carry `labor_assignments`; the
+  controller stores them raw per band (`BAND_ASSIGNMENTS`) beside the window state. Because every
+  roster push ends in `_push_attention()` and the orb's guard compares the whole rows array, a push
+  where only the assignments changed still refreshes the row. A pending (unechoed) assign is not in
+  the raw array and carries no `kit_toe`, so it contributes nothing.
+- Item names come from the `items` table of the equipment config the controller already parses
+  (`item_display_names`); with none resolved the fact counts rows (`1 work row short` / `%d work rows
+  short`). The row exists only while the window is open — the band's state is erased with it.
+- Preview: `starting_loadout_kit_short.png`, plus asserts for the covered and shut-window cases
+  (`ui_preview/chapters/starting_loadout.gd`).
+
 ### `ready` is a new rung on the orb's ladder, and it had to be the BOTTOM one
 
 `ready` means *a standing requirement is now MET*. `info` was the wrong home: that rung means neutral

@@ -357,6 +357,14 @@ const ATTENTION_COUNT_RESOURCES_MANY := "%d resources"
 ## convention every other producer already follows.
 const ATTENTION_DETAIL_TAKE_NONE := "nothing taken yet"
 
+## The kit-short row (`HudAttentionVocab.ATTENTION_KIND_LOADOUT_KIT_SHORT`): the committed work's
+## table of equipment is short of what the loadout holds. The fact names the short ITEMS where the
+## equipment roster resolves them, and counts the short work rows where it does not.
+const ATTENTION_LABEL_KIT_SHORT := "Kits short for assigned work"
+const ATTENTION_DETAIL_KIT_SHORT_ITEMS_FORMAT := "short of %s"
+const ATTENTION_DETAIL_KIT_SHORT_ROWS_ONE := "1 work row short"
+const ATTENTION_DETAIL_KIT_SHORT_ROWS_MANY := "%d work rows short"
+
 # ---- geometry (measured, not guessed — every number here is read back off a rendered frame) ------
 
 const PANEL_WIDTH := 900.0
