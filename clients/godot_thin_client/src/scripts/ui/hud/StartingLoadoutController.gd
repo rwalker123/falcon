@@ -1146,8 +1146,10 @@ func _material_ceiling(band: Dictionary, material_id: String) -> int:
 
 # ---- the orb's rows ---------------------------------------------------------
 
-## Producer — the outfitting windows. **ONE ROW PER BAND WITH ONE OPEN**, spent or not: the card is
-## dismissible and this row's `Open ▸` is the guaranteed way back to it, so a producer that fell
+## Producer — the outfitting windows. **ONE `opening_loadout` ROW PER BAND WITH ONE OPEN**, spent or
+## not, followed by a `loadout_kit_short` row when that band's assigned work is short of kit
+## (`_kit_short_row`). The card is
+## dismissible and the first row's `Open ▸` is the guaranteed way back to it, so a producer that fell
 ## silent once the carry was full would strand a player who had finished picking, put the card away,
 ## and then wanted to revise before ending the turn.
 ##

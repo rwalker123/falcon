@@ -2263,6 +2263,13 @@ func _kit_short_row() -> Dictionary:
 			return row
 	return {}
 
+func _kit_short_popover_row(rendered: Array) -> Dictionary:
+	for row_variant in rendered:
+		var row: Dictionary = row_variant
+		if String(row.get("label", "")) == HudLoadoutVocab.ATTENTION_LABEL_KIT_SHORT:
+			return row
+	return {}
+
 func _kits_short_for_assigned_work() -> void:
 	h._hud.update_band_alerts([_grant_band(), _kit_short_band(true, true)])
 	await h._settle()
@@ -2272,8 +2279,25 @@ func _kits_short_for_assigned_work() -> void:
 		not row.is_empty() and String(row.get("severity", "")) == HudAttentionVocab.ATTENTION_SEVERITY_WARN
 			and String(row.get("label", "")) == HudLoadoutVocab.ATTENTION_LABEL_KIT_SHORT
 			and String(row.get("detail", "")).ends_with(KIT_SHORT_NEEDLE))
+	# The card starts on the OTHER band, so a press that ignored the row's subject would leave it there.
+	_controller().open_band(_band_id(HOME_BAND_ENTITY))
+	await h._settle()
 	await _open_orb_popover()
+	var drawn := _kit_short_popover_row(Q.turn_orb_popover_rows(h._hud.turn_orb))
+	h._assert_hud("loadout/kit short — the row is drawn in the popover wearing `%s` (`%s`)"
+			% [ORB_OPEN_AFFORDANCE, drawn.get("jump", "")],
+		not drawn.is_empty() and String(drawn.get("jump", "")) == ORB_OPEN_AFFORDANCE)
 	await h._save("starting_loadout_kit_short")
+	h._assert_hud("loadout/kit short — the card is on the home band before the press (subject %d)"
+			% _controller().subject_band_id(),
+		_controller().subject_band_id() == _band_id(HOME_BAND_ENTITY))
+	if not drawn.is_empty():
+		(drawn["button"] as Button).pressed.emit()
+		await h._settle()
+	h._assert_hud("loadout/kit short — pressing it opens ITS band's card (subject %d)"
+			% _controller().subject_band_id(),
+		_controller().is_expanded()
+			and _controller().subject_band_id() == _band_id(KIT_SHORT_ENTITY))
 	_close_orb_popover()
 	h._hud.update_band_alerts([_grant_band(), _kit_short_band(true, false)])
 	await h._settle()

@@ -603,7 +603,7 @@ as it was made (`_write_pick` → `_send_order`), and the pill brings the card b
   segment's stretch ratio so a one-unit segment stays a visible sliver, which turns a zero-count
   segment into a permanent sliver of *nothing left* on a full pack.
 
-## The orb's rows — ONE PER BAND with an open window, in two colours
+## The orb's rows — one `opening_loadout` row per band with an open window, in two colours, plus a `loadout_kit_short` row where its work is short of kit
 
 The loadout is a producer on the generic attention hub (`ATTENTION_KIND_OPENING_LOADOUT`), folded in
 through `TurnOrbController.set_loadout_attention` — its own half for `_knowledge_attention`'s reason:
