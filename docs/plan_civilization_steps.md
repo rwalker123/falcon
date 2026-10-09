@@ -165,32 +165,45 @@ group descends from.
 - **A split divides its parent's lines; it never adds any.** Every band of a faction descends from
   the same starting band, so a faction's bands together hold exactly the `L` lines it started with.
   Splitting spreads a people out; it does not make it more diverse.
-- **The capped unit is the breeding population** — the bands in contact, which is what the supply
-  network already computes as a connected component. Its ceiling is the **union of its members'
-  lines × a per-line cap `K`**, and births stop there. A band that has walked off the network is its
-  own breeding population, holding only the lines it took.
-- **Contact with another people merges line sets.** Each side gains the lines it lacks, and both
-  ceilings rise. That is what lifts a faction past ~150 (#689). Contact with your own split bands
-  adds nothing — they hold your lines already.
-- **Lines do not decay.**
+- **The capped unit is the breeding population** — your bands in touch with each other: the
+  connected component over the connection ledger's live ties (strength above zero, either
+  direction) between bands of one people. **In touch is one rule for your own bands and for other
+  peoples' alike** — the same ledger tie, fading over ~50 quiet turns — so a band of yours out of
+  sight keeps counting until its tie bleeds out, exactly as a stranger would. Its ceiling is the
+  **union of its members' lines × a per-line cap `K`**, and births stop there. A band that has lost
+  touch is its own breeding population, holding only the lines it took. A trade route keeps two
+  distant bands in touch only through the parties that walk it and are seen.
+- **Another people's lines count only while you are in touch with them.** A breeding population's
+  union is its members' own lines plus the own lines of every other-people band one of its members
+  holds a live tie with in the connection ledger. That is what lifts a faction past ~150 (#689).
+  A sighting is not intermarriage: nothing is copied into a band's own set, so when the tie bleeds
+  out (~50 quiet turns) those lines leave the union and the ceiling falls back. Not transitive —
+  the lines another people is itself borrowing do not pass on to you. Contact with your own split
+  bands adds nothing — they hold your lines already.
+- **A band's own lines do not decay.** Only a split moves them.
 - **A line held by several separate groups of one people splits its `K` between them**, so
   splitting never raises a people's total ceiling — even a one-line band, whose split gives both
-  halves a copy of its line. A copy another people holds does not divide it: that copy is what
-  contact gives, and dividing it would leave two peoples who met no higher than before.
-- **The ceiling lifts at ~500** (`lineage.free_breeding_at`). Once a breeding population's
-  lines × `K` reaches it, the inbreeding ceiling no longer applies at all: ~500 is the forager
-  mating-network size (Birdsell's dialect tribe; Wobst's 175–475) at which a people finds mates
-  without outside contact, so past it growth is not restricted by mixing.
+  halves a copy of its line. Only holders of the same people divide it: two peoples in touch both
+  count each other's lines whole, or meeting would leave neither any higher than before.
+- **The ceiling lifts for good when a breeding population reaches ~500 PEOPLE**
+  (`lineage.free_breeding_at`) — a head-count, not lines × `K`. ~500 is the forager mating-network
+  size (Birdsell's dialect tribe; Wobst's 175–475) at which a people finds mates without outside
+  contact. Lines × `K` above 500 does not lift it; it lets births run to 500, where the
+  intermingling is done. The lift belongs to the **people** (the faction): once any of its breeding
+  populations reaches 500, none of its bands is capped again, whoever it later loses touch with or
+  however it splits.
 
 **The numbers.** `K` is chosen so an isolated starting band ceilings near 150. Each other people a
-faction mixes with adds its lines, so contact with two or three others carries the union to ~500,
-where inbreeding stops being the binding constraint and the next ceiling takes over.
+faction stays in touch with adds its lines, so touch with two or three others carries the union to
+~500; growing to 500 people while that touch holds lifts the inbreeding ceiling for good, and the
+next ceiling takes over.
 
 | Breeding population | Lines | Ceiling |
 |---|---|---|
 | An isolated starting band of 30, and every band it splits into while they stay connected | `L` | ~150 |
-| A splinter that walked off the network | its share of `L` | proportionally lower |
-| A people in contact with two or three others | the union | ~500 — the inbreeding ceiling lifts here |
+| A splinter whose tie with home has bled out | its share of `L` | proportionally lower |
+| A people in touch with two or three others | the union, while the ties hold | ~500 — reaching 500 people lifts the ceiling for good |
+| The same people after the ties bleed out, short of 500 | its own `L` again | ~150 — births stop until it is back in touch |
 
 **Our own clock.** `maturation_rate` 0.05 makes a generation ~20 turns; a well-fed band doubles in
 ~35 turns at the reserve and trend bonuses (`demographics_config.json`). A starting band of 30
@@ -201,7 +214,7 @@ reaches its ~150 ceiling in about three generations.
 
 | Ceiling | Unit | Lifted by | Video step |
 |---|---|---|---|
-| Lines × `K` (inbreeding) | the **breeding population** — a connected component | contact with other peoples | 1 → 2 |
+| Lines × `K` (inbreeding) | the **breeding population** — bands linked by live ties | staying in touch with other peoples | 1 → 2 |
 | Cohesion (~150) | the **co-located group** — a band, or a cluster on one site | belief on the tile | 2 → 3 |
 | Management (a count of stores and routes) | the **things that hold goods** — stores and trade routes | writing / record-keeping | 7 |
 
@@ -214,11 +227,14 @@ What falls out without further rules:
 
 - **Other peoples are worth finding.** A lone faction caps at ~150; growth past it comes only from
   meeting someone else.
-- **Splitting off the network costs.** A splinter that walks away takes its lines with it and lowers
-  both ceilings. Keep new bands connected, locally or by a trade route.
+- **Splitting off costs, once touch is lost.** A splinter that walks away keeps counting while its
+  tie with home holds; when it bleeds out, it takes its lines with it and lowers both ceilings. Keep
+  new bands in touch — near enough to see, or visited.
 - **The gathering reuses contact.** The connection ledger (`.claude/rules/core_sim/connections.md`)
-  gains a tie from presence in sight range and bleeds it over ~50 quiet turns; the line merge reads
-  it rather than adding a second notion of contact.
+  gains a tie from presence in sight range and bleeds it over ~50 quiet turns; the ceiling reads the
+  live ties rather than adding a second notion of contact.
+- **Staying in touch matters, not just meeting.** A people met once and left behind stops counting
+  once the tie bleeds out. Growth past ~150 needs neighbors kept until the people reaches 500.
 - **Contact, not exchange.** Trade is a thing you can do with another people, not the gate. Gating
   growth on trade would make a food good stand in for a social need.
 - **Scouting gets teeth.** The thing a scout finds is a **partner**: another faction's band.
