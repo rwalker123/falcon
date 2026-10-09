@@ -46,6 +46,12 @@ const BULLET_MARK := "◆"
 const BULLET_OVER_LIMIT := "Over the limit. Find another faction to grow again."
 const BULLET_KIN := "Too closely related. Meet another faction to grow."
 const BULLET_ROOM_FORMAT := "Room for %d more. Meet another faction to grow."
+## The line under the faction row when bands have lost touch with the main group (one / several).
+const BULLET_OUT_ONE_FORMAT := "%s is out of touch. Bring it back to share the limit."
+const BULLET_OUT_MANY_FORMAT := "%d bands are out of touch. Bring them back to share the limit."
+## The popover's sub-label over the groups that are not in touch with the main one.
+const OUT_OF_TOUCH_LABEL := "OUT OF TOUCH"
+const GROUP_NAME_SEPARATOR := ", "
 ## The DIM line (not amber) a people one step from freedom is shown.
 const STAY_IN_TOUCH_FORMAT := "Stay in touch until %d and the limit is gone for good."
 
@@ -135,17 +141,17 @@ static func note_line(band: Dictionary) -> String:
 		return faint_line(STAY_IN_TOUCH_FORMAT % free)
 	return ""
 
-## The popover's rows: one per member band, one per other people, then the contact note.
+## The main group's rows: one per member band, then one per other people.
 ## `band_name` resolves a band id to the roster's name (`""` = unknown).
-static func popover_lines(band: Dictionary, band_name: Callable) -> Array[String]:
+static func member_rows(band: Dictionary, band_name: Callable) -> Array[String]:
 	var lines: Array[String] = []
 	for member_variant in band.get(BREEDING_MEMBERS_KEY, []):
 		var member: Dictionary = member_variant
 		var id := int(member.get(MEMBER_BAND_ID_KEY, 0))
 		var label := String(band_name.call(id))
 		if label == "":
-			# The sim's own `Band 3` spelling, the event feed's fallback for a band the roster does not hold -
-			# reused so one unknown band is never named two ways.
+			# The sim's own `Band 3` spelling, the event feed's fallback for a band the roster does not
+			# hold - reused so one unknown band is never named two ways.
 			label = HudEventVocab.SIM_BAND_LABEL_FORMAT % id
 		var fading := bool(member.get(MEMBER_FADING_KEY, false))
 		var value := MEMBER_VALUE_FORMAT % [int(member.get(MEMBER_LINES_KEY, 0)),
@@ -160,6 +166,94 @@ static func popover_lines(band: Dictionary, band_name: Callable) -> Array[String
 		lines.append(table_row(FactionMark.faction_name(int(people.get(PEOPLE_FACTION_KEY, 0))),
 			HudStyle.READY.to_html(false), value + (FADING_SUFFIX if fading else ""),
 			HudStyle.WARN_HEX if fading else HudStyle.INK_HEX))
+	return lines
+
+# ---- the faction page's reading: the player's own bands, grouped by contact -------------------------
+
+## The ids of a band's breeding group, sorted and joined - two bands in touch publish the same set.
+static func group_key(band: Dictionary) -> String:
+	var ids: Array = []
+	for member in band.get(BREEDING_MEMBERS_KEY, []):
+		ids.append(int((member as Dictionary).get(MEMBER_BAND_ID_KEY, 0)))
+	ids.sort()
+	var parts: Array[String] = []
+	for id in ids:
+		parts.append(str(id))
+	return ",".join(parts)
+
+static func _band_id_of(band: Dictionary) -> int:
+	return int(band.get(MEMBER_BAND_ID_KEY, 0))
+
+## `{main, out}` over the resident bands that state a breeding group. `main` is the representative
+## band (lowest band id) of the group with the highest head-count, ties to the lowest band id; `out`
+## is every other group as `{rep, bands}`. `main` is `{}` when no band states a group.
+static func faction_groups(bands: Array) -> Dictionary:
+	var groups := {}
+	for band_variant in bands:
+		var band: Dictionary = band_variant
+		if not BandFoodStatus.fertility_is_projected(band) \
+				or (band.get(BREEDING_MEMBERS_KEY, []) as Array).is_empty():
+			continue
+		var key := group_key(band)
+		if not groups.has(key):
+			groups[key] = []
+		(groups[key] as Array).append(band)
+	var ordered: Array = []
+	for key in groups:
+		var members: Array = groups[key]
+		members.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+			return _band_id_of(a) < _band_id_of(b))
+		ordered.append({"rep": members[0], "bands": members})
+	ordered.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		var pa := population_of(a["rep"])
+		var pb := population_of(b["rep"])
+		if pa != pb:
+			return pa > pb
+		return _band_id_of(a["rep"]) < _band_id_of(b["rep"]))
+	if ordered.is_empty():
+		return {"main": {}, "out": []}
+	return {"main": ordered[0]["rep"], "out": ordered.slice(1)}
+
+## How many bands sit in the groups that are not the main one.
+static func out_band_count(out_groups: Array) -> int:
+	var count := 0
+	for group in out_groups:
+		count += (group["bands"] as Array).size()
+	return count
+
+## Does the faction page show the row? The main group's limit is stated (not lifted, projected).
+static func faction_row_shown(groups: Dictionary) -> bool:
+	var main: Dictionary = groups.get("main", {})
+	return not main.is_empty() and limit_stated(main)
+
+## The line under the faction row: over the limit, kin, room, bands out of touch, then the faint
+## stay-in-touch line. `band_name` (band id -> name) names a single out-of-touch band.
+static func faction_note_line(groups: Dictionary, band_name: Callable) -> String:
+	var out: Array = groups["out"]
+	var core := note_line(groups["main"])
+	if core.begins_with(BULLET_MARK):
+		return core
+	var count := out_band_count(out)
+	if count == 1:
+		return bullet_line(BULLET_OUT_ONE_FORMAT
+			% String(band_name.call(_band_id_of(out[0]["bands"][0]))))
+	if count > 1:
+		return bullet_line(BULLET_OUT_MANY_FORMAT % count)
+	return core
+
+## The faction popover: the main group's rows, the groups out of touch (a faint caps label, then one
+## row each: its band names against its own `population / ceiling` in amber), then the contact note.
+static func faction_popover_lines(groups: Dictionary, band_name: Callable) -> Array[String]:
+	var lines := member_rows(groups["main"], band_name)
+	var out: Array = groups["out"]
+	if not out.is_empty():
+		lines.append(faint_line(OUT_OF_TOUCH_LABEL))
+		for group in out:
+			var names: Array[String] = []
+			for band in group["bands"]:
+				names.append(String(band_name.call(_band_id_of(band))))
+			lines.append(table_row(GROUP_NAME_SEPARATOR.join(names), HudStyle.INK_DIM_HEX,
+				row_value(group["rep"]), HudStyle.WARN_HEX))
 	lines.append(faint_line(CONTACT_NOTE))
 	return lines
 

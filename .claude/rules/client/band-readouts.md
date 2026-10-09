@@ -1758,38 +1758,23 @@ with no pull adds nothing there (`_band_beliefs_compact_clause`).
 
 ## The fourth growth factor and the Family limit row (issue #691)
 
-The sim publishes a breeding ceiling (`.claude/rules/core_sim/campaign.md` -> "The breeding ceiling");
-the Band tab states it in three places.
+The sim publishes a breeding ceiling (`.claude/rules/core_sim/campaign.md` -> "The breeding
+ceiling"). The Band tab states its EFFECT on growth; the limit itself is a FACTION-page row.
 
 - **Growth is hunger x reserve x trend x ceiling.** `DetailFormat.band_fertility` multiplies
-  `HudLineageVocab.ceiling_factor` in (`fertility_ceiling`, neutral 1.0 when absent), so the Growth value,
-  its tint, the concerning caret and the faction page's weighted Growth all carry it. The breakdown gets
-  a fourth row through `fertility_breakdown_row`, `too few families` (`FERTILITY_LABEL_CEILING`), shown
-  like the others only when more than `fertility_breakdown_epsilon` off 1.0.
+  `HudLineageVocab.ceiling_factor` in (`fertility_ceiling`, neutral 1.0 when absent), so the Growth
+  value, its tint, the concerning caret and the faction page's weighted Growth all carry it. The
+  breakdown gets a fourth row through `fertility_breakdown_row`, `too few families`
+  (`FERTILITY_LABEL_CEILING`), shown like the others only when more than
+  `fertility_breakdown_epsilon` off 1.0.
 - **A product that rounds to 0% reads `Births stopped`, in DANGER ink,** instead of `0% of normal`
   (`DetailFormat.growth_is_stopped` / `growth_value_text`; the merged short-tier clause uses
-  `growth_value_short_text`). Starvation (hunger 0) and a full ceiling both land there; the Family
-  limit row beside it is what tells them apart. A zero reserve stays the not-projected sentinel: no
-  Growth row and no Family limit row.
-- **`Family limit` row, directly after Growth, the Band tab's host only.** `unit_summary_lines(...,
-  with_family_limit)`; `BandPanelController._build_vitals_label` passes it, the tile card's drawer does
-  not. Value `{breeding_population} / {breeding_ceiling}`; **hidden entirely when `breeding_ceiling == 0`
-  (free for good) or the band has no projected reading.** Value and caret go amber while
-  `fertility_ceiling < 1` (`ctx.family_limit_amber`, `DisclosureController._is_concerning`).
-- **One line under the row, by precedence** (`HudLineageVocab.note_line`): over the limit, kin
-  (`fertility_ceiling` 0), room for N more - each an amber `◆` line telling the player to meet
-  another faction (the player's word; "people" is the sim's) - else, when the ceiling equals
-  `lineage_free_breeding_at`, a faint `Stay in touch until N and the limit is gone for good.`
-- **The popover** (`BREAKDOWN_KIND_FAMILY_LIMIT`) is one table row per `breeding_members` entry (name by
-  `band_label_for_id`, the sim's `Band <id>` spelling when the roster lacks it; `{lines} families ·
-  {people}`) and per `breeding_peoples` entry (`FactionMark.faction_name` in the READY blue, `+{lines}
-  families`), ` · fading` and amber on a fading one, then the faint contact note (`Contact with
-  other factions raises the limit.`). Those rows ride behind control-character sentinels
-  (`HudLineageVocab.ROW_MARK` / `FAINT_MARK`, bullets lead with `◆ `) that
-  `DetailFormat.detail_bbcode` renders through `HudLineageVocab.line_bbcode`; a table row keeps
-  `ROW_NAME_GAP_PX` between name and figure.
+  `growth_value_short_text`). Starvation (hunger 0) and a full ceiling both land there. A zero
+  reserve stays the not-projected sentinel: no Growth row.
+- **The Band tab carries no Family limit row.** The row lives on the faction page; see
+  `band-city-panel.md` -> "The faction page's Family limit row".
 - **The two world constants** (`lineage_people_per_line`, `lineage_free_breeding_at`) are latched by
   `LineageWorld` from every frame that states them (0 = unchanged) and cleared per world by
   `Main._reset_per_world_state`.
-- **Frames:** `family_limit_room` / `_near` / `_at` / `_growth_breakdown` / `_peoples` / `_lifted` /
-  `_over` / `_starving` (`band_panel_family_limit.gd`, see `harness-band-panel.md`).
+- **Frames:** `family_limit_band_tab` (row absent, `Births stopped`, the breakdown's fourth row;
+  `band_panel_family_limit.gd`, see `harness-band-panel.md`).

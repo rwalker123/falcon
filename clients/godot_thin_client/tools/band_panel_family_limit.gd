@@ -56,6 +56,16 @@ func _member(entity: int, lines: int, people: int, fading: bool = false) -> Dict
 func _people(faction: int, lines: int, fading: bool = false) -> Dictionary:
 	return {"faction": faction, "lines": lines, "fading": fading}
 
+## Two bands in ONE breeding group: both publish the same member set and the same figures.
+func _pair(shared: Dictionary) -> Array:
+	var main := _limited({"founding_lines": 2, "breeding_peoples": []})
+	var kin := _limited({"founding_lines": 2, "breeding_peoples": [], "entity": KIN_BAND_ENTITY,
+		"name": KIN_BAND_NAME, "pos": [73, 18], "current_x": 73, "current_y": 18})
+	for key in shared:
+		main[key] = shared[key]
+		kin[key] = shared[key]
+	return [main, kin]
+
 func _kin_band() -> Dictionary:
 	var kin: Dictionary = h._band_fixture()
 	kin["entity"] = KIN_BAND_ENTITY
@@ -65,8 +75,24 @@ func _kin_band() -> Dictionary:
 	kin["current_y"] = 18
 	return kin
 
+## Stage a roster on the FACTION page (the cycler's pinned first entry, reached the way the player
+## reaches it) and render it.
+func _show_faction(roster: Array) -> void:
+	h._push_bands(roster)
+	if not h._hud._bandpanel._panel_is_faction:
+		h._hud.cycle_panel_band(BandCityPanel.CYCLE_PREV)
+	h._panel.set_dock(SIDE_LEFT)
+	h._panel.set_active_tab(BandCityPanel.ZONE_BAND)
+	await h._settle()
+
+## Step off the faction page onto a band, so the band-tab and split frames render a band.
+func _leave_faction() -> void:
+	if h._hud._bandpanel._panel_is_faction:
+		h._hud.cycle_panel_band(BandCityPanel.CYCLE_NEXT)
+
 ## Stage one band as the panel's subject on the Band tab and render it.
 func _show(band: Dictionary) -> void:
+	_leave_faction()
 	h._push_bands([band, _kin_band()])
 	h._panel.set_dock(SIDE_LEFT)
 	h._panel.set_active_tab(BandCityPanel.ZONE_BAND)
@@ -84,7 +110,7 @@ func _popover_text() -> String:
 	return "" if label == null else label.get_parsed_text()
 
 func _open(kind: String, frame: String) -> void:
-	h._click_disclosure(DetailFormat.breakdown_key(kind, {"entity": SUBJECT_ENTITY}))
+	h._click_disclosure(DetailFormat.breakdown_key(kind, {}))
 	await h._settle()
 	await h._save(frame)
 
@@ -101,53 +127,69 @@ func run(harness) -> void:
 	var limit_kind := HudDisclosureVocab.BREAKDOWN_KIND_FAMILY_LIMIT
 
 	# ---- 1. ROOM TO GROW: the row, calm ink, no line under it ------------------------------------
-	await _show(_limited({"founding_lines": 2, "breeding_population": 120, "breeding_ceiling": 200,
-		"breeding_members": [_member(SUBJECT_ENTITY, 2, 120)], "breeding_peoples": []}))
+	var both := [_member(SUBJECT_ENTITY, 2, 120), _member(KIN_BAND_ENTITY, 2, 60)]
+	await _show_faction(_pair({"breeding_population": 180, "breeding_ceiling": 400,
+		"breeding_members": both}))
 	await h._save("family_limit_room")
 	var text := _vitals_text()
-	h._assert_band_panel("family limit: the row reads `population / ceiling` (120 / 200)",
-		text.contains("Family limit") and text.contains("120 / 200"))
+	h._assert_band_panel("family limit: the faction row reads `population / ceiling` (180 / 400)",
+		text.contains("Family limit") and text.contains("180 / 400"))
+	h._assert_band_panel("family limit: …in order, directly after Growth",
+		text.find("Growth") < text.find("Family limit"))
 	h._assert_band_panel("family limit: …and says nothing under it while there is room",
-		not text.contains(HudLineageVocab.BULLET_MARK) and not text.contains("Stay in touch"))
+		not text.contains(HudLineageVocab.BULLET_MARK) and not text.contains("Stay in touch")
+			and not text.contains(HudWorkVocab.FACTION_ALERT_GLYPH + " 1 band"))
 
 	# ---- 2. NEAR THE LIMIT, one member fading ----------------------------------------------------
-	await _show(_limited({"founding_lines": 2, "breeding_population": 190, "breeding_ceiling": 200,
-		"fertility_ceiling": 0.4,
-		"breeding_members": [_member(SUBJECT_ENTITY, 2, 120), _member(KIN_BAND_ENTITY, 2, 70, true)],
-		"breeding_peoples": []}))
+	var fading := [_member(SUBJECT_ENTITY, 2, 120), _member(KIN_BAND_ENTITY, 2, 70, true)]
+	await _show_faction(_pair({"breeding_population": 190, "breeding_ceiling": 200,
+		"fertility_ceiling": 0.4, "breeding_members": fading}))
 	text = _vitals_text()
 	h._assert_band_panel("family limit: near the limit, the amber line counts the room (got `%s`)"
 			% text.replace("\n", " | "),
 		text.contains(HudLineageVocab.BULLET_ROOM_FORMAT % 10))
 	await _open(limit_kind, "family_limit_near")
 	var pop := _popover_text()
-	h._assert_band_panel("family limit: the popover lists each member with its families and people",
-		pop.contains(SUBJECT_NAME) and pop.contains("2 families · 120")
-			and pop.contains(HudLineageVocab.MEMBER_VALUE_FORMAT % [2, 70]))
-	h._assert_band_panel("family limit: …tags the fading member",
-		pop.contains(HudLineageVocab.FADING_SUFFIX.strip_edges()))
-	h._assert_band_panel("family limit: …and closes on the contact note",
-		pop.contains(HudLineageVocab.CONTACT_NOTE))
+	h._assert_band_panel("family limit: the popover lists each member, tags the fading one and ends on the note",
+		pop.contains("2 families · 120") and pop.contains(HudLineageVocab.FADING_SUFFIX.strip_edges())
+			and pop.contains(HudLineageVocab.CONTACT_NOTE))
 	_close()
 
 	# ---- 3. AT THE LIMIT: births stopped, kin ----------------------------------------------------
-	var at_limit := _limited({"founding_lines": 2, "breeding_population": 200, "breeding_ceiling": 200,
-		"fertility_ceiling": 0.0,
-		"breeding_members": [_member(SUBJECT_ENTITY, 2, 200)], "breeding_peoples": []})
-	await _show(at_limit)
+	await _show_faction(_pair({"breeding_population": 200, "breeding_ceiling": 200,
+		"fertility_ceiling": 0.0, "breeding_members": both}))
 	await h._save("family_limit_at")
 	text = _vitals_text()
-	h._assert_band_panel("family limit: at the limit the Growth row reads `Births stopped`",
-		text.contains(DetailFormat.GROWTH_STOPPED_TEXT) and not text.contains("0% of normal"))
-	h._assert_band_panel("family limit: …and the line under the limit is the kin sentence",
+	h._assert_band_panel("family limit: at the limit the line under the row is the kin sentence",
 		text.contains(HudLineageVocab.BULLET_KIN))
-	await _open(HudDisclosureVocab.BREAKDOWN_KIND_GROWTH, "family_limit_growth_breakdown")
-	h._assert_band_panel("family limit: the Growth breakdown gains the fourth row (`too few families`)",
-		_popover_text().contains(DetailFormat.FERTILITY_LABEL_CEILING))
+	h._assert_band_panel("family limit: …and the faction Growth reads `Births stopped` beside its flag, not `0% of normal`",
+		text.contains(DetailFormat.GROWTH_STOPPED_TEXT) and not text.contains("0% of normal"))
+
+	# ---- 4. A BAND LOST TOUCH: its own group, flagged ---------------------------------------------
+	var alone_kin := _kin_band()
+	alone_kin.merge({"fertility_hunger": 1.0, "fertility_reserve": 1.5, "fertility_trend": 1.0,
+		"fertility_ceiling": 1.0, "founding_lines": 1, "breeding_population": 60,
+		"breeding_ceiling": 100, "breeding_members": [_member(KIN_BAND_ENTITY, 1, 60)],
+		"breeding_peoples": []}, true)
+	var main_alone := _limited({"founding_lines": 2, "breeding_population": 150, "breeding_ceiling": 400,
+		"breeding_members": [_member(SUBJECT_ENTITY, 2, 150)], "breeding_peoples": []})
+	await _show_faction([main_alone, alone_kin])
+	await _open(limit_kind, "family_limit_lost_touch")
+	text = _vitals_text()
+	pop = _popover_text()
+	h._assert_band_panel("family limit: the main group is the larger one (150 / 400; got `%s`)"
+		% text.replace("\n", " | "), text.contains("150 / 400"))
+	h._assert_band_panel("family limit: …a band out of touch wears the page's own `⚠ 1 band` flag",
+		text.contains(HudWorkVocab.FACTION_ALERT_GLYPH + " " + HudWorkVocab.FACTION_ALERT_ONE))
+	h._assert_band_panel("family limit: …and is named in the line under the row",
+		text.contains(HudLineageVocab.BULLET_OUT_ONE_FORMAT % KIN_BAND_NAME))
+	h._assert_band_panel("family limit: …the popover lists it under OUT OF TOUCH against its own limit",
+		pop.contains(HudLineageVocab.OUT_OF_TOUCH_LABEL) and pop.contains(KIN_BAND_NAME)
+			and pop.contains("60 / 100"))
 	_close()
 
-	# ---- 4. IN TOUCH WITH ANOTHER PEOPLE, one of them fading --------------------------------------
-	await _show(_limited({"founding_lines": 2, "breeding_population": 330, "breeding_ceiling": 500,
+	# ---- 5. IN TOUCH WITH ANOTHER FACTION, one of them fading --------------------------------------
+	await _show_faction(_pair({"breeding_population": 330, "breeding_ceiling": 500,
 		"breeding_members": [_member(SUBJECT_ENTITY, 2, 140), _member(KIN_BAND_ENTITY, 2, 190)],
 		"breeding_peoples": [_people(FOREIGN_FACTION_A, 3), _people(FOREIGN_FACTION_B, 2, true)]}))
 	text = _vitals_text()
@@ -156,35 +198,33 @@ func run(harness) -> void:
 			and not text.contains(HudLineageVocab.BULLET_MARK))
 	await _open(limit_kind, "family_limit_peoples")
 	pop = _popover_text()
-	h._assert_band_panel("family limit: the popover names the other peoples by their published names",
+	h._assert_band_panel("family limit: the popover names the other factions by their published names",
 		pop.contains("Marrow Clan") and pop.contains("+3 families") and pop.contains("Reedfolk")
 			and pop.contains("+2 families"))
 	_close()
 
-	# ---- 5. LIFTED: no row at all -----------------------------------------------------------------
-	await _show(_limited({"founding_lines": 2, "breeding_population": 620, "breeding_ceiling": 0,
-		"breeding_members": [_member(SUBJECT_ENTITY, 2, 620)], "breeding_peoples": []}))
+	# ---- 6. LIFTED: no row at all -----------------------------------------------------------------
+	await _show_faction(_pair({"breeding_population": 620, "breeding_ceiling": 0,
+		"breeding_members": both}))
 	await h._save("family_limit_lifted")
 	h._assert_band_panel("family limit: a people free for good shows no Family limit row",
 		not _vitals_text().contains("Family limit"))
 
-	# ---- 6. OVER THE LIMIT ----------------------------------------------------------------------------
-	await _show(_limited({"founding_lines": 2, "breeding_population": 230, "breeding_ceiling": 200,
-		"fertility_ceiling": 0.0,
-		"breeding_members": [_member(SUBJECT_ENTITY, 2, 230)], "breeding_peoples": []}))
-	await h._save("family_limit_over")
-	h._assert_band_panel("family limit: past the ceiling the line says to find another people",
-		_vitals_text().contains(HudLineageVocab.BULLET_OVER_LIMIT))
-
-	# ---- 7. STARVING: births stopped by FOOD, the limit calm ---------------------------------------------
-	await _show(_limited({"founding_lines": 2, "breeding_population": 100, "breeding_ceiling": 300,
-		"fertility_hunger": 0.0,
-		"breeding_members": [_member(SUBJECT_ENTITY, 2, 100)], "breeding_peoples": []}))
-	await h._save("family_limit_starving")
+	# ---- 7. THE BAND TAB: the row is gone, the Growth fourth factor stays ----------------------------------
+	await _show(_limited({"founding_lines": 2, "breeding_population": 200, "breeding_ceiling": 200,
+		"fertility_ceiling": 0.0, "breeding_members": [_member(SUBJECT_ENTITY, 2, 200)],
+		"breeding_peoples": []}))
+	h._click_disclosure(DetailFormat.breakdown_key(HudDisclosureVocab.BREAKDOWN_KIND_GROWTH,
+		{"entity": SUBJECT_ENTITY}))
+	await h._settle()
+	await h._save("family_limit_band_tab")
 	text = _vitals_text()
-	h._assert_band_panel("family limit: a starving band reads `Births stopped` with the limit row calm",
-		text.contains(DetailFormat.GROWTH_STOPPED_TEXT) and text.contains("100 / 300")
-			and not text.contains(HudLineageVocab.BULLET_MARK))
+	h._assert_band_panel("family limit: the Band tab no longer carries the row or its line",
+		not text.contains("Family limit") and not text.contains(HudLineageVocab.BULLET_MARK))
+	h._assert_band_panel("family limit: …Growth reads `Births stopped` and its breakdown keeps `too few families`",
+		text.contains(DetailFormat.GROWTH_STOPPED_TEXT)
+			and _popover_text().contains(DetailFormat.FERTILITY_LABEL_CEILING))
+	_close()
 
 	# ---- 8. THE SPLIT SHEET, with the FAMILY LIMIT block and the home-at-limit line ------------------------
 	var splitting := _limited({"founding_lines": 4, "breeding_population": 430, "breeding_ceiling": 500,

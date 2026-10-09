@@ -1129,7 +1129,7 @@ static func _value_hex(key: String, value: String, ctx: Context) -> String:
         return HudStyle.WARN_HEX if ctx.family_limit_amber else HudStyle.INK_HEX
     elif key == HudDisclosureVocab.DETAIL_ROW_GROWTH:
         # A stopped birth rate is the one reading that is not a percentage: the danger ink, always.
-        if value == GROWTH_STOPPED_TEXT:
+        if value.begins_with(GROWTH_STOPPED_TEXT):
             return HudStyle.DANGER_HEX
         # The band's birth rate as a share of normal, tinted by the fertility buckets. Same
         # ink → amber → red grading as `BandFoodStatus.color_for_output` and for the same reason: normal
@@ -3323,7 +3323,17 @@ static func band_fertility(band: Dictionary) -> float:
 ## Does the Growth multiplier read as nothing at the shown precision (whole percent)? Then the row says
 ## `Births stopped`. Starvation (hunger 0) and a full breeding ceiling (ceiling 0) both land here.
 static func growth_is_stopped(band: Dictionary) -> bool:
-    return int(round(band_fertility(band) * GROWTH_PERCENT_SCALE)) == 0
+    return fertility_is_stopped(band_fertility(band))
+
+## The same test on a bare multiplier - the faction page's weighted mean goes through it too.
+static func fertility_is_stopped(fertility: float) -> bool:
+    return int(round(fertility * GROWTH_PERCENT_SCALE)) == 0
+
+## The Growth value for a bare multiplier: `150% of normal`, or `Births stopped`.
+static func growth_text_for(fertility: float) -> String:
+    if fertility_is_stopped(fertility):
+        return GROWTH_STOPPED_TEXT
+    return (GROWTH_VALUE_SHORT_FORMAT + GROWTH_ROW_ANCHOR_SUFFIX) % int(round(fertility * GROWTH_PERCENT_SCALE))
 
 ## The Growth VALUE for the full row: `150% of normal`, or `Births stopped`.
 static func growth_value_text(band: Dictionary) -> String:

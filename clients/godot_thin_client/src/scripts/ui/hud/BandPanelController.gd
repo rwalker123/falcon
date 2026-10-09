@@ -1196,7 +1196,7 @@ func _build_vitals_label(band: Dictionary) -> RichTextLabel:
     # for in height. The drawer host keeps it (it has no header and renders foreign bands).
     detail_label.text = DetailFormat.detail_bbcode(
         _banddetail.unit_summary_lines(band, _selectioncard.selected_terrain_label(), ctx,
-            _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT, false, {}, true), ctx)
+            _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT, false), ctx)
     # **THE HOVER A ROW REGISTERED, ANSWERED BY THE BLOCK** — a lapsed rung, an under-kept pen.
     # `[hint=…]` is not parsed by this Godot build (see `DetailFormat.block_tooltip`), so the label
     # carries every registered sentence at once and a cursor anywhere over the block gets all of

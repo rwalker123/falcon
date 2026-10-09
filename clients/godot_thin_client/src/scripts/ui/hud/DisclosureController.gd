@@ -142,8 +142,6 @@ func _is_concerning(kind: String, band: Dictionary) -> bool:
             return DetailFormat.food_is_concerning(band)
         HudDisclosureVocab.BREAKDOWN_KIND_GROWTH:
             return DetailFormat.growth_is_concerning(band)
-        HudDisclosureVocab.BREAKDOWN_KIND_FAMILY_LIMIT:
-            return HudLineageVocab.limit_binds(band)
         HudDisclosureVocab.BREAKDOWN_KIND_FODDER:
             # The FOOD test on the fodder account, through the same runway thresholds — see
             # `DetailFormat.fodder_is_concerning`. The row's own amber `need` clause is retired, so

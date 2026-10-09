@@ -39,8 +39,8 @@ const BREAKDOWN_KIND_MORALE := "morale"
 # combine by product; see `DetailFormat.fertility_breakdown_row`.
 const BREAKDOWN_KIND_GROWTH := "growth"
 
-# The Band tab's `Family limit` row (issue #691): who holds the breeding population's limit up. Its
-# popover rows are the member bands and the other peoples (`HudLineageVocab.popover_lines`).
+# The faction page's `Family limit` row (issue #691): who holds the breeding population's limit up. Its
+# popover rows are the member bands and the other peoples (`HudLineageVocab.faction_popover_lines`).
 const BREAKDOWN_KIND_FAMILY_LIMIT := "family_limit"
 
 # **`BREAKDOWN_KIND_TRADE` IS RETIRED** (arc #527) with the row it drilled into: the band's trade
