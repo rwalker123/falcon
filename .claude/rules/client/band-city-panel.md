@@ -1546,6 +1546,24 @@ rollup on its next `_push_bands`.
   two-gap sabotage the bracket derives its own probe widths from the same wrong number and stays
   green.
 
+## The Settling block's `From the dead` row (issue #701)
+
+`FactionRollup._build_settling_block` carries a second row beneath the stage meter: how many of the
+settle score's 100 points come from a band standing on its dead this turn (`belief_points`, pre-smoothing,
+from the player's `sedentarization` entry, which `FactionReadouts.update_sedentarization` keeps whole).
+
+- **`belief_points >= HudWorkVocab.FACTION_SETTLING_BELIEF_MIN` (0.5)** reads `From the dead  +N` with the
+  rounded integer behind the ancestors urn, both in `HudStyle.BELIEF`. The mark is its own `Label`
+  inserted ahead of the value (a plain `Label` renders no BBCode).
+- **Below it** the row reads `0 — stand on your dead` in `INK_DIM`. It fits the zone without an ellipsis
+  and says what to do next.
+- **The zone's height tier pays for the row.** `FACTION_BAND_FULL_MIN_HEIGHT` was re-measured with it in:
+  the full block reads 560px against the 531 it read before, so the threshold moved 550 to 580 (the same
+  ~19px margin). The wide dock's tiered block reads 334px of a 358px box.
+- **Frames:** `band_panel_faction` (the seeded `+24`, `TOPBAR_SEDENTARIZATION_BELIEF_POINTS`) and
+  `band_panel_faction_settling_untied` (`_assert_faction_settling_belief`, which re-pushes the entry with
+  `belief_points` 0 and asserts the zone still fits its box and its width).
+
 ## The parties strip's lines
 
 The parties inspector strip IS the detail panel for a launched party, and on a horizontal dock it lives

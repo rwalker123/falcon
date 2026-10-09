@@ -65,6 +65,8 @@ pub(crate) fn sedentarization_to_array(
         let mut dict = VarDictionary::new();
         let _ = dict.insert("faction", state.faction() as i64);
         let _ = dict.insert("score", state.score());
+        // How many of the score's 100 points come from the band standing on its dead (pre-smoothing).
+        let _ = dict.insert("belief_points", state.beliefPoints());
         if let Some(stage) = state.stage() {
             let _ = dict.insert("stage", stage);
         }
@@ -277,6 +279,16 @@ pub(crate) fn herds_to_array(
         if let Some(build_blocked_reason) = herd.buildBlockedReason() {
             let _ = dict.insert("build_blocked_reason", build_blocked_reason);
         }
+        // **WHO PREYED ON THIS HERD THIS TURN, AND HOW MUCH** — the cause behind a
+        // `predators_ate_growth` block. `predator_eaten_by` is the predator's fauna_config species KEY
+        // (`"wolf"`), empty when nothing preyed on the herd; `predator_eaten` is the biomass drawn, in
+        // the row's own `biomass` unit (divide by body mass for animals). Always inserted so the entry
+        // shape is stable.
+        let _ = dict.insert(
+            "predator_eaten_by",
+            herd.predatorEatenBy().unwrap_or_default(),
+        );
+        let _ = dict.insert("predator_eaten", herd.predatorEaten());
         // **WHERE THE PLAYER SENT THIS HERD, AND WHAT IS LEFT OF THE CLIMB**
         // (`docs/plan_standing_upkeep.md` §2.8). A queue entry names a DESTINATION rung rather than a
         // single rung — the four verbs always were destinations — so the entry stays at the head

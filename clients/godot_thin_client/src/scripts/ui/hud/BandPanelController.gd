@@ -7534,7 +7534,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             "build_blocked_lines": DetailFormat.build_blocked_lines(
                 rung_source, HudComposeVocab.BARE_FORECAST_PREFIX,
                 SourceForecast.source_kind_for_labor(kind),
-                HudWorkVocab.BUILD_QUEUE_TOOLTIP_UNINDENTED),
+                HudWorkVocab.BUILD_QUEUE_TOOLTIP_UNINDENTED, floor, _band_labor.world_herds()),
             # **THE KIT THIS CREW IS ALREADY WORKING UNDER** (`LaborAssignment.kitId`, always a real
             # roster id on a forage/hunt row). It rides the model for one reason: `_emit_work_assign`
             # RESTATES it, so a `+`/`−` on the board cannot silently re-kit a crew back to the job

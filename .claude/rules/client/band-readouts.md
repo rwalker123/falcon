@@ -1720,3 +1720,38 @@ reader in this client asks the bit first: `ReadyForImprovement._not_another_fact
 road ladder's `HudRouteVocab.has_keeper` is the same shape one subject over. **A reader that tested
 `owner != 0` would silently drop every patch the first faction tends**, which on the shipped
 single-human profile is every patch the player owns.
+
+## THE BELIEFS ROW — what belief has done to a band's culture (issue #701)
+
+`Beliefs  devout · traditional ⚱`, directly beneath Morale, produced by
+`BandDetailLines._band_beliefs_line` so the Occupants drawer and the Band panel render the identical
+row. It is on the player's own bands only (the Morale gate, `HudConst.is_player_unit`), omitted when the
+band publishes an empty `culture_traits` (no culture layer, never a row of zeros), and folded in the
+`compact` tier, which is short of height and has already merged Morale and Growth: a band taking a pull wears the
+violet mark as a clause on that merged line and the line's hover carries the same sentence the full row's does; a band
+with no pull adds nothing there (`_band_beliefs_compact_clause`).
+
+- **The wire.** `culture_traits` (the band's own culture-layer values) and `culture_ancestor_pull` (the
+  offset its ancestors pull them by this turn) are 15-entry `PackedFloat32Array`s in `CultureTraitAxis`
+  order, decoded in `native/src/dict/population.rs`. The row reads two axes: index 3
+  (TraditionalistRevisionist, negative = traditionalist) and index 13 (SecularDevout, positive =
+  devout). An empty vector is the sim's "none", so it stays empty on the Dictionary; a vector shorter
+  than 15 reads as no layer.
+- **The words follow the sign.** SecularDevout >= 0 reads `devout`, below 0 `secular`;
+  TraditionalistRevisionist <= 0 reads `traditional`, above 0 `revisionist`. The figure is the
+  magnitude to two decimals.
+- **The ancestors mark** is `BandOverlayRenderer.ANCESTORS_GLYPH` in `HudStyle.BELIEF`, drawn only while
+  the pull is non-zero on either axis (`BELIEFS_PULL_EPSILON`). The row's hover is registered on
+  `ctx.row_tooltips` under `HudDisclosureVocab.DETAIL_ROW_BELIEFS`: with a pull,
+  `The ancestors pull this band +0.30 devout and +0.30 traditional.` (the two pull magnitudes, words by
+  the pull's own sign); without one, `Not tied to its dead. Stand within reach of them to be drawn
+  toward devout, traditional ways.`
+- **The row states the words only; the figures are in the hover.** `devout 0.4 · traditional` filled the
+  narrow drawer's value column and the last figure wrapped, so the row is `devout · traditional` (plus
+  the mark), one line. The hover leads with the values, `Devout 0.4, traditional 0.3.` (one decimal,
+  first word capitalised), then the pull sentence or the untied invitation; the pull magnitudes stay
+  two decimals. It is an ordinary key/value row.
+- **Frames:** `band_beliefs_tied`, `band_beliefs_untied` (`chapters/band_expedition.gd`, after the
+  ancestors states). The chapter also asserts the flipped words, no row on an empty layer, no row on a
+  rival, that the row fits one line, and (`band_panel_preview`, `_assert_beliefs_compact_clause` on
+  `band_panel_vitals_worst_case`) the compact tier's mark, hover and no-pull silence.

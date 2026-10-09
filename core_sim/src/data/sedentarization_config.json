@@ -5,12 +5,14 @@
   "weights": {
     "domestication": 0.35,
     "surplus": 0.30,
-    "resource_density": 0.20,
-    "population": 0.15
+    "resource_density": 0.10,
+    "population": 0.15,
+    "belief": 0.10
   },
   "references": {
     "domesticated_herds": 3,
     "surplus": 300.0,
-    "population": 300.0
+    "population": 300.0,
+    "belief": 20.0
   }
 }

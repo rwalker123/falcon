@@ -585,7 +585,9 @@ const BUILD_BLOCKED_REASONS := {
 # seen `Leave standing`, so that is the phrase these quote — in the UI's own capitalisation and in
 # quotes, so it reads as a control rather than as prose.
 #
-# **ONE SENTENCE, AND IT HAS BEEN CUT TWICE.** The first wording spelled the consequence out — *"so
+# **ONE SENTENCE, AND IT HAS BEEN CUT TWICE — then given its numbers.** (The pair below now reads
+# *"Builds only while you hunt it — 61 here, you leave 67 (50%) standing."*: the dependency and the
+# figures replace the cut remedy, and with them the sentence wraps to two lines on the card.) The first wording spelled the consequence out — *"so
 # nobody can work this herd — and taming only moves while they do"* — and rendered SIX lines in the
 # ~245px card. Cutting that left three (headline, cause, remedy), which is still a paragraph standing
 # between a hazard row and an `At risk:` countdown, so Ray cut the remedy too: RETIRED — *"Lower
@@ -630,9 +632,40 @@ const BUILD_BLOCKED_MATERIALS_FORMAT := BUILD_BLOCKED_MATERIAL_SHORT_LEAD \
 const BUILD_BLOCKED_MATERIALS_UNNAMED := BUILD_BLOCKED_MATERIAL_SHORT_LEAD \
     + "what this needs — the bench or a trade, not more builders."
 
-const BUILD_BLOCKED_ESCAPEMENT_HERD := "Fewer animals here than you leave standing."
+# **THE ESCAPEMENT REASON CARRIES ITS DEPENDENCY AND ITS NUMBERS, IN ONE LINE** (found in playtest: a
+# Tame Wild Boar read `⚠ Blocked 3%` over *"Fewer animals here than you leave standing."* and nobody
+# could tell WHY). The rung builds only while the crew is actually taking from the source, and the take
+# room is `max(0, B − floor × K)` — so the sentence now says both halves of that: *builds only while
+# you hunt it*, and where the stock stands against the line the player's own `Leave standing` floor
+# draws. `%d here` is the stock and `you leave %d (%d%%) standing` is `ceil(floor × K)` and the floor,
+# in the SAME units and rounding the card's own stock row shows (`Herd 61 / 133`, `Foraging 12 / 30`),
+# so the numbers match what is on screen. **ONE line is still the budget** (the remedy sentence stays
+# cut) — measure a rewrite in `ui_preview_out/tile_meter_blocked.png`.
+const BUILD_BLOCKED_ESCAPEMENT_HERD_FORMAT := \
+    "Builds only while you hunt it — %d here, you leave %d (%d%%) standing."
 
-const BUILD_BLOCKED_ESCAPEMENT_PLANT := "Less growing here than you leave standing."
+const BUILD_BLOCKED_ESCAPEMENT_PLANT_FORMAT := \
+    "Builds only while you harvest it — %d here, you leave %d (%d%%) standing."
+
+# The numberless forms: where a surface cannot reach the stock, the ceiling or the floor, the reason
+# still says what it can rather than quoting a number it does not have.
+const BUILD_BLOCKED_ESCAPEMENT_HERD := "Builds only while you hunt it — fewer animals here than you leave standing."
+
+const BUILD_BLOCKED_ESCAPEMENT_PLANT := "Builds only while you harvest it — less growing here than you leave standing."
+
+# **A PREDATOR ATE THE GROWTH** (`predators_ate_growth`, animal Tame only). Each turn the herd regrows,
+# a predator pack eats that growth, and THEN the Tame gate looks for take room — so a herd can sit above
+# the player's own floor and still be refused. The sentence names the predator (`predator_eaten_by`,
+# resolved to a display name by `DetailFormat.predator_display_name`) and, where the numbers are
+# reachable, the stock against the line the floor draws, the same figures the escapement sentence quotes
+# (without the percent). The unnamed subject is the client behind the sim: it still knows predators
+# ate it.
+const BUILD_BLOCKED_REASON_PREDATORS := "predators_ate_growth"
+const BUILD_BLOCKED_PREDATORS_FORMAT := \
+    "%s ate this turn's growth — %d here, you leave %d standing."
+const BUILD_BLOCKED_PREDATORS_UNNUMBERED_FORMAT := \
+    "%s ate this turn's growth, so there was none to spare."
+const BUILD_BLOCKED_PREDATORS_UNNAMED := "Predators"
 
 # The key the ESCAPEMENT refusal ships under — named because it is the ONE cause worded per web (the
 # pair above), and `DetailFormat` tests it by name so that rule is written once. It was TWO rules until

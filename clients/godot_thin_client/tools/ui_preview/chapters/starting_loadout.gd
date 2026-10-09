@@ -427,6 +427,7 @@ func run(harness) -> void:
 	await _a_refused_order_resets_the_picks()
 	await _the_card_prints_whole_numbers()
 	await _a_splinters_food_is_not_unspent_room()
+	await _kits_short_for_assigned_work()
 	_assert_window_shuts()
 	h._hud.set_starting_loadout_requested.disconnect(_on_order)
 
@@ -2172,7 +2173,13 @@ func _band_name(entity: int) -> String:
 ## The shipped kit roster's shape, `none` included — the picker has to drop it, so the fixture has to
 ## offer it.
 func _equipment_config() -> Dictionary:
-	return {HudLoadoutVocab.CONFIG_KITS_KEY: [
+	return {
+		# The item table the orb's kit-short row names its short items from.
+		HudLoadoutVocab.CONFIG_ITEMS_KEY: {
+			"spears": {HudLoadoutVocab.KIT_DISPLAY_NAME_KEY: "Spears"},
+			"sled": {HudLoadoutVocab.KIT_DISPLAY_NAME_KEY: "Sleds"},
+		},
+		HudLoadoutVocab.CONFIG_KITS_KEY: [
 		_kit(KIT_STALKING, "Stalking kit", ["hunt"], ["spears", "sled"]),
 		_kit("trapping", "Trapping kit", ["hunt"], ["traps", "sled"]),
 		_kit("gathering", "Harvesting kit", ["forage"], ["baskets"]),
@@ -2183,7 +2190,8 @@ func _equipment_config() -> Dictionary:
 		_kit("wayfinding", "Wayfinding kit", ["scout"], ["wayfinding"]),
 		_kit("warrior", "Warrior kit", ["warrior"], ["clubs"]),
 		_kit(KIT_NONE, "No kit", ["hunt", "forage"], []),
-	]}
+		],
+	}
 
 func _kit(id: String, display_name: String, jobs: Array, uses: Array) -> Dictionary:
 	return {
@@ -2219,3 +2227,82 @@ func _recipe(id: String, display_name: String, work: float, inputs: Dictionary) 
 		HudLoadoutVocab.RECIPE_WORK_KEY: work,
 		HudLoadoutVocab.RECIPE_INPUTS_KEY: rows,
 	}
+
+# ---- the kit-short row ---------------------------------------------------------------------------
+
+const KIT_SHORT_ENTITY := 6301
+const KIT_SHORT_TOE_ITEMS: Array[String] = ["spears", "sled"]
+const KIT_SHORT_REQUIRED := 4
+const KIT_SHORT_FILLED := 2
+const KIT_SHORT_NEEDLE := "short of spears and sleds"
+
+## A committed hunt row whose table of equipment is `short` of every item, or fully covered.
+func _kit_short_assignments(short: bool) -> Array:
+	var lines: Array = []
+	for item in KIT_SHORT_TOE_ITEMS:
+		lines.append({
+			HudBandLaborState.POOL_TOE_ITEM_KEY: item,
+			HudBandLaborState.POOL_TOE_REQUIRED_KEY: KIT_SHORT_REQUIRED,
+			HudBandLaborState.POOL_TOE_FILLED_KEY: KIT_SHORT_FILLED if short else KIT_SHORT_REQUIRED,
+		})
+	return [{"kind": "hunt", "workers": KIT_SHORT_REQUIRED, "fauna_id": "fx_herd",
+		SourceForecast.ASSIGNMENT_KIT_TOE_KEY: lines}]
+
+func _kit_short_band(open: bool, short: bool) -> Dictionary:
+	var band := _food_splinter_band(FOOD_SPLINTER_FULL_GOODS)
+	band["entity"] = KIT_SHORT_ENTITY
+	band = BandFx.with_band_id(band)
+	(band[HudLoadoutVocab.WINDOW_KEY] as Dictionary)[HudLoadoutVocab.OPEN_KEY] = open
+	band["labor_assignments"] = _kit_short_assignments(short)
+	return band
+
+func _kit_short_row() -> Dictionary:
+	for row_variant in _controller().attention_rows():
+		var row: Dictionary = row_variant
+		if String(row.get("kind", "")) == HudAttentionVocab.ATTENTION_KIND_LOADOUT_KIT_SHORT:
+			return row
+	return {}
+
+func _kit_short_popover_row(rendered: Array) -> Dictionary:
+	for row_variant in rendered:
+		var row: Dictionary = row_variant
+		if String(row.get("label", "")) == HudLoadoutVocab.ATTENTION_LABEL_KIT_SHORT:
+			return row
+	return {}
+
+func _kits_short_for_assigned_work() -> void:
+	h._hud.update_band_alerts([_grant_band(), _kit_short_band(true, true)])
+	await h._settle()
+	var row := _kit_short_row()
+	h._assert_hud("loadout/kit short — a short hunt row raises the warn row (`%s`)"
+			% row.get("detail", ""),
+		not row.is_empty() and String(row.get("severity", "")) == HudAttentionVocab.ATTENTION_SEVERITY_WARN
+			and String(row.get("label", "")) == HudLoadoutVocab.ATTENTION_LABEL_KIT_SHORT
+			and String(row.get("detail", "")).ends_with(KIT_SHORT_NEEDLE))
+	# The card starts on the OTHER band, so a press that ignored the row's subject would leave it there.
+	_controller().open_band(_band_id(HOME_BAND_ENTITY))
+	await h._settle()
+	await _open_orb_popover()
+	var drawn := _kit_short_popover_row(Q.turn_orb_popover_rows(h._hud.turn_orb))
+	h._assert_hud("loadout/kit short — the row is drawn in the popover wearing `%s` (`%s`)"
+			% [ORB_OPEN_AFFORDANCE, drawn.get("jump", "")],
+		not drawn.is_empty() and String(drawn.get("jump", "")) == ORB_OPEN_AFFORDANCE)
+	await h._save("starting_loadout_kit_short")
+	h._assert_hud("loadout/kit short — the card is on the home band before the press (subject %d)"
+			% _controller().subject_band_id(),
+		_controller().subject_band_id() == _band_id(HOME_BAND_ENTITY))
+	if not drawn.is_empty():
+		(drawn["button"] as Button).pressed.emit()
+		await h._settle()
+	h._assert_hud("loadout/kit short — pressing it opens ITS band's card (subject %d)"
+			% _controller().subject_band_id(),
+		_controller().is_expanded()
+			and _controller().subject_band_id() == _band_id(KIT_SHORT_ENTITY))
+	_close_orb_popover()
+	h._hud.update_band_alerts([_grant_band(), _kit_short_band(true, false)])
+	await h._settle()
+	h._assert_hud("loadout/kit short — every row covered raises none", _kit_short_row().is_empty())
+	h._hud.update_band_alerts([_grant_band(), _kit_short_band(false, true)])
+	await h._settle()
+	h._assert_hud("loadout/kit short — a shut window raises none even with a short row",
+		_kit_short_row().is_empty())

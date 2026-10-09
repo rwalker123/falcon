@@ -232,6 +232,14 @@ const FACTION_SETTLING_VALUE_FORMAT := "%s  %d/%d"
 
 const FACTION_SETTLING_SCALE := 100
 
+## The SETTLING block's second row (issue #701): how many of the score's 100 points come from the band
+## standing on its dead this turn (`belief_points`, pre-smoothing). Below `FACTION_SETTLING_BELIEF_MIN`
+## the row states the absence rather than a `+0`, which would read as a measured nothing.
+const FACTION_SETTLING_BELIEF_KEY := "From the dead"
+const FACTION_SETTLING_BELIEF_VALUE_FORMAT := "+%d"
+const FACTION_SETTLING_BELIEF_NONE := "0 — stand on your dead"
+const FACTION_SETTLING_BELIEF_MIN := 0.5
+
 ## **OPEN BORDERS — the faction page's one control** (issue #512, `docs/plan_band_fission.md`
 ## §Defection). A faction-wide policy with no other home: whether another people's unhappy leavers,
 ## and their defecting parties, may join this people's bands. The checkbox's face is the policy's
@@ -286,7 +294,11 @@ const FACTION_DISCOVERY_COUNT_FORMAT := "%d"
 ## **RE-MEASURED AT 531 WHEN THE OPEN BORDERS ROW LANDED (issue #512)**, over the 480 this sat at — so
 ## it moved to 550, the same ~19px margin over the block. The wide dock's tiered block reads 305px of
 ## a 358px box with the row in, and the tall side box is still 941, so the gap it bisects is intact.
-const FACTION_BAND_FULL_MIN_HEIGHT := 550.0
+##
+## **RE-MEASURED AT 560 WHEN THE `From the dead` ROW LANDED (issue #701)**, over the 531 above — it
+## moved to 580, the same ~19px margin over the block. The wide dock's tiered block reads 334px of a
+## 358px box with the row in (24 spare), and the tall side box is still 941.
+const FACTION_BAND_FULL_MIN_HEIGHT := 580.0
 
 ## A discovered site whose catalog row carries no display name — the site_id is a worse name than
 ## none at all is a lie, so the id stands.

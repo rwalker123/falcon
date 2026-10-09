@@ -504,7 +504,20 @@ const FACTION_TAB_LABELS: Array[String] = ["Faction", "Work", "Parties"]
 ## (It was seeded for the top bar's own Sedentarization meter; that meter is retired with the
 ## top-right block, and the seed stays because the faction page now renders off the same cache.)
 const TOPBAR_SEDENTARIZATION_SCORE := 62.0
+## The Beliefs fixtures (issue #701), in `CultureTraitAxis` order. The expected strings are LITERALS.
+const BELIEFS_AXIS_COUNT := 15
+const BELIEFS_AXIS_TRADITIONALIST_REVISIONIST := 3
+const BELIEFS_AXIS_SECULAR_DEVOUT := 13
+const BELIEFS_DEVOUT := 0.42
+const BELIEFS_TRADITIONAL := -0.31
+const BELIEFS_PULL := 0.30
+const BELIEFS_ROW_KEY := "Beliefs"
+const BELIEFS_COMPACT_VALUES := "Devout 0.4, traditional 0.3."
+const BELIEFS_COMPACT_PULL := "The ancestors pull this band +0.30 devout and +0.30 traditional."
 const TOPBAR_SEDENTARIZATION_STAGE := "soft"
+## How many of that score's points the band standing on its dead supplies (the SETTLING block's
+## `From the dead` row). Seeded non-zero so every faction frame measures the block with the mark in.
+const TOPBAR_SEDENTARIZATION_BELIEF_POINTS := 24.0
 ## Slack allowed between a stat-row key's laid-out width and the width its own font measures for its
 ## own string (`_faction_keyless_rows`). It absorbs the sub-pixel disagreement between the container's
 ## rounded layout and the text server's float measurement, and nothing wider: a CLIPPED key comes back
@@ -969,7 +982,8 @@ func _ready() -> void:
 
 	# Seed the top bar so the HUD reflow reads against real content.
 	_hud.update_sedentarization([{"faction": 0,
-		"score": TOPBAR_SEDENTARIZATION_SCORE, "stage": TOPBAR_SEDENTARIZATION_STAGE}])
+		"score": TOPBAR_SEDENTARIZATION_SCORE, "stage": TOPBAR_SEDENTARIZATION_STAGE,
+		"belief_points": TOPBAR_SEDENTARIZATION_BELIEF_POINTS}])
 
 	# Slice 3: inject the panel into the HUD and push a player band through the real snapshot
 	# path (update_band_alerts → _refresh_panel_band), so the FULL band detail relocates into the
@@ -1140,6 +1154,7 @@ func _ready() -> void:
 	# is the frame that carries every optional row at once — the only state in which the zone is asked
 	# to hold the full set.
 	_assert_merged_morale_growth_fits()
+	_assert_beliefs_compact_clause()
 	# **RELEASED, not re-pinned to `PREVIEW_SIZE`.** Nothing had pinned a canvas before this state, so
 	# the states below it render at `project.godot`'s own 1920-wide base through the `expand` stretch —
 	# pinning the 1500px WINDOW size here instead takes 420px of logical width off every one of them,
@@ -2331,6 +2346,8 @@ func _ready() -> void:
 	# THE OPEN BORDERS TOGGLE: open as staged, a press sends `closed`, and the sim's answer re-renders
 	# it — photographed closed, then put back open for every frame below.
 	await _assert_faction_open_borders()
+	# THE SETTLING BLOCK'S `From the dead` ROW, in both of its states (issue #701).
+	await _assert_faction_settling_belief()
 
 	# The WORK tab — the workforce bar and the per-band roster. A separate frame because the narrow
 	# shell renders exactly ONE zone, so the state above cannot show it at all.
@@ -9812,6 +9829,45 @@ func _assert_faction_open_borders() -> void:
 	_hud.update_faction_policies([_faction_policy_fixture(true)])
 	await _settle()
 
+## THE SETTLING BLOCK'S BELIEF ROW, BOTH STATES: `+24` behind the ancestors mark while a band stands on
+## its dead, and the dimmed `0 — stand on your dead` when none does. The seed is the first; the
+## second is pushed through the real ingest, photographed, and put back. The re-render rides
+## `update_faction_policies` (the push that rebuilds the page), because `update_sedentarization` only
+## caches.
+func _assert_faction_settling_belief() -> void:
+	var zone: Node = _panel._zones.get(BandCityPanel.ZONE_BAND)
+	if zone == null:
+		_assert_band_panel("faction settling belief: the zone exists", false)
+		return
+	var tied := _faction_stat_value(zone, HudWorkVocab.FACTION_SETTLING_BELIEF_KEY)
+	_assert_band_panel("faction settling belief: a band on its dead reads +%d (got '%s')" % [
+			int(TOPBAR_SEDENTARIZATION_BELIEF_POINTS), tied],
+		tied.ends_with("+%d" % int(TOPBAR_SEDENTARIZATION_BELIEF_POINTS)))
+	_assert_band_panel("faction settling belief: ...behind the ancestors mark",
+		_has_label_containing(zone, BandOverlayRenderer.ANCESTORS_GLYPH))
+	_hud.update_sedentarization([{"faction": HudConst.PLAYER_FACTION_ID,
+		"score": TOPBAR_SEDENTARIZATION_SCORE, "stage": TOPBAR_SEDENTARIZATION_STAGE,
+		"belief_points": 0.0}])
+	_hud.update_faction_policies([_faction_policy_fixture(true)])
+	await _settle()
+	await _save("band_panel_faction_settling_untied")
+	zone = _panel._zones.get(BandCityPanel.ZONE_BAND)
+	var untied := _faction_stat_value(zone, HudWorkVocab.FACTION_SETTLING_BELIEF_KEY) if zone != null else ""
+	_assert_band_panel("faction settling belief: no band on its dead reads '%s' (got '%s')" % [
+			HudWorkVocab.FACTION_SETTLING_BELIEF_NONE, untied],
+		untied == HudWorkVocab.FACTION_SETTLING_BELIEF_NONE)
+	_assert_band_panel("faction settling belief: ...and carries no ancestors mark",
+		zone != null and not _has_label_containing(zone, BandOverlayRenderer.ANCESTORS_GLYPH))
+	# The long sentence must not widen the zone: the Settling meter beside it still renders whole.
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_zone_content_width_fits()
+	_hud.update_sedentarization([{"faction": HudConst.PLAYER_FACTION_ID,
+		"score": TOPBAR_SEDENTARIZATION_SCORE, "stage": TOPBAR_SEDENTARIZATION_STAGE,
+		"belief_points": TOPBAR_SEDENTARIZATION_BELIEF_POINTS}])
+	_hud.update_faction_policies([_faction_policy_fixture(true)])
+	await _settle()
+
 ## The player faction's `faction_policies` row, the shape the native decoder hands GDScript.
 func _faction_policy_fixture(open: bool) -> Dictionary:
 	return {"faction": HudConst.PLAYER_FACTION_ID, "open_borders": open}
@@ -15342,6 +15398,45 @@ const WORST_CASE_FOOD_CONSUMPTION := 4.60
 ## THE WORST CASE: a band carrying EVERY optional vitals row it can simultaneously have. Built on the
 ## arrivals fixture, so it also carries the per-source `arrival_schedule`s the FOOD OUTLOOK chart
 ## needs — the block `build_band_zone` gates on height.
+## The `compact` tier's Beliefs clause (issue #701): a band taking an ancestors pull wears the violet
+## mark on the merged Morale+Growth line and no `Beliefs` row; the line's hover carries the values and
+## the pull sentence. A band with no pull adds NOTHING — asserted on the producer, since the frame holds
+## only the pulled band. The fit itself rides `_assert_merged_morale_growth_fits`, which runs over the
+## same line with the mark in.
+func _assert_beliefs_compact_clause() -> void:
+	var vitals := _find_vitals_label(_panel)
+	if vitals == null:
+		_fail("beliefs compact assert found no vitals label")
+		return
+	var text: String = vitals.get_parsed_text()
+	var morale_run := _vitals_run(text, HudDisclosureVocab.DETAIL_ROW_MORALE, [])
+	_assert_band_panel("beliefs compact: the merged Morale line carries the ancestors mark",
+		morale_run.contains(BandOverlayRenderer.ANCESTORS_GLYPH))
+	_assert_band_panel("beliefs compact: ...and no Beliefs ROW costs the short dock a line",
+		not text.contains(BELIEFS_ROW_KEY))
+	_assert_band_panel("beliefs compact: ...the hover carries the values and the pull sentence",
+		vitals.tooltip_text.contains(BELIEFS_COMPACT_VALUES)
+		and vitals.tooltip_text.contains(BELIEFS_COMPACT_PULL))
+	var untied := _vitals_worst_case_band_fixture()
+	untied["culture_ancestor_pull"] = []
+	var pulled_lines := _hud._banddetail.unit_summary_lines(
+		_vitals_worst_case_band_fixture(), "", DetailFormat.Context.new(), true)
+	var untied_lines := _hud._banddetail.unit_summary_lines(untied, "", DetailFormat.Context.new(), true)
+	var pulled_joined := "\n".join(pulled_lines)
+	var untied_joined := "\n".join(untied_lines)
+	_assert_band_panel("beliefs compact: a band with NO pull adds nothing to the line",
+		not untied_joined.contains(BandOverlayRenderer.ANCESTORS_GLYPH)
+		and pulled_joined.contains(BandOverlayRenderer.ANCESTORS_GLYPH)
+		and untied_lines.size() == pulled_lines.size())
+
+func _belief_vector(devout: float, traditional: float) -> Array:
+	var values: Array = []
+	values.resize(BELIEFS_AXIS_COUNT)
+	values.fill(0.0)
+	values[BELIEFS_AXIS_SECULAR_DEVOUT] = devout
+	values[BELIEFS_AXIS_TRADITIONALIST_REVISIONIST] = traditional
+	return values
+
 func _vitals_worst_case_band_fixture() -> Dictionary:
 	var band := _arrivals_band_fixture()
 	band["entity"] = 922
@@ -15359,6 +15454,9 @@ func _vitals_worst_case_band_fixture() -> Dictionary:
 	band["morale"] = 0.31
 	band["morale_delta"] = -0.040
 	band["morale_cause"] = 1   # Terrain
+	# Takes an ancestors pull, so the SHORT tier's Morale+Growth line wears the Beliefs mark too.
+	band["culture_traits"] = _belief_vector(BELIEFS_DEVOUT, BELIEFS_TRADITIONAL)
+	band["culture_ancestor_pull"] = _belief_vector(BELIEFS_PULL, -BELIEFS_PULL)
 	band["morale_settling"] = 0.010
 	band["morale_terrain"] = -0.030
 	band["morale_climate"] = -0.020
@@ -20816,6 +20914,11 @@ func _build_queue_forage_row(tile: Vector2i, improvement: String) -> Dictionary:
 ## The patches, carrying the two fields the block reads and nothing else — the queue POSITION and the
 ## chained countdown. `turns_override` states the same sentinel on every entry, which is the blocked
 ## state's own claim.
+## The queue fixture's stand (stock / ceiling) and the floor its rows work it at.
+const QUEUE_PATCH_BIOMASS := 12
+const QUEUE_PATCH_CAPACITY := 30
+const QUEUE_PATCH_FLOOR := 0.5
+
 func _build_queue_patches(entries: int, turns_override: int = 0,
 		blocked_reason: String = "") -> Array:
 	var tiles := [QUEUE_HEAD_PATCH, QUEUE_SECOND_PATCH, QUEUE_THIRD_PATCH]
@@ -20836,6 +20939,8 @@ func _build_queue_patches(entries: int, turns_override: int = 0,
 			# source is not a blocked build", so an unqueued or unblocked fixture states it and the
 			# no-cause negative below is a real reading rather than a missing key.
 			"build_blocked_reason": blocked_reason if queued else "",
+			# The stand the escapement reason quotes: stock and ceiling in the card's own units.
+			"biomass": QUEUE_PATCH_BIOMASS, "carrying_capacity": QUEUE_PATCH_CAPACITY,
 			# **THE BASKET IS WHAT MAKES THE CROP PICKER RENDER** (`docs/plan_standing_upkeep.md`
 			# §4.7a ③), and it is here rather than on one state's own fixture so the WIDTH it takes is
 			# inside the measured frames — a control proved only by a driven assertion is a control
@@ -20988,7 +21093,11 @@ func _assert_build_queue_states_the_cause() -> void:
 	# **THE EXPECTATION IS THE TABLE, NOT THE PRODUCER** — composed through
 	# `build_blocked_reason_text` it would only assert that the lookup agrees with itself, and a
 	# lookup answering one key for every cause would satisfy both claims.
-	var wanted_plant := HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT
+	# **THE ESCAPEMENT CAUSE CARRIES ITS NUMBERS**, off the fixture's own stand and the queue rows'
+	# 50% floor, with `ceil(floor x ceiling)` spelled out: `12 here, you leave 15 (50%) standing`.
+	var wanted_plant := HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT_FORMAT % [
+		QUEUE_PATCH_BIOMASS, int(ceil(QUEUE_PATCH_FLOOR * QUEUE_PATCH_CAPACITY)),
+		int(round(QUEUE_PATCH_FLOOR * 100.0))]
 	var wanted_herd := String(HudSelectionVocab.BUILD_BLOCKED_REASONS[QUEUE_BLOCKED_HERD_REASON])
 	var plant_rows := 0
 	var herd_rows := 0
@@ -21017,6 +21126,7 @@ func _assert_build_queue_states_no_cause() -> void:
 	# …and the ONE cause worded per web, which is not in the table above.
 	causes.append(HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_HERD)
 	causes.append(HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT)
+	causes.append("Builds only while you")
 	var offenders := 0
 	for row in _build_queue_rows():
 		var tooltip := String(row.tooltip_text)

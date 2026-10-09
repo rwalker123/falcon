@@ -405,8 +405,13 @@ const NO_SUPPLY_NETWORK: u32 = 0;
 /// One breeding population's pre-pass totals: the union of its members' founding lines, their
 /// opening head-count and the births they would have this turn with no ceiling. The lines are a
 /// SET, so a line two members share (a split that could not partition its last one) counts once.
-#[derive(Debug, Default)]
+///
+/// **It belongs to one people.** A breeding group is a supply-network component, and the supply
+/// pass only unions bands that pool freely (`supply::pools_freely`, same faction), so every member
+/// shares `faction` — which is what lets a line's holders be counted per people.
+#[derive(Debug)]
 struct BreedingTally {
+    faction: FactionId,
     lines: BTreeSet<crate::lineage::LineId>,
     opening: Scalar,
     would_be_births: Scalar,
@@ -1061,8 +1066,9 @@ impl BreedingCeilings {
 /// resolve each population's ceiling and the factor its births are scaled by this turn.
 ///
 /// Per population: the ceiling is `Σ people_per_line / holders(line)` over its union's lines
-/// (`lineage::shared_breeding_ceiling` — a line several separate populations hold splits its `K`
-/// between them, so `|union| × people_per_line` when every line is its own) — lifted
+/// (`lineage::shared_breeding_ceiling` — a line several separate populations **of one people** hold
+/// splits its `K` between them, so per people the ceilings sum to at most distinct lines × `K`,
+/// and `|union| × people_per_line` when every line is its own) — lifted
 /// altogether once it reaches `free_breeding_at`, when the factor is `1` — the headroom is
 /// `max(0, ceiling − opening head-count)`, and the factor is [`ceiling_factor`] of the headroom
 /// against the members' summed would-be births — priced by [`meal_and_births`], the same function
@@ -1080,7 +1086,16 @@ fn resolve_breeding_ceilings(
     for (entity, cohort, labor, _, _) in cohorts.iter() {
         let group = BreedingGroup::of(entity, membership);
         group_of.insert(entity, group);
-        let tally = tallies.entry(group).or_default();
+        let tally = tallies.entry(group).or_insert_with(|| BreedingTally {
+            faction: cohort.faction,
+            lines: BTreeSet::new(),
+            opening: Scalar::default(),
+            would_be_births: Scalar::default(),
+        });
+        debug_assert_eq!(
+            tally.faction, cohort.faction,
+            "a breeding group is one people: the supply union never joins two factions"
+        );
         tally.lines.extend(cohort.founding_lines.iter().copied());
         tally.opening += cohort.total();
         if tiles.get(cohort.home).is_ok() {
@@ -1094,12 +1109,14 @@ fn resolve_breeding_ceilings(
                 meal_and_births(&state, band_food_flow(labor), demo).would_be_births;
         }
     }
-    // How many distinct breeding populations hold each line: a line two separate populations both
-    // hold (a one-line split copies it) splits its K between them.
-    let mut holders: BTreeMap<crate::lineage::LineId, u32> = BTreeMap::new();
+    // How many distinct breeding populations OF THE SAME PEOPLE hold each line: a line two
+    // separate populations of one people both hold (a one-line split copies it) splits its K
+    // between them. Another people holding a copy (contact merged the lines) does not divide it —
+    // its ceiling is its own, so contact lifts both.
+    let mut holders: BTreeMap<(FactionId, crate::lineage::LineId), u32> = BTreeMap::new();
     for tally in tallies.values() {
         for line in &tally.lines {
-            *holders.entry(*line).or_default() += 1;
+            *holders.entry((tally.faction, *line)).or_default() += 1;
         }
     }
     let lineage = &demo.lineage;
@@ -1107,7 +1124,10 @@ fn resolve_breeding_ceilings(
         .into_iter()
         .map(|(group, tally)| {
             let shared = crate::lineage::shared_breeding_ceiling(
-                tally.lines.iter().map(|line| holders[line]),
+                tally
+                    .lines
+                    .iter()
+                    .map(|line| holders[&(tally.faction, *line)]),
                 lineage.people_per_line,
             );
             let people = crate::lineage::inbreeding_ceiling(shared, lineage.free_breeding_at);
@@ -1269,7 +1289,7 @@ fn resolve_culture_terms(
         .iter()
         .enumerate()
         .map(|(index, (_, entity, band))| {
-            let strength = relay.strength(index, culture.relay_per_hop);
+            let strength = relay.strength(index, culture);
             (
                 *entity,
                 CultureReading {

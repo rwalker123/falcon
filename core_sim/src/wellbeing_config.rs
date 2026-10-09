@@ -161,6 +161,27 @@ impl CultureConfig {
         belief / (belief + self.belief_half_saturation)
     }
 
+    /// The relay strength `r = relay_per_hop ^ hops` of a band `hops` of kin from its anchor
+    /// (`0` direct, `crate::belief_relay::DIRECT_HOPS`); `0` when no chain reaches it (`None`). At
+    /// `relay_per_hop = 0` only a direct band reads `1`. The ONE place `r` is computed — the morale
+    /// term and the ancestor pull both read it.
+    pub fn relay_strength(&self, hops: Option<u32>) -> f32 {
+        const UNREACHED_STRENGTH: f32 = 0.0;
+        hops.map_or(UNREACHED_STRENGTH, |hops| {
+            self.relay_per_hop
+                .powi(i32::try_from(hops).unwrap_or(i32::MAX))
+        })
+    }
+
+    /// A band's tie to its ancestors `s × r`: the anchor's saturating weight times the relay
+    /// strength. `0` with no anchor (`anchor_belief = None`) and when nothing reaches the band.
+    pub fn ancestor_tie(&self, anchor_belief: Option<f32>, hops: Option<u32>) -> f32 {
+        const NO_TIE: f32 = 0.0;
+        anchor_belief.map_or(NO_TIE, |belief| {
+            self.anchor_weight(belief) * self.relay_strength(hops)
+        })
+    }
+
     /// `near_bonus`, `away_drag` and `min_anchor_belief` must be finite and non-negative,
     /// `relay_per_hop` finite and in `[0, 1]`; `belief_half_saturation` must be
     /// finite and `> 0` (it is the weight's denominator at zero belief).

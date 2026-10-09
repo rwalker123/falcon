@@ -242,6 +242,10 @@ paths:
   eye here, at true size, against the widest number) / `turn_orb_awaiting_orders` (awaiting rows + idle workers coexisting, incl. the cap's
   overflow row) / **`turn_orb_resolving`** + **`turn_orb_hint_advance` / `turn_orb_hint_review` / `turn_orb_hint_4digit`** (the resolving gate and the hover hint — see "The resolving gate" below).
 
+`loadout_kit_short` is the outfitting producer's second kind: non-locating `warn` row, `⚑` glyph, shown
+only while a band's window is open and a committed assignment's `kit_toe` is short; its `Open ▸` reaches
+that band's picker like `opening_loadout`'s (`starting-loadout.md`).
+
 ## The KNOWLEDGE producer — a third half of the registry, and its own ordering rule
 
 `docs/plan_knowledge_screen.md` §5. **`knowledge_learned`** — ONE ROW PER TRACK COMPLETED THIS TURN,

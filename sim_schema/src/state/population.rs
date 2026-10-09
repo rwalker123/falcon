@@ -1759,6 +1759,14 @@ pub struct PopulationCohortState {
     /// Appended last.
     #[serde(default)]
     pub independence_grievance_threshold: f32,
+    /// The band's own culture layer's resolved values, one per `CultureTraitAxis` in `index()`
+    /// order (15). Empty when the band has no layer; a foreign row defaults. Appended last.
+    #[serde(default)]
+    pub culture_traits: Vec<f32>,
+    /// The ancestor pull the last culture reconcile applied to the band: `tie × ancestor_pull[axis]`
+    /// per axis, `culture_traits` order. Empty when the band took no pull. Appended last.
+    #[serde(default)]
+    pub culture_ancestor_pull: Vec<f32>,
 }
 
 /// `PopulationCohortState::belief_relay_hops` for a band that holds an anchor no chain of its own

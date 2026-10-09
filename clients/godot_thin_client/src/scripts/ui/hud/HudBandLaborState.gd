@@ -1701,6 +1701,26 @@ func floor_for_hunt(band: Dictionary, herd_id: String) -> float:
 		return DEFAULT_HARVEST_FLOOR
 	return SourceForecast.clamp_floor(float(assignment["floor"]))
 
+## **THE FLOOR A BLOCKED ESCAPEMENT BUILD WAS GATED ON**: the escapement floor of the first player band
+## working this source, `-1` (`DetailFormat.BLOCKED_FLOOR_UNKNOWN`) where none does. Unlike
+## `floor_for_hunt` it never answers the default for a source nobody works — a reason quoting a floor
+## nobody set would be a made-up number.
+func working_floor_hunt(herd_id: String) -> float:
+	for band_variant in current_player_bands():
+		if band_variant is Dictionary:
+			var a := hunt_assignment_of(band_variant, herd_id)
+			if a.has("floor"):
+				return SourceForecast.clamp_floor(float(a["floor"]))
+	return DetailFormat.BLOCKED_FLOOR_UNKNOWN
+
+func working_floor_forage(x: int, y: int) -> float:
+	for band_variant in current_player_bands():
+		if band_variant is Dictionary:
+			var a := forage_assignment_of(band_variant, x, y)
+			if a.has("floor"):
+				return SourceForecast.clamp_floor(float(a["floor"]))
+	return DetailFormat.BLOCKED_FLOOR_UNKNOWN
+
 ## The plant twin: the floor of the band's existing forage on (x,y), else the default.
 func floor_for_forage(band: Dictionary, x: int, y: int) -> float:
 	var assignment := forage_assignment_of(band, x, y)

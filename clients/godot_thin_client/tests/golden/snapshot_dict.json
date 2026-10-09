@@ -2403,6 +2403,8 @@
         }
       ],
       "per_worker_yield": 30.27,
+      "predator_eaten": 26.120001,
+      "predator_eaten_by": "herds[0].predator_eaten_by",
       "prey_sense_radius": 108,
       "provisions_per_biomass": 82.150002,
       "regrowth_samples": {"__packed": "PackedFloat32Array", "len": 11, "items": [35.630001, 62.740002, 96.269997, 59.380001, 74.0, 48.580002, 65.25, 45.23, 107.059998, 81.650002, 97.730003]},
@@ -2648,6 +2650,8 @@
         }
       ],
       "per_worker_yield": 37.77,
+      "predator_eaten": 79.029999,
+      "predator_eaten_by": "herds[1].predator_eaten_by",
       "prey_sense_radius": 23,
       "provisions_per_biomass": 55.490002,
       "regrowth_samples": {"__packed": "PackedFloat32Array", "len": 11, "items": [81.800003, 54.689999, 52.18, 2.83, 67.639999, 93.059998, 90.550003, 58.049999, 14.47, 99.860001, 41.220001]},
@@ -2893,6 +2897,8 @@
         }
       ],
       "per_worker_yield": 53.610001,
+      "predator_eaten": 67.0,
+      "predator_eaten_by": "herds[2].predator_eaten_by",
       "prey_sense_radius": 150,
       "provisions_per_biomass": 14.63,
       "regrowth_samples": {"__packed": "PackedFloat32Array", "len": 11, "items": [101.379997, 81.360001, 110.129997, 15.33, 63.02, 95.510002, 71.760002, 98.870003, 29.950001, 62.450001, 107.620003]},
@@ -4827,6 +4833,8 @@
           "workers_without": 22.379999
         }
       ],
+      "culture_ancestor_pull": {"__packed": "PackedFloat32Array", "len": 3, "items": [27.690001, 7.67, 10.18]},
+      "culture_traits": {"__packed": "PackedFloat32Array", "len": 3, "items": [15.68, 91.290001, 50.68]},
       "current_x": 0,
       "current_y": 1,
       "cut_off": true,
@@ -6211,6 +6219,8 @@
           "workers_without": 55.77
         }
       ],
+      "culture_ancestor_pull": {"__packed": "PackedFloat32Array", "len": 3, "items": [88.629997, 1.55, 85.279999]},
+      "culture_traits": {"__packed": "PackedFloat32Array", "len": 3, "items": [55.869999, 23.379999, 59.23]},
       "current_x": 1,
       "current_y": 2,
       "cut_off": false,
@@ -7556,6 +7566,8 @@
           "workers_without": 102.519997
         }
       ],
+      "culture_ancestor_pull": {"__packed": "PackedFloat32Array", "len": 3, "items": [85.190002, 59.779999, 33.330002]},
+      "culture_traits": {"__packed": "PackedFloat32Array", "len": 3, "items": [32.779999, 7.37, 24.040001]},
       "current_x": 2,
       "current_y": 0,
       "cut_off": false,
@@ -8836,16 +8848,19 @@
   ],
   "sedentarization": [
     {
+      "belief_points": 93.480003,
       "faction": 8,
       "score": 80.769997,
       "stage": "sedentarization[0].stage"
     },
     {
+      "belief_points": 97.150002,
       "faction": 71,
       "score": 26.860001,
       "stage": "sedentarization[1].stage"
     },
     {
+      "belief_points": 22.790001,
       "faction": 170,
       "score": 31.299999,
       "stage": "sedentarization[2].stage"

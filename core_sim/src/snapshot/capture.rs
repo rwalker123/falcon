@@ -3142,9 +3142,21 @@ pub fn capture_snapshot(
                         }
                         _ => Vec::new(),
                     };
+                    // The band's own culture layer and the pull its last reconcile applied.
+                    let band_owner = band_id.map(|id| crate::culture::CultureOwner::from_band(*id));
+                    let culture_traits: Vec<f32> = band_owner
+                        .and_then(|owner| culture.band_layer_by_owner(owner))
+                        .map(|layer| layer.traits.values().iter().map(|v| v.to_f32()).collect())
+                        .unwrap_or_default();
+                    let culture_ancestor_pull: Vec<f32> = band_owner
+                        .and_then(|owner| culture.applied_band_pull(owner))
+                        .map(|pull| pull.iter().map(|v| v.to_f32()).collect())
+                        .unwrap_or_default();
                     Some(population_state(PopulationStateInputs {
                         belief_reach,
                         belief_relay_region,
+                        culture_traits,
+                        culture_ancestor_pull,
                         entity,
                         band_id,
                         band_name,
