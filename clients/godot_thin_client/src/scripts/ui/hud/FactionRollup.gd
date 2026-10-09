@@ -780,7 +780,32 @@ static func _build_settling_block(sedentarization: Dictionary) -> VBoxContainer:
             HudFormat.meter_bar(score, KNOWLEDGE_METER_CELLS),
             int(round(score)), HudWorkVocab.FACTION_SETTLING_SCALE],
         HudStyle.INK_DIM))
+    block.add_child(_build_settling_belief_row(float(sedentarization.get("belief_points", 0.0))))
     return block
+
+## **THE SETTLING BLOCK'S SECOND ROW (issue #701): `From the dead  +N`** — how many of the score's 100
+## points come from a band standing on its dead this turn. At or above `FACTION_SETTLING_BELIEF_MIN` it
+## reads `+N` behind the same ancestors urn the map marks a belief place with, in the belief violet;
+## below it, a dimmed `0 — stand on your dead` — a `+0` would read as a measured nothing.
+## The mark is its own Label (a plain `Label` renders no BBCode) inserted ahead of the value.
+##
+## The extra row's height is paid for by the zone's height TIER: `HudWorkVocab.FACTION_BAND_FULL_MIN_HEIGHT`
+## was re-measured with it in.
+static func _build_settling_belief_row(belief_points: float) -> HBoxContainer:
+    if belief_points < HudWorkVocab.FACTION_SETTLING_BELIEF_MIN:
+        var none_row := _stat_row(HudWorkVocab.FACTION_SETTLING_BELIEF_KEY,
+            HudWorkVocab.FACTION_SETTLING_BELIEF_NONE, HudStyle.INK_DIM)
+        return none_row
+    var row := _stat_row(HudWorkVocab.FACTION_SETTLING_BELIEF_KEY,
+        HudWorkVocab.FACTION_SETTLING_BELIEF_VALUE_FORMAT % int(round(belief_points)),
+        HudStyle.BELIEF)
+    var mark := Label.new()
+    mark.text = BandOverlayRenderer.ANCESTORS_GLYPH
+    mark.add_theme_font_size_override("font_size", STAT_ROW_FONT_SIZE)
+    mark.add_theme_color_override("font_color", HudStyle.BELIEF)
+    row.add_child(mark)
+    row.move_child(mark, row.get_child_count() - 2)
+    return row
 
 ## The Open Borders checkbox and, right-aligned beside it, what the current setting DOES. `null` when
 ## the snapshot carried no policy row — a toggle guessing the sim's default would be a second answer to

@@ -2214,16 +2214,74 @@ static func build_gear_lines(source: Dictionary, prefix: String) -> Array[String
 ## > re-add a remedy here as one the block is missing.
 ##
 ## `prefix` spells the keys, so one call serves a `patch_`-prefixed `tile_info` and a bare herd dict.
+##
+## `leave_floor` is the escapement floor (0..1) of the assignment working this source —
+## `BLOCKED_FLOOR_UNKNOWN` where the caller has none — and with `src` it is what lets the escapement
+## reason quote its numbers (`escapement_reason_numbers`).
+const BLOCKED_FLOOR_UNKNOWN := -1.0
 static func build_blocked_lines(src: Dictionary, prefix: String, kind: String,
-        indent: String = MORALE_BREAKDOWN_INDENT) -> Array[String]:
+        indent: String = MORALE_BREAKDOWN_INDENT,
+        leave_floor: float = BLOCKED_FLOOR_UNKNOWN, world_herds: Array = []) -> Array[String]:
     var lines: Array[String] = []
     if SourceForecast.build_turns_remaining(src, prefix) \
             != SourceForecast.BUILD_TURNS_QUEUE_BLOCKED:
         return lines
     lines.append("%s%s" % [indent, build_blocked_reason_text(
         SourceForecast.build_blocked_reason(src, prefix), kind,
-        SourceForecast.build_material_cost(src, prefix))])
+        SourceForecast.build_material_cost(src, prefix),
+        escapement_reason_numbers(src, prefix, kind, leave_floor),
+        predator_display_name(src, prefix, world_herds))])
     return lines
+
+## **THE PREDATOR THAT ATE THE GROWTH, IN THE PLAYER'S WORDS.** The wire names it by its fauna_config
+## species KEY (`predator_eaten_by`, `"wolf"`) and the client holds no fauna roster, so the name comes
+## from the vocabulary the herd cards already use: a visible herd of that species, whose own `species`
+## display name (`Grey Wolf Pack`) is used as-is — matched through `FoodIcons.species_key_for`, the ONE
+## species matcher. With no such herd in view the key itself is humanized (`wolf` → `Wolf`). `""` where
+## the wire names no predator.
+static func predator_display_name(src: Dictionary, prefix: String, world_herds: Array) -> String:
+    var key := String(src.get(prefix + "predator_eaten_by", "")).strip_edges()
+    if key == "":
+        return ""
+    for herd_variant in world_herds:
+        if not (herd_variant is Dictionary):
+            continue
+        var herd: Dictionary = herd_variant
+        var label := String(herd.get("label", herd.get("species", "")))
+        if FoodIcons.species_key_for(label) == key and String(herd.get("species", "")) != "":
+            return String(herd["species"])
+    var spaced := key.replace("_", " ")
+    return spaced.substr(0, 1).to_upper() + spaced.substr(1)
+
+## **THE THREE NUMBERS THE ESCAPEMENT REASON QUOTES**, `[stock, leave, percent]`, or `[]` where any is
+## unreachable (the numberless sentence then stands). In the units and rounding the card's own stock
+## row prints: a herd counts bodies (`SourceForecast.animal_count`, as `Herd 61 / 133` does) and a
+## patch is whole biomass (`Foraging 12 / 30`); `leave` is `ceil(floor × ceiling)` in those units and
+## the percent is the floor the gate used. Nothing here re-derives the ecology — the sim's gate decided
+## the block; this only states where the stock stands against the line the player's floor draws.
+static func escapement_reason_numbers(src: Dictionary, prefix: String, kind: String,
+        leave_floor: float) -> Array:
+    if leave_floor < 0.0:
+        return []
+    var biomass := float(src.get(prefix + "biomass", 0.0))
+    var capacity := float(src.get(prefix + "carrying_capacity", src.get(prefix + "tile_capacity", 0.0)))
+    if capacity <= 0.0:
+        return []
+    var stock: int
+    var ceiling: int
+    if kind == SourceForecast.SOURCE_KIND_HERD:
+        var body_mass := float(src.get(prefix + "body_mass", 0.0))
+        var head := SourceForecast.animal_count(biomass, body_mass)
+        if head == SourceForecast.ANIMAL_COUNT_NONE:
+            stock = int(round(biomass))
+            ceiling = int(round(capacity))
+        else:
+            stock = head
+            ceiling = SourceForecast.animal_count(capacity, body_mass)
+    else:
+        stock = int(round(biomass))
+        ceiling = int(round(capacity))
+    return [stock, int(ceil(leave_floor * float(ceiling))), int(round(leave_floor * 100.0))]
 
 ## The sim's cause key in the player's own words. An unknown key — and the empty one, which a `-4`
 ## should never carry — answers the fallback: we still know the builders are stuck, and saying so is
@@ -2239,10 +2297,20 @@ static func build_blocked_lines(src: Dictionary, prefix: String, kind: String,
 ## sentence is composed rather than looked up. `[]` — a wire this client is behind on — takes the
 ## unnamed form rather than inventing a material.
 static func build_blocked_reason_text(key: String, kind: String,
-        pile: Array[Dictionary] = [] as Array[Dictionary]) -> String:
+        pile: Array[Dictionary] = [] as Array[Dictionary], escapement: Array = [],
+        predator: String = "") -> String:
+    if key == HudSelectionVocab.BUILD_BLOCKED_REASON_PREDATORS:
+        var subject := predator if predator != "" else HudSelectionVocab.BUILD_BLOCKED_PREDATORS_UNNAMED
+        if escapement.size() == 3:
+            return HudSelectionVocab.BUILD_BLOCKED_PREDATORS_FORMAT % [
+                subject, escapement[0], escapement[1]]
+        return HudSelectionVocab.BUILD_BLOCKED_PREDATORS_UNNUMBERED_FORMAT % subject
     if key == HudSelectionVocab.BUILD_BLOCKED_REASON_ESCAPEMENT:
-        return HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_HERD \
-            if kind == SourceForecast.SOURCE_KIND_HERD \
+        var herd := kind == SourceForecast.SOURCE_KIND_HERD
+        if escapement.size() == 3:
+            return (HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_HERD_FORMAT if herd \
+                else HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT_FORMAT) % escapement
+        return HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_HERD if herd \
             else HudSelectionVocab.BUILD_BLOCKED_ESCAPEMENT_PLANT
     if key == HudSelectionVocab.BUILD_BLOCKED_REASON_MATERIALS:
         # **EVERY GOOD IN THE PILE, JOINED — never a sum and never the first of them.** A rung eating
@@ -3512,7 +3580,7 @@ static func _breakdown_row(value: float, magnitude: String, label: String) -> St
 static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
         unstaffed_build: String = SourceForecast.IMPROVEMENT_NONE,
         build_crew: int = SourceForecast.BUILD_CREW_NONE,
-        ctx: Context = null) -> Array[String]:
+        ctx: Context = null, blocked_floor: float = BLOCKED_FLOOR_UNKNOWN) -> Array[String]:
     var lines: Array[String] = []
     # A predator is a hunter, not quarry — the SAME `prey_sense_radius > 0` signal the map's prey-sense
     # ring keys on (carnivore == 4, herbivore == 0). A herbivore's drawer is byte-for-byte unchanged.
@@ -3617,7 +3685,8 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
                 # lives on: a half-tamed herd drawn to its escapement floor by hunters while its
                 # keeping goes unpaid (`build_blocked_lines`).
                 lines.append_array(build_blocked_lines(herd_data, herd_prefix,
-                    SourceForecast.SOURCE_KIND_HERD))
+                    SourceForecast.SOURCE_KIND_HERD, MORALE_BREAKDOWN_INDENT, blocked_floor,
+                    world_herds))
         # **THE CONSEQUENCE OF AN UNDER-KEPT HERD IS THE ONE KEEPER FACT THAT SURVIVED THE `Keepers:`
         # ROW** (issue #545). That row stated a demand every turn, on a herd where nothing was wrong,
         # and read as noise; this fires ONLY when the herd's own crew failed to keep it
@@ -3674,7 +3743,8 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
                     SourceForecast.SOURCE_KIND_HERD, SourceForecast.IMPROVEMENT_CORRAL)
                 lines.append_array(build_gear_lines(herd_data, herd_prefix))
                 lines.append_array(build_blocked_lines(herd_data, herd_prefix,
-                    SourceForecast.SOURCE_KIND_HERD))
+                    SourceForecast.SOURCE_KIND_HERD, MORALE_BREAKDOWN_INDENT, blocked_floor,
+                    world_herds))
         elif ceiling == SourceForecast.HUSBANDRY_CEILING_PASTORAL:
             lines.append(HUSBANDRY_PASTORAL_HINT)
     # **NO `Position` ROW.** These lines render in ONE place — the tile card's subject drawer — and

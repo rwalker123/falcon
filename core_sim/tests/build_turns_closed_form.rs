@@ -312,6 +312,7 @@ fn spawn_keepers_of(
                         target: LaborTarget::Hunt {
                             fauna_id: fauna_id.to_string(),
                             floor: BUILDER_FLOOR,
+                            move_with_herd: false,
                         },
                         // **The crews are stated GROSS here**, and the herd is sized so the
                         // maintenance rate is a single hand ([`TEST_CAPACITY`]) — so both rows still

@@ -154,6 +154,9 @@ var _party_autofill := false
 # `hunt` job on every render, so a selection can never survive into a verb that would refuse it.
 var _forage_kit_id: String = KitRoster.NO_KIT_ID
 var _hunt_kit_id: String = KitRoster.NO_KIT_ID
+## MIGRATION MODE on the herd sheet's box (`docs/plan_roaming_bands.md` §Migration mode): the band's
+## camp moves with a migratory herd. Seeded from the band's own row with the crew and the floor.
+var _hunt_move_with_herd: bool = false
 var _party_kit_id: String = KitRoster.NO_KIT_ID
 
 # ---- Deposit accessors + mutators ---------------------------------------------------------------
@@ -499,7 +502,8 @@ func reset_hunt_kit() -> void:
 
 ## Re-seed the composed count + floor + improvement from the newly-resolved band's staffing on the
 ## herd — the hunt twin of `seed_forage`, including the seeded-band record.
-func seed_hunt(count: int, floor: float, improvement: String) -> void:
+func seed_hunt(count: int, floor: float, improvement: String, move_with_herd: bool = false) -> void:
+	_hunt_move_with_herd = move_with_herd
 	_hunt_count = count
 	_hunt_floor = SourceForecast.clamp_floor(floor)
 	_hunt_improvement = improvement
@@ -573,6 +577,12 @@ func forage_kit_id() -> String:
 
 func set_forage_kit_id(kit_id: String) -> void:
 	_forage_kit_id = kit_id
+
+func hunt_move_with_herd() -> bool:
+	return _hunt_move_with_herd
+
+func set_hunt_move_with_herd(on: bool) -> void:
+	_hunt_move_with_herd = on
 
 func hunt_kit_id() -> String:
 	return _hunt_kit_id

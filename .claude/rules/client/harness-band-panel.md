@@ -3034,3 +3034,16 @@ overflow claim. A later run tried a fourth: the row reading the site's `upkeep_h
 claims, both two-band claims among them.
 
 **A clean run is 1518 `PASS`, exit 0.**
+
+## The migration-mode rows on the Work tab (`_follow_row_states`, `docs/plan_roaming_bands.md`, #797)
+
+Four frames — `band_panel_follow_moving` / `_camped` / `_behind` / `_off` — on ONE band with three hunt
+rows: a migratory herd it follows (the row under test), a migratory herd it does not (toggle offered,
+unpressed) and a resident herd (no toggle). Each case moves the followed herd against the band's tile.
+Per frame: the toggle exists on exactly the two migratory rows, exactly one is pressed when the flag is
+on, and the party-block lines (read off `WORK_ROW_PARTY_META`) contain the status line by EQUALITY
+(`Moving with it · next (72, 18)`, `Camped in the herd. Kills land in camp.`, `Catching up · 5 hexes
+behind`) — and none of the three on the flag-off row. A PNG-less claim presses the unflagged row's toggle
+through its real `pressed` signal and requires ONE hunt line ending ` follow`. `command_guard` drives the
+same line through the real parser (`_drive_assign_labor_kits`) and asserts the token is LAST, after
+`kit <id>`, and absent when unticked.

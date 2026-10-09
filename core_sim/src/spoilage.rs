@@ -1,25 +1,20 @@
-//! **Food spoilage by keeping class** (#706, `docs/plan_civilization_steps.md` §Step 5 → "Only food
-//! the band cannot eat in time rots").
+//! **Food spoilage by keeping class and AGE** (#706, `docs/plan_civilization_steps.md` §Step 5).
 //!
-//! A band eats its fastest-rotting food first, so a unit waits about *larder ÷ need* turns before it
-//! is eaten, and it rots only if that wait is longer than its class's shelf life. No per-unit age is
-//! tracked: the rule is a **line**, not a share. Sorting the classes by shelf life, class *k* rots by
-//! however much the stock of it and every faster class runs past `need × shelf_life_k`:
+//! Food rots at the END of its shelf life, not before. The larder holds each keeping class as
+//! **lots with an age** ([`FoodMix`]); every turn, right after the meal, [`rot_band_larders`] ages
+//! every lot by one and a lot whose age has reached its class's `shelf_life_turns` rots **whole**.
+//! Nothing rots earlier, so anyone who joins the band in the meantime — a birth, a party coming
+//! home, a band merging — can eat it, and the larder shows food that really exists until it goes
+//! off. A kill that lands on turn *T* (age 0) is there for the meals of *T+1 … T+shelf* and rots in
+//! the rot pass of *T+shelf*. The meal takes the fastest-rotting class first and the oldest lot
+//! first within it.
 //!
-//! ```text
-//! line_k     = need × shelf_life_k
-//! rot_k      = min(stock_k, max(0, cumulative_k − line_k))   cumulative_k = Σ post-rot stock of
-//! cumulative = cumulative_{k-1} + (stock_k − rot_k)            every faster class + stock_k
-//! ```
+//! A **caravan's pack** keeps counting while it is carried: a pack whose walk is at least a
+//! class's shelf life is lost on the way, entirely ([`rots_in_transit`]); a pack that survives
+//! lands aged by its walk, so its shelf life is counted from the kill and not from the landing.
 //!
-//! A band with a small surplus stays under every line and never sees rot, and the line scales with
-//! the band: sixty people hold twice what thirty hold before anything spoils.
-//!
-//! A **caravan's pack** rots by its walk instead ([`rots_in_transit`]): a class whose shelf life is
-//! shorter than the walk home is lost on the way, entirely.
-//!
-//! The rule is pure ([`larder_rot`]); [`rot_band_larders`] is the one system that applies it, once a
-//! turn right after the meal and before the turn's income lands.
+//! [`rot_band_larders`] is the one system that rots a larder, once a turn right after the meal and
+//! before the turn's income lands. [`rot_ahead`] is the same rule walked forward for the forecasts.
 
 use bevy::prelude::{Query, Res, With};
 
@@ -27,64 +22,62 @@ use crate::components::{FoodMix, PopulationCohort, ResidentBand};
 use crate::demographics_config::{DemographicsConfigHandle, KeepingConfig};
 use crate::scalar::{scalar_from_f32, scalar_zero, Scalar};
 
-/// **What rots out of `food` this turn, per class** — the line rule above, on a band whose people
-/// need `need` food a turn. Pure: the caller subtracts it. A class the table does not carry never
-/// rots (it has no shelf life to run past); a band that needs nothing (`need ≤ 0`) has every line at
-/// zero, so everything it holds rots — there is nobody to eat it.
-pub fn larder_rot(food: &FoodMix, need: f32, keeping: &KeepingConfig) -> FoodMix {
-    let need = need.max(0.0);
-    let mut rot = FoodMix::default();
-    let mut cumulative = scalar_zero();
-    for class in keeping.by_shelf_life() {
-        let stock = food.get(&class.id);
-        if stock <= scalar_zero() {
-            continue;
+/// **How much of `food` will rot before it is eaten**, on a band that eats `need` a turn and takes
+/// no income — the larder walked forward through the same meal-then-rot turns the sim runs. The
+/// runway's first-turn correction (`snapshot::population`): a larder holding food that will expire
+/// uneaten must not read a runway it cannot keep.
+///
+/// The walk is bounded by the longest shelf life in the table (past it every aged lot has expired),
+/// and a class the table does not carry never rots.
+pub fn rot_ahead(food: &FoodMix, need: f32, keeping: &KeepingConfig) -> Scalar {
+    let ration = scalar_from_f32(need.max(0.0));
+    let order = keeping.eat_order();
+    let horizon = keeping
+        .classes
+        .iter()
+        .map(|class| class.shelf_life_turns.ceil() as u32)
+        .max()
+        .unwrap_or(0);
+    let mut stock = food.clone();
+    let mut rotted = scalar_zero();
+    for _ in 0..=horizon {
+        if stock.is_empty() {
+            break;
         }
-        let line = scalar_from_f32(need * class.shelf_life_turns);
-        let over = (cumulative + stock - line).max(scalar_zero());
-        let rotted = over.min(stock);
-        rot.add(&class.id, rotted);
-        cumulative += stock - rotted;
+        stock.eat(ration, &order);
+        rotted += stock.age_and_expire(|class| keeping.shelf_life(class));
     }
-    rot
+    rotted
 }
 
-/// **The larder a turn of rot would leave** — `food` less [`larder_rot`], as one total. The runway's
-/// first-turn correction (`snapshot::population`): a larder above its lines must not read a runway
-/// it cannot keep.
-pub fn larder_after_rot(food: &FoodMix, need: f32, keeping: &KeepingConfig) -> Scalar {
-    food.total() - larder_rot(food, need, keeping).total()
-}
-
-/// **Does a pack of `class` rot on a walk of `walk_turns`?** — a shelf life shorter than the walk
-/// home. A walk of no length (a local row, a road the whole way) never rots anything, and a class
+/// **Does a pack of `class` rot on a walk of `walk_turns`?** — a shelf life no longer than the walk
+/// home (the larder expires a lot at `age >= shelf`, and a pack's walk is its age). A walk of no length (a local row, a road the whole way) never rots anything, and a class
 /// the table does not carry never rots.
 pub fn rots_in_transit(class: &str, walk_turns: u32, keeping: &KeepingConfig) -> bool {
     keeping
         .shelf_life(class)
-        .is_some_and(|shelf| shelf < walk_turns as f32)
+        .is_some_and(|shelf| shelf <= walk_turns as f32)
 }
 
 /// **THE LARDER ROT, ONCE A TURN** — right after `simulate_population`'s meal and before the turn's
-/// take lands, so the line is measured against the food the band carries into the turn. It also
-/// **resets** [`PopulationCohort::last_food_spoiled`] for the turn (to this rot); the labor pass adds
-/// any caravan transit rot on top.
+/// take lands: every lot ages a turn and a lot at its shelf life rots whole. It also **resets**
+/// [`PopulationCohort::last_food_spoiled`] for the turn (to this rot); the labor pass adds any
+/// caravan transit rot on top. A band that needs nothing rots nothing early: food nobody eats simply
+/// sits until it expires.
 ///
-/// `With<ResidentBand>`: a detached party's pack does not rot in this slice — it carries its
-/// composition through every move and lands home in the band's larder, where it rots by this rule.
+/// `With<ResidentBand>`: a detached party's pack does not rot in this slice — it carries its lots
+/// and their ages through every move and lands home in the band's larder, where they rot by this
+/// rule.
 pub fn rot_band_larders(
     demographics: Res<DemographicsConfigHandle>,
     mut cohorts: Query<&mut PopulationCohort, With<ResidentBand>>,
 ) {
     let config = demographics.get();
     for mut cohort in cohorts.iter_mut() {
-        let cohort = &mut *cohort;
-        let rot = larder_rot(cohort.stores.food(), cohort.last_food_need, &config.keeping);
-        let mut spoiled = scalar_zero();
-        for (class, amount) in rot.iter() {
-            spoiled += cohort.stores.take_food_class(class, amount);
-        }
-        cohort.last_food_spoiled = spoiled.to_f32();
+        let rotted = cohort
+            .stores
+            .age_food(|class| config.keeping.shelf_life(class));
+        cohort.last_food_spoiled = rotted.to_f32();
     }
 }
 
@@ -101,7 +94,6 @@ mod tests {
     const FLESH_SHELF: f32 = 4.0;
     const FRESH_SHELF: f32 = 8.0;
     const DRY_SHELF: f32 = 60.0;
-    const NEED: f32 = 5.0;
 
     fn keeping() -> KeepingConfig {
         KeepingConfig {
@@ -125,70 +117,175 @@ mod tests {
         }
     }
 
-    fn mix(rows: &[(&str, f32)]) -> FoodMix {
-        let mut mix = FoodMix::default();
-        for (class, amount) in rows {
-            mix.add(class, scalar_from_f32(*amount));
-        }
-        mix
-    }
-
     fn close(a: Scalar, b: f32) -> bool {
         (a.to_f32() - b).abs() < 1e-3
     }
 
-    #[test]
-    fn a_small_surplus_never_rots() {
-        // Two turns of flesh, one of greens, a season of grain — every class under its line.
-        let food = mix(&[(FLESH, NEED * 2.0), (FRESH, NEED), (DRY, NEED * 10.0)]);
-        assert!(larder_rot(&food, NEED, &keeping()).is_empty());
+    /// One turn the way the sim runs it: the meal, then the rot pass. Returns what rotted.
+    fn turn(store: &mut crate::components::LocalStore, need: f32) -> Scalar {
+        store.eat_food(scalar_from_f32(need), &keeping().eat_order());
+        store.age_food(|class| keeping().shelf_life(class))
     }
 
     #[test]
-    fn a_larder_above_the_flesh_line_rots_exactly_the_excess() {
-        let excess = 7.0;
-        let food = mix(&[(FLESH, NEED * FLESH_SHELF + excess)]);
-        let rot = larder_rot(&food, NEED, &keeping());
-        assert!(close(rot.get(FLESH), excess), "rot {:?}", rot);
-        assert!(close(rot.total(), excess));
-    }
-
-    #[test]
-    fn faster_classes_count_against_a_slower_line() {
-        // Flesh sits exactly on its own line, so it does not rot; but the band eats it first, so the
-        // greens wait behind it and run past THEIR line by flesh + greens − need × 8.
-        let flesh = NEED * FLESH_SHELF;
-        let fresh = NEED * FRESH_SHELF - flesh + 3.0;
-        let food = mix(&[(FLESH, flesh), (FRESH, fresh)]);
-        let rot = larder_rot(&food, NEED, &keeping());
-        assert!(close(rot.get(FLESH), 0.0));
-        assert!(close(rot.get(FRESH), 3.0), "rot {:?}", rot);
-    }
-
-    #[test]
-    fn the_cumulative_uses_the_post_rot_stock() {
-        // Flesh far past its line rots down to the line; the greens behind it are then measured
-        // against the flesh that SURVIVED, not the flesh that was there.
-        let food = mix(&[
-            (FLESH, 100.0),
-            (FRESH, NEED * FRESH_SHELF - NEED * FLESH_SHELF),
-        ]);
-        let rot = larder_rot(&food, NEED, &keeping());
-        assert!(close(rot.get(FLESH), 100.0 - NEED * FLESH_SHELF));
-        assert!(close(rot.get(FRESH), 0.0), "rot {:?}", rot);
-    }
-
-    #[test]
-    fn a_bigger_band_holds_more_before_rot() {
-        let food = mix(&[(FLESH, 30.0)]);
-        let small = larder_rot(&food, NEED, &keeping()).total();
-        let large = larder_rot(&food, NEED * 2.0, &keeping()).total();
-        assert!(small > scalar_zero(), "the small band is over its line");
+    fn a_kill_is_eaten_down_and_rots_whole_at_the_end_of_its_shelf_life() {
+        // A 48-flesh kill on a band needing 2: the larder reads 46, 44, 42 over the first three
+        // meals and nothing rots until the fourth rot pass, which takes what is left. (The retired
+        // line rule cut it to need × shelf = 8 on the very first turn.)
+        const KILL: f32 = 48.0;
+        const BAND_NEED: f32 = 2.0;
+        let mut store = crate::components::LocalStore::new();
+        store.add_food(FLESH, scalar_from_f32(KILL));
+        for (turn_number, expected) in [(1, 46.0), (2, 44.0), (3, 42.0)] {
+            let rotted = turn(&mut store, BAND_NEED);
+            assert!(close(rotted, 0.0), "turn {turn_number}: nothing rots early");
+            assert!(
+                close(store.food().total(), expected),
+                "turn {turn_number}: larder {:?}",
+                store.food().total()
+            );
+        }
+        let rotted = turn(&mut store, BAND_NEED);
         assert!(
-            large < small,
-            "twice the people hold twice the food before it rots"
+            close(rotted, KILL - BAND_NEED * FLESH_SHELF),
+            "the fourth rot pass takes the remaining {rotted:?}"
         );
-        assert!(close(large, (30.0 - NEED * 2.0 * FLESH_SHELF).max(0.0)));
+        assert!(store.food().is_empty());
+    }
+
+    #[test]
+    fn a_band_that_needs_nothing_keeps_its_food_until_it_expires() {
+        let mut store = crate::components::LocalStore::new();
+        store.add_food(FLESH, scalar_from_f32(10.0));
+        for _ in 1..FLESH_SHELF as u32 {
+            assert!(close(turn(&mut store, 0.0), 0.0));
+        }
+        assert!(close(store.food().total(), 10.0));
+        assert!(close(turn(&mut store, 0.0), 10.0), "it rots at its end");
+    }
+
+    #[test]
+    fn someone_arriving_mid_window_eats_from_the_kill() {
+        // The same kill, but the band grows to need 22 a turn after the second meal.
+        let mut store = crate::components::LocalStore::new();
+        store.add_food(FLESH, scalar_from_f32(48.0));
+        turn(&mut store, 2.0);
+        turn(&mut store, 2.0);
+        turn(&mut store, 22.0);
+        let rotted = turn(&mut store, 22.0);
+        assert!(
+            close(rotted, 0.0),
+            "the bigger band ate it before it expired"
+        );
+        assert!(store.food().is_empty(), "left {:?}", store.food().total());
+    }
+
+    #[test]
+    fn the_meal_takes_the_oldest_lot_first_and_the_fastest_class_first() {
+        let mut food = FoodMix::default();
+        food.add_aged(FLESH, scalar_from_f32(3.0), 2);
+        food.add_aged(FLESH, scalar_from_f32(3.0), 0);
+        food.add(FRESH, scalar_from_f32(3.0));
+        let mut store = crate::components::LocalStore::new();
+        store.add_food_mix(&food);
+        store.eat_food(scalar_from_f32(4.0), &keeping().eat_order());
+        let left: Vec<(String, u32, f32)> = store
+            .food()
+            .batches()
+            .map(|(class, age, amount)| (class.to_string(), age, amount.to_f32()))
+            .collect();
+        assert_eq!(
+            left,
+            vec![(FLESH.to_string(), 0, 2.0), (FRESH.to_string(), 0, 3.0)],
+            "the aged flesh lot went first, then the fresher one; the greens wait"
+        );
+    }
+
+    #[test]
+    fn a_proportional_split_keeps_ages_so_both_halves_expire_together() {
+        let mut food = FoodMix::default();
+        food.add_aged(FLESH, scalar_from_f32(10.0), 3);
+        food.add(FLESH, scalar_from_f32(10.0));
+        let mut stays = crate::components::LocalStore::new();
+        stays.add_food_mix(&food);
+        let moves = stays.take_food_mix(scalar_from_f32(8.0));
+        assert!(close(moves.total(), 8.0));
+        let ages = |mix: &FoodMix| -> Vec<u32> { mix.batches().map(|(_, age, _)| age).collect() };
+        assert_eq!(ages(&moves), vec![3, 0]);
+        assert_eq!(ages(stays.food()), vec![3, 0]);
+        let mut left = stays;
+        let mut gone = crate::components::LocalStore::new();
+        gone.add_food_mix(&moves);
+        let (a, b) = (
+            left.age_food(|c| keeping().shelf_life(c)),
+            gone.age_food(|c| keeping().shelf_life(c)),
+        );
+        assert!(
+            a > scalar_zero() && b > scalar_zero(),
+            "both halves hold the aged lot"
+        );
+        assert!(left.food().get(FLESH) > scalar_zero());
+    }
+
+    #[test]
+    fn a_pack_lands_aged_by_its_walk_and_expires_that_much_sooner() {
+        const WALK: u32 = 2;
+        let turns_until_it_rots = |age: u32| {
+            let mut store = crate::components::LocalStore::new();
+            store.add_food_aged(FLESH, scalar_from_f32(5.0), age);
+            (1..)
+                .find(|_| turn(&mut store, 0.0) > scalar_zero())
+                .expect("it rots")
+        };
+        assert_eq!(turns_until_it_rots(0), FLESH_SHELF as u32);
+        assert_eq!(turns_until_it_rots(WALK), FLESH_SHELF as u32 - WALK);
+    }
+
+    #[test]
+    fn merging_keeps_the_incoming_ages_and_merges_equal_ones() {
+        let mut a = FoodMix::default();
+        a.add_aged(FLESH, scalar_from_f32(1.0), 2);
+        let mut b = FoodMix::default();
+        b.add_aged(FLESH, scalar_from_f32(2.0), 2);
+        b.add(FLESH, scalar_from_f32(4.0));
+        a.merge(&b);
+        let lots: Vec<(u32, f32)> = a.batches().map(|(_, age, n)| (age, n.to_f32())).collect();
+        assert_eq!(lots, vec![(2, 3.0), (0, 4.0)]);
+    }
+
+    #[test]
+    fn the_forecast_is_what_the_turns_actually_rot() {
+        // A mixed, mixed-age larder: the forward walk must name exactly what the turns then rot.
+        let mut food = FoodMix::default();
+        food.add_aged(FLESH, scalar_from_f32(30.0), 1);
+        food.add(FLESH, scalar_from_f32(20.0));
+        food.add(FRESH, scalar_from_f32(25.0));
+        food.add(DRY, scalar_from_f32(40.0));
+        for need in [0.0, 2.0, 5.0, 12.0, 60.0] {
+            let predicted = rot_ahead(&food, need, &keeping());
+            let mut store = crate::components::LocalStore::new();
+            store.add_food_mix(&food);
+            let mut actual = scalar_zero();
+            for _ in 0..=DRY_SHELF as u32 {
+                actual += turn(&mut store, need);
+            }
+            assert!(
+                close(predicted, actual.to_f32()),
+                "need {need}: predicted {predicted:?} vs actual {actual:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_batches_survive_a_checkpoint_round_trip() {
+        let mut food = FoodMix::default();
+        food.add_aged(FLESH, scalar_from_f32(3.0), 2);
+        food.add(FLESH, scalar_from_f32(1.5));
+        food.add(DRY, scalar_from_f32(9.0));
+        let json = serde_json::to_string(&food).expect("serializes");
+        let back: FoodMix = serde_json::from_str(&json).expect("deserializes");
+        assert_eq!(back, food);
+        assert_eq!(back.batches().count(), 3);
     }
 
     #[test]
@@ -208,7 +305,9 @@ mod tests {
     fn a_walk_longer_than_a_shelf_life_rots_that_class_and_no_other() {
         let keeping = keeping();
         assert!(rots_in_transit(FLESH, FLESH_SHELF as u32 + 1, &keeping));
-        assert!(!rots_in_transit(FLESH, FLESH_SHELF as u32, &keeping));
+        // A walk of exactly the shelf life is lost too: the larder expires a lot at `age >= shelf`.
+        assert!(rots_in_transit(FLESH, FLESH_SHELF as u32, &keeping));
+        assert!(!rots_in_transit(FLESH, FLESH_SHELF as u32 - 1, &keeping));
         assert!(!rots_in_transit(DRY, FLESH_SHELF as u32 + 1, &keeping));
         assert!(!rots_in_transit(
             FLESH,

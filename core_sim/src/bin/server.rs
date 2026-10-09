@@ -460,7 +460,9 @@ fn main() {
     loop {
         let flat_server: &SnapshotServer = &snapshot_flat_server;
         let (connection, command, wire_line) = match wait_for_command(&command_rx, &turn_gate) {
-            LoopWake::Delivered(connection, command, wire_line) => (connection, command, wire_line),
+            LoopWake::Delivered(connection, command, wire_line) => {
+                (connection, *command, wire_line)
+            }
             LoopWake::TurnDeadline => {
                 // The open turn's wait ran out. `settle_open_turn` re-reads the queue rather than
                 // trusting the wake, so a deadline that raced the last submission still resolves the
@@ -765,7 +767,7 @@ fn main() {
 /// Why the command loop woke up.
 enum LoopWake {
     /// A command arrived, from this connection, with its wire form when a recorder is open.
-    Delivered(ConnectionId, Command, WireLine),
+    Delivered(ConnectionId, Box<Command>, WireLine),
     /// The open turn's wait ran out before anything arrived.
     TurnDeadline,
     /// Every sender is gone.
@@ -783,7 +785,9 @@ fn wait_for_command(commands: &Receiver<CommandDelivery>, turn_gate: &SeatTurnGa
         None => commands.recv().map_err(|_| RecvTimeoutError::Disconnected),
     };
     match received {
-        Ok((connection, command, wire_line)) => LoopWake::Delivered(connection, command, wire_line),
+        Ok((connection, command, wire_line)) => {
+            LoopWake::Delivered(connection, Box::new(command), wire_line)
+        }
         Err(RecvTimeoutError::Timeout) => LoopWake::TurnDeadline,
         Err(RecvTimeoutError::Disconnected) => LoopWake::Closed,
     }
@@ -1279,6 +1283,7 @@ impl BuildSourceRef {
             (_, _, Some(herd_id)) => Some(LaborTarget::Hunt {
                 fauna_id: herd_id.clone(),
                 floor: SOURCE_NAMED_NOT_ASSIGNED,
+                move_with_herd: false,
             }),
             _ => None,
         }
@@ -1390,6 +1395,9 @@ enum Command {
         /// species keys, **empty = the whole basket**. Rejected with a reason if the roster does not
         /// know a key or it does not grow on this tile; ignored by every other role.
         take_species: Vec<String>,
+        /// **Migration mode** — on a hunt row, the band's camp moves with the herd. Rejected with a
+        /// reason unless the herd is migratory; ignored by every other role.
+        move_with_herd: bool,
     },
     MoveBand {
         faction: FactionId,
@@ -3600,7 +3608,9 @@ fn seed_source_yield(
             }
             seeded
         }
-        LaborTarget::Hunt { fauna_id, floor } => {
+        LaborTarget::Hunt {
+            fauna_id, floor, ..
+        } => {
             let Some(herd) = app.world.resource::<HerdRegistry>().find(fauna_id) else {
                 return; // herd gone → the assignment lapses next turn.
             };
@@ -4049,7 +4059,26 @@ fn validate_labor_policy(
 ) -> Result<(), String> {
     let _ = faction;
     match target {
-        LaborTarget::Hunt { fauna_id, floor } => {
+        LaborTarget::Hunt {
+            fauna_id,
+            floor,
+            move_with_herd,
+        } => {
+            // **MIGRATION MODE FOLLOWS A MIGRATORY HERD ONLY** (`docs/plan_roaming_bands.md`): a
+            // resident herd never leaves its few tiles, so there is nothing to relocate for.
+            if *move_with_herd {
+                let migratory = app
+                    .world
+                    .resource::<HerdRegistry>()
+                    .find(fauna_id)
+                    .is_some_and(|herd| herd.size_class == core_sim::SizeClass::Migratory);
+                if !migratory {
+                    return Err(
+                        "Only a migratory herd can be followed — this one stays where it is."
+                            .to_string(),
+                    );
+                }
+            }
             // **A species that pays NOTHING may only be worked at floor `0`.** "Harvest it
             // sustainably" is meaningless for a quarry with no product: the only coherent reason to
             // put hunters on it is to remove it, so every floor that would leave some standing is
@@ -5032,6 +5061,7 @@ fn handle_assign_labor(
     floor: Option<f32>,
     kit_id: Option<String>,
     take_species: Vec<String>,
+    move_with_herd: bool,
 ) {
     // **DID THE PLAYER NAME A FLOOR AT ALL** — kept before the line below resolves absence to the
     // default, because the `extract` arm answers *absence* differently on ground that never renews
@@ -5090,6 +5120,7 @@ fn handle_assign_labor(
             Some(id) if !id.trim().is_empty() => LaborTarget::Hunt {
                 fauna_id: id,
                 floor,
+                move_with_herd,
             },
             _ => {
                 emit_command_failure(
@@ -5304,6 +5335,15 @@ fn handle_assign_labor(
     let (applied, assigned_total, dropped_row) = {
         let mut allocation = band_allocation_mut(app, band.entity);
         let applied = allocation.set_assignment(target.clone(), workers, available, crew_kit);
+        // **ONE HERD AT A TIME** — migration mode on this hunt row turns it off on the band's others.
+        if let LaborTarget::Hunt {
+            fauna_id,
+            move_with_herd: true,
+            ..
+        } = &target
+        {
+            allocation.clear_move_with_herd_except(Some(fauna_id));
+        }
         // **Nothing built, nothing DECLARED, nobody on it — the band's business here is over.**
         // The **queue entry** is part of the test: a `Cultivate` declared this turn has no progress
         // on its meter yet, so dropping the row on the ground's answer alone would abandon a build
@@ -5424,6 +5464,11 @@ fn handle_move_band(
     app.world
         .entity_mut(band.entity)
         .insert(BandTravel::to(target));
+    // **A move order ends migration mode** — otherwise next turn's follow would pull the band back
+    // to the herd it was just told to leave.
+    if let Some(mut allocation) = app.world.get_mut::<LaborAllocation>(band.entity) {
+        allocation.clear_move_with_herd_except(None);
+    }
 
     // If the moved entity is an expedition, a fresh `move_band` un-latches AwaitingOrders (or
     // redirects a Returning party back out to explore): re-arm it Outbound and re-open the
@@ -5916,6 +5961,7 @@ fn resolve_raid_kit(
         &LaborTarget::Hunt {
             fauna_id: fauna_id.to_string(),
             floor: SOURCE_NAMED_NOT_ASSIGNED,
+            move_with_herd: false,
         },
     );
     let resolved = equipment_cfg.resolve_kit_or(kit_id, KitJob::Hunt, absent);
@@ -7459,6 +7505,7 @@ fn handle_tame(app: &mut bevy::prelude::App, faction: FactionId, herd_id: String
     let target = LaborTarget::Hunt {
         fauna_id: herd_id.clone(),
         floor: SOURCE_NAMED_NOT_ASSIGNED,
+        move_with_herd: false,
     };
     if let Err(reason) = validate_improvement(app, faction, &target, Improvement::Tame) {
         warn!(
@@ -8322,6 +8369,7 @@ fn handle_corral(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) 
     let target = LaborTarget::Hunt {
         fauna_id: fauna_id.clone(),
         floor: SOURCE_NAMED_NOT_ASSIGNED,
+        move_with_herd: false,
     };
     if let Err(reason) = validate_improvement(app, faction, &target, Improvement::Corral) {
         warn!(
@@ -9031,7 +9079,8 @@ fn handle_extend_pen(app: &mut bevy::prelude::App, faction: FactionId, tile: UVe
     // A band must be keeping the pen (a Hunt assignment on it, any policy) or the ring never accrues.
     let keeper_target = LaborTarget::Hunt {
         fauna_id: fauna_id.clone(),
-        floor: SOURCE_NAMED_NOT_ASSIGNED, // matched by `same_source` (herd id) — the floor is irrelevant
+        floor: SOURCE_NAMED_NOT_ASSIGNED, // matched by `same_source` (herd id) — the floor is irrelevant,
+        move_with_herd: false,
     };
     let keepers = app
         .world
@@ -9202,7 +9251,8 @@ fn handle_set_herd_output(
     // accrues — `extend_pen`'s own requirement, for its own reason.
     let keeper_target = LaborTarget::Hunt {
         fauna_id: fauna_id.clone(),
-        floor: SOURCE_NAMED_NOT_ASSIGNED, // matched by `same_source` (herd id) — the floor is irrelevant
+        floor: SOURCE_NAMED_NOT_ASSIGNED, // matched by `same_source` (herd id) — the floor is irrelevant,
+        move_with_herd: false,
     };
     let keepers = app
         .world
@@ -10529,6 +10579,7 @@ fn command_from_payload(
             floor,
             kit_id,
             take_species,
+            move_with_herd,
         } => Some(Command::AssignLabor {
             faction: FactionId(faction_id),
             band_id,
@@ -10541,6 +10592,7 @@ fn command_from_payload(
             floor,
             kit_id,
             take_species,
+            move_with_herd,
         }),
         ProtoCommandPayload::MoveBand {
             faction_id,
@@ -11906,6 +11958,7 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
             floor,
             kit_id,
             take_species,
+            move_with_herd,
         } => {
             handle_assign_labor(
                 app,
@@ -11920,6 +11973,7 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
                 floor,
                 kit_id,
                 take_species,
+                move_with_herd,
             );
         }
         Command::MoveBand {
@@ -14575,6 +14629,7 @@ mod tests {
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
                 floor: 0.5,
+                move_with_herd: false,
             },
         );
 
@@ -14752,6 +14807,7 @@ mod tests {
             None,
             None,
             Vec::new(),
+            false,
         );
         assert_eq!(
             row(&mut app, holds_stone),
@@ -14772,6 +14828,7 @@ mod tests {
             None,
             None,
             Vec::new(),
+            false,
         );
         assert_eq!(
             row(&mut app, holds_none),
@@ -14815,6 +14872,7 @@ mod tests {
                 None,
                 None,
                 Vec::new(),
+                false,
             );
             assert_eq!(
                 staffed(&mut app),
@@ -14837,6 +14895,7 @@ mod tests {
             None,
             None,
             Vec::new(),
+            false,
         );
         assert_eq!(
             role_crew(&mut app, faction, &LaborTarget::Roadwork),
@@ -14855,6 +14914,7 @@ mod tests {
             None,
             None,
             Vec::new(),
+            false,
         );
         assert_eq!(
             role_crew(&mut app, faction, &LaborTarget::Roadwork),
@@ -14894,6 +14954,156 @@ mod tests {
             .filter(|(cohort, _)| cohort.faction == faction)
             .map(|(_, allocation)| allocation.workers_on(role))
             .sum()
+    }
+
+    /// A herd of `species` seated at `at`, for the migration-mode command tests.
+    fn seat_herd(
+        app: &mut bevy::prelude::App,
+        id: &str,
+        species: &str,
+        size_class: core_sim::SizeClass,
+        at: UVec2,
+    ) {
+        const BIOMASS: f32 = 1_000.0;
+        const FODDER_PER_BIOMASS: f32 = 0.0;
+        const REGROWTH_RATE: f32 = 0.05;
+        const BODY_MASS: f32 = 20.0;
+        app.world
+            .resource_mut::<core_sim::HerdRegistry>()
+            .herds
+            .push(core_sim::Herd::new(
+                id.to_string(),
+                species.to_string(),
+                size_class,
+                vec![at],
+                BIOMASS,
+                BIOMASS,
+                FODDER_PER_BIOMASS,
+                REGROWTH_RATE,
+                BODY_MASS,
+            ));
+    }
+
+    /// Put one hand on a hunt of `herd`, with migration mode `follow`.
+    fn hunt(app: &mut bevy::prelude::App, band: u64, herd: &str, follow: bool) {
+        handle_assign_labor(
+            app,
+            FactionId(0),
+            Some(band),
+            "hunt".to_string(),
+            1,
+            None,
+            None,
+            Some(herd.to_string()),
+            None,
+            None,
+            None,
+            Vec::new(),
+            follow,
+        );
+    }
+
+    /// Whether this faction's band holds a hunt row on `herd` with migration mode on.
+    fn follows(app: &mut bevy::prelude::App, herd: &str) -> Option<bool> {
+        app.world
+            .query::<&LaborAllocation>()
+            .iter(&app.world)
+            .flat_map(|allocation| allocation.assignments.iter())
+            .find_map(|row| match &row.target {
+                LaborTarget::Hunt {
+                    fauna_id,
+                    move_with_herd,
+                    ..
+                } if fauna_id == herd => Some(*move_with_herd),
+                _ => None,
+            })
+    }
+
+    /// ⛔ **MIGRATION MODE FOLLOWS A MIGRATORY HERD ONLY** (`docs/plan_roaming_bands.md`): the flag on
+    /// a resident herd's hunt row is refused with a reason and puts no row on the board; on a
+    /// migratory herd's it is stored on the row.
+    #[test]
+    fn migration_mode_is_refused_on_a_resident_herd_and_stored_on_a_migratory_one() {
+        let mut app = build_test_app();
+        app.update();
+        let band = starting_band_id(&mut app, FactionId(0));
+        let here = UVec2::new(1, 1);
+        seat_herd(
+            &mut app,
+            "resident",
+            "Red Deer",
+            core_sim::SizeClass::Big,
+            here,
+        );
+        seat_herd(
+            &mut app,
+            "wanderer",
+            "Thunder Mammoths",
+            core_sim::SizeClass::Migratory,
+            here,
+        );
+
+        hunt(&mut app, band, "resident", true);
+        assert_eq!(
+            follows(&mut app, "resident"),
+            None,
+            "a refused command leaves no row"
+        );
+        assert!(
+            app.world.resource::<CommandEventLog>().iter().any(|entry| {
+                entry.detail.as_deref().is_some_and(|detail| {
+                    detail.contains("migratory") || entry.label.contains("migratory")
+                })
+            }),
+            "the refusal names its reason"
+        );
+
+        hunt(&mut app, band, "wanderer", true);
+        assert_eq!(follows(&mut app, "wanderer"), Some(true));
+        hunt(&mut app, band, "wanderer", false);
+        assert_eq!(
+            follows(&mut app, "wanderer"),
+            Some(false),
+            "re-sending the row without the flag turns it off"
+        );
+    }
+
+    /// ⛔ **ONE HERD AT A TIME, AND A MOVE ORDER ENDS IT** — setting the flag on a second hunt row
+    /// clears it on the first; `move_band` clears it everywhere.
+    #[test]
+    fn migration_mode_follows_one_herd_and_a_move_order_ends_it() {
+        let mut app = build_test_app();
+        app.update();
+        let band = starting_band_id(&mut app, FactionId(0));
+        let here = UVec2::new(1, 1);
+        for id in ["wanderer_a", "wanderer_b"] {
+            seat_herd(
+                &mut app,
+                id,
+                "Thunder Mammoths",
+                core_sim::SizeClass::Migratory,
+                here,
+            );
+        }
+        hunt(&mut app, band, "wanderer_a", true);
+        hunt(&mut app, band, "wanderer_b", true);
+        assert_eq!(follows(&mut app, "wanderer_a"), Some(false));
+        assert_eq!(follows(&mut app, "wanderer_b"), Some(true));
+
+        // Any land tile will do: the band's own.
+        let camp = {
+            let tile = app
+                .world
+                .query::<(&PopulationCohort, &BandId)>()
+                .iter(&app.world)
+                .find(|(_, id)| id.0 == band)
+                .map(|(cohort, _)| cohort.current_tile)
+                .expect("the starting band exists");
+            app.world.get::<Tile>(tile).expect("a tile").position
+        };
+        handle_move_band(&mut app, FactionId(0), Some(band), camp.x, camp.y);
+        assert_eq!(follows(&mut app, "wanderer_a"), Some(false));
+        assert_eq!(follows(&mut app, "wanderer_b"), Some(false));
     }
 
     /// `upkeep_mode`'s refusals ride the `CancelOrder` feed channel, exactly as
@@ -15228,6 +15438,7 @@ mod tests {
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
                 floor: 0.5,
+                move_with_herd: false,
             },
         );
         {
@@ -15355,6 +15566,7 @@ mod tests {
             None,
             None,
             Vec::new(),
+            false,
         );
         let allocation = app
             .world
@@ -15657,6 +15869,7 @@ mod tests {
             None,
             None,
             vec![displaced.clone()],
+            false,
         );
         assert_eq!(
             band_take_selection(&app, coord),
@@ -15682,6 +15895,7 @@ mod tests {
             None,
             None,
             vec![displaced.clone()],
+            false,
         );
 
         assert!(
@@ -15780,6 +15994,7 @@ mod tests {
             None,
             None,
             vec![crop.clone(), displaced],
+            false,
         );
 
         assert_eq!(
@@ -15969,6 +16184,7 @@ mod tests {
             None,
             None,
             take.iter().map(|key| (*key).to_string()).collect(),
+            false,
         );
     }
 
@@ -16061,6 +16277,7 @@ mod tests {
             None,
             None,
             Vec::new(),
+            false,
         );
     }
 
@@ -16674,6 +16891,7 @@ mod tests {
                 species: None,
                 kit_id: None,
                 take_species: Vec::new(),
+                move_with_herd: false,
             };
             log_dispatched_command(&mut log, &command);
             apply_command(&mut app, command);
@@ -16746,6 +16964,7 @@ mod tests {
             species: None,
             kit_id: None,
             take_species: Vec::new(),
+            move_with_herd: false,
         };
         log_dispatched_command(&mut log, &command);
         apply_command(&mut app, command);
@@ -17690,6 +17909,7 @@ mod tests {
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
                 floor: 0.5,
+                move_with_herd: false,
             },
         );
 
@@ -17737,6 +17957,7 @@ mod tests {
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
                 floor: 0.5,
+                move_with_herd: false,
             },
         );
 
@@ -17769,6 +17990,7 @@ mod tests {
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
                 floor: 0.5,
+                move_with_herd: false,
             },
         );
 
@@ -17803,6 +18025,7 @@ mod tests {
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
                 floor: 0.5,
+                move_with_herd: false,
             },
         );
 
@@ -17839,6 +18062,7 @@ mod tests {
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
                 floor: 0.5,
+                move_with_herd: false,
             },
         );
 
@@ -17973,6 +18197,7 @@ mod tests {
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
                 floor: 0.5,
+                move_with_herd: false,
             },
         );
 
@@ -18011,6 +18236,7 @@ mod tests {
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
                 floor: 0.5,
+                move_with_herd: false,
             },
         );
 
@@ -18057,6 +18283,7 @@ mod tests {
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
                 floor: 0.5,
+                move_with_herd: false,
             },
         );
 
@@ -18102,6 +18329,7 @@ mod tests {
                 LaborTarget::Hunt {
                     fauna_id: id.clone(),
                     floor: 0.5,
+                    move_with_herd: false,
                 },
             );
 
@@ -18146,6 +18374,7 @@ mod tests {
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
                 floor: 0.5,
+                move_with_herd: false,
             },
         );
 
@@ -18278,6 +18507,7 @@ mod tests {
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
                 floor: 0.5,
+                move_with_herd: false,
             },
         );
         handle_set_herd_output(&mut app, faction, &id, HALF_TO_MILK);
@@ -18311,6 +18541,7 @@ mod tests {
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
                 floor: 0.5,
+                move_with_herd: false,
             },
         );
 
@@ -18383,6 +18614,7 @@ mod tests {
                 None,
                 Some(bad_kit.to_string()),
                 Vec::new(),
+                false,
             );
             let rejected = app.world.resource::<CommandEventLog>().iter().any(|entry| {
                 entry
@@ -18459,6 +18691,7 @@ mod tests {
             None,
             Some(RETIRED_KIT.to_string()),
             Vec::new(),
+            false,
         );
         assert!(
             !staffed(&mut app),
@@ -18513,6 +18746,7 @@ mod tests {
                 None,
                 named.map(str::to_string),
                 Vec::new(),
+                false,
             );
             let target = if role == "roadwork" {
                 LaborTarget::Roadwork
@@ -18710,6 +18944,7 @@ mod tests {
             LaborTarget::Hunt {
                 fauna_id: herd_id.to_string(),
                 floor: 0.5,
+                move_with_herd: false,
             },
         );
         app.world.entity_mut(band).insert(BandId(FIXTURE_BAND_ID));
@@ -18823,6 +19058,7 @@ mod tests {
             &LaborTarget::Hunt {
                 fauna_id: id,
                 floor: 0.5,
+                move_with_herd: false,
             },
             Improvement::Cultivate,
         );
@@ -18963,6 +19199,7 @@ mod tests {
             Some(floor),
             None,
             Vec::new(),
+            false,
         );
     }
 
@@ -18989,6 +19226,7 @@ mod tests {
             floor,
             None,
             Vec::new(),
+            false,
         );
     }
 
@@ -19024,6 +19262,7 @@ mod tests {
             Some(floor),
             None,
             Vec::new(),
+            false,
         );
     }
 
@@ -19184,6 +19423,7 @@ mod tests {
             Some(SUSTAIN_FLOOR),
             None,
             Vec::new(),
+            false,
         );
         resolve_labor(&mut app);
         let site = app
@@ -19268,6 +19508,7 @@ mod tests {
                 Some(SUSTAIN_FLOOR),
                 None,
                 Vec::new(),
+                false,
             );
         }
         app.world
@@ -20161,6 +20402,7 @@ mod tests {
             Some(SUSTAIN_FLOOR),
             Some(SHARED_HUNT_KIT.to_string()),
             Vec::new(),
+            false,
         );
     }
 
@@ -20507,6 +20749,7 @@ mod tests {
             LaborTarget::Hunt {
                 fauna_id: CANCEL_HERD_ID.to_string(),
                 floor: 0.5,
+                move_with_herd: false,
             },
             CANCEL_HUNT_WORKERS,
             available,
@@ -21069,6 +21312,7 @@ mod tests {
             None,
             None,
             Vec::new(),
+            false,
         );
 
         assert_eq!(
@@ -22794,6 +23038,7 @@ mod tests {
             None,
             None,
             Vec::new(),
+            false,
         );
         assert_eq!(
             forage_row(&mut app),
@@ -22917,6 +23162,7 @@ mod tests {
                 None,
                 None,
                 Vec::new(),
+                false,
             );
         }
 
@@ -24251,6 +24497,7 @@ mod tests {
             None,
             Some(kit.to_string()),
             Vec::new(),
+            false,
         );
     }
 
@@ -24932,6 +25179,7 @@ mod tests {
             None,
             None,
             Vec::new(),
+            false,
         );
 
         assert_eq!(
@@ -26796,6 +27044,7 @@ mod tests {
                 Some(PLAYED_DEADFALL_FLOOR),
                 Some("sledding".to_string()),
                 Vec::new(),
+                false,
             );
         };
         assign(&mut app, LONE_CUTTER);

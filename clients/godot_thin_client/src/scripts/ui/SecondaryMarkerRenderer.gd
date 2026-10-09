@@ -312,6 +312,24 @@ func _hidden_marks(tile: Vector2i) -> String:
 func set_hidden_source_state(state: Dictionary) -> void:
 	_hidden_source_state = state if state is Dictionary else {}
 
+## The herds the viewer's bands are following (`{herd_id: true}`), pushed each frame by `MapView._draw`
+## — threaded across rather than reached for, the `set_hidden_source_state` pattern.
+var _followed_herds: Dictionary = {}
+
+func set_followed_herds(followed: Dictionary) -> void:
+	_followed_herds = followed if followed is Dictionary else {}
+
+## A thin dashed ring round a followed herd's marker: arcs of `HERD_FOLLOW_RING_DASH_SHARE` of each
+## period, `HERD_FOLLOW_RING_DASHES` periods round. Drawn UNDER the glyph, like the distress ring.
+func _draw_follow_ring(icon_center: Vector2, radius: float) -> void:
+	var ring_radius: float = radius * _view.HERD_FOLLOW_RING_FACTOR
+	var period: float = TAU / float(_view.HERD_FOLLOW_RING_DASHES)
+	var dash: float = period * _view.HERD_FOLLOW_RING_DASH_SHARE
+	for i in range(_view.HERD_FOLLOW_RING_DASHES):
+		var start: float = period * float(i)
+		_view.draw_arc(icon_center, ring_radius, start, start + dash, _view.HERD_FOLLOW_RING_DASH_SEGMENTS,
+			Color(HudStyle.SIGNAL, 0.9), _view.HERD_FOLLOW_RING_WIDTH)
+
 func draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
 	var herd_id := String(herd.get("id", ""))
 	var x: int = int(herd.get("x", -1))
@@ -337,6 +355,9 @@ func draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
 	# full-color emoji, so `modulate` just yields a slightly-darker brown animal (rendered, looked at,
 	# reverted). The distress read has to be geometry the emoji cannot swallow.
 	var starving := PenStatus.herd_is_starving(herd)
+	var followed := _followed_herds.has(herd_id)
+	if followed:
+		_draw_follow_ring(icon_center, radius)
 	if starving:
 		_view.draw_arc(icon_center, radius * _view.HERD_DISTRESS_RING_FACTOR, 0, TAU, _view.HERD_DISTRESS_RING_SEGMENTS,
 			_view.HERD_DISTRESS_COLOR, _view.HERD_DISTRESS_RING_WIDTH)
@@ -347,9 +368,10 @@ func draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
 	if starving:
 		_draw_distress_badge(icon_center, icon_size)
 
-	# Migration arrow — thinner, and only on the hovered/selected herd tile to cut clutter.
+	# Migration arrow — thinner, and only on the hovered/selected herd tile to cut clutter — EXCEPT a
+	# herd one of the viewer's bands is following, whose next step is the band's next step.
 	var tile := Vector2i(x, y)
-	if tile == _view._hovered_tile or tile == _view.selected_tile:
+	if followed or tile == _view._hovered_tile or tile == _view.selected_tile:
 		var next_x := int(herd.get("next_x", -1))
 		var next_y := int(herd.get("next_y", -1))
 		if next_x >= 0 and next_y >= 0:

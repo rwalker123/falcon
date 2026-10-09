@@ -647,6 +647,37 @@ FAILURE state leads with `HudSelectionVocab.RUNG_HAZARD_GLYPH`:
 > blocked build call it — this card and the BUILD QUEUE row's tooltip, the date column having room for
 > the headline alone.
 >
+> **THE `escapement` REASON CARRIES ITS DEPENDENCY AND ITS NUMBERS** (found in playtest: a Tame Wild
+> Boar read `Blocked 3%` over *"Fewer animals here than you leave standing."* and the player could not
+> tell why). The rung builds only while the crew is actually taking from the source, and the take room
+> is `max(0, B - floor x K)`, so the sentence says both: `Builds only while you hunt it — 61 here, you
+> leave 67 (50%) standing.` (plant: `…harvest it — 12 here, you leave 15 (50%) standing.`, from
+> `BUILD_BLOCKED_ESCAPEMENT_*_FORMAT`). The figures are in the units the card's own stock row prints —
+> a herd counts bodies (`Herd 61 / 133`), a patch is whole biomass — the middle one is
+> `ceil(floor x ceiling)`, and the percent is the floor of the assignment working the source
+> (`HudBandLaborState.working_floor_hunt` / `_forage`; the queue row passes its model's floor). They
+> are composed in `DetailFormat.escapement_reason_numbers`, threaded through `build_blocked_lines`'
+> `leave_floor`; a caller with no floor (or a source with no ceiling) gets the numberless
+> `BUILD_BLOCKED_ESCAPEMENT_HERD` / `_PLANT` sentences, which keep the dependency. **The sentence is
+> still ONE sentence, but with the figures it wraps to two lines on the tile card's ~245px column** —
+> the one-line budget the cut remedy bought is spent on the numbers.
+>
+> **`predators_ate_growth` IS THE SECOND ESCAPEMENT-SHAPED CAUSE** (animal Tame only, same
+> `buildBlockedReason` path). Each turn the herd regrows, a predator pack eats that growth, and THEN
+> the Tame gate looks for take room, so a herd can be refused while standing above the player's own
+> floor — the escapement sentence would then blame a floor that was not the cause. The sentence names
+> the predator and quotes the same two figures (no percent): `Grey Wolf Pack ate this turn's growth —
+> 61 here, you leave 67 standing.` Without reachable numbers: `… ate this turn's growth, so there was
+> none to spare.`; with no predator named (empty key): `Predators ate …`. The wire carries the
+> predator as its fauna_config species KEY (`predator_eaten_by`, `"wolf"`; `predator_eaten` is the
+> biomass drawn, decoded in `dict/subsistence.rs`); the client holds no fauna roster, so
+> `DetailFormat.predator_display_name` takes the `species` display name of a visible herd of that
+> species (matched through `FoodIcons.species_key_for`, used as-is) and falls back to the humanized
+> key (`Wolf`) where none is in view. `build_blocked_lines` takes the world herds for that lookup.
+> Frames: `herd_blocked_escapement`, `herd_blocked_predators` (`chapters/improvements.gd`, a boar at
+> 61 / 133 with a 50% floor); the escapement patch frame's stock sits below its line, since a stock
+> above it reads as if there were room.
+>
 > **THE KEEPING REMEDY SURVIVES, NARROWED TO THE ONE KEY IT IS TRUE OF.** It renders where the cause is
 > `escapement` **and** the keeping is actually short — and it renders **beside** the cause, never
 > instead of it. They are two facts with two different remedies (the floor or the stock; versus

@@ -494,6 +494,10 @@ pub enum CommandPayload {
         /// everything"*. Order and duplicates are irrelevant: the sim sorts and deduplicates on
         /// construction. Ignored by every other role.
         take_species: Vec<String>,
+        /// **MIGRATION MODE** (`docs/plan_roaming_bands.md`) — on a **hunt** row, the band's camp
+        /// moves with the herd it hunts. Only a migratory herd can be followed; anything else is a
+        /// command failure with a reason. Ignored by every other role.
+        move_with_herd: bool,
     },
     MoveBand {
         faction_id: u32,
@@ -2072,6 +2076,7 @@ impl CommandEnvelope {
                 floor,
                 kit_id,
                 take_species,
+                move_with_herd,
             } => pb::command_envelope::Command::AssignLabor(pb::AssignLaborCommand {
                 faction_id: *faction_id,
                 band_id: *band_id,
@@ -2085,6 +2090,7 @@ impl CommandEnvelope {
                 floor: *floor,
                 kit_id: kit_id.clone(),
                 take_species: take_species.clone(),
+                move_with_herd: *move_with_herd,
             }),
             CommandPayload::MoveBand {
                 faction_id,
@@ -2680,6 +2686,7 @@ impl CommandEnvelope {
                 floor: cmd.floor,
                 kit_id: cmd.kit_id,
                 take_species: cmd.take_species,
+                move_with_herd: cmd.move_with_herd,
             },
             pb::command_envelope::Command::MoveBand(cmd) => CommandPayload::MoveBand {
                 faction_id: cmd.faction_id,

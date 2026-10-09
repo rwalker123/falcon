@@ -419,6 +419,10 @@ message AssignLaborCommand {
   // Order and duplicates do not matter: the sim sorts and deduplicates on construction.
   // Ignored by every non-forage role. Appended (append-only).
   repeated string take_species = 12;
+  // MIGRATION MODE (docs/plan_roaming_bands.md): while true on a HUNT row, the band's camp moves
+  // with the herd it hunts. Only a migratory herd can be followed - anything else is a COMMAND
+  // FAILURE with a reason. Ignored by every non-hunt role. Appended (append-only).
+  bool move_with_herd = 13;
 }
 
 // Travel a band toward a target tile at band_move_tiles_per_turn/turn.

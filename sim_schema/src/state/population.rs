@@ -463,6 +463,10 @@ pub struct LaborAssignmentState {
     /// The food they carry, gross of the walk's rot. Appended last.
     #[serde(default)]
     pub homeward_food: f32,
+    /// **Migration mode** — a hunt row only: the band's camp moves with the herd this row hunts.
+    /// Appended last.
+    #[serde(default)]
+    pub move_with_herd: bool,
 }
 
 /// **ONE LINE OF ONE TAKE ROW'S TABLE OF EQUIPMENT** — a row of [`LaborAssignmentState::kit_toe`].
@@ -1755,6 +1759,14 @@ pub struct PopulationCohortState {
     /// Appended last.
     #[serde(default)]
     pub independence_grievance_threshold: f32,
+    /// The band's own culture layer's resolved values, one per `CultureTraitAxis` in `index()`
+    /// order (15). Empty when the band has no layer; a foreign row defaults. Appended last.
+    #[serde(default)]
+    pub culture_traits: Vec<f32>,
+    /// The ancestor pull the last culture reconcile applied to the band: `tie × ancestor_pull[axis]`
+    /// per axis, `culture_traits` order. Empty when the band took no pull. Appended last.
+    #[serde(default)]
+    pub culture_ancestor_pull: Vec<f32>,
 }
 
 /// `PopulationCohortState::belief_relay_hops` for a band that holds an anchor no chain of its own

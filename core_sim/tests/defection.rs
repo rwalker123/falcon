@@ -906,6 +906,7 @@ fn a_band_that_goes_over_takes_the_improvements_only_it_works() {
         LaborTarget::Hunt {
             fauna_id: herd.clone(),
             floor: DEFAULT_ESCAPEMENT_FLOOR,
+            move_with_herd: false,
         },
     );
     work(&mut app, sibling, forage_row(shared));

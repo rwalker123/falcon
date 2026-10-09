@@ -29,8 +29,9 @@ herds move, so a hunt that started local is not local forever. As-built:
 
 ### Larder rot applies
 
-Meat in the larder rots by the existing line rule (`spoilage::larder_rot`; `flesh` keeps 4 turns).
-That is permanent, not a stopgap.
+Meat in the larder rots when its shelf life runs out (`flesh` keeps 4 turns): a kill is eaten from
+for 4 turns and whatever is left then rots, whole (`docs/plan_civilization_steps.md` §Step 5). That
+is permanent, not a stopgap.
 
 ### Migration mode is for MIGRATORY herds only
 
@@ -52,13 +53,14 @@ Two phases, both the herd's own (`RoamState` in `fauna.rs`):
 **The band keeps up independently of hunting.** Staying near the herd is the mode's own movement, not
 a side effect of a kill: the herd moves, the band moves.
 
-### Moving to the kill
+### A band in the herd never makes a far kill
 
-If a kill lands **outside** the band's 2-tile reach while in migration mode, **the band moves to the
-kill** instead of sending porters. Nothing new is needed to hold the carcass while it walks: a far
-kill's carcass already waits at the source in the work party's load (`.claude/rules/core_sim/work-party.md`).
-In migration mode the camp walks to that load, and the load lands as a camp kill once the band is
-within reach. Rot on the way is the existing transit rule (`spoilage::rots_in_transit`).
+The herd moves first each turn and the band moves right after it, both one hex, so a band camped in
+the herd stays in the herd, through migration too, and **every kill is a camp kill**. The only far
+case is the start: a band that turns the mode on while several hexes off has to catch up, and a
+migrating herd moves as fast as it does, so it closes the gap when the herd stops at its next
+grounds. **While it catches up the hunt is an ordinary far hunt** — porters carry the kills home to
+the moving camp, exactly as today. No carcass waits on a tile and the band never walks to a kill.
 
 ### Band movement rules are unchanged
 
@@ -72,6 +74,30 @@ loses nothing of the meat by leaving; what a long migration costs is the heavy g
 A camp kill is already in the larder, and the larder walks with the band (food first in the packs), so
 leaving at once costs no meat. **The band follows immediately.**
 
+### Migration mode is a choice on the hunt, not its own order
+
+Following a herd only makes sense while hunting it: a band that follows without hunters walks across
+the map and never eats from it. So migration mode is **one box on the hunt order**, never a band verb.
+Prototype: `docs/migration_mode_ux_proposal.html`.
+
+- **Turning it on.** The Assign hunters sheet of a **migratory** herd carries a **Move camp with the
+  herd** box, where the WORK PARTY section sits; a resident herd's sheet has no box. Everything else
+  on the sheet is unchanged: a band still catching up hunts with porters, so the sheet's work-party
+  forecast stays true until it arrives.
+- **Turning it off.** The hunt row on the Work tab carries the same toggle: off, the band stays where
+  it is and its hunters keep working the herd as an ordinary hunt. Cancelling the hunt ends the
+  following with it.
+- **The hunt row** says where the band stands, one line: *Camped in the herd. Kills land in camp.* /
+  *Moving with it · next (x, y)* / *Catching up · N hexes behind*. While it
+  catches up, the row's existing work-party lines run beneath it. The herd card's worked line adds
+  *moving with the herd*.
+- **The map.** The band token wears a 👣 badge and the followed herd a dashed ring; the herd's
+  next-step arrow stays drawn while the band follows it; the band's own travel line shows its next
+  step.
+- **A Move order ends it.** Moving the band clears the box on its hunt, or the next turn would pull it
+  straight back to the herd. A band follows one herd at a time: ticking the box on one hunt clears it
+  on the band's others.
+
 ### Hunting by need
 
 A band in migration mode hunts **when it needs meat**, not at its policy's fixed rate: it kills when
@@ -83,8 +109,8 @@ other work. A mammoth is indivisible and a whole one at once is the point — ne
 
 **The numbers.** A mammoth is 800 biomass × `hunt.provisions_per_biomass` 0.06 = **48 food**. A
 30-person band eats 30 × 0.16 = **4.8 a turn**, so a mammoth is 10 turns of food if nothing rots. But
-`flesh`'s rot line is need × 4 turns = 19.2, so about 29 of the 48 rot the turn after the kill: **today
-a mammoth feeds a 30-person band for about 4 turns.**
+`flesh` keeps 4 turns, so the band eats about 19 of the 48 and the other 29 rot on the fourth turn:
+**today a mammoth feeds a 30-person band for about 4 turns**, and a smaller band for the same 4.
 
 **That is the intended opening, not a dead end.** A band following a migration is not living on
 mammoths alone — it forages and hunts other game like any band. The rot is the lesson: the storage
@@ -95,7 +121,7 @@ mammoth kill is the biggest such signal in the game. So the loop is:
 1. The band kills a mammoth, eats what it can, and most of it rots — while its workers do other
    things.
 2. That rot teaches drying, on the knowledge ledger, by practice.
-3. After a few kills the band can dry meat. The rack lifts `flesh`'s rot line, so a mammoth becomes
+3. After a few kills the band can dry meat. The rack lengthens `flesh`'s shelf life, so a mammoth becomes
    many turns of food, and a migrating herd becomes **growth-sustaining**.
 
 **Drying is learned, never granted at start.** The rack is #708's (the storage branch); this arc
@@ -120,7 +146,7 @@ intensification ladder uses (learn a thing by doing the thing below it). Candida
 |---|---|---|
 | **Herd lore** | see a migrating herd's next seasonal ground, so the band can pre-position | the herd's `route` anchors |
 | **Travois / pack animals** | more carry per worker, so a long migration sheds less | the existing carry model (`carry.rs`) |
-| **Drying** | lifts `flesh`'s rot line | #708 |
+| **Drying** | lengthens `flesh`'s shelf life | #708 |
 | **Drives** (e.g. a bison jump) | more kills at once from a large herd | the hunt fight |
 
 **2. The score.** It reads the band's standing on that roaming track and how far it has travelled with
@@ -132,9 +158,6 @@ ties (`docs/plan_contact_and_logistics.md` §Settled by #530). Moving well is ho
 
 ## Open items
 
-- **The UX.** How a player puts a band into migration mode and takes it out, and what the band and the
-  herd show while it is on: the herd's next ground (once Herd lore is known), the band's next step, a
-  kill the band is walking to. Wants its own prototype pass.
 - **The score's formula** — the weights of skills against distance travelled, and the victory
   threshold. Opening values are Workbench levers, settled by playtest.
 
@@ -144,8 +167,8 @@ Sub-issues of the arc, #251.
 
 1. **Camp kill** — shipped with this doc (#796).
 2. **Migration mode** (#797) — the band's standing order on a migratory herd: camp in the herd while
-   it loiters, move with it while it migrates, move to a kill outside reach. The wire field and the
-   client verb. Waits on the UX pass.
+   it loiters, move with it while it migrates, catch up with porters running. The wire field and the
+   box on the hunt order (§Migration mode is a choice on the hunt).
 3. **Hunting by need** (#798) — the need-paced trigger for a band in migration mode.
 4. **The roaming skills** (#799) — Herd lore, travois, drives, on the knowledge ledger. Drying is
    #708's.

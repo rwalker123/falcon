@@ -6,6 +6,7 @@ use shadow_scale_flatbuffers::shadow_scale::sim as fb;
 
 use crate::dict::campaign::{kit_allocations_to_array, material_allocations_to_array};
 use crate::dict::economy::fragment_to_dict;
+use crate::dict::subsistence::regrowth_samples_packed;
 use crate::dict::{fixed64_to_f64, u32_vector_to_packed_int32};
 
 /// **ONE TABLE OF EQUIPMENT** — `[{item_id, required, filled}]`, one dict per `KitToeLine`, `[]` when
@@ -165,6 +166,18 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert(
         "belief_relay_reach_y",
         &u32_vector_to_packed_int32(cohort.beliefRelayReachY()),
+    );
+    // The band's own culture-layer values (15 entries, `CultureTraitAxis` order; index 3 =
+    // TraditionalistRevisionist, 13 = SecularDevout) and the offset its ancestors pull them by this
+    // turn (same order). Each EMPTY means "no layer" / "takes no pull" — never a run of zeros. Own
+    // bands only: a foreign band's redacted row leaves both empty.
+    let _ = dict.insert(
+        "culture_traits",
+        &regrowth_samples_packed(cohort.cultureTraits()),
+    );
+    let _ = dict.insert(
+        "culture_ancestor_pull",
+        &regrowth_samples_packed(cohort.cultureAncestorPull()),
     );
     let _ = dict.insert("size", cohort.size() as i64);
     // Every Scalar field below comes from `cohort_scalars` — see its doc comment for why.
@@ -1056,6 +1069,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                 i64::from(assignment.homewardAllHomeIn()),
             );
             let _ = entry.insert("homeward_food", f64::from(assignment.homewardFood()));
+            // Migration mode: this hunt row moves the band's camp with its migratory herd.
+            let _ = entry.insert("move_with_herd", assignment.moveWithHerd());
             array.push(&entry.to_variant());
         }
     }

@@ -47,7 +47,7 @@
 //! # WHAT THE WALK DOES COST: FOOD THAT DOES NOT KEEP THAT LONG (#706)
 //!
 //! **A pack rots by its walk.** Every pack carries the keeping classes of the food in it
-//! ([`CargoClasses`]), and when it lands any class whose shelf life is shorter than the walk the
+//! ([`CargoClasses`]), and when it lands any class whose shelf life is no longer than the walk the
 //! porter set out on is lost on the way — entirely, not as a share (`crate::spoilage::rots_in_transit`).
 //! That is not friction under another name: it is a property of the *food* (flesh, greens, grain),
 //! so the same walk costs a meat hunt everything and a nut gather nothing, and it gives a far hunt a
@@ -833,7 +833,7 @@ impl HomewardWalk {
     }
 
     /// **The food it carries that will rot before it lands** — every class whose shelf life is
-    /// shorter than its walk ([`crate::spoilage::rots_in_transit`]), the rule its landing applies.
+    /// no longer than its walk ([`crate::spoilage::rots_in_transit`]), the rule its landing applies.
     /// A pack naming no class reads as its web's fallback class, as the larder lands it.
     pub fn food_that_rots(&self, keeping: &crate::demographics_config::KeepingConfig) -> f32 {
         if !self.carries_food() {
@@ -1697,6 +1697,7 @@ mod tests {
         let target = crate::components::LaborTarget::Hunt {
             fauna_id: "boar".to_string(),
             floor: 0.0,
+            move_with_herd: false,
         };
         let walks = party.walk_home(&target);
         let porters: Vec<_> = walks.iter().filter(|w| w.workers == ONE_PORTER).collect();

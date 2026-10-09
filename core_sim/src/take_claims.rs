@@ -247,7 +247,9 @@ pub fn useful_take_hands(
                 (sources.season_of)(*tile),
             )
         }
-        LaborTarget::Hunt { fauna_id, floor } => {
+        LaborTarget::Hunt {
+            fauna_id, floor, ..
+        } => {
             let Some(herd) = sources.herd(fauna_id) else {
                 return NO_CLAIMING_HANDS;
             };

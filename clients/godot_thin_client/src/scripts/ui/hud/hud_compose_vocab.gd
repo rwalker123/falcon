@@ -917,6 +917,19 @@ const STANDING_SUMMARY_FORMAT := "%s %d %s"
 
 const STANDING_SUMMARY_SEPARATOR := " ·"
 
+## **MIGRATION MODE** (`docs/plan_roaming_bands.md` §Migration mode): the box on a MIGRATORY herd's
+## Assign hunters sheet, with its one dim sub-line, and the clause the standing summary appends for a
+## band whose row has it on. A resident herd's sheet has no box.
+const MOVE_CAMP_LABEL := "Move camp with the herd"
+const MOVE_CAMP_HINT := "Camp in the herd and travel with it."
+const STANDING_SUMMARY_MOVING_CLAUSE := " · moving with the herd"
+
+## The wire's `size_class` word for a herd that migrates; the only herds that accept `follow`.
+const SIZE_CLASS_MIGRATORY := "migratory"
+
+## The stable handle on the box, so a harness finds it by identity rather than by its face.
+const MOVE_CAMP_BOX_META := &"compose_move_camp_box"
+
 # ⛔ **EVERY BUTTON THE TILE CARD RENDERS DRAWS ITS LABEL AT THIS SIZE, AND IT IS ONE CONST BECAUSE
 # RAY IS TUNING IT.** *"we are getting more buttons now … make the font for the `Assign …` label
 # smaller, let's try 25% to see how it looks. Make that change for all the buttons in the TILE

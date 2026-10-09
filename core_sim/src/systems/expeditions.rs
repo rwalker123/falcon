@@ -218,6 +218,62 @@ pub fn advance_band_movement(
     }
 }
 
+/// One resident band as [`follow_hunted_herds`] reads it: where it stands, what it hunts, and the
+/// movement order it already carries.
+type FollowingBand = (
+    Entity,
+    &'static PopulationCohort,
+    &'static LaborAllocation,
+    Option<&'static mut BandTravel>,
+);
+
+/// **MIGRATION MODE — a band whose hunt row says `move_with_herd` walks toward that herd**
+/// (`docs/plan_roaming_bands.md`, `.claude/rules/core_sim/work-party.md`).
+///
+/// Runs in `TurnStage::Population` **immediately before** [`advance_band_movement`]: the herds have
+/// already moved this turn (`advance_herds`, Logistics), so the band re-aims at where its herd now
+/// stands and steps right after it. A band camped in the herd therefore stays on the herd's tile
+/// through loiter and migration, and every kill is a camp kill.
+///
+/// It issues **no new movement**: it only writes the same [`BandTravel`] a `move_band` order does.
+///
+/// # ⛔ RE-AIMING KEEPS `departed`
+///
+/// A band already carrying a `BandTravel` has its `target` updated **in place**. A fresh
+/// [`BandTravel::to`] is `departed: false`, and `advance_band_movement` re-runs the long-move carry
+/// shed on a not-yet-departed order that starts beyond the ferry reach — so replacing the order each
+/// turn would shed the pack again every step of a far catch-up. Only a band with no order gets a
+/// fresh one (a far start sheds once, as any long move does).
+pub fn follow_hunted_herds(
+    mut commands: Commands,
+    herds: Res<HerdRegistry>,
+    tiles: Query<&Tile>,
+    mut bands: Query<FollowingBand, (With<ResidentBand>, Without<Expedition>)>,
+) {
+    for (entity, cohort, allocation, travel) in bands.iter_mut() {
+        let Some(herd) = allocation.followed_herd().and_then(|id| herds.find(id)) else {
+            continue;
+        };
+        let target = herd.current_pos;
+        let Ok(here) = tiles.get(cohort.current_tile).map(|tile| tile.position) else {
+            continue;
+        };
+        if here == target {
+            // In the herd already: nothing to walk.
+            if travel.is_some() {
+                commands.entity(entity).remove::<BandTravel>();
+            }
+            continue;
+        }
+        match travel {
+            Some(mut travel) => travel.target = target,
+            None => {
+                commands.entity(entity).insert(BandTravel::to(target));
+            }
+        }
+    }
+}
+
 /// **Shed a resident band down to what its workers can carry, as it departs on a long move**
 /// (#732, [`crate::carry`]).
 ///

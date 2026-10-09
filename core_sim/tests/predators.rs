@@ -147,6 +147,7 @@ fn hunting_band(
         target: LaborTarget::Hunt {
             fauna_id: fauna_id.to_string(),
             floor: 0.3,
+            move_with_herd: false,
         },
         workers: hunters,
         kit: None,
@@ -1083,4 +1084,166 @@ fn predator_count_report() {
             c.prey_herds, c.target, c.packs
         );
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The predation stamp: what was drawn off a herd this turn, and by whom
+// ---------------------------------------------------------------------------------------------
+
+/// A second carnivore species ("dire_wolf") cloned off the wolf row, so two predators can eat one
+/// herd.
+const DIRE_WOLF_KEY: &str = "dire_wolf";
+const DIRE_WOLF: &str = "Dire Wolf Pack";
+
+fn two_predator_app() -> App {
+    let mut app = predation_app();
+    let mut config = (*FaunaConfigHandle::default().get()).clone();
+    let mut dire = config
+        .species
+        .get("wolf")
+        .expect("the roster has a wolf")
+        .clone();
+    dire.display_name = DIRE_WOLF.to_string();
+    config.species.insert(DIRE_WOLF_KEY.to_string(), dire);
+    app.world
+        .insert_resource(FaunaConfigHandle::new(std::sync::Arc::new(config)));
+    app
+}
+
+fn stamp_of(app: &App, id: &str) -> (f32, Option<String>) {
+    let registry = app.world.resource::<HerdRegistry>();
+    let herd = registry.herds.iter().find(|h| h.id == id).expect("herd");
+    (
+        herd.predator_eaten_this_turn,
+        herd.predator_eaten_by.clone(),
+    )
+}
+
+/// **`predator_eaten_by` names the larger contributor**, and the first met on a tie.
+#[test]
+fn the_herd_names_the_predator_species_that_ate_most() {
+    let seat_all = |wolf_biomass: f32, dire_biomass: f32| {
+        let mut app = two_predator_app();
+        let wolf_at = UVec2::new(10, 10);
+        let dire_at = UVec2::new(10, 11);
+        seat(
+            &mut app,
+            "pred_wolf",
+            WOLF,
+            wolf_at,
+            wolf_biomass,
+            240.0,
+            0.15,
+        );
+        seat(
+            &mut app,
+            "pred_dire",
+            DIRE_WOLF,
+            dire_at,
+            dire_biomass,
+            240.0,
+            0.15,
+        );
+        seat(
+            &mut app,
+            "game_deer",
+            DEER,
+            UVec2::new(11, 10),
+            1200.0,
+            1200.0,
+            0.10,
+        );
+        app.world.run_system_once(advance_predation);
+        app
+    };
+    let (eaten, by) = stamp_of(&seat_all(60.0, 120.0), "game_deer");
+    assert!(eaten > 0.0);
+    assert_eq!(
+        by.as_deref(),
+        Some(DIRE_WOLF_KEY),
+        "the bigger pack ate more"
+    );
+    let (_, by) = stamp_of(&seat_all(120.0, 60.0), "game_deer");
+    assert_eq!(by.as_deref(), Some("wolf"));
+    let (_, by) = stamp_of(&seat_all(100.0, 100.0), "game_deer");
+    assert_eq!(
+        by.as_deref(),
+        Some("wolf"),
+        "a tie keeps the first met in registry order"
+    );
+}
+
+/// **The stamp resets with the regrowth stamp it describes**, and a herd nothing preyed on reads
+/// empty.
+#[test]
+fn the_predation_stamp_resets_the_next_turn() {
+    let mut app = predation_app();
+    seat(
+        &mut app,
+        "pred_wolf",
+        WOLF,
+        UVec2::new(10, 10),
+        120.0,
+        120.0,
+        0.15,
+    );
+    seat(
+        &mut app,
+        "game_deer",
+        DEER,
+        UVec2::new(11, 10),
+        1200.0,
+        1200.0,
+        0.10,
+    );
+    app.world.run_system_once(advance_predation);
+    assert!(stamp_of(&app, "game_deer").0 > 0.0);
+
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let mut registry = app.world.resource_mut::<HerdRegistry>();
+    let deer = registry
+        .herds
+        .iter_mut()
+        .find(|h| h.id == "game_deer")
+        .expect("deer");
+    core_sim::regrow_biomass(deer, &fauna);
+    assert_eq!(deer.predator_eaten_this_turn, 0.0);
+    assert_eq!(deer.predator_eaten_by, None);
+}
+
+/// **The stamp rides the checkpoint and the save**: a herd's predation record survives both.
+#[test]
+fn the_predation_stamp_round_trips_the_checkpoint_and_the_save() {
+    use core_sim::save::{decode_save, encode_save};
+    use core_sim::sim_state::{capture_sim_state, restore_sim_state};
+
+    let mut app = build_test_app();
+    app.update();
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.first_mut().expect("worldgen seats a herd");
+        herd.predator_eaten_this_turn = 7.5;
+        herd.predator_eaten_by = Some("wolf".to_string());
+    }
+    let id = app.world.resource::<HerdRegistry>().herds[0].id.clone();
+    let checkpoint = capture_sim_state(&app.world);
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        registry.herds[0].predator_eaten_this_turn = 0.0;
+        registry.herds[0].predator_eaten_by = None;
+    }
+    restore_sim_state(&mut app.world, &checkpoint);
+    assert_eq!(stamp_of(&app, &id), (7.5, Some("wolf".to_string())));
+
+    let blob = encode_save(&app.world).expect("the world encodes");
+    let (_, payload) = decode_save(&blob).expect("the save decodes");
+    let saved = payload
+        .sim
+        .herds
+        .herds
+        .iter()
+        .find(|h| h.id == id)
+        .expect("the herd is saved");
+    assert_eq!(saved.predator_eaten_this_turn, 7.5);
+    assert_eq!(saved.predator_eaten_by.as_deref(), Some("wolf"));
 }

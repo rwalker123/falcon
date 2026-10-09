@@ -472,6 +472,7 @@ fn sustain_hunt_below_regrowth_lets_herd_grow() {
                 target: LaborTarget::Hunt {
                     fauna_id: id.clone(),
                     floor: 0.5,
+                    move_with_herd: false,
                 },
                 workers: 1,
                 kit: None,
@@ -561,6 +562,7 @@ fn a_hunt_actual_pulses_while_realized_holds_the_steady_average() {
                 target: LaborTarget::Hunt {
                     fauna_id: id.clone(),
                     floor: 0.5,
+                    move_with_herd: false,
                 },
                 workers: 2,
                 kit: None,
@@ -702,6 +704,7 @@ fn a_drawn_down_hunt_realized_drifts_smoothly_never_sawtooths() {
                 target: LaborTarget::Hunt {
                     fauna_id: id.clone(),
                     floor: 0.5,
+                    move_with_herd: false,
                 },
                 workers: 4,
                 kit: None,
@@ -790,6 +793,7 @@ fn a_hunt_past_the_leash_follows_its_herd_and_only_a_vanished_herd_ends_it() {
             target: LaborTarget::Hunt {
                 fauna_id: fauna_id.to_string(),
                 floor: 0.5,
+                move_with_herd: false,
             },
             workers: 3,
             kit: None,
@@ -911,6 +915,7 @@ fn a_hunt_just_past_the_apron_posts_a_party_on_the_same_apron_as_forage() {
                 target: LaborTarget::Hunt {
                     fauna_id: id.clone(),
                     floor: 0.5,
+                    move_with_herd: false,
                 },
                 workers: 3,
                 kit: None,
@@ -994,6 +999,7 @@ fn a_far_work_partys_hunt_dead_credit_no_belief() {
                 target: LaborTarget::Hunt {
                     fauna_id: id.clone(),
                     floor: 0.5,
+                    move_with_herd: false,
                 },
                 workers: HUNTERS,
                 kit: None,
@@ -1158,6 +1164,7 @@ fn every_labor_loss_line_names_the_band_by_its_durable_id() {
             target: LaborTarget::Hunt {
                 fauna_id: GONE_HERD.to_string(),
                 floor: 0.5,
+                move_with_herd: false,
             },
             workers: 3,
             kit: None,
@@ -1459,6 +1466,7 @@ fn hunt_alloc(fauna_id: &str, workers: u32, floor: f32) -> LaborAllocation {
             target: LaborTarget::Hunt {
                 fauna_id: fauna_id.to_string(),
                 floor,
+                move_with_herd: false,
             },
             workers,
             kit: None,
@@ -1908,6 +1916,7 @@ fn stage_hunt(
                 target: LaborTarget::Hunt {
                     fauna_id: id.clone(),
                     floor: 0.5,
+                    move_with_herd: false,
                 },
                 workers,
                 kit: None,
@@ -2217,6 +2226,7 @@ fn a_shed_assignment_is_announced_and_its_declaration_goes_with_it() {
                 target: LaborTarget::Hunt {
                     fauna_id: herd_id.clone(),
                     floor: 0.5,
+                    move_with_herd: false,
                 },
                 workers: 1,
                 kit: None,

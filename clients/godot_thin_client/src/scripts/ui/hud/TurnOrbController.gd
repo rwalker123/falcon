@@ -289,7 +289,8 @@ func _on_turn_orb_panel_requested(kind: String, subject: int) -> void:
 	if kind == HudAttentionVocab.ATTENTION_KIND_DECISION:
 		_open_fork_panel()
 		return
-	if kind == HudAttentionVocab.ATTENTION_KIND_OPENING_LOADOUT:
+	if kind == HudAttentionVocab.ATTENTION_KIND_OPENING_LOADOUT \
+			or kind == HudAttentionVocab.ATTENTION_KIND_LOADOUT_KIT_SHORT:
 		if _loadout != null:
 			# ⛔ **THE ROW'S OWN BAND, not whichever the card is showing.** Every band has an
 			# outfitting window of its own, so a press that ignored the subject would answer the

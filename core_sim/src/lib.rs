@@ -143,13 +143,14 @@ pub use components::{
     BandId, BandName, BandTravel, BandWorkforce, BatchGrade, BenchOrder, BenchQueueError, BuildJob,
     BuildQueueEntry, BuildSource, DeathCause, DemographicFlowAccumulator, DrawnInputs,
     DrawnMaterial, ElementKind, EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase,
-    FinishedBatch, FoodMix, Improvement, KeepingIssue, KeepingToolLine, KnowledgeFragment,
-    LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch, MaterialDraw,
-    MoraleCause, PoolToeLine, PopulationCohort, PowerNode, ResidentBand, Settlement, ShedCrew,
-    ShedFacts, ShedStep, ShedSubject, SourcePriority, SourceShedFacts, SourceYield, StartingUnit,
-    TakeSelection, Tile, TownCenter, TransferCause, TransferCounterparty, TransferCrossing,
-    TransferDirection, TransferLedger, TransferLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER,
-    FOOD, HEAD_ORDER, MIN_ORDER_COUNT, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
+    FinishedBatch, FoodBatch, FoodMix, Improvement, KeepingIssue, KeepingToolLine,
+    KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch,
+    MaterialDraw, MoraleCause, PoolToeLine, PopulationCohort, PowerNode, ResidentBand, Settlement,
+    ShedCrew, ShedFacts, ShedStep, ShedSubject, SourcePriority, SourceShedFacts, SourceYield,
+    StartingUnit, TakeSelection, Tile, TownCenter, TransferCause, TransferCounterparty,
+    TransferCrossing, TransferDirection, TransferLedger, TransferLink, YieldRange,
+    DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER, MIN_ORDER_COUNT, NO_IMPROVEMENT_UNDERWAY,
+    STRIP_IT_BARE,
 };
 pub use config_fingerprint::{
     current_config_fingerprint, drift_between, ConfigDigest, ConfigFingerprint,
@@ -476,14 +477,14 @@ pub use systems::{
     advance_labor_allocation, advance_party_defection, advance_population_migration,
     advance_predator_raids, advance_tick, announce_bench_material_short, bench_material_rate,
     bench_tiers, bill_and_stock_roads, bring_the_dropped_party_home, deliver_bench_output,
-    denial_forecast, expedition_returned_event, fold_party_into_band, grow_faction_roster,
-    hunt_per_worker_provisions, hunt_report_event, hunt_take, merge_founding_lines_on_contact,
-    output_multiplier, party_owes_a_report, prospective_keep_hands, publish_turn_transfers,
-    settle_bands_roadwork, settle_scarce_tools, simulate_population, simulate_power,
-    source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers, DenialForecast,
-    DenialOutcome, HeartLedger, HeartReading, HuntOutcome, PartyGear, PartySightings, PoolToolPlan,
-    PowerSimParams, RaidRoll, SplitBand, SplitRefusal, SplitRefusals, ToolClaimStage,
-    TradeDiffusionEvent,
+    denial_forecast, expedition_returned_event, fold_party_into_band, follow_hunted_herds,
+    grow_faction_roster, hunt_per_worker_provisions, hunt_report_event, hunt_take,
+    merge_founding_lines_on_contact, output_multiplier, party_owes_a_report,
+    prospective_keep_hands, publish_turn_transfers, settle_bands_roadwork, settle_scarce_tools,
+    simulate_population, simulate_power, source_has_a_meter_at_risk, split_band_from_parent,
+    split_refusals, BenchTiers, DenialForecast, DenialOutcome, HeartLedger, HeartReading,
+    HuntOutcome, PartyGear, PartySightings, PoolToolPlan, PowerSimParams, RaidRoll, SplitBand,
+    SplitRefusal, SplitRefusals, ToolClaimStage, TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,
@@ -1233,9 +1234,11 @@ pub fn build_headless_app() -> App {
             Update,
             (
                 // This whole run is serial by data — every pair conflicts on `PopulationCohort`,
-                // and the two `Commands`-using systems (`advance_band_movement`,
-                // `advance_expeditions`) sit inside it, so the auto-inserted `apply_deferred`
-                // sync points between them are preserved exactly as before.
+                // and the three `Commands`-using systems (`follow_hunted_herds`,
+                // `advance_band_movement`, `advance_expeditions`) sit inside it, so the
+                // auto-inserted `apply_deferred` sync points between them are preserved —
+                // `follow_hunted_herds` needs one so `advance_band_movement` sees a freshly
+                // inserted `BandTravel` the same turn.
                 (
                     systems::simulate_population,
                     // The larder rots right after the meal and before the turn's take lands
@@ -1251,6 +1254,11 @@ pub fn build_headless_app() -> App {
                         .run_if(starting_loadout::on_the_world_build_pass),
                     // Move first so the band's `current_tile` is current before labor reads its
                     // in-range sources, then resolve per-worker Forage/Hunt/Scout yields.
+                    //
+                    // **Migration mode re-aims the band at its herd first** — the herds moved this
+                    // turn in Logistics, so the band steps right after its herd and a band camped in
+                    // it never falls a hex behind (`follow_hunted_herds`).
+                    systems::follow_hunted_herds,
                     systems::advance_band_movement,
                     // Expedition per-turn logic (observe into the pending-reveal buffer, comm-range
                     // flush-to-Discovered, return-retarget, arrival/fold-back). Runs right after

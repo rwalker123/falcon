@@ -728,7 +728,8 @@ func pending_improvement_for(band: Dictionary, kind: String, x: int, y: int,
 ## from the confirmed row it is shadowing and leave both drawn.
 func record_pending_assign(entity: int, kind: String, workers: int, x: int, y: int, herd_id: String,
 		floor: float, improvement: String = SourceForecast.IMPROVEMENT_NONE,
-		kit_id: String = KitRoster.NO_KIT_ID, material: String = "") -> void:
+		kit_id: String = KitRoster.NO_KIT_ID, material: String = "",
+		move_with_herd: bool = false) -> void:
 	if entity < 0:
 		return
 	var entry: Dictionary = _pending_labor.get(entity, {})
@@ -738,6 +739,10 @@ func record_pending_assign(entity: int, kind: String, workers: int, x: int, y: i
 		"kind": kind, "workers": max(0, workers), "x": x, "y": y, "herd_id": herd_id,
 		"floor": SourceForecast.clamp_floor(floor), "improvement": improvement,
 		"kit_id": kit_id, "material": material,
+		# MIGRATION MODE rides the record like the kit: `assign_labor` STATES it (a bare `follow`
+		# token, absent = off), and the pending branch of `effective_worker_map` REPLACES the merged
+		# row, so a flag left off here would flash a followed hunt back to an ordinary one.
+		"move_with_herd": move_with_herd,
 	}
 	entry["assign"] = assigns
 	_pending_labor[entity] = entry
@@ -968,6 +973,9 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 			# not copied here does not exist as far as the work board is concerned. (That is exactly
 			# how the good-shortfall pair below came out empty on a row whose wire carried it.)
 			"kit_id": String(a.get("kit_id", "")),
+			# MIGRATION MODE (`docs/plan_roaming_bands.md`): the band's camp moves with this hunt's
+			# migratory herd. A bool the decoder always writes; absent reads as off.
+			"move_with_herd": bool(a.get("move_with_herd", false)),
 			# **WHERE THE PLAYER PUT THIS ROW WHEN THE BAND RUNS SHORT** (`docs/plan_standing_upkeep.md`
 			# §4.9 item 9b) — one of the three WORDS the decoder writes, normalized here so no reader
 			# downstream has to decide what an unrecognised token means. It rides beside the floor for
@@ -1103,6 +1111,8 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 			# sent. On a brand-new assignment there is no settled row to fall back to anyway, which
 			# is the case the work inspector's blank, unselectable kit picker was reported on.
 			"kit_id": String(pd.get("kit_id", KitRoster.NO_KIT_ID)),
+			# **AND THE FOLLOW FLAG THE COMMAND JUST CARRIED**, the kit's treatment: the command states it.
+			"move_with_herd": bool(pd.get("move_with_herd", false)),
 			# **AND NO KIT COVERAGE EITHER** (`SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY`),
 			# which is the good-shortfall pair's treatment and for the same reason: a `+`/`−` moves
 			# the very denominator the coverage is a fraction of, and it re-cuts the band's ledger
@@ -1670,6 +1680,10 @@ func hunt_assignment_of(band: Dictionary, herd_id: String) -> Dictionary:
 			return a
 	return {}
 
+## Whether the band's hunt row on `herd_id` has migration mode on (CONFIRMED row; seeds the sheet's box).
+func move_with_herd_for_hunt(band: Dictionary, herd_id: String) -> bool:
+	return bool(hunt_assignment_of(band, herd_id).get("move_with_herd", false))
+
 ## Workers currently foraging a specific in-range tile; 0 when unstaffed.
 func workers_for_forage(band: Dictionary, x: int, y: int) -> int:
 	return int(forage_assignment_of(band, x, y).get("workers", 0))
@@ -1686,6 +1700,26 @@ func floor_for_hunt(band: Dictionary, herd_id: String) -> float:
 	if not assignment.has("floor"):
 		return DEFAULT_HARVEST_FLOOR
 	return SourceForecast.clamp_floor(float(assignment["floor"]))
+
+## **THE FLOOR A BLOCKED ESCAPEMENT BUILD WAS GATED ON**: the escapement floor of the first player band
+## working this source, `-1` (`DetailFormat.BLOCKED_FLOOR_UNKNOWN`) where none does. Unlike
+## `floor_for_hunt` it never answers the default for a source nobody works — a reason quoting a floor
+## nobody set would be a made-up number.
+func working_floor_hunt(herd_id: String) -> float:
+	for band_variant in current_player_bands():
+		if band_variant is Dictionary:
+			var a := hunt_assignment_of(band_variant, herd_id)
+			if a.has("floor"):
+				return SourceForecast.clamp_floor(float(a["floor"]))
+	return DetailFormat.BLOCKED_FLOOR_UNKNOWN
+
+func working_floor_forage(x: int, y: int) -> float:
+	for band_variant in current_player_bands():
+		if band_variant is Dictionary:
+			var a := forage_assignment_of(band_variant, x, y)
+			if a.has("floor"):
+				return SourceForecast.clamp_floor(float(a["floor"]))
+	return DetailFormat.BLOCKED_FLOOR_UNKNOWN
 
 ## The plant twin: the floor of the band's existing forage on (x,y), else the default.
 func floor_for_forage(band: Dictionary, x: int, y: int) -> float:

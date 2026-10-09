@@ -1104,6 +1104,7 @@ fn spawn_crew_of(
                         target: LaborTarget::Hunt {
                             fauna_id: herd_id.to_string(),
                             floor: policy,
+                            move_with_herd: false,
                         },
                         workers: hunters + keepers,
                         kit: None,
@@ -5192,6 +5193,7 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
             target: LaborTarget::Hunt {
                 fauna_id: id.to_string(),
                 floor: AT_THE_FLOOR,
+                move_with_herd: false,
             },
             workers: crew,
             kit: None,

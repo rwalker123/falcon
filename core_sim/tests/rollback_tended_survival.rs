@@ -171,6 +171,7 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
                 LaborTarget::Hunt {
                     fauna_id: herd_id.clone(),
                     floor: 0.5,
+                    move_with_herd: false,
                 },
                 1,
                 available,

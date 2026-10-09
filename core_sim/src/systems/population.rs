@@ -1289,7 +1289,7 @@ fn resolve_culture_terms(
         .iter()
         .enumerate()
         .map(|(index, (_, entity, band))| {
-            let strength = relay.strength(index, culture.relay_per_hop);
+            let strength = relay.strength(index, culture);
             (
                 *entity,
                 CultureReading {

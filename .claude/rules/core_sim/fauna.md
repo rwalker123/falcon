@@ -724,8 +724,8 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 > (`workers_needed`, `hunt_haul_workers`, `huntUsefulWorkers`) keeps its carriers on a camp row too,
 > because a herd near camp today may be beyond reach tomorrow; and `carried`/`wasted` survive on `AnimalTake` only for the
 > denial raid and expeditions, whose party walks away from the rest. A hunt's and a pen's row
-> `wasted` (`wastedYield` on the wire) is a structural `0`; a big camp kill spoils in the larder
-> (`spoilage::larder_rot`) rather than at the kill. The projections (`HuntProjection::step`,
+> `wasted` (`wastedYield` on the wire) is a structural `0`; a big camp kill rots in the larder
+> (`spoilage::rot_band_larders`, at the end of its shelf life) rather than at the kill. The projections (`HuntProjection::step`,
 > `forecast_take_outcomes`, the arrival schedule) read `killed_biomass()` too, so forecast and turn
 > agree.
 >
@@ -1265,6 +1265,24 @@ position (`intensification.md` → "The storage: ONE position, and a STAMPED sta
   pastoral (slice 4, §4). See "The knowledge pattern".
 - `HerdRegistry::domesticated_count(faction)` is the seam the future `SedentarizationScore`
   reads for its "domestication progress" input.
+
+## The predation stamp — who ate the herd's growth
+
+`advance_predation` (Logistics, after `advance_herd_grazing`) stamps each prey herd with what was drawn
+off it: `Herd::predator_eaten_this_turn` (biomass) and `Herd::predator_eaten_by`, the predator species
+KEY (`fauna_config.json` `species` key, e.g. `wolf`, via `FaunaConfig::species_key_by_display`) that
+took the largest share, the first met in `HerdRegistry` order on a tie. Both reset where
+`regrow_biomass` re-stamps `biomass_before_regrowth`, so they describe the same turn
+`Herd::growth_this_turn()` does — the pair that explains why growth read smaller than the herd grew.
+The Tame build's gate reads it (`BuildGate::PredatorsAteGrowth`, `intensification.md` → "Who emptied the
+room"). Published on the herd telemetry as `predatorEatenBy:string` (key, empty when none) and
+`predatorEaten:float` (biomass, the unit of `biomass`; divide by body mass for animals), appended last
+and fog-filtered with the row. The fields ride the checkpoint (`SAVE_FORMAT_VERSION` 28).
+
+Tests: `predators::the_herd_names_the_predator_species_that_ate_most`,
+`predators::the_predation_stamp_resets_the_next_turn`,
+`predators::the_predation_stamp_round_trips_the_checkpoint_and_the_save`,
+`build_queue::a_tame_whose_room_wolves_emptied_refuses_as_predators_ate_growth` (encoded envelope).
 
 ## The regional staples carry their correction in reach
 

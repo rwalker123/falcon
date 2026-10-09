@@ -232,6 +232,14 @@ const FACTION_SETTLING_VALUE_FORMAT := "%s  %d/%d"
 
 const FACTION_SETTLING_SCALE := 100
 
+## The SETTLING block's second row (issue #701): how many of the score's 100 points come from the band
+## standing on its dead this turn (`belief_points`, pre-smoothing). Below `FACTION_SETTLING_BELIEF_MIN`
+## the row states the absence rather than a `+0`, which would read as a measured nothing.
+const FACTION_SETTLING_BELIEF_KEY := "From the dead"
+const FACTION_SETTLING_BELIEF_VALUE_FORMAT := "+%d"
+const FACTION_SETTLING_BELIEF_NONE := "0 — stand on your dead"
+const FACTION_SETTLING_BELIEF_MIN := 0.5
+
 ## **OPEN BORDERS — the faction page's one control** (issue #512, `docs/plan_band_fission.md`
 ## §Defection). A faction-wide policy with no other home: whether another people's unhappy leavers,
 ## and their defecting parties, may join this people's bands. The checkbox's face is the policy's
@@ -286,7 +294,11 @@ const FACTION_DISCOVERY_COUNT_FORMAT := "%d"
 ## **RE-MEASURED AT 531 WHEN THE OPEN BORDERS ROW LANDED (issue #512)**, over the 480 this sat at — so
 ## it moved to 550, the same ~19px margin over the block. The wide dock's tiered block reads 305px of
 ## a 358px box with the row in, and the tall side box is still 941, so the gap it bisects is intact.
-const FACTION_BAND_FULL_MIN_HEIGHT := 550.0
+##
+## **RE-MEASURED AT 560 WHEN THE `From the dead` ROW LANDED (issue #701)**, over the 531 above — it
+## moved to 580, the same ~19px margin over the block. The wide dock's tiered block reads 334px of a
+## 358px box with the row in (24 spare), and the tall side box is still 941.
+const FACTION_BAND_FULL_MIN_HEIGHT := 580.0
 
 ## A discovered site whose catalog row carries no display name — the site_id is a worse name than
 ## none at all is a lie, so the id stands.
@@ -1357,6 +1369,40 @@ const WORK_ROW_PARTY_TURNS_SINGULAR := 1
 ## string it is about to compare against. One meta for all of them: the lines are one block, they are
 ## collected in draw order.
 const WORK_ROW_PARTY_META := &"work_row_party"
+
+## **MIGRATION MODE ON A HUNT ROW** (`docs/plan_roaming_bands.md` §Migration mode is a choice on the
+## hunt). A migratory herd's row carries the same toggle the Assign hunters sheet's box sets, and —
+## while it is on — ONE status line above the row's work-party lines saying where the band stands.
+## Cancelling the hunt is the row's existing unassign; there is no control to end following on its own.
+const WORK_ROW_FOLLOW_TOGGLE := "👣 Move camp with the herd"
+const WORK_ROW_FOLLOW_MOVING_FORMAT := "Moving with it · next (%d, %d)"
+const WORK_ROW_FOLLOW_CAMPED := "Camped in the herd. Kills land in camp."
+const WORK_ROW_FOLLOW_BEHIND_FORMAT := "Catching up · %d hexes behind"
+const WORK_ROW_FOLLOW_BEHIND_ONE := "Catching up · 1 hex behind"
+
+## One hex behind is the singular form; `FOLLOW_ONE_HEX` names the 1 so the fork is not a bare literal.
+const FOLLOW_ONE_HEX := 1
+
+## The stable handle on the toggle button (valued with its pressed state), so a harness finds it by
+## identity rather than by its face. The status line is read off `WORK_ROW_PARTY_META`, which carries
+## every line of the block's own text.
+const WORK_ROW_FOLLOW_TOGGLE_META := &"work_row_follow_toggle"
+
+## The status line for a followed hunt row, composed once. `at_herd` is band tile == herd tile;
+## `next_x/next_y` are the herd's published next waypoint (`< 0` = not migrating this turn);
+## `hexes_behind` is the wrap-aware hex distance band to herd, used only when the band is elsewhere.
+## `""` when the band's or the herd's tile is unknown, because a status about nothing is noise.
+static func follow_status_line(known: bool, at_herd: bool, next_x: int, next_y: int,
+        hexes_behind: int) -> String:
+    if not known:
+        return ""
+    if at_herd:
+        if next_x >= 0 and next_y >= 0:
+            return WORK_ROW_FOLLOW_MOVING_FORMAT % [next_x, next_y]
+        return WORK_ROW_FOLLOW_CAMPED
+    if hexes_behind == FOLLOW_ONE_HEX:
+        return WORK_ROW_FOLLOW_BEHIND_ONE
+    return WORK_ROW_FOLLOW_BEHIND_FORMAT % hexes_behind
 
 ## **THE PARTY BLOCK'S LINES, COMPOSED ONCE FOR EVERY SURFACE THAT STATES A POSTING** — the work
 ## board's far forage and hunt rows and the workings roster's far wood and stone rows. One caravan,

@@ -4725,6 +4725,7 @@ mod tests {
             source: Some(crate::components::LaborTarget::Hunt {
                 fauna_id: herd.to_string(),
                 floor: crate::DEFAULT_ESCAPEMENT_FLOOR,
+                move_with_herd: false,
             }),
         }
     }

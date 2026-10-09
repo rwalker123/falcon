@@ -187,9 +187,14 @@ pub(crate) fn labor_assignment_to_state(
             // order it has. **Empty is "take everything"**, the default, never "unknown".
             state.take_species = take_species.keys().map(str::to_string).collect();
         }
-        LaborTarget::Hunt { fauna_id, floor } => {
+        LaborTarget::Hunt {
+            fauna_id,
+            floor,
+            move_with_herd,
+        } => {
             state.fauna_id = fauna_id.clone();
             state.floor = *floor;
+            state.move_with_herd = *move_with_herd;
         }
         // **THE TILE AND THE MATERIAL — BOTH HALVES OF THE WORKING'S KEY.** One tile can hold two
         // workings, so the coords alone cannot tell a felling crew from a quarrying crew standing on
@@ -269,7 +274,10 @@ fn assigned_hunt_useful_crew(
     hunt_crew_levers: &HuntCrewLevers<'_>,
     herds: &crate::fauna::HerdRegistry,
 ) -> u32 {
-    let LaborTarget::Hunt { fauna_id, floor } = target else {
+    let LaborTarget::Hunt {
+        fauna_id, floor, ..
+    } = target
+    else {
         return crate::fauna::NO_USEFUL_CREW;
     };
     let Some(herd) = herds.find(fauna_id) else {
@@ -692,6 +700,11 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// positions. (The hop count is NOT recounted here: the frame publishes the one the turn's term
     /// was priced from, `PopulationCohort::last_belief_relay_hops`.)
     pub(crate) belief_relay_region: Vec<UVec2>,
+    /// **The band's own culture layer** — its resolved values per axis, and the ancestor pull the
+    /// last reconcile applied (`CultureManager::applied_band_pull`, stored there rather than
+    /// recomputed: the cohort has moved on since). Both empty when absent.
+    pub(crate) culture_traits: Vec<f32>,
+    pub(crate) culture_ancestor_pull: Vec<f32>,
     /// **This band's standing toward its people's heart** (`systems::independence`), off the
     /// checkpointed [`crate::systems::HeartLedger`]. `None` for a band no turn has judged (a fresh
     /// world, or a detached party, which is never a member), which publishes as in touch.
@@ -958,6 +971,8 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     let PopulationStateInputs {
         belief_reach,
         belief_relay_region,
+        culture_traits,
+        culture_ancestor_pull,
         entity,
         band_id,
         band_name,
@@ -1546,20 +1561,21 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // headline rate adds (`DetailFormat.band_headline_food_rate`), so the rate and the runway beside
     // it agree. Read off the per-turn twin on the cohort, so a recapture republishes the same runway.
     //
-    // ⛔ **A RESIDENT BAND'S LARDER IS READ AFTER ONE TURN OF ROT** (#706,
-    // `crate::spoilage::larder_after_rot`) — a FIRST-TURN CORRECTION, not a model of spoilage over
-    // the whole runway. A larder above its keeping lines loses the excess on the next turn whatever
-    // the band does, so counting that food as runway would promise turns the store cannot keep; the
-    // turns after are walked as before. A detached party's pack does not rot in this slice, so it
-    // reads its pack whole.
+    // ⛔ **A RESIDENT BAND'S LARDER IS READ LESS WHAT WILL ROT UNEATEN** (#706,
+    // `crate::spoilage::rot_ahead`) — food rots at the END of its shelf life, so the larder is
+    // walked forward through the same meal-then-rot turns the sim runs, at the forward `demand`, and
+    // what would expire before the band could eat it is not runway. Income is not counted in that
+    // walk; the turns after are walked as before. A detached party's pack does not rot in this
+    // slice, so it reads its pack whole.
     let runway_larder = if expedition.is_some() {
         cohort.stores.get(FOOD)
     } else {
-        crate::spoilage::larder_after_rot(
-            cohort.stores.food(),
-            demand.to_f32(),
-            &demographics.keeping,
-        )
+        cohort.stores.get(FOOD)
+            - crate::spoilage::rot_ahead(
+                cohort.stores.food(),
+                demand.to_f32(),
+                &demographics.keeping,
+            )
     };
     let turns_of_food = if demand.raw() <= 0 {
         NOT_FOOD_LIMITED_TURNS
@@ -2232,6 +2248,8 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             .and_then(|reading| reading.last_contact_turn)
             .map_or(sim_schema::state::NO_HEART_CONTACT, |turn| turn as i64),
         independence_grievance_threshold: wellbeing.independence.grievance_threshold,
+        culture_traits,
+        culture_ancestor_pull,
     }
 }
 
@@ -2761,6 +2779,8 @@ mod tests {
         population_state(PopulationStateInputs {
             belief_reach: Vec::new(),
             belief_relay_region: Vec::new(),
+            culture_traits: Vec::new(),
+            culture_ancestor_pull: Vec::new(),
             entity: Entity::from_raw(1),
             // These fixtures assert on the derived readouts, not on band identity.
             band_id: None,
@@ -2815,6 +2835,7 @@ mod tests {
                 target: LaborTarget::Hunt {
                     fauna_id: "test-herd".to_string(),
                     floor: 0.5,
+                    move_with_herd: false,
                 },
                 workers: 4,
                 kit: None,
@@ -3231,6 +3252,7 @@ mod tests {
                         BuildSource::Herd(fauna_id) => LaborTarget::Hunt {
                             fauna_id: fauna_id.clone(),
                             floor: 0.5,
+                            move_with_herd: false,
                         },
                         // A road carries no take row at all — its keeper is on the road, not on a
                         // labor target — so a fixture that queued one would be describing a band

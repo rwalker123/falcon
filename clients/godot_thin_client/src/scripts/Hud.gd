@@ -1537,7 +1537,8 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
         floor: float, species: String = "",
         improvement: String = SourceForecast.IMPROVEMENT_NONE,
         kit_id: String = KitRoster.NO_KIT_ID,
-        take_species: PackedStringArray = PackedStringArray()) -> void:
+        take_species: PackedStringArray = PackedStringArray(),
+        move_with_herd: bool = false) -> void:
     # TWO handles, and they are not interchangeable. `band_id` is the DURABLE id the command names —
     # the sim resolves a band by it and by nothing else, because ECS entity bits are renumbered by a
     # rollback. `entity` is the CLIENT-LOCAL key the optimistic pending overlay is filed under (every
@@ -1582,7 +1583,7 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
     var recorded_floor := SourceForecast.clamp_floor(floor) if names_floor \
         else SourceForecast.FLOOR_MIN
     _band_labor.record_pending_assign(entity, kind, clamped, x, y, herd_id, recorded_floor,
-        improvement, kit_id, material)
+        improvement, kit_id, material, move_with_herd)
     _after_pending_change()
     var payload := {
         "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
@@ -1607,6 +1608,9 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
         # what keeps a composition that never touched the chips emitting the byte-identical line it
         # emitted before this axis existed. Forage only; `Main` reads it on that branch alone.
         "take_species": take_species,
+        # **MIGRATION MODE — the bare `follow` token on a hunt line** (`Main.format_assign_labor`). A
+        # statement, not a delta, like the kit and the take selection: omitted means off.
+        "move_with_herd": move_with_herd,
         # **THE CREW'S KIT, AND THE DEFAULT IT IS MEASURED AGAINST** (`docs/plan_denial_raid.md`).
         # Both travel, because `Main._kit_token` OMITS the token when the two agree — that is what
         # keeps today's command lines byte-identical where the player named no kit, and the builder
@@ -1670,7 +1674,8 @@ func _on_work_row_improvement_requested(payload: Dictionary) -> void:
             # `assign_labor`, so nothing here changes the take kit — but the overlay entry REPLACES
             # the merged row, so omitting it would blank the kit of a row the player only declared a
             # rung on, exactly as omitting the crew would blank the crew.
-            String(payload.get("kit_id", KitRoster.NO_KIT_ID)))
+            String(payload.get("kit_id", KitRoster.NO_KIT_ID)), "",
+            bool(payload.get("move_with_herd", false)))
         _after_pending_change()
         # …and an OPEN compose sheet on that source flips OFFERED → DECLARED on the same frame. It
         # reads the declaration through the overlay (`build_verb`'s `composed` argument), and

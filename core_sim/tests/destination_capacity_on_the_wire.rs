@@ -710,6 +710,7 @@ fn spawn_the_herding_band(
                     target: LaborTarget::Hunt {
                         fauna_id: herd_id.to_string(),
                         floor: core_sim::MSY_BIOMASS_FRACTION,
+                        move_with_herd: false,
                     },
                     workers: hunters + keepers,
                     kit: None,

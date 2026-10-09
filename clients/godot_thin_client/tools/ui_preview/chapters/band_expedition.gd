@@ -826,6 +826,10 @@ func run(harness) -> void:
 	# **APPENDED**, for the reason the blocks above state.
 	await _ancestors_states()
 
+	# ---- THE BELIEFS ROW (#701) ---------------------------------------------------------------
+	# **APPENDED**, for the reason the blocks above state.
+	await _belief_culture_states()
+
 	# band_alerts (above) left _player_band as an alert-fixture band (no work_range, far from the food
 	# tile); seed a NEAR band so the forage controls resolve an in-range actor.
 	h._hud._band_labor._player_band = BandFx.forage_range_bands()[0]
@@ -1350,6 +1354,145 @@ func _ancestors_states() -> void:
 		and String(hop_rows[ANCESTORS_KIN_LONGEST_HOPS]).contains("near the ancestors, through kin (254+ hops)")
 		and String(hop_rows[ANCESTORS_KIN_UNREACHED]).contains("near the ancestors")
 		and not String(hop_rows[ANCESTORS_KIN_UNREACHED]).contains("kin"))
+
+## ---- THE BELIEFS ROW (#701) — `Beliefs | devout · traditional`, beneath Morale. A TRIO,
+## because each claim alone passes on a row that always draws one shape: a band tied to its dead
+## (the ancestors mark and the pull sentence), the same culture UNTIED (no mark, the standing
+## invitation), and a RIVAL band (no row at all). Each band has its own entity.
+const BELIEFS_TIED_BAND_ENTITY := 914
+const BELIEFS_UNTIED_BAND_ENTITY := 915
+const BELIEFS_FLIPPED_BAND_ENTITY := 916
+const BELIEFS_AXIS_COUNT := 15
+const BELIEFS_AXIS_TRADITIONALIST_REVISIONIST := 3
+const BELIEFS_AXIS_SECULAR_DEVOUT := 13
+const BELIEFS_TIED_DEVOUT := 0.42
+const BELIEFS_TIED_TRADITIONAL := -0.31
+const BELIEFS_PULL_DEVOUT := 0.30
+const BELIEFS_PULL_TRADITIONAL := -0.30
+## The flipped band: secular and revisionist, pulled the other way, so the words-follow-the-sign
+## claim has both halves of both axes.
+const BELIEFS_FLIPPED_DEVOUT := -0.18
+const BELIEFS_FLIPPED_TRADITIONAL := 0.27
+## The row text, spelled as LITERALS — a needle composed through the format under test can only
+## agree with itself.
+## (The parsed text runs a table row's key and value cells together, so the key abuts the value.)
+const BELIEFS_TIED_ROW := "Beliefsdevout · traditional"
+const BELIEFS_FLIPPED_ROW := "Beliefssecular · revisionist"
+const BELIEFS_TIED_TOOLTIP := "Devout 0.4, traditional 0.3. The ancestors pull this band +0.30 devout and +0.30 traditional."
+const BELIEFS_FLIPPED_TOOLTIP := "Secular 0.2, revisionist 0.3. The ancestors pull this band +0.30 secular and +0.30 revisionist."
+const BELIEFS_UNTIED_TOOLTIP := "Devout 0.4, traditional 0.3. Not tied to its dead. Stand within reach of them to be drawn toward devout, traditional ways."
+const BELIEFS_ROW_KEY := "Beliefs"
+## The baseline band's table rows (Food, Fodder, Morale, Growth, Position): one row's height is the
+## baseline content height over this, and a wrapped Beliefs value would add two rows' worth.
+const BELIEFS_BASELINE_ROWS := 5
+## A one-line row adds ~1 row of height; a wrapped one ~2. Anything under this many rows is one line.
+const BELIEFS_ONE_LINE_ROWS_CEILING := 1.5
+
+func _culture_vector(devout: float, traditional: float) -> Array:
+	var values: Array = []
+	values.resize(BELIEFS_AXIS_COUNT)
+	values.fill(0.0)
+	values[BELIEFS_AXIS_SECULAR_DEVOUT] = devout
+	values[BELIEFS_AXIS_TRADITIONALIST_REVISIONIST] = traditional
+	return values
+
+## The parsed text with every run of whitespace (table cells, wraps) collapsed to one space.
+func _flat(text: String) -> String:
+	var words: PackedStringArray = []
+	for word in text.split(" ", false):
+		for piece in word.split("\n", false):
+			for part in piece.split("\t", false):
+				words.append(part)
+	return " ".join(words)
+
+## `get_line_count` is useless here (a table is ONE line to a `RichTextLabel`, with or without the row),
+## so one line is measured as the row's HEIGHT: what Beliefs added over the baseline, in baseline rows.
+func _beliefs_row_is_one_line(height_without_row: int) -> bool:
+	var row_height := float(height_without_row) / BELIEFS_BASELINE_ROWS
+	var added := float(h._hud.occupant_detail.get_content_height() - height_without_row)
+	return added > 0.0 and added < row_height * BELIEFS_ONE_LINE_ROWS_CEILING
+
+func _beliefs_row_count(vitals: String) -> int:
+	var count := 0
+	for line in vitals.split("\n"):
+		if line.strip_edges().begins_with(BELIEFS_ROW_KEY):
+			count += 1
+	return count
+
+func _belief_culture_states() -> void:
+	# The drawer's content height WITHOUT the row: Beliefs is an ordinary table row, so its height over this
+	# baseline says whether it wrapped.
+	var base := BandFx.band_fixture()
+	base["entity"] = BELIEFS_UNTIED_BAND_ENTITY
+	h._hud.show_unit_selection(base)
+	await h._settle()
+	var height_without_row: int = h._hud.occupant_detail.get_content_height()
+
+	# TIED: a pull on both axes, the ancestors mark, the pull sentence on the hover.
+	var tied := BandFx.band_fixture()
+	tied["entity"] = BELIEFS_TIED_BAND_ENTITY
+	tied["culture_traits"] = _culture_vector(BELIEFS_TIED_DEVOUT, BELIEFS_TIED_TRADITIONAL)
+	tied["culture_ancestor_pull"] = _culture_vector(BELIEFS_PULL_DEVOUT, BELIEFS_PULL_TRADITIONAL)
+	h._hud.show_unit_selection(tied)
+	await h._settle()
+	await h._save("band_beliefs_tied")
+	var tied_vitals := _flat(String(h._hud.occupant_detail.get_parsed_text()))
+	h._assert_hud("a tied band reads `%s` carrying the ancestors mark" % BELIEFS_TIED_ROW,
+		tied_vitals.contains(BELIEFS_TIED_ROW)
+		and tied_vitals.contains(BandOverlayRenderer.ANCESTORS_GLYPH))
+	h._assert_hud("…and its hover states the pull: `%s`" % BELIEFS_TIED_TOOLTIP,
+		String(h._hud.occupant_detail.tooltip_text).contains(BELIEFS_TIED_TOOLTIP))
+	h._assert_hud("…the row sits directly beneath Morale",
+		tied_vitals.find("Morale") >= 0
+		and tied_vitals.find("Morale") < tied_vitals.find(BELIEFS_ROW_KEY))
+	h._assert_hud("…and fits ONE line in the drawer column",
+		_beliefs_row_is_one_line(height_without_row))
+
+	# UNTIED: the same culture, no pull — no mark, and the hover invites the player toward its dead.
+	var untied := BandFx.band_fixture()
+	untied["entity"] = BELIEFS_UNTIED_BAND_ENTITY
+	untied["culture_traits"] = _culture_vector(BELIEFS_TIED_DEVOUT, BELIEFS_TIED_TRADITIONAL)
+	h._hud.show_unit_selection(untied)
+	await h._settle()
+	await h._save("band_beliefs_untied")
+	var untied_vitals := _flat(String(h._hud.occupant_detail.get_parsed_text()))
+	h._assert_hud("an untied band reads the same row WITHOUT the ancestors mark",
+		untied_vitals.contains(BELIEFS_TIED_ROW)
+		and not untied_vitals.contains(BandOverlayRenderer.ANCESTORS_GLYPH))
+	h._assert_hud("…and its hover invites: `%s`" % BELIEFS_UNTIED_TOOLTIP,
+		String(h._hud.occupant_detail.tooltip_text).contains(BELIEFS_UNTIED_TOOLTIP))
+
+	# FLIPPED: the words follow the sign on BOTH axes.
+	var flipped := BandFx.band_fixture()
+	flipped["entity"] = BELIEFS_FLIPPED_BAND_ENTITY
+	flipped["culture_traits"] = _culture_vector(BELIEFS_FLIPPED_DEVOUT, BELIEFS_FLIPPED_TRADITIONAL)
+	flipped["culture_ancestor_pull"] = _culture_vector(-BELIEFS_PULL_DEVOUT, -BELIEFS_PULL_TRADITIONAL)
+	h._hud.show_unit_selection(flipped)
+	await h._settle()
+	var flipped_vitals := _flat(String(h._hud.occupant_detail.get_parsed_text()))
+	h._assert_hud("a secular, revisionist band reads `%s`" % BELIEFS_FLIPPED_ROW,
+		flipped_vitals.contains(BELIEFS_FLIPPED_ROW))
+	h._assert_hud("…and its pull sentence follows the sign too: `%s`" % BELIEFS_FLIPPED_TOOLTIP,
+		String(h._hud.occupant_detail.tooltip_text).contains(BELIEFS_FLIPPED_TOOLTIP))
+
+	# NO LAYER: a band publishing an empty `culture_traits` draws no row (never a row of zeros).
+	var bare := BandFx.band_fixture()
+	bare["entity"] = BELIEFS_UNTIED_BAND_ENTITY
+	bare["culture_traits"] = []
+	h._hud.show_unit_selection(bare)
+	await h._settle()
+	h._assert_hud("a band with no culture layer draws NO Beliefs row",
+		_beliefs_row_count(String(h._hud.occupant_detail.get_parsed_text())) == 0)
+
+	# RIVAL: Beliefs is our own bands' business, the Morale rule — even if the row carried values.
+	var rival := _foreign_band_fixture()
+	rival["culture_traits"] = _culture_vector(BELIEFS_TIED_DEVOUT, BELIEFS_TIED_TRADITIONAL)
+	h._hud.show_unit_selection(rival)
+	await h._settle()
+	h._assert_hud("a rival band draws NO Beliefs row",
+		_beliefs_row_count(String(h._hud.occupant_detail.get_parsed_text())) == 0)
+	h._hud.show_unit_selection(BandFx.band_fixture())
+	await h._settle()
 
 ## A band that HOLDS something which eats a good. Its own entity, for the disclosure key's sake.
 func _standing_bill_band_fixture() -> Dictionary:

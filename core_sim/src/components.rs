@@ -299,15 +299,78 @@ pub struct MaterialDraw {
     pub characteristics: BTreeMap<String, f32>,
 }
 
-/// **Food, by keeping class** (#706) — `class id → amount`. The class is how the food keeps
+/// **One lot of one keeping class, and how long it has been keeping** — the unit food rots in.
+/// `age` counts the rot passes the lot has survived (plus any walk it was carried on), so it expires
+/// the turn its age reaches the class's shelf life; see [`FoodMix`].
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct FoodBatch {
+    /// Turns this lot has been keeping.
+    pub age: u32,
+    /// How much of it there is (never zero in a held mix).
+    pub amount: Scalar,
+}
+
+/// `batches` scaled to total exactly `target`, every batch by the same factor (in exact fixed-point:
+/// each share floors, and the micro-units the floors drop go one at a time to the oldest batches
+/// with room — any batch when `target` exceeds what is held). The lots keep their ages.
+fn scale_batches(batches: &[FoodBatch], target: Scalar) -> Vec<FoodBatch> {
+    let held: i128 = batches.iter().map(|b| i128::from(b.amount.raw())).sum();
+    if held <= 0 || target <= scalar_zero() {
+        return Vec::new();
+    }
+    if i128::from(target.raw()) == held {
+        return batches.to_vec();
+    }
+    let target_raw = i128::from(target.raw());
+    let mut shares: Vec<i64> = batches
+        .iter()
+        .map(|b| (i128::from(b.amount.raw()) * target_raw / held) as i64)
+        .collect();
+    let mut short = target.raw() - shares.iter().sum::<i64>();
+    let may_exceed = target_raw > held;
+    while short > 0 {
+        let before = short;
+        for (share, batch) in shares.iter_mut().zip(batches) {
+            if short > 0 && (may_exceed || *share < batch.amount.raw()) {
+                *share += 1;
+                short -= 1;
+            }
+        }
+        if short == before {
+            break;
+        }
+    }
+    batches
+        .iter()
+        .zip(shares)
+        .filter(|(_, share)| *share > 0)
+        .map(|(batch, share)| FoodBatch {
+            age: batch.age,
+            amount: Scalar::from_raw(share),
+        })
+        .collect()
+}
+
+/// **Food, by keeping class AND BY AGE** (#706) — `class id → lots`. The class is how the food keeps
 /// (`demographics_config.json` → `keeping.classes`); a larder, a party's pack, a shipment and every
-/// move between them carry it, so a band's flesh stays flesh wherever it travels.
+/// move between them carry it, so a band's flesh stays flesh wherever it travels. **Each class is a
+/// list of [`FoodBatch`]es, oldest first**, so food rots at the END of its shelf life
+/// ([`crate::spoilage`]) rather than being cut down to a line up front:
+///
+/// - [`Self::add`] lands a lot at age 0; [`Self::add_aged`] lands one that has been travelling.
+///   Lots of equal age in a class merge.
+/// - **Every take removes the oldest lot first** within a class ([`Self::remove`]).
+/// - **A proportional move** ([`Self::proportional`], [`Self::split`]) scales every lot by the same
+///   factor, so the share that moves keeps its ages and both halves expire on the same turn.
+/// - [`Self::merge`] keeps the incoming lots' ages.
+/// - A class the keeping table does not carry is never aged ([`Self::age_and_expire`] skips it), so
+///   it stays one ageless lot.
 ///
 /// A `BTreeMap` for the reason [`LocalStore`] uses one (deterministic iteration); a zero class is
 /// pruned, so two mixes holding the same food compare equal.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct FoodMix {
-    classes: BTreeMap<String, Scalar>,
+    classes: BTreeMap<String, Vec<FoodBatch>>,
 }
 
 impl FoodMix {
@@ -321,16 +384,32 @@ impl FoodMix {
     /// **`total` split across classes in proportion to `weights`** — how a scalar take whose
     /// composition is known only as weights (a basket's per-species shares, a pack's carried classes)
     /// becomes food. The parts sum to `total` exactly. Weights that sum to nothing put the whole
-    /// total in `fallback`.
+    /// total in `fallback`. Every lot lands at age 0.
     pub fn from_weights<'a>(
         total: Scalar,
         weights: impl IntoIterator<Item = (&'a str, f32)>,
         fallback: &str,
     ) -> Self {
+        Self::from_aged_weights(
+            total,
+            weights
+                .into_iter()
+                .map(|(class, weight)| (class, 0, weight)),
+            fallback,
+        )
+    }
+
+    /// [`Self::from_weights`] with each weight carrying the age its lot has already kept — a
+    /// delivery of caravan packs, each walked a different distance.
+    pub fn from_aged_weights<'a>(
+        total: Scalar,
+        weights: impl IntoIterator<Item = (&'a str, u32, f32)>,
+        fallback: &str,
+    ) -> Self {
         let mut stocks = Self::default();
-        for (class, weight) in weights {
+        for (class, age, weight) in weights {
             if weight.is_finite() && weight > 0.0 {
-                stocks.add(class, Scalar::from_f32(weight));
+                stocks.add_aged(class, Scalar::from_f32(weight), age);
             }
         }
         if stocks.total() <= scalar_zero() {
@@ -339,62 +418,164 @@ impl FoodMix {
         stocks.split(total)
     }
 
-    /// Add `amount` of `class`. A non-positive amount is a no-op.
+    /// Add `amount` of `class`, fresh (age 0). A non-positive amount is a no-op.
     pub fn add(&mut self, class: &str, amount: Scalar) {
+        self.add_aged(class, amount, 0);
+    }
+
+    /// Add `amount` of `class` that has already kept `age` turns (a pack that was walked home).
+    /// A non-positive amount is a no-op; a lot of the same age merges.
+    pub fn add_aged(&mut self, class: &str, amount: Scalar, age: u32) {
         if amount <= scalar_zero() {
             return;
         }
-        *self
-            .classes
-            .entry(class.to_string())
-            .or_insert_with(scalar_zero) += amount;
-    }
-
-    /// Add every class of `other`.
-    pub fn merge(&mut self, other: &FoodMix) {
-        for (class, amount) in other.iter() {
-            self.add(class, amount);
+        let batches = self.classes.entry(class.to_string()).or_default();
+        match batches.iter().position(|b| b.age <= age) {
+            Some(i) if batches[i].age == age => batches[i].amount += amount,
+            Some(i) => batches.insert(i, FoodBatch { age, amount }),
+            None => batches.push(FoodBatch { age, amount }),
         }
     }
 
-    /// Remove up to `amount` of `class`, returning what was removed; an emptied class is pruned.
+    /// Add every lot of `other`, ages kept.
+    pub fn merge(&mut self, other: &FoodMix) {
+        for (class, age, amount) in other.batches() {
+            self.add_aged(class, amount, age);
+        }
+    }
+
+    /// Remove up to `amount` of `class`, **oldest lot first**, returning what was removed; an
+    /// emptied class is pruned.
     pub fn remove(&mut self, class: &str, amount: Scalar) -> Scalar {
-        let Some(held) = self.classes.get_mut(class) else {
+        let Some(batches) = self.classes.get_mut(class) else {
             return scalar_zero();
         };
-        let taken = min(amount.max(scalar_zero()), *held);
-        *held -= taken;
-        if *held <= scalar_zero() {
+        let mut want = amount.max(scalar_zero());
+        let mut taken = scalar_zero();
+        for batch in batches.iter_mut() {
+            if want <= scalar_zero() {
+                break;
+            }
+            let part = min(want, batch.amount);
+            batch.amount -= part;
+            want -= part;
+            taken += part;
+        }
+        batches.retain(|b| b.amount > scalar_zero());
+        if batches.is_empty() {
             self.classes.remove(class);
         }
         taken
     }
 
-    /// The amount of one class (zero if absent).
+    /// Remove up to `amount` from the one lot of `class` aged `age` — the debit for a pack that
+    /// rotted on its walk. Returns what was removed.
+    pub fn remove_batch(&mut self, class: &str, age: u32, amount: Scalar) -> Scalar {
+        let Some(batches) = self.classes.get_mut(class) else {
+            return scalar_zero();
+        };
+        let mut taken = scalar_zero();
+        if let Some(batch) = batches.iter_mut().find(|b| b.age == age) {
+            taken = min(amount.max(scalar_zero()), batch.amount);
+            batch.amount -= taken;
+        }
+        batches.retain(|b| b.amount > scalar_zero());
+        if batches.is_empty() {
+            self.classes.remove(class);
+        }
+        taken
+    }
+
+    /// **The meal** — eat up to `amount`, **fastest-rotting class first** (`order` is the class ids
+    /// by ascending shelf life), oldest lot first within a class. A class the order does not name is
+    /// eaten last, in id order. Returns what was eaten.
+    pub fn eat(&mut self, amount: Scalar, order: &[String]) -> Scalar {
+        let mut remaining = amount.max(scalar_zero());
+        let mut eaten = scalar_zero();
+        let unnamed: Vec<String> = self
+            .classes
+            .keys()
+            .filter(|class| !order.contains(class))
+            .cloned()
+            .collect();
+        for class in order.iter().chain(unnamed.iter()) {
+            if remaining <= scalar_zero() {
+                break;
+            }
+            let taken = self.remove(class, remaining);
+            remaining -= taken;
+            eaten += taken;
+        }
+        eaten
+    }
+
+    /// **One rot pass** — every lot of a class `shelf_life` knows ages by one turn, and a lot whose
+    /// age has reached its class's shelf life rots **whole**. Returns what rotted. A class with no
+    /// shelf life never ages or rots.
+    pub fn age_and_expire(&mut self, shelf_life: impl Fn(&str) -> Option<f32>) -> Scalar {
+        let mut rotted = scalar_zero();
+        for (class, batches) in self.classes.iter_mut() {
+            let Some(life) = shelf_life(class) else {
+                continue;
+            };
+            for batch in batches.iter_mut() {
+                batch.age += 1;
+            }
+            batches.retain(|batch| {
+                let expired = batch.age as f32 >= life;
+                if expired {
+                    rotted += batch.amount;
+                }
+                !expired
+            });
+        }
+        self.classes.retain(|_, batches| !batches.is_empty());
+        rotted
+    }
+
+    /// The amount of one class, every age (zero if absent).
     pub fn get(&self, class: &str) -> Scalar {
-        self.classes.get(class).copied().unwrap_or_else(scalar_zero)
+        self.classes.get(class).map_or_else(scalar_zero, |batches| {
+            batches.iter().fold(scalar_zero(), |sum, b| sum + b.amount)
+        })
     }
 
     /// Every class's amount summed.
     pub fn total(&self) -> Scalar {
         self.classes
             .values()
-            .fold(scalar_zero(), |total, amount| total + *amount)
+            .flatten()
+            .fold(scalar_zero(), |total, batch| total + batch.amount)
     }
 
     pub fn is_empty(&self) -> bool {
         self.classes.is_empty()
     }
 
-    /// `(class, amount)` in class-id order.
+    /// `(class, amount)` in class-id order, each class's lots summed.
     pub fn iter(&self) -> impl Iterator<Item = (&str, Scalar)> {
-        self.classes.iter().map(|(k, v)| (k.as_str(), *v))
+        self.classes.iter().map(|(class, batches)| {
+            (
+                class.as_str(),
+                batches.iter().fold(scalar_zero(), |sum, b| sum + b.amount),
+            )
+        })
+    }
+
+    /// `(class, age, amount)` for every lot, in class-id order and oldest first within a class.
+    pub fn batches(&self) -> impl Iterator<Item = (&str, u32, Scalar)> {
+        self.classes.iter().flat_map(|(class, batches)| {
+            batches
+                .iter()
+                .map(move |batch| (class.as_str(), batch.age, batch.amount))
+        })
     }
 
     /// **The share of this mix `amount` would be, taken in proportion** — without taking it.
     /// `min(amount, total)` split by each class's share, in exact fixed-point: each part floors, and
     /// the few micro-units the floors drop go one at a time to the classes with room, in id order, so
-    /// the parts sum to the requested amount and no class gives more than it holds.
+    /// the parts sum to the requested amount and no class gives more than it holds. **Within a class
+    /// every lot is scaled by the same factor**, so the share keeps its ages.
     pub fn proportional(&self, amount: Scalar) -> FoodMix {
         let total = self.total();
         let want = min(amount.max(scalar_zero()), total);
@@ -405,12 +586,13 @@ impl FoodMix {
             return self.clone();
         }
         let (total_raw, want_raw) = (i128::from(total.raw()), i128::from(want.raw()));
-        let mut parts: Vec<(String, i64, i64)> = self
+        let mut parts: Vec<(&String, i64, i64)> = self
             .classes
-            .iter()
-            .map(|(class, held)| {
-                let share = (i128::from(held.raw()) * want_raw / total_raw) as i64;
-                (class.clone(), share, held.raw())
+            .keys()
+            .map(|class| {
+                let held = self.get(class).raw();
+                let share = (i128::from(held) * want_raw / total_raw) as i64;
+                (class, share, held)
             })
             .collect();
         let mut short = want.raw() - parts.iter().map(|(_, share, _)| share).sum::<i64>();
@@ -426,28 +608,24 @@ impl FoodMix {
                 break;
             }
         }
-        let mut taken = FoodMix::default();
-        for (class, share, _) in parts {
-            taken.add(&class, Scalar::from_raw(share));
-        }
-        taken
+        self.scaled_to_class_parts(parts.into_iter().map(|(class, share, _)| (class, share)))
     }
 
     /// **`total` in this mix's proportions** — the same split [`Self::proportional`] makes, scaled
     /// to an arbitrary total (which may exceed what this mix holds): what a pooled receipt is made of
-    /// when its senders shipped this mix.
+    /// when its senders shipped this mix. Every lot keeps its age.
     pub fn split(&self, total: Scalar) -> FoodMix {
         let held = self.total();
         if total <= scalar_zero() || held <= scalar_zero() {
             return FoodMix::default();
         }
         let (held_raw, total_raw) = (i128::from(held.raw()), i128::from(total.raw()));
-        let mut parts: Vec<(String, i64)> = self
+        let mut parts: Vec<(&String, i64)> = self
             .classes
-            .iter()
-            .map(|(class, amount)| {
-                let share = (i128::from(amount.raw()) * total_raw / held_raw) as i64;
-                (class.clone(), share)
+            .keys()
+            .map(|class| {
+                let share = (i128::from(self.get(class).raw()) * total_raw / held_raw) as i64;
+                (class, share)
             })
             .collect();
         let short = total.raw() - parts.iter().map(|(_, share)| share).sum::<i64>();
@@ -456,9 +634,17 @@ impl FoodMix {
         if let Some(largest) = parts.iter_mut().max_by_key(|(_, share)| *share) {
             largest.1 += short;
         }
+        self.scaled_to_class_parts(parts.into_iter())
+    }
+
+    /// This mix's classes, each scaled (lot by lot) to the raw total named for it.
+    fn scaled_to_class_parts<'a>(&self, parts: impl Iterator<Item = (&'a String, i64)>) -> FoodMix {
         let mut mix = FoodMix::default();
         for (class, share) in parts {
-            mix.add(&class, Scalar::from_raw(share));
+            let scaled = scale_batches(&self.classes[class], Scalar::from_raw(share));
+            if !scaled.is_empty() {
+                mix.classes.insert(class.clone(), scaled);
+            }
         }
         mix
     }
@@ -581,24 +767,7 @@ impl LocalStore {
     /// by ascending shelf life, [`crate::demographics_config::KeepingConfig::eat_order`]). A class
     /// the order does not name is eaten last, in id order. Returns what was eaten.
     pub fn eat_food(&mut self, amount: Scalar, order: &[String]) -> Scalar {
-        let mut remaining = amount.max(scalar_zero());
-        let mut eaten = scalar_zero();
-        let unnamed: Vec<String> = self
-            .food
-            .classes
-            .keys()
-            .filter(|class| !order.contains(class))
-            .cloned()
-            .collect();
-        for class in order.iter().chain(unnamed.iter()) {
-            if remaining <= scalar_zero() {
-                break;
-            }
-            let taken = self.food.remove(class, remaining);
-            remaining -= taken;
-            eaten += taken;
-        }
-        eaten
+        self.food.eat(amount, order)
     }
 
     /// **Take up to `amount` of food IN PROPORTION TO WHAT THE LARDER HOLDS** — the move every food
@@ -613,9 +782,20 @@ impl LocalStore {
         taken
     }
 
-    /// Remove up to `amount` of one class — the rot's debit. Returns what was removed.
-    pub fn take_food_class(&mut self, class: &str, amount: Scalar) -> Scalar {
-        self.food.remove(class, amount)
+    /// **One rot pass over the larder** — see [`FoodMix::age_and_expire`]. Returns what rotted.
+    pub fn age_food(&mut self, shelf_life: impl Fn(&str) -> Option<f32>) -> Scalar {
+        self.food.age_and_expire(shelf_life)
+    }
+
+    /// Remove up to `amount` from the one lot of `class` aged `age` — a pack that rotted on its
+    /// walk. Returns what was removed.
+    pub fn take_food_batch(&mut self, class: &str, age: u32, amount: Scalar) -> Scalar {
+        self.food.remove_batch(class, age, amount)
+    }
+
+    /// Put `amount` of food of keeping class `class` in the larder having already kept `age` turns.
+    pub fn add_food_aged(&mut self, class: &str, amount: Scalar, age: u32) {
+        self.food.add_aged(class, amount, age);
     }
 
     /// **Replace the whole larder with `amount` of one class** — a band's opening reserve, and the
@@ -2535,6 +2715,13 @@ pub enum LaborTarget {
         /// [`LaborTarget::Forage::floor`]. `0.5` settles the herd on `K/2`; `0` takes it under
         /// `extinction_floor` and the herd is gone.
         floor: f32,
+        /// **MIGRATION MODE** (`docs/plan_roaming_bands.md`) — while set (and the row has workers),
+        /// the band's camp moves toward this herd every turn
+        /// ([`crate::systems::follow_hunted_herds`]), so a band camped in the herd stays
+        /// in it. Only a **migratory** herd can be followed (checked at the command boundary).
+        /// Like the floor it is a mutable property of the row, **not part of its identity**
+        /// ([`LaborTarget::same_source`] keys a hunt row on the herd id alone).
+        move_with_herd: bool,
     },
     /// Reveal fog outward from the band (band-wide role, no food yield).
     Scout,
@@ -5790,6 +5977,36 @@ impl LaborAllocation {
             .resize(self.assignments.len(), SourceYield::ZERO);
     }
 
+    /// **Turn migration mode off on this band's hunt rows**, except the row hunting `keep` (pass
+    /// `None` to clear them all). One herd at a time: setting the flag on a row clears it on the
+    /// band's others, and a `move_band` order clears it everywhere (`docs/plan_roaming_bands.md`).
+    pub fn clear_move_with_herd_except(&mut self, keep: Option<&str>) {
+        for assignment in &mut self.assignments {
+            if let LaborTarget::Hunt {
+                fauna_id,
+                move_with_herd,
+                ..
+            } = &mut assignment.target
+            {
+                if keep != Some(fauna_id.as_str()) {
+                    *move_with_herd = false;
+                }
+            }
+        }
+    }
+
+    /// The herd this band's camp follows, if any hunt row with hands on it has migration mode on.
+    pub fn followed_herd(&self) -> Option<&str> {
+        self.assignments.iter().find_map(|a| match &a.target {
+            LaborTarget::Hunt {
+                fauna_id,
+                move_with_herd: true,
+                ..
+            } if a.staffed_total() > 0 => Some(fauna_id.as_str()),
+            _ => None,
+        })
+    }
+
     /// Set/replace the **take** crew for `target`, keeping `Σ ≤ available`. An over-budget request
     /// is **clamped** to the free headroom (not rejected). Returns the worker count actually applied
     /// so the caller can report a clamp.
@@ -7508,6 +7725,7 @@ mod tests {
             target: LaborTarget::Hunt {
                 fauna_id: herd.to_string(),
                 floor: DEFAULT_ESCAPEMENT_FLOOR,
+                move_with_herd: false,
             },
             workers: take,
             kit: None,

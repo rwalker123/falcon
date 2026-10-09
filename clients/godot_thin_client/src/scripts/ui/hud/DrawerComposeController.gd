@@ -333,9 +333,10 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
         floor: float, species: String = "",
         improvement: String = SourceForecast.IMPROVEMENT_NONE,
         kit_id: String = KitRoster.NO_KIT_ID,
-        take_species: PackedStringArray = PackedStringArray()) -> void:
+        take_species: PackedStringArray = PackedStringArray(),
+        move_with_herd: bool = false) -> void:
     _emit_assign_labor_fn.call(band, kind, workers, x, y, herd_id, floor, species, improvement,
-        kit_id, take_species)
+        kit_id, take_species, move_with_herd)
 
 ## **RETIRED — `_emit_improvement`, THE DECLARE/WITHDRAW EMITTER**
 ## (`docs/plan_standing_upkeep.md` §4.7a ①). It turned the improvement checkbox's tick into the SET
@@ -3018,7 +3019,12 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         # count seeded here too while a verb carried one; a verb declares and names no hands now, so
         # the only crew this sheet composes is the take.
         _compose.seed_hunt(staffed if staffed > 0 else HudConst.WORKER_STEP,
-            _band_labor.floor_for_hunt(band, herd_id), standing_improvement)
+            _band_labor.floor_for_hunt(band, herd_id), standing_improvement,
+            # MIGRATION MODE seeds from the band's own row (pending-aware, so a toggle pressed on the
+            # Work tab is what a reopened sheet shows), like the crew and the floor.
+            bool((_band_labor.effective_worker_map(band).get(_band_labor.pending_key(
+                SourceForecast.LABOR_KIND_HUNT, -1, -1, herd_id), {}) as Dictionary).get(
+                    "move_with_herd", false)))
         # **AND THE KIT SEEDS FROM THE ROW** — see `_standing_kit_id`.
         _compose.set_hunt_kit_id(_standing_kit_id(band,
             _band_labor.pending_key(SourceForecast.LABOR_KIND_HUNT, -1, -1, herd_id)))
@@ -3309,6 +3315,11 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         # **THE KIT LINE UNDER THE PICKER IS WHAT SURVIVES** (`KitRoster.shortfall_line`) — one sentence
         # about the gear, on the control that chose it. **The REFUSAL above is untouched**: a fight this
         # party cannot make at all must still say so, and that is the branch, not this one.
+    # **MIGRATION MODE — the box, directly ABOVE where the work party mounts** (`docs/plan_roaming_bands.md`
+    # §Migration mode is a choice on the hunt). Present on a MIGRATORY herd's sheet only; nothing
+    # else on the sheet changes for it, because a band still catching up hunts with porters.
+    if _herd_is_migratory(herd):
+        _mount_move_camp_box(target)
     # **THE WORK PARTY, PAST THE APRON** — what distance costs this crew, priced by the sim's own
     # caravan forecast at the crew, kit and floor composed above. Directly under the crew and its kit
     # because every figure in it is a property of that crew walking that distance.
@@ -3470,9 +3481,28 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # does not blank a build the herd is already running.
     assign_btn.pressed.connect(func() -> void:
         _emit_assign_labor(band, SourceForecast.LABOR_KIND_HUNT, _compose.hunt_count(),
-            herd_x, herd_y, herd_id, _compose.hunt_floor(), "", composed_improvement, kit_id)
+            herd_x, herd_y, herd_id, _compose.hunt_floor(), "", composed_improvement, kit_id,
+            PackedStringArray(), _herd_is_migratory(herd) and _compose.hunt_move_with_herd())
         close_compose_sheet())
     target.add_child(assign_btn)
+
+## Whether the herd migrates — the only kind that accepts the `follow` token (the server refuses it on a
+## herd that stays where it is). Read off the wire's `size_class` word.
+func _herd_is_migratory(herd: Dictionary) -> bool:
+    return String(herd.get("size_class", "")) == HudComposeVocab.SIZE_CLASS_MIGRATORY
+
+## The migration-mode box and its one dim sub-line. The box writes the compose state only: nothing on
+## the sheet depends on it, so there is no rebuild, and the commit reads it.
+func _mount_move_camp_box(target: VBoxContainer) -> void:
+    var box := CheckBox.new()
+    box.text = HudComposeVocab.MOVE_CAMP_LABEL
+    box.button_pressed = _compose.hunt_move_with_herd()
+    box.focus_mode = Control.FOCUS_NONE
+    box.set_meta(HudComposeVocab.MOVE_CAMP_BOX_META, true)
+    HudStyle.apply_checkbox(box)
+    box.toggled.connect(func(on: bool) -> void: _compose.set_hunt_move_with_herd(on))
+    target.add_child(box)
+    target.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.MOVE_CAMP_HINT))
 
 ## Mount the kit row where a sheet wants it — a no-op when the roster offers this job no kit at all,
 ## so a sheet rendered before the first snapshot (or against a world whose roster does not cover the
@@ -6373,6 +6403,9 @@ func _standing_summary_model(assignment: Dictionary, kind: String, noun: String,
     var suffix := String(readout["label_suffix"])
     if suffix != "":
         text += HudComposeVocab.STANDING_SUMMARY_SEPARATOR + suffix
+    # MIGRATION MODE: the worked line says so for a band whose row has the flag.
+    if bool(assignment.get("move_with_herd", false)):
+        text += HudComposeVocab.STANDING_SUMMARY_MOVING_CLAUSE
     # **THE GOOD-SHORTFALL ARM, KEPT IN STEP WITH THE WORK BOARD'S ROW**
     # (`docs/plan_standing_upkeep.md` §2.7). This surface and `BandPanelController`'s inspector render
     # the same `note` / `muted_note` pair, so a third arm added to one and not the other is exactly the

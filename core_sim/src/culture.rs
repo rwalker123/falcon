@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use bevy::prelude::*;
 use sim_runtime::{
@@ -8,6 +8,8 @@ use sim_runtime::{
 };
 
 use crate::{
+    belief::BeliefRegistry,
+    belief_config::BeliefConfigHandle,
     components::{BandId, PopulationCohort, ResidentBand, Tile},
     culture_corruption_config::{
         CulturePropagationSettings, DEFAULT_BAND_CHARACTER_AMPLITUDE, DEFAULT_BAND_ELASTICITY,
@@ -18,6 +20,7 @@ use crate::{
     provinces::ProvinceMap,
     resources::SimulationTick,
     scalar::{scalar_from_f32, Scalar},
+    wellbeing_config::WellbeingConfigHandle,
 };
 
 /// Number of trait axes defined for each culture vector.
@@ -101,6 +104,36 @@ pub enum CultureTraitAxis {
     MeritOrientedLineageOriented,
     SecularDevout,
     PluralisticMonocultural,
+}
+
+/// Stable snake_case key for a culture axis, forming `culture.axis.<key>` (and the `ancestor_pull`
+/// keys in `belief_config.json`). Written out rather than derived from the enum's debug name so the wire-visible content vocabulary can never
+/// shift under a rename.
+pub const fn culture_axis_key(axis: CultureTraitAxis) -> &'static str {
+    match axis {
+        CultureTraitAxis::PassiveAggressive => "passive_aggressive",
+        CultureTraitAxis::OpenClosed => "open_closed",
+        CultureTraitAxis::CollectivistIndividualist => "collectivist_individualist",
+        CultureTraitAxis::TraditionalistRevisionist => "traditionalist_revisionist",
+        CultureTraitAxis::HierarchicalEgalitarian => "hierarchical_egalitarian",
+        CultureTraitAxis::SyncreticPurist => "syncretic_purist",
+        CultureTraitAxis::AsceticIndulgent => "ascetic_indulgent",
+        CultureTraitAxis::PragmaticIdealistic => "pragmatic_idealistic",
+        CultureTraitAxis::RationalistMystical => "rationalist_mystical",
+        CultureTraitAxis::ExpansionistInsular => "expansionist_insular",
+        CultureTraitAxis::AdaptiveStubborn => "adaptive_stubborn",
+        CultureTraitAxis::HonorBoundOpportunistic => "honor_bound_opportunistic",
+        CultureTraitAxis::MeritOrientedLineageOriented => "merit_oriented_lineage_oriented",
+        CultureTraitAxis::SecularDevout => "secular_devout",
+        CultureTraitAxis::PluralisticMonocultural => "pluralistic_monocultural",
+    }
+}
+
+/// The axis a snake_case key (see [`culture_axis_key`]) names, if any.
+pub fn culture_axis_from_key(key: &str) -> Option<CultureTraitAxis> {
+    CultureTraitAxis::ALL
+        .into_iter()
+        .find(|axis| culture_axis_key(*axis) == key)
 }
 
 impl CultureTraitAxis {
@@ -581,6 +614,11 @@ pub struct CultureManager {
     /// driver fixes the cause; lowering elasticity would only have added lag, because in steady
     /// state a chaser's step size equals its target's velocity no matter how slowly it chases.
     smoothed_resonance: InfluencerCultureResonance,
+    /// The ancestor pull the last [`Self::reconcile`] applied to each band, keyed like `bands`. What
+    /// the snapshot publishes as `cultureAncestorPull`: stored, not recomputed at capture, because
+    /// `simulate_population` moves anchors, hop counts and belief AFTER the reconcile, so a
+    /// recompute from the cohort would be next turn's pull, not the one the layer was just given.
+    applied_band_pull: BTreeMap<u64, [Scalar; CULTURE_TRAIT_AXES]>,
 }
 
 /// Everything [`CultureManager`] holds **except its settings** — see
@@ -600,6 +638,7 @@ pub struct CultureManagerCheckpoint {
     bands: HashMap<u64, CultureLayer>,
     tension_events: Vec<CultureTensionRecord>,
     smoothed_resonance: InfluencerCultureResonance,
+    applied_band_pull: BTreeMap<u64, [Scalar; CULTURE_TRAIT_AXES]>,
 }
 
 impl CultureManager {
@@ -613,6 +652,7 @@ impl CultureManager {
             bands: self.bands.clone(),
             tension_events: self.tension_events.clone(),
             smoothed_resonance: self.smoothed_resonance,
+            applied_band_pull: self.applied_band_pull.clone(),
         }
     }
 
@@ -625,6 +665,7 @@ impl CultureManager {
         self.bands = checkpoint.bands.clone();
         self.tension_events = checkpoint.tension_events.clone();
         self.smoothed_resonance = checkpoint.smoothed_resonance;
+        self.applied_band_pull = checkpoint.applied_band_pull.clone();
     }
 }
 
@@ -643,6 +684,7 @@ impl CultureManager {
             tension_events: Vec::new(),
             settings,
             smoothed_resonance: InfluencerCultureResonance::default(),
+            applied_band_pull: BTreeMap::new(),
         }
     }
 
@@ -789,6 +831,12 @@ impl CultureManager {
         self.bands.get(&owner.0)
     }
 
+    /// The ancestor pull the last reconcile applied to the band layer `owner`, per axis; `None` when
+    /// that band took no pull.
+    pub fn applied_band_pull(&self, owner: CultureOwner) -> Option<&[Scalar; CULTURE_TRAIT_AXES]> {
+        self.applied_band_pull.get(&owner.0)
+    }
+
     pub fn band_layer_mut_by_owner(&mut self, owner: CultureOwner) -> Option<&mut CultureLayer> {
         self.bands.get_mut(&owner.0)
     }
@@ -822,7 +870,15 @@ impl CultureManager {
         }
     }
 
-    pub fn reconcile(&mut self, tick: &SimulationTick, resonance: &InfluencerCultureResonance) {
+    /// `band_pull` is each band's ancestor-pull target offset ([`band_ancestor_pulls`], keyed by the
+    /// band's culture owner key); a band absent from it takes no pull.
+    pub fn reconcile(
+        &mut self,
+        tick: &SimulationTick,
+        resonance: &InfluencerCultureResonance,
+        band_pull: &BTreeMap<u64, [Scalar; CULTURE_TRAIT_AXES]>,
+    ) {
+        self.applied_band_pull = band_pull.clone();
         if self.global.is_none()
             && self.regional.is_empty()
             && self.locals.is_empty()
@@ -970,8 +1026,10 @@ impl CultureManager {
             // its province, which chased the regional channel a few lines up. Giving bands a
             // channel of their own would mean changing how influencers *attribute* resonance in the
             // first place (`InfluencerCultureResonance` has exactly three), which is a different
-            // arc.
-            layer.resolve_against(parent_values, None);
+            // arc. What a band DOES take beyond its province is the pull of its own dead
+            // (`band_ancestor_pulls`) — a target offset from the band's belief, not influencer
+            // resonance, passed through the same extra-offset slot.
+            layer.resolve_against(parent_values, band_pull.get(&layer.owner.0));
             layer.evaluate_divergence(parent_values);
             let alert = layer.tick_thresholds();
             layer.last_updated_tick = tick.0;
@@ -1361,7 +1419,39 @@ pub fn reconcile_band_culture_layers(
     }
 }
 
+/// **The ancestor pull** — each resident band's per-axis target offset `tie × ancestor_pull[axis]`,
+/// keyed by the band's culture owner key (`.claude/rules/core_sim/belief.md` → "The ancestor pull").
+/// The tie `s × r` is read from what the band already stores: its `belief_anchor` (for `s`) and
+/// the hop count the culture term was priced from, `last_belief_relay_hops` (for `r`), through the
+/// one formula (`CultureConfig::ancestor_tie`). A band with no tie is left out of the map.
+/// Stateless: the offset is recomputed every turn and nothing accumulates.
+pub fn band_ancestor_pulls<'a>(
+    bands: impl IntoIterator<Item = (&'a BandId, &'a PopulationCohort)>,
+    belief: &BeliefRegistry,
+    culture: &crate::wellbeing_config::CultureConfig,
+    full_tie_pull: &[f32; CULTURE_TRAIT_AXES],
+) -> BTreeMap<u64, [Scalar; CULTURE_TRAIT_AXES]> {
+    let mut pulls = BTreeMap::new();
+    for (band, cohort) in bands {
+        let hops = crate::belief_relay::hops_from_wire(
+            cohort.belief_anchor,
+            cohort.last_belief_relay_hops,
+        );
+        let tie = culture.ancestor_tie(cohort.belief_anchor.map(|anchor| belief.get(anchor)), hops);
+        // No tie, or a lever that names no axis, is no pull: the band is left out, not given zeros.
+        if tie <= 0.0 || full_tie_pull.iter().all(|offset| *offset == 0.0) {
+            continue;
+        }
+        pulls.insert(
+            CultureOwner::from_band(*band).0,
+            full_tie_pull.map(|offset| scalar_from_f32(tie * offset)),
+        );
+    }
+    pulls
+}
+
 /// System wrapper that performs the reconcile pass each turn.
+#[allow(clippy::too_many_arguments)]
 pub fn reconcile_culture_layers(
     mut manager: ResMut<CultureManager>,
     tick: Res<SimulationTick>,
@@ -1369,9 +1459,19 @@ pub fn reconcile_culture_layers(
     mut tension_writer: EventWriter<CultureTensionEvent>,
     mut schism_writer: EventWriter<CultureSchismEvent>,
     impacts: Res<InfluencerImpacts>,
+    bands: Query<(&BandId, &PopulationCohort), With<ResidentBand>>,
+    belief: Res<BeliefRegistry>,
+    wellbeing: Res<WellbeingConfigHandle>,
+    belief_config: Res<BeliefConfigHandle>,
 ) {
     let resonance = impacts.culture_resonance();
-    manager.reconcile(&tick, &resonance);
+    let band_pull = band_ancestor_pulls(
+        bands.iter(),
+        &belief,
+        &wellbeing.get().culture,
+        &belief_config.get().ancestor_pull_vector(),
+    );
+    manager.reconcile(&tick, &resonance, &band_pull);
     *effects = manager.compute_effects();
 
     let records = manager.take_tension_events();
@@ -1470,19 +1570,19 @@ mod tests {
                 .set_modifier(CultureTraitAxis::OpenClosed, scalar_from_f32(1.0));
         }
 
-        manager.reconcile(&SimulationTick(1), &resonance);
+        manager.reconcile(&SimulationTick(1), &resonance, &BTreeMap::new());
         assert!(
             manager.take_tension_events().is_empty(),
             "drift event should wait for trigger ticks"
         );
 
-        manager.reconcile(&SimulationTick(2), &resonance);
+        manager.reconcile(&SimulationTick(2), &resonance, &BTreeMap::new());
         assert!(
             manager.take_tension_events().is_empty(),
             "drift event should still wait for trigger ticks"
         );
 
-        manager.reconcile(&SimulationTick(3), &resonance);
+        manager.reconcile(&SimulationTick(3), &resonance, &BTreeMap::new());
         let events = manager.take_tension_events();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].kind, CultureTensionKind::DriftWarning);
@@ -1509,12 +1609,12 @@ mod tests {
                 .set_modifier(CultureTraitAxis::OpenClosed, scalar_from_f32(1.0));
         }
 
-        manager.reconcile(&SimulationTick(1), &resonance);
+        manager.reconcile(&SimulationTick(1), &resonance, &BTreeMap::new());
         let first_events = manager.take_tension_events();
         assert_eq!(first_events.len(), 1);
         assert_eq!(first_events[0].kind, CultureTensionKind::DriftWarning);
 
-        manager.reconcile(&SimulationTick(2), &resonance);
+        manager.reconcile(&SimulationTick(2), &resonance, &BTreeMap::new());
         let second_events = manager.take_tension_events();
         assert!(
             second_events
@@ -1544,7 +1644,7 @@ mod tests {
                 .set_modifier(CultureTraitAxis::OpenClosed, scalar_from_f32(1.0));
         }
 
-        manager.reconcile(&SimulationTick(1), &resonance);
+        manager.reconcile(&SimulationTick(1), &resonance, &BTreeMap::new());
         let initial_events = manager.take_tension_events();
         assert_eq!(initial_events.len(), 1);
         assert_eq!(initial_events[0].kind, CultureTensionKind::DriftWarning);
@@ -1558,7 +1658,7 @@ mod tests {
                 .set_modifier(CultureTraitAxis::OpenClosed, Scalar::zero());
         }
 
-        manager.reconcile(&SimulationTick(2), &resonance);
+        manager.reconcile(&SimulationTick(2), &resonance, &BTreeMap::new());
         let resolve_events = manager.take_tension_events();
         assert!(
             resolve_events
@@ -1592,7 +1692,7 @@ mod global_layer_tests {
 
         let mut last = 0.0f32;
         for tick in 1..=200u64 {
-            manager.reconcile(&SimulationTick(tick), &resonance);
+            manager.reconcile(&SimulationTick(tick), &resonance, &BTreeMap::new());
             last = manager
                 .global
                 .as_ref()

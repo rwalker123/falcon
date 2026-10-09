@@ -458,6 +458,7 @@ fn create_populations<'a>(
                                 homewardWorkers: assignment.homeward_workers,
                                 homewardAllHomeIn: assignment.homeward_all_home_in,
                                 homewardFood: assignment.homeward_food,
+                                moveWithHerd: assignment.move_with_herd,
                             },
                         )
                     })
@@ -908,6 +909,10 @@ fn create_populations<'a>(
             } else {
                 Some(builder.create_vector(&cohort.belief_relay_reach_y))
             };
+            let culture_traits = (!cohort.culture_traits.is_empty())
+                .then(|| builder.create_vector(&cohort.culture_traits));
+            let culture_ancestor_pull = (!cohort.culture_ancestor_pull.is_empty())
+                .then(|| builder.create_vector(&cohort.culture_ancestor_pull));
             let belief_reach_y = if cohort.belief_reach_y.is_empty() {
                 None
             } else {
@@ -1183,6 +1188,8 @@ fn create_populations<'a>(
                     heartBond: cohort.heart_bond,
                     heartLastContactTurn: cohort.heart_last_contact_turn,
                     independenceGrievanceThreshold: cohort.independence_grievance_threshold,
+                    cultureTraits: culture_traits,
+                    cultureAncestorPull: culture_ancestor_pull,
                 },
             )
         })
@@ -1445,6 +1452,7 @@ fn decode_labor_assignment(
         homeward_workers: assignment.homewardWorkers(),
         homeward_all_home_in: assignment.homewardAllHomeIn(),
         homeward_food: assignment.homewardFood(),
+        move_with_herd: assignment.moveWithHerd(),
     })
 }
 
@@ -1839,6 +1847,8 @@ fn decode_population(
         heart_bond: cohort.heartBond(),
         heart_last_contact_turn: cohort.heartLastContactTurn(),
         independence_grievance_threshold: cohort.independenceGrievanceThreshold(),
+        culture_traits: decode_scalars(cohort.cultureTraits()),
+        culture_ancestor_pull: decode_scalars(cohort.cultureAncestorPull()),
     })
 }
 

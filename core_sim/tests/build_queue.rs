@@ -957,6 +957,7 @@ fn world_with_a_half_tamed_herd(crew: u32, floor: f32) -> (App, Entity, String) 
             target: LaborTarget::Hunt {
                 fauna_id: herd_id.clone(),
                 floor,
+                move_with_herd: false,
             },
             workers: crew,
             kit: None,
@@ -1649,12 +1650,14 @@ fn every_build_job_and_source_kind_is_stated() {
         !patch.names(&LaborTarget::Hunt {
             fauna_id: "game_deer_07".to_string(),
             floor: FOOD_PEAK,
+            move_with_herd: false,
         }),
         "a patch never names a herd's row"
     );
     assert!(herd.names(&LaborTarget::Hunt {
         fauna_id: "game_deer_07".to_string(),
         floor: FOOD_PEAK,
+        move_with_herd: false,
     }));
 
     for job in [
@@ -1746,6 +1749,7 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
             target: LaborTarget::Hunt {
                 fauna_id: RING_HERD.to_string(),
                 floor: FOOD_PEAK,
+                move_with_herd: false,
             },
             // **The hunters, and on top of them the hands that keep the pen** — the hunt row is
             // the herd's crew and keeps it first (`docs/plan_site_crews.md` §2.2).
@@ -2342,6 +2346,7 @@ fn an_abandoned_pen_frees_its_ring_to_be_started_again() {
     let keeper_row = LaborTarget::Hunt {
         fauna_id: herd_id.clone(),
         floor: FOOD_PEAK,
+        move_with_herd: false,
     };
     assert!(
         core_sim::drop_holding_and_cancel_ring(&mut app.world, band, &keeper_row),
@@ -3761,5 +3766,147 @@ fn a_hoe_short_kept_patch_names_the_hoes_it_is_short_of() {
     assert!(
         !published(&app, patch, |row| row.upkeepToolsShort()),
         "a site with no short line does not read short"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// The animal Tame's empty room, told apart by WHO emptied it (`BuildGate::PredatorsAteGrowth`)
+// ---------------------------------------------------------------------------------------------
+
+/// The roster's wolf pack, seated on the fixture herd's tile — well inside
+/// `predators.prey_sense_radius`.
+const WOLF_PACK: &str = "Grey Wolf Pack";
+/// A pack at the shipped roster's upper biomass, so its demand (`prey_per_biomass x biomass`) is
+/// real against a small warren.
+const WOLF_PACK_BIOMASS: f32 = 120.0;
+const WOLF_PACK_REGROWTH: f32 = 0.15;
+const WOLF_PACK_BODY_MASS: f32 = 30.0;
+
+/// One whole turn with the predation pass in its place in the Logistics chain.
+fn resolve_a_predated_turn(app: &mut App) {
+    app.world.run_system_once(core_sim::advance_herds);
+    app.world.run_system_once(core_sim::advance_predation);
+    app.world.run_system_once(core_sim::advance_husbandry);
+    app.world
+        .run_system_once(core_sim::advance_labor_allocation);
+    recapture_snapshot_in_place(&mut app.world);
+}
+
+/// The fixture's seated-on-its-floor, unkept half-tamed herd, with (or without) a wolf pack on it,
+/// after one predated turn. Returns the app and the herd's id.
+fn tame_stalled_at_the_floor(with_wolves: bool) -> (App, String) {
+    /// A shallow floor, so the growth share is real and the wolves' draw is what empties the room.
+    const SHALLOW_FLOOR: f32 = 0.9;
+    tame_at_floor(with_wolves, SHALLOW_FLOOR)
+}
+
+/// [`tame_stalled_at_the_floor`] at an arbitrary assignment floor.
+fn tame_at_floor(with_wolves: bool, floor: f32) -> (App, String) {
+    let (mut app, _band, herd_id) = world_with_a_half_tamed_herd(NOBODY_ON_THE_HERD, floor);
+    let position = {
+        let mut registry = app.world.resource_mut::<core_sim::HerdRegistry>();
+        let herd = registry
+            .herds
+            .iter_mut()
+            .find(|herd| herd.id == herd_id)
+            .expect("the fixture herd survives");
+        herd.biomass = herd.carrying_capacity * floor;
+        herd.position()
+    };
+    // **The fixture herd is the pack's only prey in range**, so the pack's whole demand lands on it
+    // rather than being split with whatever else worldgen seated nearby.
+    app.world
+        .resource_mut::<core_sim::HerdRegistry>()
+        .herds
+        .retain(|herd| herd.id == herd_id);
+    if with_wolves {
+        app.world
+            .resource_mut::<core_sim::HerdRegistry>()
+            .herds
+            .push(core_sim::Herd::new(
+                "pred_wolf".to_string(),
+                WOLF_PACK.to_string(),
+                core_sim::SizeClass::Small,
+                vec![position],
+                WOLF_PACK_BIOMASS,
+                WOLF_PACK_BIOMASS,
+                0.0,
+                WOLF_PACK_REGROWTH,
+                WOLF_PACK_BODY_MASS,
+            ));
+    }
+    resolve_a_predated_turn(&mut app);
+    (app, herd_id)
+}
+
+/// The fixture herd's published row: blocked reason and the predator readout, off the ENCODED buffer.
+fn published_predation(app: &App, id: &str) -> (String, String, f32) {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let row = envelope
+        .payload_as_snapshot()
+        .expect("a snapshot payload")
+        .subsistence()
+        .and_then(|section| section.herds())
+        .expect("the herd list")
+        .iter()
+        .find(|herd| herd.id().unwrap_or_default() == id)
+        .expect("the fixture herd is on the wire — it is OWNED, which passes the fog gate");
+    (
+        row.buildBlockedReason().unwrap_or_default().to_string(),
+        row.predatorEatenBy().unwrap_or_default().to_string(),
+        row.predatorEaten(),
+    )
+}
+
+/// **Wolves ate the growth: the Tame refuses as `predators_ate_growth`, and the herd row names them.**
+/// The same herd with the pack removed keeps its growth, so the Tame is not refused at all.
+#[test]
+fn a_tame_whose_room_wolves_emptied_refuses_as_predators_ate_growth() {
+    let (preyed, preyed_id) = tame_stalled_at_the_floor(true);
+    let (reason, by, eaten) = published_predation(&preyed, &preyed_id);
+    assert_eq!(reason, "predators_ate_growth");
+    assert_eq!(by, "wolf", "the species KEY, not the display name");
+    assert!(
+        eaten > 0.0,
+        "the biomass the pack drew is published: {eaten}"
+    );
+
+    let (quiet, quiet_id) = tame_stalled_at_the_floor(false);
+    let (reason, by, eaten) = published_predation(&quiet, &quiet_id);
+    assert_eq!(
+        reason, "",
+        "no pack: the herd's own growth leaves room, so the Tame builds (the floor's `escapement` \
+         reason is pinned by the stall test above)"
+    );
+    assert_eq!(by, "");
+    assert_eq!(eaten, 0.0);
+}
+
+/// **A wolf is not blamed for a room that was already empty.** At `floor = 1.0` the growth share is
+/// `x 0` and nothing stands above the line, so the room is empty with or without the pack: the refusal
+/// stays `escapement` even though the pack ate from the herd.
+#[test]
+fn a_full_floor_stays_escapement_even_with_wolves_eating() {
+    /// The top of the floor's range: leave the whole herd standing.
+    const WHOLE_HERD_STANDING: f32 = 1.0;
+    let (app, id) = tame_at_floor(true, WHOLE_HERD_STANDING);
+    let (reason, by, eaten) = published_predation(&app, &id);
+    assert!(
+        eaten > 0.0,
+        "fixture: the pack really did eat from the herd"
+    );
+    assert_eq!(by, "wolf");
+    assert_eq!(
+        reason, "escapement",
+        "the room was empty before the wolves ate, so the floor is the cause"
     );
 }

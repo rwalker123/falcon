@@ -62,6 +62,9 @@ struct PublishedRow {
     bench_workers: u32,
     has_accessible_stockpile: bool,
     has_loadout_window: bool,
+    /// The band's own culture and the ancestor pull on it (#701) — own-band readouts.
+    culture_traits: usize,
+    culture_ancestor_pull: usize,
 }
 
 impl PublishedRow {
@@ -125,6 +128,8 @@ fn published_rows(app: &App) -> Vec<PublishedRow> {
             bench_workers: row.bench().map(|bench| bench.workers()).unwrap_or(0),
             has_accessible_stockpile: row.accessibleStockpile().is_some(),
             has_loadout_window: row.loadoutWindow().is_some(),
+            culture_traits: row.cultureTraits().map(|v| v.len()).unwrap_or(0),
+            culture_ancestor_pull: row.cultureAncestorPull().map(|v| v.len()).unwrap_or(0),
         })
         .collect()
 }
