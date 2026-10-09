@@ -1782,8 +1782,8 @@ the Band tab states it in three places.
 - **The popover** (`BREAKDOWN_KIND_FAMILY_LIMIT`) is one table row per `breeding_members` entry (name by
   `band_label_for_id`, the sim's `Band <id>` spelling when the roster lacks it; `{lines} families ·
   {people}`) and per `breeding_peoples` entry (`FactionMark.faction_name` in the READY blue, `+{lines}
-  families`), ` · fading` and amber on a fading one, then the faint scale note. Those rows ride behind
-  control-character sentinels (`HudLineageVocab.ROW_MARK` / `FAINT_MARK`, bullets lead with `◆ `) that
+  families`), ` · fading` and amber on a fading one, then the faint contact note (`Contact with
+  other peoples raises the limit.`). Those rows ride behind control-character sentinels (`HudLineageVocab.ROW_MARK` / `FAINT_MARK`, bullets lead with `◆ `) that
   `DetailFormat.detail_bbcode` renders through `HudLineageVocab.line_bbcode`; a table row keeps
   `ROW_NAME_GAP_PX` between name and figure.
 - **The two world constants** (`lineage_people_per_line`, `lineage_free_breeding_at`) are latched by

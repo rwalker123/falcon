@@ -126,8 +126,8 @@ func run(harness) -> void:
 			and pop.contains(HudLineageVocab.MEMBER_VALUE_FORMAT % [2, 70]))
 	h._assert_band_panel("family limit: …tags the fading member",
 		pop.contains(HudLineageVocab.FADING_SUFFIX.strip_edges()))
-	h._assert_band_panel("family limit: …and closes on the scale note",
-		pop.contains(HudLineageVocab.SCALE_NOTE_FORMAT % [PEOPLE_PER_LINE, FREE_BREEDING_AT]))
+	h._assert_band_panel("family limit: …and closes on the contact note",
+		pop.contains(HudLineageVocab.CONTACT_NOTE))
 	_close()
 
 	# ---- 3. AT THE LIMIT: births stopped, kin ----------------------------------------------------

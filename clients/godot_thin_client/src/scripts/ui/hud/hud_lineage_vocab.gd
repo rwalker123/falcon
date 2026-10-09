@@ -38,7 +38,7 @@ const VALUE_FORMAT := "%d / %d"
 const MEMBER_VALUE_FORMAT := "%d families · %d"
 const PEOPLE_VALUE_FORMAT := "+%d families"
 const FADING_SUFFIX := " · fading"
-const SCALE_NOTE_FORMAT := "%d people per family, up to %d. Another people counts only while you stay in touch."
+const CONTACT_NOTE := "Contact with other peoples raises the limit."
 
 # ---- the bullet under the row ---------------------------------------------------------------------
 ## The amber bullet's lead mark — the work board's `◆`, so a warning reads the same on every tab.
@@ -135,7 +135,7 @@ static func note_line(band: Dictionary) -> String:
 		return faint_line(STAY_IN_TOUCH_FORMAT % free)
 	return ""
 
-## The popover's rows: one per member band, one per other people, then the scale note.
+## The popover's rows: one per member band, one per other people, then the contact note.
 ## `band_name` resolves a band id to the roster's name (`""` = unknown).
 static func popover_lines(band: Dictionary, band_name: Callable) -> Array[String]:
 	var lines: Array[String] = []
@@ -160,8 +160,7 @@ static func popover_lines(band: Dictionary, band_name: Callable) -> Array[String
 		lines.append(table_row(FactionMark.faction_name(int(people.get(PEOPLE_FACTION_KEY, 0))),
 			HudStyle.READY.to_html(false), value + (FADING_SUFFIX if fading else ""),
 			HudStyle.WARN_HEX if fading else HudStyle.INK_HEX))
-	lines.append(faint_line(SCALE_NOTE_FORMAT % [LineageWorld.people_per_line(),
-		LineageWorld.free_breeding_at()]))
+	lines.append(faint_line(CONTACT_NOTE))
 	return lines
 
 # ---- the split preview -----------------------------------------------------------------------------
