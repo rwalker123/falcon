@@ -101,12 +101,13 @@ the first load sooner, because the first pack fills at the whole party's rate.
 
 ### A pack rots by its walk (#706)
 
-**Every pack carries the keeping classes of the food in it, and a class whose shelf life is shorter
+**Every pack carries the keeping classes of the food in it, and a class whose shelf life is no longer
 than the porter's walk is lost on the way — entirely, not as a share** (`spoilage::rots_in_transit`;
 the classes and their shelf lives are `campaign.md` → "Food spoils by keeping class"). So the same
 walk costs a meat hunt everything and a nut gather nothing: a boar is `flesh`, which keeps four
 turns, so a herd eight hexes out (a six-turn walk) lands nothing it keeps, and one five hexes out
-(three turns) loses nothing. That is the natural range a far hunt has, and a longer shelf life —
+(three turns) loses nothing; a walk of exactly four turns is lost too, the same as a camp kill
+of that age (the larder expires a lot at `age >= shelf`). That is the natural range a far hunt has, and a longer shelf life —
 drying — is what extends it.
 
 - **The composition rides the caravan beside its scalar cargo.** `WorkParty::load_classes` and each
@@ -135,7 +136,7 @@ drying — is what extends it.
   say *before the order is committed* that a far take will spoil.
 - **A posting that ENDS rots by the same rule.** Its packs and load walk home
   (`WorkParty::walk_home`, below) and land through `bring_the_party_home`, which credits the route
-  arm and then strikes every class whose shelf life is shorter than the walk the cargo was carried
+  arm and then strikes every class whose shelf life is no longer than the walk the cargo was carried
   over — the porter's own walk, or the whole walk for the load the source hands carry.
 
 Pinned by `work_party::tests::a_pack_carries_its_loads_classes_home_with_its_walk` (the composition

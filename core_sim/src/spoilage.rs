@@ -9,7 +9,7 @@
 //! the rot pass of *T+shelf*. The meal takes the fastest-rotting class first and the oldest lot
 //! first within it.
 //!
-//! A **caravan's pack** keeps counting while it is carried: a pack whose walk is longer than a
+//! A **caravan's pack** keeps counting while it is carried: a pack whose walk is at least a
 //! class's shelf life is lost on the way, entirely ([`rots_in_transit`]); a pack that survives
 //! lands aged by its walk, so its shelf life is counted from the kill and not from the landing.
 //!
@@ -50,13 +50,13 @@ pub fn rot_ahead(food: &FoodMix, need: f32, keeping: &KeepingConfig) -> Scalar {
     rotted
 }
 
-/// **Does a pack of `class` rot on a walk of `walk_turns`?** — a shelf life shorter than the walk
-/// home. A walk of no length (a local row, a road the whole way) never rots anything, and a class
+/// **Does a pack of `class` rot on a walk of `walk_turns`?** — a shelf life no longer than the walk
+/// home (the larder expires a lot at `age >= shelf`, and a pack's walk is its age). A walk of no length (a local row, a road the whole way) never rots anything, and a class
 /// the table does not carry never rots.
 pub fn rots_in_transit(class: &str, walk_turns: u32, keeping: &KeepingConfig) -> bool {
     keeping
         .shelf_life(class)
-        .is_some_and(|shelf| shelf < walk_turns as f32)
+        .is_some_and(|shelf| shelf <= walk_turns as f32)
 }
 
 /// **THE LARDER ROT, ONCE A TURN** — right after `simulate_population`'s meal and before the turn's
@@ -305,7 +305,9 @@ mod tests {
     fn a_walk_longer_than_a_shelf_life_rots_that_class_and_no_other() {
         let keeping = keeping();
         assert!(rots_in_transit(FLESH, FLESH_SHELF as u32 + 1, &keeping));
-        assert!(!rots_in_transit(FLESH, FLESH_SHELF as u32, &keeping));
+        // A walk of exactly the shelf life is lost too: the larder expires a lot at `age >= shelf`.
+        assert!(rots_in_transit(FLESH, FLESH_SHELF as u32, &keeping));
+        assert!(!rots_in_transit(FLESH, FLESH_SHELF as u32 - 1, &keeping));
         assert!(!rots_in_transit(DRY, FLESH_SHELF as u32 + 1, &keeping));
         assert!(!rots_in_transit(
             FLESH,

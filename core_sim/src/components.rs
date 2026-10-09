@@ -2721,7 +2721,6 @@ pub enum LaborTarget {
         /// in it. Only a **migratory** herd can be followed (checked at the command boundary).
         /// Like the floor it is a mutable property of the row, **not part of its identity**
         /// ([`LaborTarget::same_source`] keys a hunt row on the herd id alone).
-        #[serde(default)]
         move_with_herd: bool,
     },
     /// Reveal fog outward from the band (band-wide role, no food yield).
@@ -5978,6 +5977,36 @@ impl LaborAllocation {
             .resize(self.assignments.len(), SourceYield::ZERO);
     }
 
+    /// **Turn migration mode off on this band's hunt rows**, except the row hunting `keep` (pass
+    /// `None` to clear them all). One herd at a time: setting the flag on a row clears it on the
+    /// band's others, and a `move_band` order clears it everywhere (`docs/plan_roaming_bands.md`).
+    pub fn clear_move_with_herd_except(&mut self, keep: Option<&str>) {
+        for assignment in &mut self.assignments {
+            if let LaborTarget::Hunt {
+                fauna_id,
+                move_with_herd,
+                ..
+            } = &mut assignment.target
+            {
+                if keep != Some(fauna_id.as_str()) {
+                    *move_with_herd = false;
+                }
+            }
+        }
+    }
+
+    /// The herd this band's camp follows, if any hunt row with hands on it has migration mode on.
+    pub fn followed_herd(&self) -> Option<&str> {
+        self.assignments.iter().find_map(|a| match &a.target {
+            LaborTarget::Hunt {
+                fauna_id,
+                move_with_herd: true,
+                ..
+            } if a.staffed_total() > 0 => Some(fauna_id.as_str()),
+            _ => None,
+        })
+    }
+
     /// Set/replace the **take** crew for `target`, keeping `Σ ≤ available`. An over-budget request
     /// is **clamped** to the free headroom (not rejected). Returns the worker count actually applied
     /// so the caller can report a clamp.
@@ -6009,36 +6038,6 @@ impl LaborAllocation {
     /// edit; it must not re-assert — or silently drop — a build the player committed 25 turns to.
     /// Walking away from one is `unqueue` (drop the declaration) or `abandon` (put the whole source
     /// down), which is where §2.4/§2.5 put it.
-    /// **Turn migration mode off on this band's hunt rows**, except the row hunting `keep` (pass
-    /// `None` to clear them all). One herd at a time: setting the flag on a row clears it on the
-    /// band's others, and a `move_band` order clears it everywhere (`docs/plan_roaming_bands.md`).
-    pub fn clear_move_with_herd_except(&mut self, keep: Option<&str>) {
-        for assignment in &mut self.assignments {
-            if let LaborTarget::Hunt {
-                fauna_id,
-                move_with_herd,
-                ..
-            } = &mut assignment.target
-            {
-                if keep != Some(fauna_id.as_str()) {
-                    *move_with_herd = false;
-                }
-            }
-        }
-    }
-
-    /// The herd this band's camp follows, if any hunt row with hands on it has migration mode on.
-    pub fn followed_herd(&self) -> Option<&str> {
-        self.assignments.iter().find_map(|a| match &a.target {
-            LaborTarget::Hunt {
-                fauna_id,
-                move_with_herd: true,
-                ..
-            } if a.staffed_total() > 0 => Some(fauna_id.as_str()),
-            _ => None,
-        })
-    }
-
     pub fn set_assignment(
         &mut self,
         target: LaborTarget,

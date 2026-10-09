@@ -1415,8 +1415,8 @@ row-full reading), the pools releasing their spare hands, and *hold the ground* 
 sized by what a keeper supplies, keeping the harvesters, and defaulted on when paying it would
 starve the band, and food rotting at the end of its shelf life (#797). At t60, alive / hunger
 deaths / `patches_improved` by start kind: 54 (`stay`) 55 / 0 / 1; 18 (`stay`) 52 / 0 / 2; 22
-(`stay`) 43 / 0 / 0; 59 (`stay`) 45 / 0 / 1; 20 (`stay`) 42 / 0 / 0; 50 (`split_far`) 43 / 0 / 0;
-3 (`short`) 33 / 0 / 1; 37 (`short`) 50 / 0 / 1. `hard` because argmax makes the run the rules' — at `normal` two proposals for one
+(`stay`) 43 / 0 / 0; 59 (`stay`) 45 / 0 / 1; 20 (`stay`) 40 / 0 / 0; 50 (`split_far`) 43 / 0 / 0;
+3 (`short`) 35 / 0 / 1; 37 (`short`) 50 / 0 / 1. `hard` because argmax makes the run the rules' — at `normal` two proposals for one
 band in the top two are a seeded coin flip. Seat 2 is Pass, starves on every seed alike, and is
 marked `degenerate` on all eight by the writer. `Land` wins on all eight seeds (6 to 15 moves
 accepted), so the file's `declined` list is empty.

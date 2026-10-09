@@ -1234,9 +1234,11 @@ pub fn build_headless_app() -> App {
             Update,
             (
                 // This whole run is serial by data — every pair conflicts on `PopulationCohort`,
-                // and the two `Commands`-using systems (`advance_band_movement`,
-                // `advance_expeditions`) sit inside it, so the auto-inserted `apply_deferred`
-                // sync points between them are preserved exactly as before.
+                // and the three `Commands`-using systems (`follow_hunted_herds`,
+                // `advance_band_movement`, `advance_expeditions`) sit inside it, so the
+                // auto-inserted `apply_deferred` sync points between them are preserved —
+                // `follow_hunted_herds` needs one so `advance_band_movement` sees a freshly
+                // inserted `BandTravel` the same turn.
                 (
                     systems::simulate_population,
                     // The larder rots right after the meal and before the turn's take lands

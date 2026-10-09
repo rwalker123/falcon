@@ -19370,7 +19370,7 @@ mod transit_rot_tests {
     fn a_short_walk_and_a_local_pack_lose_nothing() {
         let keeping = crate::demographics_config::DemographicsConfig::default().keeping;
         let flesh_life = keeping.shelf_life(FLESH).expect("flesh is a shipped class");
-        for walk in [NO_WALK, flesh_life as u32] {
+        for walk in [NO_WALK, flesh_life as u32 - 1] {
             let mut stores = LocalStore::new();
             let spoiled = land_food_home(
                 &mut stores,
@@ -19404,5 +19404,22 @@ mod transit_rot_tests {
         };
         assert_eq!(passes_until_it_rots(NO_WALK), flesh_life as u32);
         assert_eq!(passes_until_it_rots(WALK), flesh_life as u32 - WALK);
+    }
+
+    /// **A pack walked exactly its shelf life is lost on the walk** — the same age at which a camp
+    /// kill expires in the larder (`age >= shelf`).
+    #[test]
+    fn a_walk_of_exactly_the_shelf_life_rots_the_pack() {
+        let keeping = crate::demographics_config::DemographicsConfig::default().keeping;
+        let flesh_life = keeping.shelf_life(FLESH).expect("flesh is a shipped class");
+        let mut stores = LocalStore::new();
+        let spoiled = land_food_home(
+            &mut stores,
+            &delivery(flesh_life as u32, &[(FLESH, PACK)]),
+            &keeping,
+            FLESH,
+        );
+        assert!((spoiled - PACK).abs() < 1e-3, "spoiled {spoiled}");
+        assert!(stores.food().is_empty());
     }
 }
