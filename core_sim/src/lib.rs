@@ -90,7 +90,7 @@ mod sites;
 mod sites_config;
 mod snapshot;
 mod snapshot_overlays_config;
-mod spoilage;
+pub mod spoilage;
 mod start_profile;
 pub mod starting_loadout;
 mod supply;
