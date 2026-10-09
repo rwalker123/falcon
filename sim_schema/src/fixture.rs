@@ -616,6 +616,8 @@ fn seed_snapshot() -> WorldSnapshot {
             ..Default::default()
         });
         cohort.pooling_links = rows();
+        cohort.breeding_members = rows();
+        cohort.breeding_peoples = rows();
         cohort.pending_reveal_x = vec![0u32; ROWS];
         cohort.pending_reveal_y = vec![0u32; ROWS];
         cohort.belief_reach_x = vec![0u32; ROWS];

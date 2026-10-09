@@ -1028,7 +1028,8 @@ func _band_growth_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> Stri
         return ""
     var fertility := DetailFormat.band_fertility(unit_data)
     ctx.fertility = fertility
-    return DetailFormat.GROWTH_ROW_FORMAT % int(round(fertility * 100.0))
+    return "%s%s%s" % [HudDisclosureVocab.DETAIL_ROW_GROWTH, DetailFormat.DETAIL_KV_SEPARATOR,
+        DetailFormat.growth_value_text(unit_data)]
 
 ## The Growth row rendered as a CLAUSE on the Morale line, for the SHORT band-zone tier — the pair to
 ## `_band_growth_line`, and the only place the two can differ is the anchor suffix, which a merged
@@ -1053,10 +1054,12 @@ func _band_growth_clause(unit_data: Dictionary, ctx: DetailFormat.Context) -> St
     if label == "":
         label = HudDisclosureVocab.DETAIL_ROW_GROWTH
     return BAND_MORALE_GROWTH_CLAUSE_FORMAT % [
-        label, BandFoodStatus.hex_for_fertility(fertility),
-        DetailFormat.GROWTH_VALUE_SHORT_FORMAT % int(round(fertility * 100.0))]
+        label,
+        HudStyle.DANGER_HEX if DetailFormat.growth_is_stopped(unit_data) \
+            else BandFoodStatus.hex_for_fertility(fertility),
+        DetailFormat.growth_value_short_text(unit_data)]
 
-## Itemized fertility breakdown: the three named factors as indented sub-lines, each rendered as a
+## Itemized fertility breakdown: the four named factors as indented sub-lines, each rendered as a
 ## MULTIPLIER — `    ▼ ×0.60  short rations` — because they combine by product, so reading down the
 ## list multiplies out to the Growth headline above (`DetailFormat.detail_bbcode` tints by the sign
 ## glyph, the same path the morale breakdown uses). Only factors that actually moved off the neutral
@@ -1070,12 +1073,14 @@ func _fertility_breakdown_lines(unit_data: Dictionary) -> Array[String]:
     if not BandFoodStatus.fertility_is_projected(unit_data):
         return lines
     var trend := float(unit_data.get("fertility_trend", BandFoodStatus.FERTILITY_NEUTRAL))
-    # (factor, label) in the model's own order: hunger (the gate) → reserve (stock) → trend (flow).
+    # (factor, label) in the model's own order: hunger (the gate) → reserve (stock) → trend (flow) →
+    # ceiling (the breeding population's room, issue #691).
     var factors := [
         [float(unit_data.get("fertility_hunger", BandFoodStatus.FERTILITY_NEUTRAL)), DetailFormat.FERTILITY_LABEL_HUNGER],
         [float(unit_data.get("fertility_reserve", BandFoodStatus.FERTILITY_NEUTRAL)), DetailFormat.FERTILITY_LABEL_RESERVE],
         [trend, DetailFormat.FERTILITY_LABEL_TREND_GROWING if trend > BandFoodStatus.FERTILITY_NEUTRAL \
             else DetailFormat.FERTILITY_LABEL_TREND_SHRINKING],
+        [HudLineageVocab.ceiling_factor(unit_data), DetailFormat.FERTILITY_LABEL_CEILING],
     ]
     var epsilon := BandFoodStatus.fertility_breakdown_epsilon()
     for entry in factors:

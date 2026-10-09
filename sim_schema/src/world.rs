@@ -7,7 +7,8 @@
 
 use crate::state::campaign::{
     CampaignLabel, CampaignProfileState, CommandEventState, FactionNameState, FactionPolicyState,
-    OpeningLoadoutState, PendingForksState, StanceState, VictorySnapshotState, VoiceMediumState,
+    LineageConstantsState, OpeningLoadoutState, PendingForksState, StanceState,
+    VictorySnapshotState, VoiceMediumState,
 };
 use crate::state::connections::ConnectionState;
 use crate::state::culture::{
@@ -144,6 +145,9 @@ pub struct WorldSnapshot {
     /// Anything older was evicted by the window, not lost on the wire.
     #[serde(default)]
     pub command_events_retention_turns: u32,
+    /// The lineage constants (`CampaignSection.lineagePeoplePerLine` / `lineageFreeBreedingAt`).
+    #[serde(default)]
+    pub lineage_constants: LineageConstantsState,
     /// The Telling's fork tier, per faction: what is on the table right now.
     #[serde(default)]
     pub pending_forks: Vec<PendingForksState>,
@@ -336,6 +340,11 @@ pub struct WorldDelta {
     pub command_events: Option<Vec<CommandEventState>>,
     /// `None` means unchanged — an ordinary whole-section diff, unlike the events themselves.
     pub command_events_retention_turns: Option<u32>,
+    /// `None` means unchanged.
+    ///
+    /// Boxed so the delta stays within clippy's `large_enum_variant` margin of the snapshot in
+    /// [`crate::codec::FramePayload`].
+    pub lineage_constants: Option<Box<LineageConstantsState>>,
     /// The campaign profile roster. `None` means unchanged.
     ///
     /// This was absent from `WorldDelta` entirely until delta streaming — harmless while the

@@ -308,6 +308,7 @@ pub(crate) struct SeatPublishState {
     /// since that turn — the restatement is structural, not a flag.
     command_events: u64,
     command_events_retention_turns: Whole<u32>,
+    lineage_constants: Whole<LineageConstantsState>,
     pending_forks: Whole<Vec<PendingForksState>>,
     stance_axes: Whole<Vec<StanceState>>,
     voice_medium: Whole<Vec<VoiceMediumState>>,
@@ -643,6 +644,7 @@ struct CampaignParts {
     profiles: Option<Vec<CampaignProfileState>>,
     command_events: Option<Vec<CommandEventState>>,
     command_events_retention_turns: Option<u32>,
+    lineage_constants: Option<LineageConstantsState>,
     pending_forks: Option<Vec<PendingForksState>>,
     stance_axes: Option<Vec<StanceState>>,
     voice_medium: Option<Vec<VoiceMediumState>>,
@@ -667,6 +669,7 @@ struct CampaignBaselines<'a> {
     profiles: &'a mut Whole<Vec<CampaignProfileState>>,
     command_events: &'a mut u64,
     command_events_retention_turns: &'a mut Whole<u32>,
+    lineage_constants: &'a mut Whole<LineageConstantsState>,
     pending_forks: &'a mut Whole<Vec<PendingForksState>>,
     stance_axes: &'a mut Whole<Vec<StanceState>>,
     voice_medium: &'a mut Whole<Vec<VoiceMediumState>>,
@@ -700,6 +703,11 @@ fn diff_campaign(
         command_events_retention_turns: diff_whole(
             baseline.command_events_retention_turns,
             &snapshot.command_events_retention_turns,
+            write,
+        ),
+        lineage_constants: diff_whole(
+            baseline.lineage_constants,
+            &snapshot.lineage_constants,
             write,
         ),
         pending_forks: diff_whole(baseline.pending_forks, &snapshot.pending_forks, write),
@@ -953,6 +961,7 @@ impl SeatPublishState {
             // A fresh world has sent nothing, so every event ever pushed is "appended since".
             command_events: 0,
             command_events_retention_turns: Whole::default(),
+            lineage_constants: Whole::default(),
             pending_forks: Whole::default(),
             stance_axes: Whole::default(),
             voice_medium: Whole::default(),
@@ -1097,6 +1106,7 @@ impl SeatPublishState {
             campaign_profiles,
             command_events,
             command_events_retention_turns,
+            lineage_constants,
             pending_forks,
             stance_axes,
             voice_medium,
@@ -1216,6 +1226,7 @@ impl SeatPublishState {
                             profiles: campaign_profiles,
                             command_events,
                             command_events_retention_turns,
+                            lineage_constants,
                             pending_forks,
                             stance_axes,
                             voice_medium,
@@ -1324,6 +1335,7 @@ impl SeatPublishState {
             campaign_profiles: campaign_parts.profiles,
             command_events: campaign_parts.command_events,
             command_events_retention_turns: campaign_parts.command_events_retention_turns,
+            lineage_constants: campaign_parts.lineage_constants.map(Box::new),
             pending_forks: campaign_parts.pending_forks,
             stance_axes: campaign_parts.stance_axes,
             voice_medium: campaign_parts.voice_medium,
@@ -1562,6 +1574,8 @@ impl SeatPublishState {
             .unwrap_or(0);
         self.command_events_retention_turns
             .reset(entry.snapshot.command_events_retention_turns);
+        self.lineage_constants
+            .reset(entry.snapshot.lineage_constants);
         self.pending_forks
             .reset(entry.snapshot.pending_forks.clone());
         self.stance_axes.reset(entry.snapshot.stance_axes.clone());
@@ -1742,6 +1756,7 @@ impl SeatPublishState {
             campaign_profiles: None,
             command_events: None,
             command_events_retention_turns: None,
+            lineage_constants: None,
             pending_forks: None,
             stance_axes: None,
             voice_medium: None,
@@ -1890,6 +1905,7 @@ impl SeatPublishState {
             campaign_profiles: None,
             command_events: None,
             command_events_retention_turns: None,
+            lineage_constants: None,
             pending_forks: None,
             stance_axes: None,
             voice_medium: None,
@@ -2022,6 +2038,7 @@ impl SeatPublishState {
             campaign_profiles: None,
             command_events: None,
             command_events_retention_turns: None,
+            lineage_constants: None,
             pending_forks: None,
             stance_axes: None,
             voice_medium: None,
@@ -3517,6 +3534,15 @@ pub fn capture_snapshot(
         // The climate-band cut points ride the snapshot beside the other worldgen overlays
         // (`docs/plan_climate_authority.md` §8.3): the sim owns them, the client renders the band it is
         // told. A per-map constant read straight off the active `ClimateConfig`.
+        // The lineage constants the breeding ceiling is measured in (issue #691), read straight off
+        // the live demographics config so a client's split preview never restates them.
+        let lineage_constants_state = {
+            let lineage = &demographics_config.lineage;
+            LineageConstantsState {
+                people_per_line: u32::from(lineage.people_per_line.get()),
+                free_breeding_at: lineage.free_breeding_at.get(),
+            }
+        };
         let climate_bands_state = ClimateBandsState {
             polar_max_temp: config.climate.polar_max_temp,
             boreal_max_temp: config.climate.boreal_max_temp,
@@ -3956,6 +3982,7 @@ pub fn capture_snapshot(
             deposit_rungs: deposit_rung_state.clone(),
             command_events: command_events_state.clone(),
             command_events_retention_turns: command_events.retention_turns() as u32,
+            lineage_constants: lineage_constants_state,
             pending_forks: pending_forks_state.clone(),
             stance_axes: stance_axes_state.clone(),
             voice_medium: voice_medium_state.clone(),

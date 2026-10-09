@@ -2204,6 +2204,27 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         fertility_ceiling: cohort.last_fertility_factors.ceiling.raw(),
         breeding_population: cohort.last_breeding.headcount,
         breeding_ceiling: cohort.last_breeding.ceiling,
+        breeding_members: cohort
+            .last_breeding
+            .members
+            .iter()
+            .map(|member| BreedingMemberState {
+                band_id: member.band,
+                lines: member.lines,
+                people: member.people,
+                fading: member.fading,
+            })
+            .collect(),
+        breeding_peoples: cohort
+            .last_breeding
+            .peoples
+            .iter()
+            .map(|people| BreedingPeopleState {
+                faction: people.faction,
+                lines: people.lines,
+                fading: people.fading,
+            })
+            .collect(),
         // **What rotted this turn** (#706) — the ledger identity's `spoiled` term, set by the larder
         // rot and added to by any caravan pack's transit rot.
         food_spoiled: cohort.last_food_spoiled,

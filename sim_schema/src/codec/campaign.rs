@@ -6,8 +6,8 @@ use crate::codec::{
 use crate::state::campaign::{
     CampaignInventoryEntryState, CampaignLabel, CampaignProfileState, CampaignStartingUnitState,
     CommandEventState, FactionNameState, FactionPolicyState, ForkChoiceState, GlossEntryState,
-    OpeningLoadoutState, OpeningMaterialDefaultState, PendingForkState, PendingForksState,
-    StanceAxisState, StanceState, VictoryModeSnapshotState, VictoryResultState,
+    LineageConstantsState, OpeningLoadoutState, OpeningMaterialDefaultState, PendingForkState,
+    PendingForksState, StanceAxisState, StanceState, VictoryModeSnapshotState, VictoryResultState,
     VictorySnapshotState, VoiceLineState, VoiceMediumState,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
@@ -37,6 +37,8 @@ pub(crate) fn serialize_campaign_section<'a>(
             stanceAxes: Some(stance_axes),
             voiceMedium: Some(voice_medium),
             commandEventsRetentionTurns: snapshot.command_events_retention_turns,
+            lineagePeoplePerLine: snapshot.lineage_constants.people_per_line,
+            lineageFreeBreedingAt: snapshot.lineage_constants.free_breeding_at,
             openingLoadout: Some(opening_loadout),
             factionPolicies: Some(faction_policies),
             factionNames: Some(faction_names),
@@ -97,6 +99,16 @@ pub(crate) fn serialize_campaign_section_delta<'a>(
             // zero-turn retention window is not a legal value, so the client reads 0 as "unchanged"
             // and keeps what it holds. The same shape `capabilityFlags` uses.
             commandEventsRetentionTurns: delta.command_events_retention_turns.unwrap_or(0),
+            // `0` IS the absent encoding for both, as for the retention window: neither constant
+            // is a legal live value at zero (`NonZeroU16` / `NonZeroU32` in the config).
+            lineagePeoplePerLine: delta
+                .lineage_constants
+                .as_ref()
+                .map_or(0, |c| c.people_per_line),
+            lineageFreeBreedingAt: delta
+                .lineage_constants
+                .as_ref()
+                .map_or(0, |c| c.free_breeding_at),
         },
     )
 }
@@ -557,6 +569,10 @@ pub(crate) fn decode_campaign_section(
     snapshot.stance_axes = map_rows(section.stanceAxes(), decode_stance);
     snapshot.voice_medium = map_rows(section.voiceMedium(), decode_voice_medium);
     snapshot.command_events_retention_turns = section.commandEventsRetentionTurns();
+    snapshot.lineage_constants = LineageConstantsState {
+        people_per_line: section.lineagePeoplePerLine(),
+        free_breeding_at: section.lineageFreeBreedingAt(),
+    };
     snapshot.opening_loadout = section
         .openingLoadout()
         .map(decode_opening_loadout)
@@ -581,6 +597,13 @@ pub(crate) fn decode_campaign_section_delta(
     delta.faction_names = map_rows_if_present(section.factionNames(), decode_faction_name);
     // `0` IS the absent encoding — see `serialize_campaign_section_delta`.
     delta.command_events_retention_turns = changed_scalar(section.commandEventsRetentionTurns());
+    delta.lineage_constants =
+        (section.lineagePeoplePerLine() != 0 || section.lineageFreeBreedingAt() != 0).then(|| {
+            Box::new(LineageConstantsState {
+                people_per_line: section.lineagePeoplePerLine(),
+                free_breeding_at: section.lineageFreeBreedingAt(),
+            })
+        });
 }
 
 /// The inverse of [`create_campaign_label`]. A label with nothing in it is never written, so a

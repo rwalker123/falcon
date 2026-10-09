@@ -156,7 +156,7 @@ read, because the next person infers the short list is the whole list.
 Every re-seed goes through the **boot path's own constructors**, so a fresh faction's starting state
 has one definition rather than two.
 
-**The runtime path is `systems::independence::grow_faction_roster`**, and it owes all six too: a
+**The runtime path is `systems::independence::grow_faction_roster`**, and it owes all six too (plus the free-breeding latch a people inherits from the one it breaks from, `FreeBreedingPeoples`, which is faction-keyed state rather than one of the six): a
 people born mid-game is extended through each resource's `seed_faction` (the seam its `new` loops
 over), `FactionNames::mint_faction` (worldgen's permutation), `EspionageRoster::seed_from_catalog`
 and `TurnQueue::add_faction` (awaited from the next turn). The registry is therefore **checkpoint

@@ -8475,6 +8475,12 @@ func _fill_split_compose_sheet(sheet: VBoxContainer, band: Dictionary) -> void:
         HudComposeVocab.SPLIT_BRACKETS_FORMAT % [_split_workers, new_children, new_elders]))
     sheet.add_child(_split_row(HudComposeVocab.SPLIT_ROW_PROVISIONS,
         HudComposeVocab.SPLIT_STOCK_FORMAT % (provisions * share)))
+    # **FAMILIES (issue #691)**: the founding lines the new band takes - the SAME `share` as the worker
+    # line above (asked workers over the band's working-age), applied to the parent's lines.
+    var lines := int(band.get(HudLineageVocab.FOUNDING_LINES_KEY, 0))
+    var taken := HudLineageVocab.split_taken(lines, share)
+    if lines > 0:
+        sheet.add_child(_split_row(HudComposeVocab.SPLIT_ROW_FAMILIES, str(taken)))
 
     sheet.add_child(HudWidgets.alloc_section_label(HudComposeVocab.SPLIT_HOME_AFTER_HEADER))
     # **EVERY `now` IS THE TWO HALVES ADDED BACK UP, NEVER A SECOND READING OF THE BAND.** `pool` is
@@ -8495,6 +8501,12 @@ func _fill_split_compose_sheet(sheet: VBoxContainer, band: Dictionary) -> void:
         HudComposeVocab.SPLIT_BEFORE_AFTER_FORMAT % [
             HudComposeVocab.SPLIT_STOCK_FORMAT % provisions,
             HudComposeVocab.SPLIT_STOCK_FORMAT % (provisions * (1.0 - share))]))
+    if lines > 0:
+        sheet.add_child(_split_row(HudComposeVocab.SPLIT_ROW_FAMILIES,
+            HudComposeVocab.SPLIT_BEFORE_AFTER_FORMAT % [
+                str(lines), str(HudLineageVocab.split_home_lines(lines, taken))]))
+    if HudLineageVocab.split_block_shown(band):
+        _fill_split_family_limit(sheet, band, taken, new_people)
 
     # **THE FLOORS COME FROM THE SIM, THE SENTENCE IS THE CLIENT'S.** The sheet moves a stepper, so a
     # published verdict would need one field per possible composition; what crosses the wire is the
@@ -8521,6 +8533,24 @@ func _fill_split_compose_sheet(sheet: VBoxContainer, band: Dictionary) -> void:
     # fixed block. The reason is not lost — `confirm.tooltip_text` above carries BOTH floors' refusal
     # sentences on the disabled button, which is the control the reason is about.
     sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.SPLIT_BAND_AFTER_NOTE))
+
+## **THE FAMILY LIMIT BLOCK (issue #691)** - what the split does to the breeding ceiling. While the two
+## halves stay in touch they are one breeding population under the SHARED ceiling; the second row prices
+## each alone, from the sim's own constants (`LineageWorld`), and the amber line says which half would
+## already be at its limit. Only for a people still under a limit.
+func _fill_split_family_limit(sheet: VBoxContainer, band: Dictionary, taken: int,
+        new_people: int) -> void:
+    var limits := HudLineageVocab.split_limits(band, taken)
+    sheet.add_child(HudWidgets.alloc_section_label(HudComposeVocab.SPLIT_FAMILY_LIMIT_HEADER))
+    sheet.add_child(_split_row(HudComposeVocab.SPLIT_ROW_LIMIT_LINKED,
+        HudComposeVocab.SPLIT_LIMIT_LINKED_FORMAT % HudLineageVocab.ceiling_of(band)))
+    sheet.add_child(_split_row(HudComposeVocab.SPLIT_ROW_LIMIT_APART,
+        HudComposeVocab.SPLIT_LIMIT_APART_FORMAT % [limits["new_limit"], limits["home_limit"]]))
+    var warning := HudLineageVocab.split_warning(band, limits, new_people)
+    if warning != "":
+        var label := HudWidgets.alloc_hint_label(warning)
+        label.add_theme_color_override("font_color", HudStyle.WARN)
+        sheet.add_child(label)
 
 ## One `key   value` line on the split sheet — the `FactionRollup._stat_row` shape, kept local
 ## because the parties zone has no shared detail-row widget and one sheet does not justify minting a
@@ -10141,7 +10171,20 @@ func build_verb_form() -> Control:
         String(verb.get(HudComposeVocab.VERB_KEY_TOOLTIP, mission)), HudFormat.band_name(band)]))
     form.add_child(_build_compose_sheet(band, _band_labor.effective_idle(band)))
     _verb_form_node = form
-    return form
+    # **THE SHEET SCROLLS INSIDE THE DRAWER, so it keeps a gutter the scrollbar's width on its right**,
+    # reserved unconditionally (as `StartingLoadoutPanel._scroll_gutter` does) so a sheet that grows
+    # past the cap does not put the bar over its right-aligned values or jump its width.
+    var gutter := MarginContainer.new()
+    gutter.add_theme_constant_override("margin_right", _scrollbar_gutter())
+    gutter.add_child(form)
+    return gutter
+
+## The vertical scrollbar's own width at the active theme - the room a scrolling card reserves.
+func _scrollbar_gutter() -> int:
+    var bar := VScrollBar.new()
+    var width := int(ceil(bar.get_combined_minimum_size().x))
+    bar.free()
+    return width
 
 ## **TAKE THE MOUNTED SHEET OFF ITS HOST, SYNCHRONOUSLY, INSIDE THE CARGO-FIELD TEARDOWN WINDOW.** The
 ## drawer calls this before it clears the host the sheet sits in. A focused cargo field fires

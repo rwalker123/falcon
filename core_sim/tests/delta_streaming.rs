@@ -87,6 +87,9 @@ fn apply(base: &mut WorldSnapshot, delta: &WorldDelta) {
     if let Some(v) = delta.command_events_retention_turns {
         base.command_events_retention_turns = v;
     }
+    if let Some(v) = &delta.lineage_constants {
+        base.lineage_constants = **v;
+    }
     if let Some(v) = delta.intensification_knowledge.as_ref() {
         base.intensification_knowledge = v.clone();
     }
