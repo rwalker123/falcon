@@ -420,6 +420,7 @@ impl Food {
             floor,
             kit_id: None,
             take_species: Vec::new(),
+            move_with_herd: false,
         }
     }
 

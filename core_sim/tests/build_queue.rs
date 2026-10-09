@@ -957,6 +957,7 @@ fn world_with_a_half_tamed_herd(crew: u32, floor: f32) -> (App, Entity, String) 
             target: LaborTarget::Hunt {
                 fauna_id: herd_id.clone(),
                 floor,
+                move_with_herd: false,
             },
             workers: crew,
             kit: None,
@@ -1649,12 +1650,14 @@ fn every_build_job_and_source_kind_is_stated() {
         !patch.names(&LaborTarget::Hunt {
             fauna_id: "game_deer_07".to_string(),
             floor: FOOD_PEAK,
+            move_with_herd: false,
         }),
         "a patch never names a herd's row"
     );
     assert!(herd.names(&LaborTarget::Hunt {
         fauna_id: "game_deer_07".to_string(),
         floor: FOOD_PEAK,
+        move_with_herd: false,
     }));
 
     for job in [
@@ -1746,6 +1749,7 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
             target: LaborTarget::Hunt {
                 fauna_id: RING_HERD.to_string(),
                 floor: FOOD_PEAK,
+                move_with_herd: false,
             },
             // **The hunters, and on top of them the hands that keep the pen** — the hunt row is
             // the herd's crew and keeps it first (`docs/plan_site_crews.md` §2.2).
@@ -2342,6 +2346,7 @@ fn an_abandoned_pen_frees_its_ring_to_be_started_again() {
     let keeper_row = LaborTarget::Hunt {
         fauna_id: herd_id.clone(),
         floor: FOOD_PEAK,
+        move_with_herd: false,
     };
     assert!(
         core_sim::drop_holding_and_cancel_ring(&mut app.world, band, &keeper_row),

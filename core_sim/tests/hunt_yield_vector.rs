@@ -266,6 +266,7 @@ fn spawn_hunters(
                     target: LaborTarget::Hunt {
                         fauna_id: fauna_id.to_string(),
                         floor,
+                        move_with_herd: false,
                     },
                     workers,
                     kit: None,
@@ -738,6 +739,7 @@ fn spawn_resident_crew(
                     target: LaborTarget::Hunt {
                         fauna_id: fauna_id.to_string(),
                         floor,
+                        move_with_herd: false,
                     },
                     workers,
                     kit: None,

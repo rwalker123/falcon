@@ -225,6 +225,7 @@ mod tests {
                 floor: None,
                 kit_id: None,
                 take_species: Vec::new(),
+                move_with_herd: false,
             }
         };
         let commands = vec![

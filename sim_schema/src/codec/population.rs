@@ -458,6 +458,7 @@ fn create_populations<'a>(
                                 homewardWorkers: assignment.homeward_workers,
                                 homewardAllHomeIn: assignment.homeward_all_home_in,
                                 homewardFood: assignment.homeward_food,
+                                moveWithHerd: assignment.move_with_herd,
                             },
                         )
                     })
@@ -1451,6 +1452,7 @@ fn decode_labor_assignment(
         homeward_workers: assignment.homewardWorkers(),
         homeward_all_home_in: assignment.homewardAllHomeIn(),
         homeward_food: assignment.homewardFood(),
+        move_with_herd: assignment.moveWithHerd(),
     })
 }
 

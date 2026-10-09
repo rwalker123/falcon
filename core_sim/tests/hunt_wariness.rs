@@ -301,6 +301,7 @@ fn spawn_hunters(app: &mut App, pos: UVec2, fauna_id: &str, floor: f32) -> bevy:
                     target: LaborTarget::Hunt {
                         fauna_id: fauna_id.to_string(),
                         floor,
+                        move_with_herd: false,
                     },
                     workers: CREW,
                     kit: None,
@@ -341,6 +342,7 @@ fn seed_the_forecast(app: &mut App, band: bevy::prelude::Entity, fauna_id: &str,
     let target = LaborTarget::Hunt {
         fauna_id: fauna_id.to_string(),
         floor,
+        move_with_herd: false,
     };
     app.world
         .get_mut::<LaborAllocation>(band)

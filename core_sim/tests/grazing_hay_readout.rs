@@ -186,6 +186,7 @@ fn keeper_row(herd_id: &str) -> LaborAssignment {
         target: LaborTarget::Hunt {
             fauna_id: herd_id.to_string(),
             floor: SUSTAIN,
+            move_with_herd: false,
         },
         workers: KEEPERS,
         kit: None,

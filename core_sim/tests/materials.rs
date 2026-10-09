@@ -211,6 +211,7 @@ fn hunt_and_read_hide(floor: f32) -> (Scalar, Option<f32>, f32) {
                     target: LaborTarget::Hunt {
                         fauna_id: herd_id.clone(),
                         floor,
+                        move_with_herd: false,
                     },
                     workers: HUNT_WORKERS,
                     kit: None,

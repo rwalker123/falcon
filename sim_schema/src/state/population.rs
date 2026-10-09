@@ -463,6 +463,10 @@ pub struct LaborAssignmentState {
     /// The food they carry, gross of the walk's rot. Appended last.
     #[serde(default)]
     pub homeward_food: f32,
+    /// **Migration mode** — a hunt row only: the band's camp moves with the herd this row hunts.
+    /// Appended last.
+    #[serde(default)]
+    pub move_with_herd: bool,
 }
 
 /// **ONE LINE OF ONE TAKE ROW'S TABLE OF EQUIPMENT** — a row of [`LaborAssignmentState::kit_toe`].

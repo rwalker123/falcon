@@ -4413,7 +4413,27 @@
             "drawn": true,
             "made": 140,
             "progress": 66.239998,
-            "recipe_id": "populations[0].bench.orders[0].recipe_id"
+            "recipe_id": "populations[0].bench.orders[0].recipe_id",
+            "short_to_finish": [
+              {
+                "held": 23.360001,
+                "material_id": "populations[0].bench.orders[0].short_to_finish[0].material_id",
+                "required": 60.720001,
+                "short": 4.77
+              },
+              {
+                "held": 26.860001,
+                "material_id": "populations[0].bench.orders[0].short_to_finish[1].material_id",
+                "required": 38.919998,
+                "short": 75.269997
+              },
+              {
+                "held": 15.16,
+                "material_id": "populations[0].bench.orders[0].short_to_finish[2].material_id",
+                "required": 40.049999,
+                "short": 112.099998
+              }
+            ]
           },
           {
             "blocked_reason": "populations[0].bench.orders[1].blocked_reason",
@@ -4422,7 +4442,27 @@
             "drawn": false,
             "made": 1,
             "progress": 75.010002,
-            "recipe_id": "populations[0].bench.orders[1].recipe_id"
+            "recipe_id": "populations[0].bench.orders[1].recipe_id",
+            "short_to_finish": [
+              {
+                "held": 100.980003,
+                "material_id": "populations[0].bench.orders[1].short_to_finish[0].material_id",
+                "required": 100.480003,
+                "short": 17.6
+              },
+              {
+                "held": 98.949997,
+                "material_id": "populations[0].bench.orders[1].short_to_finish[1].material_id",
+                "required": 33.68,
+                "short": 30.76
+              },
+              {
+                "held": 59.779999,
+                "material_id": "populations[0].bench.orders[1].short_to_finish[2].material_id",
+                "required": 103.739998,
+                "short": 54.07
+              }
+            ]
           },
           {
             "blocked_reason": "populations[0].bench.orders[2].blocked_reason",
@@ -4431,7 +4471,27 @@
             "drawn": false,
             "made": 10,
             "progress": 22.700001,
-            "recipe_id": "populations[0].bench.orders[2].recipe_id"
+            "recipe_id": "populations[0].bench.orders[2].recipe_id",
+            "short_to_finish": [
+              {
+                "held": 37.189999,
+                "material_id": "populations[0].bench.orders[2].short_to_finish[0].material_id",
+                "required": 64.160004,
+                "short": 80.129997
+              },
+              {
+                "held": 31.389999,
+                "material_id": "populations[0].bench.orders[2].short_to_finish[1].material_id",
+                "required": 101.900002,
+                "short": 111.040001
+              },
+              {
+                "held": 30.35,
+                "material_id": "populations[0].bench.orders[2].short_to_finish[2].material_id",
+                "required": 26.01,
+                "short": 79.529999
+              }
+            ]
           }
         ],
         "output_grade": "populations[0].bench.output_grade",
@@ -4510,6 +4570,7 @@
           "output_grade": "populations[0].craft_offers[0].output_grade",
           "output_item_id": "populations[0].craft_offers[0].output_item_id",
           "owned_at_tier": 98,
+          "queueable": false,
           "reason": "populations[0].craft_offers[0].reason",
           "recipe_id": "sled",
           "recipe_label": "populations[0].craft_offers[0].recipe_label",
@@ -4534,7 +4595,7 @@
               "short": 77.43
             }
           ],
-          "suggested": false
+          "suggested": true
         },
         {
           "available": false,
@@ -4546,6 +4607,7 @@
           "output_grade": "populations[0].craft_offers[1].output_grade",
           "output_item_id": "populations[0].craft_offers[1].output_item_id",
           "owned_at_tier": 93,
+          "queueable": true,
           "reason": "populations[0].craft_offers[1].reason",
           "recipe_id": "baskets",
           "recipe_label": "populations[0].craft_offers[1].recipe_label",
@@ -4570,7 +4632,7 @@
               "short": 112.089996
             }
           ],
-          "suggested": true
+          "suggested": false
         },
         {
           "available": false,
@@ -4582,6 +4644,7 @@
           "output_grade": "populations[0].craft_offers[2].output_grade",
           "output_item_id": "populations[0].craft_offers[2].output_item_id",
           "owned_at_tier": 192,
+          "queueable": false,
           "reason": "populations[0].craft_offers[2].reason",
           "recipe_id": "spears",
           "recipe_label": "populations[0].craft_offers[2].recipe_label",
@@ -4606,7 +4669,7 @@
               "short": 49.970001
             }
           ],
-          "suggested": false
+          "suggested": true
         },
         {
           "available": true,
@@ -4618,6 +4681,7 @@
           "output_grade": "populations[0].craft_offers[3].output_grade",
           "output_item_id": "populations[0].craft_offers[3].output_item_id",
           "owned_at_tier": 27,
+          "queueable": false,
           "reason": "populations[0].craft_offers[3].reason",
           "recipe_id": "loom",
           "recipe_label": "populations[0].craft_offers[3].recipe_label",
@@ -4642,13 +4706,33 @@
               "short": 15.29
             }
           ],
-          "suggested": false
+          "suggested": true
         }
       ],
       "craft_suggestions": [
         {
           "count": 85,
           "item_id": "hoes",
+          "shortfalls": [
+            {
+              "held": 5.17,
+              "material_id": "populations[0].craft_suggestions[0].shortfalls[0].material_id",
+              "required": 3.65,
+              "short": 45.799999
+            },
+            {
+              "held": 42.25,
+              "material_id": "populations[0].craft_suggestions[0].shortfalls[1].material_id",
+              "required": 52.830002,
+              "short": 30.35
+            },
+            {
+              "held": 59.990002,
+              "material_id": "populations[0].craft_suggestions[0].shortfalls[2].material_id",
+              "required": 86.620003,
+              "short": 96.660004
+            }
+          ],
           "sources": [
             {
               "fauna_id": "populations[0].craft_suggestions[0].sources[0].fauna_id",
@@ -4690,6 +4774,26 @@
         {
           "count": 126,
           "item_id": "spears",
+          "shortfalls": [
+            {
+              "held": 95.349998,
+              "material_id": "populations[0].craft_suggestions[1].shortfalls[0].material_id",
+              "required": 55.91,
+              "short": 72.389999
+            },
+            {
+              "held": 85.290001,
+              "material_id": "populations[0].craft_suggestions[1].shortfalls[1].material_id",
+              "required": 6.73,
+              "short": 87.839996
+            },
+            {
+              "held": 107.129997,
+              "material_id": "populations[0].craft_suggestions[1].shortfalls[2].material_id",
+              "required": 21.459999,
+              "short": 39.869999
+            }
+          ],
           "sources": [
             {
               "fauna_id": "populations[0].craft_suggestions[1].sources[0].fauna_id",
@@ -5078,9 +5182,10 @@
               "material_id": "populations[0].labor_assignments[0].materials_rate_home[2].material_id"
             }
           ],
+          "move_with_herd": true,
           "net_rate_home": 11.27,
           "next_load_home_in": 21,
-          "overdraws": true,
+          "overdraws": false,
           "party_workers": 71,
           "party_x": 26,
           "party_y": 15,
@@ -5191,9 +5296,10 @@
               "material_id": "populations[0].labor_assignments[1].materials_rate_home[2].material_id"
             }
           ],
+          "move_with_herd": false,
           "net_rate_home": 14.17,
           "next_load_home_in": 78,
-          "overdraws": false,
+          "overdraws": true,
           "party_workers": 148,
           "party_x": 173,
           "party_y": 184,
@@ -5304,9 +5410,10 @@
               "material_id": "populations[0].labor_assignments[2].materials_rate_home[2].material_id"
             }
           ],
+          "move_with_herd": false,
           "net_rate_home": 20.030001,
           "next_load_home_in": 123,
-          "overdraws": false,
+          "overdraws": true,
           "party_workers": 1,
           "party_x": 60,
           "party_y": 49,
@@ -5692,7 +5799,27 @@
             "drawn": true,
             "made": 17,
             "progress": 84.480003,
-            "recipe_id": "populations[1].bench.orders[0].recipe_id"
+            "recipe_id": "populations[1].bench.orders[0].recipe_id",
+            "short_to_finish": [
+              {
+                "held": 83.790001,
+                "material_id": "populations[1].bench.orders[0].short_to_finish[0].material_id",
+                "required": 39.790001,
+                "short": 25.950001
+              },
+              {
+                "held": 98.339996,
+                "material_id": "populations[1].bench.orders[0].short_to_finish[1].material_id",
+                "required": 29.77,
+                "short": 88.610001
+              },
+              {
+                "held": 44.450001,
+                "material_id": "populations[1].bench.orders[0].short_to_finish[2].material_id",
+                "required": 103.449997,
+                "short": 13.9
+              }
+            ]
           },
           {
             "blocked_reason": "populations[1].bench.orders[1].blocked_reason",
@@ -5701,7 +5828,27 @@
             "drawn": false,
             "made": 180,
             "progress": 38.209999,
-            "recipe_id": "populations[1].bench.orders[1].recipe_id"
+            "recipe_id": "populations[1].bench.orders[1].recipe_id",
+            "short_to_finish": [
+              {
+                "held": 80.209999,
+                "material_id": "populations[1].bench.orders[1].short_to_finish[0].material_id",
+                "required": 78.269997,
+                "short": 90.610001
+              },
+              {
+                "held": 8.51,
+                "material_id": "populations[1].bench.orders[1].short_to_finish[1].material_id",
+                "required": 60.73,
+                "short": 74.760002
+              },
+              {
+                "held": 21.09,
+                "material_id": "populations[1].bench.orders[1].short_to_finish[2].material_id",
+                "required": 47.619999,
+                "short": 106.290001
+              }
+            ]
           },
           {
             "blocked_reason": "populations[1].bench.orders[2].blocked_reason",
@@ -5710,7 +5857,27 @@
             "drawn": false,
             "made": 15,
             "progress": 27.290001,
-            "recipe_id": "populations[1].bench.orders[2].recipe_id"
+            "recipe_id": "populations[1].bench.orders[2].recipe_id",
+            "short_to_finish": [
+              {
+                "held": 11.85,
+                "material_id": "populations[1].bench.orders[2].short_to_finish[0].material_id",
+                "required": 42.450001,
+                "short": 85.739998
+              },
+              {
+                "held": 44.310001,
+                "material_id": "populations[1].bench.orders[2].short_to_finish[1].material_id",
+                "required": 97.449997,
+                "short": 44.57
+              },
+              {
+                "held": 97.050003,
+                "material_id": "populations[1].bench.orders[2].short_to_finish[2].material_id",
+                "required": 72.900002,
+                "short": 106.419998
+              }
+            ]
           }
         ],
         "output_grade": "populations[1].bench.output_grade",
@@ -5789,6 +5956,7 @@
           "output_grade": "populations[1].craft_offers[0].output_grade",
           "output_item_id": "populations[1].craft_offers[0].output_item_id",
           "owned_at_tier": 85,
+          "queueable": false,
           "reason": "populations[1].craft_offers[0].reason",
           "recipe_id": "sled",
           "recipe_label": "populations[1].craft_offers[0].recipe_label",
@@ -5813,7 +5981,7 @@
               "short": 27.77
             }
           ],
-          "suggested": false
+          "suggested": true
         },
         {
           "available": false,
@@ -5825,6 +5993,7 @@
           "output_grade": "populations[1].craft_offers[1].output_grade",
           "output_item_id": "populations[1].craft_offers[1].output_item_id",
           "owned_at_tier": 178,
+          "queueable": true,
           "reason": "populations[1].craft_offers[1].reason",
           "recipe_id": "baskets",
           "recipe_label": "populations[1].craft_offers[1].recipe_label",
@@ -5849,7 +6018,7 @@
               "short": 71.510002
             }
           ],
-          "suggested": true
+          "suggested": false
         },
         {
           "available": false,
@@ -5861,6 +6030,7 @@
           "output_grade": "populations[1].craft_offers[2].output_grade",
           "output_item_id": "populations[1].craft_offers[2].output_item_id",
           "owned_at_tier": 35,
+          "queueable": false,
           "reason": "populations[1].craft_offers[2].reason",
           "recipe_id": "spears",
           "recipe_label": "populations[1].craft_offers[2].recipe_label",
@@ -5885,7 +6055,7 @@
               "short": 74.529999
             }
           ],
-          "suggested": false
+          "suggested": true
         },
         {
           "available": true,
@@ -5897,6 +6067,7 @@
           "output_grade": "populations[1].craft_offers[3].output_grade",
           "output_item_id": "populations[1].craft_offers[3].output_item_id",
           "owned_at_tier": 64,
+          "queueable": false,
           "reason": "populations[1].craft_offers[3].reason",
           "recipe_id": "loom",
           "recipe_label": "populations[1].craft_offers[3].recipe_label",
@@ -5921,13 +6092,33 @@
               "short": 9.99
             }
           ],
-          "suggested": false
+          "suggested": true
         }
       ],
       "craft_suggestions": [
         {
           "count": 100,
           "item_id": "hoes",
+          "shortfalls": [
+            {
+              "held": 32.84,
+              "material_id": "populations[1].craft_suggestions[0].shortfalls[0].material_id",
+              "required": 3.57,
+              "short": 54.810001
+            },
+            {
+              "held": 15.75,
+              "material_id": "populations[1].craft_suggestions[0].shortfalls[1].material_id",
+              "required": 78.25,
+              "short": 9.43
+            },
+            {
+              "held": 104.849998,
+              "material_id": "populations[1].craft_suggestions[0].shortfalls[2].material_id",
+              "required": 26.280001,
+              "short": 42.720001
+            }
+          ],
           "sources": [
             {
               "fauna_id": "populations[1].craft_suggestions[0].sources[0].fauna_id",
@@ -5969,6 +6160,26 @@
         {
           "count": 131,
           "item_id": "spears",
+          "shortfalls": [
+            {
+              "held": 110.419998,
+              "material_id": "populations[1].craft_suggestions[1].shortfalls[0].material_id",
+              "required": 101.18,
+              "short": 74.620003
+            },
+            {
+              "held": 15.81,
+              "material_id": "populations[1].craft_suggestions[1].shortfalls[1].material_id",
+              "required": 101.220001,
+              "short": 42.959999
+            },
+            {
+              "held": 55.619999,
+              "material_id": "populations[1].craft_suggestions[1].shortfalls[2].material_id",
+              "required": 89.440002,
+              "short": 24.33
+            }
+          ],
           "sources": [
             {
               "fauna_id": "populations[1].craft_suggestions[1].sources[0].fauna_id",
@@ -6357,9 +6568,10 @@
               "material_id": "populations[1].labor_assignments[0].materials_rate_home[2].material_id"
             }
           ],
+          "move_with_herd": true,
           "net_rate_home": 99.919998,
           "next_load_home_in": 188,
-          "overdraws": true,
+          "overdraws": false,
           "party_workers": 198,
           "party_x": 79,
           "party_y": 90,
@@ -6470,9 +6682,10 @@
               "material_id": "populations[1].labor_assignments[1].materials_rate_home[2].material_id"
             }
           ],
+          "move_with_herd": false,
           "net_rate_home": 72.489998,
           "next_load_home_in": 163,
-          "overdraws": false,
+          "overdraws": true,
           "party_workers": 17,
           "party_x": 116,
           "party_y": 105,
@@ -6583,9 +6796,10 @@
               "material_id": "populations[1].labor_assignments[2].materials_rate_home[2].material_id"
             }
           ],
+          "move_with_herd": false,
           "net_rate_home": 56.73,
           "next_load_home_in": 78,
-          "overdraws": false,
+          "overdraws": true,
           "party_workers": 84,
           "party_x": 5,
           "party_y": 16,
@@ -6932,7 +7146,27 @@
             "drawn": true,
             "made": 142,
             "progress": 34.880001,
-            "recipe_id": "populations[2].bench.orders[0].recipe_id"
+            "recipe_id": "populations[2].bench.orders[0].recipe_id",
+            "short_to_finish": [
+              {
+                "held": 8.22,
+                "material_id": "populations[2].bench.orders[0].short_to_finish[0].material_id",
+                "required": 40.049999,
+                "short": 8.43
+              },
+              {
+                "held": 103.629997,
+                "material_id": "populations[2].bench.orders[0].short_to_finish[1].material_id",
+                "required": 21.99,
+                "short": 38.610001
+              },
+              {
+                "held": 20.51,
+                "material_id": "populations[2].bench.orders[0].short_to_finish[2].material_id",
+                "required": 89.360001,
+                "short": 38.52
+              }
+            ]
           },
           {
             "blocked_reason": "populations[2].bench.orders[1].blocked_reason",
@@ -6941,7 +7175,27 @@
             "drawn": false,
             "made": 147,
             "progress": 31.74,
-            "recipe_id": "populations[2].bench.orders[1].recipe_id"
+            "recipe_id": "populations[2].bench.orders[1].recipe_id",
+            "short_to_finish": [
+              {
+                "held": 45.459999,
+                "material_id": "populations[2].bench.orders[1].short_to_finish[0].material_id",
+                "required": 95.18,
+                "short": 98.809998
+              },
+              {
+                "held": 6.38,
+                "material_id": "populations[2].bench.orders[1].short_to_finish[1].material_id",
+                "required": 43.57,
+                "short": 27.77
+              },
+              {
+                "held": 57.34,
+                "material_id": "populations[2].bench.orders[1].short_to_finish[2].material_id",
+                "required": 29.98,
+                "short": 35.299999
+              }
+            ]
           },
           {
             "blocked_reason": "populations[2].bench.orders[2].blocked_reason",
@@ -6950,7 +7204,27 @@
             "drawn": false,
             "made": 72,
             "progress": 57.529999,
-            "recipe_id": "populations[2].bench.orders[2].recipe_id"
+            "recipe_id": "populations[2].bench.orders[2].recipe_id",
+            "short_to_finish": [
+              {
+                "held": 91.120003,
+                "material_id": "populations[2].bench.orders[2].short_to_finish[0].material_id",
+                "required": 108.309998,
+                "short": 69.589996
+              },
+              {
+                "held": 8.1,
+                "material_id": "populations[2].bench.orders[2].short_to_finish[1].material_id",
+                "required": 26.84,
+                "short": 42.41
+              },
+              {
+                "held": 25.190001,
+                "material_id": "populations[2].bench.orders[2].short_to_finish[2].material_id",
+                "required": 77.080002,
+                "short": 36.779999
+              }
+            ]
           }
         ],
         "output_grade": "populations[2].bench.output_grade",
@@ -7029,6 +7303,7 @@
           "output_grade": "populations[2].craft_offers[0].output_grade",
           "output_item_id": "populations[2].craft_offers[0].output_item_id",
           "owned_at_tier": 188,
+          "queueable": false,
           "reason": "populations[2].craft_offers[0].reason",
           "recipe_id": "sled",
           "recipe_label": "populations[2].craft_offers[0].recipe_label",
@@ -7053,7 +7328,7 @@
               "short": 82.199997
             }
           ],
-          "suggested": false
+          "suggested": true
         },
         {
           "available": false,
@@ -7065,6 +7340,7 @@
           "output_grade": "populations[2].craft_offers[1].output_grade",
           "output_item_id": "populations[2].craft_offers[1].output_item_id",
           "owned_at_tier": 47,
+          "queueable": true,
           "reason": "populations[2].craft_offers[1].reason",
           "recipe_id": "baskets",
           "recipe_label": "populations[2].craft_offers[1].recipe_label",
@@ -7089,7 +7365,7 @@
               "short": 43.310001
             }
           ],
-          "suggested": true
+          "suggested": false
         },
         {
           "available": false,
@@ -7101,6 +7377,7 @@
           "output_grade": "populations[2].craft_offers[2].output_grade",
           "output_item_id": "populations[2].craft_offers[2].output_item_id",
           "owned_at_tier": 86,
+          "queueable": false,
           "reason": "populations[2].craft_offers[2].reason",
           "recipe_id": "spears",
           "recipe_label": "populations[2].craft_offers[2].recipe_label",
@@ -7125,7 +7402,7 @@
               "short": 49.02
             }
           ],
-          "suggested": false
+          "suggested": true
         },
         {
           "available": true,
@@ -7137,6 +7414,7 @@
           "output_grade": "populations[2].craft_offers[3].output_grade",
           "output_item_id": "populations[2].craft_offers[3].output_item_id",
           "owned_at_tier": 185,
+          "queueable": false,
           "reason": "populations[2].craft_offers[3].reason",
           "recipe_id": "loom",
           "recipe_label": "populations[2].craft_offers[3].recipe_label",
@@ -7161,13 +7439,33 @@
               "short": 76.989998
             }
           ],
-          "suggested": false
+          "suggested": true
         }
       ],
       "craft_suggestions": [
         {
           "count": 135,
           "item_id": "hoes",
+          "shortfalls": [
+            {
+              "held": 14.59,
+              "material_id": "populations[2].craft_suggestions[0].shortfalls[0].material_id",
+              "required": 85.080002,
+              "short": 32.299999
+            },
+            {
+              "held": 102.769997,
+              "material_id": "populations[2].craft_suggestions[0].shortfalls[1].material_id",
+              "required": 22.68,
+              "short": 107.050003
+            },
+            {
+              "held": 14.87,
+              "material_id": "populations[2].craft_suggestions[0].shortfalls[2].material_id",
+              "required": 54.630001,
+              "short": 38.639999
+            }
+          ],
           "sources": [
             {
               "fauna_id": "populations[2].craft_suggestions[0].sources[0].fauna_id",
@@ -7209,6 +7507,26 @@
         {
           "count": 184,
           "item_id": "spears",
+          "shortfalls": [
+            {
+              "held": 73.239998,
+              "material_id": "populations[2].craft_suggestions[1].shortfalls[0].material_id",
+              "required": 95.290001,
+              "short": 28.040001
+            },
+            {
+              "held": 17.08,
+              "material_id": "populations[2].craft_suggestions[1].shortfalls[1].material_id",
+              "required": 77.089996,
+              "short": 19.09
+            },
+            {
+              "held": 39.720001,
+              "material_id": "populations[2].craft_suggestions[1].shortfalls[2].material_id",
+              "required": 100.940002,
+              "short": 46.98
+            }
+          ],
           "sources": [
             {
               "fauna_id": "populations[2].craft_suggestions[1].sources[0].fauna_id",
@@ -7597,9 +7915,10 @@
               "material_id": "populations[2].labor_assignments[0].materials_rate_home[2].material_id"
             }
           ],
+          "move_with_herd": true,
           "net_rate_home": 19.51,
           "next_load_home_in": 67,
-          "overdraws": true,
+          "overdraws": false,
           "party_workers": 33,
           "party_x": 4,
           "party_y": 193,
@@ -7710,9 +8029,10 @@
               "material_id": "populations[2].labor_assignments[1].materials_rate_home[2].material_id"
             }
           ],
+          "move_with_herd": false,
           "net_rate_home": 24.16,
           "next_load_home_in": 148,
-          "overdraws": false,
+          "overdraws": true,
           "party_workers": 94,
           "party_x": 199,
           "party_y": 10,
@@ -7823,9 +8143,10 @@
               "material_id": "populations[2].labor_assignments[2].materials_rate_home[2].material_id"
             }
           ],
+          "move_with_herd": false,
           "net_rate_home": 3.01,
           "next_load_home_in": 109,
-          "overdraws": false,
+          "overdraws": true,
           "party_workers": 151,
           "party_x": 34,
           "party_y": 23,

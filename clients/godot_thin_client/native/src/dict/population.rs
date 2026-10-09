@@ -1069,6 +1069,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                 i64::from(assignment.homewardAllHomeIn()),
             );
             let _ = entry.insert("homeward_food", f64::from(assignment.homewardFood()));
+            // Migration mode: this hunt row moves the band's camp with its migratory herd.
+            let _ = entry.insert("move_with_herd", assignment.moveWithHerd());
             array.push(&entry.to_variant());
         }
     }

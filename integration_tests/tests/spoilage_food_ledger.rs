@@ -1,6 +1,6 @@
 //! **Food that rots must reconcile with the band's larder** (#706).
 //!
-//! Only food the band cannot eat in time rots: a larder above its keeping line loses the excess
+//! Food rots at the end of its shelf life: a lot that reaches its class's shelf life rots whole
 //! right after the meal, and a caravan pack whose walk is longer than its class keeps loses that
 //! class on the way. Both land on one exported term, `PopulationCohortState.foodSpoiled`, and the
 //! larder ledger identity carries it:
@@ -11,9 +11,9 @@
 //! ```
 //!
 //! Pinned against a **real turn** through the real systems and the real snapshot export, with a
-//! larder of flesh far above the band's flesh line — so `foodSpoiled` is genuinely non-zero
+//! larder of flesh one turn from the end of its shelf life — so `foodSpoiled` is genuinely non-zero
 //! (liveness: an identity that only ever held at zero rot would not prove the term is wired), and
-//! the rot is exactly the excess over the line.
+//! the rot is exactly what the meal left of that lot.
 
 use bevy::prelude::Entity;
 use core_sim::{
@@ -54,7 +54,11 @@ fn the_food_ledger_reconciles_when_a_larder_above_its_line_rots() {
         let mut cohort = app.world.get_mut::<PopulationCohort>(band).expect("band");
         let generous_need = cohort.total().to_f32();
         let larder = generous_need * LARDER_IN_TURNS_OF_NEED;
-        cohort.stores.reset_food(FLESH, scalar_from_f32(larder));
+        // The lot has kept all but one turn of its shelf life: this turn's rot pass ends it.
+        cohort.stores.reset_food(FLESH, scalar_from_f32(0.0));
+        cohort
+            .stores
+            .add_food_aged(FLESH, scalar_from_f32(larder), flesh_life as u32 - 1);
         larder
     };
     let before = larder_of(&app, band);
@@ -80,13 +84,12 @@ fn the_food_ledger_reconciles_when_a_larder_above_its_line_rots() {
         "a flesh larder of {seeded} must rot past the band's flesh line (need {}, shelf {flesh_life})",
         cohort.food_need
     );
-    // **And it is exactly the excess over the line** — the band eats `consumption` first, then
-    // whatever flesh remains above `need × shelf_life` rots.
-    let line = cohort.food_need * flesh_life;
-    let expected_rot = (seeded - cohort.food_consumption - line).max(0.0);
+    // **And it is exactly what the meal left of the expiring lot** — the band eats `consumption`
+    // first, then the rest of the lot rots whole.
+    let expected_rot = (seeded - cohort.food_consumption).max(0.0);
     assert!(
         (cohort.food_spoiled - expected_rot).abs() < EPSILON,
-        "the rot is the flesh above its line: spoiled {} vs expected {expected_rot}",
+        "the rot is the expiring lot less the meal: spoiled {} vs expected {expected_rot}",
         cohort.food_spoiled
     );
 

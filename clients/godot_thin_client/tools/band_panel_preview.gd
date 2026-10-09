@@ -390,6 +390,22 @@ const RUNG_FIELD_TILE := Vector2i(72, 20)
 const RUNG_TENDED_CROP := "Wild Emmer"
 const RUNG_FIELD_CROP := "Einkorn"
 const RUNG_PASTORAL_HERD_ID := "game_boar_rp"
+
+# ---- MIGRATION MODE on the Work tab's hunt rows (docs/plan_roaming_bands.md) -----------------------
+# One band, three hunt rows: a MIGRATORY herd the band follows (the row under test), a migratory herd it
+# does not (toggle offered, unpressed) and a RESIDENT herd (no toggle at all). The band's tile is fixed
+# at the reference band's; each case moves the followed herd against it.
+const FOLLOW_HERD_ID := "game_mammoth_fm"
+const FOLLOW_OTHER_HERD_ID := "game_runner_fo"
+const FOLLOW_RESIDENT_HERD_ID := "game_boar_fr"
+const FOLLOW_BAND_ENTITY := 933
+const FOLLOW_BAND_TILE := Vector2i(71, 18)
+const FOLLOW_NEXT_TILE := Vector2i(72, 18)
+const FOLLOW_BEHIND_TILE := Vector2i(66, 18)
+const FOLLOW_BEHIND_HEXES := 5
+const FOLLOW_CREW := 2
+const FOLLOW_MIGRATORY := "migratory"
+const FOLLOW_NO_NEXT := Vector2i(-1, -1)
 const RUNG_PENNED_HERD_ID := "game_aurochs_rp"
 ## The penned herd's crew, staffed in full — this frame is about the RUNG, so it must not also trip
 ## the under-herded ⚠ and leave two explanations for one amber row.
@@ -1831,6 +1847,9 @@ func _ready() -> void:
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
+
+	# MIGRATION MODE on the hunt rows: the three status lines, the toggle, and the resident control.
+	await _follow_row_states()
 
 	# Back to the LEFT dock before moving on: the states after this one inherit the dock rather than
 	# setting their own, so leaving the panel bottom-docked would silently re-render `band_panel_no_idle`
@@ -12208,6 +12227,106 @@ func _many_source_patch_fixtures() -> Array:
 			patch["committed_display_name"] = RUNG_TENDED_CROP
 		patches.append(patch)
 	return RUNG_FX.stamp_patches(patches)
+
+## The three hunt rows described above, with the followed one's flag as asked.
+func _follow_band_fixture(followed: bool) -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = FOLLOW_BAND_ENTITY
+	band["id"] = "Band 33"
+	band["idle_workers"] = 4
+	band["labor_assignments"] = [
+		{"kind": "hunt", "workers": FOLLOW_CREW, "workers_needed": FOLLOW_CREW, "floor": 0.5,
+			"fauna_id": FOLLOW_HERD_ID, "target_x": FOLLOW_BAND_TILE.x, "target_y": FOLLOW_BAND_TILE.y,
+			"actual_yield": 1.20, "sustainable_yield": 1.20, "move_with_herd": followed},
+		{"kind": "hunt", "workers": FOLLOW_CREW, "workers_needed": FOLLOW_CREW, "floor": 0.5,
+			"fauna_id": FOLLOW_OTHER_HERD_ID, "target_x": 70, "target_y": 20,
+			"actual_yield": 0.80, "sustainable_yield": 0.80, "move_with_herd": false},
+		{"kind": "hunt", "workers": FOLLOW_CREW, "workers_needed": FOLLOW_CREW, "floor": 0.5,
+			"fauna_id": FOLLOW_RESIDENT_HERD_ID, "target_x": 69, "target_y": 20,
+			"actual_yield": 0.50, "sustainable_yield": 0.50, "move_with_herd": false},
+	]
+	return band
+
+## …and their herds. `followed_tile` / `next_tile` are the case under test; `next_tile` `(-1, -1)` is a
+## herd that is not moving this turn.
+func _follow_herd_fixtures(followed_tile: Vector2i, next_tile: Vector2i) -> Array:
+	return RUNG_FX.stamp_herds([
+		{"id": FOLLOW_HERD_ID, "species": "Woolly Mammoth", "x": followed_tile.x, "y": followed_tile.y,
+			"next_x": next_tile.x, "next_y": next_tile.y, "size_class": FOLLOW_MIGRATORY,
+			"population": 40, "ecology_phase": "thriving", "huntable": true,
+			"hunt_policy_ceilings": {"sustain": 1.20}},
+		{"id": FOLLOW_OTHER_HERD_ID, "species": "Steppe Runners", "x": 70, "y": 20,
+			"size_class": FOLLOW_MIGRATORY, "population": 60, "ecology_phase": "thriving",
+			"huntable": true, "hunt_policy_ceilings": {"sustain": 0.80}},
+		{"id": FOLLOW_RESIDENT_HERD_ID, "species": "Wild Boar", "x": 69, "y": 20,
+			"size_class": "medium", "population": 90, "ecology_phase": "thriving", "huntable": true,
+			"hunt_policy_ceilings": {"sustain": 0.50}},
+	])
+
+## Render one case and read the row back. `want_line` `""` is the flag-off case (no status line).
+func _follow_case(save_name: String, followed: bool, herd_tile: Vector2i, next_tile: Vector2i,
+		want_line: String) -> void:
+	_set_world_herds(_follow_herd_fixtures(herd_tile, next_tile))
+	_push_bands([_follow_band_fixture(followed)])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	await _save(save_name)
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	var toggles := _collect_meta_controls(_panel, HudWorkVocab.WORK_ROW_FOLLOW_TOGGLE_META)
+	# TWO migratory rows offer the toggle; the resident row offers none.
+	if toggles.size() != 2:
+		_fail("%s: expected the migration toggle on exactly the two migratory rows, found %d"
+			% [save_name, toggles.size()])
+	var pressed := 0
+	for toggle in toggles:
+		if (toggle as Button).button_pressed:
+			pressed += 1
+		if (toggle as Button).text != HudWorkVocab.WORK_ROW_FOLLOW_TOGGLE:
+			_fail("%s: the toggle reads `%s`" % [save_name, (toggle as Button).text])
+	if pressed != (1 if followed else 0):
+		_fail("%s: %d toggle(s) pressed, expected %d" % [save_name, pressed, 1 if followed else 0])
+	var lines: Array[String] = []
+	for line in _collect_meta_controls(_panel, HudWorkVocab.WORK_ROW_PARTY_META):
+		lines.append(String(line.get_meta(HudWorkVocab.WORK_ROW_PARTY_META)))
+	if want_line == "":
+		for line in lines:
+			if line.begins_with("Moving") or line.begins_with("Camped") or line.begins_with("Catching"):
+				_fail("%s: a status line `%s` on a row with the flag off" % [save_name, line])
+	elif not lines.has(want_line):
+		_fail("%s: expected the status line `%s`, found %s" % [save_name, want_line, str(lines)])
+	else:
+		print("band_panel_preview: assert OK — %s reads `%s`" % [save_name, want_line])
+
+func _follow_row_states() -> void:
+	await _follow_case("band_panel_follow_moving", true, FOLLOW_BAND_TILE, FOLLOW_NEXT_TILE,
+		HudWorkVocab.WORK_ROW_FOLLOW_MOVING_FORMAT % [FOLLOW_NEXT_TILE.x, FOLLOW_NEXT_TILE.y])
+	await _follow_case("band_panel_follow_camped", true, FOLLOW_BAND_TILE, FOLLOW_NO_NEXT,
+		HudWorkVocab.WORK_ROW_FOLLOW_CAMPED)
+	await _follow_case("band_panel_follow_behind", true, FOLLOW_BEHIND_TILE, FOLLOW_NO_NEXT,
+		HudWorkVocab.WORK_ROW_FOLLOW_BEHIND_FORMAT % FOLLOW_BEHIND_HEXES)
+	await _follow_case("band_panel_follow_off", false, FOLLOW_BAND_TILE, FOLLOW_NO_NEXT, "")
+	_assert_follow_toggle_resends()
+
+## A press on an unflagged migratory row's toggle re-sends THAT row's `assign_labor` — same herd, floor,
+## crew — with the flag on. Driven through the real signal, so the line under test is the one `Main`
+## formats.
+func _assert_follow_toggle_resends() -> void:
+	var lines: Array[String] = []
+	var recorder := func(p: Dictionary) -> void:
+		lines.append(String(MAIN_SCRIPT.format_assign_labor(p).get("line", "")))
+	_hud.assign_labor_requested.connect(recorder)
+	for toggle in _collect_meta_controls(_panel, HudWorkVocab.WORK_ROW_FOLLOW_TOGGLE_META):
+		(toggle as Button).pressed.emit()
+		break
+	_hud.assign_labor_requested.disconnect(recorder)
+	if lines.size() != 1 or not lines[0].ends_with(" follow") or not lines[0].contains(" hunt "):
+		_fail("pressing the toggle on an unflagged migratory row should send a hunt line ending in "
+			+ "follow, got %s" % str(lines))
+	else:
+		print("band_panel_preview: assert OK — the row toggle re-sends the hunt line with `follow`")
 
 ## Every row on the rung board must carry the mark its rung wears — and, decisively, the WILD row must
 ## carry NONE. Asserting only the marked rows would pass a build that stamped a glyph on everything.

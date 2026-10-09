@@ -174,6 +174,7 @@ fn hunt_target() -> LaborTarget {
     LaborTarget::Hunt {
         fauna_id: HERD_ID.to_string(),
         floor: FLOOR,
+        move_with_herd: false,
     }
 }
 

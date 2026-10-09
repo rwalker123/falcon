@@ -2238,6 +2238,10 @@ table LaborAssignment {
   homewardAllHomeIn:uint = 0;
   // The food they carry, gross of the walk's rot (a deposit's material is not counted).
   homewardFood:float = 0;
+  // --- MIGRATION MODE (appended last; docs/plan_roaming_bands.md) --------------------------------
+  // A HUNT row only: true while the band's camp moves with the herd this row hunts. Always false on
+  // every other row.
+  moveWithHerd:bool = false;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).

@@ -203,6 +203,7 @@ fn resolve_quarry_and_kit(
     let herd_row = crate::components::LaborTarget::Hunt {
         fauna_id: herd_id.to_string(),
         floor: SOURCE_IS_KEYED_BY_QUARRY_ALONE,
+        move_with_herd: false,
     };
     // **Every row's claim, struck the way the turn strikes it** ([`crate::take_claims`]).
     let other_rows = crate::take_claims::with_world_sources(world, |sources| {
@@ -1098,6 +1099,7 @@ fn answer_work_party_forecast(
                 crate::components::LaborTarget::Hunt {
                     fauna_id: herd_id.clone(),
                     floor: ask.floor,
+                    move_with_herd: false,
                 },
                 KitJob::Hunt,
             )

@@ -149,6 +149,7 @@ fn hunting_world_at(
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: SHALLOW_FLOOR,
+                    move_with_herd: false,
                 },
                 workers: crew.unwrap_or(workers).max(1),
                 kit: None,
@@ -2111,6 +2112,7 @@ fn report_the_strike_wear_the_shipped_opening_pays() {
                 // The shipped default — the band holds the herd at its most productive biomass, so
                 // the run measures a steady hunt rather than a herd being stripped to nothing.
                 floor: core_sim::MSY_BIOMASS_FRACTION,
+                move_with_herd: false,
             },
             workers: workers.max(1),
             kit: None,

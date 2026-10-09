@@ -345,6 +345,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                         target: LaborTarget::Hunt {
                             fauna_id: herd_id.to_string(),
                             floor: SUSTAIN_FLOOR,
+                            move_with_herd: false,
                         },
                         workers: KEEPER_WORKERS + KEEPER_WORKERS,
                         kit: None,
@@ -1143,6 +1144,7 @@ fn seed_the_hunt_row(app: &mut App, keeper: Entity, herd_id: &str) {
     let target = LaborTarget::Hunt {
         fauna_id: herd_id.to_string(),
         floor,
+        move_with_herd: false,
     };
     app.world
         .get_mut::<LaborAllocation>(keeper)

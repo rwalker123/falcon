@@ -1405,6 +1405,9 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             // "does this parse as `f32`", and a third would have to be told apart from the floor and
             // from the commit species by shape alone; `take:` says which it is.
             let take_species = take_prefixed_token(&mut tail, TAKE_SELECTION_PREFIX);
+            // **Migration mode is a BARE flag token, lifted out beside them** — the band's camp
+            // moves with the herd this hunt row works. Only the hunt role reads it.
+            let move_with_herd = take_flag_token(&mut tail, FOLLOW_HERD_TOKEN);
             let mut parts = tail.into_iter();
             let (workers, target_x, target_y, fauna_id, floor, species) = match role.as_str() {
                 "forage" => {
@@ -1588,6 +1591,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 floor,
                 kit_id,
                 take_species,
+                move_with_herd,
             })
         }
         "move_band" => {
@@ -1931,6 +1935,22 @@ fn take_prefixed_token(tokens: &mut Vec<&str>, prefix: &str) -> Vec<String> {
         .collect()
 }
 
+/// **The bare token that turns migration mode on** for a hunt row (`docs/plan_roaming_bands.md`):
+/// `assign_labor <f> <band> hunt <herd> <workers> follow`.
+const FOLLOW_HERD_TOKEN: &str = "follow";
+
+/// Lift a bare flag token out of a role's tail, wherever it sits; `true` when it was present.
+fn take_flag_token(tokens: &mut Vec<&str>, flag: &str) -> bool {
+    let Some(index) = tokens
+        .iter()
+        .position(|token| token.eq_ignore_ascii_case(flag))
+    else {
+        return false;
+    };
+    tokens.remove(index);
+    true
+}
+
 /// The parsed source of a build-queue verb — exactly one of the two forms is filled. A named struct
 /// rather than a triple, because three `Option`s in a row are a shape a caller can mis-order.
 struct BuildSourceTokens {
@@ -2123,6 +2143,7 @@ pub fn render_command_line(payload: &CommandPayload) -> String {
             species,
             kit_id,
             take_species,
+            move_with_herd,
             ..
         } => {
             let band = band_id.map_or_else(|| NO_BAND.to_owned(), |band| band.to_string());
@@ -2152,6 +2173,9 @@ pub fn render_command_line(payload: &CommandPayload) -> String {
             line.push_str(&format!(" {workers}"));
             if let Some(kit) = kit_id {
                 line.push_str(&format!(" kit {kit}"));
+            }
+            if *move_with_herd {
+                line.push_str(&format!(" {FOLLOW_HERD_TOKEN}"));
             }
             line
         }
@@ -2850,6 +2874,7 @@ mod tests {
                 floor: None,
                 kit_id: None,
                 take_species: Vec::new(),
+                move_with_herd: false,
             }
         );
     }
@@ -2874,6 +2899,7 @@ mod tests {
                 floor: Some(0.5),
                 kit_id: None,
                 take_species: Vec::new(),
+                move_with_herd: false,
             },
             "a numeric optional token is the FLOOR"
         );
@@ -2892,6 +2918,7 @@ mod tests {
                 floor: None,
                 kit_id: None,
                 take_species: Vec::new(),
+                move_with_herd: false,
             },
             "a non-numeric optional token is the SPECIES"
         );
@@ -2919,6 +2946,7 @@ mod tests {
             floor,
             kit_id: None,
             take_species: Vec::new(),
+            move_with_herd: false,
         };
         assert_eq!(
             parse_command_line("assign_labor 0 904 extract 3 5 wood 6").unwrap(),
@@ -3029,6 +3057,7 @@ mod tests {
                 floor: Some(0.15),
                 kit_id: None,
                 take_species: Vec::new(),
+                move_with_herd: false,
             }
         );
         // A fourth token is a typo, not a longer form — fail closed rather than silently drop it.
@@ -3130,6 +3159,7 @@ mod tests {
                 floor: None,
                 kit_id: None,
                 take_species: Vec::new(),
+                move_with_herd: false,
             }
         );
         // And on a role that never reads a species at all — the scan is upstream of the dispatch.
@@ -3156,6 +3186,7 @@ mod tests {
                 floor: None,
                 kit_id: None,
                 take_species: Vec::new(),
+                move_with_herd: false,
             },
             "one tail token is the worker count; the floor defaults"
         );
@@ -3176,6 +3207,7 @@ mod tests {
                     floor: Some(floor),
                     kit_id: None,
                     take_species: Vec::new(),
+                    move_with_herd: false,
                 },
                 "hunt floor {floor} should round-trip"
             );
@@ -3210,6 +3242,7 @@ mod tests {
                 floor: None,
                 kit_id: None,
                 take_species: Vec::new(),
+                move_with_herd: false,
             }
         );
         assert_eq!(
@@ -3227,6 +3260,7 @@ mod tests {
                 floor: None,
                 kit_id: None,
                 take_species: Vec::new(),
+                move_with_herd: false,
             }
         );
     }
@@ -3254,6 +3288,7 @@ mod tests {
                 floor: None,
                 kit_id: None,
                 take_species: Vec::new(),
+                move_with_herd: false,
             }
         );
         // The kit is lifted out of the tail before the role's shape is read, so the builders row
@@ -3273,6 +3308,7 @@ mod tests {
                 floor: None,
                 kit_id: Some("hurdling".to_string()),
                 take_species: Vec::new(),
+                move_with_herd: false,
             }
         );
         assert!(matches!(
@@ -3983,6 +4019,49 @@ mod tests {
         ));
     }
 
+    /// **MIGRATION MODE IS A BARE `follow` TOKEN ON THE HUNT LINE** — it is lifted out of the tail
+    /// wherever it sits, renders last, and the line parses back to the payload it came from. Absent,
+    /// the flag is off.
+    #[test]
+    fn a_hunt_line_carries_migration_mode_as_a_bare_follow_token() {
+        let parsed = |line: &str| {
+            let Ok(CommandPayload::AssignLabor {
+                move_with_herd,
+                workers,
+                fauna_id,
+                kit_id,
+                ..
+            }) = parse_command_line(line)
+            else {
+                panic!("{line:?} must parse as assign_labor");
+            };
+            (move_with_herd, workers, fauna_id, kit_id)
+        };
+        assert_eq!(
+            parsed("assign_labor 0 7 hunt herd_a 0.5 4 follow"),
+            (true, 4, Some("herd_a".to_string()), None)
+        );
+        assert_eq!(
+            parsed("assign_labor 0 7 hunt herd_a follow 4 kit spear"),
+            (
+                true,
+                4,
+                Some("herd_a".to_string()),
+                Some("spear".to_string())
+            )
+        );
+        assert!(!parsed("assign_labor 0 7 hunt herd_a 4").0);
+
+        let payload = parse_command_line("assign_labor 0 7 hunt herd_a 0.5 4 kit spear follow")
+            .expect("the line parses");
+        let rendered = render_command_line(&payload);
+        assert!(rendered.ends_with(" follow"), "rendered: {rendered}");
+        assert_eq!(parse_command_line(&rendered).expect("round trip"), payload);
+
+        let unset = parse_command_line("assign_labor 0 7 hunt herd_a 4").expect("parses");
+        assert!(!render_command_line(&unset).contains("follow"));
+    }
+
     /// The rendered line is the grammar's: it parses back to the payload it was rendered from.
     #[test]
     fn a_rendered_command_line_parses_back_to_itself() {
@@ -4004,6 +4083,7 @@ mod tests {
                 floor,
                 kit_id: kit.map(str::to_owned),
                 take_species: Vec::new(),
+                move_with_herd: false,
             };
         let assign = |role: &str, x: Option<u32>, fauna: Option<&str>| {
             assign_with(role, x, fauna, None, None)

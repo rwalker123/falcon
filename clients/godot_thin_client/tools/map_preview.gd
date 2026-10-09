@@ -1239,6 +1239,25 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_travel_band")
 
+	# State N2 — MIGRATION MODE (docs/plan_roaming_bands.md): a band with a hunt row that moves its camp
+	# with a migratory herd wears a 👣 badge on its token, and the herd it follows wears a dashed ring and
+	# keeps its migration arrow drawn although nothing is hovered or selected on it.
+	_map.set_fow_enabled(false)
+	_map.display_snapshot(_snapshot_follow())
+	_map.selected_unit_id = -1
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_follow_herd")
+	_assert_map("a band with a followed hunt row wears the badge; a band without one does not",
+		MapView.unit_follows_herd(_map.units[0]) and not MapView.unit_follows_herd(_map.units[1]))
+	_assert_map("only the herd a player band follows is in the followed set",
+		_map.followed_herd_ids().keys() == [FOLLOW_HERD_ID])
+	_map.display_snapshot(_snapshot_follow(false))
+	_assert_map("…and with the flag off no herd is followed and no badge is worn",
+		_map.followed_herd_ids().is_empty() and not MapView.unit_follows_herd(_map.units[0]))
+
 	# State O — WRAP-AWARE seam-crossing destination: a horizontally-wrapping map with the band near
 	# the left edge and its target near the RIGHT edge. The short path crosses the seam, so the line
 	# must head LEFT (toward the wrapped-nearest copy of the target), not shoot right across the map.
@@ -4833,6 +4852,25 @@ func _snapshot_travel_band() -> Dictionary:
 	band["travel_target_x"] = 13
 	band["travel_target_y"] = 6
 	return _base_snapshot(band, [])
+
+## MIGRATION MODE: the player band follows a mammoth herd camped on its own tile (next waypoint a hex
+## east); a second player band works a herd that is NOT followed, so the badge and the ring each have a
+## control. `followed` turns the first band's flag off for the negative.
+const FOLLOW_HERD_ID := "game_mammoth_fm"
+const FOLLOW_OTHER_HERD_ID := "game_deer_07"
+const FOLLOW_OTHER_BAND_ENTITY := 7102
+func _snapshot_follow(followed: bool = true) -> Dictionary:
+	var band := _band([{"kind": "hunt", "workers": 2, "fauna_id": FOLLOW_HERD_ID,
+		"target_x": BAND_X, "target_y": BAND_Y, "move_with_herd": followed}], 2, 0)
+	var other := _band_at(FOLLOW_OTHER_BAND_ENTITY, BAND_X + 3, BAND_Y + 2)
+	other["labor_assignments"] = [{"kind": "hunt", "workers": 2, "fauna_id": FOLLOW_OTHER_HERD_ID,
+		"target_x": 13, "target_y": 6, "move_with_herd": false}]
+	var herd := {"id": FOLLOW_HERD_ID, "label": "Woolly Mammoth (%s)" % FOLLOW_HERD_ID,
+		"x": BAND_X, "y": BAND_Y, "next_x": BAND_X + 1, "next_y": BAND_Y,
+		"biomass": 4000.0, "huntable": true, "size_class": "migratory"}
+	var snap := _base_snapshot(band, [herd, _deer_herd()])
+	snap["populations"].append(other)
+	return snap
 
 ## Seam-crossing destination on a horizontally-wrapping map: band near the LEFT edge, target near the
 ## RIGHT edge. The short wrapped path runs left across the seam, so the line must head left.

@@ -665,6 +665,29 @@ const BAND_LETHAL_MARK_CLEARANCE_FACTOR := 0.5
 # and would have to fight the offset above to avoid landing on the token.
 const BAND_LETHAL_MARK_MIN_RADIUS := 28.0
 
+# --- MIGRATION MODE marks (docs/plan_roaming_bands.md §Migration mode) -------------------------
+# A band with ANY hunt row that moves its camp with a migratory herd wears a small 👣 badge at the
+# token's upper-right — past the food-runway dot on the same diagonal, so the two do not overlap — and
+# the herd it follows wears a thin dashed ring and keeps its migration arrow drawn. Both are STATES of
+# the confirmed assignment row (`move_with_herd`), true exactly while the band follows.
+const BAND_FOLLOW_BADGE_GLYPH := "👣"
+# Glyph size in TOKEN radii, so it tracks zoom like every other decoration on the token.
+const BAND_FOLLOW_BADGE_SIZE_FACTOR := 0.9
+# How far out along the up-right diagonal the badge's centre sits, in token radii per axis. The food dot
+# sits at `BAND_FOOD_DOT_OFFSET_FACTOR`; this is past it by the badge's own half-size.
+const BAND_FOLLOW_BADGE_OFFSET_FACTOR := 1.55
+# The backing disc, in token radii: dark panel fill with a SIGNAL rim, so the glyph reads on terrain.
+const BAND_FOLLOW_BADGE_DISC_FACTOR := 0.6
+const BAND_FOLLOW_BADGE_RIM_WIDTH := 1.2
+const BAND_FOLLOW_BADGE_RIM_SEGMENTS := 16
+# The followed herd's dashed ring: radius in hex radii (just outside the harvest ring), the number of
+# dashes round it, and the share of each dash-and-gap period that is drawn.
+const HERD_FOLLOW_RING_FACTOR := 0.44
+const HERD_FOLLOW_RING_WIDTH := 1.6
+const HERD_FOLLOW_RING_DASHES := 14
+const HERD_FOLLOW_RING_DASH_SHARE := 0.55
+const HERD_FOLLOW_RING_DASH_SEGMENTS := 4
+
 # --- Scouting-expedition marker (docs/plan_exploration_and_sites.md §2) ---
 # A detached party reads as a hollow, flag-marked disc — deliberately distinct from a resident
 # band's SOLID faction dot, so an expedition says "party out on a venture, not a settlement-band"
@@ -2167,6 +2190,7 @@ func _draw() -> void:
 	_band_markers.draw_primary_bands(radius, origin)
 
 	# (Slots were computed above, before the worked-source marks that dock to them.)
+	_secondary_markers.set_followed_herds(followed_herd_ids())
 	for herd in herds:
 		_secondary_markers.draw_herd(herd, radius, origin)
 	for site in food_sites:
@@ -3063,6 +3087,31 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 				and String(marker.get("expedition_phase", "")) == EXPEDITION_PHASE_AWAITING:
 			_has_awaiting_expedition = true
 		units.append(marker)
+
+## Whether this band marker has a hunt row with migration mode on. Reads the raw `labor_assignments`
+## the marker already carries (the decoder always writes `move_with_herd`; absent reads as off).
+static func unit_follows_herd(unit: Dictionary) -> bool:
+	var assignments: Variant = unit.get("labor_assignments", [])
+	if not (assignments is Array):
+		return false
+	for entry in assignments:
+		if entry is Dictionary and String((entry as Dictionary).get("kind", "")).to_lower() == "hunt" \
+				and bool((entry as Dictionary).get("move_with_herd", false)):
+			return true
+	return false
+
+## The ids of the herds the VIEWER'S bands are following: `{herd_id: true}`. Player bands only — a
+## rival's following is not the viewer's to see marked.
+func followed_herd_ids() -> Dictionary:
+	var out := {}
+	for unit in units:
+		if not (unit is Dictionary) or not HudConst.is_player_unit(unit):
+			continue
+		for entry in (unit as Dictionary).get("labor_assignments", []):
+			if entry is Dictionary and String((entry as Dictionary).get("kind", "")).to_lower() == "hunt" \
+					and bool((entry as Dictionary).get("move_with_herd", false)):
+				out[String((entry as Dictionary).get("fauna_id", ""))] = true
+	return out
 
 func _rebuild_herd_markers(snapshot: Dictionary) -> void:
 	herds = []

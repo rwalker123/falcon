@@ -151,6 +151,7 @@ fn spawn_band_with_floors(app: &mut bevy::prelude::App, floor: f32) -> Entity {
                         target: LaborTarget::Hunt {
                             fauna_id: "game_rollback_probe".to_string(),
                             floor,
+                            move_with_herd: false,
                         },
                         workers: 2,
                         kit: None,

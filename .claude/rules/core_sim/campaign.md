@@ -379,10 +379,10 @@ sim_schema/snapshot/native/`Hud.gd` exactly like `SedentarizationState`).
 
 ### Food spoils by keeping class (#706)
 
-Design of record: `docs/plan_civilization_steps.md` §Step 5 → "Only food the band cannot eat in time
-rots". **A band eats its fastest-rotting food first, so a unit waits about *larder ÷ need* turns to be
-eaten, and it rots only if that wait is longer than its shelf life.** No per-unit age is tracked: the
-rule is a line, not a share. Engine: `core_sim/src/spoilage.rs`.
+Design of record: `docs/plan_civilization_steps.md` §Step 5. **Food rots at the END of its shelf
+life, whole**: the larder holds each class as age-stamped lots, and a lot that reaches its class's
+`shelf_life_turns` rots; nothing rots earlier, so anyone who joins the band meanwhile (a birth, a
+party coming home, a band merging) can eat it. Engine: `core_sim/src/spoilage.rs`.
 
 - **A keeping class has one property, `shelf_life_turns`** (`demographics_config.json` → `keeping`).
   Every fauna and flora species names its class (`keeping`, required): all game — meat, milk and eggs
@@ -390,7 +390,13 @@ rule is a line, not a share. Engine: `core_sim/src/spoilage.rs`.
   nuts, seeds, grains and pods (`wild_emmer`, `seed_grasses`, `hazel`, `oak_mast`, `pine_nut`,
   `wild_rice`, `chestnut`, `sunflower`, `wild_pulses`, `mesquite`) are `dry`; everything else is
   `fresh_plant`. Preservation is a longer shelf life, nothing else.
-- **The larder holds food per class** — `LocalStore`'s `FoodMix`, a `class → amount` map. The generic
+- **The larder holds food per class and per age** — `LocalStore`'s `FoodMix`, a `class → [FoodBatch
+  { age, amount }]` map, lots oldest first, equal ages merged. `add` lands a lot at age 0;
+  `add_aged` lands one that was carried (a caravan pack lands aged by its walk). **Every take removes
+  the oldest lot of a class first**; a proportional move (`proportional`, `split`, so a dowry, a
+  pool, a shed, a launch larder) scales every lot by the same factor, so the moving share keeps its
+  ages; `merge` keeps the incoming ages. A class the keeping table does not carry is never aged: it
+  stays one age-0 lot. The generic
   `add` / `set` / `take` **panic on `FOOD`**, so no site can make classless food: food enters through
   `add_food` / `add_food_mix`, is eaten through `eat_food` (fastest-first, the classes' order by
   ascending shelf life), and **moves through `take_food_mix`** — a proportional take, exact to the
@@ -398,12 +404,12 @@ rule is a line, not a share. Engine: `core_sim/src/spoilage.rs`.
   the whole larder and is for the opening reserve and fixtures only.
 - **The meal draws fastest-first** (`simulate_population`): flesh, then greens, then grain.
 - **The larder rot runs once a turn, right after the meal and before the turn's take lands**
-  (`spoilage::rot_band_larders`, next in the Population chain after `simulate_population`).
-  Walking the classes in shelf-life order with a running cumulative of post-rot stock, class *k*
-  loses `min(stock_k, max(0, cumulative_k − need × shelf_life_k))`, where `need` is the turn's
-  `last_food_need`. A band with a small surplus stays under every line and never sees rot; the line
-  scales with the band, so sixty people hold twice what thirty hold before anything spoils. A band
-  that needs nothing has every line at zero.
+  (`spoilage::rot_band_larders`, next in the Population chain after `simulate_population`): every
+  lot ages one turn (`FoodMix::age_and_expire`) and a lot whose age has reached its class's shelf
+  life rots whole. A kill landing on turn *T* (age 0) feeds the meals of *T+1 … T+shelf* and rots in
+  the rot pass of *T+shelf* (flesh, 4 turns: a 48-food mammoth on a band needing 2 reads 46, 44, 42,
+  then the remaining 40 rots in the fourth pass). A band that needs nothing rots nothing early. The
+  meal takes the fastest-rotting class first, oldest lot first within it.
 - **A take lands in the class of what was taken.** A hunt (wild, pen, a party's roadside kill or a
   raid) lands in the herd species' class; a gather lands in each class in proportion to that class's
   share of the basket's conversion rate (`forage::patch_food_mix` — the same `rung_rate` the rate
@@ -417,7 +423,8 @@ rule is a line, not a share. Engine: `core_sim/src/spoilage.rs`.
   every class alike); a party's launch larder, trade cargo, a delivery, a fold-back, a raid's forfeit
   and a provision cost all move a proportional mix.
 - **A detached party's pack carries its composition but does not rot in this slice.** The larder
-  rot is `With<ResidentBand>`; the pack lands home in the band's larder and rots there by the line.
+  rot is `With<ResidentBand>`; the pack keeps its lots and ages and lands home in the band's larder,
+  where they rot by this rule.
 
 #### `foodSpoiled` is one term, and the ledger identity carries it
 
@@ -429,7 +436,8 @@ the wire as `PopulationCohortState.foodSpoiled`, appended last:
 larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled − foodLeftBehind + transferReceived − transferSent
 ```
 
-A rotten caravan pack is **credited as income when it lands and debited as spoilage the same turn**,
+`foodSpoiled` keeps its meaning (what rotted this turn); the larder part is now paid at expiry. A
+rotten caravan pack is **credited as income when it lands and debited as spoilage the same turn**,
 so `foodIncome` stays `Σ actual` — the one producer the rows report — and the loss is this one term.
 Pinned with a live, non-zero rot by `integration_tests/tests/spoilage_food_ledger.rs`.
 
@@ -442,13 +450,13 @@ until the next turn frame — the `transferReceived` accumulation shape, cleared
 `reset_transfer_ledger` — and it rides the wire as `PopulationCohortState.foodLeftBehind`. **There is
 no fodder twin**: the fodder ledger has no spoil or forfeit term, so dropped hay is simply gone.
 
-#### The runway reads the larder after one turn of rot — a first-turn correction
+#### The runway reads the larder less what will rot uneaten
 
-`turnsOfFood` passes a resident band's larder through **one application** of the larder rot
-(`spoilage::larder_after_rot`, at the forward `demand`) before projecting. A larder above its lines
-loses the excess on the next turn whatever the band does, so counting that food as runway would
-promise turns the store cannot keep. It is a correction for the first turn, not a model of rot over
-the whole runway: the turns after are walked as before. A detached party reads its pack whole.
+`turnsOfFood` for a resident band counts the larder less `spoilage::rot_ahead`: the larder walked
+forward through the same meal-then-rot turns the sim runs, at the forward `demand` and with no
+income, so a lot that would expire before the band could eat it is not runway. The turns after are
+walked as before. A detached party reads its pack whole. `spoilage::tests::the_forecast_is_what_the_turns_actually_rot`
+pins the walk against the turns.
 
 > #### THE WIRE CARRIES WHOLE PEOPLE — the fraction is an accumulator, and it stays sim-side
 >

@@ -3015,21 +3015,21 @@ fn resolve_shed_facts(
                         keeping_need,
                     })
             }
-            LaborTarget::Hunt { fauna_id, floor } => {
-                herds
-                    .find(fauna_id)
-                    .map_or(SourceShedFacts::default(), |herd| SourceShedFacts {
-                        accruing_knowledge: source_is_still_teaching(
-                            fauna::herd_rung(herd, ladder),
-                            *floor,
-                            faction,
-                            discovery,
-                            knowledge_threshold,
-                        ),
-                        improved: fauna::herd_at_risk_cost(herd) > RUNG_UNSTARTED,
-                        keeping_need,
-                    })
-            }
+            LaborTarget::Hunt {
+                fauna_id, floor, ..
+            } => herds
+                .find(fauna_id)
+                .map_or(SourceShedFacts::default(), |herd| SourceShedFacts {
+                    accruing_knowledge: source_is_still_teaching(
+                        fauna::herd_rung(herd, ladder),
+                        *floor,
+                        faction,
+                        discovery,
+                        knowledge_threshold,
+                    ),
+                    improved: fauna::herd_at_risk_cost(herd) > RUNG_UNSTARTED,
+                    keeping_need,
+                }),
             LaborTarget::Extract {
                 tile,
                 material,
@@ -4274,27 +4274,34 @@ fn land_food_home(
             pack.classes.clone()
         }
     };
-    let mut weights = crate::work_party::CargoClasses::new();
+    // **Each pack lands AGED BY ITS WALK**, so its shelf life is counted from the kill and not from
+    // the landing: a lot is keyed by (class, walk). The whole delivery is still one exact
+    // `delivery.total`, split across those lots in proportion to what the packs carried.
+    let mut lots: std::collections::BTreeMap<(String, u32), f32> =
+        std::collections::BTreeMap::new();
     for pack in &delivery.packs {
         for (class, amount) in pack_classes(pack) {
-            *weights
-                .entry(class)
+            // A class the table does not carry never rots, so its lot carries no age.
+            let age = keeping
+                .shelf_life(&class)
+                .map_or(crate::work_party::NO_WALK, |_| pack.walk_turns);
+            *lots
+                .entry((class, age))
                 .or_insert(crate::work_party::NOTHING_CARRIED) += amount;
         }
     }
-    stores.add_food_mix(&crate::components::FoodMix::from_weights(
+    let landed = crate::components::FoodMix::from_aged_weights(
         delivery.total,
-        weights
-            .iter()
-            .map(|(class, amount)| (class.as_str(), *amount)),
+        lots.iter()
+            .map(|((class, walk), amount)| (class.as_str(), *walk, *amount)),
         fallback_class,
-    ));
+    );
+    stores.add_food_mix(&landed);
+    // Then what the walk spoiled is struck off: a lot whose class keeps less than its walk is lost.
     let mut spoiled = scalar_zero();
-    for pack in &delivery.packs {
-        for (class, amount) in pack_classes(pack) {
-            if crate::spoilage::rots_in_transit(&class, pack.walk_turns, keeping) {
-                spoiled += stores.take_food_class(&class, scalar_from_f32(amount));
-            }
+    for (class, age, amount) in landed.batches() {
+        if crate::spoilage::rots_in_transit(class, age, keeping) {
+            spoiled += stores.take_food_batch(class, age, amount);
         }
     }
     spoiled.to_f32()
@@ -7485,7 +7492,9 @@ pub fn advance_labor_allocation(
                         ),
                     };
                 }
-                LaborTarget::Hunt { fauna_id, floor } => {
+                LaborTarget::Hunt {
+                    fauna_id, floor, ..
+                } => {
                     if registry.find(fauna_id).is_none() {
                         // Herd despawned (extinction / another hunter) → lapse.
                         lapsed.push(idx);
@@ -14126,6 +14135,7 @@ mod labor_yield_tests {
                     target: LaborTarget::Hunt {
                         fauna_id: HERD_ID.to_string(),
                         floor: 0.5,
+                        move_with_herd: false,
                     },
                     workers: WORKERS,
                     kit: None,
@@ -14199,6 +14209,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.0,
+                    move_with_herd: false,
                 },
                 workers: WORKERS,
                 kit: None,
@@ -14241,6 +14252,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
+                    move_with_herd: false,
                 },
                 workers: WORKERS,
                 kit: None,
@@ -14417,6 +14429,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
+                    move_with_herd: false,
                 },
                 workers: assigned,
                 kit: None,
@@ -14633,6 +14646,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: PEN_FLOOR,
+                    move_with_herd: false,
                 },
                 workers: WORKERS,
                 // The keeper carries the hunt job's own kit, which is what a pen is collected on
@@ -15039,6 +15053,7 @@ mod labor_yield_tests {
                     target: LaborTarget::Hunt {
                         fauna_id: HERD_ID.to_string(),
                         floor: crate::fauna::MSY_BIOMASS_FRACTION,
+                        move_with_herd: false,
                     },
                     workers: WORKERS,
                     kit: None,
@@ -15154,6 +15169,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
+                    move_with_herd: false,
                 },
                 workers,
                 kit: None,
@@ -15177,6 +15193,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor,
+                    move_with_herd: false,
                 },
                 workers: WORKERS,
                 kit: None,
@@ -15410,6 +15427,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
+                    move_with_herd: false,
                 },
                 workers: assigned,
                 kit: None,
@@ -15721,6 +15739,7 @@ mod labor_yield_tests {
                                 target: LaborTarget::Hunt {
                                     fauna_id: HERD_ID.to_string(),
                                     floor: policy,
+                                    move_with_herd: false,
                                 },
                                 workers,
                                 kit: None,
@@ -15952,6 +15971,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
+                    move_with_herd: false,
                 },
                 // **One hunter, and the hands its pen's keeping takes first** (§2.2).
                 workers: SHORT_HANDED_HUNTERS + pen_keepers,
@@ -16662,6 +16682,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
+                    move_with_herd: false,
                 },
                 workers: WORKERS,
                 kit: None,
@@ -16700,6 +16721,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
+                    move_with_herd: false,
                 },
                 workers: WORKERS,
                 kit: None,
@@ -16774,6 +16796,7 @@ mod labor_yield_tests {
                     target: LaborTarget::Hunt {
                         fauna_id: HERD_ID.to_string(),
                         floor: 0.5,
+                        move_with_herd: false,
                     },
                     workers: SOLE_HUNTER + keepers,
                     kit: None,
@@ -17254,6 +17277,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: BUILDER_FLOOR,
+                    move_with_herd: false,
                 },
                 workers: WORKERS + keepers,
                 kit: None,
@@ -17317,7 +17341,10 @@ mod labor_yield_tests {
             None,
             "completion retires the entry"
         );
-        let LaborTarget::Hunt { fauna_id, floor } = &completed.target else {
+        let LaborTarget::Hunt {
+            fauna_id, floor, ..
+        } = &completed.target
+        else {
             panic!("completion must not change the target's KIND: {completed:?}");
         };
         assert_eq!(
@@ -17427,6 +17454,7 @@ mod labor_yield_tests {
                     target: LaborTarget::Hunt {
                         fauna_id: HERD_ID.to_string(),
                         floor: BUILDER_FLOOR,
+                        move_with_herd: false,
                     },
                     workers: WORKERS,
                     kit: Some(take_kit),
@@ -17664,6 +17692,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: BUILDER_FLOOR,
+                    move_with_herd: false,
                 },
                 workers: WORKERS,
                 kit: Some(equipment.default_kit(crate::equipment_config::KitJob::Hunt)),
@@ -17848,6 +17877,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: BUILDER_FLOOR,
+                    move_with_herd: false,
                 },
                 workers: WORKERS,
                 kit: None,
@@ -18874,6 +18904,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: BUILDER_FLOOR,
+                    move_with_herd: false,
                 },
                 workers: WORKERS,
                 kit: None,
@@ -18932,7 +18963,10 @@ mod labor_yield_tests {
             None,
             "completion retires the entry"
         );
-        let LaborTarget::Hunt { fauna_id, floor } = &completed.target else {
+        let LaborTarget::Hunt {
+            fauna_id, floor, ..
+        } = &completed.target
+        else {
             panic!("completion must not change the target's KIND: {completed:?}");
         };
         assert_eq!(
@@ -18990,6 +19024,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
+                    move_with_herd: false,
                 },
                 workers: WORKERS,
                 kit: None,
@@ -19022,6 +19057,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
+                    move_with_herd: false,
                 },
                 workers: WORKERS,
                 kit: None,
@@ -19067,6 +19103,7 @@ mod labor_yield_tests {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: policy,
+                    move_with_herd: false,
                 },
                 workers: WORKERS,
                 kit: None,
@@ -19373,7 +19410,7 @@ mod transit_rot_tests {
     fn a_short_walk_and_a_local_pack_lose_nothing() {
         let keeping = crate::demographics_config::DemographicsConfig::default().keeping;
         let flesh_life = keeping.shelf_life(FLESH).expect("flesh is a shipped class");
-        for walk in [NO_WALK, flesh_life as u32] {
+        for walk in [NO_WALK, flesh_life as u32 - 1] {
             let mut stores = LocalStore::new();
             let spoiled = land_food_home(
                 &mut stores,
@@ -19384,5 +19421,45 @@ mod transit_rot_tests {
             assert_eq!(spoiled, 0.0, "a {walk}-turn walk keeps flesh");
             assert!((stores.food().get(FLESH).to_f32() - PACK).abs() < 1e-3);
         }
+    }
+
+    /// **A pack that survives its walk lands aged by it** — its shelf life counts from the kill, so
+    /// a pack walked `W` turns expires `W` rot passes sooner than a camp kill.
+    #[test]
+    fn a_pack_lands_aged_by_its_walk_and_expires_that_much_sooner() {
+        const WALK: u32 = 2;
+        let keeping = crate::demographics_config::DemographicsConfig::default().keeping;
+        let flesh_life = keeping.shelf_life(FLESH).expect("flesh is a shipped class");
+        let passes_until_it_rots = |walk: u32| {
+            let mut stores = LocalStore::new();
+            land_food_home(
+                &mut stores,
+                &delivery(walk, &[(FLESH, PACK)]),
+                &keeping,
+                FLESH,
+            );
+            (1..)
+                .find(|_| stores.age_food(|class| keeping.shelf_life(class)) > scalar_zero())
+                .expect("it rots")
+        };
+        assert_eq!(passes_until_it_rots(NO_WALK), flesh_life as u32);
+        assert_eq!(passes_until_it_rots(WALK), flesh_life as u32 - WALK);
+    }
+
+    /// **A pack walked exactly its shelf life is lost on the walk** — the same age at which a camp
+    /// kill expires in the larder (`age >= shelf`).
+    #[test]
+    fn a_walk_of_exactly_the_shelf_life_rots_the_pack() {
+        let keeping = crate::demographics_config::DemographicsConfig::default().keeping;
+        let flesh_life = keeping.shelf_life(FLESH).expect("flesh is a shipped class");
+        let mut stores = LocalStore::new();
+        let spoiled = land_food_home(
+            &mut stores,
+            &delivery(flesh_life as u32, &[(FLESH, PACK)]),
+            &keeping,
+            FLESH,
+        );
+        assert!((spoiled - PACK).abs() < 1e-3, "spoiled {spoiled}");
+        assert!(stores.food().is_empty());
     }
 }

@@ -1506,6 +1506,7 @@ mod tests {
                     target: LaborTarget::Hunt {
                         fauna_id: "game_1".to_string(),
                         floor: 0.5,
+                        move_with_herd: false,
                     },
                     workers: 5,
                     kit: None,
@@ -1662,6 +1663,7 @@ mod tests {
                     target: LaborTarget::Hunt {
                         fauna_id: "game_1".to_string(),
                         floor: 0.5,
+                        move_with_herd: false,
                     },
                     workers: 5,
                     kit: None,

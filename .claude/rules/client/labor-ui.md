@@ -8190,3 +8190,40 @@ sentence muted under the next-turn figure.
 - **The hunt row's `keep_hands` is not its `next_rung_keep_hands`.** The first is the keeping at the
   rung the herd stands on now. The second is the keeping once the next rung is built, and it belongs
   to the deal.
+
+## MIGRATION MODE — one box on the hunt, and where it shows (`docs/plan_roaming_bands.md`, #797)
+
+Following a herd is a choice on a hunt, never a band verb: the flag is `LaborAssignment.moveWithHerd`
+(dict key `move_with_herd`, decoded beside `homeward_food` in `native/src/dict/population.rs`), and
+the command carries it as the bare token ` follow`, rendered LAST on the hunt line, after `kit <id>`
+(`Main._follow_token`). **Omitted means off**, so the flag is a statement like the kit and the take
+selection: every restate of a followed row must carry it.
+
+- **The sheet.** A herd whose wire `size_class` is `migratory` (`HudComposeVocab.SIZE_CLASS_MIGRATORY`)
+  gets a `CheckBox` — `Move camp with the herd`, with the one dim line `Camp in the herd and travel
+  with it.` — mounted by `DrawerComposeController._mount_move_camp_box` directly ABOVE where the WORK
+  PARTY section mounts, after the Kit row. A resident herd's sheet has no box. Nothing else on the
+  sheet moves: a band still catching up hunts with porters, so the party section and the yields stay
+  true. The box writes `ComposeState.hunt_move_with_herd` only (nothing on the sheet depends on it, so
+  no rebuild); `seed_hunt` seeds it from the band's own PENDING-AWARE row, so a toggle pressed on the
+  Work tab is what a reopened sheet shows. The commit sends it only for a migratory herd.
+- **Threading.** `move_with_herd` is the trailing parameter of `_emit_assign_labor` on all three
+  layers (`DrawerComposeController` / `BandPanelController` adapters → `Hud._emit_assign_labor`),
+  rides `record_pending_assign` (so the pending row carries it — `effective_worker_map`'s pending
+  branch REPLACES the merged row) and the payload. `BandPanelController._emit_work_assign` restates
+  the row's own flag on every `+`/`−` (`RESTATE_STANDING_FOLLOW`, a tri-state int because a bool
+  cannot say "leave it alone"), and the `⌃` payload restates it for the overlay's sake.
+- **The Work tab row.** A hunt row whose live herd is migratory (or whose flag is already on) carries
+  a pill toggle `👣 Move camp with the herd` (`WORK_ROW_FOLLOW_TOGGLE_META`) at the head of its party
+  column; pressing it re-sends the row's `assign_labor` with the flag flipped through
+  `_emit_work_assign`. While the flag is on, ONE status line leads the block, above the work-party lines
+  (which keep rendering beneath, unchanged): band tile == herd tile and the herd migrating (`next_x >= 0`)
+  → `Moving with it · next (x, y)`; at the herd otherwise → `Camped in the herd. Kills land in camp.`;
+  elsewhere → `Catching up · N hexes behind` (`1 hex` singular), the wrap-aware `hex_distance_wrapped`.
+  The line is `HudWorkVocab.follow_status_line`; it counts as a party line and the toggle as one more, so
+  the row's height and the board's reservation pay for both without a second edit
+  (`_work_row_party_lines`). Cancelling the hunt is the row's existing unassign — no control ends
+  following on its own.
+- **The herd card's worked line** (`_standing_summary_model`) appends ` · moving with the herd` for a
+  band whose row has the flag.
+- **The map half** is `map-markers.md` → "MIGRATION MODE'S TWO MARKS".

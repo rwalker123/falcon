@@ -194,6 +194,7 @@ fn hunt_row(herd_id: &str, priority: SourcePriority) -> LaborAssignment {
         target: LaborTarget::Hunt {
             fauna_id: herd_id.to_string(),
             floor: SUSTAIN,
+            move_with_herd: false,
         },
         workers: KEEPER_WORKERS,
         kit: None,
@@ -326,6 +327,7 @@ fn edit_the_big_row(app: &mut App, keeper: Entity, rank: SourcePriority) {
         LaborTarget::Hunt {
             fauna_id: "pen_big".to_string(),
             floor: SUSTAIN,
+            move_with_herd: false,
         },
         KEEPER_WORKERS,
         KEEPER_WORKERS,

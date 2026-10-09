@@ -256,6 +256,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2, policy: f32) -> Entit
                     target: LaborTarget::Hunt {
                         fauna_id: herd_id.to_string(),
                         floor: policy,
+                        move_with_herd: false,
                     },
                     workers: KEEPER_WORKERS,
                     kit: None,
