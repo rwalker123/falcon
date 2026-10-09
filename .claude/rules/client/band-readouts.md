@@ -1777,13 +1777,15 @@ the Band tab states it in three places.
   (free for good) or the band has no projected reading.** Value and caret go amber while
   `fertility_ceiling < 1` (`ctx.family_limit_amber`, `DisclosureController._is_concerning`).
 - **One line under the row, by precedence** (`HudLineageVocab.note_line`): over the limit, kin
-  (`fertility_ceiling` 0), room for N more - each an amber `◆` line - else, when the ceiling equals
+  (`fertility_ceiling` 0), room for N more - each an amber `◆` line telling the player to meet
+  another faction (the player's word; "people" is the sim's) - else, when the ceiling equals
   `lineage_free_breeding_at`, a faint `Stay in touch until N and the limit is gone for good.`
 - **The popover** (`BREAKDOWN_KIND_FAMILY_LIMIT`) is one table row per `breeding_members` entry (name by
   `band_label_for_id`, the sim's `Band <id>` spelling when the roster lacks it; `{lines} families ·
   {people}`) and per `breeding_peoples` entry (`FactionMark.faction_name` in the READY blue, `+{lines}
   families`), ` · fading` and amber on a fading one, then the faint contact note (`Contact with
-  other peoples raises the limit.`). Those rows ride behind control-character sentinels (`HudLineageVocab.ROW_MARK` / `FAINT_MARK`, bullets lead with `◆ `) that
+  other factions raises the limit.`). Those rows ride behind control-character sentinels
+  (`HudLineageVocab.ROW_MARK` / `FAINT_MARK`, bullets lead with `◆ `) that
   `DetailFormat.detail_bbcode` renders through `HudLineageVocab.line_bbcode`; a table row keeps
   `ROW_NAME_GAP_PX` between name and figure.
 - **The two world constants** (`lineage_people_per_line`, `lineage_free_breeding_at`) are latched by

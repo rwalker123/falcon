@@ -38,14 +38,14 @@ const VALUE_FORMAT := "%d / %d"
 const MEMBER_VALUE_FORMAT := "%d families · %d"
 const PEOPLE_VALUE_FORMAT := "+%d families"
 const FADING_SUFFIX := " · fading"
-const CONTACT_NOTE := "Contact with other peoples raises the limit."
+const CONTACT_NOTE := "Contact with other factions raises the limit."
 
 # ---- the bullet under the row ---------------------------------------------------------------------
 ## The amber bullet's lead mark — the work board's `◆`, so a warning reads the same on every tab.
 const BULLET_MARK := "◆"
-const BULLET_OVER_LIMIT := "Over the limit. Find another people to grow again."
-const BULLET_KIN := "Too closely related. Meet another people to grow."
-const BULLET_ROOM_FORMAT := "Room for %d more. Meet another people to grow."
+const BULLET_OVER_LIMIT := "Over the limit. Find another faction to grow again."
+const BULLET_KIN := "Too closely related. Meet another faction to grow."
+const BULLET_ROOM_FORMAT := "Room for %d more. Meet another faction to grow."
 ## The DIM line (not amber) a people one step from freedom is shown.
 const STAY_IN_TOUCH_FORMAT := "Stay in touch until %d and the limit is gone for good."
 
