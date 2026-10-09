@@ -629,6 +629,22 @@ fn decode_delta_against(
         frame.insert_always("command_events_retention_turns", retention_turns as i64);
     }
 
+    // The LINEAGE CONSTANTS (issue #691): 0 = unchanged, so only a stated value rides.
+    if let Some(campaign) = delta.campaign() {
+        if campaign.lineagePeoplePerLine() > 0 {
+            frame.insert_always(
+                "lineage_people_per_line",
+                campaign.lineagePeoplePerLine() as i64,
+            );
+        }
+        if campaign.lineageFreeBreedingAt() > 0 {
+            frame.insert_always(
+                "lineage_free_breeding_at",
+                campaign.lineageFreeBreedingAt() as i64,
+            );
+        }
+    }
+
     if let Some(pending_forks) = delta.campaign().and_then(|s| s.pendingForks()) {
         frame.insert_changed("pending_forks", &pending_forks_to_array(pending_forks));
     }

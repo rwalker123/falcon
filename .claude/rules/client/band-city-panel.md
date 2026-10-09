@@ -7844,3 +7844,24 @@ are bright, and a person split between the two is one square shaded in part.
   `layout_for(width)` is that arithmetic, pure, so a harness asks the question the draw answers.
 
 The compose sheet's half is `labor-ui.md` → "THE CREW SPLIT ON THE SHEET".
+
+## The split sheet's families and FAMILY LIMIT block (issue #691)
+
+`BandPanelController._fill_split_compose_sheet` states the founding lines each half would hold, from the
+SAME `share` the sheet already shows as `N% of the band goes with them` (asked workers over the band's
+working-age): `taken = clamp(round_half_up(lines x share), 1, lines - 1)` (`HudLineageVocab.split_taken`),
+a one-line band taking 1 and keeping its 1.
+
+- A `Families` row on THE NEW BAND (`{taken}`) and on THE HOME BAND, AFTER (`{lines} -> {lines - taken}`),
+  whenever the band publishes `founding_lines`.
+- **Only while the people is under a limit** (`breeding_ceiling != 0`, projected reading, both world
+  constants known): a `FAMILY LIMIT` section with `Stays linked` (`{ceiling}, shared`) and `If it loses
+  touch` (`{new_limit} - home {home_limit}`), where `new_limit = min(taken x K, free)` and
+  `home_limit = min((union - taken) x K, free)` over `union` = the members' plus the other peoples'
+  lines; a one-line band prices at `floor(K/2)` and `(union - 1) x K + floor(K/2)`. One amber `◆` line:
+  home first (`breeding_population - new band people >= home_limit`), else the new band
+  (`new band people >= new_limit`). Strings are in `hud_compose_vocab.gd` (`SPLIT_*FAMIL*`,
+  `SPLIT_LIMIT_*`), arithmetic in `hud_lineage_vocab.gd`.
+- **Frames:** `family_limit_split` (block and home-at-limit line), `family_limit_split_free` (Families
+  rows, no block). The sheet is the last thing in a height-capped scroll, so the harness scrolls it to
+  the end before saving.

@@ -3304,6 +3304,8 @@
       "order": 65
     }
   ],
+  "lineage_free_breeding_at": 90,
+  "lineage_people_per_line": 85,
   "materials": [
     {
       "axes": [
@@ -4524,6 +4526,45 @@
         "worked": 72,
         "workers": 95
       },
+      "breeding_ceiling": 198,
+      "breeding_members": [
+        {
+          "band_id": 67,
+          "fading": true,
+          "lines": 49,
+          "people": 123
+        },
+        {
+          "band_id": 56,
+          "fading": false,
+          "lines": 50,
+          "people": 138
+        },
+        {
+          "band_id": 89,
+          "fading": false,
+          "lines": 107,
+          "people": 109
+        }
+      ],
+      "breeding_peoples": [
+        {
+          "faction": 195,
+          "fading": true,
+          "lines": 62
+        },
+        {
+          "faction": 36,
+          "fading": false,
+          "lines": 29
+        },
+        {
+          "faction": 37,
+          "fading": false,
+          "lines": 112
+        }
+      ],
+      "breeding_population": 186,
       "build_queue": [
         {
           "build_priority": "populations[0].build_queue[0].build_priority",
@@ -4912,6 +4953,7 @@
       "expedition_target_herd": "populations[0].expedition_target_herd",
       "expedition_target_species": "populations[0].expedition_target_species",
       "faction": 182,
+      "fertility_ceiling": 0.000036,
       "fertility_hunger": 0.000048,
       "fertility_reserve": 0.000077,
       "fertility_trend": 0.000084,
@@ -4929,6 +4971,7 @@
       "food_shortfall": 99.949997,
       "food_spoiled": 82.919998,
       "forage_carry_per_worker_biomass": 80.459999,
+      "founding_lines": 72,
       "founding_min_workers": 13,
       "founding_parent_min_workers": 132,
       "generation": 178,
@@ -5910,6 +5953,45 @@
         "worked": 89,
         "workers": 4
       },
+      "breeding_ceiling": 3,
+      "breeding_members": [
+        {
+          "band_id": 100,
+          "fading": true,
+          "lines": 142,
+          "people": 174
+        },
+        {
+          "band_id": 191,
+          "fading": false,
+          "lines": 141,
+          "people": 47
+        },
+        {
+          "band_id": 114,
+          "fading": false,
+          "lines": 104,
+          "people": 80
+        }
+      ],
+      "breeding_peoples": [
+        {
+          "faction": 12,
+          "fading": true,
+          "lines": 157
+        },
+        {
+          "faction": 123,
+          "fading": false,
+          "lines": 70
+        },
+        {
+          "faction": 102,
+          "fading": false,
+          "lines": 167
+        }
+      ],
+      "breeding_population": 161,
       "build_queue": [
         {
           "build_priority": "populations[1].build_queue[0].build_priority",
@@ -6298,6 +6380,7 @@
       "expedition_target_herd": "populations[1].expedition_target_herd",
       "expedition_target_species": "populations[1].expedition_target_species",
       "faction": 141,
+      "fertility_ceiling": 0.000035,
       "fertility_hunger": 0.000157,
       "fertility_reserve": 0.000058,
       "fertility_trend": 0.000143,
@@ -6315,6 +6398,7 @@
       "food_shortfall": 104.449997,
       "food_spoiled": 90.110001,
       "forage_carry_per_worker_biomass": 90.010002,
+      "founding_lines": 189,
       "founding_min_workers": 168,
       "founding_parent_min_workers": 115,
       "generation": 195,
@@ -7257,6 +7341,45 @@
         "worked": 130,
         "workers": 69
       },
+      "breeding_ceiling": 160,
+      "breeding_members": [
+        {
+          "band_id": 149,
+          "fading": true,
+          "lines": 47,
+          "people": 57
+        },
+        {
+          "band_id": 98,
+          "fading": false,
+          "lines": 192,
+          "people": 168
+        },
+        {
+          "band_id": 95,
+          "fading": false,
+          "lines": 37,
+          "people": 23
+        }
+      ],
+      "breeding_peoples": [
+        {
+          "faction": 117,
+          "fading": true,
+          "lines": 8
+        },
+        {
+          "faction": 94,
+          "fading": false,
+          "lines": 7
+        },
+        {
+          "faction": 147,
+          "fading": false,
+          "lines": 158
+        }
+      ],
+      "breeding_population": 160,
       "build_queue": [
         {
           "build_priority": "populations[2].build_queue[0].build_priority",
@@ -7645,6 +7768,7 @@
       "expedition_target_herd": "populations[2].expedition_target_herd",
       "expedition_target_species": "populations[2].expedition_target_species",
       "faction": 124,
+      "fertility_ceiling": 0.000146,
       "fertility_hunger": 0.000186,
       "fertility_reserve": 0.000015,
       "fertility_trend": 0.000038,
@@ -7662,6 +7786,7 @@
       "food_shortfall": 97.199997,
       "food_spoiled": 5.14,
       "forage_carry_per_worker_biomass": 56.990002,
+      "founding_lines": 58,
       "founding_min_workers": 87,
       "founding_parent_min_workers": 118,
       "generation": 72,

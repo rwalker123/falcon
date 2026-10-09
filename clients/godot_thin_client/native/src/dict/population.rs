@@ -82,6 +82,7 @@ struct CohortScalars {
     fertility_hunger: f64,
     fertility_reserve: f64,
     fertility_trend: f64,
+    fertility_ceiling: f64,
 }
 
 fn cohort_scalars(cohort: fb::PopulationCohortState<'_>) -> CohortScalars {
@@ -99,6 +100,7 @@ fn cohort_scalars(cohort: fb::PopulationCohortState<'_>) -> CohortScalars {
         fertility_hunger: fixed64_to_f64(cohort.fertilityHunger()),
         fertility_reserve: fixed64_to_f64(cohort.fertilityReserve()),
         fertility_trend: fixed64_to_f64(cohort.fertilityTrend()),
+        fertility_ceiling: fixed64_to_f64(cohort.fertilityCeiling()),
     }
 }
 
@@ -212,6 +214,38 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("fertility_hunger", scalars.fertility_hunger);
     let _ = dict.insert("fertility_reserve", scalars.fertility_reserve);
     let _ = dict.insert("fertility_trend", scalars.fertility_trend);
+    // The FOURTH factor (issue #688/#691): the share of this turn's would-be births the breeding
+    // population had room for. Neutral at 1.0, 0 at the ceiling. Same not-projected sentinel as the
+    // other three (zero reserve).
+    let _ = dict.insert("fertility_ceiling", scalars.fertility_ceiling);
+    // FOUNDING LINES and the BREEDING POPULATION this band belongs to. `breeding_ceiling` 0 means
+    // "no inbreeding ceiling" (the people is free for good), never a ceiling of nobody.
+    let _ = dict.insert("founding_lines", cohort.foundingLines() as i64);
+    let _ = dict.insert("breeding_population", cohort.breedingPopulation() as i64);
+    let _ = dict.insert("breeding_ceiling", cohort.breedingCeiling() as i64);
+    let mut breeding_members = VarArray::new();
+    if let Some(members) = cohort.breedingMembers() {
+        for member in members.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("band_id", member.bandId() as i64);
+            let _ = row.insert("lines", member.lines() as i64);
+            let _ = row.insert("people", member.people() as i64);
+            let _ = row.insert("fading", member.fading());
+            breeding_members.push(&row.to_variant());
+        }
+    }
+    let _ = dict.insert("breeding_members", &breeding_members);
+    let mut breeding_peoples = VarArray::new();
+    if let Some(peoples) = cohort.breedingPeoples() {
+        for people in peoples.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("faction", people.faction() as i64);
+            let _ = row.insert("lines", people.lines() as i64);
+            let _ = row.insert("fading", people.fading());
+            breeding_peoples.push(&row.to_variant());
+        }
+    }
+    let _ = dict.insert("breeding_peoples", &breeding_peoples);
     let _ = dict.insert("generation", cohort.generation() as i64);
     let _ = dict.insert("faction", cohort.faction() as i64);
     let _ = dict.insert("turns_of_food", cohort.turnsOfFood() as f64);
@@ -2100,6 +2134,7 @@ mod cohort_decode_tests {
                 fertilityHunger: 600_000,
                 fertilityReserve: 1_500_000,
                 fertilityTrend: 250_000,
+                fertilityCeiling: 500_000,
                 ..Default::default()
             },
         );
@@ -2147,11 +2182,14 @@ mod cohort_decode_tests {
         assert!((scalars.fertility_hunger - 0.6).abs() < 1e-9);
         assert!((scalars.fertility_reserve - 1.5).abs() < 1e-9);
         assert!((scalars.fertility_trend - 0.25).abs() < 1e-9);
-        let multiplier =
-            scalars.fertility_hunger * scalars.fertility_reserve * scalars.fertility_trend;
+        assert!((scalars.fertility_ceiling - 0.5).abs() < 1e-9);
+        let multiplier = scalars.fertility_hunger
+            * scalars.fertility_reserve
+            * scalars.fertility_trend
+            * scalars.fertility_ceiling;
         assert!(
-            (multiplier - 0.225).abs() < 1e-9,
-            "fertility multiplier {multiplier} != 0.225"
+            (multiplier - 0.1125).abs() < 1e-9,
+            "fertility multiplier {multiplier} != 0.1125"
         );
     }
 
@@ -2173,6 +2211,7 @@ mod cohort_decode_tests {
             ("fertility_hunger", scalars.fertility_hunger),
             ("fertility_reserve", scalars.fertility_reserve),
             ("fertility_trend", scalars.fertility_trend),
+            ("fertility_ceiling", scalars.fertility_ceiling),
         ] {
             assert!(
                 value.abs() < 1_000.0,

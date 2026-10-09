@@ -388,7 +388,8 @@ func _herd_label_for_id(herd_id: String) -> String:
 ## does. See that producer for why the answer is a parameter.
 func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
         ctx: DetailFormat.Context = null, compact: bool = false,
-        with_position: bool = true, denial_view: Dictionary = {}) -> Array[String]:
+        with_position: bool = true, denial_view: Dictionary = {},
+        with_family_limit: bool = false) -> Array[String]:
     # The tint context is an OUT-PARAMETER of this producer, not a member: the caller (each of the two
     # detail hosts) builds it and hands it straight to the formatter. Defaulted so the preview
     # harnesses can still ask for the lines alone.
@@ -540,6 +541,10 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
                     lines.append(beliefs_line)
             if growth_line != "":
                 lines.append(growth_line)
+        # THE FAMILY LIMIT, directly after Growth (issue #691): the Band tab's host only - the tile
+        # card's drawer states Growth and stops there. Nothing at all for a people with no limit.
+        if with_family_limit:
+            lines.append_array(_family_limit_lines(unit_data, context))
     if with_position:
         var pos_array: Array = Array(unit_data.get("pos", []))
         if pos_array.size() == 2:
@@ -1028,7 +1033,8 @@ func _band_growth_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> Stri
         return ""
     var fertility := DetailFormat.band_fertility(unit_data)
     ctx.fertility = fertility
-    return DetailFormat.GROWTH_ROW_FORMAT % int(round(fertility * 100.0))
+    return "%s%s%s" % [HudDisclosureVocab.DETAIL_ROW_GROWTH, DetailFormat.DETAIL_KV_SEPARATOR,
+        DetailFormat.growth_value_text(unit_data)]
 
 ## The Growth row rendered as a CLAUSE on the Morale line, for the SHORT band-zone tier — the pair to
 ## `_band_growth_line`, and the only place the two can differ is the anchor suffix, which a merged
@@ -1053,10 +1059,31 @@ func _band_growth_clause(unit_data: Dictionary, ctx: DetailFormat.Context) -> St
     if label == "":
         label = HudDisclosureVocab.DETAIL_ROW_GROWTH
     return BAND_MORALE_GROWTH_CLAUSE_FORMAT % [
-        label, BandFoodStatus.hex_for_fertility(fertility),
-        DetailFormat.GROWTH_VALUE_SHORT_FORMAT % int(round(fertility * 100.0))]
+        label,
+        HudStyle.DANGER_HEX if DetailFormat.growth_is_stopped(unit_data) \
+            else BandFoodStatus.hex_for_fertility(fertility),
+        DetailFormat.growth_value_short_text(unit_data)]
 
-## Itemized fertility breakdown: the three named factors as indented sub-lines, each rendered as a
+## The `Family limit` row, its popover and the one line under it (issue #691). Empty when the people is
+## free for good (`breeding_ceiling == 0`) or the band has no projected reading - no row, no caret.
+## The value is `population / ceiling`, amber (and the caret amber) while the ceiling is biting.
+func _family_limit_lines(unit_data: Dictionary, ctx: DetailFormat.Context) -> Array[String]:
+    var lines: Array[String] = []
+    ctx.family_limit_amber = false
+    if not HudLineageVocab.limit_stated(unit_data):
+        return lines
+    ctx.family_limit_amber = HudLineageVocab.limit_binds(unit_data)
+    _disclosures.register(HudDisclosureVocab.DETAIL_ROW_FAMILY_LIMIT,
+        HudDisclosureVocab.BREAKDOWN_KIND_FAMILY_LIMIT, unit_data,
+        HudLineageVocab.popover_lines(unit_data, _band_labor.band_label_for_id))
+    lines.append("%s%s%s" % [HudDisclosureVocab.DETAIL_ROW_FAMILY_LIMIT,
+        DetailFormat.DETAIL_KV_SEPARATOR, HudLineageVocab.row_value(unit_data)])
+    var note := HudLineageVocab.note_line(unit_data)
+    if note != "":
+        lines.append(note)
+    return lines
+
+## Itemized fertility breakdown: the four named factors as indented sub-lines, each rendered as a
 ## MULTIPLIER — `    ▼ ×0.60  short rations` — because they combine by product, so reading down the
 ## list multiplies out to the Growth headline above (`DetailFormat.detail_bbcode` tints by the sign
 ## glyph, the same path the morale breakdown uses). Only factors that actually moved off the neutral
@@ -1070,12 +1097,14 @@ func _fertility_breakdown_lines(unit_data: Dictionary) -> Array[String]:
     if not BandFoodStatus.fertility_is_projected(unit_data):
         return lines
     var trend := float(unit_data.get("fertility_trend", BandFoodStatus.FERTILITY_NEUTRAL))
-    # (factor, label) in the model's own order: hunger (the gate) → reserve (stock) → trend (flow).
+    # (factor, label) in the model's own order: hunger (the gate) → reserve (stock) → trend (flow) →
+    # ceiling (the breeding population's room, issue #691).
     var factors := [
         [float(unit_data.get("fertility_hunger", BandFoodStatus.FERTILITY_NEUTRAL)), DetailFormat.FERTILITY_LABEL_HUNGER],
         [float(unit_data.get("fertility_reserve", BandFoodStatus.FERTILITY_NEUTRAL)), DetailFormat.FERTILITY_LABEL_RESERVE],
         [trend, DetailFormat.FERTILITY_LABEL_TREND_GROWING if trend > BandFoodStatus.FERTILITY_NEUTRAL \
             else DetailFormat.FERTILITY_LABEL_TREND_SHRINKING],
+        [HudLineageVocab.ceiling_factor(unit_data), DetailFormat.FERTILITY_LABEL_CEILING],
     ]
     var epsilon := BandFoodStatus.fertility_breakdown_epsilon()
     for entry in factors:
