@@ -9,21 +9,24 @@
 //! holds what walked off.
 //!
 //! **Lines are a SET of identities, not a count.** The count is what gets published, but the
-//! slices that build on this one need the identities: contact merges line sets ("each side gains
-//! the lines it lacks"), and a recent split shares every line it could gain and so adds nothing —
-//! both are set operations, and neither can be answered from two numbers.
+//! breeding ceiling needs the identities: a population's union of lines, and a line several
+//! separate populations of one people hold (a one-line split copies it), are both set operations
+//! that two numbers cannot answer. A band's own set changes only by a split.
 //!
 //! **A [`LineId`] needs no allocator.** Lines are only ever *minted* on a starting band, whose
 //! [`BandId`] is already unique, so `(origin_band, index)` is globally unique by construction; a
 //! split partitions existing ids and never mints. The set is a [`BTreeSet`] so every walk over it is
 //! in id order — the sim is seeded and must stay deterministic.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::num::{NonZeroU16, NonZeroU32};
 
+use bevy::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
 use crate::components::BandId;
+use crate::connections::ConnectionLedger;
+use crate::orders::FactionId;
 use crate::scalar::Scalar;
 
 /// The fewest lines a band can hold. A band of people descends from *someone*: a split may take
@@ -75,14 +78,6 @@ impl FoundingLines {
         self.0.iter()
     }
 
-    /// **Gain every line `other` holds that `self` lacks** (contact between two peoples), returning
-    /// how many were new. A set union, so absorbing again changes nothing and returns `0`.
-    pub fn absorb(&mut self, other: &FoundingLines) -> usize {
-        let before = self.0.len();
-        self.0.extend(other.0.iter().copied());
-        self.0.len() - before
-    }
-
     /// **The lines a split walks off with, removed from `self`.**
     ///
     /// The splinter takes `round(len × share)`, where `share` is the same people share the split
@@ -125,7 +120,8 @@ const ONE_HOLDER: u32 = 1;
 
 /// **A breeding population's ceiling when its lines are shared** (issue #688) — `Σ K / holders`
 /// over the lines in its union, where `holders` is how many distinct breeding populations **of
-/// the same people** hold that line this turn, summed in fixed point and floored to whole people.
+/// the same people** hold that line in their members' own sets this turn (a line borrowed from
+/// another people counts whole: `holders` = 1), summed in fixed point and floored to whole people.
 ///
 /// **A line held by several separate populations of one people splits its `K` between them.** A one-line band's
 /// split gives both halves a copy of its line ([`FoundingLines::split_off_share`]), so counting the
@@ -145,28 +141,146 @@ pub fn shared_breeding_ceiling(
     u32::try_from(total.raw().div_euclid(Scalar::SCALE)).unwrap_or(u32::MAX)
 }
 
-/// **The inbreeding ceiling that binds a breeding population, if any** (issue #688): its `ceiling`
-/// ([`shared_breeding_ceiling`]), or `None` once that reaches `free_breeding_at` — a people that
-/// large finds mates without outside contact, so inbreeding no longer restricts its growth.
-pub fn inbreeding_ceiling(ceiling: u32, free_breeding_at: NonZeroU32) -> Option<u32> {
-    (ceiling < free_breeding_at.get()).then_some(ceiling)
+/// **The head-count at which a people breeds freely, as the effective ceiling of one that has not
+/// got there yet** (issue #691) — `min(shared, free_breeding_at)`. A union × `K` above
+/// `free_breeding_at` lets births run to `free_breeding_at` and no further; the next turn's
+/// pre-pass then sees the head-count and latches the people ([`FreeBreedingPeoples`]).
+pub fn effective_breeding_ceiling(shared: u32, free_breeding_at: NonZeroU32) -> u32 {
+    shared.min(free_breeding_at.get())
 }
 
-/// **A band's breeding population as of this turn** (issue #688) — the bands in its supply-network
-/// component (or the band alone, in no network), read after the turn's demographics. Parked on
-/// [`crate::components::PopulationCohort::last_breeding`] for publication only: nothing steers off
-/// it, `simulate_population` rewrites it every turn, and `Default` (all zero) is what a cohort reads
-/// before its first turn.
+/// **The peoples whose breeding is free for good** (issue #691). A people is in this set once ANY
+/// of its breeding populations' opening head-count plus the births it would have this turn with no
+/// ceiling — whole people — reaches `lineage.free_breeding_at`; nothing removes it. A latched people's every population has no
+/// inbreeding ceiling, whoever it later loses touch with and however it splits. A breakaway people
+/// born from a latched one inherits the latch ([`Self::inherit`]). Checkpoint state.
+#[derive(Resource, Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FreeBreedingPeoples(BTreeSet<FactionId>);
+
+impl FreeBreedingPeoples {
+    /// Latch `faction`. Returns whether it was newly latched.
+    pub fn latch(&mut self, faction: FactionId) -> bool {
+        self.0.insert(faction)
+    }
+
+    /// Whether `faction` breeds freely.
+    pub fn contains(&self, faction: FactionId) -> bool {
+        self.0.contains(&faction)
+    }
+
+    /// **A people born from another carries its latch.** The breakaway's bands are the old people's
+    /// own, so the head-count that freed the old people freed them.
+    pub fn inherit(&mut self, child: FactionId, parent: FactionId) {
+        if self.contains(parent) {
+            self.0.insert(child);
+        }
+    }
+
+    /// Every latched people, in id order.
+    pub fn iter(&self) -> impl Iterator<Item = FactionId> + '_ {
+        self.0.iter().copied()
+    }
+}
+
+/// One group of a people's bands that live ties join.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TieJoinedGroup {
+    pub faction: FactionId,
+    /// Indices into the band list handed to [`tie_joined_groups`], ascending (so in `BandId` order
+    /// when that list is).
+    pub members: Vec<usize>,
+}
+
+/// **A people's tie-joined groups** — the one notion of "which of a people's bands are in touch",
+/// read by independence (`systems::independence::heart_groups`: the largest group is the heart) and
+/// by the breeding ceiling (`systems::population::resolve_breeding_ceilings`: a group is a breeding
+/// population).
+///
+/// Per people, its bands are joined wherever [`ConnectionLedger::tie_is_live`] holds between two of
+/// them (either direction), and the groups are the connected components. `bands` must be sorted by
+/// `BandId`, so every walk is in a stated order and groups come out by faction, then lowest member.
+pub fn tie_joined_groups(
+    bands: &[(BandId, FactionId)],
+    ledger: &ConnectionLedger,
+) -> Vec<TieJoinedGroup> {
+    let mut by_faction: BTreeMap<FactionId, Vec<usize>> = BTreeMap::new();
+    for (index, (_, faction)) in bands.iter().enumerate() {
+        by_faction.entry(*faction).or_default().push(index);
+    }
+    let mut groups = Vec::new();
+    for (faction, indices) in by_faction {
+        let mut seen: BTreeSet<usize> = BTreeSet::new();
+        for &start in &indices {
+            if !seen.insert(start) {
+                continue;
+            }
+            let mut members = vec![start];
+            let mut frontier = vec![start];
+            while let Some(at) = frontier.pop() {
+                for &other in &indices {
+                    if seen.contains(&other) || !ledger.tie_is_live(bands[at].0, bands[other].0) {
+                        continue;
+                    }
+                    seen.insert(other);
+                    members.push(other);
+                    frontier.push(other);
+                }
+            }
+            members.sort_unstable();
+            groups.push(TieJoinedGroup { faction, members });
+        }
+    }
+    groups
+}
+
+/// One own-people band in a breeding population, as the wire publishes it
+/// (`PopulationCohortState.breedingMembers`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BreedingMember {
+    /// The band's durable id (`0` for a band that has none).
+    pub band: u64,
+    /// How many founding lines the band itself holds.
+    pub lines: u32,
+    /// Whole people in the band after this turn.
+    pub people: u32,
+    /// In touch with the rest of the population only through a tie that is bleeding: no edge to
+    /// any other member carried contact in the last Visibility pass. Always `false` for the
+    /// population's only member.
+    pub fading: bool,
+}
+
+/// One OTHER people contributing lines to a breeding population
+/// (`PopulationCohortState.breedingPeoples`). Deliberately carries no head-count.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BreedingPeople {
+    pub faction: u32,
+    /// Union lines that came only from this people's in-touch bands (lines the members do not
+    /// hold; a line two foreign peoples share is credited to the lower faction id).
+    pub lines: u32,
+    /// No in-touch band of this people carried contact with any member in the last Visibility
+    /// pass.
+    pub fading: bool,
+}
+
+/// **A band's breeding population as of this turn** (issue #688/#691) — the tie-joined group of its
+/// people's bands, read after the turn's demographics. Parked on
+/// [`crate::components::PopulationCohort::last_breeding`] for publication only: nothing steers off
+/// it, `simulate_population` rewrites it every turn, and `Default` (all zero, no rows) is what a
+/// cohort reads before its first turn.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BreedingReading {
     /// Everyone in the breeding population after this turn's births and deaths, in whole people —
     /// the members' fixed-point head-counts summed, then rounded once. On the wire as
     /// `PopulationCohortState.breedingPopulation`.
     pub headcount: u32,
-    /// The ceiling births stopped at: [`shared_breeding_ceiling`] over the members' lines, or
-    /// [`NO_INBREEDING_CEILING`] once that reaches `free_breeding_at` and no longer applies. On the
-    /// wire as `PopulationCohortState.breedingCeiling`.
+    /// The ceiling births stopped at: [`effective_breeding_ceiling`], or
+    /// [`NO_INBREEDING_CEILING`] once the people is latched. On the wire as
+    /// `PopulationCohortState.breedingCeiling`.
     pub ceiling: u32,
+    /// The own-people bands in the population, self included, in `BandId` order.
+    pub members: Vec<BreedingMember>,
+    /// The other peoples whose in-touch bands contribute lines, in faction order.
+    pub peoples: Vec<BreedingPeople>,
 }
 
 #[cfg(test)]
@@ -184,26 +298,6 @@ mod tests {
 
     fn k() -> NonZeroU16 {
         NonZeroU16::new(K).unwrap()
-    }
-
-    #[test]
-    fn absorb_gains_the_lines_it_lacks_and_is_idempotent() {
-        let mut ours = FoundingLines::founded(ORIGIN, LINES);
-        let theirs = FoundingLines::founded(BandId(7), LINES);
-        assert_eq!(ours.absorb(&theirs), usize::from(LINES));
-        assert_eq!(ours.len(), 2 * usize::from(LINES));
-        assert_eq!(
-            ours.absorb(&theirs),
-            0,
-            "a union absorbed twice changes nothing"
-        );
-        let overlap = FoundingLines::founded(ORIGIN, LINES);
-        assert_eq!(
-            ours.absorb(&overlap),
-            0,
-            "lines already held are not gained"
-        );
-        assert_eq!(ours.len(), 2 * usize::from(LINES));
     }
 
     #[test]

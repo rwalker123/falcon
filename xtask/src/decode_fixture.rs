@@ -501,6 +501,7 @@ fn build_planned_delta(
         equipment_config_json,
         command_events,
         command_events_retention_turns: Some(plan.retention_turns),
+        lineage_constants: Some(Box::new(snapshot.lineage_constants)),
         // Carried on every delta rather than diffed (see `WorldDelta::fog_enabled`); the derived
         // `Default` says `false`, which would silently flip the merged world's fog.
         fog_enabled: snapshot.fog_enabled,

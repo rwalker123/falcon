@@ -359,6 +359,7 @@ pub mod knowledge {
                 campaign_profiles: Vec::new(),
                 command_events: Vec::new(),
                 command_events_retention_turns: 0,
+                lineage_constants: Default::default(),
                 connections: Vec::new(),
                 routes: Vec::new(),
                 contact_lessons: Vec::new(),

@@ -34,6 +34,9 @@ arrangement.
 - **Groups.** Per people, its `ResidentBand`s with a `BandId` are joined wherever
   `ConnectionLedger::tie_is_live(a, b)` holds — undirected, the pooling rule's reading. Expeditions
   are never members.
+  The grouping is `lineage::tie_joined_groups`, **shared with the breeding ceiling**
+  (`resolve_breeding_ceilings` groups a people's bands into breeding populations with the same
+  function), so there is one notion of "a people's bands in touch".
 - **The heart** is the group holding the most people (`cohort.total()`), ties to the group with the
   lowest `BandId`. A people with one band is its own heart and can never be cut off.
 - **Cut off** = a band outside its people's heart.
@@ -73,7 +76,7 @@ the old people only (the band holds a lesser fragment of it, so the max is exerc
 
 ## The roster grows at runtime — ONE function
 
-`grow_faction_roster(&mut RosterResources, map_seed)` is the one statement of the runtime path,
+`grow_faction_roster(&mut RosterResources, map_seed, parent)` is the one statement of the runtime path,
 extending the set `factions.md` → "THE ROSTER-DERIVED SET IS SIX RESOURCES" names, each through the
 seam the boot constructor uses:
 
@@ -86,6 +89,7 @@ seam the boot constructor uses:
 | `FactionBorderPolicies` | `seed_faction` (open) |
 | `FactionNames` | `mint_faction` — worldgen's one-per-world permutation under the world's `map_seed`, so the new id takes the name it would have had at creation |
 | `EspionageRoster` | `seed_from_catalog(&[new])` |
+| `FreeBreedingPeoples` | `inherit(new, parent)` — a people born from a latched people breeds freely too (`campaign.md` → "The breeding ceiling") |
 
 **The other faction-keyed state was swept and needs no row.** `SedentarizationScore`,
 `GreatDiscoveryReadiness`, `ObservationField`, `DiscoveredSites`, `KnowledgeLedger` and the band-name

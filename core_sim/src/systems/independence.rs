@@ -11,7 +11,7 @@
 //! The clock is the tie's own bleed and the gate is the discontent block's grievance: this module
 //! adds the one number that joins them and no second counter.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -23,6 +23,7 @@ use crate::{
     connections::{ConnectionLedger, FULL_TIE, NO_TIE},
     espionage::{CounterIntelBudgets, EspionageCatalog, EspionageRoster, FactionSecurityPolicies},
     faction_names::{FactionNameCatalog, FactionNameCatalogHandle, FactionNames},
+    lineage::{tie_joined_groups, FreeBreedingPeoples},
     orders::{FactionId, FactionRegistry, TurnQueue},
     resources::{
         CommandEventEntry, CommandEventKind, CommandEventLog, DiscoveryProgressLedger,
@@ -105,6 +106,8 @@ pub struct RosterResources<'w> {
     pub names: ResMut<'w, FactionNames>,
     pub espionage_roster: ResMut<'w, EspionageRoster>,
     pub espionage_catalog: Res<'w, EspionageCatalog>,
+    /// The peoples whose breeding is free for good; a people born from a latched one inherits it.
+    pub free_breeding: ResMut<'w, FreeBreedingPeoples>,
     /// The faction-name pool. `Option` for worldgen's reason: a hand-built world may install none,
     /// and the builtin pool is the very list `include_str!` baked in.
     pub name_catalog: Option<Res<'w, FactionNameCatalogHandle>>,
@@ -117,9 +120,15 @@ pub struct RosterResources<'w> {
 /// resource `new` builds through, `FactionNames::mint_faction` on worldgen's permutation,
 /// `EspionageRoster::seed_from_catalog`), so a people born mid-game starts in exactly the state a
 /// people present at world creation did. The turn queue awaits it from the NEXT turn
-/// ([`TurnQueue::add_faction`]) — the turn in flight was already collected.
-pub fn grow_faction_roster(roster: &mut RosterResources, map_seed: u64) -> FactionId {
+/// ([`TurnQueue::add_faction`]) — the turn in flight was already collected. `parent` is the people
+/// it breaks from: the new people inherits its free-breeding latch ([`FreeBreedingPeoples`]).
+pub fn grow_faction_roster(
+    roster: &mut RosterResources,
+    map_seed: u64,
+    parent: FactionId,
+) -> FactionId {
     let faction = roster.registry.add_ai_faction();
+    roster.free_breeding.inherit(faction, parent);
     roster.turn_queue.add_faction(faction);
     let budget_config = roster
         .espionage_catalog
@@ -200,54 +209,40 @@ fn band_views(
 /// The heart is the component holding the most people, ties to the lowest `BandId` — the people
 /// is where its people are, not where it started. A people with one band is its own heart.
 fn heart_groups(bands: &[BandView], ledger: &ConnectionLedger) -> Vec<Group> {
-    let mut by_faction: BTreeMap<FactionId, Vec<usize>> = BTreeMap::new();
-    for (index, view) in bands.iter().enumerate() {
-        by_faction.entry(view.faction).or_default().push(index);
-    }
+    // The grouping itself is `lineage::tie_joined_groups` — the same one the breeding ceiling reads.
+    let keyed: Vec<(BandId, FactionId)> =
+        bands.iter().map(|view| (view.band, view.faction)).collect();
     let mut groups: Vec<Group> = Vec::new();
-    for (faction, indices) in by_faction {
-        let mut seen: BTreeSet<usize> = BTreeSet::new();
-        let first_group = groups.len();
-        for &start in &indices {
-            if !seen.insert(start) {
-                continue;
-            }
-            let mut members = vec![start];
-            let mut frontier = vec![start];
-            while let Some(at) = frontier.pop() {
-                for &other in &indices {
-                    if seen.contains(&other)
-                        || !ledger.tie_is_live(bands[at].band, bands[other].band)
-                    {
-                        continue;
-                    }
-                    seen.insert(other);
-                    members.push(other);
-                    frontier.push(other);
-                }
-            }
-            members.sort_unstable();
-            let people = members
-                .iter()
-                .fold(scalar_zero(), |sum, &index| sum + bands[index].people);
-            groups.push(Group {
-                faction,
-                lowest: bands[members[0]].band,
-                members,
-                people,
-                is_heart: false,
-            });
-        }
-        // Groups were opened in BandId order, so the first strictly-largest is the tie-break winner.
-        let mut heart = first_group;
-        for candidate in first_group..groups.len() {
+    for joined in tie_joined_groups(&keyed, ledger) {
+        let people = joined
+            .members
+            .iter()
+            .fold(scalar_zero(), |sum, &index| sum + bands[index].people);
+        groups.push(Group {
+            faction: joined.faction,
+            lowest: bands[joined.members[0]].band,
+            members: joined.members,
+            people,
+            is_heart: false,
+        });
+    }
+    // The heart of each people: the component holding the most people. Groups open in BandId order,
+    // so the first strictly-largest is the tie-break winner (the lowest BandId).
+    let mut start = 0;
+    while start < groups.len() {
+        let faction = groups[start].faction;
+        let end = groups[start..]
+            .iter()
+            .position(|group| group.faction != faction)
+            .map_or(groups.len(), |offset| start + offset);
+        let mut heart = start;
+        for candidate in start..end {
             if groups[candidate].people > groups[heart].people {
                 heart = candidate;
             }
         }
-        if heart < groups.len() {
-            groups[heart].is_heart = true;
-        }
+        groups[heart].is_heart = true;
+        start = end;
     }
     groups.sort_by_key(|group| group.lowest);
     groups
@@ -422,7 +417,7 @@ pub fn advance_band_independence(
     let mut flips: Vec<BandFlip> = Vec::new();
     for group in breaking {
         let from = group.faction;
-        let to = grow_faction_roster(&mut roster, sim_config.map_seed);
+        let to = grow_faction_roster(&mut roster, sim_config.map_seed, from);
         {
             let members: Vec<&PopulationCohort> = group
                 .members

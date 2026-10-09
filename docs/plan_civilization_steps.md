@@ -722,7 +722,7 @@ Every decision this doc leaves unmade is owned by an issue, so it cannot be lost
   starting band ceilings near 150. ~~The contact range~~ is **decided** on the line-merge slice
   (#689): contact is the connection ledger's own contact-this-turn stamp (the sight sweep and an
   expedition's flush), with no range of its own. See `.claude/rules/core_sim/campaign.md`
-  "Contact merges lines".
+  "Another people's lines count only while in touch".
 - ~~**When a far party's haul is delivered, and what gates its launch**~~ — **decided** on the
   work-party slice (#684), before implementation, and it dissolved rather than resolved: a standing
   posting has no launch and no shipment, so there is nothing to gate. See "The model" above.
