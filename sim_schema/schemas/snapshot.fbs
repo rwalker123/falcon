@@ -1459,9 +1459,11 @@ table PopulationCohortState {
   // The breeding population's ceiling, in people. The same figure on every member band: the
   // EFFECTIVE ceiling min(shared ceiling, lineage.free_breeding_at), where the shared ceiling is the
   // sum of people_per_line / holders over the population's union of lines.
-  // 0 MEANS "NO INBREEDING CEILING": once any breeding population of this people is carried (by its uncapped births) to
-  // demographics_config.json lineage.free_breeding_at PEOPLE (~500, the size at which a people finds
-  // mates without outside contact) the people is free for good, fertilityCeiling reads 1e6 at any
+  // 0 MEANS "NO INBREEDING CEILING": once, in a turn's pre-pass, any breeding population of this
+  // people opens at demographics_config.json lineage.free_breeding_at PEOPLE (~500, the size at which
+  // a people finds mates without outside contact) or - its own ceiling being at least that - is
+  // carried there by its uncapped births (that turn's births are uncapped too), the people is free
+  // for good, fertilityCeiling reads 1e6 at any
   // head-count, and this publishes 0. A client reads 0 as unrestricted, never as a ceiling of nobody.
   breedingCeiling:uint = 0;
   // Layer-1 CULTURE morale contribution - near / far from the ancestors (issue #699):

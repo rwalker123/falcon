@@ -141,18 +141,20 @@ pub fn shared_breeding_ceiling(
     u32::try_from(total.raw().div_euclid(Scalar::SCALE)).unwrap_or(u32::MAX)
 }
 
-/// **The head-count at which a people breeds freely, as the effective ceiling of one that has not
-/// got there yet** (issue #691) — `min(shared, free_breeding_at)`. A union × `K` above
-/// `free_breeding_at` lets births run to `free_breeding_at` and no further; the next turn's
-/// pre-pass then sees the head-count and latches the people ([`FreeBreedingPeoples`]).
+/// **The effective ceiling of a population whose people has not latched** (issue #691) —
+/// `min(shared, free_breeding_at)`. A union × `K` above `free_breeding_at` lets births run to
+/// `free_breeding_at` and no further. The people latches ([`FreeBreedingPeoples`]) in the same
+/// turn's pre-pass when the population's opening head-count is `free_breeding_at`, or when its
+/// shared ceiling is at least `free_breeding_at` and its opening head-count plus its uncapped births
+/// reaches it; that turn's births are then uncapped, so the head-count can pass `free_breeding_at`
+/// on the latching turn.
 pub fn effective_breeding_ceiling(shared: u32, free_breeding_at: NonZeroU32) -> u32 {
     shared.min(free_breeding_at.get())
 }
 
 /// **The peoples whose breeding is free for good** (issue #691). A people is in this set once ANY
-/// of its breeding populations' opening head-count plus the births it would have this turn with no
-/// ceiling — whole people — reaches `lineage.free_breeding_at`; nothing removes it. A latched people's every population has no
-/// inbreeding ceiling, whoever it later loses touch with and however it splits. A breakaway people
+/// of its breeding populations latches it (see [`effective_breeding_ceiling`]); nothing removes it.
+/// A latched people's every population has no inbreeding ceiling, whoever it later loses touch with and however it splits. A breakaway people
 /// born from a latched one inherits the latch ([`Self::inherit`]). Checkpoint state.
 #[derive(Resource, Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FreeBreedingPeoples(BTreeSet<FactionId>);

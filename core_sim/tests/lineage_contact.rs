@@ -602,6 +602,59 @@ fn a_people_whose_births_fall_short_of_the_free_head_count_stays_capped() {
     );
 }
 
+/// Where the parked-tie fixture is seated: ten people under the free size, which one turn's
+/// uncapped births (a few tens) cross.
+const NEAR_FREE_GAP_PEOPLE: f32 = 10.0;
+/// Quiet turns the parked-tie fixture runs.
+const PARKED_TURNS: u64 = 3;
+
+/// **Births only count where the population's own ceiling would let them carry it to the free
+/// size.** A population at ~490 whose foreign tie has parked has a ceiling of its own lines × K,
+/// below 500: it bears nobody and does not latch on births it cannot have. The control arm, the
+/// same population still in touch, latches in the same turn.
+#[test]
+fn a_population_whose_foreign_tie_parked_does_not_latch_on_births_its_ceiling_forbids() {
+    let free_at;
+    let near;
+    {
+        let (mut app, home, rival) = two_peoples(LIFTING_LINES_EACH);
+        free_at = shipped_free_at(&app);
+        near = free_at as f32 - NEAR_FREE_GAP_PEOPLE;
+        seat_people(&mut app, &home, near);
+        contact(&mut app, &home, &rival, CONTACT_TURN);
+        population_turn(&mut app, READ_TICK);
+        assert!(
+            latched(&app, HOME),
+            "control: in touch, the ceiling lets the births carry it to the free size"
+        );
+    }
+
+    let (mut app, home, rival) = two_peoples(LIFTING_LINES_EACH);
+    let k = shipped_k(&app);
+    seat_people(&mut app, &home, near);
+    contact(&mut app, &home, &rival, CONTACT_TURN);
+    let parked = bleed_out(&mut app, CONTACT_TURN);
+    assert_parked(&app, &home, &rival);
+    let before = people_of(&app, &home);
+    for turn in 0..PARKED_TURNS {
+        population_turn(&mut app, parked + turn);
+        assert!(
+            !latched(&app, HOME),
+            "turn {turn}: its ceiling forbids the births"
+        );
+    }
+    let row = wire(&mut app, &home);
+    assert_eq!(row.ceiling, u32::from(LIFTING_LINES_EACH) * k);
+    assert!(
+        row.ceiling < free_at,
+        "fixture: the ceiling is below the free size"
+    );
+    assert!(
+        people_of(&app, &home) <= before,
+        "above its ceiling it bears nobody and only shrinks"
+    );
+}
+
 /// **The latch survives save and load, and a checkpoint restore.**
 #[test]
 fn the_latch_survives_a_save_and_a_checkpoint() {

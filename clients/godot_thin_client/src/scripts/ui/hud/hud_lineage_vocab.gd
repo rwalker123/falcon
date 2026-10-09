@@ -289,10 +289,20 @@ static func split_limits(band: Dictionary, taken: int) -> Dictionary:
 	var k := LineageWorld.people_per_line()
 	var free := LineageWorld.free_breeding_at()
 	var union := union_lines(band)
-	if int(band.get(FOUNDING_LINES_KEY, 0)) <= 1:
-		var half := k / 2
-		return {"new_limit": half, "home_limit": mini((union - 1) * k + half, free)}
-	return {"new_limit": mini(taken * k, free), "home_limit": mini((union - taken) * k, free)}
+	var new_limit := k / 2
+	var home_limit := mini((union - 1) * k + k / 2, free)
+	if int(band.get(FOUNDING_LINES_KEY, 0)) > 1:
+		new_limit = mini(taken * k, free)
+		home_limit = mini((union - taken) * k, free)
+	# **NEITHER HALF CAN OUT-GROW THE LINKED POPULATION.** `union` sums the lines the members and the
+	# other peoples publish, while the sim dedups the union and divides K across each line's holders
+	# - so a copied line (a one-line split, both halves still linked) can make the sum read higher
+	# than the ceiling the sim published. That ceiling is the cap.
+	var published := ceiling_of(band)
+	if published != CEILING_LIFTED:
+		new_limit = mini(new_limit, published)
+		home_limit = mini(home_limit, published)
+	return {"new_limit": new_limit, "home_limit": home_limit}
 
 ## Does the sheet draw the `FAMILY LIMIT` block? Only for a people still under a limit, with a
 ## projected reading and the world constants in hand to price the halves with.

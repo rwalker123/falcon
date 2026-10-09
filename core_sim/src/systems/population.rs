@@ -1073,9 +1073,12 @@ impl BreedingCeilings {
 /// leave the union. A foreign line counts whole; a line several separate populations of one people
 /// hold in their own sets splits its `K` (`lineage::shared_breeding_ceiling`).
 ///
-/// **The lift is a head-count, latched per people.** A people whose population's opening head-count
-/// plus its uncapped would-be births reaches `free_breeding_at` people is added to `FreeBreedingPeoples` and never leaves it; its every
-/// population has factor `1`. An unlatched population's ceiling is
+/// **The lift is a head-count, latched per people.** A people is added to `FreeBreedingPeoples`
+/// in this pre-pass, before any factor, and never leaves it. It latches when a population's opening
+/// head-count is `free_breeding_at`, or when that population's shared ceiling is at least
+/// `free_breeding_at` and its opening head-count plus its uncapped would-be births reaches it. The
+/// latching turn's births are uncapped, so the head-count can pass `free_breeding_at` on it. A
+/// latched people's every population has factor `1`. An unlatched population's ceiling is
 /// `min(shared, free_breeding_at)`; the headroom is `max(0, ceiling − opening head-count)` and the
 /// factor is [`ceiling_factor`] of the headroom against the members' summed would-be births —
 /// priced by [`meal_and_births`], the same function [`advance_demographics`] prices them with. A
@@ -1191,19 +1194,11 @@ fn resolve_breeding_ceilings(
         }
     }
 
-    // ---- The latch: a population whose uncapped births carry it to free_breeding_at frees its
-    // whole people, before the factor is computed so that turn's births are uncapped too ----
-    let lineage = &demo.lineage;
-    for tally in tallies.values() {
-        if (tally.opening + tally.would_be_births).to_u32() >= lineage.free_breeding_at.get() {
-            free.latch(tally.faction);
-        }
-    }
-
     // How many distinct breeding populations OF THE SAME PEOPLE hold each line in their members'
     // OWN sets: a line two separate populations of one people both hold (a one-line split copies
     // it) splits its K between them. A line borrowed from another people is that people's to
     // count: it carries its whole K in the borrower's sum.
+    let lineage = &demo.lineage;
     let mut holders: BTreeMap<(FactionId, LineId), u32> = BTreeMap::new();
     for tally in tallies.values() {
         for line in &tally.lines {
@@ -1211,9 +1206,9 @@ fn resolve_breeding_ceilings(
         }
     }
 
-    let mut ceilings = BTreeMap::new();
-    let mut member_entities = BTreeMap::new();
-    for (group, tally) in tallies {
+    // Each population's shared ceiling and the other peoples that add to it.
+    let mut resolved: BTreeMap<BreedingGroup, (u32, Vec<BreedingPeople>)> = BTreeMap::new();
+    for (group, tally) in &tallies {
         // Foreign-only lines, credited to the lowest faction id that brings them.
         let mut claimed: BTreeSet<LineId> = tally.lines.clone();
         let mut peoples = Vec::new();
@@ -1224,7 +1219,7 @@ fn resolve_breeding_ceilings(
             peoples.push(BreedingPeople {
                 faction: faction.0,
                 lines: u32::try_from(fresh).unwrap_or(u32::MAX),
-                fading: !touched.get(&(group, *faction)).copied().unwrap_or(false),
+                fading: !touched.get(&(*group, *faction)).copied().unwrap_or(false),
             });
         }
         let shared = crate::lineage::shared_breeding_ceiling(
@@ -1235,6 +1230,29 @@ fn resolve_breeding_ceilings(
                 .chain(std::iter::repeat_n(1, borrowed_lines)),
             lineage.people_per_line,
         );
+        resolved.insert(*group, (shared, peoples));
+    }
+
+    // ---- The latch, in the pre-pass and before any factor, so the latching turn's births are
+    // uncapped too. A population latches its people when its opening head-count is already
+    // `free_breeding_at`, or when its own ceiling lets it reach that size (`shared` is at least
+    // `free_breeding_at`, so the effective ceiling is the free size) and its uncapped births carry
+    // it there. A population whose ceiling is below the free size bears nobody past that ceiling,
+    // so its would-be births never count ----
+    let free_at = lineage.free_breeding_at.get();
+    for (group, tally) in &tallies {
+        let shared = resolved[group].0;
+        if tally.opening.to_u32() >= free_at
+            || (shared >= free_at && (tally.opening + tally.would_be_births).to_u32() >= free_at)
+        {
+            free.latch(tally.faction);
+        }
+    }
+
+    let mut ceilings = BTreeMap::new();
+    let mut member_entities = BTreeMap::new();
+    for (group, tally) in tallies {
+        let (shared, peoples) = resolved.remove(&group).expect("every group was resolved");
         let people = (!free.contains(tally.faction))
             .then(|| crate::lineage::effective_breeding_ceiling(shared, lineage.free_breeding_at));
         let factor = breeding_factor(people, tally.opening, tally.would_be_births);

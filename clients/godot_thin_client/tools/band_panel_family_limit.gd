@@ -312,3 +312,13 @@ func _assert_split_arithmetic() -> void:
 		int(limits["new_limit"]) == PEOPLE_PER_LINE / 2
 			and int(limits["home_limit"]) == mini((3 - 1) * PEOPLE_PER_LINE + PEOPLE_PER_LINE / 2,
 				FREE_BREEDING_AT))
+	# Two LINKED one-line halves: `union_lines` reads 2, so the uncapped home limit would be 150 - past
+	# the published 100 they share. Neither half may out-grow the linked ceiling.
+	var linked := {"founding_lines": 1, "breeding_ceiling": PEOPLE_PER_LINE,
+		"breeding_members": [_member(SUBJECT_ENTITY, 1, 40), _member(KIN_BAND_ENTITY, 1, 40)],
+		"breeding_peoples": []}
+	var capped := HudLineageVocab.split_limits(linked, 1)
+	h._assert_band_panel("family limit: two linked one-line halves never price past the shared ceiling (%s)"
+			% str(capped),
+		HudLineageVocab.union_lines(linked) == 2 and int(capped["home_limit"]) <= PEOPLE_PER_LINE
+			and int(capped["new_limit"]) <= PEOPLE_PER_LINE)
