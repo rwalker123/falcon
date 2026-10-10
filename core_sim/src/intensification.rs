@@ -7391,6 +7391,41 @@ mod tests {
                 .remove("weaving");
         });
         assert_rejects(err, "knowledge.lesson_costs[weaving]");
+        // …and storage, which neither a rung nor a bench teaches: rot does.
+        let err = reject(|json| {
+            json["knowledge"]["lesson_costs"]
+                .as_object_mut()
+                .expect("lesson_costs is a map")
+                .remove(crate::spoilage::STORAGE_KNOWLEDGE);
+        });
+        assert_rejects(err, "knowledge.lesson_costs[storage]");
+    }
+
+    /// **The rot that counts as a full turn of storage practice must be a positive, finite number
+    /// of turns of need.** `0` divides by zero (infinite practice for any rot, NaN for none), a
+    /// negative flips the sign, and a non-finite value poisons the ratio — each would silently
+    /// break the lesson's pace. Checked on the struct because JSON cannot spell NaN or infinity.
+    #[test]
+    fn rejects_a_storage_lesson_that_cannot_be_paced() {
+        /// A negative dial, to pin the sign check apart from the zero check.
+        const NEGATIVE_ROT_TURNS: f32 = -1.0;
+        for bad in [
+            0.0,
+            NEGATIVE_ROT_TURNS,
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+        ] {
+            let mut knowledge = LadderConfig::builtin().knowledge.clone();
+            knowledge.storage_lesson_rot_turns = bad;
+            let err = validate_knowledge(&knowledge).expect_err(&format!(
+                "storage_lesson_rot_turns = {bad} must be rejected"
+            ));
+            assert!(
+                err.to_string().contains("storage_lesson_rot_turns"),
+                "{bad}: {err}"
+            );
+        }
     }
 
     #[test]

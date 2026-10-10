@@ -14,6 +14,7 @@ paths:
   - "core_sim/tests/{supply_network,sedentarization,founding_lines}.rs"
   - "core_sim/src/lineage.rs"
   - "core_sim/src/spoilage.rs"
+  - "core_sim/tests/storage_lesson.rs"
   - "core_sim/src/systems/lineage_contact.rs"
   - "core_sim/tests/lineage_contact.rs"
 ---

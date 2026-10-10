@@ -1,5 +1,5 @@
-//! **ROT TEACHES STORAGE** (#707, `.claude/rules/core_sim/intensification.md` → "The knowledge
-//! pattern"). A surplus that sits in a band's larder until it spoils is the practice that teaches
+//! **ROT TEACHES STORAGE** (#707, `.claude/rules/core_sim/campaign.md` → "Rot teaches
+//! storage"). A surplus that sits in a band's larder until it spoils is the practice that teaches
 //! the `storage` lesson through the same ledger the ladder uses; a band with no excess never
 //! learns it. These drive the turn's real systems in the Population chain's order — the meal
 //! (`simulate_population`), then the larder rot (`rot_band_larders`) — on a real band.
