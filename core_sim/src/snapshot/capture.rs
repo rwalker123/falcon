@@ -3174,6 +3174,9 @@ pub fn capture_snapshot(
                         belief_relay_region,
                         culture_traits,
                         culture_ancestor_pull,
+                        culture_drift: band_owner
+                            .and_then(|owner| culture.applied_contact_pull(owner))
+                            .copied(),
                         entity,
                         band_id,
                         band_name,

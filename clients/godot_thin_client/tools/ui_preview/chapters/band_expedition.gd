@@ -1491,8 +1491,63 @@ func _belief_culture_states() -> void:
 	await h._settle()
 	h._assert_hud("a rival band draws NO Beliefs row",
 		_beliefs_row_count(String(h._hud.occupant_detail.get_parsed_text())) == 0)
+	await _culture_drift_states()
 	h._hud.show_unit_selection(BandFx.band_fixture())
 	await h._settle()
+
+## THE CONTACT-DRIFT LINE (issue #702): `Drifting toward the Red Hill band — Open +0.02/turn`, beneath
+## Beliefs. The source band is joined on its BandId against the roster the HUD already holds.
+const DRIFT_BAND_ENTITY := 917
+const DRIFT_SOURCE_BAND_ID := 7102
+const DRIFT_SOURCE_NAME := "Red Hill"
+const DRIFT_UNKNOWN_SOURCE_BAND_ID := 7103
+const DRIFT_AXIS_OPEN_CLOSED := 1
+const DRIFT_AXIS_LABEL := "Open \u2194 Closed"
+const DRIFT_DELTA := -0.02
+const DRIFT_ROW := "Drifting toward the Red Hill band \u2014 Open +0.02/turn"
+const DRIFT_ROW_CLOSED := "Closed +0.02/turn"
+const DRIFT_ROW_UNKNOWN := "Drifting toward another band \u2014 Open +0.02/turn"
+const DRIFT_ROW_NEEDLE := "Drifting toward"
+
+func _drift_band_fixture(source_band: int, delta: float) -> Dictionary:
+	var band := BandFx.band_fixture()
+	band["entity"] = DRIFT_BAND_ENTITY
+	band["culture_traits"] = _culture_vector(BELIEFS_TIED_DEVOUT, BELIEFS_TIED_TRADITIONAL)
+	band["culture_drift_source_band"] = source_band
+	band["culture_drift_axis"] = DRIFT_AXIS_OPEN_CLOSED
+	band["culture_drift_axis_label"] = DRIFT_AXIS_LABEL
+	band["culture_drift_delta"] = delta
+	return band
+
+func _culture_drift_states() -> void:
+	var source := BandFx.band_fixture()
+	source["entity"] = DRIFT_BAND_ENTITY + 1
+	source["band_id"] = DRIFT_SOURCE_BAND_ID
+	source["name"] = DRIFT_SOURCE_NAME
+	h._hud._band_labor._player_bands = [source]
+	h._hud.show_unit_selection(_drift_band_fixture(DRIFT_SOURCE_BAND_ID, DRIFT_DELTA))
+	await h._settle()
+	await h._save("band_culture_drift")
+	var drifting := _flat(String(h._hud.occupant_detail.get_parsed_text()))
+	h._assert_hud("a band drifting toward a known band reads `%s`" % DRIFT_ROW,
+		drifting.contains(DRIFT_ROW))
+	# The pole follows the delta's sign: a positive delta on the same axis moves toward Closed.
+	h._hud.show_unit_selection(_drift_band_fixture(DRIFT_SOURCE_BAND_ID, -DRIFT_DELTA))
+	await h._settle()
+	h._assert_hud("…and a positive delta names the axis's other pole: `%s`" % DRIFT_ROW_CLOSED,
+		_flat(String(h._hud.occupant_detail.get_parsed_text())).contains(DRIFT_ROW_CLOSED))
+	# A source the roster cannot name is `another band`, never a raw BandId.
+	h._hud.show_unit_selection(_drift_band_fixture(DRIFT_UNKNOWN_SOURCE_BAND_ID, DRIFT_DELTA))
+	await h._settle()
+	var unnamed := _flat(String(h._hud.occupant_detail.get_parsed_text()))
+	h._assert_hud("an unnameable source reads `%s`, no raw id" % DRIFT_ROW_UNKNOWN,
+		unnamed.contains(DRIFT_ROW_UNKNOWN) and not unnamed.contains(str(DRIFT_UNKNOWN_SOURCE_BAND_ID)))
+	# No pull (source 0): no line at all.
+	h._hud.show_unit_selection(_drift_band_fixture(HudConst.NO_BAND_ID, 0.0))
+	await h._settle()
+	h._assert_hud("a band with no contact pull draws NO drift line",
+		not _flat(String(h._hud.occupant_detail.get_parsed_text())).contains(DRIFT_ROW_NEEDLE))
+	h._hud._band_labor._player_bands = []
 
 ## A band that HOLDS something which eats a good. Its own entity, for the disclosure key's sake.
 func _standing_bill_band_fixture() -> Dictionary:

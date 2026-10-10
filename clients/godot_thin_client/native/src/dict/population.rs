@@ -181,6 +181,21 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "culture_ancestor_pull",
         &regrowth_samples_packed(cohort.cultureAncestorPull()),
     );
+    // CULTURE OVER A CONNECTION (issue #702). The strongest contact pull this turn: the BandId drifted
+    // toward (0 = no pull; the axis and delta are then 0), the `CultureTraitAxis` index (same order as
+    // `culture_traits`), that axis's signed per-turn delta, and the axis's `A ↔ B` label from the one
+    // table `dict/culture.rs` already owns (so the client never keeps a second pole list). Own
+    // bands only: a foreign row carries the defaults.
+    let _ = dict.insert(
+        "culture_drift_source_band",
+        cohort.cultureDriftSourceBand() as i64,
+    );
+    let _ = dict.insert("culture_drift_axis", i64::from(cohort.cultureDriftAxis()));
+    let _ = dict.insert(
+        "culture_drift_axis_label",
+        crate::dict::culture::culture_axis_label_for_index(cohort.cultureDriftAxis()),
+    );
+    let _ = dict.insert("culture_drift_delta", f64::from(cohort.cultureDriftDelta()));
     let _ = dict.insert("size", cohort.size() as i64);
     // Every Scalar field below comes from `cohort_scalars` — see its doc comment for why.
     let scalars = cohort_scalars(cohort);

@@ -1195,6 +1195,9 @@ fn create_populations<'a>(
                     cultureAncestorPull: culture_ancestor_pull,
                     breedingMembers: Some(breeding_members),
                     breedingPeoples: Some(breeding_peoples),
+                    cultureDriftSourceBand: cohort.culture_drift_source_band,
+                    cultureDriftAxis: cohort.culture_drift_axis,
+                    cultureDriftDelta: cohort.culture_drift_delta,
                 },
             )
         })
@@ -1854,6 +1857,9 @@ fn decode_population(
         independence_grievance_threshold: cohort.independenceGrievanceThreshold(),
         culture_traits: decode_scalars(cohort.cultureTraits()),
         culture_ancestor_pull: decode_scalars(cohort.cultureAncestorPull()),
+        culture_drift_source_band: cohort.cultureDriftSourceBand(),
+        culture_drift_axis: cohort.cultureDriftAxis(),
+        culture_drift_delta: cohort.cultureDriftDelta(),
         breeding_members: map_rows(cohort.breedingMembers(), |member| BreedingMemberState {
             band_id: member.bandId(),
             lines: member.lines(),

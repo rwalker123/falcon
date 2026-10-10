@@ -308,7 +308,10 @@ const WORK_LINK_MIN_DRAWN_WIDTH := 20.0
 ## in the sim's own detail shape. The slip's shipped detail names no band. The second slip carries
 ## `band=` to pin the link the Work tab offers once a band is named.
 const SLIP_LABEL := "Field at (44, 24) is slipping — 94%"
-const SLIP_DETAIL := "status=slipping rung=forage:field x=44 y=24 progress=94"
+## The sim's own shapes (`independence.rs push_band_broke_away_events`, `population.rs` deaths).
+const CULTURE_BREAKAWAY_DETAIL := "band=4 from=0 to=1 side=lost cause=culture"
+const DEATH_CAUSE_DETAIL := "bracket=working cause=cold"
+const SLIP_DETAIL :="status=slipping rung=forage:field x=44 y=24 progress=94"
 const SLIP_BANDED_LABEL := "Field at (45, 24) is slipping — 60%"
 const SLIP_BANDED_DETAIL := "status=slipping rung=forage:field x=45 y=24 progress=60 band=5"
 const SLIP_BANDED_BAND := 5
@@ -372,6 +375,14 @@ func _rung_slip_states(event_dock: EventDockPanel) -> void:
 	h._assert_hud("the TRIM keeps its tile in the detail — the hiding is scoped to the decay pair (\"%s\")"
 			% EventDockPanel.detail_phrase(SHED_TRIMMED_LINKLESS_DETAIL),
 		EventDockPanel.detail_phrase(SHED_TRIMMED_LINKLESS_DETAIL).contains("60"))
+	# **`cause=culture` ON `band_broke_away` IS SAID BY THE LABEL** ("grew too far from our ways"), so
+	# the column drops it (issue #702) — while `cause=` stays real content on a death.
+	h._assert_hud("a culture break-away's detail renders no raw `cause` token (\"%s\")"
+			% EventDockPanel.detail_phrase(CULTURE_BREAKAWAY_DETAIL),
+		EventDockPanel.detail_phrase(CULTURE_BREAKAWAY_DETAIL) == "")
+	h._assert_hud("…and `cause=cold` on a death still renders (\"%s\")"
+			% EventDockPanel.detail_phrase(DEATH_CAUSE_DETAIL),
+		EventDockPanel.detail_phrase(DEATH_CAUSE_DETAIL).contains("cold"))
 	h._assert_hud("the LOSS beside it stays Alert (got %s)"
 			% _preview_event_rung(event_dock, SLIP_LOST_LABEL),
 		_preview_event_rung(event_dock, SLIP_LOST_LABEL) == HudEventVocab.RUNG_ALERT)

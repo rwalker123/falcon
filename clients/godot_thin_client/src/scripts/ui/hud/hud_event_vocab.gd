@@ -645,6 +645,16 @@ const DETAIL_KEY_HIDDEN_BY_STATUS := {
 	"status=feral": {"rung": true, "progress": true, "x": true, "y": true, "reason": true},
 }
 
+## **WHOLE `key=value` FRAGMENTS THE LABEL ALREADY SAYS, hidden by exact match** (issue #702). Not
+## `DETAIL_KEY_HIDDEN`: that drops a KEY on every kind, and `cause` is real content on `died`
+## (`cause=cold` / `heat` / `age` are rows the label does not restate). `band_broke_away`'s
+## `cause=culture` is the opposite case — the label reads "grew too far from our ways", so the token
+## would print a bare `Culture` beside a sentence that already gave the reason. The grievance
+## break-away carries no `cause` at all, so nothing else on that kind is affected.
+const DETAIL_FRAGMENT_HIDDEN := {
+	"cause=culture": true,
+}
+
 ## Bare words that are grammar, not content. The ` · ` join supplies the separation `at` was doing.
 const DETAIL_FILLER_WORDS := {
 	"at": true,

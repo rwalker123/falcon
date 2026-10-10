@@ -11,12 +11,14 @@ use crate::{
     belief::BeliefRegistry,
     belief_config::BeliefConfigHandle,
     components::{BandId, PopulationCohort, ResidentBand, Tile},
+    connections::ConnectionLedger,
     culture_corruption_config::{
-        CulturePropagationSettings, DEFAULT_BAND_CHARACTER_AMPLITUDE, DEFAULT_BAND_ELASTICITY,
-        DEFAULT_BAND_HARD_TRIGGER_TICKS, DEFAULT_BAND_SOFT_TRIGGER_TICKS,
-        DEFAULT_RESONANCE_RESPONSE,
+        CultureCorruptionConfigHandle, CulturePropagationSettings,
+        DEFAULT_BAND_CHARACTER_AMPLITUDE, DEFAULT_BAND_ELASTICITY, DEFAULT_BAND_HARD_TRIGGER_TICKS,
+        DEFAULT_BAND_SOFT_TRIGGER_TICKS, DEFAULT_RESONANCE_RESPONSE,
     },
     influencers::{InfluencerCultureResonance, InfluencerImpacts},
+    orders::FactionId,
     provinces::ProvinceMap,
     resources::SimulationTick,
     scalar::{scalar_from_f32, Scalar},
@@ -25,6 +27,10 @@ use crate::{
 
 /// Number of trait axes defined for each culture vector.
 pub const CULTURE_TRAIT_AXES: usize = 15;
+
+/// The half-width of the trait range: every axis runs `-CULTURE_TRAIT_SPAN..=CULTURE_TRAIT_SPAN`. The
+/// global layer clamps to it, and contact drift reads a band's Purist value against it.
+pub const CULTURE_TRAIT_SPAN: f32 = 2.5;
 
 /// Unique identifier for a culture layer instance.
 pub type CultureLayerId = u32;
@@ -619,6 +625,28 @@ pub struct CultureManager {
     /// `simulate_population` moves anchors, hop counts and belief AFTER the reconcile, so a
     /// recompute from the cohort would be next turn's pull, not the one the layer was just given.
     applied_band_pull: BTreeMap<u64, [Scalar; CULTURE_TRAIT_AXES]>,
+    /// The strongest contact pull the last [`Self::apply_contact_drift`] gave each band, keyed like
+    /// `bands`. Published as the band's `cultureDrift*` wire fields; stored, not recomputed at
+    /// capture, for `applied_band_pull`'s reason. A band that took no pull is absent.
+    applied_contact_pull: BTreeMap<u64, ContactPull>,
+}
+
+/// One mutual tie between two resident bands, as contact drift reads it: `tie` is the WEAKER of
+/// the two directed strengths (`docs/plan_contact_and_logistics.md` §"Settled by #530").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ContactTie {
+    pub a: BandId,
+    pub b: BandId,
+    pub tie: Scalar,
+}
+
+/// A band's strongest contact pull this turn: the band it drifted toward, the axis that moved most,
+/// and that axis's signed delta (the amount added to the band's modifier).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContactPull {
+    pub source: u64,
+    pub axis: usize,
+    pub delta: Scalar,
 }
 
 /// Everything [`CultureManager`] holds **except its settings** — see
@@ -639,6 +667,7 @@ pub struct CultureManagerCheckpoint {
     tension_events: Vec<CultureTensionRecord>,
     smoothed_resonance: InfluencerCultureResonance,
     applied_band_pull: BTreeMap<u64, [Scalar; CULTURE_TRAIT_AXES]>,
+    applied_contact_pull: BTreeMap<u64, ContactPull>,
 }
 
 impl CultureManager {
@@ -653,6 +682,7 @@ impl CultureManager {
             tension_events: self.tension_events.clone(),
             smoothed_resonance: self.smoothed_resonance,
             applied_band_pull: self.applied_band_pull.clone(),
+            applied_contact_pull: self.applied_contact_pull.clone(),
         }
     }
 
@@ -666,6 +696,7 @@ impl CultureManager {
         self.tension_events = checkpoint.tension_events.clone();
         self.smoothed_resonance = checkpoint.smoothed_resonance;
         self.applied_band_pull = checkpoint.applied_band_pull.clone();
+        self.applied_contact_pull = checkpoint.applied_contact_pull.clone();
     }
 }
 
@@ -685,6 +716,7 @@ impl CultureManager {
             settings,
             smoothed_resonance: InfluencerCultureResonance::default(),
             applied_band_pull: BTreeMap::new(),
+            applied_contact_pull: BTreeMap::new(),
         }
     }
 
@@ -837,6 +869,111 @@ impl CultureManager {
         self.applied_band_pull.get(&owner.0)
     }
 
+    /// The strongest contact pull the last [`Self::apply_contact_drift`] gave band `owner`; `None`
+    /// when that band took none.
+    pub fn applied_contact_pull(&self, owner: CultureOwner) -> Option<&ContactPull> {
+        self.applied_contact_pull.get(&owner.0)
+    }
+
+    /// **Contact drift** — two bands that know each other grow alike. For each mutual tie, each
+    /// side's MODIFIER moves toward the other's value:
+    ///
+    /// `pull_A = rate x tie x receptiveness_A x weight_B / (weight_A + weight_B) x (value_B - value_A)`
+    ///
+    /// with `receptiveness_A = 1 - clamp(purist_A / CULTURE_TRAIT_SPAN, -1, 1)`. Every value is read
+    /// from a snapshot taken before anything is written, so the order ties are visited in changes
+    /// nothing; the sums are over `BTreeMap`s so even the float accumulation order is fixed.
+    ///
+    /// `weights` is each resident band's headcount keyed by `BandId.0`; a tie naming a band with no
+    /// layer or no weight is skipped. `rate == 0` writes nothing (and clears the published pulls).
+    pub fn apply_contact_drift(
+        &mut self,
+        rate: f32,
+        weights: &BTreeMap<u64, Scalar>,
+        ties: &[ContactTie],
+    ) {
+        self.applied_contact_pull.clear();
+        if rate <= 0.0 {
+            return;
+        }
+        let purist_axis = CultureTraitAxis::SyncreticPurist.index();
+        let start: BTreeMap<u64, [Scalar; CULTURE_TRAIT_AXES]> = self
+            .bands
+            .iter()
+            .map(|(owner, layer)| (*owner, *layer.traits.values()))
+            .collect();
+        // receiver -> source -> per-axis pull.
+        let mut pulls: BTreeMap<u64, BTreeMap<u64, [f32; CULTURE_TRAIT_AXES]>> = BTreeMap::new();
+        for tie in ties {
+            let (Some(values_a), Some(values_b)) = (start.get(&tie.a.0), start.get(&tie.b.0))
+            else {
+                continue;
+            };
+            let (Some(weight_a), Some(weight_b)) = (weights.get(&tie.a.0), weights.get(&tie.b.0))
+            else {
+                continue;
+            };
+            let total = weight_a.to_f32() + weight_b.to_f32();
+            if total <= 0.0 || tie.tie <= Scalar::zero() {
+                continue;
+            }
+            for (receiver, receiver_values, giver, giver_values, giver_weight) in [
+                (tie.a, values_a, tie.b, values_b, weight_b),
+                (tie.b, values_b, tie.a, values_a, weight_a),
+            ] {
+                let purist = receiver_values[purist_axis].to_f32();
+                let receptiveness = 1.0 - (purist / CULTURE_TRAIT_SPAN).clamp(-1.0, 1.0);
+                let factor =
+                    rate * tie.tie.to_f32() * receptiveness * giver_weight.to_f32() / total;
+                let entry = pulls
+                    .entry(receiver.0)
+                    .or_default()
+                    .entry(giver.0)
+                    .or_insert([0.0; CULTURE_TRAIT_AXES]);
+                for idx in 0..CULTURE_TRAIT_AXES {
+                    entry[idx] += factor * (giver_values[idx] - receiver_values[idx]).to_f32();
+                }
+            }
+        }
+        for (receiver, sources) in pulls {
+            let Some(layer) = self.bands.get_mut(&receiver) else {
+                continue;
+            };
+            let mut total = [0.0f32; CULTURE_TRAIT_AXES];
+            let mut strongest: Option<(u64, f32)> = None;
+            for (source, pull) in &sources {
+                for idx in 0..CULTURE_TRAIT_AXES {
+                    total[idx] += pull[idx];
+                }
+                let magnitude: f32 = pull.iter().map(|v| v.abs()).sum();
+                // Ascending source order and a strict `>`: the lower BandId wins a tie.
+                if magnitude > 0.0 && strongest.is_none_or(|(_, best)| magnitude > best) {
+                    strongest = Some((*source, magnitude));
+                }
+            }
+            for (slot, delta) in layer.traits.modifier_mut().iter_mut().zip(total) {
+                *slot += scalar_from_f32(delta);
+            }
+            if let Some((source, _)) = strongest {
+                let pull = &sources[&source];
+                let mut axis = 0;
+                for idx in 1..CULTURE_TRAIT_AXES {
+                    if pull[idx].abs() > pull[axis].abs() {
+                        axis = idx;
+                    }
+                }
+                self.applied_contact_pull.insert(
+                    receiver,
+                    ContactPull {
+                        source,
+                        axis,
+                        delta: scalar_from_f32(pull[axis]),
+                    },
+                );
+            }
+        }
+    }
+
     pub fn band_layer_mut_by_owner(&mut self, owner: CultureOwner) -> Option<&mut CultureLayer> {
         self.bands.get_mut(&owner.0)
     }
@@ -932,8 +1069,10 @@ impl CultureManager {
             let origin = *global.traits.baseline();
             let elasticity = global.elasticity;
             for idx in 0..CULTURE_TRAIT_AXES {
-                let target = (origin[idx] + resonance.global[idx])
-                    .clamp(scalar_from_f32(-2.5), scalar_from_f32(2.5));
+                let target = (origin[idx] + resonance.global[idx]).clamp(
+                    scalar_from_f32(-CULTURE_TRAIT_SPAN),
+                    scalar_from_f32(CULTURE_TRAIT_SPAN),
+                );
                 let current = global.traits.values()[idx];
                 global
                     .traits
@@ -1450,6 +1589,49 @@ pub fn band_ancestor_pulls<'a>(
     pulls
 }
 
+/// **Every mutual tie between two of the given resident bands**, at the weaker of its two directed
+/// strengths, in `(a, b)` order with `a < b`. A one-way tie, a parked edge (strength zero) on
+/// either side, and a tie to a band not in `residents` are all left out.
+pub fn mutual_contact_ties(
+    ledger: &ConnectionLedger,
+    residents: &BTreeMap<u64, Scalar>,
+) -> Vec<ContactTie> {
+    let mut ties = Vec::new();
+    for (key, forward) in ledger.iter() {
+        if key.observer >= key.subject
+            || !residents.contains_key(&key.observer.0)
+            || !residents.contains_key(&key.subject.0)
+        {
+            continue;
+        }
+        let Some(back) = ledger.get(&crate::connections::ConnectionKey::new(
+            key.subject,
+            key.observer,
+        )) else {
+            continue;
+        };
+        let tie = forward.strength.min(back.strength);
+        if tie > Scalar::zero() {
+            ties.push(ContactTie {
+                a: key.observer,
+                b: key.subject,
+                tie,
+            });
+        }
+    }
+    ties
+}
+
+/// **The bands whose held schism asks to split off as their own people** (#702), recorded by
+/// [`reconcile_culture_layers`] in `TurnStage::Influence` and drained by
+/// `systems::advance_culture_splits` in the Population chain the same turn. Each entry is the band
+/// and the people it belonged to when culture judged it, so a band independence (or a defection)
+/// already moved this turn is recognised and skipped.
+#[derive(Resource, Debug, Default, Clone)]
+pub struct CultureSplitQueue {
+    pub bands: BTreeMap<BandId, FactionId>,
+}
+
 /// System wrapper that performs the reconcile pass each turn.
 #[allow(clippy::too_many_arguments)]
 pub fn reconcile_culture_layers(
@@ -1463,8 +1645,22 @@ pub fn reconcile_culture_layers(
     belief: Res<BeliefRegistry>,
     wellbeing: Res<WellbeingConfigHandle>,
     belief_config: Res<BeliefConfigHandle>,
+    connections: Res<ConnectionLedger>,
+    culture_config: Res<CultureCorruptionConfigHandle>,
+    mut splits: ResMut<CultureSplitQueue>,
 ) {
     let resonance = impacts.culture_resonance();
+    // Contact drift writes the band modifiers BEFORE the reconcile, so this turn's resolve sees it.
+    // It reads last turn's ledger (`advance_connections` runs after Influence).
+    let drift_rate = culture_config.config().culture().contact_drift().rate();
+    if drift_rate > 0.0 || !manager.applied_contact_pull.is_empty() {
+        let weights: BTreeMap<u64, Scalar> = bands
+            .iter()
+            .map(|(band, cohort)| (band.0, cohort.total()))
+            .collect();
+        let ties = mutual_contact_ties(&connections, &weights);
+        manager.apply_contact_drift(drift_rate, &weights, &ties);
+    }
     let band_pull = band_ancestor_pulls(
         bands.iter(),
         &belief,
@@ -1489,6 +1685,35 @@ pub fn reconcile_culture_layers(
         );
         if record.kind == CultureTensionKind::SchismRisk {
             schism_writer.send(record.into());
+        }
+    }
+
+    // **A purist band whose strain held past the hard threshold asks to split off** (#702). An
+    // accepting band (purist at or below the lever) absorbs it and stays; a people of one band has
+    // nothing to break away from.
+    splits.bands.clear();
+    let min_purist = culture_config.config().culture().split_min_purist();
+    for record in records.iter() {
+        if record.kind != CultureTensionKind::SchismRisk || record.scope != CultureLayerScope::Band
+        {
+            continue;
+        }
+        let band = BandId(record.owner.0);
+        let Some(layer) = manager.band_layer_by_owner(record.owner) else {
+            continue;
+        };
+        let purist = layer.traits.values()[CultureTraitAxis::SyncreticPurist.index()].to_f32();
+        if purist <= min_purist {
+            continue;
+        }
+        let Some((_, cohort)) = bands.iter().find(|(id, _)| **id == band) else {
+            continue;
+        };
+        let has_sibling = bands
+            .iter()
+            .any(|(id, other)| *id != band && other.faction == cohort.faction);
+        if has_sibling {
+            splits.bands.insert(band, cohort.faction);
         }
     }
 }

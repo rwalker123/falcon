@@ -1538,6 +1538,15 @@ table PopulationCohortState {
   // (faction order), with no head-count: that is theirs to know.
   breedingMembers:[BreedingMemberState];
   breedingPeoples:[BreedingPeopleState];
+  // --- CULTURE OVER A CONNECTION (appended last, issue #702) -------------------------------------
+  // Own bands only: a foreign (redacted) row carries the defaults. The STRONGEST contact pull the
+  // band took this turn (contact drift, `culture.contact_drift.rate`): the band it drifted toward,
+  // the axis that pull moved most (a `CultureTraitAxis` index, `cultureTraits` order) and that
+  // axis's signed delta per turn. `cultureDriftSourceBand` == 0 (BandId 0 is "unset") = no pull this
+  // turn, and the axis and delta are then 0.
+  cultureDriftSourceBand:ulong = 0;
+  cultureDriftAxis:ubyte = 0;
+  cultureDriftDelta:float = 0;
 }
 
 // One band's outfitting window. THE TWO SUPPLIES ARE MUTUALLY EXCLUSIVE and `parentBandId` says which

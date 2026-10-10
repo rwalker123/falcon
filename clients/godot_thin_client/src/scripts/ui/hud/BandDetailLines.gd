@@ -188,6 +188,22 @@ const BELIEFS_PULL_TERM_FORMAT := "+%.2f %s"
 const BELIEFS_UNTIED_TOOLTIP_FORMAT := \
     "Not tied to its dead. Stand within reach of them to be drawn toward %s, %s ways."
 
+# ---- THE CONTACT-DRIFT LINE (issue #702), beneath Beliefs: `Drifting toward the Red Hill band — Open
+# +0.02/turn`. The band's STRONGEST contact pull this turn: the band it drifted toward, and the pole of
+# the axis the pull moved it toward. `culture_drift_source_band` 0 = no pull, and then NO line (never a
+# zero). The pole comes off the native decoder's `culture_drift_axis_label` (`A ↔ B`, the one axis
+# table, `native/src/dict/culture.rs`): a negative delta moves toward A, a positive one toward B — the
+# same sign convention the Beliefs words follow. As with the ancestors' pull the figure is a MAGNITUDE
+# toward the named pole, so it always reads `+`. A source the roster cannot name (a band of another
+# people) reads `another band`, never a raw id. Own bands only; the `compact` tier takes no row.
+const BAND_CULTURE_DRIFT_SOURCE_KEY := "culture_drift_source_band"
+const BAND_CULTURE_DRIFT_LABEL_KEY := "culture_drift_axis_label"
+const BAND_CULTURE_DRIFT_DELTA_KEY := "culture_drift_delta"
+const CULTURE_DRIFT_POLE_SEPARATOR := " ↔ "
+const CULTURE_DRIFT_UNKNOWN_SOURCE := "another"
+const CULTURE_DRIFT_LINE_FORMAT := "Drifting toward the %s band — %s +%.2f/turn"
+const CULTURE_DRIFT_UNNAMED_LINE_FORMAT := "Drifting toward %s band — %s +%.2f/turn"
+
 # ---- THE GROWTH ROW AS A CLAUSE ON THE MORALE LINE, for the `compact` (SHORT band-zone tier) host —
 # the second merge this tier makes, and the same trade for the same reason as the hay clause above:
 # HEIGHT is what is scarce in a height-capped horizontal dock, and it has a whole screen of width.
@@ -538,6 +554,9 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
                 var beliefs_line := _band_beliefs_line(unit_data, context)
                 if beliefs_line != "":
                     lines.append(beliefs_line)
+                    var drift_line := _band_culture_drift_line(unit_data)
+                    if drift_line != "":
+                        lines.append(drift_line)
             if growth_line != "":
                 lines.append(growth_line)
     if with_position:
@@ -986,6 +1005,24 @@ func _band_beliefs_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> Str
         ctx.row_tooltips[HudDisclosureVocab.DETAIL_ROW_BELIEFS] = String(reading["values"]) + " " \
             + BELIEFS_UNTIED_TOOLTIP_FORMAT % [BELIEFS_WORD_DEVOUT, BELIEFS_WORD_TRADITIONAL]
     return HudDisclosureVocab.DETAIL_ROW_BELIEFS + DetailFormat.DETAIL_KV_SEPARATOR + value
+
+## `Drifting toward the Red Hill band — Open +0.02/turn`, or `""` when the band takes no contact pull
+## (source 0, or a label the decoder did not state). The pole is the end of the axis the delta's sign
+## moves toward: negative -> the label's first pole, positive -> its second.
+func _band_culture_drift_line(unit_data: Dictionary) -> String:
+    var source := int(unit_data.get(BAND_CULTURE_DRIFT_SOURCE_KEY, HudConst.NO_BAND_ID))
+    if source == HudConst.NO_BAND_ID:
+        return ""
+    var poles := String(unit_data.get(BAND_CULTURE_DRIFT_LABEL_KEY, "")).split(
+        CULTURE_DRIFT_POLE_SEPARATOR, false)
+    if poles.size() != 2:
+        return ""
+    var delta := float(unit_data.get(BAND_CULTURE_DRIFT_DELTA_KEY, 0.0))
+    var pole := String(poles[1]) if delta > 0.0 else String(poles[0])
+    var source_name := _band_labor.band_label_for_id(source)
+    if source_name == "":
+        return CULTURE_DRIFT_UNNAMED_LINE_FORMAT % [CULTURE_DRIFT_UNKNOWN_SOURCE, pole, absf(delta)]
+    return CULTURE_DRIFT_LINE_FORMAT % [source_name, pole, absf(delta)]
 
 ## The `compact` tier's Beliefs clause: just the violet mark, and ONLY while the band takes a pull;
 ## the line's hover is then the whole sentence (the values, then the pull). `""` otherwise.

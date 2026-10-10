@@ -1775,6 +1775,17 @@ pub struct PopulationCohortState {
     /// order, with no head-count. Empty when none. Appended last.
     #[serde(default)]
     pub breeding_peoples: Vec<BreedingPeopleState>,
+    /// **The band this band's strongest contact pull drifted it toward** (issue #702); `0` = no
+    /// pull this turn (`BandId(0)` is "unset"). Own bands only. Appended last.
+    #[serde(default)]
+    pub culture_drift_source_band: u64,
+    /// The trait axis (`CultureTraitAxis` index, `culture_traits` order) that pull moved most.
+    /// Appended last.
+    #[serde(default)]
+    pub culture_drift_axis: u8,
+    /// That axis's signed delta this turn. Appended last.
+    #[serde(default)]
+    pub culture_drift_delta: f32,
 }
 
 /// **ONE OWN-PEOPLE BAND IN A BREEDING POPULATION** — a row of

@@ -1751,6 +1751,17 @@ with no pull adds nothing there (`_band_beliefs_compact_clause`).
   the mark), one line. The hover leads with the values, `Devout 0.4, traditional 0.3.` (one decimal,
   first word capitalised), then the pull sentence or the untied invitation; the pull magnitudes stay
   two decimals. It is an ordinary key/value row.
+- **The contact-drift line (#702)**, directly beneath Beliefs on the same non-`compact` gate:
+  `Drifting toward the Red Hill band — Open +0.02/turn`, from `BandDetailLines._band_culture_drift_line`.
+  The wire is `culture_drift_source_band` (BandId, 0 = no pull, and then NO line), `culture_drift_axis`
+  and `culture_drift_delta`, plus `culture_drift_axis_label`, which the decoder adds from
+  `dict/culture.rs`'s one `A ↔ B` axis table so the client keeps no second pole list. The pole named is
+  the label's first half for a negative delta and its second for a positive one (the sign convention the
+  Beliefs words follow), and the figure is a magnitude toward that pole, so it always reads `+`. The
+  source is joined through `HudBandLaborState.band_label_for_id`; a band the roster cannot name (another
+  people) reads `another band`, never a raw id. It wraps to two lines in the drawer column, which is the
+  panel-copy ceiling. Frame `band_culture_drift` plus a PNG-less set (opposite pole, unnamed source, no
+  pull) in `chapters/band_expedition.gd`.
 - **Frames:** `band_beliefs_tied`, `band_beliefs_untied` (`chapters/band_expedition.gd`, after the
   ancestors states). The chapter also asserts the flipped words, no row on an empty layer, no row on a
   rival, that the row fits one line, and (`band_panel_preview`, `_assert_beliefs_compact_clause` on

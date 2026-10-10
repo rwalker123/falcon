@@ -4875,6 +4875,10 @@
         }
       ],
       "culture_ancestor_pull": {"__packed": "PackedFloat32Array", "len": 3, "items": [27.690001, 7.67, 10.18]},
+      "culture_drift_axis": 26,
+      "culture_drift_axis_label": "Trait",
+      "culture_drift_delta": 13.75,
+      "culture_drift_source_band": 174,
       "culture_traits": {"__packed": "PackedFloat32Array", "len": 3, "items": [15.68, 91.290001, 50.68]},
       "current_x": 0,
       "current_y": 1,
@@ -6302,6 +6306,10 @@
         }
       ],
       "culture_ancestor_pull": {"__packed": "PackedFloat32Array", "len": 3, "items": [88.629997, 1.55, 85.279999]},
+      "culture_drift_axis": 167,
+      "culture_drift_axis_label": "Trait",
+      "culture_drift_delta": 55.23,
+      "culture_drift_source_band": 149,
       "culture_traits": {"__packed": "PackedFloat32Array", "len": 3, "items": [55.869999, 23.379999, 59.23]},
       "current_x": 1,
       "current_y": 2,
@@ -7690,6 +7698,10 @@
         }
       ],
       "culture_ancestor_pull": {"__packed": "PackedFloat32Array", "len": 3, "items": [85.190002, 59.779999, 33.330002]},
+      "culture_drift_axis": 96,
+      "culture_drift_axis_label": "Trait",
+      "culture_drift_delta": 5.61,
+      "culture_drift_source_band": 88,
       "culture_traits": {"__packed": "PackedFloat32Array", "len": 3, "items": [32.779999, 7.37, 24.040001]},
       "current_x": 2,
       "current_y": 0,
