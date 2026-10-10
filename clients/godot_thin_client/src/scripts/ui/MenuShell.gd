@@ -367,6 +367,11 @@ var _option_toggles: Array = []
 ## The Theme row's three parts, rebuilt with the pane. Held because "Restore defaults" has to move the
 ## picker AND re-word the caption, and because caption + button are re-derived together on every pick.
 var _theme_picker: OptionButton = null
+## The Frame rate row's picker, held so "Restore defaults" can move it.
+var _max_fps_picker: OptionButton = null
+const MAX_FPS_LABEL_FORMAT := "%d fps"
+const MAX_FPS_UNLIMITED_LABEL := "Unlimited"
+const MAX_FPS_CAPTION_FORMAT := "Lower runs cooler; drops to %d fps when the game is in the background."
 var _theme_caption: Label = null
 var _theme_apply: Button = null
 
@@ -1029,6 +1034,9 @@ func _build_options_pane() -> void:
 	# other row here it writes `ClientSettings` and stops; unlike them, what it writes is not what is on
 	# screen until its own "Apply now" installs the palette and rebuilds the scene against it.
 	_pane_body.add_child(_make_theme_row())
+	# Frame rate sits with the other display-ish rows. Writes `ClientSettings` and stops; the settings
+	# autoload's governor applies it to `Engine.max_fps`.
+	_pane_body.add_child(_make_max_fps_row())
 	# Fog of war is a SERVER setting, but this row writes only `ClientSettings` — MenuShell has no
 	# handle to Main/Inspector/CommandClient and must not grow one. `Main` listens on
 	# `ClientSettings.changed` and is the single place that sends `set_fog`, which is also why the
@@ -1171,6 +1179,50 @@ func _make_theme_row() -> Control:
 	return col
 
 
+## One "Frame rate" row: an OptionButton over `ClientSettings.MAX_FPS_CHOICES` plus a caption.
+func _make_max_fps_row() -> Control:
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", SPEED_ROW_SEPARATION)
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", SPEED_ROW_SEPARATION)
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.add_child(row)
+
+	var title_label := Label.new()
+	title_label.text = "Frame rate"
+	title_label.add_theme_font_size_override("font_size", SPEED_ROW_TITLE_SIZE)
+	title_label.add_theme_color_override("font_color", HudStyle.INK)
+	title_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(title_label)
+
+	_max_fps_picker = OptionButton.new()
+	_max_fps_picker.focus_mode = Control.FOCUS_NONE
+	_max_fps_picker.fit_to_longest_item = false
+	HudStyle.apply_option_button(_max_fps_picker)
+	for index in ClientSettings.MAX_FPS_CHOICES.size():
+		var fps: int = ClientSettings.MAX_FPS_CHOICES[index]
+		_max_fps_picker.add_item(MAX_FPS_UNLIMITED_LABEL if fps == 0 else MAX_FPS_LABEL_FORMAT % fps, index)
+		_max_fps_picker.set_item_metadata(index, fps)
+	_max_fps_picker.select(ClientSettings.MAX_FPS_CHOICES.find(ClientSettings.max_fps))
+	_max_fps_picker.item_selected.connect(_on_max_fps_selected)
+	row.add_child(_max_fps_picker)
+
+	var caption := Label.new()
+	caption.text = MAX_FPS_CAPTION_FORMAT % ClientSettings.UNFOCUSED_MAX_FPS
+	caption.add_theme_font_size_override("font_size", HINT_SIZE)
+	caption.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+	caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	caption.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.add_child(caption)
+	return col
+
+
+func _on_max_fps_selected(index: int) -> void:
+	ClientSettings.set_max_fps(int(_max_fps_picker.get_item_metadata(index)))
+
+
 ## The picker index showing `id` — the default's index for an id the roster no longer lists, so a
 ## stale settings file still opens the row on something.
 func _theme_item_index(id: String) -> int:
@@ -1248,6 +1300,8 @@ func _make_toggle_row(title: String, value: bool, default_value: bool, on_change
 
 func _on_restore_defaults_pressed() -> void:
 	ClientSettings.restore_defaults()
+	if _max_fps_picker != null:
+		_max_fps_picker.select(ClientSettings.MAX_FPS_CHOICES.find(ClientSettings.MAX_FPS_DEFAULT))
 	if _theme_picker != null:
 		_theme_picker.select(_theme_item_index(HudPalette.DEFAULT_THEME))
 		_refresh_theme_row(HudPalette.DEFAULT_THEME)
