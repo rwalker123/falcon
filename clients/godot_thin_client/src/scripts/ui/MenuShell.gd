@@ -371,7 +371,7 @@ var _theme_picker: OptionButton = null
 var _max_fps_picker: OptionButton = null
 const MAX_FPS_LABEL_FORMAT := "%d fps"
 const MAX_FPS_UNLIMITED_LABEL := "Unlimited"
-const MAX_FPS_CAPTION := "Lower runs cooler; drops to 10 fps when the game is in the background."
+const MAX_FPS_CAPTION_FORMAT := "Lower runs cooler; drops to %d fps when the game is in the background."
 var _theme_caption: Label = null
 var _theme_apply: Button = null
 
@@ -1210,7 +1210,7 @@ func _make_max_fps_row() -> Control:
 	row.add_child(_max_fps_picker)
 
 	var caption := Label.new()
-	caption.text = MAX_FPS_CAPTION
+	caption.text = MAX_FPS_CAPTION_FORMAT % ClientSettings.UNFOCUSED_MAX_FPS
 	caption.add_theme_font_size_override("font_size", HINT_SIZE)
 	caption.add_theme_color_override("font_color", HudStyle.INK_FAINT)
 	caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
