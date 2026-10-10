@@ -13,6 +13,8 @@ paths:
   - "core_sim/src/data/{demographics_config,supply_network_config,sedentarization_config}.json"
   - "core_sim/tests/{supply_network,sedentarization,founding_lines}.rs"
   - "core_sim/src/lineage.rs"
+  - "core_sim/src/spoilage.rs"
+  - "core_sim/tests/storage_lesson.rs"
   - "core_sim/tests/lineage_contact.rs"
 ---
 
@@ -456,6 +458,42 @@ forward through the same meal-then-rot turns the sim runs, at the forward `deman
 income, so a lot that would expire before the band could eat it is not runway. The turns after are
 walked as before. A detached party reads its pack whole. `spoilage::tests::the_forecast_is_what_the_turns_actually_rot`
 pins the walk against the turns.
+
+#### Rot teaches storage (#707)
+
+Food rotting in a band's larder teaches the faction **`storage`** (`spoilage::STORAGE_KNOWLEDGE`,
+discovery `STORAGE_DISCOVERY_ID` = 2018), on the knowledge ledger and in the ladder's practice
+currency (`intensification.md` → "A LESSON COSTS PRACTICE"). Design of record:
+`docs/plan_civilization_steps.md` §Step 5, "Rot teaches storage — one signal, not two".
+
+```text
+practice = learn_rate × min(1, rotted / (need × storage_lesson_rot_turns))   // per band, per turn
+credit   = practice / lesson_costs["storage"]                                // LadderKnowledge::ledger_credit
+```
+
+- **Larder rot is surplus by definition.** A lot rots only when it has gone uneaten for its whole
+  shelf life, so "food lost to rot while a surplus sat" needs no second test. A band with no excess
+  rots nothing and learns nothing. A band whose excess rots learns at full pace.
+- **Measured against the band's own need** (`last_food_need`, struck by the meal immediately before),
+  so band size cancels. Sixty people rotting half a turn's food learn exactly as fast as thirty
+  people rotting half of theirs. This is the lesson's version of "learning must not scale with hands".
+- **Capped at one full turn of practice per band per turn.** Rot of `storage_lesson_rot_turns` turns
+  of need (1.0) is a full turn. More rot does not teach faster: a mammoth expiring whole is one bad
+  turn, not a year of practice. That makes the lesson the ladder's ~20 turns at full rate, the same
+  as `cultivation` and `herding`, which open the rung-2 step on their branches as `storage` opens the
+  drying rack.
+- **Transit rot never teaches.** `rot_band_larders` credits before the labor pass adds a caravan
+  pack's transit rot to `last_food_spoiled`. A pack lost on a long walk is distance, and the band
+  that lost it may have had no excess at all.
+- **A band is the source.** Each band credits its own larder once per turn, as each worked source
+  credits a rung lesson once per turn.
+- **Priced and checked like every other lesson.** `lesson_costs.storage` (20) is required by
+  `validate_lesson_cost_coverage` beside the rung and craft names. `storage` is also a contact tag in
+  `start_profile_knowledge_tags.json`, so a people can learn it from a tied people who knows it. No
+  start profile grants it.
+- **Not on the knowledge wire.** `knowledge_roster` lists what a rung *teaches*, and no rung teaches
+  `storage`, so it rides no `ladderKnowledge` / `intensificationKnowledge` row. It gates no rung
+  today.
 
 > #### THE WIRE CARRIES WHOLE PEOPLE — the fraction is an accumulator, and it stays sim-side
 >

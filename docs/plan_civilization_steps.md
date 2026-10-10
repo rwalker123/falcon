@@ -726,8 +726,10 @@ Every decision this doc leaves unmade is owned by an issue, so it cannot be lost
 - ~~**When a far party's haul is delivered, and what gates its launch**~~ — **decided** on the
   work-party slice (#684), before implementation, and it dissolved rather than resolved: a standing
   posting has no launch and no shipment, so there is nothing to gate. See "The model" above.
-- **The storage lesson's pace** — a meaningful default from the existing ~20-work lessons and the
-  ladder's pacing (#707), adjusted from the measurement (#705) and playtesting.
+- ~~**The storage lesson's pace**~~ — **set** on the lesson slice (#707): a lesson cost of 20, the
+  same as the other rung-2 lessons, and a band earns one full turn of practice on any turn its larder
+  rots at least one turn of its own need (`storage_lesson_rot_turns`), in proportion below that.
+  Playtesting adjusts both dials. See `.claude/rules/core_sim/campaign.md` → "Rot teaches storage".
 - **Why moving never paid** — the measurement (#705).
 - **Writing, the third ceiling** — the design task (#712).
 
