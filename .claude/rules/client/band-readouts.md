@@ -386,15 +386,12 @@ which is a property of the tier and not of the merge.
   - **NO CARET, AND NOTHING REGISTERED.** `fodder_breakdown_lines` produces no rows for a band with
     neither flow, so the dormant branch registers no disclosure at all and `_key_cell` draws a plain
     dim key. An empty pull-down is worse than no pull-down.
-  - ⛔ **AND IT CARRIES NO HOVER, BECAUSE THE HOVER A ROW REGISTERS HERE IS THE WHOLE BLOCK'S.** The
-    stat block is one `RichTextLabel` and `DetailFormat.block_tooltip` joins every registered row's
-    sentence into its single `tooltip_text` — `[hint=…]` is not parsed by this Godot build, so a
-    sentence cannot be scoped to the row that owns it. The row registered two (a Foddering lock in
-    the forage panel's own words, and a calm *no fodder yet*), and what a player got was a paragraph
-    about hay popping out from under a cursor resting on **Growth**, **Morale** or **Food** — rows a
-    fodder lock bears on not at all, on a block where hay is the one term that is dormant. Reported
-    from play. **A dormant account states itself with the dim dash and nothing else**; anything more
-    waits for a surface that can hover one row.
+  - **AND IT CARRIES NO HOVER.** A dormant account states itself with the dim dash and nothing
+    else. The row once registered two sentences (a Foddering lock in the forage panel's words, and a
+    calm *no fodder yet*); while a detail block had one block-wide tooltip they surfaced under a cursor
+    on **Growth**, **Morale** or **Food** (reported from play). Hovers are per-row now
+    (`DetailFormat.hover_wrap` / `wire_row_hovers`), but the dormant row still has nothing to say a
+    hover would add.
   - **AND THE KNOWLEDGE READ WENT WITH BOTH SENTENCES.** The live Foddering percent was the only
     thing either scale needed that a band dict does not carry, so `BandDetailLines` holds no
     `FactionReadouts` cluster now and `FactionRollup.build_band_zone` takes no `knowledge` row: the

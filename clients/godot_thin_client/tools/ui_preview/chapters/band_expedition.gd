@@ -2029,10 +2029,10 @@ const FODDER_KNOWLEDGE_PART := 0.35
 
 const FODDER_KNOWLEDGE_LEARNED := 1.0
 
-## **THE WORDS A FODDER SENTENCE CANNOT AVOID.** The dormant row registers NO hover: a row's hover
-## here is the whole BLOCK's (`DetailFormat.block_tooltip` joins them onto one `tooltip_text`, per-run
-## `[hint=…]` being unparsed in this build), so the two sentences it used to register popped out from
-## under a cursor resting on Growth, Morale or Food. Asked as WORDS rather than against the retired
+## **THE WORDS A FODDER SENTENCE CANNOT AVOID.** The dormant row registers NO hover. When a hover
+## answered for the whole block the two sentences it used to register popped out from under a cursor
+## resting on Growth, Morale or Food; hovers are per-row now (`DetailFormat.hover_wrap` /
+## `wire_row_hovers`), but a dim dash for an account that does not exist still needs no sentence. Asked as WORDS rather than against the retired
 ## consts, because a re-worded sentence is the same defect back.
 const RETIRED_FODDER_HOVER_WORDS := ["fodder", "hay"]
 

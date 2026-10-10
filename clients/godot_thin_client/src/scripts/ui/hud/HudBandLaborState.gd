@@ -414,7 +414,6 @@ func set_panel_band(band: Dictionary) -> void:
 	_panel_band = band
 	changed.emit(&"panel_band")
 
-## Ingest the per-snapshot player-faction split (the four fields `update_band_alerts` sets together).
 ## The OTHER peoples' bands the viewer can currently see, by durable `band_id` — the join a contact-drift
 ## sentence needs to name the band pulling its culture (and, through its `faction`, the people). Only
 ## what this frame carries: a band out of sight is absent, and the caller then says `another band`.
@@ -432,6 +431,7 @@ func set_foreign_bands(bands: Array) -> void:
 func foreign_band(band_id: int) -> Dictionary:
 	return _foreign_bands.get(band_id, {})
 
+## Ingest the per-snapshot player-faction split (the four fields `update_band_alerts` sets together).
 func ingest_snapshot_bands(prev_sizes: Dictionary, band: Dictionary, bands: Array, expeditions: Array) -> void:
 	_prev_band_sizes = prev_sizes
 	_player_band = band

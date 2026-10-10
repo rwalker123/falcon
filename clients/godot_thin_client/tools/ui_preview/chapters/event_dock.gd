@@ -308,10 +308,10 @@ const WORK_LINK_MIN_DRAWN_WIDTH := 20.0
 ## in the sim's own detail shape. The slip's shipped detail names no band. The second slip carries
 ## `band=` to pin the link the Work tab offers once a band is named.
 const SLIP_LABEL := "Field at (44, 24) is slipping — 94%"
+const SLIP_DETAIL := "status=slipping rung=forage:field x=44 y=24 progress=94"
 ## The sim's own shapes (`independence.rs push_band_broke_away_events`, `population.rs` deaths).
 const CULTURE_BREAKAWAY_DETAIL := "band=4 from=0 to=1 side=lost cause=culture"
 const DEATH_CAUSE_DETAIL := "bracket=working cause=cold"
-const SLIP_DETAIL :="status=slipping rung=forage:field x=44 y=24 progress=94"
 const SLIP_BANDED_LABEL := "Field at (45, 24) is slipping — 60%"
 const SLIP_BANDED_DETAIL := "status=slipping rung=forage:field x=45 y=24 progress=60 band=5"
 const SLIP_BANDED_BAND := 5

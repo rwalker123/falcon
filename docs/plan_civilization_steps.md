@@ -322,6 +322,9 @@ own Syncretic ↔ Purist value:
   that is the absorption; no second rule.
 - **A people of one band does not split from itself**, which also keeps a fresh splinter from
   splitting again.
+- **Any band may split, the home band included.** The amber *may break away* warning is the
+  player's guard; a home band that drifts away anyway is a consequence, not something the rules
+  forbid.
 
 Levers: `culture.contact_drift.rate` and `culture.split_min_purist` in
 `culture_corruption_config.json`. As-built: `.claude/rules/core_sim/ecs-systems.md` (contact drift)

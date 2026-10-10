@@ -883,12 +883,18 @@ impl CultureManager {
         self.break_away_risk.contains(&owner.0)
     }
 
-    /// The bands whose layer is in the drift-warning state (`ticks_above_soft` at its trigger).
-    fn bands_in_drift_warning(&self) -> Vec<u64> {
+    /// The bands whose layer is in the drift-warning state (`ticks_above_soft` at its trigger) or
+    /// the hard state (`ticks_above_hard` at its trigger). **A level, not an edge**: it holds every
+    /// turn the layer stays there, unlike the `SchismRisk` record, which fires once on crossing.
+    fn bands_in_strain(&self, hard_only: bool) -> Vec<u64> {
         self.bands
             .iter()
             .filter(|(_, layer)| {
-                layer.divergence.ticks_above_soft >= layer.divergence.soft_trigger_ticks.max(1)
+                let hard =
+                    layer.divergence.ticks_above_hard >= layer.divergence.hard_trigger_ticks.max(1);
+                let soft =
+                    layer.divergence.ticks_above_soft >= layer.divergence.soft_trigger_ticks.max(1);
+                hard || (soft && !hard_only)
             })
             .map(|(owner, _)| *owner)
             .collect()
@@ -1749,19 +1755,19 @@ pub fn reconcile_culture_layers(
             .any(|(id, other)| *id != band && other.faction == cohort.faction);
         may_break_away(purist, min_purist, has_sibling).then_some(cohort.faction)
     };
-    // The warning: in the drift-warning state and passing the same predicate the split uses.
+    // **Both read one level state and one predicate**: the warning is any band in the warning or
+    // hard state that `may_break`; the split is any band in the hard state that `may_break`, every
+    // turn it stays there. The `SchismRisk` record is an edge (it fires once, on crossing) and is
+    // not what queues a split — a band that crossed hard while it could not break away, and can
+    // later, must still go.
     let at_risk: BTreeSet<u64> = manager
-        .bands_in_drift_warning()
+        .bands_in_strain(false)
         .into_iter()
         .filter(|owner| may_break(&manager, BandId(*owner)).is_some())
         .collect();
     manager.break_away_risk = at_risk;
-    for record in records.iter() {
-        if record.kind != CultureTensionKind::SchismRisk || record.scope != CultureLayerScope::Band
-        {
-            continue;
-        }
-        let band = BandId(record.owner.0);
+    for owner in manager.bands_in_strain(true) {
+        let band = BandId(owner);
         if let Some(faction) = may_break(&manager, band) {
             splits.bands.insert(band, faction);
         }
