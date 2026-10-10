@@ -2406,11 +2406,14 @@ func update_band_alerts(populations_variant: Variant) -> void:
     var player_band: Dictionary = {}
     var player_bands: Array = []
     var player_expeditions: Array = []
+    var foreign_bands: Array = []
     for entry_variant in populations:
         if not (entry_variant is Dictionary):
             continue
         var entry: Dictionary = entry_variant
         if int(entry.get("faction", -1)) != HudConst.PLAYER_FACTION_ID:
+            if not bool(entry.get("is_expedition", false)):
+                foreign_bands.append(entry)
             continue
         if bool(entry.get("is_expedition", false)):
             player_expeditions.append(entry)
@@ -2431,6 +2434,7 @@ func update_band_alerts(populations_variant: Variant) -> void:
     # them: a detached party is those same people walking somewhere, not a band to outfit.
     _loadout.set_bands(player_bands)
     # 3. Ingest (overwrites prev_band_sizes) — unchanged.
+    _band_labor.set_foreign_bands(foreign_bands)
     _band_labor.ingest_snapshot_bands(new_sizes, player_band, player_bands, player_expeditions)
     # An open Deny / Trade sheet's highlight and an armed pick are derived from where the bands
     # stand, so they follow this roster (`TargetingController.refresh_live_targets`).

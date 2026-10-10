@@ -514,6 +514,10 @@ const BELIEFS_DEVOUT := 0.42
 const BELIEFS_TRADITIONAL := -0.31
 const BELIEFS_PULL := 0.30
 const BELIEFS_ROW_KEY := "Beliefs"
+## An unresolvable foreign source (no foreign band is staged here), a pull well above the printed precision.
+const BELIEFS_COMPACT_DRIFT_SOURCE := 9100
+const BELIEFS_COMPACT_DRIFT_AXIS_LABEL := "Open \u2194 Closed"
+const BELIEFS_COMPACT_DRIFT_DELTA := -0.02
 const BELIEFS_COMPACT_VALUES := "Devout 0.4, traditional 0.3."
 const BELIEFS_COMPACT_PULL := "The ancestors pull this band +0.30 devout and +0.30 traditional."
 const TOPBAR_SEDENTARIZATION_STAGE := "soft"
@@ -15450,6 +15454,19 @@ func _assert_beliefs_compact_clause() -> void:
 	_assert_band_panel("beliefs compact: ...and the Beliefs hover gains the break-away sentence",
 		String(risky_ctx.row_tooltips.get(HudDisclosureVocab.DETAIL_ROW_BELIEFS, "")).contains(
 			HudDisclosureVocab.BELIEFS_BREAK_AWAY_TOOLTIP))
+	# THE CONTACT-DRIFT ARROW (#702) rides the same clause in the SHORT tier, with the same hover.
+	var drifting := _vitals_worst_case_band_fixture()
+	drifting["culture_drift_source_band"] = BELIEFS_COMPACT_DRIFT_SOURCE
+	drifting["culture_drift_axis_label"] = BELIEFS_COMPACT_DRIFT_AXIS_LABEL
+	drifting["culture_drift_delta"] = BELIEFS_COMPACT_DRIFT_DELTA
+	var drift_ctx := DetailFormat.Context.new()
+	var drift_joined := "\n".join(_hud._banddetail.unit_summary_lines(drifting, "", drift_ctx, true))
+	_assert_band_panel("beliefs compact: a foreign pull adds the arrow to the Morale line",
+		drift_joined.contains(HudDisclosureVocab.BELIEFS_DRIFT_GLYPH)
+		and not pulled_joined.contains(HudDisclosureVocab.BELIEFS_DRIFT_GLYPH))
+	_assert_band_panel("beliefs compact: ...and the Beliefs hover names who is pulling",
+		String(drift_ctx.row_tooltips.get(HudDisclosureVocab.DETAIL_ROW_BELIEFS, "")).contains(
+			HudDisclosureVocab.BELIEFS_DRIFT_UNKNOWN_BAND))
 	_assert_band_panel("beliefs compact: a band with NO pull adds nothing to the line",
 		not untied_joined.contains(BandOverlayRenderer.ANCESTORS_GLYPH)
 		and pulled_joined.contains(BandOverlayRenderer.ANCESTORS_GLYPH)

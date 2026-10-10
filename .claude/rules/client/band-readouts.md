@@ -1753,17 +1753,22 @@ with no pull adds nothing there (`_band_beliefs_compact_clause`).
   `[hint=…]` is still unparsed by this Godot build. Harnesses emit the hover signals and read
   `tooltip_text` (`workings.gd` `_assert_hovers_are_per_row` is the pair claim); `Readout.detail_excerpt`
   strips hover runs so its fixed window still reads the value.
-- **The contact-drift line (#702)**, directly beneath Beliefs on the same non-`compact` gate:
-  `Drifting toward the Red Hill band — Open +0.02/turn`, from `BandDetailLines._band_culture_drift_line`.
-  The wire is `culture_drift_source_band` (BandId, 0 = no pull, and then NO line), `culture_drift_axis`
-  and `culture_drift_delta`, plus `culture_drift_axis_label`, which the decoder adds from
-  `dict/culture.rs`'s one `A ↔ B` axis table so the client keeps no second pole list. The pole named is
-  the label's first half for a negative delta and its second for a positive one (the sign convention the
-  Beliefs words follow), and the figure is a magnitude toward that pole, so it always reads `+`. The
-  source is joined through `HudBandLaborState.band_label_for_id`; a band the roster cannot name (another
-  people) reads `another band`, never a raw id. It wraps to two lines in the drawer column, which is the
-  panel-copy ceiling. Frame `band_culture_drift` plus a PNG-less set (opposite pole, unnamed source, no
-  pull) in `chapters/band_expedition.gd`.
+- **The contact-drift mark (#702)** replaces the two-line drift row, which was too big, named the
+  player's own band and could print `+0.00`. When a FOREIGN people's band pulls this band's culture, a
+  small arrow (`HudDisclosureVocab.BELIEFS_DRIFT_GLYPH`, `→`, in `HudStyle.BELIEF` through the urn's
+  `BELIEFS_ANCESTORS_MARK_FORMAT`) ends the Beliefs value, after the urn; the compact tier carries it
+  on the same Morale-line clause with the same hover. The Beliefs hover gains
+  `Drifting toward the Red Hill band (Ashfolk) — Open +0.02/turn.` The wire is `culture_drift_source_band`
+  (foreign pulls only: kin pulls are never published, 0 = none), `culture_drift_axis_label` (the
+  decoder's `A ↔ B` axis label; negative delta = first pole, positive = second; the figure is a
+  magnitude toward the pole so it reads `+`) and `culture_drift_delta`. **The rounds-to-zero rule is the
+  precision constant**: the magnitude is printed at `BELIEFS_DRIFT_DECIMALS` and a pull whose printed
+  value is zero hides BOTH the arrow and the sentence. The band is joined through
+  `HudBandLaborState.foreign_band` (the visible foreign bands, set by `Hud.update_band_alerts`), its
+  people through `FactionNames`; an unseen band reads `another band`, an unnamed people drops the
+  parenthetical, and no raw id or `Faction N` is ever printed. Frame `band_culture_drift`; the claims
+  (arrow and sentence, opposite pole, unresolvable source, no people, rounds-to-zero, source 0) are in
+  `chapters/band_expedition.gd`, the compact arrow in `band_panel_preview`.
 - **Frames:** `band_beliefs_tied`, `band_beliefs_untied` (`chapters/band_expedition.gd`, after the
   ancestors states). The chapter also asserts the flipped words, no row on an empty layer, no row on a
   rival, that the row fits one line, and (`band_panel_preview`, `_assert_beliefs_compact_clause` on

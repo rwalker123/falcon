@@ -116,3 +116,23 @@ const BELIEFS_BREAK_AWAY_KEY := "culture_break_away_risk"
 const BELIEFS_BREAK_AWAY_CLAUSE := "may break away"
 const BELIEFS_BREAK_AWAY_TOOLTIP := \
 	"This band's ways have drifted far from its people's; a purist band that drifts further breaks away as a new people."
+
+# ---- THE CONTACT-DRIFT MARK on the Beliefs row (#702): a small violet arrow at the END of the value
+# (after the ancestors urn) while a FOREIGN people's band is pulling this band's culture, and one hover
+# sentence naming who and which way. The cohort keys are the sim's (`culture_drift_*`, foreign pulls
+# only: kin pulls are never published and source 0 = none); the pole comes off the decoder's
+# `A <-> B` axis label (a negative delta moves toward A, a positive one toward B) and the figure is a
+# MAGNITUDE toward the named pole, so it always reads `+`. **THE PRECISION IS ONE CONSTANT**: a pull whose
+# magnitude prints as zero at `BELIEFS_DRIFT_DECIMALS` hides BOTH the mark and the sentence, so the
+# hover can never say `+0.00`. A band or people the client cannot resolve reads `another band` / loses
+# the parenthetical, never a raw id.
+const BELIEFS_DRIFT_SOURCE_KEY := "culture_drift_source_band"
+const BELIEFS_DRIFT_LABEL_KEY := "culture_drift_axis_label"
+const BELIEFS_DRIFT_DELTA_KEY := "culture_drift_delta"
+const BELIEFS_DRIFT_POLE_SEPARATOR := " ↔ "
+const BELIEFS_DRIFT_GLYPH := "→"
+const BELIEFS_DRIFT_DECIMALS := 2
+const BELIEFS_DRIFT_BAND_FORMAT := "the %s band"
+const BELIEFS_DRIFT_UNKNOWN_BAND := "another band"
+const BELIEFS_DRIFT_PEOPLE_FORMAT := " (%s)"
+const BELIEFS_DRIFT_SENTENCE_FORMAT := "Drifting toward %s%s — %s +%s/turn."

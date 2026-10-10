@@ -644,8 +644,9 @@ pub struct ContactTie {
     pub tie: Scalar,
 }
 
-/// A band's strongest contact pull this turn: the band it drifted toward, the axis that moved most,
-/// and that axis's signed delta (the amount added to the band's modifier).
+/// A band's strongest contact pull **from another people's band** this turn: the band it drifted
+/// toward, the axis that moved most, and that axis's signed delta (the amount added to the band's
+/// modifier). A pull from a band of its own people moves the culture and is never published here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContactPull {
     pub source: u64,
@@ -910,9 +911,15 @@ impl CultureManager {
     ///
     /// `weights` is each resident band's headcount keyed by `BandId.0`; a tie naming a band with no
     /// layer or no weight is skipped. `rate == 0` writes nothing (and clears the published pulls).
+    ///
+    /// **Every mutual tie pulls, kin included, but only a pull from ANOTHER people is published**
+    /// (`applied_contact_pull`): `factions` is each band's people as it stands now, and a source is
+    /// a candidate for the published pull only when both bands' peoples are known and differ. Kin
+    /// drift keeps a people together and is not news to the player.
     pub fn apply_contact_drift(
         &mut self,
         rate: f32,
+        factions: &BTreeMap<u64, FactionId>,
         weights: &BTreeMap<u64, Scalar>,
         ties: &[ContactTie],
     ) {
@@ -971,7 +978,12 @@ impl CultureManager {
                 }
                 let magnitude: f32 = pull.iter().map(|v| v.abs()).sum();
                 // Ascending source order and a strict `>`: the lower BandId wins a tie.
-                if magnitude > 0.0 && strongest.is_none_or(|(_, best)| magnitude > best) {
+                let foreign = matches!(
+                    (factions.get(&receiver), factions.get(source)),
+                    (Some(mine), Some(theirs)) if mine != theirs
+                );
+                if foreign && magnitude > 0.0 && strongest.is_none_or(|(_, best)| magnitude > best)
+                {
                     strongest = Some((*source, magnitude));
                 }
             }
@@ -1689,8 +1701,12 @@ pub fn reconcile_culture_layers(
             .iter()
             .map(|(band, cohort)| (band.0, cohort.total()))
             .collect();
+        let factions: BTreeMap<u64, FactionId> = bands
+            .iter()
+            .map(|(band, cohort)| (band.0, cohort.faction))
+            .collect();
         let ties = mutual_contact_ties(&connections, &weights);
-        manager.apply_contact_drift(drift_rate, &weights, &ties);
+        manager.apply_contact_drift(drift_rate, &factions, &weights, &ties);
     }
     let band_pull = band_ancestor_pulls(
         bands.iter(),

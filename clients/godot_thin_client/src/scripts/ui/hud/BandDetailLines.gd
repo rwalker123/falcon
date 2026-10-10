@@ -165,22 +165,6 @@ const BELIEFS_PULL_TERM_FORMAT := "+%.2f %s"
 const BELIEFS_UNTIED_TOOLTIP_FORMAT := \
     "Not tied to its dead. Stand within reach of them to be drawn toward %s, %s ways."
 
-# ---- THE CONTACT-DRIFT LINE (issue #702), beneath Beliefs: `Drifting toward the Red Hill band — Open
-# +0.02/turn`. The band's STRONGEST contact pull this turn: the band it drifted toward, and the pole of
-# the axis the pull moved it toward. `culture_drift_source_band` 0 = no pull, and then NO line (never a
-# zero). The pole comes off the native decoder's `culture_drift_axis_label` (`A ↔ B`, the one axis
-# table, `native/src/dict/culture.rs`): a negative delta moves toward A, a positive one toward B — the
-# same sign convention the Beliefs words follow. As with the ancestors' pull the figure is a MAGNITUDE
-# toward the named pole, so it always reads `+`. A source the roster cannot name (a band of another
-# people) reads `another band`, never a raw id. Own bands only; the `compact` tier takes no row.
-const BAND_CULTURE_DRIFT_SOURCE_KEY := "culture_drift_source_band"
-const BAND_CULTURE_DRIFT_LABEL_KEY := "culture_drift_axis_label"
-const BAND_CULTURE_DRIFT_DELTA_KEY := "culture_drift_delta"
-const CULTURE_DRIFT_POLE_SEPARATOR := " ↔ "
-const CULTURE_DRIFT_UNKNOWN_SOURCE := "another"
-const CULTURE_DRIFT_LINE_FORMAT := "Drifting toward the %s band — %s +%.2f/turn"
-const CULTURE_DRIFT_UNNAMED_LINE_FORMAT := "Drifting toward %s band — %s +%.2f/turn"
-
 # ---- THE GROWTH ROW AS A CLAUSE ON THE MORALE LINE, for the `compact` (SHORT band-zone tier) host —
 # the second merge this tier makes, and the same trade for the same reason as the hay clause above:
 # HEIGHT is what is scarce in a height-capped horizontal dock, and it has a whole screen of width.
@@ -523,9 +507,6 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
                 var beliefs_line := _band_beliefs_line(unit_data, context)
                 if beliefs_line != "":
                     lines.append(beliefs_line)
-                    var drift_line := _band_culture_drift_line(unit_data)
-                    if drift_line != "":
-                        lines.append(drift_line)
             if growth_line != "":
                 lines.append(growth_line)
     if with_position:
@@ -941,7 +922,7 @@ func _belief_reading(unit_data: Dictionary) -> Dictionary:
             BELIEFS_PULL_TERM_FORMAT % [absf(pull_devout), _devout_word(pull_devout)],
             BELIEFS_PULL_TERM_FORMAT % [absf(pull_traditional), _traditional_word(pull_traditional)]]
     return {"terms": terms, "values": values, "pulling": pulling, "pull_sentence": sentence,
-        "at_risk": at_risk}
+        "at_risk": at_risk, "drift": _drift_reading(unit_data)}
 
 func _belief_mark() -> String:
     return BELIEFS_ANCESTORS_MARK_FORMAT % [
@@ -959,6 +940,9 @@ func _beliefs_hover(reading: Dictionary) -> String:
         text += String(reading["pull_sentence"])
     else:
         text += BELIEFS_UNTIED_TOOLTIP_FORMAT % [BELIEFS_WORD_DEVOUT, BELIEFS_WORD_TRADITIONAL]
+    var drift: Dictionary = reading["drift"]
+    if not drift.is_empty():
+        text += " " + String(drift["sentence"])
     if bool(reading["at_risk"]):
         text += " " + HudDisclosureVocab.BELIEFS_BREAK_AWAY_TOOLTIP
     return text
@@ -976,26 +960,42 @@ func _band_beliefs_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> Str
         value += BELIEFS_TERM_SEPARATOR + _break_away_clause()
     if bool(reading["pulling"]):
         value += _belief_mark()
+    if not (reading["drift"] as Dictionary).is_empty():
+        value += _drift_mark()
     ctx.row_tooltips[HudDisclosureVocab.DETAIL_ROW_BELIEFS] = _beliefs_hover(reading)
     return HudDisclosureVocab.DETAIL_ROW_BELIEFS + DetailFormat.DETAIL_KV_SEPARATOR + value
 
-## `Drifting toward the Red Hill band — Open +0.02/turn`, or `""` when the band takes no contact pull
-## (source 0, or a label the decoder did not state). The pole is the end of the axis the delta's sign
-## moves toward: negative -> the label's first pole, positive -> its second.
-func _band_culture_drift_line(unit_data: Dictionary) -> String:
-    var source := int(unit_data.get(BAND_CULTURE_DRIFT_SOURCE_KEY, HudConst.NO_BAND_ID))
+## The contact-drift reading for the Beliefs row: `{sentence}` (the hover's drift half), or `{}` when no
+## FOREIGN band pulls this band or the pull would print as zero (`BELIEFS_DRIFT_DECIMALS`).
+func _drift_reading(unit_data: Dictionary) -> Dictionary:
+    var source := int(unit_data.get(HudDisclosureVocab.BELIEFS_DRIFT_SOURCE_KEY, HudConst.NO_BAND_ID))
     if source == HudConst.NO_BAND_ID:
-        return ""
-    var poles := String(unit_data.get(BAND_CULTURE_DRIFT_LABEL_KEY, "")).split(
-        CULTURE_DRIFT_POLE_SEPARATOR, false)
+        return {}
+    var delta := float(unit_data.get(HudDisclosureVocab.BELIEFS_DRIFT_DELTA_KEY, 0.0))
+    var magnitude := String.num(absf(delta), HudDisclosureVocab.BELIEFS_DRIFT_DECIMALS)
+    if is_zero_approx(float(magnitude)):
+        return {}
+    var poles := String(unit_data.get(HudDisclosureVocab.BELIEFS_DRIFT_LABEL_KEY, "")).split(
+        HudDisclosureVocab.BELIEFS_DRIFT_POLE_SEPARATOR, false)
     if poles.size() != 2:
-        return ""
-    var delta := float(unit_data.get(BAND_CULTURE_DRIFT_DELTA_KEY, 0.0))
+        return {}
     var pole := String(poles[1]) if delta > 0.0 else String(poles[0])
-    var source_name := _band_labor.band_label_for_id(source)
-    if source_name == "":
-        return CULTURE_DRIFT_UNNAMED_LINE_FORMAT % [CULTURE_DRIFT_UNKNOWN_SOURCE, pole, absf(delta)]
-    return CULTURE_DRIFT_LINE_FORMAT % [source_name, pole, absf(delta)]
+    var band := _band_labor.foreign_band(source)
+    var band_name := _band_labor.band_label_for_id(source)
+    var people := ""
+    if not band.is_empty():
+        band_name = HudFormat.band_name(band)
+        people = FactionNames.name_of(int(band.get("faction", HudConst.NO_FACTION_ID)))
+    var who := HudDisclosureVocab.BELIEFS_DRIFT_UNKNOWN_BAND
+    var parenthetical := ""
+    if band_name != "":
+        who = HudDisclosureVocab.BELIEFS_DRIFT_BAND_FORMAT % band_name
+        if people != "":
+            parenthetical = HudDisclosureVocab.BELIEFS_DRIFT_PEOPLE_FORMAT % people
+    return {"sentence": HudDisclosureVocab.BELIEFS_DRIFT_SENTENCE_FORMAT % [who, parenthetical, pole, magnitude]}
+
+func _drift_mark() -> String:
+    return BELIEFS_ANCESTORS_MARK_FORMAT % [HudStyle.BELIEF.to_html(false), HudDisclosureVocab.BELIEFS_DRIFT_GLYPH]
 
 ## The `compact` tier's Beliefs clause: the violet mark while the band takes a pull, and the amber
 ## `may break away` words while the sim flags it at risk (a warning must not vanish in the short tier).
@@ -1003,7 +1003,8 @@ func _band_culture_drift_line(unit_data: Dictionary) -> String:
 ## `""` when neither holds.
 func _band_beliefs_compact_clause(unit_data: Dictionary, ctx: DetailFormat.Context) -> String:
     var reading := _belief_reading(unit_data)
-    if reading.is_empty() or not (bool(reading["pulling"]) or bool(reading["at_risk"])):
+    if reading.is_empty() or not (bool(reading["pulling"]) or bool(reading["at_risk"])
+            or not (reading["drift"] as Dictionary).is_empty()):
         return ""
     ctx.row_tooltips[HudDisclosureVocab.DETAIL_ROW_BELIEFS] = _beliefs_hover(reading)
     var clause := ""
@@ -1011,6 +1012,8 @@ func _band_beliefs_compact_clause(unit_data: Dictionary, ctx: DetailFormat.Conte
         clause += BELIEFS_TERM_SEPARATOR + _break_away_clause()
     if bool(reading["pulling"]):
         clause += _belief_mark()
+    if not (reading["drift"] as Dictionary).is_empty():
+        clause += _drift_mark()
     return DetailFormat.hover_wrap(HudDisclosureVocab.DETAIL_ROW_BELIEFS, clause, ctx)
 
 ## A culture vector off the cohort dict, `[]` unless it is a full `CULTURE_AXIS_COUNT` entries (an

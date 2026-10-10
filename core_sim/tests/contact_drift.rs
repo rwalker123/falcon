@@ -15,14 +15,14 @@ use bevy::prelude::*;
 use core_sim::{
     build_test_app, mutual_contact_ties, publish_baseline_snapshot, reconcile_band_culture_layers,
     reconcile_culture_layers, scalar_from_f32, BandId, ConnectionKey, ConnectionLedger,
-    ConnectionsConfigHandle, ContactTie, CultureManager, CultureOwner, CultureTraitAxis,
+    ConnectionsConfigHandle, ContactTie, CultureManager, CultureOwner, CultureTraitAxis, FactionId,
     InfluencerCultureResonance, ResidentBand, Scalar, Sighting, SimulationTick, SnapshotHistory,
     CULTURE_TRAIT_AXES, CULTURE_TRAIT_SPAN,
 };
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
 mod faction_support;
-use faction_support::one_faction_world;
+use faction_support::{one_faction_world, two_faction_world, HOME, RIVAL};
 
 const RATE: f32 = 0.014;
 const A: BandId = BandId(1);
@@ -34,6 +34,22 @@ const GAP: f32 = 1.0;
 
 fn json_round_trip<T: serde::Serialize + serde::de::DeserializeOwned>(value: &T) -> T {
     serde_json::from_str(&serde_json::to_string(value).unwrap()).unwrap()
+}
+
+/// Every staged band its own people, so every tie is a foreign one.
+fn each_a_people() -> BTreeMap<u64, FactionId> {
+    [(A, 1), (B, 2), (C, 3)]
+        .into_iter()
+        .map(|(band, faction)| (band.0, FactionId(faction)))
+        .collect()
+}
+
+/// `A` and `B` one people, `C` another.
+fn a_and_b_kin() -> BTreeMap<u64, FactionId> {
+    [(A, 1), (B, 1), (C, 2)]
+        .into_iter()
+        .map(|(band, faction)| (band.0, FactionId(faction)))
+        .collect()
 }
 
 fn purist_axis() -> usize {
@@ -107,6 +123,7 @@ fn two_equal_neutral_bands_at_a_full_tie_close_the_gap_by_the_rate() {
     let mut manager = pair();
     manager.apply_contact_drift(
         RATE,
+        &each_a_people(),
         &weights(&[(A, EQUAL_WEIGHT), (B, EQUAL_WEIGHT)]),
         &[full_tie(A, B)],
     );
@@ -128,7 +145,7 @@ fn half_the_gap_closes_in_about_fifty_turns() {
     }
     let weights = weights(&[(A, EQUAL_WEIGHT), (B, EQUAL_WEIGHT)]);
     for _ in 0..HALF_GAP_TURNS {
-        manager.apply_contact_drift(RATE, &weights, &[full_tie(A, B)]);
+        manager.apply_contact_drift(RATE, &each_a_people(), &weights, &[full_tie(A, B)]);
         for band in [A, B] {
             let follow = scalar_from_f32(modifier(&manager, band, GAP_AXIS));
             manager
@@ -176,9 +193,10 @@ fn a_tie_that_runs_one_way_moves_nothing_and_a_mutual_one_is_the_weaker_side() {
     let mut full = pair();
     let mut half = pair();
     let w = weights(&[(A, EQUAL_WEIGHT), (B, EQUAL_WEIGHT)]);
-    full.apply_contact_drift(RATE, &w, &[full_tie(A, B)]);
+    full.apply_contact_drift(RATE, &each_a_people(), &w, &[full_tie(A, B)]);
     half.apply_contact_drift(
         RATE,
+        &each_a_people(),
         &w,
         &[ContactTie {
             a: A,
@@ -192,7 +210,12 @@ fn a_tie_that_runs_one_way_moves_nothing_and_a_mutual_one_is_the_weaker_side() {
 #[test]
 fn the_smaller_band_moves_more() {
     let mut manager = pair();
-    manager.apply_contact_drift(RATE, &weights(&[(A, 10.0), (B, 30.0)]), &[full_tie(A, B)]);
+    manager.apply_contact_drift(
+        RATE,
+        &each_a_people(),
+        &weights(&[(A, 10.0), (B, 30.0)]),
+        &[full_tie(A, B)],
+    );
     let small = modifier(&manager, A, GAP_AXIS).abs();
     let large = modifier(&manager, B, GAP_AXIS).abs();
     // A (10 of 40) is pulled by B's 30/40 share; B by A's 10/40: a ratio of three.
@@ -207,6 +230,7 @@ fn a_purist_band_moves_less_and_a_syncretic_one_more() {
         set_value(&mut manager, A, purist_axis(), purist);
         manager.apply_contact_drift(
             RATE,
+            &each_a_people(),
             &weights(&[(A, EQUAL_WEIGHT), (B, EQUAL_WEIGHT)]),
             &[full_tie(A, B)],
         );
@@ -233,7 +257,12 @@ fn the_result_does_not_depend_on_the_order_bands_or_ties_are_visited() {
         set_value(&mut manager, C, GAP_AXIS, -0.7);
         set_value(&mut manager, B, purist_axis(), 0.9);
         let ties: Vec<ContactTie> = tie_order.iter().map(|(a, b)| full_tie(*a, *b)).collect();
-        manager.apply_contact_drift(RATE, &weights(&[(A, 5.0), (B, 12.0), (C, 20.0)]), &ties);
+        manager.apply_contact_drift(
+            RATE,
+            &each_a_people(),
+            &weights(&[(A, 5.0), (B, 12.0), (C, 20.0)]),
+            &ties,
+        );
         [A, B, C].map(|band| {
             (0..CULTURE_TRAIT_AXES)
                 .map(|axis| modifier(&manager, band, axis).to_bits())
@@ -254,6 +283,7 @@ fn a_rate_of_zero_reproduces_the_culture_with_no_drift() {
             if drift {
                 manager.apply_contact_drift(
                     0.0,
+                    &each_a_people(),
                     &weights(&[(A, EQUAL_WEIGHT), (B, EQUAL_WEIGHT)]),
                     &[full_tie(A, B)],
                 );
@@ -279,6 +309,7 @@ fn drift_writes_the_modifier_it_persists_and_it_survives_a_checkpoint() {
     let mut manager = pair();
     manager.apply_contact_drift(
         RATE,
+        &each_a_people(),
         &weights(&[(A, EQUAL_WEIGHT), (B, EQUAL_WEIGHT)]),
         &[full_tie(A, B)],
     );
@@ -313,6 +344,7 @@ fn the_strongest_pull_names_its_source_and_its_axis_and_ties_go_to_the_lower_id(
     set_value(&mut manager, C, 2, -1.0);
     manager.apply_contact_drift(
         RATE,
+        &each_a_people(),
         &weights(&[(A, 10.0), (B, 10.0), (C, 10.0)]),
         &[full_tie(A, B), full_tie(A, C)],
     );
@@ -330,6 +362,7 @@ fn the_strongest_pull_names_its_source_and_its_axis_and_ties_go_to_the_lower_id(
     set_value(&mut tied, C, 0, 0.5);
     tied.apply_contact_drift(
         RATE,
+        &each_a_people(),
         &weights(&[(A, 10.0), (B, 10.0), (C, 10.0)]),
         &[full_tie(A, C), full_tie(A, B)],
     );
@@ -341,14 +374,19 @@ fn the_strongest_pull_names_its_source_and_its_axis_and_ties_go_to_the_lower_id(
 
     // Identical bands pull nothing, and publish nothing.
     let mut same = manager_with(&[A, B]);
-    same.apply_contact_drift(RATE, &weights(&[(A, 10.0), (B, 10.0)]), &[full_tie(A, B)]);
+    same.apply_contact_drift(
+        RATE,
+        &each_a_people(),
+        &weights(&[(A, 10.0), (B, 10.0)]),
+        &[full_tie(A, B)],
+    );
     assert!(same
         .applied_contact_pull(CultureOwner::from_band(A))
         .is_none());
 }
 
 #[test]
-fn the_strongest_pull_is_on_the_encoded_snapshot() {
+fn a_kin_pull_moves_the_culture_and_publishes_nothing_on_the_encoded_snapshot() {
     let mut app = one_faction_world();
     let (home_entity, home_id) = app
         .world
@@ -389,6 +427,13 @@ fn the_strongest_pull_is_on_the_encoded_snapshot() {
             layer.traits.update_value(gap_axis, scalar_from_f32(value));
         }
     }
+    let seeded_before = app
+        .world
+        .resource::<CultureManager>()
+        .band_layer_by_owner(CultureOwner::from_band(home_id))
+        .unwrap()
+        .traits
+        .modifier()[gap_axis];
     app.world.run_system_once(reconcile_culture_layers);
 
     publish_baseline_snapshot(&mut app.world);
@@ -410,12 +455,122 @@ fn the_strongest_pull_is_on_the_encoded_snapshot() {
         .collect();
     let home_row = rows.iter().find(|r| r.bandId() == home_id.0).unwrap();
     let sibling_row = rows.iter().find(|r| r.bandId() == sibling.0).unwrap();
-    assert_eq!(home_row.cultureDriftSourceBand(), sibling.0);
-    assert_eq!(sibling_row.cultureDriftSourceBand(), home_id.0);
-    assert_eq!(home_row.cultureDriftAxis() as usize, gap_axis);
+    // Kin drift runs but is not published: no source, no delta.
+    assert_eq!(home_row.cultureDriftSourceBand(), 0);
+    assert_eq!(sibling_row.cultureDriftSourceBand(), 0);
+    assert_eq!(home_row.cultureDriftDelta(), 0.0);
+    let moved = app
+        .world
+        .resource::<CultureManager>()
+        .band_layer_by_owner(CultureOwner::from_band(home_id))
+        .unwrap()
+        .traits
+        .modifier()[gap_axis];
     assert!(
-        home_row.cultureDriftDelta() > 0.0,
-        "home drifts up toward +1"
+        moved > seeded_before,
+        "**LIVENESS**: the kin tie still pulled the culture ({moved} vs {seeded_before})"
     );
-    assert!(sibling_row.cultureDriftDelta() < 0.0, "sibling drifts down");
+}
+
+#[test]
+fn a_band_tied_to_kin_alone_publishes_no_pull_while_its_culture_still_moves() {
+    let mut manager = pair();
+    let kin: BTreeMap<u64, FactionId> = [(A, 1), (B, 1)]
+        .into_iter()
+        .map(|(band, faction)| (band.0, FactionId(faction)))
+        .collect();
+    manager.apply_contact_drift(
+        RATE,
+        &kin,
+        &weights(&[(A, EQUAL_WEIGHT), (B, EQUAL_WEIGHT)]),
+        &[full_tie(A, B)],
+    );
+    assert!(
+        modifier(&manager, A, GAP_AXIS) > 0.0,
+        "kin drift still runs"
+    );
+    assert!(manager
+        .applied_contact_pull(CultureOwner::from_band(A))
+        .is_none());
+}
+
+#[test]
+fn a_strong_kin_and_a_weak_foreign_band_publish_the_foreign_one() {
+    let mut manager = manager_with(&[A, B, C]);
+    // B (kin) is far away on axis 0; C (another people) a small step away on axis 2.
+    set_value(&mut manager, B, 0, 2.0);
+    set_value(&mut manager, C, 2, 0.1);
+    manager.apply_contact_drift(
+        RATE,
+        &a_and_b_kin(),
+        &weights(&[(A, 10.0), (B, 10.0), (C, 10.0)]),
+        &[full_tie(A, B), full_tie(A, C)],
+    );
+    let pull = manager
+        .applied_contact_pull(CultureOwner::from_band(A))
+        .copied()
+        .expect("the foreign pull is published");
+    assert_eq!(pull.source, C.0);
+    assert_eq!(pull.axis, 2);
+    // The kin pull was the larger one and still moved the culture.
+    assert!(modifier(&manager, A, 0) > modifier(&manager, A, 2).abs());
+}
+
+#[test]
+fn a_foreign_pull_is_on_the_encoded_snapshot() {
+    let mut app = two_faction_world();
+    let band_of = |app: &mut App, faction: FactionId| {
+        app.world
+            .query_filtered::<(&BandId, &core_sim::PopulationCohort), With<ResidentBand>>()
+            .iter(&app.world)
+            .filter(|(_, cohort)| cohort.faction == faction)
+            .map(|(band, _)| *band)
+            .min()
+            .expect("the people has a band")
+    };
+    let home_id = band_of(&mut app, HOME);
+    let rival_id = band_of(&mut app, RIVAL);
+    app.world.run_system_once(reconcile_band_culture_layers);
+    let mut ledger = ConnectionLedger::default();
+    for key in [
+        ConnectionKey::new(home_id, rival_id),
+        ConnectionKey::new(rival_id, home_id),
+    ] {
+        ledger.insert_full_tie(key, &Sighting::new(UVec2::ZERO, 1, ""), 1);
+    }
+    app.world.insert_resource(ledger);
+    let gap_axis = CultureTraitAxis::OpenClosed.index();
+    {
+        let mut manager = app.world.resource_mut::<CultureManager>();
+        for (band, value) in [(home_id, -1.0), (rival_id, 1.0)] {
+            manager
+                .band_layer_mut_by_owner(CultureOwner::from_band(band))
+                .unwrap()
+                .traits
+                .update_value(gap_axis, scalar_from_f32(value));
+        }
+    }
+    app.world.run_system_once(reconcile_culture_layers);
+
+    publish_baseline_snapshot(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref()).to_vec();
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let home_row = envelope
+        .payload_as_snapshot()
+        .unwrap()
+        .population()
+        .and_then(|section| section.populations())
+        .unwrap()
+        .iter()
+        .find(|row| row.bandId() == home_id.0)
+        .expect("the viewer's own band is published in full");
+    assert_eq!(home_row.cultureDriftSourceBand(), rival_id.0);
+    assert_eq!(home_row.cultureDriftAxis() as usize, gap_axis);
+    assert!(home_row.cultureDriftDelta() > 0.0);
 }

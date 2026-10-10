@@ -1450,29 +1450,83 @@ func _belief_culture_states() -> void:
 	h._hud.show_unit_selection(BandFx.band_fixture())
 	await h._settle()
 
-## THE CONTACT-DRIFT LINE (issue #702): `Drifting toward the Red Hill band — Open +0.02/turn`, beneath
-## Beliefs. The source band is joined on its BandId against the roster the HUD already holds.
+## THE CONTACT-DRIFT MARK (issue #702): a violet arrow at the end of the Beliefs value while a FOREIGN
+## band pulls this band's culture, and one hover sentence naming the band, its people and the pole.
 const DRIFT_BAND_ENTITY := 917
 const DRIFT_SOURCE_BAND_ID := 7102
 const DRIFT_SOURCE_NAME := "Red Hill"
+const DRIFT_SOURCE_FACTION := 1
+const DRIFT_PEOPLE_NAME := "Ashfolk"
 const DRIFT_UNKNOWN_SOURCE_BAND_ID := 7103
 const DRIFT_AXIS_OPEN_CLOSED := 1
 const DRIFT_AXIS_LABEL := "Open \u2194 Closed"
 const DRIFT_DELTA := -0.02
-const DRIFT_ROW := "Drifting toward the Red Hill band \u2014 Open +0.02/turn"
-const DRIFT_ROW_CLOSED := "Closed +0.02/turn"
-const DRIFT_ROW_UNKNOWN := "Drifting toward another band \u2014 Open +0.02/turn"
-const DRIFT_ROW_NEEDLE := "Drifting toward"
+const DRIFT_DELTA_ROUNDS_TO_ZERO := 0.004
+const DRIFT_SENTENCE := "Drifting toward the Red Hill band (Ashfolk) \u2014 Open +0.02/turn."
+const DRIFT_SENTENCE_CLOSED := "Closed +0.02/turn."
+const DRIFT_SENTENCE_UNKNOWN := "Drifting toward another band \u2014 Open +0.02/turn."
+const DRIFT_SENTENCE_NEEDLE := "Drifting toward"
 
 func _drift_band_fixture(source_band: int, delta: float) -> Dictionary:
 	var band := BandFx.band_fixture()
 	band["entity"] = DRIFT_BAND_ENTITY
 	band["culture_traits"] = _culture_vector(BELIEFS_TIED_DEVOUT, BELIEFS_TIED_TRADITIONAL)
+	band["culture_ancestor_pull"] = _culture_vector(BELIEFS_PULL_DEVOUT, BELIEFS_PULL_TRADITIONAL)
 	band["culture_drift_source_band"] = source_band
 	band["culture_drift_axis"] = DRIFT_AXIS_OPEN_CLOSED
 	band["culture_drift_axis_label"] = DRIFT_AXIS_LABEL
 	band["culture_drift_delta"] = delta
 	return band
+
+## Show the drifting band and return `{glyph, hover}`: whether the Beliefs value carries the arrow, and
+## the sentence the Beliefs hover answers with (read the way the engine does, via the hover signal).
+func _drift_probe(source_band: int, delta: float, save_as: String = "") -> Dictionary:
+	h._hud.show_unit_selection(_drift_band_fixture(source_band, delta))
+	await h._settle()
+	if save_as != "":
+		await h._save(save_as)
+	var label: RichTextLabel = h._hud.occupant_detail
+	var meta := HudDisclosureVocab.ROW_HOVER_META_PREFIX + HudDisclosureVocab.DETAIL_ROW_BELIEFS
+	label.meta_hover_started.emit(meta)
+	var hover := String(label.tooltip_text)
+	label.meta_hover_ended.emit(meta)
+	return {"glyph": String(label.text).contains(HudDisclosureVocab.BELIEFS_DRIFT_GLYPH), "hover": hover}
+
+func _culture_drift_states() -> void:
+	var source := BandFx.band_fixture()
+	source["entity"] = DRIFT_BAND_ENTITY + 1
+	source["band_id"] = DRIFT_SOURCE_BAND_ID
+	source["name"] = DRIFT_SOURCE_NAME
+	source["faction"] = DRIFT_SOURCE_FACTION
+	h._hud._band_labor.set_foreign_bands([source])
+	FactionNames.update([{"faction": DRIFT_SOURCE_FACTION, "name": DRIFT_PEOPLE_NAME}])
+	var pulled := await _drift_probe(DRIFT_SOURCE_BAND_ID, DRIFT_DELTA, "band_culture_drift")
+	h._assert_hud("a foreign pull puts the arrow on the Beliefs value, and the hover names band, people and pole",
+		bool(pulled["glyph"]) and String(pulled["hover"]).contains(DRIFT_SENTENCE))
+	h._assert_hud("…the arrow is in the belief violet, after the urn",
+		String(h._hud.occupant_detail.text).contains("[color=#%s]%s[/color]" % [
+			HudStyle.BELIEF.to_html(false), HudDisclosureVocab.BELIEFS_DRIFT_GLYPH]))
+	h._assert_hud("…and no drift LINE is drawn any more",
+		not _flat(String(h._hud.occupant_detail.get_parsed_text())).contains(DRIFT_SENTENCE_NEEDLE))
+	var flipped := await _drift_probe(DRIFT_SOURCE_BAND_ID, -DRIFT_DELTA)
+	h._assert_hud("…a positive delta names the axis's other pole: `%s`" % DRIFT_SENTENCE_CLOSED,
+		String(flipped["hover"]).contains(DRIFT_SENTENCE_CLOSED))
+	var unnamed := await _drift_probe(DRIFT_UNKNOWN_SOURCE_BAND_ID, DRIFT_DELTA)
+	h._assert_hud("an unresolvable source reads `%s`, no raw id" % DRIFT_SENTENCE_UNKNOWN,
+		bool(unnamed["glyph"]) and String(unnamed["hover"]).contains(DRIFT_SENTENCE_UNKNOWN)
+			and not String(unnamed["hover"]).contains(str(DRIFT_UNKNOWN_SOURCE_BAND_ID)))
+	FactionNames.reset()
+	var no_people := await _drift_probe(DRIFT_SOURCE_BAND_ID, DRIFT_DELTA)
+	h._assert_hud("a band whose people cannot be named drops the parenthetical, never a `Faction N`",
+		String(no_people["hover"]).contains("Drifting toward the Red Hill band \u2014 Open +0.02/turn.")
+			and not String(no_people["hover"]).contains("("))
+	var zero := await _drift_probe(DRIFT_SOURCE_BAND_ID, DRIFT_DELTA_ROUNDS_TO_ZERO)
+	h._assert_hud("a pull that rounds to +0.00 shows NO arrow and NO sentence",
+		not bool(zero["glyph"]) and not String(zero["hover"]).contains(DRIFT_SENTENCE_NEEDLE))
+	var none := await _drift_probe(HudConst.NO_BAND_ID, 0.0)
+	h._assert_hud("source 0 shows neither",
+		not bool(none["glyph"]) and not String(none["hover"]).contains(DRIFT_SENTENCE_NEEDLE))
+	h._hud._band_labor.set_foreign_bands([])
 
 ## THE BREAK-AWAY WARNING (#702): `Beliefs  devout · traditional · may break away`, the clause in the
 ## warning ink and the Beliefs hover one sentence longer. A flag false draws none.
@@ -1515,36 +1569,6 @@ func _break_away_states() -> void:
 	h._hud.occupant_detail.meta_hover_ended.emit(hover_meta)
 	h._assert_hud("…and nothing is hovered at rest",
 		String(h._hud.occupant_detail.tooltip_text) == "")
-
-func _culture_drift_states() -> void:
-	var source := BandFx.band_fixture()
-	source["entity"] = DRIFT_BAND_ENTITY + 1
-	source["band_id"] = DRIFT_SOURCE_BAND_ID
-	source["name"] = DRIFT_SOURCE_NAME
-	h._hud._band_labor._player_bands = [source]
-	h._hud.show_unit_selection(_drift_band_fixture(DRIFT_SOURCE_BAND_ID, DRIFT_DELTA))
-	await h._settle()
-	await h._save("band_culture_drift")
-	var drifting := _flat(String(h._hud.occupant_detail.get_parsed_text()))
-	h._assert_hud("a band drifting toward a known band reads `%s`" % DRIFT_ROW,
-		drifting.contains(DRIFT_ROW))
-	# The pole follows the delta's sign: a positive delta on the same axis moves toward Closed.
-	h._hud.show_unit_selection(_drift_band_fixture(DRIFT_SOURCE_BAND_ID, -DRIFT_DELTA))
-	await h._settle()
-	h._assert_hud("…and a positive delta names the axis's other pole: `%s`" % DRIFT_ROW_CLOSED,
-		_flat(String(h._hud.occupant_detail.get_parsed_text())).contains(DRIFT_ROW_CLOSED))
-	# A source the roster cannot name is `another band`, never a raw BandId.
-	h._hud.show_unit_selection(_drift_band_fixture(DRIFT_UNKNOWN_SOURCE_BAND_ID, DRIFT_DELTA))
-	await h._settle()
-	var unnamed := _flat(String(h._hud.occupant_detail.get_parsed_text()))
-	h._assert_hud("an unnameable source reads `%s`, no raw id" % DRIFT_ROW_UNKNOWN,
-		unnamed.contains(DRIFT_ROW_UNKNOWN) and not unnamed.contains(str(DRIFT_UNKNOWN_SOURCE_BAND_ID)))
-	# No pull (source 0): no line at all.
-	h._hud.show_unit_selection(_drift_band_fixture(HudConst.NO_BAND_ID, 0.0))
-	await h._settle()
-	h._assert_hud("a band with no contact pull draws NO drift line",
-		not _flat(String(h._hud.occupant_detail.get_parsed_text())).contains(DRIFT_ROW_NEEDLE))
-	h._hud._band_labor._player_bands = []
 
 ## A band that HOLDS something which eats a good. Its own entity, for the disclosure key's sake.
 func _standing_bill_band_fixture() -> Dictionary:

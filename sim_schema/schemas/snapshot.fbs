@@ -1535,7 +1535,9 @@ table PopulationCohortState {
   breedingPeoples:[BreedingPeopleState];
   // --- CULTURE OVER A CONNECTION (appended last, issue #702) -------------------------------------
   // Own bands only: a foreign (redacted) row carries the defaults. The STRONGEST contact pull the
-  // band took this turn (contact drift, `culture.contact_drift.rate`): the band it drifted toward,
+  // band took this turn from ANOTHER PEOPLE's band (contact drift, `culture.contact_drift.rate`;
+  // a pull from its own people's bands moves its culture and is never published): the band it
+  // drifted toward,
   // the axis that pull moved most (a `CultureTraitAxis` index, `cultureTraits` order) and that
   // axis's signed delta per turn. `cultureDriftSourceBand` == 0 (BandId 0 is "unset") = no pull this
   // turn, and the axis and delta are then 0.
