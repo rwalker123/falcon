@@ -1755,3 +1755,26 @@ with no pull adds nothing there (`_band_beliefs_compact_clause`).
   ancestors states). The chapter also asserts the flipped words, no row on an empty layer, no row on a
   rival, that the row fits one line, and (`band_panel_preview`, `_assert_beliefs_compact_clause` on
   `band_panel_vitals_worst_case`) the compact tier's mark, hover and no-pull silence.
+
+## The fourth growth factor and the Family limit row (issue #691)
+
+The sim publishes a breeding ceiling (`.claude/rules/core_sim/campaign.md` -> "The breeding
+ceiling"). The Band tab states its EFFECT on growth; the limit itself is a FACTION-page row.
+
+- **Growth is hunger x reserve x trend x ceiling.** `DetailFormat.band_fertility` multiplies
+  `HudLineageVocab.ceiling_factor` in (`fertility_ceiling`, neutral 1.0 when absent), so the Growth
+  value, its tint, the concerning caret and the faction page's weighted Growth all carry it. The
+  breakdown gets a fourth row through `fertility_breakdown_row`, `too few families`
+  (`FERTILITY_LABEL_CEILING`), shown like the others only when more than
+  `fertility_breakdown_epsilon` off 1.0.
+- **A product that rounds to 0% reads `Births stopped`, in DANGER ink,** instead of `0% of normal`
+  (`DetailFormat.growth_is_stopped` / `growth_value_text`; the merged short-tier clause uses
+  `growth_value_short_text`). Starvation (hunger 0) and a full ceiling both land there. A zero
+  reserve stays the not-projected sentinel: no Growth row.
+- **The Band tab carries no Family limit row.** The row lives on the faction page; see
+  `band-city-panel.md` -> "The faction page's Family limit row".
+- **The two world constants** (`lineage_people_per_line`, `lineage_free_breeding_at`) are latched by
+  `LineageWorld` from every frame that states them (0 = unchanged) and cleared per world by
+  `Main._reset_per_world_state`.
+- **Frames:** `family_limit_band_tab` (row absent, `Births stopped`, the breakdown's fourth row;
+  `band_panel_family_limit.gd`, see `harness-band-panel.md`).

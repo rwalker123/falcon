@@ -850,6 +850,8 @@ const FLORA_COMPOSITION_SUBLINE_FORMAT := "%s%s %s"
 # deltas: these factors combine by product, and three percentages that refuse to sum to the headline
 # would invite arithmetic they cannot support. See `fertility_breakdown_row`.
 const GROWTH_ROW_FORMAT := "Growth: %d%% of normal"
+# A fraction -> whole percent.
+const GROWTH_PERCENT_SCALE := 100.0
 # The same reading with the anchor DROPPED, for the SHORT band-zone tier's MERGED Morale+Growth line
 # (`BandDetailLines.BAND_MORALE_GROWTH_CLAUSE_FORMAT`). The anchor is what makes a standalone `150%`
 # legible, and it is exactly what a merged line cannot afford: the vitals label is `AUTOWRAP_WORD`, so
@@ -874,6 +876,12 @@ const FERTILITY_LABEL_HUNGER := "short rations"
 const FERTILITY_LABEL_RESERVE := "storage reserve"
 const FERTILITY_LABEL_TREND_GROWING := "storage growing"
 const FERTILITY_LABEL_TREND_SHRINKING := "storage shrinking"
+# The FOURTH factor (issue #691): the breeding population's room for the births. Always a deficit when
+# it lists, so it has the one direction and the one word.
+const FERTILITY_LABEL_CEILING := "too few families"
+# The Growth value when the product rounds to nothing (the shown precision is whole percent): a stopped
+# birth rate reads as the fact, not as `0% of normal`. In DANGER ink.
+const GROWTH_STOPPED_TEXT := "Births stopped"
 
 ## The longest `Key` `_split_kv` will align into a table row; anything wider reads as a sentence.
 const DETAIL_KEY_MAX_LENGTH := 16
@@ -918,6 +926,8 @@ class Context extends RefCounted:
     ## NAN when there is no band, or when the sim published no reading yet (the not-projected
     ## sentinel) — in which case no Growth row was emitted to tint.
     var fertility: float = NAN
+    ## The `Family limit` row's value reads amber while the ceiling is biting (`fertility_ceiling < 1`).
+    var family_limit_amber: bool = false
     var disclosures: Dictionary = {}
     ## **THE PER-ROW HOVER, keyed by the row's own KEY** — `{"Cultivation": "This ground is
     ## slipping — …"}`. A detail surface is ONE `RichTextLabel`, so a row cannot carry a
@@ -951,6 +961,14 @@ static func detail_bbcode(lines: Array, ctx: Context = null) -> String:
                 out += "[/table]"
                 table_open = false
             out += "\n"
+            continue
+        # THE BREEDING CEILING'S LINES (issue #691): popover table rows, the amber `◆` bullet and the
+        # faint notes. They ride behind control-character sentinels (`HudLineageVocab`) because the
+        # popover payload is a list of strings and a plain `Key: value` carries one ink per row.
+        if HudLineageVocab.is_lineage_line(line):
+            var rendered := HudLineageVocab.line_bbcode(line, table_open)
+            out += String(rendered["bbcode"])
+            table_open = bool(rendered["table_open"])
             continue
         # INDENTED SUB-ROWS — ONE branch for every family that hangs rows beneath a headline row.
         # They render full-width (never as a lopsided table row), and THE SIGN GLYPH DECIDES THE TINT:
@@ -1107,7 +1125,12 @@ static func _value_hex(key: String, value: String, ctx: Context) -> String:
         # The player band's morale row tints by the morale thresholds.
         if not is_nan(ctx.morale):
             return BandFoodStatus.hex_for_morale(ctx.morale)
+    elif key == HudDisclosureVocab.DETAIL_ROW_FAMILY_LIMIT:
+        return HudStyle.WARN_HEX if ctx.family_limit_amber else HudStyle.INK_HEX
     elif key == HudDisclosureVocab.DETAIL_ROW_GROWTH:
+        # A stopped birth rate is the one reading that is not a percentage: the danger ink, always.
+        if value.begins_with(GROWTH_STOPPED_TEXT):
+            return HudStyle.DANGER_HEX
         # The band's birth rate as a share of normal, tinted by the fertility buckets. Same
         # ink → amber → red grading as `BandFoodStatus.color_for_output` and for the same reason: normal
         # growth is normal, not a "good", so the top bucket is neutral ink even when the band
@@ -3294,7 +3317,35 @@ static func band_fertility(band: Dictionary) -> float:
         return BandFoodStatus.FERTILITY_NEUTRAL
     return float(band.get("fertility_hunger", BandFoodStatus.FERTILITY_NEUTRAL)) \
         * float(band.get("fertility_reserve", BandFoodStatus.FERTILITY_NEUTRAL)) \
-        * float(band.get("fertility_trend", BandFoodStatus.FERTILITY_NEUTRAL))
+        * float(band.get("fertility_trend", BandFoodStatus.FERTILITY_NEUTRAL)) \
+        * HudLineageVocab.ceiling_factor(band)
+
+## Does the Growth multiplier read as nothing at the shown precision (whole percent)? Then the row says
+## `Births stopped`. Starvation (hunger 0) and a full breeding ceiling (ceiling 0) both land here.
+static func growth_is_stopped(band: Dictionary) -> bool:
+    return fertility_is_stopped(band_fertility(band))
+
+## The same test on a bare multiplier - the faction page's weighted mean goes through it too.
+static func fertility_is_stopped(fertility: float) -> bool:
+    return int(round(fertility * GROWTH_PERCENT_SCALE)) == 0
+
+## The Growth value for a bare multiplier: `150% of normal`, or `Births stopped`.
+static func growth_text_for(fertility: float) -> String:
+    if fertility_is_stopped(fertility):
+        return GROWTH_STOPPED_TEXT
+    return (GROWTH_VALUE_SHORT_FORMAT + GROWTH_ROW_ANCHOR_SUFFIX) % int(round(fertility * GROWTH_PERCENT_SCALE))
+
+## The Growth VALUE for the full row: `150% of normal`, or `Births stopped`.
+static func growth_value_text(band: Dictionary) -> String:
+    if growth_is_stopped(band):
+        return GROWTH_STOPPED_TEXT
+    return (GROWTH_VALUE_SHORT_FORMAT + GROWTH_ROW_ANCHOR_SUFFIX) % int(round(band_fertility(band) * GROWTH_PERCENT_SCALE))
+
+## The Growth value for the merged short-tier clause: `150%`, or `Births stopped`.
+static func growth_value_short_text(band: Dictionary) -> String:
+    if growth_is_stopped(band):
+        return GROWTH_STOPPED_TEXT
+    return GROWTH_VALUE_SHORT_FORMAT % int(round(band_fertility(band) * GROWTH_PERCENT_SCALE))
 
 ## One `    ▼ ×0.60  short rations`-style fertility breakdown row. It reuses the morale breakdown's
 ## indent + ▲/▼ sign glyph so `detail_bbcode`'s shared indented-sub-line branch tints it (▲ above

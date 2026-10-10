@@ -1,10 +1,11 @@
 //! **The breeding-population ceiling** (issue #688, `docs/plan_civilization_steps.md` §"The
 //! mechanism: an isolated people cannot grow past its lines").
 //!
-//! A breeding population — a supply-network component, or a band alone in none — ceilings at
-//! `|union of its members' founding lines| × lineage.people_per_line`. Births stop there; nobody is
-//! removed by it. Driven through the **real** `simulate_population` (and, for membership, the real
-//! `balance_supply_networks`) on a generated world, so every number is the demographic model's own.
+//! A breeding population — a people's bands joined by live contact ties (#691), or a band alone —
+//! ceilings at `|union of its members' founding lines| × lineage.people_per_line`, capped at
+//! `lineage.free_breeding_at`. Births stop there; nobody is removed by it. Driven through the
+//! **real** `simulate_population` on a generated world, so every number is the demographic
+//! model's own.
 //!
 //! Each fixture removes the band's `LaborAllocation`, which reads as *no flow telemetry* and so a
 //! neutral `trend` factor, and keeps its larder deep, so the band is well fed and fertility is the
@@ -17,11 +18,10 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::{Entity, With};
 
 use core_sim::{
-    balance_supply_networks, breeding_ceiling, recapture_snapshot_in_place, scalar_from_f32,
-    simulate_population, split_band_from_parent, BandId, ConnectionKey, ConnectionLedger,
-    ConnectionsConfig, DemographicsConfigHandle, FoundingLines, LaborAllocation, PopulationCohort,
-    ResidentBand, Scalar, SettleConfig, Sighting, SnapshotHistory, SupplyNetworkMembership, Tile,
-    FULL_TIE,
+    breeding_ceiling, recapture_snapshot_in_place, scalar_from_f32, simulate_population,
+    split_band_from_parent, BandId, ConnectionKey, ConnectionLedger, ConnectionsConfig,
+    DemographicsConfigHandle, FoundingLines, LaborAllocation, PopulationCohort, ResidentBand,
+    Scalar, SettleConfig, Sighting, SnapshotHistory, Tile, FULL_TIE,
 };
 use faction_support::{one_faction_world, HOME};
 
@@ -190,7 +190,7 @@ fn forget_ties(app: &mut App) {
     *app.world.resource_mut::<ConnectionLedger>() = ConnectionLedger::default();
 }
 
-/// A seeded full-strength tie both ways between two bands, so the supply pass links them.
+/// A seeded full-strength tie both ways between two bands, so they are one breeding population.
 fn tie(app: &mut App, a: Entity, b: Entity) {
     const SEEDED_ON_TURN: u64 = 0;
     let cfg = ConnectionsConfig::default();
@@ -214,15 +214,9 @@ fn tie(app: &mut App, a: Entity, b: Entity) {
     }
 }
 
-fn network_of(app: &App, band: Entity) -> u32 {
-    app.world
-        .resource::<SupplyNetworkMembership>()
-        .network_of(band)
-}
-
 /// The home band seated at `PRE_SPLIT_PEOPLE` with the shipped `L`, split, with both halves fed
-/// and on a neutral trend. `linked` seeds the tie and runs the supply pass, so the two share a
-/// network; otherwise the pass runs with no tie and each is its own breeding population.
+/// and on a neutral trend. `linked` seeds the tie, so the two are one breeding population;
+/// otherwise there is no tie and each is its own.
 fn split_pair(app: &mut App, linked: bool) -> (Entity, Entity) {
     let (parent, id) = home_band(app);
     let (lines, _) = shipped_lineage(app);
@@ -241,7 +235,6 @@ fn split_pair(app: &mut App, linked: bool) -> (Entity, Entity) {
     if linked {
         tie(app, parent, child);
     }
-    app.world.run_system_once(balance_supply_networks);
     for band in [parent, child] {
         neutral_trend(app, band);
     }
@@ -258,11 +251,10 @@ fn an_isolated_band_grows_to_its_lines_times_k_and_holds() {
     seat_lines(&mut app, band, id, lines);
     seat_people(&mut app, band, ceiling as f32 - SEAT_BELOW_CEILING);
     neutral_trend(&mut app, band);
-    assert_eq!(network_of(&app, band), 0, "a lone band is in no network");
 
     grow_to_and_hold(&mut app, &[band], ceiling);
 
-    let reading = cohort(&app, band).last_breeding;
+    let reading = cohort(&app, band).last_breeding.clone();
     assert_eq!(reading.ceiling, ceiling);
     assert_eq!(
         reading.headcount,
@@ -275,16 +267,12 @@ fn an_isolated_band_grows_to_its_lines_times_k_and_holds() {
     );
 }
 
-/// **Two bands of one people in one network share ONE ceiling** — the union of their partitioned
+/// **Two tied bands of one people share ONE ceiling** — the union of their partitioned
 /// lines × K — so one may grow past its own lines' share while the pair stays under the union's.
 #[test]
 fn two_bands_in_one_network_share_one_ceiling() {
     let mut app = one_faction_world();
     let (parent, child) = split_pair(&mut app, true);
-    let network = network_of(&app, parent);
-    assert!(network != 0, "the tied pair forms a network");
-    assert_eq!(network_of(&app, child), network);
-
     let (lines, _) = shipped_lineage(&app);
     let child_lines = cohort(&app, child).founding_lines.len();
     let parent_lines = cohort(&app, parent).founding_lines.len();
@@ -304,7 +292,7 @@ fn two_bands_in_one_network_share_one_ceiling() {
     assert_eq!(
         factors.ceiling,
         Scalar::one(),
-        "the splinter breeds on the network's room, not on its own lines"
+        "the splinter breeds on the population's room, not on its own lines"
     );
     assert!(
         factors.multiplier() > Scalar::zero(),
@@ -322,15 +310,12 @@ fn two_bands_in_one_network_share_one_ceiling() {
     );
 }
 
-/// **A splinter off the network caps at its own lines × K** — it walked off with them, and the
+/// **A splinter out of touch caps at its own lines × K** — it walked off with them, and the
 /// parent's ceiling fell by the same lines.
 #[test]
 fn a_splinter_off_the_network_caps_at_its_own_lines() {
     let mut app = one_faction_world();
     let (parent, child) = split_pair(&mut app, false);
-    assert_eq!(network_of(&app, parent), 0, "no tie, no network");
-    assert_eq!(network_of(&app, child), 0);
-
     let child_cap = ceiling_for(&app, cohort(&app, child).founding_lines.len());
     let parent_cap = ceiling_for(&app, cohort(&app, parent).founding_lines.len());
     let (lines, _) = shipped_lineage(&app);
@@ -414,7 +399,7 @@ fn the_breeding_fields_reach_the_encoded_envelope() {
         factor > Scalar::zero() && factor < Scalar::one(),
         "liveness: part of the births fit ({factor:?})"
     );
-    let reading = cohort(&app, band).last_breeding;
+    let reading = cohort(&app, band).last_breeding.clone();
 
     recapture_snapshot_in_place(&mut app.world);
     let snapshot = app
@@ -455,8 +440,7 @@ fn free_breeding_at(app: &App) -> u32 {
         .get()
 }
 
-/// The fewest lines whose `× K` reaches `free_breeding_at` — the smallest people the ceiling no
-/// longer binds.
+/// The fewest lines whose `× K` reaches `free_breeding_at`.
 fn lines_at_free_breeding(app: &App) -> u16 {
     let k = u32::from(shipped_lineage(app).1.get());
     u16::try_from(free_breeding_at(app).div_ceil(k)).expect("a line count fits a u16")
@@ -492,23 +476,32 @@ fn published_breeding(app: &mut App, band: Entity) -> (i64, u32, u32) {
     )
 }
 
-/// **At `free_breeding_at` the inbreeding ceiling lifts.** A population whose `lines × K` reaches
-/// it grows straight past that figure with a factor of `1`, and publishes a ceiling of `0` — "no
-/// inbreeding ceiling" — on the encoded envelope.
+/// Whether the home people is latched as breeding freely.
+fn is_latched(app: &App) -> bool {
+    app.world
+        .resource::<core_sim::FreeBreedingPeoples>()
+        .contains(HOME)
+}
+
+/// **At `free_breeding_at` PEOPLE the inbreeding ceiling lifts for good.** A population whose
+/// opening head-count reaches it — however few lines it holds — is latched: it grows straight past
+/// that figure with a factor of `1`, and publishes a ceiling of `0` ("no inbreeding ceiling") on
+/// the encoded envelope. Lines × K above it does not lift anything by itself.
 #[test]
-fn a_population_at_the_free_breeding_size_grows_past_its_lines() {
+fn a_population_at_the_free_breeding_head_count_latches_and_grows_free() {
     let mut app = one_faction_world();
     let (band, id) = home_band(&mut app);
-    let lines = lines_at_free_breeding(&app);
-    let would_be_ceiling = ceiling_for(&app, usize::from(lines));
-    assert!(would_be_ceiling >= free_breeding_at(&app));
-    seat_lines(&mut app, band, id, lines);
-    seat_people(&mut app, band, would_be_ceiling as f32 + SEAT_ABOVE_CEILING);
+    // ONE line: its ceiling is K, nowhere near 500 - only the head-count can lift it.
+    seat_lines(&mut app, band, id, ONE_LINE);
+    let free_at = free_breeding_at(&app);
+    seat_people(&mut app, band, free_at as f32);
     neutral_trend(&mut app, band);
+    assert!(!is_latched(&app), "fixture: nothing has latched yet");
     let before = total(&app, band);
 
     for _ in 0..HOLD_TURNS {
         turn(&mut app, &[band]);
+        assert!(is_latched(&app), "the head-count latched the people");
         assert_eq!(
             cohort(&app, band).last_fertility_factors.ceiling,
             Scalar::one(),
@@ -517,7 +510,7 @@ fn a_population_at_the_free_breeding_size_grows_past_its_lines() {
     }
     assert!(
         total(&app, band) > before,
-        "liveness: the band grew past what its lines × K would have held ({before} → {})",
+        "liveness: the band grew past the head-count that freed it ({before} → {})",
         total(&app, band)
     );
 
@@ -527,27 +520,78 @@ fn a_population_at_the_free_breeding_size_grows_past_its_lines() {
     assert_eq!(population, cohort(&app, band).last_breeding.headcount);
 }
 
-/// **One line short of `free_breeding_at`, the ceiling still binds**: a population above its
-/// `lines × K` bears nobody and publishes that ceiling.
+/// Room below `free_breeding_at` that one turn's uncapped births cannot cross, in people.
+const BIRTHS_SHORT_OF_FREE_PEOPLE: f32 = 60.0;
+/// Where a growth fixture is seated, well under the free size.
+const GROWTH_START_PEOPLE: f32 = 400.0;
+/// The most turns the growth fixture runs before it must have latched.
+const MAX_TURNS_TO_LATCH: usize = 100;
+
+/// **A population whose uncapped births fall short of `free_breeding_at` is not latched**: it is
+/// held at the effective ceiling `min(shared, free_breeding_at)` and publishes it.
 #[test]
-fn a_population_just_under_the_free_breeding_size_still_caps() {
+fn a_population_whose_births_fall_short_of_the_free_head_count_stays_capped() {
     let mut app = one_faction_world();
     let (band, id) = home_band(&mut app);
-    let lines = lines_at_free_breeding(&app) - 1;
-    let ceiling = ceiling_for(&app, usize::from(lines));
-    assert!(ceiling < free_breeding_at(&app));
+    let lines = lines_at_free_breeding(&app);
+    assert!(
+        ceiling_for(&app, usize::from(lines)) >= free_breeding_at(&app),
+        "fixture: lines × K clears the free size, so only the head-count is in question"
+    );
     seat_lines(&mut app, band, id, lines);
-    seat_people(&mut app, band, ceiling as f32 + SEAT_ABOVE_CEILING);
+    let free_at = free_breeding_at(&app);
+    seat_people(&mut app, band, free_at as f32 - BIRTHS_SHORT_OF_FREE_PEOPLE);
     neutral_trend(&mut app, band);
+    let before = total(&app, band);
     turn(&mut app, &[band]);
 
+    assert!(!is_latched(&app), "opening + births stays under 500");
+    let (_, _, published) = published_breeding(&mut app, band);
     assert_eq!(
-        cohort(&app, band).last_fertility_factors.ceiling,
-        Scalar::zero()
+        published, free_at,
+        "the effective ceiling is min(lines × K, free_breeding_at)"
     );
-    let (factor, _, published) = published_breeding(&mut app, band);
-    assert_eq!(factor, Scalar::zero().raw());
-    assert_eq!(published, ceiling);
+    assert!(
+        total(&app, band) > before,
+        "liveness: the band bore children"
+    );
+}
+
+/// **A well-fed population with union × K above 500 grows past 500 and latches on real turns.** It
+/// is held at the effective ceiling of 500 until its uncapped births would carry it there; the
+/// turn they do, the people latches and that turn's births are uncapped too.
+#[test]
+fn a_growing_population_latches_when_its_births_reach_the_free_head_count() {
+    let mut app = one_faction_world();
+    let (band, id) = home_band(&mut app);
+    let lines = lines_at_free_breeding(&app);
+    let free_at = free_breeding_at(&app);
+    seat_lines(&mut app, band, id, lines);
+    seat_people(&mut app, band, GROWTH_START_PEOPLE);
+    neutral_trend(&mut app, band);
+
+    let mut capped_below_free = false;
+    let latched_on = (0..MAX_TURNS_TO_LATCH).find(|_| {
+        let was_below = total(&app, band) < free_at as f32;
+        turn(&mut app, &[band]);
+        if !is_latched(&app) {
+            capped_below_free |= was_below && cohort(&app, band).last_breeding.ceiling == free_at;
+        }
+        is_latched(&app)
+    });
+    assert!(latched_on.is_some(), "the population never latched");
+    assert!(
+        capped_below_free,
+        "liveness: it was held under the effective ceiling of {free_at} before it latched"
+    );
+    for _ in 0..HOLD_TURNS {
+        turn(&mut app, &[band]);
+    }
+    assert!(total(&app, band) > free_at as f32, "grown past 500");
+    assert_eq!(
+        cohort(&app, band).last_breeding.ceiling,
+        core_sim::NO_INBREEDING_CEILING
+    );
 }
 
 /// One line — a band that cannot partition it, so its split hands both halves a copy.
@@ -602,10 +646,6 @@ fn one_line_split(app: &mut App) -> (Entity, Entity) {
 fn two_unlinked_halves_of_one_line_share_its_k() {
     let mut app = one_faction_world();
     let (parent, child) = one_line_split(&mut app);
-    app.world.run_system_once(balance_supply_networks);
-    assert_eq!(network_of(&app, parent), 0);
-    assert_eq!(network_of(&app, child), 0);
-
     let k = u32::from(shipped_lineage(&app).1.get());
     let one_line = Scalar::from_u32(k);
     for _ in 0..SHARED_LINE_TURNS {
@@ -636,9 +676,6 @@ fn relinked_halves_of_one_line_hold_its_whole_k() {
     let mut app = one_faction_world();
     let (parent, child) = one_line_split(&mut app);
     tie(&mut app, parent, child);
-    app.world.run_system_once(balance_supply_networks);
-    assert!(network_of(&app, parent) != 0);
-    assert_eq!(network_of(&app, parent), network_of(&app, child));
 
     turn(&mut app, &[parent, child]);
     let k = u32::from(shipped_lineage(&app).1.get());
@@ -677,8 +714,6 @@ fn scattering_a_people_never_raises_its_total_ceiling() {
         neutral_trend(&mut app, band);
     }
 
-    app.world.run_system_once(balance_supply_networks);
-    assert!(bands.iter().all(|&band| network_of(&app, band) == 0));
     turn(&mut app, &bands);
 
     let total_ceiling: u32 = bands

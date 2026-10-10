@@ -39,6 +39,10 @@ const BREAKDOWN_KIND_MORALE := "morale"
 # combine by product; see `DetailFormat.fertility_breakdown_row`.
 const BREAKDOWN_KIND_GROWTH := "growth"
 
+# The faction page's `Family limit` row (issue #691): who holds the breeding population's limit up. Its
+# popover rows are the member bands and the other peoples (`HudLineageVocab.faction_popover_lines`).
+const BREAKDOWN_KIND_FAMILY_LIMIT := "family_limit"
+
 # **`BREAKDOWN_KIND_TRADE` IS RETIRED** (arc #527) with the row it drilled into: the band's trade
 # goods were the second product of the same worked sources the Food breakdown itemizes, and that
 # account no longer exists.
@@ -76,6 +80,9 @@ const DETAIL_ROW_FOOD := "Food"
 const DETAIL_ROW_MORALE := "Morale"
 
 const DETAIL_ROW_GROWTH := "Growth"
+
+# The breeding ceiling's row, directly beneath Growth. Its label IS the registration key.
+const DETAIL_ROW_FAMILY_LIMIT := "Family limit"
 
 # The band's culture row (`Beliefs  devout · traditional ⚱`, figures in the hover), beneath Morale. Its label IS the
 # `ctx.row_tooltips` key, so the hover and the row cannot drift.

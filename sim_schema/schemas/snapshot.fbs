@@ -1441,10 +1441,10 @@ table PopulationCohortState {
   craftSuggestions:[CraftSuggestion];
   // --- THE BREEDING CEILING (appended last, issue #688) ------------------------------------------
   // An isolated people cannot grow past its founding lines (docs/plan_civilization_steps.md). The
-  // capped unit is the BREEDING POPULATION - the bands in this band's supply network, or this band
-  // alone when it is in none - and its ceiling is |union of its members' foundingLines| x
-  // demographics_config.json lineage.people_per_line. Births stop there; nobody is ever removed by
-  // it.
+  // capped unit is the BREEDING POPULATION - this people's bands joined by live contact ties (see
+  // breedingMembers), or this band alone - and its ceiling is the sum over the union of its lines of
+  // demographics_config.json lineage.people_per_line / holders, capped at lineage.free_breeding_at.
+  // Births stop there; nobody is ever removed by it.
   //
   // THE FOURTH FERTILITY FACTOR, beside fertilityHunger/Reserve/Trend and in their fixed-point
   // encoding (FIXED_POINT_SCALE = 1e6, NEUTRAL AT 1e6): the share of this turn's would-be births the
@@ -1456,11 +1456,15 @@ table PopulationCohortState {
   // The breeding population's head-count after this turn's demographics, whole people (the members'
   // fixed-point totals summed, then rounded once). The same figure on every member band.
   breedingPopulation:uint = 0;
-  // The breeding population's ceiling, in people. The same figure on every member band.
-  // 0 MEANS "NO INBREEDING CEILING": once |union of lines| x people_per_line reaches
-  // demographics_config.json lineage.free_breeding_at (~500, the size at which a people finds mates
-  // without outside contact) the ceiling is lifted, fertilityCeiling reads 1e6 at any head-count,
-  // and this publishes 0. A client reads 0 as unrestricted, never as a ceiling of nobody.
+  // The breeding population's ceiling, in people. The same figure on every member band: the
+  // EFFECTIVE ceiling min(shared ceiling, lineage.free_breeding_at), where the shared ceiling is the
+  // sum of people_per_line / holders over the population's union of lines.
+  // 0 MEANS "NO INBREEDING CEILING": once, in a turn's pre-pass, any breeding population of this
+  // people opens at demographics_config.json lineage.free_breeding_at PEOPLE (~500, the size at which
+  // a people finds mates without outside contact) or - its own ceiling being at least that - is
+  // carried there by its uncapped births (that turn's births are uncapped too), the people is free
+  // for good, fertilityCeiling reads 1e6 at any
+  // head-count, and this publishes 0. A client reads 0 as unrestricted, never as a ceiling of nobody.
   breedingCeiling:uint = 0;
   // Layer-1 CULTURE morale contribution - near / far from the ancestors (issue #699):
   // s x (r x near_bonus - (1 - r) x away_drag), where s = b / (b + belief_half_saturation) for the
@@ -1524,6 +1528,16 @@ table PopulationCohortState {
   // band took no pull (no anchor, nothing reaching it, or `ancestor_pull` empty). Positive on
   // SecularDevout is devout; NEGATIVE on TraditionalistRevisionist is traditionalist.
   cultureAncestorPull:[float];
+  // --- WHO THE BREEDING POPULATION IS (appended last, issue #691) ---------------------------------
+  // Own bands only: a foreign (redacted) row carries the defaults. The breeding population is the
+  // tie-joined group of this people's bands - joined wherever a live contact tie runs between two of
+  // them, in either direction, the same grouping independence reads for a people's heart. Its lines
+  // are its members' OWN lines plus the own lines of every band of ANOTHER people holding a live tie
+  // with any member; the tie bleeds out and those lines leave. breedingMembers lists the own-people
+  // bands (self included, BandId order); breedingPeoples the other peoples contributing lines
+  // (faction order), with no head-count: that is theirs to know.
+  breedingMembers:[BreedingMemberState];
+  breedingPeoples:[BreedingPeopleState];
 }
 
 // One band's outfitting window. THE TWO SUPPLIES ARE MUTUALLY EXCLUSIVE and `parentBandId` says which
@@ -5921,6 +5935,13 @@ table CampaignSection {
   // World-visible, one row per faction in id order. A per-world constant, so it diffs out after the
   // first frame; absent means "unchanged" on a delta.
   factionNames:[FactionNameState];
+  // --- THE LINEAGE CONSTANTS (appended last, issue #691) ----------------------------------------
+  // World constants echoed off the live demographics_config.json `lineage` block so a client's split
+  // preview never restates config. lineagePeoplePerLine = `people_per_line` (K): the people one
+  // founding line carries. lineageFreeBreedingAt = `free_breeding_at`: the head-count at which a
+  // people breeds freely for good. 0 on a delta = unchanged.
+  lineagePeoplePerLine:uint = 0;
+  lineageFreeBreedingAt:uint = 0;
 }
 
 // --- The opening loadout: what the turn-one picker draws ---------------------------------------
@@ -6684,3 +6705,29 @@ table Envelope {
 }
 
 root_type Envelope;
+
+// ONE OWN-PEOPLE BAND IN A BREEDING POPULATION - a row of `PopulationCohortState.breedingMembers`.
+// Appended last.
+table BreedingMemberState {
+  // The band's durable id.
+  bandId:ulong;
+  // How many founding lines the band itself holds.
+  lines:uint;
+  // Whole people in the band after this turn.
+  people:uint;
+  // In touch with the rest of the population only through a tie that is bleeding: no edge between
+  // this band and any OTHER member carried contact in the last Visibility pass. Always false for
+  // the row of a population's only member.
+  fading:bool = false;
+}
+
+// ONE OTHER PEOPLE CONTRIBUTING LINES TO A BREEDING POPULATION - a row of
+// `PopulationCohortState.breedingPeoples`. Appended last. Deliberately carries no head-count.
+table BreedingPeopleState {
+  faction:uint;
+  // Union lines that came only from this people's in-touch bands (lines the members do not already
+  // hold; a line two foreign peoples share is credited to the lower faction id).
+  lines:uint;
+  // No in-touch band of this people carried contact with any member in the last Visibility pass.
+  fading:bool = false;
+}

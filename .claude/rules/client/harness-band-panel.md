@@ -3047,3 +3047,16 @@ behind`) — and none of the three on the flag-off row. A PNG-less claim presses
 through its real `pressed` signal and requires ONE hunt line ending ` follow`. `command_guard` drives the
 same line through the real parser (`_drive_assign_labor_kits`) and asserts the token is LAST, after
 `kit <id>`, and absent when unticked.
+
+## `band_panel_family_limit.gd` - the breeding ceiling's frames (issue #691)
+
+A satellite of `band_panel_preview` in its own file (the `band_panel_trade_tab.gd` shape), appended
+after the Trade tab so no earlier frame moves. It stages the world constants (`LineageWorld`) and the
+faction names, then renders the FACTION page's Family limit row in each reading (`family_limit_room`,
+`_near` with a fading member and the popover open, `_at` kin, `_lost_touch` with a band in its own
+group, `_peoples` with another faction fading, `_lifted` row absent), one Band-tab frame
+(`family_limit_band_tab`: no row, `Births stopped`, the breakdown's fourth row) and the split sheet
+twice (`family_limit_split`, `family_limit_split_free`). PNG-less claims pin the split arithmetic.
+**The faction page is entered once through the real cycler and re-entered only when off it** (a second
+`CYCLE_PREV` leaves for the last band), and each Band-tab state selects its band on its own hex first:
+a popover click re-renders the hosts off the selection.

@@ -9,12 +9,13 @@ use crate::state::campaign::{OpeningKitDefaultState, OpeningMaterialDefaultState
 use crate::state::population::{
     AccessibleStockpileEntryState, AccessibleStockpileState, BandKitCrewState, BandKitTiersState,
     BandLoadoutSupplyRowState, BandLoadoutWindowState, BenchOrderState, BenchState,
-    BuildQueueEntryState, CharacteristicReadingState, CohortStoreState, CraftOfferState,
-    CraftSuggestionSourceState, CraftSuggestionState, DrawnInputState, EquipmentBatchState,
-    GenerationState, HarvestTaskState, KitItemConditionState, KitToeLineState,
-    LaborAssignmentState, MaterialBatchState, MaterialShortfallState, PoolCrewLineState,
-    PoolToeLineState, PoolingLinkState, PopulationCohortState, PopulationDemographicsState,
-    ScoutTaskState, SettlementStageViewState, SourcePriorityState, TransferCrossingState,
+    BreedingMemberState, BreedingPeopleState, BuildQueueEntryState, CharacteristicReadingState,
+    CohortStoreState, CraftOfferState, CraftSuggestionSourceState, CraftSuggestionState,
+    DrawnInputState, EquipmentBatchState, GenerationState, HarvestTaskState, KitItemConditionState,
+    KitToeLineState, LaborAssignmentState, MaterialBatchState, MaterialShortfallState,
+    PoolCrewLineState, PoolToeLineState, PoolingLinkState, PopulationCohortState,
+    PopulationDemographicsState, ScoutTaskState, SettlementStageViewState, SourcePriorityState,
+    TransferCrossingState,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -911,6 +912,8 @@ fn create_populations<'a>(
             };
             let culture_traits = (!cohort.culture_traits.is_empty())
                 .then(|| builder.create_vector(&cohort.culture_traits));
+            let breeding_members = create_breeding_members(builder, &cohort.breeding_members);
+            let breeding_peoples = create_breeding_peoples(builder, &cohort.breeding_peoples);
             let culture_ancestor_pull = (!cohort.culture_ancestor_pull.is_empty())
                 .then(|| builder.create_vector(&cohort.culture_ancestor_pull));
             let belief_reach_y = if cohort.belief_reach_y.is_empty() {
@@ -1190,6 +1193,8 @@ fn create_populations<'a>(
                     independenceGrievanceThreshold: cohort.independence_grievance_threshold,
                     cultureTraits: culture_traits,
                     cultureAncestorPull: culture_ancestor_pull,
+                    breedingMembers: Some(breeding_members),
+                    breedingPeoples: Some(breeding_peoples),
                 },
             )
         })
@@ -1849,6 +1854,17 @@ fn decode_population(
         independence_grievance_threshold: cohort.independenceGrievanceThreshold(),
         culture_traits: decode_scalars(cohort.cultureTraits()),
         culture_ancestor_pull: decode_scalars(cohort.cultureAncestorPull()),
+        breeding_members: map_rows(cohort.breedingMembers(), |member| BreedingMemberState {
+            band_id: member.bandId(),
+            lines: member.lines(),
+            people: member.people(),
+            fading: member.fading(),
+        }),
+        breeding_peoples: map_rows(cohort.breedingPeoples(), |people| BreedingPeopleState {
+            faction: people.faction(),
+            lines: people.lines(),
+            fading: people.fading(),
+        }),
     })
 }
 
@@ -1893,6 +1909,49 @@ fn create_transfer_crossings<'a>(
                     counterpartyFaction: crossing.counterparty_faction,
                     partyId: crossing.party_id,
                     amount: crossing.amount,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&rows)
+}
+
+/// `PopulationCohortState.breedingMembers`.
+fn create_breeding_members<'a>(
+    builder: &mut FbBuilder<'a>,
+    members: &[BreedingMemberState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::BreedingMemberState<'a>>>> {
+    let rows: Vec<_> = members
+        .iter()
+        .map(|member| {
+            fb::BreedingMemberState::create(
+                builder,
+                &fb::BreedingMemberStateArgs {
+                    bandId: member.band_id,
+                    lines: member.lines,
+                    people: member.people,
+                    fading: member.fading,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&rows)
+}
+
+/// `PopulationCohortState.breedingPeoples`.
+fn create_breeding_peoples<'a>(
+    builder: &mut FbBuilder<'a>,
+    peoples: &[BreedingPeopleState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::BreedingPeopleState<'a>>>> {
+    let rows: Vec<_> = peoples
+        .iter()
+        .map(|people| {
+            fb::BreedingPeopleState::create(
+                builder,
+                &fb::BreedingPeopleStateArgs {
+                    faction: people.faction,
+                    lines: people.lines,
+                    fading: people.fading,
                 },
             )
         })

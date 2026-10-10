@@ -1054,6 +1054,21 @@ const SPLIT_BRACKETS_FORMAT := "%d · %d · %d"
 ## halves sum to the band's own displayed total.
 const SPLIT_BEFORE_AFTER_FORMAT := "%s → %s"
 
+## The families row on both halves (issue #691): the founding lines each half would carry. `Families`
+## on the new band is the count it takes; on the home band it is `before → after`.
+const SPLIT_ROW_FAMILIES := "Families"
+
+## The FAMILY LIMIT block - drawn only for a people still under a breeding ceiling. `Stays linked` is
+## the shared ceiling while the halves keep in touch; `If it loses touch` prices each half alone.
+const SPLIT_FAMILY_LIMIT_HEADER := "Family limit"
+const SPLIT_ROW_LIMIT_LINKED := "Stays linked"
+const SPLIT_LIMIT_LINKED_FORMAT := "%d, shared"
+const SPLIT_ROW_LIMIT_APART := "If it loses touch"
+const SPLIT_LIMIT_APART_FORMAT := "%d · home %d"
+## The one amber line under the block, by precedence (home first: it is the larger half).
+const SPLIT_LIMIT_HOME_AT := "Home would be at its limit if they lose touch."
+const SPLIT_LIMIT_NEW_AT := "The new band would be at its limit if it loses touch."
+
 const SPLIT_BAND_BUTTON := "Form the band"
 
 const SPLIT_BAND_HINT := "Split this band in two where it stands. The new band moves like any other."

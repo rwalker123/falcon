@@ -65,6 +65,8 @@ const ForecastFx := preload("res://tools/ui_preview/fixtures_forecast.gd")
 const RUNG_FX := preload("res://tools/ui_preview/fixtures_rung.gd")
 ## The Trade tab's states (issue #731), kept out of this file — see `band_panel_trade_tab.gd`.
 const TRADE_TAB_STATES := preload("res://tools/band_panel_trade_tab.gd")
+## The Family limit row and the split sheet's FAMILY LIMIT block (issue #691), in their own file.
+const FAMILY_LIMIT_STATES := preload("res://tools/band_panel_family_limit.gd")
 ## The hex `_band_fixture()` stands on — the tile the map-path state clicks.
 const MAP_PATH_TILE := Vector2i(71, 18)
 ## A grid just large enough to hold MAP_PATH_TILE, and one flat terrain id to fill it with.
@@ -2540,6 +2542,9 @@ func _ready() -> void:
 
 	# The band dock's Trade tab (issue #731) — its own file, appended last so no frame above moves.
 	await TRADE_TAB_STATES.new().run(self)
+
+	# The breeding ceiling's Band-tab row and split-sheet block (issue #691), appended last.
+	await FAMILY_LIMIT_STATES.new().run(self)
 
 	_assert_pending_assign_rollback()
 

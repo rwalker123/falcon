@@ -307,8 +307,9 @@ pub use knowledge_contact_config::{
     BUILTIN_KNOWLEDGE_CONTACT_CONFIG,
 };
 pub use lineage::{
-    breeding_ceiling, inbreeding_ceiling, shared_breeding_ceiling, BreedingReading, FoundingLines,
-    LineId, MIN_BAND_LINES, NO_INBREEDING_CEILING,
+    breeding_ceiling, effective_breeding_ceiling, shared_breeding_ceiling, tie_joined_groups,
+    BreedingMember, BreedingPeople, BreedingReading, FoundingLines, FreeBreedingPeoples, LineId,
+    TieJoinedGroup, MIN_BAND_LINES, NO_INBREEDING_CEILING,
 };
 // The drainage-network measurement instrument (consumed by the `#[ignore]`d census test).
 pub use extraction::{
@@ -479,12 +480,12 @@ pub use systems::{
     bench_tiers, bill_and_stock_roads, bring_the_dropped_party_home, deliver_bench_output,
     denial_forecast, expedition_returned_event, fold_party_into_band, follow_hunted_herds,
     grow_faction_roster, hunt_per_worker_provisions, hunt_report_event, hunt_take,
-    merge_founding_lines_on_contact, output_multiplier, party_owes_a_report,
-    prospective_keep_hands, publish_turn_transfers, settle_bands_roadwork, settle_scarce_tools,
-    simulate_population, simulate_power, source_has_a_meter_at_risk, split_band_from_parent,
-    split_refusals, BenchTiers, DenialForecast, DenialOutcome, HeartLedger, HeartReading,
-    HuntOutcome, PartyGear, PartySightings, PoolToolPlan, PowerSimParams, RaidRoll, SplitBand,
-    SplitRefusal, SplitRefusals, ToolClaimStage, TradeDiffusionEvent,
+    output_multiplier, party_owes_a_report, prospective_keep_hands, publish_turn_transfers,
+    settle_bands_roadwork, settle_scarce_tools, simulate_population, simulate_power,
+    source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers, DenialForecast,
+    DenialOutcome, HeartLedger, HeartReading, HuntOutcome, PartyGear, PartySightings, PoolToolPlan,
+    PowerSimParams, RaidRoll, SplitBand, SplitRefusal, SplitRefusals, ToolClaimStage,
+    TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,
@@ -914,6 +915,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(visibility::VisibilitySweepTracker::default())
         .insert_resource(connections::ConnectionLedger::default())
         .insert_resource(systems::HeartLedger::default())
+        .insert_resource(lineage::FreeBreedingPeoples::default())
         // **The roads and this turn's traffic** (`docs/plan_standing_upkeep.md` §4.13). The registry
         // is world state; the traffic log is a hand-off from the three things that move —
         // `balance_supply_networks` (which pairs pooled), `advance_band_movement` (who marched) and
@@ -1348,10 +1350,6 @@ pub fn build_headless_app() -> App {
                     // `ContactsThisTurn` (which `calculate_visibility` and the expedition flush
                     // both fill) and clears it, so the set is rebuilt from scratch every turn.
                     connections::advance_connections,
-                    // Contact between two peoples merges their founding lines. Reads the
-                    // `last_contact_turn` stamp the line above just wrote; the faction check lives
-                    // here so `connections.rs` stays faction-blind.
-                    systems::merge_founding_lines_on_contact,
                     // ⛔ **A KEPT ROAD IS ITS OWN VISIBILITY SOURCE, beside a band's presence and
                     // never through the connection grant** — see `light_kept_routes`. It runs after
                     // the sweep (the fog it writes into is the sweep's) and before the decay, so a
