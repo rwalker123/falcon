@@ -129,29 +129,6 @@ const BAND_FOOD_FODDER_CLAUSE_FORMAT := " · [color=#%s]%s fodder[/color]"
 # which is how a short good takes the danger ink without a second severity rule beside it.
 const BAND_MATERIAL_UPKEEP_ROW_FORMAT := HudDisclosureVocab.DETAIL_ROW_UPKEEP + ": %s  (%s)"
 
-# ---- WHAT THE BAND CARRIES AGAINST WHAT IT CAN (#732) — `Carry: 48 / 102`, beneath the stores it
-# weighs. Both terms are the sim's (`carry_load` / `carry_capacity`, in food-unit load: food, weighted
-# hay, items and materials), stated in whole units; the client adds nothing up.
-#
-# **ONE LINE, NO DISCLOSURE.** The row's whole job is the comparison; what a long move would leave
-# behind is the targeting banner's to say, at the moment it is true.
-#
-# ⛔ **NEVER AMBER.** A band that is not moving is never warned that it is over its carry (#732, the
-# maintainer's rule): the long-move targeting warning is the one place that is said. The row reads
-# `load / carry` in plain ink whatever the two are.
-#
-# **The hover is the MOVE RULE, stated plainly, and only where it is news.** A detail block is one
-# `RichTextLabel` whose hover answers for every row (`DetailFormat.block_tooltip`), so a sentence
-# registered on every band would greet a cursor resting on Food or Morale too. It is registered when
-# the load is above the carry — the one case a long move would leave something behind — and it says
-# what a move does, not that anything is wrong.
-const BAND_CARRY_ROW_FORMAT := HudDisclosureVocab.DETAIL_ROW_CARRY + ": %d / %d"
-const BAND_CARRY_TOOLTIP_FORMAT := \
-    "A move farther than %d tiles leaves behind what the band can't carry."
-## The cohort keys the row reads, decoded in `native/src/dict/population.rs`.
-const BAND_CARRY_CAPACITY_KEY := "carry_capacity"
-const BAND_CARRY_LOAD_KEY := "carry_load"
-
 ## ONE GOOD'S AMOUNT AND ITS NAME — `2 hurdles`, `0.05 hurdles`. **A material names itself**: the
 ## catalogue ships no display word, so the id IS the noun (`SourceForecast.PICKER_MATERIAL_PRODUCT_FORMAT`'s
 ## rule), and the amount is trimmed so a shelf reads `2` while a mending rate reads `0.05`.
@@ -499,14 +476,6 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
             _disclosures.register(HudDisclosureVocab.DETAIL_ROW_UPKEEP,
                 HudDisclosureVocab.BREAKDOWN_KIND_UPKEEP, unit_data,
                 _disclosures.material_upkeep_breakdown_lines(unit_data))
-        # **WHAT THE BAND CARRIES AGAINST WHAT IT CAN**, beneath the stores it weighs — see
-        # `BAND_CARRY_ROW_FORMAT`. Not in the `compact` tier: that host is short of HEIGHT and already
-        # spends its rows on the two larders and the bill; the over-carry consequence still reaches a
-        # player there through the targeting banner, which is where it bites.
-        if not compact:
-            var carry_line := _band_carry_line(unit_data, context)
-            if carry_line != "":
-                lines.append(carry_line)
     # Morale is our own bands' business only (a non-player band's morale isn't ours
     # to see); morale drives productivity + migration (a harsh tile erodes it until
     # people begin leaving), while deaths stay starvation/cold-driven.
@@ -851,19 +820,6 @@ func _band_fodder_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> Stri
 ## **THE CALLER HAS ALREADY ASKED WHETHER THERE IS A BILL** (`band_has_material_upkeep`), which is why
 ## this reads the worst row without a fallback: an empty answer here would be a row about nothing, and
 ## the gate is what stops it being drawn at all.
-## `Carry: 48 / 102`, or `""` for a band the wire states no capacity for (a frame from before the
-## field, or a fixture) — a `0 / 0` would read as a band that can carry nothing. Flags the context
-## when the load is over, which is what tints the value and registers the hover.
-func _band_carry_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> String:
-    var capacity := float(unit_data.get(BAND_CARRY_CAPACITY_KEY, 0.0))
-    if capacity <= 0.0:
-        return ""
-    var carried := float(unit_data.get(BAND_CARRY_LOAD_KEY, 0.0))
-    if carried > capacity:
-        ctx.row_tooltips[HudDisclosureVocab.DETAIL_ROW_CARRY] = BAND_CARRY_TOOLTIP_FORMAT \
-            % int(unit_data.get(HudComposeVocab.MOVE_FERRY_REACH_KEY, 0))
-    return BAND_CARRY_ROW_FORMAT % [roundi(carried), roundi(capacity)]
-
 func _band_material_upkeep_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> String:
     var worst := DetailFormat.band_material_worst(unit_data)
     var turns := float(worst.get(DetailFormat.MATERIAL_BILL_RUNWAY_KEY,
@@ -977,33 +933,50 @@ func _belief_reading(unit_data: Dictionary) -> Dictionary:
     if not pull.is_empty():
         pull_devout = float(pull[CULTURE_AXIS_SECULAR_DEVOUT])
         pull_traditional = float(pull[CULTURE_AXIS_TRADITIONALIST_REVISIONIST])
+    var at_risk := bool(unit_data.get(HudDisclosureVocab.BELIEFS_BREAK_AWAY_KEY, false))
     var pulling := absf(pull_devout) > BELIEFS_PULL_EPSILON or absf(pull_traditional) > BELIEFS_PULL_EPSILON
     var sentence := ""
     if pulling:
         sentence = BELIEFS_PULL_TOOLTIP_FORMAT % [
             BELIEFS_PULL_TERM_FORMAT % [absf(pull_devout), _devout_word(pull_devout)],
             BELIEFS_PULL_TERM_FORMAT % [absf(pull_traditional), _traditional_word(pull_traditional)]]
-    return {"terms": terms, "values": values, "pulling": pulling, "pull_sentence": sentence}
+    return {"terms": terms, "values": values, "pulling": pulling, "pull_sentence": sentence,
+        "at_risk": at_risk}
 
 func _belief_mark() -> String:
     return BELIEFS_ANCESTORS_MARK_FORMAT % [
         HudStyle.BELIEF.to_html(false), BandOverlayRenderer.ANCESTORS_GLYPH]
 
-## `Beliefs: devout · traditional ⚱` — an ordinary key/value row beneath Morale, the mark and
-## the pull hover only while the band takes a pull. Registers its hover on the render context under
-## `DETAIL_ROW_BELIEFS`. `""` when the band publishes no culture layer.
+## The amber `may break away` words (#702): the sim's own verdict, in the warning ink.
+func _break_away_clause() -> String:
+    return "[color=#%s]%s[/color]" % [HudStyle.WARN_HEX, HudDisclosureVocab.BELIEFS_BREAK_AWAY_CLAUSE]
+
+## The Beliefs hover, the ONE sentence both tiers register: the values, then the pull sentence (or the
+## untied invitation), then the break-away warning when the flag is up.
+func _beliefs_hover(reading: Dictionary) -> String:
+    var text := String(reading["values"]) + " "
+    if bool(reading["pulling"]):
+        text += String(reading["pull_sentence"])
+    else:
+        text += BELIEFS_UNTIED_TOOLTIP_FORMAT % [BELIEFS_WORD_DEVOUT, BELIEFS_WORD_TRADITIONAL]
+    if bool(reading["at_risk"]):
+        text += " " + HudDisclosureVocab.BELIEFS_BREAK_AWAY_TOOLTIP
+    return text
+
+## `Beliefs: devout · traditional · may break away ⚱` — an ordinary key/value row beneath Morale, the
+## amber clause only while the sim says the band is at risk of breaking away, the mark only while the
+## band takes an ancestors pull. Registers its hover on the render context under `DETAIL_ROW_BELIEFS`.
+## `""` when the band publishes no culture layer.
 func _band_beliefs_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> String:
     var reading := _belief_reading(unit_data)
     if reading.is_empty():
         return ""
     var value := String(reading["terms"])
+    if bool(reading["at_risk"]):
+        value += BELIEFS_TERM_SEPARATOR + _break_away_clause()
     if bool(reading["pulling"]):
         value += _belief_mark()
-        ctx.row_tooltips[HudDisclosureVocab.DETAIL_ROW_BELIEFS] = \
-            String(reading["values"]) + " " + String(reading["pull_sentence"])
-    else:
-        ctx.row_tooltips[HudDisclosureVocab.DETAIL_ROW_BELIEFS] = String(reading["values"]) + " " \
-            + BELIEFS_UNTIED_TOOLTIP_FORMAT % [BELIEFS_WORD_DEVOUT, BELIEFS_WORD_TRADITIONAL]
+    ctx.row_tooltips[HudDisclosureVocab.DETAIL_ROW_BELIEFS] = _beliefs_hover(reading)
     return HudDisclosureVocab.DETAIL_ROW_BELIEFS + DetailFormat.DETAIL_KV_SEPARATOR + value
 
 ## `Drifting toward the Red Hill band — Open +0.02/turn`, or `""` when the band takes no contact pull
@@ -1024,16 +997,21 @@ func _band_culture_drift_line(unit_data: Dictionary) -> String:
         return CULTURE_DRIFT_UNNAMED_LINE_FORMAT % [CULTURE_DRIFT_UNKNOWN_SOURCE, pole, absf(delta)]
     return CULTURE_DRIFT_LINE_FORMAT % [source_name, pole, absf(delta)]
 
-## The `compact` tier's Beliefs clause: just the violet mark, and ONLY while the band takes a pull;
-## the line's hover is then the whole sentence (the values, then the pull). `""` otherwise.
+## The `compact` tier's Beliefs clause: the violet mark while the band takes a pull, and the amber
+## `may break away` words while the sim flags it at risk (a warning must not vanish in the short tier).
+## The clause wears the Beliefs hover itself, since that tier draws no Beliefs row to hang it on.
+## `""` when neither holds.
 func _band_beliefs_compact_clause(unit_data: Dictionary, ctx: DetailFormat.Context) -> String:
     var reading := _belief_reading(unit_data)
-    if reading.is_empty() or not bool(reading["pulling"]):
+    if reading.is_empty() or not (bool(reading["pulling"]) or bool(reading["at_risk"])):
         return ""
-    # The same sentence the full row's hover carries.
-    ctx.row_tooltips[HudDisclosureVocab.DETAIL_ROW_BELIEFS] = \
-        String(reading["values"]) + " " + String(reading["pull_sentence"])
-    return _belief_mark()
+    ctx.row_tooltips[HudDisclosureVocab.DETAIL_ROW_BELIEFS] = _beliefs_hover(reading)
+    var clause := ""
+    if bool(reading["at_risk"]):
+        clause += BELIEFS_TERM_SEPARATOR + _break_away_clause()
+    if bool(reading["pulling"]):
+        clause += _belief_mark()
+    return DetailFormat.hover_wrap(HudDisclosureVocab.DETAIL_ROW_BELIEFS, clause, ctx)
 
 ## A culture vector off the cohort dict, `[]` unless it is a full `CULTURE_AXIS_COUNT` entries (an
 ## absent or short vector is "no layer", and indexing it would be a crash, not a reading).

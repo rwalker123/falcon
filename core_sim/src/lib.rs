@@ -187,7 +187,7 @@ pub use crisis_config::{
     BUILTIN_CRISIS_TELEMETRY_CONFIG,
 };
 pub use culture::{
-    culture_region_at, mutual_contact_ties, reconcile_band_culture_layers,
+    culture_region_at, may_break_away, mutual_contact_ties, reconcile_band_culture_layers,
     reconcile_culture_layers, seeded_modifiers_for_band, ContactPull, ContactTie,
     CultureEffectsCache, CultureLayer, CultureLayerId, CultureLayerScope, CultureManager,
     CultureOwner, CultureSchismEvent, CultureSplitQueue, CultureTensionEvent, CultureTensionKind,

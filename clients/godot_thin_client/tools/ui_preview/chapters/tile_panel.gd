@@ -47,8 +47,6 @@ const LONG_MOVE_WARNING := "Too far to carry it all — leaves 40 food, 6 gear, 
 ## A band holding more than it can carry, with the sim's long-move forecast on it.
 func _long_move_band_fixture() -> Dictionary:
 	var band := BandFx.band_fixture()
-	band["carry_capacity"] = 96.0
-	band["carry_load"] = 154.0
 	band["move_ferry_reach_tiles"] = LONG_MOVE_REACH
 	band["long_move_leaves_food"] = LONG_MOVE_LEAVES_FOOD
 	band["long_move_leaves_items"] = LONG_MOVE_LEAVES_ITEMS

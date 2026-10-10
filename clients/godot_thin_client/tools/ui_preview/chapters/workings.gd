@@ -325,16 +325,17 @@ func run(harness) -> void:
 			and not "\n".join(lines).contains(HudDepositVocab.reverting_value(
 				_wood_working(WOOD_OVER_CUT))))
 	h._assert_hud("…while the block's hover carries the bill AND the §7 figures (%s)"
-			% DetailFormat.block_tooltip(ctx),
-		DetailFormat.block_tooltip(ctx).contains(DetailFormat.format_work_units(
+			% _all_hovers(ctx),
+		_all_hovers(ctx).contains(DetailFormat.format_work_units(
 				WOOD_UPKEEP_SHORTFALL))
-			and DetailFormat.block_tooltip(ctx).contains(
+			and _all_hovers(ctx).contains(
 				DetailFormat.format_trimmed(WOOD_SUSTAINABLE, HudDepositVocab.CARD_STOCK_DECIMALS)))
+	_assert_hovers_are_per_row()
 	# ⛔ **THE COUNTDOWN LIVES ON THE WORK BOARD'S HOVER AND NOWHERE ELSE.**
 	h._assert_hud("…and the neglect countdown is on the roster's hover and not on this one",
 		HudDepositVocab.deposit_roster_tooltip(_wood_working(WOOD_OVER_CUT)).contains(
 				HudDepositVocab.reverting_value(_wood_working(WOOD_OVER_CUT)))
-			and not DetailFormat.block_tooltip(ctx).contains(
+			and not _all_hovers(ctx).contains(
 				HudDepositVocab.reverting_value(_wood_working(WOOD_OVER_CUT))))
 	# **A ROW THAT WOULD SAY "none" IS NOT RENDERED.** Neither of these rungs buys anything over its
 	# branch's free floor, so the payoff row is absent — at the free floor a material is ONE row.
@@ -2684,3 +2685,46 @@ func _row_asides(rows: Array[Dictionary], rung_key: String) -> Array[String]:
 		if aside is Dictionary:
 			out.append(String((aside as Dictionary).get(RungLadder.RUNG_ASIDE_TEXT_KEY, "")))
 	return out
+
+
+## Every sentence the card registered, joined — what the retired `DetailFormat.block_tooltip` returned.
+## The claims above are about WHAT the card says on hover; where it shows is `_assert_hovers_are_per_row`.
+func _all_hovers(ctx: DetailFormat.Context) -> String:
+	var sentences: Array[String] = []
+	for key in ctx.row_tooltips:
+		sentences.append(String(ctx.row_tooltips[key]))
+	return "\n".join(sentences)
+
+const HOVER_ROW_A := "Alpha"
+const HOVER_ROW_B := "Beta"
+const HOVER_SENTENCE_A := "The first row's sentence."
+const HOVER_SENTENCE_B := "The second row's sentence."
+
+## A row's hover shows over THAT row only (the detail block is one `RichTextLabel`): two rows that both
+## registered one, wired onto a real label and hovered the way the engine does. The pair is the claim,
+## since either alone passes on a block that always or never answers.
+func _assert_hovers_are_per_row() -> void:
+	var ctx := DetailFormat.Context.new()
+	ctx.row_tooltips[HOVER_ROW_A] = HOVER_SENTENCE_A
+	ctx.row_tooltips[HOVER_ROW_B] = HOVER_SENTENCE_B
+	var label := RichTextLabel.new()
+	label.bbcode_enabled = true
+	label.text = DetailFormat.detail_bbcode(
+		["%s: 1" % HOVER_ROW_A, "%s: 2" % HOVER_ROW_B, "Gamma: 3"], ctx)
+	DetailFormat.wire_row_hovers(label, ctx)
+	var prefix := HudDisclosureVocab.ROW_HOVER_META_PREFIX
+	h._assert_hud("a row with a hover wears a hover region, and a row without one does not",
+		label.text.contains("[url=%s%s]" % [prefix, HOVER_ROW_A])
+			and label.text.contains("[url=%s%s]" % [prefix, HOVER_ROW_B])
+			and not label.text.contains("%sGamma" % prefix))
+	h._assert_hud("nothing is hovered at rest", label.tooltip_text == "")
+	label.meta_hover_started.emit(prefix + HOVER_ROW_A)
+	h._assert_hud("hovering row A states A's sentence and NOT B's (got \"%s\")" % label.tooltip_text,
+		label.tooltip_text == HOVER_SENTENCE_A)
+	label.meta_hover_ended.emit(prefix + HOVER_ROW_A)
+	label.meta_hover_started.emit(prefix + HOVER_ROW_B)
+	h._assert_hud("…and hovering B states B's sentence and NOT A's (got \"%s\")" % label.tooltip_text,
+		label.tooltip_text == HOVER_SENTENCE_B)
+	label.meta_hover_ended.emit(prefix + HOVER_ROW_B)
+	h._assert_hud("…and leaving a row clears the tooltip", label.tooltip_text == "")
+	label.free()

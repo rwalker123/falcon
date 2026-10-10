@@ -708,6 +708,8 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// **This band's strongest contact pull** (`CultureManager::applied_contact_pull`): the band it
     /// drifted toward, the axis moved most and its signed delta. `None` when it took none.
     pub(crate) culture_drift: Option<crate::culture::ContactPull>,
+    /// Whether the band may break away over its culture (`CultureManager::break_away_risk`).
+    pub(crate) culture_break_away_risk: bool,
     /// **This band's standing toward its people's heart** (`systems::independence`), off the
     /// checkpointed [`crate::systems::HeartLedger`]. `None` for a band no turn has judged (a fresh
     /// world, or a detached party, which is never a member), which publishes as in touch.
@@ -977,6 +979,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         culture_traits,
         culture_ancestor_pull,
         culture_drift,
+        culture_break_away_risk,
         entity,
         band_id,
         band_name,
@@ -2247,12 +2250,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             .min()
             .unwrap_or(crate::work_party::NO_LOAD_ON_THE_ROAD),
         homeward_all_home_in: homeward_totals.all_home_in,
-        // **WHAT THIS BAND CAN CARRY** (#732) — its whole working-age hands × one worker's pack, and
-        // the load of everything it holds. Dependants add nothing.
-        carry_capacity: crate::carry::band_carry_capacity(cohort, expedition_levers.carry).to_f32(),
-        carry_load: crate::carry::held_load(&cohort.stores, equipment)
-            .load(expedition_levers.carry)
-            .to_f32(),
         move_ferry_reach_tiles: expedition_levers.move_ferry_reach_tiles,
         // **The long-move forecast is the shed the move would run**, from the same function — no
         // client mirror. A detached party keeps its own rules, so it forecasts nothing.
@@ -2278,6 +2275,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         culture_drift_source_band: culture_drift.map_or(0, |pull| pull.source),
         culture_drift_axis: culture_drift.map_or(0, |pull| pull.axis as u8),
         culture_drift_delta: culture_drift.map_or(0.0, |pull| pull.delta.to_f32()),
+        culture_break_away_risk,
     }
 }
 
@@ -2810,6 +2808,7 @@ mod tests {
             culture_traits: Vec::new(),
             culture_ancestor_pull: Vec::new(),
             culture_drift: None,
+            culture_break_away_risk: false,
             entity: Entity::from_raw(1),
             // These fixtures assert on the derived readouts, not on band identity.
             band_id: None,

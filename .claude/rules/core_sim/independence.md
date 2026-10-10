@@ -169,7 +169,11 @@ heart's.
 
 The announcement is `band_broke_away` with the same two rows and `side=` tokens; the detail also
 carries **`cause=culture`** and the label reads as culture (*"... grew too far from our ways ..."*).
-The grievance break-away carries no `cause` token. The queue is a derived resource (filled and
+The grievance break-away carries no `cause` token. **The player is warned first:** a band in the
+drift-warning state (`ticks_above_soft` at its trigger) that passes the same predicate
+(`culture::may_break_away`: purist above the lever and a sibling) is published as
+`cultureBreakAwayRisk:bool` on its cohort row (own bands only; `CultureManager::break_away_risk`,
+checkpointed, save format 32), because band tensions never reach `active_tensions`. The queue is a derived resource (filled and
 drained within one turn), listed in `sim_state_coverage.rs`'s `DERIVED_RESOURCES`.
 
 ## Events

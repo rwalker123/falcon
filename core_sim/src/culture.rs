@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use bevy::prelude::*;
 use sim_runtime::{
@@ -629,6 +629,10 @@ pub struct CultureManager {
     /// `bands`. Published as the band's `cultureDrift*` wire fields; stored, not recomputed at
     /// capture, for `applied_band_pull`'s reason. A band that took no pull is absent.
     applied_contact_pull: BTreeMap<u64, ContactPull>,
+    /// The bands (keyed like `bands`) that may break away: in the drift-warning state and passing
+    /// [`may_break_away`]. Published as `cultureBreakAwayRisk`; stored for `applied_band_pull`'s
+    /// reason.
+    break_away_risk: BTreeSet<u64>,
 }
 
 /// One mutual tie between two resident bands, as contact drift reads it: `tie` is the WEAKER of
@@ -668,6 +672,7 @@ pub struct CultureManagerCheckpoint {
     smoothed_resonance: InfluencerCultureResonance,
     applied_band_pull: BTreeMap<u64, [Scalar; CULTURE_TRAIT_AXES]>,
     applied_contact_pull: BTreeMap<u64, ContactPull>,
+    break_away_risk: BTreeSet<u64>,
 }
 
 impl CultureManager {
@@ -683,6 +688,7 @@ impl CultureManager {
             smoothed_resonance: self.smoothed_resonance,
             applied_band_pull: self.applied_band_pull.clone(),
             applied_contact_pull: self.applied_contact_pull.clone(),
+            break_away_risk: self.break_away_risk.clone(),
         }
     }
 
@@ -697,6 +703,7 @@ impl CultureManager {
         self.smoothed_resonance = checkpoint.smoothed_resonance;
         self.applied_band_pull = checkpoint.applied_band_pull.clone();
         self.applied_contact_pull = checkpoint.applied_contact_pull.clone();
+        self.break_away_risk = checkpoint.break_away_risk.clone();
     }
 }
 
@@ -717,6 +724,7 @@ impl CultureManager {
             smoothed_resonance: InfluencerCultureResonance::default(),
             applied_band_pull: BTreeMap::new(),
             applied_contact_pull: BTreeMap::new(),
+            break_away_risk: BTreeSet::new(),
         }
     }
 
@@ -867,6 +875,22 @@ impl CultureManager {
     /// that band took no pull.
     pub fn applied_band_pull(&self, owner: CultureOwner) -> Option<&[Scalar; CULTURE_TRAIT_AXES]> {
         self.applied_band_pull.get(&owner.0)
+    }
+
+    /// Whether band `owner` may break away, as of the last reconcile system pass.
+    pub fn break_away_risk(&self, owner: CultureOwner) -> bool {
+        self.break_away_risk.contains(&owner.0)
+    }
+
+    /// The bands whose layer is in the drift-warning state (`ticks_above_soft` at its trigger).
+    fn bands_in_drift_warning(&self) -> Vec<u64> {
+        self.bands
+            .iter()
+            .filter(|(_, layer)| {
+                layer.divergence.ticks_above_soft >= layer.divergence.soft_trigger_ticks.max(1)
+            })
+            .map(|(owner, _)| *owner)
+            .collect()
     }
 
     /// The strongest contact pull the last [`Self::apply_contact_drift`] gave band `owner`; `None`
@@ -1632,6 +1656,13 @@ pub struct CultureSplitQueue {
     pub bands: BTreeMap<BandId, FactionId>,
 }
 
+/// **The one rule for "this band may break away"** (#702), shared by the split queue and the
+/// published warning so they cannot disagree: the band's Syncretic<->Purist value is above
+/// `split_min_purist` AND its people has at least one other resident band.
+pub fn may_break_away(purist: f32, split_min_purist: f32, has_sibling: bool) -> bool {
+    purist > split_min_purist && has_sibling
+}
+
 /// System wrapper that performs the reconcile pass each turn.
 #[allow(clippy::too_many_arguments)]
 pub fn reconcile_culture_layers(
@@ -1693,27 +1724,30 @@ pub fn reconcile_culture_layers(
     // nothing to break away from.
     splits.bands.clear();
     let min_purist = culture_config.config().culture().split_min_purist();
+    let may_break = |manager: &CultureManager, band: BandId| -> Option<FactionId> {
+        let layer = manager.band_layer_by_owner(CultureOwner::from_band(band))?;
+        let purist = layer.traits.values()[CultureTraitAxis::SyncreticPurist.index()].to_f32();
+        let (_, cohort) = bands.iter().find(|(id, _)| **id == band)?;
+        let has_sibling = bands
+            .iter()
+            .any(|(id, other)| *id != band && other.faction == cohort.faction);
+        may_break_away(purist, min_purist, has_sibling).then_some(cohort.faction)
+    };
+    // The warning: in the drift-warning state and passing the same predicate the split uses.
+    let at_risk: BTreeSet<u64> = manager
+        .bands_in_drift_warning()
+        .into_iter()
+        .filter(|owner| may_break(&manager, BandId(*owner)).is_some())
+        .collect();
+    manager.break_away_risk = at_risk;
     for record in records.iter() {
         if record.kind != CultureTensionKind::SchismRisk || record.scope != CultureLayerScope::Band
         {
             continue;
         }
         let band = BandId(record.owner.0);
-        let Some(layer) = manager.band_layer_by_owner(record.owner) else {
-            continue;
-        };
-        let purist = layer.traits.values()[CultureTraitAxis::SyncreticPurist.index()].to_f32();
-        if purist <= min_purist {
-            continue;
-        }
-        let Some((_, cohort)) = bands.iter().find(|(id, _)| **id == band) else {
-            continue;
-        };
-        let has_sibling = bands
-            .iter()
-            .any(|(id, other)| *id != band && other.faction == cohort.faction);
-        if has_sibling {
-            splits.bands.insert(band, cohort.faction);
+        if let Some(faction) = may_break(&manager, band) {
+            splits.bands.insert(band, faction);
         }
     }
 }

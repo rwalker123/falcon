@@ -629,6 +629,7 @@ fn seed_snapshot() -> WorldSnapshot {
         cohort.culture_drift_source_band = 1;
         cohort.culture_drift_axis = 1;
         cohort.culture_drift_delta = 0.02;
+        cohort.culture_break_away_risk = true;
         cohort.knowledge_fragments = rows();
         // The cohort's optional tables, on the even rows only — see [`seeded_on`].
         cohort.harvest_task = seeded_on(row).then(HarvestTaskState::default);

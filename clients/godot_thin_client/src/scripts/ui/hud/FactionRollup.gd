@@ -180,13 +180,8 @@ static func _build_vitals_label(bands: Array, disclosures: DisclosureController)
     ctx.family_limit_amber = HudLineageVocab.faction_row_shown(groups) \
         and HudLineageVocab.limit_binds(groups["main"])
     label.text = DetailFormat.detail_bbcode(lines, ctx)
-    # **A HOVER A ROW REGISTERS IS ANSWERED BY THE BLOCK, WHICH IS WHY NO ROW HERE REGISTERS ONE.**
-    # `[hint=…]` is not parsed by this Godot build (see `DetailFormat.block_tooltip`), so the label
-    # carries every registered sentence at once and a cursor anywhere over the block gets all of
-    # them — the dormant `Fodder:` row used to put a paragraph about hay under Growth and Morale
-    # that way. The attachment stays, in the shape both band-page hosts use, so a row that ever does
-    # have a block-wide sentence to make is answered; it joins nothing today and shows no tooltip.
-    label.tooltip_text = DetailFormat.block_tooltip(ctx)
+    # **A ROW'S HOVER SHOWS OVER THAT ROW ALONE** (`DetailFormat.wire_row_hovers`).
+    DetailFormat.wire_row_hovers(label, ctx)
     return label
 
 ## Drop the previous render's caret state. A one-line hop through a helper because this layer is
@@ -576,7 +571,7 @@ static func _severity_color(severity: String) -> Color:
 ## what makes this row and the cycler's card agree about which band is which.
 static func _band_row(band: Dictionary, value: String, note: String) -> String:
     var suffix := "  [color=#%s]%s[/color]" % [HudStyle.INK_DIM_HEX, note] if note != "" else ""
-    return "%s%s%d][color=#%s]%s[/color][/url]  %s%s" % [
+    return "%s%s%d][color=#%s][u]%s[/u][/color][/url]  %s%s" % [
         DetailFormat.DISCLOSURE_URL_OPEN, HudDisclosureVocab.FACTION_BAND_JUMP_META_PREFIX,
         int(band.get("entity", -1)), HudStyle.SIGNAL_HEX,
         HudFormat.band_name(band), value, suffix]

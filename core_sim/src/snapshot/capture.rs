@@ -3177,6 +3177,8 @@ pub fn capture_snapshot(
                         culture_drift: band_owner
                             .and_then(|owner| culture.applied_contact_pull(owner))
                             .copied(),
+                        culture_break_away_risk: band_owner
+                            .is_some_and(|owner| culture.break_away_risk(owner)),
                         entity,
                         band_id,
                         band_name,

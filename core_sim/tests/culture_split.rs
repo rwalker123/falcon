@@ -280,3 +280,68 @@ fn a_negative_or_non_finite_lever_is_refused_at_load() {
     assert_eq!(shipped.culture().contact_drift().rate(), 0.014);
     assert_eq!(shipped.culture().split_min_purist(), 0.0);
 }
+
+// ---------------------------------------------------------------------------------------------
+// The warning: `cultureBreakAwayRisk` on the encoded cohort row.
+// ---------------------------------------------------------------------------------------------
+
+/// Ticks short of the band scope's soft trigger (3), so this turn's reconcile tips it over.
+const ONE_SHORT_OF_SOFT: u16 = 2;
+
+/// Stage the fixture's band `soft_ticks_before` ticks into the drift-warning window (the hard
+/// counter is cleared so no split queues), run this turn's reconcile, and read the flag off the
+/// encoded envelope.
+fn published_risk(purist: f32, sole: bool, soft_ticks_before: u16) -> bool {
+    let mut fx = fixture(purist, sole);
+    {
+        let mut manager = fx.app.world.resource_mut::<CultureManager>();
+        let layer = manager
+            .band_layer_mut_by_owner(CultureOwner::from_band(fx.strained))
+            .unwrap();
+        layer.divergence.ticks_above_hard = 0;
+        layer.divergence.ticks_above_soft = soft_ticks_before;
+    }
+    fx.app.world.run_system_once(reconcile_culture_layers);
+    core_sim::publish_baseline_snapshot(&mut fx.app.world);
+    let snapshot = fx
+        .app
+        .world
+        .resource::<core_sim::SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref()).to_vec();
+    let envelope =
+        shadow_scale_flatbuffers::generated::shadow_scale::sim::root_as_envelope(bytes.as_ref())
+            .expect("a valid envelope");
+    envelope
+        .payload_as_snapshot()
+        .unwrap()
+        .population()
+        .and_then(|section| section.populations())
+        .unwrap()
+        .iter()
+        .find(|row| row.bandId() == fx.strained.0)
+        .expect("the band is on the wire")
+        .cultureBreakAwayRisk()
+}
+
+#[test]
+fn a_purist_band_past_soft_with_a_sibling_publishes_the_break_away_risk() {
+    assert!(published_risk(PURIST, false, ONE_SHORT_OF_SOFT));
+}
+
+#[test]
+fn the_same_band_below_soft_publishes_no_risk() {
+    assert!(!published_risk(PURIST, false, 0));
+}
+
+#[test]
+fn an_accepting_band_past_soft_publishes_no_risk() {
+    assert!(!published_risk(ACCEPTING, false, ONE_SHORT_OF_SOFT));
+}
+
+#[test]
+fn a_purist_sole_band_past_soft_publishes_no_risk() {
+    assert!(!published_risk(PURIST, true, ONE_SHORT_OF_SOFT));
+}

@@ -1399,18 +1399,13 @@ table PopulationCohortState {
   homewardNextLoadIn:uint = 0;
   // Turns until the last homeward hand is back; 0 = nobody walking home.
   homewardAllHomeIn:uint = 0;
-  // --- WHAT THIS BAND CAN CARRY (appended last, #732) ----------------------------------------
+  // --- THE LONG MOVE (appended last, #732) ---------------------------------------------------
   // A band carries what its WORKERS can carry: its working-age value as it stands (never floored to
-  // whole hands) x expedition_config carry.per_worker_carry. Dependants add nothing. In food-unit
-  // load, where
-  //   load = food + fodderWeight x fodder + itemCarryWeight x items + materialCarryWeight x materials.
-  carryCapacity:float = 0;
-  // The load of EVERYTHING this band holds right now - its larder, its hay, every item in its ledger
-  // (bench tools included) and every material unit.
-  carryLoad:float = 0;
+  // whole hands) x expedition_config carry.per_worker_carry. Dependants add nothing. The cohort
+  // publishes no carry total: the long-move forecast below is the sim's own answer.
   // How far a band may move and still keep everything (it can ferry its goods), in hex steps - the
   // same radius within which same-faction bands pool. Echoed on every cohort (the
-  // `bandMoveTilesPerTurn` idiom). A move FARTHER than this sheds the band down to `carryCapacity`
+  // `bandMoveTilesPerTurn` idiom). A move FARTHER than this sheds the band down to what its workers can carry
   // the moment the order is accepted, and what is left behind is LOST.
   moveFerryReachTiles:uint = 0;
   // THE FORECAST OF A LONG MOVE, computed by the same shedding function the move runs (no client
@@ -1547,6 +1542,10 @@ table PopulationCohortState {
   cultureDriftSourceBand:ulong = 0;
   cultureDriftAxis:ubyte = 0;
   cultureDriftDelta:float = 0;
+  // True when the band's culture is in the drift-warning state, its Syncretic<->Purist value is
+  // above `culture.split_min_purist` and its people has another resident band: it may break away
+  // if the strain holds (`culture::may_break_away`, the same predicate the split uses). Own bands only.
+  cultureBreakAwayRisk:bool = false;
 }
 
 // One band's outfitting window. THE TWO SUPPLIES ARE MUTUALLY EXCLUSIVE and `parentBandId` says which
