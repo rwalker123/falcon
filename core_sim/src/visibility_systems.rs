@@ -37,7 +37,7 @@ const MIN_EFFECTIVE_SIGHT_RANGE: i32 = 1;
 /// definition; anything further has room for a blocker and must be cast.
 const ADJACENT_LOS_SKIP_DISTANCE: u32 = 1;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use sim_runtime::TerrainTags;
 
@@ -57,8 +57,9 @@ use crate::{
     orders::FactionId,
     resources::{SimulationConfig, SimulationTick, TileRegistry},
     routes::RoadRegistry,
+    terrain::terrain_definition,
     visibility::{VisibilityLedger, VisibilityState, VisibilitySweepTracker},
-    visibility_config::{TerrainModifierConfig, VisibilityConfigHandle},
+    visibility_config::{SizeSightBonusConfig, TerrainDetectionConfig, VisibilityConfigHandle},
 };
 
 /// Step 1: Clear all Active visibility states to Discovered at the start of the visibility phase.
@@ -150,7 +151,7 @@ struct ContactSink<'a> {
     /// Which resident bands stand on which tile, each with the name it answers to. **Probed, never
     /// iterated**, so a hash map's order is not observable — the deterministic ordering that
     /// matters is [`crate::connections::ContactsThisTurn`]'s, which is keyed.
-    occupancy: &'a HashMap<UVec2, Vec<(BandId, &'a str)>>,
+    occupancy: &'a Occupancy<'a>,
     contacts: &'a mut ContactsThisTurn,
     /// The turn the sighting happened on, which for a live reveal is always *now*.
     turn: u64,
@@ -174,17 +175,24 @@ impl ContactSink<'_> {
     }
 }
 
+/// Which resident bands stand on which tile, each with the name a sighting of it records.
+type Occupancy<'a> = HashMap<UVec2, Vec<(BandId, &'a str)>>;
+
 /// Which resident bands stand on which tile, built **once** per sweep — each beside the
 /// [`BandName`] a sighting of it records (empty when the band carries none), borrowed from the
 /// query rather than cloned per band.
 ///
 /// **Subjects are resident bands only.** A detached expedition is not a subject — seeing someone's
 /// scouts is a different beat, and out of scope for the primitive.
+///
+/// **The same pass also totals the people on each tile** ([`TilePeople`]) — the size bonus of
+/// [`size_sight_bonus_map`] is a property of the tile's whole crowd, any faction.
 fn resident_band_occupancy<'a>(
     residents: &'a Query<(&BandId, &PopulationCohort, Option<&BandName>), With<ResidentBand>>,
     tiles: &Query<&Tile>,
-) -> HashMap<UVec2, Vec<(BandId, &'a str)>> {
-    let mut occupancy: HashMap<UVec2, Vec<(BandId, &'a str)>> = HashMap::new();
+) -> (Occupancy<'a>, TilePeople) {
+    let mut occupancy: Occupancy<'a> = HashMap::new();
+    let mut people = TilePeople::new();
     for (band, cohort, name) in residents.iter() {
         if let Ok(tile) = tiles.get(cohort.current_tile) {
             let name = name.map_or("", |name| name.0.as_str());
@@ -192,9 +200,107 @@ fn resident_band_occupancy<'a>(
                 .entry(tile.position)
                 .or_default()
                 .push((*band, name));
+            add_people(&mut people, tile.position, cohort.size);
         }
     }
-    occupancy
+    (occupancy, people)
+}
+
+/// Total resident people standing on each tile, keyed [`tile_key`]-style (row-major).
+pub(crate) type TilePeople = BTreeMap<(u32, u32), u32>;
+
+/// Row-major map key for a tile: `(y, x)`, so a `BTreeMap` iterates in a deterministic row order.
+pub(crate) fn tile_key(pos: UVec2) -> (u32, u32) {
+    (pos.y, pos.x)
+}
+
+/// Add `size` people to the tile's tally.
+pub(crate) fn add_people(people: &mut TilePeople, pos: UVec2, size: u32) {
+    let entry = people.entry(tile_key(pos)).or_insert(0);
+    *entry = entry.saturating_add(size);
+}
+
+/// Tiles of extra sight range INTO a tile holding `people` residents: one per full
+/// `people_per_tile` above `threshold_people`, capped at `max_tiles`. Faction-blind.
+pub(crate) fn size_sight_bonus_tiles(people: u32, cfg: &SizeSightBonusConfig) -> u32 {
+    let excess = (people as f32 - cfg.threshold_people).max(0.0);
+    let steps = (excess / cfg.people_per_tile).floor();
+    // `steps` is finite and non-negative (validated config); the float-to-int cast saturates.
+    (steps as u32).min(cfg.max_tiles)
+}
+
+/// Only the tiles whose crowd earns a bonus, keyed row-major so iteration order is deterministic.
+pub(crate) fn size_sight_bonus_map(
+    people: &TilePeople,
+    cfg: &SizeSightBonusConfig,
+) -> BTreeMap<(u32, u32), u32> {
+    people
+        .iter()
+        .filter_map(|(key, count)| {
+            let bonus = size_sight_bonus_tiles(*count, cfg);
+            (bonus > 0).then_some((*key, bonus))
+        })
+        .collect()
+}
+
+/// Whole tiles of sight range into a tile of the given authored `detection_modifier`: the product
+/// with `tiles_per_unit`, truncated toward zero (so a small modifier is no modifier).
+pub fn terrain_sight_modifier(detection_modifier: f32, cfg: &TerrainDetectionConfig) -> i32 {
+    (detection_modifier * cfg.tiles_per_unit).trunc() as i32
+}
+
+/// Everything about the TARGET tile that moves how far away it can be seen, built once per sweep:
+/// the terrain term per tile and the size bonus of the occupied tiles. Sight is sight — the live
+/// sweep and an expedition's observation read the same one.
+pub(crate) struct SightModifiers {
+    /// Terrain sight modifier per tile, indexed `y * width + x`.
+    terrain: Vec<i32>,
+    /// Largest positive entry of `terrain` (floored at 0): how far past `base_range` the disc box
+    /// must reach to stay a superset.
+    max_terrain_bonus: u32,
+    /// Size bonus of every tile that has one, row-major.
+    size_bonus: BTreeMap<(u32, u32), u32>,
+}
+
+impl SightModifiers {
+    pub(crate) fn build(
+        tiles: &Query<&Tile>,
+        width: u32,
+        height: u32,
+        terrain_cfg: &TerrainDetectionConfig,
+        size_bonus: BTreeMap<(u32, u32), u32>,
+    ) -> Self {
+        let mut terrain = vec![0i32; (width * height) as usize];
+        for tile in tiles.iter() {
+            let idx = (tile.position.y * width + tile.position.x) as usize;
+            if idx < terrain.len() {
+                terrain[idx] = terrain_sight_modifier(
+                    terrain_definition(tile.terrain).detection_modifier,
+                    terrain_cfg,
+                );
+            }
+        }
+        let max_terrain_bonus = terrain.iter().copied().max().unwrap_or(0).max(0) as u32;
+        Self {
+            terrain,
+            max_terrain_bonus,
+            size_bonus,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_parts(terrain: Vec<i32>, size_bonus: BTreeMap<(u32, u32), u32>) -> Self {
+        let max_terrain_bonus = terrain.iter().copied().max().unwrap_or(0).max(0) as u32;
+        Self {
+            terrain,
+            max_terrain_bonus,
+            size_bonus,
+        }
+    }
+
+    fn size_bonus_at(&self, pos: UVec2) -> u32 {
+        self.size_bonus.get(&tile_key(pos)).copied().unwrap_or(0)
+    }
 }
 
 /// Step 2: Calculate visibility from all visibility sources (units, settlements).
@@ -269,11 +375,21 @@ pub fn calculate_visibility(
     // Build terrain tags grid for terrain modifier lookups
     let terrain_tags = build_terrain_tags_grid(&tiles, width, height);
 
+    // Where every resident band stands and how many people each tile holds, built ONCE (one pass
+    // over the residents) and probed per revealed tile below.
+    let (occupancy, tile_people) = resident_band_occupancy(&residents, &tiles);
+    // Terrain sight term per tile + the size bonus of crowded tiles: one notion of effective range
+    // for every vision source below.
+    let sight_modifiers = SightModifiers::build(
+        &tiles,
+        width,
+        height,
+        &cfg.terrain_detection,
+        size_sight_bonus_map(&tile_people, &cfg.size_sight_bonus),
+    );
+
     // Parse blocking terrain tags from config (e.g., HIGHLAND, VOLCANIC)
     let blocking_tags = parse_blocking_tags(&cfg.line_of_sight.blocking_terrain_tags);
-
-    // Where every resident band stands, built ONCE and probed per revealed tile below.
-    let occupancy = resident_band_occupancy(&residents, &tiles);
 
     // Collect all visibility sources — see `VisionSource` for what each field is.
     let mut sources: Vec<VisionSource> = Vec::new();
@@ -475,7 +591,7 @@ pub fn calculate_visibility(
             &elevation,
             cfg.line_of_sight.enabled,
             &terrain_tags,
-            &cfg.terrain_modifiers,
+            &sight_modifiers,
             blocking_tags,
             wrap_horizontal,
             source.observer_band.map(|observer| ContactSink {
@@ -733,7 +849,8 @@ pub(crate) fn build_terrain_tags_grid(
 }
 
 /// Reveal all tiles within range of a viewer position.
-/// Applies terrain modifiers: forest tiles are harder to see (penalty), water tiles are easier (bonus).
+/// Applies the target tile's terrain sight term (`detection_modifier`) and its size bonus (a crowded tile is
+/// visible from further away).
 /// Supports horizontal wrapping for cylindrical world topology.
 ///
 /// # Performance Notes
@@ -757,7 +874,7 @@ fn reveal_tiles_in_range(
     elevation: &ElevationField,
     los_enabled: bool,
     terrain_tags: &[TerrainTags],
-    terrain_modifiers: &TerrainModifierConfig,
+    sight_modifiers: &SightModifiers,
     blocking_tags: TerrainTags,
     wrap_horizontal: bool,
     // **Contact rides the reveal.** `None` for a source with no band behind it, which reveals fog
@@ -778,7 +895,7 @@ fn reveal_tiles_in_range(
         elevation,
         los_enabled,
         terrain_tags,
-        terrain_modifiers,
+        sight_modifiers,
         blocking_tags,
         wrap_horizontal,
         |pos| {
@@ -809,7 +926,7 @@ pub(crate) fn visible_tiles_in_range(
     elevation: &ElevationField,
     los_enabled: bool,
     terrain_tags: &[TerrainTags],
-    terrain_modifiers: &TerrainModifierConfig,
+    sight_modifiers: &SightModifiers,
     blocking_tags: TerrainTags,
     wrap_horizontal: bool,
 ) -> Vec<UVec2> {
@@ -820,7 +937,7 @@ pub(crate) fn visible_tiles_in_range(
         elevation,
         los_enabled,
         terrain_tags,
-        terrain_modifiers,
+        sight_modifiers,
         blocking_tags,
         wrap_horizontal,
         |pos| visible.push(pos),
@@ -840,7 +957,7 @@ fn for_each_visible_tile_in_range(
     elevation: &ElevationField,
     los_enabled: bool,
     terrain_tags: &[TerrainTags],
-    terrain_modifiers: &TerrainModifierConfig,
+    sight_modifiers: &SightModifiers,
     blocking_tags: TerrainTags,
     wrap_horizontal: bool,
     mut f: impl FnMut(UVec2),
@@ -848,13 +965,15 @@ fn for_each_visible_tile_in_range(
     let width = elevation.width;
     let height = elevation.height;
 
-    // Use max possible range for bounding box (base + max bonus). This stays a **superset** of the
-    // hex disc filtered for below: every hex step changes the offset column and row by at most one
-    // (see `HEX_NEIGHBOR_OFFSETS`), so a tile `n` hex steps away lies within `n` columns and `n`
-    // rows. `water_bonus` is the only positive terrain modifier (`get_terrain_modifier` returns the
-    // water bonus, the negative forest penalty, or zero), so `effective_range <= max_range`. The
-    // caller has already folded the elevation bonus into `base_range`.
-    let max_range = base_range + terrain_modifiers.water_bonus.max(0) as u32;
+    // Bounding box sized by the base range plus the largest POSITIVE terrain term. This stays a
+    // **superset** of the hex disc filtered for below as far as terrain goes: every hex step changes
+    // the offset column and row by at most one (see `HEX_NEIGHBOR_OFFSETS`), so a tile `n` hex
+    // steps away lies within `n` columns and `n` rows, and no tile's terrain term exceeds
+    // `max_terrain_bonus`. The caller has already folded the elevation bonus into `base_range`.
+    // The SIZE bonus is deliberately NOT in the box (it would widen the sweep of every source for
+    // the sake of a few crowded tiles): tiles inside the box take their size bonus in the loop,
+    // and the crowded tiles that lie OUTSIDE the box are walked from the bonus map afterwards.
+    let max_range = base_range + sight_modifiers.max_terrain_bonus;
 
     // Y bounds (no vertical wrap)
     let min_y = center.y.saturating_sub(max_range);
@@ -874,6 +993,67 @@ fn for_each_visible_tile_in_range(
 
     let center_elevation = elevation.sample(center.x, center.y);
 
+    // The one per-tile test: effective range into this tile (base + terrain + size bonus, never
+    // below the floor), then the hex disc, then line of sight. Both the box loop and the
+    // outside-the-box crowded tiles go through it, so there is a single notion of "can see".
+    let mut try_tile = |x: u32, y: u32| {
+        // **Sight is measured in HEX STEPS**, the same metric every other radius in the sim
+        // uses (`band_work_range`, supply reach, `raid_radius`). Euclidean distance over odd-r
+        // *offset* coordinates — what this used to compute — is not the hex metric at all, and
+        // it disagreed with it in **both directions**:
+        //
+        // - it **understated** hex distance on the column-heavy diagonals, so every source saw
+        //   further there than its configured range. That is the bug this landed for: a
+        //   wrapped `(dcol 8, drow 4)` reads `8.94` under offset-Euclid and is **10** hex
+        //   steps, so a scout at effective range 9 revealed a band ten hexes off across deep
+        //   ocean, recorded a contact, and that contact satisfied the defection gate;
+        // - it **overstated** hex distance on the row-heavy axis, so a source saw *less* far
+        //   there than its range. At effective range 9 an offset delta of `(dcol 4, drow 9)` is
+        //   exactly 9 hex steps — in both row parities — while offset-Euclid reads
+        //   `√97 ≈ 9.85 > 9` and excluded it.
+        //
+        // So the disc did not merely shrink: at range 9 it drops **8** over-reaching tiles,
+        // gains **26** it was wrongly excluding, and grows **253 → 271** overall (the hex disc
+        // `1 + 3·r·(r+1)`). Contact, trade ties and defection all key off this sweep, so the
+        // widened axis can create contacts that did not exist before — it is not a pure
+        // tightening of the sight radius.
+        let target = UVec2::new(x, y);
+        let hex_distance = hex_distance_wrapped(center, target, width, wrap_horizontal);
+
+        let idx = (y * width + x) as usize;
+        let terrain_modifier = sight_modifiers.terrain.get(idx).copied().unwrap_or(0);
+        let size_bonus = sight_modifiers.size_bonus_at(target);
+
+        let effective_range = (base_range as i32 + terrain_modifier + size_bonus as i32)
+            .max(MIN_EFFECTIVE_SIGHT_RANGE) as u32;
+
+        // Skip tiles outside the hex disc of that range.
+        if hex_distance > effective_range {
+            return;
+        }
+
+        // Line of sight check if enabled (skip for adjacent tiles - no intermediate blocker)
+        if los_enabled
+            && hex_distance > ADJACENT_LOS_SKIP_DISTANCE
+            && !has_line_of_sight_wrapped(
+                center,
+                target,
+                center_elevation,
+                &LineOfSightCtx {
+                    elevation,
+                    terrain_tags,
+                    blocking_tags,
+                    wrap_horizontal,
+                },
+            )
+        {
+            return;
+        }
+
+        // Tile is visible from this source.
+        f(target);
+    };
+
     for y in min_y..=max_y {
         for dx in x_start..=x_end {
             // Calculate actual x coordinate, wrapping if needed
@@ -886,67 +1066,21 @@ fn for_each_visible_tile_in_range(
                 }
                 raw_x as u32
             };
+            try_tile(x, y);
+        }
+    }
 
-            // **Sight is measured in HEX STEPS**, the same metric every other radius in the sim
-            // uses (`band_work_range`, supply reach, `raid_radius`). Euclidean distance over odd-r
-            // *offset* coordinates — what this used to compute — is not the hex metric at all, and
-            // it disagreed with it in **both directions**:
-            //
-            // - it **understated** hex distance on the column-heavy diagonals, so every source saw
-            //   further there than its configured range. That is the bug this landed for: a
-            //   wrapped `(dcol 8, drow 4)` reads `8.94` under offset-Euclid and is **10** hex
-            //   steps, so a scout at effective range 9 revealed a band ten hexes off across deep
-            //   ocean, recorded a contact, and that contact satisfied the defection gate;
-            // - it **overstated** hex distance on the row-heavy axis, so a source saw *less* far
-            //   there than its range. At effective range 9 an offset delta of `(dcol 4, drow 9)` is
-            //   exactly 9 hex steps — in both row parities — while offset-Euclid reads
-            //   `√97 ≈ 9.85 > 9` and excluded it.
-            //
-            // So the disc did not merely shrink: at range 9 it drops **8** over-reaching tiles,
-            // gains **26** it was wrongly excluding, and grows **253 → 271** overall (the hex disc
-            // `1 + 3·r·(r+1)`). Contact, trade ties and defection all key off this sweep, so the
-            // widened axis can create contacts that did not exist before — it is not a pure
-            // tightening of the sight radius.
-            let hex_distance =
-                hex_distance_wrapped(center, UVec2::new(x, y), width, wrap_horizontal);
-
-            // Calculate terrain modifier for target tile
-            let idx = (y * width + x) as usize;
-            let tags = terrain_tags
-                .get(idx)
-                .copied()
-                .unwrap_or(TerrainTags::empty());
-            let terrain_modifier = get_terrain_modifier(tags, terrain_modifiers);
-
-            // Calculate effective range for this target tile
-            let effective_range =
-                (base_range as i32 + terrain_modifier).max(MIN_EFFECTIVE_SIGHT_RANGE) as u32;
-
-            // Skip tiles outside the hex disc of that range (accounting for terrain modifier)
-            if hex_distance > effective_range {
-                continue;
-            }
-
-            // Line of sight check if enabled (skip for adjacent tiles - no intermediate blocker)
-            if los_enabled
-                && hex_distance > ADJACENT_LOS_SKIP_DISTANCE
-                && !has_line_of_sight_wrapped(
-                    center,
-                    UVec2::new(x, y),
-                    center_elevation,
-                    &LineOfSightCtx {
-                        elevation,
-                        terrain_tags,
-                        blocking_tags,
-                        wrap_horizontal,
-                    },
-                )
-            {
-                continue;
-            }
-
-            // Tile is visible from this source.
-            f(UVec2::new(x, y));
+    // Crowded tiles OUTSIDE the box: a large group can be seen from beyond the terrain-only reach.
+    // Walked from the bonus map (few entries), skipping any tile the box loop already tried so no
+    // tile is visited twice.
+    for &(y, x) in sight_modifiers.size_bonus.keys() {
+        if y >= height || x >= width {
+            continue;
+        }
+        let dx = shortest_delta_x(center.x, x, width, wrap_horizontal);
+        let inside_box = (min_y..=max_y).contains(&y) && (x_start..=x_end).contains(&dx);
+        if !inside_box {
+            try_tile(x, y);
         }
     }
 }
@@ -977,24 +1111,6 @@ pub(crate) fn parse_blocking_tags(tag_names: &[String]) -> TerrainTags {
         result |= tag;
     }
     result
-}
-
-/// Get terrain modifier for a tile based on its terrain tags.
-/// - Forest/wetland tiles apply a penalty (harder to see into)
-/// - Water tiles apply a bonus (easier to see across)
-fn get_terrain_modifier(tags: TerrainTags, cfg: &TerrainModifierConfig) -> i32 {
-    // Water bonus takes precedence (open water is easy to see across)
-    if tags.contains(TerrainTags::WATER) {
-        return cfg.water_bonus;
-    }
-
-    // Wetland/forest-like terrain applies penalty (foliage obscures vision)
-    if tags.contains(TerrainTags::WETLAND) {
-        return cfg.forest_penalty;
-    }
-
-    // No modifier for other terrain
-    0
 }
 
 /// Terrain data and blocking rules that stay constant across every ray cast in a
@@ -1825,27 +1941,198 @@ mod tests {
     }
 
     #[test]
-    fn terrain_modifier_water_bonus() {
-        let cfg = TerrainModifierConfig {
-            forest_penalty: -2,
-            water_bonus: 1,
+    fn detection_modifier_truncates_toward_zero_into_whole_tiles() {
+        let cfg = TerrainDetectionConfig::default();
+        assert_eq!(terrain_sight_modifier(-0.15, &cfg), -1);
+        assert_eq!(terrain_sight_modifier(-0.05, &cfg), 0);
+        assert_eq!(terrain_sight_modifier(0.20, &cfg), 2);
+        assert_eq!(terrain_sight_modifier(-0.25, &cfg), -2);
+        // Liveness: the scale is read, not ignored.
+        let doubled = TerrainDetectionConfig {
+            tiles_per_unit: cfg.tiles_per_unit * 2.0,
         };
+        assert_eq!(terrain_sight_modifier(-0.15, &doubled), -3);
+        // The authored table maps as the design says: a forest shortens, steppe lengthens.
+        let modifier =
+            |terrain| terrain_sight_modifier(terrain_definition(terrain).detection_modifier, &cfg);
+        assert_eq!(modifier(sim_runtime::TerrainType::MixedWoodland), -1);
+        assert_eq!(modifier(sim_runtime::TerrainType::BorealTaiga), -2);
+        assert_eq!(modifier(sim_runtime::TerrainType::PrairieSteppe), 2);
+    }
 
-        // Water tiles get bonus
-        let water_tags = TerrainTags::WATER;
-        assert_eq!(get_terrain_modifier(water_tags, &cfg), 1);
+    #[test]
+    fn size_bonus_steps_above_the_threshold_and_caps() {
+        let cfg = SizeSightBonusConfig::default();
+        assert_eq!(
+            size_sight_bonus_tiles(30, &cfg),
+            0,
+            "a start band gets nothing"
+        );
+        assert_eq!(
+            size_sight_bonus_tiles(50, &cfg),
+            0,
+            "the threshold itself earns nothing"
+        );
+        assert_eq!(
+            size_sight_bonus_tiles(74, &cfg),
+            0,
+            "a part-step earns nothing"
+        );
+        assert_eq!(size_sight_bonus_tiles(75, &cfg), 1);
+        assert_eq!(size_sight_bonus_tiles(100, &cfg), 2);
+        assert_eq!(size_sight_bonus_tiles(150, &cfg), 4);
+        assert_eq!(
+            size_sight_bonus_tiles(10_000, &cfg),
+            cfg.max_tiles,
+            "capped"
+        );
+        // Liveness: only crowded tiles reach the map, and sizes on one tile add.
+        let mut people = TilePeople::new();
+        add_people(&mut people, UVec2::new(3, 4), 40);
+        add_people(&mut people, UVec2::new(3, 4), 60);
+        add_people(&mut people, UVec2::new(9, 9), 30);
+        let map = size_sight_bonus_map(&people, &cfg);
+        assert_eq!(map.len(), 1);
+        assert_eq!(map.get(&tile_key(UVec2::new(3, 4))), Some(&2));
+    }
 
-        // Wetland tiles get penalty
-        let wetland_tags = TerrainTags::WETLAND;
-        assert_eq!(get_terrain_modifier(wetland_tags, &cfg), -2);
+    mod sight_geometry {
+        use super::*;
+        use sim_runtime::TerrainType;
 
-        // Plain tiles get no modifier
-        let plain_tags = TerrainTags::empty();
-        assert_eq!(get_terrain_modifier(plain_tags, &cfg), 0);
+        const W: u32 = 80;
+        const H: u32 = 41;
+        const BASE: u32 = 4;
+        const CENTER: UVec2 = UVec2::new(30, 20);
 
-        // Water takes precedence over wetland (coastal wetland)
-        let coastal_wetland = TerrainTags::WATER | TerrainTags::WETLAND;
-        assert_eq!(get_terrain_modifier(coastal_wetland, &cfg), 1);
+        fn flat() -> ElevationField {
+            ElevationField::new(W, H, vec![0.0; (W * H) as usize])
+        }
+
+        fn same_row(center: UVec2, dx: i32) -> UVec2 {
+            UVec2::new(wrap_x(center.x as i32 + dx, W, true), center.y)
+        }
+
+        fn sees(
+            center: UVec2,
+            modifiers: &SightModifiers,
+            tags: &[TerrainTags],
+            blocking: TerrainTags,
+        ) -> Vec<UVec2> {
+            visible_tiles_in_range(center, BASE, &flat(), true, tags, modifiers, blocking, true)
+        }
+
+        fn grid_with(entries: &[(UVec2, i32)]) -> Vec<i32> {
+            let mut grid = vec![0; (W * H) as usize];
+            for (pos, value) in entries {
+                grid[(pos.y * W + pos.x) as usize] = *value;
+            }
+            grid
+        }
+
+        fn bonus(entries: &[(UVec2, u32)]) -> BTreeMap<(u32, u32), u32> {
+            entries.iter().map(|(p, b)| (tile_key(*p), *b)).collect()
+        }
+
+        fn no_tags() -> Vec<TerrainTags> {
+            vec![TerrainTags::empty(); (W * H) as usize]
+        }
+
+        #[test]
+        fn a_forest_tile_at_the_base_range_is_hidden_where_steppe_is_seen() {
+            let cfg = TerrainDetectionConfig::default();
+            let modifier = |t: TerrainType| {
+                terrain_sight_modifier(terrain_definition(t).detection_modifier, &cfg)
+            };
+            let forest = modifier(TerrainType::MixedWoodland);
+            let steppe = modifier(TerrainType::PrairieSteppe);
+            let at_base = same_row(CENTER, BASE as i32);
+            let at_steppe_reach = same_row(CENTER, BASE as i32 + steppe);
+            let beyond_steppe = same_row(CENTER, BASE as i32 + steppe + 1);
+
+            let as_forest =
+                SightModifiers::from_parts(grid_with(&[(at_base, forest)]), BTreeMap::new());
+            assert!(!sees(CENTER, &as_forest, &no_tags(), TerrainTags::empty()).contains(&at_base));
+
+            let as_steppe = SightModifiers::from_parts(
+                grid_with(&[
+                    (at_base, steppe),
+                    (at_steppe_reach, steppe),
+                    (beyond_steppe, steppe),
+                ]),
+                BTreeMap::new(),
+            );
+            let seen = sees(CENTER, &as_steppe, &no_tags(), TerrainTags::empty());
+            assert!(seen.contains(&at_base), "the same tile as steppe is seen");
+            assert!(seen.contains(&at_steppe_reach), "steppe reaches base + 2");
+            assert!(!seen.contains(&beyond_steppe), "and no further");
+        }
+
+        #[test]
+        fn a_crowded_tile_is_seen_beyond_the_base_range_and_its_neighbour_is_not() {
+            let crowded = same_row(CENTER, BASE as i32 + 2);
+            let empty_further = same_row(CENTER, BASE as i32 + 3);
+            let none = SightModifiers::from_parts(grid_with(&[]), BTreeMap::new());
+            assert!(!sees(CENTER, &none, &no_tags(), TerrainTags::empty()).contains(&crowded));
+
+            let big = SightModifiers::from_parts(grid_with(&[]), bonus(&[(crowded, 2)]));
+            let seen = sees(CENTER, &big, &no_tags(), TerrainTags::empty());
+            assert!(seen.contains(&crowded), "bonus 2 lifts base+2 into sight");
+            assert!(
+                !seen.contains(&empty_further),
+                "an empty tile further out stays dark"
+            );
+            assert_eq!(
+                seen.iter().filter(|p| **p == crowded).count(),
+                1,
+                "visited once"
+            );
+            // The ordinary disc is untouched.
+            assert!(seen.contains(&same_row(CENTER, BASE as i32)));
+        }
+
+        #[test]
+        fn a_crowded_tile_inside_the_box_is_visited_exactly_once() {
+            // Terrain +2 somewhere widens the box to base + 2, so a crowded tile at base + 1 is inside.
+            let inside = same_row(CENTER, BASE as i32 + 1);
+            let widener = same_row(CENTER, -(BASE as i32));
+            let outside = same_row(CENTER, BASE as i32 + 3);
+            let modifiers = SightModifiers::from_parts(
+                grid_with(&[(widener, 2)]),
+                bonus(&[(inside, 1), (outside, 3)]),
+            );
+            let seen = sees(CENTER, &modifiers, &no_tags(), TerrainTags::empty());
+            assert_eq!(seen.iter().filter(|p| **p == inside).count(), 1);
+            assert_eq!(seen.iter().filter(|p| **p == outside).count(), 1);
+        }
+
+        #[test]
+        fn the_large_group_pass_wraps_across_the_seam() {
+            let center = UVec2::new(2, 20);
+            let crowded = same_row(center, -(BASE as i32 + 2));
+            assert!(crowded.x > W / 2, "the target sits across the seam");
+            let big = SightModifiers::from_parts(grid_with(&[]), bonus(&[(crowded, 2)]));
+            let seen = sees(center, &big, &no_tags(), TerrainTags::empty());
+            assert_eq!(seen.iter().filter(|p| **p == crowded).count(), 1);
+            let none = SightModifiers::from_parts(grid_with(&[]), BTreeMap::new());
+            assert!(!sees(center, &none, &no_tags(), TerrainTags::empty()).contains(&crowded));
+        }
+
+        #[test]
+        fn a_ridge_still_hides_a_crowded_tile() {
+            let crowded = same_row(CENTER, BASE as i32 + 2);
+            let big = SightModifiers::from_parts(grid_with(&[]), bonus(&[(crowded, 2)]));
+            let mut tags = no_tags();
+            let ridge = same_row(CENTER, 2);
+            tags[(ridge.y * W + ridge.x) as usize] = TerrainTags::HIGHLAND;
+            let blocked = sees(CENTER, &big, &tags, TerrainTags::HIGHLAND);
+            assert!(
+                !blocked.contains(&crowded),
+                "the ridge blocks the sight line"
+            );
+            // Liveness: the same tile is seen with the ridge removed.
+            assert!(sees(CENTER, &big, &no_tags(), TerrainTags::HIGHLAND).contains(&crowded));
+        }
     }
 }
 
@@ -1868,6 +2155,10 @@ mod hex_sight_range_tests {
     use crate::scalar::{scalar_from_f32, scalar_zero};
     use crate::visibility::VisibilityLedger;
     use crate::visibility_config::VisibilityConfig;
+
+    /// A terrain whose authored `detection_modifier` is `0.0`, so it adds nothing to sight and the
+    /// fixture's geometry is the pure hex disc. (The `Tile` default, an alluvial plain, is `+0.15`.)
+    const NEUTRAL_TERRAIN: sim_runtime::TerrainType = sim_runtime::TerrainType::SemiAridScrub;
 
     /// The live map this defect was found on: 80 columns, wrapping.
     const WIDTH: u32 = 80;
@@ -1963,12 +2254,14 @@ mod hex_sight_range_tests {
         let observer_tile = world
             .spawn(Tile {
                 position: OBSERVER,
+                terrain: NEUTRAL_TERRAIN,
                 ..Default::default()
             })
             .id();
         let subject_tile = world
             .spawn(Tile {
                 position: subject,
+                terrain: NEUTRAL_TERRAIN,
                 ..Default::default()
             })
             .id();
@@ -2058,7 +2351,7 @@ mod hex_sight_range_tests {
             &elevation,
             cfg.line_of_sight.enabled,
             &tags,
-            &cfg.terrain_modifiers,
+            &SightModifiers::from_parts(vec![0; (WIDTH * HEIGHT) as usize], BTreeMap::new()),
             parse_blocking_tags(&cfg.line_of_sight.blocking_terrain_tags),
             true,
         );
