@@ -1101,6 +1101,7 @@ fn spawn_crew_of(
                 assignments: with_builders_pool(
                     vec![LaborAssignment {
                         party: None,
+                        muster_crew: 0,
                         target: LaborTarget::Hunt {
                             fauna_id: herd_id.to_string(),
                             floor: policy,
@@ -1780,6 +1781,7 @@ fn an_untamed_herd_quotes_the_tame_it_would_take_on_and_the_quote_halves_with_th
             .assignments
             .push(LaborAssignment {
                 party: None,
+                muster_crew: 0,
                 target: LaborTarget::Builders,
                 workers: keepers,
                 kit: None,
@@ -3433,6 +3435,7 @@ fn set_hunt_improvement(
                     Some(row) => row.workers = builders,
                     None => allocation.assignments.push(LaborAssignment {
                         party: None,
+                        muster_crew: 0,
                         target: LaborTarget::Builders,
                         workers: builders,
                         kit: None,
@@ -4194,6 +4197,7 @@ fn with_builders_pool(mut rows: Vec<LaborAssignment>, builders: u32) -> Vec<Labo
     if builders > 0 {
         rows.push(LaborAssignment {
             party: None,
+            muster_crew: 0,
             target: LaborTarget::Builders,
             workers: builders,
             kit: Some(
@@ -5190,6 +5194,7 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
             .expect("the herd's tile resolves");
         let hunt_row = |id: &str, crew: u32| LaborAssignment {
             party: None,
+            muster_crew: 0,
             target: LaborTarget::Hunt {
                 fauna_id: id.to_string(),
                 floor: AT_THE_FLOOR,

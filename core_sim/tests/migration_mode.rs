@@ -138,6 +138,7 @@ fn spawn_band(app: &mut App, at: UVec2, follow: bool) -> Entity {
             LaborAllocation {
                 assignments: vec![LaborAssignment {
                     party: None,
+                    muster_crew: 0,
                     target: LaborTarget::Hunt {
                         fauna_id: HERD_ID.to_string(),
                         floor: FLOOR,
@@ -288,11 +289,12 @@ fn without_the_flag_the_band_stays_and_the_herd_walks_off() {
     assert_ne!(herd_tile(&app), LEG_START);
 }
 
-/// ⛔ **A FAR START WALKS A HEX A TURN, SHEDS ONCE, AND HUNTS FAR MEANWHILE.** The herd keeps
+/// ⛔ **A FAR START WALKS A HEX A TURN, SHEDS ONCE, AND POSTS NO PARTY MEANWHILE.** The herd keeps
 /// moving, so the target is re-aimed every turn; keeping `departed` is what stops the long-move shed
-/// re-running on each re-aim.
+/// re-running on each re-aim. A follow row is a need row (hunting by need, #798): only a camp kill is
+/// ever hunted, so while the band is catching up there is no far hunt and no caravan.
 #[test]
-fn a_far_start_walks_toward_the_herd_sheds_once_and_hunts_far_meanwhile() {
+fn a_far_start_walks_toward_the_herd_sheds_once_and_posts_no_party_meanwhile() {
     /// The band starts this many hexes west of the herd — past the ferry reach.
     const GAP: u32 = 6;
     let band_start = UVec2::new(LEG_END.x - GAP, ROW);
@@ -336,8 +338,8 @@ fn a_far_start_walks_toward_the_herd_sheds_once_and_hunts_far_meanwhile() {
         posted_a_party |= row_has_party(&app, band);
     }
     assert!(
-        posted_a_party,
-        "far from the herd the hunt is an ordinary far hunt with porters"
+        !posted_a_party,
+        "a need row never posts a party: while the band catches up it hunts nothing"
     );
 }
 

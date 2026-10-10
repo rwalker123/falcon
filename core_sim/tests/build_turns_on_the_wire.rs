@@ -432,6 +432,7 @@ fn spawn_the_holding_band(
             assignments: vec![
                 LaborAssignment {
                     party: None,
+                    muster_crew: 0,
                     target: LaborTarget::Forage {
                         tile: source,
                         floor: DEFAULT_ESCAPEMENT_FLOOR,
@@ -448,6 +449,7 @@ fn spawn_the_holding_band(
                 // *stop building* without withdrawing what they declared.
                 LaborAssignment {
                     party: None,
+                    muster_crew: 0,
                     target: LaborTarget::Builders,
                     workers: builders,
                     kit: None,

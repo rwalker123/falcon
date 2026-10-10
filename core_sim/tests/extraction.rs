@@ -172,6 +172,7 @@ fn spawn_band_of(
             LaborAllocation {
                 assignments: vec![LaborAssignment {
                     party: None,
+                    muster_crew: 0,
                     target: LaborTarget::Extract {
                         tile: UVec2::new(0, 0),
                         material: material.to_string(),
@@ -244,6 +245,7 @@ fn spawn_keepers(
         for (tile, material) in workings {
             allocation.assignments.push(LaborAssignment {
                 party: None,
+                muster_crew: 0,
                 target: LaborTarget::Extract {
                     tile: *tile,
                     material: (*material).to_string(),
@@ -663,6 +665,7 @@ fn a_working_raised_this_turn_arms_no_more_people_than_there_are_axes() {
                 .expect("the fixture band has an allocation");
             allocation.assignments.push(LaborAssignment {
                 party: None,
+                muster_crew: 0,
                 target: LaborTarget::Builders,
                 workers: BUILDERS,
                 kit: None,
@@ -1170,6 +1173,7 @@ fn a_band_learns_woodcraft_at_the_free_floor_and_then_raises_a_felling_working()
             .expect("the fixture band has an allocation");
         allocation.assignments.push(LaborAssignment {
             party: None,
+            muster_crew: 0,
             target: LaborTarget::Builders,
             workers: 8,
             kit: None,
@@ -1942,6 +1946,7 @@ fn a_slumped_working_can_be_cut_back_open() {
             .retain(|a| !a.target.same_source(&row));
         allocation.assignments.push(LaborAssignment {
             party: None,
+            muster_crew: 0,
             target: row,
             workers: 4,
             kit: None,
@@ -1949,6 +1954,7 @@ fn a_slumped_working_can_be_cut_back_open() {
         });
         allocation.assignments.push(LaborAssignment {
             party: None,
+            muster_crew: 0,
             target: LaborTarget::Builders,
             workers: 12,
             kit: None,

@@ -93,6 +93,7 @@ fn eat_and_publish(larder_in_meals: f32) -> Published {
     let income = need * INCOME_OVER_NEED;
     let row = LaborAssignment {
         party: None,
+        muster_crew: 0,
         target: LaborTarget::Scout,
         workers: 0,
         kit: None,

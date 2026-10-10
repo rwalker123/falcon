@@ -246,6 +246,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         }
     }
     let _ = dict.insert("breeding_peoples", &breeding_peoples);
+    // Hunting by need (#798): the idle hands the muster takes next turn.
+    let _ = dict.insert("idle_mustered", i64::from(cohort.idleMustered()));
     let _ = dict.insert("generation", cohort.generation() as i64);
     let _ = dict.insert("faction", cohort.faction() as i64);
     let _ = dict.insert("turns_of_food", cohort.turnsOfFood() as f64);
@@ -1105,6 +1107,14 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let _ = entry.insert("homeward_food", f64::from(assignment.homewardFood()));
             // Migration mode: this hunt row moves the band's camp with its migratory herd.
             let _ = entry.insert("move_with_herd", assignment.moveWithHerd());
+            // Hunting by need (#798): a need row's crew next turn (0 = waiting), what a donor row
+            // lends, the wait until a crew goes out (u32::MAX = never), the turns to bring the
+            // animal down, and the herd's banked wounds as a fraction of the body.
+            let _ = entry.insert("muster_crew", i64::from(assignment.musterCrew()));
+            let _ = entry.insert("lent_to_hunt", i64::from(assignment.lentToHunt()));
+            let _ = entry.insert("turns_until_hunt", i64::from(assignment.turnsUntilHunt()));
+            let _ = entry.insert("turns_to_kill", i64::from(assignment.turnsToKill()));
+            let _ = entry.insert("kill_progress", f64::from(assignment.killProgress()));
             array.push(&entry.to_variant());
         }
     }

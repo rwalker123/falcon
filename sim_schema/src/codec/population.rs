@@ -460,6 +460,11 @@ fn create_populations<'a>(
                                 homewardAllHomeIn: assignment.homeward_all_home_in,
                                 homewardFood: assignment.homeward_food,
                                 moveWithHerd: assignment.move_with_herd,
+                                musterCrew: assignment.muster_crew,
+                                lentToHunt: assignment.lent_to_hunt,
+                                turnsUntilHunt: assignment.turns_until_hunt,
+                                turnsToKill: assignment.turns_to_kill,
+                                killProgress: assignment.kill_progress,
                             },
                         )
                     })
@@ -1195,6 +1200,7 @@ fn create_populations<'a>(
                     cultureAncestorPull: culture_ancestor_pull,
                     breedingMembers: Some(breeding_members),
                     breedingPeoples: Some(breeding_peoples),
+                    idleMustered: cohort.idle_mustered,
                 },
             )
         })
@@ -1458,6 +1464,11 @@ fn decode_labor_assignment(
         homeward_all_home_in: assignment.homewardAllHomeIn(),
         homeward_food: assignment.homewardFood(),
         move_with_herd: assignment.moveWithHerd(),
+        muster_crew: assignment.musterCrew(),
+        lent_to_hunt: assignment.lentToHunt(),
+        turns_until_hunt: assignment.turnsUntilHunt(),
+        turns_to_kill: assignment.turnsToKill(),
+        kill_progress: assignment.killProgress(),
     })
 }
 
@@ -1865,6 +1876,7 @@ fn decode_population(
             lines: people.lines(),
             fading: people.fading(),
         }),
+        idle_mustered: cohort.idleMustered(),
     })
 }
 

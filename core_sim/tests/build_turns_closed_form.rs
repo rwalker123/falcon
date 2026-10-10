@@ -309,6 +309,7 @@ fn spawn_keepers_of(
                 assignments: vec![
                     LaborAssignment {
                         party: None,
+                        muster_crew: 0,
                         target: LaborTarget::Hunt {
                             fauna_id: fauna_id.to_string(),
                             floor: BUILDER_FLOOR,
@@ -329,6 +330,7 @@ fn spawn_keepers_of(
                     // agree for a closed-form check to mean anything.
                     LaborAssignment {
                         party: None,
+                        muster_crew: 0,
                         target: LaborTarget::Builders,
                         workers: builders,
                         kit: None,
@@ -1404,6 +1406,7 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                 assignments: vec![
                     LaborAssignment {
                         party: None,
+                        muster_crew: 0,
                         target: LaborTarget::Forage {
                             tile: source,
                             floor: DEFAULT_ESCAPEMENT_FLOOR,
@@ -1420,6 +1423,7 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                     // so the roster answers `tillage` and the hoes are what the gear term below reads.
                     LaborAssignment {
                         party: None,
+                        muster_crew: 0,
                         target: LaborTarget::Builders,
                         workers: BUILDERS,
                         kit: None,

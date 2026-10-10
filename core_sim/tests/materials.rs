@@ -208,6 +208,7 @@ fn hunt_and_read_hide(floor: f32) -> (Scalar, Option<f32>, f32) {
             LaborAllocation {
                 assignments: vec![LaborAssignment {
                     party: None,
+                    muster_crew: 0,
                     target: LaborTarget::Hunt {
                         fauna_id: herd_id.clone(),
                         floor,

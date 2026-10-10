@@ -1318,6 +1318,12 @@ pub struct FollowConfig {
     pub reveal_radius: u32,
     pub reveal_duration_turns: u64,
     pub morale_gain: f32,
+    /// **HUNTING BY NEED** (`docs/plan_roaming_bands.md` §Hunting by need) — the slack, in turns,
+    /// a band in migration mode allows between its larder running out and the kill that would
+    /// refill it. A crew goes out when `runway <= turns_to_kill + need_margin_turns`. `0` sends a
+    /// crew only when the larder would empty on the very turn the kill lands; larger values hunt
+    /// earlier. Validated finite and `>= 0`.
+    pub need_margin_turns: f32,
 }
 
 impl Default for FollowConfig {
@@ -1326,6 +1332,7 @@ impl Default for FollowConfig {
             reveal_radius: 2,
             reveal_duration_turns: 3,
             morale_gain: 0.01,
+            need_margin_turns: 1.0,
         }
     }
 }
@@ -2236,6 +2243,9 @@ impl FaunaConfig {
                 value: migratory.max_herds.to_string(),
             });
         }
+
+        // --- Hunting by need: a negative or non-finite margin would send crews out never, or always.
+        require_non_negative_finite("follow.need_margin_turns", self.follow.need_margin_turns)?;
 
         // --- Hunt: the biomass→provisions rate the WHOLE ladder is denominated in. At `0` every rung
         // (wild, pastoral, pen) pays nothing and the food economy silently stops.
@@ -3998,6 +4008,12 @@ mod tests {
     // `intensification::tests::rejects_taming_that_cannot_outrun_its_decay` along with the dials
     // themselves (the `animal:pastoral` rung's `build` block), where `LadderConfig::validate` now
     // owns the bound for *every* rung of *both* food webs rather than each web re-asserting it.
+
+    #[test]
+    fn validate_rejects_a_negative_need_margin() {
+        let err = reject(|json| json["follow"]["need_margin_turns"] = (-1.0).into());
+        assert_rejects_field(err, "follow.need_margin_turns");
+    }
 
     #[test]
     fn validate_rejects_a_zero_provisions_rate() {

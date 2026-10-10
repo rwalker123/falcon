@@ -160,6 +160,7 @@ fn resident_band(app: &mut App, tile: Entity, working: u32, warriors: u32) -> En
     let assignments = if warriors > 0 {
         vec![LaborAssignment {
             party: None,
+            muster_crew: 0,
             target: LaborTarget::Warrior,
             workers: warriors,
             kit: None,

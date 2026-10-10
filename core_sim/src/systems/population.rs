@@ -2868,6 +2868,7 @@ mod food_flow_tests {
     fn forage_assignment() -> LaborAssignment {
         LaborAssignment {
             party: None,
+            muster_crew: 0,
             target: LaborTarget::Forage {
                 tile: UVec2::new(0, 0),
                 floor: 0.5,

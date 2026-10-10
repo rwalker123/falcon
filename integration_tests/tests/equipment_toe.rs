@@ -146,6 +146,7 @@ fn hunting_world_at(
         LaborAllocation {
             assignments: vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: SHALLOW_FLOOR,
@@ -179,6 +180,7 @@ fn gathering_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
         LaborAllocation {
             assignments: vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
                 target: LaborTarget::Forage {
                     tile: patch,
                     floor: STRIP_THE_PATCH,
@@ -204,6 +206,7 @@ fn scouting_world(kit: BandEquipment) -> (bevy::prelude::App, Entity) {
     app.world.entity_mut(band).insert(LaborAllocation {
         assignments: vec![LaborAssignment {
             party: None,
+            muster_crew: 0,
             target: LaborTarget::Scout,
             workers: workers.max(1),
             kit: None,
@@ -2107,6 +2110,7 @@ fn report_the_strike_wear_the_shipped_opening_pays() {
     app.world.entity_mut(band).insert(LaborAllocation {
         assignments: vec![LaborAssignment {
             party: None,
+            muster_crew: 0,
             target: LaborTarget::Hunt {
                 fauna_id: HERD_ID.to_string(),
                 // The shipped default — the band holds the herd at its most productive biomass, so

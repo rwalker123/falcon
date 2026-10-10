@@ -212,6 +212,7 @@ fn seat_pens(app: &mut App, tile: UVec2, pens: &[(&str, f32)]) {
 fn hunt_row(herd_id: &str, priority: SourcePriority, workers: u32) -> LaborAssignment {
     LaborAssignment {
         party: None,
+        muster_crew: 0,
         target: LaborTarget::Hunt {
             fauna_id: herd_id.to_string(),
             floor: SUSTAIN,

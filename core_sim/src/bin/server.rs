@@ -5214,7 +5214,9 @@ fn handle_assign_labor(
     // The names it drops are announced once, beside the applied event at the foot of this function,
     // because a pruned selection is a change the player did not ask for.
     let mut pruned_take: Vec<String> = Vec::new();
-    if workers > 0 {
+    // **A NEED ROW IS VALIDATED AT ZERO TOO**: it holds no standing workers whatever count is sent,
+    // so `workers == 0` is its ordinary shape and the migratory check must still run.
+    if workers > 0 || target.is_need_row() {
         if let Err(reason) = validate_labor_policy(app, faction, &target) {
             emit_command_failure(app, event_kind, faction, reason);
             return;
@@ -5272,7 +5274,7 @@ fn handle_assign_labor(
     // The fork is **here and not in `default_kit_for_target`**, because the question it answers is
     // *"what does this command STORE"*, not *"which kit is the absent one"*: that helper returns a
     // resolved `KitChoice` for the raid path too.
-    let unstaffing = workers == 0;
+    let unstaffing = workers == 0 && !target.is_need_row();
     let staffing_a_standing_pool = matches!(target, LaborTarget::Builders | LaborTarget::Roadwork);
     if staffing_a_standing_pool && kit_id.is_some() {
         let refusal = match target {
@@ -5351,11 +5353,14 @@ fn handle_assign_labor(
         // row, so dropping the row would drop the entry with it).
         let queued = BuildSource::of(&target)
             .is_some_and(|source| allocation.build_queue_position(&source).is_some());
-        let dropped_row = if applied == 0 && !source_holds_something && !queued {
-            allocation.drop_source_row(&target)
-        } else {
-            None
-        };
+        // **A NEED ROW IS KEPT BY ITS FLAG**, so a zero head count never drops it: it exists at zero
+        // by design (`docs/plan_roaming_bands.md` §Hunting by need).
+        let dropped_row =
+            if applied == 0 && !source_holds_something && !queued && !target.is_need_row() {
+                allocation.drop_source_row(&target)
+            } else {
+                None
+            };
         (applied, allocation.assigned_total(), dropped_row)
     };
     // **An unassigned far row sends its whole caravan walking home** — the load and every walker's pack —
@@ -5406,7 +5411,8 @@ fn handle_assign_labor(
             )),
         );
     }
-    let clamp_note = if applied < workers {
+    // A need row takes no standing hands, so there is nothing to clamp: the count sent is ignored.
+    let clamp_note = if applied < workers && !target.is_need_row() {
         format!(" (clamped from {} — only {} idle)", workers, available)
     } else {
         String::new()
@@ -13055,6 +13061,7 @@ mod tests {
                 LaborAllocation {
                     assignments: vec![core_sim::LaborAssignment {
                         party: None,
+                        muster_crew: 0,
                         target,
                         workers: BAND_WORKERS,
                         kit: None,
@@ -15104,6 +15111,166 @@ mod tests {
         handle_move_band(&mut app, FactionId(0), Some(band), camp.x, camp.y);
         assert_eq!(follows(&mut app, "wanderer_a"), Some(false));
         assert_eq!(follows(&mut app, "wanderer_b"), Some(false));
+    }
+
+    /// `hunt`, with the head count named.
+    fn hunt_with(app: &mut bevy::prelude::App, band: u64, herd: &str, workers: u32, follow: bool) {
+        handle_assign_labor(
+            app,
+            FactionId(0),
+            Some(band),
+            "hunt".to_string(),
+            workers,
+            None,
+            None,
+            Some(herd.to_string()),
+            None,
+            None,
+            None,
+            Vec::new(),
+            follow,
+        );
+    }
+
+    /// The head count on this faction's hunt row on `herd`, `None` when it has no such row.
+    fn hunters_on(app: &mut bevy::prelude::App, herd: &str) -> Option<u32> {
+        app.world
+            .query::<&LaborAllocation>()
+            .iter(&app.world)
+            .flat_map(|allocation| allocation.assignments.iter())
+            .find_map(|row| match &row.target {
+                LaborTarget::Hunt { fauna_id, .. } if fauna_id == herd => Some(row.workers),
+                _ => None,
+            })
+    }
+
+    /// ⛔ **HUNTING BY NEED: `follow` MAKES THE ROW AT ZERO WORKERS, WHATEVER COUNT IS SENT** — and the
+    /// migratory check runs even at zero, so a resident herd is refused with no row left behind.
+    #[test]
+    fn a_follow_order_creates_the_need_row_at_zero_and_a_resident_herd_is_refused_even_at_zero() {
+        let mut app = build_test_app();
+        app.update();
+        let band = starting_band_id(&mut app, FactionId(0));
+        let here = UVec2::new(1, 1);
+        seat_herd(
+            &mut app,
+            "resident",
+            "Red Deer",
+            core_sim::SizeClass::Big,
+            here,
+        );
+        seat_herd(
+            &mut app,
+            "wanderer",
+            "Thunder Mammoths",
+            core_sim::SizeClass::Migratory,
+            here,
+        );
+
+        hunt_with(&mut app, band, "wanderer", 5, true);
+        assert_eq!(follows(&mut app, "wanderer"), Some(true));
+        assert_eq!(
+            hunters_on(&mut app, "wanderer"),
+            Some(0),
+            "the row exists and holds no standing workers, however many were sent"
+        );
+
+        hunt_with(&mut app, band, "resident", 0, true);
+        assert_eq!(
+            follows(&mut app, "resident"),
+            None,
+            "a resident herd cannot be followed, even at zero workers"
+        );
+        assert!(
+            app.world.resource::<CommandEventLog>().iter().any(|entry| {
+                entry.detail.as_deref().is_some_and(|detail| {
+                    detail.contains("migratory") || entry.label.contains("migratory")
+                })
+            }),
+            "and the refusal names its reason"
+        );
+    }
+
+    /// ⛔ **UNFOLLOWING IS AN ORDINARY HUNT ORDER**: at `n` the row becomes a standing hunt of `n`
+    /// hands, at zero the hunt ends as it always does.
+    #[test]
+    fn unfollowing_restores_an_ordinary_hunt_or_drops_the_row() {
+        let mut app = build_test_app();
+        app.update();
+        let band = starting_band_id(&mut app, FactionId(0));
+        seat_herd(
+            &mut app,
+            "wanderer",
+            "Thunder Mammoths",
+            core_sim::SizeClass::Migratory,
+            UVec2::new(1, 1),
+        );
+
+        hunt_with(&mut app, band, "wanderer", 0, true);
+        assert_eq!(follows(&mut app, "wanderer"), Some(true));
+        hunt_with(&mut app, band, "wanderer", 2, false);
+        assert_eq!(follows(&mut app, "wanderer"), Some(false));
+        assert_eq!(
+            hunters_on(&mut app, "wanderer"),
+            Some(2),
+            "an ordinary hunt at the count named"
+        );
+
+        hunt_with(&mut app, band, "wanderer", 0, true);
+        hunt_with(&mut app, band, "wanderer", 0, false);
+        assert_eq!(
+            hunters_on(&mut app, "wanderer"),
+            None,
+            "unfollowing at zero ends the hunt"
+        );
+    }
+
+    /// ⛔ **A MOVE ORDER ENDS A NEED ROW**: the flag clears, and the row — at zero workers and holding
+    /// nothing — is dropped by the next labor pass.
+    #[test]
+    fn a_move_order_ends_a_need_row() {
+        let mut app = build_test_app();
+        app.update();
+        let band = starting_band_id(&mut app, FactionId(0));
+        seat_herd(
+            &mut app,
+            "wanderer",
+            "Thunder Mammoths",
+            core_sim::SizeClass::Migratory,
+            UVec2::new(1, 1),
+        );
+        hunt_with(&mut app, band, "wanderer", 0, true);
+        assert_eq!(follows(&mut app, "wanderer"), Some(true));
+        let camp = {
+            let tile = app
+                .world
+                .query::<(&PopulationCohort, &BandId)>()
+                .iter(&app.world)
+                .find(|(_, id)| id.0 == band)
+                .map(|(cohort, _)| cohort.current_tile)
+                .expect("the starting band exists");
+            app.world.get::<Tile>(tile).expect("a tile").position
+        };
+        handle_move_band(&mut app, FactionId(0), Some(band), camp.x, camp.y);
+        assert_eq!(
+            follows(&mut app, "wanderer"),
+            Some(false),
+            "the flag is cleared"
+        );
+        assert!(
+            hunters_on(&mut app, "wanderer").is_some(),
+            "the row waits for the labor pass to retire it"
+        );
+
+        bevy::ecs::system::RunSystemOnce::run_system_once(
+            &mut app.world,
+            core_sim::advance_labor_allocation,
+        );
+        assert_eq!(
+            hunters_on(&mut app, "wanderer"),
+            None,
+            "an ordinary row at zero holding nothing is dropped: the hunt has ended"
+        );
     }
 
     /// `upkeep_mode`'s refusals ride the `CancelOrder` feed channel, exactly as

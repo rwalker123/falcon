@@ -59,8 +59,11 @@ The herd moves first each turn and the band moves right after it, both one hex, 
 the herd stays in the herd, through migration too, and **every kill is a camp kill**. The only far
 case is the start: a band that turns the mode on while several hexes off has to catch up, and a
 migrating herd moves as fast as it does, so it closes the gap when the herd stops at its next
-grounds. **While it catches up the hunt is an ordinary far hunt** — porters carry the kills home to
-the moving camp, exactly as today. No carcass waits on a tile and the band never walks to a kill.
+grounds. **While it catches up the band does not hunt that herd**: hunting by need (below) sends a
+crew for one turn at a time, and a one-turn crew cannot run a caravan with porters on the road, so
+only a camp kill is ever mustered. The band forages and works its other rows on the way; the first
+hunt goes out once the herd is within the band's reach. No carcass waits on a tile and the band never
+walks to a kill.
 
 ### Band movement rules are unchanged
 
@@ -81,15 +84,13 @@ the map and never eats from it. So migration mode is **one box on the hunt order
 Prototype: `docs/migration_mode_ux_proposal.html`.
 
 - **Turning it on.** The Assign hunters sheet of a **migratory** herd carries a **Move camp with the
-  herd** box, where the WORK PARTY section sits; a resident herd's sheet has no box. Everything else
-  on the sheet is unchanged: a band still catching up hunts with porters, so the sheet's work-party
-  forecast stays true until it arrives.
+  herd** box; a resident herd's sheet has no box. Ticking it replaces the hunter stepper (§Hunting by
+  need).
 - **Turning it off.** The hunt row on the Work tab carries the same toggle: off, the band stays where
-  it is and its hunters keep working the herd as an ordinary hunt. Cancelling the hunt ends the
-  following with it.
+  it is and the herd is worked as an ordinary hunt, staffed from idle hands. Cancelling the hunt ends
+  the following with it.
 - **The hunt row** says where the band stands, one line: *Camped in the herd. Kills land in camp.* /
-  *Moving with it · next (x, y)* / *Catching up · N hexes behind*. While it
-  catches up, the row's existing work-party lines run beneath it. The herd card's worked line adds
+  *Moving with it · next (x, y)* / *Catching up · N hexes behind*. The herd card's worked line adds
   *moving with the herd*.
 - **The map.** The band token wears a 👣 badge and the followed herd a dashed ring; the herd's
   next-step arrow stays drawn while the band follows it; the band's own travel line shows its next
@@ -103,7 +104,21 @@ Prototype: `docs/migration_mode_ux_proposal.html`.
 A band in migration mode hunts **when it needs meat**, not at its policy's fixed rate: it kills when
 the larder will run short of food before another kill could land. Between kills the band's workers do
 other work. A mammoth is indivisible and a whole one at once is the point — need-pacing decides
-*when*, never *how much of one*.
+*when*, never *how much of one*. Prototype: `docs/hunting_by_need_ux_proposal.html`.
+
+- **No hunters sit on the hunt.** Ticking **Move camp with the herd** replaces the sheet's hunter
+  stepper: the row holds no standing workers, and every hand works the band's other rows.
+- **The band musters a crew when it is time.** The crew is the useful crew — the most hands that
+  still add to the kill — taken for one turn: idle hands first, then from the band's other work,
+  lowest Priority first. Priority is the player's control over which work gives up hands. The hands
+  are back on their rows the next turn.
+- **When it goes out:** when the band's food runway falls to the turns this crew needs to bring an
+  animal down, plus a margin (a config lever). A mammoth takes several turns of a crew's work and the
+  wounds carry on the herd, so once an animal is partly down the crew keeps going until it falls.
+- **A small band can hunt without pause.** If its whole workforce needs longer to bring an animal
+  down than the meat keeps, the next hunt is always due. That is the setup working, not a defect:
+  below a certain size a mammoth herd does not carry a band until it can dry meat.
+- **Turning the box off** makes it an ordinary hunt again, staffed from idle hands.
 
 ### Drying is learned, and it is what makes a herd growth-sustaining
 
@@ -167,7 +182,7 @@ Sub-issues of the arc, #251.
 
 1. **Camp kill** — shipped with this doc (#796).
 2. **Migration mode** (#797) — the band's standing order on a migratory herd: camp in the herd while
-   it loiters, move with it while it migrates, catch up with porters running. The wire field and the
+   it loiters, move with it while it migrates, catch up when it starts far off. The wire field and the
    box on the hunt order (§Migration mode is a choice on the hunt).
 3. **Hunting by need** (#798) — the need-paced trigger for a band in migration mode.
 4. **The roaming skills** (#799) — Herd lore, travois, drives, on the knowledge ledger. Drying is

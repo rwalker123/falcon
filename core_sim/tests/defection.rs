@@ -815,6 +815,7 @@ fn a_party_out_from_a_band_that_goes_over_goes_with_it_and_still_comes_home() {
 fn work(app: &mut App, band: Entity, target: LaborTarget) {
     let row = LaborAssignment {
         party: None,
+        muster_crew: 0,
         target,
         workers: 0,
         kit: None,

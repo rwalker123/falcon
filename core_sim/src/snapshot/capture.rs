@@ -3247,6 +3247,7 @@ pub fn capture_snapshot(
                             season_of: &season_of,
                             map_seed: config.map_seed,
                             flora: &flora_config,
+                            grid: (tile_registry.width, config.map_topology.wrap_horizontal),
                         },
                     }))
                 },

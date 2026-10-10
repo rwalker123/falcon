@@ -11,6 +11,8 @@ paths:
   - "core_sim/tests/work_party_caravan.rs"
   - "core_sim/src/systems/expeditions.rs"
   - "core_sim/tests/migration_mode.rs"
+  - "core_sim/src/hunt_by_need.rs"
+  - "core_sim/tests/hunt_by_need.rs"
 ---
 
 # The work party — hunt, forage and extract are one model, and distance is a caravan
@@ -630,10 +632,11 @@ the floor is: re-sending the row without `follow` turns it off.
 **immediately before it**. The herds have already moved this turn (`advance_herds`, Logistics), so
 the band re-aims at where its herd now stands and steps right after it: a band camped in the herd
 stays on the herd's tile through loiter and migration, and every kill is a camp kill. No work-party,
-porter or kill code changed — a band that turns the mode on while far away is simply an ordinary far
-hunt until it catches up. A resident band only (never a detached party), and only while the row has
-workers (`LaborAllocation::followed_herd`). If the band already stands on the herd's tile any
-`BandTravel` is removed; the herd gone from the registry does nothing.
+porter or kill code changed. A band that turns the mode on while far away hunts nothing until it has
+caught up (see "Hunting by need" below: the row is a need row and only a camp kill is ever mustered).
+A resident band only (never a detached party). `LaborAllocation::followed_herd` follows a row with
+the flag **whatever its head count** — a need row holds no standing workers. If the band already
+stands on the herd's tile any `BandTravel` is removed; the herd gone from the registry does nothing.
 
 ### ⛔ Re-aiming keeps `departed`
 
@@ -661,6 +664,86 @@ the hunt channel. A resident herd never leaves its few tiles, so there is nothin
 Tests: `tests/migration_mode.rs` (loiter and migrate camps, the far start, the wire) and, for the
 command boundary, `bin/server.rs` `migration_mode_*`; the `follow` token round-trips in
 `sim_runtime::command_text`.
+
+### Hunting by need (#798)
+
+Design: `docs/plan_roaming_bands.md` §Hunting by need. Engine: `core_sim/src/hunt_by_need.rs`
+(`assess_need`), the muster in `components.rs` (`LaborAllocation::muster_donors`) and its
+application in `systems/labor.rs` (`apply_muster` / `restore_muster`), the wire in
+`snapshot/population.rs`.
+
+**A hunt row with `move_with_herd` is a *need row*, and it holds no standing workers** (`workers ==
+0` always). `set_assignment` forces it to zero whatever count a command names (the hands go back to
+idle) and keeps it by its flag: `handle_assign_labor` never drops it at zero, the Hunt arm's holding
+lapse (`!row_is_held && !is_need_row()`) passes it, and `validate_labor_policy`'s migratory check
+runs at zero too. `assign_labor … hunt <n>` **without** `follow` on a need row is an ordinary hunt of
+`n` again (zero drops the row as it always did); `move_band` clears the flag and the next labor pass
+retires the empty row.
+
+**The plan is `LaborAssignment::muster_crew`** — the hands the row sends next turn, `0` = waiting.
+Like `party` it is outside `LaborAssignment`'s `PartialEq` (a fact the turn restamps), and it rides
+the save (`SAVE_FORMAT_VERSION` 31). The donors are never stored.
+
+**The decision, at the foot of the band's labor pass for next turn** (`assess_need`):
+
+| step | rule |
+|---|---|
+| herd gone, or beyond `band_work_range` of the band | `muster_crew = 0` — **only a camp kill is mustered**; a one-turn crew cannot run a caravan, so a need row never posts a party and a band still catching up hunts nothing |
+| crew | `hunt_useful_crew(hunt_crew_take_curve(..))` priced with `max_workers` = the musterable pool (idle + every donor row's hands) |
+| no crew | `0` |
+| a hunt in progress | the crew was out this turn, the herd has `wounds.pending() > 0` and **no kill landed** → send, whatever the larder says |
+| otherwise | send iff `runway <= turns_to_kill + follow.need_margin_turns` (default **1**); `turns_to_kill` is the first non-zero slot of `fauna::project_arrivals_hunt` at that crew (`fauna::hunt_crew_turns_to_kill`), `runway` is `snapshot::band_turns_of_food` — the very function behind the published `turnsOfFood` — and the `NOT_FOOD_LIMITED_TURNS` sentinel never triggers |
+
+### ⛔ "Wounds pending" is a hunt in progress, not `pending > 0`
+
+A crew that kills a mammoth deals more damage than the body holds and the excess banks toward the
+**next** animal (`DamageLedger::strike`), so a herd carries a small `pending` after almost every
+kill. Read as *"the animal is partly down"* that remainder sent a full crew after the next mammoth
+every time, whatever the larder said, for ever. The rule is therefore *the crew was out this turn,
+the animal took damage and is not down*; Pinned by
+`hunt_by_need::wounds_keep_the_crew_going_until_the_animal_is_down_and_the_carcass_lands_whole`,
+which refills the larder every turn so only the wound can keep the crew out, and asserts the remainder
+after the kill sends nobody.
+
+**Applied in `advance_labor_allocation`, after the starvation shed and before the pools, the site
+keeping and the row claims**: for each need row with `muster_crew > 0` whose herd is inside
+`band_work_range`, `muster_donors(idle, need_idx, crew)` is clamped to what the donors hold now, the
+donor rows' `workers` are cut and the need row's set to the crew. Everything downstream reads those
+numbers; kits come through the ordinary claims at the need row's own Priority. After the row walk
+`restore_muster` hands every donor its hands back and the need row returns to zero.
+
+- **Donors**: idle first, then source rows (forage, hunt, extract) with no party posted, not a need
+  row and **whose source is within `band_work_range` of the band** — decided by geometry
+  (`hunt_by_need::source_is_local`, on `work_party::party_begins_past`, the threshold `post_a_party`
+  posts past), never by "a party exists yet", so a brand-new far row can't lend. Order is `Low` →
+  `Normal` → `High`, the later row first within a tier. Role rows, the bench and road keepers never
+  lend. It may come up short. The turn and the capture pass the same predicate to `muster_donors`.
+- **A donor emptied for the turn is not lapsed**: the holding test asks `row_is_held` (hands before
+  the loan), while the lesson test still asks who is actually there.
+- **Priced over the pool, not the donors' reduced claims**: the decision and the capture price the
+  crew against the other rows at their full claims, so a crew that would empty a donor is quoted as
+  if that donor still held its kit.
+
+**The wire** (`LaborAssignment`, appended after `moveWithHerd`; `PopulationCohortState`):
+
+| field | meaning |
+|---|---|
+| `musterCrew` | the hands this need row sends next turn (`0` = waiting) |
+| `lentToHunt` | on a donor row, the hands it gives up next turn (same `muster_donors` call) |
+| `turnsUntilHunt` | on a waiting need row, `ceil(runway - turns_to_kill - margin)`, floor 1; `NO_HUNT_NEEDED` (`u32::MAX`) when the larder is not food-limited, no crew can be raised or the herd is out of camp range; `0` on a sending row |
+| `turnsToKill` | turns until the animal is down at the planned crew, counting wounds; `0` when no crew can be raised |
+| `killProgress` | `wounds.pending() / durability`, in `[0, 1)` |
+| `PopulationCohortState.idleMustered` | the idle hands the muster takes next turn |
+
+For a need row `huntUsefulWorkers` is priced over the musterable pool, not idle only. The native
+decode keys are the snake_case of each (`muster_crew`, `lent_to_hunt`, `turns_until_hunt`,
+`turns_to_kill`, `kill_progress`, `idle_mustered`).
+
+Tests: `tests/hunt_by_need.rs` (the full and the lean larder, the muster order and exactly what the
+turn took against the published plan, the small band, the wound rule and the whole carcass, the far
+herd, the save and the wire both ways), `components::tests` (the donor order and exclusions), and
+`bin/server.rs` `a_follow_order_creates_the_need_row_at_zero_…` / `unfollowing_…` /
+`a_move_order_ends_a_need_row`.
 
 ## The tests that carry the arc
 

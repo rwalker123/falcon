@@ -467,6 +467,25 @@ pub struct LaborAssignmentState {
     /// Appended last.
     #[serde(default)]
     pub move_with_herd: bool,
+    /// **Hunting by need** (#798) — the hands this NEED ROW sends next turn; `0` = waiting and on
+    /// every non-need row. Appended last.
+    #[serde(default)]
+    pub muster_crew: u32,
+    /// On a DONOR source row, the hands it gives up next turn (the one muster function the turn
+    /// applies). Appended last.
+    #[serde(default)]
+    pub lent_to_hunt: u32,
+    /// On a WAITING need row, turns until a crew goes out if nothing changes (floor 1);
+    /// `u32::MAX` when it never will. `0` on a sending row and every non-need row. Appended last.
+    #[serde(default)]
+    pub turns_until_hunt: u32,
+    /// At the planned crew, turns until the animal is down, counting current wounds; `0` when no
+    /// crew can be raised. Appended last.
+    #[serde(default)]
+    pub turns_to_kill: u32,
+    /// The herd's banked wounds over the body's durability, in `[0, 1)`. Appended last.
+    #[serde(default)]
+    pub kill_progress: f32,
 }
 
 /// **ONE LINE OF ONE TAKE ROW'S TABLE OF EQUIPMENT** — a row of [`LaborAssignmentState::kit_toe`].
@@ -1775,6 +1794,10 @@ pub struct PopulationCohortState {
     /// order, with no head-count. Empty when none. Appended last.
     #[serde(default)]
     pub breeding_peoples: Vec<BreedingPeopleState>,
+    /// **Hunting by need** (#798) — the idle hands the muster takes next turn for the band's need
+    /// row. Appended last.
+    #[serde(default)]
+    pub idle_mustered: u32,
 }
 
 /// **ONE OWN-PEOPLE BAND IN A BREEDING POPULATION** — a row of

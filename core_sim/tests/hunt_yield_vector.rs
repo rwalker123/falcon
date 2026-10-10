@@ -263,6 +263,7 @@ fn spawn_hunters(
             LaborAllocation {
                 assignments: vec![LaborAssignment {
                     party: None,
+                    muster_crew: 0,
                     target: LaborTarget::Hunt {
                         fauna_id: fauna_id.to_string(),
                         floor,
@@ -736,6 +737,7 @@ fn spawn_resident_crew(
             LaborAllocation {
                 assignments: std::iter::once(LaborAssignment {
                     party: None,
+                    muster_crew: 0,
                     target: LaborTarget::Hunt {
                         fauna_id: fauna_id.to_string(),
                         floor,
@@ -752,6 +754,7 @@ fn spawn_resident_crew(
                 // band is paying for and nobody is spending.
                 .chain((build_crew > 0).then_some(LaborAssignment {
                     party: None,
+                    muster_crew: 0,
                     target: LaborTarget::Builders,
                     workers: build_crew,
                     kit: None,

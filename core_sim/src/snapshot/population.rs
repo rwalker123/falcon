@@ -274,44 +274,118 @@ fn assigned_hunt_useful_crew(
     hunt_crew_levers: &HuntCrewLevers<'_>,
     herds: &crate::fauna::HerdRegistry,
 ) -> u32 {
+    with_hunt_curve(
+        target,
+        crew_pool,
+        gear,
+        kit_levers,
+        hunt_crew_levers,
+        herds,
+        |inputs| crate::fauna::hunt_useful_crew(&crate::fauna::hunt_crew_take_curve(inputs)),
+    )
+    .unwrap_or(crate::fauna::NO_USEFUL_CREW)
+}
+
+/// **Run `read` over the hunt crew curve's inputs for one hunt row** — the one assembly of
+/// [`crate::fauna::HuntCrewCurveInputs`] on the capture side, shared by the row's useful-crew
+/// ceiling and the hunting-by-need readout so both price the same party. `None` for a non-hunt row
+/// and for a herd that has left the registry.
+fn with_hunt_curve<R>(
+    target: &LaborTarget,
+    crew_pool: u32,
+    gear: &HuntCrewGear<'_>,
+    kit_levers: &BandKitLevers<'_>,
+    hunt_crew_levers: &HuntCrewLevers<'_>,
+    herds: &crate::fauna::HerdRegistry,
+    read: impl FnOnce(&crate::fauna::HuntCrewCurveInputs<'_>) -> R,
+) -> Option<R> {
     let LaborTarget::Hunt {
         fauna_id, floor, ..
     } = target
     else {
-        return crate::fauna::NO_USEFUL_CREW;
+        return None;
     };
-    let Some(herd) = herds.find(fauna_id) else {
-        return crate::fauna::NO_USEFUL_CREW;
-    };
+    let herd = herds.find(fauna_id)?;
     // Resolved after the two gates, so a non-hunt row pays nothing for a vector it never reads.
     let other_rows = gear
         .allocation
         .rows_excluding_source(kit_levers.config, target, gear.claims);
-    crate::fauna::hunt_useful_crew(&crate::fauna::hunt_crew_take_curve(
-        &crate::fauna::HuntCrewCurveInputs {
+    Some(read(&crate::fauna::HuntCrewCurveInputs {
+        herd,
+        fauna: hunt_crew_levers.fauna,
+        equipment: kit_levers.config,
+        kit: gear.kit,
+        wear: gear.wear,
+        other_rows: &other_rows,
+        priority: gear.allocation.priority_on(target),
+        intrinsic: kit_levers.person_intrinsic,
+        // **BASE, not `expedition_tuning`** — this is a band hunting its own range.
+        tuning: hunt_crew_levers.combat.tuning(),
+        hunt_injury_damage_per_animal: hunt_crew_levers.combat.hunt_injury_damage_per_animal,
+        range_sigmas: hunt_crew_levers.combat.forecast_range_sigmas,
+        floor: *floor,
+        baseline_haul_rate: hunt_crew_levers.baseline_haul_rate,
+        max_workers: crew_pool,
+        keeping: crate::fauna::herd_crew_keeping_next_turn(
             herd,
-            fauna: hunt_crew_levers.fauna,
-            equipment: kit_levers.config,
-            kit: gear.kit,
-            wear: gear.wear,
-            other_rows: &other_rows,
-            priority: gear.allocation.priority_on(target),
-            intrinsic: kit_levers.person_intrinsic,
-            // **BASE, not `expedition_tuning`** — this is a band hunting its own range.
-            tuning: hunt_crew_levers.combat.tuning(),
-            hunt_injury_damage_per_animal: hunt_crew_levers.combat.hunt_injury_damage_per_animal,
-            range_sigmas: hunt_crew_levers.combat.forecast_range_sigmas,
-            floor: *floor,
-            baseline_haul_rate: hunt_crew_levers.baseline_haul_rate,
-            max_workers: crew_pool,
-            keeping: crate::fauna::herd_crew_keeping_next_turn(
-                herd,
-                hunt_crew_levers.fauna,
-                hunt_crew_levers.ladder,
-                None,
-            ),
+            hunt_crew_levers.fauna,
+            hunt_crew_levers.ladder,
+            None,
+        ),
+    }))
+}
+
+/// **WHAT A NEED ROW PUBLISHES ABOUT NEXT TURN'S HUNT** — [`crate::hunt_by_need::assess_need`] over
+/// the same curve inputs the labor pass assembles, priced over the **musterable pool** (idle hands
+/// plus every donor row's), with the band's runway as the published `turnsOfFood`.
+///
+/// `None` when the herd is gone or beyond `band_work_range` of the band: the turn forces
+/// `muster_crew` to `0` there and never posts a party for a need row, so the wire states *waiting,
+/// never* ([`crate::hunt_by_need::NO_HUNT_NEEDED`]).
+// The row cannot resolve any of these for itself: the pool, the runway, the band's position, its
+// gear and both levers each come from a different part of the capture.
+#[allow(clippy::too_many_arguments)]
+fn need_row_assessment(
+    target: &LaborTarget,
+    pool: u32,
+    runway: f32,
+    band_position: Option<bevy::math::UVec2>,
+    gear: &HuntCrewGear<'_>,
+    kit_levers: &BandKitLevers<'_>,
+    hunt_crew_levers: &HuntCrewLevers<'_>,
+    sources: &BuildSourceInputs<'_>,
+) -> Option<crate::hunt_by_need::NeedAssessment> {
+    let LaborTarget::Hunt { fauna_id, .. } = target else {
+        return None;
+    };
+    let herd = sources.herds.find(fauna_id)?;
+    let (width, wrap) = sources.grid;
+    let in_camp_range = band_position.is_some_and(|band| {
+        crate::grid_utils::hex_distance_wrapped(herd.current_pos, band, width, wrap)
+            <= sources.labor.band_work_range
+    });
+    if !in_camp_range {
+        return None;
+    }
+    with_hunt_curve(
+        target,
+        pool,
+        gear,
+        kit_levers,
+        hunt_crew_levers,
+        sources.herds,
+        |inputs| {
+            crate::hunt_by_need::assess_need(
+                inputs,
+                sources.labor.arrivals_horizon_turns,
+                runway,
+                hunt_crew_levers.fauna.follow.need_margin_turns,
+                // A hunt in progress is already a stored plan (`muster_crew > 0`); the capture
+                // never re-derives it, so a waiting row is assessed on the runway alone.
+                false,
+            )
         },
-    ))
+    )
 }
 
 /// Summarize a band's labor allocation into the `activity` string — the dominant assignment's kind,
@@ -339,6 +413,52 @@ fn allocation_summary(allocation: Option<&LaborAllocation>) -> String {
 /// are one concept in two currencies and share this one reading, so a test (or any consumer) names
 /// the constant rather than the literal `999`.
 pub const NOT_FOOD_LIMITED_TURNS: f32 = 999.0;
+
+/// **THE BAND'S FOOD RUNWAY, IN TURNS — the value the wire's `turnsOfFood` carries.** One function so
+/// the snapshot capture and the labor pass's hunting-by-need decision (`crate::hunt_by_need`) read
+/// the same number and cannot disagree about when the larder runs out.
+///
+/// The steady income is Σ per-source `realized` (the honest long-run average of the lumpy `actual`),
+/// the consumption is the forward `demand` of the people, and a resident band's larder is read less
+/// what will rot uneaten (see the derivation at the call site in [`population_state`]).
+pub(crate) fn band_turns_of_food(
+    cohort: &PopulationCohort,
+    allocation: Option<&LaborAllocation>,
+    demographics: &DemographicsConfig,
+    is_expedition: bool,
+) -> f32 {
+    let demand = food_demand(
+        cohort.children,
+        cohort.working,
+        cohort.elders,
+        &demographics.consumption,
+    );
+    let steady_food_income: f32 = allocation
+        .map(|a| a.last_yields.iter().map(|y| y.realized).sum())
+        .unwrap_or(0.0);
+    let runway_larder = if is_expedition {
+        cohort.stores.get(FOOD)
+    } else {
+        cohort.stores.get(FOOD)
+            - crate::spoilage::rot_ahead(
+                cohort.stores.food(),
+                demand.to_f32(),
+                &demographics.keeping,
+            )
+    };
+    if demand.raw() <= 0 {
+        NOT_FOOD_LIMITED_TURNS
+    } else {
+        larder_runway_turns(
+            runway_larder.to_f32(),
+            demand.to_f32(),
+            steady_food_income,
+            pooled_food_net(cohort),
+            &merged_arrival_schedule(allocation),
+            MealOrder::BeforeIncome,
+        )
+    }
+}
 
 /// The larder runway, in **TURNS until the larder is empty** — the value the wire's `turnsOfFood`
 /// carries.
@@ -737,6 +857,9 @@ pub(crate) struct BuildSourceInputs<'a> {
     pub(crate) map_seed: u64,
     /// The flora table a patch's basket resolves against.
     pub(crate) flora: &'a crate::flora_config::FloraConfig,
+    /// The grid's width and whether it wraps horizontally — what a need row's *is the herd within
+    /// `band_work_range`* test measures hex distance over (hunting by need).
+    pub(crate) grid: (u32, bool),
 }
 
 /// **THE JOB TOKEN A ROW PUBLISHES** — the rung this band's queue entry for `source` is actually
@@ -892,8 +1015,14 @@ pub(crate) fn empty_build_sources() -> &'static BuildSourceInputs<'static> {
         season_of: &no_season,
         map_seed: crate::HARNESS_MAP_SEED,
         flora: FLORA.get_or_init(crate::flora_config::FloraConfig::builtin),
+        grid: (EMPTY_GRID_WIDTH, false),
     })
 }
+
+/// The width of the grid a fixture's [`empty_build_sources`] is measured over: no fixture that uses
+/// it places a band and a need row's herd apart.
+#[cfg(test)]
+const EMPTY_GRID_WIDTH: u32 = 1;
 
 /// **THE SHIPPED ROSTER AND DIALS, for a fixture that asserts on a band's derived readouts** — the
 /// [`HuntCrewLevers`] every capture path resolves out of the loaded configs. Built once, exactly as
@@ -1403,12 +1532,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         })
         .collect();
     let (travel_target_x, travel_target_y) = travel_target.map(|t| (t.x, t.y)).unwrap_or((0, 0));
-    let demand = food_demand(
-        cohort.children,
-        cohort.working,
-        cohort.elders,
-        &demographics.consumption,
-    );
     let activity = allocation_summary(allocation);
     // **The head-count, through the one seam the COMMANDS clamp against**
     // ([`crate::components::BandWorkforce`]). The bench's crew is spent labor that is not a
@@ -1427,6 +1550,34 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     );
     let working_age = age_brackets.working;
     let idle_workers = workforce.idle();
+    // **The band's runway, resolved ONCE** — the published `turnsOfFood` and the figure a need row's
+    // `turnsUntilHunt` counts down from.
+    let turns_of_food = band_turns_of_food(cohort, allocation, demographics, expedition.is_some());
+    // **THE MUSTER THE NEXT TURN WILL APPLY**, from the one function the labor pass applies
+    // (`LaborAllocation::muster_donors`), so a donor row's `lentToHunt` and the band's
+    // `idleMustered` are what the turn takes. A band has at most one need row.
+    let donor_is_local = |target: &LaborTarget| {
+        crate::hunt_by_need::source_is_local(
+            target,
+            build_sources.herds,
+            current_position,
+            build_sources.labor,
+            build_sources.grid,
+        )
+    };
+    let muster_plan = allocation.and_then(|a| {
+        a.assignments
+            .iter()
+            .position(|row| row.is_need_row() && row.muster_crew > 0)
+            .map(|need_idx| {
+                a.muster_donors(
+                    idle_workers,
+                    need_idx,
+                    a.assignments[need_idx].muster_crew,
+                    &donor_is_local,
+                )
+            })
+    });
     // Zip each assignment with its retained per-source yield telemetry (same index order). An
     // assignment with no telemetry row yet → default 0 yields rather than a panic.
     const NO_YIELD: SourceYield = SourceYield::ZERO;
@@ -1447,19 +1598,43 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     // reach: the hands standing on it plus the band's idle ones. That is the pool
                     // `assign_labor` judges an add against and the domain the compose sheet asks its
                     // curve over, so the two surfaces answer the same question.
+                    //
+                    // **A NEED ROW'S POOL IS THE MUSTERABLE ONE** — it holds no hands of its own and
+                    // its crew is made of idle hands plus what its donors lend.
+                    let crew_pool = if assignment.is_need_row() {
+                        a.musterable_pool(idle_workers, i, &donor_is_local)
+                    } else {
+                        assignment.workers.saturating_add(idle_workers)
+                    };
+                    let hunt_gear = HuntCrewGear {
+                        kit: &resolved_kit,
+                        wear: &kit,
+                        allocation: a,
+                        claims: &claims.claims,
+                    };
                     let hunt_useful_workers = assigned_hunt_useful_crew(
                         &assignment.target,
-                        assignment.workers.saturating_add(idle_workers),
-                        &HuntCrewGear {
-                            kit: &resolved_kit,
-                            wear: &kit,
-                            allocation: a,
-                            claims: &claims.claims,
-                        },
+                        crew_pool,
+                        &hunt_gear,
                         kit_levers,
                         hunt_crew_levers,
                         build_sources.herds,
                     );
+                    // **HUNTING BY NEED**, resolved here while the gear is in hand.
+                    let need_assessment = if assignment.is_need_row() {
+                        need_row_assessment(
+                            &assignment.target,
+                            crew_pool,
+                            turns_of_food,
+                            current_position,
+                            &hunt_gear,
+                            kit_levers,
+                            hunt_crew_levers,
+                            build_sources,
+                        )
+                    } else {
+                        None
+                    };
                     // **THE GOOD-SIDE SHORTFALL'S TWO TERMS** — read off the source itself, where
                     // the stamped bill and the store's payment live, because a row holds neither.
                     // `resolved_build_job`'s own rule: a resolution needing both registries is the
@@ -1491,6 +1666,33 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     row.homeward_workers = walking_home.workers;
                     row.homeward_all_home_in = walking_home.all_home_in;
                     row.homeward_food = walking_home.food;
+                    // **HUNTING BY NEED (#798)** — a need row publishes the crew it sends, the wait
+                    // before one goes and the animal's progress; a donor row what it lends. Every
+                    // other row keeps the zeros.
+                    if assignment.is_need_row() {
+                        row.muster_crew = assignment.muster_crew;
+                        if let LaborTarget::Hunt { fauna_id, .. } = &assignment.target {
+                            row.kill_progress =
+                                build_sources.herds.find(fauna_id).map_or(0.0, |herd| {
+                                    crate::fauna::hunt_kill_progress(herd, hunt_crew_levers.fauna)
+                                });
+                        }
+                        match need_assessment {
+                            Some(assessment) => {
+                                row.turns_to_kill = assessment.turns_to_kill;
+                                // A row with a crew planned is sending, whatever the runway alone
+                                // would say (a hunt in progress sends on the animal, not the larder).
+                                row.turns_until_hunt = if assignment.muster_crew > 0 {
+                                    0
+                                } else {
+                                    assessment.turns_until_hunt
+                                };
+                            }
+                            None => row.turns_until_hunt = crate::hunt_by_need::NO_HUNT_NEEDED,
+                        }
+                    } else if let Some(plan) = &muster_plan {
+                        row.lent_to_hunt = plan.lent_by(i);
+                    }
                     // **HOW MANY CUTTERS THIS WORKING CAN USE, GEAR INCLUDED** (#663) — the crew
                     // whose capacity reaches the room above the row's floor, crew-independent
                     // (`extraction::useful_cutters`). `0` on every non-extract row.
@@ -1537,9 +1739,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // pulses. Purely local: it is no longer exported, because the client sums the same quantity from
     // the per-source `realized_yield` of the breakdown rows so its headline cannot disagree with the
     // rows it sits above (see `core_sim/CLAUDE.md`).
-    let steady_food_income = allocation
-        .map(|a| a.last_yields.iter().map(|y| y.realized).sum())
-        .unwrap_or(0.0);
     let food_consumption = cohort.last_food_consumption;
     // The food this band forfeited to a predator raid this turn (the real `LocalStore::take` debit
     // `advance_predator_raids` levied on a casualty-causing raid). It is in NEITHER food term — a
@@ -1567,28 +1766,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // what would expire before the band could eat it is not runway. Income is not counted in that
     // walk; the turns after are walked as before. A detached party's pack does not rot in this
     // slice, so it reads its pack whole.
-    let runway_larder = if expedition.is_some() {
-        cohort.stores.get(FOOD)
-    } else {
-        cohort.stores.get(FOOD)
-            - crate::spoilage::rot_ahead(
-                cohort.stores.food(),
-                demand.to_f32(),
-                &demographics.keeping,
-            )
-    };
-    let turns_of_food = if demand.raw() <= 0 {
-        NOT_FOOD_LIMITED_TURNS
-    } else {
-        larder_runway_turns(
-            runway_larder.to_f32(),
-            demand.to_f32(),
-            steady_food_income,
-            pooled_food_net(cohort),
-            &merged_arrival_schedule(allocation),
-            MealOrder::BeforeIncome,
-        )
-    };
     // **THE HAY LEDGER, in fodder units** — the pens' unmet feed against the Fields' harvest, both
     // read off the allocation the way `raid_forfeit` is, and `0.0` for a band with no allocation at
     // all. A pen eats grass and hay and never the people's bread, so none of this touches a food
@@ -2225,6 +2402,8 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 fading: people.fading,
             })
             .collect(),
+        // **The idle hands next turn's muster takes** (#798) — the idle share of the need row's crew.
+        idle_mustered: muster_plan.as_ref().map_or(0, |plan| plan.from_idle),
         // **What rotted this turn** (#706) — the ledger identity's `spoiled` term, set by the larder
         // rot and added to by any caravan pack's transit rot.
         food_spoiled: cohort.last_food_spoiled,
@@ -2853,6 +3032,7 @@ mod tests {
         LaborAllocation {
             assignments: vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: "test-herd".to_string(),
                     floor: 0.5,
@@ -3167,6 +3347,7 @@ mod tests {
         let scouting = LaborAllocation {
             assignments: vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
                 target: LaborTarget::Scout,
                 workers: 4,
                 kit: None,
@@ -3263,6 +3444,7 @@ mod tests {
                 .iter()
                 .map(|source| LaborAssignment {
                     party: None,
+                    muster_crew: 0,
                     target: match source {
                         BuildSource::Patch(tile) => LaborTarget::Forage {
                             tile: *tile,

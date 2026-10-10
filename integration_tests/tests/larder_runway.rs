@@ -94,6 +94,7 @@ fn the_published_runway_is_the_turn_the_larder_really_empties() {
     app.world.entity_mut(band).insert(LaborAllocation {
         assignments: vec![LaborAssignment {
             party: None,
+            muster_crew: 0,
             target: LaborTarget::Forage {
                 tile: patch,
                 floor: 0.5,

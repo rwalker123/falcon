@@ -1251,6 +1251,7 @@ fn build_rows(
 ) -> Vec<LaborAssignment> {
     let mut rows = vec![LaborAssignment {
         party: None,
+        muster_crew: 0,
         target: LaborTarget::Forage {
             tile: patch,
             floor: DEEP_DRAW_FLOOR,
@@ -1264,6 +1265,7 @@ fn build_rows(
     if builders > 0 {
         rows.push(LaborAssignment {
             party: None,
+            muster_crew: 0,
             target: LaborTarget::Builders,
             workers: builders,
             kit: None,

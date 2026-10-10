@@ -191,6 +191,7 @@ fn seat_two_pens(app: &mut App, tile: UVec2) {
 fn hunt_row(herd_id: &str, priority: SourcePriority) -> LaborAssignment {
     LaborAssignment {
         party: None,
+        muster_crew: 0,
         target: LaborTarget::Hunt {
             fauna_id: herd_id.to_string(),
             floor: SUSTAIN,
@@ -566,6 +567,7 @@ fn queue_a_build(
         .expect("the keeper band keeps its allocation");
     allocation.assignments.push(LaborAssignment {
         party: None,
+        muster_crew: 0,
         target: LaborTarget::Builders,
         workers: RING_BUILDERS,
         kit: None,

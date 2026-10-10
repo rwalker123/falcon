@@ -56,6 +56,7 @@ mod great_discovery;
 pub mod grid_utils;
 pub mod hashing;
 pub mod heightfield;
+pub mod hunt_by_need;
 mod hydrology;
 mod influencers;
 mod intensification;
@@ -145,12 +146,12 @@ pub use components::{
     DrawnMaterial, ElementKind, EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase,
     FinishedBatch, FoodBatch, FoodMix, Improvement, KeepingIssue, KeepingToolLine,
     KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch,
-    MaterialDraw, MoraleCause, PoolToeLine, PopulationCohort, PowerNode, ResidentBand, Settlement,
-    ShedCrew, ShedFacts, ShedStep, ShedSubject, SourcePriority, SourceShedFacts, SourceYield,
-    StartingUnit, TakeSelection, Tile, TownCenter, TransferCause, TransferCounterparty,
-    TransferCrossing, TransferDirection, TransferLedger, TransferLink, YieldRange,
-    DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER, MIN_ORDER_COUNT, NO_IMPROVEMENT_UNDERWAY,
-    STRIP_IT_BARE,
+    MaterialDraw, MoraleCause, MusterPlan, PoolToeLine, PopulationCohort, PowerNode, ResidentBand,
+    Settlement, ShedCrew, ShedFacts, ShedStep, ShedSubject, SourcePriority, SourceShedFacts,
+    SourceYield, StartingUnit, TakeSelection, Tile, TownCenter, TransferCause,
+    TransferCounterparty, TransferCrossing, TransferDirection, TransferLedger, TransferLink,
+    YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER, MIN_ORDER_COUNT,
+    NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
 };
 pub use config_fingerprint::{
     current_config_fingerprint, drift_between, ConfigDigest, ConfigFingerprint,
@@ -236,9 +237,10 @@ pub use fauna::{
     herd_rung_already_built, herd_rung_key, herd_space_capacity, herd_standing_provisions,
     herd_standing_rung_share, herd_standing_scale, herd_take_room, herd_upkeep_demand,
     herd_upkeep_shortfall, herd_upkeep_supply, herd_upkeep_workers_needed, herd_wariness,
-    hunt_armed_crew, hunt_crew_needed, hunt_crew_room, hunt_crew_take_curve, hunt_engage_workers,
-    hunt_escapement_ceiling, hunt_haul_workers, hunt_source_yield_preview, hunt_take_bound,
-    hunt_take_overdraws, hunt_take_workers, hunt_useful_crew, kill_carry_rate, kill_over_retreat,
+    hunt_armed_crew, hunt_crew_needed, hunt_crew_room, hunt_crew_take_curve,
+    hunt_crew_turns_to_kill, hunt_engage_workers, hunt_escapement_ceiling, hunt_haul_workers,
+    hunt_kill_progress, hunt_source_yield_preview, hunt_take_bound, hunt_take_overdraws,
+    hunt_take_workers, hunt_useful_crew, kill_carry_rate, kill_over_retreat,
     migratory_corridor_tiles, next_turns_quarry, per_hunter_take_biomass, project_arrivals_hunt,
     project_realized_hunt, quantise_animal_take, quarry_default_hunt_kit, regrow_biomass,
     regrowth_delta_at, repopulate_fauna, resolve_hunt_engagement, resolve_hunt_fight,
@@ -397,6 +399,7 @@ pub use snapshot_overlays_config::{
     MilitaryOverlayConfig, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
     SnapshotOverlaysConfigMetadata, BUILTIN_SNAPSHOT_OVERLAYS_CONFIG,
 };
+pub use spoilage::rot_band_larders;
 pub use start_profile::{
     resolve_active_profile, snapshot_profiles, ActiveStartProfile, CampaignLabel, FactionControl,
     InventoryEntry, OpeningLoadoutConfig, StartProfile, StartProfileKnowledgeTags,
