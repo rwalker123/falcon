@@ -5210,6 +5210,17 @@ pub struct LaborAllocation {
     /// must stop republishing last turn's tools. **Excluded from equality** below, like the rest of
     /// the per-turn telemetry.
     pub last_pool_toe: Vec<PoolToeLine>,
+    /// **THE TOOLS EACH QUEUED BUILD BEHIND THE HEAD WILL NEED OF THE BUILDERS' HANDS**, one line per
+    /// `(queue position, item)` for every entry after the head (the head's own claim is the builders'
+    /// [`Self::last_pool_toe`] line). Each is the same requirement the head's claim computes — the
+    /// entry's in-flight rung's `pool_toe` x the builders' hand count / the item's
+    /// `workers_per_unit` — struck by `systems::labor` from the entry's own quote.
+    ///
+    /// The craft suggestions walk these against the stock left after the turn's settlement
+    /// (`craft_suggestions::band_tool_shortfall_lines`), so a tool a later job will need is suggested
+    /// before that job reaches the head. Cleared before every early exit of the band's turn on
+    /// [`Self::last_pool_toe`]'s rule. **Excluded from equality** below.
+    pub last_queued_build_toe: Vec<QueuedBuildToe>,
     /// **THE KEEPING TOOLS THIS BAND'S SITE CREWS WERE ISSUED THIS TURN**, one line per `(site, item)`
     /// — the units the band-wide settlement handed each site crew for its keeping hands
     /// (`docs/plan_site_crews.md` §2.3).
@@ -5381,6 +5392,19 @@ pub struct KeepingIssue {
     /// against, so `(required − units).max(0)` is what this site's crew went without. It is what the
     /// craft suggestions read a site crew's shortfall off ([`crate::craft_suggestions`]); a line the
     /// settlement reached with nothing reads `units 0` against its claim rather than being absent.
+    pub required: f32,
+}
+
+/// **THE TOOLS A QUEUED BUILD WILL NEED** — one line of [`LaborAllocation::last_queued_build_toe`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QueuedBuildToe {
+    /// The entry's place in the build queue; the head is `0` and never appears here.
+    pub position: u32,
+    /// The entry's source, which is how a client names the job.
+    pub source: BuildSource,
+    /// The equipment item id.
+    pub item: String,
+    /// Units the builders' hands would need of it for this job.
     pub required: f32,
 }
 

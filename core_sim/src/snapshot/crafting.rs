@@ -760,6 +760,8 @@ const SUGGESTION_SOURCE_POOL: &str = "pool";
 const SUGGESTION_SOURCE_SITE: &str = "site";
 /// See [`SUGGESTION_SOURCE_POOL`]. A take row.
 const SUGGESTION_SOURCE_TAKE: &str = "take";
+/// See [`SUGGESTION_SOURCE_POOL`]. A queued build behind the head of the build queue.
+const SUGGESTION_SOURCE_BUILD_QUEUE: &str = "build_queue";
 
 /// **THE CRAFT SUGGESTIONS ON THE WIRE** — numbers and join keys only; the client owns the words, as
 /// it does for the craft offers.
@@ -800,6 +802,12 @@ pub(crate) fn craft_suggestion_states(
                             state.kind = SUGGESTION_SOURCE_TAKE.to_string();
                             state.job = (*job).to_string();
                             source.as_ref()
+                        }
+                        SupplySource::BuildQueue { position, source } => {
+                            state.kind = SUGGESTION_SOURCE_BUILD_QUEUE.to_string();
+                            state.job = source.kind().to_string();
+                            state.queue_position = *position;
+                            Some(source)
                         }
                     };
                     match target {

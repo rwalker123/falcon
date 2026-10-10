@@ -74,6 +74,13 @@ var _band_legend: Array = []
 var _recipes: Array = []
 var _craft_knowledge: Array = []
 
+## The Work tab's build-queue labels for a band, `{rank: face}` - handed in by the coordinator so this
+## controller never holds the band panel's.
+var _build_queue_faces: Callable = Callable()
+
+func set_build_queue_faces_source(source: Callable) -> void:
+	_build_queue_faces = source
+
 func setup(host: Node, band_labor: HudBandLaborState, room_bounds: Control = null) -> void:
 	_host = host
 	_band_labor = band_labor
@@ -161,6 +168,8 @@ func render() -> void:
 		# out (a worker at the bench is assigned labor); the stepper asks how many COULD stand at the
 		# bench, which keeps the crew already on it — the sim's `benchable()` against its `idle()`.
 		CraftingPanel.PAYLOAD_IDLE_WORKERS: _band_labor.benchable_workers(band),
+		CraftingPanel.PAYLOAD_BUILD_QUEUE_FACES: _build_queue_faces.call(band) \
+			if _build_queue_faces.is_valid() else {},
 	})
 
 ## The room the card is bounded by changed shape — a panel docked or released an edge, or the event

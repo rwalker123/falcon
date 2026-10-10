@@ -18,7 +18,24 @@
 //! - **the site crews** — [`LaborAllocation::last_keeping_issued`], each line carrying its claim
 //!   beside what the settlement issued (`upkeepToe` on the wire);
 //! - **the take rows** — each row's kit lines (`kitToe` on the wire), handed in by the capture that
-//!   settles them.
+//!   settles them;
+//! - **the queued builds behind the head** — [`LaborAllocation::last_queued_build_toe`]: what each
+//!   later job in the build queue will ask of the builders' hands. The head's own claim is the
+//!   builders' `last_pool_toe` line; the later jobs are walked **in queue order against the stock
+//!   left after the turn's settlement** (owned units, less every unit the turn issued to a pool, a
+//!   site crew or a take row), each job taking its tools **cumulatively** — a tool an earlier job
+//!   takes is not there for a later one. A line is a [`SupplySource::BuildQueue`] carrying the
+//!   job's queue position and source.
+//!
+//! # The order
+//!
+//! 1. every **non-build** shortage (a pool other than the builders, a site crew, a take row), by
+//!    workers going without;
+//! 2. then the **current build** — the head job's builders line, as build position 0;
+//! 3. then the **later jobs, in queue order**, ties by item id.
+//!
+//! An item short in both places is **one** suggestion: its count is the total and it ranks at its
+//! earliest position.
 //!
 //! **A detached party is not a source**: it carries the kit it left with and is never resupplied, so
 //! nothing crafted now reaches it. Its cohort works no rows, and the capture publishes it no list.
@@ -39,7 +56,7 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    components::{BandBench, BuildSource, LaborAllocation, LaborTarget},
+    components::{BandBench, BandEquipment, BuildSource, LaborAllocation, LaborTarget},
     equipment_config::{
         EffectTier, EquipmentConfig, EquipmentEffect, EquipmentStat, ItemDefinition, KitJob,
     },
@@ -61,6 +78,9 @@ pub enum SupplySource {
         job: &'static str,
         source: Option<BuildSource>,
     },
+    /// **A queued build behind the head**, by its place in the build queue (`1` is next) and its
+    /// source. The head's own claim is [`SupplySource::Pool`] of the builders.
+    BuildQueue { position: u32, source: BuildSource },
 }
 
 impl SupplySource {
@@ -74,9 +94,19 @@ impl SupplySource {
 
     /// **Whether a missing unit here costs build or keeping WORK.** The pools build and keep; a site
     /// crew keeps. A take row's kit buys attack, carry or reach — food, not work.
+    /// **THE BUILD QUEUE PLACE THIS SOURCE IS A CLAIM FOR**, `None` for a non-build consumer: the
+    /// builders' pool is the head job (position 0) and a [`Self::BuildQueue`] line carries its own.
+    fn build_position(&self) -> Option<u32> {
+        match self {
+            SupplySource::Pool(KitJob::Builders) => Some(HEAD_BUILD_POSITION),
+            SupplySource::BuildQueue { position, .. } => Some(*position),
+            _ => None,
+        }
+    }
+
     fn adds_work(&self) -> bool {
         match self {
-            SupplySource::Pool(_) | SupplySource::Site(_) => true,
+            SupplySource::Pool(_) | SupplySource::Site(_) | SupplySource::BuildQueue { .. } => true,
             SupplySource::Take { .. } => false,
         }
     }
@@ -151,6 +181,8 @@ const NOTHING_TO_MAKE: f32 = 0.0;
 pub fn band_tool_shortfall_lines<'a>(
     allocation: &LaborAllocation,
     take_rows: impl IntoIterator<Item = (usize, &'a str, f32, f32)>,
+    equipment: &EquipmentConfig,
+    wear: &BandEquipment,
 ) -> Vec<ToolShortfallLine> {
     let pools = allocation
         .last_pool_toe
@@ -181,7 +213,9 @@ pub fn band_tool_shortfall_lines<'a>(
                 filled,
             })
         });
-    pools.chain(sites).chain(takes).collect()
+    let mut lines: Vec<ToolShortfallLine> = pools.chain(sites).chain(takes).collect();
+    lines.extend(queued_build_lines(allocation, &lines, equipment, wear));
+    lines
 }
 
 /// **A ROW THAT CLAIMS NONE OF AN ITEM WRITES NO KIT LINE FOR IT** — `required` is never `0` on the
@@ -260,6 +294,51 @@ pub fn take_row_gear(
         .collect()
 }
 
+/// **THE QUEUED BUILDS' LINES** — each later job in the build queue walked against the stock left
+/// after this turn's settlement, **cumulatively**: the band's owned live units of an item
+/// ([`BandEquipment::live_units`], the reading the settlement itself uses) less every unit the turn
+/// issued of it (`settled` — the pools' and sites' and take rows' `filled`, the head's builders line
+/// included), then less what each earlier queued job took. A job's line is `required` against what it
+/// could take from that remainder.
+///
+/// Jobs are walked in queue order, items within a job in id order; nothing here re-derives the
+/// settlement.
+fn queued_build_lines(
+    allocation: &LaborAllocation,
+    settled: &[ToolShortfallLine],
+    equipment: &EquipmentConfig,
+    wear: &BandEquipment,
+) -> Vec<ToolShortfallLine> {
+    let mut queued: Vec<&crate::components::QueuedBuildToe> =
+        allocation.last_queued_build_toe.iter().collect();
+    queued.sort_by(|a, b| (a.position, &a.item).cmp(&(b.position, &b.item)));
+    let mut left: BTreeMap<&str, f32> = BTreeMap::new();
+    queued
+        .into_iter()
+        .map(|line| {
+            let stock = left.entry(line.item.as_str()).or_insert_with(|| {
+                let issued: f32 = settled
+                    .iter()
+                    .filter(|settled| settled.item == line.item)
+                    .map(|settled| settled.filled)
+                    .sum();
+                (wear.live_units(&line.item, equipment) as f32 - issued).max(NOTHING_MISSING)
+            });
+            let filled = line.required.min(*stock);
+            *stock -= filled;
+            ToolShortfallLine {
+                source: SupplySource::BuildQueue {
+                    position: line.position,
+                    source: line.source.clone(),
+                },
+                item: line.item.clone(),
+                required: line.required,
+                filled,
+            }
+        })
+        .collect()
+}
+
 /// **A BAND'S RANKED SUGGESTIONS, from its settled gear** — the one function the snapshot's
 /// `craftSuggestions` and auto-craft both call, so the list the panel shows and the list auto-craft
 /// works down cannot differ. `take_rows` are `(row, item, required, filled)` off [`TakeRowGear::toe`].
@@ -269,8 +348,9 @@ pub fn band_suggestions<'a>(
     bench: Option<&BandBench>,
     recipes: &RecipesConfig,
     equipment: &EquipmentConfig,
+    wear: &BandEquipment,
 ) -> Vec<CraftSuggestion> {
-    let lines = band_tool_shortfall_lines(allocation, take_rows);
+    let lines = band_tool_shortfall_lines(allocation, take_rows, equipment, wear);
     craft_suggestions(&lines, bench, recipes, equipment)
 }
 
@@ -326,11 +406,50 @@ pub fn craft_suggestions(
             })
         })
         .collect();
-    // **Most people going without first; ties by item id**, which the `BTreeMap` walk already put in
-    // order — a stable sort keeps it.
-    suggestions.sort_by(|a, b| b.workers_without.total_cmp(&a.workers_without));
+    // **The order** (module docs): every non-build shortage first, by workers going without; then
+    // the build — the head's builders line as position 0, the queued jobs behind it in queue order.
+    // An item short in both places ranks at its earliest position. Ties by item id, which the
+    // `BTreeMap` walk already put in order — a stable sort keeps it.
+    suggestions.sort_by(|a, b| {
+        rank_of(a)
+            .partial_cmp(&rank_of(b))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     suggestions
 }
+
+/// **WHERE A SUGGESTION RANKS** — `(tier, key)`, smaller first. Tier 0 is any non-build shortage,
+/// keyed by the people going without it there (negated, so more first); tier 1 is build-only, keyed
+/// by the earliest build position it is short at.
+fn rank_of(suggestion: &CraftSuggestion) -> (u8, f32) {
+    let non_build: f32 = suggestion
+        .sources
+        .iter()
+        .filter(|line| line.source.build_position().is_none())
+        .map(|line| line.workers_without)
+        .sum();
+    if suggestion
+        .sources
+        .iter()
+        .any(|line| line.source.build_position().is_none())
+    {
+        return (NON_BUILD_TIER, -non_build);
+    }
+    let earliest = suggestion
+        .sources
+        .iter()
+        .filter_map(|line| line.source.build_position())
+        .min()
+        .unwrap_or(HEAD_BUILD_POSITION);
+    (BUILD_TIER, earliest as f32)
+}
+
+/// The tier of a suggestion short of something a non-build consumer needs.
+const NON_BUILD_TIER: u8 = 0;
+/// The tier of a suggestion short only for the build queue.
+const BUILD_TIER: u8 = 1;
+/// The head job's place in the build queue.
+const HEAD_BUILD_POSITION: u32 = 0;
 
 /// **UNITS OF `item` ALREADY COMING FROM THE BENCH** — what the queue still owes, `(count − made) ×
 /// the output amount` over every order whose recipe makes the item, **plus** what the bench has
@@ -439,7 +558,7 @@ mod tests {
             ),
             line(take("deer"), SPEARS, 3.0, 0.0),
             line(
-                SupplySource::Pool(KitJob::Builders),
+                SupplySource::Pool(KitJob::Roadwork),
                 "earthmoving",
                 3.0,
                 0.0,
@@ -545,5 +664,182 @@ mod tests {
         assert_eq!(ranked.len(), 1, "the over-filled hoe line is not short");
         assert_eq!(ranked[0].count, 1, "0.3 + 0.7 is one tool, not two");
         assert_eq!(ranked[0].sources.len(), 2, "both pools are named");
+    }
+
+    // ---- the queued builds behind the head --------------------------------------------------
+
+    use crate::components::{PoolToeLine, QueuedBuildToe};
+
+    const CROOK: &str = "crook";
+    const PLAIN_TIER: &str = "plain";
+
+    fn herd(id: &str) -> BuildSource {
+        BuildSource::Herd(id.to_string())
+    }
+
+    fn stocked(item: &str, count: u32) -> BandEquipment {
+        let mut wear = BandEquipment::default();
+        if count > 0 {
+            wear.stock(item, count, PLAIN_TIER, None);
+        }
+        wear
+    }
+
+    fn queued(position: u32, source: BuildSource, item: &str, required: f32) -> QueuedBuildToe {
+        QueuedBuildToe {
+            position,
+            source,
+            item: item.to_string(),
+            required,
+        }
+    }
+
+    /// The builders' settled line for the head job.
+    fn head(item: &str, required: f32, filled: f32) -> PoolToeLine {
+        PoolToeLine {
+            pool: KitJob::Builders,
+            item: item.to_string(),
+            required,
+            filled,
+        }
+    }
+
+    fn suggest(
+        allocation: &LaborAllocation,
+        take_rows: Vec<(usize, &str, f32, f32)>,
+        wear: &BandEquipment,
+    ) -> Vec<CraftSuggestion> {
+        let (recipes, equipment) = configs();
+        let lines = band_tool_shortfall_lines(allocation, take_rows, &equipment, wear);
+        craft_suggestions(&lines, None, &recipes, &equipment)
+    }
+
+    fn queue_positions(suggestion: &CraftSuggestion) -> Vec<u32> {
+        suggestion
+            .sources
+            .iter()
+            .filter_map(|line| line.source.build_position())
+            .collect()
+    }
+
+    /// **TWO CROOKS HELD, TWO TAME JOBS NEEDING TWO EACH: THE HEAD IS COVERED, THE SECOND IS SHORT 2.**
+    /// The head job's line is its settled builders claim (required 2, filled 2); the second job walks
+    /// the stock left after the settlement, which is none.
+    #[test]
+    fn a_covered_head_leaves_nothing_for_the_second_tame_job() {
+        let allocation = LaborAllocation {
+            last_pool_toe: vec![head(CROOK, 2.0, 2.0)],
+            last_queued_build_toe: vec![queued(1, herd("boar"), CROOK, 2.0)],
+            ..Default::default()
+        };
+        let ranked = suggest(&allocation, Vec::new(), &stocked(CROOK, 2));
+        assert_eq!(ranked.len(), 1, "only the second job is short: {ranked:?}");
+        assert_eq!((ranked[0].item.as_str(), ranked[0].count), (CROOK, 2));
+        assert!(matches!(
+            ranked[0].sources[0].source,
+            SupplySource::BuildQueue { position: 1, .. }
+        ));
+        assert_eq!(ranked[0].sources[0].workers_without, 2.0);
+    }
+
+    /// **TAME, CULTIVATE, TAME WITH 2 CROOKS AND 0 HOES: job 2 is short 2 hoes, job 3 short 2
+    /// crooks** — the first Tame took the crooks, so the third finds none. In queue order.
+    #[test]
+    fn jobs_take_their_tools_cumulatively_in_queue_order() {
+        let allocation = LaborAllocation {
+            last_pool_toe: vec![head(CROOK, 2.0, 2.0)],
+            last_queued_build_toe: vec![
+                queued(1, BuildSource::Patch(PATCH), HOES, 2.0),
+                queued(2, herd("boar"), CROOK, 2.0),
+            ],
+            ..Default::default()
+        };
+        let ranked = suggest(&allocation, Vec::new(), &stocked(CROOK, 2));
+        let order: Vec<(&str, u32, Vec<u32>)> = ranked
+            .iter()
+            .map(|s| (s.item.as_str(), s.count, queue_positions(s)))
+            .collect();
+        assert_eq!(
+            order,
+            vec![(HOES, 2, vec![1]), (CROOK, 2, vec![2])],
+            "hoes for job 2, then crooks for job 3, each in its place in the queue"
+        );
+    }
+
+    /// **A LATER JOB TAKES FROM WHAT AN EARLIER QUEUED JOB LEFT** - not from the whole stock. Four
+    /// crooks held and the head takes none of them: the first queued job takes two, the second two,
+    /// the third finds none.
+    #[test]
+    fn each_queued_job_takes_from_what_the_ones_before_it_left() {
+        let allocation = LaborAllocation {
+            last_queued_build_toe: vec![
+                queued(1, herd("a"), CROOK, 2.0),
+                queued(2, herd("b"), CROOK, 2.0),
+                queued(3, herd("c"), CROOK, 2.0),
+            ],
+            ..Default::default()
+        };
+        let ranked = suggest(&allocation, Vec::new(), &stocked(CROOK, 4));
+        assert_eq!(ranked.len(), 1);
+        assert_eq!(ranked[0].count, 2, "only the third job is short");
+        assert_eq!(queue_positions(&ranked[0]), vec![3]);
+    }
+
+    /// **A CURRENT NON-BUILD SHORTAGE OUTRANKS EVERY BUILD ONE, THE HEAD INCLUDED**, even when the head
+    /// job has more people going without; the head then ranks before the later jobs.
+    #[test]
+    fn non_build_shortages_rank_above_the_head_job_and_the_head_above_the_queue() {
+        let (recipes, equipment) = configs();
+        let lines = [
+            line(
+                SupplySource::BuildQueue {
+                    position: 1,
+                    source: BuildSource::Patch(PATCH),
+                },
+                HOES,
+                9.0,
+                0.0,
+            ),
+            line(SupplySource::Pool(KitJob::Builders), CROOK, 5.0, 0.0),
+            line(take("deer"), SPEARS, 1.0, 0.0),
+        ];
+        let ranked = craft_suggestions(&lines, None, &recipes, &equipment);
+        let order: Vec<&str> = ranked.iter().map(|s| s.item.as_str()).collect();
+        assert_eq!(
+            order,
+            vec![SPEARS, CROOK, HOES],
+            "one hunter without a spear beats five builders without crooks; the head beats the queue \
+             even though the queued job is 9 short"
+        );
+    }
+
+    /// **AN ITEM SHORT NOW AND FOR A LATER JOB IS ONE SUGGESTION**: the total count, ranked at its
+    /// earliest position (here with the non-build shortages, ahead of a build-only item).
+    #[test]
+    fn an_item_short_now_and_later_is_one_suggestion_at_its_earliest_position() {
+        let allocation = LaborAllocation {
+            last_keeping_issued: vec![crate::components::KeepingIssue {
+                source: BuildSource::Patch(PATCH),
+                item: HOES.to_string(),
+                units: 0.0,
+                required: 1.0,
+            }],
+            last_pool_toe: vec![head(CROOK, 3.0, 0.0)],
+            last_queued_build_toe: vec![queued(1, BuildSource::Patch(UVec2::new(8, 8)), HOES, 2.0)],
+            ..Default::default()
+        };
+        let ranked = suggest(&allocation, Vec::new(), &BandEquipment::default());
+        let order: Vec<(&str, u32)> = ranked.iter().map(|s| (s.item.as_str(), s.count)).collect();
+        assert_eq!(
+            order,
+            vec![(HOES, 3), (CROOK, 3)],
+            "hoes: 1 now + 2 later = one suggestion of 3, ahead of the build-only crooks even though \
+             the crooks have more people without"
+        );
+        assert_eq!(
+            ranked[0].sources.len(),
+            2,
+            "both lines ride the one suggestion"
+        );
     }
 }

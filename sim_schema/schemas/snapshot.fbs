@@ -5202,6 +5202,12 @@ table CraftSuggestion {
 //                  material), the LaborAssignment spelling.
 //   kind "take"  — a take row's kitToe. Same `job` + target keys as a site; a band-wide role
 //                  ("scout" | "warrior") carries no target.
+//   kind "build_queue" — a QUEUED BUILD behind the head of the build queue, which will need these
+//                  tools of the builders' hands. `queuePosition` is its place in the band's build
+//                  queue (the head is 0 and is the builders' own "pool" line, so this is >= 1) and
+//                  `job` + target keys are the BuildQueueEntryState's own (`kind` + targetX/Y |
+//                  faunaId | material), which is how the client joins to that row's label. "road"
+//                  entries read job "roadwork" with targetX/Y.
 table CraftSuggestionSource {
   kind:string;
   job:string;
@@ -5211,7 +5217,9 @@ table CraftSuggestionSource {
   material:string;
   missingUnits:float;          // (required − filled), never below 0, in units of the item
   workersWithout:float;        // missingUnits x the item's workers_per_unit
-  workPerTurn:float = 0;       // workersWithout x build_work on a pool or site; 0 on a take row
+  workPerTurn:float = 0;       // workersWithout x build_work on a pool, site or queued build; 0 on a take row
+  // The queued build's place in the build queue (kind "build_queue" only; 0 otherwise). Appended last.
+  queuePosition:uint = 0;
 }
 
 // ONE ROW PER RECIPE, ALWAYS — a row of PopulationCohortState.craftOffers.

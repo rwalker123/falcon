@@ -161,6 +161,7 @@ fn band_suggestions_and_offers(
         Some(bench),
         &configs.recipes,
         &configs.equipment,
+        &wear,
     );
 
     let ladder = world.get_resource::<LadderConfigHandle>()?.get();

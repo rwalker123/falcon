@@ -3910,3 +3910,122 @@ fn a_full_floor_stays_escapement_even_with_wolves_eating() {
         "the room was empty before the wolves ate, so the floor is the cause"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// (17) THE QUEUED BUILDS BEHIND THE HEAD ARE SUGGESTED THEIR TOOLS
+// ---------------------------------------------------------------------------------------------
+
+/// One published suggestion source: `(kind, job, queue position, target x, target y, missing units)`.
+type PublishedSource = (String, String, u32, u32, u32, f32);
+
+/// **THE BAND'S PUBLISHED CRAFT SUGGESTIONS FOR ONE ITEM**: its count and every source line.
+fn published_suggestion(
+    app: &App,
+    band: Entity,
+    item: &str,
+) -> Option<(u32, Vec<PublishedSource>)> {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let cohort = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.entity() == band.to_bits())
+        .expect("the band is on the wire");
+    cohort
+        .craftSuggestions()?
+        .iter()
+        .find(|row| row.itemId() == Some(item))
+        .map(|row| {
+            let sources = row
+                .sources()
+                .map(|sources| {
+                    sources
+                        .iter()
+                        .map(|source| {
+                            (
+                                source.kind().unwrap_or_default().to_string(),
+                                source.job().unwrap_or_default().to_string(),
+                                source.queuePosition(),
+                                source.targetX(),
+                                source.targetY(),
+                                source.missingUnits(),
+                            )
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            (row.count(), sources)
+        })
+}
+
+/// **A BAND BUILDING THE FIRST OF THREE QUEUED CULTIVATES, HOLDING NO HOES, IS SUGGESTED HOES FOR THE
+/// OTHER TWO TOO** - each queued job's line rides the encoded frame as a `build_queue` source carrying
+/// its queue position and the target keys the build-queue row is labelled by, and the head's own
+/// shortage stays the builders' `pool` line.
+#[test]
+fn the_jobs_behind_the_head_are_suggested_their_tools_off_the_encoded_frame() {
+    let (mut app, band, sources) = world_with_a_queue(THE_WHOLE_QUEUE, BUILDERS);
+    *app.world
+        .get_mut::<core_sim::BandEquipment>(band)
+        .expect("a spawned band carries an equipment ledger") = core_sim::BandEquipment::default();
+    resolve_a_turn(&mut app);
+
+    let queued: Vec<_> = app
+        .world
+        .get::<LaborAllocation>(band)
+        .expect("the band keeps its allocation")
+        .last_queued_build_toe
+        .iter()
+        .filter(|line| line.item == SHARED_TOOL)
+        .map(|line| (line.position, line.source.clone()))
+        .collect();
+    assert_eq!(
+        queued,
+        vec![
+            (1, BuildSource::Patch(sources[1])),
+            (2, BuildSource::Patch(sources[2]))
+        ],
+        "the labor pass states what each entry behind the head will ask of the builders"
+    );
+
+    let (count, lines) = published_suggestion(&app, band, SHARED_TOOL)
+        .expect("hoes are suggested to a band that holds none");
+    let build_queue: Vec<(u32, u32, u32)> = lines
+        .iter()
+        .filter(|line| line.0 == "build_queue")
+        .map(|line| (line.2, line.3, line.4))
+        .collect();
+    assert_eq!(
+        build_queue,
+        vec![
+            (1, sources[1].x, sources[1].y),
+            (2, sources[2].x, sources[2].y)
+        ],
+        "each later job is a source line with its queue position and its patch's tile"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.0 == "pool" && line.1 == "builders"),
+        "the head's own shortage stays the builders' pool line: {lines:?}"
+    );
+    let missing: f32 = lines.iter().map(|line| line.5).sum();
+    assert_eq!(
+        count,
+        missing.ceil() as u32,
+        "ONE suggestion whose count is the total over every consumer"
+    );
+}

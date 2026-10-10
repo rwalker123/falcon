@@ -5521,6 +5521,8 @@ pub fn advance_labor_allocation(
         // the shed's `continue`s and rewritten below from the plan this turn actually settled, so a
         // band that loses its last worker stops publishing a TOE for sites it no longer holds.
         allocation.last_pool_toe.clear();
+        // **AND THE QUEUED BUILDS' TOOLS**, on the same rule.
+        allocation.last_queued_build_toe.clear();
         // **AND THE SITE CREWS' KEEPING ISSUES**, on the same rule: the take crews' item budget is
         // struck less them, and a band that sheds its last hand holds no site to issue to.
         allocation.last_keeping_issued.clear();
@@ -10332,6 +10334,11 @@ pub fn advance_labor_allocation(
         // (`docs/plan_standing_upkeep.md` §4.6b). It runs here, after the meters have moved and the
         // queue has been edited, because the answer is a fact about the band's whole list and no
         // per-source site can see one.
+        // **THE QUEUED BUILDS' TOOLS** — what each entry behind the head will ask of the builders'
+        // hands, struck from its own quote (`queued_build_toe`). The craft suggestions walk these
+        // against the stock the settlement left.
+        allocation.last_queued_build_toe =
+            queued_build_toe(&equipment_cfg, &allocation, &build_quotes, builders);
         publish_build_chain(
             &allocation,
             &build_quotes,
@@ -10346,6 +10353,58 @@ pub fn advance_labor_allocation(
             &mut deposit_build_claims,
         );
     }
+}
+
+/// **WHAT EACH QUEUED BUILD BEHIND THE HEAD WILL NEED OF THE BUILDERS' HANDS** — the head's claim
+/// ([`plan_pool_tools`]'s builders claim) computed for every later entry: the tools of the rung in
+/// flight on that entry (its quote's first leg, the reading the head's ask takes) over the pool's
+/// whole hand count, through [`ToeClaim::of`]. An entry with no quote, or one the ladder resolves no
+/// branch for, claims nothing; a pool with no hands claims nothing.
+fn queued_build_toe(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    allocation: &LaborAllocation,
+    quotes: &[(BuildSource, crate::intensification::BuildQuote)],
+    builders: u32,
+) -> Vec<crate::components::QueuedBuildToe> {
+    if builders == NO_CREW_ON_THIS_ACTIVITY {
+        return Vec::new();
+    }
+    let mut lines = Vec::new();
+    for (position, entry) in allocation
+        .build_queue
+        .iter()
+        .enumerate()
+        .skip(BUILD_QUEUE_HEAD + 1)
+    {
+        let Some((_, quote)) = quotes.iter().find(|(source, _)| *source == entry.source) else {
+            continue;
+        };
+        let rung = quote.legs.first().map(|leg| leg.rung);
+        let Some(branch) = source_branch(&entry.source, rung) else {
+            continue;
+        };
+        let toe = equipment.pool_toe(branch, rung.map(|rung| rung.wire_key()).as_deref());
+        let claim = ToeClaim::of(
+            ToolCrew::Pool(crate::equipment_config::KitJob::Builders),
+            entry.priority,
+            builders as f32,
+            builders as f32,
+            &toe,
+        );
+        lines.extend(
+            claim
+                .required
+                .iter()
+                .filter(|(_, required)| *required > NO_UNITS_SETTLED)
+                .map(|(item, required)| crate::components::QueuedBuildToe {
+                    position: position as u32,
+                    source: entry.source.clone(),
+                    item: item.to_string(),
+                    required: *required,
+                }),
+        );
+    }
+    lines
 }
 
 /// **DROP EVERY QUEUE ENTRY WHOSE DECLARED JOB IS ALREADY STANDING, AND ANNOUNCE EACH ONE.**

@@ -299,8 +299,9 @@ fn suggestions_rank_by_workers_without_and_net_out_the_queue() {
         .collect();
     assert_eq!(
         ranked,
-        vec![(EARTHMOVING, WHOLE_SHORTFALL), (HOES, WHOLE_SHORTFALL)],
-        "a 2–2 tie on the score goes to the item id, and the count is the whole shortfall"
+        vec![(HOES, WHOLE_SHORTFALL), (EARTHMOVING, WHOLE_SHORTFALL)],
+        "the site crew's hoes (a non-build shortage) rank above the builders' earthmoving (the \
+         current build), whatever the score, and the count is the whole shortfall"
     );
     for (item, _, workers, work, sources) in &unqueued {
         assert_eq!(*workers, TWO_WITHOUT, "{item}: two people went without");
@@ -311,12 +312,12 @@ fn suggestions_rank_by_workers_without_and_net_out_the_queue() {
         assert_eq!(sources.len(), 1, "{item}: its one consumer is named");
     }
     assert_eq!(
-        (unqueued[0].4[0].0.as_str(), unqueued[0].4[0].1.as_str()),
+        (unqueued[1].4[0].0.as_str(), unqueued[1].4[0].1.as_str()),
         ("pool", "builders"),
         "the pool's line is keyed by its pool token"
     );
     assert_eq!(
-        (unqueued[1].4[0].0.as_str(), unqueued[1].4[0].1.as_str()),
+        (unqueued[0].4[0].0.as_str(), unqueued[0].4[0].1.as_str()),
         ("site", "forage"),
         "the site crew's line is keyed by the labor row that keeps it"
     );

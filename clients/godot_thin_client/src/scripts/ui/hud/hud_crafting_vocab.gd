@@ -187,6 +187,14 @@ const SOURCE_KIND_KEY := "kind"
 const SOURCE_KIND_POOL := "pool"
 const SOURCE_KIND_SITE := "site"
 const SOURCE_KIND_TAKE := "take"
+## A LATER build in the band's queue (the head job is the `pool`/`builders` line). Joined onto the Work
+## tab's build queue by `queue_position` (>= 1; the head is 0), which is the rank that tab draws from.
+const SOURCE_KIND_BUILD_QUEUE := "build_queue"
+const SOURCE_QUEUE_POSITION_KEY := "queue_position"
+## The builders' own job token on a source line, the head job's spelling.
+const SOURCE_JOB_BUILDERS := "builders"
+## `N builders, for <the build queue row's own label>` - a suggestion whose only shortage is a queued build.
+const SUGGESTION_BUILD_QUEUE_FORMAT := "%s builders, for %s"
 ## A pool token (`roadwork` | `builders`) or a labor-row kind (`hunt`, `forage`, `extract`, `scout`,
 ## `warrior`) — the `LaborAssignment` spelling.
 const SOURCE_JOB_KEY := "job"

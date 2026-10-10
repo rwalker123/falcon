@@ -1266,6 +1266,7 @@ fn create_craft_suggestions<'a>(
                             missingUnits: source.missing_units,
                             workersWithout: source.workers_without,
                             workPerTurn: source.work_per_turn,
+                            queuePosition: source.queue_position,
                         },
                     )
                 })
@@ -1841,6 +1842,7 @@ fn decode_population(
                     missing_units: source.missingUnits(),
                     workers_without: source.workersWithout(),
                     work_per_turn: source.workPerTurn(),
+                    queue_position: source.queuePosition(),
                 }),
                 shortfalls: decode_shortfalls(suggestion.shortfalls()),
             }

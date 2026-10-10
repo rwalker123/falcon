@@ -817,6 +817,19 @@ on|off` and `bench_auto_skip <f> <band>`, relayed panel → `CraftingPanelContro
 - **An idle bench with Auto on** reads `Auto: nothing to make.` in place of the Make-a-row prompt; the
   `No one at the bench` crew prompt is the sim's blocked line and is untouched.
 
+### A queued build names itself on the suggestion
+
+A suggestion's `sources` may carry `kind: "build_queue"` lines (a LATER build in the band's queue, with
+`queue_position` >= 1, `job` and the target keys; the head job stays the `pool`/`builders` line). When one
+is present and every other line is the builders' own, the amber consequence reads `N builders, for <label>`
+(`SUGGESTION_BUILD_QUEUE_FORMAT`), N the earliest-position line's `workers_without`. **The label is the Work
+tab's own queue-row face, joined by `queue_position`**: `BandPanelController.build_queue_faces(band)` returns
+`{rank: face}` off the same `_build_queue_models` list and `_build_queue_job_face` the block draws, `Hud`
+hands it to `CraftingPanelController` as a Callable, and the panel receives it as `PAYLOAD_BUILD_QUEUE_FACES`
+- so a road's `roadwork`/`extract` spelling never has to match. Only when the position is unresolved does it
+fall back to `HudWorkVocab.build_queue_subject(job, x, y, "")`. Any non-build source (take, site, other
+pool) keeps today's wording, being the more urgent fact.
+
 ## Key scripts
 
 | Script | Purpose |

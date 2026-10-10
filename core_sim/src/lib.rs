@@ -146,12 +146,12 @@ pub use components::{
     DrawnMaterial, ElementKind, EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase,
     FinishedBatch, FoodBatch, FoodMix, Improvement, KeepingIssue, KeepingToolLine,
     KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch,
-    MaterialDraw, MoraleCause, PoolToeLine, PopulationCohort, PowerNode, ResidentBand, Settlement,
-    ShedCrew, ShedFacts, ShedStep, ShedSubject, SourcePriority, SourceShedFacts, SourceYield,
-    StartingUnit, TakeSelection, Tile, TownCenter, TransferCause, TransferCounterparty,
-    TransferCrossing, TransferDirection, TransferLedger, TransferLink, YieldRange,
-    DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER, MIN_ORDER_COUNT, NO_IMPROVEMENT_UNDERWAY,
-    STRIP_IT_BARE,
+    MaterialDraw, MoraleCause, PoolToeLine, PopulationCohort, PowerNode, QueuedBuildToe,
+    ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep, ShedSubject, SourcePriority,
+    SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile, TownCenter, TransferCause,
+    TransferCounterparty, TransferCrossing, TransferDirection, TransferLedger, TransferLink,
+    YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER, MIN_ORDER_COUNT,
+    NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
 };
 pub use config_fingerprint::{
     current_config_fingerprint, drift_between, ConfigDigest, ConfigFingerprint,

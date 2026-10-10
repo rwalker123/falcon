@@ -398,6 +398,13 @@ AI's Craft specialist (#668) and auto-craft (#779) read the same list rather tha
   (`poolToe`), the site crews (their keeping TOE), and the take rows (`kitToe`). A **detached party is
   not a source** — it carries the kit it left with and is never resupplied, so nothing crafted now
   reaches it.
+- **The build queue is read whole, in order.** Each job takes the tools it needs from what the band
+  holds, in queue order, and a tool an earlier job took is not there for a later one. With 2 crooks
+  and two queued jobs that each need 2, the first is covered and the second asks for 2 more. With a
+  Cultivate between them, the list reads 2 hoes and then 2 crooks.
+- **The list runs in three tiers:** every shortfall outside the build queue first (pools, site crews,
+  take rows, ranked by workers going without), then the build being worked now, then later builds in
+  queue order. An item short in two tiers is one suggestion for the total, at its earlier place.
 - **A spent tool counts; a worn one does not.** A tool performs at full strength until it expires,
   so wear costs nothing today. Tools about to expire are the forecast's subject (#778).
 - **Whether it can be made at all is the offer's question**, not the suggestion's: a suggestion

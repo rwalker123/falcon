@@ -1346,6 +1346,7 @@ panel, the AI's Craft specialist (#668) and auto-craft (#779) read one list.
 | a standing pool | `LaborAllocation::last_pool_toe` (`poolToe`) | `pool` / the pool token |
 | a site crew | `LaborAllocation::last_keeping_issued` — each `KeepingIssue` carries `required` beside the `units` issued | `site` / the row kind keeping it (`forage` / `hunt` / `extract`) + target keys |
 | a take row | the row's kit lines from `snapshot::population`'s `row_gear` — the very lines `kitToe` is copied from | `take` / the row kind (+ target keys; none on `scout` / `warrior`) |
+| a queued build behind the head | `LaborAllocation::last_queued_build_toe` — walked against the stock the settlement left (below) | `build_queue` / the entry's kind + target keys, with `queuePosition` |
 
 `KeepingIssue::required` exists for this: `keeping_issued` used to write only what was **paid**, so a
 claim the settlement reached with nothing had no line at all. It now writes one line per claimed item
@@ -1353,7 +1354,27 @@ claim the settlement reached with nothing had no line at all. It now writes one 
 those zeros as the zeros they are.
 
 - **The score is workers going without** — `(required − filled).max(0) × workers_per_unit`, summed
-  over sources. Ranked descending, ties by item id (a stable sort over the `BTreeMap` walk).
+  over sources.
+- **The order** (`craft_suggestions::rank_of`): every **non-build** shortage first (a pool other than
+  the builders, a site crew, a take row), by workers going without, ties by item id; then **the
+  current build** — the head job's builders line, as build position 0, however many people it leaves
+  without; then **the later jobs in queue order**, ties by item id. An item short in more than one
+  place is **one** suggestion: its count is the total (the queue netting applies to that total) and it
+  ranks at its **earliest** position, so hoes short now at a site and later for a queued job rank
+  with the non-build shortages.
+- **A queued job asks for what the head asks for.** `systems::labor::queued_build_toe` strikes, for
+  every entry after the head, its in-flight rung's `pool_toe` × the builders' hand count through
+  `ToeClaim::of` — the builders' claim for the head — and parks the lines on
+  `LaborAllocation::last_queued_build_toe` (`QueuedBuildToe { position, source, item, required }`,
+  cleared with `last_pool_toe`, riding `BandRecord::labor`). The rung comes from the entry's own quote
+  (`BuildQuote::legs`, first leg). A pool with no hands, or an entry with no quote, claims nothing.
+- **Stock left after the settlement** is `BandEquipment::live_units` (the reading
+  `settle_pool_tools` itself uses) less every unit the turn issued — the `filled` of the pools'
+  (the head's builders line included), sites' and take rows' lines, all already in the line list
+  (`craft_suggestions::queued_build_lines`; nothing re-derives the settlement). Queued jobs then take
+  from it **cumulatively, in queue order, items in id order**: 2 crooks held and two Tame jobs of 2
+  each leave job 2 short 2; Tame, Cultivate, Tame on 2 crooks and 0 hoes leaves job 2 short 2 hoes and
+  job 3 short 2 crooks.
 - **A detached party is not a source.** `population_state` publishes an empty list for any cohort
   with an `Expedition`: it carries the kit it left with and is never resupplied. A far work party is
   a take **row** of its home band, so it counts.
@@ -1375,9 +1396,16 @@ those zeros as the zeros they are.
   the client states the people instead.
 - **Numbers and join keys only.** The client owns the words, as with `craftOffers`, and joins on
   `itemId == CraftOffer.outputItemId` for makeability; an item no recipe makes is still published.
+  A `build_queue` source line carries `queuePosition` (≥ 1; the head is the builders' `pool` line)
+  and the queue entry's own keys — `job` is `BuildSource::kind()`, the `BuildQueueEntryState.kind`
+  spelling, with `targetX/Y` / `faunaId` / `material` — which is how the client names the job
+  ("2 builders, for Tame Wild Boar") from the build-queue row it already holds.
+- **Auto-craft needs nothing here**: it takes the top usable suggestion, so a queued job's tools are
+  crafted ahead of the job reaching the head (`auto_craft::auto_crafts_the_tools_a_queued_build_will_need`).
 
 Pinned by `craft_suggestions::tests` (ranking and ties, work only where gear adds work, queue netting
-to zero, fractional shortfalls) and, off the encoded frame, by
+to zero, fractional shortfalls, the cumulative queued-job walk, the build/non-build order and the
+merge), `build_queue::the_jobs_behind_the_head_are_suggested_their_tools_off_the_encoded_frame` and, off the encoded frame, by
 `bench_queue::suggestions_rank_by_workers_without_and_net_out_the_queue`,
 `::a_suggestion_does_not_rise_on_the_turn_its_item_is_made` and
 `::a_detached_party_publishes_no_suggestions` (paired with its home band carrying the same lines).

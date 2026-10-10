@@ -123,6 +123,9 @@ const PAYLOAD_CRAFT_KNOWLEDGE := "craft_knowledge"
 ## already at the bench** (`HudBandLaborState.benchable_workers`), which is a different question from
 ## "how many are idle" and is why the key's name outlives its meaning. See `_build_crew_stepper`.
 const PAYLOAD_IDLE_WORKERS := "idle_workers"
+## `{queue_position: int -> face: String}` - the Work tab's build-queue row labels, by the rank the sim
+## publishes on a suggestion's `build_queue` source line.
+const PAYLOAD_BUILD_QUEUE_FACES := "build_queue_faces"
 
 var _card: PanelContainer = null
 var _scroll: ScrollContainer = null
@@ -2123,7 +2126,7 @@ func _build_suggestion_row(suggestion: Dictionary, payload: Dictionary) -> Contr
 	title.add_theme_color_override("font_color", HudStyle.INK)
 	words.add_child(title)
 	var consequence := Label.new()
-	consequence.text = _suggestion_consequence(suggestion)
+	consequence.text = _suggestion_consequence(suggestion, payload)
 	consequence.add_theme_font_size_override("font_size", HudCraftingVocab.SUGGESTION_LINE_FONT_SIZE)
 	# AMBER: people are working short right now — a warning beside the number it explains.
 	consequence.add_theme_color_override("font_color", HudStyle.WARN)
@@ -2189,13 +2192,45 @@ func _suggestion_item_name(item_id: String, ledger_row: Dictionary) -> String:
 ## (`work_per_turn > 0`, published), else the people going without, because a missing spear costs
 ## attack and carry and no single unit of output ranks it against a missing hoe. Both numbers are the
 ## sim's, rendered as they arrive.
-func _suggestion_consequence(suggestion: Dictionary) -> String:
+func _suggestion_consequence(suggestion: Dictionary, payload: Dictionary = {}) -> String:
 	var work := float(suggestion.get(HudCraftingVocab.SUGGESTION_WORK_PER_TURN_KEY, 0.0))
 	if work > 0.0:
 		return HudCraftingVocab.SUGGESTION_WORK_FORMAT % _amount_text(work)
+	var queued := _earliest_build_queue_source(suggestion)
+	if not queued.is_empty():
+		return HudCraftingVocab.SUGGESTION_BUILD_QUEUE_FORMAT % [
+			_amount_text(float(queued.get(HudCraftingVocab.SOURCE_WORKERS_WITHOUT_KEY, 0.0))),
+			_build_queue_label(queued, payload)]
 	return HudCraftingVocab.SUGGESTION_WITHOUT_FORMAT % [
 		_amount_text(float(suggestion.get(HudCraftingVocab.SUGGESTION_WORKERS_WITHOUT_KEY, 0.0))),
 		_suggestion_crew_noun(suggestion)]
+
+## **THE EARLIEST QUEUED-BUILD SOURCE, WHEN NOTHING ELSE IS SHORT** - `{}` unless the suggestion carries a
+## `build_queue` line and every other line is the builders' own (the head job). Any take, site or other
+## source is the more urgent fact, so a mixed suggestion keeps the ordinary wording.
+func _earliest_build_queue_source(suggestion: Dictionary) -> Dictionary:
+	var best := {}
+	for source_variant in suggestion.get(HudCraftingVocab.SUGGESTION_SOURCES_KEY, []):
+		if not (source_variant is Dictionary):
+			continue
+		var source: Dictionary = source_variant
+		if String(source.get(HudCraftingVocab.SOURCE_KIND_KEY, "")) == HudCraftingVocab.SOURCE_KIND_BUILD_QUEUE:
+			if best.is_empty() or int(source.get(HudCraftingVocab.SOURCE_QUEUE_POSITION_KEY, 0)) \
+					< int(best.get(HudCraftingVocab.SOURCE_QUEUE_POSITION_KEY, 0)):
+				best = source
+		elif String(source.get(HudCraftingVocab.SOURCE_JOB_KEY, "")) != HudCraftingVocab.SOURCE_JOB_BUILDERS:
+			return {}
+	return best
+
+## The queue row's own label, joined by position; the job + target only when the position cannot be resolved.
+func _build_queue_label(source: Dictionary, payload: Dictionary) -> String:
+	var faces: Dictionary = payload.get(PAYLOAD_BUILD_QUEUE_FACES, {})
+	var position := int(source.get(HudCraftingVocab.SOURCE_QUEUE_POSITION_KEY, 0))
+	if faces.has(position):
+		return String(faces[position])
+	return HudWorkVocab.build_queue_subject(String(source.get(HudCraftingVocab.SOURCE_JOB_KEY, "")),
+		int(source.get(HudCraftingVocab.SOURCE_TARGET_X_KEY, -1)),
+		int(source.get(HudCraftingVocab.SOURCE_TARGET_Y_KEY, -1)), "")
 
 ## The crew noun for `N … without`: the job's own word where EVERY source shares one job that has one
 ## (`3 hunters without`), else `workers` — a suggestion drawn from hunters and builders at once is

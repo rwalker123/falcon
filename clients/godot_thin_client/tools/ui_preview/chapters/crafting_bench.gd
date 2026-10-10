@@ -17,7 +17,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 258
+const EXPECTED_CHECKPOINTS := 262
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
@@ -1254,6 +1254,76 @@ func _auto_craft_states() -> void:
 		panel != null and _label_with_text(panel, HudCraftingVocab.AUTO_IDLE_SUB) != null
 			and _label_with_text(panel, HudCraftingVocab.BENCH_IDLE_SUB) == null)
 	await h._save("crafting_auto_idle")
+	h._hud.close_crafting_panel()
+	await h._settle()
+	await _build_queue_suggestion_states()
+
+const BQ_FACE := "Tame Wild Boar"
+const BQ_POSITION := 1
+const BQ_LINE := "2 builders, for Tame Wild Boar"
+const BQ_FALLBACK_LINE := "2 builders, for (12, 7)"
+
+func _bq_source(position: int) -> Dictionary:
+	return {"kind": HudCraftingVocab.SOURCE_KIND_BUILD_QUEUE, "job": "hunt", "target_x": 12,
+		"target_y": 7, "fauna_id": "wild_boar", "material": "", "missing_units": 2.0,
+		"workers_without": 2.0, "work_per_turn": 0.0, "queue_position": position}
+
+## A take-row suggestion first, then a Crook whose only shortage is a queued build, then a Sled that
+## is short for a take AND a queued build (the mixed case keeps today's wording).
+func _build_queue_band() -> Dictionary:
+	var band := _crafting_band()
+	band["craft_suggestions"] = [
+		_suggestion("spears", SUGGEST_SPEARS_COUNT, 3.0, 0.0, [
+			_source(HudCraftingVocab.SOURCE_KIND_TAKE, "hunt", 0, 0, "red_deer", "", 3.0, 3.0, 0.0)]),
+		_suggestion("sled", SUGGEST_SLED_COUNT, 3.0, 0.0, [
+			_source(HudCraftingVocab.SOURCE_KIND_TAKE, "hunt", 0, 0, "red_deer", "", 1.0, 1.0, 0.0),
+			_bq_source(BQ_POSITION)]),
+		_suggestion("crook", 2, 2.0, 0.0, [_bq_source(BQ_POSITION)]),
+	]
+	return band
+
+func _consequence_of(panel: Node, item_id: String) -> String:
+	var row := _auto_meta_value_node(panel, HudCraftingVocab.SUGGESTION_META, item_id)
+	if row == null:
+		return ""
+	var texts := _label_texts(row)
+	return String(texts[1]) if texts.size() > 1 else ""
+
+func _auto_meta_value_node(node: Node, meta: String, value: Variant) -> Node:
+	if node.has_meta(meta) and node.get_meta(meta) == value:
+		return node
+	for child in node.get_children():
+		var found := _auto_meta_value_node(child, meta, value)
+		if found != null:
+			return found
+	return null
+
+func _build_queue_suggestion_states() -> void:
+	var controller = h._hud.crafting_panel()
+	var real_source: Callable = controller._build_queue_faces
+	# The Work tab's own row labels are the join target; the harness hands the controller the label the
+	# queue row would draw for position 1.
+	controller.set_build_queue_faces_source(func(_b: Dictionary) -> Dictionary: return {BQ_POSITION: BQ_FACE})
+	var panel: CraftingPanel = await _auto_show(_build_queue_band())
+	if panel == null:
+		h._assert_hud("crafting/build-queue — the panel opens", false)
+		return
+	var line := _consequence_of(panel, "crook")
+	h._assert_hud("crafting/build-queue — a queued-build-only suggestion names the build (%s)" % line,
+		line == BQ_LINE)
+	var mixed := _consequence_of(panel, "sled")
+	h._assert_hud("crafting/build-queue — a mixed suggestion keeps the take wording (%s)" % mixed,
+		mixed == "3 hunters without")
+	await h._save("crafting_build_queue_suggestion")
+	h._hud.close_crafting_panel()
+	await h._settle()
+	# An unresolvable position falls back to the job + target.
+	controller.set_build_queue_faces_source(func(_b: Dictionary) -> Dictionary: return {})
+	panel = await _auto_show(_build_queue_band())
+	line = _consequence_of(panel, "crook") if panel != null else ""
+	h._assert_hud("crafting/build-queue — an unresolved position falls back to the job and tile (%s)" % line,
+		line == BQ_FALLBACK_LINE)
+	controller.set_build_queue_faces_source(real_source)
 	h._hud.close_crafting_panel()
 	await h._settle()
 

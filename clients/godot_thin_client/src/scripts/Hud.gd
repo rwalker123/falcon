@@ -818,6 +818,8 @@ func _ready() -> void:
     # viewport describes.
     _crafting = CraftingPanelController.new()
     _crafting.setup(self, _band_labor, floating_room)
+    _crafting.set_build_queue_faces_source(
+        func(band: Dictionary) -> Dictionary: return _bandpanel.build_queue_faces(band))
     _crafting.bench_enqueue_requested.connect(
         func(payload: Dictionary) -> void: bench_enqueue_requested.emit(payload))
     _crafting.bench_crew_requested.connect(

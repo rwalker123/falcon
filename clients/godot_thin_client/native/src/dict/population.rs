@@ -1544,6 +1544,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                     let _ = entry.insert("missing_units", source.missingUnits() as f64);
                     let _ = entry.insert("workers_without", source.workersWithout() as f64);
                     let _ = entry.insert("work_per_turn", source.workPerTurn() as f64);
+                    // A QUEUED BUILD's place in the build queue (`kind == "build_queue"`; `0`
+                    // otherwise). With `job` + the target keys it joins to the build-queue row.
+                    let _ = entry.insert("queue_position", source.queuePosition() as i64);
                     sources.push(&entry.to_variant());
                 }
             }

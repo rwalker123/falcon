@@ -1770,6 +1770,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     bench,
                     craft_inputs.recipes,
                     craft_inputs.equipment,
+                    &kit,
                 ),
             );
             // **What the whole count needs that the stock cannot cover**, off the same forecast the

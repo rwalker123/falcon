@@ -2151,7 +2151,7 @@ pub struct CraftSuggestionState {
 /// The `kind` / `job` / target keys are spelled as `snapshot.fbs`'s `CraftSuggestionSource` states.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct CraftSuggestionSourceState {
-    /// `"pool"` | `"site"` | `"take"`.
+    /// `"pool"` | `"site"` | `"take"` | `"build_queue"`.
     pub kind: String,
     /// The pool token, or the labor row's kind.
     pub job: String,
@@ -2163,8 +2163,11 @@ pub struct CraftSuggestionSourceState {
     pub missing_units: f32,
     /// `missing_units × workers_per_unit`.
     pub workers_without: f32,
-    /// `workers_without × build_work` on a pool or site; `0` on a take row.
+    /// `workers_without × build_work` on a pool, site or queued build; `0` on a take row.
     pub work_per_turn: f32,
+    /// The queued build's place in the build queue (`kind == "build_queue"` only; `0` otherwise).
+    #[serde(default)]
+    pub queue_position: u32,
 }
 
 /// **One material of the pile a bench has already withdrawn** for the item in flight — a row of

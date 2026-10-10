@@ -484,3 +484,35 @@ fn a_skipped_item_no_longer_needed_leaves_the_skipped_set() {
         "the clubs are not suggested, so the stale skip is dropped"
     );
 }
+
+/// **AUTO-CRAFT CRAFTS FOR A QUEUED BUILD BEFORE IT REACHES THE HEAD.** Nothing is short now; the
+/// second job in the build queue will want hoes. The top suggestion is those hoes, so an auto bench
+/// queues them at the job's count ahead of time.
+#[test]
+fn auto_crafts_the_tools_a_queued_build_will_need() {
+    let (mut app, band) = world();
+    auto_bench(&mut app, band, STANDING_CREW);
+    {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("a spawned band carries an allocation");
+        allocation.last_pool_toe.clear();
+        allocation.last_keeping_issued.clear();
+        allocation.last_queued_build_toe = vec![core_sim::QueuedBuildToe {
+            position: 1,
+            source: BuildSource::Patch(FIRST_SITE),
+            item: HOES.to_string(),
+            required: 2.0,
+        }];
+    }
+    bank_hide_and_fibre(&mut app, band);
+    bank_bone(&mut app, band);
+
+    set_auto_craft(&mut app.world, band, true);
+
+    let queued = bench(&app, band);
+    assert_eq!(queued_items(&app, band), vec![HOES.to_string()]);
+    assert!(queued.orders[0].auto);
+    assert_eq!(queued.orders[0].count, 2, "the whole count the job needs");
+}
