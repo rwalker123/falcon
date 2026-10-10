@@ -432,9 +432,10 @@ pub use visibility::{
 };
 pub use visibility_config::{
     load_visibility_config_from_env, DecayConfig, ElevationConfig, LineOfSightConfig,
-    SightRangeConfig, TerrainModifierConfig, VisibilityConfig, VisibilityConfigHandle,
-    VisibilityConfigMetadata, BUILTIN_VISIBILITY_CONFIG,
+    SightRangeConfig, SizeSightBonusConfig, TerrainDetectionConfig, VisibilityConfig,
+    VisibilityConfigHandle, VisibilityConfigMetadata, BUILTIN_VISIBILITY_CONFIG,
 };
+pub use visibility_systems::terrain_sight_modifier;
 pub use wellbeing_config::{
     load_wellbeing_config_from_env, CultureConfig, DiscontentConfig, MigrationConfig,
     ProductivityConfig, WellbeingConfig, WellbeingConfigHandle, WellbeingConfigMetadata,

@@ -163,9 +163,10 @@ to compensate**: narrowing the diagonals is the fix.
 
 - **The bounding box is unchanged and is still a superset.** Every hex step changes the offset
   column and row by at most one (`HEX_NEIGHBOR_OFFSETS`), so a tile `n` steps away lies within `n`
-  columns and `n` rows; `water_bonus` is the only positive terrain modifier
-  (`get_terrain_modifier` returns the water bonus, the negative forest penalty, or zero), so
-  `effective_range <= max_range`. The **caller has already folded the elevation bonus into the
+  columns and `n` rows; the box is widened by the sweep's largest positive terrain term, so
+  `effective_range <= max_range` for every tile not carrying a large-group bonus. A tile that does
+  is outside that argument by design and is tested in a second pass (`connections.md` → "A large
+  group is seen from further away"). The **caller has already folded the elevation bonus into the
   `base_range` argument** (`calculate_visibility` passes `source.base_range + capped_bonus`), which
   is what keeps that inequality true.
 - **`ADJACENT_LOS_SKIP_DIST_SQ` became `ADJACENT_LOS_SKIP_DISTANCE` (`1`)** — adjacency is hex
@@ -181,7 +182,11 @@ to compensate**: narrowing the diagonals is the fix.
 
 **Modifiers**:
 - **Elevation**: Higher elevation grants sight bonus (configurable per 100m)
-- **Terrain**: Water tiles grant bonus range; forest/wetland tiles apply penalty
+- **Terrain**: the **target** tile's `TerrainDefinition::detection_modifier`, in whole tiles (#533).
+  It replaced a tag rule (wetland −2, water +1) that never applied to an actual forest. Forest and
+  open water shorten sight, steppe lengthens it.
+- **Target size**: a tile holding a large group is visible from further off (#533) —
+  `connections.md` → "A large group is seen from further away"
 - **Line of Sight**: Bresenham ray-cast checks for blocking terrain
 - **Local scout** (labor): staffed scouts are **forward observers** — with ≥1 scout (from the
   cohort's `LaborAllocation` head-count, `workers_on(&LaborTarget::Scout)`), `calculate_visibility`
@@ -199,7 +204,8 @@ to compensate**: narrowing the diagonals is the fix.
 - `sight_ranges`: Per-unit-type `base_range` and `elevation_bonus_factor`
 - `elevation`: `enabled`, `bonus_per_100m`, `max_bonus`
 - `line_of_sight`: `enabled`, `blocking_terrain_tags`
-- `terrain_modifiers`: `forest_penalty`, `water_bonus`
+- `terrain_detection`: `tiles_per_unit` — the scale that turns `detection_modifier` into tiles (`connections.md`)
+- `size_sight_bonus`: `threshold_people`, `people_per_tile`, `max_tiles` — the large-group bonus (`connections.md`)
 - `movement`: `max_sweep_tiles` (cap on the corridor length revealed for a single-turn move; keep above the real max per-turn move distance so genuine moves sweep fully — see `corridor_tiles`)
 
 **Snapshot Export**: `visibility_raster` emits a per-faction `ScalarRasterState` (fixed-point i64 samples) encoding Unexplored=0.0, Discovered=0.5, Active=1.0; the client decodes these to floats and renders black / cloudy / full-color. (`FactionVisibilityMap::to_byte_raster` still exists as a 0/1/2 byte view, but is not the snapshot export.)

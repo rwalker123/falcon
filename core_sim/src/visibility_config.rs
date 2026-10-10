@@ -25,7 +25,8 @@ pub struct VisibilityConfig {
     pub sight_ranges: HashMap<String, SightRangeConfig>,
     pub elevation: ElevationConfig,
     pub line_of_sight: LineOfSightConfig,
-    pub terrain_modifiers: TerrainModifierConfig,
+    pub terrain_detection: TerrainDetectionConfig,
+    pub size_sight_bonus: SizeSightBonusConfig,
     pub movement: MovementConfig,
 }
 
@@ -36,7 +37,8 @@ impl Default for VisibilityConfig {
             sight_ranges: default_sight_ranges(),
             elevation: ElevationConfig::default(),
             line_of_sight: LineOfSightConfig::default(),
-            terrain_modifiers: TerrainModifierConfig::default(),
+            terrain_detection: TerrainDetectionConfig::default(),
+            size_sight_bonus: SizeSightBonusConfig::default(),
             movement: MovementConfig::default(),
         }
     }
@@ -92,13 +94,45 @@ fn default_sight_ranges() -> HashMap<String, SightRangeConfig> {
 impl VisibilityConfig {
     pub fn builtin() -> Arc<Self> {
         Arc::new(
-            serde_json::from_str(BUILTIN_VISIBILITY_CONFIG)
-                .expect("builtin visibility config should parse"),
+            Self::from_json_str(BUILTIN_VISIBILITY_CONFIG)
+                .expect("builtin visibility config should parse and validate"),
         )
     }
 
-    pub fn from_json_str(json: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(json)
+    pub fn from_json_str(json: &str) -> Result<Self, VisibilityConfigError> {
+        let config: VisibilityConfig = serde_json::from_str(json)?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// The terrain scale must be finite and non-negative; the size bonus needs a finite non-negative
+    /// threshold and a strictly positive step (it is a divisor).
+    pub fn validate(&self) -> Result<(), VisibilityConfigError> {
+        let scale = self.terrain_detection.tiles_per_unit;
+        if !scale.is_finite() || scale < 0.0 {
+            return Err(VisibilityConfigError::Invalid {
+                field: "terrain_detection.tiles_per_unit",
+                constraint: "be finite and at least 0",
+                value: scale.to_string(),
+            });
+        }
+        let threshold = self.size_sight_bonus.threshold_people;
+        if !threshold.is_finite() || threshold < 0.0 {
+            return Err(VisibilityConfigError::Invalid {
+                field: "size_sight_bonus.threshold_people",
+                constraint: "be finite and at least 0",
+                value: threshold.to_string(),
+            });
+        }
+        let step = self.size_sight_bonus.people_per_tile;
+        if !step.is_finite() || step <= 0.0 {
+            return Err(VisibilityConfigError::Invalid {
+                field: "size_sight_bonus.people_per_tile",
+                constraint: "be finite and greater than 0",
+                value: step.to_string(),
+            });
+        }
+        Ok(())
     }
 
     pub fn from_file(path: &Path) -> Result<Self, VisibilityConfigError> {
@@ -106,8 +140,7 @@ impl VisibilityConfig {
             path: path.to_path_buf(),
             source,
         })?;
-        let config = VisibilityConfig::from_json_str(&contents)?;
-        Ok(config)
+        VisibilityConfig::from_json_str(&contents)
     }
 
     /// Get sight range config for a unit type, with fallback to default.
@@ -218,19 +251,43 @@ impl Default for LineOfSightConfig {
     }
 }
 
-/// Terrain-based sight modifiers.
+/// How a tile's authored `detection_modifier` (`terrain.rs`, roughly -0.25..+0.20) becomes whole
+/// tiles of sight range into that tile. The one terrain sight term.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
-pub struct TerrainModifierConfig {
-    pub forest_penalty: i32,
-    pub water_bonus: i32,
+pub struct TerrainDetectionConfig {
+    /// Tiles of range per 1.0 of `detection_modifier`; the product is truncated toward zero.
+    pub tiles_per_unit: f32,
 }
 
-impl Default for TerrainModifierConfig {
+impl Default for TerrainDetectionConfig {
     fn default() -> Self {
         Self {
-            forest_penalty: -2,
-            water_bonus: 1,
+            tiles_per_unit: 10.0,
+        }
+    }
+}
+
+/// A large group is visible from further away: a per-TARGET-tile bonus on sight range into the tile
+/// it stands on (faction-blind; a property of the target, not of the observer).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct SizeSightBonusConfig {
+    /// People standing on a tile below which there is no bonus (50 = the settlement "camp" stage
+    /// `min_size`; a 30-person start band gets 0).
+    pub threshold_people: f32,
+    /// Each full step of this many people above the threshold adds one tile of range.
+    pub people_per_tile: f32,
+    /// Ceiling on the bonus, in tiles.
+    pub max_tiles: u32,
+}
+
+impl Default for SizeSightBonusConfig {
+    fn default() -> Self {
+        Self {
+            threshold_people: 50.0,
+            people_per_tile: 25.0,
+            max_tiles: 4,
         }
     }
 }
@@ -239,6 +296,12 @@ impl Default for TerrainModifierConfig {
 pub enum VisibilityConfigError {
     #[error("failed to parse visibility config: {0}")]
     Parse(#[from] serde_json::Error),
+    #[error("invalid visibility config: `{field}` must {constraint}, got {value}")]
+    Invalid {
+        field: &'static str,
+        constraint: &'static str,
+        value: String,
+    },
     #[error("failed to read visibility config from {path:?}: {source}")]
     Read {
         path: PathBuf,
@@ -320,6 +383,17 @@ mod tests {
         assert!(!config.decay.enabled);
         assert_eq!(config.decay.threshold_turns, 12);
         assert!(config.sight_ranges.contains_key("BandScout"));
+    }
+
+    #[test]
+    fn validate_rejects_bad_levers() {
+        let bad_scale = r#"{"terrain_detection":{"tiles_per_unit":-1.0}}"#;
+        assert!(VisibilityConfig::from_json_str(bad_scale).is_err());
+        let bad_step = r#"{"size_sight_bonus":{"people_per_tile":0.0}}"#;
+        assert!(VisibilityConfig::from_json_str(bad_step).is_err());
+        let bad_threshold = r#"{"size_sight_bonus":{"threshold_people":-5.0}}"#;
+        assert!(VisibilityConfig::from_json_str(bad_threshold).is_err());
+        assert!(VisibilityConfig::from_json_str("{}").is_ok());
     }
 
     #[test]

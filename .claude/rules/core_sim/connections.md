@@ -13,6 +13,9 @@ paths:
   - "core_sim/src/data/knowledge_contact_config.json"
   - "core_sim/src/data/start_profile_knowledge_tags.json"
   - "core_sim/tests/knowledge_contact.rs"
+  - "core_sim/src/visibility_config.rs"
+  - "core_sim/src/data/visibility_config.json"
+  - "core_sim/tests/large_group_detection.rs"
 ---
 
 # Contact & connections — the tie two groups leave behind
@@ -83,8 +86,82 @@ Two consequences worth holding onto:
 - **A worked source observes.** A band's foragers standing on a forage tile are people standing
   there, so they find whoever else is. That is what "presence" means.
 
-**Subjects are resident bands only.** A detached expedition is not a subject; seeing someone's scouts
-is a separate question (#533).
+**Subjects are resident bands only.** A detached expedition is not a subject: a scout party goes
+unseen because it chooses to, which is a scouting mechanism, not a sight term.
+
+## A large group is seen from further away
+
+Design of record: `docs/plan_contact_and_logistics.md` → "Settled by #533". Without this, you only
+ever found people by looking, and a smoke-making camp of a hundred was no easier to find than three
+people in a wood.
+
+**It is a per-TARGET bonus, not a per-group radius.** `for_each_visible_tile_in_range` already
+gave each target tile its own effective range, and the bonus is one more term in it:
+
+```text
+effective_range(tile) = max(MIN_EFFECTIVE_SIGHT_RANGE,
+                            base + terrain_sight_modifier(tile) + size_sight_bonus_tiles(people on tile))
+```
+
+- **`people`** is the sum of `PopulationCohort.size` over every `ResidentBand` on the tile, of any
+  faction. `resident_band_occupancy` totals it in the same pass that builds the contact occupancy,
+  into `TilePeople` (a `BTreeMap` keyed `(y, x)`, so iteration is row-major).
+- **`size_sight_bonus_tiles`** = `min(max_tiles, floor(max(0, people − threshold_people) /
+  people_per_tile))`. At the shipped levers a 30-person start band earns nothing, 75 earns 1 tile,
+  100 earns 2, 150 reaches the cap of 4.
+- **`terrain_sight_modifier`** = `trunc(detection_modifier × tiles_per_unit)`, toward zero, so a
+  small modifier is no modifier: Mixed Woodland −1, Boreal Taiga −2, Prairie Steppe +2, Alluvial
+  Plain +1, deep ocean −2. **It replaced the tag rule** (`forest_penalty` / `water_bonus`, deleted),
+  which never applied to an actual forest because forests carry no `WETLAND` tag. One terrain
+  answer to *"how hard is this tile to see into"*, not two.
+
+**`SightModifiers` is built once per sweep and read by BOTH sight paths** — `calculate_visibility`
+and the expedition observe pass in `systems/expeditions.rs`. It holds the per-tile terrain grid, its
+largest positive entry and the size-bonus map. A second copy of effective range in either path would
+drift silently, the same reason contact rides the sweep at all.
+
+**Only the occupied tile lights.** The empty ground around a big camp at the same distance stays
+fogged. Lighting the tile is not optional, though: a foreign band has a wire row only on a tile the
+viewer sees as `Active` (`factions.md` → "THREE TIERS"), so contact without the reveal would be a tie
+to a band the map cannot draw. Contact then follows through `ContactSink`, unchanged.
+
+**The keystone is untouched.** The observer is present and looking; the bonus changes what that look
+reaches. Nothing is granted through a connection. **LOS still applies**, so a ridge hides a large
+camp too.
+
+### The bounding box excludes the size bonus, and a second pass covers it
+
+Widening every source's box by `max_tiles` would grow the sweep of every source for a handful of
+crowded tiles. So the box is `base + max_terrain_bonus`, which is a superset for terrain alone, and
+the tiles inside it take their size bonus in the loop. Then a **second pass** walks the bonus map's
+entries that lie **outside** the box and runs the identical `try_tile` test on each. The in-box
+predicate that excludes a tile from the second pass is the box loop's own bounds (wrap-aware through
+`shortest_delta_x`), so no tile is tested twice.
+
+### Config — `visibility_config.json`
+
+| Key | Shipped | Meaning |
+|---|---|---|
+| `terrain_detection.tiles_per_unit` | **10.0** | tiles per unit of `detection_modifier`. Validated finite, `>= 0`; `0` switches the terrain term off. Chosen so a −0.20 forest matches the retired `forest_penalty` of −2 |
+| `size_sight_bonus.threshold_people` | **50** | head count before a tile earns any bonus — the settlement `camp` stage's `min_size`. Finite, `>= 0` |
+| `size_sight_bonus.people_per_tile` | **25** | people per extra tile above the threshold. Finite, `> 0` |
+| `size_sight_bonus.max_tiles` | **4** | the cap |
+
+All four are opening values, here to be tuned in playtest.
+
+### Tests
+
+`visibility_systems`' unit module pins the two arithmetic functions, forest-versus-steppe reach, a
+crowded tile seen from beyond the box while its empty neighbour stays dark (and tested exactly once,
+inside or outside the box), the second pass across the wrap seam, and a ridge hiding a crowded tile
+beside a no-ridge control. `core_sim/tests/large_group_detection.rs` runs whole turns on a
+two-faction world and reads the **encoded** frame: 30 people at `base + 1` give no `Active` tile, no
+contact and no row; 110 on the same tile give all three, with the row redacted to tier 2; an empty
+tile at that distance stays dark; and a ridge stops it, with a control. `tests/expedition_sight.rs`'s
+`an_expedition_observes_a_large_band_beyond_its_normal_reach` pins the party path.
+
+**Hex-geometry fixtures pin `SemiAridScrub`** (`detection_modifier` 0.00), because the `Tile`
+default is Alluvial Plain, which reads +1 tile now and would bend every disc.
 
 ## An expedition reports a people the way it reports the map
 
