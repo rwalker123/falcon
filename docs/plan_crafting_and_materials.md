@@ -403,6 +403,28 @@ AI's Craft specialist (#668) and auto-craft (#779) read the same list rather tha
 - **Whether it can be made at all is the offer's question**, not the suggestion's: a suggestion
   names an item, and the panel reads the existing `CraftOffer` for that item's refusal and recipe.
 
+### Auto-craft — the bench works down the list on its own (#779)
+
+An opt-in **Auto** switch on the bench, per band. It reads the same suggestion list as the panel, so
+the player only steps in to override.
+
+- **It fills an empty queue, and only an empty one.** When the bench has no orders, Auto queues the
+  top suggestion for its whole count, as one order tagged `auto`. When that order is met, Auto queues
+  the next. Anything the player queues sits in the queue like any order, so overriding is just
+  queueing; Auto adds nothing while an order is there.
+- **It waits rather than walking down the list.** If the top suggestion is short of materials, the
+  bench waits on it with the usual shortage line. Going further down the list unasked would spend
+  scarce material on things lower down, which is the decision the ranking exists to make.
+- **Skip is the player's say-so to move on.** It appears only on the auto order the bench is waiting
+  on. The item is passed over until one of it can be drawn from stock, then it is eligible again.
+  It returns the next time the queue is empty and never preempts a running order. Make next keeps
+  listing it, dimmed, saying what it is waiting for.
+- **The crew stays the player's.** Auto never moves the crafters stepper, as the bench never picks
+  its crew (above).
+- **An auto order is an ordinary order.** It can be counted, raised or removed like any other.
+  Switching Auto off leaves the queue as it is and forgets every skip.
+- A suggestion for a craft the band has not learned is passed over, since the queue would refuse it.
+
 ### Readout rules
 
 - **The ledger carries no condition column.** Its four columns are **Item · Owned · Rebuild costs ·

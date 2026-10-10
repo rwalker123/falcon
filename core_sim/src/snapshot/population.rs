@@ -467,13 +467,6 @@ pub(crate) enum MealOrder {
 /// the income term instead.
 const NO_STANDING_NET: f32 = 0.0;
 
-/// **A ROW THAT CLAIMS NONE OF AN ITEM WRITES NO `kitToe` LINE FOR IT** — `required` is never `0` on
-/// the wire, so a reader may divide by it.
-const NOTHING_CLAIMED: f32 = 0.0;
-
-/// One unit serves one worker — an item the roster does not carry is read at the roster's default.
-const ONE_WORKER_PER_UNIT: u32 = 1;
-
 /// ⛔ **THIS TURN'S POOLED FOOD, IN MINUS OUT** — the band's `Pooled` crossings on `FOOD`, off the
 /// per-turn twin [`PopulationCohort::last_turn_transfer_crossings`], so a recapture reads what the
 /// turn's frame read.
@@ -1137,51 +1130,21 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     )> = allocation
         .map(|alloc| {
             // The band-wide per-item unit budget `advance_labor_allocation` arms the source crews
-            // from ([`crate::components::LaborAllocation::item_budget`]), settled on the claims.
-            let budget = alloc.item_budget(kit_levers.config, &claims.claims);
-            alloc
-                .assignments
-                .iter()
-                .enumerate()
-                .map(|(i, assignment)| {
-                    // **The kit is spread over the take hands** — a keeper carries the keeping
-                    // tools, never the take kit (`docs/plan_site_crews.md` §2.3).
-                    let workers = crate::take_claims::take_hands(
-                        assignment.workers as f32,
-                        claims.keep_hands[i],
-                    );
-                    let row_kit = if assignment.target.is_standing_pool() {
-                        kit_levers.config.no_kit()
-                    } else {
-                        assignment.kit_choice(kit_levers.config)
-                    };
-                    let share =
-                        budget.share_for_source(&assignment.target, &kit, kit_levers.config);
-                    let coverage = kit_levers
-                        .config
-                        .coverage_from_units(&row_kit, workers, &kit, &share);
-                    // **WHICH OF THE KIT'S ITEMS ARE SHORT, BY NAME** (`docs/plan_site_crews.md`
-                    // §2.3) — per item, the units the row claimed (its take hands that would take
-                    // something with the kit, never its head count) beside the units the
-                    // settlement handed it. A row that claims nothing writes no line.
-                    let claim = claims.claims[i];
-                    let kit_toe = row_kit
-                        .uses()
-                        .filter_map(|item| {
-                            let per_unit = kit_levers
-                                .config
-                                .item(item)
-                                .map_or(ONE_WORKER_PER_UNIT, |def| def.workers_per_unit)
-                                as f32;
-                            let required = claim / per_unit;
-                            (required > NOTHING_CLAIMED).then(|| sim_schema::KitToeLineState {
-                                item_id: item.to_string(),
-                                required,
-                                filled: share(item),
-                            })
+            // from ([`crate::components::LaborAllocation::item_budget`]), settled on the claims —
+            // struck by the one function auto-craft's suggestions read too.
+            crate::craft_suggestions::take_row_gear(kit_levers.config, alloc, claims, &kit)
+                .into_iter()
+                .map(|gear| {
+                    let toe = gear
+                        .toe
+                        .into_iter()
+                        .map(|line| sim_schema::KitToeLineState {
+                            item_id: line.item_id,
+                            required: line.required,
+                            filled: line.filled,
                         })
                         .collect();
-                    (row_kit, coverage, kit_toe)
+                    (gear.kit, gear.coverage, toe)
                 })
                 .collect()
         })
@@ -1800,10 +1763,10 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                         .iter()
                         .map(move |line| (row, line.item_id.as_str(), line.required, line.filled))
                 });
-            let lines = crate::craft_suggestions::band_tool_shortfall_lines(alloc, take_rows);
             let mut states = crate::snapshot::crafting::craft_suggestion_states(
-                crate::craft_suggestions::craft_suggestions(
-                    &lines,
+                crate::craft_suggestions::band_suggestions(
+                    alloc,
+                    take_rows,
                     bench,
                     craft_inputs.recipes,
                     craft_inputs.equipment,

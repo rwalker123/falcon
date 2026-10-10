@@ -852,6 +852,22 @@ message BenchPriorityCommand {
   string level = 3;     // "high" | "normal" | "low"
 }
 
+// Turn a band's bench AUTO-CRAFT on or off. While on, the bench keeps an empty queue filled from the
+// ranked craft suggestions; it never picks the crew. Turning it off clears the skipped set and
+// leaves existing orders alone.
+message BenchAutoCommand {
+  uint32 faction_id = 1;
+  uint64 band_id = 2;
+  bool enabled = 3;
+}
+
+// Skip the auto order the bench is stuck waiting on: its item is parked in the skipped set and the
+// next suggestion is queued. Refused unless the bench has no workable order and the head is auto.
+message BenchAutoSkipCommand {
+  uint32 faction_id = 1;
+  uint64 band_id = 2;
+}
+
 // ---------------------------------------------------------------------------------------------
 // SAVE GAME — four operations over three envelopes and one query.
 //
@@ -1655,5 +1671,8 @@ message CommandEnvelope {
     BenchOrderCountCommand bench_order_count = 79;
     BenchRemoveOrderCommand bench_remove = 80;
     BenchRaiseOrderCommand bench_raise = 81;
+    // 81 is held by `bench_raise`, so auto-craft's two verbs take 82-83 (append-only; never renumber).
+    BenchAutoCommand bench_auto = 82;
+    BenchAutoSkipCommand bench_auto_skip = 83;
   }
 }

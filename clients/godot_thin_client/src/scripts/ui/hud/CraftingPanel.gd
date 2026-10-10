@@ -99,6 +99,10 @@ signal order_raise_requested(order: int)
 ## **A SIBLING VERB, NOT A `work_priority` TOKEN**: `work_priority`'s grammar reads a lone trailing
 ## token as a herd id, so `work_priority … bench low` would be ambiguous with a herd named `bench`.
 signal bench_priority_requested(level: String)
+## The Auto switch was flipped - `bench_auto <faction> <band> on|off`. `on` is the state it is asking for.
+signal bench_auto_requested(on: bool)
+## The Skip link under a waiting auto order was pressed - `bench_auto_skip <faction> <band>`.
+signal bench_auto_skip_requested
 
 # ---- the render payload's keys (this panel's contract with its controller) ----------------------
 const PAYLOAD_BAND := "band"
@@ -605,9 +609,13 @@ func _build_bench(payload: Dictionary) -> void:
 	sub.add_theme_color_override("font_color", HudStyle.INK_DIM)
 	var blocked := ""
 	var blocked_severity := ""
+	var auto_on := bool(bench.get(HudCraftingVocab.BENCH_AUTO_KEY, false))
+	var bench_orders: Array = bench.get(HudCraftingVocab.BENCH_ORDERS_KEY, [])
 	if recipe_id == "":
 		title.text = HudCraftingVocab.BENCH_IDLE_TITLE
-		sub.text = HudCraftingVocab.BENCH_IDLE_SUB
+		# An idle bench with Auto on has nothing it will make; the "No one at the bench" crew prompt is
+		# the sim's own blocked line and is untouched.
+		sub.text = HudCraftingVocab.AUTO_IDLE_SUB if auto_on else HudCraftingVocab.BENCH_IDLE_SUB
 	else:
 		var recipe := _recipe_of(recipe_id, payload)
 		var craft_name := _craft_display_name(String(recipe.get(HudCraftingVocab.MATERIAL_CRAFT_KEY, "")), payload)
@@ -619,7 +627,15 @@ func _build_bench(payload: Dictionary) -> void:
 		sub.text = _bench_sub_line(bench)
 		blocked = String(bench.get(HudCraftingVocab.BENCH_BLOCKED_REASON_KEY, ""))
 		blocked_severity = String(bench.get(HudCraftingVocab.BENCH_BLOCKED_SEVERITY_KEY, ""))
-	words.add_child(title)
+	var well_index := _worked_index(bench)
+	if recipe_id != "" and _order_is_auto(bench_orders, well_index):
+		var title_row := HBoxContainer.new()
+		title_row.add_theme_constant_override("separation", HudCraftingVocab.AUTO_TAG_SEPARATION)
+		title_row.add_child(title)
+		title_row.add_child(_build_auto_tag(HudCraftingVocab.AUTO_TAG_WELL_INDEX))
+		words.add_child(title_row)
+	else:
+		words.add_child(title)
 	# **THE RANK LEADS LINE TWO, exactly as a worked row's does** (`docs/plan_standing_upkeep.md` §4.9
 	# item 9b) — `High priority · ` / `Low priority · ` in the tier's ink, and a Normal bench prints
 	# NOTHING, its line two staying byte-identical to what it printed before the mark existed.
@@ -651,7 +667,15 @@ func _build_bench(payload: Dictionary) -> void:
 		prefix.set_meta(HudCraftingVocab.BENCH_PRIORITY_META, priority)
 		line_two.add_child(prefix)
 	sub.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# The sub line wraps before it can touch the control row: its minimum width collapses and a fixed gap
+	# sits between it and the Priority link.
+	sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	sub.custom_minimum_size = Vector2.ZERO
 	line_two.add_child(sub)
+	var link_gap := Control.new()
+	link_gap.custom_minimum_size = Vector2(HudCraftingVocab.BENCH_LINK_GAP, 0.0)
+	link_gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	line_two.add_child(link_gap)
 	# **AND THE CONTROL RIDES THE SAME LINE, WHICH IS WHAT MAKES IT FREE.** A row of its own cost the
 	# well ~24px on EVERY bench, forever, and the collapsed-band-dock state had less headroom than
 	# that: `crafting_panel_band_dock_collapsed`'s ledger fitted its 1072px room with under one row to
@@ -683,6 +707,11 @@ func _build_bench(payload: Dictionary) -> void:
 		# predict, so a claim about the blocked line can only be scoped to the node that carries it.
 		reason.set_meta(HudCraftingVocab.BENCH_BLOCKED_META, true)
 		words.add_child(reason)
+		# **SKIP LIVES ON A WAITING AUTO HEAD** - Auto is on, nothing is workable, and the order the
+		# bench is stuck on (the head) is one Auto queued. The player's say-so is the only thing that
+		# moves Auto down the list.
+		if auto_on and _order_is_auto(bench_orders, HudCraftingVocab.ORDER_HEAD_INDEX):
+			words.add_child(_build_auto_skip_link())
 	elif recipe_id != "":
 		# **THE WORKED ORDER'S FORECAST** — the queue rows skip `worked`, so without this the lone
 		# order that is affordable for one pass shows nothing until it stalls. Never beside a blocked
@@ -704,8 +733,11 @@ func _build_bench(payload: Dictionary) -> void:
 	# **THE WELL IS THE WORKED ORDER'S ROW** — `orders[worked]`, the order every bench scalar
 	# describes — so its `made/count` stepper rides here, beside its ✕, rather than on a second row
 	# under the well repeating its name and its ✕. See `_build_queue`.
-	var orders: Array = bench.get(HudCraftingVocab.BENCH_ORDERS_KEY, [])
-	var worked := _worked_index(bench)
+	var orders: Array = bench_orders
+	var worked := well_index
+	# **THE AUTO SWITCH rides after the Priority link (line two's trailing edge) and before the Made
+	# stepper**, on an idle bench too: it is a standing statement about the bench.
+	top.add_child(_build_auto_switch(auto_on))
 	if recipe_id != "" and worked < orders.size() and orders[worked] is Dictionary:
 		top.add_child(_build_head_count_stepper(worked, orders[worked]))
 	if recipe_id != "":
@@ -863,6 +895,103 @@ func _commit_priority(level: String) -> void:
 	bench_priority_requested.emit(HudWorkVocab.work_priority_of(level))
 	if not _payload.is_empty():
 		render(_payload)
+
+## **THE AUTO SWITCH** - a small pill (track plus knob) with the caption under it in the Made/Crafters
+## caption style. On, the track, knob and caption take the amber ink; off, they are muted. Pressing it
+## asks for the opposite state (`bench_auto ... on|off`); no optimistic overlay, the recapture re-renders.
+func _build_auto_switch(on: bool) -> Control:
+	var column := VBoxContainer.new()
+	column.alignment = BoxContainer.ALIGNMENT_CENTER
+	column.add_theme_constant_override("separation", HudCraftingVocab.ROW_SEPARATION)
+	var ink := HudStyle.WARN if on else HudStyle.INK_FAINT
+	var track_size := HudCraftingVocab.AUTO_SWITCH_TRACK_SIZE
+	var button := Button.new()
+	button.focus_mode = Control.FOCUS_NONE
+	button.tooltip_text = HudCraftingVocab.BENCH_AUTO_TOOLTIP
+	button.custom_minimum_size = track_size
+	button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	var track := StyleBoxFlat.new()
+	track.bg_color = HudStyle.WARN.darkened(HudCraftingVocab.AUTO_AMBER_DARKEN) if on else HudStyle.LINE
+	track.border_color = HudStyle.WARN if on else HudStyle.LINE
+	track.set_border_width_all(HudCraftingVocab.AUTO_SWITCH_BORDER)
+	track.set_corner_radius_all(int(track_size.y))
+	for state in ["normal", "hover", "pressed", "focus", "disabled"]:
+		button.add_theme_stylebox_override(state, track)
+	var knob := Panel.new()
+	knob.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var knob_style := StyleBoxFlat.new()
+	knob_style.bg_color = ink
+	knob_style.set_corner_radius_all(int(HudCraftingVocab.AUTO_SWITCH_KNOB_SIZE))
+	knob.add_theme_stylebox_override("panel", knob_style)
+	knob.size = Vector2.ONE * HudCraftingVocab.AUTO_SWITCH_KNOB_SIZE
+	var knob_y := (track_size.y - HudCraftingVocab.AUTO_SWITCH_KNOB_SIZE) * 0.5
+	var knob_x := HudCraftingVocab.AUTO_SWITCH_INSET + HudCraftingVocab.AUTO_SWITCH_BORDER
+	if on:
+		knob_x = track_size.x - HudCraftingVocab.AUTO_SWITCH_KNOB_SIZE - knob_x
+	knob.position = Vector2(knob_x, knob_y)
+	button.add_child(knob)
+	button.set_meta(HudCraftingVocab.BENCH_AUTO_SWITCH_META, on)
+	button.pressed.connect(func() -> void: bench_auto_requested.emit(not on))
+	column.add_child(button)
+	var caption := Label.new()
+	caption.text = HudCraftingVocab.BENCH_AUTO_CAPTION.to_upper()
+	caption.add_theme_font_size_override("font_size", HudCraftingVocab.CREW_CAPTION_FONT_SIZE)
+	caption.add_theme_color_override("font_color", ink)
+	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	HudWidgets.set_label_tooltip(caption, HudCraftingVocab.BENCH_AUTO_TOOLTIP)
+	column.add_child(caption)
+	return column
+
+## The small amber `AUTO` tag after an order's name: uppercase, in a thin amber-bordered box.
+func _build_auto_tag(index: int) -> Control:
+	var box := PanelContainer.new()
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.0, 0.0, 0.0, 0.0)
+	style.border_color = HudStyle.WARN.darkened(HudCraftingVocab.AUTO_AMBER_DARKEN)
+	style.set_border_width_all(HudCraftingVocab.AUTO_SWITCH_BORDER)
+	style.set_corner_radius_all(HudCraftingVocab.AUTO_TAG_CORNER_RADIUS)
+	style.content_margin_left = HudCraftingVocab.AUTO_TAG_PADDING_H
+	style.content_margin_right = HudCraftingVocab.AUTO_TAG_PADDING_H
+	style.content_margin_top = HudCraftingVocab.AUTO_TAG_PADDING_V
+	style.content_margin_bottom = HudCraftingVocab.AUTO_TAG_PADDING_V
+	box.add_theme_stylebox_override("panel", style)
+	box.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var label := Label.new()
+	label.text = HudCraftingVocab.AUTO_TAG_TEXT.to_upper()
+	label.add_theme_font_size_override("font_size", HudCraftingVocab.AUTO_TAG_FONT_SIZE)
+	label.add_theme_color_override("font_color", HudStyle.WARN)
+	box.add_child(label)
+	box.set_meta(HudCraftingVocab.AUTO_TAG_META, index)
+	return box
+
+## The amber underlined Skip link under the bench's blocked line.
+func _build_auto_skip_link() -> Control:
+	var holder := MarginContainer.new()
+	holder.add_theme_constant_override("margin_top", HudCraftingVocab.AUTO_SKIP_TOP_MARGIN)
+	var link := HudWidgets.build_inline_link(HudCraftingVocab.AUTO_SKIP_LINK, HudStyle.WARN,
+		func() -> void: bench_auto_skip_requested.emit())
+	link.set_meta(HudCraftingVocab.AUTO_SKIP_META, true)
+	link.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	holder.add_child(link)
+	return holder
+
+func _order_is_auto(orders: Array, index: int) -> bool:
+	return index >= 0 and index < orders.size() and orders[index] is Dictionary \
+		and bool((orders[index] as Dictionary).get(HudCraftingVocab.ORDER_AUTO_KEY, false))
+
+## "Auto skipped - back when <materials> is in" for ONE item, off the item's suggested offer's
+## `shortfalls`; the free-bench line when nothing is short.
+func _auto_skipped_note(ledger_row: Dictionary) -> String:
+	var materials: Array[String] = []
+	if not ledger_row.is_empty():
+		var offer: Dictionary = ledger_row["offer"]
+		for row_variant in offer.get(HudCraftingVocab.OFFER_SHORTFALLS_KEY, []):
+			if row_variant is Dictionary:
+				materials.append(String((row_variant as Dictionary).get(
+					HudCraftingVocab.SHORTFALL_MATERIAL_ID_KEY, "")))
+	if materials.is_empty():
+		return HudCraftingVocab.AUTO_SKIPPED_FREE
+	return HudCraftingVocab.AUTO_SKIPPED_FORMAT % HudCraftingVocab.AUTO_SKIPPED_MATERIAL_SEPARATOR.join(materials)
 
 ## The `− n +` crew stepper. **It spends the same pool `assign_labor` does** — a crew at the bench is
 ## not gathering — so `+` greys out at the ceiling rather than sending a command the sim will clamp.
@@ -1985,6 +2114,7 @@ func _build_suggestion_row(suggestion: Dictionary, payload: Dictionary) -> Contr
 	row.tooltip_text = _suggestion_tooltip(suggestion)
 	row.mouse_filter = Control.MOUSE_FILTER_PASS
 
+	var skipped: bool = _auto_skipped_items(payload).has(item_id)
 	var words := VBoxContainer.new()
 	words.add_theme_constant_override("separation", 0)
 	var title := Label.new()
@@ -2000,7 +2130,15 @@ func _build_suggestion_row(suggestion: Dictionary, payload: Dictionary) -> Contr
 	words.add_child(consequence)
 	var short_text := _shortfall_text(suggestion.get(HudCraftingVocab.SUGGESTION_SHORTFALLS_KEY, []),
 		HudCraftingVocab.SUGGESTION_SHORTFALL_TAIL_FORMAT, count)
-	if short_text != "":
+	if skipped:
+		# Dim the name and consequence; the red shortfall gives way to the faint skipped note. Queue
+		# stays live - the player can always queue it by hand.
+		title.modulate.a = HudCraftingVocab.AUTO_SKIPPED_DIM_ALPHA
+		consequence.modulate.a = HudCraftingVocab.AUTO_SKIPPED_DIM_ALPHA
+		var note := _forecast_label(_auto_skipped_note(ledger_row), HudCraftingVocab.SUGGESTION_LINE_FONT_SIZE)
+		note.set_meta(HudCraftingVocab.AUTO_SKIPPED_NOTE_META, item_id)
+		words.add_child(note)
+	elif short_text != "":
 		var short_line := _forecast_label(short_text, HudCraftingVocab.SUGGESTION_LINE_FONT_SIZE)
 		short_line.set_meta(HudCraftingVocab.SUGGESTION_SHORTFALL_META, item_id)
 		words.add_child(short_line)
@@ -2141,6 +2279,11 @@ static func _source_names_a_tile(job: String) -> bool:
 	return job != HudConst.LABOR_KIND_SCOUT and job != HudConst.LABOR_KIND_WARRIOR
 
 ## The suggestion for `item_id` in the payload's band, `{}` when the sim no longer publishes one.
+func _auto_skipped_items(payload: Dictionary) -> Array:
+	var band: Dictionary = payload.get(PAYLOAD_BAND, {})
+	var bench = band.get(HudCraftingVocab.BAND_BENCH_KEY, {})
+	return bench.get(HudCraftingVocab.BENCH_AUTO_SKIPPED_KEY, []) if bench is Dictionary else []
+
 func _suggestion_in(payload: Dictionary, item_id: String) -> Dictionary:
 	var band: Dictionary = payload.get(PAYLOAD_BAND, {})
 	for suggestion_variant in band.get(HudCraftingVocab.BAND_CRAFT_SUGGESTIONS_KEY, []):
@@ -2257,7 +2400,14 @@ func _build_queue_row(index: int, order: Dictionary, bench: Dictionary, payload:
 	name_label.text = _order_name(order, payload)
 	name_label.add_theme_font_size_override("font_size", HudCraftingVocab.QUEUE_ROW_FONT_SIZE)
 	name_label.add_theme_color_override("font_color", HudStyle.INK_DIM)
-	words.add_child(name_label)
+	if bool(order.get(HudCraftingVocab.ORDER_AUTO_KEY, false)):
+		var name_row := HBoxContainer.new()
+		name_row.add_theme_constant_override("separation", HudCraftingVocab.AUTO_TAG_SEPARATION)
+		name_row.add_child(name_label)
+		name_row.add_child(_build_auto_tag(index))
+		words.add_child(name_row)
+	else:
+		words.add_child(name_label)
 	if blocked != "":
 		var reason := Label.new()
 		reason.text = blocked

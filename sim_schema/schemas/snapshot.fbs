@@ -5119,6 +5119,16 @@ table BenchState {
   // why). Every scalar above describes `orders[worked]`; when no order can be worked they describe
   // the head and `worked` is 0, so a fully stuck bench reads as its blocked head. 0 on an idle bench.
   worked:uint = 0;
+  // --- AUTO-CRAFT (appended last) ----------------------------------------------------------------
+  // The per-band opt-in toggle (`bench_auto <faction> <band> on|off`). While on, an EMPTY queue is
+  // refilled from the ranked craft suggestions; the crew is never touched. Published on an idle
+  // bench too - it is a standing statement about the bench.
+  auto:bool = false;
+  // The items the player skipped (`bench_auto_skip`) while auto-craft waited on them, by item id.
+  // A skipped item is passed over until one of it can be drawn from stock; the client reads the
+  // materials it is waiting on off the existing CraftOffer for that item (`suggested` offer's
+  // `shortfalls`/`reason`). Cleared when auto is switched off. Sorted.
+  autoSkipped:[string];
 }
 
 // ONE ORDER ON A BENCH'S QUEUE — `recipe x count`. Every order has a count (>= 1); the
@@ -5150,6 +5160,9 @@ table BenchOrder {
   // the gap. Empty when the stock on hand covers every pass still to draw. A FORECAST, not a block:
   // `blockedReason` stays the only "why this order is skipped" field. Appended last.
   shortToFinish:[MaterialShortfall];
+  // AUTO-CRAFT QUEUED THIS ORDER rather than the player. Only an auto head can be skipped
+  // (`bench_auto_skip`); otherwise an ordinary order. Appended last.
+  auto:bool = false;
 }
 
 // ONE SUGGESTION — an item the band's consumers are short of, and how many to make.

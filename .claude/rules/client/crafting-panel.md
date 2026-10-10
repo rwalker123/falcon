@@ -792,6 +792,31 @@ The group header carries the material's craft and its track: the meter is
 `progress / completion_threshold`, both published, so the client draws no scale of its own, and the
 craft's name is the sim's `display_name` because the client never maps a craft id to English.
 
+## AUTO-CRAFT — the bench's Auto switch, the `AUTO` tag, Skip, and the dimmed suggestion (issue #779)
+
+The sim keeps a band's queue filled from the Make next list while `bench.auto` is on: it fills only an
+EMPTY queue, with the top suggestion for its whole count, as an order carrying `auto`. A short auto
+order WAITS (the bench never walks down the list); Skip (only on a waiting auto head) passes its item
+over until it can be drawn. Switching off clears the skips and touches neither orders nor crew. Wire:
+`bench.auto`, `bench.auto_skipped` (item ids), `orders[].auto`; commands `bench_auto <f> <band>
+on|off` and `bench_auto_skip <f> <band>`, relayed panel → `CraftingPanelController` → `HudLayer` →
+`Main.format_bench_auto` / `format_bench_auto_skip` exactly as `bench_priority` is.
+
+- **The switch** is a pill (30x15 track, 11px knob, both `AUTO_SWITCH_*`) over an `AUTO` caption in the
+  Made/Crafters caption size. On, track/knob/caption take `HudStyle.WARN`; off, `INK_FAINT`. It is a
+  top-row sibling of the steppers (after the Priority link on line two, before `Made`), and renders on an
+  IDLE bench too. A click asks for the OPPOSITE state; no optimistic overlay.
+- **The `AUTO` tag** is a thin amber-bordered box after an order's name, on queue rows (meta valued the
+  order index) and on the well title (index `AUTO_TAG_WELL_INDEX`, -1).
+- **Skip** shows only when `bench.auto`, the bench carries a `blocked_reason` and `orders[0].auto`; an
+  amber underlined link directly under the red blocked line.
+- **A skipped suggestion** (item in `auto_skipped`) dims its name and consequence and swaps the red
+  shortfall line for a faint `Auto skipped — back when <materials> is in`, the materials being the item's
+  suggested offer's `shortfalls` for ONE item (or `Auto takes it back when the bench is free` when none
+  are short). Its Queue stays live.
+- **An idle bench with Auto on** reads `Auto: nothing to make.` in place of the Make-a-row prompt; the
+  `No one at the bench` crew prompt is the sim's blocked line and is untouched.
+
 ## Key scripts
 
 | Script | Purpose |

@@ -184,6 +184,96 @@ pub fn band_tool_shortfall_lines<'a>(
     pools.chain(sites).chain(takes).collect()
 }
 
+/// **A ROW THAT CLAIMS NONE OF AN ITEM WRITES NO KIT LINE FOR IT** — `required` is never `0` on the
+/// wire, so a reader may divide by it.
+const NOTHING_CLAIMED: f32 = 0.0;
+
+/// **ONE TAKE ROW'S CLAIM ON ONE KIT ITEM** — units `required` against the units the settlement
+/// handed the row (`filled`). The wire's `kitToe` line, before it is worded.
+#[derive(Debug, Clone, PartialEq)]
+pub struct KitToeLine {
+    pub item_id: String,
+    pub required: f32,
+    pub filled: f32,
+}
+
+/// **ONE TAKE ROW'S GEAR, SETTLED** — the kit it carries, how far the band's units cover it, and its
+/// per-item claim lines (a standing pool writes none: its tools are settled with the keeping).
+#[derive(Debug, Clone)]
+pub struct TakeRowGear {
+    pub kit: crate::equipment_config::KitChoice,
+    pub coverage: crate::equipment_config::KitCoverage,
+    pub toe: Vec<KitToeLine>,
+}
+
+/// **EVERY ROW'S GEAR, struck once for the snapshot and for auto-craft alike** — index-aligned with
+/// `allocation.assignments`. The kit is spread over the take hands (a keeper carries the keeping
+/// tools, never the take kit, `docs/plan_site_crews.md` §2.3) and cut from the band's share of the
+/// ledger ([`LaborAllocation::item_budget`]), settled on `claims`.
+pub fn take_row_gear(
+    config: &EquipmentConfig,
+    allocation: &LaborAllocation,
+    claims: &crate::take_claims::RowClaims,
+    kit: &crate::components::BandEquipment,
+) -> Vec<TakeRowGear> {
+    let budget = allocation.item_budget(config, &claims.claims);
+    allocation
+        .assignments
+        .iter()
+        .enumerate()
+        .map(|(i, assignment)| {
+            let workers =
+                crate::take_claims::take_hands(assignment.workers as f32, claims.keep_hands[i]);
+            let row_kit = if assignment.target.is_standing_pool() {
+                config.no_kit()
+            } else {
+                assignment.kit_choice(config)
+            };
+            let share = budget.share_for_source(&assignment.target, kit, config);
+            let coverage = config.coverage_from_units(&row_kit, workers, kit, &share);
+            // **WHICH OF THE KIT'S ITEMS ARE SHORT, BY NAME** — per item, the units the row
+            // claimed (its take hands that would take something with the kit, never its head
+            // count) beside the units the settlement handed it. A row that claims nothing writes
+            // no line.
+            let claim = claims.claims[i];
+            let toe = row_kit
+                .uses()
+                .filter_map(|item| {
+                    let per_unit = config
+                        .item(item)
+                        .map_or(ONE_WORKER_PER_UNIT, |def| def.workers_per_unit)
+                        as f32;
+                    let required = claim / per_unit;
+                    (required > NOTHING_CLAIMED).then(|| KitToeLine {
+                        item_id: item.to_string(),
+                        required,
+                        filled: share(item),
+                    })
+                })
+                .collect();
+            TakeRowGear {
+                kit: row_kit,
+                coverage,
+                toe,
+            }
+        })
+        .collect()
+}
+
+/// **A BAND'S RANKED SUGGESTIONS, from its settled gear** — the one function the snapshot's
+/// `craftSuggestions` and auto-craft both call, so the list the panel shows and the list auto-craft
+/// works down cannot differ. `take_rows` are `(row, item, required, filled)` off [`TakeRowGear::toe`].
+pub fn band_suggestions<'a>(
+    allocation: &LaborAllocation,
+    take_rows: impl IntoIterator<Item = (usize, &'a str, f32, f32)>,
+    bench: Option<&BandBench>,
+    recipes: &RecipesConfig,
+    equipment: &EquipmentConfig,
+) -> Vec<CraftSuggestion> {
+    let lines = band_tool_shortfall_lines(allocation, take_rows);
+    craft_suggestions(&lines, bench, recipes, equipment)
+}
+
 /// **RANK WHAT TO MAKE NEXT** — see the module docs for every rule.
 ///
 /// `bench` is the band's bench, whose queue nets the counts; `None` nets nothing.

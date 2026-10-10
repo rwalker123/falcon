@@ -34,6 +34,53 @@ mod tests {
     use super::*;
     use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
+    /// **The bench's auto-craft state rides the wire** (`BenchState.auto` / `autoSkipped`,
+    /// `BenchOrder.auto`). Encode, decode, compare the decoded rows - an appended field that never
+    /// reached the codec passes an in-process assertion and fails this one.
+    #[test]
+    fn the_benchs_auto_state_and_an_orders_auto_tag_ride_the_wire() {
+        let snapshot = WorldSnapshot {
+            populations: vec![PopulationCohortState {
+                entity: 7,
+                bench: BenchState {
+                    auto: true,
+                    auto_skipped: vec!["clubs".to_string(), "hoes".to_string()],
+                    orders: vec![
+                        BenchOrderState {
+                            recipe_id: "baskets".to_string(),
+                            count: 2,
+                            auto: true,
+                            ..Default::default()
+                        },
+                        BenchOrderState {
+                            recipe_id: "sled".to_string(),
+                            count: 1,
+                            auto: false,
+                            ..Default::default()
+                        },
+                    ],
+                    ..Default::default()
+                },
+                ..Default::default()
+            }],
+            ..WorldSnapshot::default()
+        };
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let decoded = decode_snapshot_flatbuffer(&bytes).expect("the snapshot decodes");
+        let bench = &decoded.populations[0].bench;
+        assert!(bench.auto, "the toggle");
+        assert_eq!(bench.auto_skipped, vec!["clubs", "hoes"], "the skipped ids");
+        assert_eq!(
+            bench
+                .orders
+                .iter()
+                .map(|order| order.auto)
+                .collect::<Vec<_>>(),
+            vec![true, false],
+            "each order's own tag, not one value for the queue"
+        );
+    }
+
     /// A `WorldSnapshot` carrying exactly one herd — the rest of the world is irrelevant to the herd
     /// telemetry's wire encoding.
     fn snapshot_with_herd(herd: HerdTelemetryState) -> WorldSnapshot {

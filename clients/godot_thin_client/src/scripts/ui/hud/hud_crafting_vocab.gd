@@ -92,6 +92,50 @@ const BENCH_PRIORITY_META := "crafting_bench_priority"
 ## cannot say which — the `CLEAR_BENCH_META` argument, one control over.
 const BENCH_PRIORITY_LINK_META := "crafting_bench_priority_link"
 
+# ---- AUTO-CRAFT (`bench_auto` / `bench_auto_skip`, issue #779) ------------------------------------
+## `bench.auto` — the per-band switch that keeps the bench's queue filled from `Make next`. It fills
+## only an EMPTY queue, with the top suggestion for its whole count, as an order tagged `auto`.
+const BENCH_AUTO_KEY := "auto"
+## `bench.auto_skipped` — item ids the player passed over while an auto order waited, cleared when the
+## switch goes off or the item can be drawn again.
+const BENCH_AUTO_SKIPPED_KEY := "auto_skipped"
+## An order's own `auto` flag — queued by the switch rather than by the player.
+const ORDER_AUTO_KEY := "auto"
+const BENCH_AUTO_CAPTION := "Auto"
+const BENCH_AUTO_TOOLTIP := "Keep the bench working down Make next"
+const AUTO_TAG_TEXT := "Auto"
+const AUTO_SKIP_LINK := "Skip to the next suggestion"
+const AUTO_IDLE_SUB := "Auto: nothing to make."
+const AUTO_SKIPPED_FORMAT := "Auto skipped \u2014 back when %s is in"
+const AUTO_SKIPPED_FREE := "Auto takes it back when the bench is free"
+const AUTO_SKIPPED_MATERIAL_SEPARATOR := ", "
+## Handles for the harness: the switch (valued its on/off state), the tag on an order (valued the
+## order's index, -1 for the well's title), the Skip link, and a dimmed suggestion's note.
+const BENCH_AUTO_SWITCH_META := "crafting_bench_auto_switch"
+const AUTO_TAG_META := "crafting_auto_tag"
+const AUTO_SKIP_META := "crafting_auto_skip"
+const AUTO_SKIPPED_NOTE_META := "crafting_auto_skipped_note"
+## The tag index the well's title carries.
+const AUTO_TAG_WELL_INDEX := -1
+## The pill switch: a track with a knob inset by `AUTO_SWITCH_INSET`, the knob sliding to the far end
+## when on. Sizes follow the prototype (30x15 track, 11px knob); the caption is the Made/Crafters one.
+const AUTO_SWITCH_TRACK_SIZE := Vector2(30.0, 15.0)
+const AUTO_SWITCH_KNOB_SIZE := 11.0
+const AUTO_SWITCH_INSET := 1.0
+const AUTO_SWITCH_BORDER := 1
+## How far toward the ground the amber darkens for the on-track fill and the tag's edge.
+const AUTO_AMBER_DARKEN := 0.45
+const AUTO_TAG_FONT_SIZE := 9
+const AUTO_TAG_CORNER_RADIUS := 3
+const AUTO_TAG_PADDING_H := 4
+const AUTO_TAG_PADDING_V := 0
+## Alpha of a skipped suggestion's name and consequence line.
+const AUTO_SKIPPED_DIM_ALPHA := 0.5
+const AUTO_TAG_SEPARATION := 6
+const AUTO_SKIP_TOP_MARGIN := 4
+## Minimum gap between the bench info column's sub line and the Priority link / control row.
+const BENCH_LINK_GAP := 14.0
+
 ## **THE QUEUE** (`BenchState.orders`, `docs/plan_crafting_and_materials.md` §7 → "The queue") — every
 ## order on the bench, HEAD FIRST, `[]` on an idle bench. An order's INDEX in this array is the `order`
 ## argument the three queue verbs address, so the panel never renumbers it. The worked order's `made` is what

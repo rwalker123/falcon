@@ -1494,10 +1494,24 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                 "short_to_finish",
                 &shortfalls_to_array(order.shortToFinish()),
             );
+            // AUTO-CRAFT QUEUED THIS ORDER (not the player) - the only kind `bench_auto_skip`
+            // applies to.
+            let _ = row.insert("auto", order.auto());
             bench_orders.push(&row.to_variant());
         }
     }
     let _ = bench_dict.insert("orders", &bench_orders);
+    // **AUTO-CRAFT** (`bench_auto <faction> <band> on|off`): while on, an empty queue is refilled from
+    // the ranked craft suggestions. Always inserted, on an idle bench too - it is a standing
+    // statement about the bench. `auto_skipped` is the item ids the player skipped while auto waited
+    // on them (sorted), so the entry shape is stable (an empty array when none).
+    let _ = bench_dict.insert("auto", cohort.bench().is_some_and(|b| b.auto()));
+    let auto_skipped = cohort
+        .bench()
+        .and_then(|b| b.autoSkipped())
+        .map(crate::dict::strings_to_variant_array)
+        .unwrap_or_default();
+    let _ = bench_dict.insert("auto_skipped", &auto_skipped);
     let _ = dict.insert("bench", &bench_dict);
 
     // **WHAT TO MAKE NEXT, RANKED SIM-SIDE BY WHO IS GOING WITHOUT** (§7 → "Suggestions"). In rank

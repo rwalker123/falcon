@@ -472,12 +472,18 @@ fn bench_state(
     // **THE QUEUE, head first**, published on an idle bench too (as an empty list) — every order's
     // recipe, count and made, plus the progress and pile a displaced order is holding at rest.
     let orders = bench_orders(bench, store, wear, inputs, tiers_by_material, forecast);
+    // **AUTO-CRAFT is a standing statement about the bench**, published on an idle bench and on a
+    // stalled one alike, like the rank above it. The skipped set iterates sorted (`BTreeSet`).
+    let auto = bench.auto;
+    let auto_skipped: Vec<String> = bench.auto_skipped.iter().cloned().collect();
     let Some((worked, head)) =
         described.and_then(|index| bench.orders.get(index).map(|order| (index, order)))
     else {
         return BenchState {
             priority: published_priority,
             orders,
+            auto,
+            auto_skipped,
             ..BenchState::default()
         };
     };
@@ -495,6 +501,8 @@ fn bench_state(
             priority: published_priority,
             orders,
             worked,
+            auto,
+            auto_skipped,
             ..BenchState::default()
         };
     };
@@ -580,6 +588,8 @@ fn bench_state(
             .unwrap_or_default(),
         orders,
         worked,
+        auto,
+        auto_skipped,
     }
 }
 
@@ -628,6 +638,7 @@ fn bench_orders(
                     .get(index)
                     .map(|rows| shortfall_states(rows))
                     .unwrap_or_default(),
+                auto: order.auto,
             }
         })
         .collect()

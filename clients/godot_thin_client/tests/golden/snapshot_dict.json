@@ -4387,10 +4387,15 @@
       "belief_relay_reach_x": {"__packed": "PackedInt32Array", "len": 3, "items": [76, 47, 86]},
       "belief_relay_reach_y": {"__packed": "PackedInt32Array", "len": 3, "items": [143, 76, 65]},
       "bench": {
+        "auto": true,
+        "auto_skipped": [
+          "spears",
+          "hoes"
+        ],
         "blocked_reason": "populations[0].bench.blocked_reason",
         "blocked_severity": "populations[0].bench.blocked_severity",
         "display_name": "populations[0].bench.display_name",
-        "drawn": true,
+        "drawn": false,
         "drawn_inputs": [
           {
             "amount": 43.32,
@@ -4407,10 +4412,11 @@
         ],
         "orders": [
           {
+            "auto": true,
             "blocked_reason": "populations[0].bench.orders[0].blocked_reason",
             "blocked_severity": "populations[0].bench.orders[0].blocked_severity",
             "count": 198,
-            "drawn": true,
+            "drawn": false,
             "made": 140,
             "progress": 66.239998,
             "recipe_id": "populations[0].bench.orders[0].recipe_id",
@@ -4436,10 +4442,11 @@
             ]
           },
           {
+            "auto": false,
             "blocked_reason": "populations[0].bench.orders[1].blocked_reason",
             "blocked_severity": "populations[0].bench.orders[1].blocked_severity",
             "count": 157,
-            "drawn": false,
+            "drawn": true,
             "made": 1,
             "progress": 75.010002,
             "recipe_id": "populations[0].bench.orders[1].recipe_id",
@@ -4465,10 +4472,11 @@
             ]
           },
           {
+            "auto": false,
             "blocked_reason": "populations[0].bench.orders[2].blocked_reason",
             "blocked_severity": "populations[0].bench.orders[2].blocked_severity",
             "count": 172,
-            "drawn": false,
+            "drawn": true,
             "made": 10,
             "progress": 22.700001,
             "recipe_id": "populations[0].bench.orders[2].recipe_id",
@@ -5773,10 +5781,15 @@
       "belief_relay_reach_x": {"__packed": "PackedInt32Array", "len": 3, "items": [63, 92, 81]},
       "belief_relay_reach_y": {"__packed": "PackedInt32Array", "len": 3, "items": [180, 63, 182]},
       "bench": {
+        "auto": false,
+        "auto_skipped": [
+          "spears",
+          "hoes"
+        ],
         "blocked_reason": "populations[1].bench.blocked_reason",
         "blocked_severity": "populations[1].bench.blocked_severity",
         "display_name": "populations[1].bench.display_name",
-        "drawn": false,
+        "drawn": true,
         "drawn_inputs": [
           {
             "amount": 18.709999,
@@ -5793,10 +5806,11 @@
         ],
         "orders": [
           {
+            "auto": true,
             "blocked_reason": "populations[1].bench.orders[0].blocked_reason",
             "blocked_severity": "populations[1].bench.orders[0].blocked_severity",
             "count": 189,
-            "drawn": true,
+            "drawn": false,
             "made": 17,
             "progress": 84.480003,
             "recipe_id": "populations[1].bench.orders[0].recipe_id",
@@ -5822,10 +5836,11 @@
             ]
           },
           {
+            "auto": false,
             "blocked_reason": "populations[1].bench.orders[1].blocked_reason",
             "blocked_severity": "populations[1].bench.orders[1].blocked_severity",
             "count": 46,
-            "drawn": false,
+            "drawn": true,
             "made": 180,
             "progress": 38.209999,
             "recipe_id": "populations[1].bench.orders[1].recipe_id",
@@ -5851,10 +5866,11 @@
             ]
           },
           {
+            "auto": false,
             "blocked_reason": "populations[1].bench.orders[2].blocked_reason",
             "blocked_severity": "populations[1].bench.orders[2].blocked_severity",
             "count": 75,
-            "drawn": false,
+            "drawn": true,
             "made": 15,
             "progress": 27.290001,
             "recipe_id": "populations[1].bench.orders[2].recipe_id",
@@ -7120,10 +7136,15 @@
       "belief_relay_reach_x": {"__packed": "PackedInt32Array", "len": 3, "items": [30, 121, 36]},
       "belief_relay_reach_y": {"__packed": "PackedInt32Array", "len": 3, "items": [33, 158, 119]},
       "bench": {
+        "auto": false,
+        "auto_skipped": [
+          "spears",
+          "hoes"
+        ],
         "blocked_reason": "populations[2].bench.blocked_reason",
         "blocked_severity": "populations[2].bench.blocked_severity",
         "display_name": "populations[2].bench.display_name",
-        "drawn": false,
+        "drawn": true,
         "drawn_inputs": [
           {
             "amount": 87.889999,
@@ -7140,10 +7161,11 @@
         ],
         "orders": [
           {
+            "auto": true,
             "blocked_reason": "populations[2].bench.orders[0].blocked_reason",
             "blocked_severity": "populations[2].bench.orders[0].blocked_severity",
             "count": 40,
-            "drawn": true,
+            "drawn": false,
             "made": 142,
             "progress": 34.880001,
             "recipe_id": "populations[2].bench.orders[0].recipe_id",
@@ -7169,10 +7191,11 @@
             ]
           },
           {
+            "auto": false,
             "blocked_reason": "populations[2].bench.orders[1].blocked_reason",
             "blocked_severity": "populations[2].bench.orders[1].blocked_severity",
             "count": 183,
-            "drawn": false,
+            "drawn": true,
             "made": 147,
             "progress": 31.74,
             "recipe_id": "populations[2].bench.orders[1].recipe_id",
@@ -7198,10 +7221,11 @@
             ]
           },
           {
+            "auto": false,
             "blocked_reason": "populations[2].bench.orders[2].blocked_reason",
             "blocked_severity": "populations[2].bench.orders[2].blocked_severity",
             "count": 170,
-            "drawn": false,
+            "drawn": true,
             "made": 72,
             "progress": 57.529999,
             "recipe_id": "populations[2].bench.orders[2].recipe_id",

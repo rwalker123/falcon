@@ -3806,3 +3806,11 @@ commit line is captured off the real `assign_labor_requested` signal, and **each
 pending overlay first**: a commit leaves its optimistic row behind and the sheet seeds from the
 pending-aware map, so the previous state's `follow` would seed the next. The Work-tab row's frames and
 claims are `harness-band-panel.md`'s.
+
+## `chapters/crafting_bench.gd` — the auto-craft frames (issue #779)
+
+Three frames and thirteen claims, appended LAST in the chapter (`_auto_craft_states`), so no earlier frame moves; `EXPECTED_CHECKPOINTS` 241 -> **258**, RE-MEASURED by raising the const and reading `reached` back. The behaviour is `crafting-panel.md` -> "AUTO-CRAFT".
+
+- `crafting_auto_waiting` -- an auto head short of bone: the `AUTO` tag on the well title, the Skip link under the red blocked line, the switch ON. PNG-less beside it: a REAL press on the switch sends `bench_auto <f> <band> off` and on Skip `bench_auto_skip <f> <band>` (asserted on the command LINE through `Main.format_bench_auto*`), and the negatives that make the pair mean something -- a waiting head the PLAYER queued gets no Skip/tag, and Auto OFF hides Skip even on an auto-tagged head while the switch reads OFF.
+- `crafting_auto_working` -- an auto order being worked, the clubs suggestion in `auto_skipped`: its note by equality (`Auto skipped — back when bone is in`), no red shortfall line, Queue live, no Skip. PNG-less: the same item with nothing short reads the free-bench line, and a queued auto order on a queue ROW wears the tag.
+- `crafting_auto_idle` -- Auto on over an idle bench reads `Auto: nothing to make.` and not the Make-a-row prompt.

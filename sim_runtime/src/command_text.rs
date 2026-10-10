@@ -214,6 +214,18 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "bench_priority <faction_id> <band_id> high|normal|low",
     },
     CommandVerbHelp {
+        verb: "bench_auto",
+        aliases: &[],
+        summary: "TURN A BAND'S BENCH AUTO-CRAFT ON OR OFF. While on, whenever the bench's queue is EMPTY it queues the top craft suggestion at its whole count, marked auto; it never picks the crew and never queues anything while you have an order waiting. A queued auto order short of materials just waits - only `bench_auto_skip` moves on. Turning it off forgets what you skipped and leaves existing orders alone.",
+        usage: "bench_auto <faction_id> <band_id> on|off",
+    },
+    CommandVerbHelp {
+        verb: "bench_auto_skip",
+        aliases: &[],
+        summary: "SKIP THE AUTO ORDER THE BENCH IS WAITING ON: its item is set aside (it returns when the queue is next empty and the item can be drawn) and the next suggestion is queued. Refused unless the bench has no workable order and the head order is an auto order.",
+        usage: "bench_auto_skip <faction_id> <band_id>",
+    },
+    CommandVerbHelp {
         verb: "corral",
         aliases: &[],
         summary: "DECLARE a Corral on your domesticated herd at a tile: appended to the build queue of every band hunting it and raised by the band's `builders` pool at the head of that queue - this names no workers. An investment that pays a reduced take while the pen is built, then pins the herd there (needs Penning knowledge, earned by working herds you have already TAMED — Herding gates tame, not corral).",
@@ -1190,6 +1202,41 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 faction_id: parse_u32(faction_str, "bench_priority faction")?,
                 band_id: parse_u64(band_str, "bench_priority band_id")?,
                 level,
+            })
+        }
+        "bench_auto" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
+            let state = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("on|off"))?;
+            let enabled = parse_bool(&state.to_ascii_lowercase(), "bench_auto state")?;
+            if let Some(extra) = parts.next() {
+                return Err(CommandParseError::UnexpectedToken(extra.to_string()));
+            }
+            Ok(CommandPayload::BenchAuto {
+                faction_id: parse_u32(faction_str, "bench_auto faction")?,
+                band_id: parse_u64(band_str, "bench_auto band_id")?,
+                enabled,
+            })
+        }
+        "bench_auto_skip" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
+            if let Some(extra) = parts.next() {
+                return Err(CommandParseError::UnexpectedToken(extra.to_string()));
+            }
+            Ok(CommandPayload::BenchAutoSkip {
+                faction_id: parse_u32(faction_str, "bench_auto_skip faction")?,
+                band_id: parse_u64(band_str, "bench_auto_skip band_id")?,
             })
         }
         "corral" => {
@@ -3737,6 +3784,39 @@ mod tests {
             parse_command_line("work_priority 1 7 4 9 wood extra low"),
             Err(CommandParseError::UnexpectedToken(_))
         ));
+    }
+
+    /// **`bench_auto` takes a band and `on|off`; `bench_auto_skip` takes a band alone.**
+    #[test]
+    fn parse_bench_auto_verbs() {
+        assert_eq!(
+            parse_command_line("bench_auto 1 7 on").unwrap(),
+            CommandPayload::BenchAuto {
+                faction_id: 1,
+                band_id: 7,
+                enabled: true,
+            }
+        );
+        assert_eq!(
+            parse_command_line("bench_auto 1 7 OFF").unwrap(),
+            CommandPayload::BenchAuto {
+                faction_id: 1,
+                band_id: 7,
+                enabled: false,
+            }
+        );
+        assert!(parse_command_line("bench_auto 1 7").is_err());
+        assert!(parse_command_line("bench_auto 1 7 sideways").is_err());
+        assert!(parse_command_line("bench_auto 1 7 on extra").is_err());
+        assert_eq!(
+            parse_command_line("bench_auto_skip 1 7").unwrap(),
+            CommandPayload::BenchAutoSkip {
+                faction_id: 1,
+                band_id: 7,
+            }
+        );
+        assert!(parse_command_line("bench_auto_skip 1").is_err());
+        assert!(parse_command_line("bench_auto_skip 1 7 extra").is_err());
     }
 
     /// **`bench_priority` names a BAND and a LEVEL, and no source at all** — the bench family's own

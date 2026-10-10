@@ -4591,6 +4591,12 @@ pub struct BenchOrder {
     /// before the draw — a **short draw withdraws nothing at all**, so this stays `None` and the
     /// turn is a no-op rather than a half-spent pile.
     pub drawn: Option<DrawnInputs>,
+    /// **WHETHER AUTO-CRAFT QUEUED THIS ORDER** ([`BandBench::auto`]) rather than the player. Set
+    /// only by `auto_craft::auto_craft_fill`; every player-queued order (a suggestion's Queue, the
+    /// ledger's Make, `bench_enqueue`) is `false`. It is what makes an order skippable
+    /// (`bench_auto_skip` is valid only on an auto head) and is otherwise an ordinary order: it can
+    /// be counted, raised or removed like any other.
+    pub auto: bool,
 }
 
 /// **THE SMALLEST COUNT AN ORDER MAY CARRY** — one item. An order of zero is not an order.
@@ -4618,6 +4624,7 @@ impl BenchOrder {
             made: NOTHING_MADE,
             progress: scalar_zero(),
             drawn: None,
+            auto: false,
         }
     }
 
@@ -4724,6 +4731,17 @@ pub struct BandBench {
     /// rest of the bench (`BandRecord::bench`), so a save taken between the finishing turn and the
     /// next keeps them.
     pub finished: Vec<FinishedBatch>,
+    /// **AUTO-CRAFT** — while on, whenever the queue is empty the bench queues the top craft
+    /// suggestion at its whole count, tagged [`BenchOrder::auto`]
+    /// (`auto_craft::auto_craft_fill`). A property of the bench: it survives every queue edit and
+    /// is flipped only by `bench_auto`. **Persisted** (`BandRecord::bench`).
+    pub auto: bool,
+    /// **THE ITEMS THE PLAYER SKIPPED** while auto-craft waited on them (`bench_auto_skip`), by
+    /// `equipment.json` item id. A skipped item is passed over until one of it can be drawn from
+    /// stock; it is then dropped from the set the next time auto-craft fills an empty queue (it
+    /// never preempts a running order). Switching auto off clears it. `BTreeSet` so the checkpoint
+    /// and the wire iterate in a stable order. **Persisted** with the rest of the bench.
+    pub auto_skipped: BTreeSet<String>,
 }
 
 impl BandBench {
@@ -4763,6 +4781,15 @@ impl BandBench {
     /// with a reason.
     pub fn enqueue(&mut self, recipe_id: &str, count: u32) {
         self.orders.push(BenchOrder::new(recipe_id, count));
+    }
+
+    /// **Add an order that AUTO-CRAFT chose** to the back of the queue — [`Self::enqueue`] with the
+    /// order tagged [`BenchOrder::auto`]. Writes no [`Self::last_started`]: that records what the
+    /// *player* picked.
+    pub fn enqueue_auto(&mut self, recipe_id: &str, count: u32) {
+        let mut order = BenchOrder::new(recipe_id, count);
+        order.auto = true;
+        self.orders.push(order);
     }
 
     /// **Change one order's count.** Refused below [`MIN_ORDER_COUNT`], and at or below what the

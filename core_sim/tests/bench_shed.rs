@@ -124,6 +124,8 @@ fn world_with_a_band_at_the_bench(bench_priority: SourcePriority) -> (App, Entit
                 priority: bench_priority,
                 last_started: Default::default(),
                 finished: Vec::new(),
+                auto: false,
+                auto_skipped: Default::default(),
             },
         ))
         .id();

@@ -44,6 +44,10 @@ signal bench_raise_requested(payload: Dictionary)
 ## there is no order argument to disambiguate — and it is legal on an IDLE bench, a rank being a standing
 ## statement about the bench rather than about the job on it.
 signal bench_priority_requested(payload: Dictionary)
+## Switch auto-craft on or off for the band's bench - `bench_auto <faction> <band> on|off`. Payload: { faction, band_id, on }.
+signal bench_auto_requested(payload: Dictionary)
+## Pass over the waiting auto order's item - `bench_auto_skip <faction> <band>`. Payload: { faction, band_id }.
+signal bench_auto_skip_requested(payload: Dictionary)
 
 # --- Collaborators handed in by HudLayer (the SAME instances it holds) ---
 var _band_labor: HudBandLaborState = null
@@ -190,6 +194,8 @@ func _ensure_panel() -> void:
 	_panel.order_remove_requested.connect(_on_order_remove_requested)
 	_panel.order_raise_requested.connect(_on_order_raise_requested)
 	_panel.bench_priority_requested.connect(_on_bench_priority_requested)
+	_panel.bench_auto_requested.connect(_on_bench_auto_requested)
+	_panel.bench_auto_skip_requested.connect(_on_bench_auto_skip_requested)
 
 func _on_band_selected(entity: int) -> void:
 	_open_entity = entity
@@ -275,6 +281,26 @@ func _on_bench_priority_requested(level: String) -> void:
 		"faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
 		"band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
 		"level": level,
+	})
+
+## Auto names the band and the state it asks for, and nothing else (one bench per band).
+func _on_bench_auto_requested(on: bool) -> void:
+	var band := _open_band()
+	if band.is_empty():
+		return
+	bench_auto_requested.emit({
+		"faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+		"band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
+		"on": on,
+	})
+
+func _on_bench_auto_skip_requested() -> void:
+	var band := _open_band()
+	if band.is_empty():
+		return
+	bench_auto_skip_requested.emit({
+		"faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+		"band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
 	})
 
 # ---- lookups ----------------------------------------------------------------

@@ -188,6 +188,12 @@ signal bench_raise_requested(payload: Dictionary)
 ## of it, that grammar reading a lone trailing token as a herd id. RELAYED from
 ## `CraftingPanelController`.
 signal bench_priority_requested(payload: Dictionary)
+## Emitted when the bench's Auto switch is flipped. Payload keys: { faction, band_id, on }. Main formats
+## `bench_auto <faction> <band> on|off`. RELAYED from `CraftingPanelController`.
+signal bench_auto_requested(payload: Dictionary)
+## Emitted when the Skip link under a waiting auto order is pressed. Payload keys: { faction, band_id }.
+## Main formats `bench_auto_skip <faction> <band>`. RELAYED from `CraftingPanelController`.
+signal bench_auto_skip_requested(payload: Dictionary)
 ## Emitted on EVERY stepper press on the OPENING LOADOUT picker (issue #629) — the card holds no
 ## draft and defers no order. Payload keys:
 ## { faction, band_id, kits: [{id, count}], materials: [{id, units}], revert_kits, revert_materials }.
@@ -824,6 +830,10 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: bench_raise_requested.emit(payload))
     _crafting.bench_priority_requested.connect(
         func(payload: Dictionary) -> void: bench_priority_requested.emit(payload))
+    _crafting.bench_auto_requested.connect(
+        func(payload: Dictionary) -> void: bench_auto_requested.emit(payload))
+    _crafting.bench_auto_skip_requested.connect(
+        func(payload: Dictionary) -> void: bench_auto_skip_requested.emit(payload))
     _bandpanel.crafting_requested.connect(
         func(band: Dictionary) -> void: _crafting.toggle_for(band))
     # The knowledge screen, on the same room and the same launch idiom. It takes `_topbar` as well,

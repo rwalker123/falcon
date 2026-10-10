@@ -1,10 +1,10 @@
 ---
 paths:
-  - "core_sim/src/{materials_config,recipes_config,crafting,craft_suggestions}.rs"
+  - "core_sim/src/{materials_config,recipes_config,crafting,craft_suggestions,auto_craft}.rs"
   - "core_sim/src/systems/crafting.rs"
   - "core_sim/src/snapshot/crafting.rs"
   - "core_sim/src/data/{materials,recipes}.json"
-  - "core_sim/tests/{materials,crafting,crafting_wire,bench_delivery,bench_queue}.rs"
+  - "core_sim/tests/{materials,crafting,crafting_wire,bench_delivery,bench_queue,auto_craft}.rs"
 ---
 
 # Materials and the bench — the stuff a craftable thing is made of, and how it gets made
@@ -523,7 +523,7 @@ there in slice 4.
 # The bench
 
 `BandBench` is a component on a band: `{ orders, workers, last_output_grade, priority, last_started,
-finished }`. **One bench, one queue**: `orders` is an ordered list of `BenchOrder { recipe_id, count,
+finished, auto, auto_skipped }`. **One bench, one queue**: `orders` is an ordered list of `BenchOrder { recipe_id, count, auto,
 made, progress, drawn }` and the bench works **one order a turn — the worked order** (below).
 Everything else on the
 bench — the crew, the rank, the band's recipe habits, the parked output — belongs to the bench and
@@ -1381,6 +1381,49 @@ to zero, fractional shortfalls) and, off the encoded frame, by
 `bench_queue::suggestions_rank_by_workers_without_and_net_out_the_queue`,
 `::a_suggestion_does_not_rise_on_the_turn_its_item_is_made` and
 `::a_detached_party_publishes_no_suggestions` (paired with its home band carrying the same lines).
+
+## Auto-craft — the bench works down the suggestion list on its own (#779)
+
+Design: `docs/plan_crafting_and_materials.md` §7, "Auto-craft". `auto_craft.rs` is the whole
+behaviour; `BandBench::auto` is the per-band toggle (`bench_auto <f> <b> on|off`, proto field 82),
+`BandBench::auto_skipped` the items the player passed over, `BenchOrder::auto` the tag on an order
+auto-craft queued. All three ride `BandRecord::bench` (`SAVE_FORMAT_VERSION` 30) and the wire
+(`BenchState.auto` / `autoSkipped`, `BenchOrder.auto`).
+
+- **It fills an EMPTY queue, and only an empty one.** `auto_craft_fill` queues the first usable
+  suggestion at its whole netted `count` as one `auto` order. A player-queued order on the queue means
+  it adds nothing, so overriding is just queueing.
+- **The suggestions are the snapshot's own.** `craft_suggestions::take_row_gear` settles the rows'
+  gear and `band_suggestions` ranks it — the two functions `snapshot::population` calls — fed by
+  `take_claims::with_world_sources` (between-turns, regrow-first, exactly the capture's reading).
+  Nothing here re-derives a shortfall line.
+- **The recipe is the offer the ledger marks `suggested` for that item** (`band_craft_state`'s
+  `craft_offers`, `suggested && outputItemId == item`) — the recipe the panel's Queue button sends.
+  *Usable* means that offer is `queueable` (the one knowledge predicate `first_unknown_craft`); an item
+  no recipe makes, or one whose craft is unlearned, is passed over. It writes no `last_started`: that
+  records what the player chose.
+- **It never walks down the list on its own.** An auto order short of material WAITS (the ordinary
+  skip/waiting semantics). Only the player's skip moves on.
+- **It never picks the crew.** `BandBench::workers` is untouched by every path.
+- **Skip** (`bench_auto_skip <f> <b>`, field 83) is valid only when `worked_order` is `None` **and** the
+  head is `auto`; otherwise it is refused by name. It parks the head's item (its recipe's
+  `output_equipment_id`) in `auto_skipped`, removes the head (a drawn order is workable, so a waiting
+  head holds no pile and nothing is forfeited) and refills.
+- **A skipped item returns only when the queue is next empty.** At each fill an item whose suggested
+  recipe can draw ONE item from stock (`order_is_workable` on a count-1 order) leaves `auto_skipped`,
+  and so does an item that is no longer in the suggestion list (nobody is going without it, so a
+  stale skip must not survive); it never preempts a running order. Turning auto off clears the set and leaves every order alone.
+- **When it runs:** the turn systems `advance_auto_craft` (before `advance_crafting`) and
+  `advance_auto_craft_after_bench` (after it — so an order that completes this turn has its successor
+  in the snapshot), both exclusive systems in the Population chain; and at the end of `bench_auto`,
+  `bench_auto_skip` and `bench_remove`.
+- **A detached party gets nothing** (it carries an `Expedition`; the snapshot publishes it no
+  suggestions either). A world missing the crafting configs does nothing.
+- **No config lever.** Every number is a count or a comparison the existing configs already own.
+
+Pinned by `core_sim/tests/auto_craft.rs` (the fill, the wait, skip and its refusals, no preemption,
+the player's order, toggle-off, successor-after-completion, the unlearned craft, the save round trip)
+and `sim_schema`'s `the_benchs_auto_state_and_an_orders_auto_tag_ride_the_wire`.
 
 ## `queueable` — the Make button's gate is KNOWLEDGE ONLY
 

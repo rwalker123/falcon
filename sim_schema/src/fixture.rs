@@ -464,6 +464,8 @@ fn seed_snapshot() -> WorldSnapshot {
                 short_to_finish: rows_of(MaterialShortfallState::default()),
                 ..Default::default()
             }),
+            // The skipped item ids — a repeated string field, seeded so the guard decodes one.
+            auto_skipped: vec!["spears".to_string(), "hoes".to_string()],
             ..Default::default()
         };
         // **WHAT TO MAKE NEXT** — a repeated field whose rows carry a repeated field of their own

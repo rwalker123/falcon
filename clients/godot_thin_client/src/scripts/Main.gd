@@ -433,6 +433,10 @@ func _ready() -> void:
             hud.connect("bench_raise_requested", Callable(self, "_on_hud_bench_raise"))
         if hud.has_signal("bench_priority_requested") and not hud.is_connected("bench_priority_requested", Callable(self, "_on_hud_bench_priority")):
             hud.connect("bench_priority_requested", Callable(self, "_on_hud_bench_priority"))
+        if hud.has_signal("bench_auto_requested") and not hud.is_connected("bench_auto_requested", Callable(self, "_on_hud_bench_auto")):
+            hud.connect("bench_auto_requested", Callable(self, "_on_hud_bench_auto"))
+        if hud.has_signal("bench_auto_skip_requested") and not hud.is_connected("bench_auto_skip_requested", Callable(self, "_on_hud_bench_auto_skip")):
+            hud.connect("bench_auto_skip_requested", Callable(self, "_on_hud_bench_auto_skip"))
         if hud.has_signal("set_starting_loadout_requested") and not hud.is_connected("set_starting_loadout_requested", Callable(self, "_on_hud_set_starting_loadout")):
             hud.connect("set_starting_loadout_requested", Callable(self, "_on_hud_set_starting_loadout"))
         if hud.has_signal("answer_fork_requested") and not hud.is_connected("answer_fork_requested", Callable(self, "_on_hud_answer_fork")):
@@ -2233,6 +2237,32 @@ static func format_bench_priority(payload: Dictionary) -> Dictionary:
         "message": "The bench is now %s priority for this band." % face.to_lower(),
     }
 
+## **`bench_auto <faction_id> <band_id> on|off` - THE BENCH'S AUTO SWITCH** (issue #779). While on, an
+## EMPTY queue is refilled from the Make next list with the top suggestion for its whole count. It
+## names the band and the state, one bench per band; legal on an idle bench.
+static func format_bench_auto(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    if band_id == HudConst.NO_BAND_ID or not payload.has("on"):
+        return {}
+    var on := bool(payload["on"])
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
+    return {
+        "line": "bench_auto %d %d %s" % [faction, band_id, "on" if on else "off"],
+        "message": "The bench now works down Make next." if on else "The bench no longer queues by itself.",
+    }
+
+## **`bench_auto_skip <faction_id> <band_id>`** - pass the waiting auto head's item over until it can be
+## drawn, and queue the next suggestion instead. Names the band and nothing else.
+static func format_bench_auto_skip(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    if band_id == HudConst.NO_BAND_ID:
+        return {}
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
+    return {
+        "line": "bench_auto_skip %d %d" % [faction, band_id],
+        "message": "Skipping to the next suggestion.",
+    }
+
 ## **RETIRED — `abandon_improvement` and its builder** (`docs/plan_standing_upkeep.md` §2.4). It
 ## existed to clear an assignment's STORED improvement, back when that field was the commitment; the
 ## build verb is DERIVED from the meter now, so there is no stored authority left to clear and a
@@ -2440,6 +2470,12 @@ func _on_hud_bench_raise(payload: Dictionary) -> void:
 ## the mark is captured live off the bench and lands on this command's own recapture.
 func _on_hud_bench_priority(payload: Dictionary) -> void:
     _send_formatted_command(format_bench_priority(payload))
+
+func _on_hud_bench_auto(payload: Dictionary) -> void:
+    _send_formatted_command(format_bench_auto(payload))
+
+func _on_hud_bench_auto_skip(payload: Dictionary) -> void:
+    _send_formatted_command(format_bench_auto_skip(payload))
 
 ## Compose one band's outfitting order — emitted on every stepper press, the card deferring nothing.
 ##

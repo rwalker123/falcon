@@ -15,6 +15,7 @@ pub(crate) const BUILD_ID: &str = match option_env!("CORE_SIM_BUILD_ID") {
     None => "dev-unknown",
 };
 
+pub mod auto_craft;
 mod band_names;
 pub mod belief;
 mod belief_config;
@@ -1269,7 +1270,12 @@ pub fn build_headless_app() -> App {
                     // The bench runs right after labor, for two reasons that both have to hold: it
                     // draws on the materials THIS turn's take just delivered, and its crew came out
                     // of the same worker pool the assignment loop above spends.
+                    // **Auto-craft fills an EMPTY queue** right before the bench works, and again
+                    // right after it (so an order that completes this turn has its successor in
+                    // the snapshot). See `auto_craft`.
+                    auto_craft::advance_auto_craft,
                     systems::advance_crafting,
+                    auto_craft::advance_auto_craft_after_bench,
                     // The bench-queue shortage notice reads the stock the draw just left, so it
                     // follows the draw directly.
                     systems::announce_bench_material_short,

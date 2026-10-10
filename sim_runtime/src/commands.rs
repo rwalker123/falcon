@@ -445,6 +445,19 @@ pub enum CommandPayload {
         /// The level token: `"high"`, `"normal"` or `"low"`.
         level: String,
     },
+    /// **TURN A BAND'S BENCH AUTO-CRAFT ON OR OFF** — while on, an empty queue is refilled from the
+    /// ranked craft suggestions. Off clears the skipped set and leaves existing orders alone.
+    BenchAuto {
+        faction_id: u32,
+        band_id: u64,
+        enabled: bool,
+    },
+    /// **SKIP THE AUTO ORDER THE BENCH IS WAITING ON** — parks its item and queues the next
+    /// suggestion. Refused unless nothing is workable and the head order is an auto order.
+    BenchAutoSkip {
+        faction_id: u32,
+        band_id: u64,
+    },
     /// The Telling: answer a pending narrative fork with one of its authored choices.
     AnswerFork {
         faction_id: u32,
@@ -1952,6 +1965,22 @@ impl CommandEnvelope {
                 band_id: *band_id,
                 level: level.clone(),
             }),
+            CommandPayload::BenchAuto {
+                faction_id,
+                band_id,
+                enabled,
+            } => pb::command_envelope::Command::BenchAuto(pb::BenchAutoCommand {
+                faction_id: *faction_id,
+                band_id: *band_id,
+                enabled: *enabled,
+            }),
+            CommandPayload::BenchAutoSkip {
+                faction_id,
+                band_id,
+            } => pb::command_envelope::Command::BenchAutoSkip(pb::BenchAutoSkipCommand {
+                faction_id: *faction_id,
+                band_id: *band_id,
+            }),
             CommandPayload::Corral {
                 faction_id,
                 target_x,
@@ -2642,6 +2671,15 @@ impl CommandEnvelope {
                 faction_id: cmd.faction_id,
                 band_id: cmd.band_id,
                 level: cmd.level,
+            },
+            pb::command_envelope::Command::BenchAuto(cmd) => CommandPayload::BenchAuto {
+                faction_id: cmd.faction_id,
+                band_id: cmd.band_id,
+                enabled: cmd.enabled,
+            },
+            pb::command_envelope::Command::BenchAutoSkip(cmd) => CommandPayload::BenchAutoSkip {
+                faction_id: cmd.faction_id,
+                band_id: cmd.band_id,
             },
             pb::command_envelope::Command::ExtendPen(cmd) => CommandPayload::ExtendPen {
                 faction_id: cmd.faction_id,

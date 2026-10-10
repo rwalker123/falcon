@@ -2086,6 +2086,13 @@ pub struct BenchState {
     /// that holds a pile or can draw one), else the head. `0` on an idle bench. Appended last.
     #[serde(default)]
     pub worked: u32,
+    /// **Auto-craft is on for this bench** — an empty queue is refilled from the craft suggestions.
+    /// Appended last.
+    #[serde(default)]
+    pub auto: bool,
+    /// **The item ids the player skipped** while auto-craft waited on them, sorted. Appended last.
+    #[serde(default)]
+    pub auto_skipped: Vec<String>,
 }
 
 /// **One order on a bench's queue** — `recipe × count`, a row of [`BenchState::orders`].
@@ -2114,6 +2121,9 @@ pub struct BenchOrderState {
     /// empty when every pass still to draw is covered. See `snapshot.fbs`.
     #[serde(default)]
     pub short_to_finish: Vec<MaterialShortfallState>,
+    /// Auto-craft queued this order rather than the player — the only kind a skip applies to.
+    #[serde(default)]
+    pub auto: bool,
 }
 
 /// **One craft suggestion** — an item the band's consumers went without, and how many to make. A row

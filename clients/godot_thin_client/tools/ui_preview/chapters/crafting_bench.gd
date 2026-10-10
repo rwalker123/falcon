@@ -17,7 +17,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 241
+const EXPECTED_CHECKPOINTS := 258
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
@@ -760,6 +760,7 @@ func _crafting_states() -> void:
 	await _short_head_state()
 	await _material_shortage_state()
 	await _worked_forecast_state()
+	await _auto_craft_states()
 
 	# Hand everything back: the panel closed, the roster restored to the reference band.
 	h._hud.close_crafting_panel()
@@ -1057,6 +1058,202 @@ func _worked_forecast_state() -> void:
 	h._assert_hud("crafting/worked-forecast — a BLOCKED well shows its refusal and NO forecast line",
 		panel != null and _forecast_label(panel, HudCraftingVocab.BENCH_SHORT_TO_FINISH_META, true) == null
 			and _blocked_line(panel) != null)
+	h._hud.close_crafting_panel()
+	await h._settle()
+
+# ---- AUTO-CRAFT (issue #779) ----------------------------------------------------------------------
+
+const AUTO_HEAD_RECIPE := "clubs"
+const AUTO_HEAD_NAME := "Clubs"
+const AUTO_HEAD_COUNT := SUGGEST_CLUBS_COUNT
+const AUTO_SKIPPED_ITEM := "clubs"
+const AUTO_SHORT_BONE := 4.9
+const AUTO_SKIPPED_LINE := "Auto skipped — back when bone is in"
+const AUTO_FREE_LINE := "Auto takes it back when the bench is free"
+
+## An auto head waiting short of bone: the bench is blocked, nothing is workable.
+func _auto_waiting_band() -> Dictionary:
+	var band := _crafting_band()
+	var bench: Dictionary = _bench()
+	bench["recipe_id"] = AUTO_HEAD_RECIPE
+	bench["display_name"] = AUTO_HEAD_NAME
+	bench["teaches"] = ""
+	bench["auto"] = true
+	bench["auto_skipped"] = []
+	bench["drawn"] = false
+	bench["output_grade"] = ""
+	bench["progress"] = 0.0
+	bench["rate_per_turn"] = BENCH_RATE
+	bench["blocked_reason"] = "Short %.1f bone" % AUTO_SHORT_BONE
+	bench["work"] = BENCH_WORK
+	bench["blocked_severity"] = HudCraftingVocab.SEVERITY_DANGER
+	var head := _order(AUTO_HEAD_RECIPE, AUTO_HEAD_COUNT, 0, 0.0, false, bench["blocked_reason"],
+		HudCraftingVocab.SEVERITY_DANGER)
+	head["auto"] = true
+	bench["orders"] = [head]
+	bench["worked"] = 0
+	band["bench"] = bench
+	band["craft_suggestions"] = _suggestions_without(["clubs"])
+	return band
+
+## The sim nets queued work out of Make next, so an item on the bench is not listed.
+func _suggestions_without(item_ids: Array) -> Array:
+	return _craft_suggestions().filter(func(s: Dictionary) -> bool: return not item_ids.has(String(s["item_id"])))
+
+## An auto order being worked, with the clubs suggestion skipped.
+func _auto_working_band() -> Dictionary:
+	var band := _crafting_band()
+	var bench: Dictionary = _bench()
+	bench["auto"] = true
+	bench["auto_skipped"] = [AUTO_SKIPPED_ITEM]
+	bench["recipe_id"] = SPEARS_FLINT_RECIPE
+	bench["display_name"] = QUEUE_PAUSED_NAME
+	bench["teaches"] = ""
+	(bench["orders"] as Array)[0]["recipe_id"] = SPEARS_FLINT_RECIPE
+	(bench["orders"] as Array)[0]["auto"] = true
+	band["bench"] = bench
+	band["craft_suggestions"] = _suggestions_without(["spears"])
+	return band
+
+func _auto_idle_band() -> Dictionary:
+	var band := _bare_band()
+	var bench: Dictionary = band["bench"]
+	bench["auto"] = true
+	bench["auto_skipped"] = []
+	band["bench"] = bench
+	return band
+
+func _auto_meta_node(node: Node, meta: String) -> Node:
+	if node.has_meta(meta):
+		return node
+	for child in node.get_children():
+		var found := _auto_meta_node(child, meta)
+		if found != null:
+			return found
+	return null
+
+func _auto_tag_nodes(node: Node, into: Array) -> void:
+	if node.has_meta(HudCraftingVocab.AUTO_TAG_META):
+		into.append(node)
+	for child in node.get_children():
+		_auto_tag_nodes(child, into)
+
+func _auto_show(band: Dictionary) -> CraftingPanel:
+	h._hud.update_band_alerts([band])
+	h._hud.open_crafting_panel(band)
+	await h._settle()
+	return h._hud.crafting_panel().panel()
+
+func _auto_craft_states() -> void:
+	var band_id := int(_crafting_band().get("band_id", HudConst.NO_BAND_ID))
+	var faction := HudConst.PLAYER_FACTION_ID
+
+	# (a) an auto head waiting short of bone: the tag in the well title, the Skip link under the red line.
+	var panel: CraftingPanel = await _auto_show(_auto_waiting_band())
+	if panel == null:
+		h._assert_hud("crafting/auto — the panel opens", false)
+		return
+	var tags: Array = []
+	_auto_tag_nodes(panel, tags)
+	h._assert_hud("crafting/auto — the waiting auto head wears ONE AUTO tag, on the well title (%s)"
+			% [tags.map(func(t): return t.get_meta(HudCraftingVocab.AUTO_TAG_META))],
+		tags.size() == 1 and int(tags[0].get_meta(HudCraftingVocab.AUTO_TAG_META))
+			== HudCraftingVocab.AUTO_TAG_WELL_INDEX)
+	var skip := _auto_meta_node(panel, HudCraftingVocab.AUTO_SKIP_META)
+	var blocked := _blocked_line(panel)
+	h._assert_hud("crafting/auto — the Skip link sits under the red blocked line",
+		skip != null and blocked != null and skip is Button
+			and (skip as Button).text == HudCraftingVocab.AUTO_SKIP_LINK
+			and (skip as Control).get_global_rect().position.y >= blocked.get_global_rect().end.y)
+	var switch := _auto_meta_node(panel, HudCraftingVocab.BENCH_AUTO_SWITCH_META)
+	h._assert_hud("crafting/auto — the switch reads ON",
+		switch != null and bool(switch.get_meta(HudCraftingVocab.BENCH_AUTO_SWITCH_META)))
+	await h._save("crafting_auto_waiting")
+
+	# The two commands, as the socket would see them.
+	var sent: Array = []
+	var on_auto := func(p: Dictionary) -> void:
+		sent.append(String(MAIN_SCRIPT.format_bench_auto(p).get("line", "")))
+	var on_skip := func(p: Dictionary) -> void:
+		sent.append(String(MAIN_SCRIPT.format_bench_auto_skip(p).get("line", "")))
+	h._hud.bench_auto_requested.connect(on_auto)
+	h._hud.bench_auto_skip_requested.connect(on_skip)
+	await _press_control(switch as Control)
+	panel = h._hud.crafting_panel().panel()
+	await _press_control(_auto_meta_node(panel, HudCraftingVocab.AUTO_SKIP_META) as Control)
+	h._hud.bench_auto_requested.disconnect(on_auto)
+	h._hud.bench_auto_skip_requested.disconnect(on_skip)
+	h._assert_hud("crafting/auto — a REAL press on the switch sends `bench_auto … off`, Skip sends `bench_auto_skip` (%s)" % [sent],
+		sent == ["bench_auto %d %d off" % [faction, band_id], "bench_auto_skip %d %d" % [faction, band_id]])
+	h._hud.close_crafting_panel()
+	await h._settle()
+
+	# An auto head that is NOT waiting shows no Skip; a player-queued waiting head shows none either.
+	var player_wait := _auto_waiting_band()
+	((player_wait["bench"] as Dictionary)["orders"] as Array)[0]["auto"] = false
+	panel = await _auto_show(player_wait)
+	h._assert_hud("crafting/auto — a waiting head the PLAYER queued gets no Skip and no tag",
+		panel != null and _auto_meta_node(panel, HudCraftingVocab.AUTO_SKIP_META) == null
+			and _auto_meta_node(panel, HudCraftingVocab.AUTO_TAG_META) == null)
+	var switch_off_band := _auto_waiting_band()
+	(switch_off_band["bench"] as Dictionary)["auto"] = false
+	panel = await _auto_show(switch_off_band)
+	h._assert_hud("crafting/auto — Auto off hides the Skip link even on an auto-tagged head, and the switch reads OFF",
+		panel != null and _auto_meta_node(panel, HudCraftingVocab.AUTO_SKIP_META) == null
+			and not bool(_auto_meta_node(panel, HudCraftingVocab.BENCH_AUTO_SWITCH_META)
+				.get_meta(HudCraftingVocab.BENCH_AUTO_SWITCH_META)))
+	h._hud.close_crafting_panel()
+	await h._settle()
+
+	# (b) an auto order being worked, a skipped suggestion dimmed beneath.
+	panel = await _auto_show(_auto_working_band())
+	var skipped_note := _auto_meta_node(panel, HudCraftingVocab.AUTO_SKIPPED_NOTE_META)
+	h._assert_hud("crafting/auto — the skipped clubs row says it was skipped, naming bone (%s)"
+			% [(skipped_note as Label).text if skipped_note != null else "none"],
+		skipped_note is Label and (skipped_note as Label).text == AUTO_SKIPPED_LINE
+			and (skipped_note as Label).get_theme_color(FONT_COLOR_THEME_ITEM) == HudStyle.INK_FAINT)
+	h._assert_hud("crafting/auto — …in place of its red shortfall line",
+		_forecast_label(panel, HudCraftingVocab.SUGGESTION_SHORTFALL_META, AUTO_SKIPPED_ITEM) == null)
+	var queue_button := _suggestion_queue_button(panel, AUTO_SKIPPED_ITEM)
+	h._assert_hud("crafting/auto — …and its Queue stays live",
+		queue_button != null and not queue_button.disabled)
+	tags.clear()
+	_auto_tag_nodes(panel, tags)
+	h._assert_hud("crafting/auto — the worked auto order's AUTO tag rides the well title",
+		tags.size() == 1 and int(tags[0].get_meta(HudCraftingVocab.AUTO_TAG_META))
+			== HudCraftingVocab.AUTO_TAG_WELL_INDEX)
+	h._assert_hud("crafting/auto — a worked bench shows no Skip link",
+		_auto_meta_node(panel, HudCraftingVocab.AUTO_SKIP_META) == null)
+	await h._save("crafting_auto_working")
+
+	# A skipped item nothing is short of any more reads the free-bench line; a queued auto order
+	# behind the worked one wears the tag on its ROW.
+	var free_band := _auto_working_band()
+	for offer_variant in free_band["craft_offers"]:
+		var offer: Dictionary = offer_variant
+		if String(offer.get("output_item_id", "")) == AUTO_SKIPPED_ITEM:
+			offer["shortfalls"] = []
+	var queued := _order("sled", QUEUE_WAITING_COUNT, 0, 0.0, false)
+	queued["auto"] = true
+	((free_band["bench"] as Dictionary)["orders"] as Array).append(queued)
+	panel = await _auto_show(free_band)
+	skipped_note = _auto_meta_node(panel, HudCraftingVocab.AUTO_SKIPPED_NOTE_META)
+	h._assert_hud("crafting/auto — a skipped item with nothing short reads the free-bench line",
+		skipped_note is Label and (skipped_note as Label).text == AUTO_FREE_LINE)
+	tags.clear()
+	_auto_tag_nodes(panel, tags)
+	var row_tag := _queue_rows(panel)
+	h._assert_hud("crafting/auto — an auto order on a queue ROW wears the tag (%d tags)" % tags.size(),
+		tags.size() == 2 and row_tag.size() == 1 and _auto_meta_node(row_tag[0], HudCraftingVocab.AUTO_TAG_META) != null)
+	h._hud.close_crafting_panel()
+	await h._settle()
+
+	# (c) an idle bench with Auto on.
+	panel = await _auto_show(_auto_idle_band())
+	h._assert_hud("crafting/auto — an idle bench with Auto on reads `%s`" % HudCraftingVocab.AUTO_IDLE_SUB,
+		panel != null and _label_with_text(panel, HudCraftingVocab.AUTO_IDLE_SUB) != null
+			and _label_with_text(panel, HudCraftingVocab.BENCH_IDLE_SUB) == null)
+	await h._save("crafting_auto_idle")
 	h._hud.close_crafting_panel()
 	await h._settle()
 
