@@ -215,7 +215,7 @@ impl SplitDowry {
 /// band's larder mass plus every party's carried provisions — detaching or recalling a party leaves
 /// the card's carry, food and free room exactly where they were.
 ///
-/// **The window only.** The cohort's own `carryCapacity` / `carryLoad`, the band panel and the
+/// **The window only.** The band's own carry (`carry::band_carry_capacity`), the band panel and the
 /// long-move shed and forecast stay the band's PRESENT people: a party does not walk with its band.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WindowPeople {

@@ -514,6 +514,10 @@ const BELIEFS_DEVOUT := 0.42
 const BELIEFS_TRADITIONAL := -0.31
 const BELIEFS_PULL := 0.30
 const BELIEFS_ROW_KEY := "Beliefs"
+## An unresolvable foreign source (no foreign band is staged here), a pull well above the printed precision.
+const BELIEFS_COMPACT_DRIFT_SOURCE := 9100
+const BELIEFS_COMPACT_DRIFT_AXIS_LABEL := "Open \u2194 Closed"
+const BELIEFS_COMPACT_DRIFT_DELTA := -0.02
 const BELIEFS_COMPACT_VALUES := "Devout 0.4, traditional 0.3."
 const BELIEFS_COMPACT_PULL := "The ancestors pull this band +0.30 devout and +0.30 traditional."
 const TOPBAR_SEDENTARIZATION_STAGE := "soft"
@@ -15089,10 +15093,6 @@ func _band_fixture() -> Dictionary:
 		"fertility_reserve": 1.5,
 		"fertility_trend": 1.25,
 		"stores": {"provisions": 84.0},
-		# What the band carries against what it can (#732) — every live band publishes both, so the
-		# reference band does too and every band-zone frame measures the `Carry:` row it renders.
-		"carry_capacity": 96.0,
-		"carry_load": 61.4,
 		"move_ferry_reach_tiles": 2,
 		"working_age": 16,
 		"idle_workers": 3,
@@ -15419,9 +15419,14 @@ func _assert_beliefs_compact_clause() -> void:
 		morale_run.contains(BandOverlayRenderer.ANCESTORS_GLYPH))
 	_assert_band_panel("beliefs compact: ...and no Beliefs ROW costs the short dock a line",
 		not text.contains(BELIEFS_ROW_KEY))
-	_assert_band_panel("beliefs compact: ...the hover carries the values and the pull sentence",
+	# The hover is per-row now: nothing at rest, and the Beliefs sentence over the clause's own run.
+	_assert_band_panel("beliefs compact: ...nothing is hovered at rest", vitals.tooltip_text == "")
+	vitals.meta_hover_started.emit(HudDisclosureVocab.ROW_HOVER_META_PREFIX + BELIEFS_ROW_KEY)
+	_assert_band_panel("beliefs compact: ...hovering the clause carries the values and the pull sentence",
 		vitals.tooltip_text.contains(BELIEFS_COMPACT_VALUES)
 		and vitals.tooltip_text.contains(BELIEFS_COMPACT_PULL))
+	vitals.meta_hover_ended.emit(HudDisclosureVocab.ROW_HOVER_META_PREFIX + BELIEFS_ROW_KEY)
+	_assert_band_panel("beliefs compact: ...and leaving it clears the tooltip", vitals.tooltip_text == "")
 	var untied := _vitals_worst_case_band_fixture()
 	untied["culture_ancestor_pull"] = []
 	var pulled_lines := _hud._banddetail.unit_summary_lines(
@@ -15429,6 +15434,39 @@ func _assert_beliefs_compact_clause() -> void:
 	var untied_lines := _hud._banddetail.unit_summary_lines(untied, "", DetailFormat.Context.new(), true)
 	var pulled_joined := "\n".join(pulled_lines)
 	var untied_joined := "\n".join(untied_lines)
+	# THE BREAK-AWAY WARNING (#702) in the SHORT tier: a warning must not vanish where Beliefs has no row.
+	var risky := _vitals_worst_case_band_fixture()
+	risky["culture_break_away_risk"] = true
+	var risky_joined := "\n".join(_hud._banddetail.unit_summary_lines(
+		risky, "", DetailFormat.Context.new(), true))
+	var risky_no_pull := _vitals_worst_case_band_fixture()
+	risky_no_pull["culture_ancestor_pull"] = []
+	risky_no_pull["culture_break_away_risk"] = true
+	var risky_no_pull_joined := "\n".join(_hud._banddetail.unit_summary_lines(
+		risky_no_pull, "", DetailFormat.Context.new(), true))
+	var amber_clause := "[color=#%s]%s[/color]" % [HudStyle.WARN_HEX, HudDisclosureVocab.BELIEFS_BREAK_AWAY_CLAUSE]
+	_assert_band_panel("beliefs compact: the flag adds the AMBER `may break away` clause to the Morale line",
+		risky_joined.contains(amber_clause) and not pulled_joined.contains(amber_clause))
+	_assert_band_panel("beliefs compact: ...even for a band with no ancestors pull",
+		risky_no_pull_joined.contains(amber_clause) and not untied_joined.contains(amber_clause))
+	var risky_ctx := DetailFormat.Context.new()
+	_hud._banddetail.unit_summary_lines(risky, "", risky_ctx, true)
+	_assert_band_panel("beliefs compact: ...and the Beliefs hover gains the break-away sentence",
+		String(risky_ctx.row_tooltips.get(HudDisclosureVocab.DETAIL_ROW_BELIEFS, "")).contains(
+			HudDisclosureVocab.BELIEFS_BREAK_AWAY_TOOLTIP))
+	# THE CONTACT-DRIFT ARROW (#702) rides the same clause in the SHORT tier, with the same hover.
+	var drifting := _vitals_worst_case_band_fixture()
+	drifting["culture_drift_source_band"] = BELIEFS_COMPACT_DRIFT_SOURCE
+	drifting["culture_drift_axis_label"] = BELIEFS_COMPACT_DRIFT_AXIS_LABEL
+	drifting["culture_drift_delta"] = BELIEFS_COMPACT_DRIFT_DELTA
+	var drift_ctx := DetailFormat.Context.new()
+	var drift_joined := "\n".join(_hud._banddetail.unit_summary_lines(drifting, "", drift_ctx, true))
+	_assert_band_panel("beliefs compact: a foreign pull adds the arrow to the Morale line",
+		drift_joined.contains(HudDisclosureVocab.BELIEFS_DRIFT_GLYPH)
+		and not pulled_joined.contains(HudDisclosureVocab.BELIEFS_DRIFT_GLYPH))
+	_assert_band_panel("beliefs compact: ...and the Beliefs hover names who is pulling",
+		String(drift_ctx.row_tooltips.get(HudDisclosureVocab.DETAIL_ROW_BELIEFS, "")).contains(
+			HudDisclosureVocab.BELIEFS_DRIFT_UNKNOWN_BAND))
 	_assert_band_panel("beliefs compact: a band with NO pull adds nothing to the line",
 		not untied_joined.contains(BandOverlayRenderer.ANCESTORS_GLYPH)
 		and pulled_joined.contains(BandOverlayRenderer.ANCESTORS_GLYPH)

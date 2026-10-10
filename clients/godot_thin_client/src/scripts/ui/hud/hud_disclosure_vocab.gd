@@ -102,7 +102,37 @@ const DETAIL_ROW_FODDER := "Fodder"
 # names ONE GOOD, which is what keeps it from reading as the summed materials scalar this arc refuses.
 const DETAIL_ROW_UPKEEP := "Upkeep"
 
-# **What the band can CARRY against what it holds** (#732) — `Carry: 48 / 102`, beneath the stores it
-# weighs. No disclosure: the row is the whole of it, and the sim's long-move forecast is what the
-# targeting banner quotes when a move would leave something behind.
-const DETAIL_ROW_CARRY := "Carry"
+## The `[url]` meta prefix of a per-row HOVER region (`DetailFormat.hover_wrap`): `hover:<row key>`. It
+## shares the label with the disclosure and band-jump metas, and `DisclosureController` ignores any meta
+## that is not its own, so a click on a hover run does nothing.
+const ROW_HOVER_META_PREFIX := "hover:"
+
+# ---- THE BREAK-AWAY WARNING on the Beliefs row (#702). The cohort key is the sim's own verdict
+# (`culture_break_away_risk`: past the soft divergence limit for the trigger ticks, purist, with a
+# sibling band in its people), never derived here. The clause rides the Beliefs row's value in the
+# warning ink, and the compact tier states it as a clause on the Morale line so the warning is not
+# lost where Beliefs has no row of its own.
+const BELIEFS_BREAK_AWAY_KEY := "culture_break_away_risk"
+const BELIEFS_BREAK_AWAY_CLAUSE := "may break away"
+const BELIEFS_BREAK_AWAY_TOOLTIP := \
+	"This band's ways have drifted far from its people's; a purist band that drifts further breaks away as a new people."
+
+# ---- THE CONTACT-DRIFT MARK on the Beliefs row (#702): a small violet arrow at the END of the value
+# (after the ancestors urn) while a FOREIGN people's band is pulling this band's culture, and one hover
+# sentence naming who and which way. The cohort keys are the sim's (`culture_drift_*`, foreign pulls
+# only: kin pulls are never published and source 0 = none); the pole comes off the decoder's
+# `A <-> B` axis label (a negative delta moves toward A, a positive one toward B) and the figure is a
+# MAGNITUDE toward the named pole, so it always reads `+`. **THE PRECISION IS ONE CONSTANT**: a pull whose
+# magnitude prints as zero at `BELIEFS_DRIFT_DECIMALS` hides BOTH the mark and the sentence, so the
+# hover can never say `+0.00`. A band or people the client cannot resolve reads `another band` / loses
+# the parenthetical, never a raw id.
+const BELIEFS_DRIFT_SOURCE_KEY := "culture_drift_source_band"
+const BELIEFS_DRIFT_LABEL_KEY := "culture_drift_axis_label"
+const BELIEFS_DRIFT_DELTA_KEY := "culture_drift_delta"
+const BELIEFS_DRIFT_POLE_SEPARATOR := " ↔ "
+const BELIEFS_DRIFT_GLYPH := "→"
+const BELIEFS_DRIFT_DECIMALS := 2
+const BELIEFS_DRIFT_BAND_FORMAT := "the %s band"
+const BELIEFS_DRIFT_UNKNOWN_BAND := "another band"
+const BELIEFS_DRIFT_PEOPLE_FORMAT := " (%s)"
+const BELIEFS_DRIFT_SENTENCE_FORMAT := "Drifting toward %s%s — %s +%s/turn."

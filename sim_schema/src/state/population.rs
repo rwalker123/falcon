@@ -1662,16 +1662,8 @@ pub struct PopulationCohortState {
     /// Turns until the last homeward hand is back; `0` = nobody walking home. Appended last.
     #[serde(default)]
     pub homeward_all_home_in: u32,
-    /// **What this band can carry** (#732) — whole working-age hands × one worker's pack, in
-    /// food-unit load. Dependants add nothing. Appended last.
-    #[serde(default)]
-    pub carry_capacity: f32,
-    /// **The load of everything this band holds** — larder, hay, every item (bench tools included)
-    /// and every material unit. Appended last.
-    #[serde(default)]
-    pub carry_load: f32,
     /// **How far a move keeps everything**, in hex steps — echoed per cohort. A move farther than
-    /// this sheds the band to [`Self::carry_capacity`]. Appended last.
+    /// this sheds the band down to what its workers can carry. Appended last.
     #[serde(default)]
     pub move_ferry_reach_tiles: u32,
     /// **What a long move would leave behind right now**: food. Computed by the shedding function the
@@ -1775,6 +1767,20 @@ pub struct PopulationCohortState {
     /// order, with no head-count. Empty when none. Appended last.
     #[serde(default)]
     pub breeding_peoples: Vec<BreedingPeopleState>,
+    /// **The band this band's strongest contact pull drifted it toward** (issue #702); `0` = no
+    /// pull this turn (`BandId(0)` is "unset"). Own bands only. Appended last.
+    #[serde(default)]
+    pub culture_drift_source_band: u64,
+    /// The trait axis (`CultureTraitAxis` index, `culture_traits` order) that pull moved most.
+    /// Appended last.
+    #[serde(default)]
+    pub culture_drift_axis: u8,
+    /// That axis's signed delta this turn. Appended last.
+    #[serde(default)]
+    pub culture_drift_delta: f32,
+    /// The band may break away over its culture (issue #702). Own bands only. Appended last.
+    #[serde(default)]
+    pub culture_break_away_risk: bool,
 }
 
 /// **ONE OWN-PEOPLE BAND IN A BREEDING POPULATION** — a row of

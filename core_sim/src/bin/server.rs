@@ -27363,7 +27363,32 @@ mod long_move_tests {
         transfer_sent: f32,
     }
 
-    fn read_carry(app: &bevy::prelude::App, band_id: u64) -> PublishedCarry {
+    /// The band's carry capacity and held load — the sim's own functions, since the cohort row
+    /// publishes neither.
+    fn sim_carry(app: &mut bevy::prelude::App, band_id: u64) -> (f32, f32) {
+        let carry = app
+            .world
+            .resource::<ExpeditionConfigHandle>()
+            .get()
+            .carry
+            .clone();
+        let (cohort, equipment) = app
+            .world
+            .query::<(&BandId, &PopulationCohort, Option<&BandEquipment>)>()
+            .iter(&app.world)
+            .find(|(id, _, _)| id.0 == band_id)
+            .map(|(_, cohort, equipment)| (cohort.clone(), equipment.cloned()))
+            .expect("the band is alive");
+        (
+            core_sim::carry::band_carry_capacity(&cohort, &carry).to_f32(),
+            core_sim::carry::held_load(&cohort.stores, equipment.as_ref())
+                .load(&carry)
+                .to_f32(),
+        )
+    }
+
+    fn read_carry(app: &mut bevy::prelude::App, band_id: u64) -> PublishedCarry {
+        let (carry_capacity, carry_load) = sim_carry(app, band_id);
         let snapshot = app
             .world
             .resource::<SnapshotHistory>()
@@ -27382,8 +27407,8 @@ mod long_move_tests {
             .find(|cohort| cohort.bandId() == band_id)
             .expect("the band publishes a row");
         PublishedCarry {
-            carry_capacity: row.carryCapacity(),
-            carry_load: row.carryLoad(),
+            carry_capacity,
+            carry_load,
             move_ferry_reach_tiles: row.moveFerryReachTiles(),
             leaves_food: row.longMoveLeavesFood(),
             leaves_items: row.longMoveLeavesItems(),
@@ -27536,7 +27561,7 @@ mod long_move_tests {
 
         // **The identity, turn frame to turn frame, across the shedding move.**
         core_sim::run_turn(&mut app);
-        let turn = read_carry(&app, band_id);
+        let turn = read_carry(&mut app, band_id);
         let larder_after = holdings(&app, band).0;
         let identity = turn.food_income
             - turn.food_consumption

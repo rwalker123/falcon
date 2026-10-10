@@ -1163,9 +1163,7 @@ fn create_populations<'a>(
                     homewardFoodSpoils: cohort.homeward_food_spoils,
                     homewardNextLoadIn: cohort.homeward_next_load_in,
                     homewardAllHomeIn: cohort.homeward_all_home_in,
-                    // WHAT THIS BAND CAN CARRY — appended last (#732).
-                    carryCapacity: cohort.carry_capacity,
-                    carryLoad: cohort.carry_load,
+                    // THE LONG MOVE — appended last (#732).
                     moveFerryReachTiles: cohort.move_ferry_reach_tiles,
                     longMoveLeavesFood: cohort.long_move_leaves_food,
                     longMoveLeavesItems: cohort.long_move_leaves_items,
@@ -1195,6 +1193,10 @@ fn create_populations<'a>(
                     cultureAncestorPull: culture_ancestor_pull,
                     breedingMembers: Some(breeding_members),
                     breedingPeoples: Some(breeding_peoples),
+                    cultureDriftSourceBand: cohort.culture_drift_source_band,
+                    cultureDriftAxis: cohort.culture_drift_axis,
+                    cultureDriftDelta: cohort.culture_drift_delta,
+                    cultureBreakAwayRisk: cohort.culture_break_away_risk,
                 },
             )
         })
@@ -1809,8 +1811,6 @@ fn decode_population(
         homeward_food_spoils: cohort.homewardFoodSpoils(),
         homeward_next_load_in: cohort.homewardNextLoadIn(),
         homeward_all_home_in: cohort.homewardAllHomeIn(),
-        carry_capacity: cohort.carryCapacity(),
-        carry_load: cohort.carryLoad(),
         move_ferry_reach_tiles: cohort.moveFerryReachTiles(),
         long_move_leaves_food: cohort.longMoveLeavesFood(),
         long_move_leaves_items: cohort.longMoveLeavesItems(),
@@ -1854,6 +1854,10 @@ fn decode_population(
         independence_grievance_threshold: cohort.independenceGrievanceThreshold(),
         culture_traits: decode_scalars(cohort.cultureTraits()),
         culture_ancestor_pull: decode_scalars(cohort.cultureAncestorPull()),
+        culture_drift_source_band: cohort.cultureDriftSourceBand(),
+        culture_drift_axis: cohort.cultureDriftAxis(),
+        culture_drift_delta: cohort.cultureDriftDelta(),
+        culture_break_away_risk: cohort.cultureBreakAwayRisk(),
         breeding_members: map_rows(cohort.breedingMembers(), |member| BreedingMemberState {
             band_id: member.bandId(),
             lines: member.lines(),

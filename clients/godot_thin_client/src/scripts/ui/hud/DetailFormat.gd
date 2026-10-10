@@ -1049,41 +1049,73 @@ static func detail_bbcode(lines: Array, ctx: Context = null) -> String:
             if not table_open:
                 out += "[table=2]"
                 table_open = true
-            out += "[cell]%s[/cell][cell][color=#%s]%s[/color][/cell]" % [
-                _key_cell(String(kv[0]), context), _value_hex(String(kv[0]), String(kv[1]), context), kv[1],
-            ]
+            var row_key := String(kv[0])
+            var value_run := "[color=#%s]%s[/color]" % [_value_hex(row_key, String(kv[1]), context), kv[1]]
+            # A value already carrying a clickable run (a merged disclosure clause) is not wrapped: the
+            # engine has no nested metas, and that clause states its own hover where it needs one.
+            if not String(kv[1]).contains(DISCLOSURE_URL_OPEN):
+                value_run = hover_wrap(row_key, value_run, context)
+            var key_run := _key_cell(row_key, context)
+            if not context.disclosures.has(row_key):
+                key_run = hover_wrap(row_key, key_run, context)
+            out += "[cell]%s[/cell][cell]%s[/cell]" % [key_run, value_run]
     if table_open:
         out += "[/table]"
     return out
 
-## **THE HOVER A DETAIL BLOCK CARRIES, JOINED FROM THE ROWS THAT REGISTERED ONE** — and it is the
-## BLOCK's, not the row's, because THE ENGINE WILL NOT CARRY A PER-ROW ONE HERE.
+## **THE HOVER A ROW CARRIES SHOWS ONLY OVER THAT ROW** — `ctx.row_tooltips` (keyed by the row's own
+## key) is the one source of the text, and a detail surface is ONE `RichTextLabel`, so the row cannot
+## carry a `tooltip_text` of its own.
 ##
 ## ⛔ **`[hint=…]` IS NOT PARSED BY THIS GODOT BUILD, AND IT FAILS LOUDLY IN THE MIDDLE OF A TABLE.**
 ## It was tried first, being the documented BBCode for a per-run tooltip: the tag rendered LITERALLY,
 ## and the parser did not recover — every tag after it in that cell (`[color=…]`, `[/cell]`,
-## `[/table]`) printed as text too, so the rung row read
-## `[hint=This ground is slipping…][color=#f2b13f]⚠ Blocked 96%[/color][/hint][/cell][/table]` on
-## screen. Rendered and looked at, not reasoned about. Do not re-add it without rendering it first.
+## `[/table]`) printed as text too. Rendered and looked at, not reasoned about. Do not re-add it
+## without rendering it first.
 ##
-## So the remedy rides `RichTextLabel.tooltip_text`, which answers for the whole block — and the block
-## is exactly ONE SOURCE (the land drawer describes one patch, the herd drawer one herd), of which at
-## most one rung is ever at risk (`SourceForecast.at_risk_rung`). The hover therefore states one
-## source's remedy on a surface about that source, which is a wider target than the row and never a
-## different subject. **A `RichTextLabel` is NOT a `Label`**, so a bare `tooltip_text` is live here
-## rather than the silent no-op `HudWidgets.set_label_tooltip` exists for.
+## So a row that registered a hover wears a `[url=hover:<key>]` run over its key and its value
+## (`hover_wrap`), and `wire_row_hovers` answers the label's `meta_hover_started` by setting that
+## row's sentence as the `tooltip_text` and `meta_hover_ended` by clearing it. The tooltip is
+## therefore EMPTY everywhere but over a row that has something to say. This replaced a block-wide
+## `block_tooltip` that joined every row's sentence into one string, which put the Carry sentence
+## under a cursor resting on Beliefs.
 ##
-## `""` for a block whose every rung is being kept, which is every calm card in the game — and an
-## empty `tooltip_text` shows no tooltip at all, so nothing is offered where nothing is wrong.
-static func block_tooltip(ctx: Context) -> String:
-    if ctx == null:
-        return ""
-    var lines: Array[String] = []
-    for key in ctx.row_tooltips:
-        var hover := String(ctx.row_tooltips[key])
-        if hover != "" and not lines.has(hover):
-            lines.append(hover)
-    return "\n".join(lines)
+## **THE RUN IS NOT UNDERLINED, because the wired label turns `meta_underlined` off** — a hover
+## region is not a link. A run that IS a link underlines itself with `[u]` (`_key_cell`,
+## `HudFormat.clickable_run`, `FactionRollup._band_row`).
+static func hover_wrap(key: String, inner: String, ctx: Context) -> String:
+    if ctx == null or String(ctx.row_tooltips.get(key, "")) == "":
+        return inner
+    return "[url=%s%s]%s[/url]" % [HudDisclosureVocab.ROW_HOVER_META_PREFIX, key, inner]
+
+## Make a detail label answer a row's hover with that row's sentence alone. Safe to call on every
+## render: the signals are connected once and the sentences are re-stored each time.
+static func wire_row_hovers(label: RichTextLabel, ctx: Context) -> void:
+    if label == null:
+        return
+    label.meta_underlined = false
+    label.tooltip_text = ""
+    label.set_meta(ROW_HOVERS_META, {} if ctx == null else ctx.row_tooltips.duplicate())
+    if label.has_meta(ROW_HOVERS_WIRED_META):
+        return
+    label.set_meta(ROW_HOVERS_WIRED_META, true)
+    label.meta_hover_started.connect(_on_row_hover_started.bind(label))
+    label.meta_hover_ended.connect(_on_row_hover_ended.bind(label))
+
+const ROW_HOVERS_META := "row_hovers"
+const ROW_HOVERS_WIRED_META := "row_hovers_wired"
+
+static func _on_row_hover_started(meta: Variant, label: RichTextLabel) -> void:
+    var payload := String(meta)
+    if not payload.begins_with(HudDisclosureVocab.ROW_HOVER_META_PREFIX):
+        return
+    var hovers: Dictionary = label.get_meta(ROW_HOVERS_META, {})
+    label.tooltip_text = String(hovers.get(
+        payload.substr(HudDisclosureVocab.ROW_HOVER_META_PREFIX.length()), ""))
+
+static func _on_row_hover_ended(meta: Variant, label: RichTextLabel) -> void:
+    if String(meta).begins_with(HudDisclosureVocab.ROW_HOVER_META_PREFIX):
+        label.tooltip_text = ""
 
 ## THE KEY→TINT REGISTRY: which hex a row's VALUE renders in, keyed on the row's own label. Every
 ## detail surface in the game consults this one table, which is why the tile card's Sight /
@@ -1219,7 +1251,7 @@ static func _key_cell(key: String, ctx: Context) -> String:
     var st: Dictionary = ctx.disclosures[key]
     var caret := BREAKDOWN_CARET_OPEN if bool(st.get("open", false)) else BREAKDOWN_CARET_CLOSED
     var caret_hex := HudStyle.WARN_HEX if bool(st.get("concerning", false)) else HudStyle.SIGNAL_HEX
-    return DISCLOSURE_URL_OPEN + "%s%s][color=#%s]%s %s[/color][/url]" % [
+    return DISCLOSURE_URL_OPEN + "%s%s][color=#%s][u]%s %s[/u][/color][/url]" % [
         HudDisclosureVocab.BREAKDOWN_TOGGLE_META_PREFIX, String(st.get("key", "")),
         caret_hex, key, caret,
     ]
@@ -3165,14 +3197,10 @@ const FODDER_DORMANT_VALUE := HudComposeVocab.YIELD_LOCKED_GLYPH
 ## takes no arguments for that reason — there is no per-faction, per-band or per-render fact left in
 ## the row to vary.
 ##
-## ⛔ **IT CARRIES NO HOVER, BECAUSE THE HOVER A ROW REGISTERS HERE IS THE WHOLE BLOCK'S.** The stat
-## block is ONE `RichTextLabel`, and `block_tooltip` joins every row's registered sentence into that
-## label's single `tooltip_text` — a per-run `[hint=…]` is not parsed by this Godot build, so there is
-## no way to scope a sentence to the row that owns it. The row registered two here (a Foddering lock,
-## and a calm *no fodder yet*), and what a player actually got was a paragraph about HAY popping out
-## from under a cursor resting on Growth, Morale or Food — rows a fodder lock bears on not at all.
-## **A dormant account states itself with the dim dash and nothing else.** Anything more has to wait
-## for a surface that can hover one row.
+## ⛔ **IT CARRIES NO HOVER.** It used to register two (a Foddering lock, and a calm *no fodder yet*)
+## when a hover answered for the whole block, so a paragraph about HAY popped out from under a cursor
+## resting on Growth, Morale or Food. Hovers are per-row now, but a dim dash for an account that does
+## not exist needs no sentence: **a dormant account states itself with the dash and nothing else.**
 ##
 ## **THE RUNWAY CONTEXT IS DELIBERATELY LEFT ALONE.** Callers reset `Context.fodder_turns` to `NAN`
 ## per render; writing a real `turns_of_fodder` for this row (999 for anything that drains nothing)

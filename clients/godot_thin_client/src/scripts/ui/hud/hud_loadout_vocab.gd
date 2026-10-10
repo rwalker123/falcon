@@ -65,7 +65,7 @@ const BAND_ID_KEY := "band_id"
 ## never a success signal: an accepted order leaves it open, which is what lets a pick be revised.
 const OPEN_KEY := "open"
 ## ⛔ **THE BAND'S WHOLE CARRY — goods AND food, in food-unit load** (#732), on every window: the
-## band's workers × per-worker carry, the same number as the cohort's own `carry_capacity`. It is the
+## band's workers × per-worker carry (the sim's `band_carry_capacity`). It is the
 ## carry bar's whole width. What an order's GOODS may weigh depends on `food_fixed` (below).
 const CARRY_CAPACITY_KEY := "carry_capacity"
 ## ⛔ **THE BAND'S FOOD, in load.** On a SPLINTER (`food_fixed` false) `food_share` is the most it may

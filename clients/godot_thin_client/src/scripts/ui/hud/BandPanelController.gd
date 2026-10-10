@@ -1197,14 +1197,8 @@ func _build_vitals_label(band: Dictionary) -> RichTextLabel:
     detail_label.text = DetailFormat.detail_bbcode(
         _banddetail.unit_summary_lines(band, _selectioncard.selected_terrain_label(), ctx,
             _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT, false), ctx)
-    # **THE HOVER A ROW REGISTERED, ANSWERED BY THE BLOCK** — a lapsed rung, an under-kept pen.
-    # `[hint=…]` is not parsed by this Godot build (see `DetailFormat.block_tooltip`), so the label
-    # carries every registered sentence at once and a cursor anywhere over the block gets all of
-    # them; `SubjectDrawerController` does exactly this for the OTHER detail host. That is also the
-    # reason the dormant `Fodder:` row registers nothing at all: its sentence reached a cursor
-    # resting on Growth, Morale or Food. Empty for a block whose every row is live, which shows no
-    # tooltip at all.
-    detail_label.tooltip_text = DetailFormat.block_tooltip(ctx)
+    # **A ROW'S HOVER SHOWS OVER THAT ROW ALONE** (`DetailFormat.wire_row_hovers`).
+    DetailFormat.wire_row_hovers(detail_label, ctx)
     return detail_label
 
 ## "PEOPLE" — who the band IS: a stacked children/working-age/elders bar plus its key and the

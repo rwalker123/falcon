@@ -4594,9 +4594,7 @@
           "target_y": 103
         }
       ],
-      "carry_capacity": 24.440001,
       "carry_fodder_weight": 50.959999,
-      "carry_load": 48.189999,
       "carry_material_weight": 39.889999,
       "carry_per_worker": 112.379997,
       "children": 97,
@@ -4875,10 +4873,15 @@
         }
       ],
       "culture_ancestor_pull": {"__packed": "PackedFloat32Array", "len": 3, "items": [27.690001, 7.67, 10.18]},
+      "culture_break_away_risk": true,
+      "culture_drift_axis": 26,
+      "culture_drift_axis_label": "Trait",
+      "culture_drift_delta": 13.75,
+      "culture_drift_source_band": 174,
       "culture_traits": {"__packed": "PackedFloat32Array", "len": 3, "items": [15.68, 91.290001, 50.68]},
       "current_x": 0,
       "current_y": 1,
-      "cut_off": true,
+      "cut_off": false,
       "discontent_fraction": 0.00013,
       "elders": 199,
       "entity": 100,
@@ -4976,7 +4979,7 @@
       "founding_parent_min_workers": 132,
       "generation": 178,
       "grievance": 0.000154,
-      "has_belief_anchor": false,
+      "has_belief_anchor": true,
       "heart_bond": 1.43,
       "heart_last_contact_turn": 78,
       "home": 193,
@@ -5009,7 +5012,7 @@
       "idle_workers": 54,
       "independence_grievance_threshold": 59.740002,
       "is_expedition": true,
-      "is_traveling": true,
+      "is_traveling": false,
       "kit_id": "populations[0].kit_id",
       "kit_item_conditions": [
         {
@@ -6021,9 +6024,7 @@
           "target_y": 200
         }
       ],
-      "carry_capacity": 58.130001,
       "carry_fodder_weight": 12.16,
-      "carry_load": 68.220001,
       "carry_material_weight": 81.660004,
       "carry_per_worker": 74.93,
       "children": 148,
@@ -6302,10 +6303,15 @@
         }
       ],
       "culture_ancestor_pull": {"__packed": "PackedFloat32Array", "len": 3, "items": [88.629997, 1.55, 85.279999]},
+      "culture_break_away_risk": false,
+      "culture_drift_axis": 167,
+      "culture_drift_axis_label": "Trait",
+      "culture_drift_delta": 55.23,
+      "culture_drift_source_band": 149,
       "culture_traits": {"__packed": "PackedFloat32Array", "len": 3, "items": [55.869999, 23.379999, 59.23]},
       "current_x": 1,
       "current_y": 2,
-      "cut_off": false,
+      "cut_off": true,
       "discontent_fraction": 0.000061,
       "elders": 58,
       "entity": 101,
@@ -6403,7 +6409,7 @@
       "founding_parent_min_workers": 115,
       "generation": 195,
       "grievance": 0.000053,
-      "has_belief_anchor": true,
+      "has_belief_anchor": false,
       "heart_bond": 22.93,
       "heart_last_contact_turn": 101,
       "home": 148,
@@ -6435,8 +6441,8 @@
       "hunter_attack": 43.43,
       "idle_workers": 151,
       "independence_grievance_threshold": 24.59,
-      "is_expedition": false,
-      "is_traveling": true,
+      "is_expedition": true,
+      "is_traveling": false,
       "kit_id": "populations[1].kit_id",
       "kit_item_conditions": [
         {
@@ -7409,9 +7415,7 @@
           "target_y": 13
         }
       ],
-      "carry_capacity": 70.75,
       "carry_fodder_weight": 77.010002,
-      "carry_load": 108.230003,
       "carry_material_weight": 33.52,
       "carry_per_worker": 84.809998,
       "children": 39,
@@ -7690,10 +7694,15 @@
         }
       ],
       "culture_ancestor_pull": {"__packed": "PackedFloat32Array", "len": 3, "items": [85.190002, 59.779999, 33.330002]},
+      "culture_break_away_risk": false,
+      "culture_drift_axis": 96,
+      "culture_drift_axis_label": "Trait",
+      "culture_drift_delta": 5.61,
+      "culture_drift_source_band": 88,
       "culture_traits": {"__packed": "PackedFloat32Array", "len": 3, "items": [32.779999, 7.37, 24.040001]},
       "current_x": 2,
       "current_y": 0,
-      "cut_off": false,
+      "cut_off": true,
       "discontent_fraction": 0.000036,
       "elders": 73,
       "entity": 102,
@@ -7791,7 +7800,7 @@
       "founding_parent_min_workers": 118,
       "generation": 72,
       "grievance": 0.00018,
-      "has_belief_anchor": false,
+      "has_belief_anchor": true,
       "heart_bond": 70.870003,
       "heart_last_contact_turn": 24,
       "home": 95,
@@ -7823,8 +7832,8 @@
       "hunter_attack": 69.129997,
       "idle_workers": 68,
       "independence_grievance_threshold": 50.919998,
-      "is_expedition": true,
-      "is_traveling": false,
+      "is_expedition": false,
+      "is_traveling": true,
       "kit_id": "populations[2].kit_id",
       "kit_item_conditions": [
         {

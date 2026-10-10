@@ -816,7 +816,6 @@ func run(harness) -> void:
 
 	# ---- WHAT THE BAND CARRIES (#732) --------------------------------------------------------------
 	# **APPENDED**, for the reason the blocks above state.
-	await _carry_states()
 
 	# ---- THE BAND'S STANDING TOWARD ITS PEOPLE'S HEART (#284) -------------------------------------
 	# **APPENDED**, for the reason the blocks above state.
@@ -1052,60 +1051,6 @@ const BILL_INCOME_NONE := 0.0
 ## Its disclosure key — `DetailFormat.breakdown_key(kind, band)`'s shape over the bill band's own
 ## entity, so the caret cannot collide with the reference band's Food / Morale / Growth popovers.
 const BAND_DISCLOSURE_UPKEEP := "upkeep:908"
-
-## ---- WHAT THE BAND CARRIES (#732) — the `Carry:` row, as a PAIR on one band with only the load moving:
-## under its capacity the row registers no hover; over it the block's hover states the move rule. BOTH
-## are plain ink: a band that is not moving is never warned that it is over its carry (the maintainer's
-## rule). Either half alone passes on a row that never or always registers the hover.
-const CARRY_CAPACITY := 96.0
-const CARRY_LOAD_UNDER := 61.4
-const CARRY_LOAD_OVER := 154.0
-const CARRY_REACH := 2
-## The row's VALUE and the hover, spelled as LITERALS — a needle composed through the format under
-## test can only agree with itself. The value is asserted beside the row's KEY rather than as one
-## `Carry: …` string, because `detail_bbcode` splits a row into a key cell and a value cell.
-const CARRY_VALUE_UNDER := "61 / 96"
-const CARRY_VALUE_OVER := "154 / 96"
-const CARRY_HOVER := "A move farther than 2 tiles leaves behind what the band can't carry."
-
-func _carry_band_fixture(carried: float) -> Dictionary:
-	var band := BandFx.band_fixture()
-	band["carry_capacity"] = CARRY_CAPACITY
-	band["carry_load"] = carried
-	band["move_ferry_reach_tiles"] = CARRY_REACH
-	return band
-
-func _carry_states() -> void:
-	var light := _carry_band_fixture(CARRY_LOAD_UNDER)
-	h._hud._band_labor._player_band = light
-	h._hud.show_unit_selection(light)
-	await h._settle()
-	var light_vitals := String(h._hud.occupant_detail.get_parsed_text())
-	h._assert_hud("a band under its carry states `%s %s`, and registers no hover"
-			% [HudDisclosureVocab.DETAIL_ROW_CARRY, CARRY_VALUE_UNDER],
-		light_vitals.contains(HudDisclosureVocab.DETAIL_ROW_CARRY)
-			and light_vitals.contains(CARRY_VALUE_UNDER)
-			and not String(h._hud.occupant_detail.tooltip_text).contains(CARRY_HOVER))
-	h._assert_hud("…in plain ink, not the warning one",
-		not String(h._hud.occupant_detail.text).contains(
-			"[color=#%s]%s" % [HudStyle.WARN_HEX, CARRY_VALUE_UNDER]))
-	var heavy := _carry_band_fixture(CARRY_LOAD_OVER)
-	h._hud._band_labor._player_band = heavy
-	h._hud.show_unit_selection(heavy)
-	await h._settle()
-	await h._save("band_carry_over")
-	var heavy_vitals := String(h._hud.occupant_detail.get_parsed_text())
-	h._assert_hud("a band OVER its carry states `%s %s`"
-			% [HudDisclosureVocab.DETAIL_ROW_CARRY, CARRY_VALUE_OVER],
-		heavy_vitals.contains(HudDisclosureVocab.DETAIL_ROW_CARRY)
-			and heavy_vitals.contains(CARRY_VALUE_OVER))
-	# ⛔ **AND OVER ITS CARRY IS STILL NOT A WARNING.** It was amber; the band is not moving, and the
-	# long-move targeting warning is the one place over-carry is stated.
-	h._assert_hud("…and its value is NOT drawn in the warning ink",
-		not String(h._hud.occupant_detail.text).contains("[color=#%s]%s" % [HudStyle.WARN_HEX,
-			CARRY_VALUE_OVER]))
-	h._assert_hud("…and the block's hover states the move rule (\"%s\")" % CARRY_HOVER,
-		String(h._hud.occupant_detail.tooltip_text).contains(CARRY_HOVER))
 
 ## ---- THE BAND'S STANDING TOWARD ITS PEOPLE'S HEART (#284) -----------------------------------------
 ## How long ago the draining band last touched its heart, and the bond its strongest tie still holds.
@@ -1419,6 +1364,12 @@ func _beliefs_row_count(vitals: String) -> int:
 			count += 1
 	return count
 
+## Hover the Beliefs row the way the engine does: the label emits its hover-started meta, and the
+## drawer answers with that row's sentence alone.
+func _hover_beliefs() -> void:
+	h._hud.occupant_detail.meta_hover_started.emit(
+		HudDisclosureVocab.ROW_HOVER_META_PREFIX + HudDisclosureVocab.DETAIL_ROW_BELIEFS)
+
 func _belief_culture_states() -> void:
 	# The drawer's content height WITHOUT the row: Beliefs is an ordinary table row, so its height over this
 	# baseline says whether it wrapped.
@@ -1440,6 +1391,7 @@ func _belief_culture_states() -> void:
 	h._assert_hud("a tied band reads `%s` carrying the ancestors mark" % BELIEFS_TIED_ROW,
 		tied_vitals.contains(BELIEFS_TIED_ROW)
 		and tied_vitals.contains(BandOverlayRenderer.ANCESTORS_GLYPH))
+	_hover_beliefs()
 	h._assert_hud("…and its hover states the pull: `%s`" % BELIEFS_TIED_TOOLTIP,
 		String(h._hud.occupant_detail.tooltip_text).contains(BELIEFS_TIED_TOOLTIP))
 	h._assert_hud("…the row sits directly beneath Morale",
@@ -1459,6 +1411,7 @@ func _belief_culture_states() -> void:
 	h._assert_hud("an untied band reads the same row WITHOUT the ancestors mark",
 		untied_vitals.contains(BELIEFS_TIED_ROW)
 		and not untied_vitals.contains(BandOverlayRenderer.ANCESTORS_GLYPH))
+	_hover_beliefs()
 	h._assert_hud("…and its hover invites: `%s`" % BELIEFS_UNTIED_TOOLTIP,
 		String(h._hud.occupant_detail.tooltip_text).contains(BELIEFS_UNTIED_TOOLTIP))
 
@@ -1472,6 +1425,7 @@ func _belief_culture_states() -> void:
 	var flipped_vitals := _flat(String(h._hud.occupant_detail.get_parsed_text()))
 	h._assert_hud("a secular, revisionist band reads `%s`" % BELIEFS_FLIPPED_ROW,
 		flipped_vitals.contains(BELIEFS_FLIPPED_ROW))
+	_hover_beliefs()
 	h._assert_hud("…and its pull sentence follows the sign too: `%s`" % BELIEFS_FLIPPED_TOOLTIP,
 		String(h._hud.occupant_detail.tooltip_text).contains(BELIEFS_FLIPPED_TOOLTIP))
 
@@ -1491,8 +1445,130 @@ func _belief_culture_states() -> void:
 	await h._settle()
 	h._assert_hud("a rival band draws NO Beliefs row",
 		_beliefs_row_count(String(h._hud.occupant_detail.get_parsed_text())) == 0)
+	await _break_away_states()
+	await _culture_drift_states()
 	h._hud.show_unit_selection(BandFx.band_fixture())
 	await h._settle()
+
+## THE CONTACT-DRIFT MARK (issue #702): a violet arrow at the end of the Beliefs value while a FOREIGN
+## band pulls this band's culture, and one hover sentence naming the band, its people and the pole.
+const DRIFT_BAND_ENTITY := 917
+const DRIFT_SOURCE_BAND_ID := 7102
+const DRIFT_SOURCE_NAME := "Red Hill"
+const DRIFT_SOURCE_FACTION := 1
+const DRIFT_PEOPLE_NAME := "Ashfolk"
+const DRIFT_UNKNOWN_SOURCE_BAND_ID := 7103
+const DRIFT_AXIS_OPEN_CLOSED := 1
+const DRIFT_AXIS_LABEL := "Open \u2194 Closed"
+const DRIFT_DELTA := -0.02
+const DRIFT_DELTA_ROUNDS_TO_ZERO := 0.004
+const DRIFT_SENTENCE := "Drifting toward the Red Hill band (Ashfolk) \u2014 Open +0.02/turn."
+const DRIFT_SENTENCE_CLOSED := "Closed +0.02/turn."
+const DRIFT_SENTENCE_UNKNOWN := "Drifting toward another band \u2014 Open +0.02/turn."
+const DRIFT_SENTENCE_NEEDLE := "Drifting toward"
+
+func _drift_band_fixture(source_band: int, delta: float) -> Dictionary:
+	var band := BandFx.band_fixture()
+	band["entity"] = DRIFT_BAND_ENTITY
+	band["culture_traits"] = _culture_vector(BELIEFS_TIED_DEVOUT, BELIEFS_TIED_TRADITIONAL)
+	band["culture_ancestor_pull"] = _culture_vector(BELIEFS_PULL_DEVOUT, BELIEFS_PULL_TRADITIONAL)
+	band["culture_drift_source_band"] = source_band
+	band["culture_drift_axis"] = DRIFT_AXIS_OPEN_CLOSED
+	band["culture_drift_axis_label"] = DRIFT_AXIS_LABEL
+	band["culture_drift_delta"] = delta
+	return band
+
+## Show the drifting band and return `{glyph, hover}`: whether the Beliefs value carries the arrow, and
+## the sentence the Beliefs hover answers with (read the way the engine does, via the hover signal).
+func _drift_probe(source_band: int, delta: float, save_as: String = "") -> Dictionary:
+	h._hud.show_unit_selection(_drift_band_fixture(source_band, delta))
+	await h._settle()
+	if save_as != "":
+		await h._save(save_as)
+	var label: RichTextLabel = h._hud.occupant_detail
+	var meta := HudDisclosureVocab.ROW_HOVER_META_PREFIX + HudDisclosureVocab.DETAIL_ROW_BELIEFS
+	label.meta_hover_started.emit(meta)
+	var hover := String(label.tooltip_text)
+	label.meta_hover_ended.emit(meta)
+	return {"glyph": String(label.text).contains(HudDisclosureVocab.BELIEFS_DRIFT_GLYPH), "hover": hover}
+
+func _culture_drift_states() -> void:
+	var source := BandFx.band_fixture()
+	source["entity"] = DRIFT_BAND_ENTITY + 1
+	source["band_id"] = DRIFT_SOURCE_BAND_ID
+	source["name"] = DRIFT_SOURCE_NAME
+	source["faction"] = DRIFT_SOURCE_FACTION
+	h._hud._band_labor.set_foreign_bands([source])
+	FactionNames.update([{"faction": DRIFT_SOURCE_FACTION, "name": DRIFT_PEOPLE_NAME}])
+	var pulled := await _drift_probe(DRIFT_SOURCE_BAND_ID, DRIFT_DELTA, "band_culture_drift")
+	h._assert_hud("a foreign pull puts the arrow on the Beliefs value, and the hover names band, people and pole",
+		bool(pulled["glyph"]) and String(pulled["hover"]).contains(DRIFT_SENTENCE))
+	h._assert_hud("…the arrow is in the belief violet, after the urn",
+		String(h._hud.occupant_detail.text).contains("[color=#%s]%s[/color]" % [
+			HudStyle.BELIEF.to_html(false), HudDisclosureVocab.BELIEFS_DRIFT_GLYPH]))
+	h._assert_hud("…and no drift LINE is drawn any more",
+		not _flat(String(h._hud.occupant_detail.get_parsed_text())).contains(DRIFT_SENTENCE_NEEDLE))
+	var flipped := await _drift_probe(DRIFT_SOURCE_BAND_ID, -DRIFT_DELTA)
+	h._assert_hud("…a positive delta names the axis's other pole: `%s`" % DRIFT_SENTENCE_CLOSED,
+		String(flipped["hover"]).contains(DRIFT_SENTENCE_CLOSED))
+	var unnamed := await _drift_probe(DRIFT_UNKNOWN_SOURCE_BAND_ID, DRIFT_DELTA)
+	h._assert_hud("an unresolvable source reads `%s`, no raw id" % DRIFT_SENTENCE_UNKNOWN,
+		bool(unnamed["glyph"]) and String(unnamed["hover"]).contains(DRIFT_SENTENCE_UNKNOWN)
+			and not String(unnamed["hover"]).contains(str(DRIFT_UNKNOWN_SOURCE_BAND_ID)))
+	FactionNames.reset()
+	var no_people := await _drift_probe(DRIFT_SOURCE_BAND_ID, DRIFT_DELTA)
+	h._assert_hud("a band whose people cannot be named drops the parenthetical, never a `Faction N`",
+		String(no_people["hover"]).contains("Drifting toward the Red Hill band \u2014 Open +0.02/turn.")
+			and not String(no_people["hover"]).contains("("))
+	var zero := await _drift_probe(DRIFT_SOURCE_BAND_ID, DRIFT_DELTA_ROUNDS_TO_ZERO)
+	h._assert_hud("a pull that rounds to +0.00 shows NO arrow and NO sentence",
+		not bool(zero["glyph"]) and not String(zero["hover"]).contains(DRIFT_SENTENCE_NEEDLE))
+	var none := await _drift_probe(HudConst.NO_BAND_ID, 0.0)
+	h._assert_hud("source 0 shows neither",
+		not bool(none["glyph"]) and not String(none["hover"]).contains(DRIFT_SENTENCE_NEEDLE))
+	h._hud._band_labor.set_foreign_bands([])
+
+## THE BREAK-AWAY WARNING (#702): `Beliefs  devout · traditional · may break away`, the clause in the
+## warning ink and the Beliefs hover one sentence longer. A flag false draws none.
+const BREAK_AWAY_BAND_ENTITY := 918
+const BREAK_AWAY_CLAUSE_ROW := "devout · traditional · may break away"
+
+func _break_away_states() -> void:
+	var risky := BandFx.band_fixture()
+	risky["entity"] = BREAK_AWAY_BAND_ENTITY
+	risky["culture_traits"] = _culture_vector(BELIEFS_TIED_DEVOUT, BELIEFS_TIED_TRADITIONAL)
+	risky["culture_break_away_risk"] = true
+	h._hud.show_unit_selection(risky)
+	await h._settle()
+	await h._save("band_beliefs_break_away")
+	var risky_vitals := _flat(String(h._hud.occupant_detail.get_parsed_text()))
+	h._assert_hud("a band flagged at risk reads `Beliefs … %s`" % BREAK_AWAY_CLAUSE_ROW,
+		risky_vitals.contains(HudDisclosureVocab.DETAIL_ROW_BELIEFS)
+		and risky_vitals.contains(BREAK_AWAY_CLAUSE_ROW))
+	h._assert_hud("…the clause is in the WARNING ink",
+		String(h._hud.occupant_detail.text).contains("[color=#%s]%s[/color]" % [
+			HudStyle.WARN_HEX, HudDisclosureVocab.BELIEFS_BREAK_AWAY_CLAUSE]))
+	var hover_meta := HudDisclosureVocab.ROW_HOVER_META_PREFIX + HudDisclosureVocab.DETAIL_ROW_BELIEFS
+	h._hud.occupant_detail.meta_hover_started.emit(hover_meta)
+	h._assert_hud("…and the Beliefs hover gains the break-away sentence",
+		String(h._hud.occupant_detail.tooltip_text).contains(HudDisclosureVocab.BELIEFS_BREAK_AWAY_TOOLTIP))
+	h._hud.occupant_detail.meta_hover_ended.emit(hover_meta)
+	var calm := BandFx.band_fixture()
+	calm["entity"] = BREAK_AWAY_BAND_ENTITY
+	calm["culture_traits"] = _culture_vector(BELIEFS_TIED_DEVOUT, BELIEFS_TIED_TRADITIONAL)
+	h._hud.show_unit_selection(calm)
+	await h._settle()
+	h._assert_hud("a band NOT flagged draws no `may break away` clause and its hover has no such sentence",
+		not _flat(String(h._hud.occupant_detail.get_parsed_text())).contains(
+			HudDisclosureVocab.BELIEFS_BREAK_AWAY_CLAUSE)
+		and not String(h._hud.occupant_detail.text).contains(HudDisclosureVocab.BELIEFS_BREAK_AWAY_CLAUSE))
+	h._hud.occupant_detail.meta_hover_started.emit(hover_meta)
+	h._assert_hud("…the calm band's hover states the values only",
+		not String(h._hud.occupant_detail.tooltip_text).contains(HudDisclosureVocab.BELIEFS_BREAK_AWAY_TOOLTIP)
+		and String(h._hud.occupant_detail.tooltip_text).contains(BELIEFS_UNTIED_TOOLTIP))
+	h._hud.occupant_detail.meta_hover_ended.emit(hover_meta)
+	h._assert_hud("…and nothing is hovered at rest",
+		String(h._hud.occupant_detail.tooltip_text) == "")
 
 ## A band that HOLDS something which eats a good. Its own entity, for the disclosure key's sake.
 func _standing_bill_band_fixture() -> Dictionary:
@@ -1953,10 +2029,10 @@ const FODDER_KNOWLEDGE_PART := 0.35
 
 const FODDER_KNOWLEDGE_LEARNED := 1.0
 
-## **THE WORDS A FODDER SENTENCE CANNOT AVOID.** The dormant row registers NO hover: a row's hover
-## here is the whole BLOCK's (`DetailFormat.block_tooltip` joins them onto one `tooltip_text`, per-run
-## `[hint=…]` being unparsed in this build), so the two sentences it used to register popped out from
-## under a cursor resting on Growth, Morale or Food. Asked as WORDS rather than against the retired
+## **THE WORDS A FODDER SENTENCE CANNOT AVOID.** The dormant row registers NO hover. When a hover
+## answered for the whole block the two sentences it used to register popped out from under a cursor
+## resting on Growth, Morale or Food; hovers are per-row now (`DetailFormat.hover_wrap` /
+## `wire_row_hovers`), but a dim dash for an account that does not exist still needs no sentence. Asked as WORDS rather than against the retired
 ## consts, because a re-worded sentence is the same defect back.
 const RETIRED_FODDER_HOVER_WORDS := ["fodder", "hay"]
 

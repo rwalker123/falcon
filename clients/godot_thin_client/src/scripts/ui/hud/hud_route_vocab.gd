@@ -954,9 +954,8 @@ static func road_lines(road: Dictionary, keeper_label: String = "",
 	var bonus := bonus_value(road)
 	if bonus != "":
 		lines.append("%s: %s" % [ROAD_BONUS_ROW, bonus])
-	# **THE REST OF THE PAYOFF GOES TO THE BLOCK'S HOVER**, keyed on the row that stopped saying it.
-	# `DetailFormat.block_tooltip` joins every registered hover into the one `tooltip_text` a
-	# `RichTextLabel` block can carry, `[hint=…]` not being parsed by this Godot build.
+	# **THE REST OF THE PAYOFF GOES TO THE ROW'S HOVER**, keyed on the row that stopped saying it
+	# (`DetailFormat.hover_wrap` shows it over that row alone).
 	if ctx != null:
 		var spare := bonus_tooltip(road)
 		if spare != "":

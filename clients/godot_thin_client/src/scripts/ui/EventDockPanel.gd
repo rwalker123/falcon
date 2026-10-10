@@ -641,6 +641,9 @@ static func detail_phrase(detail: String) -> String:
 			fragments.append(coordinate)
 			open_index = -1
 			continue
+		if HudEventVocab.DETAIL_FRAGMENT_HIDDEN.has(token):
+			open_index = -1
+			continue
 		var split := token.find("=")
 		if split > 0:
 			open_key = token.substr(0, split)

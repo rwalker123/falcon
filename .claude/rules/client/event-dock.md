@@ -97,7 +97,11 @@ on `band_changed_hands`' shape. The gained side stays Alert for `party_defected`
 per-row override matches a `key=value` fragment on ANY kind, so a `side=gained` demotion would reach
 the other two handover kinds. `lost_touch` (detail `band=`) is the warning one step before it: nothing
 is lost yet and a visit restores contact, so it is Notable. All four tokens are already in
-`DETAIL_KEY_HIDDEN`, so both kinds render an empty detail column.
+`DETAIL_KEY_HIDDEN`, so both kinds render an empty detail column. A culture split (#702) adds
+`cause=culture` to the same detail; the label already says it ("grew too far from our ways"), so
+`HudEventVocab.DETAIL_FRAGMENT_HIDDEN` drops that whole fragment by exact match and the column stays
+empty. It is a fragment table and not a `cause` key entry because `cause=cold|heat|age` on `died` is
+real content. The rung stays Alert on both sides.
 
 **A cross-people `migrated` line takes the handover's treatment exactly.** The source side reads
 `N left Band X to join Faction F` with `to=<faction>`, the destination side `N from Faction F joined

@@ -1452,6 +1452,8 @@ mod tests {
             belief_relay_region: Vec::new(),
             culture_traits: Vec::new(),
             culture_ancestor_pull: Vec::new(),
+            culture_drift: None,
+            culture_break_away_risk: false,
             entity: Entity::from_raw(1),
             // This fixture asserts on the derived readouts, not on band identity.
             band_id: None,

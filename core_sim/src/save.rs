@@ -125,7 +125,9 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 28 | Predators name themselves (#701 follow-up): `Herd` gained `predator_eaten_this_turn` and `predator_eaten_by` — what predators drew off the herd this turn and which species drew most — which `BuildGate::PredatorsAteGrowth` is judged on and the herd telemetry publishes as `predatorEaten` / `predatorEatenBy`. The herd rides the checkpoint, so a version-27 blob has neither |
 /// | 29 | Food rots at the end of its shelf life (#706): `FoodMix` holds each keeping class as age-stamped `FoodBatch` lots (`class -> [{age, amount}]`, oldest first) instead of one amount per class, so every band's larder, every party pack and every in-flight cargo serializes its lots; `LaborTarget::Hunt` gained `move_with_herd` (migration mode, #797), required on a decode. |
 /// | 30 | Another people's lines count only while in touch (#691): `SimState` gained `free_breeding` (`FreeBreedingPeoples`, the peoples whose breeding the head-count freed for good), and `BreedingReading` (carried on `PopulationCohort::last_breeding`) gained the `members` and `peoples` rows the wire publishes as `PopulationCohortState.breedingMembers` / `breedingPeoples`. A version-29 blob has neither. |
-pub const SAVE_FORMAT_VERSION: u32 = 30;
+/// | 31 | Culture over a connection (#702): `CultureManagerCheckpoint` gained `applied_contact_pull` (each band's strongest contact-drift pull, published as `PopulationCohortState.cultureDriftSourceBand` / `cultureDriftAxis` / `cultureDriftDelta`). A version-30 blob lacks it |
+/// | 32 | Break-away warning (#702): `CultureManagerCheckpoint` gained `break_away_risk` (the bands that may break away over their culture, published as `PopulationCohortState.cultureBreakAwayRisk`). A version-31 blob lacks it |
+pub const SAVE_FORMAT_VERSION: u32 = 32;
 
 /// gzip level for the payload document.
 ///

@@ -391,8 +391,8 @@ seeds from it.
 The window is **per band**, so it rides the cohort beside the two things a picker draws with it:
 
 - **`PopulationCohortState.loadoutWindow`** (`BandLoadoutWindowState`) — `open`, `carryCapacity`
-  (the band's WHOLE carry, goods and food, on every window — the same number as the cohort's
-  `carryCapacity`), `foodShare` / `foodCarried` and `foodFixed`: on a fixed-larder window (the
+  (the band's WHOLE carry, goods and food, on every window — the same number as
+  `carry::band_carry_capacity` gives the band), `foodShare` / `foodCarried` and `foodFixed`: on a fixed-larder window (the
   opening band, a parent whose grant is open) both food fields are the larder's mass and the goods
   allowance is `carryCapacity − foodCarried`; on a splinter they are its full share F and what has
   crossed, and the goods allowance is the whole `carryCapacity`. `OverCarry`'s capacity is that goods

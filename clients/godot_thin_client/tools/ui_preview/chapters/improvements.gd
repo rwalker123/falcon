@@ -1374,14 +1374,14 @@ func run(harness) -> void:
 		and not blocked_row.contains(RETIRED_LOST_SOON_NEEDLE)
 		and not blocked_row.contains(RETIRED_LOST_NOW_NEEDLE))
 	# **THE REMEDY IS THE CARD'S HOVER NOW** — the BLOCK's, not the row's, `[hint=…]` being unparsed by
-	# this Godot build (`DetailFormat.block_tooltip` carries what it rendered instead). Asserted on the
+	# this Godot build (`DetailFormat.wire_row_hovers` shows each row's sentence over that row). Asserted on the
 	# label's own `tooltip_text` by EQUALITY, since half the claim is that the hover carries the remedy
 	# AND NOTHING ELSE.
 	var slipping_hover: String = HudWorkVocab.under_kept_note_for_source(
 		SourceForecast.SOURCE_KIND_FORAGE)
 	h._assert_hud("…and the remedy rides the card's hover instead (\"%s\")"
-			% h._hud.tile_detail.tooltip_text,
-		h._hud.tile_detail.tooltip_text == slipping_hover)
+			% _tile_card_hovers(),
+		_tile_card_hovers() == slipping_hover)
 	# > ### ⛔ THE PAIRING THIS FRAME EXISTS FOR — a block AND a shortfall, one instruction between them
 	# >
 	# > `escapement` on a source whose keeping is ALSO short is the shape that broke: the `At risk:` row
@@ -1395,7 +1395,7 @@ func run(harness) -> void:
 		SourceForecast.SOURCE_KIND_FORAGE)
 	h._assert_hud("…and the remedy naming who pays is on the HOVER and on no visible line (%d)"
 			% blocked_visible.count(under_kept),
-		h._hud.tile_detail.tooltip_text.contains(under_kept)
+		_tile_card_hovers().contains(under_kept)
 		and blocked_visible.count(under_kept) == BLOCKED_HOVER_ABSENT)
 	h._assert_hud("…beside the cause, ONCE each — never one instruction twice on one card (%d)"
 			% blocked_visible.count(blocked_cause),
@@ -2362,8 +2362,8 @@ func _a_rung_that_slipped_is_building_again() -> void:
 	# the card is where a player interrogates it, and the words are the work board's own note, so the
 	# two surfaces cannot phrase one hazard differently.
 	h._assert_hud("…and names the ROLE that pays it on the card's hover, in the board's words (\"%s\")"
-			% h._hud.tile_detail.tooltip_text,
-		h._hud.tile_detail.tooltip_text
+			% _tile_card_hovers(),
+		_tile_card_hovers()
 			== HudWorkVocab.under_kept_note_for_source(SourceForecast.SOURCE_KIND_FORAGE))
 	# **AND A HEALTHY SOURCE STATES NO HOVER AT ALL** — the pair, without which every claim above
 	# passes on a card that hangs the remedy off every rung it draws.
@@ -2590,7 +2590,7 @@ func _both_live_meters_get_their_own_row() -> void:
 		_under_kept_hover(short_kept_both, SourceForecast.IMPROVEMENT_SOW)
 			== HudWorkVocab.under_kept_note_for_source(SourceForecast.SOURCE_KIND_FORAGE)
 		and _under_kept_hover(short_kept_both, SourceForecast.IMPROVEMENT_CULTIVATE) == ""
-		and h._hud.tile_detail.tooltip_text
+		and _tile_card_hovers()
 			== HudWorkVocab.under_kept_note_for_source(SourceForecast.SOURCE_KIND_FORAGE))
 
 	# **AND THE SAME ROUTING ON THE UNBUILT ARM — the reviewer's own walk, as a rendered card.** A
@@ -3029,3 +3029,16 @@ func _blocked_herd_frames() -> void:
 	h._assert_hud("…a predator no herd in view carries falls back to its key (%s)" % str(unseen),
 		unseen.size() == 1 and unseen[0].begins_with("Wolf ate"))
 	h._set_world_herds([])
+
+
+## Every sentence the tile card registered for its rows, joined. The hover is per-row now (it shows only
+## over the row that owns it, `workings.gd` -> `_assert_hovers_are_per_row`), so what a card CLAIMS to say
+## on hover is read off the sentences the render wired, not off a block-wide `tooltip_text`.
+func _tile_card_hovers() -> String:
+	var hovers: Dictionary = h._hud.tile_detail.get_meta(DetailFormat.ROW_HOVERS_META, {})
+	var sentences: Array[String] = []
+	for key in hovers:
+		var sentence := String(hovers[key])
+		if sentence != "" and not sentences.has(sentence):
+			sentences.append(sentence)
+	return "\n".join(sentences)

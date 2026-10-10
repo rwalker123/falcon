@@ -181,6 +181,25 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "culture_ancestor_pull",
         &regrowth_samples_packed(cohort.cultureAncestorPull()),
     );
+    // CULTURE OVER A CONNECTION (issue #702). The strongest contact pull this turn: the BandId drifted
+    // toward (0 = no pull; the axis and delta are then 0), the `CultureTraitAxis` index (same order as
+    // `culture_traits`), that axis's signed per-turn delta, and the axis's `A ↔ B` label from the one
+    // table `dict/culture.rs` already owns (so the client never keeps a second pole list). Own
+    // bands only: a foreign row carries the defaults.
+    let _ = dict.insert(
+        "culture_drift_source_band",
+        cohort.cultureDriftSourceBand() as i64,
+    );
+    let _ = dict.insert("culture_drift_axis", i64::from(cohort.cultureDriftAxis()));
+    let _ = dict.insert(
+        "culture_drift_axis_label",
+        crate::dict::culture::culture_axis_label_for_index(cohort.cultureDriftAxis()),
+    );
+    let _ = dict.insert("culture_drift_delta", f64::from(cohort.cultureDriftDelta()));
+    // The break-away warning: true when this purist band is past the soft divergence limit for the
+    // trigger ticks and has a sibling band in its people, i.e. it breaks away if the drift reaches the
+    // hard limit. Own bands only; a foreign row carries false.
+    let _ = dict.insert("culture_break_away_risk", cohort.cultureBreakAwayRisk());
     let _ = dict.insert("size", cohort.size() as i64);
     // Every Scalar field below comes from `cohort_scalars` — see its doc comment for why.
     let scalars = cohort_scalars(cohort);
@@ -1876,18 +1895,14 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "homeward_all_home_in",
         i64::from(cohort.homewardAllHomeIn()),
     );
-    // WHAT THIS BAND CAN CARRY (#732), in food-unit load:
-    //   carry_capacity  — whole working-age hands × `expedition_config.carry.per_worker_carry` (7.0).
-    //   carry_load      — everything the band holds right now: food + weighted hay + items + materials.
+    // THE LONG MOVE (#732), in food-unit load:
     //   move_ferry_reach_tiles — how far a move may go and keep everything; a move FARTHER sheds the
-    //                     band down to `carry_capacity` and what is left behind is lost.
+    //                     band down to what its workers can carry and what is left behind is lost.
     //   long_move_leaves_food / _items / _materials — the sim's own forecast of that shedding, by
     //                     the same function the move runs. The client NEVER mirrors the rule; all 0
     //                     when the band fits (and on a detached party).
     //   food_left_behind — food a long move left behind since the last turn frame: a loss term of the
     //                     larder identity, read exactly as `food_spoiled` is.
-    let _ = dict.insert("carry_capacity", f64::from(cohort.carryCapacity()));
-    let _ = dict.insert("carry_load", f64::from(cohort.carryLoad()));
     let _ = dict.insert(
         "move_ferry_reach_tiles",
         i64::from(cohort.moveFerryReachTiles()),
@@ -1965,7 +1980,7 @@ fn loadout_window_to_dict(window: fb::BandLoadoutWindowState<'_>) -> VarDictiona
     // committing a loadout leaves it open, which is what lets a pick be revised.
     let _ = dict.insert("open", window.open());
     // The band's WHOLE carry (goods + food), in food-unit load — the bar's whole width, and the
-    // same number as the cohort's own `carry_capacity`.
+    // sim's `band_carry_capacity`.
     let _ = dict.insert("carry_capacity", f64::from(window.carryCapacity()));
     // THE BAND'S FOOD, in load. On a splinter (`food_fixed` false) `food_share` is the most it may
     // take and `food_carried` what it holds now — the truth, where a client's

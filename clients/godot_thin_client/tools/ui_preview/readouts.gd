@@ -377,6 +377,11 @@ const DETAIL_EXCERPT_ABSENT := "<row absent>"
 ## value is no better a needle (a `50` appears in any percentage two rows up). Excerpt from the KEY,
 ## then assert on what follows it.
 static func detail_excerpt(bbcode: String, key: String) -> String:
+	# A row's per-row hover region (`[url=hover:<key>]…[/url]`) is invisible markup that would otherwise
+	# sit between the key and its value and spend the fixed window.
+	var hover_open := RegEx.create_from_string(
+		"\\[url=%s[^\\]]*\\]" % HudDisclosureVocab.ROW_HOVER_META_PREFIX)
+	bbcode = hover_open.sub(bbcode, "", true).replace("[/url]", "")
 	var at := bbcode.find(key)
 	if at < 0:
 		return DETAIL_EXCERPT_ABSENT
