@@ -161,7 +161,7 @@ a band at `(1,35)` are **10 hex steps** apart; the old comparison read wrapped `
 rival's whole 29-person band changed faction off one over-long sight line. **No config was retuned
 to compensate**: narrowing the diagonals is the fix.
 
-- **The bounding box is unchanged and is still a superset.** Every hex step changes the offset
+- **The bounding box is a superset for TERRAIN only, not for a large-group bonus.** Every hex step changes the offset
   column and row by at most one (`HEX_NEIGHBOR_OFFSETS`), so a tile `n` steps away lies within `n`
   columns and `n` rows; the box is widened by the sweep's largest positive terrain term, so
   `effective_range <= max_range` for every tile not carrying a large-group bonus. A tile that does
