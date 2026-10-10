@@ -408,6 +408,21 @@ const FOLLOW_BEHIND_HEXES := 5
 const FOLLOW_CREW := 2
 const FOLLOW_MIGRATORY := "migratory"
 const FOLLOW_NO_NEXT := Vector2i(-1, -1)
+
+## HUNTING BY NEED (`docs/plan_roaming_bands.md` §Hunting by need): the need row's fixtures. The donors
+## are a forage row, a (non-followed) hunt row, and the idle hands; the muster numbers are the wire's.
+const NEED_FORAGE_TILE := Vector2i(72, 21)
+const NEED_FORAGE_STANDING := 4
+const NEED_FORAGE_LENT := 2
+const NEED_DONOR_HUNT_STANDING := 3
+const NEED_DONOR_HUNT_LENT := 1
+const NEED_IDLE_MUSTERED := 2
+const NEED_CREW_OUT := NEED_IDLE_MUSTERED + NEED_FORAGE_LENT + NEED_DONOR_HUNT_LENT
+const NEED_TURNS_TO_KILL := 3
+const NEED_KILL_PROGRESS := 0.4
+const NEED_TURNS_UNTIL := 2
+const NEED_FOOD_TURNS := 6.0
+const NEED_UNLIMITED_FOOD_TURNS := 999.0
 const RUNG_PENNED_HERD_ID := "game_aurochs_rp"
 ## The penned herd's crew, staffed in full — this frame is about the RUNG, so it must not also trip
 ## the under-herded ⚠ and leave two explanations for one amber row.
@@ -12314,6 +12329,132 @@ func _follow_row_states() -> void:
 		HudWorkVocab.WORK_ROW_FOLLOW_BEHIND_FORMAT % FOLLOW_BEHIND_HEXES)
 	await _follow_case("band_panel_follow_off", false, FOLLOW_BAND_TILE, FOLLOW_NO_NEXT, "")
 	_assert_follow_toggle_resends()
+	await _need_row_states()
+	_assert_need_toggle_off_resends()
+
+## The need-row band: the followed mammoth row holds NO standing hands (the sim's rule), the other two
+## hunt rows and a forage row are the donors. `muster` 0 is a waiting row.
+func _need_band_fixture(muster: int, turns_until: int, lent_forage: int, lent_hunt: int,
+		idle_mustered: int, food_turns: float) -> Dictionary:
+	var band := _follow_band_fixture(true)
+	band["turns_of_food"] = food_turns
+	band["idle_mustered"] = idle_mustered
+	var rows: Array = band["labor_assignments"]
+	var need: Dictionary = rows[0]
+	need["workers"] = 0
+	need["muster_crew"] = muster
+	need["turns_until_hunt"] = turns_until
+	need["turns_to_kill"] = NEED_TURNS_TO_KILL if muster > 0 else 0
+	need["kill_progress"] = NEED_KILL_PROGRESS if muster > 0 else 0.0
+	need["hunt_useful_workers"] = 5
+	var donor_hunt: Dictionary = rows[1]
+	donor_hunt["workers"] = NEED_DONOR_HUNT_STANDING
+	donor_hunt["lent_to_hunt"] = lent_hunt
+	rows.append({"kind": "forage", "workers": NEED_FORAGE_STANDING, "workers_needed": NEED_FORAGE_STANDING,
+		"floor": 0.5, "target_x": NEED_FORAGE_TILE.x, "target_y": NEED_FORAGE_TILE.y,
+		"actual_yield": 0.9, "sustainable_yield": 0.9, "lent_to_hunt": lent_forage})
+	return band
+
+## Render one need-row case and read the board back. `lines` are the party-block lines wanted (all of
+## them, in order, ignoring any other row's), `count` the need row's count-slot text.
+func _need_case(save_name: String, band: Dictionary, herd_tile: Vector2i, count: String,
+		primary: String, lines: Array[String], donors: bool) -> void:
+	_set_world_herds(_follow_herd_fixtures(herd_tile, FOLLOW_NO_NEXT))
+	_push_bands([band])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	await _save(save_name)
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	var counts := _collect_meta_controls(_panel, HudWorkVocab.WORK_ROW_NEED_COUNT_META)
+	if counts.size() != 1:
+		_fail("%s: expected exactly one need-row count slot, found %d (%s)" % [save_name, counts.size(),
+			str(counts.map(func(c): return [(c as Label).text, c.is_visible_in_tree()]))])
+		return
+	var count_label := counts[0] as Label
+	if count_label.text != count:
+		_fail("%s: the need row's count slot reads `%s`, expected `%s`" % [save_name, count_label.text, count])
+	# NO STEPPER on a need row: nothing in its line carries the stepper faces.
+	for sibling in count_label.get_parent().get_children():
+		if sibling is Button and ((sibling as Button).text == HudWorkVocab.STEPPER_MINUS_FACE
+				or (sibling as Button).text == HudWorkVocab.STEPPER_PLUS_FACE):
+			_fail("%s: a need row mounts a worker stepper" % save_name)
+	var accounts: Array[String] = []
+	for node in _collect_meta_controls(_panel, HudWorkVocab.WORK_ROW_ACCOUNTS_META):
+		accounts.append(String(node.get_meta(HudWorkVocab.WORK_ROW_ACCOUNTS_META)))
+	if not accounts.has(primary):
+		_fail("%s: expected the need row's primary line `%s`, found %s" % [save_name, primary, str(accounts)])
+	var party: Array[String] = []
+	for node in _collect_meta_controls(_panel, HudWorkVocab.WORK_ROW_PARTY_META):
+		party.append(String(node.get_meta(HudWorkVocab.WORK_ROW_PARTY_META)))
+	for want in lines:
+		if not party.has(want):
+			_fail("%s: expected the line `%s`, found %s" % [save_name, want, str(party)])
+	var has_meter := not _collect_meta_controls(_panel, HudWorkVocab.WORK_ROW_NEED_METER_META).is_empty()
+	if has_meter != (count != HudWorkVocab.WORK_ROW_NEED_WAITING):
+		_fail("%s: the kill meter is %s but the crew is %s" % [save_name, str(has_meter), count])
+	var lent_counts := _collect_meta_controls(_panel, HudWorkVocab.WORK_ROW_LENT_COUNT_META)
+	var lent_lines := _collect_meta_controls(_panel, HudWorkVocab.WORK_ROW_LENT_LINE_META)
+	if donors:
+		var want_counts: Array[String] = [
+			HudWorkVocab.WORK_ROW_LENT_COUNT_FORMAT % [NEED_FORAGE_STANDING, NEED_FORAGE_STANDING - NEED_FORAGE_LENT],
+			HudWorkVocab.WORK_ROW_LENT_COUNT_FORMAT % [NEED_DONOR_HUNT_STANDING, NEED_DONOR_HUNT_STANDING - NEED_DONOR_HUNT_LENT],
+		]
+		var got_counts: Array[String] = []
+		for node in lent_counts:
+			got_counts.append(String(node.get_meta(HudWorkVocab.WORK_ROW_LENT_COUNT_META)))
+		for want in want_counts:
+			if not got_counts.has(want):
+				_fail("%s: donor count `%s` missing, found %s" % [save_name, want, str(got_counts)])
+		if lent_lines.size() != 2:
+			_fail("%s: expected two donor lines, found %d" % [save_name, lent_lines.size()])
+		for node in lent_lines:
+			if not String(node.get_meta(HudWorkVocab.WORK_ROW_LENT_LINE_META)).ends_with("back after the kill"):
+				_fail("%s: a donor line reads `%s`" % [save_name, String(node.get_meta(HudWorkVocab.WORK_ROW_LENT_LINE_META))])
+	elif not lent_counts.is_empty() or not lent_lines.is_empty():
+		_fail("%s: a donor mark with nothing lent" % save_name)
+	print("band_panel_preview: assert OK — %s (count `%s`, primary `%s`)" % [save_name, count, primary])
+
+func _need_row_states() -> void:
+	# The toggle press above recorded a pending flag on a second herd's row; a need row is the fixture's
+	# subject here, so start from a clean overlay.
+	_hud._band_labor._pending_labor.clear()
+	var hunting_line := HudWorkVocab.WORK_ROW_NEED_HUNTING_FORMAT % ["woolly mammoth",
+		NEED_TURNS_TO_KILL, "turns"]
+	var from_line := HudWorkVocab.need_from_line(NEED_IDLE_MUSTERED, [
+		{"name": "Harvest (%d, %d)" % [NEED_FORAGE_TILE.x, NEED_FORAGE_TILE.y], "count": NEED_FORAGE_LENT},
+		{"name": "Hunt Steppe Runners", "count": NEED_DONOR_HUNT_LENT}])
+	await _need_case("band_panel_need_out",
+		_need_band_fixture(NEED_CREW_OUT, HudWorkVocab.NO_HUNT_NEEDED, NEED_FORAGE_LENT,
+			NEED_DONOR_HUNT_LENT, NEED_IDLE_MUSTERED, NEED_FOOD_TURNS),
+		FOLLOW_BAND_TILE, HudWorkVocab.WORK_ROW_NEED_OUT_FORMAT % NEED_CREW_OUT, hunting_line,
+		[from_line], true)
+	await _need_case("band_panel_need_waiting",
+		_need_band_fixture(0, NEED_TURNS_UNTIL, 0, 0, 0, NEED_FOOD_TURNS),
+		FOLLOW_BAND_TILE, HudWorkVocab.WORK_ROW_NEED_WAITING,
+		(HudWorkVocab.WORK_ROW_NEED_GOES_OUT_FORMAT % [NEED_TURNS_UNTIL, "turns"])
+			+ (HudWorkVocab.WORK_ROW_NEED_FOOD_LASTS_FORMAT % int(NEED_FOOD_TURNS)),
+		[HudWorkVocab.WORK_ROW_FOLLOW_CAMPED], false)
+	await _need_case("band_panel_need_steady",
+		_need_band_fixture(0, HudWorkVocab.NO_HUNT_NEEDED, 0, 0, 0, NEED_UNLIMITED_FOOD_TURNS),
+		FOLLOW_BAND_TILE, HudWorkVocab.WORK_ROW_NEED_WAITING, HudWorkVocab.WORK_ROW_NEED_STEADY,
+		[HudWorkVocab.WORK_ROW_FOLLOW_CAMPED], false)
+	await _need_case("band_panel_need_behind",
+		_need_band_fixture(0, HudWorkVocab.NO_HUNT_NEEDED, 0, 0, 0, NEED_FOOD_TURNS),
+		FOLLOW_BEHIND_TILE, HudWorkVocab.WORK_ROW_NEED_WAITING, HudWorkVocab.WORK_ROW_NEED_BEHIND,
+		[HudWorkVocab.WORK_ROW_FOLLOW_BEHIND_FORMAT % FOLLOW_BEHIND_HEXES], false)
+	# The Workforce head: idle hands the muster takes read as out hunting.
+	_push_bands([_need_band_fixture(NEED_CREW_OUT, HudWorkVocab.NO_HUNT_NEEDED, NEED_FORAGE_LENT,
+		NEED_DONOR_HUNT_LENT, NEED_IDLE_MUSTERED, NEED_FOOD_TURNS)])
+	_panel.set_active_tab(&"band")
+	await _settle()
+	if not _has_label_containing(_panel, "%d out hunting" % NEED_IDLE_MUSTERED):
+		_fail("the Workforce head does not state the %d idle hands out hunting" % NEED_IDLE_MUSTERED)
+	else:
+		print("band_panel_preview: assert OK — the Workforce head reads idle · N out hunting")
+	_panel.set_active_tab(&"work")
 
 ## A press on an unflagged migratory row's toggle re-sends THAT row's `assign_labor` — same herd, floor,
 ## crew — with the flag on. Driven through the real signal, so the line under test is the one `Main`
@@ -12327,11 +12468,34 @@ func _assert_follow_toggle_resends() -> void:
 		(toggle as Button).pressed.emit()
 		break
 	_hud.assign_labor_requested.disconnect(recorder)
-	if lines.size() != 1 or not lines[0].ends_with(" follow") or not lines[0].contains(" hunt "):
-		_fail("pressing the toggle on an unflagged migratory row should send a hunt line ending in "
-			+ "follow, got %s" % str(lines))
+	if lines.size() != 1 or not lines[0].ends_with(" 0 follow") or not lines[0].contains(" hunt "):
+		_fail("pressing the toggle on an unflagged migratory row should state a need row — a hunt line "
+			+ "at 0 hands ending in follow, got %s" % str(lines))
 	else:
-		print("band_panel_preview: assert OK — the row toggle re-sends the hunt line with `follow`")
+		print("band_panel_preview: assert OK — the row toggle states a need row (`hunt 0 … follow`)")
+
+## Turning following OFF on a need row sends an ORDINARY hunt — `min(hunt_useful_workers, idle)` hands
+## and no `follow` token. The harness band has 4 idle and a useful crew of 5, so the count is 4.
+func _assert_need_toggle_off_resends() -> void:
+	_set_world_herds(_follow_herd_fixtures(FOLLOW_BAND_TILE, FOLLOW_NO_NEXT))
+	_push_bands([_need_band_fixture(0, NEED_TURNS_UNTIL, 0, 0, 0, NEED_FOOD_TURNS)])
+	var lines: Array[String] = []
+	var recorder := func(p: Dictionary) -> void:
+		lines.append(String(MAIN_SCRIPT.format_assign_labor(p).get("line", "")))
+	_hud.assign_labor_requested.connect(recorder)
+	for toggle in _collect_meta_controls(_panel, HudWorkVocab.WORK_ROW_FOLLOW_TOGGLE_META):
+		if (toggle as Button).button_pressed:
+			(toggle as Button).pressed.emit()
+			break
+	_hud.assign_labor_requested.disconnect(recorder)
+	if lines.size() != 1 or lines[0].ends_with(" follow") or not lines[0].contains(" hunt ") \
+			or not lines[0].contains(" 4"):
+		_fail("turning following off on a need row should send an ordinary hunt at min(useful, idle) = 4, "
+			+ "got %s" % str(lines))
+	else:
+		print("band_panel_preview: assert OK — following off sends an ordinary hunt (%s)" % lines[0])
+	_hud._band_labor._pending_labor.clear()
+	_push_bands([_follow_band_fixture(false)])
 
 ## Every row on the rung board must carry the mark its rung wears — and, decisively, the WILD row must
 ## carry NONE. Asserting only the marked rows would pass a build that stamped a glyph on everything.

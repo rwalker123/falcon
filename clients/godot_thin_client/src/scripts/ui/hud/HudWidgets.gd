@@ -389,9 +389,10 @@ static func build_marker_icon(texture: Texture2D, glyph: String, box_px: float, 
 ## **A GREYED `+` SAYS WHY** (`selection-card.md` → "A DISABLED CONTROL SAYS WHY"): `plus_blocked_reason`
 ## is the caller's sentence for the condition that made `plus_enabled` false, and becomes the `+`'s
 ## hover. A greyed `−` is always the same fact — there is nobody on it — so it needs no argument.
+## Returns the count `Label`, so a caller can restate it (a donor row's `4 → 3`).
 static func add_stepper_controls(row: HBoxContainer, count: int, plus_enabled: bool,
         on_change: Callable, compact_chrome: bool = false, metric: Dictionary = {},
-        plus_blocked_reason: String = "") -> void:
+        plus_blocked_reason: String = "") -> Label:
     var button_width := float(metric.get(STEPPER_METRIC_BUTTON_WIDTH,
         HudWorkVocab.WORKER_STEPPER_BUTTON_WIDTH))
     var value_width := float(metric.get(STEPPER_METRIC_VALUE_WIDTH,
@@ -425,6 +426,7 @@ static func add_stepper_controls(row: HBoxContainer, count: int, plus_enabled: b
         for control in [minus, value, plus]:
             compact(control, HudWorkVocab.WORK_STEPPER_FONT_SIZE,
                 HudWorkVocab.WORK_STEPPER_PADDING_V, padding_h)
+    return value
 
 ## The three keys a `metric` may carry. **Named**, because producer and reader are different scripts
 ## and a typo in a `get` here is a silent fallback to the shared width — which is precisely the

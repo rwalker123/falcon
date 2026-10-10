@@ -921,8 +921,21 @@ const STANDING_SUMMARY_SEPARATOR := " ·"
 ## Assign hunters sheet, with its one dim sub-line, and the clause the standing summary appends for a
 ## band whose row has it on. A resident herd's sheet has no box.
 const MOVE_CAMP_LABEL := "Move camp with the herd"
-const MOVE_CAMP_HINT := "Camp in the herd and travel with it."
+const MOVE_CAMP_HINT := "Camp in the herd, travel with it, hunt it when you need meat."
 const STANDING_SUMMARY_MOVING_CLAUSE := " · moving with the herd"
+
+## **HUNTING BY NEED — the Assign hunters sheet with the box ticked** (`docs/plan_roaming_bands.md`
+## §Hunting by need). The hunter stepper, its crew split, its cap note and the per-turn readout are
+## replaced by this block: a need row holds no standing crew, the band sends one when it runs short.
+const NEED_BLOCK_TITLE := "When the band needs meat"
+const NEED_BLOCK_HINT_FORMAT := "Sends %d from its other work, lowest Priority first. They come back after the kill."
+## The standing hands a need row commits: none. The muster is the sim's, per turn.
+const NEED_ROW_STANDING_HANDS := 0
+const NEED_BLOCK_META := &"compose_need_block"
+
+## The worked line of a need row: waiting, and with a crew out.
+const STANDING_SUMMARY_NEED_WAITING_FORMAT := "%s hunts when needed"
+const STANDING_SUMMARY_NEED_OUT_FORMAT := "%s %d %s out"
 
 ## The wire's `size_class` word for a herd that migrates; the only herds that accept `follow`.
 const SIZE_CLASS_MIGRATORY := "migratory"

@@ -1377,6 +1377,10 @@ func _build_workforce_block(band: Dictionary) -> VBoxContainer:
             segments.append({"key": String(spec[0]), "count": int(spec[1]), "color": spec[2],
                 "tooltip": "%s: %d" % [String(spec[0]), int(spec[1])]})
     var readout := HudWorkVocab.WORKFORCE_IDLE_FORMAT % [idle, int(band.get("working_age", 0))]
+    # HUNTING BY NEED: the idle hands the next muster takes read as out hunting, not as idle.
+    var idle_out := mini(int(band.get(HudWorkVocab.COHORT_IDLE_MUSTERED_KEY, 0)), idle)
+    if idle_out > 0:
+        readout = HudWorkVocab.WORKFORCE_IDLE_OUT_FORMAT % [idle - idle_out, idle_out]
     if away_workers > 0:
         readout += HudWorkVocab.WORKFORCE_AWAY_FORMAT % away_workers
     var block := HudWidgets.make_zone_block()
@@ -2088,6 +2092,7 @@ func _work_item(node: Control, keep_with_next: bool = false) -> Dictionary:
 func _work_section_items(band: Dictionary, models: Array, extract_models: Array, queued: Array,
         roster_models: Array, roster_unseen: bool) -> Array:
     var items: Array = []
+    _attach_muster_sources(band, models, extract_models)
     var builders := int(_band_labor.effective_role_workers(
         band, HudConst.LABOR_KIND_BUILDERS).get("workers", 0))
     var queue_drawn := mini(queued.size(), HudWorkVocab.BUILD_QUEUE_ROWS_MAX)
@@ -2108,7 +2113,7 @@ func _work_section_items(band: Dictionary, models: Array, extract_models: Array,
         var nodes: Array = []
         for model in rows:
             nodes.append(_build_work_row(band, model as Dictionary))
-        _append_work_section(items, spec[0], _build_work_section_head(spec[0]), nodes)
+        _append_work_section(items, spec[0], _build_work_section_head(spec[0], rows), nodes)
     var roadwork := int(_band_labor.effective_role_workers(
         band, HudConst.LABOR_KIND_ROADWORK).get("workers", 0))
     var roster_drawn := mini(roster_models.size(), HudWorkVocab.ROADWORK_ROSTER_ROWS_MAX)
@@ -2164,8 +2169,41 @@ func _append_work_section(items: Array, key: StringName, head: HBoxContainer,
 ## A section's head — the fold triangle (installed by `_append_work_section`) and the section's NAME,
 ## nothing else. ⛔ **THE `N on work` READOUT IS RETIRED**: the hands a section spends are on its own
 ## steppers one row down, and a count beside the name read as one more thing to reconcile.
-func _build_work_section_head(key: StringName) -> HBoxContainer:
-    return HudWidgets.zone_head(String(HudWorkVocab.WORK_SECTION_TITLES[key]), "")
+func _build_work_section_head(key: StringName, rows: Array = []) -> HBoxContainer:
+    # HUNTING BY NEED: a Hunting section holding a need row states how many hands are out, or that the
+    # band hunts when it needs meat.
+    var readout := ""
+    if key == HudWorkVocab.WORK_SECTION_HUSBANDRY:
+        var crew := 0
+        var has_need_row := false
+        for row in rows:
+            if bool((row as Dictionary).get("need_row", false)):
+                has_need_row = true
+                crew += int((row as Dictionary).get("muster_crew", 0))
+        if has_need_row:
+            readout = HudWorkVocab.need_count_text(crew)
+    return HudWidgets.zone_head(String(HudWorkVocab.WORK_SECTION_TITLES[key]), readout)
+
+## HUNTING BY NEED: fill each crew-out need row's "From idle 2 · Woodcutting 3" line. The sources are
+## the cohort's idle hands first, then every row of the band that lends hands next turn, in board
+## order (forage rows, hunt rows, then workings) — so it is called after the board is sorted.
+func _attach_muster_sources(band: Dictionary, models: Array, extract_models: Array) -> void:
+    var sources: Array = []
+    for kind in [SourceForecast.LABOR_KIND_FORAGE, SourceForecast.LABOR_KIND_HUNT]:
+        for model in models:
+            if String((model as Dictionary).get("kind", "")) == kind \
+                    and int((model as Dictionary).get("lent_to_hunt", 0)) > 0:
+                sources.append({"name": String((model as Dictionary).get("label", "")),
+                    "count": int((model as Dictionary).get("lent_to_hunt", 0))})
+    for model in extract_models:
+        if int((model as Dictionary).get("lent_to_hunt", 0)) > 0:
+            sources.append({"name": String((model as Dictionary).get("name", "")),
+                "count": int((model as Dictionary).get("lent_to_hunt", 0))})
+    var from_line := HudWorkVocab.need_from_line(int(band.get(HudWorkVocab.COHORT_IDLE_MUSTERED_KEY, 0)),
+        sources)
+    for model in models:
+        if bool((model as Dictionary).get("need_row", false)):
+            (model as Dictionary)["need_from"] = from_line
 
 ## **THE COLLAPSE CHEVRON, THE HEAD'S FIRST CHILD.** A `Button`, so it consumes its own press and a
 ## head that is also the queue's or the roster's `+N more` door keeps that door behaviour untouched.
@@ -2804,6 +2842,9 @@ func _extract_source_models(band: Dictionary) -> Array:
         model["build_priority"] = _band_labor.build_priority_for_key(band, key)
         model["priority"] = HudWorkVocab.work_priority_of(_band_labor.extract_assignment_of(
             band, tile.x, tile.y, String(model["material"])).get("priority", ""))
+        # HUNTING BY NEED: the hands this working gives up to next turn's hunt.
+        model["lent_to_hunt"] = int(_band_labor.extract_assignment_of(
+            band, tile.x, tile.y, String(model["material"])).get("lent_to_hunt", 0))
         models.append(model)
     return models
 
@@ -2895,18 +2936,28 @@ func _build_extract_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     if useful != HudDepositVocab.CUTTERS_UNCAPPED and cutters >= useful:
         add_blocked.append(HudWorkVocab.STEPPER_WORKING_FULL_REASON_FORMAT % useful)
     var can_add := add_blocked.is_empty()
-    HudWidgets.add_stepper_controls(line, cutters, can_add,
+    var extract_value := HudWidgets.add_stepper_controls(line, cutters, can_add,
         func(n: int) -> void: _emit_assign_labor(band, HudConst.LABOR_KIND_EXTRACT, n,
             tile.x, tile.y, "", floor, material, SourceForecast.IMPROVEMENT_NONE, kit_id), true, {},
         HudWorkVocab.DISABLED_REASON_SEPARATOR.join(add_blocked))
+    var extract_lent := int(model.get("lent_to_hunt", 0))
+    if extract_lent > 0:
+        _mark_lent_count(extract_value, cutters, extract_lent)
     col.add_child(_build_site_crew_line(HudWorkVocab.site_crew_line(
         rung_name if rung_name != "" else HudWorkVocab.SITE_CREW_RUNG_WILD),
         HudWorkVocab.SITE_CREW_LINE_META, _crew_split_for_row(cutters,
             float(assignment.get(SourceForecast.ASSIGNMENT_KEEP_HANDS_KEY,
                 SourceForecast.NO_UPKEEP_DEMAND)),
             HudConst.LABOR_KIND_EXTRACT)))
-    col.add_child(_build_working_yield_line(_working_yield_text(band, model, deposit, ladder,
-        cutters, useful, floor), value_ink))
+    if extract_lent > 0:
+        # A donor working: line three is the loan, in warn ink, in place of the yield it is not making.
+        var lent_line := _build_working_yield_line(
+            HudWorkVocab.WORK_ROW_LENT_LINE_FORMAT % extract_lent, HudStyle.WARN,
+            HudWorkVocab.WORK_ROW_LENT_LINE_META)
+        col.add_child(lent_line)
+    else:
+        col.add_child(_build_working_yield_line(_working_yield_text(band, model, deposit, ladder,
+            cutters, useful, floor), value_ink))
     col.add_child(_build_pill_line(band, model, true))
     return row
 
@@ -5976,9 +6027,19 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     line.add_child(_build_site_keeping_mark(kept, demand, bool(model.get("keep_tools_short", false)),
         String(model.get("keep_tools_named", "")),
         model.get("tending", {}) as Dictionary))
-    HudWidgets.add_stepper_controls(line, int(model.get("workers", 0)), bool(model.get("can_add", false)),
-        func(n: int) -> void: _emit_work_assign(band, model, n), true, {},
-        String(model.get("add_blocked_reason", "")))
+    if bool(model.get("need_row", false)):
+        # **HUNTING BY NEED: NO STEPPER.** The row holds no standing hands; the count slot says how many
+        # the sim has sent this turn, or that it sends when the band needs meat.
+        line.add_child(_build_need_count_label(model))
+    else:
+        var stepper_value := HudWidgets.add_stepper_controls(line, int(model.get("workers", 0)),
+            bool(model.get("can_add", false)),
+            func(n: int) -> void: _emit_work_assign(band, model, n), true, {},
+            String(model.get("add_blocked_reason", "")))
+        # A DONOR row shows the standing count struck through beside what is left after the loan.
+        var lent := int(model.get("lent_to_hunt", 0))
+        if lent > 0:
+            _mark_lent_count(stepper_value, int(model.get("workers", 0)), lent)
     # **LINE TWO NAMES THE RUNG THE SITE STANDS ON**, and nothing else: covered keeping says nothing,
     # a short one is the `⚠` above, and the accounts line below says what the take produces.
     col.add_child(_build_site_crew_line(HudWorkVocab.site_crew_line(
@@ -6040,9 +6101,22 @@ func _build_work_row_accounts(band: Dictionary, model: Dictionary) -> MarginCont
     line_two.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line_two.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
     var accounts := Label.new()
-    accounts.text = _work_row_summary_text(model)
+    # HUNTING BY NEED: a need row's line two is its state ("Hunting · … down in ~3 turns"), and a donor
+    # row's is the loan ("1 out hunting · back after the kill", in warn ink) — each REPLACES the yield
+    # line, which prices a standing crew the row does not have at that moment.
+    var lent_hands := int(model.get("lent_to_hunt", 0))
+    var accounts_ink := HudStyle.INK_DIM
+    if bool(model.get("need_row", false)):
+        accounts.text = String(model.get("need_primary", ""))
+        accounts_ink = HudStyle.INK if int(model.get("muster_crew", 0)) > 0 else HudStyle.INK_DIM
+    elif lent_hands > 0:
+        accounts.text = HudWorkVocab.WORK_ROW_LENT_LINE_FORMAT % lent_hands
+        accounts_ink = HudStyle.WARN
+        accounts.set_meta(HudWorkVocab.WORK_ROW_LENT_LINE_META, accounts.text)
+    else:
+        accounts.text = _work_row_summary_text(model)
     accounts.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-    accounts.add_theme_color_override("font_color", HudStyle.INK_DIM)
+    accounts.add_theme_color_override("font_color", accounts_ink)
     accounts.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
     HudWidgets.set_label_tooltip(accounts, accounts.text)
     accounts.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -6060,6 +6134,8 @@ func _build_work_row_accounts(band: Dictionary, model: Dictionary) -> MarginCont
     # the board reserved for it.
     column.add_theme_constant_override("separation", HudWorkVocab.TWO_LINE_STEPPER_SEPARATION)
     column.add_child(line_two)
+    if bool(model.get("need_row", false)) and int(model.get("muster_crew", 0)) > 0:
+        column.add_child(_build_need_meter(float(model.get("need_progress", 0.0))))
     if bool(model.get("follow_offered", false)):
         column.add_child(_build_follow_toggle(band, model))
     for line in _work_row_party_lines_text(model):
@@ -6067,17 +6143,92 @@ func _build_work_row_accounts(band: Dictionary, model: Dictionary) -> MarginCont
     margin.add_child(column)
     return margin
 
+## The count slot of a need row: `N out` while the sim has sent a crew, else `when needed`. It is a
+## plain label because the row holds no standing hands for a stepper to edit.
+func _build_need_count_label(model: Dictionary) -> Label:
+    var crew := int(model.get("muster_crew", 0))
+    var label := Label.new()
+    label.text = HudWorkVocab.need_count_text(crew)
+    label.add_theme_font_size_override("font_size", HudWorkVocab.WORK_STEPPER_FONT_SIZE)
+    label.add_theme_color_override("font_color", HudStyle.WARN if crew > 0 else HudStyle.INK_DIM)
+    label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    label.set_meta(HudWorkVocab.WORK_ROW_NEED_COUNT_META, label.text)
+    return label
+
+## The thin kill meter under a crew that is out; its fill is the banked share of the animal.
+func _build_need_meter(progress: float) -> Control:
+    var margin := MarginContainer.new()
+    margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    var bar := ProgressBar.new()
+    bar.show_percentage = false
+    bar.min_value = 0.0
+    bar.max_value = 1.0
+    bar.value = clampf(progress, 0.0, 1.0)
+    bar.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_NEED_METER_HEIGHT)
+    bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    var fill := StyleBoxFlat.new()
+    fill.bg_color = HudStyle.WARN
+    var track := StyleBoxFlat.new()
+    track.bg_color = HudStyle.LINE_SOFT
+    bar.add_theme_stylebox_override("fill", fill)
+    bar.add_theme_stylebox_override("background", track)
+    bar.set_meta(HudWorkVocab.WORK_ROW_NEED_METER_META, bar.value)
+    margin.add_child(bar)
+    return margin
+
+## Restate a donor row's count as `4 → 3`: the standing count struck through and dim, then what is left
+## once the lent hands are out. The stepper beside it still edits the standing count.
+func _mark_lent_count(value: Label, standing: int, lent: int) -> void:
+    var host := value.get_parent()
+    if host == null:
+        return
+    var rich := RichTextLabel.new()
+    rich.bbcode_enabled = true
+    rich.fit_content = true
+    rich.scroll_active = false
+    rich.autowrap_mode = TextServer.AUTOWRAP_OFF
+    rich.custom_minimum_size = Vector2(HudWorkVocab.WORK_ROW_LENT_VALUE_WIDTH, 0.0)
+    rich.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    rich.add_theme_font_size_override("normal_font_size", HudWorkVocab.WORK_STEPPER_FONT_SIZE)
+    rich.add_theme_color_override("default_color", HudStyle.INK)
+    rich.text = "[center][color=#%s][s]%d[/s][/color] → %d[/center]" % [
+        HudStyle.INK_DIM.to_html(false), standing, standing - lent]
+    rich.set_meta(HudWorkVocab.WORK_ROW_LENT_COUNT_META,
+        HudWorkVocab.WORK_ROW_LENT_COUNT_FORMAT % [standing, standing - lent])
+    var index := value.get_index()
+    host.add_child(rich)
+    host.move_child(rich, index)
+    host.remove_child(value)
+    value.queue_free()
+
 ## Where the band stands against the herd it follows, as the one status line — `""` when either tile
 ## is unknown. Wrap-aware through the same hex distance the rest of the board uses.
 func _follow_status_line(band: Dictionary, herd: Dictionary) -> String:
+    var hexes := _follow_hexes_behind(band, herd)
+    var known := hexes != FOLLOW_DISTANCE_UNKNOWN
+    return HudWorkVocab.follow_status_line(known, known and hexes == 0,
+        int(herd.get("next_x", -1)), int(herd.get("next_y", -1)), maxi(hexes, 0))
+
+## `_follow_hexes_behind`'s answer when either tile is unknown.
+const FOLLOW_DISTANCE_UNKNOWN := -1
+
+## Wrap-aware hex distance from the band to the herd, `FOLLOW_DISTANCE_UNKNOWN` when either tile is.
+func _follow_hexes_behind(band: Dictionary, herd: Dictionary) -> int:
     var band_tile := SourceForecast.band_tile(band)
     var herd_x := int(herd.get("x", -1))
     var herd_y := int(herd.get("y", -1))
-    var known := band_tile.x >= 0 and band_tile.y >= 0 and herd_x >= 0 and herd_y >= 0
-    var hexes := SourceForecast.hex_distance_wrapped(band_tile.x, band_tile.y, herd_x, herd_y,
-        _band_labor.grid_width(), _band_labor.wrap_horizontal()) if known else 0
-    return HudWorkVocab.follow_status_line(known, known and hexes == 0,
-        int(herd.get("next_x", -1)), int(herd.get("next_y", -1)), hexes)
+    if band_tile.x < 0 or band_tile.y < 0 or herd_x < 0 or herd_y < 0:
+        return FOLLOW_DISTANCE_UNKNOWN
+    return SourceForecast.hex_distance_wrapped(band_tile.x, band_tile.y, herd_x, herd_y,
+        _band_labor.grid_width(), _band_labor.wrap_horizontal())
+
+## The animal the hunt brings down, in the singular: the herd's species name, lower-cased.
+func _need_animal_noun(herd: Dictionary, herd_id: String) -> String:
+    var species := _herd_label_for_id(herd_id) if herd_id != "" else ""
+    if species == "" or species == herd_id:
+        species = String(herd.get("species", ""))
+    return species.to_lower() if species != "" else HudWorkVocab.WORK_ROW_NEED_ANIMAL_FALLBACK
 
 ## The row's migration-mode toggle: pressed when the flag is on, and a press re-sends the row's own
 ## `assign_labor` (same herd, floor, crew, kit) with the flag flipped, through the same emitter as the
@@ -6095,7 +6246,12 @@ func _build_follow_toggle(band: Dictionary, model: Dictionary) -> Button:
     HudWidgets.compact(btn, HudWorkVocab.ALLOC_SECTION_FONT_SIZE, HudWorkVocab.WORK_PAGER_PADDING_V)
     btn.set_meta(HudWorkVocab.WORK_ROW_FOLLOW_TOGGLE_META, on)
     btn.pressed.connect(func() -> void:
-        _emit_work_assign(band, model, int(model.get("workers", 0)), RESTATE_STANDING_FLOOR,
+        # **HUNTING BY NEED.** Turning following ON states a need row: `hunt 0 … follow`, the sim
+        # musters the crew. Turning it OFF states an ordinary hunt at what the herd can use, capped at
+        # the band's idle hands (the sim drops the row if that is 0).
+        var hands := mini(int(model.get("hunt_useful_workers", 0)), _band_labor.effective_idle(band)) \
+            if on else HudComposeVocab.NEED_ROW_STANDING_HANDS
+        _emit_work_assign(band, model, hands, RESTATE_STANDING_FLOOR,
             RESTATE_STANDING_SPECIES, RESTATE_STANDING_KIT, 0 if on else 1))
     return btn
 
@@ -6128,8 +6284,12 @@ func _build_work_row_party_line(text: String) -> Label:
 ## and the drawn block all come through this one count, so a line added to the block is paid for
 ## without a second edit anywhere.
 func _work_row_party_lines(model: Dictionary) -> int:
-    # The migration-mode toggle is one more compact line at the head of the column.
-    return _work_row_party_lines_text(model).size() + (1 if bool(model.get("follow_offered", false)) else 0)
+    # The migration-mode toggle is one more compact line at the head of the column, and a crew that is
+    # out draws its progress meter as one more.
+    var meter_lines := 1 if bool(model.get("need_row", false)) \
+        and int(model.get("muster_crew", 0)) > 0 else 0
+    return _work_row_party_lines_text(model).size() \
+        + (1 if bool(model.get("follow_offered", false)) else 0) + meter_lines
 
 ## **THE BLOCK ITSELF, AS TEXT** (`docs/plan_civilization_steps.md` §One work party) — `[]` on the
 ## ordinary local row, which is what makes that row identical to the one that shipped before any of
@@ -6155,7 +6315,17 @@ func _work_row_party_lines_text(model: Dictionary) -> Array[String]:
     var lines: Array[String] = []
     # MIGRATION MODE's status line leads the block; the work-party lines run beneath it unchanged.
     var follow_line := String(model.get("follow_line", ""))
-    if follow_line != "":
+    if bool(model.get("need_row", false)):
+        # HUNTING BY NEED: a crew that is out states who it came from (the follow status would be
+        # redundant — the band is in the herd); a waiting row keeps the follow status beneath its
+        # primary line.
+        if int(model.get("muster_crew", 0)) > 0:
+            var from_line := String(model.get("need_from", ""))
+            if from_line != "":
+                lines.append(from_line)
+        elif follow_line != "":
+            lines.append(follow_line)
+    elif follow_line != "":
         lines.append(follow_line)
     lines.append_array(_work_row_posted_party_lines(model))
     var homeward := String(model.get("homeward_line", ""))
@@ -6180,6 +6350,9 @@ func _work_row_posted_party_lines(model: Dictionary) -> Array[String]:
 
 func _work_row_stripe_color(model: Dictionary) -> Color:
     if bool(model.get("warn", false)) or String(model.get("note", "")) != "":
+        return HudStyle.WARN
+    # A need row with a crew out wears the warn accent (the prototype's `.hunt.out`).
+    if bool(model.get("need_row", false)) and int(model.get("muster_crew", 0)) > 0:
         return HudStyle.WARN
     if bool(model.get("pending", false)):
         return HudStyle.SIGNAL
@@ -7009,8 +7182,12 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # takes the row to 0 at once, but the hands are not free until they are back; hiding the row
         # the player just acted on read as the unassign having failed. The row stays, at crew 0, with
         # its walker line, until the last hand is home.
+        # …AND A NEED ROW (a hunt row that moves camp with its herd) holds 0 standing hands by design,
+        # so it is admitted on the flag: it IS the order the band is carrying out.
+        var is_need_row := kind == SourceForecast.LABOR_KIND_HUNT \
+            and bool(m.get("move_with_herd", false))
         if workers <= 0 and not pending and not queued_keys.has(String(key)) \
-                and HudWorkVocab.row_homeward_workers(m) <= 0:
+                and HudWorkVocab.row_homeward_workers(m) <= 0 and not is_need_row:
             continue
         var x := int(m.get("x", -1))
         var y := int(m.get("y", -1))
@@ -7330,7 +7507,25 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         var follow_offered := kind == SourceForecast.LABOR_KIND_HUNT and (follow_on \
             or String(live_herd.get("size_class", "")) == HudComposeVocab.SIZE_CLASS_MIGRATORY)
         var follow_line := _follow_status_line(band, live_herd) if follow_on else ""
+        # **HUNTING BY NEED** — the need row's count, primary line and meter, and a donor row's lent
+        # hands. `behind` reads the same tiles the follow status does. The "From" source list needs
+        # the SORTED board, so `_attach_muster_sources` fills it once the order is known.
+        var muster_crew := int(m.get("muster_crew", 0))
+        var food_turns := float(band.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
+        var need_primary := ""
+        if is_need_row:
+            need_primary = HudWorkVocab.need_primary_line(muster_crew, int(m.get("turns_to_kill", 0)),
+                _need_animal_noun(live_herd, herd_id),
+                int(m.get(HudWorkVocab.NEED_TURNS_UNTIL_KEY, HudWorkVocab.NEED_TURNS_UNKNOWN)),
+                _follow_hexes_behind(band, live_herd) > 0,
+                int(roundf(food_turns)) if BandFoodStatus.is_limited(food_turns) else 0)
         models.append({
+            "need_row": is_need_row, "muster_crew": muster_crew,
+            "hunt_useful_workers": int(m.get(SourceForecast.ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY, 0)),
+            "lent_to_hunt": int(m.get("lent_to_hunt", 0)),
+            "need_primary": need_primary,
+            "need_progress": clampf(float(m.get("kill_progress", 0.0)), 0.0, 1.0),
+            "need_from": "",
             "key": String(key), "kind": kind, "icon": icon, "icon_texture": icon_texture,
             "label": label,
             # ⛔ **A PARTY ROW STATES WHAT ARRIVES HOME, NOT WHAT IS TAKEN.** The amortized rate and

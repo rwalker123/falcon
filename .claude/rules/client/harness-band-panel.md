@@ -3060,3 +3060,17 @@ twice (`family_limit_split`, `family_limit_split_free`). PNG-less claims pin the
 **The faction page is entered once through the real cycler and re-entered only when off it** (a second
 `CYCLE_PREV` leaves for the last band), and each Band-tab state selects its band on its own hex first:
 a popover click re-renders the hosts off the selection.
+
+
+## The need rows' frames (`_need_row_states`, issue #798)
+
+Four frames (`band_panel_need_out`, `_waiting`, `_steady`, `_behind`) on one band whose followed
+mammoth row is the only need row (a followed row with workers 0), beside a forage row and a second hunt
+row that act as donors. `_need_case` asserts per frame: exactly one need-row count slot (`N out` or
+`when needed`); the primary line by equality; the stripe ink; and, for the crew-out frame, the donor
+counts `4 -> 3` and `3 -> 2`, the WARN line, and the Workforce `out hunting` text. The base follow
+fixture's followed row used to carry `workers: 2`, a state the sim cannot send, so it is now a need row.
+`_assert_follow_toggle_resends` requires the line to end ` 0 follow`; `_assert_need_toggle_off_resends`
+asserts OFF sends an ordinary hunt at `min(hunt_useful_workers, idle)`. The pending overlay is cleared
+before the frames so an earlier toggle press does not mark a second herd's row. `command_guard` also
+round-trips the zero-count line (`ASSIGN_LABOR_GRAMMAR_DRIVES` 8, `ASSIGN_LABOR_EXPECTED` 14).

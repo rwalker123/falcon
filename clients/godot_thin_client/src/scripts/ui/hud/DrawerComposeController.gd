@@ -3215,25 +3215,42 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
                     # and the drag dies with it. Refill only the readings that follow the floor.
                     _floor_drag_live = true
                     _floor_drag_refill.call(floor)))
+    # **HUNTING BY NEED — the box, ABOVE the Hunters section** (`docs/plan_roaming_bands.md` §Hunting by
+    # need). Ticked, the row is a need row that holds no standing crew, so the stepper, its split, the
+    # cap note, the work party and the per-turn readout below are replaced by one text block. Toggling
+    # it REBUILDS the sheet. Present on a MIGRATORY herd's sheet only.
+    var needs_hunt := _herd_is_migratory(herd) and _compose.hunt_move_with_herd()
+    if _herd_is_migratory(herd):
+        _mount_move_camp_box(target, func() -> void:
+            _build_herd_assign_controls(_live_herd(herd_id, herd), target))
     # THE CREW, on ONE line with both targets (§7.6) — with its cap note, which explains THIS stepper's
     # dead `+` and therefore travels with it. Clicking a target staffs it, clamped to the same cap the
     # `+` obeys: a target is a shortcut to a count, never a way past the ceiling.
     var on_crew_change := func(n: int) -> void:
         _compose.set_hunt_count(clampi(n, 0, cap))
         _build_herd_assign_controls(_live_herd(herd_id, herd), target)
-    _mount_crew_row(target, live_hosts, crew_label,
-        _compose.hunt_count(), _compose.hunt_count() < cap, on_crew_change, chart_model,
-        func(count: int) -> void:
-            _compose.set_hunt_count(clampi(count, 0, cap))
-            _build_herd_assign_controls(_live_herd(herd_id, herd), target),
-        "", _crew_cap_reason(String(capped["note"]), cap, assignable))
-    # **THE CREW SPLIT, UNDER THE STEPPER** — the hunt curve row's `keep_hands` at the stepper's crew.
-    var hunt_split := _mount_crew_split(target, _compose.hunt_count(), _curve_row_keep_hands(
-        crew_take_view, SourceForecast.hunt_crew_take_row(crew_take, _compose.hunt_count())),
-        SourceForecast.LABOR_KIND_HUNT)
-    var cap_note := String(capped["note"])
-    if cap_note != "":
-        target.add_child(HudWidgets.alloc_hint_label(cap_note))
+    var hunt_split := ""
+    var cap_note := ""
+    if needs_hunt:
+        # N is the sheet's useful-crew figure (the number the cap note reports as `max N useful`), NOT
+        # the idle-clamped cap: the muster draws on the band's other work too, not just its idle hands.
+        var useful_crew := SourceForecast.max_useful_workers(forecast)
+        _mount_need_block(target, cap if useful_crew == SourceForecast.MAX_USEFUL_UNBOUNDED \
+            else useful_crew, crew_label)
+    else:
+        _mount_crew_row(target, live_hosts, crew_label,
+            _compose.hunt_count(), _compose.hunt_count() < cap, on_crew_change, chart_model,
+            func(count: int) -> void:
+                _compose.set_hunt_count(clampi(count, 0, cap))
+                _build_herd_assign_controls(_live_herd(herd_id, herd), target),
+            "", _crew_cap_reason(String(capped["note"]), cap, assignable))
+        # **THE CREW SPLIT, UNDER THE STEPPER** — the hunt curve row's `keep_hands` at the stepper's crew.
+        hunt_split = _mount_crew_split(target, _compose.hunt_count(), _curve_row_keep_hands(
+            crew_take_view, SourceForecast.hunt_crew_take_row(crew_take, _compose.hunt_count())),
+            SourceForecast.LABOR_KIND_HUNT)
+        cap_note = String(capped["note"])
+        if cap_note != "":
+            target.add_child(HudWidgets.alloc_hint_label(cap_note))
     # **NO STALE ANSWER STANDS ON THIS PATH EITHER** — `_crew_take_view` reads `view_exact`, and the
     # note that used to stand here said the opposite. The stale window's bargain is about a STEPPER
     # tick, and a stepper tick moves nothing this question is keyed on (the key carries the band's
@@ -3315,16 +3332,11 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         # **THE KIT LINE UNDER THE PICKER IS WHAT SURVIVES** (`KitRoster.shortfall_line`) — one sentence
         # about the gear, on the control that chose it. **The REFUSAL above is untouched**: a fight this
         # party cannot make at all must still say so, and that is the branch, not this one.
-    # **MIGRATION MODE — the box, directly ABOVE where the work party mounts** (`docs/plan_roaming_bands.md`
-    # §Migration mode is a choice on the hunt). Present on a MIGRATORY herd's sheet only; nothing
-    # else on the sheet changes for it, because a band still catching up hunts with porters.
-    if _herd_is_migratory(herd):
-        _mount_move_camp_box(target)
     # **THE WORK PARTY, PAST THE APRON** — what distance costs this crew, priced by the sim's own
     # caravan forecast at the crew, kit and floor composed above. Directly under the crew and its kit
     # because every figure in it is a property of that crew walking that distance.
     var party_view := {}
-    if past_apron:
+    if past_apron and not needs_hunt:
         party_view = _work_party_view(band, ForecastQuery.WORK_PARTY_SOURCE_HUNT, herd_id,
             herd_x, herd_y, [], kit_id, _compose.hunt_count(), _compose.hunt_floor())
         _mount_work_party_section(target, party_view)
@@ -3338,8 +3350,10 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     #     control (below) — a panel offering to start a build in the act of abandoning the source
     #     argues with itself.
     # Gating on the raw count instead would fix the no-op and break the unassign the Work zone needs.
-    var is_unassign := _compose.hunt_count() <= 0 and current > 0
-    var is_noop := _compose.hunt_count() <= 0 and current <= 0
+    # **A NEED ROW COMMITS WITH 0 HANDS AND IS NEITHER OF THOSE**: `hunt 0 … follow` states the
+    # standing order, and the sim keeps a zero-crew row that carries the flag.
+    var is_unassign := not needs_hunt and _compose.hunt_count() <= 0 and current > 0
+    var is_noop := not needs_hunt and _compose.hunt_count() <= 0 and current <= 0
     var assign_btn := Button.new()
     assign_btn.set_meta(HudWidgets.COMPOSE_COMMIT_META, true)
     # The averaging-window disclaimer USED TO STAND HERE, as a wrapped body line under the hint: the
@@ -3356,7 +3370,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # thing composed, and the box's terms are stated in the readout beneath it. It used to follow
     # the readout, which put the payoff (then on the box's own face) BELOW the PER TURN box it
     # differs from and gave the two numbers no visible relationship at all.
-    if not is_unassign:
+    if not is_unassign and not needs_hunt:
         # **THE CONTROL IS IN THE LIVE SET, because its turn estimate is priced at the floor.**
         # The crew half tracks on its own — a stepper tick rebuilds the whole sheet — but a floor
         # DRAG must not, so the box is rebuilt in place by the registry exactly as the yields row
@@ -3394,7 +3408,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # THE ONE RESOLUTION OF THIS SHEET'S DEAL, spent by the readout below. An unassign quotes
     # none: the control above is not built either, so there would be no rung on the card for the
     # rows to be about.
-    var deal_rung := "" if is_unassign else _improvement_deal_rung(
+    var deal_rung := "" if is_unassign or needs_hunt else _improvement_deal_rung(
         SourceForecast.LABOR_KIND_HUNT, herd, HudComposeVocab.BARE_FORECAST_PREFIX,
         composed_improvement)
     # ⛔ **THE DEAL IS THE CREW CURVE'S, AT THE SHEET'S CREW** — the hunt twin of the forage sheet's
@@ -3427,33 +3441,34 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # **HIDDEN RATHER THAN ABSENT** when the answer is in hand. A `BoxContainer` skips invisible
     # children entirely, separation included, so an answered sheet lays out to the pixel it did
     # before this host existed.
-    var take_state_host := VBoxContainer.new()
-    take_state_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    target.add_child(take_state_host)
-    _register_live(live_hosts, take_state_host, chart_model, _compose.hunt_count(),
-        func(host: Container, _live: Dictionary, _crew: int) -> void:
-            var state := String(_hunt_live_crew_view.get("state", ForecastQuery.STATE_PENDING))
-            host.visible = state != ForecastQuery.STATE_READY
-            if not host.visible:
-                return
-            host.add_child(HudWidgets.alloc_hint_label(
-                HudComposeVocab.HUNT_TAKE_PENDING \
-                if state == ForecastQuery.STATE_PENDING \
-                else HudComposeVocab.FORECAST_FAILED_FORMAT \
-                    % String(_hunt_live_crew_view.get("error", "")))))
-    # **THE ROWS COME OFF THE LIVE PAIR, NOT OFF THE BUILDER'S LOCAL.** The model is asked at
-    # `_live_floor(live)` on every refill, so binding the committed floor's curve into the closure
-    # would compose one floor's rows against another floor's room for the whole of a drag — the
-    # defect this arc closes, restated in the one place it would be invisible. The two agree
-    # exactly on a sheet nobody is dragging, which is why the substitution is safe.
-    _mount_readout(target, live_hosts, chart_model, _compose.hunt_count(),
-        func(floor_value: float, crew: int, reaches: bool) -> Dictionary:
-            return _with_home_rate(_hunt_yield_model(band, herd, floor_value, crew,
-                composed_improvement, reaches, _hunt_live_crew_take), party_view,
-                SourceForecast.YIELD_ACCOUNT_FOOD, true),
-        SourceForecast.LABOR_KIND_HUNT,
-        _improvement_deal_row(SourceForecast.LABOR_KIND_HUNT, herd,
-            HudComposeVocab.BARE_FORECAST_PREFIX, band, deal_rung, deal_payoff), hunt_split)
+    if not needs_hunt:
+        var take_state_host := VBoxContainer.new()
+        take_state_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        target.add_child(take_state_host)
+        _register_live(live_hosts, take_state_host, chart_model, _compose.hunt_count(),
+            func(host: Container, _live: Dictionary, _crew: int) -> void:
+                var state := String(_hunt_live_crew_view.get("state", ForecastQuery.STATE_PENDING))
+                host.visible = state != ForecastQuery.STATE_READY
+                if not host.visible:
+                    return
+                host.add_child(HudWidgets.alloc_hint_label(
+                    HudComposeVocab.HUNT_TAKE_PENDING \
+                    if state == ForecastQuery.STATE_PENDING \
+                    else HudComposeVocab.FORECAST_FAILED_FORMAT \
+                        % String(_hunt_live_crew_view.get("error", "")))))
+        # **THE ROWS COME OFF THE LIVE PAIR, NOT OFF THE BUILDER'S LOCAL.** The model is asked at
+        # `_live_floor(live)` on every refill, so binding the committed floor's curve into the closure
+        # would compose one floor's rows against another floor's room for the whole of a drag — the
+        # defect this arc closes, restated in the one place it would be invisible. The two agree
+        # exactly on a sheet nobody is dragging, which is why the substitution is safe.
+        _mount_readout(target, live_hosts, chart_model, _compose.hunt_count(),
+            func(floor_value: float, crew: int, reaches: bool) -> Dictionary:
+                return _with_home_rate(_hunt_yield_model(band, herd, floor_value, crew,
+                    composed_improvement, reaches, _hunt_live_crew_take), party_view,
+                    SourceForecast.YIELD_ACCOUNT_FOOD, true),
+            SourceForecast.LABOR_KIND_HUNT,
+            _improvement_deal_row(SourceForecast.LABOR_KIND_HUNT, herd,
+                HudComposeVocab.BARE_FORECAST_PREFIX, band, deal_rung, deal_payoff), hunt_split)
     # **NO KEEPING ROW** (`docs/plan_standing_upkeep.md` §2.5) — a managed herd is held by the
     # band's `husbandry` role, not by a crew on this sheet, so there is no stepper here to point
     # at it. What this herd's share of that pool covers, and where it falls short, is stated on
@@ -3480,9 +3495,11 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # travels — it is recorded on the OPTIMISTIC OVERLAY and never on the wire, so a crew edit
     # does not blank a build the herd is already running.
     assign_btn.pressed.connect(func() -> void:
-        _emit_assign_labor(band, SourceForecast.LABOR_KIND_HUNT, _compose.hunt_count(),
+        # A NEED ROW STATES 0 STANDING HANDS: the sim musters the crew each turn it is wanted.
+        _emit_assign_labor(band, SourceForecast.LABOR_KIND_HUNT,
+            HudComposeVocab.NEED_ROW_STANDING_HANDS if needs_hunt else _compose.hunt_count(),
             herd_x, herd_y, herd_id, _compose.hunt_floor(), "", composed_improvement, kit_id,
-            PackedStringArray(), _herd_is_migratory(herd) and _compose.hunt_move_with_herd())
+            PackedStringArray(), needs_hunt)
         close_compose_sheet())
     target.add_child(assign_btn)
 
@@ -3491,18 +3508,37 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
 func _herd_is_migratory(herd: Dictionary) -> bool:
     return String(herd.get("size_class", "")) == HudComposeVocab.SIZE_CLASS_MIGRATORY
 
-## The migration-mode box and its one dim sub-line. The box writes the compose state only: nothing on
-## the sheet depends on it, so there is no rebuild, and the commit reads it.
-func _mount_move_camp_box(target: VBoxContainer) -> void:
+## The migration-mode box and its one dim sub-line. Toggling it REBUILDS the sheet (`on_toggle`): ticked,
+## the Hunters section is replaced by the need block (`_mount_need_block`) and the per-turn readout goes.
+func _mount_move_camp_box(target: VBoxContainer, on_toggle: Callable) -> void:
     var box := CheckBox.new()
     box.text = HudComposeVocab.MOVE_CAMP_LABEL
     box.button_pressed = _compose.hunt_move_with_herd()
     box.focus_mode = Control.FOCUS_NONE
     box.set_meta(HudComposeVocab.MOVE_CAMP_BOX_META, true)
     HudStyle.apply_checkbox(box)
-    box.toggled.connect(func(on: bool) -> void: _compose.set_hunt_move_with_herd(on))
+    box.toggled.connect(func(on: bool) -> void:
+        _compose.set_hunt_move_with_herd(on)
+        on_toggle.call())
     target.add_child(box)
     target.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.MOVE_CAMP_HINT))
+
+## **THE HUNTERS SECTION OF A TICKED SHEET** — in place of the stepper: the section label, then
+## `When the band needs meat` over one dim line saying how many hands the muster sends (`useful`, the
+## sheet's own useful-crew figure) and from where.
+func _mount_need_block(target: VBoxContainer, useful: int, crew_label: String) -> void:
+    var block := VBoxContainer.new()
+    block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    block.add_theme_constant_override("separation", HudComposeVocab.CREW_ROW_LABEL_SEPARATION)
+    block.set_meta(HudComposeVocab.NEED_BLOCK_META, true)
+    block.add_child(HudWidgets.alloc_section_label(crew_label))
+    var title := Label.new()
+    title.text = HudComposeVocab.NEED_BLOCK_TITLE
+    title.add_theme_color_override("font_color", HudStyle.INK)
+    title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    block.add_child(title)
+    block.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.NEED_BLOCK_HINT_FORMAT % useful))
+    target.add_child(block)
 
 ## Mount the kit row where a sheet wants it — a no-op when the roster offers this job no kit at all,
 ## so a sheet rendered before the first snapshot (or against a world whose roster does not cover the
@@ -6401,6 +6437,15 @@ func _standing_summary_model(assignment: Dictionary, kind: String, noun: String,
         noun,
     ]
     var suffix := String(readout["label_suffix"])
+    # HUNTING BY NEED: a need row holds no standing hunters, so its worked line says it hunts when
+    # needed (or how many it has sent out) and quotes no yield.
+    var is_need_row := kind == SourceForecast.LABOR_KIND_HUNT \
+        and bool(assignment.get("move_with_herd", false))
+    if is_need_row:
+        var out := int(assignment.get("muster_crew", 0))
+        text = HudComposeVocab.STANDING_SUMMARY_NEED_OUT_FORMAT % [mark, out, noun] if out > 0 \
+            else HudComposeVocab.STANDING_SUMMARY_NEED_WAITING_FORMAT % mark
+        suffix = ""
     if suffix != "":
         text += HudComposeVocab.STANDING_SUMMARY_SEPARATOR + suffix
     # MIGRATION MODE: the worked line says so for a band whose row has the flag.

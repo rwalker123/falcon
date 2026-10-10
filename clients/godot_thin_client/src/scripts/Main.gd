@@ -1394,12 +1394,18 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
             var herd_id := String(payload.get("herd_id", "")).strip_edges()
             if herd_id == "":
                 return {}
+            # A HUNT-BY-NEED ROW: `hunt <herd> <floor> 0 … follow` states the standing order with no
+            # standing hands (the sim musters a crew on the turns the band needs meat), so the count
+            # of 0 is NOT an unassign when `follow` rides it.
+            var need_row := workers == 0 and bool(payload.get("move_with_herd", false))
             return {
                 "line": "assign_labor %d %d hunt %s %s %d%s%s" % [
                     faction, band_id, herd_id, _format_floor(payload), workers,
                     _kit_token(payload), _follow_token(payload)],
-                "message": "Assign %d hunter%s to %s, leaving %s standing." % [
-                    workers, "" if workers == 1 else "s", herd_id, _floor_percent_text(payload)],
+                "message": ("Camp follows %s and hunts it when the band needs meat." % herd_id)
+                    if need_row else
+                    "Assign %d hunter%s to %s, leaving %s standing." % [
+                        workers, "" if workers == 1 else "s", herd_id, _floor_percent_text(payload)],
             }
         "extract":
             # **THE TWO DEPOSIT BRANCHES' TAKE ROW** (`docs/plan_extraction.md` §6, arc #583) —

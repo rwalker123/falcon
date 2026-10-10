@@ -1067,6 +1067,13 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 		for homeward_key in HudWorkVocab.ROW_HOMEWARD_KEYS:
 			if (a as Dictionary).has(homeward_key):
 				(merged[key] as Dictionary)[homeward_key] = (a as Dictionary)[homeward_key]
+		# **HUNTING BY NEED** (`docs/plan_roaming_bands.md` §Hunting by need) — the muster figures of a need
+		# row and the lent hands of a donor row. Copied here because **this map is a hand-listed
+		# allowlist**: a key not copied does not exist as far as the work board is concerned. Present-
+		# only, so an absent key reads as "the wire said nothing" (`turns_until_hunt` in particular).
+		for need_key in HudWorkVocab.NEED_ROW_KEYS:
+			if (a as Dictionary).has(need_key):
+				(merged[key] as Dictionary)[need_key] = (a as Dictionary)[need_key]
 	var pend := pending_assigns_for(int(band.get("entity", -1)))
 	for key in pend:
 		var pd: Dictionary = pend[key]
@@ -1146,6 +1153,10 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 		for homeward_key in HudWorkVocab.ROW_HOMEWARD_KEYS:
 			if settled_party.has(homeward_key):
 				(merged[key] as Dictionary)[homeward_key] = settled_party[homeward_key]
+		# …and the need row's muster: a pending edit changes nothing the sim has decided for next turn.
+		for need_key in HudWorkVocab.NEED_ROW_KEYS:
+			if settled_party.has(need_key):
+				(merged[key] as Dictionary)[need_key] = settled_party[need_key]
 	# **A WITHDRAWAL BLANKS THE IMPROVEMENT AND TOUCHES NOTHING ELSE** (`docs/plan_standing_upkeep.md`
 	# §4.7b ④). `unqueue` withdraws a DECLARATION: the crew stays, the floor stays, the banked meter
 	# stays — so the one thing that must stop being true on the frame the `✕` is pressed is that this

@@ -14,12 +14,13 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 17
+const EXPECTED_CHECKPOINTS := 19
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
 const ForecastFx := preload("res://tools/ui_preview/fixtures_forecast.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
+const Readout := preload("res://tools/ui_preview/readouts.gd")
 const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
@@ -133,8 +134,15 @@ func run(harness) -> void:
 	# State 2 — CHECKED: the commit sends the bare `follow` token, LAST on the hunt line.
 	box.button_pressed = true
 	await h._settle()
-	await h._save("herd_follow_checked")
+	await h._save("herd_need_checked")
 	h._assert_hud("ticking the box is composed state", h._hud._compose.hunt_move_with_herd())
+	var ticked: Control = h._hud._drawercompose._compose_sheet
+	h._assert_hud("a ticked sheet swaps the Hunters stepper for `%s`" % HudComposeVocab.NEED_BLOCK_TITLE,
+		Q.find_meta_node(ticked, HudComposeVocab.NEED_BLOCK_META) != null
+			and Q.has_label_containing(ticked, HudComposeVocab.NEED_BLOCK_TITLE)
+			and Readout.stepper_count(ticked) == 0)
+	h._assert_hud("…and carries no per-turn yield box (no hands are standing on the herd)",
+		Readout.yields_text(ticked) == "")
 	_sent_lines.clear()
 	var commit := Q.compose_commit_button(h._hud._drawercompose._compose_sheet)
 	if commit != null:
@@ -143,6 +151,8 @@ func run(harness) -> void:
 	h._assert_hud("a ticked commit sends ONE hunt line ending in the bare `follow` token (got %s)"
 			% str(_sent_lines),
 		_sent_lines.size() == 1 and _sent_lines[0].contains(" hunt ")
+			and _sent_lines[0].contains(" %d%s" % [HudComposeVocab.NEED_ROW_STANDING_HANDS,
+				MAIN_SCRIPT.FOLLOW_TOKEN])
 			and _sent_lines[0].ends_with(MAIN_SCRIPT.FOLLOW_TOKEN))
 
 	# State 3 — UNTICKED commit sends no token (the byte-identical line it always sent).

@@ -3806,3 +3806,12 @@ commit line is captured off the real `assign_labor_requested` signal, and **each
 pending overlay first**: a commit leaves its optimistic row behind and the sheet seeds from the
 pending-aware map, so the previous state's `follow` would seed the next. The Work-tab row's frames and
 claims are `harness-band-panel.md`'s.
+
+
+## `chapters/migration_mode.gd` — the need sheet (issue #798)
+
+The ticked box now swaps the sheet: frame `herd_need_checked` (it replaced `herd_follow_checked`)
+asserts the `When the band needs meat` block is mounted, `Readout.stepper_count` is 0, and no yield box
+renders, and the commit line is asserted to carry `0 follow` (the zero-count token, then the bare
+`follow` last). The other three frames and their claims are unchanged, which is also the claim that an
+un-ticked sheet is the ordinary hunt sheet. `EXPECTED_CHECKPOINTS` is 19.

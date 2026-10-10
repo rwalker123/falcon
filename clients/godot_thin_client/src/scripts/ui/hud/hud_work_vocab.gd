@@ -1404,6 +1404,96 @@ static func follow_status_line(known: bool, at_herd: bool, next_x: int, next_y: 
         return WORK_ROW_FOLLOW_BEHIND_ONE
     return WORK_ROW_FOLLOW_BEHIND_FORMAT % hexes_behind
 
+## ---- HUNTING BY NEED (`docs/plan_roaming_bands.md` §Hunting by need) --------------------------------
+##
+## A hunt row with `move_with_herd` is a NEED ROW: it holds no standing workers, and each turn the sim
+## decides whether a crew goes out next turn and musters it for that one turn (idle hands first, then
+## the band's local source rows, lowest Priority first). The wire says so with `muster_crew` (the
+## hands going out; 0 = waiting), `turns_until_hunt` / `turns_to_kill` / `kill_progress` on the need
+## row and `lent_to_hunt` on each donor row. `idle_mustered` is the cohort's idle hands the muster takes.
+
+## `turns_until_hunt`'s "no hunt is coming" word — the wire's u32::MAX (food is steady, no crew can be
+## raised, or the herd is out of camp range). 0 means a crew is going now.
+const NO_HUNT_NEEDED := 4294967295
+
+## The key the model carries when the row has no published figure yet (a just-pressed pending row).
+const NEED_TURNS_UNKNOWN := -1
+
+## The assignment keys the need rows and their donors ride on, copied through the labor map presence-sensitively
+## (zero and absent are one reading on all but `turns_until_hunt`, where an absent key must never read
+## as "a crew goes out now").
+const NEED_TURNS_UNTIL_KEY := "turns_until_hunt"
+const NEED_ROW_KEYS: Array[String] = ["muster_crew", "lent_to_hunt", "turns_to_kill", "kill_progress",
+    NEED_TURNS_UNTIL_KEY]
+const COHORT_IDLE_MUSTERED_KEY := "idle_mustered"
+
+const WORK_ROW_NEED_OUT_FORMAT := "%d out"
+const WORK_ROW_NEED_WAITING := "when needed"
+const WORK_ROW_NEED_HUNTING_FORMAT := "Hunting · %s down in ~%d %s"
+const WORK_ROW_NEED_GOES_OUT_FORMAT := "Hunt goes out in %d %s"
+const WORK_ROW_NEED_FOOD_LASTS_FORMAT := " · food lasts %d"
+const WORK_ROW_NEED_STEADY := "Food is steady · no hunt needed"
+const WORK_ROW_NEED_BEHIND := "Hunts once it reaches the herd"
+const WORK_ROW_NEED_PENDING := "Sent · the band decides each turn"
+const WORK_ROW_NEED_FROM_FORMAT := "From %s"
+const WORK_ROW_NEED_FROM_IDLE_FORMAT := "idle %d"
+const WORK_ROW_NEED_FROM_ROW_FORMAT := "%s %d"
+const WORK_ROW_NEED_FROM_SEPARATOR := " · "
+const WORK_ROW_TURN_ONE := "turn"
+const WORK_ROW_TURN_MANY := "turns"
+const WORK_ROW_NEED_TURN_SINGULAR := 1
+## The generic noun when the herd is not in the world list (the animal is "down" either way).
+const WORK_ROW_NEED_ANIMAL_FALLBACK := "animal"
+
+## A donor row: the standing count with the lent hands taken off, and the warn line under it.
+const WORK_ROW_LENT_COUNT_FORMAT := "%d → %d"
+const WORK_ROW_LENT_VALUE_WIDTH := 44.0
+const WORK_ROW_LENT_LINE_FORMAT := "%d out hunting · back after the kill"
+const WORK_ROW_LENT_LINE_META := &"work_row_lent_line"
+const WORK_ROW_LENT_COUNT_META := &"work_row_lent_count"
+const WORK_ROW_NEED_COUNT_META := &"work_row_need_count"
+
+## The meter under a crew that is out: thin, and its fill is the banked share of the animal.
+const WORK_ROW_NEED_METER_HEIGHT := 4.0
+const WORK_ROW_NEED_METER_META := &"work_row_need_meter"
+
+## The Workforce head's idle readout while hands are out on a hunt.
+const WORKFORCE_IDLE_OUT_FORMAT := "%d idle · %d out hunting"
+
+static func need_turns_word(turns: int) -> String:
+    return WORK_ROW_TURN_ONE if turns == WORK_ROW_NEED_TURN_SINGULAR else WORK_ROW_TURN_MANY
+
+## The count slot of a need row and of the Hunting section head.
+static func need_count_text(muster_crew: int) -> String:
+    return WORK_ROW_NEED_OUT_FORMAT % muster_crew if muster_crew > 0 else WORK_ROW_NEED_WAITING
+
+## The need row's primary line (the accounts slot). `turns_until` is `NEED_TURNS_UNKNOWN` before the
+## wire has answered, `NO_HUNT_NEEDED` when no hunt is coming.
+static func need_primary_line(muster_crew: int, turns_to_kill: int, noun: String, turns_until: int,
+        behind: bool, food_turns: int) -> String:
+    if muster_crew > 0:
+        return WORK_ROW_NEED_HUNTING_FORMAT % [noun, turns_to_kill, need_turns_word(turns_to_kill)]
+    if turns_until == NEED_TURNS_UNKNOWN:
+        return WORK_ROW_NEED_PENDING
+    if turns_until == NO_HUNT_NEEDED:
+        return WORK_ROW_NEED_BEHIND if behind else WORK_ROW_NEED_STEADY
+    var line := WORK_ROW_NEED_GOES_OUT_FORMAT % [turns_until, need_turns_word(turns_until)]
+    if food_turns > 0:
+        line += WORK_ROW_NEED_FOOD_LASTS_FORMAT % food_turns
+    return line
+
+## "From idle 2 · Woodcutting 3": `sources` is `[{name, count}]` in board order; idle leads.
+static func need_from_line(idle_mustered: int, sources: Array) -> String:
+    var parts: Array[String] = []
+    if idle_mustered > 0:
+        parts.append(WORK_ROW_NEED_FROM_IDLE_FORMAT % idle_mustered)
+    for source in sources:
+        parts.append(WORK_ROW_NEED_FROM_ROW_FORMAT % [String((source as Dictionary)["name"]),
+            int((source as Dictionary)["count"])])
+    if parts.is_empty():
+        return ""
+    return WORK_ROW_NEED_FROM_FORMAT % WORK_ROW_NEED_FROM_SEPARATOR.join(PackedStringArray(parts))
+
 ## **THE PARTY BLOCK'S LINES, COMPOSED ONCE FOR EVERY SURFACE THAT STATES A POSTING** — the work
 ## board's far forage and hunt rows and the workings roster's far wood and stone rows. One caravan,
 ## one sentence set: nothing about a working's party differs from a patch's but the noun it walks to.

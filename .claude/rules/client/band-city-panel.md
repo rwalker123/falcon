@@ -7891,3 +7891,27 @@ one-line band taking 1 and keeping its 1.
   scrollbar's width, reserved unconditionally (as `StartingLoadoutPanel._scroll_gutter` does).
 - **Frames:** `family_limit_split`, `family_limit_split_free`; the harness scrolls the sheet to its
   end before saving.
+
+
+## HUNTING BY NEED on the Work tab (issue #798)
+
+The labor-side contract is `labor-ui.md` -> "HUNTING BY NEED". The rows it adds to this board:
+
+- **A NEED ROW** (`_work_source_models`' `need_row`: a hunt row with `move_with_herd` and the muster
+  keys) is admitted at 0 workers. It has no stepper; its count slot reads `N out` while a crew is out
+  and `when needed` otherwise (`HudWorkVocab.need_count_text`), and the HUSBANDRY section head repeats
+  the same readout while any need row exists. Line two is the primary line
+  (`HudWorkVocab.need_primary_line`): `Hunting · <noun> down in ~K turn(s)` with a 4px progress meter
+  (`_build_need_meter`) while a crew is out; waiting, `Hunt goes out in N turns · food lasts M`,
+  `Food is steady · no hunt needed` where `turns_until_hunt` is the sentinel, or, when the band is
+  behind the herd, the `Catching up` follow line over `Hunts once it reaches the herd`. A crew out also
+  states `From idle 2 · Woodcutting 3` (`_attach_muster_sources`, sources in board order: forage rows,
+  hunt rows, then workings) and turns the row's stripe WARN.
+- **The follow toggle on a need row.** OFF re-sends an ordinary hunt at
+  `min(hunt_useful_workers, effective idle)`; ON sends 0 with `follow`.
+- **DONOR ROWS.** A row that lends hands (`lent_to_hunt` > 0) reads `4 -> 3` in its count slot and, on
+  its own line in WARN, `N out hunting · back after the kill`. Workings carry the same count and line.
+  The Workforce readout reads `I idle · M out hunting` while `idle_mustered` is positive
+  (`HudWorkVocab.WORKFORCE_IDLE_OUT_FORMAT`).
+- **Heights.** The meter is a party line (`_work_row_party_lines`), so the row's height and the
+  board's reservation pay for it without a second edit.
