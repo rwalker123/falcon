@@ -264,6 +264,52 @@ fn band_gear(
     ))
 }
 
+/// **What a `follow` ask prices a need crew over** - the asking band's allocation, every row's
+/// standing claim, its idle hands and where it stands. Owned, so the pricing can borrow it beside
+/// the world's resources.
+struct MusterScene {
+    allocation: crate::components::LaborAllocation,
+    claims: Vec<f32>,
+    idle: u32,
+    band_pos: Option<bevy::math::UVec2>,
+}
+
+/// The scene for `band_id`, or `None` for a band with no allocation (nothing to lend).
+fn muster_scene(world: &mut World, faction: FactionId, band_id: u64) -> Option<MusterScene> {
+    let wanted = BandId(band_id);
+    let mut query = world.query::<(bevy::prelude::Entity, &BandId, &PopulationCohort)>();
+    let entity = query
+        .iter(world)
+        .find(|(_, id, cohort)| **id == wanted && cohort.faction == faction)
+        .map(|(entity, _, _)| entity)?;
+    let cohort = world.get::<PopulationCohort>(entity)?.clone();
+    let allocation = world
+        .get::<crate::components::LaborAllocation>(entity)?
+        .clone();
+    let wear = world
+        .get::<BandEquipment>(entity)
+        .cloned()
+        .unwrap_or_default();
+    let idle = crate::components::BandWorkforce::resolve(
+        Some(&cohort),
+        Some(&allocation),
+        world.get::<crate::components::BandBench>(entity),
+    )
+    .idle();
+    let band_pos = world
+        .get::<crate::components::Tile>(cohort.current_tile)
+        .map(|tile| tile.position);
+    let claims = crate::take_claims::with_world_sources(world, |sources| {
+        crate::take_claims::row_claims(sources, &allocation, &wear).claims
+    });
+    Some(MusterScene {
+        allocation,
+        claims,
+        idle,
+        band_pos,
+    })
+}
+
 /// **The party the answer is quoted for** — the same four `equipment.*` seams
 /// `snapshot::kit_roster_states` resolves a kit's published tiers through, but over the asking
 /// band's **live** wear and against **this** quarry.
@@ -542,6 +588,66 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
         Ok(resolved) => resolved,
         Err(failure) => return failure,
     };
+    // **A `follow` ASK PRICES THE CREW A NEED ROW WOULD MUSTER** - over the gear the musterable pool
+    // would carry (`hunt_by_need::MusterPricing`), the pricing the turn, the capture and the craft
+    // pass use, so the sheet's "Sends N" is what the row then sends.
+    let scene = if ask.follow {
+        muster_scene(world, FactionId(ask.faction_id), ask.band_id)
+    } else {
+        None
+    };
+    // Only a `follow` ask reads the donors' geometry; an ordinary ask needs none of it, and a
+    // hand-built world without a map has none to give.
+    let labor = world.resource::<LaborConfigHandle>().get();
+    let grid = (
+        world
+            .get_resource::<crate::resources::TileRegistry>()
+            .map_or(0, |tiles| tiles.width),
+        world
+            .get_resource::<crate::SimulationConfig>()
+            .is_some_and(|config| config.map_topology.wrap_horizontal),
+    );
+    let Some(herds) = world.get_resource::<HerdRegistry>() else {
+        return query_failure(query_error::UNKNOWN_HERD);
+    };
+    let is_local = |target: &crate::components::LaborTarget| {
+        crate::hunt_by_need::source_is_local(
+            target,
+            herds,
+            scene.as_ref().and_then(|scene| scene.band_pos),
+            &labor,
+            grid,
+        )
+    };
+    let herd_row = crate::components::LaborTarget::Hunt {
+        fauna_id: ask.herd_id.clone(),
+        floor: SOURCE_IS_KEYED_BY_QUARRY_ALONE,
+        move_with_herd: true,
+    };
+    let pricing = scene
+        .as_ref()
+        .map(|scene| crate::hunt_by_need::MusterPricing {
+            allocation: &scene.allocation,
+            target: &herd_row,
+            need_idx: scene
+                .allocation
+                .assignments
+                .iter()
+                .position(|row| row.target.same_source(&herd_row))
+                .unwrap_or(crate::hunt_by_need::NO_NEED_ROW),
+            idle: scene.idle,
+            is_local: &is_local,
+            claims: &scene.claims,
+        });
+    // **A `follow` ASK'S CAP IS A CEILING, NOT THE POOL**: locality is geometric, so the client
+    // cannot count the musterable hands; the server clamps to them.
+    let max_workers = pricing.as_ref().map_or(ask.max_workers, |pricing| {
+        ask.max_workers.min(pricing.allocation.musterable_pool(
+            pricing.idle,
+            pricing.need_idx,
+            pricing.is_local,
+        ))
+    });
     let equipment = world.resource::<EquipmentConfigHandle>().get();
     let fauna = world.resource::<FaunaConfigHandle>().get();
     let combat = world.resource::<CombatConfigHandle>().get();
@@ -559,6 +665,7 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
         // from its own share of it — the share moves with the crew size, which is why the rows
         // travel rather than a budget (`fauna::HuntCrewCurveInputs::other_rows`).
         other_rows: &other_rows,
+        muster: pricing.as_ref(),
         // **Settled at the row's own rank** — the band's items go High, then Normal, then Low.
         priority,
         intrinsic,
@@ -576,7 +683,7 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
             .get()
             .hunt
             .per_worker_biomass_capacity,
-        max_workers: ask.max_workers,
+        max_workers,
         // **Each row is what its crew collects after keeping** (`docs/plan_site_crews.md` §2.2) —
         // the deposit curve's rule ([`crate::extraction::deposit_crew_quote`]).
         keeping: crate::fauna::herd_crew_keeping_next_turn(
@@ -2101,6 +2208,7 @@ mod tests {
             kit_id: DEFAULT_HUNT_KIT.to_string(),
             floor,
             max_workers,
+            follow: false,
         }
     }
 

@@ -7902,7 +7902,7 @@ The labor-side contract is `labor-ui.md` -> "HUNTING BY NEED". The rows it adds 
   and `when needed` otherwise (`HudWorkVocab.need_count_text`), and the HUSBANDRY section head repeats
   the same readout while any need row exists. Line two is the primary line
   (`HudWorkVocab.need_primary_line`): `Hunting · <noun> down in ~K turn(s)` with a 4px progress meter
-  (`_build_need_meter`) while a crew is out; waiting, `Hunt goes out in N turns · food lasts M`,
+  (`_build_need_meter`) while a crew is out; waiting, `Hunt goes out in N turns · meat lasts M` (M is the row's `need_runway`, the meat on hand only, printed while below `BandFoodStatus.UNLIMITED_TURNS`; not the band's `turns_of_food`),
   `Food is steady · no hunt needed` where `turns_until_hunt` is the sentinel, or, when the band is
   behind the herd, the `Catching up` follow line over `Hunts once it reaches the herd`. A crew out also
   states `From idle 2 · Woodcutting 3` (`_attach_muster_sources`, sources in board order: forage rows,

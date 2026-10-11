@@ -486,6 +486,11 @@ pub struct LaborAssignmentState {
     /// The herd's banked wounds over the body's durability, in `[0, 1)`. Appended last.
     #[serde(default)]
     pub kill_progress: f32,
+    /// On a NEED row, turns the food the kill replaces will last — the meat on hand against the
+    /// band's net eating, the figure `turns_until_hunt` counts down from (`0` on every other row).
+    /// Appended last.
+    #[serde(default)]
+    pub need_runway: f32,
 }
 
 /// **ONE LINE OF ONE TAKE ROW'S TABLE OF EQUIPMENT** — a row of [`LaborAssignmentState::kit_toe`].

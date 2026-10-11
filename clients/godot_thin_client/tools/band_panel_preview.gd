@@ -423,6 +423,9 @@ const NEED_KILL_PROGRESS := 0.4
 const NEED_TURNS_UNTIL := 2
 const NEED_FOOD_TURNS := 6.0
 const NEED_UNLIMITED_FOOD_TURNS := 999.0
+## Dried stores the band holds beyond its meat: the band's `turns_of_food` runs this much longer than the
+## need row's `need_runway`, so a row that read the band figure would print the wrong number.
+const NEED_DRIED_RESERVE_TURNS := 11.0
 const RUNG_PENNED_HERD_ID := "game_aurochs_rp"
 ## The penned herd's crew, staffed in full — this frame is about the RUNG, so it must not also trip
 ## the under-herded ⚠ and leave two explanations for one amber row.
@@ -12337,13 +12340,15 @@ func _follow_row_states() -> void:
 func _need_band_fixture(muster: int, turns_until: int, lent_forage: int, lent_hunt: int,
 		idle_mustered: int, food_turns: float) -> Dictionary:
 	var band := _follow_band_fixture(true)
-	band["turns_of_food"] = food_turns
+	band["turns_of_food"] = food_turns if food_turns >= NEED_UNLIMITED_FOOD_TURNS \
+		else food_turns + NEED_DRIED_RESERVE_TURNS
 	band["idle_mustered"] = idle_mustered
 	var rows: Array = band["labor_assignments"]
 	var need: Dictionary = rows[0]
 	need["workers"] = 0
 	need["muster_crew"] = muster
 	need["turns_until_hunt"] = turns_until
+	need[HudWorkVocab.NEED_RUNWAY_KEY] = food_turns
 	need["turns_to_kill"] = NEED_TURNS_TO_KILL if muster > 0 else 0
 	need["kill_progress"] = NEED_KILL_PROGRESS if muster > 0 else 0.0
 	need["hunt_useful_workers"] = 5
@@ -12435,7 +12440,7 @@ func _need_row_states() -> void:
 		_need_band_fixture(0, NEED_TURNS_UNTIL, 0, 0, 0, NEED_FOOD_TURNS),
 		FOLLOW_BAND_TILE, HudWorkVocab.WORK_ROW_NEED_WAITING,
 		(HudWorkVocab.WORK_ROW_NEED_GOES_OUT_FORMAT % [NEED_TURNS_UNTIL, "turns"])
-			+ (HudWorkVocab.WORK_ROW_NEED_FOOD_LASTS_FORMAT % int(NEED_FOOD_TURNS)),
+			+ (HudWorkVocab.WORK_ROW_NEED_MEAT_LASTS_FORMAT % int(NEED_FOOD_TURNS)),
 		[HudWorkVocab.WORK_ROW_FOLLOW_CAMPED], false)
 	await _need_case("band_panel_need_steady",
 		_need_band_fixture(0, HudWorkVocab.NO_HUNT_NEEDED, 0, 0, 0, NEED_UNLIMITED_FOOD_TURNS),

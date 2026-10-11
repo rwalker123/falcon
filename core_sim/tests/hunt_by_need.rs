@@ -161,7 +161,31 @@ const MAMMOTH_HERD: Quarry = Quarry {
 /// A world with the need herd (a migratory mammoth herd), two donor herds, and one band hunting
 /// all three — the mammoth on a need row (`follow`, no standing hands).
 fn world(stock: Stock) -> (App, Entity) {
-    world_hunting(stock, MAMMOTH_HERD)
+    let (mut app, band) = world_hunting(stock, MAMMOTH_HERD);
+    meat_keeps_like_the_stores(&mut app);
+    (app, band)
+}
+
+/// **The need clock counts only the food that keeps no longer than the kill does** - so a fixture
+/// whose subject is "the larder" holds it in a class the kill's own class outlasts. Stretching
+/// `flesh` to the stores' shelf life makes the stored `dry` food count, as it did before the clock
+/// separated meat from reserve. The marsh and shelf-life tests below leave the shipped table alone
+/// and hold their larders as meat.
+fn meat_keeps_like_the_stores(app: &mut App) {
+    let stores_life = stores_shelf_life(app);
+    set_flesh_shelf_life(app, stores_life);
+}
+
+/// Stretch (or shrink) how long `flesh` keeps - the stand-in for preservation.
+fn set_flesh_shelf_life(app: &mut App, life: f32) {
+    let handle = app.world.resource::<core_sim::DemographicsConfigHandle>();
+    let mut config = (*handle.get()).clone();
+    for class in config.keeping.classes.iter_mut().filter(|c| c.id == FLESH) {
+        class.shelf_life_turns = life;
+    }
+    app.world
+        .resource_mut::<core_sim::DemographicsConfigHandle>()
+        .replace(std::sync::Arc::new(config));
 }
 
 /// [`world`] with the need row's herd stated.
@@ -313,14 +337,23 @@ fn turn_with_meal(app: &mut App) {
     recapture_snapshot_in_place(&mut app.world);
 }
 
-/// Set the larder to exactly `amount` of meat.
+/// Set the larder to exactly `amount` of long-keeping stores.
 fn set_larder(app: &mut App, band: Entity, amount: f32) {
+    set_larder_of(app, band, STORE_CLASS, amount);
+}
+
+/// Set the larder to exactly `amount` of fresh meat, the food a kill replaces.
+fn set_meat(app: &mut App, band: Entity, amount: f32) {
+    set_larder_of(app, band, FLESH, amount);
+}
+
+fn set_larder_of(app: &mut App, band: Entity, class: &str, amount: f32) {
     let mut cohort = app
         .world
         .get_mut::<PopulationCohort>(band)
         .expect("the band keeps its cohort");
     cohort.stores = LocalStore::new();
-    cohort.stores.add_food(STORE_CLASS, scalar_from_f32(amount));
+    cohort.stores.add_food(class, scalar_from_f32(amount));
 }
 
 fn larder(app: &App, band: Entity) -> core_sim::Scalar {
@@ -364,6 +397,7 @@ struct PublishedRow {
     hunt_useful_workers: u32,
     move_with_herd: bool,
     kit_id: String,
+    need_runway: f32,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -421,6 +455,7 @@ fn published(app: &App) -> Published {
                 hunt_useful_workers: row.huntUsefulWorkers(),
                 move_with_herd: row.moveWithHerd(),
                 kit_id: row.kitId().unwrap_or_default().to_string(),
+                need_runway: row.needRunway(),
             })
             .collect(),
     }
@@ -567,8 +602,14 @@ fn a_lean_larder_musters_the_useful_crew_and_hands_every_donor_back() {
 
     // The preview is the muster function's own answer.
     let idx = index_of(&app, band, NEED_HERD);
-    let plan =
-        allocation(&app, band).muster_donors(wire.idle_workers, idx, need.muster_crew, &|_| true);
+    // The gear covers the whole band, so the kit is not short and the order is Priority alone.
+    let plan = allocation(&app, band).muster_donors(
+        wire.idle_workers,
+        idx,
+        need.muster_crew,
+        &|_| true,
+        &core_sim::MusterKit::default(),
+    );
     assert_eq!(wire.idle_mustered, plan.from_idle);
     for herd in [NORMAL_DONOR_HERD, LOW_DONOR_HERD] {
         assert_eq!(
@@ -1086,9 +1127,10 @@ const BIG_CAMP: Stock = Stock {
 };
 /// The keeping class a kill lands in.
 const FLESH: &str = "flesh";
-/// A larder big enough to cover the meal's whole window, so the meal is nothing and only the one
-/// whole animal remains.
-const MEAL_COVERING_LARDER: f32 = COMFORTABLE_LARDER;
+/// Meat enough to cover the meal's whole window (over `flesh`'s shelf life the band's net eating is
+/// ~55 food on the fixture camp) yet less than the people eat before it spoils, so none rots
+/// uneaten: the meal is nothing and only the one whole animal remains.
+const MEAL_COVERING_LARDER: f32 = 60.0;
 /// A margin so wide the band hunts whatever its larder says, so a meal of nothing is still sent.
 const ALWAYS_DUE_MARGIN_TURNS: f32 = 100.0;
 /// How many times longer the stand-in for drying keeps meat.
@@ -1157,6 +1199,8 @@ fn sizing(app: &mut App, band: Entity, quarry: Quarry) -> Sizing {
                 kit_id: need.kit_id.clone(),
                 floor: FLOOR,
                 max_workers: pool,
+                // The sheet's ask for a need row: priced over the gear the muster brings.
+                follow: true,
             },
         ),
     );
@@ -1184,10 +1228,10 @@ fn sizing(app: &mut App, band: Entity, quarry: Quarry) -> Sizing {
     }
 }
 
-/// Run one turn on a lean larder of `amount` and size the need row.
+/// Run one turn on `amount` of meat and size the need row.
 fn sized_at(stock: Stock, quarry: Quarry, amount: f32) -> (App, Entity, Sizing) {
     let (mut app, band) = world_hunting(stock, quarry);
-    set_larder(&mut app, band, amount);
+    set_meat(&mut app, band, amount);
     turn(&mut app);
     let sized = sizing(&mut app, band, quarry);
     (app, band, sized)
@@ -1286,7 +1330,7 @@ fn a_meal_of_nothing_still_calls_for_one_whole_animal() {
     app.world
         .resource_mut::<FaunaConfigHandle>()
         .replace(std::sync::Arc::new(config));
-    set_larder(&mut app, band, MEAL_COVERING_LARDER);
+    set_meat(&mut app, band, MEAL_COVERING_LARDER);
     turn(&mut app);
     let sized = sizing(&mut app, band, MARSH_HERD);
     assert_eq!(sized.food, 0.0, "the larder covers the window");
@@ -1321,7 +1365,7 @@ fn a_longer_shelf_life_sends_a_bigger_crew() {
         .world
         .resource_mut::<core_sim::DemographicsConfigHandle>()
         .replace(std::sync::Arc::new(config));
-    set_larder(&mut long_app, band, 0.0);
+    set_meat(&mut long_app, band, 0.0);
     turn(&mut long_app);
     let long = sizing(&mut long_app, band, MARSH_HERD);
 
@@ -1438,5 +1482,434 @@ fn the_meal_counts_whole_animals_and_floors_at_one() {
         .animals()
         .is_infinite(),
         "an inedible herd never lands the meal"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// THE NEED CLOCK COUNTS ONLY THE FOOD THE KILL REPLACES
+// ---------------------------------------------------------------------------------------------
+
+/// Turns of the camp's meals held as meat, and how long preserved meat keeps: the stock outlasts the
+/// time a hunt takes to land, and is still shorter-keeping than the dried reserve beside it.
+const TURNS_OF_MEAT: f32 = 12.0;
+const PRESERVED_MEAT_SHELF_LIFE: f32 = 20.0;
+/// Turns watched while the meat is eaten down.
+const TURNS_TO_EAT_THE_MEAT: usize = 24;
+
+/// The `dry` class's shelf life as shipped - what `flesh` must keep for the stores to count.
+fn stores_shelf_life(app: &App) -> f32 {
+    app.world
+        .resource::<core_sim::DemographicsConfigHandle>()
+        .get()
+        .keeping
+        .shelf_life(STORE_CLASS)
+        .expect("the stores' class is shipped")
+}
+
+/// A band with a deep dried reserve and no meat at all.
+fn dried_reserve_only(stock: Stock) -> (App, Entity) {
+    let (mut app, band) = world_hunting(stock, MAMMOTH_HERD);
+    set_larder(&mut app, band, FAT_LARDER);
+    (app, band)
+}
+
+/// ⛔ **A BAND ARRIVING WITH A DRIED RESERVE AND NO MEAT HUNTS AT ONCE.** `dry` keeps far longer than
+/// the mammoth's `flesh`, so it is a reserve the kill does not stand in for: the need clock reads the
+/// meat on hand - none - and the first hunt goes out, where the band's own runway (`turnsOfFood`) is
+/// still long.
+#[test]
+fn a_dried_reserve_with_no_meat_sends_a_crew_at_once() {
+    let (mut app, band) = dried_reserve_only(Stock::ROOMY);
+    turn(&mut app);
+    let wire = published(&app);
+    let need = wire.row(NEED_HERD);
+    assert!(need.muster_crew > 0, "no meat: the first hunt goes out now");
+    assert_eq!(need.turns_until_hunt, 0);
+    assert!(
+        need.need_runway < 1.0,
+        "the meat on hand is under a turn: {}",
+        need.need_runway
+    );
+    assert!(
+        wire.turns_of_food > 1.0 + need.need_runway,
+        "control: the band's own runway still counts the reserve ({} turns)",
+        wire.turns_of_food
+    );
+    let _ = band;
+}
+
+/// ⛔ **WITH MEAT ON HAND THE BAND WAITS, AND HUNTS AGAIN AS THE MEAT RUNS LOW - NOT WHEN THE RESERVE
+/// DOES.** The people eat the meat first (fastest-keeping class first); the clock waits while it
+/// lasts and goes out while the dried stock is still deep.
+#[test]
+fn with_meat_on_hand_the_band_waits_and_hunts_as_the_meat_runs_low() {
+    let (mut app, band) = dried_reserve_only(Stock::FEW_DONOR_HANDS);
+    set_flesh_shelf_life(&mut app, PRESERVED_MEAT_SHELF_LIFE);
+    assert!(PRESERVED_MEAT_SHELF_LIFE < stores_shelf_life(&app));
+    let eaten_per_turn = meal(&app, band);
+    let mut meat = eaten_per_turn * TURNS_OF_MEAT;
+    let mut waited = false;
+    let mut sent_at = None;
+    for step in 0..TURNS_TO_EAT_THE_MEAT {
+        // The people eat the meat first; the donors' kills are not banked, so the meat is only
+        // what is left of the stock the band began with.
+        meat = (meat - eaten_per_turn).max(0.0);
+        {
+            let mut cohort = app
+                .world
+                .get_mut::<PopulationCohort>(band)
+                .expect("the band keeps its cohort");
+            cohort.stores = LocalStore::new();
+            cohort
+                .stores
+                .add_food(STORE_CLASS, scalar_from_f32(FAT_LARDER));
+            cohort.stores.add_food(FLESH, scalar_from_f32(meat));
+        }
+        turn(&mut app);
+        let need = published(&app).row(NEED_HERD).clone();
+        if need.muster_crew > 0 {
+            sent_at = Some(step);
+            break;
+        }
+        waited = true;
+        assert!(
+            need.need_runway > 1.0,
+            "turn {step}: the meat still lasts ({} turns)",
+            need.need_runway
+        );
+    }
+    assert!(waited, "it waited while the meat lasted");
+    assert!(sent_at.is_some(), "liveness: it hunted as the meat ran low");
+    assert!(
+        meat < eaten_per_turn * TURNS_OF_MEAT * 0.5,
+        "it went out with the meat low, not at the start"
+    );
+    assert!(
+        larder(&app, band).to_f32() > FAT_LARDER * 0.9,
+        "the dried reserve is still deep when the hunt goes out"
+    );
+}
+
+/// ⛔ **WHEN THE KILL KEEPS AS LONG AS THE RESERVE, THE RESERVE COUNTS** - the seam drying extends. A
+/// `flesh` shelf life stretched to `dry`'s (a stand-in for the rack) makes the same fat reserve the
+/// food the kill replaces, so the band that hunted at once above is not food-limited at all.
+#[test]
+fn a_kill_that_keeps_as_long_as_the_reserve_counts_the_reserve() {
+    let (mut app, band) = dried_reserve_only(Stock::ROOMY);
+    meat_keeps_like_the_stores(&mut app);
+    let _ = stores_shelf_life(&app);
+    turn(&mut app);
+    let need = published(&app).row(NEED_HERD).clone();
+    assert_eq!(need.muster_crew, 0, "the reserve counts: nothing is due");
+    assert!(
+        need.turns_until_hunt > MANY_TURNS_AWAY,
+        "a deep reserve is a long wait ({} turns)",
+        need.turns_until_hunt
+    );
+    let _ = band;
+}
+
+// ---------------------------------------------------------------------------------------------
+// KIT-AWARE DONORS
+// ---------------------------------------------------------------------------------------------
+
+/// Hands the gathering donor and the stalking donor hold, and the crew the tests plan.
+const STALKING_HANDS: u32 = NORMAL_DONOR_HANDS;
+/// Hands the muster must take from rows after idle hands are used up.
+const HANDS_FROM_ROWS: u32 = 2;
+/// Items a band holds of the stalking kit when it is SHORT: fewer than its own boar row claims plus
+/// the crew would, but enough to arm the boar hunters it has.
+const SHORT_STALKING_UNITS: u32 = STALKING_HANDS + 1;
+const ENOUGH_UNITS: u32 = 100;
+const GATHERING_KIT: &str = "gathering";
+
+/// Give the band exactly this gear, and put the Low donor row on the gathering kit.
+fn arm_the_band(app: &mut App, band: Entity, stalking_units: u32) {
+    let mut kit = BandEquipment::default();
+    kit.stock("spears", stalking_units, "plain", None);
+    kit.stock("sled", stalking_units, "plain", None);
+    kit.stock("baskets", ENOUGH_UNITS, "plain", None);
+    *app.world
+        .get_mut::<BandEquipment>(band)
+        .expect("the band keeps its ledger") = kit;
+    let gathering = app
+        .world
+        .resource::<core_sim::EquipmentConfigHandle>()
+        .get()
+        .kit(GATHERING_KIT)
+        .expect("the gathering kit is shipped");
+    let low = index_of(app, band, LOW_DONOR_HERD);
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the band keeps its allocation")
+        .assignments[low]
+        .kit = Some(gathering);
+}
+
+/// Plan a crew that needs `HANDS_FROM_ROWS` hands from the donor rows after every idle one.
+fn plan_a_crew_past_the_idle(app: &mut App, band: Entity) {
+    recapture_snapshot_in_place(&mut app.world);
+    let idle = published(app).idle_workers;
+    set_muster(app, band, idle + HANDS_FROM_ROWS);
+}
+
+/// ⛔ **WHEN THE HUNT'S KIT IS SHORT, THE DONOR HOLDING IT LENDS FIRST.** A Low gathering row and a
+/// Normal stalking row; the band holds barely more spears than the stalking row uses. Priority alone
+/// would take the gatherers' hands and leave the crew to claim stalking kits off the budget, stripping
+/// the stalking hunters of their gear while they keep their hands. The stalking row lends instead, so
+/// its kit goes to the crew with it.
+#[test]
+fn when_the_hunts_kit_is_short_the_donor_holding_it_lends_first() {
+    let (mut app, band) = world(Stock::ROOMY);
+    arm_the_band(&mut app, band, SHORT_STALKING_UNITS);
+    plan_a_crew_past_the_idle(&mut app, band);
+    let wire = published(&app);
+    assert_eq!(
+        wire.row(NORMAL_DONOR_HERD).lent_to_hunt,
+        HANDS_FROM_ROWS,
+        "the stalking row lends first, though it is the higher Priority"
+    );
+    assert_eq!(wire.row(LOW_DONOR_HERD).lent_to_hunt, 0);
+    assert_eq!(wire.idle_mustered, wire.idle_workers);
+}
+
+/// The control: with the kit not short, the order is Priority alone.
+#[test]
+fn when_the_kit_is_not_short_the_lowest_priority_lends_first() {
+    let (mut app, band) = world(Stock::ROOMY);
+    arm_the_band(&mut app, band, ENOUGH_UNITS);
+    plan_a_crew_past_the_idle(&mut app, band);
+    let wire = published(&app);
+    assert_eq!(wire.row(LOW_DONOR_HERD).lent_to_hunt, HANDS_FROM_ROWS);
+    assert_eq!(wire.row(NORMAL_DONOR_HERD).lent_to_hunt, 0);
+}
+
+/// The turn lends what the board published: the stalking row, with its kit, is what is missing from
+/// the donors' work - read against a control turn with nobody mustered.
+#[test]
+fn the_turn_lends_the_donors_the_board_named() {
+    let (mut mustered, band_m) = world(Stock::ROOMY);
+    arm_the_band(&mut mustered, band_m, SHORT_STALKING_UNITS);
+    plan_a_crew_past_the_idle(&mut mustered, band_m);
+    let (mut control, band_c) = world(Stock::ROOMY);
+    arm_the_band(&mut control, band_c, SHORT_STALKING_UNITS);
+    run_one_turn_fed(&mut mustered, band_m);
+    run_one_turn_fed(&mut control, band_c);
+    assert_ne!(
+        taken(&mustered, band_m, NORMAL_DONOR_HERD),
+        taken(&control, band_c, NORMAL_DONOR_HERD),
+        "the stalking row really did give hands up on the turn"
+    );
+    assert_eq!(
+        taken(&mustered, band_m, LOW_DONOR_HERD),
+        taken(&control, band_c, LOW_DONOR_HERD),
+        "the gathering row was left alone"
+    );
+    assert_eq!(hands(&mustered, band_m), hands(&control, band_c));
+}
+
+// ---------------------------------------------------------------------------------------------
+// CRAFT SUGGESTIONS SEE THE HUNT TURN
+// ---------------------------------------------------------------------------------------------
+
+fn suggested(app: &App, item: &str) -> Option<u32> {
+    decode_latest(app)
+        .populations
+        .iter()
+        .find(|cohort| cohort.band_id == BAND)
+        .expect("the band is on the wire")
+        .craft_suggestions
+        .iter()
+        .find(|suggestion| suggestion.item_id == item)
+        .map(|suggestion| suggestion.count)
+}
+
+/// Small game with no defence: bare hands still take it, so the crew the curve prices is wider than
+/// the spears the band holds, and the whole crew claims the stalking kit.
+const RABBIT_BODY_MASS: f32 = 0.27;
+const RABBIT_HEAD_COUNT: f32 = 2000.0;
+const RABBITS: Quarry = Quarry {
+    species: "Rabbit Warren",
+    body_mass: RABBIT_BODY_MASS,
+    stock: RABBIT_HEAD_COUNT * RABBIT_BODY_MASS,
+};
+
+/// A camp small enough that the idle hands cannot make the crew: both donors lend.
+const CREW_NEEDS_THE_DONORS: Stock = Stock {
+    working: 5 + LOW_DONOR_HANDS + NORMAL_DONOR_HANDS,
+    ..Stock::ROOMY
+};
+
+/// ⛔ **A HUNT CREW'S MISSING KIT IS SUGGESTED, THOUGH EVERY STANDING ROW IS FULLY KITTED.** A need
+/// row stands at zero hands, so the standing pass never sees what its crew would claim. The band holds
+/// exactly the spears its stalking rows use; the mustered crew would need many more, and the shortfall
+/// is the people mustered less the spears held - the stalking donors' own kit moving to the crew,
+/// never counted twice.
+#[test]
+fn a_hunt_crews_missing_kit_is_suggested_though_the_standing_rows_are_kitted() {
+    let (mut app, band) = world_hunting(CREW_NEEDS_THE_DONORS, RABBITS);
+    arm_the_band(&mut app, band, STALKING_HANDS);
+    set_meat(&mut app, band, LEAN_LARDER);
+    turn(&mut app);
+    let crew = row(&app, band, NEED_HERD).muster_crew;
+
+    assert!(
+        crew > published(&app).idle_workers,
+        "liveness: the donors lend, so their kit moves to the crew"
+    );
+
+    let spears = suggested(&app, "spears").expect("the crew's spears are suggested");
+    assert!(spears > 0);
+    assert!(
+        spears + STALKING_HANDS <= crew,
+        "{spears} suggested over the {STALKING_HANDS} held cannot exceed the {crew} mustered: the stalking donor's own kit is not counted twice"
+    );
+    // The control: the same band with the crew's gear in hand suggests nothing.
+    let (mut armed, band_a) = world_hunting(CREW_NEEDS_THE_DONORS, RABBITS);
+    arm_the_band(&mut armed, band_a, ENOUGH_UNITS);
+    set_meat(&mut armed, band_a, LEAN_LARDER);
+    turn(&mut armed);
+    assert!(row(&armed, band_a, NEED_HERD).muster_crew > 0);
+    assert_eq!(suggested(&armed, "spears"), None);
+}
+
+// ---------------------------------------------------------------------------------------------
+// THE GEAR THE MUSTER BRINGS
+// ---------------------------------------------------------------------------------------------
+
+/// Idle hands left once both donor rows are staffed: fewer than the spears the stalking donor holds,
+/// so a crew that arms anyone has to borrow from it.
+const FEW_IDLE_HANDS: u32 = 2;
+/// A camp whose every spare hand is on a donor row, with `FEW_IDLE_HANDS` idle.
+const IDLE_HANDS_ARE_FEW: Stock = Stock {
+    working: FEW_IDLE_HANDS + LOW_DONOR_HANDS + NORMAL_DONOR_HANDS,
+    ..Stock::ROOMY
+};
+
+/// The band with every stalking kit claimed: the boar row is `High`, so it is served its spears
+/// before any row that might ask for them, a new hunt included.
+fn every_stalking_kit_is_claimed(app: &mut App, band: Entity) {
+    arm_the_band(app, band, STALKING_HANDS);
+    let boar = index_of(app, band, NORMAL_DONOR_HERD);
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the band keeps its allocation")
+        .assignments[boar]
+        .priority = SourcePriority::High;
+}
+
+/// The crew-take curve the Assign hunters sheet asks for the need row's herd.
+fn sheet_curve(
+    app: &mut App,
+    band: Entity,
+    follow: bool,
+) -> Vec<sim_runtime::commands::HuntCrewTakeRow> {
+    let pool = musterable_pool(app, band);
+    sheet_curve_asking(app, follow, pool)
+}
+
+/// The same ask with a `follow` ceiling of the caller's choosing.
+fn sheet_curve_capped(app: &mut App, ceiling: u32) -> Vec<sim_runtime::commands::HuntCrewTakeRow> {
+    sheet_curve_asking(app, true, ceiling)
+}
+
+fn sheet_curve_asking(
+    app: &mut App,
+    follow: bool,
+    pool: u32,
+) -> Vec<sim_runtime::commands::HuntCrewTakeRow> {
+    let kit_id = published(app).row(NEED_HERD).kit_id.clone();
+    let reply = core_sim::forecast_query::answer_forecast_query(
+        &mut app.world,
+        &sim_runtime::commands::QueryPayload::HuntCrewTake(
+            sim_runtime::commands::HuntCrewTakeQuery {
+                faction_id: FACTION.0,
+                band_id: BAND,
+                herd_id: NEED_HERD.to_string(),
+                kit_id,
+                floor: FLOOR,
+                max_workers: pool,
+                follow,
+            },
+        ),
+    );
+    let sim_runtime::commands::QueryReply::HuntCrewTake(curve) = reply else {
+        panic!("the crew-take query answers with a curve");
+    };
+    curve.per_crew
+}
+
+/// ⛔ **A CREW IS PRICED OVER THE GEAR THE MUSTER BRINGS, NOT OVER THE UNCLAIMED UNITS ALONE.** Marsh
+/// Grazers have defense 3, so bare hands cannot wound one. Every spear the band owns is claimed by
+/// its stalking row, so the free units arm nobody and a curve priced over them reads zero at every
+/// crew - useful crew 0, the hunt never goes out. A hunter lent from the stalking row brings his
+/// spear with him, so the crew is armed by exactly the hands the muster takes from that row.
+#[test]
+fn a_quarry_bare_hands_cannot_wound_is_hunted_with_the_kit_the_donors_bring() {
+    let (mut app, band) = world_hunting(IDLE_HANDS_ARE_FEW, MARSH_HERD);
+    every_stalking_kit_is_claimed(&mut app, band);
+    set_meat(&mut app, band, LEAN_LARDER);
+    turn(&mut app);
+    let wire = published(&app);
+    let need = wire.row(NEED_HERD);
+
+    assert!(
+        row(&app, band, NEED_HERD).muster_crew > 0,
+        "the need row sends a crew"
+    );
+    assert_eq!(
+        need.muster_crew,
+        row(&app, band, NEED_HERD).muster_crew,
+        "the wire publishes the plan the turn made"
+    );
+    assert!(
+        need.hunt_useful_workers > 0,
+        "the useful crew is priced over the gear the muster brings"
+    );
+    assert!(
+        need.turns_to_kill > 0,
+        "the animal can be brought down, so there is a finite wait"
+    );
+    assert!(
+        wire.row(NORMAL_DONOR_HERD).lent_to_hunt > 0,
+        "the stalking row lends: its spears are the ones that arm the crew"
+    );
+    assert!(
+        wire.row(NORMAL_DONOR_HERD).lent_to_hunt >= wire.row(LOW_DONOR_HERD).lent_to_hunt,
+        "the row holding the kit lends before the one that does not"
+    );
+}
+
+/// The sheet's curve agrees with the row: asked with `follow` it prices the same muster, and without
+/// it, the free units alone - which arm nobody on this band.
+#[test]
+fn the_sheet_prices_a_need_row_over_the_muster_when_it_asks_with_follow() {
+    let (mut app, band) = world_hunting(IDLE_HANDS_ARE_FEW, MARSH_HERD);
+    every_stalking_kit_is_claimed(&mut app, band);
+    set_meat(&mut app, band, LEAN_LARDER);
+    turn(&mut app);
+    let crew = row(&app, band, NEED_HERD).muster_crew;
+
+    let with_follow = sheet_curve(&mut app, band, true);
+    let without = sheet_curve(&mut app, band, false);
+
+    assert!(
+        without.iter().all(|row| row.animals_likely == 0.0),
+        "liveness of the control: priced over the free units, nothing can be wounded"
+    );
+    // An over-large ceiling (the client sends the whole workforce) is clamped to the pool.
+    let pool = musterable_pool(&app, band);
+    let over = sheet_curve_capped(&mut app, pool + 50);
+    assert_eq!(
+        over.len(),
+        pool as usize,
+        "the ask is clamped to the musterable pool"
+    );
+    let at_crew = with_follow
+        .get(crew as usize - 1)
+        .expect("the curve reaches the crew the row sends");
+    assert!(
+        at_crew.animals_likely > 0.0,
+        "the crew the row sends lands animals on the sheet's curve too"
     );
 }

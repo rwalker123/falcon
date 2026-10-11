@@ -1352,6 +1352,19 @@ claim the settlement reached with nothing had no line at all. It now writes one 
 (`units 0` where unfilled) plus any unit paid against no claim; every reader that sums `units` reads
 those zeros as the zeros they are.
 
+- **A need row's crew is a second, hunt-turn pass.** A hunting-by-need row stands at zero hands, so
+  the standing lines never see the kit its crew would claim. For a band whose need row yields a crew
+  (`assess_need`, sending or waiting), the capture clones the allocation, musters that crew through
+  `LaborAllocation::muster_donors` (kit-carrying donors bring their kit — `work-party.md` →
+  "Hunting by need"), re-strikes every row's claim and the item budget, and builds the take rows'
+  lines again (`snapshot::population::hunt_turn_shortfall_lines`). `craft_suggestions_over` ranks
+  over both passes and **each item's shortfall is the larger of the two, never the sum** (the same
+  people on different days); the winning pass's sources are listed, `queued_units` is netted as
+  before. The turn's own kit split is unchanged. The Gear readout (`kitItemConditions` /
+  `workersOnQuotedJob`) is deliberately **not** maxed: it states how far the gear reaches the rows
+  as they are staffed, not what to make. Pinned by
+  `hunt_by_need::a_hunt_crews_missing_kit_is_suggested_though_the_standing_rows_are_kitted` (and
+  its control) and `craft_suggestions::tests::the_larger_of_two_passes_wins_per_item_and_they_are_never_summed`.
 - **The score is workers going without** — `(required − filled).max(0) × workers_per_unit`, summed
   over sources. Ranked descending, ties by item id (a stable sort over the `BTreeMap` walk).
 - **A detached party is not a source.** `population_state` publishes an empty list for any cohort

@@ -37,6 +37,16 @@ pub fn band_shelf_life(keeping: &KeepingConfig, class: &str) -> Option<f32> {
     keeping.shelf_life(class)
 }
 
+/// **DOES FOOD OF `class` KEEP NO LONGER THAN FOOD OF `kill_class`?** — the test for whether a stored
+/// class is "the food this kill replaces" (`hunt_by_need`): a class that keeps longer is a reserve
+/// the kill does not stand in for. Both lives are read through [`band_shelf_life`], so the answer
+/// moves with preservation; a class the table does not carry never rots and counts as keeping
+/// longest.
+pub fn keeps_no_longer_than(keeping: &KeepingConfig, class: &str, kill_class: &str) -> bool {
+    let life = |id: &str| band_shelf_life(keeping, id).unwrap_or(f32::INFINITY);
+    life(class) <= life(kill_class)
+}
+
 /// **How much of `food` will rot before it is eaten**, on a band that eats `need` a turn and takes
 /// no income — the larder walked forward through the same meal-then-rot turns the sim runs. The
 /// runway's first-turn correction (`snapshot::population`): a larder holding food that will expire

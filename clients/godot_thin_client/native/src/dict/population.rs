@@ -1128,6 +1128,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let _ = entry.insert("turns_until_hunt", i64::from(assignment.turnsUntilHunt()));
             let _ = entry.insert("turns_to_kill", i64::from(assignment.turnsToKill()));
             let _ = entry.insert("kill_progress", f64::from(assignment.killProgress()));
+            // The turns the food the kill replaces (the meat on hand) will last; the figure
+            // `turns_until_hunt` counts down from. 999 = not food-limited; 0 off a need row.
+            let _ = entry.insert("need_runway", f64::from(assignment.needRunway()));
             array.push(&entry.to_variant());
         }
     }

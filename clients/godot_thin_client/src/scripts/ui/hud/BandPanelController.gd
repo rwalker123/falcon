@@ -7511,14 +7511,14 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # hands. `behind` reads the same tiles the follow status does. The "From" source list needs
         # the SORTED board, so `_attach_muster_sources` fills it once the order is known.
         var muster_crew := int(m.get("muster_crew", 0))
-        var food_turns := float(band.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
+        var meat_turns := float(m.get(HudWorkVocab.NEED_RUNWAY_KEY, BandFoodStatus.UNLIMITED_TURNS))
         var need_primary := ""
         if is_need_row:
             need_primary = HudWorkVocab.need_primary_line(muster_crew, int(m.get("turns_to_kill", 0)),
                 _need_animal_noun(live_herd, herd_id),
                 int(m.get(HudWorkVocab.NEED_TURNS_UNTIL_KEY, HudWorkVocab.NEED_TURNS_UNKNOWN)),
                 _follow_hexes_behind(band, live_herd) > 0,
-                int(roundf(food_turns)) if BandFoodStatus.is_limited(food_turns) else 0)
+                int(roundf(meat_turns)) if BandFoodStatus.is_limited(meat_turns) else 0)
         models.append({
             "need_row": is_need_row, "muster_crew": muster_crew,
             "hunt_useful_workers": int(m.get(SourceForecast.ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY, 0)),

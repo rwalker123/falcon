@@ -7,13 +7,16 @@
 //! back at the end of the pass. The same assessment is what the snapshot capture publishes from, so
 //! the board and the turn cannot disagree.
 
-use crate::demographics_config::KeepingConfig;
+use crate::components::LaborTarget;
+use crate::components::{BandEquipment, LaborAllocation, MusterKit, PopulationCohort};
+use crate::demographics_config::DemographicsConfig;
+use crate::equipment_config::{EquipmentConfig, KitChoice};
 use crate::fauna::{
     herd_food_per_animal, hunt_crew_for_animals, hunt_crew_take_curve, hunt_crew_turns_to_kill,
     hunt_useful_crew, HuntCrewCurveInputs, NO_USEFUL_CREW,
 };
 use crate::fauna_config::FaunaConfig;
-use crate::snapshot::{BandFoodTerms, NOT_FOOD_LIMITED_TURNS};
+use crate::snapshot::{kill_food_terms, kill_turns_of_food, BandFoodTerms, NOT_FOOD_LIMITED_TURNS};
 
 /// The wire's `turnsUntilHunt` when a crew will not be sent however long the band waits: the larder
 /// is not food-limited, or no crew can be raised. `u32::MAX` rather than `0` because `0` already
@@ -85,35 +88,217 @@ pub(crate) fn meal_food(terms: &BandFoodTerms, keeps_turns: Option<f32>) -> f32 
 
 /// The meal for each configured keeping class, in the table's order — what the wire publishes as
 /// `PopulationCohortState.huntMeals`, so a compose sheet sizing a crew before the row exists reads
-/// the very figure the turn will.
-pub(crate) fn meals_by_class(terms: &BandFoodTerms, keeping: &KeepingConfig) -> Vec<(String, f32)> {
-    keeping
+/// the very figure the turn will. Each class's meal is struck over the food that class's kill
+/// replaces ([`kill_food_terms`]), the same larder the turn sizes the crew against.
+pub(crate) fn meals_by_class(
+    cohort: &PopulationCohort,
+    allocation: Option<&LaborAllocation>,
+    demographics: &DemographicsConfig,
+    is_expedition: bool,
+) -> Vec<(String, f32)> {
+    demographics
+        .keeping
         .classes
         .iter()
         .map(|class| {
+            let terms = kill_food_terms(cohort, allocation, demographics, is_expedition, &class.id);
             (
                 class.id.clone(),
-                meal_food(terms, crate::spoilage::band_shelf_life(keeping, &class.id)),
+                meal_food(
+                    &terms,
+                    crate::spoilage::band_shelf_life(&demographics.keeping, &class.id),
+                ),
             )
         })
         .collect()
 }
 
-/// **THE MEAL FOR ONE HERD** — its meat lands in the herd species' keeping class (the kill fallback
-/// where the table cannot resolve it), and one animal is worth [`herd_food_per_animal`]. The turn
-/// and the snapshot both call this.
-pub(crate) fn herd_meal(
-    terms: &BandFoodTerms,
+/// **THE NEED CLOCK FOR ONE HERD** — the meal its kill calls for and the runway the trigger reads.
+/// Both are struck over **the food that keeps no longer than this herd's kill does**
+/// ([`crate::spoilage::keeps_no_longer_than`]): the band's dried reserve is not what a kill
+/// replaces, so a band arriving with plenty of `dry` and no meat hunts at once, and after a kill it
+/// hunts again as the meat runs low rather than burning the reserve to its last turn. When drying
+/// (#708) lengthens the kill's shelf life the longer classes join the count with no new lever. Net
+/// eating — demand less steady income — is unchanged. The turn and the snapshot both call this.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct NeedClock {
+    pub meal: NeedMeal,
+    /// Turns the meat on hand lasts ([`crate::snapshot::kill_turns_of_food`]); the sentinel
+    /// [`NOT_FOOD_LIMITED_TURNS`] when income covers the people.
+    pub runway: f32,
+}
+
+pub(crate) fn need_clock(
+    cohort: &PopulationCohort,
+    allocation: Option<&LaborAllocation>,
+    demographics: &DemographicsConfig,
+    is_expedition: bool,
     herd: &crate::fauna::Herd,
     fauna: &FaunaConfig,
-    keeping: &KeepingConfig,
-) -> NeedMeal {
+) -> NeedClock {
+    let keeping = &demographics.keeping;
     let class = fauna
         .keeping_for(&herd.species)
         .unwrap_or(&keeping.kill_fallback_class);
-    NeedMeal {
-        food: meal_food(terms, crate::spoilage::band_shelf_life(keeping, class)),
-        food_per_animal: herd_food_per_animal(herd, fauna),
+    let terms = kill_food_terms(cohort, allocation, demographics, is_expedition, class);
+    NeedClock {
+        meal: NeedMeal {
+            food: meal_food(&terms, crate::spoilage::band_shelf_life(keeping, class)),
+            food_per_animal: herd_food_per_animal(herd, fauna),
+        },
+        runway: kill_turns_of_food(cohort, allocation, demographics, is_expedition, class),
+    }
+}
+
+/// The `need_idx` of a hunt no row stands on yet: the Assign hunters sheet pricing a crew before the
+/// row exists. No donor is excluded as "the need row", and no claim is zeroed for it.
+pub const NO_NEED_ROW: usize = usize::MAX;
+
+/// **THE HUNT'S TAKE KIT AGAINST THE BAND'S GEAR, FOR A CREW OF `crew`** - whether the kit is short
+/// and which donor rows are holding it, struck from the same item budget the turn settles the
+/// band's gear with ([`LaborAllocation::item_budget`], on `claims`, the rows' standing claims) so
+/// there is one count of who holds what.
+///
+/// An item of `hunt_kit` is **short** when the units no row claims
+/// ([`crate::equipment_config::BandItemBudget::unclaimed_units`]) arm fewer than `crew` hands. The
+/// shortfall is the largest gap over the short items; a donor row is *holding* the kit when it
+/// carries a short item and was settled units of it - and the hands it holds are what lending it
+/// frees. A kit nothing is short of returns the default, and the donor order stays Priority alone.
+pub(crate) fn muster_kit(
+    allocation: &LaborAllocation,
+    need_idx: usize,
+    crew: u32,
+    hunt_kit: &KitChoice,
+    claims: &[f32],
+    equipment: &EquipmentConfig,
+    wear: &BandEquipment,
+) -> MusterKit {
+    let budget = allocation.item_budget(equipment, claims);
+    let per_unit = |item: &str| equipment.item(item).map_or(1, |def| def.workers_per_unit) as f32;
+    let short_items: Vec<(&str, u32)> = hunt_kit
+        .uses()
+        .filter_map(|item| {
+            let free_hands =
+                (budget.unclaimed_units(item, wear, equipment) * per_unit(item)).floor();
+            let gap = crew as f32 - free_hands;
+            (gap > 0.0).then_some((item, gap as u32))
+        })
+        .collect();
+    let Some(shortfall) = short_items.iter().map(|(_, gap)| *gap).max() else {
+        return MusterKit::default();
+    };
+    let carried = allocation
+        .assignments
+        .iter()
+        .enumerate()
+        .map(|(idx, row)| {
+            if idx == need_idx || row.is_need_row() {
+                return 0;
+            }
+            let row_kit = row.kit_choice(equipment);
+            let at = budget.row_of(&row.target);
+            short_items
+                .iter()
+                .filter(|(item, _)| row_kit.uses().any(|used| used == *item))
+                .map(|(item, _)| {
+                    (budget.units_for_row(item, at, wear, equipment) * per_unit(item)).floor()
+                        as u32
+                })
+                .max()
+                .unwrap_or(0)
+                .min(row.workers)
+        })
+        .collect();
+    MusterKit { shortfall, carried }
+}
+
+/// **THE GEAR THE MUSTER BRINGS AT A CREW OF `c`** - the one function the crew-take curve, the
+/// need assessment (useful crew, turns to kill, meal-sized crew), the hunt-turn craft pass and the
+/// Assign hunters sheet price a need crew against, so they cannot disagree about it.
+///
+/// A need row holds no hands, so the rows beside it still hold their kit at the standing claims: a
+/// curve priced over the **free** units alone arms nobody on a band whose stalking kits are all
+/// claimed by its boar-hunt rows, and a quarry bare hands cannot wound (Marsh Grazers, defense 3)
+/// prices at zero - the hunt would never go out. A boar hunter lent to the hunt brings his kit, so
+/// the crew is priced over the free units **plus the units the lent donors hold**, in the order
+/// [`LaborAllocation::muster_donors`] takes them. There is no fixed point: the plan is a function of
+/// the crew size and the *standing* claims alone, and the donors' reduced claims are derived from
+/// it, not fed back into it.
+pub struct MusterPricing<'a> {
+    /// The band's allocation as it stands (donors at full strength, the need row at nothing).
+    pub allocation: &'a LaborAllocation,
+    /// The hunt source being priced - `rows_excluding_source` drops any row already on it.
+    pub target: &'a LaborTarget,
+    /// The need row's index, or [`NO_NEED_ROW`] before one exists.
+    pub need_idx: usize,
+    /// Idle hands, mustered before any donor.
+    pub idle: u32,
+    /// Whether a source is within the band's work range (donors must be).
+    pub is_local: &'a dyn Fn(&LaborTarget) -> bool,
+    /// Every row's standing take-kit claim, index-aligned with the allocation.
+    pub claims: &'a [f32],
+}
+
+impl MusterPricing<'_> {
+    /// The standing claims with the hunt source's own row (if any) at nothing: it is the row being
+    /// priced, not a competitor for its own gear.
+    fn standing_claims(&self) -> Vec<f32> {
+        self.allocation
+            .assignments
+            .iter()
+            .zip(self.claims)
+            .map(|(row, claim)| {
+                if row.target.same_source(self.target) {
+                    0.0
+                } else {
+                    *claim
+                }
+            })
+            .collect()
+    }
+
+    /// Who a crew of `crew` is made of, kit-aware.
+    pub fn plan_at(
+        &self,
+        crew: u32,
+        hunt_kit: &KitChoice,
+        equipment: &EquipmentConfig,
+        wear: &BandEquipment,
+    ) -> crate::components::MusterPlan {
+        let standing = self.standing_claims();
+        let kit = muster_kit(
+            self.allocation,
+            self.need_idx,
+            crew,
+            hunt_kit,
+            &standing,
+            equipment,
+            wear,
+        );
+        self.allocation
+            .muster_donors(self.idle, self.need_idx, crew, self.is_local, &kit)
+    }
+
+    /// **The rows a crew of `crew` competes with for the band's gear** once the donors it musters
+    /// have given their hands up: each lending row's claim falls in proportion to the hands lent, so
+    /// the kit they held is free for the crew.
+    pub fn other_rows_at(
+        &self,
+        crew: u32,
+        hunt_kit: &KitChoice,
+        equipment: &EquipmentConfig,
+        wear: &BandEquipment,
+    ) -> Vec<crate::equipment_config::KittedRow> {
+        let plan = self.plan_at(crew, hunt_kit, equipment, wear);
+        let mut claims = self.standing_claims();
+        for (row, lent) in &plan.from_rows {
+            let held = self.allocation.assignments[*row].workers;
+            if held > 0 {
+                claims[*row] *= (held - lent) as f32 / held as f32;
+            }
+        }
+        self.allocation
+            .rows_excluding_source(equipment, self.target, &claims)
     }
 }
 

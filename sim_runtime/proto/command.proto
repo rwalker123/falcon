@@ -1236,6 +1236,11 @@ message HuntCrewTakeQuery {
   //
   // 0 asks for nothing and is answered with an empty `per_crew`.
   uint32 max_workers = 6;
+  // Price the crew a NEED row would muster (a hunt with `move_with_herd`): the curve is struck over
+  // the free gear PLUS the kit the lent donors hold, in the order the muster takes them, and
+  // `max_workers` should be the sheet's musterable pool. False is an ordinary hunt row, priced over
+  // the units no row claims.
+  bool follow = 7;
 }
 
 // The reply frame, written back on the command socket. A TOP-LEVEL message rather than a member of

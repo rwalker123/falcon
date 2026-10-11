@@ -114,11 +114,18 @@ other work. A mammoth is indivisible and a whole one at once is the point — ne
   turn (a mammoth) it is the useful crew. The meal is the people's food over the turns that kind of
   meat keeps, less their income and what the larder already holds. Preservation lengthens that
   window, so a band that can dry meat sends a bigger crew for a bigger haul. The crew is taken for
-  one turn: idle hands first, then from the band's other work, lowest Priority first. Priority is
+  one turn: idle hands first, then from the band's other work, lowest Priority first - except that when the hunt's gear is short, the work already holding that
+  gear lends first, so the crew takes the gear with the hands instead of stripping it from hunters
+  who keep their hands. Priority is
   the player's control over which work gives up hands. The hands are back on their rows the next
   turn.
-- **When it goes out:** when the band's food runway falls to the turns this crew needs to bring an
-  animal down, plus a margin (a config lever). A mammoth takes several turns of a crew's work and the
+- **When it goes out:** when the **meat on hand** runs down to the turns this crew needs to bring an
+  animal down, plus a margin (a config lever). The clock counts only the food that keeps no longer
+  than the kill does - today the `flesh` in the larder. A dried reserve keeps longer, so it is a
+  reserve the kill does not stand in for: a band that arrives with plenty of dried food and no meat
+  hunts at once, and after each kill it hunts again as the meat runs low, rather than burning the
+  reserve down to its last turn. When drying lengthens meat's shelf life the longer classes join the
+  count and hunts come further apart. A mammoth takes several turns of a crew's work and the
   wounds carry on the herd, so once an animal is partly down the crew keeps going until it falls.
 - **A small band can hunt without pause.** If its whole workforce needs longer to bring an animal
   down than the meat keeps, the next hunt is always due. That is the setup working, not a defect:

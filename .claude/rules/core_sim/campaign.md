@@ -394,7 +394,9 @@ party coming home, a band merging) can eat it. Engine: `core_sim/src/spoilage.rs
   pack's rot on the road (`rots_in_transit`, `work_party::TransitRot`, the landing in
   `systems::labor`) and a hunting crew's meal (`hunt_by_need::meal_food`, `work-party.md` → "Hunting
   by need") all call it, so they cannot disagree about how long a kill lasts. Today it returns the
-  class's `shelf_life_turns`; it is the seam the drying rack (#708) extends — a band that can dry
+  class's `shelf_life_turns` (and `spoilage::keeps_no_longer_than` compares two classes through it —
+  the hunting need clock counts only the larder classes that keep no longer than the kill); it is the
+  seam the drying rack (#708) extends — a band that can dry
   meat keeps its `flesh` longer, or moves a kill into a longer class, there, and the rot rule and the
   meal move together.
 - **The larder holds food per class and per age** — `LocalStore`'s `FoodMix`, a `class → [FoodBatch

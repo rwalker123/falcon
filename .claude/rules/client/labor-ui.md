@@ -8235,7 +8235,7 @@ selection: every restate of a followed row must carry it.
 it holds 0 standing workers, and the sim decides each turn whether to muster a crew (idle hands first,
 then source rows, lowest Priority first). The wire keys on the assignment are `muster_crew`,
 `lent_to_hunt`, `turns_until_hunt` (`HudWorkVocab.NO_HUNT_NEEDED`, 4294967295, means no hunt needed),
-`turns_to_kill`, `kill_progress` and `hunt_useful_workers`; the cohort carries `idle_mustered` and
+`turns_to_kill`, `kill_progress`, `need_runway` (float; turns the meat on hand lasts, 999 = not food-limited; in `HudWorkVocab.NEED_ROW_KEYS`) and `hunt_useful_workers`; the cohort carries `idle_mustered` and
 `turns_of_food`. `HudBandLaborState.effective_worker_map` is a hand-listed allowlist, so these ride
 `HudWorkVocab.NEED_ROW_KEYS`, copied through on the confirmed row and again from the settled row onto a
 pending overlay row (which replaces the merged row).
@@ -8252,6 +8252,13 @@ pending overlay row (which replaces the merged row).
   crew falls back to the cap.)
   The commit sends `hunt <herd> <floor> 0 ... follow` (`HudComposeVocab.NEED_ROW_STANDING_HANDS`); it
   is never read as an unassign or a no-op while the box is ticked.
+- **The curve ask follows the box.** Ticked on a migratory herd, the hunt crew-take ask
+  (`_hunt_crew_take_params`) carries `follow = true` and `max_workers` = the band's `working_age` (clamped
+  by `_crew_take_workers`; the server clamps it again to the musterable pool and prices the crew over the
+  gear the muster brings). Un-ticked, the ask has no `follow` key and `max_workers` is the band's hunt pool.
+  `follow` is a term of the `ForecastQuery` key (`_hunt_curve_herd_terms`, `:follow=<bool>`), so toggling
+  the box re-asks and a non-follow curve never answers the follow sheet. `SourceForecast.hunt_need_crew`
+  reads the follow curve.
 - **Un-ticked is unchanged.** The same herd's sheet, un-ticked, is the ordinary hunt sheet: the
   stepper, the cap note and the yields, committing `hunt ... <n>` with no `follow`.
 - **The herd card's worked line** says `<band> hunts when needed` while no crew is out, and `N hunters

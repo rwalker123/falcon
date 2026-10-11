@@ -2290,6 +2290,11 @@ table LaborAssignment {
   turnsToKill:uint = 0;
   // killProgress: the herd's banked wounds over the body's durability, in [0,1).
   killProgress:float = 0;
+  // needRunway: on a NEED row, turns the food the kill replaces - the meat on hand, against the
+  // band's net eating - will last. The figure turnsUntilHunt counts down from; the band's own
+  // turnsOfFood also counts the dried reserve a kill does not stand in for. 999 = not food-limited.
+  // 0 on every other row.
+  needRunway:float = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).

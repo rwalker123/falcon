@@ -1423,15 +1423,18 @@ const NEED_TURNS_UNKNOWN := -1
 ## (zero and absent are one reading on all but `turns_until_hunt`, where an absent key must never read
 ## as "a crew goes out now").
 const NEED_TURNS_UNTIL_KEY := "turns_until_hunt"
+## `need_runway`: turns the MEAT on hand lasts (dried stores are a reserve, not counted); on the wire
+## 999.0 (`BandFoodStatus.UNLIMITED_TURNS`, the sim's NOT_FOOD_LIMITED_TURNS) = not food-limited.
+const NEED_RUNWAY_KEY := "need_runway"
 const NEED_ROW_KEYS: Array[String] = ["muster_crew", "lent_to_hunt", "turns_to_kill", "kill_progress",
-    NEED_TURNS_UNTIL_KEY]
+    NEED_TURNS_UNTIL_KEY, NEED_RUNWAY_KEY]
 const COHORT_IDLE_MUSTERED_KEY := "idle_mustered"
 
 const WORK_ROW_NEED_OUT_FORMAT := "%d out"
 const WORK_ROW_NEED_WAITING := "when needed"
 const WORK_ROW_NEED_HUNTING_FORMAT := "Hunting · %s down in ~%d %s"
 const WORK_ROW_NEED_GOES_OUT_FORMAT := "Hunt goes out in %d %s"
-const WORK_ROW_NEED_FOOD_LASTS_FORMAT := " · food lasts %d"
+const WORK_ROW_NEED_MEAT_LASTS_FORMAT := " · meat lasts %d"
 const WORK_ROW_NEED_STEADY := "Food is steady · no hunt needed"
 const WORK_ROW_NEED_BEHIND := "Hunts once it reaches the herd"
 const WORK_ROW_NEED_PENDING := "Sent · the band decides each turn"
@@ -1470,7 +1473,7 @@ static func need_count_text(muster_crew: int) -> String:
 ## The need row's primary line (the accounts slot). `turns_until` is `NEED_TURNS_UNKNOWN` before the
 ## wire has answered, `NO_HUNT_NEEDED` when no hunt is coming.
 static func need_primary_line(muster_crew: int, turns_to_kill: int, noun: String, turns_until: int,
-        behind: bool, food_turns: int) -> String:
+        behind: bool, meat_turns: int) -> String:
     if muster_crew > 0:
         return WORK_ROW_NEED_HUNTING_FORMAT % [noun, turns_to_kill, need_turns_word(turns_to_kill)]
     if turns_until == NEED_TURNS_UNKNOWN:
@@ -1478,8 +1481,8 @@ static func need_primary_line(muster_crew: int, turns_to_kill: int, noun: String
     if turns_until == NO_HUNT_NEEDED:
         return WORK_ROW_NEED_BEHIND if behind else WORK_ROW_NEED_STEADY
     var line := WORK_ROW_NEED_GOES_OUT_FORMAT % [turns_until, need_turns_word(turns_until)]
-    if food_turns > 0:
-        line += WORK_ROW_NEED_FOOD_LASTS_FORMAT % food_turns
+    if meat_turns > 0:
+        line += WORK_ROW_NEED_MEAT_LASTS_FORMAT % meat_turns
     return line
 
 ## "From idle 2 · Woodcutting 3": `sources` is `[{name, count}]` in board order; idle leads.

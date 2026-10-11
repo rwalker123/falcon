@@ -20602,6 +20602,7 @@ mod tests {
                 kit_id: SHARED_HUNT_KIT.to_string(),
                 floor: SUSTAIN_FLOOR,
                 max_workers: SHORTFALL_ROW_CREW,
+                follow: false,
             }),
         );
         match reply {
@@ -26237,6 +26238,7 @@ mod tests {
                     kit_id,
                     floor: 0.25,
                     max_workers: 4,
+                    follow: false,
                 }),
             ),
             (

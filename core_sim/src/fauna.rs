@@ -10053,6 +10053,11 @@ pub struct HuntCrewCurveInputs<'a> {
     /// **Empty is the ordinary case**: a band with nothing else reaching for the kit's items falls
     /// through to the whole live stock, which is what a ledger-wide coverage always gave it.
     pub other_rows: &'a [crate::equipment_config::KittedRow],
+    /// **THE MUSTER A NEED CREW IS PRICED OVER** (`hunt_by_need::MusterPricing`): when present the
+    /// competing rows are re-struck at every crew size with the donors that crew would lend having
+    /// given up their hands (and so their kit), and `other_rows` is unused. `None` is every ordinary
+    /// row, whose crew is staffed where it stands.
+    pub muster: Option<&'a crate::hunt_by_need::MusterPricing<'a>>,
     /// **The rank this row claims the band's take gear at** — its own `SourcePriority`
     /// ([`crate::components::LaborAllocation::priority_on`]): the band's items are settled High,
     /// then Normal, then Low (`docs/plan_site_crews.md` §2.3), so a High row's curve is armed ahead
@@ -10135,11 +10140,20 @@ pub fn next_turns_quarry(herd: &Herd, fauna: &FaunaConfig) -> Herd {
 /// never the head count.
 fn curve_coverage(
     inputs: &HuntCrewCurveInputs<'_>,
+    crew: u32,
     workers: f32,
     useful: f32,
 ) -> crate::equipment_config::KitCoverage {
+    let mustered;
+    let other_rows: &[crate::equipment_config::KittedRow] = match inputs.muster {
+        Some(muster) => {
+            mustered = muster.other_rows_at(crew, inputs.kit, inputs.equipment, inputs.wear);
+            &mustered
+        }
+        None => inputs.other_rows,
+    };
     let budget = crate::equipment_config::BandItemBudget::with_prospective_row(
-        inputs.other_rows.iter().cloned(),
+        other_rows.iter().cloned(),
         inputs.kit,
         workers.min(useful),
         inputs.priority,
@@ -10274,7 +10288,7 @@ pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTak
             // **The crew keeps first** — every term below reads the hands left to take with.
             let workers =
                 crew as f32 - crew_keep_hands(inputs.keeping, inputs.equipment, inputs.wear, crew);
-            let coverage = curve_coverage(inputs, workers, useful);
+            let coverage = curve_coverage(inputs, crew, workers, useful);
             let party = PartyResolution {
                 equipment: inputs.equipment,
                 coverage: &coverage,
@@ -10449,6 +10463,7 @@ pub fn hunt_armed_crew(inputs: &HuntCrewCurveInputs<'_>) -> u32 {
     };
     let coverage = curve_coverage(
         inputs,
+        inputs.max_workers,
         inputs.max_workers as f32,
         curve_useful_take_hands(inputs, &quarry),
     );
@@ -10599,7 +10614,7 @@ pub fn hunt_crew_turns_to_kill(
     let quarry = next_turns_quarry(inputs.herd, inputs.fauna);
     let useful = curve_useful_take_hands(inputs, &quarry);
     let hands = crew as f32 - crew_keep_hands(inputs.keeping, inputs.equipment, inputs.wear, crew);
-    let coverage = curve_coverage(inputs, hands, useful);
+    let coverage = curve_coverage(inputs, crew, hands, useful);
     let party = PartyResolution {
         equipment: inputs.equipment,
         coverage: &coverage,

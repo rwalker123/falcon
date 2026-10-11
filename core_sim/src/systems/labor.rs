@@ -5137,6 +5137,15 @@ impl AppliedMuster {
 /// **Only a camp kill is mustered.** A herd that has left the registry or stands beyond
 /// `band_work_range` of the band cannot be hunted by a one-turn crew (it would need porters on the
 /// road), so the plan is forced to `0` and the band hunts nothing this turn.
+/// **THE GEAR [`apply_muster`] CHOOSES DONORS AGAINST** - the band's equipment, its wear ledger and
+/// every row's take-kit claim as the rows hold it (index-aligned with the allocation, struck before
+/// any hand is lent).
+struct MusterGear<'a> {
+    equipment: &'a crate::equipment_config::EquipmentConfig,
+    wear: &'a BandEquipment,
+    claims: &'a [f32],
+}
+
 fn apply_muster(
     allocation: &mut LaborAllocation,
     mut idle: u32,
@@ -5144,6 +5153,7 @@ fn apply_muster(
     band_pos: Option<UVec2>,
     labor: &crate::labor_config::LaborConfig,
     grid: (u32, u32, bool),
+    gear: &MusterGear<'_>,
 ) -> AppliedMuster {
     let mut applied = AppliedMuster::default();
     let need_rows: Vec<usize> = allocation
@@ -5168,9 +5178,23 @@ fn apply_muster(
             continue;
         }
         let crew = allocation.assignments[need_idx].muster_crew;
-        let plan = allocation.muster_donors(idle, need_idx, crew, &|target| {
-            crate::hunt_by_need::source_is_local(target, herds, band_pos, labor, (grid.0, grid.2))
-        });
+        // The crew is mustered by the one pricing the curve, the capture and the craft pass use:
+        // idle first, then the donors (kit-carrying ones first when the hunt's kit is short), on the
+        // claims the rows hold before any hand is lent.
+        let hunt_kit = allocation.assignments[need_idx].kit_choice(gear.equipment);
+        let target = allocation.assignments[need_idx].target.clone();
+        let is_local = |donor: &LaborTarget| {
+            crate::hunt_by_need::source_is_local(donor, herds, band_pos, labor, (grid.0, grid.2))
+        };
+        let plan = crate::hunt_by_need::MusterPricing {
+            allocation: &*allocation,
+            target: &target,
+            need_idx,
+            idle,
+            is_local: &is_local,
+            claims: gear.claims,
+        }
+        .plan_at(crew, &hunt_kit, gear.equipment, gear.wear);
         for (row, hands) in &plan.from_rows {
             allocation.assignments[*row].workers -= hands;
             applied.lent.push((*row, *hands));
@@ -5604,6 +5628,49 @@ pub fn advance_labor_allocation(
         // shed on purpose: the shed has already cut the allocation to the people the band still has.
         let idle_to_muster =
             BandWorkforce::resolve(Some(&cohort), Some(&allocation), bench.as_deref()).idle();
+        // **The rows' claims AS THEY STAND** - donors at full strength, the need row at nothing -
+        // so the muster can tell which donors are holding the hunt's kit. Struck only when a crew
+        // is planned.
+        let standing_claims = allocation
+            .assignments
+            .iter()
+            .any(|row| row.is_need_row() && row.muster_crew > 0)
+            .then(|| {
+                let ground_of = |pos: UVec2| {
+                    tile_registry
+                        .index(pos.x, pos.y)
+                        .and_then(|entity| tiles.get(entity).ok())
+                        .cloned()
+                };
+                let season_of = |pos: UVec2| {
+                    tile_registry
+                        .index(pos.x, pos.y)
+                        .and_then(|entity| food_modules.get(entity).ok())
+                        .map_or(NO_FORAGE_SEASON, |module| module.seasonal_weight.max(0.0))
+                };
+                crate::take_claims::row_claims(
+                    &crate::take_claims::ClaimSources {
+                        forage: &forage_registry,
+                        herds: &registry,
+                        deposits: &deposits,
+                        ground_of: &ground_of,
+                        season_of: &season_of,
+                        map_seed,
+                        labor: &labor,
+                        flora: &flora,
+                        fauna: &fauna,
+                        equipment: &equipment_cfg,
+                        extraction: &extraction_cfg,
+                        ladder: &ladder,
+                        materials: &materials_cfg,
+                        combat: &combat_config,
+                        person: person_profile,
+                        start: fauna::ProjectionStart::AfterRegrowth,
+                    },
+                    &allocation,
+                    &band_kit,
+                )
+            });
         let muster = apply_muster(
             &mut allocation,
             idle_to_muster,
@@ -5611,6 +5678,13 @@ pub fn advance_labor_allocation(
             band_pos,
             &labor,
             (grid_width, grid_height, wrap_horizontal),
+            &MusterGear {
+                equipment: &equipment_cfg,
+                wear: &band_kit,
+                claims: standing_claims
+                    .as_ref()
+                    .map_or(&[][..], |claims| claims.claims.as_slice()),
+            },
         );
         // **THE HAY LEDGER IS CLEARED BEFORE ANY EXIT OUT OF THIS BAND'S TURN**, and re-summed at the
         // foot of the loop from the rows it actually resolved. Every other per-turn ledger the
@@ -10449,20 +10523,6 @@ pub fn advance_labor_allocation(
             .map(|(idx, _)| idx)
             .collect();
         if !need_rows.is_empty() {
-            let runway = crate::snapshot::band_turns_of_food(
-                &cohort,
-                Some(&allocation),
-                &demographics_cfg,
-                false,
-            );
-            // **THE MEAL'S TERMS**, struck beside the runway from the same larder, so a crew is
-            // sized to what the band can eat of a kill before it spoils.
-            let food_terms = crate::snapshot::band_food_terms(
-                &cohort,
-                Some(&allocation),
-                &demographics_cfg,
-                false,
-            );
             let idle_now =
                 BandWorkforce::resolve(Some(&cohort), Some(&allocation), bench.as_deref()).idle();
             let wear_now = band_equipment.as_deref().unwrap_or(&band_kit);
@@ -10523,12 +10583,41 @@ pub fn advance_labor_allocation(
                     if !in_camp_range {
                         return (idx, NO_CREW_ON_THIS_ACTIVITY);
                     }
+                    // **The need clock for THIS herd's kill** — its meal and the runway of the food
+                    // that kill replaces ([`crate::hunt_by_need::need_clock`]).
+                    let clock = crate::hunt_by_need::need_clock(
+                        &cohort,
+                        Some(&allocation),
+                        &demographics_cfg,
+                        false,
+                        herd,
+                        &fauna,
+                    );
                     let kit = row.kit_choice(&equipment_cfg);
                     let other_rows = allocation.rows_excluding_source(
                         &equipment_cfg,
                         &row.target,
                         &claims.claims,
                     );
+                    let is_local = |donor: &LaborTarget| {
+                        crate::hunt_by_need::source_is_local(
+                            donor,
+                            &registry,
+                            Some(band_pos),
+                            &labor,
+                            (grid_width, wrap_horizontal),
+                        )
+                    };
+                    // **The gear the muster brings** - the curve prices the crew over the free units
+                    // plus the kit the lent donors hold, not over the free units alone.
+                    let pricing = crate::hunt_by_need::MusterPricing {
+                        allocation: &allocation,
+                        target: &row.target,
+                        need_idx: idx,
+                        idle: idle_now,
+                        is_local: &is_local,
+                        claims: &claims.claims,
+                    };
                     let assessment = crate::hunt_by_need::assess_need(
                         &fauna::HuntCrewCurveInputs {
                             herd,
@@ -10537,6 +10626,7 @@ pub fn advance_labor_allocation(
                             kit: &kit,
                             wear: wear_now,
                             other_rows: &other_rows,
+                            muster: Some(&pricing),
                             priority: allocation.priority_on(&row.target),
                             intrinsic: person_profile,
                             tuning: combat_tuning,
@@ -10544,33 +10634,20 @@ pub fn advance_labor_allocation(
                             range_sigmas: combat_config.forecast_range_sigmas,
                             floor: *floor,
                             baseline_haul_rate,
-                            max_workers: allocation.musterable_pool(idle_now, idx, &|target| {
-                                crate::hunt_by_need::source_is_local(
-                                    target,
-                                    &registry,
-                                    Some(band_pos),
-                                    &labor,
-                                    (grid_width, wrap_horizontal),
-                                )
-                            }),
+                            max_workers: allocation.musterable_pool(idle_now, idx, &is_local),
                             keeping: fauna::herd_crew_keeping_next_turn(
                                 herd, &fauna, &ladder, None,
                             ),
                         },
                         arrivals_horizon,
-                        runway,
+                        clock.runway,
                         fauna.follow.need_margin_turns,
                         // A hunt in progress: a crew was out this turn, the animal took damage and
                         // is not down — no kill landed on the row.
                         herds_crewed_this_turn.contains(fauna_id)
                             && herd.wounds.pending() > 0.0
                             && allocation.last_yields[idx].actual <= NOTHING_LANDED,
-                        &crate::hunt_by_need::herd_meal(
-                            &food_terms,
-                            herd,
-                            &fauna,
-                            &demographics_cfg.keeping,
-                        ),
+                        &clock.meal,
                     );
                     (
                         idx,

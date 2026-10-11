@@ -14,7 +14,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 27
+const EXPECTED_CHECKPOINTS := 31
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
@@ -59,6 +59,8 @@ const RESIDENT := "medium"
 
 ## The line a commit sends, captured off the real signal so the text under test is what `Main` formats.
 var _sent_lines: Array[String] = []
+## Every hunt crew-take ask the sheet put on the socket, in order — read back to prove what the ask carried.
+var _crew_asks: Array = []
 
 func _band(followed: bool, herd_id: String) -> Dictionary:
 	var assignments: Array = []
@@ -158,10 +160,12 @@ func _check_hunt_need_crew() -> void:
 func run(harness) -> void:
 	h = harness
 	_sent_lines = []
+	_crew_asks = []
 	var query: ForecastQuery = h._hud.forecast_query()
 	query.set_sender(func(request_id: int, ask: Dictionary) -> bool:
 		var reply: Dictionary = ForecastFx.answer(h._hud, request_id, ask)
 		if String(ask.get("kind", "")) == ForecastQuery.KIND_HUNT_CREW_TAKE:
+			_crew_asks.append(ask.duplicate())
 			reply["per_crew"] = _need_curve(int(ask.get("max_workers", 0)))
 		query.deliver.call_deferred([reply])
 		return true)
@@ -176,6 +180,9 @@ func run(harness) -> void:
 	_open(herd)
 	await h._settle()
 	await h._save("herd_follow_unchecked")
+	h._assert_hud("unticked: the crew-take ask went out and carries no `follow`",
+		not _crew_asks.is_empty() and not bool((_crew_asks[-1] as Dictionary).get("follow", false)))
+	var unticked_asks := _crew_asks.size()
 	var sheet: Control = h._hud._drawercompose._compose_sheet
 	var box := _box(sheet)
 	h._assert_hud("a migratory herd's sheet carries the Move camp box", box != null)
@@ -195,6 +202,13 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("herd_need_checked")
 	h._assert_hud("ticking the box is composed state", h._hud._compose.hunt_move_with_herd())
+	h._assert_hud("ticking RE-ASKS the curve (a non-follow curve does not answer the follow sheet)",
+		_crew_asks.size() > unticked_asks)
+	var follow_ask: Dictionary = _crew_asks[-1] if not _crew_asks.is_empty() else {}
+	h._assert_hud("ticked: the ask carries follow = true",
+		bool(follow_ask.get("follow", false)))
+	h._assert_hud("ticked: max_workers is the band's whole working-age workforce (%d)" % NEED_CURVE_WORKERS,
+		int(follow_ask.get("max_workers", 0)) == NEED_CURVE_WORKERS)
 	var ticked: Control = h._hud._drawercompose._compose_sheet
 	h._assert_hud("a ticked sheet swaps the Hunters stepper for `%s`" % HudComposeVocab.NEED_BLOCK_TITLE,
 		Q.find_meta_node(ticked, HudComposeVocab.NEED_BLOCK_META) != null

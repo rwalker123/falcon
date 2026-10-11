@@ -172,6 +172,8 @@ impl CrewTakeOracle for LinkOracle<'_> {
             kit_id: ask.kit_id.clone(),
             floor: ask.floor,
             max_workers: ask.max_workers,
+            // The AI prices ordinary hunt rows: a need row is a migration-mode box it does not set.
+            follow: false,
         });
         match self.link.ask(query, self.timeout) {
             Ok(QueryReply::HuntCrewTake(reply)) => {

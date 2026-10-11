@@ -465,6 +465,7 @@ fn create_populations<'a>(
                                 turnsUntilHunt: assignment.turns_until_hunt,
                                 turnsToKill: assignment.turns_to_kill,
                                 killProgress: assignment.kill_progress,
+                                needRunway: assignment.need_runway,
                             },
                         )
                     })
@@ -1471,6 +1472,7 @@ fn decode_labor_assignment(
         turns_until_hunt: assignment.turnsUntilHunt(),
         turns_to_kill: assignment.turnsToKill(),
         kill_progress: assignment.killProgress(),
+        need_runway: assignment.needRunway(),
     })
 }
 

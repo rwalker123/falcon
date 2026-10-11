@@ -4754,28 +4754,54 @@ func _crew_take_workers(max_workers: int) -> int:
 ## stand terms, on the animal web).
 func _hunt_curve_herd_terms(herd_id: String) -> String:
     var herd := _live_herd(herd_id, _band_labor.find_world_herd(herd_id))
-    return ":%s:%f:%f" % [
+    return ":%s:%f:%f:follow=%s" % [
         String(herd.get(SourceForecast.FORECAST_CURRENT_RUNG_KEY, "")),
-        float(herd.get("domestication", 0.0)), float(herd.get("biomass", 0.0))]
+        float(herd.get("domestication", 0.0)), float(herd.get("biomass", 0.0)),
+        str(_hunt_curve_follows(herd_id))]
+
+## **HUNTING BY NEED ASKS A DIFFERENT QUESTION** (#798): ticked on a migratory herd, the curve is priced
+## over the gear the band's whole muster brings (donors lend their kits) rather than the idle crew's,
+## so the ask carries `follow = true` and the key carries it too — a non-follow curve must never answer
+## the follow sheet (nor the reverse). Same predicate as the sheet's `needs_hunt`.
+func _hunt_curve_follows(herd_id: String) -> bool:
+    var herd := _live_herd(herd_id, _band_labor.find_world_herd(herd_id))
+    return _herd_is_migratory(herd) and _compose.hunt_move_with_herd()
+
+## The ask's `max_workers` ceiling: the band's whole working-age workforce when following (the server
+## clamps it to the musterable pool), else the caller's own pool. Run through `_crew_take_workers`.
+func _hunt_curve_cap(band: Dictionary, herd_id: String, pool: int) -> int:
+    if _hunt_curve_follows(herd_id):
+        return _crew_take_workers(maxi(int(band.get("working_age", 0)), 0))
+    return _crew_take_workers(pool)
+
+## The hunt crew-take ask payload, one spelling for the build and drag paths. `follow` is present only
+## when true, so an unticked ask is byte-identical to the pre-#798 one.
+func _hunt_crew_take_params(band: Dictionary, band_id: int, herd_id: String, kit_id: String,
+        floor: float, workers: int) -> Dictionary:
+    var params := {
+        "faction_id": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+        "band_id": band_id,
+        "herd_id": herd_id,
+        "kit_id": kit_id,
+        "floor": floor,
+        "max_workers": workers,
+    }
+    if _hunt_curve_follows(herd_id):
+        params["follow"] = true
+    return params
 
 func _crew_take_view(band: Dictionary, herd_id: String, kit_id: String, floor: float,
         max_workers: int) -> Dictionary:
     if _forecast_query == null:
         return {"state": ForecastQuery.STATE_PENDING, "answer": {}, "error": ""}
     var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
-    var workers := _crew_take_workers(max_workers)
+    var workers := _hunt_curve_cap(band, herd_id, max_workers)
     var subject := ForecastQuery.subject_of(ForecastQuery.KIND_HUNT_CREW_TAKE, band_id, herd_id)
     var key := ForecastQuery.key_of(subject, kit_id, workers, floor, band,
         _band_labor.kits()) + _hunt_curve_herd_terms(herd_id)
     if workers > 0 and band_id != HudConst.NO_BAND_ID and herd_id != "":
-        _forecast_query.ask(ForecastQuery.KIND_HUNT_CREW_TAKE, subject, key, {
-            "faction_id": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
-            "band_id": band_id,
-            "herd_id": herd_id,
-            "kit_id": kit_id,
-            "floor": floor,
-            "max_workers": workers,
-        })
+        _forecast_query.ask(ForecastQuery.KIND_HUNT_CREW_TAKE, subject, key,
+            _hunt_crew_take_params(band, band_id, herd_id, kit_id, floor, workers))
     return _forecast_query.view_exact(subject, key)
 
 ## **THE SAME QUESTION, PUT WHILE THE FLOOR IS STILL MOVING** — and the reason it has to be put at all
@@ -4805,7 +4831,7 @@ func _drag_crew_take(band: Dictionary, herd_id: String, kit_id: String, floor: f
     # **THE SAME CLAMP THE BUILD PATH APPLIES, and it must be the same one** — see
     # `_crew_take_workers`: the crew term is half the key, so two paths clamping differently would ask
     # under one key and read back under another.
-    var workers := _crew_take_workers(max_workers)
+    var workers := _hunt_curve_cap(band, herd_id, max_workers)
     var subject := ForecastQuery.subject_of(ForecastQuery.KIND_HUNT_CREW_TAKE, band_id, herd_id)
     var key := ForecastQuery.key_of(subject, kit_id, workers, floor, band,
         _band_labor.kits()) + _hunt_curve_herd_terms(herd_id)
@@ -4816,14 +4842,8 @@ func _drag_crew_take(band: Dictionary, herd_id: String, kit_id: String, floor: f
             and workers > 0 and band_id != HudConst.NO_BAND_ID and herd_id != "":
         _crew_take_drag_asked_key = key
         _crew_take_drag_asked_at_msec = now
-        _forecast_query.ask(ForecastQuery.KIND_HUNT_CREW_TAKE, subject, key, {
-            "faction_id": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
-            "band_id": band_id,
-            "herd_id": herd_id,
-            "kit_id": kit_id,
-            "floor": floor,
-            "max_workers": workers,
-        })
+        _forecast_query.ask(ForecastQuery.KIND_HUNT_CREW_TAKE, subject, key,
+            _hunt_crew_take_params(band, band_id, herd_id, kit_id, floor, workers))
     # **READ EXACTLY, whether or not this motion asked.** A suppressed motion is still a floor the
     # sheet has no answer for, and the answer it does hold is the previous floor's — so the take line
     # says it is waiting rather than quoting a take for a floor the player has left. See
