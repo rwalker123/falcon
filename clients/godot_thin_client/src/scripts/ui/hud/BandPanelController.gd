@@ -1835,6 +1835,17 @@ func _pending_head_build_target(band: Dictionary) -> Dictionary:
     return {BUILD_TARGET_BRANCH_KEY: branch,
         BUILD_TARGET_RUNG_KEY: _queue_model_build_rung(head, branch)}
 
+## **THE WORK TAB'S QUEUE ROW LABELS BY WIRE RANK** - `{rank: face}`, the very list and face the block draws,
+## for a surface (the crafting panel's suggestions) that names a queued build by its position.
+func build_queue_faces(band: Dictionary) -> Dictionary:
+    var faces: Dictionary = {}
+    for model_variant in _build_queue_models(band, _work_source_models(band, 0)):
+        var model: Dictionary = model_variant
+        var rank := _build_queue_row_rank(model)
+        if rank >= 0:
+            faces[rank] = _build_queue_job_face(model)
+    return faces
+
 ## **THE RUNG A QUEUE MODEL IS BEING RAISED TO — `BUILD_RUNG_ANY` unless it is a road.** It was ONE
 ## derivation shared with the queue row's kit picker, so the header's kit line and that row's dropdown
 ## could not read one model two ways; the picker retired with `docs/plan_pool_toe.md` §3 and the

@@ -127,7 +127,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 30 | Another people's lines count only while in touch (#691): `SimState` gained `free_breeding` (`FreeBreedingPeoples`, the peoples whose breeding the head-count freed for good), and `BreedingReading` (carried on `PopulationCohort::last_breeding`) gained the `members` and `peoples` rows the wire publishes as `PopulationCohortState.breedingMembers` / `breedingPeoples`. A version-29 blob has neither. |
 /// | 31 | Culture over a connection (#702): `CultureManagerCheckpoint` gained `applied_contact_pull` (each band's strongest contact-drift pull, published as `PopulationCohortState.cultureDriftSourceBand` / `cultureDriftAxis` / `cultureDriftDelta`). A version-30 blob lacks it |
 /// | 32 | Break-away warning (#702): `CultureManagerCheckpoint` gained `break_away_risk` (the bands that may break away over their culture, published as `PopulationCohortState.cultureBreakAwayRisk`). A version-31 blob lacks it |
-pub const SAVE_FORMAT_VERSION: u32 = 32;
+/// | 33 | Auto-craft (#779): `BandBench` gained `auto` (the per-band toggle) and `auto_skipped` (the item ids the player skipped while auto waited on them), and `BenchOrder` gained `auto` (whether auto-craft queued it); `LaborAllocation` gained `last_queued_build_toe` (the tools each queued build behind the head will need, which the craft suggestions read). The bench rides `BandRecord::bench` and the allocation `BandRecord::labor`, so a version-32 blob has none of them |
+pub const SAVE_FORMAT_VERSION: u32 = 33;
 
 /// gzip level for the payload document.
 ///

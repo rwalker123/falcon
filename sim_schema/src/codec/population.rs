@@ -731,6 +731,13 @@ fn create_populations<'a>(
                     .collect();
                 let drawn_inputs = builder.create_vector(&drawn_inputs);
                 let orders = create_bench_orders(builder, &cohort.bench.orders);
+                let auto_skipped: Vec<_> = cohort
+                    .bench
+                    .auto_skipped
+                    .iter()
+                    .map(|item| builder.create_string(item))
+                    .collect();
+                let auto_skipped = builder.create_vector(&auto_skipped);
                 fb::BenchState::create(
                     builder,
                     &fb::BenchStateArgs {
@@ -760,6 +767,9 @@ fn create_populations<'a>(
                         orders: Some(orders),
                         // The index the scalars above describe — appended last.
                         worked: cohort.bench.worked,
+                        // **AUTO-CRAFT** — appended last.
+                        auto: cohort.bench.auto,
+                        autoSkipped: Some(auto_skipped),
                     },
                 )
             };
@@ -1227,6 +1237,7 @@ fn create_bench_orders<'a>(
                     blockedReason: Some(blocked_reason),
                     blockedSeverity: Some(blocked_severity),
                     shortToFinish: Some(short_to_finish),
+                    auto: order.auto,
                 },
             )
         })
@@ -1262,6 +1273,7 @@ fn create_craft_suggestions<'a>(
                             missingUnits: source.missing_units,
                             workersWithout: source.workers_without,
                             workPerTurn: source.work_per_turn,
+                            queuePosition: source.queue_position,
                         },
                     )
                 })
@@ -1521,8 +1533,11 @@ fn decode_bench(bench: fb::BenchState<'_>) -> Result<BenchState, DecodeError> {
             blocked_reason: text(order.blockedReason()),
             blocked_severity: text(order.blockedSeverity()),
             short_to_finish: decode_shortfalls(order.shortToFinish()),
+            auto: order.auto(),
         }),
         worked: bench.worked(),
+        auto: bench.auto(),
+        auto_skipped: decode_strings(bench.autoSkipped()),
     })
 }
 
@@ -1832,6 +1847,7 @@ fn decode_population(
                     missing_units: source.missingUnits(),
                     workers_without: source.workersWithout(),
                     work_per_turn: source.workPerTurn(),
+                    queue_position: source.queuePosition(),
                 }),
                 shortfalls: decode_shortfalls(suggestion.shortfalls()),
             }

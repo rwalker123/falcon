@@ -15,6 +15,7 @@ pub(crate) const BUILD_ID: &str = match option_env!("CORE_SIM_BUILD_ID") {
     None => "dev-unknown",
 };
 
+pub mod auto_craft;
 mod band_names;
 pub mod belief;
 mod belief_config;
@@ -145,12 +146,12 @@ pub use components::{
     DrawnMaterial, ElementKind, EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase,
     FinishedBatch, FoodBatch, FoodMix, Improvement, KeepingIssue, KeepingToolLine,
     KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch,
-    MaterialDraw, MoraleCause, PoolToeLine, PopulationCohort, PowerNode, ResidentBand, Settlement,
-    ShedCrew, ShedFacts, ShedStep, ShedSubject, SourcePriority, SourceShedFacts, SourceYield,
-    StartingUnit, TakeSelection, Tile, TownCenter, TransferCause, TransferCounterparty,
-    TransferCrossing, TransferDirection, TransferLedger, TransferLink, YieldRange,
-    DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER, MIN_ORDER_COUNT, NO_IMPROVEMENT_UNDERWAY,
-    STRIP_IT_BARE,
+    MaterialDraw, MoraleCause, PoolToeLine, PopulationCohort, PowerNode, QueuedBuildToe,
+    ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep, ShedSubject, SourcePriority,
+    SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile, TownCenter, TransferCause,
+    TransferCounterparty, TransferCrossing, TransferDirection, TransferLedger, TransferLink,
+    YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER, MIN_ORDER_COUNT,
+    NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
 };
 pub use config_fingerprint::{
     current_config_fingerprint, drift_between, ConfigDigest, ConfigFingerprint,
@@ -1274,7 +1275,12 @@ pub fn build_headless_app() -> App {
                     // The bench runs right after labor, for two reasons that both have to hold: it
                     // draws on the materials THIS turn's take just delivered, and its crew came out
                     // of the same worker pool the assignment loop above spends.
+                    // **Auto-craft fills an EMPTY queue** right before the bench works, and again
+                    // right after it (so an order that completes this turn has its successor in
+                    // the snapshot). See `auto_craft`.
+                    auto_craft::advance_auto_craft,
                     systems::advance_crafting,
+                    auto_craft::advance_auto_craft_after_bench,
                     // The bench-queue shortage notice reads the stock the draw just left, so it
                     // follows the draw directly.
                     systems::announce_bench_material_short,

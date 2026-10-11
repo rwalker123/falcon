@@ -401,7 +401,9 @@ fn band_handle(payload: &CommandPayload) -> BandHandle {
         CommandPayload::BenchEnqueue { band_id, .. }
         | CommandPayload::BenchOrderCount { band_id, .. }
         | CommandPayload::BenchRemoveOrder { band_id, .. }
-        | CommandPayload::BenchRaiseOrder { band_id, .. } => Some(*band_id),
+        | CommandPayload::BenchRaiseOrder { band_id, .. }
+        | CommandPayload::BenchAuto { band_id, .. }
+        | CommandPayload::BenchAutoSkip { band_id, .. } => Some(*band_id),
         // ⛔ **AND `abandon` NAMES A PLACE** (arc #532). The roadwork roster's `✕` is its only
         // emitter and it deliberately carries no band token: the sim drops every holding this
         // FACTION has on the tile, which is why the roster's own tooltip warns that a forage

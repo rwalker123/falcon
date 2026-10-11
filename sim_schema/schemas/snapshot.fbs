@@ -5143,6 +5143,16 @@ table BenchState {
   // why). Every scalar above describes `orders[worked]`; when no order can be worked they describe
   // the head and `worked` is 0, so a fully stuck bench reads as its blocked head. 0 on an idle bench.
   worked:uint = 0;
+  // --- AUTO-CRAFT (appended last) ----------------------------------------------------------------
+  // The per-band opt-in toggle (`bench_auto <faction> <band> on|off`). While on, an EMPTY queue is
+  // refilled from the ranked craft suggestions; the crew is never touched. Published on an idle
+  // bench too - it is a standing statement about the bench.
+  auto:bool = false;
+  // The items the player skipped (`bench_auto_skip`) while auto-craft waited on them, by item id.
+  // A skipped item is passed over until one of it can be drawn from stock; the client reads the
+  // materials it is waiting on off the existing CraftOffer for that item (`suggested` offer's
+  // `shortfalls`/`reason`). Cleared when auto is switched off. Sorted.
+  autoSkipped:[string];
 }
 
 // ONE ORDER ON A BENCH'S QUEUE — `recipe x count`. Every order has a count (>= 1); the
@@ -5174,6 +5184,9 @@ table BenchOrder {
   // the gap. Empty when the stock on hand covers every pass still to draw. A FORECAST, not a block:
   // `blockedReason` stays the only "why this order is skipped" field. Appended last.
   shortToFinish:[MaterialShortfall];
+  // AUTO-CRAFT QUEUED THIS ORDER rather than the player. Only an auto head can be skipped
+  // (`bench_auto_skip`); otherwise an ordinary order. Appended last.
+  auto:bool = false;
 }
 
 // ONE SUGGESTION — an item the band's consumers are short of, and how many to make.
@@ -5213,6 +5226,12 @@ table CraftSuggestion {
 //                  material), the LaborAssignment spelling.
 //   kind "take"  — a take row's kitToe. Same `job` + target keys as a site; a band-wide role
 //                  ("scout" | "warrior") carries no target.
+//   kind "build_queue" — a QUEUED BUILD behind the head of the build queue, which will need these
+//                  tools of the builders' hands. `queuePosition` is its place in the band's build
+//                  queue (the head is 0 and is the builders' own "pool" line, so this is >= 1) and
+//                  `job` + target keys are the BuildQueueEntryState's own (`kind` + targetX/Y |
+//                  faunaId | material), which is how the client joins to that row's label. "road"
+//                  entries read job "roadwork" with targetX/Y.
 table CraftSuggestionSource {
   kind:string;
   job:string;
@@ -5222,7 +5241,9 @@ table CraftSuggestionSource {
   material:string;
   missingUnits:float;          // (required − filled), never below 0, in units of the item
   workersWithout:float;        // missingUnits x the item's workers_per_unit
-  workPerTurn:float = 0;       // workersWithout x build_work on a pool or site; 0 on a take row
+  workPerTurn:float = 0;       // workersWithout x build_work on a pool, site or queued build; 0 on a take row
+  // The queued build's place in the build queue (kind "build_queue" only; 0 otherwise). Appended last.
+  queuePosition:uint = 0;
 }
 
 // ONE ROW PER RECIPE, ALWAYS — a row of PopulationCohortState.craftOffers.
