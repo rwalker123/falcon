@@ -727,16 +727,28 @@ pub fn advance_expeditions(
     // rather than borrowed, because `bands` is re-borrowed mutably below; a band with no
     // `BandName` is recorded under the empty name, which the wire reads as "unknown".
     let mut resident_names: HashMap<BandId, String> = HashMap::new();
+    // **How many people each tile holds** (all resident bands, any faction), for the size sight
+    // bonus — summed in the same pass.
+    let mut tile_people = crate::visibility_systems::TilePeople::new();
     for (band_entity, cohort, band_id, resident, _, name, _) in bands.iter() {
         let (Some(id), Some(_)) = (band_id, resident) else {
             continue;
         };
         if let Ok(tile) = tiles.get(cohort.current_tile) {
+            crate::visibility_systems::add_people(&mut tile_people, tile.position, cohort.size);
             occupancy.entry(tile.position).or_default().push(*id);
             resident_positions.insert(*id, (band_entity, tile.position));
             resident_names.insert(*id, name.map(|name| name.0.clone()).unwrap_or_default());
         }
     }
+    // The same terrain term and size bonus the live sweep uses — sight is sight.
+    let sight_modifiers = crate::visibility_systems::SightModifiers::build(
+        &tiles,
+        elevation.width,
+        elevation.height,
+        &vis_cfg.terrain_detection,
+        crate::visibility_systems::size_sight_bonus_map(&tile_people, &vis_cfg.size_sight_bonus),
+    );
 
     for (entity, mut cohort, travel, mut expedition, mut party_equipment, party_band) in
         expeditions.iter_mut()
@@ -920,7 +932,7 @@ pub fn advance_expeditions(
             &elevation,
             vis_cfg.line_of_sight.enabled,
             &terrain_tags,
-            &vis_cfg.terrain_modifiers,
+            &sight_modifiers,
             blocking_tags,
             wrap_horizontal,
         ) {

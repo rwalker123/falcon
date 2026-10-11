@@ -175,14 +175,13 @@ static func _build_vitals_label(bands: Array, disclosures: DisclosureController)
     # here registers its own disclosure as it is built, so the state is complete only after the last
     # of them. `BandDetailLines` hit exactly this ordering trap on the merged Growth clause.
     ctx.disclosures = disclosures.state()
+    # The Family limit value is amber while the main group's ceiling is biting.
+    var groups := HudLineageVocab.faction_groups(bands)
+    ctx.family_limit_amber = HudLineageVocab.faction_row_shown(groups) \
+        and HudLineageVocab.limit_binds(groups["main"])
     label.text = DetailFormat.detail_bbcode(lines, ctx)
-    # **A HOVER A ROW REGISTERS IS ANSWERED BY THE BLOCK, WHICH IS WHY NO ROW HERE REGISTERS ONE.**
-    # `[hint=…]` is not parsed by this Godot build (see `DetailFormat.block_tooltip`), so the label
-    # carries every registered sentence at once and a cursor anywhere over the block gets all of
-    # them — the dormant `Fodder:` row used to put a paragraph about hay under Growth and Morale
-    # that way. The attachment stays, in the shape both band-page hosts use, so a row that ever does
-    # have a block-wide sentence to make is answered; it joins nothing today and shows no tooltip.
-    label.tooltip_text = DetailFormat.block_tooltip(ctx)
+    # **A ROW'S HOVER SHOWS OVER THAT ROW ALONE** (`DetailFormat.wire_row_hovers`).
+    DetailFormat.wire_row_hovers(label, ctx)
     return label
 
 ## Drop the previous render's caret state. A one-line hop through a helper because this layer is
@@ -202,6 +201,35 @@ static func _faction_summary_lines(bands: Array, disclosures: DisclosureControll
     var growth := _growth_line(bands, disclosures)
     if growth != "":
         lines.append(growth)
+    lines.append_array(_family_limit_lines(bands, disclosures))
+    return lines
+
+## `Family limit: 330 / 500  ⚠ 1 band` and the line under it (issue #691), derived from the player's
+## own resident bands: they are grouped by the set of bands they breed with; the group with the most
+## people is the MAIN one and every other group is out of touch. Nothing at all when the main group's
+## limit is lifted or has no projected reading. The `⚠ N bands` flag is the page's own
+## `_alert_clause`, N = the bands outside the main group, and it turns the key amber.
+static func _family_limit_lines(bands: Array, disclosures: DisclosureController) -> Array[String]:
+    var lines: Array[String] = []
+    var groups := HudLineageVocab.faction_groups(bands)
+    if not HudLineageVocab.faction_row_shown(groups):
+        return lines
+    var names := {}
+    for band_variant in bands:
+        var band: Dictionary = band_variant
+        names[int(band.get("band_id", HudConst.NO_BAND_ID))] = HudFormat.band_name(band)
+    var band_name := func(id: int) -> String: return String(names.get(id, ""))
+    var out_count := HudLineageVocab.out_band_count(groups["out"])
+    disclosures.register_faction(HudDisclosureVocab.DETAIL_ROW_FAMILY_LIMIT,
+        HudDisclosureVocab.BREAKDOWN_KIND_FAMILY_LIMIT,
+        HudLineageVocab.faction_popover_lines(groups, band_name),
+        HudLineageVocab.limit_binds(groups["main"]) or out_count > 0)
+    lines.append("%s%s%s%s" % [HudDisclosureVocab.DETAIL_ROW_FAMILY_LIMIT,
+        DetailFormat.DETAIL_KV_SEPARATOR, HudLineageVocab.row_value(groups["main"]),
+        _alert_clause(out_count, HudStyle.WARN_HEX)])
+    var note := HudLineageVocab.faction_note_line(groups, band_name)
+    if note != "":
+        lines.append(note)
     return lines
 
 ## `Food: 229 · −5.86 /turn` (+ the alert clause). **NO RUNWAY.** Turns-of-food is one larder against
@@ -466,9 +494,9 @@ static func _growth_line(bands: Array, disclosures: DisclosureController) -> Str
         return ""
     disclosures.register_faction(HudDisclosureVocab.DETAIL_ROW_GROWTH,
         HudDisclosureVocab.BREAKDOWN_KIND_GROWTH, rows, concerning > 0)
-    return "%s%s%d%% of normal%s" % [
+    return "%s%s%s%s" % [
         HudDisclosureVocab.DETAIL_ROW_GROWTH, DetailFormat.DETAIL_KV_SEPARATOR,
-        int(round((total / weight) * 100.0)) if weight > 0.0 else 0,
+        DetailFormat.growth_text_for(total / weight if weight > 0.0 else 0.0),
         _alert_clause(concerning, HudStyle.WARN_HEX)]
 
 ## ONE SUMMARY ROW — the shape Work and Parties share, so the two tabs read as one idea.
@@ -543,7 +571,7 @@ static func _severity_color(severity: String) -> Color:
 ## what makes this row and the cycler's card agree about which band is which.
 static func _band_row(band: Dictionary, value: String, note: String) -> String:
     var suffix := "  [color=#%s]%s[/color]" % [HudStyle.INK_DIM_HEX, note] if note != "" else ""
-    return "%s%s%d][color=#%s]%s[/color][/url]  %s%s" % [
+    return "%s%s%d][color=#%s][u]%s[/u][/color][/url]  %s%s" % [
         DetailFormat.DISCLOSURE_URL_OPEN, HudDisclosureVocab.FACTION_BAND_JUMP_META_PREFIX,
         int(band.get("entity", -1)), HudStyle.SIGNAL_HEX,
         HudFormat.band_name(band), value, suffix]

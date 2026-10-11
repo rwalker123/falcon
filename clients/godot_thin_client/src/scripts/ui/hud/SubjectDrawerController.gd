@@ -203,11 +203,11 @@ func _render_land_drawer() -> void:
     if markup != _tile_detail_lines_cache:
         _tile_detail.text = markup
         _tile_detail_lines_cache = markup
-    # **THE REMEDY IS THE BLOCK'S HOVER** — see `DetailFormat.block_tooltip` for why it cannot be the
-    # row's. Written on EVERY render rather than inside the markup diff: it is one string assignment,
+    # **THE REMEDY IS THE ROW'S HOVER** — `DetailFormat.wire_row_hovers` shows each registered sentence
+    # over its own row only. Written on EVERY render rather than inside the markup diff: it is one string assignment,
     # and the shortfall it answers to can move while every rendered line stands still (a patch mid-Sow
     # states a countdown on the row being billed whether or not its keeping is short).
-    _tile_detail.tooltip_text = DetailFormat.block_tooltip(ctx)
+    DetailFormat.wire_row_hovers(_tile_detail, ctx)
     _drawercompose.build_forage_drawer_actions(_selection.tile_info())
     # …and the ROAD action beneath it, at the bottom of the card with the other verbs. It appears
     # exactly where the `Road` readout row above does — a tile carrying a road — so nothing shows on
@@ -926,7 +926,7 @@ func _render_occupant_drawer(from_selection: bool = false) -> void:
             _band_labor.working_floor_hunt(String(_selection.herd().get("id", ""))))
     _occupant_detail.text = DetailFormat.detail_bbcode(lines, ctx)
     # …and the animal web's half of the same hover, on the drawer that describes one herd.
-    _occupant_detail.tooltip_text = DetailFormat.block_tooltip(ctx)
+    DetailFormat.wire_row_hovers(_occupant_detail, ctx)
     if is_expedition:
         _build_expedition_panel(_selection.unit())
     elif is_player_band:

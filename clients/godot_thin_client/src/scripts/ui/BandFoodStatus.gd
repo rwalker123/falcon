@@ -40,7 +40,7 @@ const DEFAULT_CRITICAL_OUTPUT := 0.60
 # Per-turn morale-contribution magnitude below which a breakdown row is trivial and hidden.
 const DEFAULT_MORALE_BREAKDOWN_EPSILON := 0.002
 # Fertility-multiplier tint buckets for the Growth readout — the band's birth rate as a share of
-# its NORMAL rate (`fertility_hunger x fertility_reserve x fertility_trend`, neutral at 1.0). Unlike
+# its NORMAL rate (`fertility_hunger x fertility_reserve x fertility_trend x fertility_ceiling`, neutral at 1.0). Unlike
 # output it can exceed 1.0 (a well-provisioned band out-breeds its base rate), so `warn` sits BELOW
 # neutral: at/above it the row reads neutral ink, below it amber, below `critical` red. `critical`
 # brackets the shipped floor a fully-collapsed band damps to (0.75 deficit penalty x a saturated

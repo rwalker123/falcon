@@ -1113,6 +1113,16 @@ fn traditionalist() -> usize {
     CultureTraitAxis::TraditionalistRevisionist.index()
 }
 
+/// Switch contact drift off, so a comparison between two worlds isolates the ancestor pull: two
+/// co-located kin bands are tied, and drift would move both toward each other differently in the
+/// pulled and unpulled arms.
+fn drift_off(app: &mut App) {
+    app.world
+        .resource_mut::<core_sim::CultureCorruptionConfigHandle>()
+        .replace_from_json(r#"{"culture":{"contact_drift":{"rate":0}}}"#)
+        .expect("the lever parses");
+}
+
 /// Turn the pull off for this world: an empty `ancestor_pull` map.
 fn pull_off(app: &mut App) {
     let config = BeliefConfig {
@@ -1211,6 +1221,7 @@ fn an_anchored_band_reached_by_no_chain_gets_no_pull() {
 fn one_hop_of_kin_gets_half_the_pull_of_a_direct_band() {
     let world = |pull: bool| -> (App, BandId, BandId) {
         let mut app = one_faction_world();
+        drift_off(&mut app);
         if !pull {
             pull_off(&mut app);
         }

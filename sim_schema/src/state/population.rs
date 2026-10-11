@@ -1662,16 +1662,8 @@ pub struct PopulationCohortState {
     /// Turns until the last homeward hand is back; `0` = nobody walking home. Appended last.
     #[serde(default)]
     pub homeward_all_home_in: u32,
-    /// **What this band can carry** (#732) — whole working-age hands × one worker's pack, in
-    /// food-unit load. Dependants add nothing. Appended last.
-    #[serde(default)]
-    pub carry_capacity: f32,
-    /// **The load of everything this band holds** — larder, hay, every item (bench tools included)
-    /// and every material unit. Appended last.
-    #[serde(default)]
-    pub carry_load: f32,
     /// **How far a move keeps everything**, in hex steps — echoed per cohort. A move farther than
-    /// this sheds the band to [`Self::carry_capacity`]. Appended last.
+    /// this sheds the band down to what its workers can carry. Appended last.
     #[serde(default)]
     pub move_ferry_reach_tiles: u32,
     /// **What a long move would leave behind right now**: food. Computed by the shedding function the
@@ -1702,13 +1694,13 @@ pub struct PopulationCohortState {
     /// ticked. Appended last.
     #[serde(default)]
     pub fertility_ceiling: i64,
-    /// **The band's breeding population, in whole people** — every band in its supply network, or
-    /// the band alone in none, after this turn's demographics. Appended last.
+    /// **The band's breeding population, in whole people** — every band in its people's tie-joined
+    /// group, or the band alone, after this turn's demographics. Appended last.
     #[serde(default)]
     pub breeding_population: u32,
-    /// **The breeding population's ceiling, in people** — `|union of founding lines| ×
-    /// people_per_line`; **`0` means no inbreeding ceiling** (lifted once it reaches
-    /// `lineage.free_breeding_at`). Appended last.
+    /// **The breeding population's ceiling, in people** — the effective ceiling
+    /// `min(shared ceiling, lineage.free_breeding_at)`; **`0` means no inbreeding ceiling** (its
+    /// people has reached `lineage.free_breeding_at` people). Appended last.
     #[serde(default)]
     pub breeding_ceiling: u32,
     /// Layer-1 **culture** morale contribution — near (+) / far (−) from the band's ancestors
@@ -1767,6 +1759,53 @@ pub struct PopulationCohortState {
     /// per axis, `culture_traits` order. Empty when the band took no pull. Appended last.
     #[serde(default)]
     pub culture_ancestor_pull: Vec<f32>,
+    /// **The own-people bands of this band's breeding population**, self included, in `band_id`
+    /// order (issue #691). Own bands only; a foreign row defaults. Appended last.
+    #[serde(default)]
+    pub breeding_members: Vec<BreedingMemberState>,
+    /// **The other peoples contributing lines to this band's breeding population**, in faction
+    /// order, with no head-count. Empty when none. Appended last.
+    #[serde(default)]
+    pub breeding_peoples: Vec<BreedingPeopleState>,
+    /// **The band this band's strongest contact pull drifted it toward** (issue #702); `0` = no
+    /// pull this turn (`BandId(0)` is "unset"). Own bands only. Appended last.
+    #[serde(default)]
+    pub culture_drift_source_band: u64,
+    /// The trait axis (`CultureTraitAxis` index, `culture_traits` order) that pull moved most.
+    /// Appended last.
+    #[serde(default)]
+    pub culture_drift_axis: u8,
+    /// That axis's signed delta this turn. Appended last.
+    #[serde(default)]
+    pub culture_drift_delta: f32,
+    /// The band may break away over its culture (issue #702). Own bands only. Appended last.
+    #[serde(default)]
+    pub culture_break_away_risk: bool,
+}
+
+/// **ONE OWN-PEOPLE BAND IN A BREEDING POPULATION** — a row of
+/// [`PopulationCohortState::breeding_members`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct BreedingMemberState {
+    pub band_id: u64,
+    /// How many founding lines the band itself holds.
+    pub lines: u32,
+    /// Whole people in the band after this turn.
+    pub people: u32,
+    /// In touch with the rest only through a tie that is bleeding (no contact in the last
+    /// Visibility pass on any edge to another member). `false` for a lone band.
+    pub fading: bool,
+}
+
+/// **ONE OTHER PEOPLE CONTRIBUTING LINES TO A BREEDING POPULATION** — a row of
+/// [`PopulationCohortState::breeding_peoples`]. Carries no head-count.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct BreedingPeopleState {
+    pub faction: u32,
+    /// Union lines that came only from this people's in-touch bands.
+    pub lines: u32,
+    /// No in-touch band of this people carried contact with any member in the last Visibility pass.
+    pub fading: bool,
 }
 
 /// `PopulationCohortState::belief_relay_hops` for a band that holds an anchor no chain of its own

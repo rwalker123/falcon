@@ -53,7 +53,11 @@
       "incident_delta_scale": 0.03,
       "incident_delta_min": 0.05,
       "incident_delta_max": 0.15
-    }
+    },
+    "contact_drift": {
+      "rate": 0.014
+    },
+    "split_min_purist": 0.0
   },
   "corruption": {
     "trust_axis": 1,

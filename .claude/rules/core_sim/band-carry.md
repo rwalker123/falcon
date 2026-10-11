@@ -114,8 +114,8 @@ outfit (playtest: 5/5/7 split 6 → splinter 2/2/2, parent 3/3/5). The parent is
 > provision_draw_per_worker_per_tile` of food, so a long trip FREED room on a turn-one grant card —
 > send a scout, mint more kits, recall it — and a short trip pushed the band over.
 >
-> **The card only.** The cohort's own `carryCapacity` / `carryLoad`, the band panel and the long-move
-> shed count the people PRESENT — a party does not walk with its band.
+> **The card only.** The band's own carry (`carry::band_carry_capacity`), the band panel and the
+> long-move shed count the people PRESENT — a party does not walk with its band.
 
 ## A party's kit comes OUT of its band, and goes back
 
@@ -154,7 +154,7 @@ left would re-mint the scout's kit.
 > should never give the warning it is over its carry limit."** The cap limits what walks away, not
 > what a band owns, so the ONE place over-carry is stated is the long-move targeting warning (the
 > published `longMoveLeaves*`). The outfit card prints `0 / C carry left` in normal ink, the turn orb
-> has no over-carry item, and the band panel's Carry row is never amber.
+> has no over-carry item, and the band panel has no Carry row at all.
 >
 > **`OverCarry` bounds what is ADDED.** It refuses an order only if its goods load is above the
 > allowance **and** above what the band already holds, so a band over its carry can still step its
@@ -219,11 +219,14 @@ ledger has no spoil term.
 
 ## On the wire
 
-`PopulationCohortState`: `carryCapacity`, `carryPerWorker` / `carryMaterialWeight` /
-`carryFodderWeight` (the pack echo, renamed from `expeditionTrade*`), `carryLoad`,
+`PopulationCohortState`: `carryPerWorker` / `carryMaterialWeight` /
+`carryFodderWeight` (the pack echo, renamed from `expeditionTrade*`),
 `moveFerryReachTiles` (echoed per cohort, the `bandMoveTilesPerTurn` idiom), the three
 `longMoveLeaves*` fields (all 0 when the band fits) and `foodLeftBehind`. The outfitting window's
 own cap and the weights a client prices an order with are in `starting-loadout.md` → On the wire.
+**The cohort publishes no carry capacity and no held load**: the band panel's Carry row is gone, and
+the long-move forecast above (with the ferry reach) is the only carry statement a band row makes. The
+sim still computes both (`band_carry_capacity`, `held_load`) for the shed and the window.
 
 ## Config files
 

@@ -421,3 +421,14 @@ pub struct OpeningMaterialDefaultState {
     pub material_id: String,
     pub units: u32,
 }
+
+/// **The lineage constants the breeding ceiling is measured in** (issue #691) — echoed off the live
+/// `demographics_config.json` → `lineage` at capture so a client's split preview never restates
+/// config. A world constant, diffed whole.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct LineageConstantsState {
+    /// `lineage.people_per_line` (`K`) — how many people one founding line carries.
+    pub people_per_line: u32,
+    /// `lineage.free_breeding_at` — the head-count at which a people breeds freely.
+    pub free_breeding_at: u32,
+}

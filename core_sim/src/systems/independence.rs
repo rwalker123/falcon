@@ -11,7 +11,7 @@
 //! The clock is the tie's own bleed and the gate is the discontent block's grievance: this module
 //! adds the one number that joins them and no second counter.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -21,8 +21,10 @@ use super::labor::{follow_the_band_to_its_new_people, BandFlip, BandFlipFollower
 use crate::{
     components::{BandId, PopulationCohort, ResidentBand},
     connections::{ConnectionLedger, FULL_TIE, NO_TIE},
+    culture::CultureSplitQueue,
     espionage::{CounterIntelBudgets, EspionageCatalog, EspionageRoster, FactionSecurityPolicies},
     faction_names::{FactionNameCatalog, FactionNameCatalogHandle, FactionNames},
+    lineage::{tie_joined_groups, FreeBreedingPeoples},
     orders::{FactionId, FactionRegistry, TurnQueue},
     resources::{
         CommandEventEntry, CommandEventKind, CommandEventLog, DiscoveryProgressLedger,
@@ -105,6 +107,8 @@ pub struct RosterResources<'w> {
     pub names: ResMut<'w, FactionNames>,
     pub espionage_roster: ResMut<'w, EspionageRoster>,
     pub espionage_catalog: Res<'w, EspionageCatalog>,
+    /// The peoples whose breeding is free for good; a people born from a latched one inherits it.
+    pub free_breeding: ResMut<'w, FreeBreedingPeoples>,
     /// The faction-name pool. `Option` for worldgen's reason: a hand-built world may install none,
     /// and the builtin pool is the very list `include_str!` baked in.
     pub name_catalog: Option<Res<'w, FactionNameCatalogHandle>>,
@@ -117,9 +121,15 @@ pub struct RosterResources<'w> {
 /// resource `new` builds through, `FactionNames::mint_faction` on worldgen's permutation,
 /// `EspionageRoster::seed_from_catalog`), so a people born mid-game starts in exactly the state a
 /// people present at world creation did. The turn queue awaits it from the NEXT turn
-/// ([`TurnQueue::add_faction`]) — the turn in flight was already collected.
-pub fn grow_faction_roster(roster: &mut RosterResources, map_seed: u64) -> FactionId {
+/// ([`TurnQueue::add_faction`]) — the turn in flight was already collected. `parent` is the people
+/// it breaks from: the new people inherits its free-breeding latch ([`FreeBreedingPeoples`]).
+pub fn grow_faction_roster(
+    roster: &mut RosterResources,
+    map_seed: u64,
+    parent: FactionId,
+) -> FactionId {
     let faction = roster.registry.add_ai_faction();
+    roster.free_breeding.inherit(faction, parent);
     roster.turn_queue.add_faction(faction);
     let budget_config = roster
         .espionage_catalog
@@ -200,54 +210,40 @@ fn band_views(
 /// The heart is the component holding the most people, ties to the lowest `BandId` — the people
 /// is where its people are, not where it started. A people with one band is its own heart.
 fn heart_groups(bands: &[BandView], ledger: &ConnectionLedger) -> Vec<Group> {
-    let mut by_faction: BTreeMap<FactionId, Vec<usize>> = BTreeMap::new();
-    for (index, view) in bands.iter().enumerate() {
-        by_faction.entry(view.faction).or_default().push(index);
-    }
+    // The grouping itself is `lineage::tie_joined_groups` — the same one the breeding ceiling reads.
+    let keyed: Vec<(BandId, FactionId)> =
+        bands.iter().map(|view| (view.band, view.faction)).collect();
     let mut groups: Vec<Group> = Vec::new();
-    for (faction, indices) in by_faction {
-        let mut seen: BTreeSet<usize> = BTreeSet::new();
-        let first_group = groups.len();
-        for &start in &indices {
-            if !seen.insert(start) {
-                continue;
-            }
-            let mut members = vec![start];
-            let mut frontier = vec![start];
-            while let Some(at) = frontier.pop() {
-                for &other in &indices {
-                    if seen.contains(&other)
-                        || !ledger.tie_is_live(bands[at].band, bands[other].band)
-                    {
-                        continue;
-                    }
-                    seen.insert(other);
-                    members.push(other);
-                    frontier.push(other);
-                }
-            }
-            members.sort_unstable();
-            let people = members
-                .iter()
-                .fold(scalar_zero(), |sum, &index| sum + bands[index].people);
-            groups.push(Group {
-                faction,
-                lowest: bands[members[0]].band,
-                members,
-                people,
-                is_heart: false,
-            });
-        }
-        // Groups were opened in BandId order, so the first strictly-largest is the tie-break winner.
-        let mut heart = first_group;
-        for candidate in first_group..groups.len() {
+    for joined in tie_joined_groups(&keyed, ledger) {
+        let people = joined
+            .members
+            .iter()
+            .fold(scalar_zero(), |sum, &index| sum + bands[index].people);
+        groups.push(Group {
+            faction: joined.faction,
+            lowest: bands[joined.members[0]].band,
+            members: joined.members,
+            people,
+            is_heart: false,
+        });
+    }
+    // The heart of each people: the component holding the most people. Groups open in BandId order,
+    // so the first strictly-largest is the tie-break winner (the lowest BandId).
+    let mut start = 0;
+    while start < groups.len() {
+        let faction = groups[start].faction;
+        let end = groups[start..]
+            .iter()
+            .position(|group| group.faction != faction)
+            .map_or(groups.len(), |offset| start + offset);
+        let mut heart = start;
+        for candidate in start..end {
             if groups[candidate].people > groups[heart].people {
                 heart = candidate;
             }
         }
-        if heart < groups.len() {
-            groups[heart].is_heart = true;
-        }
+        groups[heart].is_heart = true;
+        start = end;
     }
     groups.sort_by_key(|group| group.lowest);
     groups
@@ -289,6 +285,20 @@ fn standing_toward(
     (bond, last)
 }
 
+/// **Why a band broke away** — rides the `band_broke_away` detail as `cause=` when it is not the
+/// default, and picks the line each people reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BreakAwayCause {
+    /// A cut-off, aggrieved group ([`advance_band_independence`]). The detail carries no `cause`.
+    Grievance,
+    /// A purist band whose cultural strain held past the hard threshold ([`advance_culture_splits`],
+    /// #702). The detail carries [`CULTURE_CAUSE_TOKEN`].
+    Culture,
+}
+
+/// The `cause=` token a culture split carries on its `band_broke_away` detail.
+pub const CULTURE_CAUSE_TOKEN: &str = "culture";
+
 /// **Tell both peoples a band broke away** — one row under the people it left, one under the people
 /// it founded, on `push_band_changed_hands_events`' shape (`side=lost|gained`, same tokens).
 fn push_band_broke_away_events(
@@ -297,32 +307,99 @@ fn push_band_broke_away_events(
     band: BandId,
     from: FactionId,
     to: FactionId,
+    cause: BreakAwayCause,
 ) {
     let name = band_label(band);
     let people = faction_label(to);
     let detail = |side: &str| {
-        Some(format!(
-            "band={} from={} to={} side={}",
-            band.0, from.0, to.0, side
-        ))
+        let base = format!("band={} from={} to={} side={}", band.0, from.0, to.0, side);
+        Some(match cause {
+            BreakAwayCause::Grievance => base,
+            BreakAwayCause::Culture => format!("{base} cause={CULTURE_CAUSE_TOKEN}"),
+        })
+    };
+    let (lost, gained) = match cause {
+        BreakAwayCause::Grievance => (
+            format!("{name} no longer answers to us — they call themselves {people}."),
+            format!(
+                "{name} broke away from {} — we answer to no one but ourselves.",
+                faction_label(from)
+            ),
+        ),
+        BreakAwayCause::Culture => (
+            format!(
+                "{name} grew too far from our ways and no longer answers to us — they call \
+                 themselves {people}."
+            ),
+            format!(
+                "{name} broke away from {} over its ways — we answer to no one but ourselves.",
+                faction_label(from)
+            ),
+        ),
     };
     event_log.push(CommandEventEntry::new(
         tick,
         CommandEventKind::BandBrokeAway,
         from,
-        format!("{name} no longer answers to us — they call themselves {people}."),
+        lost,
         detail("lost"),
     ));
     event_log.push(CommandEventEntry::new(
         tick,
         CommandEventKind::BandBrokeAway,
         to,
-        format!(
-            "{name} broke away from {} — we answer to no one but ourselves.",
-            faction_label(from)
-        ),
+        gained,
         detail("gained"),
     ));
+}
+
+/// **Hand a set of bands over to one new AI people** — the per-band hand-over both ways of breaking
+/// away share: the roster grows ([`grow_faction_roster`]), the new people's discovery progress is
+/// seeded from the old people's ledger in full and the bands' own knowledge, its fog is the old
+/// people's map remembered, each band's `cohort.faction` moves and its grievance resets to zero,
+/// and both peoples are told. Returns the new people and the flips for
+/// `follow_the_band_to_its_new_people`, which the caller runs once every break-away of the turn is
+/// in. Ties are band-keyed and are not touched.
+#[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
+fn break_away_as_new_people(
+    roster: &mut RosterResources,
+    seeds: &mut NewPeopleSeeds,
+    event_log: &mut CommandEventLog,
+    cohorts: &mut Query<(Entity, &mut PopulationCohort, Option<&BandId>), With<ResidentBand>>,
+    map_seed: u64,
+    now: u64,
+    from: FactionId,
+    members: &[(Entity, BandId)],
+    cause: BreakAwayCause,
+) -> (FactionId, Vec<BandFlip>) {
+    let to = grow_faction_roster(roster, map_seed, from);
+    {
+        let knowledge: Vec<&PopulationCohort> = members
+            .iter()
+            .filter_map(|(entity, _)| cohorts.get(*entity).ok())
+            .map(|(_, cohort, _)| cohort)
+            .collect();
+        seed_new_peoples_knowledge(&mut seeds.discovery, from, to, &knowledge);
+    }
+    seeds
+        .visibility
+        .insert_remembered_copy(from, to, seeds.tiles.width, seeds.tiles.height);
+    let mut flips = Vec::with_capacity(members.len());
+    for &(entity, band) in members {
+        if let Ok((_, mut cohort, _)) = cohorts.get_mut(entity) {
+            cohort.faction = to;
+            // It was a grievance against the people they left.
+            cohort.grievance = scalar_zero();
+        }
+        push_band_broke_away_events(event_log, now, band, from, to, cause);
+        flips.push(BandFlip {
+            entity,
+            band,
+            from,
+            to,
+        });
+    }
+    (to, flips)
 }
 
 /// **Tell a people it has lost touch with one of its bands.**
@@ -421,35 +498,23 @@ pub fn advance_band_independence(
         .collect();
     let mut flips: Vec<BandFlip> = Vec::new();
     for group in breaking {
-        let from = group.faction;
-        let to = grow_faction_roster(&mut roster, sim_config.map_seed);
-        {
-            let members: Vec<&PopulationCohort> = group
-                .members
-                .iter()
-                .filter_map(|&index| cohorts.get(bands[index].entity).ok())
-                .map(|(_, cohort, _)| cohort)
-                .collect();
-            seed_new_peoples_knowledge(&mut seeds.discovery, from, to, &members);
-        }
-        seeds
-            .visibility
-            .insert_remembered_copy(from, to, seeds.tiles.width, seeds.tiles.height);
-        for &index in &group.members {
-            let view = &bands[index];
-            if let Ok((_, mut cohort, _)) = cohorts.get_mut(view.entity) {
-                cohort.faction = to;
-                // It was a grievance against the people they left.
-                cohort.grievance = scalar_zero();
-            }
-            push_band_broke_away_events(&mut event_log, now, view.band, from, to);
-            flips.push(BandFlip {
-                entity: view.entity,
-                band: view.band,
-                from,
-                to,
-            });
-        }
+        let members: Vec<(Entity, BandId)> = group
+            .members
+            .iter()
+            .map(|&index| (bands[index].entity, bands[index].band))
+            .collect();
+        let (_, group_flips) = break_away_as_new_people(
+            &mut roster,
+            &mut seeds,
+            &mut event_log,
+            &mut cohorts,
+            sim_config.map_seed,
+            now,
+            group.faction,
+            &members,
+            BreakAwayCause::Grievance,
+        );
+        flips.extend(group_flips);
     }
     let any_broke_away = !flips.is_empty();
     if any_broke_away {
@@ -501,4 +566,81 @@ pub fn advance_band_independence(
         }
     }
     heart_ledger.readings = readings;
+}
+
+/// **A purist band that grew too far from its people splits off** (#702,
+/// `docs/plan_contact_and_logistics.md` §"Settled by #530").
+///
+/// [`crate::culture::reconcile_culture_layers`] queues a band whose band-scope schism held past the
+/// hard threshold while its Syncretic<->Purist value stood above `culture.split_min_purist` and its
+/// people had another resident band. This system performs the split: that ONE band (not its
+/// tie-joined group) becomes a new AI people through the same hand-over a break-away uses
+/// ([`break_away_as_new_people`]), keeping its culture layer as it is.
+///
+/// **Runs directly after [`advance_band_independence`]** in the Population chain, so every band's
+/// people is final for the turn. A queued band whose people is no longer the one culture judged
+/// (independence, a defection or a remnant flip moved it) is skipped, and so is one whose people
+/// has no other resident band left. The band's [`HeartReading`] is written here as a sole-band
+/// heart's, because independence has already rebuilt the turn's readings.
+#[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
+pub fn advance_culture_splits(
+    sim_config: Res<SimulationConfig>,
+    tick: Res<SimulationTick>,
+    mut queue: ResMut<CultureSplitQueue>,
+    mut heart_ledger: ResMut<HeartLedger>,
+    mut event_log: ResMut<CommandEventLog>,
+    mut roster: RosterResources,
+    mut seeds: NewPeopleSeeds,
+    mut followers: BandFlipFollowers,
+    mut cohorts: Query<(Entity, &mut PopulationCohort, Option<&BandId>), With<ResidentBand>>,
+) {
+    if queue.bands.is_empty() {
+        return;
+    }
+    let now = tick.0;
+    let queued = std::mem::take(&mut queue.bands);
+    let mut flips: Vec<BandFlip> = Vec::new();
+    // `BTreeMap` order: lowest BandId first, so several splits in one turn are deterministic.
+    for (band, judged_as) in queued {
+        let Some((entity, faction)) = cohorts
+            .iter()
+            .find(|(_, _, id)| id.is_some_and(|id| *id == band))
+            .map(|(entity, cohort, _)| (entity, cohort.faction))
+        else {
+            continue;
+        };
+        if faction != judged_as {
+            continue;
+        }
+        let has_sibling = cohorts
+            .iter()
+            .any(|(other, cohort, _)| other != entity && cohort.faction == faction);
+        if !has_sibling {
+            continue;
+        }
+        let (to, group_flips) = break_away_as_new_people(
+            &mut roster,
+            &mut seeds,
+            &mut event_log,
+            &mut cohorts,
+            sim_config.map_seed,
+            now,
+            faction,
+            &[(entity, band)],
+            BreakAwayCause::Culture,
+        );
+        heart_ledger.readings.insert(
+            band,
+            HeartReading {
+                faction: to,
+                cut_off: false,
+                bond: FULL_TIE,
+                last_contact_turn: Some(now),
+            },
+        );
+        flips.extend(group_flips);
+    }
+    if !flips.is_empty() {
+        follow_the_band_to_its_new_people(&mut followers, &cohorts, flips, sim_config.map_seed);
+    }
 }

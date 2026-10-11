@@ -7844,3 +7844,50 @@ are bright, and a person split between the two is one square shaded in part.
   `layout_for(width)` is that arithmetic, pure, so a harness asks the question the draw answers.
 
 The compose sheet's half is `labor-ui.md` → "THE CREW SPLIT ON THE SHEET".
+
+## The faction page's Family limit row (issue #691)
+
+`FactionRollup._family_limit_lines`, directly after Growth. No schema field: it is derived from the
+player's own RESIDENT bands (parties excluded), `HudLineageVocab.faction_groups`.
+
+- **Groups.** Bands are grouped by their `breeding_members` band-id set. The MAIN group is the one
+  with the highest `breeding_population` (ties to the lowest band id); every other group is out of
+  touch. Bands with no projected reading are not grouped.
+- **Hidden entirely** when the main group's `breeding_ceiling == 0` (the latch is per faction) or it
+  has no projected reading.
+- **Value** `{breeding_population} / {breeding_ceiling}` of the main group, amber (value via
+  `Context.family_limit_amber`, key via the caret) while its `fertility_ceiling < 1`. Bands in the
+  other groups append the page's own `_alert_clause` (`N` = bands outside the main group), which
+  also turns the key amber.
+- **One line under it, by precedence:** over the limit, kin (`fertility_ceiling` 0), room for N
+  more - amber `◆` lines - then `{Band} is out of touch. Bring it back to share the limit.` / `{N}
+  bands are out of touch. Bring them back to share the limit.` (amber), then the faint stay-in-touch
+  line when the ceiling equals `lineage_free_breeding_at`.
+- **Popover** (`BREAKDOWN_KIND_FAMILY_LIMIT`, `register_faction`): the main group's member rows and
+  other-faction rows (names by `FactionMark.faction_name`, READY blue; ` · fading` amber), then, if
+  any group is out of touch, a faint `OUT OF TOUCH` label and one row per group (its band names
+  joined `, ` against its own `population / ceiling` in amber), then the faint `CONTACT_NOTE`. Rows
+  ride behind control-character sentinels (`HudLineageVocab.ROW_MARK` / `FAINT_MARK`, bullets lead
+  with `◆ `) that `DetailFormat.detail_bbcode` renders through `HudLineageVocab.line_bbcode`.
+- **Frames:** `family_limit_room` / `_near` / `_at` / `_lost_touch` / `_peoples` / `_lifted`.
+
+## The split sheet's families and FAMILY LIMIT block (issue #691)
+
+`BandPanelController._fill_split_compose_sheet` states the founding lines each half would hold, from
+the SAME `share` as `N% of the band goes with them` (asked workers over the band's working-age):
+`taken = clamp(round_half_up(lines x share), 1, lines - 1)` (`HudLineageVocab.split_taken`), a
+one-line band taking 1 and keeping its 1.
+
+- A `Families` row on THE NEW BAND (`{taken}`) and on THE HOME BAND, AFTER (`{lines} -> {lines -
+  taken}`), whenever the band publishes `founding_lines`.
+- **Only while the people is under a limit** (`breeding_ceiling != 0`, projected reading, both world
+  constants known): a `FAMILY LIMIT` section with `Stays linked` (`{ceiling}, shared`) and `If it
+  loses touch` (`{new_limit} - home {home_limit}`), where `new_limit = min(taken x K, free)` and
+  `home_limit = min((union - taken) x K, free)` over the members' plus the other peoples' lines; a
+  one-line band prices at `floor(K/2)` and `(union - 1) x K + floor(K/2)`. One amber `◆` line: home
+  first (`breeding_population - new band people >= home_limit`), else the new band. Strings are in
+  `hud_compose_vocab.gd` (`SPLIT_*FAMIL*`, `SPLIT_LIMIT_*`), arithmetic in `hud_lineage_vocab.gd`.
+- The sheet scrolls inside the drawer, so `build_verb_form` wraps it in a right margin the
+  scrollbar's width, reserved unconditionally (as `StartingLoadoutPanel._scroll_gutter` does).
+- **Frames:** `family_limit_split`, `family_limit_split_free`; the harness scrolls the sheet to its
+  end before saving.

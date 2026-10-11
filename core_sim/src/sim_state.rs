@@ -223,6 +223,10 @@ pub struct SimState {
     /// derived**: the lost-touch line is an edge read off the previous turn's reading, and the
     /// capture publishes the readings before a restored world has run a turn.
     pub hearts: crate::systems::HeartLedger,
+    /// The peoples whose breeding the head-count freed for good (`lineage::FreeBreedingPeoples`,
+    /// issue #691). **State, not derived**: the latch outlives the population that earned it, so
+    /// nothing in a restored world can rebuild it.
+    pub free_breeding: crate::lineage::FreeBreedingPeoples,
     /// **THE LIVE WORKINGS ON THE TWO DEPOSIT BRANCHES.**
     ///
     /// ⛔ **THE STOCK IS THE ONLY THING HERE THAT IS NOT DERIVABLE, and it is why this is state at
@@ -453,6 +457,10 @@ pub fn capture_sim_state(world: &World) -> SimState {
             .get_resource::<crate::systems::HeartLedger>()
             .cloned()
             .unwrap_or_default(),
+        free_breeding: world
+            .get_resource::<crate::lineage::FreeBreedingPeoples>()
+            .cloned()
+            .unwrap_or_default(),
         deposits: world.resource::<DepositRegistry>().clone(),
         forage: world.resource::<ForageRegistry>().clone(),
         graze: world.resource::<GrazeRegistry>().clone(),
@@ -655,6 +663,7 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     world.insert_resource(state.faction_names.clone());
     world.insert_resource(state.factions.clone());
     world.insert_resource(state.hearts.clone());
+    world.insert_resource(state.free_breeding.clone());
     world.insert_resource(state.deposits.clone());
     world.insert_resource(state.forage.clone());
     world.insert_resource(state.graze.clone());

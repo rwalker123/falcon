@@ -73,6 +73,14 @@ A **resident** band (`ResidentBand` — an expedition is detached and deliberate
 - **Band layers ride `CultureManagerCheckpoint`**, so they survive a rollback without a `Resource`/`Component` of their own (and so need no new row in `tests/sim_state_coverage.rs`).
 - **Band layers are not on the wire.** `sim_schema`'s `CultureLayerScope` has no `Band` member, the capture walks global/regional/local only, and `active_tensions` skips bands for the same reason; a band's tensions still reach the sim through `take_tension_events`.
 
+#### Contact drift — two tied bands grow alike (#702)
+
+`CultureManager::apply_contact_drift`, called by `reconcile_culture_layers` BEFORE `reconcile` so the same turn's resolve sees it. Per band, per axis, summed over each MUTUAL tie (`mutual_contact_ties`: both directed edges present, `tie = min(strength)`, any factions): `pull_A = rate x tie x receptiveness_A x weight_B/(weight_A+weight_B) x (value_B - value_A)`, `weight` = the band's headcount, `receptiveness_A = 1 - clamp(purist_A / CULTURE_TRAIT_SPAN, -1, 1)`. It reads start-of-turn `value`s and sums over `BTreeMap`s (visit order changes nothing) and writes the band layer's **modifier**, never `value`. No new bound is invented: the modifier is unclamped. It reads the previous turn's `ConnectionLedger` (`advance_connections` runs after Influence).
+
+- **Lever**: `culture_corruption_config.json` -> `culture.contact_drift.rate` (**0.014**, finite and `>= 0`, validated in `CultureCorruptionConfig::from_json_str`); `0` switches drift off and reproduces the no-drift culture exactly. Beside it, `culture.split_min_purist` (**0.0**, finite) is the purist line for the schism split (`independence.md`).
+- **Wire**: the band's strongest pull **from another people's band** (the source, among ties to bands of a different `cohort.faction` as drift is computed, whose summed |per-axis pull| is largest, ties to the lower `BandId`; `apply_contact_drift` takes each band's faction for this). Kin drift still runs and still moves the culture but is never published: a band tied to kin alone publishes the no-pull sentinel (source `0`). The strongest foreign pull is stored as `applied_contact_pull` (checkpointed; save format 31) and published on `PopulationCohortState` as `cultureDriftSourceBand:ulong` (`0` = none), `cultureDriftAxis:ubyte` (`CultureTraitAxis` index) and `cultureDriftDelta:float` (that axis's signed delta this turn). Own-band fields; a redacted foreign row carries the defaults.
+- Tests: `tests/contact_drift.rs`, `tests/culture_split.rs`.
+
 **Config** (`culture_corruption_config.json` → `culture.propagation`): a `band` block beside `global`/`regional`/`local` — `elasticity` **0.20** (half the tile scope's 0.40, because a band carries cultural memory across a move), `soft_threshold` 0.6, `hard_threshold` 1.2, and, uniquely among the scopes, trigger ticks **> 1** (`soft` 3 / `hard` 5) so a band passing briefly through a foreign province does not read as a schism. Plus `band_character_amplitude` **0.2**.
 
 ### Knowledge & Espionage
@@ -161,11 +169,12 @@ a band at `(1,35)` are **10 hex steps** apart; the old comparison read wrapped `
 rival's whole 29-person band changed faction off one over-long sight line. **No config was retuned
 to compensate**: narrowing the diagonals is the fix.
 
-- **The bounding box is unchanged and is still a superset.** Every hex step changes the offset
+- **The bounding box is a superset for TERRAIN only, not for a large-group bonus.** Every hex step changes the offset
   column and row by at most one (`HEX_NEIGHBOR_OFFSETS`), so a tile `n` steps away lies within `n`
-  columns and `n` rows; `water_bonus` is the only positive terrain modifier
-  (`get_terrain_modifier` returns the water bonus, the negative forest penalty, or zero), so
-  `effective_range <= max_range`. The **caller has already folded the elevation bonus into the
+  columns and `n` rows; the box is widened by the sweep's largest positive terrain term, so
+  `effective_range <= max_range` for every tile not carrying a large-group bonus. A tile that does
+  is outside that argument by design and is tested in a second pass (`connections.md` → "A large
+  group is seen from further away"). The **caller has already folded the elevation bonus into the
   `base_range` argument** (`calculate_visibility` passes `source.base_range + capped_bonus`), which
   is what keeps that inequality true.
 - **`ADJACENT_LOS_SKIP_DIST_SQ` became `ADJACENT_LOS_SKIP_DISTANCE` (`1`)** — adjacency is hex
@@ -181,7 +190,11 @@ to compensate**: narrowing the diagonals is the fix.
 
 **Modifiers**:
 - **Elevation**: Higher elevation grants sight bonus (configurable per 100m)
-- **Terrain**: Water tiles grant bonus range; forest/wetland tiles apply penalty
+- **Terrain**: the **target** tile's `TerrainDefinition::detection_modifier`, in whole tiles (#533).
+  It replaced a tag rule (wetland −2, water +1) that never applied to an actual forest. Forest and
+  open water shorten sight, steppe lengthens it.
+- **Target size**: a tile holding a large group is visible from further off (#533) —
+  `connections.md` → "A large group is seen from further away"
 - **Line of Sight**: Bresenham ray-cast checks for blocking terrain
 - **Local scout** (labor): staffed scouts are **forward observers** — with ≥1 scout (from the
   cohort's `LaborAllocation` head-count, `workers_on(&LaborTarget::Scout)`), `calculate_visibility`
@@ -199,7 +212,8 @@ to compensate**: narrowing the diagonals is the fix.
 - `sight_ranges`: Per-unit-type `base_range` and `elevation_bonus_factor`
 - `elevation`: `enabled`, `bonus_per_100m`, `max_bonus`
 - `line_of_sight`: `enabled`, `blocking_terrain_tags`
-- `terrain_modifiers`: `forest_penalty`, `water_bonus`
+- `terrain_detection`: `tiles_per_unit` — the scale that turns `detection_modifier` into tiles (`connections.md`)
+- `size_sight_bonus`: `threshold_people`, `people_per_tile`, `max_tiles` — the large-group bonus (`connections.md`)
 - `movement`: `max_sweep_tiles` (cap on the corridor length revealed for a single-turn move; keep above the real max per-turn move distance so genuine moves sweep fully — see `corridor_tiles`)
 
 **Snapshot Export**: `visibility_raster` emits a per-faction `ScalarRasterState` (fixed-point i64 samples) encoding Unexplored=0.0, Discovered=0.5, Active=1.0; the client decodes these to floats and renders black / cloudy / full-color. (`FactionVisibilityMap::to_byte_raster` still exists as a 0/1/2 byte view, but is not the snapshot export.)

@@ -1416,7 +1416,7 @@ merge), `build_queue::the_jobs_behind_the_head_are_suggested_their_tools_off_the
 Design: `docs/plan_crafting_and_materials.md` §7, "Auto-craft". `auto_craft.rs` is the whole
 behaviour; `BandBench::auto` is the per-band toggle (`bench_auto <f> <b> on|off`, proto field 82),
 `BandBench::auto_skipped` the items the player passed over, `BenchOrder::auto` the tag on an order
-auto-craft queued. All three ride `BandRecord::bench` (`SAVE_FORMAT_VERSION` 30) and the wire
+auto-craft queued. All three ride `BandRecord::bench` (`SAVE_FORMAT_VERSION` 33) and the wire
 (`BenchState.auto` / `autoSkipped`, `BenchOrder.auto`).
 
 - **It fills an EMPTY queue, and only an empty one.** `auto_craft_fill` queues the first usable

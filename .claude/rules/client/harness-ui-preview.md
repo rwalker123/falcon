@@ -2013,19 +2013,8 @@ Each fails a DISJOINT set, and each names the defect in its own words:
 
 ## `chapters/band_expedition.gd` — what the band carries (#732)
 
-`EXPECTED_CHECKPOINTS` **126**, RE-MEASURED. Two additions, both appended so no earlier frame moves:
+`EXPECTED_CHECKPOINTS` re-measured by the run. The `Carry:` row and its `_carry_states` pair are retired with the row (`band-readouts.md`). What remains:
 
-- **The `Carry:` row, as a PAIR on one band with only the load moving** (`_carry_states`, after
-  `_expedition_kit_states`). The fixture states `carry_capacity` 96, `move_ferry_reach_tiles` 2 and a
-  `carry_load` of 61.4, then 154. Under its capacity the row reads `61 / 96` in plain ink and the
-  block registers no hover; over it the row reads `154 / 96`, asserted NOT in `HudStyle.WARN`, and the
-  hover states the move rule, `A move farther than 2 tiles leaves behind what the band can't
-  carry.` — frame **`band_carry_over`**. Both halves are plain ink (`band-readouts.md` → "The `Carry`
-  row is a FACT"); the pair is what pins the hover, which either half alone passes on a row that
-  never or always registers it. The value and the hover are
-  LITERALS, and the value is asserted beside the row's KEY (`HudDisclosureVocab.DETAIL_ROW_CARRY`)
-  rather than as one `Carry: …` string, because `detail_bbcode` splits a row into a key cell and a
-  value cell.
 - **The food ledger's left-behind term.** The raided band fixture also states `food_left_behind`
   0.80 (`PopulationCohortState.foodLeftBehind`, food a long move dropped), so the ledger draws a
   `Left behind` row beside the raid and spoilage rows, and the net-food identity the chapter
@@ -2036,7 +2025,7 @@ Each fails a DISJOINT set, and each names the defect in its own words:
 ## `chapters/band_expedition.gd` — the culture morale term (#699)
 
 `EXPECTED_CHECKPOINTS` **139**, RE-MEASURED: four frames and nine claims, appended after
-`_carry_states` (`_ancestors_states`) so no earlier frame moves.
+the preceding block (`_ancestors_states`) so no earlier frame moves.
 
 - **NEAR** — the reference band (entity 910) with `morale_culture` +0.006, its Morale disclosure
   opened: the popover itemizes `▲ +0.6%  near the ancestors` — frame
@@ -3738,7 +3727,6 @@ re-sent opening raising the card again. `EXIT=1`.
 **A clean run is 470 frames / 2540 `PASS`, exit 0 — MEASURED windowed on this tree.**
 `band_panel_preview` 1518 `PASS`, exit 0, on the same tree.
 
-<<<<<<< HEAD
 ## The band's standing toward its people's heart (`chapters/band_expedition.gd`, issue #284)
 
 Two frames and twelve assertions, appended after the carry states (`_heart_states`). The behaviour is
@@ -3759,7 +3747,7 @@ Two frames and twelve assertions, appended after the carry states (`_heart_state
 `EXPECTED_CHECKPOINTS` **154**, re-measured by raising the const to an impossible number and
 reading `reached 154 checkpoints` back (the chapter also carries main's `_ancestors_states`). **A clean
 run on the merged tree is 491 frames / 2707 `PASS` / 0 `FAIL`, exit 0.**
-=======
+
 ## The bench queue and the suggestions (`chapters/crafting_bench.gd`, issue #776)
 
 Two frames appended LAST in the chapter — `crafting_queue_suggestions` and
@@ -3790,7 +3778,6 @@ is a `WAITING` queue row with its tinted reason, and the head row's `+`/✕ send
 well's send `order 1`. Every fixture bench now carries `worked` and every order `blocked_reason` /
 `blocked_severity`. **`EXPECTED_CHECKPOINTS` moved 218 → 228, RE-MEASURED** the same way (the run read
 back `reached 228`); the PR #784 review's pausing-raise pair (a WAITING order's ↑ claims no pause) took it to 230 and the run to 2664 `PASS` / 0 `FAIL` / 483 frames.
->>>>>>> origin/main
 
 ## `chapters/migration_mode.gd` — the Move camp box (`docs/plan_roaming_bands.md`, #797)
 

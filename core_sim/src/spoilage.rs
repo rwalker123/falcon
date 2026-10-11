@@ -15,12 +15,39 @@
 //!
 //! [`rot_band_larders`] is the one system that rots a larder, once a turn right after the meal and
 //! before the turn's income lands. [`rot_ahead`] is the same rule walked forward for the forecasts.
+//!
+//! **Rot also teaches** (#707): a surplus that sat until it spoiled is the practice that teaches
+//! [`STORAGE_KNOWLEDGE`], paid through the same knowledge ledger the intensification ladder uses
+//! ([`storage_practice`]). Only the LARDER's rot teaches; a caravan pack lost on its walk is
+//! distance, not a surplus that sat.
 
-use bevy::prelude::{Query, Res, With};
+use bevy::prelude::{Query, Res, ResMut, With};
 
 use crate::components::{FoodMix, PopulationCohort, ResidentBand};
 use crate::demographics_config::{DemographicsConfigHandle, KeepingConfig};
+use crate::intensification::{LadderConfigHandle, LadderKnowledge};
+use crate::resources::DiscoveryProgressLedger;
 use crate::scalar::{scalar_from_f32, scalar_zero, Scalar};
+
+/// The discovery-ledger id of the storage lesson. Taught by rot rather than by a rung or a bench,
+/// so it is coded here beside the system that teaches it ([`rot_band_larders`]) and resolved by
+/// `intensification::discovery_id_for`.
+pub const STORAGE_DISCOVERY_ID: u32 = 2018;
+
+/// The name of the storage lesson in `intensification_ladder.json` (`knowledge.lesson_costs`) and
+/// in `start_profile_knowledge_tags.json`.
+pub const STORAGE_KNOWLEDGE: &str = "storage";
+
+/// **Practice one band's rot is worth this turn**, in the ladder's practice units: `learn_rate`
+/// times the share of a full turn's need that rotted, capped at one full turn. Zero when nothing
+/// rotted or the band needs nothing. Measured against the band's OWN need, so band size cancels.
+pub fn storage_practice(rotted: f32, need: f32, knowledge: &LadderKnowledge) -> f32 {
+    if rotted <= 0.0 || need <= 0.0 {
+        return 0.0;
+    }
+    let full_turn = need * knowledge.storage_lesson_rot_turns;
+    knowledge.learn_rate * (rotted / full_turn).min(1.0)
+}
 
 /// **How much of `food` will rot before it is eaten**, on a band that eats `need` a turn and takes
 /// no income — the larder walked forward through the same meal-then-rot turns the sim runs. The
@@ -68,16 +95,33 @@ pub fn rots_in_transit(class: &str, walk_turns: u32, keeping: &KeepingConfig) ->
 /// `With<ResidentBand>`: a detached party's pack does not rot in this slice — it carries its lots
 /// and their ages through every move and lands home in the band's larder, where they rot by this
 /// rule.
+///
+/// **Rot teaches storage** (#707): the larder rot this pass computes — and only that, before the
+/// labor pass adds caravan transit rot — is credited to the faction's [`STORAGE_KNOWLEDGE`] lesson
+/// once per band per turn ([`storage_practice`], priced by `LadderKnowledge::ledger_credit`).
 pub fn rot_band_larders(
     demographics: Res<DemographicsConfigHandle>,
+    ladder: Res<LadderConfigHandle>,
+    mut ledger: ResMut<DiscoveryProgressLedger>,
     mut cohorts: Query<&mut PopulationCohort, With<ResidentBand>>,
 ) {
     let config = demographics.get();
+    let ladder = ladder.get();
     for mut cohort in cohorts.iter_mut() {
         let rotted = cohort
             .stores
             .age_food(|class| config.keeping.shelf_life(class));
         cohort.last_food_spoiled = rotted.to_f32();
+        let practice = storage_practice(rotted.to_f32(), cohort.last_food_need, &ladder.knowledge);
+        if let Some(credit) = ladder.knowledge.ledger_credit(STORAGE_KNOWLEDGE, practice) {
+            if credit > 0.0 {
+                ledger.add_progress(
+                    cohort.faction,
+                    STORAGE_DISCOVERY_ID,
+                    scalar_from_f32(credit),
+                );
+            }
+        }
     }
 }
 
@@ -322,6 +366,66 @@ mod tests {
         assert_eq!(
             config.keeping.eat_order(),
             vec![FLESH.to_string(), FRESH.to_string(), DRY.to_string()]
+        );
+    }
+
+    /// The ladder pace the storage tests state for themselves, so a re-tune of the shipped dials
+    /// cannot move the arithmetic under them.
+    const LEARN_RATE: f32 = 1.0;
+    /// Turns of need that count as one full turn of practice (the shipped dial's value).
+    const ROT_TURNS: f32 = 1.0;
+    /// Two band sizes' per-turn need and the share of it that rots, for the size-cancels pin.
+    const SMALL_NEED: f32 = 30.0;
+    const BIG_NEED: f32 = 60.0;
+    const HALF: f32 = 0.5;
+    /// Rot far past one full turn's need (a whole kill expiring at once), which must still pay no
+    /// more than one turn of practice.
+    const MANY_TURNS_OF_NEED: f32 = 10.0;
+
+    fn knowledge() -> LadderKnowledge {
+        let mut knowledge = crate::intensification::LadderConfig::builtin()
+            .knowledge
+            .clone();
+        knowledge.learn_rate = LEARN_RATE;
+        knowledge.storage_lesson_rot_turns = ROT_TURNS;
+        knowledge
+    }
+
+    #[test]
+    fn no_rot_teaches_nothing() {
+        assert_eq!(storage_practice(0.0, SMALL_NEED, &knowledge()), 0.0);
+    }
+
+    #[test]
+    fn a_band_that_needs_nothing_learns_nothing_from_its_rot() {
+        assert_eq!(storage_practice(SMALL_NEED, 0.0, &knowledge()), 0.0);
+    }
+
+    #[test]
+    fn a_turns_need_rotting_is_a_full_turn_of_practice_and_more_is_capped() {
+        let k = knowledge();
+        assert_eq!(
+            storage_practice(SMALL_NEED * ROT_TURNS, SMALL_NEED, &k),
+            LEARN_RATE
+        );
+        assert_eq!(
+            storage_practice(SMALL_NEED * MANY_TURNS_OF_NEED, SMALL_NEED, &k),
+            LEARN_RATE
+        );
+    }
+
+    #[test]
+    fn half_a_turns_need_rotting_is_half_the_practice() {
+        let practice = storage_practice(SMALL_NEED * HALF * ROT_TURNS, SMALL_NEED, &knowledge());
+        assert!((practice - LEARN_RATE * HALF).abs() < 1e-6, "{practice}");
+    }
+
+    #[test]
+    fn band_size_cancels() {
+        let k = knowledge();
+        assert_eq!(
+            storage_practice(SMALL_NEED * HALF, SMALL_NEED, &k),
+            storage_practice(BIG_NEED * HALF, BIG_NEED, &k)
         );
     }
 }

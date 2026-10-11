@@ -17,7 +17,12 @@ pub struct CultureCorruptionConfig {
 
 impl CultureCorruptionConfig {
     pub fn from_json_str(json: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(json)
+        let parsed: Self = serde_json::from_str(json)?;
+        parsed
+            .culture
+            .validate()
+            .map_err(<serde_json::Error as serde::de::Error>::custom)?;
+        Ok(parsed)
     }
 
     pub fn culture(&self) -> &CultureSeverityConfig {
@@ -41,9 +46,68 @@ pub struct CultureSeverityConfig {
     drift_warning: CultureTensionTuning,
     assimilation_push: CultureTensionTuning,
     schism_risk: CultureTensionTuning,
+    /// Culture over a connection: how fast two tied bands grow alike
+    /// (`docs/plan_contact_and_logistics.md` §"Settled by #530").
+    contact_drift: ContactDriftSettings,
+    /// The Syncretic<->Purist value a band must EXCEED for a held schism to split it off as its
+    /// own people (#702). A band at or below it is accepting and never splits.
+    split_min_purist: f32,
 }
 
+/// The contact-drift lever block (`culture.contact_drift`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ContactDriftSettings {
+    /// The share of the gap two equal, neutral bands at a full tie close per turn. `0` turns
+    /// contact drift off. Finite and `>= 0`.
+    rate: f32,
+}
+
+impl ContactDriftSettings {
+    pub fn rate(&self) -> f32 {
+        self.rate
+    }
+}
+
+impl Default for ContactDriftSettings {
+    fn default() -> Self {
+        Self {
+            rate: DEFAULT_CONTACT_DRIFT_RATE,
+        }
+    }
+}
+
+/// First guess: half the gap in ~50 turns at a full tie between equal, neutral bands.
+const DEFAULT_CONTACT_DRIFT_RATE: f32 = 0.014;
+
+/// Neutral on the Syncretic<->Purist axis: any purist band splits.
+const DEFAULT_SPLIT_MIN_PURIST: f32 = 0.0;
+
 impl CultureSeverityConfig {
+    pub fn contact_drift(&self) -> &ContactDriftSettings {
+        &self.contact_drift
+    }
+
+    pub fn split_min_purist(&self) -> f32 {
+        self.split_min_purist
+    }
+
+    /// Reject levers the contact-drift and split rules cannot read.
+    fn validate(&self) -> Result<(), String> {
+        let rate = self.contact_drift.rate;
+        if !rate.is_finite() || rate < 0.0 {
+            return Err(format!(
+                "culture.contact_drift.rate must be finite and >= 0, got {rate}"
+            ));
+        }
+        if !self.split_min_purist.is_finite() {
+            return Err(format!(
+                "culture.split_min_purist must be finite, got {}",
+                self.split_min_purist
+            ));
+        }
+        Ok(())
+    }
     pub fn trust_axis(&self) -> usize {
         self.trust_axis
     }
@@ -91,6 +155,8 @@ impl Default for CultureSeverityConfig {
                 incident_delta_min: 0.05,
                 incident_delta_max: 0.15,
             },
+            contact_drift: ContactDriftSettings::default(),
+            split_min_purist: DEFAULT_SPLIT_MIN_PURIST,
         }
     }
 }

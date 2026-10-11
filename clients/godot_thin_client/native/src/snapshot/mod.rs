@@ -1359,6 +1359,23 @@ pub(crate) fn snapshot_to_dict(
         let _ = dict.insert("command_events_retention_turns", retention_turns as i64);
     }
 
+    // The LINEAGE CONSTANTS (issue #691): world constants echoed off the demographics config. 0 is
+    // the FlatBuffers default and means "not stated" (unchanged on a delta), so it is withheld.
+    if let Some(campaign) = snapshot.campaign() {
+        if campaign.lineagePeoplePerLine() > 0 {
+            let _ = dict.insert(
+                "lineage_people_per_line",
+                campaign.lineagePeoplePerLine() as i64,
+            );
+        }
+        if campaign.lineageFreeBreedingAt() > 0 {
+            let _ = dict.insert(
+                "lineage_free_breeding_at",
+                campaign.lineageFreeBreedingAt() as i64,
+            );
+        }
+    }
+
     if let Some(pending_forks) = snapshot.campaign().and_then(|s| s.pendingForks()) {
         let _ = dict.insert("pending_forks", &pending_forks_to_array(pending_forks));
     }

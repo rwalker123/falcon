@@ -2006,30 +2006,27 @@ fn a_splinter_drifting_below_four_workers_keeps_its_carry_on_the_wire() {
         .expect("the splinter publishes a row");
     let per_worker = carry_cfg(&app).per_worker_carry;
     let floored = (ASKED - 1) as f32 * per_worker;
+    let capacity = core_sim::carry::band_carry_capacity(
+        app.world.get::<PopulationCohort>(child).expect("cohort"),
+        &carry_cfg(&app),
+    )
+    .to_f32();
     assert!(
-        (row.carryCapacity() - DRIFTED_WORKING * per_worker).abs() < 1e-3,
-        "carry is the actual working value times one pack: {} (a floored count would read {floored})",
-        row.carryCapacity()
+        (capacity - DRIFTED_WORKING * per_worker).abs() < 1e-3,
+        "carry is the actual working value times one pack: {capacity} (a floored count would read {floored})",
     );
     // The split packs a splinter to its full carry, so a hundredth of a worker's drift is a
     // hundredth of a pack over — under one whole unit, never the 8-load step a floored count took.
-    let overage = row.carryLoad() - row.carryCapacity();
-    assert!(
-        overage > 0.0 && overage < 1.0,
-        "**LIVENESS**: the drift leaves the packed splinter a fraction of a unit over: load {} \
-         against {}",
-        row.carryLoad(),
-        row.carryCapacity()
-    );
     // ⛔ **An overage under one whole unit comes off the food** — a rounding drift does not cost a
     // tool. The published forecast is the plan the move would run.
-    assert_eq!(row.longMoveLeavesItems(), 0, "no tool is left behind");
-    assert_eq!(row.longMoveLeavesMaterials(), 0.0, "nor any material");
     assert!(
-        (row.longMoveLeavesFood() - overage).abs() < 1e-3,
-        "the {overage} of overage comes off the food: {}",
+        row.longMoveLeavesFood() > 0.0 && row.longMoveLeavesFood() < 1.0,
+        "**LIVENESS**: the drift leaves the packed splinter a fraction of a unit over, all of it \
+         food: {}",
         row.longMoveLeavesFood()
     );
+    assert_eq!(row.longMoveLeavesItems(), 0, "no tool is left behind");
+    assert_eq!(row.longMoveLeavesMaterials(), 0.0, "nor any material");
 }
 
 /// The published row of `band`, read off a fresh capture's encoded envelope.
@@ -2100,7 +2097,7 @@ fn a_fresh_splinter_publishes_no_food_shortfall() {
 fn the_opening_bands_window_publishes_a_fixed_larder_inside_its_carry() {
     let mut app = world_on_the_build_turn();
     let (parent, parent_band) = home_band(&mut app);
-    let (window_carry, food_share, food_carried, food_fixed, band_carry) =
+    let (window_carry, food_share, food_carried, food_fixed) =
         with_published_row(&mut app, parent_band, |row| {
             let window = row.loadoutWindow().expect("the opening band has a window");
             (
@@ -2108,9 +2105,13 @@ fn the_opening_bands_window_publishes_a_fixed_larder_inside_its_carry() {
                 window.foodShare(),
                 window.foodCarried(),
                 window.foodFixed(),
-                row.carryCapacity(),
             )
         });
+    let band_carry = core_sim::carry::band_carry_capacity(
+        app.world.get::<PopulationCohort>(parent).expect("cohort"),
+        &carry_cfg(&app),
+    )
+    .to_f32();
     assert!(food_fixed, "the opening band's larder is fixed");
     let larder = food_mass_of(&app, parent).to_f32();
     assert!(larder > 0.0, "**LIVENESS**: the band holds a larder");

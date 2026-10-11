@@ -81,6 +81,7 @@ impl WorldSnapshot {
             capability_flags,
             command_events,
             command_events_retention_turns,
+            lineage_constants,
             campaign_profiles,
             pending_forks,
             stance_axes,
@@ -216,6 +217,10 @@ impl WorldSnapshot {
         replace_if_some(
             &mut self.command_events_retention_turns,
             command_events_retention_turns,
+        );
+        replace_if_some(
+            &mut self.lineage_constants,
+            &lineage_constants.as_deref().copied(),
         );
         replace_if_some(&mut self.campaign_profiles, campaign_profiles);
         replace_if_some(&mut self.pending_forks, pending_forks);
@@ -577,6 +582,7 @@ mod tests {
         delta.deposits = Some(Vec::new());
         delta.deposit_rungs = Some(Vec::new());
         delta.moisture_raster = Some(Default::default());
+        delta.lineage_constants = Some(Default::default());
         delta.elevation_overlay = Some(Default::default());
         delta.climate_bands = Some(Default::default());
         delta.temperature_survivability = Some(Default::default());

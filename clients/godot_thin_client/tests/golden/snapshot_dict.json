@@ -3304,6 +3304,8 @@
       "order": 65
     }
   ],
+  "lineage_free_breeding_at": 90,
+  "lineage_people_per_line": 85,
   "materials": [
     {
       "axes": [
@@ -4532,6 +4534,45 @@
         "worked": 72,
         "workers": 95
       },
+      "breeding_ceiling": 198,
+      "breeding_members": [
+        {
+          "band_id": 67,
+          "fading": true,
+          "lines": 49,
+          "people": 123
+        },
+        {
+          "band_id": 56,
+          "fading": false,
+          "lines": 50,
+          "people": 138
+        },
+        {
+          "band_id": 89,
+          "fading": false,
+          "lines": 107,
+          "people": 109
+        }
+      ],
+      "breeding_peoples": [
+        {
+          "faction": 195,
+          "fading": true,
+          "lines": 62
+        },
+        {
+          "faction": 36,
+          "fading": false,
+          "lines": 29
+        },
+        {
+          "faction": 37,
+          "fading": false,
+          "lines": 112
+        }
+      ],
+      "breeding_population": 186,
       "build_queue": [
         {
           "build_priority": "populations[0].build_queue[0].build_priority",
@@ -4561,9 +4602,7 @@
           "target_y": 103
         }
       ],
-      "carry_capacity": 24.440001,
       "carry_fodder_weight": 50.959999,
-      "carry_load": 48.189999,
       "carry_material_weight": 39.889999,
       "carry_per_worker": 112.379997,
       "children": 97,
@@ -4848,10 +4887,15 @@
         }
       ],
       "culture_ancestor_pull": {"__packed": "PackedFloat32Array", "len": 3, "items": [27.690001, 7.67, 10.18]},
+      "culture_break_away_risk": true,
+      "culture_drift_axis": 26,
+      "culture_drift_axis_label": "Trait",
+      "culture_drift_delta": 13.75,
+      "culture_drift_source_band": 174,
       "culture_traits": {"__packed": "PackedFloat32Array", "len": 3, "items": [15.68, 91.290001, 50.68]},
       "current_x": 0,
       "current_y": 1,
-      "cut_off": true,
+      "cut_off": false,
       "discontent_fraction": 0.00013,
       "elders": 199,
       "entity": 100,
@@ -4926,6 +4970,7 @@
       "expedition_target_herd": "populations[0].expedition_target_herd",
       "expedition_target_species": "populations[0].expedition_target_species",
       "faction": 182,
+      "fertility_ceiling": 0.000036,
       "fertility_hunger": 0.000048,
       "fertility_reserve": 0.000077,
       "fertility_trend": 0.000084,
@@ -4943,11 +4988,12 @@
       "food_shortfall": 99.949997,
       "food_spoiled": 82.919998,
       "forage_carry_per_worker_biomass": 80.459999,
+      "founding_lines": 72,
       "founding_min_workers": 13,
       "founding_parent_min_workers": 132,
       "generation": 178,
       "grievance": 0.000154,
-      "has_belief_anchor": false,
+      "has_belief_anchor": true,
       "heart_bond": 1.43,
       "heart_last_contact_turn": 78,
       "home": 193,
@@ -4980,7 +5026,7 @@
       "idle_workers": 54,
       "independence_grievance_threshold": 59.740002,
       "is_expedition": true,
-      "is_traveling": true,
+      "is_traveling": false,
       "kit_id": "populations[0].kit_id",
       "kit_item_conditions": [
         {
@@ -5932,6 +5978,45 @@
         "worked": 89,
         "workers": 4
       },
+      "breeding_ceiling": 3,
+      "breeding_members": [
+        {
+          "band_id": 100,
+          "fading": true,
+          "lines": 142,
+          "people": 174
+        },
+        {
+          "band_id": 191,
+          "fading": false,
+          "lines": 141,
+          "people": 47
+        },
+        {
+          "band_id": 114,
+          "fading": false,
+          "lines": 104,
+          "people": 80
+        }
+      ],
+      "breeding_peoples": [
+        {
+          "faction": 12,
+          "fading": true,
+          "lines": 157
+        },
+        {
+          "faction": 123,
+          "fading": false,
+          "lines": 70
+        },
+        {
+          "faction": 102,
+          "fading": false,
+          "lines": 167
+        }
+      ],
+      "breeding_population": 161,
       "build_queue": [
         {
           "build_priority": "populations[1].build_queue[0].build_priority",
@@ -5961,9 +6046,7 @@
           "target_y": 200
         }
       ],
-      "carry_capacity": 58.130001,
       "carry_fodder_weight": 12.16,
-      "carry_load": 68.220001,
       "carry_material_weight": 81.660004,
       "carry_per_worker": 74.93,
       "children": 148,
@@ -6248,10 +6331,15 @@
         }
       ],
       "culture_ancestor_pull": {"__packed": "PackedFloat32Array", "len": 3, "items": [88.629997, 1.55, 85.279999]},
+      "culture_break_away_risk": false,
+      "culture_drift_axis": 167,
+      "culture_drift_axis_label": "Trait",
+      "culture_drift_delta": 55.23,
+      "culture_drift_source_band": 149,
       "culture_traits": {"__packed": "PackedFloat32Array", "len": 3, "items": [55.869999, 23.379999, 59.23]},
       "current_x": 1,
       "current_y": 2,
-      "cut_off": false,
+      "cut_off": true,
       "discontent_fraction": 0.000061,
       "elders": 58,
       "entity": 101,
@@ -6326,6 +6414,7 @@
       "expedition_target_herd": "populations[1].expedition_target_herd",
       "expedition_target_species": "populations[1].expedition_target_species",
       "faction": 141,
+      "fertility_ceiling": 0.000035,
       "fertility_hunger": 0.000157,
       "fertility_reserve": 0.000058,
       "fertility_trend": 0.000143,
@@ -6343,11 +6432,12 @@
       "food_shortfall": 104.449997,
       "food_spoiled": 90.110001,
       "forage_carry_per_worker_biomass": 90.010002,
+      "founding_lines": 189,
       "founding_min_workers": 168,
       "founding_parent_min_workers": 115,
       "generation": 195,
       "grievance": 0.000053,
-      "has_belief_anchor": true,
+      "has_belief_anchor": false,
       "heart_bond": 22.93,
       "heart_last_contact_turn": 101,
       "home": 148,
@@ -6379,8 +6469,8 @@
       "hunter_attack": 43.43,
       "idle_workers": 151,
       "independence_grievance_threshold": 24.59,
-      "is_expedition": false,
-      "is_traveling": true,
+      "is_expedition": true,
+      "is_traveling": false,
       "kit_id": "populations[1].kit_id",
       "kit_item_conditions": [
         {
@@ -7293,6 +7383,45 @@
         "worked": 130,
         "workers": 69
       },
+      "breeding_ceiling": 160,
+      "breeding_members": [
+        {
+          "band_id": 149,
+          "fading": true,
+          "lines": 47,
+          "people": 57
+        },
+        {
+          "band_id": 98,
+          "fading": false,
+          "lines": 192,
+          "people": 168
+        },
+        {
+          "band_id": 95,
+          "fading": false,
+          "lines": 37,
+          "people": 23
+        }
+      ],
+      "breeding_peoples": [
+        {
+          "faction": 117,
+          "fading": true,
+          "lines": 8
+        },
+        {
+          "faction": 94,
+          "fading": false,
+          "lines": 7
+        },
+        {
+          "faction": 147,
+          "fading": false,
+          "lines": 158
+        }
+      ],
+      "breeding_population": 160,
       "build_queue": [
         {
           "build_priority": "populations[2].build_queue[0].build_priority",
@@ -7322,9 +7451,7 @@
           "target_y": 13
         }
       ],
-      "carry_capacity": 70.75,
       "carry_fodder_weight": 77.010002,
-      "carry_load": 108.230003,
       "carry_material_weight": 33.52,
       "carry_per_worker": 84.809998,
       "children": 39,
@@ -7609,10 +7736,15 @@
         }
       ],
       "culture_ancestor_pull": {"__packed": "PackedFloat32Array", "len": 3, "items": [85.190002, 59.779999, 33.330002]},
+      "culture_break_away_risk": false,
+      "culture_drift_axis": 96,
+      "culture_drift_axis_label": "Trait",
+      "culture_drift_delta": 5.61,
+      "culture_drift_source_band": 88,
       "culture_traits": {"__packed": "PackedFloat32Array", "len": 3, "items": [32.779999, 7.37, 24.040001]},
       "current_x": 2,
       "current_y": 0,
-      "cut_off": false,
+      "cut_off": true,
       "discontent_fraction": 0.000036,
       "elders": 73,
       "entity": 102,
@@ -7687,6 +7819,7 @@
       "expedition_target_herd": "populations[2].expedition_target_herd",
       "expedition_target_species": "populations[2].expedition_target_species",
       "faction": 124,
+      "fertility_ceiling": 0.000146,
       "fertility_hunger": 0.000186,
       "fertility_reserve": 0.000015,
       "fertility_trend": 0.000038,
@@ -7704,11 +7837,12 @@
       "food_shortfall": 97.199997,
       "food_spoiled": 5.14,
       "forage_carry_per_worker_biomass": 56.990002,
+      "founding_lines": 58,
       "founding_min_workers": 87,
       "founding_parent_min_workers": 118,
       "generation": 72,
       "grievance": 0.00018,
-      "has_belief_anchor": false,
+      "has_belief_anchor": true,
       "heart_bond": 70.870003,
       "heart_last_contact_turn": 24,
       "home": 95,
@@ -7740,8 +7874,8 @@
       "hunter_attack": 69.129997,
       "idle_workers": 68,
       "independence_grievance_threshold": 50.919998,
-      "is_expedition": true,
-      "is_traveling": false,
+      "is_expedition": false,
+      "is_traveling": true,
       "kit_id": "populations[2].kit_id",
       "kit_item_conditions": [
         {

@@ -155,3 +155,21 @@ such project setting exists in Godot 4 — and then assigned `get_tree().root.th
 was already null. The name and the autoload slot were right, so this work replaced the body rather
 than adding a fifth script. Worth knowing if you go looking for when scaling "regressed": it never
 worked.
+
+
+## The frame-rate cap rides the same settings store
+
+The Options pane's **Frame rate** row (30 / 60 / 120 fps / Unlimited) writes `ClientSettings.max_fps`
+(`[display] max_fps`, default 60; a saved value outside `MAX_FPS_CHOICES` falls back to the default).
+Without a cap Godot redraws at the display refresh and every frame runs the whole-screen terrain
+shader, which heats an idle laptop.
+
+`ClientSettings` is also the governor: `Engine.max_fps` is the pick while the app is focused and
+`UNFOCUSED_MAX_FPS` (10) after `NOTIFICATION_APPLICATION_FOCUS_OUT`, including when the pick is
+Unlimited (0). It is re-applied on `set_max_fps` and `restore_defaults`.
+
+The governor is active only when the client booted as the game: a deferred check in `_ready` requires
+`get_tree().current_scene.scene_file_path` to equal `application/run/main_scene`. The preview
+harnesses run the same project and load this autoload, and a 10 fps unfocused throttle would slow their
+windows ~10x and could trip their watchdogs; they instantiate LandingScreen/Main as children, so they
+are never the current scene and `Engine.max_fps` stays untouched there.

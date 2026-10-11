@@ -366,8 +366,8 @@ pub(crate) fn ceiling_factor(headroom: Scalar, would_be_births: Scalar) -> Scala
     max(headroom, scalar_zero()) / would_be_births
 }
 
-/// **A breeding population's factor, threshold included** — `1` when its inbreeding ceiling is
-/// lifted (`ceiling` is `None`: `lineage::inbreeding_ceiling` reached `free_breeding_at`), else
+/// **A breeding population's factor, threshold included** — `1` when its people breeds freely
+/// (`ceiling` is `None`: the people is in `lineage::FreeBreedingPeoples`), else
 /// [`ceiling_factor`] of the headroom `max(0, ceiling − opening)` against the would-be births.
 pub(crate) fn breeding_factor(
     ceiling: Option<u32>,
@@ -381,48 +381,44 @@ pub(crate) fn breeding_factor(
     ceiling_factor(headroom, would_be_births)
 }
 
-/// **Which breeding population a band belongs to this turn** — its supply-network component, or the
-/// band alone when it is in none (`SupplyNetworkMembership::network_of` reads `0`). Ordered so the
-/// pre-pass can key a `BTreeMap` on it: the sim is seeded and its walks are in a stated order.
+/// **Which breeding population a band belongs to this turn** — the lowest `BandId` of its
+/// tie-joined group (`lineage::tie_joined_groups`), or the band alone when it has no `BandId`.
+/// Ordered so the pre-pass can key a `BTreeMap` on it: the sim is seeded and its walks are in a
+/// stated order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum BreedingGroup {
-    Network(u32),
+    Tied(BandId),
     Alone(Entity),
 }
 
-impl BreedingGroup {
-    fn of(entity: Entity, membership: &crate::supply::SupplyNetworkMembership) -> Self {
-        match membership.network_of(entity) {
-            NO_SUPPLY_NETWORK => Self::Alone(entity),
-            network => Self::Network(network),
-        }
-    }
-}
-
-/// `SupplyNetworkMembership::network_of`'s reading for a band in no multi-band network.
-const NO_SUPPLY_NETWORK: u32 = 0;
-
-/// One breeding population's pre-pass totals: the union of its members' founding lines, their
+/// One breeding population's pre-pass totals: the union of its members' OWN founding lines, their
 /// opening head-count and the births they would have this turn with no ceiling. The lines are a
 /// SET, so a line two members share (a split that could not partition its last one) counts once.
 ///
-/// **It belongs to one people.** A breeding group is a supply-network component, and the supply
-/// pass only unions bands that pool freely (`supply::pools_freely`, same faction), so every member
-/// shares `faction` — which is what lets a line's holders be counted per people.
+/// **It belongs to one people.** A tie-joined group is one people by construction, so a line's
+/// holders are counted per `faction`. Other peoples' in-touch bands add their own lines on top
+/// (`foreign`), counted whole.
 #[derive(Debug)]
 struct BreedingTally {
     faction: FactionId,
+    /// The group's bands in `BandId` order: `(entity, band id or 0, own line count)`.
+    members: Vec<(Entity, u64, u32)>,
     lines: BTreeSet<crate::lineage::LineId>,
+    /// Every OTHER people's in-touch bands' own lines, by that people.
+    foreign: BTreeMap<FactionId, BTreeSet<crate::lineage::LineId>>,
     opening: Scalar,
     would_be_births: Scalar,
 }
 
-/// One breeding population's resolved ceiling: the people it can hold (`None` once the ceiling is
-/// lifted at `free_breeding_at`), and the factor every member's births are multiplied by this turn.
-#[derive(Debug, Clone, Copy)]
+/// One breeding population's resolved ceiling: the people it can hold (`None` once its people
+/// breeds freely), and the factor every member's births are multiplied by this turn. `members` and
+/// `peoples` are the rows the wire publishes beside it.
+#[derive(Debug, Clone)]
 struct BreedingCeiling {
     people: Option<u32>,
     factor: Scalar,
+    members: Vec<crate::lineage::BreedingMember>,
+    peoples: Vec<crate::lineage::BreedingPeople>,
 }
 
 /// Read a band's food flow off last turn's labor telemetry, distinguishing **no data** from a
@@ -1049,6 +1045,9 @@ type DemographicBands<'w, 's> = Query<
 struct BreedingCeilings {
     group_of: BTreeMap<Entity, BreedingGroup>,
     ceilings: BTreeMap<BreedingGroup, BreedingCeiling>,
+    /// The entities of each population's `members` rows, parallel to them — the publish step fills
+    /// in their post-turn head-counts.
+    member_entities: BTreeMap<BreedingGroup, Vec<Entity>>,
 }
 
 impl BreedingCeilings {
@@ -1062,40 +1061,77 @@ impl BreedingCeilings {
     }
 }
 
-/// **The ceiling pre-pass** (issue #688): group the resident bands into breeding populations, and
-/// resolve each population's ceiling and the factor its births are scaled by this turn.
+/// **The ceiling pre-pass** (issues #688, #691): group the resident bands into breeding
+/// populations, and resolve each population's ceiling and the factor its births are scaled by.
 ///
-/// Per population: the ceiling is `Σ people_per_line / holders(line)` over its union's lines
-/// (`lineage::shared_breeding_ceiling` — a line several separate populations **of one people** hold
-/// splits its `K` between them, so per people the ceilings sum to at most distinct lines × `K`,
-/// and `|union| × people_per_line` when every line is its own) — lifted
-/// altogether once it reaches `free_breeding_at`, when the factor is `1` — the headroom is
-/// `max(0, ceiling − opening head-count)`, and the factor is [`ceiling_factor`] of the headroom
-/// against the members' summed would-be births — priced by [`meal_and_births`], the same function
-/// [`advance_demographics`] prices them with. A band whose home tile does not resolve skips the
-/// demographic model this turn, so it would bear nobody; its people still count toward the
-/// head-count.
+/// **A population is a people's tie-joined group** (`lineage::tie_joined_groups`, the grouping
+/// independence reads for its heart), read off the ledger as the last Visibility pass left it. A
+/// band with no `BandId` is its own population.
+///
+/// **Its lines are its members' OWN lines plus the own lines of every band of a DIFFERENT people
+/// holding a live tie with any member** — in touch, not copied: when the tie bleeds out the lines
+/// leave the union. A foreign line counts whole; a line several separate populations of one people
+/// hold in their own sets splits its `K` (`lineage::shared_breeding_ceiling`).
+///
+/// **The lift is a head-count, latched per people.** A people is added to `FreeBreedingPeoples`
+/// in this pre-pass, before any factor, and never leaves it. It latches when a population's opening
+/// head-count is `free_breeding_at`, or when that population's shared ceiling is at least
+/// `free_breeding_at` and its opening head-count plus its uncapped would-be births reaches it. The
+/// latching turn's births are uncapped, so the head-count can pass `free_breeding_at` on it. A
+/// latched people's every population has factor `1`. An unlatched population's ceiling is
+/// `min(shared, free_breeding_at)`; the headroom is `max(0, ceiling − opening head-count)` and the
+/// factor is [`ceiling_factor`] of the headroom against the members' summed would-be births —
+/// priced by [`meal_and_births`], the same function [`advance_demographics`] prices them with. A
+/// band whose home tile does not resolve skips the demographic model this turn, so it would bear
+/// nobody; its people still count toward the head-count.
 fn resolve_breeding_ceilings(
     cohorts: &DemographicBands,
     tiles: &Query<&Tile>,
-    membership: &crate::supply::SupplyNetworkMembership,
+    ledger: &ConnectionLedger,
+    contact_stamp: Option<u64>,
     demo: &DemographicsConfig,
+    free: &mut crate::lineage::FreeBreedingPeoples,
 ) -> BreedingCeilings {
+    use crate::lineage::{BreedingMember, BreedingPeople, LineId};
+
+    // Every resident band, in (BandId, entity) order: a band with no id sorts first, by entity.
+    let mut rows: Vec<_> = cohorts.iter().collect();
+    rows.sort_by_key(|(entity, _, _, band, _)| (band.copied(), *entity));
+
+    let keyed: Vec<(BandId, FactionId)> = rows
+        .iter()
+        .filter_map(|(_, cohort, _, band, _)| band.map(|band| (*band, cohort.faction)))
+        .collect();
+    // `keyed` skips the id-less rows, so map each keyed index back to its row.
+    let keyed_rows: Vec<usize> = rows
+        .iter()
+        .enumerate()
+        .filter_map(|(index, (_, _, _, band, _))| band.map(|_| index))
+        .collect();
+
     let mut group_of = BTreeMap::new();
     let mut tallies: BTreeMap<BreedingGroup, BreedingTally> = BTreeMap::new();
-    for (entity, cohort, labor, _, _) in cohorts.iter() {
-        let group = BreedingGroup::of(entity, membership);
-        group_of.insert(entity, group);
+    let mut group_of_band: BTreeMap<BandId, BreedingGroup> = BTreeMap::new();
+    let mut row_of_band: BTreeMap<BandId, usize> = BTreeMap::new();
+
+    let mut add_member = |tallies: &mut BTreeMap<BreedingGroup, BreedingTally>,
+                          group: BreedingGroup,
+                          row_index: usize| {
+        let (entity, cohort, labor, band, _) = &rows[row_index];
+        group_of.insert(*entity, group);
         let tally = tallies.entry(group).or_insert_with(|| BreedingTally {
             faction: cohort.faction,
+            members: Vec::new(),
             lines: BTreeSet::new(),
+            foreign: BTreeMap::new(),
             opening: Scalar::default(),
             would_be_births: Scalar::default(),
         });
-        debug_assert_eq!(
-            tally.faction, cohort.faction,
-            "a breeding group is one people: the supply union never joins two factions"
-        );
+        tally.members.push((
+            *entity,
+            band.map_or(0, |band| band.0),
+            u32::try_from(cohort.founding_lines.len()).unwrap_or(u32::MAX),
+        ));
         tally.lines.extend(cohort.founding_lines.iter().copied());
         tally.opening += cohort.total();
         if tiles.get(cohort.home).is_ok() {
@@ -1106,59 +1142,193 @@ fn resolve_breeding_ceilings(
                 food_store: cohort.stores.get(FOOD),
             };
             tally.would_be_births +=
-                meal_and_births(&state, band_food_flow(labor), demo).would_be_births;
+                meal_and_births(&state, band_food_flow(*labor), demo).would_be_births;
+        }
+    };
+
+    for joined in crate::lineage::tie_joined_groups(&keyed, ledger) {
+        let lowest = keyed[joined.members[0]].0;
+        let group = BreedingGroup::Tied(lowest);
+        for &member in &joined.members {
+            let row_index = keyed_rows[member];
+            let band = keyed[member].0;
+            group_of_band.insert(band, group);
+            row_of_band.insert(band, row_index);
+            add_member(&mut tallies, group, row_index);
         }
     }
-    // How many distinct breeding populations OF THE SAME PEOPLE hold each line: a line two
-    // separate populations of one people both hold (a one-line split copies it) splits its K
-    // between them. Another people holding a copy (contact merged the lines) does not divide it —
-    // its ceiling is its own, so contact lifts both.
-    let mut holders: BTreeMap<(FactionId, crate::lineage::LineId), u32> = BTreeMap::new();
+    for (row_index, (entity, _, _, band, _)) in rows.iter().enumerate() {
+        if band.is_none() {
+            add_member(&mut tallies, BreedingGroup::Alone(*entity), row_index);
+        }
+    }
+
+    // ---- In touch with another people: its own lines count while the tie is live ----
+    // (group, foreign people) -> whether any such tie carried contact in the last Visibility pass.
+    let mut touched: BTreeMap<(BreedingGroup, FactionId), bool> = BTreeMap::new();
+    for (key, connection) in ledger.iter() {
+        if connection.strength <= crate::connections::NO_TIE {
+            continue;
+        }
+        let (Some(&row_a), Some(&row_b)) = (
+            row_of_band.get(&key.observer),
+            row_of_band.get(&key.subject),
+        ) else {
+            continue;
+        };
+        let (cohort_a, cohort_b) = (rows[row_a].1, rows[row_b].1);
+        if cohort_a.faction == cohort_b.faction {
+            continue;
+        }
+        let contact = contact_stamp == Some(connection.last_contact_turn);
+        for (mine, theirs_cohort) in [(key.observer, cohort_b), (key.subject, cohort_a)] {
+            let group = group_of_band[&mine];
+            if let Some(tally) = tallies.get_mut(&group) {
+                tally
+                    .foreign
+                    .entry(theirs_cohort.faction)
+                    .or_default()
+                    .extend(theirs_cohort.founding_lines.iter().copied());
+            }
+            *touched.entry((group, theirs_cohort.faction)).or_default() |= contact;
+        }
+    }
+
+    // How many distinct breeding populations OF THE SAME PEOPLE hold each line in their members'
+    // OWN sets: a line two separate populations of one people both hold (a one-line split copies
+    // it) splits its K between them. A line borrowed from another people is that people's to
+    // count: it carries its whole K in the borrower's sum.
+    let lineage = &demo.lineage;
+    let mut holders: BTreeMap<(FactionId, LineId), u32> = BTreeMap::new();
     for tally in tallies.values() {
         for line in &tally.lines {
             *holders.entry((tally.faction, *line)).or_default() += 1;
         }
     }
-    let lineage = &demo.lineage;
-    let ceilings = tallies
-        .into_iter()
-        .map(|(group, tally)| {
-            let shared = crate::lineage::shared_breeding_ceiling(
-                tally
-                    .lines
-                    .iter()
-                    .map(|line| holders[&(tally.faction, *line)]),
-                lineage.people_per_line,
-            );
-            let people = crate::lineage::inbreeding_ceiling(shared, lineage.free_breeding_at);
-            let factor = breeding_factor(people, tally.opening, tally.would_be_births);
-            (group, BreedingCeiling { people, factor })
-        })
-        .collect();
-    BreedingCeilings { group_of, ceilings }
+
+    // Each population's shared ceiling and the other peoples that add to it.
+    let mut resolved: BTreeMap<BreedingGroup, (u32, Vec<BreedingPeople>)> = BTreeMap::new();
+    for (group, tally) in &tallies {
+        // Foreign-only lines, credited to the lowest faction id that brings them.
+        let mut claimed: BTreeSet<LineId> = tally.lines.clone();
+        let mut peoples = Vec::new();
+        let mut borrowed_lines = 0_usize;
+        for (faction, lines) in &tally.foreign {
+            let fresh = lines.iter().filter(|line| claimed.insert(**line)).count();
+            borrowed_lines += fresh;
+            peoples.push(BreedingPeople {
+                faction: faction.0,
+                lines: u32::try_from(fresh).unwrap_or(u32::MAX),
+                fading: !touched.get(&(*group, *faction)).copied().unwrap_or(false),
+            });
+        }
+        let shared = crate::lineage::shared_breeding_ceiling(
+            tally
+                .lines
+                .iter()
+                .map(|line| holders[&(tally.faction, *line)])
+                .chain(std::iter::repeat_n(1, borrowed_lines)),
+            lineage.people_per_line,
+        );
+        resolved.insert(*group, (shared, peoples));
+    }
+
+    // ---- The latch, in the pre-pass and before any factor, so the latching turn's births are
+    // uncapped too. A population latches its people when its opening head-count is already
+    // `free_breeding_at`, or when its own ceiling lets it reach that size (`shared` is at least
+    // `free_breeding_at`, so the effective ceiling is the free size) and its uncapped births carry
+    // it there. A population whose ceiling is below the free size bears nobody past that ceiling,
+    // so its would-be births never count ----
+    let free_at = lineage.free_breeding_at.get();
+    for (group, tally) in &tallies {
+        let shared = resolved[group].0;
+        if tally.opening.to_u32() >= free_at
+            || (shared >= free_at && (tally.opening + tally.would_be_births).to_u32() >= free_at)
+        {
+            free.latch(tally.faction);
+        }
+    }
+
+    let mut ceilings = BTreeMap::new();
+    let mut member_entities = BTreeMap::new();
+    for (group, tally) in tallies {
+        let (shared, peoples) = resolved.remove(&group).expect("every group was resolved");
+        let people = (!free.contains(tally.faction))
+            .then(|| crate::lineage::effective_breeding_ceiling(shared, lineage.free_breeding_at));
+        let factor = breeding_factor(people, tally.opening, tally.would_be_births);
+
+        let sole = tally.members.len() == 1;
+        let members = tally
+            .members
+            .iter()
+            .map(|(_, band, lines)| BreedingMember {
+                band: *band,
+                lines: *lines,
+                people: 0,
+                fading: !sole
+                    && !tally.members.iter().any(|(_, other, _)| {
+                        other != band
+                            && ledger
+                                .edges_between(BandId(*band), BandId(*other))
+                                .into_iter()
+                                .flatten()
+                                .any(|edge| contact_stamp == Some(edge.last_contact_turn))
+                    }),
+            })
+            .collect();
+        member_entities.insert(
+            group,
+            tally.members.iter().map(|(entity, _, _)| *entity).collect(),
+        );
+        ceilings.insert(
+            group,
+            BreedingCeiling {
+                people,
+                factor,
+                members,
+                peoples,
+            },
+        );
+    }
+    BreedingCeilings {
+        group_of,
+        ceilings,
+        member_entities,
+    }
 }
 
-/// Park each band's breeding population — its post-turn head-count and its ceiling — on the cohort
-/// for the snapshot (`PopulationCohort::last_breeding`). Run after the turn's demographics, so the
-/// head-count is the one the same frame's band sizes describe.
+/// Park each band's breeding population — its post-turn head-count, its ceiling and the rows that
+/// explain them — on the cohort for the snapshot (`PopulationCohort::last_breeding`). Run after the
+/// turn's demographics, so the head-count is the one the same frame's band sizes describe.
 fn publish_breeding_readings(cohorts: &mut DemographicBands, breeding: &BreedingCeilings) {
     let mut headcounts: BTreeMap<BreedingGroup, Scalar> = BTreeMap::new();
+    let mut whole_people: BTreeMap<Entity, u32> = BTreeMap::new();
     for (entity, cohort, _, _, _) in cohorts.iter() {
         if let Some(group) = breeding.group_of.get(&entity) {
             *headcounts.entry(*group).or_insert_with(scalar_zero) += cohort.total();
+            whole_people.insert(entity, cohort.total().to_u32());
         }
     }
     for (entity, mut cohort, _, _, _) in cohorts.iter_mut() {
         let Some(group) = breeding.group_of.get(&entity) else {
             continue;
         };
+        let Some(ceiling) = breeding.ceilings.get(group) else {
+            continue;
+        };
+        let mut members = ceiling.members.clone();
+        if let Some(entities) = breeding.member_entities.get(group) {
+            for (member, member_entity) in members.iter_mut().zip(entities) {
+                member.people = whole_people.get(member_entity).copied().unwrap_or(0);
+            }
+        }
         cohort.last_breeding = crate::lineage::BreedingReading {
             headcount: headcounts.get(group).copied().unwrap_or_default().to_u32(),
-            ceiling: breeding
-                .ceilings
-                .get(group)
-                .and_then(|ceiling| ceiling.people)
+            ceiling: ceiling
+                .people
                 .unwrap_or(crate::lineage::NO_INBREEDING_CEILING),
+            members,
+            peoples: ceiling.peoples.clone(),
         };
     }
 }
@@ -1325,9 +1495,11 @@ pub fn simulate_population(
     // (`crate::belief`).
     mut belief: ResMut<BeliefRegistry>,
     belief_config: Res<BeliefConfigHandle>,
-    // **The breeding population** (issue #688) — the supply-network components the Logistics stage
-    // resolved earlier this turn; a band in none is its own breeding population.
-    supply_membership: Res<crate::supply::SupplyNetworkMembership>,
+    // **The breeding population** (issues #688, #691) — each people's tie-joined bands, read off the
+    // connection ledger as the last Visibility pass left it; and the peoples whose breeding the
+    // head-count has freed for good.
+    connections: Res<ConnectionLedger>,
+    mut free_breeding: ResMut<crate::lineage::FreeBreedingPeoples>,
     // **Near / far from the ancestors** — the culture term reads the same road-aware walk test
     // migration does (`supply::WalkReach`).
     walk_inputs: WalkReachInputs,
@@ -1335,7 +1507,17 @@ pub fn simulate_population(
     let population_cfg = pipeline_config.config().population();
     let belief_cfg = belief_config.get();
     let demo = demographics.get();
-    let breeding = resolve_breeding_ceilings(&cohorts, &tiles, &supply_membership, &demo);
+    // The Visibility pass that just stamped the ledger ran under the previous tick (`advance_tick`
+    // runs in the Snapshot stage), so "contact in that pass" is `last_contact_turn == tick − 1`.
+    let contact_stamp = tick.0.checked_sub(1);
+    let breeding = resolve_breeding_ceilings(
+        &cohorts,
+        &tiles,
+        &connections,
+        contact_stamp,
+        &demo,
+        &mut free_breeding,
+    );
     let wellbeing = wellbeing_config.get();
     let max_cap_scalar = scalar_from_u32(config.population_cap);
     let morale_pressure_cfg = MoralePressureConfig {
@@ -2542,8 +2724,6 @@ mod breeding_ceiling_tests {
     const MILD_TEMP: f32 = 18.0;
     /// A population cap no fixture here reaches.
     const NO_CAP: u32 = 1_000_000;
-    /// A round per-line cap and free-breeding size, so the threshold falls on a whole line.
-    const PEOPLE_PER_LINE: u16 = 20;
     const FREE_BREEDING_AT: u32 = 500;
 
     fn people(value: f32) -> Scalar {
@@ -2580,35 +2760,30 @@ mod breeding_ceiling_tests {
         );
     }
 
-    /// **The free-breeding threshold's edge.** One person of ceiling below `free_breeding_at` still
-    /// caps a population at its ceiling; at `free_breeding_at` the ceiling is lifted and the factor
-    /// is `1` however far past it the population stands.
+    /// **The free-breeding threshold's edge.** An unlatched population's ceiling never exceeds
+    /// `free_breeding_at` however many lines it holds (births run to it and no further); a latched
+    /// people has no ceiling (`None`), and its factor is `1` at any head-count.
     #[test]
-    fn the_ceiling_lifts_exactly_at_the_free_breeding_size() {
-        let k = std::num::NonZeroU16::new(PEOPLE_PER_LINE).unwrap();
+    fn the_effective_ceiling_stops_at_the_free_breeding_size() {
         let free_at = std::num::NonZeroU32::new(FREE_BREEDING_AT).unwrap();
-        let lines_at = (FREE_BREEDING_AT / u32::from(PEOPLE_PER_LINE)) as usize;
-        let under = crate::lineage::inbreeding_ceiling(
-            crate::lineage::breeding_ceiling(lines_at - 1, k),
-            free_at,
+        let under = crate::lineage::effective_breeding_ceiling(FREE_BREEDING_AT - 1, free_at);
+        let over = crate::lineage::effective_breeding_ceiling(FREE_BREEDING_AT * 3, free_at);
+        assert_eq!(under, FREE_BREEDING_AT - 1);
+        assert_eq!(
+            over, FREE_BREEDING_AT,
+            "a union x K above 500 lets births run to 500"
         );
-        let at = crate::lineage::inbreeding_ceiling(
-            crate::lineage::breeding_ceiling(lines_at, k),
-            free_at,
-        );
-        assert_eq!(under, Some(FREE_BREEDING_AT - u32::from(PEOPLE_PER_LINE)));
-        assert_eq!(at, None, "a ceiling of free_breeding_at is lifted");
 
         let crowded = scalar_from_u32(FREE_BREEDING_AT * 2);
         assert_eq!(
-            breeding_factor(under, crowded, people(WOULD_BE_BIRTHS)),
+            breeding_factor(Some(over), crowded, people(WOULD_BE_BIRTHS)),
             scalar_zero(),
-            "just under the threshold, a population above its ceiling still bears nobody"
+            "unlatched, a population above its effective ceiling still bears nobody"
         );
         assert_eq!(
-            breeding_factor(at, crowded, people(WOULD_BE_BIRTHS)),
+            breeding_factor(None, crowded, people(WOULD_BE_BIRTHS)),
             scalar_one(),
-            "at the threshold, no head-count withholds a birth"
+            "latched, no head-count withholds a birth"
         );
     }
 
