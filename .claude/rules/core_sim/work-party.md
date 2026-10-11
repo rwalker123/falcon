@@ -689,10 +689,51 @@ the save (`SAVE_FORMAT_VERSION` 31). The donors are never stored.
 | step | rule |
 |---|---|
 | herd gone, or beyond `band_work_range` of the band | `muster_crew = 0` — **only a camp kill is mustered**; a one-turn crew cannot run a caravan, so a need row never posts a party and a band still catching up hunts nothing |
-| crew | `hunt_useful_crew(hunt_crew_take_curve(..))` priced with `max_workers` = the musterable pool (idle + every donor row's hands) |
+| crew | **sized to the meal** (below): the smallest row of `hunt_crew_take_curve(..)` landing the animals the meal calls for, never above `hunt_useful_crew`, priced with `max_workers` = the musterable pool (idle + every donor row's hands) |
 | no crew | `0` |
 | a hunt in progress | the crew was out this turn, the herd has `wounds.pending() > 0` and **no kill landed** → send, whatever the larder says |
 | otherwise | send iff `runway <= turns_to_kill + follow.need_margin_turns` (default **1**); `turns_to_kill` is the first non-zero slot of `fauna::project_arrivals_hunt` at that crew (`fauna::hunt_crew_turns_to_kill`), `runway` is `snapshot::band_turns_of_food` — the very function behind the published `turnsOfFood` — and the `NOT_FOOD_LIMITED_TURNS` sentinel never triggers |
+
+### The crew is sized to the meal
+
+The useful crew is where the take curve stops rising, and for small easy game that is enormous:
+Marsh Grazers (47 a head, ≈ 2.8 food an animal, 37 animals of room) priced a crew of 131 on a camp of
+200, which would kill dozens of animals in a turn that mostly rot within `flesh`'s four. So
+`assess_need` sizes the crew to **what the band can eat of one kill before it spoils**:
+
+```text
+net_eat = max(0, food_demand − Σ realized)          // band_turns_of_food's own terms
+keeps   = spoilage::band_shelf_life(keeping, class) // the class the herd's meat lands in
+meal    = max(0, net_eat × keeps − usable_larder)   // usable = larder − rot_ahead, as the runway
+animals = max(1, ceil(meal / food_per_animal))      // food_per_animal = body_mass × provisions_per_biomass
+crew    = smallest curve row with likely ≥ animals  // CREW_TAKE_RISE_TOLERANCE slack; else the useful crew
+```
+
+- **One whole animal is the floor** (an animal is indivisible), and the crew never exceeds
+  `hunt_useful_crew`. A mammoth is unchanged: no row of its curve lands one in a turn, so the crew is
+  the useful one.
+- **The terms are shared, not copied.** `snapshot::band_food_terms` (`BandFoodTerms`: demand, steady
+  income, usable larder) is what `band_turns_of_food` and the meal both read;
+  `hunt_by_need::herd_meal` builds the `NeedMeal` for one herd (class via `FaunaConfig::keeping_for`,
+  falling back to `kill_fallback_class`; food per animal via `fauna::herd_food_per_animal`, the
+  figure behind the wire's `foodPerAnimal`). The turn (labor pass) and the capture both call it, so
+  the wire's `musterCrew` is what the turn musters. The `finishing` path sizes the crew the same way.
+- **Preservation moves the meal through `spoilage::band_shelf_life`** — the one place a shelf life is
+  read (`campaign.md` → "Food spoils by keeping class"). A longer `flesh` shelf life (drying, #708)
+  lengthens the rot rule and the meal together: a bigger meal, a bigger crew, a bigger haul.
+
+**Wire** (appended): `PopulationCohortState.huntMeals:[KeepingMeal{keeping, food}]` — the meal for
+every configured keeping class, in the keeping table's order, each at that class's shelf life — and
+`HerdTelemetryState.keeping` — the class the herd's meat lands in (empty only for a species the table
+cannot resolve). A compose sheet sizing a crew before the row exists reads the `huntMeals` entry
+named by the herd's `keeping`, divides by the herd's `foodPerAnimal`, floors at one animal, and takes
+the first crew-take row reaching it (never above the useful crew). Native decode keys: `hunt_meals`
+(array of `{keeping, food}`) on the band dict, `keeping` on the herd dict. Pinned by
+`tests/hunt_by_need.rs` (`a_crew_is_the_smallest_that_lands_the_meal_far_below_the_useful_crew`,
+`a_mammoth_is_still_sent_the_useful_crew`, `a_bigger_larder_sends_a_smaller_crew`,
+`a_meal_of_nothing_still_calls_for_one_whole_animal`, `a_longer_shelf_life_sends_a_bigger_crew`,
+`the_wire_carries_the_meal_per_keeping_class_and_the_herds_class`), each against an oracle built from
+the fixture's own numbers and the compose sheet's crew-take query.
 
 ### ⛔ "Wounds pending" is a hunt in progress, not `pending > 0`
 

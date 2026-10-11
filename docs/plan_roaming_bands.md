@@ -108,10 +108,15 @@ other work. A mammoth is indivisible and a whole one at once is the point — ne
 
 - **No hunters sit on the hunt.** Ticking **Move camp with the herd** replaces the sheet's hunter
   stepper: the row holds no standing workers, and every hand works the band's other rows.
-- **The band musters a crew when it is time.** The crew is the useful crew — the most hands that
-  still add to the kill — taken for one turn: idle hands first, then from the band's other work,
-  lowest Priority first. Priority is the player's control over which work gives up hands. The hands
-  are back on their rows the next turn.
+- **The band musters a crew when it is time.** The crew is the smallest that brings down what the
+  band can eat before the meat spoils — at least one animal (an animal is indivisible), never more
+  than the useful crew, the most hands that still add to the kill. Where no crew lands that many in a
+  turn (a mammoth) it is the useful crew. The meal is the people's food over the turns that kind of
+  meat keeps, less their income and what the larder already holds. Preservation lengthens that
+  window, so a band that can dry meat sends a bigger crew for a bigger haul. The crew is taken for
+  one turn: idle hands first, then from the band's other work, lowest Priority first. Priority is
+  the player's control over which work gives up hands. The hands are back on their rows the next
+  turn.
 - **When it goes out:** when the band's food runway falls to the turns this crew needs to bring an
   animal down, plus a margin (a config lever). A mammoth takes several turns of a crew's work and the
   wounds carry on the herd, so once an animal is partly down the crew keeps going until it falls.

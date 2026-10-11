@@ -143,9 +143,29 @@ fn resident_herd(
     herd
 }
 
+/// What the need row's herd is.
+#[derive(Clone, Copy)]
+struct Quarry {
+    species: &'static str,
+    body_mass: f32,
+    stock: f32,
+}
+
+/// The default quarry: a migratory mammoth herd.
+const MAMMOTH_HERD: Quarry = Quarry {
+    species: MAMMOTHS,
+    body_mass: MAMMOTH_BODY_MASS,
+    stock: STANDING_STOCK,
+};
+
 /// A world with the need herd (a migratory mammoth herd), two donor herds, and one band hunting
 /// all three — the mammoth on a need row (`follow`, no standing hands).
 fn world(stock: Stock) -> (App, Entity) {
+    world_hunting(stock, MAMMOTH_HERD)
+}
+
+/// [`world`] with the need row's herd stated.
+fn world_hunting(stock: Stock, quarry: Quarry) -> (App, Entity) {
     let mut app = build_test_app();
     app.update();
     app.world
@@ -156,11 +176,11 @@ fn world(stock: Stock) -> (App, Entity) {
         registry.clear();
         registry.herds.push(resident_herd(
             NEED_HERD,
-            MAMMOTHS,
+            quarry.species,
             SizeClass::Migratory,
             stock.herd_at,
-            MAMMOTH_BODY_MASS,
-            STANDING_STOCK,
+            quarry.body_mass,
+            quarry.stock,
         ));
         registry.herds.push(resident_herd(
             LOW_DONOR_HERD,
@@ -343,6 +363,7 @@ struct PublishedRow {
     kill_progress: f32,
     hunt_useful_workers: u32,
     move_with_herd: bool,
+    kit_id: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -399,6 +420,7 @@ fn published(app: &App) -> Published {
                 kill_progress: row.killProgress(),
                 hunt_useful_workers: row.huntUsefulWorkers(),
                 move_with_herd: row.moveWithHerd(),
+                kit_id: row.kitId().unwrap_or_default().to_string(),
             })
             .collect(),
     }
@@ -1032,4 +1054,389 @@ fn decode_latest(app: &App) -> sim_schema::WorldSnapshot {
         .snapshot;
     let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
     sim_schema::decode_snapshot_flatbuffer(bytes.as_ref()).expect("it decodes")
+}
+
+// ---------------------------------------------------------------------------------------------
+// SIZE THE CREW TO THE MEAL
+//
+// A crew is the smallest that brings down what the band can eat before the meat spoils — at least
+// one animal, never more than the useful crew. Each test below reads the sizing back off the wire and
+// compares it with an ORACLE built from the fixture's own numbers: the band's demand and income, the
+// species' body and meat rate, the keeping class's shelf life, and the crew-take curve as the compose
+// sheet asks for it.
+// ---------------------------------------------------------------------------------------------
+
+const MARSH_GRAZERS: &str = "Marsh Grazers";
+const MARSH_BODY_MASS: f32 = 47.0;
+/// Animals standing in the marsh herd: with the shipped 50% floor, room for half of them.
+const MARSH_HEAD_COUNT: f32 = 74.0;
+const MARSH_HERD: Quarry = Quarry {
+    species: MARSH_GRAZERS,
+    body_mass: MARSH_BODY_MASS,
+    stock: MARSH_HEAD_COUNT * MARSH_BODY_MASS,
+};
+/// A camp of a few hundred people: enough hands that the useful crew on small game is far larger
+/// than the meal calls for.
+const BIG_CAMP_WORKING: u32 = 160;
+const BIG_CAMP_ELDERS: f32 = 40.0;
+const BIG_CAMP: Stock = Stock {
+    working: BIG_CAMP_WORKING,
+    elders: BIG_CAMP_ELDERS,
+    ..Stock::ROOMY
+};
+/// The keeping class a kill lands in.
+const FLESH: &str = "flesh";
+/// A larder big enough to cover the meal's whole window, so the meal is nothing and only the one
+/// whole animal remains.
+const MEAL_COVERING_LARDER: f32 = COMFORTABLE_LARDER;
+/// A margin so wide the band hunts whatever its larder says, so a meal of nothing is still sent.
+const ALWAYS_DUE_MARGIN_TURNS: f32 = 100.0;
+/// How many times longer the stand-in for drying keeps meat.
+const DRIED_SHELF_FACTOR: f32 = 2.0;
+/// The same relative slack the sim's curve reads apart float noise with.
+const RISE_TOLERANCE: f32 = 0.001;
+
+/// The sizing, derived independently of the sim's own functions.
+struct Sizing {
+    /// The meal in food.
+    food: f32,
+    /// Whole animals the meal calls for.
+    animals: f32,
+    /// The crew-take curve over the musterable pool, as the compose sheet asks it.
+    likely: Vec<f32>,
+    /// The useful crew the wire publishes for the row.
+    useful: u32,
+    /// The crew the meal calls for: the smallest row landing the animals, else the useful crew.
+    crew: u32,
+    /// Whether any row of the curve reaches the animals.
+    reached: bool,
+}
+
+fn config_shelf_life(app: &App) -> f32 {
+    app.world
+        .resource::<core_sim::DemographicsConfigHandle>()
+        .get()
+        .keeping
+        .shelf_life(FLESH)
+        .expect("flesh is a shipped class")
+}
+
+/// Food in one whole animal, from the species' own meat rate.
+fn food_per_animal(app: &App, species: &str, body_mass: f32) -> f32 {
+    body_mass
+        * app
+            .world
+            .resource::<FaunaConfigHandle>()
+            .get()
+            .hunt_yield_for(species)
+            .provisions_per_biomass
+}
+
+/// Derive the sizing for the need row from the band as the labor pass left it.
+fn sizing(app: &mut App, band: Entity, quarry: Quarry) -> Sizing {
+    let wire = published(app);
+    let need = wire.row(NEED_HERD);
+    let pool = musterable_pool(app, band);
+    let income: f32 = allocation(app, band)
+        .last_yields
+        .iter()
+        .map(|y| y.realized)
+        .sum();
+    let net_eat = (meal(app, band) - income).max(0.0);
+    let usable_larder = larder(app, band).to_f32();
+    let food = (net_eat * config_shelf_life(app) - usable_larder).max(0.0);
+    let per_animal = food_per_animal(app, quarry.species, quarry.body_mass);
+    let animals = (food / per_animal).ceil().max(1.0);
+    let reply = core_sim::forecast_query::answer_forecast_query(
+        &mut app.world,
+        &sim_runtime::commands::QueryPayload::HuntCrewTake(
+            sim_runtime::commands::HuntCrewTakeQuery {
+                faction_id: FACTION.0,
+                band_id: BAND,
+                herd_id: NEED_HERD.to_string(),
+                kit_id: need.kit_id.clone(),
+                floor: FLOOR,
+                max_workers: pool,
+            },
+        ),
+    );
+    let sim_runtime::commands::QueryReply::HuntCrewTake(curve) = reply else {
+        panic!("the crew-take query answers with a curve");
+    };
+    let useful = need.hunt_useful_workers;
+    let likely: Vec<f32> = curve
+        .per_crew
+        .iter()
+        .map(|row| row.animals_likely)
+        .collect();
+    let smallest = likely
+        .iter()
+        .take(useful as usize)
+        .position(|take| take * (1.0 + RISE_TOLERANCE) >= animals)
+        .map(|index| index as u32 + 1);
+    Sizing {
+        food,
+        animals,
+        likely,
+        useful,
+        crew: smallest.unwrap_or(useful),
+        reached: smallest.is_some(),
+    }
+}
+
+/// Run one turn on a lean larder of `amount` and size the need row.
+fn sized_at(stock: Stock, quarry: Quarry, amount: f32) -> (App, Entity, Sizing) {
+    let (mut app, band) = world_hunting(stock, quarry);
+    set_larder(&mut app, band, amount);
+    turn(&mut app);
+    let sized = sizing(&mut app, band, quarry);
+    (app, band, sized)
+}
+
+fn planned_crew(app: &App) -> u32 {
+    published(app).row(NEED_HERD).muster_crew
+}
+
+/// ⛔ **A CREW IS SIZED TO THE MEAL, NOT TO THE PLATEAU.** Small easy game has a useful crew far past
+/// anything the band can eat before the meat spoils: Marsh Grazers (47 biomass a head, ≈ 2.8 food an
+/// animal, 37 animals of room) priced a crew of 131 on a camp of 200, which would kill dozens of
+/// animals in one turn and watch most of them rot in four. The crew is the smallest row of the curve
+/// that lands what the camp can eat of one kill, so it is far below the useful crew, and the wire's
+/// `musterCrew` is that crew.
+#[test]
+fn a_crew_is_the_smallest_that_lands_the_meal_far_below_the_useful_crew() {
+    let (app, _band, sized) = sized_at(BIG_CAMP, MARSH_HERD, 0.0);
+    assert!(
+        sized.reached,
+        "liveness: some crew lands the meal's animals"
+    );
+    assert!(
+        sized.food > 0.0 && sized.animals > 1.0,
+        "liveness: the meal is a real one"
+    );
+    assert!(
+        sized.crew < sized.useful,
+        "the meal calls for fewer hands ({}) than the plateau ({})",
+        sized.crew,
+        sized.useful
+    );
+    assert_eq!(
+        planned_crew(&app),
+        sized.crew,
+        "the published plan is the smallest crew landing {} animals",
+        sized.animals
+    );
+    let below = sized.crew as usize - 1;
+    assert!(
+        below == 0 || sized.likely[below - 1] * (1.0 + RISE_TOLERANCE) < sized.animals,
+        "one hand fewer would land too few"
+    );
+}
+
+/// ⛔ **A MAMMOTH IS UNCHANGED**: no crew brings one down in a turn, so no row of the curve reaches
+/// even the one animal the meal floors at, and the crew is the useful one.
+#[test]
+fn a_mammoth_is_still_sent_the_useful_crew() {
+    let (app, band, sized) = sized_at(Stock::ROOMY, MAMMOTH_HERD, LEAN_LARDER);
+    assert!(!sized.reached, "no crew lands a mammoth in a turn");
+    assert!(
+        sized.likely.iter().all(|take| *take < sized.animals),
+        "every row falls short of the animals the meal calls for"
+    );
+    assert_eq!(
+        planned_crew(&app),
+        sized.useful.min(musterable_pool(&app, band)),
+        "the crew is the useful crew"
+    );
+}
+
+/// ⛔ **A BIGGER LARDER IS A SMALLER MEAL AND A SMALLER CREW.**
+#[test]
+fn a_bigger_larder_sends_a_smaller_crew() {
+    let (empty_app, _, empty) = sized_at(BIG_CAMP, MARSH_HERD, 0.0);
+    let (stocked_app, _, stocked) = sized_at(BIG_CAMP, MARSH_HERD, 20.0);
+    assert!(
+        planned_crew(&empty_app) > 0,
+        "liveness: the empty larder sends"
+    );
+    assert!(
+        planned_crew(&stocked_app) > 0,
+        "liveness: the stocked larder still sends"
+    );
+    assert!(
+        stocked.food < empty.food,
+        "the larder pays part of the meal"
+    );
+    assert_eq!(planned_crew(&empty_app), empty.crew);
+    assert_eq!(planned_crew(&stocked_app), stocked.crew);
+    assert!(
+        planned_crew(&stocked_app) < planned_crew(&empty_app),
+        "the smaller meal needs fewer hands"
+    );
+}
+
+/// ⛔ **THE MEAL FLOORS AT ONE ANIMAL.** An animal is indivisible: a band that needs no food from the
+/// kill (its larder covers the whole window) and is sent anyway — a margin wide enough that it is
+/// always due — still sends the crew that brings down one.
+#[test]
+fn a_meal_of_nothing_still_calls_for_one_whole_animal() {
+    let (mut app, band) = world_hunting(BIG_CAMP, MARSH_HERD);
+    let mut config = (*app.world.resource::<FaunaConfigHandle>().get()).clone();
+    config.follow.need_margin_turns = ALWAYS_DUE_MARGIN_TURNS;
+    app.world
+        .resource_mut::<FaunaConfigHandle>()
+        .replace(std::sync::Arc::new(config));
+    set_larder(&mut app, band, MEAL_COVERING_LARDER);
+    turn(&mut app);
+    let sized = sizing(&mut app, band, MARSH_HERD);
+    assert_eq!(sized.food, 0.0, "the larder covers the window");
+    assert_eq!(sized.animals, 1.0, "one whole animal, no fewer");
+    assert!(planned_crew(&app) > 0, "liveness: the band is sent");
+    assert_eq!(planned_crew(&app), sized.crew);
+    let (_, _, hungry) = sized_at(BIG_CAMP, MARSH_HERD, 0.0);
+    assert!(
+        planned_crew(&app) < hungry.crew,
+        "one animal is a smaller crew than a real meal"
+    );
+}
+
+/// ⛔ **A LONGER SHELF LIFE IS A BIGGER MEAL AND A BIGGER CREW** — the seam drying extends. The rack
+/// is not built; a longer `flesh` shelf life in config stands in for it. The meal, the crew and the
+/// wire's `huntMeals` all move together because every reading of a shelf life goes through
+/// `spoilage::band_shelf_life`.
+#[test]
+fn a_longer_shelf_life_sends_a_bigger_crew() {
+    let (short_app, _, short) = sized_at(BIG_CAMP, MARSH_HERD, 0.0);
+
+    let (mut long_app, band) = world_hunting(BIG_CAMP, MARSH_HERD);
+    let mut config = (*long_app
+        .world
+        .resource::<core_sim::DemographicsConfigHandle>()
+        .get())
+    .clone();
+    for class in config.keeping.classes.iter_mut().filter(|c| c.id == FLESH) {
+        class.shelf_life_turns *= DRIED_SHELF_FACTOR;
+    }
+    long_app
+        .world
+        .resource_mut::<core_sim::DemographicsConfigHandle>()
+        .replace(std::sync::Arc::new(config));
+    set_larder(&mut long_app, band, 0.0);
+    turn(&mut long_app);
+    let long = sizing(&mut long_app, band, MARSH_HERD);
+
+    assert!(
+        long.food > short.food,
+        "meat that keeps longer is a bigger meal"
+    );
+    assert_eq!(planned_crew(&long_app), long.crew);
+    assert!(
+        planned_crew(&long_app) > planned_crew(&short_app),
+        "a bigger meal sends a bigger crew ({} against {})",
+        planned_crew(&long_app),
+        planned_crew(&short_app)
+    );
+    assert!(
+        planned_crew(&long_app) <= long.useful,
+        "never above the useful crew"
+    );
+}
+
+/// ⛔ **THE WIRE CARRIES THE MEAL THE TURN SIZES THE CREW WITH**, per keeping class, and the herd
+/// names its class, so a compose sheet can size the crew before the row exists — and the
+/// `musterCrew` it publishes is what the sheet's arithmetic gives.
+#[test]
+fn the_wire_carries_the_meal_per_keeping_class_and_the_herds_class() {
+    let (app, _band, sized) = sized_at(BIG_CAMP, MARSH_HERD, 0.0);
+    let decoded = decode_latest(&app);
+    let cohort = decoded
+        .populations
+        .iter()
+        .find(|cohort| cohort.band_id == BAND)
+        .expect("the band is on the wire");
+    let classes: Vec<String> = app
+        .world
+        .resource::<core_sim::DemographicsConfigHandle>()
+        .get()
+        .keeping
+        .classes
+        .iter()
+        .map(|class| class.id.clone())
+        .collect();
+    assert_eq!(
+        cohort
+            .hunt_meals
+            .iter()
+            .map(|meal| meal.keeping.clone())
+            .collect::<Vec<_>>(),
+        classes,
+        "one meal per configured keeping class, in table order"
+    );
+    let herd = decoded
+        .herds
+        .iter()
+        .find(|herd| herd.id == NEED_HERD)
+        .expect("the need herd is on the wire");
+    assert_eq!(herd.keeping, FLESH, "the herd's meat lands in flesh");
+    let flesh_meal = cohort
+        .hunt_meals
+        .iter()
+        .find(|meal| meal.keeping == herd.keeping)
+        .expect("the herd's class has a meal");
+    assert!(
+        (flesh_meal.food - sized.food).abs() <= sized.food * RISE_TOLERANCE,
+        "the published meal ({}) is the oracle's ({})",
+        flesh_meal.food,
+        sized.food
+    );
+    // The sheet's arithmetic from the wire alone gives the plan the turn stored.
+    let from_wire = (flesh_meal.food / herd.food_per_animal).ceil().max(1.0);
+    assert_eq!(from_wire, sized.animals);
+    let dry = cohort
+        .hunt_meals
+        .iter()
+        .find(|meal| meal.keeping == STORE_CLASS)
+        .expect("the dry class has a meal");
+    assert!(
+        dry.food > flesh_meal.food,
+        "meat that keeps longer is a bigger meal"
+    );
+    assert_eq!(
+        cohort
+            .labor_assignments
+            .iter()
+            .find(|row| row.fauna_id == NEED_HERD)
+            .expect("the row decodes")
+            .muster_crew,
+        sized.crew,
+        "the wire's musterCrew is the sized crew"
+    );
+}
+
+/// The meal's arithmetic on its own: whole animals, floored at one, and an animal that pays no food
+/// is more than any crew lands.
+#[test]
+fn the_meal_counts_whole_animals_and_floors_at_one() {
+    use core_sim::hunt_by_need::NeedMeal;
+    let per_animal = 3.0;
+    let meal = |food: f32| NeedMeal {
+        food,
+        food_per_animal: per_animal,
+    };
+    assert_eq!(meal(0.0).animals(), 1.0, "a meal of nothing is one animal");
+    assert_eq!(meal(per_animal).animals(), 1.0);
+    assert_eq!(
+        meal(per_animal + 0.01).animals(),
+        2.0,
+        "a part animal is a whole one"
+    );
+    assert!(
+        NeedMeal {
+            food: per_animal,
+            food_per_animal: 0.0
+        }
+        .animals()
+        .is_infinite(),
+        "an inedible herd never lands the meal"
+    );
 }

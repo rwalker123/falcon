@@ -10544,6 +10544,34 @@ pub fn hunt_useful_crew(curve: &[HuntCrewTake]) -> u32 {
     plateau
 }
 
+/// **THE SMALLEST CREW THAT BRINGS DOWN `animals` A TURN** — the first row of `curve` (ascending
+/// crews) whose expected take reaches it, never above `useful` ([`hunt_useful_crew`]). Where no row
+/// reaches it (a mammoth: no crew lands one in a turn) the answer is `useful`. The comparison
+/// carries [`CREW_TAKE_RISE_TOLERANCE`], so float noise in a row does not skip it.
+pub fn hunt_crew_for_animals(curve: &[HuntCrewTake], animals: f32, useful: u32) -> u32 {
+    curve
+        .iter()
+        .take_while(|row| row.workers <= useful)
+        .find(|row| {
+            row.likely.is_finite() && row.likely * (1.0 + CREW_TAKE_RISE_TOLERANCE) >= animals
+        })
+        .map_or(useful, |row| row.workers)
+}
+
+/// The output multiplier a per-animal food figure is struck at: the wellbeing multiplier is per band
+/// and scales what a take pays, never what an animal is worth, so the neutral `1.0` is the figure the
+/// wire's `foodPerAnimal` publishes.
+const NEUTRAL_OUTPUT_MULTIPLIER: f32 = 1.0;
+
+/// **THE FOOD IN ONE WHOLE ANIMAL OF THIS HERD** — `body_mass × provisions_per_biomass`, the very
+/// figure the wire's `foodPerAnimal` carries (`SourceYieldForecast::body_mass_yield`, struck at the
+/// neutral output multiplier).
+pub fn herd_food_per_animal(herd: &Herd, fauna: &FaunaConfig) -> f32 {
+    herd_hunt_yield(herd, fauna)
+        .apply(herd.body_mass, NEUTRAL_OUTPUT_MULTIPLIER)
+        .provisions
+}
+
 /// The output multiplier a pure TIMING projection is run at. [`project_arrivals_hunt`] asks `when`,
 /// never `how much`, and the wellbeing multiplier only scales the amount, so the neutral `1.0`
 /// answers the same slot.

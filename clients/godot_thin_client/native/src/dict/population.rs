@@ -248,6 +248,19 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("breeding_peoples", &breeding_peoples);
     // Hunting by need (#798): the idle hands the muster takes next turn.
     let _ = dict.insert("idle_mustered", i64::from(cohort.idleMustered()));
+    // Hunting by need (#798): the meal a hunt is sized to, per keeping class. A compose sheet reads
+    // the entry named by the herd's `keeping` and sizes the crew to
+    // `max(1, ceil(food / food_per_animal))` animals.
+    let mut hunt_meals = VarArray::new();
+    if let Some(meals) = cohort.huntMeals() {
+        for meal in meals.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("keeping", meal.keeping().unwrap_or_default());
+            let _ = row.insert("food", f64::from(meal.food()));
+            hunt_meals.push(&row.to_variant());
+        }
+    }
+    let _ = dict.insert("hunt_meals", &hunt_meals);
     let _ = dict.insert("generation", cohort.generation() as i64);
     let _ = dict.insert("faction", cohort.faction() as i64);
     let _ = dict.insert("turns_of_food", cohort.turnsOfFood() as f64);

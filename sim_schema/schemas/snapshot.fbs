@@ -1542,6 +1542,19 @@ table PopulationCohortState {
   // The idle hands the muster takes next turn for the band's need row (the idle share of the crew
   // musterCrew names); the donor rows' shares ride their own lentToHunt.
   idleMustered:uint = 0;
+  // The MEAL a hunt is sized to, for each configured keeping class (keeping.classes order): the food
+  // the band cannot cover otherwise before a kill landing in that class spoils -
+  // max(0, (foodDemand - steady income) * shelfLife(class) - usable larder). The need row's crew is
+  // the smallest that brings down max(1, ceil(food / foodPerAnimal)) animals; a compose sheet reads
+  // the entry named by the herd's `keeping`. Computed by the one function the turn sizes the crew
+  // with.
+  huntMeals:[KeepingMeal];
+}
+
+// One keeping class's hunting meal - a row of `PopulationCohortState.huntMeals`.
+table KeepingMeal {
+  keeping:string;
+  food:float = 0;
 }
 
 // One band's outfitting window. THE TWO SUPPLIES ARE MUTUALLY EXCLUSIVE and `parentBandId` says which
@@ -4594,6 +4607,12 @@ table HerdTelemetryState {
   // refused because of exactly this. Fog-filtered with the row.
   predatorEatenBy:string;
   predatorEaten:float = 0;
+  // --- WHERE THIS HERD'S MEAT KEEPS (appended last, #798) ----------------------------------------
+  // The keeping class (`demographics_config.json` keeping.classes id, e.g. "flesh") the herd's meat
+  // lands in. Pairs with PopulationCohortState.huntMeals (the band's meal per class) and foodPerAnimal
+  // to size a hunting-by-need crew before the row exists. Empty only for a species the fauna table
+  // cannot resolve; the reader then has no meal and sizes nothing.
+  keeping:string;
 }
 
 table CommandEventState {

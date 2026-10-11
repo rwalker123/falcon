@@ -22,6 +22,21 @@ use crate::components::{FoodMix, PopulationCohort, ResidentBand};
 use crate::demographics_config::{DemographicsConfigHandle, KeepingConfig};
 use crate::scalar::{scalar_from_f32, scalar_zero, Scalar};
 
+/// **HOW LONG FOOD OF `class` KEEPS FOR A BAND, in turns** — `None` for a class the table does not
+/// carry (it never rots). **THE ONE SEAM every reading of a shelf life goes through**: the larder's
+/// rot ([`rot_band_larders`]), the forecast walk ([`rot_ahead`]), a caravan pack's rot on the road
+/// ([`rots_in_transit`], `work_party::TransitRot`, the landing in `systems::labor`) and the hunting
+/// crew's meal (`hunt_by_need::hunt_meal`) all call it, so they cannot disagree about how long a
+/// kill lasts.
+///
+/// Today a shelf life is a property of the class alone (`keeping.shelf_life_turns`). **This is the
+/// function #708 extends**: a band that can dry meat keeps its `flesh` longer, or moves a kill into a
+/// longer class, and it does so *here* — one edit that lengthens the rot rule and the meal a hunting
+/// crew is sized to at the same time.
+pub fn band_shelf_life(keeping: &KeepingConfig, class: &str) -> Option<f32> {
+    keeping.shelf_life(class)
+}
+
 /// **How much of `food` will rot before it is eaten**, on a band that eats `need` a turn and takes
 /// no income — the larder walked forward through the same meal-then-rot turns the sim runs. The
 /// runway's first-turn correction (`snapshot::population`): a larder holding food that will expire
@@ -35,7 +50,8 @@ pub fn rot_ahead(food: &FoodMix, need: f32, keeping: &KeepingConfig) -> Scalar {
     let horizon = keeping
         .classes
         .iter()
-        .map(|class| class.shelf_life_turns.ceil() as u32)
+        .filter_map(|class| band_shelf_life(keeping, &class.id))
+        .map(|life| life.ceil() as u32)
         .max()
         .unwrap_or(0);
     let mut stock = food.clone();
@@ -45,7 +61,7 @@ pub fn rot_ahead(food: &FoodMix, need: f32, keeping: &KeepingConfig) -> Scalar {
             break;
         }
         stock.eat(ration, &order);
-        rotted += stock.age_and_expire(|class| keeping.shelf_life(class));
+        rotted += stock.age_and_expire(|class| band_shelf_life(keeping, class));
     }
     rotted
 }
@@ -54,9 +70,7 @@ pub fn rot_ahead(food: &FoodMix, need: f32, keeping: &KeepingConfig) -> Scalar {
 /// home (the larder expires a lot at `age >= shelf`, and a pack's walk is its age). A walk of no length (a local row, a road the whole way) never rots anything, and a class
 /// the table does not carry never rots.
 pub fn rots_in_transit(class: &str, walk_turns: u32, keeping: &KeepingConfig) -> bool {
-    keeping
-        .shelf_life(class)
-        .is_some_and(|shelf| shelf <= walk_turns as f32)
+    band_shelf_life(keeping, class).is_some_and(|shelf| shelf <= walk_turns as f32)
 }
 
 /// **THE LARDER ROT, ONCE A TURN** — right after `simulate_population`'s meal and before the turn's
@@ -76,7 +90,7 @@ pub fn rot_band_larders(
     for mut cohort in cohorts.iter_mut() {
         let rotted = cohort
             .stores
-            .age_food(|class| config.keeping.shelf_life(class));
+            .age_food(|class| band_shelf_life(&config.keeping, class));
         cohort.last_food_spoiled = rotted.to_f32();
     }
 }

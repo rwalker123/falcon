@@ -14,7 +14,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 19
+const EXPECTED_CHECKPOINTS := 27
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const HerdFx := preload("res://tools/ui_preview/fixtures_herd.gd")
@@ -43,6 +43,17 @@ const PARTY_WALK_TURNS := 6
 const PARTY_ON_ROAD := 2
 const PARTY_FIRST_LOAD := 12
 
+## **THE MEAL THE BAND CAN EAT BEFORE A KILL SPOILS** (`hunt_meals`), in food, and the keeping class the
+## herd's meat resolves to. The meal is a few animals so the muster the need block quotes lands BELOW the
+## herd's useful crew — the gap the frame exists to show.
+const KEEPING_CLASS := "fresh"
+const MEAL_ANIMALS := 2
+## The herd's authored crew-take curve: each hunter brings down NEED_ANIMALS_PER_HUNTER animals a turn
+## until the herd's room caps the take at NEED_CURVE_CAP_ANIMALS. The meal (MEAL_ANIMALS) is reached
+## before the cap, so the meal-sized muster sits BELOW the useful crew (the plateau).
+const NEED_ANIMALS_PER_HUNTER := 0.5
+const NEED_CURVE_CAP_ANIMALS := 3.0
+
 const MIGRATORY := "migratory"
 const RESIDENT := "medium"
 
@@ -58,6 +69,8 @@ func _band(followed: bool, herd_id: String) -> Dictionary:
 	return BandFx.with_band_id({
 		"name": "Ashfell", "id": "Ashfell", "entity": BAND_ENTITY, "faction": 0, "size": 80,
 		"current_x": BAND_TILE.x, "current_y": BAND_TILE.y, "pos": [BAND_TILE.x, BAND_TILE.y],
+		"hunt_meals": [{"keeping": KEEPING_CLASS,
+			"food": (float(MEAL_ANIMALS) - 0.5) * HerdFx.BOAR_FOOD_PER_ANIMAL}],
 		"working_age": 12, "idle_workers": IDLE_WORKERS,
 		"work_range": APRON, "max_expedition_party_size": 8,
 		"hunt_per_worker_provisions": 0.8,
@@ -68,6 +81,7 @@ func _band(followed: bool, herd_id: String) -> Dictionary:
 func _herd(size_class: String) -> Dictionary:
 	var herd := HerdFx.raid_boar_herd()
 	herd["size_class"] = size_class
+	herd["keeping"] = KEEPING_CLASS
 	herd["x"] = HERD_TILE.x
 	herd["y"] = HERD_TILE.y
 	herd[ForecastFx.WORK_PARTY_FORECAST_KEY] = {
@@ -99,12 +113,57 @@ func _box(sheet: Control) -> CheckBox:
 func _y_of(node: Control) -> float:
 	return node.get_global_rect().position.y
 
+## The curve length the fixture's crew-take answer is asked for when the harness reads it back.
+const NEED_CURVE_WORKERS := 12
+
+## The authored curve: whole-crew rows `1..max_workers`, rising per hunter and flat at the cap.
+func _need_curve(max_workers: int) -> Array:
+	var rows: Array = []
+	for workers in range(1, max_workers + 1):
+		var animals := minf(float(workers) * NEED_ANIMALS_PER_HUNTER, NEED_CURVE_CAP_ANIMALS)
+		rows.append({
+			SourceForecast.CREW_TAKE_WORKERS_KEY: workers,
+			SourceForecast.CREW_TAKE_LOW_KEY: animals,
+			SourceForecast.CREW_TAKE_LIKELY_KEY: animals,
+			SourceForecast.CREW_TAKE_HIGH_KEY: animals,
+			SourceForecast.HUNT_CREW_NEXT_RUNG_ANIMALS_KEY: 0.0,
+			"next_rung_keep_hands": 0.0,
+		})
+	return rows
+
+## `SourceForecast.hunt_need_crew` on a hand-made curve: smallest reaching row, cap at the useful crew,
+## no row reaching it (the mammoth) -> useful, no meal for the class -> useful, sub-animal meal -> one.
+func _check_hunt_need_crew() -> void:
+	var likely := SourceForecast.CREW_TAKE_LIKELY_KEY
+	var curve: Array = []
+	for pair in [[1, 1.0], [2, 2.0], [3, 4.0], [4, 4.0]]:
+		curve.append({"workers": pair[0], likely: pair[1]})
+	var keeping := KEEPING_CLASS
+	var meals: Array = [{"keeping": keeping, "food": 7.0}, {"keeping": "cured", "food": 100.0}]
+	# food 7 / 3 per animal -> ceil = 3 animals -> the first row reaching 3 is the 3-worker row.
+	h._assert_hud("need crew: the smallest row reaching the meal",
+		SourceForecast.hunt_need_crew(meals, keeping, 3.0, curve, 4) == 3)
+	h._assert_hud("need crew: capped at the useful crew",
+		SourceForecast.hunt_need_crew(meals, keeping, 3.0, curve, 2) == 2)
+	h._assert_hud("need crew: a meal no row reaches falls back to the useful crew",
+		SourceForecast.hunt_need_crew(meals, "cured", 3.0, curve, 4) == 4)
+	h._assert_hud("need crew: no meal for the class falls back to the useful crew",
+		SourceForecast.hunt_need_crew(meals, "dried", 3.0, curve, 4) == 4)
+	h._assert_hud("need crew: a meal under one animal still asks for one",
+		SourceForecast.hunt_need_crew([{"keeping": keeping, "food": 0.1}], keeping, 3.0, curve, 4) == 1)
+	h._assert_hud("need crew: an unbounded useful crew passes through when there is no meal",
+		SourceForecast.hunt_need_crew([], keeping, 3.0, curve, SourceForecast.MAX_USEFUL_UNBOUNDED)
+			== SourceForecast.MAX_USEFUL_UNBOUNDED)
+
 func run(harness) -> void:
 	h = harness
 	_sent_lines = []
 	var query: ForecastQuery = h._hud.forecast_query()
 	query.set_sender(func(request_id: int, ask: Dictionary) -> bool:
-		query.deliver.call_deferred([ForecastFx.answer(h._hud, request_id, ask)])
+		var reply: Dictionary = ForecastFx.answer(h._hud, request_id, ask)
+		if String(ask.get("kind", "")) == ForecastQuery.KIND_HUNT_CREW_TAKE:
+			reply["per_crew"] = _need_curve(int(ask.get("max_workers", 0)))
+		query.deliver.call_deferred([reply])
 		return true)
 	var recorder := func(p: Dictionary) -> void:
 		_sent_lines.append(String(MAIN_SCRIPT.format_assign_labor(p).get("line", "")))
@@ -143,6 +202,20 @@ func run(harness) -> void:
 			and Readout.stepper_count(ticked) == 0)
 	h._assert_hud("…and carries no per-turn yield box (no hands are standing on the herd)",
 		Readout.yields_text(ticked) == "")
+	# The muster is sized to the MEAL: `ceil(food / food_per_animal)` animals, the first curve row that
+	# reaches them — read here off the fixture's own curve, not off the function under test.
+	var meal_crew := 0
+	for row in _need_curve(NEED_CURVE_WORKERS):
+		if float((row as Dictionary)[SourceForecast.CREW_TAKE_LIKELY_KEY]) * 1.001 >= float(MEAL_ANIMALS):
+			meal_crew = int((row as Dictionary)["workers"])
+			break
+	h._assert_hud("the need block quotes the MEAL-sized muster (%d), `%s`" % [meal_crew,
+			HudComposeVocab.NEED_BLOCK_HINT_FORMAT % meal_crew],
+		meal_crew > 0 and Q.has_label_containing(ticked, HudComposeVocab.NEED_BLOCK_HINT_FORMAT % meal_crew))
+	var plateau := SourceForecast.crew_take_plateau(_need_curve(NEED_CURVE_WORKERS))
+	h._assert_hud("…and it is below the useful crew (the curve's plateau, %d)" % plateau,
+		meal_crew > 0 and meal_crew < plateau)
+	_check_hunt_need_crew()
 	_sent_lines.clear()
 	var commit := Q.compose_commit_button(h._hud._drawercompose._compose_sheet)
 	if commit != null:

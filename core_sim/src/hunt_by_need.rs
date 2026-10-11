@@ -7,11 +7,13 @@
 //! back at the end of the pass. The same assessment is what the snapshot capture publishes from, so
 //! the board and the turn cannot disagree.
 
+use crate::demographics_config::KeepingConfig;
 use crate::fauna::{
-    hunt_crew_take_curve, hunt_crew_turns_to_kill, hunt_useful_crew, HuntCrewCurveInputs,
-    NO_USEFUL_CREW,
+    herd_food_per_animal, hunt_crew_for_animals, hunt_crew_take_curve, hunt_crew_turns_to_kill,
+    hunt_useful_crew, HuntCrewCurveInputs, NO_USEFUL_CREW,
 };
-use crate::snapshot::NOT_FOOD_LIMITED_TURNS;
+use crate::fauna_config::FaunaConfig;
+use crate::snapshot::{BandFoodTerms, NOT_FOOD_LIMITED_TURNS};
 
 /// The wire's `turnsUntilHunt` when a crew will not be sent however long the band waits: the larder
 /// is not food-limited, or no crew can be raised. `u32::MAX` rather than `0` because `0` already
@@ -43,10 +45,84 @@ pub(crate) fn source_is_local(
         <= crate::work_party::party_begins_past(labor)
 }
 
+/// The fewest animals a hunt can bring down: an animal is indivisible, so even a meal of nothing is
+/// one whole animal.
+const MIN_ANIMALS: f32 = 1.0;
+
+/// **THE MEAL A HUNT IS SIZED TO** — what the band can eat from one kill before the meat spoils,
+/// less what its larder already holds, and what one animal of the herd is worth.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NeedMeal {
+    /// Food the band cannot cover otherwise before this kill's meat spoils ([`meal_food`]).
+    pub food: f32,
+    /// Food in one whole animal of the herd (`body_mass × provisions_per_biomass`).
+    pub food_per_animal: f32,
+}
+
+impl NeedMeal {
+    /// **Whole animals the meal calls for** — `max(1, ceil(food / food_per_animal))`. A herd that
+    /// pays no food (or a meal that never ends because the class never spoils) calls for more than
+    /// any crew lands, which leaves the crew at the useful one.
+    pub fn animals(&self) -> f32 {
+        if self.food_per_animal <= 0.0 || !self.food.is_finite() {
+            return f32::INFINITY;
+        }
+        (self.food / self.food_per_animal).ceil().max(MIN_ANIMALS)
+    }
+}
+
+/// **THE MEAL, IN FOOD** — `max(0, net_eat × keeps − usable_larder)`: what the band eats beyond its
+/// own income over the `keeps_turns` the meat lasts, less the larder it can already count on.
+/// `keeps_turns` is [`crate::spoilage::band_shelf_life`] of the class the kill lands in, so the
+/// meal and the larder's rot are one rule. `None` (a class that never rots) is an unending meal.
+pub(crate) fn meal_food(terms: &BandFoodTerms, keeps_turns: Option<f32>) -> f32 {
+    let Some(keeps) = keeps_turns else {
+        return f32::INFINITY;
+    };
+    let net_eat = (terms.demand.to_f32() - terms.steady_income).max(0.0);
+    (net_eat * keeps - terms.usable_larder).max(0.0)
+}
+
+/// The meal for each configured keeping class, in the table's order — what the wire publishes as
+/// `PopulationCohortState.huntMeals`, so a compose sheet sizing a crew before the row exists reads
+/// the very figure the turn will.
+pub(crate) fn meals_by_class(terms: &BandFoodTerms, keeping: &KeepingConfig) -> Vec<(String, f32)> {
+    keeping
+        .classes
+        .iter()
+        .map(|class| {
+            (
+                class.id.clone(),
+                meal_food(terms, crate::spoilage::band_shelf_life(keeping, &class.id)),
+            )
+        })
+        .collect()
+}
+
+/// **THE MEAL FOR ONE HERD** — its meat lands in the herd species' keeping class (the kill fallback
+/// where the table cannot resolve it), and one animal is worth [`herd_food_per_animal`]. The turn
+/// and the snapshot both call this.
+pub(crate) fn herd_meal(
+    terms: &BandFoodTerms,
+    herd: &crate::fauna::Herd,
+    fauna: &FaunaConfig,
+    keeping: &KeepingConfig,
+) -> NeedMeal {
+    let class = fauna
+        .keeping_for(&herd.species)
+        .unwrap_or(&keeping.kill_fallback_class);
+    NeedMeal {
+        food: meal_food(terms, crate::spoilage::band_shelf_life(keeping, class)),
+        food_per_animal: herd_food_per_animal(herd, fauna),
+    }
+}
+
 /// What the band decides about one need row for next turn.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NeedAssessment {
-    /// The crew [`hunt_useful_crew`] prices over the musterable pool; `0` when none can be raised.
+    /// The smallest crew of the curve that brings down the meal's animals, never above
+    /// [`hunt_useful_crew`] (the crew itself where no crew lands that many); priced over the
+    /// musterable pool; `0` when none can be raised.
     pub crew: u32,
     /// Turns until that crew brings an animal down, counting the herd's current wounds; `0` when no
     /// crew can be raised.
@@ -72,7 +148,9 @@ impl NeedAssessment {
 /// `max_workers` set to the musterable pool; `runway` is the band's food runway, the very value the
 /// snapshot publishes as `turnsOfFood`; `margin` is `follow.need_margin_turns`.
 ///
-/// * a crew of [`hunt_useful_crew`] of the curve is what would go out; none → nothing is sent;
+/// * the crew that would go out is sized to the meal ([`hunt_crew_for_animals`]): the smallest that
+///   lands the animals the band can eat before the meat spoils, at least one, never above
+///   [`hunt_useful_crew`]; none → nothing is sent;
 /// * an animal **already partly down** is finished (`finishing`, below);
 /// * otherwise a crew goes out iff `runway <= turns_to_kill + margin`, and a runway at the
 ///   [`NOT_FOOD_LIMITED_TURNS`] sentinel never triggers it.
@@ -92,11 +170,14 @@ pub fn assess_need(
     runway: f32,
     margin: f32,
     finishing: bool,
+    meal: &NeedMeal,
 ) -> NeedAssessment {
-    let crew = hunt_useful_crew(&hunt_crew_take_curve(inputs));
-    if crew == NO_USEFUL_CREW {
+    let curve = hunt_crew_take_curve(inputs);
+    let useful = hunt_useful_crew(&curve);
+    if useful == NO_USEFUL_CREW {
         return NeedAssessment::NO_CREW;
     }
+    let crew = hunt_crew_for_animals(&curve, meal.animals(), useful);
     let turns_to_kill = hunt_crew_turns_to_kill(inputs, crew, horizon);
     let reported_turns = turns_to_kill.unwrap_or(0);
     if finishing {

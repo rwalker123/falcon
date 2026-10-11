@@ -3814,4 +3814,11 @@ The ticked box now swaps the sheet: frame `herd_need_checked` (it replaced `herd
 asserts the `When the band needs meat` block is mounted, `Readout.stepper_count` is 0, and no yield box
 renders, and the commit line is asserted to carry `0 follow` (the zero-count token, then the bare
 `follow` last). The other three frames and their claims are unchanged, which is also the claim that an
-un-ticked sheet is the ordinary hunt sheet. `EXPECTED_CHECKPOINTS` is 19.
+un-ticked sheet is the ordinary hunt sheet. The band states a `hunt_meals` row (2 animals' worth of food less half an animal) and the herd the
+matching `keeping`; the chapter's sender authors the crew-take curve (0.5 animals a hunter, flat at 3.0,
+plateau 6) because the stock boar curve is room-bound at 0.07 animals and cannot reach a meal. The frame
+asserts the block reads `Sends 4 from its other work` (the first row reaching 2 animals, read off the
+authored rows, not the function under test) and that 4 is below the useful crew (6). Six PNG-less claims
+drive `SourceForecast.hunt_need_crew`: smallest reaching row, cap at useful, a meal no row reaches, no meal
+for the class, a sub-animal meal asking one, and an unbounded useful crew passing through.
+`EXPECTED_CHECKPOINTS` is 27.

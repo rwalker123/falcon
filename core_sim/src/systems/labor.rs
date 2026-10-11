@@ -4290,8 +4290,7 @@ fn land_food_home(
     for pack in &delivery.packs {
         for (class, amount) in pack_classes(pack) {
             // A class the table does not carry never rots, so its lot carries no age.
-            let age = keeping
-                .shelf_life(&class)
+            let age = crate::spoilage::band_shelf_life(keeping, &class)
                 .map_or(crate::work_party::NO_WALK, |_| pack.walk_turns);
             *lots
                 .entry((class, age))
@@ -10456,6 +10455,14 @@ pub fn advance_labor_allocation(
                 &demographics_cfg,
                 false,
             );
+            // **THE MEAL'S TERMS**, struck beside the runway from the same larder, so a crew is
+            // sized to what the band can eat of a kill before it spoils.
+            let food_terms = crate::snapshot::band_food_terms(
+                &cohort,
+                Some(&allocation),
+                &demographics_cfg,
+                false,
+            );
             let idle_now =
                 BandWorkforce::resolve(Some(&cohort), Some(&allocation), bench.as_deref()).idle();
             let wear_now = band_equipment.as_deref().unwrap_or(&band_kit);
@@ -10558,6 +10565,12 @@ pub fn advance_labor_allocation(
                         herds_crewed_this_turn.contains(fauna_id)
                             && herd.wounds.pending() > 0.0
                             && allocation.last_yields[idx].actual <= NOTHING_LANDED,
+                        &crate::hunt_by_need::herd_meal(
+                            &food_terms,
+                            herd,
+                            &fauna,
+                            &demographics_cfg.keeping,
+                        ),
                     );
                     (
                         idx,

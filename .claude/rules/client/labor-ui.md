@@ -8244,7 +8244,12 @@ pending overlay row (which replaces the merged row).
   sheet (the box moved above the Hunters section for that reason). The Hunters stepper, the split, the
   cap note, the improvement control and the per-turn yield box are replaced by
   `_mount_need_block`: `When the band needs meat` over `Sends N from its other work, lowest Priority
-  first. They come back after the kill.` (N is the sheet's useful-crew figure, the cap as fallback).
+  first. They come back after the kill.` (N is the MEAL-sized muster, `SourceForecast.hunt_need_crew`, a client twin of the sim's
+  `fauna::hunt_crew_for_animals`: the selected band's `hunt_meals` row whose `keeping` equals the herd's
+  `keeping`; `animals = max(1, ceil(food / food_per_animal))` (`HUNT_NEED_MIN_ANIMALS`); the first
+  crew-take curve row with `likely * (1 + CREW_TAKE_REACH_TOLERANCE) >= animals`, capped at the useful
+  crew. No meal for the class, no curve, or no row reaching it gives the useful crew; an unbounded useful
+  crew falls back to the cap.)
   The commit sends `hunt <herd> <floor> 0 ... follow` (`HudComposeVocab.NEED_ROW_STANDING_HANDS`); it
   is never read as an unassign or a no-op while the box is ticked.
 - **Un-ticked is unchanged.** The same herd's sheet, un-ticked, is the ordinary hunt sheet: the

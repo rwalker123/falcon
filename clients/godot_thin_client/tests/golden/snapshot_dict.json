@@ -2346,6 +2346,7 @@
       "huntable": false,
       "husbandry_ceiling": "herds[0].husbandry_ceiling",
       "id": "herds[0].id",
+      "keeping": "herds[0].keeping",
       "label": "herds[0].label",
       "material_per_biomass": [
         {
@@ -2593,6 +2594,7 @@
       "huntable": true,
       "husbandry_ceiling": "herds[1].husbandry_ceiling",
       "id": "herds[1].id",
+      "keeping": "herds[1].keeping",
       "label": "herds[1].label",
       "material_per_biomass": [
         {
@@ -2840,6 +2842,7 @@
       "huntable": false,
       "husbandry_ceiling": "herds[2].husbandry_ceiling",
       "id": "herds[2].id",
+      "keeping": "herds[2].keeping",
       "label": "herds[2].label",
       "material_per_biomass": [
         {
@@ -5004,6 +5007,20 @@
           "workers": 99.360001
         }
       ],
+      "hunt_meals": [
+        {
+          "food": 3.83,
+          "keeping": "populations[0].hunt_meals[0].keeping"
+        },
+        {
+          "food": 85.93,
+          "keeping": "populations[0].hunt_meals[1].keeping"
+        },
+        {
+          "food": 110.209999,
+          "keeping": "populations[0].hunt_meals[2].keeping"
+        }
+      ],
       "hunt_per_worker_provisions": 29.4,
       "hunter_attack": 45.5,
       "idle_mustered": 70,
@@ -6447,6 +6464,20 @@
           "workers": 101.379997
         }
       ],
+      "hunt_meals": [
+        {
+          "food": 26.790001,
+          "keeping": "populations[1].hunt_meals[0].keeping"
+        },
+        {
+          "food": 19.92,
+          "keeping": "populations[1].hunt_meals[1].keeping"
+        },
+        {
+          "food": 78.260002,
+          "keeping": "populations[1].hunt_meals[2].keeping"
+        }
+      ],
       "hunt_per_worker_provisions": 38.400002,
       "hunter_attack": 43.43,
       "idle_mustered": 69,
@@ -7849,6 +7880,20 @@
             "sled"
           ],
           "workers": 77.879997
+        }
+      ],
+      "hunt_meals": [
+        {
+          "food": 103.949997,
+          "keeping": "populations[2].hunt_meals[0].keeping"
+        },
+        {
+          "food": 26.35,
+          "keeping": "populations[2].hunt_meals[1].keeping"
+        },
+        {
+          "food": 108.769997,
+          "keeping": "populations[2].hunt_meals[2].keeping"
         }
       ],
       "hunt_per_worker_provisions": 90.980003,

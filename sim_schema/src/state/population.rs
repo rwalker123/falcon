@@ -1798,6 +1798,20 @@ pub struct PopulationCohortState {
     /// row. Appended last.
     #[serde(default)]
     pub idle_mustered: u32,
+    /// **Hunting by need** (#798) — the meal a hunt is sized to for each configured keeping class, in
+    /// `keeping.classes` order. Appended last.
+    #[serde(default)]
+    pub hunt_meals: Vec<KeepingMealState>,
+}
+
+/// **ONE KEEPING CLASS'S HUNTING MEAL** — a row of [`PopulationCohortState::hunt_meals`]: the food
+/// the band cannot cover otherwise before a kill landing in `keeping` spoils.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct KeepingMealState {
+    /// The keeping class id.
+    pub keeping: String,
+    /// Food the meal calls for.
+    pub food: f32,
 }
 
 /// **ONE OWN-PEOPLE BAND IN A BREEDING POPULATION** — a row of

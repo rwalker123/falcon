@@ -349,6 +349,8 @@ fn need_row_assessment(
     target: &LaborTarget,
     pool: u32,
     runway: f32,
+    food: &BandFoodTerms,
+    keeping: &crate::demographics_config::KeepingConfig,
     band_position: Option<bevy::math::UVec2>,
     gear: &HuntCrewGear<'_>,
     kit_levers: &BandKitLevers<'_>,
@@ -383,6 +385,7 @@ fn need_row_assessment(
                 // A hunt in progress is already a stored plan (`muster_crew > 0`); the capture
                 // never re-derives it, so a waiting row is assessed on the runway alone.
                 false,
+                &crate::hunt_by_need::herd_meal(food, herd, hunt_crew_levers.fauna, keeping),
             )
         },
     )
@@ -427,16 +430,50 @@ pub(crate) fn band_turns_of_food(
     demographics: &DemographicsConfig,
     is_expedition: bool,
 ) -> f32 {
+    let terms = band_food_terms(cohort, allocation, demographics, is_expedition);
+    if terms.demand.raw() <= 0 {
+        NOT_FOOD_LIMITED_TURNS
+    } else {
+        larder_runway_turns(
+            terms.usable_larder,
+            terms.demand.to_f32(),
+            terms.steady_income,
+            pooled_food_net(cohort),
+            &merged_arrival_schedule(allocation),
+            MealOrder::BeforeIncome,
+        )
+    }
+}
+
+/// **THE THREE TERMS A BAND'S FOOD IS READ FROM** — shared by the runway ([`band_turns_of_food`]) and
+/// the hunting crew's meal (`hunt_by_need::hunt_meal`), so the two cannot price the same band's
+/// larder differently.
+pub(crate) struct BandFoodTerms {
+    /// What the people want to eat each turn (`food_demand`, the forward need).
+    pub demand: crate::scalar::Scalar,
+    /// Σ per-source `realized` — the steady income, the honest average of the lumpy `actual`.
+    pub steady_income: f32,
+    /// The larder less what will rot uneaten (`spoilage::rot_ahead`); a detached party reads its
+    /// pack whole.
+    pub usable_larder: f32,
+}
+
+pub(crate) fn band_food_terms(
+    cohort: &PopulationCohort,
+    allocation: Option<&LaborAllocation>,
+    demographics: &DemographicsConfig,
+    is_expedition: bool,
+) -> BandFoodTerms {
     let demand = food_demand(
         cohort.children,
         cohort.working,
         cohort.elders,
         &demographics.consumption,
     );
-    let steady_food_income: f32 = allocation
+    let steady_income: f32 = allocation
         .map(|a| a.last_yields.iter().map(|y| y.realized).sum())
         .unwrap_or(0.0);
-    let runway_larder = if is_expedition {
+    let usable_larder = if is_expedition {
         cohort.stores.get(FOOD)
     } else {
         cohort.stores.get(FOOD)
@@ -446,17 +483,10 @@ pub(crate) fn band_turns_of_food(
                 &demographics.keeping,
             )
     };
-    if demand.raw() <= 0 {
-        NOT_FOOD_LIMITED_TURNS
-    } else {
-        larder_runway_turns(
-            runway_larder.to_f32(),
-            demand.to_f32(),
-            steady_food_income,
-            pooled_food_net(cohort),
-            &merged_arrival_schedule(allocation),
-            MealOrder::BeforeIncome,
-        )
+    BandFoodTerms {
+        demand,
+        steady_income,
+        usable_larder: usable_larder.to_f32(),
     }
 }
 
@@ -1553,6 +1583,9 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // **The band's runway, resolved ONCE** — the published `turnsOfFood` and the figure a need row's
     // `turnsUntilHunt` counts down from.
     let turns_of_food = band_turns_of_food(cohort, allocation, demographics, expedition.is_some());
+    // **The terms the hunting crew's meal is struck from**, shared with the runway above. A band's
+    // `huntMeals` are this meal for each keeping class.
+    let food_terms = band_food_terms(cohort, allocation, demographics, expedition.is_some());
     // **THE MUSTER THE NEXT TURN WILL APPLY**, from the one function the labor pass applies
     // (`LaborAllocation::muster_donors`), so a donor row's `lentToHunt` and the band's
     // `idleMustered` are what the turn takes. A band has at most one need row.
@@ -1626,6 +1659,8 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                             &assignment.target,
                             crew_pool,
                             turns_of_food,
+                            &food_terms,
+                            &demographics.keeping,
                             current_position,
                             &hunt_gear,
                             kit_levers,
@@ -2404,6 +2439,10 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             .collect(),
         // **The idle hands next turn's muster takes** (#798) — the idle share of the need row's crew.
         idle_mustered: muster_plan.as_ref().map_or(0, |plan| plan.from_idle),
+        hunt_meals: crate::hunt_by_need::meals_by_class(&food_terms, &demographics.keeping)
+            .into_iter()
+            .map(|(keeping, food)| sim_schema::KeepingMealState { keeping, food })
+            .collect(),
         // **What rotted this turn** (#706) — the ledger identity's `spoiled` term, set by the larder
         // rot and added to by any caravan pack's transit rot.
         food_spoiled: cohort.last_food_spoiled,

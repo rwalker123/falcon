@@ -3232,9 +3232,13 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     var hunt_split := ""
     var cap_note := ""
     if needs_hunt:
-        # N is the sheet's useful-crew figure (the number the cap note reports as `max N useful`), NOT
-        # the idle-clamped cap: the muster draws on the band's other work too, not just its idle hands.
-        var useful_crew := SourceForecast.max_useful_workers(forecast)
+        # N is the MEAL-sized muster (`SourceForecast.hunt_need_crew`): the hands the sim sends to bring
+        # the band's `hunt_meals` figure for this herd's keeping class, capped at the useful crew and
+        # falling back to it when the band publishes no meal. NOT the idle-clamped cap: the muster draws
+        # on the band's other work too, not just its idle hands.
+        var useful_crew := SourceForecast.hunt_need_crew(Array(band.get("hunt_meals", [])),
+            String(herd.get("keeping", "")), float(herd.get("food_per_animal", 0.0)), crew_take,
+            SourceForecast.max_useful_workers(forecast))
         _mount_need_block(target, cap if useful_crew == SourceForecast.MAX_USEFUL_UNBOUNDED \
             else useful_crew, crew_label)
     else:
@@ -3525,7 +3529,7 @@ func _mount_move_camp_box(target: VBoxContainer, on_toggle: Callable) -> void:
 
 ## **THE HUNTERS SECTION OF A TICKED SHEET** — in place of the stepper: the section label, then
 ## `When the band needs meat` over one dim line saying how many hands the muster sends (`useful`, the
-## sheet's own useful-crew figure) and from where.
+## meal-sized crew from `SourceForecast.hunt_need_crew`) and from where.
 func _mount_need_block(target: VBoxContainer, useful: int, crew_label: String) -> void:
     var block := VBoxContainer.new()
     block.size_flags_horizontal = Control.SIZE_EXPAND_FILL

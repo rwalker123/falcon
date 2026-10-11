@@ -389,6 +389,14 @@ party coming home, a band merging) can eat it. Engine: `core_sim/src/spoilage.rs
   nuts, seeds, grains and pods (`wild_emmer`, `seed_grasses`, `hazel`, `oak_mast`, `pine_nut`,
   `wild_rice`, `chestnut`, `sunflower`, `wild_pulses`, `mesquite`) are `dry`; everything else is
   `fresh_plant`. Preservation is a longer shelf life, nothing else.
+- **A shelf life is read through ONE function, `spoilage::band_shelf_life(keeping, class)`.** The
+  larder's rot (`rot_band_larders`), the forecast walk (`rot_ahead`, horizon included), a caravan
+  pack's rot on the road (`rots_in_transit`, `work_party::TransitRot`, the landing in
+  `systems::labor`) and a hunting crew's meal (`hunt_by_need::meal_food`, `work-party.md` → "Hunting
+  by need") all call it, so they cannot disagree about how long a kill lasts. Today it returns the
+  class's `shelf_life_turns`; it is the seam the drying rack (#708) extends — a band that can dry
+  meat keeps its `flesh` longer, or moves a kill into a longer class, there, and the rot rule and the
+  meal move together.
 - **The larder holds food per class and per age** — `LocalStore`'s `FoodMix`, a `class → [FoodBatch
   { age, amount }]` map, lots oldest first, equal ages merged. `add` lands a lot at age 0;
   `add_aged` lands one that was carried (a caravan pack lands aged by its walk). **Every take removes
