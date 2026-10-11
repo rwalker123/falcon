@@ -400,6 +400,7 @@ fn two_quarries_and_one_chisel(ranks: [SourcePriority; 2]) -> [bool; 2] {
             allocation.assignments.push(core_sim::LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Extract {
                     tile: *tile,
                     material: material.clone(),
@@ -492,6 +493,7 @@ fn a_queued_paving_and_a_quarry(build_mark: SourcePriority) -> PavingTurn {
         allocation.assignments.push(core_sim::LaborAssignment {
             party: None,
             muster_crew: 0,
+            planned_crew: 0,
             target: LaborTarget::Extract {
                 tile: quarry_tile,
                 material: material.clone(),
@@ -504,6 +506,7 @@ fn a_queued_paving_and_a_quarry(build_mark: SourcePriority) -> PavingTurn {
         allocation.assignments.push(core_sim::LaborAssignment {
             party: None,
             muster_crew: 0,
+            planned_crew: 0,
             target: LaborTarget::Builders,
             workers: BUILDERS,
             kit: None,
@@ -603,6 +606,7 @@ fn a_band_keeping_a_paved_road_and_a_quarry(quarry_rank: SourcePriority) -> Shar
         allocation.assignments.push(core_sim::LaborAssignment {
             party: None,
             muster_crew: 0,
+            planned_crew: 0,
             target: LaborTarget::Extract {
                 tile: quarry_tile,
                 material: material.clone(),
@@ -617,6 +621,7 @@ fn a_band_keeping_a_paved_road_and_a_quarry(quarry_rank: SourcePriority) -> Shar
         allocation.assignments.push(core_sim::LaborAssignment {
             party: None,
             muster_crew: 0,
+            planned_crew: 0,
             target: LaborTarget::Roadwork,
             workers: ONE_KEEPER,
             kit: None,
@@ -1152,6 +1157,7 @@ fn staff_one_role(
     allocation.assignments.push(core_sim::LaborAssignment {
         party: None,
         muster_crew: 0,
+        planned_crew: 0,
         target: role,
         workers: keepers,
         kit: None,
@@ -2453,6 +2459,7 @@ mod a_pool_puts_its_idle_hands_on_the_work_still_owed {
                 allocation.assignments.push(core_sim::LaborAssignment {
                     party: None,
                     muster_crew: 0,
+                    planned_crew: 0,
                     target: role,
                     workers: keepers,
                     kit: None,

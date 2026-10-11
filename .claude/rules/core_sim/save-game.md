@@ -53,7 +53,8 @@ The current `SAVE_FORMAT_VERSION` and its row-by-row changelog are the table on 
 `save.rs` — the one home for the number, so a bump never leaves a stale copy here. (Version 29 was
 the larder becoming age-stamped lots, `FoodMix` → `FoodBatch` `{age, amount}`, so every band's
 larder, party pack and cargo serializes its lots; version 34 added a need row's plan,
-the hands it sends next turn, `LaborAssignment::muster_crew`.)
+the hands it sends next turn (`LaborAssignment::muster_crew`) and the crew it would send
+(`planned_crew`).)
 
 ## Four operations, three commands and one query
 

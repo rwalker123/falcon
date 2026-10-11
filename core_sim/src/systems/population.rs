@@ -2869,6 +2869,7 @@ mod food_flow_tests {
         LaborAssignment {
             party: None,
             muster_crew: 0,
+            planned_crew: 0,
             target: LaborTarget::Forage {
                 tile: UVec2::new(0, 0),
                 floor: 0.5,

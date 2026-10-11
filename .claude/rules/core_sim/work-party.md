@@ -682,7 +682,12 @@ retires the empty row.
 
 **The plan is `LaborAssignment::muster_crew`** — the hands the row sends next turn, `0` = waiting.
 Like `party` it is outside `LaborAssignment`'s `PartialEq` (a fact the turn restamps), and it rides
-the save (`SAVE_FORMAT_VERSION` 34). The donors are never stored.
+the save (`SAVE_FORMAT_VERSION` 34). The donors are never stored. **Beside it rides
+`LaborAssignment::planned_crew`** - the meal-sized crew `assess_need` priced at the same decision,
+whether or not the row sends (`0` when no crew can be raised, the herd is gone or out of camp
+range): a waiting row has `muster_crew == 0` and a planned crew, and the craft suggestions equip that
+crew ahead of the hunt (`crafting.md` -> "Craft suggestions"). Also outside the `PartialEq`, and on the
+save.
 
 **The decision, at the foot of the band's labor pass for next turn** (`assess_need`):
 

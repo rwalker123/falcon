@@ -145,6 +145,7 @@ fn hunting_band(
     let assignments = vec![LaborAssignment {
         party: None,
         muster_crew: 0,
+        planned_crew: 0,
         target: LaborTarget::Hunt {
             fauna_id: fauna_id.to_string(),
             floor: 0.3,

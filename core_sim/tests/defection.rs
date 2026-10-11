@@ -816,6 +816,7 @@ fn work(app: &mut App, band: Entity, target: LaborTarget) {
     let row = LaborAssignment {
         party: None,
         muster_crew: 0,
+        planned_crew: 0,
         target,
         workers: 0,
         kit: None,

@@ -504,6 +504,7 @@ fn spawn_forager_of(
                     LaborAssignment {
                         party: None,
                         muster_crew: 0,
+                        planned_crew: 0,
                         target: LaborTarget::Forage {
                             tile: patch,
                             floor: policy,
@@ -519,6 +520,7 @@ fn spawn_forager_of(
                     LaborAssignment {
                         party: None,
                         muster_crew: 0,
+                        planned_crew: 0,
                         target: LaborTarget::Builders,
                         workers: foragers,
                         kit: None,
@@ -1507,6 +1509,7 @@ fn a_field_worked_by(crew: u32, ledger: core_sim::BandEquipment) -> (App, Entity
                 assignments: vec![LaborAssignment {
                     party: None,
                     muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Forage {
                         tile: coord,
                         floor: FIELD_CREW_FLOOR,

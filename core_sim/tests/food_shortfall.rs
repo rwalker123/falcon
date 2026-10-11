@@ -94,6 +94,7 @@ fn eat_and_publish(larder_in_meals: f32) -> Published {
     let row = LaborAssignment {
         party: None,
         muster_crew: 0,
+        planned_crew: 0,
         target: LaborTarget::Scout,
         workers: 0,
         kit: None,

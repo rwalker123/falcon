@@ -127,6 +127,7 @@ fn world_with_a_keeping_band() -> (App, UVec2) {
                 LaborAssignment {
                     party: None,
                     muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Forage {
                         tile: source,
                         floor: DEFAULT_ESCAPEMENT_FLOOR,
@@ -141,6 +142,7 @@ fn world_with_a_keeping_band() -> (App, UVec2) {
                 LaborAssignment {
                     party: None,
                     muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Roadwork,
                     workers: KEEP_CREW,
                     kit: None,
@@ -150,6 +152,7 @@ fn world_with_a_keeping_band() -> (App, UVec2) {
                 LaborAssignment {
                     party: None,
                     muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Builders,
                     workers: BUILD_CREW,
                     kit: None,

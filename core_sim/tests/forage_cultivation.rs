@@ -262,6 +262,7 @@ fn forage_row(patch: UVec2, policy: f32, foragers: u32) -> LaborAssignment {
     LaborAssignment {
         party: None,
         muster_crew: 0,
+        planned_crew: 0,
         target: LaborTarget::Forage {
             tile: patch,
             floor: policy,
@@ -310,6 +311,7 @@ fn set_forage_improvement(
                 None => allocation.assignments.push(LaborAssignment {
                     party: None,
                     muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Builders,
                     workers: builders,
                     kit: None,
@@ -470,6 +472,7 @@ fn spawn_forager_at(
                             LaborAssignment {
                                 party: None,
                                 muster_crew: 0,
+                                planned_crew: 0,
                                 target: LaborTarget::Builders,
                                 workers: foragers,
                                 kit: None,
@@ -3201,6 +3204,7 @@ fn an_unstarted_patch_quotes_the_next_rungs_job_and_the_quote_halves_with_the_cr
             .push(LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Builders,
                 workers,
                 kit: None,
@@ -3583,6 +3587,7 @@ fn spawn_band_holding_one_patch_and_queueing_a_build(
         allocation.assignments.push(LaborAssignment {
             party: None,
             muster_crew: 0,
+            planned_crew: 0,
             target: LaborTarget::Builders,
             workers: builders,
             kit: None,
@@ -4400,6 +4405,7 @@ fn a_rung_completes_erodes_and_is_repaired_only_by_re_queueing_it() {
         allocation.assignments.push(LaborAssignment {
             party: None,
             muster_crew: 0,
+            planned_crew: 0,
             target: LaborTarget::Builders,
             workers: builders,
             kit: None,

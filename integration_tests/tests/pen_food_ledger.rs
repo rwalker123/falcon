@@ -132,6 +132,7 @@ fn run_one_turn_with_a_pen(larder: f32, hay: f32, floor: f32) -> (f32, f32, f32,
         assignments: vec![LaborAssignment {
             party: None,
             muster_crew: 0,
+            planned_crew: 0,
             target: LaborTarget::Hunt {
                 fauna_id: herd_id.clone(),
                 floor,

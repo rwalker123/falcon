@@ -172,6 +172,7 @@ fn world_hunting_at(
             assignments: vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor,

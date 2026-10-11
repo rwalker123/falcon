@@ -264,6 +264,7 @@ fn spawn_hunters(
                 assignments: vec![LaborAssignment {
                     party: None,
                     muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Hunt {
                         fauna_id: fauna_id.to_string(),
                         floor,
@@ -738,6 +739,7 @@ fn spawn_resident_crew(
                 assignments: std::iter::once(LaborAssignment {
                     party: None,
                     muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Hunt {
                         fauna_id: fauna_id.to_string(),
                         floor,
@@ -755,6 +757,7 @@ fn spawn_resident_crew(
                 .chain((build_crew > 0).then_some(LaborAssignment {
                     party: None,
                     muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Builders,
                     workers: build_crew,
                     kit: None,

@@ -1497,6 +1497,7 @@ mod tests {
                 LaborAssignment {
                     party: None,
                     muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Forage {
                         tile: UVec2::new(0, 0),
                         floor: 0.5,
@@ -1510,6 +1511,7 @@ mod tests {
                 LaborAssignment {
                     party: None,
                     muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Hunt {
                         fauna_id: "game_1".to_string(),
                         floor: 0.5,
@@ -1657,6 +1659,7 @@ mod tests {
                 LaborAssignment {
                     party: None,
                     muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Forage {
                         tile: UVec2::new(0, 0),
                         floor: 0.5,
@@ -1670,6 +1673,7 @@ mod tests {
                 LaborAssignment {
                     party: None,
                     muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Hunt {
                         fauna_id: "game_1".to_string(),
                         floor: 0.5,
@@ -1749,6 +1753,7 @@ mod tests {
             assignments: vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
                     floor: 0.5,
@@ -1815,6 +1820,7 @@ mod tests {
         let assignment = LaborAssignment {
             party: None,
             muster_crew: 0,
+            planned_crew: 0,
             target,
             workers: 6,
             kit: None,
@@ -1853,6 +1859,7 @@ mod tests {
         let assignment = LaborAssignment {
             party: None,
             muster_crew: 0,
+            planned_crew: 0,
             target: LaborTarget::Forage {
                 tile: UVec2::new(7, 9),
                 floor: 0.15,

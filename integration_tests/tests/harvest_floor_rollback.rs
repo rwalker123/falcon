@@ -137,6 +137,7 @@ fn spawn_band_with_floors(app: &mut bevy::prelude::App, floor: f32) -> Entity {
                     LaborAssignment {
                         party: None,
                         muster_crew: 0,
+                        planned_crew: 0,
                         target: LaborTarget::Forage {
                             tile: tile_pos,
                             floor,
@@ -150,6 +151,7 @@ fn spawn_band_with_floors(app: &mut bevy::prelude::App, floor: f32) -> Entity {
                     LaborAssignment {
                         party: None,
                         muster_crew: 0,
+                        planned_crew: 0,
                         target: LaborTarget::Hunt {
                             fauna_id: "game_rollback_probe".to_string(),
                             floor,

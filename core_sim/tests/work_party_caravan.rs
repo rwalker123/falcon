@@ -160,6 +160,7 @@ fn spawn_band_camped_at(
                 assignments: vec![LaborAssignment {
                     party: None,
                     muster_crew: 0,
+                    planned_crew: 0,
                     target,
                     workers: CREW,
                     kit,
@@ -1815,6 +1816,7 @@ fn a_far_workings_rate_home_on_the_turn_it_completes_a_rung_is_the_querys() {
         allocation.assignments.push(LaborAssignment {
             party: None,
             muster_crew: 0,
+            planned_crew: 0,
             target: LaborTarget::Builders,
             workers: BUILDERS,
             kit: None,

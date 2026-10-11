@@ -1591,6 +1591,7 @@ fn spawn_forager(
                 assignments: vec![LaborAssignment {
                     party: None,
                     muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Forage {
                         tile: patch,
                         floor: policy,

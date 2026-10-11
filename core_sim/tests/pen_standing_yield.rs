@@ -343,6 +343,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                     LaborAssignment {
                         party: None,
                         muster_crew: 0,
+                        planned_crew: 0,
                         target: LaborTarget::Hunt {
                             fauna_id: herd_id.to_string(),
                             floor: SUSTAIN_FLOOR,
@@ -358,6 +359,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                     LaborAssignment {
                         party: None,
                         muster_crew: 0,
+                        planned_crew: 0,
                         target: LaborTarget::Builders,
                         workers: BUILDERS,
                         kit: None,

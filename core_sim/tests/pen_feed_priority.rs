@@ -213,6 +213,7 @@ fn hunt_row(herd_id: &str, priority: SourcePriority, workers: u32) -> LaborAssig
     LaborAssignment {
         party: None,
         muster_crew: 0,
+        planned_crew: 0,
         target: LaborTarget::Hunt {
             fauna_id: herd_id.to_string(),
             floor: SUSTAIN,

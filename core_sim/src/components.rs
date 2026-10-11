@@ -3123,6 +3123,15 @@ pub struct LaborAssignment {
     /// restamps, not an order, and a rollback record or command no-op guard that compared it would
     /// report *nothing changed* as a change every turn. It does ride the save checkpoint.
     pub muster_crew: u32,
+    /// **HUNTING BY NEED - THE CREW THE ROW WOULD SEND, whether or not it sends yet.** The meal-sized
+    /// crew `assess_need` priced at the same foot-of-pass decision that writes [`Self::muster_crew`]
+    /// (`0` when no crew can be raised, the herd is gone or out of camp range). A waiting row has
+    /// `muster_crew == 0` and a planned crew: the craft suggestions and auto-craft read it
+    /// (`snapshot::population::hunt_turn_lines`) so the kit that crew would claim is flagged and made
+    /// AHEAD of the hunt, not on the turn it goes out.
+    ///
+    /// ⛔ **OUTSIDE THIS TYPE'S EQUALITY**, for [`Self::muster_crew`]'s reason, and it rides the save.
+    pub planned_crew: u32,
 }
 
 /// ⛔ **EQUALITY IS THE ORDER THE PLAYER GAVE, AND THE PARTY IS NOT PART OF IT.**
@@ -6133,6 +6142,7 @@ impl LaborAllocation {
                     *move_with_herd = false;
                     // The row is an ordinary hunt again, so its need-row plan goes with the flag.
                     assignment.muster_crew = 0;
+                    assignment.planned_crew = 0;
                 }
             }
         }
@@ -6338,6 +6348,7 @@ impl LaborAllocation {
         // **A NEED ROW'S PLAN IS A FACT THE TURN RESTAMPED**, so a re-push of the row keeps it —
         // but only while the row is still a need row.
         let mut standing_muster = 0;
+        let mut standing_planned = 0;
         let mut had_row = false;
         if let Some(idx) = self
             .assignments
@@ -6348,6 +6359,7 @@ impl LaborAllocation {
             standing_priority = self.assignments[idx].priority;
             standing_party = self.assignments[idx].party.clone();
             standing_muster = self.assignments[idx].muster_crew;
+            standing_planned = self.assignments[idx].planned_crew;
             had_row = true;
             self.assignments.remove(idx);
             self.last_yields.remove(idx);
@@ -6392,6 +6404,7 @@ impl LaborAllocation {
                 priority: standing_priority,
                 party: standing_party,
                 muster_crew: if need_row { standing_muster } else { 0 },
+                planned_crew: if need_row { standing_planned } else { 0 },
             });
             self.last_yields.push(SourceYield::ZERO);
         }
@@ -7962,6 +7975,7 @@ mod tests {
         LaborAssignment {
             party: None,
             muster_crew: 0,
+            planned_crew: 0,
             target: LaborTarget::Forage {
                 tile,
                 floor: DEFAULT_ESCAPEMENT_FLOOR,
@@ -7993,6 +8007,7 @@ mod tests {
         LaborAssignment {
             party: None,
             muster_crew: 0,
+            planned_crew: 0,
             target: LaborTarget::Hunt {
                 fauna_id: herd.to_string(),
                 floor: DEFAULT_ESCAPEMENT_FLOOR,
@@ -8019,6 +8034,7 @@ mod tests {
         LaborAssignment {
             party: None,
             muster_crew: 0,
+            planned_crew: 0,
             target,
             workers,
             kit: None,
@@ -8404,6 +8420,7 @@ mod tests {
         LaborAssignment {
             party: None,
             muster_crew: 0,
+            planned_crew: 0,
             priority,
             ..staffed_forage(tile, take)
         }
@@ -9850,6 +9867,7 @@ mod tests {
             priority,
             party: None,
             muster_crew: 0,
+            planned_crew: 0,
         }
     }
 

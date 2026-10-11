@@ -184,6 +184,7 @@ fn keeper_row(herd_id: &str) -> LaborAssignment {
     LaborAssignment {
         party: None,
         muster_crew: 0,
+        planned_crew: 0,
         target: LaborTarget::Hunt {
             fauna_id: herd_id.to_string(),
             floor: SUSTAIN,
@@ -1286,6 +1287,7 @@ fn forager_row(patch: UVec2) -> LaborAssignment {
     LaborAssignment {
         party: None,
         muster_crew: 0,
+        planned_crew: 0,
         target: LaborTarget::Forage {
             tile: patch,
             floor: SUSTAIN,

@@ -221,6 +221,7 @@ fn spawn_hunters(app: &mut App, pos: UVec2, fauna_id: &str, floor: f32) -> bevy:
                 assignments: vec![LaborAssignment {
                     party: None,
                     muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Hunt {
                         fauna_id: fauna_id.to_string(),
                         floor,
@@ -931,6 +932,7 @@ fn a_gather_reports_a_point_and_pays_it() {
                     assignments: vec![LaborAssignment {
                         party: None,
                         muster_crew: 0,
+                        planned_crew: 0,
                         target: LaborTarget::Forage {
                             tile: coord,
                             floor: FOOD_PEAK,

@@ -231,6 +231,7 @@ fn hunt_row(herd: &str, workers: u32, priority: SourcePriority, follow: bool) ->
     LaborAssignment {
         party: None,
         muster_crew: 0,
+        planned_crew: 0,
         target: LaborTarget::Hunt {
             fauna_id: herd.to_string(),
             floor: FLOOR,
@@ -725,6 +726,7 @@ fn a_far_row_with_no_party_yet_is_not_a_donor() {
         .push(LaborAssignment {
             party: None,
             muster_crew: 0,
+            planned_crew: 0,
             target: LaborTarget::Forage {
                 tile: FAR_HERD_AT,
                 floor: FLOOR,
@@ -2070,5 +2072,59 @@ fn auto_craft_queues_the_kit_a_hunt_crew_is_short_of() {
             .iter()
             .any(|recipe| is_stalking_gear(recipe)),
         "control: a crew with its gear in hand queues no stalking gear"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// THE KIT IS FLAGGED AHEAD OF THE HUNT: A WAITING ROW'S PLANNED CREW
+// ---------------------------------------------------------------------------------------------
+
+/// ⛔ **A WAITING NEED ROW'S CREW IS EQUIPPED AHEAD OF THE HUNT.** With meat in the larder the row
+/// waits (`muster_crew` 0) but the labor pass still prices the crew it would send (`planned_crew`),
+/// and the craft suggestions - and auto-craft, which reads the same list - flag the kit that crew
+/// would claim now, so the band can make it before the hunt goes out. A row with no planned crew adds
+/// nothing.
+#[test]
+fn a_waiting_rows_planned_crew_is_equipped_ahead_of_the_hunt() {
+    let (mut app, band) = world_hunting(CREW_NEEDS_THE_DONORS, RABBITS);
+    arm_the_band(&mut app, band, STALKING_HANDS);
+    set_meat(&mut app, band, COMFORTABLE_LARDER);
+    turn(&mut app);
+    set_meat(&mut app, band, COMFORTABLE_LARDER);
+    turn(&mut app);
+    let need = row(&app, band, NEED_HERD);
+    assert_eq!(need.muster_crew, 0, "liveness: the row is waiting");
+    assert!(need.planned_crew > 0, "the crew it would send is planned");
+    assert!(
+        suggested(&app, "spears").is_some(),
+        "the planned crew's spears are suggested before the hunt goes out"
+    );
+
+    auto_bench_with_materials(&mut app, band);
+    let queued = queued_recipes(&app, band);
+    assert!(
+        queued.iter().any(|recipe| is_stalking_gear(recipe)),
+        "auto-craft queues the planned crew's gear ahead of the hunt, got {queued:?}"
+    );
+
+    // The control: the same band with no planned crew adds nothing.
+    let (mut none, band_n) = world_hunting(CREW_NEEDS_THE_DONORS, RABBITS);
+    arm_the_band(&mut none, band_n, STALKING_HANDS);
+    set_meat(&mut none, band_n, COMFORTABLE_LARDER);
+    turn(&mut none);
+    let need_n = index_of(&none, band_n, NEED_HERD);
+    none.world
+        .get_mut::<LaborAllocation>(band_n)
+        .expect("the band keeps its allocation")
+        .assignments[need_n]
+        .planned_crew = 0;
+    recapture_snapshot_in_place(&mut none.world);
+    assert_eq!(suggested(&none, "spears"), None);
+    auto_bench_with_materials(&mut none, band_n);
+    assert!(
+        !queued_recipes(&none, band_n)
+            .iter()
+            .any(|recipe| is_stalking_gear(recipe)),
+        "control: no planned crew, nothing to equip"
     );
 }

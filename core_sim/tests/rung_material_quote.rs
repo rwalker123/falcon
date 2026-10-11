@@ -493,6 +493,7 @@ fn begin_a_ring(app: &mut App, band: Entity) {
     allocation.assignments.push(LaborAssignment {
         party: None,
         muster_crew: 0,
+        planned_crew: 0,
         target: LaborTarget::Hunt {
             fauna_id: CORRALLED_HERD.to_string(),
             floor: KEEPER_FLOOR,
@@ -505,6 +506,7 @@ fn begin_a_ring(app: &mut App, band: Entity) {
     allocation.assignments.push(LaborAssignment {
         party: None,
         muster_crew: 0,
+        planned_crew: 0,
         target: LaborTarget::Builders,
         workers: RING_BUILDERS,
         kit: None,

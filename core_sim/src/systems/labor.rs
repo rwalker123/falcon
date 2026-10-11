@@ -10563,7 +10563,7 @@ pub fn advance_labor_allocation(
                 &allocation,
                 wear_now,
             );
-            let decided: Vec<(usize, u32)> = need_rows
+            let decided: Vec<(usize, u32, u32)> = need_rows
                 .iter()
                 .map(|&idx| {
                     let row = &allocation.assignments[idx];
@@ -10571,10 +10571,10 @@ pub fn advance_labor_allocation(
                         fauna_id, floor, ..
                     } = &row.target
                     else {
-                        return (idx, NO_CREW_ON_THIS_ACTIVITY);
+                        return (idx, NO_CREW_ON_THIS_ACTIVITY, NO_CREW_ON_THIS_ACTIVITY);
                     };
                     let Some(herd) = registry.find(fauna_id) else {
-                        return (idx, NO_CREW_ON_THIS_ACTIVITY);
+                        return (idx, NO_CREW_ON_THIS_ACTIVITY, NO_CREW_ON_THIS_ACTIVITY);
                     };
                     let in_camp_range = crate::grid_utils::hex_distance_wrapped(
                         herd.current_pos,
@@ -10583,7 +10583,7 @@ pub fn advance_labor_allocation(
                         wrap_horizontal,
                     ) <= crate::work_party::party_begins_past(&labor);
                     if !in_camp_range {
-                        return (idx, NO_CREW_ON_THIS_ACTIVITY);
+                        return (idx, NO_CREW_ON_THIS_ACTIVITY, NO_CREW_ON_THIS_ACTIVITY);
                     }
                     // **The need clock for THIS herd's kill** — its meal and the runway of the food
                     // that kill replaces ([`crate::hunt_by_need::need_clock`]).
@@ -10658,11 +10658,13 @@ pub fn advance_labor_allocation(
                         } else {
                             NO_CREW_ON_THIS_ACTIVITY
                         },
+                        assessment.crew,
                     )
                 })
                 .collect();
-            for (idx, crew) in decided {
+            for (idx, crew, planned) in decided {
                 allocation.assignments[idx].muster_crew = crew;
+                allocation.assignments[idx].planned_crew = planned;
             }
         }
         // **A row that lapsed mid-loop takes its declaration with it**, on the same rule the
@@ -14289,6 +14291,7 @@ mod labor_yield_tests {
             allocation.assignments.push(LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Builders,
                 // ⛔ **A `builders` ROW CARRIES NO KIT AT ALL** since §4.7a ②: the builders' kit was
                 // a property of the queue ENTRY, and `assign_labor` refuses a token here. Neither
@@ -14550,6 +14553,7 @@ mod labor_yield_tests {
                 LaborAssignment {
                     party: None,
                     muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Forage {
                         tile: UVec2::new(0, 0),
                         floor: 0.5,
@@ -14563,6 +14567,7 @@ mod labor_yield_tests {
                 LaborAssignment {
                     party: None,
                     muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Hunt {
                         fauna_id: HERD_ID.to_string(),
                         floor: 0.5,
@@ -14638,6 +14643,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.0,
@@ -14682,6 +14688,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -14826,6 +14833,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
                     floor,
@@ -14861,6 +14869,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -14929,6 +14938,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
                     floor: 0.0,
@@ -15064,6 +15074,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
                     floor: 0.5,
@@ -15081,6 +15092,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: PEN_FLOOR,
@@ -15287,6 +15299,7 @@ mod labor_yield_tests {
                 vec![LaborAssignment {
                     party: None,
                     muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Forage {
                         tile: SOURCE,
                         floor: BUILDER_FLOOR,
@@ -15425,6 +15438,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: SHALLOW_DRAW_FLOOR,
@@ -15491,6 +15505,7 @@ mod labor_yield_tests {
                 vec![LaborAssignment {
                     party: None,
                     muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Hunt {
                         fauna_id: HERD_ID.to_string(),
                         floor: crate::fauna::MSY_BIOMASS_FRACTION,
@@ -15608,6 +15623,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -15633,6 +15649,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor,
@@ -15868,6 +15885,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -16088,6 +16106,7 @@ mod labor_yield_tests {
                         vec![LaborAssignment {
                             party: None,
                             muster_crew: 0,
+                            planned_crew: 0,
                             target: LaborTarget::Forage {
                                 tile: SOURCE,
                                 floor: policy,
@@ -16182,6 +16201,7 @@ mod labor_yield_tests {
                             vec![LaborAssignment {
                                 party: None,
                                 muster_crew: 0,
+                                planned_crew: 0,
                                 target: LaborTarget::Hunt {
                                     fauna_id: HERD_ID.to_string(),
                                     floor: policy,
@@ -16397,6 +16417,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: 0.5,
@@ -16416,6 +16437,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -16550,6 +16572,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
                     floor: 0.5,
@@ -16652,6 +16675,7 @@ mod labor_yield_tests {
                 vec![LaborAssignment {
                     party: None,
                     muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Forage {
                         tile: SOURCE,
                         floor: policy,
@@ -16736,6 +16760,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
                     floor: 0.5,
@@ -16756,6 +16781,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: UVec2::new(1, 0),
                     floor: 0.5,
@@ -16805,6 +16831,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: 0.5,
@@ -16909,6 +16936,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: 0.5,
@@ -16942,6 +16970,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: 0.5,
@@ -17037,6 +17066,7 @@ mod labor_yield_tests {
                 vec![LaborAssignment {
                     party: None,
                     muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Forage {
                         tile: SOURCE,
                         floor: 0.5,
@@ -17136,6 +17166,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -17176,6 +17207,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -17252,6 +17284,7 @@ mod labor_yield_tests {
                 vec![LaborAssignment {
                     party: None,
                     muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Hunt {
                         fauna_id: HERD_ID.to_string(),
                         floor: 0.5,
@@ -17445,6 +17478,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: BUILDER_FLOOR,
@@ -17601,6 +17635,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: BUILDER_FLOOR,
@@ -17736,6 +17771,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: BUILDER_FLOOR,
@@ -17914,6 +17950,7 @@ mod labor_yield_tests {
                 LaborAssignment {
                     party: None,
                     muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Hunt {
                         fauna_id: HERD_ID.to_string(),
                         floor: BUILDER_FLOOR,
@@ -17928,6 +17965,7 @@ mod labor_yield_tests {
                 LaborAssignment {
                     party: None,
                     muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Builders,
                     workers: builders,
                     kit: None,
@@ -18154,6 +18192,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: BUILDER_FLOOR,
@@ -18340,6 +18379,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: BUILDER_FLOOR,
@@ -18501,6 +18541,7 @@ mod labor_yield_tests {
             allocation.assignments.push(LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: BUILDER_FLOOR,
@@ -19369,6 +19410,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: BUILDER_FLOOR,
@@ -19457,6 +19499,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: 0.5,
@@ -19491,6 +19534,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -19525,6 +19569,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -19572,6 +19617,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: policy,
@@ -19593,6 +19639,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: policy,

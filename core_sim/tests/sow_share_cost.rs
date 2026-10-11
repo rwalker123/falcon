@@ -234,6 +234,7 @@ fn spawn_the_farming_band(app: &mut App, tile: bevy::prelude::Entity, source: UV
                 LaborAssignment {
                     party: None,
                     muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Forage {
                         tile: source,
                         floor: DEFAULT_ESCAPEMENT_FLOOR,
@@ -247,6 +248,7 @@ fn spawn_the_farming_band(app: &mut App, tile: bevy::prelude::Entity, source: UV
                 LaborAssignment {
                     party: None,
                     muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Builders,
                     workers: A_MEASURED_BUILD_POOL,
                     kit: None,

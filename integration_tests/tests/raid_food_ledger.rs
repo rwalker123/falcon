@@ -69,6 +69,7 @@ fn the_food_ledger_reconciles_with_a_predator_raid() {
         assignments: vec![LaborAssignment {
             party: None,
             muster_crew: 0,
+            planned_crew: 0,
             target: LaborTarget::Forage {
                 tile: patch,
                 floor: 0.5,

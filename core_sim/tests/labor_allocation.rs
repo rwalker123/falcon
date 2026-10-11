@@ -317,6 +317,7 @@ fn forage_alloc_policy(tile: UVec2, workers: u32, policy: f32) -> LaborAllocatio
         assignments: vec![LaborAssignment {
             party: None,
             muster_crew: 0,
+            planned_crew: 0,
             target: LaborTarget::Forage {
                 tile,
                 floor: policy,
@@ -471,6 +472,7 @@ fn sustain_hunt_below_regrowth_lets_herd_grow() {
             assignments: vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: id.clone(),
                     floor: 0.5,
@@ -562,6 +564,7 @@ fn a_hunt_actual_pulses_while_realized_holds_the_steady_average() {
             assignments: vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: id.clone(),
                     floor: 0.5,
@@ -705,6 +708,7 @@ fn a_drawn_down_hunt_realized_drifts_smoothly_never_sawtooths() {
             assignments: vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: id.clone(),
                     floor: 0.5,
@@ -795,6 +799,7 @@ fn a_hunt_past_the_leash_follows_its_herd_and_only_a_vanished_herd_ends_it() {
         assignments: vec![LaborAssignment {
             party: None,
             muster_crew: 0,
+            planned_crew: 0,
             target: LaborTarget::Hunt {
                 fauna_id: fauna_id.to_string(),
                 floor: 0.5,
@@ -918,6 +923,7 @@ fn a_hunt_just_past_the_apron_posts_a_party_on_the_same_apron_as_forage() {
             assignments: vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: id.clone(),
                     floor: 0.5,
@@ -1003,6 +1009,7 @@ fn a_far_work_partys_hunt_dead_credit_no_belief() {
             assignments: vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: id.clone(),
                     floor: 0.5,
@@ -1169,6 +1176,7 @@ fn every_labor_loss_line_names_the_band_by_its_durable_id() {
         assignments: vec![LaborAssignment {
             party: None,
             muster_crew: 0,
+            planned_crew: 0,
             target: LaborTarget::Hunt {
                 fauna_id: GONE_HERD.to_string(),
                 floor: 0.5,
@@ -1183,6 +1191,7 @@ fn every_labor_loss_line_names_the_band_by_its_durable_id() {
     allocation.assignments.push(LaborAssignment {
         party: None,
         muster_crew: 0,
+        planned_crew: 0,
         target: LaborTarget::Scout,
         workers: 1,
         kit: None,
@@ -1473,6 +1482,7 @@ fn hunt_alloc(fauna_id: &str, workers: u32, floor: f32) -> LaborAllocation {
         assignments: vec![LaborAssignment {
             party: None,
             muster_crew: 0,
+            planned_crew: 0,
             target: LaborTarget::Hunt {
                 fauna_id: fauna_id.to_string(),
                 floor,
@@ -1924,6 +1934,7 @@ fn stage_hunt(
             assignments: vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: id.clone(),
                     floor: 0.5,
@@ -2159,6 +2170,7 @@ fn a_crew_that_is_only_trimmed_is_announced_and_says_what_is_left() {
     allocation.assignments.push(LaborAssignment {
         party: None,
         muster_crew: 0,
+        planned_crew: 0,
         target: LaborTarget::Scout,
         workers: 3,
         kit: None,
@@ -2236,6 +2248,7 @@ fn a_shed_assignment_is_announced_and_its_declaration_goes_with_it() {
             LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: herd_id.clone(),
                     floor: 0.5,
@@ -2248,6 +2261,7 @@ fn a_shed_assignment_is_announced_and_its_declaration_goes_with_it() {
             LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Builders,
                 workers: 1,
                 kit: None,

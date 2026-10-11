@@ -13189,6 +13189,7 @@ mod tests {
                     assignments: vec![core_sim::LaborAssignment {
                         party: None,
                         muster_crew: 0,
+                        planned_crew: 0,
                         target,
                         workers: BAND_WORKERS,
                         kit: None,

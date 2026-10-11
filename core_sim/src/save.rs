@@ -128,7 +128,7 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 31 | Culture over a connection (#702): `CultureManagerCheckpoint` gained `applied_contact_pull` (each band's strongest contact-drift pull, published as `PopulationCohortState.cultureDriftSourceBand` / `cultureDriftAxis` / `cultureDriftDelta`). A version-30 blob lacks it |
 /// | 32 | Break-away warning (#702): `CultureManagerCheckpoint` gained `break_away_risk` (the bands that may break away over their culture, published as `PopulationCohortState.cultureBreakAwayRisk`). A version-31 blob lacks it |
 /// | 33 | Auto-craft (#779): `BandBench` gained `auto` (the per-band toggle) and `auto_skipped` (the item ids the player skipped while auto waited on them), and `BenchOrder` gained `auto` (whether auto-craft queued it); `LaborAllocation` gained `last_queued_build_toe` (the tools each queued build behind the head will need, which the craft suggestions read). The bench rides `BandRecord::bench` and the allocation `BandRecord::labor`, so a version-32 blob has none of them |
-/// | 34 | Hunting by need (#798): `LaborAssignment` gained `muster_crew` — the hands a need row (a hunt row in migration mode) sends next turn, the fact the labor pass restamps at its foot. A version-30 blob has no such field. |
+/// | 34 | Hunting by need (#798): `LaborAssignment` gained `muster_crew` — the hands a need row (a hunt row in migration mode) sends next turn, the fact the labor pass restamps at its foot. A version-30 blob has no such field. and `planned_crew` — the meal-sized crew the row would send, sending or waiting, which the craft suggestions equip ahead of the hunt. A version-33 blob has neither. |
 pub const SAVE_FORMAT_VERSION: u32 = 34;
 
 /// gzip level for the payload document.

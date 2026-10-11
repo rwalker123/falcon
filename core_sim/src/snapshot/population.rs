@@ -423,8 +423,9 @@ fn need_row_assessment(
 /// row's `crew` mustered through [`LaborAllocation::muster_donors`] (kit-carrying donors bring
 /// their kit), every row's claim struck again and the budget settled on them. Pools and site crews
 /// are unchanged by a muster, so only the take rows' lines differ from the standing pass.
-/// **THE HUNT-TURN PASS FOR A BAND, or `None` with no hunt going out** - the need row whose stored plan
-/// (`LaborAssignment::muster_crew`, the labor pass's own decision for next turn) is a crew, mustered
+/// **THE HUNT-TURN PASS FOR A BAND, or `None` with no crew planned** - the need row whose stored
+/// `LaborAssignment::planned_crew` (the meal-sized crew the labor pass priced at its foot, sending or
+/// waiting, so the kit is flagged ahead of the hunt) is a crew, mustered
 /// through [`hunt_turn_shortfall_lines`]. The snapshot's `craftSuggestions` and auto-craft both take it
 /// through [`crate::craft_suggestions::band_suggestions`], so the two read one list.
 pub(crate) fn hunt_turn_lines(
@@ -438,11 +439,11 @@ pub(crate) fn hunt_turn_lines(
     let need_idx = allocation
         .assignments
         .iter()
-        .position(|row| row.is_need_row() && row.muster_crew > 0)?;
+        .position(|row| row.is_need_row() && row.planned_crew > 0)?;
     Some(hunt_turn_shortfall_lines(
         allocation,
         need_idx,
-        allocation.assignments[need_idx].muster_crew,
+        allocation.assignments[need_idx].planned_crew,
         idle,
         is_local,
         sources,
@@ -3226,6 +3227,7 @@ mod tests {
             assignments: vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: "test-herd".to_string(),
                     floor: 0.5,
@@ -3541,6 +3543,7 @@ mod tests {
             assignments: vec![LaborAssignment {
                 party: None,
                 muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Scout,
                 workers: 4,
                 kit: None,
@@ -3638,6 +3641,7 @@ mod tests {
                 .map(|source| LaborAssignment {
                     party: None,
                     muster_crew: 0,
+                    planned_crew: 0,
                     target: match source {
                         BuildSource::Patch(tile) => LaborTarget::Forage {
                             tile: *tile,
