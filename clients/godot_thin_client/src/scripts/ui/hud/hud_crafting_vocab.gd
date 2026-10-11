@@ -339,7 +339,7 @@ const GROUP_ORDER: Array[String] = [GROUP_KIT, GROUP_TOOL, GROUP_STOCK]
 ## click, and a clause after the name reads as part of what is being folded away. The rationale it
 ## carried belongs in `.claude/rules/client/crafting-panel.md`, not on screen.
 const GROUP_HEADS := {
-	GROUP_KIT: "Kit",
+	GROUP_KIT: "Gear",
 	GROUP_TOOL: "Bench tools",
 	GROUP_STOCK: "Materials",
 }

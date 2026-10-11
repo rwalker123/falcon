@@ -44,7 +44,7 @@ const TIER_PLAIN := "plain"
 const TIER_FLINT := "flint"
 
 ## The ledger's three section heads, as the panel names them and keys their fold state.
-const HEAD_KIT := "Kit"
+const HEAD_KIT := "Gear"
 const HEAD_TOOLS := "Bench tools"
 const HEAD_MATERIALS := "Materials"
 
@@ -1995,7 +1995,7 @@ func _assert_panel_renders() -> void:
 		texts.has(HudCraftingVocab.LEDGER_COLUMN_ITEM.to_upper())
 			and texts.has(HudCraftingVocab.LEDGER_COLUMN_OWNED.to_upper())
 			and texts.has(HudCraftingVocab.LEDGER_COLUMN_COST.to_upper()))
-	# **THE THREE SECTIONS ARE THE THREE GROUPS** — `Kit`, `Bench tools`, `Materials`, all carrying the
+	# **THE THREE SECTIONS ARE THE THREE GROUPS** — `Gear`, `Bench tools`, `Materials`, all carrying the
 	# open caret.
 	h._assert_hud("crafting — the three group heads read as one foldable family",
 		texts.has(_head_face(HEAD_KIT, false)) and texts.has(_head_face(HEAD_TOOLS, false))

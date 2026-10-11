@@ -2520,7 +2520,7 @@ MADE"; what belongs here is the shape of the drive.
 
 | frame | what only IT can say |
 |---|---|
-| `crafting_panel` (existing) | the ledger at rest: `Kit` · `Bench tools` · `Materials`, and `2 recipes` under Baskets and Spears only |
+| `crafting_panel` (existing) | the ledger at rest: `Gear` · `Bench tools` · `Materials`, and `2 recipes` under Baskets and Spears only |
 | `crafting_recipes_popup` | the popup under Spears' link, `Bone` / `Flint` with an Owned column of `×6` / `—` |
 | `crafting_make_picker` | the picker under the Spears row: the short bone recipe's radio disabled with its reason, the flint one lit |
 
