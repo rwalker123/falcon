@@ -17,7 +17,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 262
+const EXPECTED_CHECKPOINTS := 263
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
@@ -1189,6 +1189,20 @@ func _auto_craft_states() -> void:
 	await h._settle()
 
 	# An auto head that is NOT waiting shows no Skip; a player-queued waiting head shows none either.
+	# The crew-only prompt: an auto head with nobody at the bench and its materials in stock is not
+	# waiting in the server's eyes, so no Skip even though the bench row carries a reason.
+	var crewless := _auto_waiting_band()
+	var crewless_bench: Dictionary = crewless["bench"]
+	crewless_bench["blocked_reason"] = "No one at the bench"
+	crewless_bench["blocked_severity"] = HudCraftingVocab.SEVERITY_NEUTRAL
+	crewless_bench["workers"] = 0
+	var crewless_head: Dictionary = (crewless_bench["orders"] as Array)[0]
+	crewless_head["blocked_reason"] = ""
+	crewless_head["blocked_severity"] = ""
+	panel = await _auto_show(crewless)
+	h._assert_hud("crafting/auto — an auto head with 0 crew and materials in stock shows no Skip",
+		panel != null and _blocked_line(panel) != null
+			and _auto_meta_node(panel, HudCraftingVocab.AUTO_SKIP_META) == null)
 	var player_wait := _auto_waiting_band()
 	((player_wait["bench"] as Dictionary)["orders"] as Array)[0]["auto"] = false
 	panel = await _auto_show(player_wait)

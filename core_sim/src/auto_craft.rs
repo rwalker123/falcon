@@ -84,7 +84,6 @@ fn suggested_offer<'a>(offers: &'a [CraftOfferState], item: &str) -> Option<&'a 
 /// known. Returns whether an order was queued.
 ///
 /// Only an empty queue on an auto bench is filled. Never touches the crew.
-#[allow(clippy::too_many_arguments)]
 fn fill_empty_queue(
     bench: &mut BandBench,
     suggestions: &[CraftSuggestion],

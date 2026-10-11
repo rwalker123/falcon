@@ -92,8 +92,6 @@ impl SupplySource {
         }
     }
 
-    /// **Whether a missing unit here costs build or keeping WORK.** The pools build and keep; a site
-    /// crew keeps. A take row's kit buys attack, carry or reach — food, not work.
     /// **THE BUILD QUEUE PLACE THIS SOURCE IS A CLAIM FOR**, `None` for a non-build consumer: the
     /// builders' pool is the head job (position 0) and a [`Self::BuildQueue`] line carries its own.
     fn build_position(&self) -> Option<u32> {
@@ -104,6 +102,8 @@ impl SupplySource {
         }
     }
 
+    /// **Whether a missing unit here costs build or keeping WORK.** The pools build and keep; a site
+    /// crew keeps. A take row's kit buys attack, carry or reach — food, not work.
     fn adds_work(&self) -> bool {
         match self {
             SupplySource::Pool(_) | SupplySource::Site(_) | SupplySource::BuildQueue { .. } => true,

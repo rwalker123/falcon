@@ -713,7 +713,14 @@ func _build_bench(payload: Dictionary) -> void:
 		# **SKIP LIVES ON A WAITING AUTO HEAD** - Auto is on, nothing is workable, and the order the
 		# bench is stuck on (the head) is one Auto queued. The player's say-so is the only thing that
 		# moves Auto down the list.
-		if auto_on and _order_is_auto(bench_orders, HudCraftingVocab.ORDER_HEAD_INDEX):
+		#
+		# **GATED ON THE HEAD ORDER'S OWN `blocked_reason`, never the bench row's**: the bench's line also
+		# carries the crew prompt ("No one at the bench"), which the server's skip check ignores, so a
+		# crewless bench with its materials in stock would show a link the server refuses.
+		if auto_on and well_index == HudCraftingVocab.ORDER_HEAD_INDEX \
+				and _order_is_auto(bench_orders, HudCraftingVocab.ORDER_HEAD_INDEX) \
+				and String((bench_orders[HudCraftingVocab.ORDER_HEAD_INDEX] as Dictionary).get(
+					HudCraftingVocab.ORDER_BLOCKED_REASON_KEY, "")) != "":
 			words.add_child(_build_auto_skip_link())
 	elif recipe_id != "":
 		# **THE WORKED ORDER'S FORECAST** — the queue rows skip `worked`, so without this the lone

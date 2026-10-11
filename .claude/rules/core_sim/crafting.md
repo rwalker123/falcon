@@ -1336,7 +1336,8 @@ store, bench and ledger are unchanged diffs out entirely. `equipment.md` records
 Design: `docs/plan_crafting_and_materials.md` §7, "Suggestions". **`craft_suggestions.rs` is a pure
 function over a band's own state** — `craft_suggestions(lines, bench, recipes, equipment)` — so the
 panel, the AI's Craft specialist (#668) and auto-craft (#779) read one list.
-`band_tool_shortfall_lines(allocation, take_rows)` builds its input.
+`band_tool_shortfall_lines(allocation, take_rows, equipment, wear)` builds its input, and
+`band_suggestions` is the entry point that builds the lines and ranks them in one call.
 
 **The sources are the consumers that draw on the band's stock each turn**, read off what the turn
 **settled**, never re-derived:
@@ -1345,7 +1346,7 @@ panel, the AI's Craft specialist (#668) and auto-craft (#779) read one list.
 |---|---|---|
 | a standing pool | `LaborAllocation::last_pool_toe` (`poolToe`) | `pool` / the pool token |
 | a site crew | `LaborAllocation::last_keeping_issued` — each `KeepingIssue` carries `required` beside the `units` issued | `site` / the row kind keeping it (`forage` / `hunt` / `extract`) + target keys |
-| a take row | the row's kit lines from `snapshot::population`'s `row_gear` — the very lines `kitToe` is copied from | `take` / the row kind (+ target keys; none on `scout` / `warrior`) |
+| a take row | the row's kit lines from `craft_suggestions::take_row_gear` — the very lines `kitToe` is copied from | `take` / the row kind (+ target keys; none on `scout` / `warrior`) |
 | a queued build behind the head | `LaborAllocation::last_queued_build_toe` — walked against the stock the settlement left (below) | `build_queue` / the entry's kind + target keys, with `queuePosition` |
 
 `KeepingIssue::required` exists for this: `keeping_issued` used to write only what was **paid**, so a

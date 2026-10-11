@@ -10330,15 +10330,15 @@ pub fn advance_labor_allocation(
             tick.0,
             &mut event_log,
         );
-        // **THE CHAIN** — every entry's published finish date, walked in **queue order**
-        // (`docs/plan_standing_upkeep.md` §4.6b). It runs here, after the meters have moved and the
-        // queue has been edited, because the answer is a fact about the band's whole list and no
-        // per-source site can see one.
         // **THE QUEUED BUILDS' TOOLS** — what each entry behind the head will ask of the builders'
         // hands, struck from its own quote (`queued_build_toe`). The craft suggestions walk these
         // against the stock the settlement left.
         allocation.last_queued_build_toe =
             queued_build_toe(&equipment_cfg, &allocation, &build_quotes, builders);
+        // **THE CHAIN** — every entry's published finish date, walked in **queue order**
+        // (`docs/plan_standing_upkeep.md` §4.6b). It runs here, after the meters have moved and the
+        // queue has been edited, because the answer is a fact about the band's whole list and no
+        // per-source site can see one.
         publish_build_chain(
             &allocation,
             &build_quotes,
