@@ -17,7 +17,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 263
+const EXPECTED_CHECKPOINTS := 264
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
@@ -1276,11 +1276,15 @@ const BQ_FACE := "Tame Wild Boar"
 const BQ_POSITION := 1
 const BQ_LINE := "2 builders, for Tame Wild Boar"
 const BQ_FALLBACK_LINE := "2 builders, for (12, 7)"
+const BQ_ONE_LINE := "1 builder, for Tame Wild Boar"
+## What the sim really publishes: a builder's gear always adds build work, so the queued-build
+## suggestion carries a positive `work_per_turn` - the wording must win over `+X work a turn` anyway.
+const BQ_WORK_PER_TURN := 0.5
 
-func _bq_source(position: int) -> Dictionary:
+func _bq_source(position: int, builders: float = 2.0) -> Dictionary:
 	return {"kind": HudCraftingVocab.SOURCE_KIND_BUILD_QUEUE, "job": "hunt", "target_x": 12,
 		"target_y": 7, "fauna_id": "wild_boar", "material": "", "missing_units": 2.0,
-		"workers_without": 2.0, "work_per_turn": 0.0, "queue_position": position}
+		"workers_without": builders, "work_per_turn": BQ_WORK_PER_TURN, "queue_position": position}
 
 ## A take-row suggestion first, then a Crook whose only shortage is a queued build, then a Sled that
 ## is short for a take AND a queued build (the mixed case keeps today's wording).
@@ -1292,7 +1296,8 @@ func _build_queue_band() -> Dictionary:
 		_suggestion("sled", SUGGEST_SLED_COUNT, 3.0, 0.0, [
 			_source(HudCraftingVocab.SOURCE_KIND_TAKE, "hunt", 0, 0, "red_deer", "", 1.0, 1.0, 0.0),
 			_bq_source(BQ_POSITION)]),
-		_suggestion("crook", 2, 2.0, 0.0, [_bq_source(BQ_POSITION)]),
+		_suggestion("crook", 2, 2.0, BQ_WORK_PER_TURN, [_bq_source(BQ_POSITION)]),
+		_suggestion("hoes", 1, 1.0, BQ_WORK_PER_TURN, [_bq_source(BQ_POSITION, 1.0)]),
 	]
 	return band
 
@@ -1328,6 +1333,8 @@ func _build_queue_suggestion_states() -> void:
 	var mixed := _consequence_of(panel, "sled")
 	h._assert_hud("crafting/build-queue — a mixed suggestion keeps the take wording (%s)" % mixed,
 		mixed == "3 hunters without")
+	var one := _consequence_of(panel, "hoes")
+	h._assert_hud("crafting/build-queue — one builder reads singular (%s)" % one, one == BQ_ONE_LINE)
 	await h._save("crafting_build_queue_suggestion")
 	h._hud.close_crafting_panel()
 	await h._settle()

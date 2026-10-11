@@ -603,7 +603,8 @@ Each row is TWO lines and one button (`_build_suggestion_row`, keyed `SUGGESTION
 
 - **`<item> ×<count>`** — the name is the item's offers' `displayName`, the count the sim's WHOLE
   shortfall net of what is already queued (a suggestion the queue covers is simply not published).
-- **ONE consequence line, in the shortage's own unit, in WARN** — `+X work a turn` where the published
+- **ONE consequence line, in the shortage's own unit, in WARN** — the queued-build wording comes FIRST
+  (`N builders, for <label>`, see "A queued build names itself on the suggestion"), then `+X work a turn` where the published
   `work_per_turn > 0` (gear that adds build or keeping work), else the people going without:
   `3 hunters without`. The noun is the work vocabulary's own crew noun where EVERY source shares a job
   that has one (`hunt` → `Hunters`, `forage` → `Harvesters`, `builders` → `Builders`), else
@@ -822,8 +823,11 @@ on|off` and `bench_auto_skip <f> <band>`, relayed panel → `CraftingPanelContro
 A suggestion's `sources` may carry `kind: "build_queue"` lines (a LATER build in the band's queue, with
 `queue_position` >= 1, `job` and the target keys; the head job stays the `pool`/`builders` line). When one
 is present and every other line is the builders' own, the amber consequence reads `N builders, for <label>`
-(`SUGGESTION_BUILD_QUEUE_FORMAT`), N the earliest-position line's `workers_without`. **The label is the Work
-tab's own queue-row face, joined by `queue_position`**: `BandPanelController.build_queue_faces(band)` returns
+(`SUGGESTION_BUILD_QUEUE_FORMAT`; `1 builder, for <label>` at exactly one,
+`SUGGESTION_BUILD_QUEUE_ONE_FORMAT`), N the earliest-position line's `workers_without`. **This wording
+takes precedence over `+X work a turn`**: a builder's gear always publishes `work_per_turn > 0` (build
+kits are productivity), so checking work first would make this wording unreachable and hide which build
+the gear is for. **The label is the Work tab's own queue-row face, joined by `queue_position`**: `BandPanelController.build_queue_faces(band)` returns
 `{rank: face}` off the same `_build_queue_models` list and `_build_queue_job_face` the block draws, `Hud`
 hands it to `CraftingPanelController` as a Callable, and the panel receives it as `PAYLOAD_BUILD_QUEUE_FACES`
 - so a road's `roadwork`/`extract` spelling never has to match. Only when the position is unresolved does it

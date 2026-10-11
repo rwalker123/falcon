@@ -195,6 +195,8 @@ const SOURCE_QUEUE_POSITION_KEY := "queue_position"
 const SOURCE_JOB_BUILDERS := "builders"
 ## `N builders, for <the build queue row's own label>` - a suggestion whose only shortage is a queued build.
 const SUGGESTION_BUILD_QUEUE_FORMAT := "%s builders, for %s"
+## Its singular, for exactly one builder going without (`1 builder, for Tame Wild Boar`).
+const SUGGESTION_BUILD_QUEUE_ONE_FORMAT := "1 builder, for %s"
 ## A pool token (`roadwork` | `builders`) or a labor-row kind (`hunt`, `forage`, `extract`, `scout`,
 ## `warrior`) — the `LaborAssignment` spelling.
 const SOURCE_JOB_KEY := "job"

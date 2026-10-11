@@ -2195,19 +2195,23 @@ func _suggestion_item_name(item_id: String, ledger_row: Dictionary) -> String:
 			return name
 	return HudCraftingVocab.SUGGESTION_ITEM_FALLBACK_FORMAT % item_id
 
-## **WHAT THE SHORTAGE COSTS, IN ITS OWN UNIT** — work a turn on gear that adds build or keeping work
+## **WHAT THE SHORTAGE COSTS, IN ITS OWN UNIT** - the queued build it holds up when that is the only thing
+## short (`_earliest_build_queue_source`), else work a turn on gear that adds build or keeping work
 ## (`work_per_turn > 0`, published), else the people going without, because a missing spear costs
-## attack and carry and no single unit of output ranks it against a missing hoe. Both numbers are the
-## sim's, rendered as they arrive.
+## attack and carry and no single unit of output ranks it against a missing hoe. The build comes FIRST
+## because a builder's gear always adds work, so the work clause would hide which build it is for. Both
+## numbers are the sim's, rendered as they arrive.
 func _suggestion_consequence(suggestion: Dictionary, payload: Dictionary = {}) -> String:
+	var queued := _earliest_build_queue_source(suggestion)
+	if not queued.is_empty():
+		var builders := float(queued.get(HudCraftingVocab.SOURCE_WORKERS_WITHOUT_KEY, 0.0))
+		if is_equal_approx(builders, 1.0):
+			return HudCraftingVocab.SUGGESTION_BUILD_QUEUE_ONE_FORMAT % _build_queue_label(queued, payload)
+		return HudCraftingVocab.SUGGESTION_BUILD_QUEUE_FORMAT % [
+			_amount_text(builders), _build_queue_label(queued, payload)]
 	var work := float(suggestion.get(HudCraftingVocab.SUGGESTION_WORK_PER_TURN_KEY, 0.0))
 	if work > 0.0:
 		return HudCraftingVocab.SUGGESTION_WORK_FORMAT % _amount_text(work)
-	var queued := _earliest_build_queue_source(suggestion)
-	if not queued.is_empty():
-		return HudCraftingVocab.SUGGESTION_BUILD_QUEUE_FORMAT % [
-			_amount_text(float(queued.get(HudCraftingVocab.SOURCE_WORKERS_WITHOUT_KEY, 0.0))),
-			_build_queue_label(queued, payload)]
 	return HudCraftingVocab.SUGGESTION_WITHOUT_FORMAT % [
 		_amount_text(float(suggestion.get(HudCraftingVocab.SUGGESTION_WORKERS_WITHOUT_KEY, 0.0))),
 		_suggestion_crew_noun(suggestion)]
