@@ -2947,6 +2947,44 @@ static func crew_take_reaching(per_crew: Array, animals: float) -> int:
             return workers
     return NO_CREW_ANSWER
 
+## The fewest animals a meal ever asks for — `ONE_WHOLE_ANIMAL` in `core_sim/src/fauna.rs`: a kill lands
+## whole, so a meal smaller than one animal still costs the one.
+const HUNT_NEED_MIN_ANIMALS := 1
+
+## The wire keys of a band's `hunt_meals` row (`{keeping, food}`) and of a herd's keeping class.
+const HUNT_MEAL_KEEPING_KEY := "keeping"
+const HUNT_MEAL_FOOD_KEY := "food"
+
+## **THE HANDS A HUNTING-BY-NEED MUSTER SENDS** (`docs/plan_roaming_bands.md` §Hunting by need) — the
+## sim's `fauna::hunt_crew_for_animals` over `hunt_by_need`, restated so the Assign hunters sheet quotes
+## the number the sim sends. The muster is sized to the MEAL, not to the herd's useful crew:
+##  1. the band's `hunt_meals` row of the herd's `keeping` class (food it can eat before a kill of that
+##     class spoils, net of income and usable larder); none → the useful crew;
+##  2. `animals = max(1, ceil(food / food_per_animal))`;
+##  3. the first curve row whose `likely * (1 + CREW_TAKE_REACH_TOLERANCE) >= animals`, capped at the
+##     useful crew; no row reaches it → the useful crew.
+## `useful` may be `MAX_USEFUL_UNBOUNDED`; it is then returned as is for the caller's own fallback, and
+## imposes no cap on a row that was found.
+static func hunt_need_crew(meals: Array, keeping: String, food_per_animal: float,
+        per_crew: Array, useful: int) -> int:
+    if keeping == "" or food_per_animal <= 0.0:
+        return useful
+    var food := -1.0
+    for meal_variant in meals:
+        if meal_variant is Dictionary and String((meal_variant as Dictionary).get(
+                HUNT_MEAL_KEEPING_KEY, "")) == keeping:
+            food = float((meal_variant as Dictionary).get(HUNT_MEAL_FOOD_KEY, 0.0))
+            break
+    if food < 0.0 or not is_finite(food):
+        return useful
+    var animals := maxi(ceili(food / food_per_animal), HUNT_NEED_MIN_ANIMALS)
+    if not has_crew_take_curve(per_crew):
+        return useful
+    for workers in range(1, per_crew.size() + 1):
+        if crew_take_likely(per_crew, workers) * (1.0 + CREW_TAKE_REACH_TOLERANCE) >= float(animals):
+            return workers if useful == MAX_USEFUL_UNBOUNDED else mini(workers, useful)
+    return useful
+
 ## **WHERE THE CURVE STOPS RISING** — the smallest crew no larger crew out-takes, which is what
 ## *"max N workers useful here"* has always meant and what the closed form could only guess at.
 ##

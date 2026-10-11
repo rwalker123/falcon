@@ -2346,6 +2346,7 @@
       "huntable": false,
       "husbandry_ceiling": "herds[0].husbandry_ceiling",
       "id": "herds[0].id",
+      "keeping": "herds[0].keeping",
       "label": "herds[0].label",
       "material_per_biomass": [
         {
@@ -2593,6 +2594,7 @@
       "huntable": true,
       "husbandry_ceiling": "herds[1].husbandry_ceiling",
       "id": "herds[1].id",
+      "keeping": "herds[1].keeping",
       "label": "herds[1].label",
       "material_per_biomass": [
         {
@@ -2840,6 +2842,7 @@
       "huntable": false,
       "husbandry_ceiling": "herds[2].husbandry_ceiling",
       "id": "herds[2].id",
+      "keeping": "herds[2].keeping",
       "label": "herds[2].label",
       "material_per_biomass": [
         {
@@ -5021,8 +5024,23 @@
           "workers": 99.360001
         }
       ],
+      "hunt_meals": [
+        {
+          "food": 3.83,
+          "keeping": "populations[0].hunt_meals[0].keeping"
+        },
+        {
+          "food": 85.93,
+          "keeping": "populations[0].hunt_meals[1].keeping"
+        },
+        {
+          "food": 110.209999,
+          "keeping": "populations[0].hunt_meals[2].keeping"
+        }
+      ],
       "hunt_per_worker_provisions": 29.4,
       "hunter_attack": 45.5,
+      "idle_mustered": 70,
       "idle_workers": 54,
       "independence_grievance_threshold": 59.740002,
       "is_expedition": true,
@@ -5170,6 +5188,7 @@
           "hunters_on_the_road": 119,
           "improvement": "populations[0].labor_assignments[0].improvement",
           "keep_hands": 98.620003,
+          "kill_progress": 28.209999,
           "kind": "populations[0].labor_assignments[0].kind",
           "kit_id": "populations[0].labor_assignments[0].kit_id",
           "kit_toe": [
@@ -5185,6 +5204,7 @@
             }
           ],
           "kit_workers_holding": 99.230003,
+          "lent_to_hunt": 44,
           "material": "populations[0].labor_assignments[0].material",
           "material_upkeep_demand": [
             {
@@ -5243,6 +5263,8 @@
             }
           ],
           "move_with_herd": true,
+          "muster_crew": 189,
+          "need_runway": 35.98,
           "net_rate_home": 11.27,
           "next_load_home_in": 21,
           "overdraws": false,
@@ -5261,6 +5283,8 @@
           "target_x": 117,
           "target_y": 128,
           "transit_keeps_turns": 97.370003,
+          "turns_to_kill": 100,
+          "turns_until_hunt": 40,
           "useful_cutters": 184,
           "walk_out_remaining": 28,
           "walk_tiles": 90,
@@ -5284,6 +5308,7 @@
           "hunters_on_the_road": 12,
           "improvement": "populations[0].labor_assignments[1].improvement",
           "keep_hands": 3.33,
+          "kill_progress": 22.75,
           "kind": "populations[0].labor_assignments[1].kind",
           "kit_id": "populations[0].labor_assignments[1].kit_id",
           "kit_toe": [
@@ -5299,6 +5324,7 @@
             }
           ],
           "kit_workers_holding": 53.110001,
+          "lent_to_hunt": 181,
           "material": "populations[0].labor_assignments[1].material",
           "material_upkeep_demand": [
             {
@@ -5357,6 +5383,8 @@
             }
           ],
           "move_with_herd": false,
+          "muster_crew": 134,
+          "need_runway": 111.139999,
           "net_rate_home": 14.17,
           "next_load_home_in": 78,
           "overdraws": true,
@@ -5375,6 +5403,8 @@
           "target_x": 44,
           "target_y": 33,
           "transit_keeps_turns": 107.940002,
+          "turns_to_kill": 175,
+          "turns_until_hunt": 197,
           "useful_cutters": 197,
           "walk_out_remaining": 89,
           "walk_tiles": 27,
@@ -5398,6 +5428,7 @@
           "hunters_on_the_road": 121,
           "improvement": "populations[0].labor_assignments[2].improvement",
           "keep_hands": 103.919998,
+          "kill_progress": 1.19,
           "kind": "populations[0].labor_assignments[2].kind",
           "kit_id": "populations[0].labor_assignments[2].kit_id",
           "kit_toe": [
@@ -5413,6 +5444,7 @@
             }
           ],
           "kit_workers_holding": 14.23,
+          "lent_to_hunt": 174,
           "material": "populations[0].labor_assignments[2].material",
           "material_upkeep_demand": [
             {
@@ -5471,6 +5503,8 @@
             }
           ],
           "move_with_herd": false,
+          "muster_crew": 7,
+          "need_runway": 8.1,
           "net_rate_home": 20.030001,
           "next_load_home_in": 123,
           "overdraws": true,
@@ -5489,6 +5523,8 @@
           "target_x": 167,
           "target_y": 178,
           "transit_keeps_turns": 24.950001,
+          "turns_to_kill": 74,
+          "turns_until_hunt": 138,
           "useful_cutters": 70,
           "walk_out_remaining": 158,
           "walk_tiles": 72,
@@ -6465,8 +6501,23 @@
           "workers": 101.379997
         }
       ],
+      "hunt_meals": [
+        {
+          "food": 26.790001,
+          "keeping": "populations[1].hunt_meals[0].keeping"
+        },
+        {
+          "food": 19.92,
+          "keeping": "populations[1].hunt_meals[1].keeping"
+        },
+        {
+          "food": 78.260002,
+          "keeping": "populations[1].hunt_meals[2].keeping"
+        }
+      ],
       "hunt_per_worker_provisions": 38.400002,
       "hunter_attack": 43.43,
+      "idle_mustered": 69,
       "idle_workers": 151,
       "independence_grievance_threshold": 24.59,
       "is_expedition": true,
@@ -6614,6 +6665,7 @@
           "hunters_on_the_road": 118,
           "improvement": "populations[1].labor_assignments[0].improvement",
           "keep_hands": 55.380001,
+          "kill_progress": 60.610001,
           "kind": "populations[1].labor_assignments[0].kind",
           "kit_id": "populations[1].labor_assignments[0].kit_id",
           "kit_toe": [
@@ -6629,6 +6681,7 @@
             }
           ],
           "kit_workers_holding": 68.360001,
+          "lent_to_hunt": 95,
           "material": "populations[1].labor_assignments[0].material",
           "material_upkeep_demand": [
             {
@@ -6687,6 +6740,8 @@
             }
           ],
           "move_with_herd": true,
+          "muster_crew": 40,
+          "need_runway": 100.650002,
           "net_rate_home": 99.919998,
           "next_load_home_in": 188,
           "overdraws": false,
@@ -6705,6 +6760,8 @@
           "target_x": 62,
           "target_y": 51,
           "transit_keeps_turns": 95.139999,
+          "turns_to_kill": 93,
+          "turns_until_hunt": 79,
           "useful_cutters": 91,
           "walk_out_remaining": 171,
           "walk_tiles": 105,
@@ -6728,6 +6785,7 @@
           "hunters_on_the_road": 1,
           "improvement": "populations[1].labor_assignments[1].improvement",
           "keep_hands": 57.48,
+          "kill_progress": 32.91,
           "kind": "populations[1].labor_assignments[1].kind",
           "kit_id": "populations[1].labor_assignments[1].kit_id",
           "kit_toe": [
@@ -6743,6 +6801,7 @@
             }
           ],
           "kit_workers_holding": 76.669998,
+          "lent_to_hunt": 134,
           "material": "populations[1].labor_assignments[1].material",
           "material_upkeep_demand": [
             {
@@ -6801,6 +6860,8 @@
             }
           ],
           "move_with_herd": false,
+          "muster_crew": 183,
+          "need_runway": 65.220001,
           "net_rate_home": 72.489998,
           "next_load_home_in": 163,
           "overdraws": true,
@@ -6819,6 +6880,8 @@
           "target_x": 135,
           "target_y": 146,
           "transit_keeps_turns": 81.07,
+          "turns_to_kill": 42,
+          "turns_until_hunt": 2,
           "useful_cutters": 158,
           "walk_out_remaining": 190,
           "walk_tiles": 32,
@@ -6842,6 +6905,7 @@
           "hunters_on_the_road": 68,
           "improvement": "populations[1].labor_assignments[2].improvement",
           "keep_hands": 26.209999,
+          "kill_progress": 18.07,
           "kind": "populations[1].labor_assignments[2].kind",
           "kit_id": "populations[1].labor_assignments[2].kit_id",
           "kit_toe": [
@@ -6857,6 +6921,7 @@
             }
           ],
           "kit_workers_holding": 15.11,
+          "lent_to_hunt": 93,
           "material": "populations[1].labor_assignments[2].material",
           "material_upkeep_demand": [
             {
@@ -6915,6 +6980,8 @@
             }
           ],
           "move_with_herd": false,
+          "muster_crew": 62,
+          "need_runway": 62.32,
           "net_rate_home": 56.73,
           "next_load_home_in": 78,
           "overdraws": true,
@@ -6933,6 +7000,8 @@
           "target_x": 148,
           "target_y": 137,
           "transit_keeps_turns": 55.080002,
+          "turns_to_kill": 103,
+          "turns_until_hunt": 77,
           "useful_cutters": 13,
           "walk_out_remaining": 33,
           "walk_tiles": 147,
@@ -7870,8 +7939,23 @@
           "workers": 77.879997
         }
       ],
+      "hunt_meals": [
+        {
+          "food": 103.949997,
+          "keeping": "populations[2].hunt_meals[0].keeping"
+        },
+        {
+          "food": 26.35,
+          "keeping": "populations[2].hunt_meals[1].keeping"
+        },
+        {
+          "food": 108.769997,
+          "keeping": "populations[2].hunt_meals[2].keeping"
+        }
+      ],
       "hunt_per_worker_provisions": 90.980003,
       "hunter_attack": 69.129997,
+      "idle_mustered": 152,
       "idle_workers": 68,
       "independence_grievance_threshold": 50.919998,
       "is_expedition": false,
@@ -8019,6 +8103,7 @@
           "hunters_on_the_road": 153,
           "improvement": "populations[2].labor_assignments[0].improvement",
           "keep_hands": 84.419998,
+          "kill_progress": 64.970001,
           "kind": "populations[2].labor_assignments[0].kind",
           "kit_id": "populations[2].labor_assignments[0].kit_id",
           "kit_toe": [
@@ -8034,6 +8119,7 @@
             }
           ],
           "kit_workers_holding": 63.790001,
+          "lent_to_hunt": 6,
           "material": "populations[2].labor_assignments[0].material",
           "material_upkeep_demand": [
             {
@@ -8092,6 +8178,8 @@
             }
           ],
           "move_with_herd": true,
+          "muster_crew": 31,
+          "need_runway": 71.0,
           "net_rate_home": 19.51,
           "next_load_home_in": 67,
           "overdraws": false,
@@ -8110,6 +8198,8 @@
           "target_x": 175,
           "target_y": 186,
           "transit_keeps_turns": 14.11,
+          "turns_to_kill": 130,
+          "turns_until_hunt": 194,
           "useful_cutters": 110,
           "walk_out_remaining": 94,
           "walk_tiles": 160,
@@ -8133,6 +8223,7 @@
           "hunters_on_the_road": 22,
           "improvement": "populations[2].labor_assignments[1].improvement",
           "keep_hands": 63.639999,
+          "kill_progress": 35.509998,
           "kind": "populations[2].labor_assignments[1].kind",
           "kit_id": "populations[2].labor_assignments[1].kit_id",
           "kit_toe": [
@@ -8148,6 +8239,7 @@
             }
           ],
           "kit_workers_holding": 0.66,
+          "lent_to_hunt": 87,
           "material": "populations[2].labor_assignments[1].material",
           "material_upkeep_demand": [
             {
@@ -8206,6 +8298,8 @@
             }
           ],
           "move_with_herd": false,
+          "muster_crew": 56,
+          "need_runway": 81.589996,
           "net_rate_home": 24.16,
           "next_load_home_in": 148,
           "overdraws": true,
@@ -8224,6 +8318,8 @@
           "target_x": 198,
           "target_y": 187,
           "transit_keeps_turns": 35.360001,
+          "turns_to_kill": 173,
+          "turns_until_hunt": 7,
           "useful_cutters": 99,
           "walk_out_remaining": 115,
           "walk_tiles": 121,
@@ -8247,6 +8343,7 @@
           "hunters_on_the_road": 23,
           "improvement": "populations[2].labor_assignments[2].improvement",
           "keep_hands": 45.779999,
+          "kill_progress": 0.39,
           "kind": "populations[2].labor_assignments[2].kind",
           "kit_id": "populations[2].labor_assignments[2].kit_id",
           "kit_toe": [
@@ -8262,6 +8359,7 @@
             }
           ],
           "kit_workers_holding": 75.290001,
+          "lent_to_hunt": 100,
           "material": "populations[2].labor_assignments[2].material",
           "material_upkeep_demand": [
             {
@@ -8320,6 +8418,8 @@
             }
           ],
           "move_with_herd": false,
+          "muster_crew": 77,
+          "need_runway": 102.699997,
           "net_rate_home": 3.01,
           "next_load_home_in": 109,
           "overdraws": true,
@@ -8338,6 +8438,8 @@
           "target_x": 69,
           "target_y": 80,
           "transit_keeps_turns": 108.949997,
+          "turns_to_kill": 60,
+          "turns_until_hunt": 120,
           "useful_cutters": 200,
           "walk_out_remaining": 172,
           "walk_tiles": 10,

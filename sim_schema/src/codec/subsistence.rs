@@ -537,6 +537,7 @@ fn create_herds<'a>(
             create_material_payoffs(builder, &herd.corral_build_material_cost);
         let upkeep_toe = create_upkeep_toe(builder, &herd.upkeep_toe);
         let predator_eaten_by = builder.create_string(&herd.predator_eaten_by);
+        let keeping = builder.create_string(&herd.keeping);
         let entry = fb::HerdTelemetryState::create(
             builder,
             &fb::HerdTelemetryStateArgs {
@@ -697,6 +698,7 @@ fn create_herds<'a>(
                 upkeepHands: herd.upkeep_hands,
                 upkeepToolsShort: herd.upkeep_tools_short,
                 predatorEatenBy: Some(predator_eaten_by),
+                keeping: Some(keeping),
                 predatorEaten: herd.predator_eaten,
                 // **WHAT A PEN RING SWALLOWS TO RAISE** — appended last (append-only wire), and
                 // the material twin of `corralWorkCost`. It carries what `buildMaterialCost` above
@@ -1599,6 +1601,7 @@ fn decode_herd(herd: fb::HerdTelemetryState<'_>) -> HerdTelemetryState {
         upkeep_hands: herd.upkeepHands(),
         upkeep_tools_short: herd.upkeepToolsShort(),
         predator_eaten_by: text(herd.predatorEatenBy()),
+        keeping: text(herd.keeping()),
         predator_eaten: herd.predatorEaten(),
     }
 }

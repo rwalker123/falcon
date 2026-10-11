@@ -126,6 +126,8 @@ fn world_with_a_keeping_band() -> (App, UVec2) {
             assignments: vec![
                 LaborAssignment {
                     party: None,
+                    muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Forage {
                         tile: source,
                         floor: DEFAULT_ESCAPEMENT_FLOOR,
@@ -139,6 +141,8 @@ fn world_with_a_keeping_band() -> (App, UVec2) {
                 // The road-keeping — a pool of its own, on the band rather than on any tile.
                 LaborAssignment {
                     party: None,
+                    muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Roadwork,
                     workers: KEEP_CREW,
                     kit: None,
@@ -147,6 +151,8 @@ fn world_with_a_keeping_band() -> (App, UVec2) {
                 // …and so is the building, since §2.5.
                 LaborAssignment {
                     party: None,
+                    muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Builders,
                     workers: BUILD_CREW,
                     kit: None,

@@ -1354,6 +1354,28 @@ claim the settlement reached with nothing had no line at all. It now writes one 
 (`units 0` where unfilled) plus any unit paid against no claim; every reader that sums `units` reads
 those zeros as the zeros they are.
 
+- **A need row's crew is a second, hunt-turn pass.** A hunting-by-need row stands at zero hands, so
+  the standing lines never see the kit its crew would claim. For a band whose need row has a **planned crew**
+  (`LaborAssignment::planned_crew > 0`: the meal-sized crew the labor pass priced at its foot,
+  **whether the row is sending or still waiting**, so the kit is flagged ahead of the hunt and the
+  band can make it in time), the allocation is cloned, that crew is mustered through `LaborAllocation::muster_donors` (kit-carrying donors bring
+  their kit - `work-party.md` -> "Hunting by need"), every row's claim and the item budget are struck
+  again, and the take rows' lines are built a second time
+  (`snapshot::population::hunt_turn_lines` -> `hunt_turn_shortfall_lines`, through the same
+  `take_row_gear` and `band_tool_shortfall_lines`). `band_suggestions` takes that pass as its
+  `hunt_turn` argument and ranks over both readings with `craft_suggestions_over`: **each item's
+  shortfall is the larger of the two, never the sum** (the same people on different days); the
+  winning pass's sources are listed and `queued_units` is netted as before. **The panel and
+  auto-craft both call `band_suggestions` with the pass**, so a kit a going-out hunt crew is short of
+  is in the list auto-craft works down: it queues it like any other top suggestion (the offer marked
+  `suggested` for the item), and a need row with no planned crew adds nothing to either list. The
+  turn's own kit split is unchanged. The Gear readout (`kitItemConditions` /
+  `workersOnQuotedJob`) is deliberately **not** maxed: it states how far the gear reaches the rows
+  as they are staffed, not what to make. Pinned by
+  `hunt_by_need::{a_hunt_crews_missing_kit_is_suggested_though_the_standing_rows_are_kitted,
+  auto_craft_queues_the_kit_a_hunt_crew_is_short_of,
+  a_waiting_rows_planned_crew_is_equipped_ahead_of_the_hunt}` (each with its control) and
+  `craft_suggestions::tests::the_larger_of_two_passes_wins_per_item_and_they_are_never_summed`.
 - **The score is workers going without** — `(required − filled).max(0) × workers_per_unit`, summed
   over sources.
 - **The order** (`craft_suggestions::rank_of`): every **non-build** shortage first (a pool other than

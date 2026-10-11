@@ -294,6 +294,7 @@ fn crew_take_about(faction_id: u32) -> QueryPayload {
         kit_id: HUNT_KIT.to_string(),
         floor: ANY_FLOOR,
         max_workers: ANY_CREW_CAP,
+        follow: false,
     })
 }
 

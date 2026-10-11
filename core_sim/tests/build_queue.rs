@@ -182,6 +182,8 @@ fn world_with_a_queue_knowing(
         .iter()
         .map(|source| LaborAssignment {
             party: None,
+            muster_crew: 0,
+            planned_crew: 0,
             target: LaborTarget::Forage {
                 tile: *source,
                 floor: FOOD_PEAK,
@@ -197,6 +199,8 @@ fn world_with_a_queue_knowing(
         .collect();
     assignments.push(LaborAssignment {
         party: None,
+        muster_crew: 0,
+        planned_crew: 0,
         target: LaborTarget::Builders,
         workers: builders,
         // ⛔ A `builders` ROW carries no kit — the bare isolation rides the queue entry
@@ -954,6 +958,8 @@ fn world_with_a_half_tamed_herd(crew: u32, floor: f32) -> (App, Entity, String) 
     let assignments = vec![
         LaborAssignment {
             party: None,
+            muster_crew: 0,
+            planned_crew: 0,
             target: LaborTarget::Hunt {
                 fauna_id: herd_id.clone(),
                 floor,
@@ -965,6 +971,8 @@ fn world_with_a_half_tamed_herd(crew: u32, floor: f32) -> (App, Entity, String) 
         },
         LaborAssignment {
             party: None,
+            muster_crew: 0,
+            planned_crew: 0,
             target: LaborTarget::Builders,
             workers: BUILDERS,
             kit: None,
@@ -1746,6 +1754,8 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
     let assignments = vec![
         LaborAssignment {
             party: None,
+            muster_crew: 0,
+            planned_crew: 0,
             target: LaborTarget::Hunt {
                 fauna_id: RING_HERD.to_string(),
                 floor: FOOD_PEAK,
@@ -1759,6 +1769,8 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
         },
         LaborAssignment {
             party: None,
+            muster_crew: 0,
+            planned_crew: 0,
             target: LaborTarget::Forage {
                 tile: source,
                 floor: FOOD_PEAK,
@@ -1771,6 +1783,8 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
         },
         LaborAssignment {
             party: None,
+            muster_crew: 0,
+            planned_crew: 0,
             target: LaborTarget::Builders,
             workers: builders,
             kit: None,
@@ -2105,6 +2119,8 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
 
     let gather = |source: UVec2| LaborAssignment {
         party: None,
+        muster_crew: 0,
+        planned_crew: 0,
         target: LaborTarget::Forage {
             tile: source,
             floor: FOOD_PEAK,
@@ -2126,6 +2142,8 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
         gather(sources[0]),
         LaborAssignment {
             party: None,
+            muster_crew: 0,
+            planned_crew: 0,
             target: LaborTarget::Builders,
             workers: a_pool_that_finishes_a_cultivate_in_one_turn(),
             kit: None,
@@ -2137,6 +2155,8 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
         gather(sources[1]),
         LaborAssignment {
             party: None,
+            muster_crew: 0,
+            planned_crew: 0,
             target: LaborTarget::Builders,
             workers: BUILDERS,
             kit: None,

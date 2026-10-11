@@ -4,6 +4,7 @@ use super::*;
 
 use crate::belief::BeliefRegistry;
 use crate::belief_config::{BeliefConfig, BeliefConfigHandle};
+use crate::components::BandWorkforce;
 use crate::work_party::WorkParty;
 
 /// **"Is this crew actually working the source?"** — THE eligibility term that replaced the
@@ -41,6 +42,10 @@ fn crew_is_working_the_source(standing_above_floor: f32) -> bool {
 /// because `0.0` as a bare literal there reads as an arbitrary epsilon rather than as the exact
 /// boundary `max(0, B − floor·K)` is clamped at.
 const NOTHING_STANDS_ABOVE_THE_FLOOR: f32 = 0.0;
+
+/// A row whose `SourceYield::actual` is at most this landed no food this turn — for a need row, no
+/// kill (hunting by need).
+const NOTHING_LANDED: f32 = 0.0;
 /// **A CAMP KILL HAULS NOTHING** — a hunt or slaughter within `band_work_range` is carried no
 /// distance, so the sled ([`crate::equipment_config::WearQuantum::BiomassHauled`]) is charged for no
 /// biomass. A posted kill is charged for what its packs seat ([`crate::fauna::AnimalTake::carried`]).
@@ -3851,7 +3856,10 @@ impl BandReach {
 /// **WHERE THIS ROW'S WORKERS ARE STANDING** — the source's own tile, because a work party's
 /// position *is* its source's (`crate::work_party`). A patch and a deposit cannot move, a herd is
 /// wherever it is this turn, and a band-wide role stands with the band and takes no party at all.
-fn party_source_position(target: &LaborTarget, registry: &HerdRegistry) -> Option<UVec2> {
+pub(crate) fn party_source_position(
+    target: &LaborTarget,
+    registry: &HerdRegistry,
+) -> Option<UVec2> {
     match target {
         LaborTarget::Forage { tile, .. } | LaborTarget::Extract { tile, .. } => Some(*tile),
         LaborTarget::Hunt { fauna_id, .. } => registry.find(fauna_id).map(|herd| herd.position()),
@@ -4282,8 +4290,7 @@ fn land_food_home(
     for pack in &delivery.packs {
         for (class, amount) in pack_classes(pack) {
             // A class the table does not carry never rots, so its lot carries no age.
-            let age = keeping
-                .shelf_life(&class)
+            let age = crate::spoilage::band_shelf_life(keeping, &class)
                 .map_or(crate::work_party::NO_WALK, |_| pack.walk_turns);
             *lots
                 .entry((class, age))
@@ -5100,6 +5107,117 @@ fn settle_hunt_band_side(
     }
 }
 
+/// **THE HANDS A NEED ROW BORROWED THIS TURN**, so [`restore_muster`] can hand them back.
+#[derive(Debug, Default)]
+struct AppliedMuster {
+    /// `(donor row, hands lent)`.
+    lent: Vec<(usize, u32)>,
+    /// The need rows that were crewed this turn — their `workers` go back to zero.
+    crewed: Vec<usize>,
+}
+
+impl AppliedMuster {
+    /// The hands donor row `idx` lent this turn.
+    fn lent_by(&self, idx: usize) -> u32 {
+        self.lent
+            .iter()
+            .filter(|(row, _)| *row == idx)
+            .map(|(_, hands)| hands)
+            .sum()
+    }
+}
+
+/// **APPLY LAST TURN'S DECISION: crew every need row that planned a hunt, from the band's own hands**
+/// (`docs/plan_roaming_bands.md` §Hunting by need).
+///
+/// The donors are chosen NOW, never stored — [`LaborAllocation::muster_donors`], the same function
+/// the snapshot publishes its preview from — and the plan is clamped to what they hold today, so a
+/// band that lost hands since it decided simply sends a smaller crew.
+///
+/// **Only a camp kill is mustered.** A herd that has left the registry or stands beyond
+/// `band_work_range` of the band cannot be hunted by a one-turn crew (it would need porters on the
+/// road), so the plan is forced to `0` and the band hunts nothing this turn.
+/// **THE GEAR [`apply_muster`] CHOOSES DONORS AGAINST** - the band's equipment, its wear ledger and
+/// every row's take-kit claim as the rows hold it (index-aligned with the allocation, struck before
+/// any hand is lent).
+struct MusterGear<'a> {
+    equipment: &'a crate::equipment_config::EquipmentConfig,
+    wear: &'a BandEquipment,
+    claims: &'a [f32],
+}
+
+fn apply_muster(
+    allocation: &mut LaborAllocation,
+    mut idle: u32,
+    herds: &HerdRegistry,
+    band_pos: Option<UVec2>,
+    labor: &crate::labor_config::LaborConfig,
+    grid: (u32, u32, bool),
+    gear: &MusterGear<'_>,
+) -> AppliedMuster {
+    let mut applied = AppliedMuster::default();
+    let need_rows: Vec<usize> = allocation
+        .assignments
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| row.is_need_row() && row.muster_crew > 0)
+        .map(|(idx, _)| idx)
+        .collect();
+    for need_idx in need_rows {
+        let in_camp_range = match (&allocation.assignments[need_idx].target, band_pos) {
+            (LaborTarget::Hunt { fauna_id, .. }, Some(band)) => {
+                herds.find(fauna_id).is_some_and(|herd| {
+                    crate::grid_utils::hex_distance_wrapped(herd.current_pos, band, grid.0, grid.2)
+                        <= crate::work_party::party_begins_past(labor)
+                })
+            }
+            _ => false,
+        };
+        if !in_camp_range {
+            allocation.assignments[need_idx].muster_crew = 0;
+            continue;
+        }
+        let crew = allocation.assignments[need_idx].muster_crew;
+        // The crew is mustered by the one pricing the curve, the capture and the craft pass use:
+        // idle first, then the donors (kit-carrying ones first when the hunt's kit is short), on the
+        // claims the rows hold before any hand is lent.
+        let hunt_kit = allocation.assignments[need_idx].kit_choice(gear.equipment);
+        let target = allocation.assignments[need_idx].target.clone();
+        let is_local = |donor: &LaborTarget| {
+            crate::hunt_by_need::source_is_local(donor, herds, band_pos, labor, (grid.0, grid.2))
+        };
+        let plan = crate::hunt_by_need::MusterPricing {
+            allocation: &*allocation,
+            target: &target,
+            need_idx,
+            idle,
+            is_local: &is_local,
+            claims: gear.claims,
+        }
+        .plan_at(crew, &hunt_kit, gear.equipment, gear.wear);
+        for (row, hands) in &plan.from_rows {
+            allocation.assignments[*row].workers -= hands;
+            applied.lent.push((*row, *hands));
+        }
+        idle -= plan.from_idle;
+        allocation.assignments[need_idx].workers = plan.total();
+        applied.crewed.push(need_idx);
+    }
+    applied
+}
+
+/// **GIVE THE BORROWED HANDS BACK** — every donor row's crew restored, every crewed need row back
+/// to the zero workers it holds between hunts. Row indices are the ones [`apply_muster`] saw, so it
+/// runs before anything removes a row.
+fn restore_muster(allocation: &mut LaborAllocation, applied: &AppliedMuster) {
+    for (row, hands) in &applied.lent {
+        allocation.assignments[*row].workers += hands;
+    }
+    for row in &applied.crewed {
+        allocation.assignments[*row].workers = NO_CREW_ON_THIS_ACTIVITY;
+    }
+}
+
 /// **EVERY PIECE OF A BAND [`advance_labor_allocation`] TOUCHES**, named because the tuple crossed
 /// clippy's complexity bar when the bench joined it.
 ///
@@ -5500,6 +5618,74 @@ pub fn advance_labor_allocation(
             }
             announce_shed_crew(&mut event_log, tick.0, faction, band_id, &shed);
         }
+        // ## ⛔ HUNTING BY NEED — THE CREW IS MUSTERED HERE, AND HANDED BACK AFTER THE ROW WALK
+        //
+        // A need row (`move_with_herd`) holds no standing workers. When last turn's decision said a
+        // crew goes out, its hands are borrowed from the band's own now — idle first, then the
+        // source rows nobody has a party on, `Low` priority first ([`LaborAllocation::muster_donors`])
+        // — so everything downstream (the pools, the site keeping, the item budget, the row walk's
+        // `hunt_take`) reads the numbers the turn is really worked at. It sits after the starvation
+        // shed on purpose: the shed has already cut the allocation to the people the band still has.
+        let idle_to_muster =
+            BandWorkforce::resolve(Some(&cohort), Some(&allocation), bench.as_deref()).idle();
+        // **The rows' claims AS THEY STAND** - donors at full strength, the need row at nothing -
+        // so the muster can tell which donors are holding the hunt's kit. Struck only when a crew
+        // is planned.
+        let standing_claims = allocation
+            .assignments
+            .iter()
+            .any(|row| row.is_need_row() && row.muster_crew > 0)
+            .then(|| {
+                let ground_of = |pos: UVec2| {
+                    tile_registry
+                        .index(pos.x, pos.y)
+                        .and_then(|entity| tiles.get(entity).ok())
+                        .cloned()
+                };
+                let season_of = |pos: UVec2| {
+                    tile_registry
+                        .index(pos.x, pos.y)
+                        .and_then(|entity| food_modules.get(entity).ok())
+                        .map_or(NO_FORAGE_SEASON, |module| module.seasonal_weight.max(0.0))
+                };
+                crate::take_claims::row_claims(
+                    &crate::take_claims::ClaimSources {
+                        forage: &forage_registry,
+                        herds: &registry,
+                        deposits: &deposits,
+                        ground_of: &ground_of,
+                        season_of: &season_of,
+                        map_seed,
+                        labor: &labor,
+                        flora: &flora,
+                        fauna: &fauna,
+                        equipment: &equipment_cfg,
+                        extraction: &extraction_cfg,
+                        ladder: &ladder,
+                        materials: &materials_cfg,
+                        combat: &combat_config,
+                        person: person_profile,
+                        start: fauna::ProjectionStart::AfterRegrowth,
+                    },
+                    &allocation,
+                    &band_kit,
+                )
+            });
+        let muster = apply_muster(
+            &mut allocation,
+            idle_to_muster,
+            &registry,
+            band_pos,
+            &labor,
+            (grid_width, grid_height, wrap_horizontal),
+            &MusterGear {
+                equipment: &equipment_cfg,
+                wear: &band_kit,
+                claims: standing_claims
+                    .as_ref()
+                    .map_or(&[][..], |claims| claims.claims.as_slice()),
+            },
+        );
         // **THE HAY LEDGER IS CLEARED BEFORE ANY EXIT OUT OF THIS BAND'S TURN**, and re-summed at the
         // foot of the loop from the rows it actually resolved. Every other per-turn ledger the
         // cohort publishes is rebuilt from an emptied container (`last_yields` is resized to the
@@ -5977,20 +6163,25 @@ pub fn advance_labor_allocation(
             // at a time, so everything below prices **the hunters present** — `0` while the party
             // is still walking out. A local row has no party at all and reads `assignment.workers`
             // exactly as it always did, which is the identity the whole model rests on.
-            let posting = party_source_position(&assignment.target, &registry).and_then(|source| {
-                post_a_party(
-                    assignment.party.as_ref(),
-                    &assignment.target,
-                    source,
-                    band_pos,
-                    assignment.workers,
-                    (grid_width, grid_height, wrap_horizontal),
-                    &labor,
-                    &supply_cfg,
-                    &roads,
-                    widest_route_reach,
-                )
-            });
+            // **A NEED ROW NEVER POSTS A PARTY**: a one-turn crew cannot run a caravan with porters on
+            // the road, so a need row is hunted only as a camp kill, inside `band_work_range`
+            // (`docs/plan_roaming_bands.md` §Hunting by need).
+            let posting = party_source_position(&assignment.target, &registry)
+                .filter(|_| !assignment.is_need_row())
+                .and_then(|source| {
+                    post_a_party(
+                        assignment.party.as_ref(),
+                        &assignment.target,
+                        source,
+                        band_pos,
+                        assignment.workers,
+                        (grid_width, grid_height, wrap_horizontal),
+                        &labor,
+                        &supply_cfg,
+                        &roads,
+                        widest_route_reach,
+                    )
+                });
             let workers = posting
                 .as_ref()
                 .map_or(assignment.workers, |posting| posting.working_crew);
@@ -6018,6 +6209,11 @@ pub fn advance_labor_allocation(
             // the row silently, with the party still out there. The row holds a posting; the
             // arithmetic beneath it already resolves a zero working crew to a zero take on its own.
             let take_crew_present = assignment.workers > NO_CREW_ON_THIS_ACTIVITY;
+            // **A DONOR THAT LENT ALL ITS HANDS TO A NEED ROW STILL HOLDS ITS SOURCE**: the loan is
+            // for this turn only and is handed back after the walk, so the holding test below asks
+            // about the hands the row had before the muster, not the hands it has left. (The lesson
+            // above still asks who is actually there — a lent hand is not practising.)
+            let row_is_held = take_crew_present || muster.lent_by(idx) > NO_CREW_ON_THIS_ACTIVITY;
             // **AND THE LESSON ASKS WHO IS AT THE SOURCE.** A party still on its walk out, or with
             // every hand on the road, is not practising on the ground however well staffed the row
             // is. On a local row this is `take_crew_present` exactly.
@@ -6288,7 +6484,7 @@ pub fn advance_labor_allocation(
                     // meter yet and may have no gatherers either — that is the create-from-nothing
                     // case the rung exists for — so the row survives on the declaration alone until
                     // the player withdraws it (`unqueue`) or puts the source down (`abandon`).
-                    if !take_crew_present
+                    if !row_is_held
                         && queued.is_none()
                         && !source_has_a_meter_at_risk(
                             &assignment.target,
@@ -7522,7 +7718,11 @@ pub fn advance_labor_allocation(
                     // animal twin of the Forage arm's, on the animal web's own seam
                     // (`fauna::herd_keeping_rung`, which is `None` for a herd nobody owns and has
                     // not penned). A band with no hands on a wild herd is simply not hunting it.
-                    if !take_crew_present
+                    //
+                    // **A NEED ROW IS KEPT BY ITS FLAG**, not by hands: it holds none between hunts
+                    // (`docs/plan_roaming_bands.md` §Hunting by need).
+                    if !row_is_held
+                        && !assignment.is_need_row()
                         && queued.is_none()
                         && !source_has_a_meter_at_risk(
                             &assignment.target,
@@ -9240,7 +9440,7 @@ pub fn advance_labor_allocation(
                     // **A HOLDING ROW LASTS EXACTLY AS LONG AS THERE IS SOMETHING TO HOLD** — the
                     // two food webs' rule. A working still on its free floor is a wild stand: with
                     // no crew and nothing declared, the band has nothing here.
-                    if !take_crew_present
+                    if !row_is_held
                         && queued.is_none()
                         && !source_has_a_meter_at_risk(
                             &assignment.target,
@@ -9788,6 +9988,19 @@ pub fn advance_labor_allocation(
                 }
             }
         }
+        // **THE MUSTERED HANDS GO BACK** — every donor's crew restored and the need row to zero, so
+        // nothing past the row walk (the lapse sweep, the wire, next turn) sees a borrowed hand.
+        restore_muster(&mut allocation, &muster);
+        // **WHICH HERDS A CREW WORKED THIS TURN**, by id — the rows' indices shift when the lapse
+        // sweep below removes one, and the decision at the foot of the pass reads this after it.
+        let herds_crewed_this_turn: Vec<String> = muster
+            .crewed
+            .iter()
+            .filter_map(|idx| match &allocation.assignments[*idx].target {
+                LaborTarget::Hunt { fauna_id, .. } => Some(fauna_id.clone()),
+                _ => None,
+            })
+            .collect();
         // **Stamp the fodder-flow rate onto every pen this band keeps** (Flora Roster F3, §5.3), now
         // that the whole band's hay harvest (`band_fodder_inflow`) is summed. Split evenly across the
         // band's pens so the *total* K contribution reflects the *total* hay grown, not N copies of
@@ -10296,6 +10509,164 @@ pub fn advance_labor_allocation(
             yields.remove(idx);
         }
         allocation.last_yields = yields;
+        // ## ⛔ HUNTING BY NEED — THE DECISION FOR NEXT TURN
+        //
+        // Struck here, at the foot of the pass, because it reads what the pass leaves: the larder
+        // after the take, the income schedule, the herd after the hunt (its wounds included). For
+        // each need row: does the band send a crew next turn, and how big? The assessment is
+        // `hunt_by_need::assess_need` — the same one the snapshot publishes its readout from — over
+        // the **musterable pool** (idle hands plus every donor row's), priced against the band's
+        // runway as the snapshot's `turnsOfFood` states it.
+        let need_rows: Vec<usize> = allocation
+            .assignments
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row.is_need_row())
+            .map(|(idx, _)| idx)
+            .collect();
+        if !need_rows.is_empty() {
+            let idle_now =
+                BandWorkforce::resolve(Some(&cohort), Some(&allocation), bench.as_deref()).idle();
+            let wear_now = band_equipment.as_deref().unwrap_or(&band_kit);
+            let ground_of = |pos: UVec2| {
+                tile_registry
+                    .index(pos.x, pos.y)
+                    .and_then(|entity| tiles.get(entity).ok())
+                    .cloned()
+            };
+            let season_of = |pos: UVec2| {
+                tile_registry
+                    .index(pos.x, pos.y)
+                    .and_then(|entity| food_modules.get(entity).ok())
+                    .map_or(NO_FORAGE_SEASON, |module| module.seasonal_weight.max(0.0))
+            };
+            let claims = crate::take_claims::row_claims(
+                &crate::take_claims::ClaimSources {
+                    forage: &forage_registry,
+                    herds: &registry,
+                    deposits: &deposits,
+                    ground_of: &ground_of,
+                    season_of: &season_of,
+                    map_seed,
+                    labor: &labor,
+                    flora: &flora,
+                    fauna: &fauna,
+                    equipment: &equipment_cfg,
+                    extraction: &extraction_cfg,
+                    ladder: &ladder,
+                    materials: &materials_cfg,
+                    combat: &combat_config,
+                    person: person_profile,
+                    // Between turns, exactly as the snapshot's readout is struck.
+                    start: fauna::ProjectionStart::BeforeRegrowth,
+                },
+                &allocation,
+                wear_now,
+            );
+            let decided: Vec<(usize, u32, u32)> = need_rows
+                .iter()
+                .map(|&idx| {
+                    let row = &allocation.assignments[idx];
+                    let LaborTarget::Hunt {
+                        fauna_id, floor, ..
+                    } = &row.target
+                    else {
+                        return (idx, NO_CREW_ON_THIS_ACTIVITY, NO_CREW_ON_THIS_ACTIVITY);
+                    };
+                    let Some(herd) = registry.find(fauna_id) else {
+                        return (idx, NO_CREW_ON_THIS_ACTIVITY, NO_CREW_ON_THIS_ACTIVITY);
+                    };
+                    let in_camp_range = crate::grid_utils::hex_distance_wrapped(
+                        herd.current_pos,
+                        band_pos,
+                        grid_width,
+                        wrap_horizontal,
+                    ) <= crate::work_party::party_begins_past(&labor);
+                    if !in_camp_range {
+                        return (idx, NO_CREW_ON_THIS_ACTIVITY, NO_CREW_ON_THIS_ACTIVITY);
+                    }
+                    // **The need clock for THIS herd's kill** — its meal and the runway of the food
+                    // that kill replaces ([`crate::hunt_by_need::need_clock`]).
+                    let clock = crate::hunt_by_need::need_clock(
+                        &cohort,
+                        Some(&allocation),
+                        &demographics_cfg,
+                        false,
+                        herd,
+                        &fauna,
+                    );
+                    let kit = row.kit_choice(&equipment_cfg);
+                    let other_rows = allocation.rows_excluding_source(
+                        &equipment_cfg,
+                        &row.target,
+                        &claims.claims,
+                    );
+                    let is_local = |donor: &LaborTarget| {
+                        crate::hunt_by_need::source_is_local(
+                            donor,
+                            &registry,
+                            Some(band_pos),
+                            &labor,
+                            (grid_width, wrap_horizontal),
+                        )
+                    };
+                    // **The gear the muster brings** - the curve prices the crew over the free units
+                    // plus the kit the lent donors hold, not over the free units alone.
+                    let pricing = crate::hunt_by_need::MusterPricing {
+                        allocation: &allocation,
+                        target: &row.target,
+                        need_idx: idx,
+                        idle: idle_now,
+                        is_local: &is_local,
+                        claims: &claims.claims,
+                    };
+                    let assessment = crate::hunt_by_need::assess_need(
+                        &fauna::HuntCrewCurveInputs {
+                            herd,
+                            fauna: &fauna,
+                            equipment: &equipment_cfg,
+                            kit: &kit,
+                            wear: wear_now,
+                            other_rows: &other_rows,
+                            muster: Some(&pricing),
+                            priority: allocation.priority_on(&row.target),
+                            intrinsic: person_profile,
+                            tuning: combat_tuning,
+                            hunt_injury_damage_per_animal: hunt_injury_damage,
+                            range_sigmas: combat_config.forecast_range_sigmas,
+                            floor: *floor,
+                            baseline_haul_rate,
+                            max_workers: allocation.musterable_pool(idle_now, idx, &is_local),
+                            keeping: fauna::herd_crew_keeping_next_turn(
+                                herd, &fauna, &ladder, None,
+                            ),
+                        },
+                        arrivals_horizon,
+                        clock.runway,
+                        fauna.follow.need_margin_turns,
+                        // A hunt in progress: a crew was out this turn, the animal took damage and
+                        // is not down — no kill landed on the row.
+                        herds_crewed_this_turn.contains(fauna_id)
+                            && herd.wounds.pending() > 0.0
+                            && allocation.last_yields[idx].actual <= NOTHING_LANDED,
+                        &clock.meal,
+                    );
+                    (
+                        idx,
+                        if assessment.send {
+                            assessment.crew
+                        } else {
+                            NO_CREW_ON_THIS_ACTIVITY
+                        },
+                        assessment.crew,
+                    )
+                })
+                .collect();
+            for (idx, crew, planned) in decided {
+                allocation.assignments[idx].muster_crew = crew;
+                allocation.assignments[idx].planned_crew = planned;
+            }
+        }
         // **A row that lapsed mid-loop takes its declaration with it**, on the same rule the
         // pre-loop prune enforces: an entry requires a row. **And a ring the dropped entry was
         // funding stops with it** — see [`fauna::cancel_dropped_rings`]; the lapse is the one exit
@@ -13919,6 +14290,8 @@ mod labor_yield_tests {
                 .expect("the fixture band has an allocation");
             allocation.assignments.push(LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Builders,
                 // ⛔ **A `builders` ROW CARRIES NO KIT AT ALL** since §4.7a ②: the builders' kit was
                 // a property of the queue ENTRY, and `assign_labor` refuses a token here. Neither
@@ -14179,6 +14552,8 @@ mod labor_yield_tests {
             vec![
                 LaborAssignment {
                     party: None,
+                    muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Forage {
                         tile: UVec2::new(0, 0),
                         floor: 0.5,
@@ -14191,6 +14566,8 @@ mod labor_yield_tests {
                 },
                 LaborAssignment {
                     party: None,
+                    muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Hunt {
                         fauna_id: HERD_ID.to_string(),
                         floor: 0.5,
@@ -14265,6 +14642,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.0,
@@ -14308,6 +14687,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -14451,6 +14832,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
                     floor,
@@ -14485,6 +14868,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -14552,6 +14937,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
                     floor: 0.0,
@@ -14686,6 +15073,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
                     floor: 0.5,
@@ -14702,6 +15091,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: PEN_FLOOR,
@@ -14907,6 +15298,8 @@ mod labor_yield_tests {
                 tile,
                 vec![LaborAssignment {
                     party: None,
+                    muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Forage {
                         tile: SOURCE,
                         floor: BUILDER_FLOOR,
@@ -15044,6 +15437,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: SHALLOW_DRAW_FLOOR,
@@ -15109,6 +15504,8 @@ mod labor_yield_tests {
                 tile,
                 vec![LaborAssignment {
                     party: None,
+                    muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Hunt {
                         fauna_id: HERD_ID.to_string(),
                         floor: crate::fauna::MSY_BIOMASS_FRACTION,
@@ -15225,6 +15622,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -15249,6 +15648,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor,
@@ -15483,6 +15884,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -15702,6 +16105,8 @@ mod labor_yield_tests {
                         tile,
                         vec![LaborAssignment {
                             party: None,
+                            muster_crew: 0,
+                            planned_crew: 0,
                             target: LaborTarget::Forage {
                                 tile: SOURCE,
                                 floor: policy,
@@ -15795,6 +16200,8 @@ mod labor_yield_tests {
                             tile,
                             vec![LaborAssignment {
                                 party: None,
+                                muster_crew: 0,
+                                planned_crew: 0,
                                 target: LaborTarget::Hunt {
                                     fauna_id: HERD_ID.to_string(),
                                     floor: policy,
@@ -16009,6 +16416,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: 0.5,
@@ -16027,6 +16436,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -16160,6 +16571,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
                     floor: 0.5,
@@ -16261,6 +16674,8 @@ mod labor_yield_tests {
                 tile,
                 vec![LaborAssignment {
                     party: None,
+                    muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Forage {
                         tile: SOURCE,
                         floor: policy,
@@ -16344,6 +16759,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
                     floor: 0.5,
@@ -16363,6 +16780,8 @@ mod labor_yield_tests {
             idle_tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: UVec2::new(1, 0),
                     floor: 0.5,
@@ -16411,6 +16830,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: 0.5,
@@ -16514,6 +16935,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: 0.5,
@@ -16546,6 +16969,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: 0.5,
@@ -16640,6 +17065,8 @@ mod labor_yield_tests {
                 tile,
                 vec![LaborAssignment {
                     party: None,
+                    muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Forage {
                         tile: SOURCE,
                         floor: 0.5,
@@ -16738,6 +17165,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -16777,6 +17206,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -16852,6 +17283,8 @@ mod labor_yield_tests {
                 tile,
                 vec![LaborAssignment {
                     party: None,
+                    muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Hunt {
                         fauna_id: HERD_ID.to_string(),
                         floor: 0.5,
@@ -17044,6 +17477,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: BUILDER_FLOOR,
@@ -17199,6 +17634,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: BUILDER_FLOOR,
@@ -17333,6 +17770,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: BUILDER_FLOOR,
@@ -17510,6 +17949,8 @@ mod labor_yield_tests {
             vec![
                 LaborAssignment {
                     party: None,
+                    muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Hunt {
                         fauna_id: HERD_ID.to_string(),
                         floor: BUILDER_FLOOR,
@@ -17523,6 +17964,8 @@ mod labor_yield_tests {
                 // because a build's gear is a property of the queue ENTRY and not of the band.
                 LaborAssignment {
                     party: None,
+                    muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Builders,
                     workers: builders,
                     kit: None,
@@ -17748,6 +18191,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: BUILDER_FLOOR,
@@ -17933,6 +18378,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: BUILDER_FLOOR,
@@ -18093,6 +18540,8 @@ mod labor_yield_tests {
                 .expect("the fixture band has an allocation");
             allocation.assignments.push(LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: BUILDER_FLOOR,
@@ -18960,6 +19409,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: BUILDER_FLOOR,
@@ -19047,6 +19498,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: 0.5,
@@ -19080,6 +19533,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -19113,6 +19568,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -19159,6 +19616,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: policy,
@@ -19179,6 +19638,8 @@ mod labor_yield_tests {
             tile,
             vec![LaborAssignment {
                 party: None,
+                muster_crew: 0,
+                planned_crew: 0,
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: policy,

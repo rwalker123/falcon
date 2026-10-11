@@ -552,6 +552,19 @@ impl FoodMix {
         self.classes.is_empty()
     }
 
+    /// **A copy holding only the classes `keep` accepts**, every lot and its age intact — the slice of
+    /// a larder one question is about (`snapshot::kill_food_terms`: the food a kill replaces).
+    pub fn retaining(&self, keep: impl Fn(&str) -> bool) -> FoodMix {
+        FoodMix {
+            classes: self
+                .classes
+                .iter()
+                .filter(|(class, _)| keep(class.as_str()))
+                .map(|(class, batches)| (class.clone(), batches.clone()))
+                .collect(),
+        }
+    }
+
     /// `(class, amount)` in class-id order, each class's lots summed.
     pub fn iter(&self) -> impl Iterator<Item = (&str, Scalar)> {
         self.classes.iter().map(|(class, batches)| {
@@ -2922,6 +2935,19 @@ impl LaborTarget {
     /// demand, no share, and no command the player could issue to fix it.
     ///
     /// Stated exhaustively so a new target has to answer the question rather than inherit a default.
+    /// **A NEED ROW** — a hunt row in migration mode (`move_with_herd`), which holds no standing
+    /// workers and is crewed from the band's own hands only on the turns it needs meat
+    /// (`docs/plan_roaming_bands.md` §Hunting by need).
+    pub fn is_need_row(&self) -> bool {
+        matches!(
+            self,
+            LaborTarget::Hunt {
+                move_with_herd: true,
+                ..
+            }
+        )
+    }
+
     pub fn is_source(&self) -> bool {
         match self {
             LaborTarget::Forage { .. }
@@ -3084,6 +3110,28 @@ pub struct LaborAssignment {
     /// source's live position, so a rollback record or a command no-op guard that compared it would
     /// report *nothing changed* as a change on every turn the herd moved.
     pub party: Option<crate::work_party::WorkParty>,
+    /// **HUNTING BY NEED — THE HANDS THIS ROW SENDS NEXT TURN** (`docs/plan_roaming_bands.md`
+    /// §Hunting by need). Only a *need row* (a hunt row with `move_with_herd`) ever carries a
+    /// non-zero value: it holds no standing workers, so the labor pass decides at its foot whether a
+    /// crew goes out next turn and writes the crew size here; `0` is *waiting*.
+    ///
+    /// The crew is **mustered from the band's own hands for that one turn**
+    /// ([`LaborAllocation::muster_donors`]) and handed back at the end of the pass, so the donors
+    /// are never stored — they are chosen at application time against what the band holds then.
+    ///
+    /// ⛔ **IT IS OUTSIDE THIS TYPE'S EQUALITY**, for [`Self::party`]'s reason: it is a fact the turn
+    /// restamps, not an order, and a rollback record or command no-op guard that compared it would
+    /// report *nothing changed* as a change every turn. It does ride the save checkpoint.
+    pub muster_crew: u32,
+    /// **HUNTING BY NEED - THE CREW THE ROW WOULD SEND, whether or not it sends yet.** The meal-sized
+    /// crew `assess_need` priced at the same foot-of-pass decision that writes [`Self::muster_crew`]
+    /// (`0` when no crew can be raised, the herd is gone or out of camp range). A waiting row has
+    /// `muster_crew == 0` and a planned crew: the craft suggestions and auto-craft read it
+    /// (`snapshot::population::hunt_turn_lines`) so the kit that crew would claim is flagged and made
+    /// AHEAD of the hunt, not on the turn it goes out.
+    ///
+    /// ⛔ **OUTSIDE THIS TYPE'S EQUALITY**, for [`Self::muster_crew`]'s reason, and it rides the save.
+    pub planned_crew: u32,
 }
 
 /// ⛔ **EQUALITY IS THE ORDER THE PLAYER GAVE, AND THE PARTY IS NOT PART OF IT.**
@@ -3116,6 +3164,52 @@ impl PartialEq for LaborAssignment {
 // keeper crew (`maintain <faction> <source…> <workers>`), which left the tile one slice before the
 // build did, for the same waste-of-an-indivisible-supplier reason.
 
+/// **WHO A NEED ROW'S CREW IS MADE OF FOR ONE TURN** — [`LaborAllocation::muster_donors`]'s answer.
+/// Never stored: it is chosen against what the donors hold when it is applied.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MusterPlan {
+    /// Hands taken from the band's idle ones — they go first.
+    pub from_idle: u32,
+    /// `(row index, hands)` taken from donor rows, in the order they gave them up.
+    pub from_rows: Vec<(usize, u32)>,
+}
+
+/// **HOW SHORT THE HUNT'S TAKE KIT IS, AND WHO IS HOLDING IT** — what [`LaborAllocation::muster_donors`]
+/// reads to put kit-carrying donors first. Struck by `hunt_by_need::muster_kit` from the band's
+/// own item budget (`BandItemBudget`, the claims the turn settles on), never from a parallel count.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MusterKit {
+    /// Hands of the crew the band cannot arm from units no row is claiming — `0` when the kit is
+    /// not short, and then the donor order is Priority alone.
+    pub shortfall: u32,
+    /// Per assignment index: the hands on that row holding a unit of a **short** item of the hunt
+    /// kit (the row carries the item and was settled units of it). Lending these frees their kit for
+    /// the crew; lending any other hand frees nothing.
+    pub carried: Vec<u32>,
+}
+
+impl MusterKit {
+    /// The hands on row `idx` whose lending frees a unit of the short kit.
+    pub fn carried_by(&self, idx: usize) -> u32 {
+        self.carried.get(idx).copied().unwrap_or(0)
+    }
+}
+
+impl MusterPlan {
+    /// The crew this plan raises — it may be short of the one asked for.
+    pub fn total(&self) -> u32 {
+        self.from_idle + self.from_rows.iter().map(|(_, hands)| hands).sum::<u32>()
+    }
+
+    /// What donor row `idx` gives up under this plan.
+    pub fn lent_by(&self, idx: usize) -> u32 {
+        self.from_rows
+            .iter()
+            .find(|(row, _)| *row == idx)
+            .map_or(0, |(_, hands)| *hands)
+    }
+}
+
 impl LaborAssignment {
     /// **EVERY HAND THIS ROW HOLDS** — the take crew, and nothing else.
     ///
@@ -3127,6 +3221,11 @@ impl LaborAssignment {
     /// and a future third allocation on a source would answer it here.
     pub fn staffed_total(&self) -> u32 {
         self.workers
+    }
+
+    /// Whether this row is a need row ([`LaborTarget::is_need_row`]).
+    pub fn is_need_row(&self) -> bool {
+        self.target.is_need_row()
     }
 
     /// **The kit this row is priced at** — its own choice, or the job's default when it named none.
@@ -6041,21 +6140,133 @@ impl LaborAllocation {
             {
                 if keep != Some(fauna_id.as_str()) {
                     *move_with_herd = false;
+                    // The row is an ordinary hunt again, so its need-row plan goes with the flag.
+                    assignment.muster_crew = 0;
+                    assignment.planned_crew = 0;
                 }
             }
         }
     }
 
-    /// The herd this band's camp follows, if any hunt row with hands on it has migration mode on.
+    /// The herd this band's camp follows, if any hunt row has migration mode on. **A need row
+    /// follows whatever its head count** — it holds no standing workers, so the flag alone is what
+    /// keeps the camp with the herd (`docs/plan_roaming_bands.md` §Hunting by need).
     pub fn followed_herd(&self) -> Option<&str> {
         self.assignments.iter().find_map(|a| match &a.target {
             LaborTarget::Hunt {
                 fauna_id,
                 move_with_herd: true,
                 ..
-            } if a.staffed_total() > 0 => Some(fauna_id.as_str()),
+            } => Some(fauna_id.as_str()),
             _ => None,
         })
+    }
+
+    /// **THE BAND'S MUSTER FOR ONE NEED ROW** — who the `crew` hunting row `need_idx` is made of for
+    /// the one turn it goes out. The ONE function the labor pass applies, the snapshot capture
+    /// publishes from and the craft suggestions equip, so the board, the turn and the shopping list
+    /// cannot disagree.
+    ///
+    /// **Idle hands first**, then the band's other *source* rows (forage, hunt, extract) that have no
+    /// work party posted and are not need rows themselves, ordered by [`SourcePriority`] `Low` →
+    /// `Normal` → `High`, ties broken by the **later row first**. Role rows (scouts, warriors,
+    /// builders), the bench's crew and road keepers are never donors. It takes up to `crew` and may
+    /// come up short ([`MusterPlan::total`] is what it got).
+    ///
+    /// **When the hunt's take kit is short** (`kit.shortfall > 0`), donors that are holding it come
+    /// first — lowest Priority first among them, the later row first on a tie — and give up hands
+    /// only as far as the shortfall in kitted hands, because a lent hand's unit goes to the crew
+    /// instead of leaving its own row bare to be stripped by the budget. Then the rest, in the
+    /// ordinary order. With the kit not short the order is Priority alone.
+    ///
+    /// **A donor's source must be within the band's work range**, decided by geometry through
+    /// `is_local` (see [`crate::hunt_by_need::source_is_local`]) rather than by whether a party has
+    /// been posted yet: a brand-new far row has no party and must still never lend.
+    pub fn muster_donors(
+        &self,
+        idle: u32,
+        need_idx: usize,
+        crew: u32,
+        is_local: &dyn Fn(&LaborTarget) -> bool,
+        kit: &MusterKit,
+    ) -> MusterPlan {
+        let from_idle = idle.min(crew);
+        let mut wanted = crew - from_idle;
+        let order = self.donor_order(need_idx, is_local);
+        let mut taken: BTreeMap<usize, u32> = BTreeMap::new();
+        fn give(taken: &mut BTreeMap<usize, u32>, idx: usize, hands: u32, wanted: &mut u32) {
+            let hands = hands.min(*wanted);
+            if hands > 0 {
+                *taken.entry(idx).or_insert(0) += hands;
+                *wanted -= hands;
+            }
+        }
+        // The kit-carrying donors first, only as far as the kitted shortfall.
+        let mut owed = kit.shortfall.min(wanted);
+        for &idx in order.iter().filter(|idx| kit.carried_by(**idx) > 0) {
+            if owed == 0 || wanted == 0 {
+                break;
+            }
+            let hands = self.assignments[idx]
+                .workers
+                .min(kit.carried_by(idx))
+                .min(owed);
+            owed -= hands.min(wanted);
+            give(&mut taken, idx, hands, &mut wanted);
+        }
+        // Then everyone, in the ordinary order, from what each still holds.
+        for &idx in &order {
+            if wanted == 0 {
+                break;
+            }
+            let held = self.assignments[idx].workers - taken.get(&idx).copied().unwrap_or(0);
+            give(&mut taken, idx, held, &mut wanted);
+        }
+        // Reported in the ordinary donor order, so the plan reads the same however it was reached.
+        let from_rows = order
+            .iter()
+            .filter_map(|idx| taken.get(idx).map(|hands| (*idx, *hands)))
+            .collect();
+        MusterPlan {
+            from_idle,
+            from_rows,
+        }
+    }
+
+    /// **Every hand the band could lend row `need_idx` this turn** — `idle` plus every donor row's
+    /// head count. The pool a need row's crew is priced over.
+    pub fn musterable_pool(
+        &self,
+        idle: u32,
+        need_idx: usize,
+        is_local: &dyn Fn(&LaborTarget) -> bool,
+    ) -> u32 {
+        idle + self
+            .donor_order(need_idx, is_local)
+            .into_iter()
+            .map(|idx| self.assignments[idx].workers)
+            .sum::<u32>()
+    }
+
+    /// The donor rows' indices in the order they give hands up: `Low` first, the later row first
+    /// within a tier. See [`Self::muster_donors`].
+    fn donor_order(&self, need_idx: usize, is_local: &dyn Fn(&LaborTarget) -> bool) -> Vec<usize> {
+        let mut donors: Vec<usize> = self
+            .assignments
+            .iter()
+            .enumerate()
+            .filter(|(idx, row)| {
+                *idx != need_idx
+                    && row.target.is_source()
+                    && !row.is_need_row()
+                    && row.party.is_none()
+                    && is_local(&row.target)
+                    && row.workers > 0
+            })
+            .map(|(idx, _)| idx)
+            .collect();
+        donors.sort_by_key(|idx| (self.assignments[*idx].priority, std::cmp::Reverse(*idx)));
+        donors
     }
 
     /// Set/replace the **take** crew for `target`, keeping `Σ ≤ available`. An over-budget request
@@ -6110,7 +6321,11 @@ impl LaborAllocation {
             .map(|a| a.staffed_total())
             .sum();
         let headroom = available.saturating_sub(others);
-        let applied = workers.min(headroom);
+        // **A NEED ROW NEVER HOLDS STANDING WORKERS** (`docs/plan_roaming_bands.md` §Hunting by
+        // need): whatever head count a command names, the row is held at zero and its hands go back
+        // to idle. It is *kept by its flag*, so it exists at zero even when the band had none before.
+        let need_row = target.is_need_row();
+        let applied = if need_row { 0 } else { workers.min(headroom) };
         self.align_yields();
         // Drop any prior assignment on this source (and its now-stale telemetry row), then re-add if
         // non-zero (captures a new stance).
@@ -6130,6 +6345,10 @@ impl LaborAllocation {
         // again. Dropping it here would restart the transit countdown on every stepper press, so a
         // posting the player kept adjusting would never deliver anything.
         let mut standing_party = None;
+        // **A NEED ROW'S PLAN IS A FACT THE TURN RESTAMPED**, so a re-push of the row keeps it —
+        // but only while the row is still a need row.
+        let mut standing_muster = 0;
+        let mut standing_planned = 0;
         let mut had_row = false;
         if let Some(idx) = self
             .assignments
@@ -6139,13 +6358,15 @@ impl LaborAllocation {
             standing_kit = self.assignments[idx].kit.clone();
             standing_priority = self.assignments[idx].priority;
             standing_party = self.assignments[idx].party.clone();
+            standing_muster = self.assignments[idx].muster_crew;
+            standing_planned = self.assignments[idx].planned_crew;
             had_row = true;
             self.assignments.remove(idx);
             self.last_yields.remove(idx);
         }
         // **A source the band already held keeps its row at zero** — see the doc above. A role's row
         // goes, and a source the band never worked is not conjured into existence by an unassign.
-        let keep_holding = applied == 0 && had_row && target.is_source();
+        let keep_holding = applied == 0 && (had_row || need_row) && target.is_source();
         // ⛔ **A CUT SENDS ITS DROPPED HANDS WALKING HOME NOW, NOT AT THE TURN** (#706) — a far row
         // cut short of zero through [`crate::work_party::WorkParty::cut_crew`], one held at zero
         // through [`crate::work_party::WorkParty::walk_home`], onto [`Self::homeward`] in this
@@ -6171,9 +6392,19 @@ impl LaborAllocation {
                 // **A row held at zero is not an order about tier**, so it keeps what it had: the
                 // command deliberately resolves no kit when it is unstaffing, and writing that
                 // `None` onto a surviving row would forget the tier the band was working at.
-                kit: if keep_holding { standing_kit } else { kit },
+                // A need row never carries a crew, so the command resolves it a kit only as a
+                // courtesy; the named one wins, the standing one stays otherwise.
+                kit: if need_row {
+                    kit.or(standing_kit)
+                } else if keep_holding {
+                    standing_kit
+                } else {
+                    kit
+                },
                 priority: standing_priority,
                 party: standing_party,
+                muster_crew: if need_row { standing_muster } else { 0 },
+                planned_crew: if need_row { standing_planned } else { 0 },
             });
             self.last_yields.push(SourceYield::ZERO);
         }
@@ -7743,6 +7974,8 @@ mod tests {
     fn staffed_forage(tile: bevy::math::UVec2, take: u32) -> LaborAssignment {
         LaborAssignment {
             party: None,
+            muster_crew: 0,
+            planned_crew: 0,
             target: LaborTarget::Forage {
                 tile,
                 floor: DEFAULT_ESCAPEMENT_FLOOR,
@@ -7773,6 +8006,8 @@ mod tests {
     fn ranked_hunt(herd: &str, take: u32, priority: SourcePriority) -> LaborAssignment {
         LaborAssignment {
             party: None,
+            muster_crew: 0,
+            planned_crew: 0,
             target: LaborTarget::Hunt {
                 fauna_id: herd.to_string(),
                 floor: DEFAULT_ESCAPEMENT_FLOOR,
@@ -7798,6 +8033,8 @@ mod tests {
     fn staffed_role(target: LaborTarget, workers: u32) -> LaborAssignment {
         LaborAssignment {
             party: None,
+            muster_crew: 0,
+            planned_crew: 0,
             target,
             workers,
             kit: None,
@@ -8182,6 +8419,8 @@ mod tests {
     ) -> LaborAssignment {
         LaborAssignment {
             party: None,
+            muster_crew: 0,
+            planned_crew: 0,
             priority,
             ..staffed_forage(tile, take)
         }
@@ -9614,5 +9853,176 @@ mod tests {
             5,
             "nothing is minted and nothing is lost by the move"
         );
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Hunting by need — the muster (`docs/plan_roaming_bands.md` §Hunting by need).
+    // ---------------------------------------------------------------------------------------------
+
+    fn muster_row(target: LaborTarget, workers: u32, priority: SourcePriority) -> LaborAssignment {
+        LaborAssignment {
+            target,
+            workers,
+            kit: None,
+            priority,
+            party: None,
+            muster_crew: 0,
+            planned_crew: 0,
+        }
+    }
+
+    fn muster_hunt(herd: &str, follow: bool) -> LaborTarget {
+        LaborTarget::Hunt {
+            fauna_id: herd.to_string(),
+            floor: 0.5,
+            move_with_herd: follow,
+        }
+    }
+
+    /// The need row is index 0; the donors follow in the order the tests state.
+    fn muster_board(rows: Vec<LaborAssignment>) -> LaborAllocation {
+        let mut assignments = vec![muster_row(
+            muster_hunt("need", true),
+            0,
+            SourcePriority::Normal,
+        )];
+        assignments.extend(rows);
+        LaborAllocation {
+            assignments,
+            ..Default::default()
+        }
+    }
+
+    /// ⛔ **IDLE FIRST, THEN `Low` → `Normal` → `High`, THE LATER ROW FIRST WITHIN A TIER.**
+    #[test]
+    fn the_muster_takes_idle_then_low_then_normal_then_high_later_rows_first() {
+        let board = muster_board(vec![
+            muster_row(
+                muster_hunt("normal_early", false),
+                2,
+                SourcePriority::Normal,
+            ),
+            muster_row(muster_hunt("high", false), 5, SourcePriority::High),
+            muster_row(muster_hunt("low_early", false), 1, SourcePriority::Low),
+            muster_row(muster_hunt("normal_late", false), 3, SourcePriority::Normal),
+            muster_row(muster_hunt("low_late", false), 4, SourcePriority::Low),
+        ]);
+        // Idle covers the whole crew: nobody else is asked.
+        let plan = board.muster_donors(6, 0, 4, &|_| true, &MusterKit::default());
+        assert_eq!((plan.from_idle, plan.from_rows.len()), (4, 0));
+
+        // Idle 2, crew 12: the 2 idle hands, then Low (the later row, 4, then the earlier, 1), then
+        // Normal (the later row's 3, then 2 of the earlier's — the crew is full).
+        let plan = board.muster_donors(2, 0, 12, &|_| true, &MusterKit::default());
+        assert_eq!(plan.from_idle, 2);
+        assert_eq!(
+            plan.from_rows,
+            vec![(5, 4), (3, 1), (4, 3), (1, 2)],
+            "Low-late, Low-early, Normal-late, Normal-early — High is not reached"
+        );
+        assert_eq!(plan.total(), 12);
+        assert_eq!(plan.lent_by(5), 4);
+        assert_eq!(plan.lent_by(2), 0, "High lends nothing while others can");
+
+        // Asking for everything reaches High last, and a crew bigger than the band comes up short.
+        let plan = board.muster_donors(0, 0, 100, &|_| true, &MusterKit::default());
+        assert_eq!(plan.from_rows.last(), Some(&(2, 5)), "High goes last");
+        assert_eq!(
+            plan.total(),
+            1 + 2 + 3 + 4 + 5,
+            "short of the 100 asked for"
+        );
+    }
+
+    /// ⛔ **A SHORT KIT PUTS THE DONORS HOLDING IT FIRST, ONLY AS FAR AS THE SHORTFALL.** Rows 1 and 2
+    /// are Low and Normal; row 2 holds the kit. With the kit short by 3 it lends 3 of its 4 hands
+    /// before the Low row is asked; the rest comes in Priority order from what each still holds.
+    #[test]
+    fn a_short_kit_puts_the_donors_holding_it_first_up_to_the_shortfall() {
+        let board = muster_board(vec![
+            muster_row(muster_hunt("low", false), 3, SourcePriority::Low),
+            muster_row(muster_hunt("kitted", false), 4, SourcePriority::Normal),
+        ]);
+        let short = MusterKit {
+            shortfall: 3,
+            carried: vec![0, 0, 4],
+        };
+        let plan = board.muster_donors(0, 0, 5, &|_| true, &short);
+        assert_eq!(
+            plan.lent_by(2),
+            3,
+            "the kitted row lends up to the shortfall"
+        );
+        assert_eq!(
+            plan.lent_by(1),
+            2,
+            "then the Low row, in the ordinary order"
+        );
+        assert_eq!(plan.total(), 5);
+
+        // A crew past the shortfall continues in Priority order, from what each row still holds.
+        let plan = board.muster_donors(0, 0, 7, &|_| true, &short);
+        assert_eq!((plan.lent_by(1), plan.lent_by(2)), (3, 4));
+
+        // The kit not short: Priority alone, the Low row first.
+        let plan = board.muster_donors(0, 0, 5, &|_| true, &MusterKit::default());
+        assert_eq!((plan.lent_by(1), plan.lent_by(2)), (3, 2));
+    }
+
+    /// ⛔ **ONLY SOURCE ROWS WITH NO PARTY AND NO FLAG ARE DONORS** — role rows, other need rows, a
+    /// row with a caravan out and an empty row lend nothing, and the need row never lends to itself.
+    #[test]
+    fn roles_parties_other_need_rows_and_empty_rows_never_lend() {
+        let mut with_party = muster_row(muster_hunt("far", false), 4, SourcePriority::Low);
+        with_party.party = Some(crate::work_party::WorkParty::posted(UVec2::new(9, 9), 3, 3));
+        let board = muster_board(vec![
+            muster_row(LaborTarget::Scout, 3, SourcePriority::Low),
+            muster_row(LaborTarget::Warrior, 3, SourcePriority::Low),
+            muster_row(LaborTarget::Roadwork, 3, SourcePriority::Low),
+            muster_row(LaborTarget::Builders, 3, SourcePriority::Low),
+            muster_row(muster_hunt("other_need", true), 3, SourcePriority::Low),
+            with_party,
+            muster_row(muster_hunt("empty", false), 0, SourcePriority::Low),
+            muster_row(muster_hunt("donor", false), 2, SourcePriority::Normal),
+        ]);
+        let plan = board.muster_donors(0, 0, 50, &|_| true, &MusterKit::default());
+        assert_eq!(
+            plan.from_rows,
+            vec![(8, 2)],
+            "only the plain source row lends"
+        );
+        assert_eq!(board.musterable_pool(7, 0, &|_| true), 7 + 2);
+    }
+
+    /// A need row holds no standing workers whatever count a command names, exists at zero, and
+    /// hands any it had back to idle.
+    #[test]
+    fn a_need_row_is_held_at_zero_whatever_count_is_named() {
+        let mut board = LaborAllocation::default();
+        let target = muster_hunt("need", true);
+        let applied = board.set_assignment(target.clone(), 5, 10, None);
+        assert_eq!(applied, 0, "no standing hands");
+        assert_eq!(
+            board.assignments.len(),
+            1,
+            "the row exists at zero, kept by its flag"
+        );
+        assert_eq!(board.assignments[0].workers, 0);
+        assert_eq!(
+            board.followed_herd(),
+            Some("need"),
+            "followed with no workers on it"
+        );
+
+        // Unfollowing turns it back into an ordinary hunt at the count named.
+        board.assignments[0].muster_crew = 4;
+        let applied = board.set_assignment(muster_hunt("need", false), 3, 10, None);
+        assert_eq!(applied, 3);
+        assert_eq!(board.assignments[0].workers, 3);
+        assert_eq!(
+            board.assignments[0].muster_crew, 0,
+            "the plan went with the flag"
+        );
+        assert_eq!(board.followed_herd(), None);
     }
 }

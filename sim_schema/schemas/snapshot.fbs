@@ -1548,6 +1548,23 @@ table PopulationCohortState {
   // above `culture.split_min_purist` and its people has another resident band: it may break away
   // if the strain holds (`culture::may_break_away`, the same predicate the split uses). Own bands only.
   cultureBreakAwayRisk:bool = false;
+  // --- HUNTING BY NEED (appended last, #798) -------------------------------------------------------
+  // The idle hands the muster takes next turn for the band's need row (the idle share of the crew
+  // musterCrew names); the donor rows' shares ride their own lentToHunt.
+  idleMustered:uint = 0;
+  // The MEAL a hunt is sized to, for each configured keeping class (keeping.classes order): the food
+  // the band cannot cover otherwise before a kill landing in that class spoils -
+  // max(0, (foodDemand - steady income) * shelfLife(class) - usable larder). The need row's crew is
+  // the smallest that brings down max(1, ceil(food / foodPerAnimal)) animals; a compose sheet reads
+  // the entry named by the herd's `keeping`. Computed by the one function the turn sizes the crew
+  // with.
+  huntMeals:[KeepingMeal];
+}
+
+// One keeping class's hunting meal - a row of `PopulationCohortState.huntMeals`.
+table KeepingMeal {
+  keeping:string;
+  food:float = 0;
 }
 
 // One band's outfitting window. THE TWO SUPPLIES ARE MUTUALLY EXCLUSIVE and `parentBandId` says which
@@ -2266,6 +2283,28 @@ table LaborAssignment {
   // A HUNT row only: true while the band's camp moves with the herd this row hunts. Always false on
   // every other row.
   moveWithHerd:bool = false;
+  // --- HUNTING BY NEED (appended last, #798; docs/plan_roaming_bands.md) --------------------------
+  // A NEED ROW (a hunt row with moveWithHerd) holds no standing workers: the labor pass decides at
+  // its foot whether a crew goes out next turn. All five read 0 on every other row.
+  // musterCrew: the hands this need row sends next turn (0 = waiting).
+  musterCrew:uint = 0;
+  // lentToHunt: on a DONOR source row, the hands it gives up next turn (from the one muster
+  // function the turn applies); 0 on every other row.
+  lentToHunt:uint = 0;
+  // turnsUntilHunt: on a WAITING need row, turns until a crew goes out if nothing changes (floor 1);
+  // 4294967295 (u32::MAX) when it never will - the larder is not food-limited or no crew can be
+  // raised. 0 on a row that is sending and on every non-need row.
+  turnsUntilHunt:uint = 0;
+  // turnsToKill: at the planned (useful) crew, turns until the animal is down counting the herd's
+  // current wounds; 0 when no crew can be raised.
+  turnsToKill:uint = 0;
+  // killProgress: the herd's banked wounds over the body's durability, in [0,1).
+  killProgress:float = 0;
+  // needRunway: on a NEED row, turns the food the kill replaces - the meat on hand, against the
+  // band's net eating - will last. The figure turnsUntilHunt counts down from; the band's own
+  // turnsOfFood also counts the dried reserve a kill does not stand in for. 999 = not food-limited.
+  // 0 on every other row.
+  needRunway:float = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).
@@ -4583,6 +4622,12 @@ table HerdTelemetryState {
   // refused because of exactly this. Fog-filtered with the row.
   predatorEatenBy:string;
   predatorEaten:float = 0;
+  // --- WHERE THIS HERD'S MEAT KEEPS (appended last, #798) ----------------------------------------
+  // The keeping class (`demographics_config.json` keeping.classes id, e.g. "flesh") the herd's meat
+  // lands in. Pairs with PopulationCohortState.huntMeals (the band's meal per class) and foodPerAnimal
+  // to size a hunting-by-need crew before the row exists. Empty only for a species the fauna table
+  // cannot resolve; the reader then has no meal and sizes nothing.
+  keeping:string;
 }
 
 table CommandEventState {

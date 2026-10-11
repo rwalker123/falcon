@@ -318,6 +318,8 @@ fn spawn_forager_with_workers(
             LaborAllocation {
                 assignments: vec![LaborAssignment {
                     party: None,
+                    muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Forage {
                         tile: patch,
                         floor,

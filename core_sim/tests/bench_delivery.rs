@@ -72,6 +72,8 @@ fn a_band_making_its_own_earthmoving_gear() -> (App, Entity) {
     };
     allocation.assignments.push(core_sim::LaborAssignment {
         party: None,
+        muster_crew: 0,
+        planned_crew: 0,
         target: LaborTarget::Roadwork,
         workers: KEEPERS,
         kit: None,

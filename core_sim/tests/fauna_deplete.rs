@@ -212,6 +212,8 @@ fn spawn_hunter(
             LaborAllocation {
                 assignments: vec![LaborAssignment {
                     party: None,
+                    muster_crew: 0,
+                    planned_crew: 0,
                     target: LaborTarget::Hunt {
                         fauna_id: herd_id.to_string(),
                         floor: policy,

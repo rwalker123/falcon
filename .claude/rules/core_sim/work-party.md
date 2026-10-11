@@ -11,6 +11,8 @@ paths:
   - "core_sim/tests/work_party_caravan.rs"
   - "core_sim/src/systems/expeditions.rs"
   - "core_sim/tests/migration_mode.rs"
+  - "core_sim/src/hunt_by_need.rs"
+  - "core_sim/tests/hunt_by_need.rs"
 ---
 
 # The work party — hunt, forage and extract are one model, and distance is a caravan
@@ -630,10 +632,11 @@ the floor is: re-sending the row without `follow` turns it off.
 **immediately before it**. The herds have already moved this turn (`advance_herds`, Logistics), so
 the band re-aims at where its herd now stands and steps right after it: a band camped in the herd
 stays on the herd's tile through loiter and migration, and every kill is a camp kill. No work-party,
-porter or kill code changed — a band that turns the mode on while far away is simply an ordinary far
-hunt until it catches up. A resident band only (never a detached party), and only while the row has
-workers (`LaborAllocation::followed_herd`). If the band already stands on the herd's tile any
-`BandTravel` is removed; the herd gone from the registry does nothing.
+porter or kill code changed. A band that turns the mode on while far away hunts nothing until it has
+caught up (see "Hunting by need" below: the row is a need row and only a camp kill is ever mustered).
+A resident band only (never a detached party). `LaborAllocation::followed_herd` follows a row with
+the flag **whatever its head count** — a need row holds no standing workers. If the band already
+stands on the herd's tile any `BandTravel` is removed; the herd gone from the registry does nothing.
 
 ### ⛔ Re-aiming keeps `departed`
 
@@ -661,6 +664,195 @@ the hunt channel. A resident herd never leaves its few tiles, so there is nothin
 Tests: `tests/migration_mode.rs` (loiter and migrate camps, the far start, the wire) and, for the
 command boundary, `bin/server.rs` `migration_mode_*`; the `follow` token round-trips in
 `sim_runtime::command_text`.
+
+### Hunting by need (#798)
+
+Design: `docs/plan_roaming_bands.md` §Hunting by need. Engine: `core_sim/src/hunt_by_need.rs`
+(`assess_need`), the muster in `components.rs` (`LaborAllocation::muster_donors`) and its
+application in `systems/labor.rs` (`apply_muster` / `restore_muster`), the wire in
+`snapshot/population.rs`.
+
+**A hunt row with `move_with_herd` is a *need row*, and it holds no standing workers** (`workers ==
+0` always). `set_assignment` forces it to zero whatever count a command names (the hands go back to
+idle) and keeps it by its flag: `handle_assign_labor` never drops it at zero, the Hunt arm's holding
+lapse (`!row_is_held && !is_need_row()`) passes it, and `validate_labor_policy`'s migratory check
+runs at zero too. `assign_labor … hunt <n>` **without** `follow` on a need row is an ordinary hunt of
+`n` again (zero drops the row as it always did); `move_band` clears the flag and the next labor pass
+retires the empty row.
+
+**The plan is `LaborAssignment::muster_crew`** — the hands the row sends next turn, `0` = waiting.
+Like `party` it is outside `LaborAssignment`'s `PartialEq` (a fact the turn restamps), and it rides
+the save (`SAVE_FORMAT_VERSION` 34). The donors are never stored. **Beside it rides
+`LaborAssignment::planned_crew`** - the meal-sized crew `assess_need` priced at the same decision,
+whether or not the row sends (`0` when no crew can be raised, the herd is gone or out of camp
+range): a waiting row has `muster_crew == 0` and a planned crew, and the craft suggestions equip that
+crew ahead of the hunt (`crafting.md` -> "Craft suggestions"). Also outside the `PartialEq`, and on the
+save.
+
+**The decision, at the foot of the band's labor pass for next turn** (`assess_need`):
+
+| step | rule |
+|---|---|
+| herd gone, or beyond `band_work_range` of the band | `muster_crew = 0` — **only a camp kill is mustered**; a one-turn crew cannot run a caravan, so a need row never posts a party and a band still catching up hunts nothing |
+| crew | **sized to the meal** (below): the smallest row of `hunt_crew_take_curve(..)` landing the animals the meal calls for, never above `hunt_useful_crew`, priced with `max_workers` = the musterable pool (idle + every donor row's hands) |
+| no crew | `0` |
+| a hunt in progress | the crew was out this turn, the herd has `wounds.pending() > 0` and **no kill landed** → send, whatever the larder says |
+| otherwise | send iff `runway <= turns_to_kill + follow.need_margin_turns` (default **1**); `turns_to_kill` is the first non-zero slot of `fauna::project_arrivals_hunt` at that crew (`fauna::hunt_crew_turns_to_kill`), `runway` is the **need clock's** (`snapshot::kill_turns_of_food`, below) and the `NOT_FOOD_LIMITED_TURNS` sentinel never triggers |
+
+### The clock counts only the food the kill replaces
+
+`snapshot::band_turns_of_food` (the wire's `turnsOfFood`) counts the whole larder, and a trigger read
+off it let a band burn a dried reserve to its last turn before its first hunt (a band with 66 food,
+mostly 60-turn `dry`, reading "hunt goes out in 22 turns · food lasts 25"), and then, after each
+kill, eat the meat and go back to burning the reserve. So the need clock reads the larder the kill
+stands in for:
+
+- **The larder it counts is the classes that keep no longer than this herd's kill does**
+  (`spoilage::keeps_no_longer_than`, through `band_shelf_life` for the kill's class and for each stored
+  class). A class that keeps longer is a reserve. `snapshot::kill_food_terms` /
+  `kill_turns_of_food` are `band_food_terms` / `band_turns_of_food` over that subset
+  (`FoodMix::retaining`), with `rot_ahead` applied to the subset; **net eating (demand less steady
+  income) is unchanged**, and `turnsOfFood` is untouched.
+- **Both the trigger's runway and the meal's usable larder read it** (`hunt_by_need::need_clock`,
+  one call per herd for the turn and the capture). Today only `flesh` counts, so a band arriving with
+  no meat has a runway near nothing and the first hunt goes out at once; after a kill the next goes
+  out as the meat runs low. When drying (#708) lengthens the kill's shelf life the longer classes
+  join the count through `band_shelf_life` — no lever.
+- **On the wire:** `LaborAssignment.needRunway` (decode key `need_runway`) — on a need row, the turns
+  the meat on hand lasts, the figure `turnsUntilHunt` counts down from (`999` = not food-limited,
+  `0` off a need row). A row reading "food lasts N" beside "goes out in M" reads this, not the
+  band-wide `turnsOfFood`.
+
+Pinned by `hunt_by_need::{a_dried_reserve_with_no_meat_sends_a_crew_at_once,
+with_meat_on_hand_the_band_waits_and_hunts_as_the_meat_runs_low,
+a_kill_that_keeps_as_long_as_the_reserve_counts_the_reserve}`.
+
+### The crew is sized to the meal
+
+The useful crew is where the take curve stops rising, and for small easy game that is enormous:
+Marsh Grazers (47 a head, ≈ 2.8 food an animal, 37 animals of room) priced a crew of 131 on a camp of
+200, which would kill dozens of animals in a turn that mostly rot within `flesh`'s four. So
+`assess_need` sizes the crew to **what the band can eat of one kill before it spoils**:
+
+```text
+net_eat = max(0, food_demand − Σ realized)          // band_turns_of_food's own terms
+keeps   = spoilage::band_shelf_life(keeping, class) // the class the herd's meat lands in
+meal    = max(0, net_eat × keeps − usable_larder)   // usable = larder − rot_ahead, as the runway
+animals = max(1, ceil(meal / food_per_animal))      // food_per_animal = body_mass × provisions_per_biomass
+crew    = smallest curve row with likely ≥ animals  // CREW_TAKE_RISE_TOLERANCE slack; else the useful crew
+```
+
+- **One whole animal is the floor** (an animal is indivisible), and the crew never exceeds
+  `hunt_useful_crew`. A mammoth is unchanged: no row of its curve lands one in a turn, so the crew is
+  the useful one.
+- **The terms are shared, not copied.** `snapshot::band_food_terms` (`BandFoodTerms`: demand, steady
+  income, usable larder) is what `band_turns_of_food` and the meal both read;
+  `hunt_by_need::herd_meal` builds the `NeedMeal` for one herd (class via `FaunaConfig::keeping_for`,
+  falling back to `kill_fallback_class`; food per animal via `fauna::herd_food_per_animal`, the
+  figure behind the wire's `foodPerAnimal`). The turn (labor pass) and the capture both call it, so
+  the wire's `musterCrew` is what the turn musters. The `finishing` path sizes the crew the same way.
+- **Preservation moves the meal through `spoilage::band_shelf_life`** — the one place a shelf life is
+  read (`campaign.md` → "Food spoils by keeping class"). A longer `flesh` shelf life (drying, #708)
+  lengthens the rot rule and the meal together: a bigger meal, a bigger crew, a bigger haul.
+
+The meal's `usable_larder` is the same kill-class larder as the clock's (above), not the whole store.
+
+**Wire** (appended): `PopulationCohortState.huntMeals:[KeepingMeal{keeping, food}]` — the meal for
+every configured keeping class, in the keeping table's order, each at that class's shelf life — and
+`HerdTelemetryState.keeping` — the class the herd's meat lands in (empty only for a species the table
+cannot resolve). A compose sheet sizing a crew before the row exists reads the `huntMeals` entry
+named by the herd's `keeping`, divides by the herd's `foodPerAnimal`, floors at one animal, and takes
+the first crew-take row reaching it (never above the useful crew). Native decode keys: `hunt_meals`
+(array of `{keeping, food}`) on the band dict, `keeping` on the herd dict. Pinned by
+`tests/hunt_by_need.rs` (`a_crew_is_the_smallest_that_lands_the_meal_far_below_the_useful_crew`,
+`a_mammoth_is_still_sent_the_useful_crew`, `a_bigger_larder_sends_a_smaller_crew`,
+`a_meal_of_nothing_still_calls_for_one_whole_animal`, `a_longer_shelf_life_sends_a_bigger_crew`,
+`the_wire_carries_the_meal_per_keeping_class_and_the_herds_class`), each against an oracle built from
+the fixture's own numbers and the compose sheet's crew-take query.
+
+### ⛔ "Wounds pending" is a hunt in progress, not `pending > 0`
+
+A crew that kills a mammoth deals more damage than the body holds and the excess banks toward the
+**next** animal (`DamageLedger::strike`), so a herd carries a small `pending` after almost every
+kill. Read as *"the animal is partly down"* that remainder sent a full crew after the next mammoth
+every time, whatever the larder said, for ever. The rule is therefore *the crew was out this turn,
+the animal took damage and is not down*; Pinned by
+`hunt_by_need::wounds_keep_the_crew_going_until_the_animal_is_down_and_the_carcass_lands_whole`,
+which refills the larder every turn so only the wound can keep the crew out, and asserts the remainder
+after the kill sends nobody.
+
+**Applied in `advance_labor_allocation`, after the starvation shed and before the pools, the site
+keeping and the row claims**: for each need row with `muster_crew > 0` whose herd is inside
+`band_work_range`, `muster_donors(idle, need_idx, crew)` is clamped to what the donors hold now, the
+donor rows' `workers` are cut and the need row's set to the crew. Everything downstream reads those
+numbers; kits come through the ordinary claims at the need row's own Priority. After the row walk
+`restore_muster` hands every donor its hands back and the need row returns to zero.
+
+- **Donors**: idle first, then source rows (forage, hunt, extract) with no party posted, not a need
+  row and **whose source is within `band_work_range` of the band** — decided by geometry
+  (`hunt_by_need::source_is_local`, on `work_party::party_begins_past`, the threshold `post_a_party`
+  posts past), never by "a party exists yet", so a brand-new far row can't lend. Order is `Low` →
+  `Normal` → `High`, the later row first within a tier. Role rows, the bench and road keepers never
+  lend. It may come up short. The turn and the capture pass the same predicate to `muster_donors`.
+- **Kit-aware order** (`MusterKit`, struck by `hunt_by_need::muster_kit` from the band's own
+  `BandItemBudget` on the rows' standing claims): an item of the need row's kit is *short* when the
+  units no row claims (`BandItemBudget::unclaimed_units`) arm fewer hands than the crew. When one is,
+  the donors that carry a short item and were settled units of it lend **first** (Priority order
+  among them), only as far as the shortfall in kitted hands; then everyone in the ordinary order from
+  what each still holds. Otherwise the order is Priority alone. Without it a harvest donor lent its
+  hands and the crew claimed stalking kits off the shared budget, stripping boar hunters who kept
+  their hands but lost their gear. `muster_donors` is still the one function the turn
+  (`apply_muster`, claims struck before any hand is lent), the capture and the craft suggestions
+  call. Pinned by `hunt_by_need::{when_the_hunts_kit_is_short_the_donor_holding_it_lends_first,
+  when_the_kit_is_not_short_the_lowest_priority_lends_first, the_turn_lends_the_donors_the_board_named}`
+  and `components::tests::a_short_kit_puts_the_donors_holding_it_first_up_to_the_shortfall`.
+- **A donor emptied for the turn is not lapsed**: the holding test asks `row_is_held` (hands before
+  the loan), while the lesson test still asks who is actually there.
+- **Priced over the gear the muster brings** (`hunt_by_need::MusterPricing`): a need row holds no
+  hands, so a curve priced over the **free** units alone arms nobody on a band whose stalking kits
+  are all claimed by its boar-hunt rows - and a quarry bare hands cannot wound (Marsh Grazers,
+  defense 3) prices at useful crew 0, the hunt never goes out, and the kit-aware donor order is
+  moot. A hunter lent from a boar row brings his kit, so `HuntCrewCurveInputs::muster` re-strikes the
+  competing rows **at every crew size**: `MusterPricing::plan_at(c)` is `muster_kit` +
+  `muster_donors` (idle first, kit-carrying donors first up to the shortfall), and
+  `other_rows_at(c)` scales each lent row's claim by the share of its hands that stayed. The plan is a
+  function of the crew and the *standing* claims alone - the reduced claims are derived from it, not
+  fed back - so there is no fixed point. **One function, four readers**: the labor decision
+  (`assess_need`: useful crew, meal-sized crew, `turns_to_kill`), the capture (`with_hunt_curve` for
+  a need row, so `huntUsefulWorkers`/`musterCrew`/`turnsToKill` are the turn's), the hunt-turn craft
+  pass (`hunt_turn_shortfall_lines`) and `apply_muster` (the donors actually lent) all call
+  `MusterPricing`, so they cannot disagree about the gear. Ordinary rows leave `muster` `None` and
+  price over their own claims as before. Pinned by
+  `hunt_by_need::{a_quarry_bare_hands_cannot_wound_is_hunted_with_the_kit_the_donors_bring,
+  the_sheet_prices_a_need_row_over_the_muster_when_it_asks_with_follow}` (both fail with the muster
+  pricing switched off).
+- **The Assign hunters sheet asks with `follow`** (`HuntCrewTakeQuery.follow`, proto field 7):
+  the same curve for the same row. Without it the query prices an *ordinary* hunt row, which
+  competes for gear at its Priority; a client composing a `follow` (need) row sends `follow = true`
+  and `max_workers` = the musterable pool (`huntUsefulWorkers` is already priced over it), and the
+  "Sends N" figure is then the row's own `musterCrew`.
+
+**The wire** (`LaborAssignment`, appended after `moveWithHerd`; `PopulationCohortState`):
+
+| field | meaning |
+|---|---|
+| `musterCrew` | the hands this need row sends next turn (`0` = waiting) |
+| `lentToHunt` | on a donor row, the hands it gives up next turn (same `muster_donors` call) |
+| `needRunway` | on a need row, the turns the meat on hand lasts (the need clock above); `0` elsewhere |
+| `turnsUntilHunt` | on a waiting need row, `ceil(runway - turns_to_kill - margin)`, floor 1; `NO_HUNT_NEEDED` (`u32::MAX`) when the larder is not food-limited, no crew can be raised or the herd is out of camp range; `0` on a sending row |
+| `turnsToKill` | turns until the animal is down at the planned crew, counting wounds; `0` when no crew can be raised |
+| `killProgress` | `wounds.pending() / durability`, in `[0, 1)` |
+| `PopulationCohortState.idleMustered` | the idle hands the muster takes next turn |
+
+For a need row `huntUsefulWorkers` is priced over the musterable pool, not idle only. The native
+decode keys are the snake_case of each (`muster_crew`, `lent_to_hunt`, `need_runway`, `turns_until_hunt`,
+`turns_to_kill`, `kill_progress`, `idle_mustered`).
+
+Tests: `tests/hunt_by_need.rs` (the full and the lean larder, the muster order and exactly what the
+turn took against the published plan, the small band, the wound rule and the whole carcass, the far
+herd, the save and the wire both ways), `components::tests` (the donor order and exclusions), and
+`bin/server.rs` `a_follow_order_creates_the_need_row_at_zero_…` / `unfollowing_…` /
+`a_move_order_ends_a_need_row`.
 
 ## The tests that carry the arc
 

@@ -991,6 +991,11 @@ pub struct HuntCrewTakeQuery {
     /// **The largest crew this band could put on the herd** — the stepper's own cap, and exactly the
     /// length of the reply's `per_crew`. `0` asks for nothing and is answered with an empty curve.
     pub max_workers: u32,
+    /// **Price the crew a NEED row would muster** (a hunt with `move_with_herd`): the curve is struck
+    /// over the free gear plus the kit the lent donors hold, in the order the muster takes them
+    /// (`hunt_by_need::MusterPricing`), and `max_workers` is the sheet's musterable pool. `false` is
+    /// an ordinary hunt row, priced over the units no row claims.
+    pub follow: bool,
 }
 
 /// **The server → client answer frame**, written back on the command socket as its own
@@ -2296,6 +2301,7 @@ impl CommandEnvelope {
                                 kit_id: ask.kit_id.clone(),
                                 floor: ask.floor,
                                 max_workers: ask.max_workers,
+                                follow: ask.follow,
                             })
                         }
                         QueryPayload::ListSaves => {
@@ -2825,6 +2831,7 @@ impl CommandEnvelope {
                             kit_id: ask.kit_id,
                             floor: ask.floor,
                             max_workers: ask.max_workers,
+                            follow: ask.follow,
                         })
                     }
                     pb::query_command::Query::WorkPartyForecast(ask) => {
@@ -3653,6 +3660,7 @@ mod tests {
                 kit_id: "big_game".to_string(),
                 floor: 0.375,
                 max_workers: 12,
+                follow: true,
             }),
         };
         let envelope = CommandEnvelope {

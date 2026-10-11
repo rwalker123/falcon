@@ -252,6 +252,7 @@ pub(crate) fn dispatch(
             kit_id: dict_string(ask, "kit_id"),
             floor: dict_f32(ask, "floor"),
             max_workers: dict_u32(ask, "max_workers"),
+            follow: dict_bool(ask, "follow"),
         }),
         QUERY_KIND_DEPOSIT_CREW_TAKE => QueryPayload::DepositCrewTake(DepositCrewTakeQuery {
             faction_id: dict_u32(ask, "faction_id"),
@@ -837,6 +838,12 @@ fn dict_f32(dict: &VarDictionary, key: &str) -> f32 {
         .unwrap_or_default() as f32
 }
 
+fn dict_bool(dict: &VarDictionary, key: &str) -> bool {
+    dict.get(key)
+        .and_then(|value| value.try_to::<bool>().ok())
+        .unwrap_or_default()
+}
+
 fn dict_string_array(dict: &VarDictionary, key: &str) -> Vec<String> {
     let Some(value) = dict.get(key) else {
         return Vec::new();
@@ -901,6 +908,7 @@ mod tests {
                 kit_id: String::new(),
                 floor: 0.0,
                 max_workers: 0,
+                follow: false,
             }),
             QueryPayload::WorkPartyForecast(WorkPartyForecastQuery {
                 faction_id: 0,

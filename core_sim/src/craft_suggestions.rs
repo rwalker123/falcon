@@ -342,16 +342,25 @@ fn queued_build_lines(
 /// **A BAND'S RANKED SUGGESTIONS, from its settled gear** — the one function the snapshot's
 /// `craftSuggestions` and auto-craft both call, so the list the panel shows and the list auto-craft
 /// works down cannot differ. `take_rows` are `(row, item, required, filled)` off [`TakeRowGear::toe`].
+///
+/// `hunt_turn` is the second reading of the band's take rows, on the turn a hunting-by-need crew goes
+/// out (`snapshot::population::hunt_turn_lines`): a need row stands at zero hands, so only the
+/// mustered pass sees the kit its crew would claim. Each item's shortfall is the larger of the two
+/// readings ([`craft_suggestions_over`]), so a kit a hunt crew is short of is suggested - and
+/// auto-craft, reading this same list, queues it. `None` is a band with no hunt going out.
 pub fn band_suggestions<'a>(
     allocation: &LaborAllocation,
     take_rows: impl IntoIterator<Item = (usize, &'a str, f32, f32)>,
+    hunt_turn: Option<&[ToolShortfallLine]>,
     bench: Option<&BandBench>,
     recipes: &RecipesConfig,
     equipment: &EquipmentConfig,
     wear: &BandEquipment,
 ) -> Vec<CraftSuggestion> {
     let lines = band_tool_shortfall_lines(allocation, take_rows, equipment, wear);
-    craft_suggestions(&lines, bench, recipes, equipment)
+    let passes: Vec<&[ToolShortfallLine]> =
+        std::iter::once(lines.as_slice()).chain(hunt_turn).collect();
+    craft_suggestions_over(&passes, bench, recipes, equipment)
 }
 
 /// **RANK WHAT TO MAKE NEXT** — see the module docs for every rule.
@@ -363,6 +372,42 @@ pub fn craft_suggestions(
     recipes: &RecipesConfig,
     equipment: &EquipmentConfig,
 ) -> Vec<CraftSuggestion> {
+    craft_suggestions_over(&[lines], bench, recipes, equipment)
+}
+
+/// **RANK WHAT TO MAKE NEXT OVER SEVERAL READINGS OF THE SAME BAND** - the standing turn's lines and
+/// the turn the hunt goes out (`hunt_by_need`: a need row stands at zero hands, so only a mustered
+/// pass sees the kit its crew would claim). **Each item's shortfall is the larger of the passes, never
+/// their sum**: they describe one band on two different days, and the tools made serve both. The
+/// sources of the pass that wins are the ones listed. Ties go to the earlier pass.
+pub fn craft_suggestions_over(
+    passes: &[&[ToolShortfallLine]],
+    bench: Option<&BandBench>,
+    recipes: &RecipesConfig,
+    equipment: &EquipmentConfig,
+) -> Vec<CraftSuggestion> {
+    let mut by_item: BTreeMap<&str, Vec<SuggestionSourceLine>> = BTreeMap::new();
+    for pass in passes {
+        for (item, sources) in group_missing(pass, equipment) {
+            let missing = |lines: &[SuggestionSourceLine]| -> f32 {
+                lines.iter().map(|line| line.missing_units).sum()
+            };
+            match by_item.get(item) {
+                Some(held) if missing(held) >= missing(&sources) => {}
+                _ => {
+                    by_item.insert(item, sources);
+                }
+            }
+        }
+    }
+    suggestions_from(by_item, bench, recipes)
+}
+
+/// One pass's missing units per item, as source lines.
+fn group_missing<'a>(
+    lines: &'a [ToolShortfallLine],
+    equipment: &EquipmentConfig,
+) -> BTreeMap<&'a str, Vec<SuggestionSourceLine>> {
     let mut by_item: BTreeMap<&str, Vec<SuggestionSourceLine>> = BTreeMap::new();
     for line in lines {
         let missing_units = (line.required - line.filled).max(NOTHING_MISSING);
@@ -388,6 +433,15 @@ pub fn craft_suggestions(
             });
     }
 
+    by_item
+}
+
+/// Net each item's shortfall against the queue and rank the survivors.
+fn suggestions_from(
+    by_item: BTreeMap<&str, Vec<SuggestionSourceLine>>,
+    bench: Option<&BandBench>,
+    recipes: &RecipesConfig,
+) -> Vec<CraftSuggestion> {
     let mut suggestions: Vec<CraftSuggestion> = by_item
         .into_iter()
         .filter_map(|(item, sources)| {
@@ -572,6 +626,30 @@ mod tests {
             "three short beats two, and the 3–3 tie goes to the earlier id"
         );
         assert_eq!(ranked[2].count, 2, "the whole shortfall, in units");
+    }
+
+    /// **TWO READINGS OF ONE BAND TAKE THE LARGER SHORTFALL PER ITEM, NEVER THE SUM** - the standing
+    /// turn and the turn the hunt goes out are the same people on different days, and a tool made
+    /// serves both.
+    #[test]
+    fn the_larger_of_two_passes_wins_per_item_and_they_are_never_summed() {
+        let (recipes, equipment) = configs();
+        let standing = [line(take("boar"), SPEARS, 4.0, 2.0)];
+        let hunt_turn = [
+            line(take("boar"), SPEARS, 1.0, 0.0),
+            line(take("mammoth"), SPEARS, 5.0, 2.0),
+        ];
+        let ranked = craft_suggestions_over(&[&standing, &hunt_turn], None, &recipes, &equipment);
+        assert_eq!(ranked.len(), 1);
+        assert_eq!(ranked[0].count, 4, "max(2, 1 + 3), not 2 + 4");
+        assert_eq!(
+            ranked[0].sources.len(),
+            2,
+            "the winning pass's sources are the ones listed"
+        );
+
+        let alone = craft_suggestions_over(&[&standing], None, &recipes, &equipment);
+        assert_eq!(alone[0].count, 2, "control: the standing pass alone");
     }
 
     /// **Work a turn is stated only where the gear adds build or keeping work** — a spear's cost is

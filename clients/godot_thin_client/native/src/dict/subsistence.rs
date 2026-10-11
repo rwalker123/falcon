@@ -289,6 +289,9 @@ pub(crate) fn herds_to_array(
             herd.predatorEatenBy().unwrap_or_default(),
         );
         let _ = dict.insert("predator_eaten", herd.predatorEaten());
+        // Hunting by need (#798): the keeping class this herd's meat lands in; pairs with the band's
+        // `hunt_meals` entry of the same `keeping` to size a hunting crew. Empty when unresolved.
+        let _ = dict.insert("keeping", herd.keeping().unwrap_or_default());
         // **WHERE THE PLAYER SENT THIS HERD, AND WHAT IS LEFT OF THE CLIMB**
         // (`docs/plan_standing_upkeep.md` §2.8). A queue entry names a DESTINATION rung rather than a
         // single rung — the four verbs always were destinations — so the entry stays at the head

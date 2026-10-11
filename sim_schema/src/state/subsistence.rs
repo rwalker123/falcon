@@ -964,6 +964,11 @@ pub struct HerdTelemetryState {
     /// The biomass (the unit of `biomass`) predators drew off this herd this turn. Appended last.
     #[serde(default)]
     pub predator_eaten: f32,
+    /// **The keeping class this herd's meat lands in** (#798) — pairs with the band's
+    /// `hunt_meals` to size a hunting crew. Empty for a species the fauna table cannot resolve.
+    /// Appended last.
+    #[serde(default)]
+    pub keeping: String,
 }
 
 impl Default for HerdTelemetryState {
@@ -1074,6 +1079,7 @@ impl Default for HerdTelemetryState {
             upkeep_hands: NO_UPKEEP_HANDS,
             upkeep_tools_short: false,
             predator_eaten_by: String::new(),
+            keeping: String::new(),
             predator_eaten: 0.0,
             corral_material: Vec::new(),
             pastoral_material: Vec::new(),

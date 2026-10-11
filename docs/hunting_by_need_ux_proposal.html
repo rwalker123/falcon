@@ -1,0 +1,671 @@
+<meta charset="utf-8">
+<title>Hunting By Need Prototype</title>
+<style>
+  /* Layout: a plain setup strip (clearly NOT the game) above one fixed game surface —
+     map, tile card top-left with the Assign hunters sheet as its own card beside it,
+     Band/City panel docked right, turn orb bottom-right.
+     Built on docs/migration_mode_ux_proposal.html (#797). Single dark look on purpose: the HUD is the "ember" theme from HudPalette.gd. */
+  :root {
+    color-scheme: dark;
+    --page: #0f0d0b;
+    --strip: #1d2226;
+    --strip-line: #3a444b;
+    --strip-ink: #d9e2e8;
+    --strip-dim: #93a2ad;
+    --strip-accent: #7fb6e0;
+
+    --g-ground: #14100d;
+    --g-panel: rgba(34, 27, 21, 0.94);
+    --g-panel-solid: #221b15;
+    --g-line: #46372a;
+    --g-line-soft: #2f261d;
+    --g-ink: #f4ead7;
+    --g-dim: #bdab90;
+    --g-faint: #8d7e68;
+    --g-signal: #efe3cd;
+    --g-signal-deep: #a08d6d;
+    --g-warn: #e0a63c;
+    --g-danger: #c05a41;
+    --g-healthy: #94a361;
+    --g-btn: #3d3226;
+    --g-btn-ink: #fbf3e2;
+
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  body { background: var(--page); color: var(--strip-ink); font-family: var(--sans); margin: 0; }
+  .wrap { padding-inline: 16px; padding-block: 16px 32px; display: grid; gap: 14px; }
+
+  /* ---------- setup strip: deliberately looks like a dev tool, not the game ---------- */
+  .strip { background: var(--strip); border: 1px dashed var(--strip-line); border-radius: 4px;
+    padding: 10px 14px; display: grid; gap: 8px; max-width: 1260px; font-size: 13px; }
+  .strip h1 { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; margin: 0;
+    color: var(--strip-dim); font-weight: 600; }
+  .strip .try { color: var(--strip-ink); font-size: 14px; }
+  .strip .row { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; }
+  .strip .lbl { color: var(--strip-dim); font-family: var(--mono); font-size: 12px; }
+  .strip button { font: inherit; font-size: 12px; background: transparent; color: var(--strip-ink);
+    border: 1px solid var(--strip-line); border-radius: 3px; padding: 4px 9px; cursor: pointer; }
+  .strip button:hover { border-color: var(--strip-accent); }
+  .strip button[disabled] { opacity: .4; cursor: default; }
+  .strip button[aria-pressed="true"] { background: var(--strip-accent); color: #0b1620; border-color: var(--strip-accent); }
+  .strip button:focus-visible, .game button:focus-visible, .game input:focus-visible { outline: 2px solid var(--strip-accent); outline-offset: 1px; }
+
+  /* ---------- the game surface ---------- */
+  .scroller { overflow-x: auto; max-width: 100%; }
+  .game { position: relative; width: 1260px; height: 680px; background: var(--g-ground);
+    font-family: var(--sans); color: var(--g-ink); overflow: hidden; border: 1px solid #000; }
+  #map { position: absolute; left: 0; top: 0; width: 960px; height: 680px; }
+  .hex { stroke: rgba(0,0,0,.35); stroke-width: 1; }
+  .hex.sel { stroke: #fff; stroke-width: 2.2; }
+
+  .card { position: absolute; background: var(--g-panel); border: 1px solid var(--g-line);
+    border-radius: 5px; box-shadow: 0 4px 14px rgba(0,0,0,.5); }
+  .tile { left: 12px; top: 10px; width: 272px; padding: 10px; font-size: 13px; }
+  .eyebrow { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--g-faint); }
+  .eyebrow b { color: var(--g-ink); font-weight: 600; letter-spacing: 0; font-size: 11px; }
+  .occ { display: flex; align-items: center; gap: 8px; border: 1px solid var(--g-line);
+    border-radius: 4px; padding: 4px 8px; margin-top: 5px; cursor: pointer; background: transparent;
+    color: var(--g-ink); font: inherit; width: 100%; text-align: left; box-sizing: border-box; }
+  .occ.on { border-color: var(--g-signal-deep); box-shadow: inset 3px 0 0 var(--g-signal); }
+  .occ .sw { width: 7px; height: 7px; background: var(--g-healthy); }
+  .occ .n { margin-left: auto; color: var(--g-dim); font-variant-numeric: tabular-nums; }
+  .kv { display: grid; grid-template-columns: 84px 1fr; gap: 3px 8px; margin: 10px 4px 4px; }
+  .kv dt { color: var(--g-dim); } .kv dd { margin: 0; }
+  .gbtn { font: inherit; font-size: 13px; background: transparent; color: var(--g-ink);
+    border: 1px solid var(--g-line); border-radius: 4px; padding: 6px 10px; cursor: pointer; width: 100%; margin-top: 6px; }
+  .gbtn:hover { border-color: var(--g-signal-deep); }
+  .gbtn.primary { background: var(--g-btn); color: var(--g-btn-ink); }
+  .note { color: var(--g-dim); font-size: 12px; margin: 8px 4px 0; }
+  .worked { color: var(--g-dim); font-size: 12px; margin: 8px 4px 0; }
+
+  /* the Assign hunters sheet — its own card beside the tile card, copied from herd_hunt_* preview frames */
+  .compose { left: 286px; top: 12px; width: 264px; padding: 10px; font-size: 12px; display: grid; gap: 8px; }
+  .compose .hd { display: flex; align-items: center; gap: 6px; }
+  .compose .hd .x { margin-left: auto; width: 28px; height: 28px; border: 1px solid var(--g-line); border-radius: 4px;
+    background: transparent; color: var(--g-ink); cursor: pointer; }
+  .srow { display: flex; align-items: center; gap: 8px; }
+  .srow .k { width: 46px; color: var(--g-ink); font-size: 13px; }
+  .field { flex: 1; border: 1px solid var(--g-line); border-radius: 4px; padding: 6px 8px; font-size: 13px; display: flex; }
+  .field::after { content: "⌄"; margin-left: auto; color: var(--g-dim); }
+  .seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+  .seg button { font: inherit; font-size: 10.5px; border: 1px solid var(--g-line); border-radius: 4px; background: transparent;
+    color: var(--g-ink); padding: 3px 0; cursor: pointer; }
+  .seg button.on { background: var(--g-btn); border-color: var(--g-signal-deep); }
+  .cap { font-size: 8.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--g-faint); }
+  .floor { display: grid; grid-template-columns: 1fr 10px; gap: 10px; align-items: stretch; }
+  .chart { position: relative; height: 86px; border: 1px solid var(--g-line-soft);
+    background: linear-gradient(#3a3626 0 44%, #2e2a20 44% 100%); }
+  .chart .ln { position: absolute; left: 0; right: 0; top: 42px; border-top: 1.5px solid var(--g-ink); }
+  .chart .tag { position: absolute; left: 2px; top: 30px; font-size: 8px; background: rgba(20,16,13,.85); padding: 0 3px; }
+  .chart .ax { position: absolute; right: 2px; bottom: -13px; font-size: 8px; color: var(--g-faint); }
+  .lf { border: 1px solid var(--g-line); background: linear-gradient(#8d7e68, #2a2119); position: relative; }
+  .lf span { position: absolute; left: 12px; top: 8px; writing-mode: vertical-rl; font-size: 7px; color: var(--g-faint); letter-spacing: .06em; }
+  .step { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .step button { width: 26px; height: 28px; border: 1px solid var(--g-line); border-radius: 4px; background: transparent;
+    color: var(--g-ink); cursor: pointer; }
+  .step .ct { width: 24px; text-align: center; font-variant-numeric: tabular-nums; font-size: 13px; }
+  .step .pc { border: 1px solid var(--g-line); border-radius: 10px; padding: 2px 7px; font-size: 9.5px; color: var(--g-dim); }
+  .step .pc b { color: var(--g-ink); font-weight: 400; font-size: 11px; margin-right: 3px; }
+  .step .pc.on { background: var(--g-btn); }
+  .tiny { font-size: 8.5px; color: var(--g-faint); }
+  .opt { border: 1px solid var(--g-line); border-radius: 4px; padding: 6px 8px; display: grid; gap: 2px; }
+  .opt.on { border-color: var(--g-signal-deep); background: rgba(239,227,205,.05); }
+  .opt label { display: flex; gap: 7px; align-items: center; cursor: pointer; font-size: 12px; }
+  .opt input { accent-color: #a08d6d; margin: 0; }
+  .opt .sub { color: var(--g-dim); font-size: 10.5px; padding-left: 20px; }
+  .party { display: grid; gap: 1px; } .party .l { font-size: 9px; color: var(--g-dim); }
+  .yield { border: 1px solid var(--g-line-soft); border-radius: 3px; padding: 7px 8px; display: grid; gap: 4px; }
+  .yield .big { font-size: 13px; font-variant-numeric: tabular-nums; }
+  .yield .big small { font-size: 8px; color: var(--g-faint); letter-spacing: .06em; margin: 0 14px 0 4px; }
+  .yield .big em { font-style: normal; font-size: 8px; color: var(--g-healthy); letter-spacing: .06em; }
+  .yield .g, .yield .a { font-size: 10.5px; padding-left: 9px; text-indent: -9px; }
+  .yield .g { color: var(--g-healthy); } .yield .a { color: var(--g-warn); }
+  .yield .g::before, .yield .a::before { content: "•  "; }
+
+  .fire { right: 312px; top: 10px; width: 250px; padding: 9px 11px 10px; font-size: 12.5px; }
+  .fire .eyebrow { color: var(--g-warn); border-bottom: 1px solid var(--g-line); padding-bottom: 5px; margin-bottom: 6px; }
+  .fire p { margin: 4px 0; color: var(--g-ink); font-style: italic; }
+  .fire p.old { color: var(--g-faint); }
+
+  .orb { position: absolute; left: 870px; top: 590px; width: 62px; height: 62px; border-radius: 50%;
+    border: 2px solid var(--g-warn); background: #1e1711; color: var(--g-warn); font-size: 22px; cursor: pointer;
+    display: grid; place-items: center; box-shadow: 0 0 0 4px rgba(224,166,60,.12); }
+  .orb small { position: absolute; top: 8px; font-size: 7px; letter-spacing: .2em; }
+  .orb span { margin-top: 6px; }
+  .orbhint { position: absolute; left: 850px; top: 658px; width: 100px; text-align: center; font-size: 10px; color: var(--g-faint); }
+
+  /* Band / City panel, docked right */
+  .panel { position: absolute; right: 0; top: 0; width: 300px; height: 100%; background: var(--g-panel-solid);
+    border-left: 1px solid var(--g-line); padding: 10px 12px; box-sizing: border-box; font-size: 13px; }
+  .ph { display: flex; align-items: center; gap: 8px; }
+  .ph .nm { font-size: 14px; } .ph .sub { font-size: 10.5px; color: var(--g-faint); }
+  .cyc { margin-left: auto; display: flex; gap: 4px; align-items: center; color: var(--g-faint); font-size: 10px; }
+  .cyc i { width: 22px; height: 22px; border: 1px solid var(--g-line); border-radius: 4px; display: grid; place-items: center; font-style: normal; color: var(--g-ink); }
+  .verbs { display: flex; gap: 4px; margin-top: 8px; }
+  .verb { width: 34px; height: 30px; border: 1px solid var(--g-line); border-radius: 4px; background: transparent;
+    color: var(--g-ink); font-size: 15px; display: grid; place-items: center; }
+  .tabs { display: flex; gap: 16px; margin: 14px 0 10px; font-size: 12px; }
+  .tabs button { font: inherit; background: none; border: 0; padding: 0 0 2px; color: var(--g-faint); cursor: pointer; }
+  .tabs button.on { color: var(--g-ink); border-bottom: 1px solid var(--g-ink); }
+  .vit { display: grid; gap: 4px; font-size: 14px; }
+  .vit .v { color: var(--g-warn); font-variant-numeric: tabular-nums; }
+  .vit .ok { color: var(--g-healthy); }
+  .sect { margin-top: 14px; }
+  .sect > .eyebrow { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .bar { height: 6px; background: #d8cbb2; opacity: .8; border-radius: 1px; }
+  .hunt { border: 1px solid var(--g-line); border-radius: 4px; padding: 8px 9px; display: grid; gap: 4px; }
+  .hunt.moving { border-color: var(--g-signal-deep); }
+  .hunt .l1 { display: flex; align-items: center; gap: 6px; }
+  .hunt .l1 .n { margin-left: auto; color: var(--g-dim); font-variant-numeric: tabular-nums; }
+  .hunt .l2 { color: var(--g-dim); font-size: 12px; }
+  .hunt .amber { color: var(--g-warn); font-size: 12px; }
+  .hunt .amber::before { content: "• "; }
+  .hunt .acts { display: flex; gap: 6px; margin-top: 3px; }
+  .chip { font: inherit; font-size: 11px; background: transparent; color: var(--g-dim);
+    border: 1px solid var(--g-line); border-radius: 3px; padding: 2px 7px; cursor: pointer; }
+  .chip:hover { color: var(--g-ink); border-color: var(--g-signal-deep); }
+  .chip.on { color: var(--g-ink); border-color: var(--g-signal-deep); background: rgba(239,227,205,.07); }
+  .chip.x { margin-left: auto; }
+  .empty { color: var(--g-faint); font-size: 12px; }
+  .build { position: absolute; left: 380px; bottom: 6px; font-size: 10px; color: var(--g-faint); }
+  /* ---------- additions for #798: the work rows and the hunt's muster ---------- */
+  .wrow { border: 1px solid var(--g-line-soft); border-radius: 4px; padding: 6px 9px; display: grid; gap: 2px; margin-top: 5px; }
+  .wrow .l1 { display: flex; align-items: center; gap: 6px; }
+  .wrow .l1 .n { margin-left: auto; font-variant-numeric: tabular-nums; }
+  .wrow .l1 .n s { color: var(--g-faint); text-decoration: none; margin-right: 3px; }
+  .wrow .l2 { color: var(--g-dim); font-size: 11.5px; }
+  .wrow .out { color: var(--g-warn); font-size: 11.5px; }
+  .pri { font: inherit; font-size: 10px; background: transparent; color: var(--g-dim); border: 1px solid var(--g-line);
+    border-radius: 9px; padding: 1px 7px; cursor: pointer; }
+  .pri:hover { color: var(--g-ink); border-color: var(--g-signal-deep); }
+  .pri.High { color: var(--g-ink); border-color: var(--g-signal-deep); }
+  .hunt.out { border-color: var(--g-warn); box-shadow: inset 3px 0 0 var(--g-warn); }
+  .hunt .l2 b { color: var(--g-ink); font-weight: 400; }
+  .hunt .good { color: var(--g-healthy); font-size: 12px; }
+  .meter { height: 4px; background: var(--g-line-soft); border-radius: 2px; overflow: hidden; }
+  .meter i { display: block; height: 100%; background: var(--g-warn); }
+  .when { border: 1px solid var(--g-line); border-radius: 4px; padding: 6px 8px; display: grid; gap: 2px; }
+  .when .big { font-size: 13px; }
+  .when .sub { color: var(--g-dim); font-size: 10.5px; }
+  .idle { color: var(--g-faint); font-size: 11.5px; margin-top: 6px; }
+  .strip .stat { font-family: var(--mono); font-size: 12px; color: var(--strip-dim); }
+  .strip .stat b { color: var(--strip-ink); font-weight: 400; }
+</style>
+
+<div class="wrap">
+  <section class="strip" aria-label="Prototype setup (not part of the game)">
+    <h1>Prototype setup — not part of the game · #798 Hunting by need</h1>
+    <div class="try"><b>Try this:</b> select the mammoths, press <b>Assign hunters ▸</b>, tick <b>Move camp with the herd</b> (the hunter count goes away), press <b>Hunt Here</b>, then end turns. Watch the Work tab: the band's rows give up hands when the hunt goes out and get them back when the kill lands. Click a row's <b>Priority</b> to change who gives up hands first.</div>
+    <div class="row">
+      <span class="lbl">scenario</span>
+      <button type="button" data-preset="1">Not hunting yet</button>
+      <button type="button" data-preset="2">Hunting by need · waiting</button>
+      <button type="button" data-preset="3">Hunting by need · crew out</button>
+      <button type="button" data-preset="4">Small band · can't field a full crew</button>
+    </div>
+    <div class="row">
+      <span class="lbl">time</span>
+      <button type="button" id="t5">End 5 turns</button>
+      <span class="stat" id="stat"></span>
+      <span class="lbl" style="margin-left:auto">a mammoth = 18 hunter-turns · 48 meat · keeps 4 turns · numbers illustrative</span>
+    </div>
+  </section>
+
+  <div class="scroller">
+    <div class="game" id="game">
+      <svg id="map" viewBox="0 0 960 680" aria-label="Map"></svg>
+      <div class="card tile" id="tile"></div>
+      <div class="card compose" id="compose" hidden></div>
+      <div class="card fire" id="fire"></div>
+      <button type="button" class="orb" id="orb" aria-label="End turn"><small>TURN</small><span id="turnN">40</span></button>
+      <div class="orbhint">end turn</div>
+      <aside class="panel" id="panel"></aside>
+      <div class="build">build cli prototype · srv —</div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  // ---------- hex geometry (pointy-top, odd-r offset) ----------
+  const R = 31, COLS = 15, ROWS = 12, OX = 36, OY = 40, S3 = Math.sqrt(3);
+  const center = (c, r) => [OX + R * S3 * (c + 0.5 * (r & 1)), OY + R * 1.5 * r];
+  const cube = (c, r) => { const q = c - (r - (r & 1)) / 2; return [q, r, -q - r]; };
+  const dist = (a, b) => { const A = cube(a.x, a.y), B = cube(b.x, b.y);
+    return Math.max(Math.abs(A[0]-B[0]), Math.abs(A[1]-B[1]), Math.abs(A[2]-B[2])); };
+  const NB = [[[1,0],[-1,0],[0,-1],[-1,-1],[0,1],[-1,1]], [[1,0],[-1,0],[1,-1],[0,-1],[1,1],[0,1]]];
+  const neighbors = (p) => NB[p.y & 1].map(([dx,dy]) => ({x:p.x+dx, y:p.y+dy}))
+    .filter(n => n.x >= 0 && n.y >= 0 && n.x < COLS && n.y < ROWS);
+  const stepToward = (p, t) => {
+    if (p.x === t.x && p.y === t.y) return {...p};
+    let best = null, bd = 1e9;
+    for (const n of neighbors(p)) { const d = dist(n, t); if (d < bd) { bd = d; best = n; } }
+    return best;
+  };
+  const same = (a, b) => a && b && a.x === b.x && a.y === b.y;
+  const hexPts = (c, r) => { const [cx, cy] = center(c, r); let s = "";
+    for (let i = 0; i < 6; i++) { const a = Math.PI / 180 * (60 * i - 30);
+      s += (cx + R * Math.cos(a)).toFixed(1) + "," + (cy + R * Math.sin(a)).toFixed(1) + " "; } return s; };
+
+  // ---------- world ----------
+  const ROUTE = [{x:7,y:7}, {x:12,y:3}, {x:6,y:2}];      // mammoth seasonal grounds
+  const LOITER = 6;
+  const EAT_PER_HEAD = 0.16;
+  const MAMMOTH_MEAT = 48, MEAT_KEEPS = 4;
+  const KILL_WORK = 18;        // hunter-turns to bring one mammoth down
+  const USEFUL_CREW = 6;       // hunt_useful_crew: past this, more hands add nothing
+  const PRI_ORDER = ["Low", "Normal", "High"];
+  const terrain = [];
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+    const h = Math.abs(Math.sin(c * 12.9898 + r * 78.233) * 43758.5453) % 1;
+    const tones = ["#4b4a33", "#545437", "#47503a", "#5a5639", "#3f4734"];
+    let col = tones[Math.floor(h * tones.length)];
+    if ((c === 2 && r > 3) || (c === 3 && r > 8)) col = "#2c4a55";
+    if (h > 0.93) col = "#6a6050";
+    terrain.push({c, r, col, name: col === "#2c4a55" ? "River" : h > 0.93 ? "Rocky Steppe" : "Mammoth Steppe"});
+  }
+
+  let S;
+  const deer = {x: 3, y: 2, name: "Red Deer", glyph: "🦌"};
+  function preset(n) {
+    const base = {
+      turn: 40, ui: {sel: "herd", sheet: null, tab: "work"},
+      herd: {x:7, y:7, name:"Woolly Mammoth", glyph:"🦣", phase:"loiter", loiterLeft:5, leg:1, count:9},
+      band: {
+        x:6, y:8, name:"Saltmarch", people:30, working:15,
+        store:14, meat:null,                 // meat: {amt, left} — a kill, rotting on its shelf life
+        hunt:null,                           // {needed:true, moving:true} | {needed:false, moving:false, hunters}
+        wound:0, crew:null,                  // crew: [{row, n}] — who is out this turn
+        rows:[
+          {id:"berry", glyph:"🫐", name:"Berry patch", n:6, pri:"Normal", food:0.35},
+          {id:"fish", glyph:"🐟", name:"Fishing weir", n:4, pri:"Normal", food:0.40},
+          {id:"wood", glyph:"🪵", name:"Woodcutting", n:3, pri:"Low", food:0, what:"wood"},
+        ],
+      },
+      events: [],
+    };
+    const b = base.band;
+    if (n === 2 || n === 3) { b.x = 7; b.y = 7; b.hunt = {needed:true, moving:true}; base.ui.sel = "band";
+      base.events = ["Saltmarch camps among the mammoths."]; }
+    if (n === 2) { b.store = 9; b.meat = {amt: 33.6, left: 2}; base.events.push("Hunters kill a mammoth beside camp: 48 meat."); }
+    if (n === 3) { b.store = 7.5; b.wound = 6; base.events.push("Six hunters go out after a mammoth."); }
+    if (n === 4) {
+      b.x = 7; b.y = 7; b.hunt = {needed:true, moving:true}; base.ui.sel = "band";
+      b.name = "Reedfall"; b.people = 12; b.working = 4; b.store = 11;
+      b.rows = [
+        {id:"berry", glyph:"🫐", name:"Berry patch", n:3, pri:"Normal", food:0.35},
+        {id:"fish", glyph:"🐟", name:"Fishing weir", n:1, pri:"High", food:0.40},
+      ];
+      base.events = ["Reedfall camps among the mammoths."];
+    }
+    S = base;
+    S.band.crew = plannedCrew();
+    document.querySelectorAll("[data-preset]").forEach(x => x.setAttribute("aria-pressed", String(+x.dataset.preset === n)));
+    render();
+  }
+
+  const log = (t) => { S.events.push(t); if (S.events.length > 4) S.events.shift(); };
+  const moving = () => !!(S.band.hunt && S.band.hunt.moving);
+  const byNeed = () => !!(S.band.hunt && S.band.hunt.needed);
+
+  // ---------- the band's economy ----------
+  const assigned = (b) => b.rows.reduce((s, r) => s + r.n, 0);
+  const idleOf = (b) => b.working - assigned(b) - (b.hunt && !b.hunt.needed ? b.hunt.hunters : 0);
+  const eatRate = (b) => b.people * EAT_PER_HEAD;
+  const outFrom = (b, id) => (b.crew || []).filter(c => c.row === id).reduce((s, c) => s + c.n, 0);
+  const incomeWith = (b, crew) => b.rows.reduce((s, r) => s + (r.n - (crew || []).filter(c => c.row === r.id).reduce((a, c) => a + c.n, 0)) * r.food, 0);
+
+  // The muster: idle hands first, then rows from lowest Priority up; ties give from the bottom of the list.
+  function musterCrew(b) {
+    let need = USEFUL_CREW; const crew = [];
+    const idle = Math.max(0, idleOf(b));
+    if (idle > 0) { const k = Math.min(idle, need); crew.push({row:"idle", n:k}); need -= k; }
+    const order = b.rows.map((r, i) => ({r, i})).sort((a, c) => PRI_ORDER.indexOf(a.r.pri) - PRI_ORDER.indexOf(c.r.pri) || c.i - a.i);
+    for (const {r} of order) { if (need <= 0) break; const k = Math.min(r.n, need); if (k > 0) { crew.push({row:r.id, n:k}); need -= k; } }
+    return crew;
+  }
+  const crewSize = (crew) => (crew || []).reduce((s, c) => s + c.n, 0);
+
+  // Meat the band will still eat before it rots (it eats meat first).
+  const edibleMeat = (b) => b.meat ? Math.min(b.meat.amt, eatRate(b) * b.meat.left) : 0;
+
+  // Start the hunt when the food will run out before a kill could land if we waited one more turn.
+  function needsHunt(b, store, meat) {
+    if (b.wound > 0) return true;                                    // a mammoth already half down: finish it
+    const crew = musterCrew(b), size = crewSize(crew);
+    if (size === 0) return false;
+    const turns = Math.ceil(KILL_WORK / size);
+    const drain = eatRate(b) - incomeWith(b, crew);
+    return store + meat - drain * (turns + 1) <= eatRate(b);         // one turn of eating as the margin
+  }
+  function plannedCrew() { const b = S.band; return byNeed() && needsHunt(b, b.store, edibleMeat(b)) ? musterCrew(b) : null; }
+
+  // How many turns until the hunt goes out, if nothing changes.
+  function turnsUntilHunt() {
+    const b = S.band; let store = b.store, meat = b.meat ? {...b.meat} : null;
+    const inc = incomeWith(b, null), eat = eatRate(b);
+    for (let t = 1; t <= 30; t++) {
+      let need = eat;
+      if (meat) { const m = Math.min(meat.amt, need); meat.amt -= m; need -= m; meat.left--; if (meat.left <= 0) meat = null; }
+      store = store + inc - need;
+      const em = meat ? Math.min(meat.amt, eat * meat.left) : 0;
+      if (needsHunt(b, store, em)) return t;
+    }
+    return null;
+  }
+  const runway = () => { const b = S.band, drain = eatRate(b) - incomeWith(b, b.crew);
+    const food = b.store + edibleMeat(b); return drain <= 0 ? null : Math.floor(food / drain); };
+
+  // ---------- one turn ----------
+  function endTurn() {
+    const h = S.herd, b = S.band;
+    S.turn++;
+    // 1. work: the rows that kept their hands bring food in; the band eats meat first
+    b.store += incomeWith(b, b.crew);
+    let need = eatRate(b);
+    if (b.meat) {
+      const m = Math.min(b.meat.amt, need); b.meat.amt -= m; need -= m; b.meat.left--;
+      if (b.meat.left <= 0) { if (b.meat.amt > 0.05) log(`${b.meat.amt.toFixed(0)} meat rotted in camp.`); b.meat = null; }
+    }
+    b.store = Math.max(0, b.store - need);
+    // 2. the herd moves; a band following it steps right after
+    if (h.phase === "loiter") { h.loiterLeft--; if (h.loiterLeft <= 0) { h.phase = "migrate"; log("The mammoths move off toward their next grounds."); } }
+    if (h.phase === "migrate") {
+      const t = ROUTE[h.leg]; const nx = stepToward(h, t); h.x = nx.x; h.y = nx.y;
+      if (same(h, t)) { h.phase = "loiter"; h.loiterLeft = LOITER; h.leg = (h.leg + 1) % ROUTE.length; log("The mammoths reach their seasonal grounds."); }
+    }
+    if (moving() && !same(b, h)) { const nx = stepToward(b, h); b.x = nx.x; b.y = nx.y; }
+    // 3. the hunt: an out crew wears a mammoth down; a whole one lands in camp the turn it falls
+    const crew = byNeed() ? b.crew : (b.hunt ? [{row:"hunt", n:b.hunt.hunters}] : null);
+    if (crew && crewSize(crew) > 0) {
+      b.wound += crewSize(crew);
+      if (b.wound >= KILL_WORK) {
+        b.wound = 0; h.count = Math.max(0, h.count - 1);
+        b.meat = {amt: (b.meat ? b.meat.amt : 0) + MAMMOTH_MEAT, left: MEAT_KEEPS};
+        log(byNeed() ? `A mammoth falls beside camp: ${MAMMOTH_MEAT} meat. The hunters go back to work.` : `Hunters kill a mammoth beside camp: ${MAMMOTH_MEAT} meat.`);
+      }
+    }
+    // 4. next turn's plan: does the hunt go out?
+    const was = crewSize(b.crew);
+    b.crew = plannedCrew();
+    if (!was && b.crew) log(`${crewSize(b.crew)} hunters go out after a mammoth.`);
+    render();
+  }
+
+  // ---------- derived status: the words the hunt row shows ----------
+  function where() {
+    const b = S.band, h = S.herd, gap = dist(b, h);
+    if (!moving()) return null;
+    if (gap > 0) return `Catching up · ${gap} hex${gap === 1 ? "" : "es"} behind`;
+    if (h.phase === "migrate") { const nx = stepToward(h, ROUTE[h.leg]); return `Moving with it · next (${nx.x}, ${nx.y})`; }
+    return "Camped in the herd. Kills land in camp.";
+  }
+  function crewFrom(crew) {
+    return crew.map(c => c.row === "idle" ? `idle ${c.n}` : `${S.band.rows.find(r => r.id === c.row).name} ${c.n}`).join(" · ");
+  }
+
+  // ---------- render ----------
+  const svgNS = "http://www.w3.org/2000/svg";
+  const el = (tag, attrs, parent, text) => { const e = document.createElementNS(svgNS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; parent.appendChild(e); return e; };
+
+  function renderMap() {
+    const svg = document.getElementById("map"); svg.innerHTML = "";
+    const h = S.herd, b = S.band, ui = S.ui;
+    el("rect", {x:0, y:0, width:960, height:680, fill:"#14100d"}, svg);
+    const gHex = el("g", {}, svg);
+    for (const t of terrain) {
+      const p = {x:t.c, y:t.r};
+      let cls = "hex";
+      if ((ui.sel === "herd" && same(p, h)) || (ui.sel === "band" && same(p, b)) || (ui.sel === "deer" && same(p, deer))) cls += " sel";
+      const poly = el("polygon", {points: hexPts(t.c, t.r), fill: t.col, class: cls}, gHex);
+      poly.addEventListener("click", () => clickHex(p));
+    }
+    const over = el("g", {"pointer-events":"none"}, svg);
+    const mv = moving();
+    if ((ui.sel === "herd" || mv) && h.phase === "loiter") {
+      for (const t of terrain) { const p = {x:t.c, y:t.r};
+        if (dist(p, h) <= 2) el("polygon", {points: hexPts(t.c, t.r), fill:"rgba(224,166,60,.10)", stroke:"rgba(224,166,60,.35)", "stroke-width":1}, over); }
+    }
+    if (b.hunt && !mv) {
+      const [hx, hy] = center(h.x, h.y);
+      el("circle", {cx:hx, cy:hy, r:17, fill:"none", stroke:"rgba(235,87,77,.85)", "stroke-width":1.6}, over);
+      line(over, b, h, "rgba(235,87,77,.45)", 1.4, "");
+    }
+    if (h.phase === "migrate" && (mv || ui.sel === "herd")) {
+      const nx = stepToward(h, ROUTE[h.leg]); arrow(over, h, nx, "rgba(250,148,46,.85)", 1.8, false);
+    }
+    if (mv && !same(b, h)) {
+      line(over, b, h, "rgba(239,227,205,.55)", 1.6, "4 5");
+      const nx = stepToward(b, h); arrow(over, b, nx, "#efe3cd", 2.4, true);
+    }
+    token(over, h, h.glyph, mv);
+    token(over, deer, deer.glyph, false);
+    const [bx, by] = center(b.x, b.y);
+    const off = same(b, h) ? -11 : 0;
+    el("circle", {cx:bx + off, cy:by - 2, r:13, fill:"#2a2119", stroke:"#e7d9bd", "stroke-width":1.4}, over);
+    el("text", {x:bx + off, y:by + 3, "text-anchor":"middle", "font-size":14}, over, "⛺");
+    if (mv) {
+      el("circle", {cx:bx + off + 11, cy:by - 13, r:7.5, fill:"#221b15", stroke:"#efe3cd", "stroke-width":1}, over);
+      el("text", {x:bx + off + 11, y:by - 9.5, "text-anchor":"middle", "font-size":9}, over, "👣");
+    }
+    // the crew is out: the existing red worked-ring on the herd, only on the turns a hunt runs
+    if (crewSize(b.crew) > 0) {
+      const [hx, hy] = center(h.x, h.y);
+      el("circle", {cx:hx + (same(b, h) ? 11 : 0), cy:hy - 1, r:18, fill:"none", stroke:"rgba(235,87,77,.85)", "stroke-width":1.6}, over);
+    }
+    pill(over, bx, by + 21, b.name, "#f4ead7", "rgba(34,27,21,.9)");
+  }
+  function token(g, p, glyph, followed) {
+    const [x, y] = center(p.x, p.y); const off = same(p, S.band) ? 11 : 0;
+    el("text", {x:x + off, y:y + 5, "text-anchor":"middle", "font-size":18}, g, glyph);
+    if (followed) el("circle", {cx:x + off, cy:y - 1, r:14, fill:"none", stroke:"rgba(239,227,205,.7)", "stroke-width":1, "stroke-dasharray":"3 3"}, g);
+  }
+  function line(g, a, b, color, w, dash) { const [x1,y1] = center(a.x,a.y), [x2,y2] = center(b.x,b.y);
+    el("line", {x1, y1, x2, y2, stroke:color, "stroke-width":w, "stroke-dasharray":dash || "", "stroke-linecap":"round"}, g); }
+  function arrow(g, a, b, color, w, short) {
+    let [x1,y1] = center(a.x,a.y), [x2,y2] = center(b.x,b.y);
+    if (short) { x1 = x1 + (x2-x1)*.35; y1 = y1 + (y2-y1)*.35; }
+    x2 = x1 + (x2-x1)*.9; y2 = y1 + (y2-y1)*.9;
+    el("line", {x1, y1, x2, y2, stroke:color, "stroke-width":w, "stroke-linecap":"round"}, g);
+    const ang = Math.atan2(y2-y1, x2-x1), s = 8;
+    const p = [[x2,y2],[x2 - s*Math.cos(ang-0.45), y2 - s*Math.sin(ang-0.45)],[x2 - s*Math.cos(ang+0.45), y2 - s*Math.sin(ang+0.45)]];
+    el("polygon", {points: p.map(q => q.join(",")).join(" "), fill:color}, g);
+  }
+  function pill(g, x, y, text, ink, bg) {
+    const w = text.length * 6.4 + 12;
+    el("rect", {x:x - w/2, y:y - 8, width:w, height:15, rx:7.5, fill:bg || "rgba(20,16,13,.92)", stroke:"rgba(70,55,42,1)"}, g);
+    el("text", {x, y:y + 3.5, "text-anchor":"middle", "font-size":10.5, fill:ink, "font-family":"system-ui, sans-serif"}, g, text);
+  }
+
+  // The real sheet (DrawerComposeController._build_herd_assign_controls). Ticking
+  // "Move camp with the herd" REPLACES the hunter stepper: the band hunts by need, crew picked by the sim.
+  function composeHtml() {
+    const sh = S.ui.sheet, b = S.band, h = S.herd;
+    const pol = [["strip","💀 Everything"],["peak","♻ Best"],["learn","⬆ Learning"]];
+    const crew = musterCrew(b), size = crewSize(crew);
+    const hunters = sh.moving
+      ? `<div class="when"><span class="big">When the band needs meat</span>
+          <span class="sub">Sends ${size} from its other work, lowest Priority first. They come back after the kill.</span></div>`
+      : `<div class="step"><button type="button" id="shMinus" aria-label="Fewer">−</button><span class="ct">${sh.hunters}</span><button type="button" id="shPlus" aria-label="More">+</button>
+          <span class="pc"><b>3</b>clear it now</span><span class="pc ${sh.hunters === USEFUL_CREW ? "on" : ""}"><b>${USEFUL_CREW}</b>hold it after</span></div>
+        <span class="tiny">max ${USEFUL_CREW} workers useful here — more would be idle</span>`;
+    const yieldBox = sh.moving
+      ? `<div class="yield"><span class="cap">Each kill</span>
+          <div class="big">${MAMMOTH_MEAT}<small>MEAT</small>~${Math.ceil(KILL_WORK / Math.max(1, size))} turns out<small>PER MAMMOTH</small></div>
+          <div class="a">Meat keeps ${MEAT_KEEPS} turns · most of a mammoth rots</div>
+          <div class="g">The herd breeds back ≈0.14 ${h.name} a turn.</div></div>`
+      : `<div class="yield"><span class="cap">Next turn · now → after · at the likely take</span>
+          <div class="big">2.43 → 0.07<small>FOOD</small><em>RENEWABLE</em></div>
+          <div class="g">The herd breeds back ≈0.14 ${h.name} a turn.</div></div>`;
+    return `<div class="hd"><span class="cap">Assign hunters</span><span style="font-size:12px">${h.name}</span>
+        <button type="button" class="x" id="shClose" aria-label="Close">✕</button></div>
+      <div class="srow"><span class="k">Band:</span><span class="field">${b.name}</span></div>
+      <div class="seg">${pol.map(([k, t]) => `<button type="button" data-pol="${k}" class="${sh.policy === k ? "on" : ""}">${t}</button>`).join("")}</div>
+      <span class="cap">Leave standing</span>
+      <div class="floor"><div class="chart"><div class="ln"></div><span class="tag">leave 50% · ≈4 ${h.name}</span><span class="ax">60 turns</span></div>
+        <div class="lf"><span>LEARNING FASTER ↑</span></div></div>
+      <div class="opt ${sh.moving ? "on" : ""}"><label for="shMove"><input type="checkbox" id="shMove" ${sh.moving ? "checked" : ""}> Move camp with the herd</label>
+        <span class="sub">Camp in the herd, travel with it, hunt it when you need meat.</span></div>
+      <span class="cap" style="margin-top:2px">Hunters</span>
+      ${hunters}
+      <div class="srow"><span class="k">Kit</span><span class="field">⇣ Stalking kit</span></div>
+      ${yieldBox}
+      <button type="button" class="gbtn primary" id="shGo">Hunt Here</button>`;
+  }
+
+  function renderTile() {
+    const t = document.getElementById("tile"); const ui = S.ui, h = S.herd, b = S.band;
+    const at = ui.sel === "herd" ? h : ui.sel === "deer" ? deer : b;
+    const ter = terrain.find(q => q.c === at.x && q.r === at.y);
+    let html = `<div class="eyebrow">Tile <b>(${at.x}, ${at.y})</b></div>
+      <div class="occ" style="cursor:default"><span class="sw" style="background:#8d7e68"></span>${ter.name}<span class="n">4</span></div>`;
+    if (same(b, at)) html += `<div class="eyebrow" style="margin-top:6px">Bands (1)</div>
+      <button type="button" class="occ ${ui.sel === "band" ? "on" : ""}" data-sel="band"><span class="sw"></span>⛺ ${b.name}<span class="n">${b.people}</span></button>`;
+    if (same(h, at) || same(deer, at)) html += `<div class="eyebrow" style="margin-top:6px">Wildlife (1)</div>`;
+    if (same(h, at)) html += `<button type="button" class="occ ${ui.sel === "herd" ? "on" : ""}" data-sel="herd"><span class="sw" style="background:#e0a63c"></span>${h.glyph} ${h.name}<span class="n">${h.count}</span></button>`;
+    if (same(deer, at)) html += `<button type="button" class="occ ${ui.sel === "deer" ? "on" : ""}" data-sel="deer"><span class="sw" style="background:#e0a63c"></span>${deer.glyph} ${deer.name}<span class="n">5</span></button>`;
+    const fight = `<dt>Defense</dt><dd>▰▰▰▰▱ 12</dd><dt>Danger</dt><dd>Hunt 8 · Threat 0</dd>`;
+    if (ui.sel === "band") {
+      html += `<p class="note">Labor allocation is in the Band / City panel.</p>`;
+    } else if (ui.sel === "herd") {
+      html += `<dl class="kv"><dt>Size</dt><dd>Migratory game</dd><dt>Herd</dt><dd>${h.count} / 12 · <span style="color:var(--g-healthy)">Thriving</span></dd>
+        <dt>Range</dt><dd>2 tiles</dd>${fight}</dl><p class="note" style="color:var(--g-ink)">Wild game — hunt only</p>`;
+      if (b.hunt) html += `<p class="worked">${b.name} · ${b.hunt.needed ? (crewSize(b.crew) ? `${crewSize(b.crew)} hunters out` : "hunts when needed") : `${b.hunt.hunters} hunters`}${b.hunt.moving ? " · 👣 moving with the herd" : ""}</p>`;
+      html += `<button type="button" class="gbtn" id="assign">Assign hunters ▸</button>`;
+    } else if (ui.sel === "deer") {
+      html += `<dl class="kv"><dt>Size</dt><dd>Big game</dd><dt>Herd</dt><dd>5 / 8 · <span style="color:var(--g-healthy)">Thriving</span></dd><dt>Range</dt><dd>1 tile</dd><dt>Defense</dt><dd>▱▱▱▱▱ 2</dd></dl>
+        <button type="button" class="gbtn">Assign hunters ▸</button>`;
+    }
+    t.innerHTML = html;
+    t.querySelectorAll("[data-sel]").forEach(x => x.addEventListener("click", () => { S.ui.sel = x.dataset.sel; S.ui.sheet = null; render(); }));
+    on("assign", () => { S.ui.sheet = b.hunt ? {moving: b.hunt.moving, hunters: b.hunt.hunters || USEFUL_CREW, policy: "peak"}
+                                           : {hunters: USEFUL_CREW, moving: false, policy: "peak"}; render(); });
+
+    const c = document.getElementById("compose");
+    c.hidden = !(ui.sel === "herd" && ui.sheet);
+    if (c.hidden) { c.innerHTML = ""; return; }
+    c.innerHTML = composeHtml();
+    on("shClose", () => { S.ui.sheet = null; render(); });
+    on("shMinus", () => { S.ui.sheet.hunters = Math.max(1, S.ui.sheet.hunters - 1); render(); });
+    on("shPlus", () => { S.ui.sheet.hunters = Math.min(USEFUL_CREW, S.ui.sheet.hunters + 1); render(); });
+    c.querySelectorAll("[data-pol]").forEach(x => x.addEventListener("click", () => { S.ui.sheet.policy = x.dataset.pol; render(); }));
+    const cb = document.getElementById("shMove");
+    if (cb) cb.addEventListener("change", () => { S.ui.sheet.moving = cb.checked; render(); });
+    on("shGo", () => {
+      const sh = S.ui.sheet, was = b.hunt;
+      setHunt(sh.moving ? {needed:true, moving:true} : {needed:false, moving:false, hunters: Math.min(sh.hunters, Math.max(0, idleOf(b)) + (was && !was.needed ? was.hunters : 0))});
+      S.ui.sheet = null; S.ui.tab = "work"; S.ui.sel = "band";
+      if (b.hunt.moving && !(was && was.moving)) log(`${b.name} sets out to camp with the mammoths.`);
+      else if (!b.hunt.needed) log(`${b.hunt.hunters} hunters set out after the mammoths.`);
+      render();
+    });
+  }
+  const on = (id, fn) => { const e = document.getElementById(id); if (e) e.addEventListener("click", fn); };
+  function setHunt(h) { S.band.hunt = h; S.band.crew = plannedCrew(); }
+
+  function renderPanel() {
+    const p = document.getElementById("panel"); const b = S.band, h = S.herd;
+    const travelling = moving() && (!same(b, h) || h.phase === "migrate");
+    const run = runway();
+    const V = [["➜","Move"],["⚑","Scout"],["💀","Deny"],["📦","Trade"],["⌂","Split"]];
+    const food = b.store + (b.meat ? b.meat.amt : 0);
+    let html = `<div class="ph"><span>⛺</span><div><div class="nm">${b.name}</div><div class="sub">${travelling ? "On the move" : "Camp"} (${b.x}, ${b.y})</div></div>
+      <div class="cyc"><i>◀</i>1 / 1<i>▶</i></div></div>
+      <div class="verbs">${V.map(([g, t]) => `<span class="verb" title="${t}">${g}</span>`).join("")}</div>
+      <div class="tabs"><button type="button" data-tab="band" class="${S.ui.tab === "band" ? "on" : ""}">Band</button>
+        <button type="button" data-tab="work" class="${S.ui.tab === "work" ? "on" : ""}">Work</button>
+        <button type="button" data-tab="parties">Parties</button></div>
+      <div class="vit"><div>Food <span class="v">${food.toFixed(0)} (${run == null ? "steady" : run + " turns"})</span></div>
+        ${b.meat ? `<div style="font-size:12px;color:var(--g-dim)">${b.meat.amt.toFixed(0)} of it meat · <span style="color:var(--g-warn)">rots in ${b.meat.left} turn${b.meat.left === 1 ? "" : "s"}</span></div>` : ""}</div>`;
+    if (S.ui.tab === "band") {
+      html += `<div class="sect"><div class="eyebrow"><span>People</span><span>${b.people}</span></div><div class="bar"></div></div>
+        <div class="sect"><div class="eyebrow"><span>Working age</span><span>${b.working}</span></div><div class="bar" style="opacity:.5"></div></div>`;
+    } else {
+      const out = crewSize(b.crew);
+      html += `<div class="sect"><div class="eyebrow"><span>Hunting</span><span>${b.hunt ? (b.hunt.needed ? (out ? `${out} out` : "when needed") : `${b.hunt.hunters} hunters`) : "0 hunters"}</span></div>`;
+      if (b.hunt) html += huntRow();
+      else html += `<div class="empty">No hunts. Select a herd and assign hunters.</div>`;
+      html += `</div><div class="sect"><div class="eyebrow"><span>Work</span><span>${assigned(b)} of ${b.working}</span></div>`;
+      for (const r of b.rows) {
+        const o = outFrom(b, r.id);
+        html += `<div class="wrow"><div class="l1">${r.glyph} ${r.name}
+            <button type="button" class="pri ${r.pri}" data-pri="${r.id}" title="Priority — who gives up hands to the hunt last">${r.pri}</button>
+            <span class="n">${o ? `<s>${r.n} →</s>${r.n - o}` : r.n}</span></div>
+          ${o ? `<div class="out">${o} out hunting · back after the kill</div>` : `<div class="l2">${r.food ? `+${(r.n * r.food).toFixed(1)} food a turn` : `+${(r.n * 0.5).toFixed(1)} ${r.what} a turn`}</div>`}</div>`;
+      }
+      const idle = Math.max(0, idleOf(b)), idleOut = outFrom(b, "idle");
+      if (idle) html += `<div class="idle">${idleOut ? `${idle - idleOut} idle · ${idleOut} out hunting` : `${idle} idle`}</div>`;
+      html += `</div>`;
+    }
+    p.innerHTML = html;
+    p.querySelectorAll("[data-tab]").forEach(x => x.addEventListener("click", () => { if (x.dataset.tab !== "parties") { S.ui.tab = x.dataset.tab; render(); } }));
+    p.querySelectorAll("[data-pri]").forEach(x => x.addEventListener("click", () => {
+      const r = b.rows.find(q => q.id === x.dataset.pri);
+      r.pri = PRI_ORDER[(PRI_ORDER.indexOf(r.pri) + 1) % PRI_ORDER.length];
+      if (crewSize(b.crew) && b.wound === 0) b.crew = plannedCrew();     // a crew already out stays out
+      render();
+    }));
+    on("pMove", () => {
+      if (b.hunt.moving) { setHunt({needed:false, moving:false, hunters: Math.min(USEFUL_CREW, Math.max(0, idleOf(b)))}); b.wound = 0;
+        log(b.hunt.hunters ? `${b.name} stays put. ${b.hunt.hunters} idle hands keep hunting.` : `${b.name} stays put. No idle hands to hunt.`); }
+      else { setHunt({needed:true, moving:true}); log(`${b.name} sets out to camp with the mammoths.`); }
+      render(); });
+    on("pCancel", () => { b.hunt = null; b.crew = null; b.wound = 0; S.ui.sheet = null; log(`${b.name} calls its hunters in.`); render(); });
+    on("hMinus", () => { b.hunt.hunters = Math.max(0, b.hunt.hunters - 1); render(); });
+    on("hPlus", () => { if (idleOf(b) > 0) b.hunt.hunters = Math.min(USEFUL_CREW, b.hunt.hunters + 1); render(); });
+  }
+
+  function huntRow() {
+    const b = S.band, h = S.herd, out = crewSize(b.crew);
+    const acts = `<div class="acts"><button type="button" class="chip ${b.hunt.moving ? "on" : ""}" id="pMove" aria-pressed="${b.hunt.moving}">👣 Move camp with the herd</button>
+      <button type="button" class="chip x" id="pCancel" aria-label="Cancel hunt" title="Cancel hunt">✕</button></div>`;
+    if (!b.hunt.needed) {
+      return `<div class="hunt"><div class="l1">${h.glyph} ${h.name}
+          <span class="n"><button type="button" class="chip" id="hMinus" aria-label="Fewer">−</button> ${b.hunt.hunters} <button type="button" class="chip" id="hPlus" aria-label="More">+</button></span></div>
+        <div class="l2">${b.hunt.hunters ? `Mammoth down every ~${Math.ceil(KILL_WORK / b.hunt.hunters)} turns` : "No hunters on it"}</div>${acts}</div>`;
+    }
+    const w = where();
+    if (out) {
+      const left = Math.ceil((KILL_WORK - b.wound) / out), short = out < USEFUL_CREW;
+      return `<div class="hunt moving out"><div class="l1">${h.glyph} ${h.name}<span class="n">${out} out</span></div>
+        <div class="l2"><b>Hunting · mammoth down in ~${left} turn${left === 1 ? "" : "s"}</b></div>
+        <div class="meter"><i style="width:${(100 * b.wound / KILL_WORK).toFixed(0)}%"></i></div>
+        <div class="l2">From ${crewFrom(b.crew)}</div>
+        ${short ? `<div class="amber">Only ${out} of ${USEFUL_CREW} hands to spare · a slow kill</div>` : ""}
+        ${acts}</div>`;
+    }
+    const n = turnsUntilHunt(), run = runway();
+    const l2 = n == null ? "Food is steady · no hunt needed" : `Hunt goes out in ${n} turn${n === 1 ? "" : "s"}`;
+    return `<div class="hunt moving"><div class="l1">${h.glyph} ${h.name}<span class="n">when needed</span></div>
+      <div class="l2">${l2}${run != null ? ` · food lasts ${run}` : ""}</div>
+      ${w ? `<div class="l2">${w}</div>` : ""}${acts}</div>`;
+  }
+
+  function renderChrome() {
+    document.getElementById("turnN").textContent = S.turn;
+    const f = document.getElementById("fire");
+    f.innerHTML = `<div class="eyebrow">At the fire</div>` + (S.events.length
+      ? S.events.map((e, i) => `<p class="${i < S.events.length - 2 ? "old" : ""}">${e}</p>`).join("")
+      : `<p class="old">Nothing has been told yet.</p>`);
+    const b = S.band;
+    document.getElementById("stat").innerHTML =
+      `store <b>${b.store.toFixed(1)}</b> · meat <b>${b.meat ? b.meat.amt.toFixed(1) + " (" + b.meat.left + "t)" : "—"}</b> · eats <b>${eatRate(b).toFixed(1)}</b>/t · rows bring <b>${incomeWith(b, b.crew).toFixed(1)}</b>/t · wound <b>${b.wound}/${KILL_WORK}</b>`;
+  }
+  function render() { renderMap(); renderTile(); renderPanel(); renderChrome(); }
+
+  function clickHex(p) {
+    const ui = S.ui; ui.sheet = null;
+    if (same(p, S.band) && same(p, S.herd)) ui.sel = ui.sel === "band" ? "herd" : "band";
+    else if (same(p, S.band)) ui.sel = "band";
+    else if (same(p, S.herd)) ui.sel = "herd";
+    else if (same(p, deer)) ui.sel = "deer";
+    render();
+  }
+  document.getElementById("orb").addEventListener("click", endTurn);
+  document.getElementById("t5").addEventListener("click", () => { for (let i = 0; i < 5; i++) endTurn(); });
+  document.querySelectorAll("[data-preset]").forEach(x => x.addEventListener("click", () => preset(+x.dataset.preset)));
+  preset(1);
+})();
+</script>

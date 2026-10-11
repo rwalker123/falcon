@@ -154,9 +154,13 @@ fn band_suggestions_and_offers(
             .iter()
             .map(move |line| (row, line.item_id.as_str(), line.required, line.filled))
     });
+    // **The hunt-turn pass**, so a kit a going-out hunt crew is short of is in the list auto-craft
+    // works down exactly as it is in the panel's (`snapshot::population::hunt_turn_lines`).
+    let hunt_turn = hunt_turn_pass(world, cohort, allocation, bench, &wear, configs);
     let suggestions = band_suggestions(
         allocation,
         take_rows,
+        hunt_turn.as_deref(),
         Some(bench),
         &configs.recipes,
         &configs.equipment,
@@ -192,6 +196,47 @@ fn band_suggestions_and_offers(
     };
     let offers = band_craft_state(&cohort.stores, Some(bench), &wear, &inputs).craft_offers;
     Some((suggestions, offers))
+}
+
+/// The hunt-turn shortfall lines for a band whose need row is sending a crew, resolved from the world
+/// exactly as the capture resolves them: idle hands through [`crate::components::BandWorkforce`], the donor predicate from
+/// the band's tile and the work range.
+fn hunt_turn_pass(
+    world: &World,
+    cohort: &PopulationCohort,
+    allocation: &LaborAllocation,
+    bench: &BandBench,
+    wear: &BandEquipment,
+    configs: &FillConfigs,
+) -> Option<Vec<crate::craft_suggestions::ToolShortfallLine>> {
+    let herds = world.get_resource::<crate::HerdRegistry>()?;
+    let labor = world.get_resource::<crate::LaborConfigHandle>()?.get();
+    let width = world
+        .get_resource::<crate::resources::TileRegistry>()?
+        .width;
+    let wrap = world
+        .get_resource::<crate::SimulationConfig>()?
+        .map_topology
+        .wrap_horizontal;
+    let band_pos = world
+        .get::<crate::components::Tile>(cohort.current_tile)
+        .map(|tile| tile.position);
+    let idle =
+        crate::components::BandWorkforce::resolve(Some(cohort), Some(allocation), Some(bench))
+            .idle();
+    let is_local = |target: &crate::components::LaborTarget| {
+        crate::hunt_by_need::source_is_local(target, herds, band_pos, &labor, (width, wrap))
+    };
+    with_world_sources(world, |sources| {
+        crate::snapshot::population::hunt_turn_lines(
+            allocation,
+            idle,
+            &is_local,
+            sources,
+            wear,
+            &configs.equipment,
+        )
+    })
 }
 
 /// The band's kit ledger — a band with none reads as start-stocked, as the snapshot's does.

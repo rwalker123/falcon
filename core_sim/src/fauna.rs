@@ -10053,6 +10053,11 @@ pub struct HuntCrewCurveInputs<'a> {
     /// **Empty is the ordinary case**: a band with nothing else reaching for the kit's items falls
     /// through to the whole live stock, which is what a ledger-wide coverage always gave it.
     pub other_rows: &'a [crate::equipment_config::KittedRow],
+    /// **THE MUSTER A NEED CREW IS PRICED OVER** (`hunt_by_need::MusterPricing`): when present the
+    /// competing rows are re-struck at every crew size with the donors that crew would lend having
+    /// given up their hands (and so their kit), and `other_rows` is unused. `None` is every ordinary
+    /// row, whose crew is staffed where it stands.
+    pub muster: Option<&'a crate::hunt_by_need::MusterPricing<'a>>,
     /// **The rank this row claims the band's take gear at** — its own `SourcePriority`
     /// ([`crate::components::LaborAllocation::priority_on`]): the band's items are settled High,
     /// then Normal, then Low (`docs/plan_site_crews.md` §2.3), so a High row's curve is armed ahead
@@ -10135,11 +10140,20 @@ pub fn next_turns_quarry(herd: &Herd, fauna: &FaunaConfig) -> Herd {
 /// never the head count.
 fn curve_coverage(
     inputs: &HuntCrewCurveInputs<'_>,
+    crew: u32,
     workers: f32,
     useful: f32,
 ) -> crate::equipment_config::KitCoverage {
+    let mustered;
+    let other_rows: &[crate::equipment_config::KittedRow] = match inputs.muster {
+        Some(muster) => {
+            mustered = muster.other_rows_at(crew, inputs.kit, inputs.equipment, inputs.wear);
+            &mustered
+        }
+        None => inputs.other_rows,
+    };
     let budget = crate::equipment_config::BandItemBudget::with_prospective_row(
-        inputs.other_rows.iter().cloned(),
+        other_rows.iter().cloned(),
         inputs.kit,
         workers.min(useful),
         inputs.priority,
@@ -10274,7 +10288,7 @@ pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTak
             // **The crew keeps first** — every term below reads the hands left to take with.
             let workers =
                 crew as f32 - crew_keep_hands(inputs.keeping, inputs.equipment, inputs.wear, crew);
-            let coverage = curve_coverage(inputs, workers, useful);
+            let coverage = curve_coverage(inputs, crew, workers, useful);
             let party = PartyResolution {
                 equipment: inputs.equipment,
                 coverage: &coverage,
@@ -10449,6 +10463,7 @@ pub fn hunt_armed_crew(inputs: &HuntCrewCurveInputs<'_>) -> u32 {
     };
     let coverage = curve_coverage(
         inputs,
+        inputs.max_workers,
         inputs.max_workers as f32,
         curve_useful_take_hands(inputs, &quarry),
     );
@@ -10542,6 +10557,101 @@ pub fn hunt_useful_crew(curve: &[HuntCrewTake]) -> u32 {
         }
     }
     plateau
+}
+
+/// **THE SMALLEST CREW THAT BRINGS DOWN `animals` A TURN** — the first row of `curve` (ascending
+/// crews) whose expected take reaches it, never above `useful` ([`hunt_useful_crew`]). Where no row
+/// reaches it (a mammoth: no crew lands one in a turn) the answer is `useful`. The comparison
+/// carries [`CREW_TAKE_RISE_TOLERANCE`], so float noise in a row does not skip it.
+pub fn hunt_crew_for_animals(curve: &[HuntCrewTake], animals: f32, useful: u32) -> u32 {
+    curve
+        .iter()
+        .take_while(|row| row.workers <= useful)
+        .find(|row| {
+            row.likely.is_finite() && row.likely * (1.0 + CREW_TAKE_RISE_TOLERANCE) >= animals
+        })
+        .map_or(useful, |row| row.workers)
+}
+
+/// The output multiplier a per-animal food figure is struck at: the wellbeing multiplier is per band
+/// and scales what a take pays, never what an animal is worth, so the neutral `1.0` is the figure the
+/// wire's `foodPerAnimal` publishes.
+const NEUTRAL_OUTPUT_MULTIPLIER: f32 = 1.0;
+
+/// **THE FOOD IN ONE WHOLE ANIMAL OF THIS HERD** — `body_mass × provisions_per_biomass`, the very
+/// figure the wire's `foodPerAnimal` carries (`SourceYieldForecast::body_mass_yield`, struck at the
+/// neutral output multiplier).
+pub fn herd_food_per_animal(herd: &Herd, fauna: &FaunaConfig) -> f32 {
+    herd_hunt_yield(herd, fauna)
+        .apply(herd.body_mass, NEUTRAL_OUTPUT_MULTIPLIER)
+        .provisions
+}
+
+/// The output multiplier a pure TIMING projection is run at. [`project_arrivals_hunt`] asks `when`,
+/// never `how much`, and the wellbeing multiplier only scales the amount, so the neutral `1.0`
+/// answers the same slot.
+const TIMING_ONLY_OUTPUT_MULTIPLIER: f32 = 1.0;
+
+/// **HOW MANY TURNS UNTIL A CREW OF `crew` BRINGS AN ANIMAL DOWN** — the first non-zero slot of
+/// [`project_arrivals_hunt`] run for the party the curve prices at that crew
+/// ([`hunt_crew_take_curve`]'s row construction), as a camp kill (nothing hauled, the pack bounds
+/// nothing). `1` = the kill lands next turn.
+///
+/// **It counts the herd's current wounds**: the projection starts its kill arm from
+/// [`Herd::wounds`] ([`KillCarry::new`]), so an animal already partly down finishes sooner.
+///
+/// `None` when no crew can be raised (`crew == 0`), nothing lands within `horizon` turns, or the
+/// quarry yields no food (a wolf is paid in pelts). This is the *hunting by need* clock
+/// (`docs/plan_roaming_bands.md` §Hunting by need).
+pub fn hunt_crew_turns_to_kill(
+    inputs: &HuntCrewCurveInputs<'_>,
+    crew: u32,
+    horizon: u32,
+) -> Option<u32> {
+    if crew == 0 || horizon == 0 {
+        return None;
+    }
+    let quarry = next_turns_quarry(inputs.herd, inputs.fauna);
+    let useful = curve_useful_take_hands(inputs, &quarry);
+    let hands = crew as f32 - crew_keep_hands(inputs.keeping, inputs.equipment, inputs.wear, crew);
+    let coverage = curve_coverage(inputs, crew, hands, useful);
+    let party = PartyResolution {
+        equipment: inputs.equipment,
+        coverage: &coverage,
+        wear: inputs.wear,
+        intrinsic: inputs.intrinsic,
+        tuning: inputs.tuning,
+        hunt_injury_damage_per_animal: inputs.hunt_injury_damage_per_animal,
+    }
+    .party_against(crate::equipment_config::Quarry::Mass(quarry.body_mass));
+    let arrivals = project_arrivals_hunt(
+        inputs.herd,
+        inputs.fauna,
+        kill_carry_rate(true, inputs.baseline_haul_rate),
+        &party,
+        TIMING_ONLY_OUTPUT_MULTIPLIER,
+        hands,
+        inputs.floor,
+        horizon,
+    );
+    arrivals
+        .iter()
+        .position(|delivered| *delivered > 0.0)
+        .map(|slot| slot as u32 + 1)
+}
+
+/// **HOW FAR DOWN THE HERD'S NEXT ANIMAL ALREADY IS** — the fight's banked damage over the body's
+/// durability, in `[0, 1)`. `0` for a herd nobody has hurt and for a pen (slaughtered, not
+/// fought). It is the wire's `killProgress` and the *"finish the animal already partly down"* test
+/// of hunting by need.
+pub fn hunt_kill_progress(herd: &Herd, fauna: &FaunaConfig) -> f32 {
+    let Some(fight) = herd_fight_stage(herd, fauna) else {
+        return 0.0;
+    };
+    if fight.profile.durability <= 0.0 {
+        return 0.0;
+    }
+    (herd.wounds.pending() / fight.profile.durability).clamp(0.0, 1.0)
 }
 
 // **RETIRED: `corral_yield`** — the gross managed yield a penned herd handed its keeper each turn.

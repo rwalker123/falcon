@@ -159,6 +159,8 @@ fn spawn_band_camped_at(
             LaborAllocation {
                 assignments: vec![LaborAssignment {
                     party: None,
+                    muster_crew: 0,
+                    planned_crew: 0,
                     target,
                     workers: CREW,
                     kit,
@@ -1813,6 +1815,8 @@ fn a_far_workings_rate_home_on_the_turn_it_completes_a_rung_is_the_querys() {
             .expect("the fixture band has an allocation");
         allocation.assignments.push(LaborAssignment {
             party: None,
+            muster_crew: 0,
+            planned_crew: 0,
             target: LaborTarget::Builders,
             workers: BUILDERS,
             kit: None,

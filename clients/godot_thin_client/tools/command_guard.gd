@@ -526,6 +526,14 @@ func _drive_assign_labor_kits() -> void:
 		BandFx.KIT_ID_NONE, PackedStringArray(), true)
 	await _settle()
 	_assert_follow_token_is_last(band)
+	# **THE NEED ROW — `hunt <herd> <floor> 0 follow`** (hunting by need): a followed hunt row with NO
+	# standing workers, which the sim musters a crew for on its own. Driven through the real emitter so
+	# the real parser reads the zero-count line the ticked sheet sends.
+	_hud._emit_assign_labor(band, SourceForecast.LABOR_KIND_HUNT, HudComposeVocab.NEED_ROW_STANDING_HANDS,
+		int(band.get("current_x", 0)), int(band.get("current_y", 0)), NEAR_HERD_ID,
+		SourceForecast.DEFAULT_HARVEST_FLOOR, "", SourceForecast.IMPROVEMENT_NONE,
+		BandFx.KIT_ID_NONE, PackedStringArray(), true)
+	await _settle()
 	_hud._emit_assign_labor(band, SourceForecast.LABOR_KIND_FORAGE, PARTY_WORKERS,
 		TARGET_X, TARGET_Y, "", SourceForecast.DEFAULT_HARVEST_FLOOR, "",
 		SourceForecast.IMPROVEMENT_NONE, BandFx.KIT_ID_NONE)
@@ -1209,7 +1217,7 @@ const ASSIGN_LABOR_UNKNOWN_ROLE := "stonemason"
 ## a tile, a material AND an optional floor, where every role in that list takes a bare worker count. It is
 ## driven here for the reason the whole sweep exists: a grammar the server's dispatch takes and
 ## `sim_runtime::command_text` does not is refused INSIDE the client, with nothing failing anywhere.
-const ASSIGN_LABOR_GRAMMAR_DRIVES := 7
+const ASSIGN_LABOR_GRAMMAR_DRIVES := 8
 
 ## …and the BARE `builders` line beside its tailed one — the exact line the pool's `+` emits — plus the
 ## FAR HERD's commit (`_drive_far_herd_assign_labor`), the hunt line a sheet past the apron sends.
@@ -1217,7 +1225,7 @@ const ASSIGN_LABOR_BARE_DRIVES := 2
 
 ## What `EXPECTED_KINDS` must say for `assign_labor`. Spelled here because a `const` initializer
 ## cannot call `Array.size()`, and re-derived at runtime so the two cannot drift.
-const ASSIGN_LABOR_EXPECTED := 13
+const ASSIGN_LABOR_EXPECTED := 14
 
 ## **THE LIST ABOVE IS THE WHOLE OF WHAT THE CLIENT CAN SAY, ASSERTED RATHER THAN TRUSTED.**
 ##
@@ -1251,6 +1259,13 @@ func _assert_follow_token_is_last(band: Dictionary) -> void:
 			% [followed, plain])
 	if not plain.contains(" kit "):
 		_fail("the follow-token position check needs a kit token to sit after; got `%s`" % plain)
+	# The need row: zero standing workers, still followed. The count token must read 0 and `follow` last.
+	var need_payload := followed_payload.duplicate()
+	need_payload["workers"] = HudComposeVocab.NEED_ROW_STANDING_HANDS
+	var need := String(MAIN_SCRIPT.format_assign_labor(need_payload).get("line", ""))
+	if need == "" or not need.contains(" %d" % HudComposeVocab.NEED_ROW_STANDING_HANDS) \
+			or not need.ends_with(MAIN_SCRIPT.FOLLOW_TOKEN):
+		_fail("a need-row hunt line read `%s`, not a zero-count line ending `follow`" % need)
 
 func _assert_every_role_is_emittable() -> void:
 	var band := _band_fixture()

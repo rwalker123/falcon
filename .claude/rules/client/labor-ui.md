@@ -8227,3 +8227,39 @@ selection: every restate of a followed row must carry it.
 - **The herd card's worked line** (`_standing_summary_model`) appends ` · moving with the herd` for a
   band whose row has the flag.
 - **The map half** is `map-markers.md` → "MIGRATION MODE'S TWO MARKS".
+
+
+## HUNTING BY NEED — a followed hunt row with no standing workers (issue #798)
+
+`docs/plan_roaming_bands.md` §Hunting by need. A hunt row carrying `move_with_herd` is a NEED ROW:
+it holds 0 standing workers, and the sim decides each turn whether to muster a crew (idle hands first,
+then source rows, lowest Priority first). The wire keys on the assignment are `muster_crew`,
+`lent_to_hunt`, `turns_until_hunt` (`HudWorkVocab.NO_HUNT_NEEDED`, 4294967295, means no hunt needed),
+`turns_to_kill`, `kill_progress`, `need_runway` (float; turns the meat on hand lasts, 999 = not food-limited; in `HudWorkVocab.NEED_ROW_KEYS`) and `hunt_useful_workers`; the cohort carries `idle_mustered` and
+`turns_of_food`. `HudBandLaborState.effective_worker_map` is a hand-listed allowlist, so these ride
+`HudWorkVocab.NEED_ROW_KEYS`, copied through on the confirmed row and again from the settled row onto a
+pending overlay row (which replaces the merged row).
+
+- **The Assign hunters sheet.** Ticking `Move camp with the herd` on a migratory herd rebuilds the
+  sheet (the box moved above the Hunters section for that reason). The Hunters stepper, the split, the
+  cap note, the improvement control and the per-turn yield box are replaced by
+  `_mount_need_block`: `When the band needs meat` over `Sends N from its other work, lowest Priority
+  first. They come back after the kill.` (N is the MEAL-sized muster, `SourceForecast.hunt_need_crew`, a client twin of the sim's
+  `fauna::hunt_crew_for_animals`: the selected band's `hunt_meals` row whose `keeping` equals the herd's
+  `keeping`; `animals = max(1, ceil(food / food_per_animal))` (`HUNT_NEED_MIN_ANIMALS`); the first
+  crew-take curve row with `likely * (1 + CREW_TAKE_REACH_TOLERANCE) >= animals`, capped at the useful
+  crew. No meal for the class, no curve, or no row reaching it gives the useful crew; an unbounded useful
+  crew falls back to the cap.)
+  The commit sends `hunt <herd> <floor> 0 ... follow` (`HudComposeVocab.NEED_ROW_STANDING_HANDS`); it
+  is never read as an unassign or a no-op while the box is ticked.
+- **The curve ask follows the box.** Ticked on a migratory herd, the hunt crew-take ask
+  (`_hunt_crew_take_params`) carries `follow = true` and `max_workers` = the band's `working_age` (clamped
+  by `_crew_take_workers`; the server clamps it again to the musterable pool and prices the crew over the
+  gear the muster brings). Un-ticked, the ask has no `follow` key and `max_workers` is the band's hunt pool.
+  `follow` is a term of the `ForecastQuery` key (`_hunt_curve_herd_terms`, `:follow=<bool>`), so toggling
+  the box re-asks and a non-follow curve never answers the follow sheet. `SourceForecast.hunt_need_crew`
+  reads the follow curve.
+- **Un-ticked is unchanged.** The same herd's sheet, un-ticked, is the ordinary hunt sheet: the
+  stepper, the cap note and the yields, committing `hunt ... <n>` with no `follow`.
+- **The herd card's worked line** says `<band> hunts when needed` while no crew is out, and `N hunters
+  out` while one is, then the `moving with the herd` clause.

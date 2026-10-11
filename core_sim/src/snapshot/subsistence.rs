@@ -1362,6 +1362,11 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     .and_then(|herd| herd.predator_eaten_by.clone())
                     .unwrap_or_default(),
                 predator_eaten: herd.map_or(0.0, |herd| herd.predator_eaten_this_turn),
+                // **Where this herd's meat keeps** (#798) — the class `huntMeals` is keyed by. Empty
+                // only where the table cannot resolve the species.
+                keeping: species_def
+                    .map(|def| def.keeping.clone())
+                    .unwrap_or_default(),
             }
         })
         .collect()
