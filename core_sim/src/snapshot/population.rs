@@ -601,6 +601,25 @@ pub(crate) fn kill_food_terms(
     })
 }
 
+/// **THE ROWS' YIELDS THAT ARE STANDING INCOME** - every row's retained yield but a need row's.
+///
+/// A need row holds no hands: on a hunt turn the labor pass lends it a one-turn crew and projects
+/// its `realized` and arrivals as if that crew worked the herd every turn. Counted as income, a kill
+/// that has just landed reads as a steady supply, the need clock sees a long runway and the next
+/// hunt waits a turn. The food a kill brought is already in the larder, so leaving the row out
+/// costs the band nothing real. This is the one seam the band's runway, the need clock, the meal and
+/// `huntMeals` all read their income through (`food_terms_over`, `merged_arrival_schedule`).
+fn standing_yields(
+    allocation: &LaborAllocation,
+) -> impl Iterator<Item = &crate::components::SourceYield> {
+    allocation
+        .assignments
+        .iter()
+        .zip(&allocation.last_yields)
+        .filter(|(row, _)| !row.is_need_row())
+        .map(|(_, yields)| yields)
+}
+
 fn food_terms_over(
     cohort: &PopulationCohort,
     allocation: Option<&LaborAllocation>,
@@ -615,7 +634,7 @@ fn food_terms_over(
         &demographics.consumption,
     );
     let steady_income: f32 = allocation
-        .map(|a| a.last_yields.iter().map(|y| y.realized).sum())
+        .map(|a| standing_yields(a).map(|y| y.realized).sum())
         .unwrap_or(0.0);
     let larder = cohort.stores.food().retaining(counts);
     let usable_larder = if is_expedition {
@@ -793,7 +812,7 @@ fn merged_arrival_schedule(allocation: Option<&LaborAllocation>) -> Vec<f32> {
     let Some(allocation) = allocation else {
         return merged;
     };
-    for yields in &allocation.last_yields {
+    for yields in standing_yields(allocation) {
         if yields.arrivals.len() > merged.len() {
             merged.resize(yields.arrivals.len(), 0.0);
         }

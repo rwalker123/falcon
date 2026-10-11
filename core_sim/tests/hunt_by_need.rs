@@ -1179,10 +1179,12 @@ fn sizing(app: &mut App, band: Entity, quarry: Quarry) -> Sizing {
     let wire = published(app);
     let need = wire.row(NEED_HERD);
     let pool = musterable_pool(app, band);
-    let income: f32 = allocation(app, band)
-        .last_yields
+    // The standing income, summed from the two donor rows alone: the need row's own yield is a
+    // one-turn crew's projection, not income (and is named here so the oracle does not share the
+    // sim's own filter).
+    let income: f32 = [NORMAL_DONOR_HERD, LOW_DONOR_HERD]
         .iter()
-        .map(|y| y.realized)
+        .map(|herd| allocation(app, band).last_yields[index_of(app, band, herd)].realized)
         .sum();
     let net_eat = (meal(app, band) - income).max(0.0);
     let usable_larder = larder(app, band).to_f32();
@@ -1911,5 +1913,60 @@ fn the_sheet_prices_a_need_row_over_the_muster_when_it_asks_with_follow() {
     assert!(
         at_crew.animals_likely > 0.0,
         "the crew the row sends lands animals on the sheet's curve too"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// THE NEED ROW'S OWN YIELD IS NOT STANDING INCOME
+// ---------------------------------------------------------------------------------------------
+
+/// Meals of meat left after the kill: well inside `flesh`'s shelf life, so the runway is a few turns.
+const MEALS_OF_MEAT_AFTER_THE_KILL: f32 = 3.0;
+/// Turns the harness lets a hunt go out and land.
+const TURNS_TO_LAND_A_KILL: usize = 4;
+
+/// ⛔ **A NEED ROW'S OWN YIELD IS NEVER STANDING INCOME.** On a hunt turn the labor pass lends the
+/// row a one-turn crew and projects its `realized` and arrivals as if that crew worked the herd every
+/// turn. Counted as income, a kill that just landed reads as a steady supply: the need clock sees net
+/// eating near nothing and a long runway, and the next hunt waits a turn. The runway after a kill must
+/// be the one the band would read with the row at zero.
+#[test]
+fn the_need_rows_own_projection_is_not_income_to_the_need_clock() {
+    let (mut app, band) = world_hunting(Stock::FEW_DONOR_HANDS, RABBITS);
+    set_meat(&mut app, band, LEAN_LARDER);
+    let need = index_of(&app, band, NEED_HERD);
+
+    let mut killed = false;
+    for _ in 0..TURNS_TO_LAND_A_KILL {
+        turn(&mut app);
+        if allocation(&app, band).last_yields[need].realized > 0.0 {
+            killed = true;
+            break;
+        }
+    }
+    assert!(
+        killed,
+        "liveness: the need row's crew went out and its projection is positive"
+    );
+    // The kill is in the larder; leave a few meals of it, so the runway is short but real.
+    let meals = meal(&app, band);
+    set_meat(&mut app, band, MEALS_OF_MEAT_AFTER_THE_KILL * meals);
+    recapture_snapshot_in_place(&mut app.world);
+    let with_projection = published(&app).row(NEED_HERD).need_runway;
+    let turns_until = published(&app).row(NEED_HERD).turns_until_hunt;
+
+    // The same band with the need row's projection erased - the row at zero hands.
+    let zero = allocation(&app, band).last_yields[need].clone();
+    assert!(zero.realized > 0.0);
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the band keeps its allocation")
+        .last_yields[need] = core_sim::SourceYield::ZERO;
+    recapture_snapshot_in_place(&mut app.world);
+    let at_zero = published(&app).row(NEED_HERD).need_runway;
+
+    assert_eq!(
+        with_projection, at_zero,
+        "the runway ignores the need row's own projected yield (turns until hunt read {turns_until})"
     );
 }
