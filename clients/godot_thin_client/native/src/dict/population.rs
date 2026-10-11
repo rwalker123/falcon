@@ -181,6 +181,25 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "culture_ancestor_pull",
         &regrowth_samples_packed(cohort.cultureAncestorPull()),
     );
+    // CULTURE OVER A CONNECTION (issue #702). The strongest contact pull this turn: the BandId drifted
+    // toward (0 = no pull; the axis and delta are then 0), the `CultureTraitAxis` index (same order as
+    // `culture_traits`), that axis's signed per-turn delta, and the axis's `A ↔ B` label from the one
+    // table `dict/culture.rs` already owns (so the client never keeps a second pole list). Own
+    // bands only: a foreign row carries the defaults.
+    let _ = dict.insert(
+        "culture_drift_source_band",
+        cohort.cultureDriftSourceBand() as i64,
+    );
+    let _ = dict.insert("culture_drift_axis", i64::from(cohort.cultureDriftAxis()));
+    let _ = dict.insert(
+        "culture_drift_axis_label",
+        crate::dict::culture::culture_axis_label_for_index(cohort.cultureDriftAxis()),
+    );
+    let _ = dict.insert("culture_drift_delta", f64::from(cohort.cultureDriftDelta()));
+    // The break-away warning: true when this purist band is past the soft divergence limit for the
+    // trigger ticks and has a sibling band in its people, i.e. it breaks away if the drift reaches the
+    // hard limit. Own bands only; a foreign row carries false.
+    let _ = dict.insert("culture_break_away_risk", cohort.cultureBreakAwayRisk());
     let _ = dict.insert("size", cohort.size() as i64);
     // Every Scalar field below comes from `cohort_scalars` — see its doc comment for why.
     let scalars = cohort_scalars(cohort);
@@ -1554,10 +1573,24 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                 "short_to_finish",
                 &shortfalls_to_array(order.shortToFinish()),
             );
+            // AUTO-CRAFT QUEUED THIS ORDER (not the player) - the only kind `bench_auto_skip`
+            // applies to.
+            let _ = row.insert("auto", order.auto());
             bench_orders.push(&row.to_variant());
         }
     }
     let _ = bench_dict.insert("orders", &bench_orders);
+    // **AUTO-CRAFT** (`bench_auto <faction> <band> on|off`): while on, an empty queue is refilled from
+    // the ranked craft suggestions. Always inserted, on an idle bench too - it is a standing
+    // statement about the bench. `auto_skipped` is the item ids the player skipped while auto waited
+    // on them (sorted), so the entry shape is stable (an empty array when none).
+    let _ = bench_dict.insert("auto", cohort.bench().is_some_and(|b| b.auto()));
+    let auto_skipped = cohort
+        .bench()
+        .and_then(|b| b.autoSkipped())
+        .map(crate::dict::strings_to_variant_array)
+        .unwrap_or_default();
+    let _ = bench_dict.insert("auto_skipped", &auto_skipped);
     let _ = dict.insert("bench", &bench_dict);
 
     // **WHAT TO MAKE NEXT, RANKED SIM-SIDE BY WHO IS GOING WITHOUT** (§7 → "Suggestions"). In rank
@@ -1590,6 +1623,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                     let _ = entry.insert("missing_units", source.missingUnits() as f64);
                     let _ = entry.insert("workers_without", source.workersWithout() as f64);
                     let _ = entry.insert("work_per_turn", source.workPerTurn() as f64);
+                    // A QUEUED BUILD's place in the build queue (`kind == "build_queue"`; `0`
+                    // otherwise). With `job` + the target keys it joins to the build-queue row.
+                    let _ = entry.insert("queue_position", source.queuePosition() as i64);
                     sources.push(&entry.to_variant());
                 }
             }
@@ -1902,18 +1938,14 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "homeward_all_home_in",
         i64::from(cohort.homewardAllHomeIn()),
     );
-    // WHAT THIS BAND CAN CARRY (#732), in food-unit load:
-    //   carry_capacity  — whole working-age hands × `expedition_config.carry.per_worker_carry` (7.0).
-    //   carry_load      — everything the band holds right now: food + weighted hay + items + materials.
+    // THE LONG MOVE (#732), in food-unit load:
     //   move_ferry_reach_tiles — how far a move may go and keep everything; a move FARTHER sheds the
-    //                     band down to `carry_capacity` and what is left behind is lost.
+    //                     band down to what its workers can carry and what is left behind is lost.
     //   long_move_leaves_food / _items / _materials — the sim's own forecast of that shedding, by
     //                     the same function the move runs. The client NEVER mirrors the rule; all 0
     //                     when the band fits (and on a detached party).
     //   food_left_behind — food a long move left behind since the last turn frame: a loss term of the
     //                     larder identity, read exactly as `food_spoiled` is.
-    let _ = dict.insert("carry_capacity", f64::from(cohort.carryCapacity()));
-    let _ = dict.insert("carry_load", f64::from(cohort.carryLoad()));
     let _ = dict.insert(
         "move_ferry_reach_tiles",
         i64::from(cohort.moveFerryReachTiles()),
@@ -1991,7 +2023,7 @@ fn loadout_window_to_dict(window: fb::BandLoadoutWindowState<'_>) -> VarDictiona
     // committing a loadout leaves it open, which is what lets a pick be revised.
     let _ = dict.insert("open", window.open());
     // The band's WHOLE carry (goods + food), in food-unit load — the bar's whole width, and the
-    // same number as the cohort's own `carry_capacity`.
+    // sim's `band_carry_capacity`.
     let _ = dict.insert("carry_capacity", f64::from(window.carryCapacity()));
     // THE BAND'S FOOD, in load. On a splinter (`food_fixed` false) `food_share` is the most it may
     // take and `food_carried` what it holds now — the truth, where a client's

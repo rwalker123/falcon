@@ -1,10 +1,10 @@
 ---
 paths:
-  - "core_sim/src/{materials_config,recipes_config,crafting,craft_suggestions}.rs"
+  - "core_sim/src/{materials_config,recipes_config,crafting,craft_suggestions,auto_craft}.rs"
   - "core_sim/src/systems/crafting.rs"
   - "core_sim/src/snapshot/crafting.rs"
   - "core_sim/src/data/{materials,recipes}.json"
-  - "core_sim/tests/{materials,crafting,crafting_wire,bench_delivery,bench_queue}.rs"
+  - "core_sim/tests/{materials,crafting,crafting_wire,bench_delivery,bench_queue,auto_craft}.rs"
 ---
 
 # Materials and the bench — the stuff a craftable thing is made of, and how it gets made
@@ -523,7 +523,7 @@ there in slice 4.
 # The bench
 
 `BandBench` is a component on a band: `{ orders, workers, last_output_grade, priority, last_started,
-finished }`. **One bench, one queue**: `orders` is an ordered list of `BenchOrder { recipe_id, count,
+finished, auto, auto_skipped }`. **One bench, one queue**: `orders` is an ordered list of `BenchOrder { recipe_id, count, auto,
 made, progress, drawn }` and the bench works **one order a turn — the worked order** (below).
 Everything else on the
 bench — the crew, the rank, the band's recipe habits, the parked output — belongs to the bench and
@@ -1336,7 +1336,8 @@ store, bench and ledger are unchanged diffs out entirely. `equipment.md` records
 Design: `docs/plan_crafting_and_materials.md` §7, "Suggestions". **`craft_suggestions.rs` is a pure
 function over a band's own state** — `craft_suggestions(lines, bench, recipes, equipment)` — so the
 panel, the AI's Craft specialist (#668) and auto-craft (#779) read one list.
-`band_tool_shortfall_lines(allocation, take_rows)` builds its input.
+`band_tool_shortfall_lines(allocation, take_rows, equipment, wear)` builds its input, and
+`band_suggestions` is the entry point that builds the lines and ranks them in one call.
 
 **The sources are the consumers that draw on the band's stock each turn**, read off what the turn
 **settled**, never re-derived:
@@ -1345,7 +1346,8 @@ panel, the AI's Craft specialist (#668) and auto-craft (#779) read one list.
 |---|---|---|
 | a standing pool | `LaborAllocation::last_pool_toe` (`poolToe`) | `pool` / the pool token |
 | a site crew | `LaborAllocation::last_keeping_issued` — each `KeepingIssue` carries `required` beside the `units` issued | `site` / the row kind keeping it (`forage` / `hunt` / `extract`) + target keys |
-| a take row | the row's kit lines from `snapshot::population`'s `row_gear` — the very lines `kitToe` is copied from | `take` / the row kind (+ target keys; none on `scout` / `warrior`) |
+| a take row | the row's kit lines from `craft_suggestions::take_row_gear` — the very lines `kitToe` is copied from | `take` / the row kind (+ target keys; none on `scout` / `warrior`) |
+| a queued build behind the head | `LaborAllocation::last_queued_build_toe` — walked against the stock the settlement left (below) | `build_queue` / the entry's kind + target keys, with `queuePosition` |
 
 `KeepingIssue::required` exists for this: `keeping_issued` used to write only what was **paid**, so a
 claim the settlement reached with nothing had no line at all. It now writes one line per claimed item
@@ -1353,20 +1355,47 @@ claim the settlement reached with nothing had no line at all. It now writes one 
 those zeros as the zeros they are.
 
 - **A need row's crew is a second, hunt-turn pass.** A hunting-by-need row stands at zero hands, so
-  the standing lines never see the kit its crew would claim. For a band whose need row yields a crew
-  (`assess_need`, sending or waiting), the capture clones the allocation, musters that crew through
-  `LaborAllocation::muster_donors` (kit-carrying donors bring their kit — `work-party.md` →
-  "Hunting by need"), re-strikes every row's claim and the item budget, and builds the take rows'
-  lines again (`snapshot::population::hunt_turn_shortfall_lines`). `craft_suggestions_over` ranks
-  over both passes and **each item's shortfall is the larger of the two, never the sum** (the same
-  people on different days); the winning pass's sources are listed, `queued_units` is netted as
-  before. The turn's own kit split is unchanged. The Gear readout (`kitItemConditions` /
+  the standing lines never see the kit its crew would claim. For a band whose need row is **sending**
+  (`LaborAssignment::muster_crew > 0`, the labor pass's own plan for next turn), the allocation is
+  cloned, that crew is mustered through `LaborAllocation::muster_donors` (kit-carrying donors bring
+  their kit - `work-party.md` -> "Hunting by need"), every row's claim and the item budget are struck
+  again, and the take rows' lines are built a second time
+  (`snapshot::population::hunt_turn_lines` -> `hunt_turn_shortfall_lines`, through the same
+  `take_row_gear` and `band_tool_shortfall_lines`). `band_suggestions` takes that pass as its
+  `hunt_turn` argument and ranks over both readings with `craft_suggestions_over`: **each item's
+  shortfall is the larger of the two, never the sum** (the same people on different days); the
+  winning pass's sources are listed and `queued_units` is netted as before. **The panel and
+  auto-craft both call `band_suggestions` with the pass**, so a kit a going-out hunt crew is short of
+  is in the list auto-craft works down: it queues it like any other top suggestion (the offer marked
+  `suggested` for the item), and a waiting need row (no plan) adds nothing to either list. The
+  turn's own kit split is unchanged. The Gear readout (`kitItemConditions` /
   `workersOnQuotedJob`) is deliberately **not** maxed: it states how far the gear reaches the rows
   as they are staffed, not what to make. Pinned by
-  `hunt_by_need::a_hunt_crews_missing_kit_is_suggested_though_the_standing_rows_are_kitted` (and
-  its control) and `craft_suggestions::tests::the_larger_of_two_passes_wins_per_item_and_they_are_never_summed`.
+  `hunt_by_need::{a_hunt_crews_missing_kit_is_suggested_though_the_standing_rows_are_kitted,
+  auto_craft_queues_the_kit_a_hunt_crew_is_short_of}` (each with its control) and
+  `craft_suggestions::tests::the_larger_of_two_passes_wins_per_item_and_they_are_never_summed`.
 - **The score is workers going without** — `(required − filled).max(0) × workers_per_unit`, summed
-  over sources. Ranked descending, ties by item id (a stable sort over the `BTreeMap` walk).
+  over sources.
+- **The order** (`craft_suggestions::rank_of`): every **non-build** shortage first (a pool other than
+  the builders, a site crew, a take row), by workers going without, ties by item id; then **the
+  current build** — the head job's builders line, as build position 0, however many people it leaves
+  without; then **the later jobs in queue order**, ties by item id. An item short in more than one
+  place is **one** suggestion: its count is the total (the queue netting applies to that total) and it
+  ranks at its **earliest** position, so hoes short now at a site and later for a queued job rank
+  with the non-build shortages.
+- **A queued job asks for what the head asks for.** `systems::labor::queued_build_toe` strikes, for
+  every entry after the head, its in-flight rung's `pool_toe` × the builders' hand count through
+  `ToeClaim::of` — the builders' claim for the head — and parks the lines on
+  `LaborAllocation::last_queued_build_toe` (`QueuedBuildToe { position, source, item, required }`,
+  cleared with `last_pool_toe`, riding `BandRecord::labor`). The rung comes from the entry's own quote
+  (`BuildQuote::legs`, first leg). A pool with no hands, or an entry with no quote, claims nothing.
+- **Stock left after the settlement** is `BandEquipment::live_units` (the reading
+  `settle_pool_tools` itself uses) less every unit the turn issued — the `filled` of the pools'
+  (the head's builders line included), sites' and take rows' lines, all already in the line list
+  (`craft_suggestions::queued_build_lines`; nothing re-derives the settlement). Queued jobs then take
+  from it **cumulatively, in queue order, items in id order**: 2 crooks held and two Tame jobs of 2
+  each leave job 2 short 2; Tame, Cultivate, Tame on 2 crooks and 0 hoes leaves job 2 short 2 hoes and
+  job 3 short 2 crooks.
 - **A detached party is not a source.** `population_state` publishes an empty list for any cohort
   with an `Expedition`: it carries the kit it left with and is never resupplied. A far work party is
   a take **row** of its home band, so it counts.
@@ -1388,12 +1417,62 @@ those zeros as the zeros they are.
   the client states the people instead.
 - **Numbers and join keys only.** The client owns the words, as with `craftOffers`, and joins on
   `itemId == CraftOffer.outputItemId` for makeability; an item no recipe makes is still published.
+  A `build_queue` source line carries `queuePosition` (≥ 1; the head is the builders' `pool` line)
+  and the queue entry's own keys — `job` is `BuildSource::kind()`, the `BuildQueueEntryState.kind`
+  spelling, with `targetX/Y` / `faunaId` / `material` — which is how the client names the job
+  ("2 builders, for Tame Wild Boar") from the build-queue row it already holds.
+- **Auto-craft needs nothing here**: it takes the top usable suggestion, so a queued job's tools are
+  crafted ahead of the job reaching the head (`auto_craft::auto_crafts_the_tools_a_queued_build_will_need`).
 
 Pinned by `craft_suggestions::tests` (ranking and ties, work only where gear adds work, queue netting
-to zero, fractional shortfalls) and, off the encoded frame, by
+to zero, fractional shortfalls, the cumulative queued-job walk, the build/non-build order and the
+merge), `build_queue::the_jobs_behind_the_head_are_suggested_their_tools_off_the_encoded_frame` and, off the encoded frame, by
 `bench_queue::suggestions_rank_by_workers_without_and_net_out_the_queue`,
 `::a_suggestion_does_not_rise_on_the_turn_its_item_is_made` and
 `::a_detached_party_publishes_no_suggestions` (paired with its home band carrying the same lines).
+
+## Auto-craft — the bench works down the suggestion list on its own (#779)
+
+Design: `docs/plan_crafting_and_materials.md` §7, "Auto-craft". `auto_craft.rs` is the whole
+behaviour; `BandBench::auto` is the per-band toggle (`bench_auto <f> <b> on|off`, proto field 82),
+`BandBench::auto_skipped` the items the player passed over, `BenchOrder::auto` the tag on an order
+auto-craft queued. All three ride `BandRecord::bench` (`SAVE_FORMAT_VERSION` 33) and the wire
+(`BenchState.auto` / `autoSkipped`, `BenchOrder.auto`).
+
+- **It fills an EMPTY queue, and only an empty one.** `auto_craft_fill` queues the first usable
+  suggestion at its whole netted `count` as one `auto` order. A player-queued order on the queue means
+  it adds nothing, so overriding is just queueing.
+- **The suggestions are the snapshot's own.** `craft_suggestions::take_row_gear` settles the rows'
+  gear and `band_suggestions` ranks it — the two functions `snapshot::population` calls — fed by
+  `take_claims::with_world_sources` (between-turns, regrow-first, exactly the capture's reading).
+  Nothing here re-derives a shortfall line.
+- **The recipe is the offer the ledger marks `suggested` for that item** (`band_craft_state`'s
+  `craft_offers`, `suggested && outputItemId == item`) — the recipe the panel's Queue button sends.
+  *Usable* means that offer is `queueable` (the one knowledge predicate `first_unknown_craft`); an item
+  no recipe makes, or one whose craft is unlearned, is passed over. It writes no `last_started`: that
+  records what the player chose.
+- **It never walks down the list on its own.** An auto order short of material WAITS (the ordinary
+  skip/waiting semantics). Only the player's skip moves on.
+- **It never picks the crew.** `BandBench::workers` is untouched by every path.
+- **Skip** (`bench_auto_skip <f> <b>`, field 83) is valid only when `worked_order` is `None` **and** the
+  head is `auto`; otherwise it is refused by name. It parks the head's item (its recipe's
+  `output_equipment_id`) in `auto_skipped`, removes the head (a drawn order is workable, so a waiting
+  head holds no pile and nothing is forfeited) and refills.
+- **A skipped item returns only when the queue is next empty.** At each fill an item whose suggested
+  recipe can draw ONE item from stock (`order_is_workable` on a count-1 order) leaves `auto_skipped`,
+  and so does an item that is no longer in the suggestion list (nobody is going without it, so a
+  stale skip must not survive); it never preempts a running order. Turning auto off clears the set and leaves every order alone.
+- **When it runs:** the turn systems `advance_auto_craft` (before `advance_crafting`) and
+  `advance_auto_craft_after_bench` (after it — so an order that completes this turn has its successor
+  in the snapshot), both exclusive systems in the Population chain; and at the end of `bench_auto`,
+  `bench_auto_skip` and `bench_remove`.
+- **A detached party gets nothing** (it carries an `Expedition`; the snapshot publishes it no
+  suggestions either). A world missing the crafting configs does nothing.
+- **No config lever.** Every number is a count or a comparison the existing configs already own.
+
+Pinned by `core_sim/tests/auto_craft.rs` (the fill, the wait, skip and its refusals, no preemption,
+the player's order, toggle-off, successor-after-completion, the unlearned craft, the save round trip)
+and `sim_schema`'s `the_benchs_auto_state_and_an_orders_auto_tag_ride_the_wire`.
 
 ## `queueable` — the Make button's gate is KNOWLEDGE ONLY
 

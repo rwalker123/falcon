@@ -423,6 +423,34 @@ fn need_row_assessment(
 /// row's `crew` mustered through [`LaborAllocation::muster_donors`] (kit-carrying donors bring
 /// their kit), every row's claim struck again and the budget settled on them. Pools and site crews
 /// are unchanged by a muster, so only the take rows' lines differ from the standing pass.
+/// **THE HUNT-TURN PASS FOR A BAND, or `None` with no hunt going out** - the need row whose stored plan
+/// (`LaborAssignment::muster_crew`, the labor pass's own decision for next turn) is a crew, mustered
+/// through [`hunt_turn_shortfall_lines`]. The snapshot's `craftSuggestions` and auto-craft both take it
+/// through [`crate::craft_suggestions::band_suggestions`], so the two read one list.
+pub(crate) fn hunt_turn_lines(
+    allocation: &LaborAllocation,
+    idle: u32,
+    is_local: &dyn Fn(&LaborTarget) -> bool,
+    sources: &crate::take_claims::ClaimSources<'_>,
+    wear: &crate::components::BandEquipment,
+    equipment: &crate::equipment_config::EquipmentConfig,
+) -> Option<Vec<crate::craft_suggestions::ToolShortfallLine>> {
+    let need_idx = allocation
+        .assignments
+        .iter()
+        .position(|row| row.is_need_row() && row.muster_crew > 0)?;
+    Some(hunt_turn_shortfall_lines(
+        allocation,
+        need_idx,
+        allocation.assignments[need_idx].muster_crew,
+        idle,
+        is_local,
+        sources,
+        wear,
+        equipment,
+    ))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn hunt_turn_shortfall_lines(
     standing: &LaborAllocation,
@@ -451,35 +479,15 @@ fn hunt_turn_shortfall_lines(
     }
     mustered.assignments[need_idx].workers = plan.total();
     let claims = crate::take_claims::row_claims(sources, &mustered, wear);
-    let budget = mustered.item_budget(equipment, &claims.claims);
-    let take_rows: Vec<(usize, String, f32, f32)> = mustered
-        .assignments
-        .iter()
-        .enumerate()
-        .filter(|(_, assignment)| !assignment.target.is_standing_pool())
-        .flat_map(|(row, assignment)| {
-            let kit = assignment.kit_choice(equipment);
-            let share = budget.share_for_source(&assignment.target, wear, equipment);
-            let claim = claims.claims[row];
-            kit.uses()
-                .filter_map(|item| {
-                    let per_unit = equipment
-                        .item(item)
-                        .map_or(ONE_WORKER_PER_UNIT, |def| def.workers_per_unit)
-                        as f32;
-                    let required = claim / per_unit;
-                    (required > NOTHING_CLAIMED)
-                        .then(|| (row, item.to_string(), required, share(item)))
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect();
-    crate::craft_suggestions::band_tool_shortfall_lines(
-        &mustered,
-        take_rows
+    // The same settled gear the capture and auto-craft read (`take_row_gear`), now for the mustered
+    // allocation.
+    let gear = crate::craft_suggestions::take_row_gear(equipment, &mustered, &claims, wear);
+    let take_rows = gear.iter().enumerate().flat_map(|(row, gear)| {
+        gear.toe
             .iter()
-            .map(|(row, item, required, filled)| (*row, item.as_str(), *required, *filled)),
-    )
+            .map(move |line| (row, line.item_id.as_str(), line.required, line.filled))
+    });
+    crate::craft_suggestions::band_tool_shortfall_lines(&mustered, take_rows, equipment, wear)
 }
 
 /// Summarize a band's labor allocation into the `activity` string — the dominant assignment's kind,
@@ -776,13 +784,6 @@ pub(crate) enum MealOrder {
 /// the income term instead.
 const NO_STANDING_NET: f32 = 0.0;
 
-/// **A ROW THAT CLAIMS NONE OF AN ITEM WRITES NO `kitToe` LINE FOR IT** — `required` is never `0` on
-/// the wire, so a reader may divide by it.
-const NOTHING_CLAIMED: f32 = 0.0;
-
-/// One unit serves one worker — an item the roster does not carry is read at the roster's default.
-const ONE_WORKER_PER_UNIT: u32 = 1;
-
 /// ⛔ **THIS TURN'S POOLED FOOD, IN MINUS OUT** — the band's `Pooled` crossings on `FOOD`, off the
 /// per-turn twin [`PopulationCohort::last_turn_transfer_crossings`], so a recapture reads what the
 /// turn's frame read.
@@ -1014,6 +1015,11 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// recomputed: the cohort has moved on since). Both empty when absent.
     pub(crate) culture_traits: Vec<f32>,
     pub(crate) culture_ancestor_pull: Vec<f32>,
+    /// **This band's strongest contact pull** (`CultureManager::applied_contact_pull`): the band it
+    /// drifted toward, the axis moved most and its signed delta. `None` when it took none.
+    pub(crate) culture_drift: Option<crate::culture::ContactPull>,
+    /// Whether the band may break away over its culture (`CultureManager::break_away_risk`).
+    pub(crate) culture_break_away_risk: bool,
     /// **This band's standing toward its people's heart** (`systems::independence`), off the
     /// checkpointed [`crate::systems::HeartLedger`]. `None` for a band no turn has judged (a fresh
     /// world, or a detached party, which is never a member), which publishes as in touch.
@@ -1291,6 +1297,8 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         belief_relay_region,
         culture_traits,
         culture_ancestor_pull,
+        culture_drift,
+        culture_break_away_risk,
         entity,
         band_id,
         band_name,
@@ -1451,51 +1459,21 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     )> = allocation
         .map(|alloc| {
             // The band-wide per-item unit budget `advance_labor_allocation` arms the source crews
-            // from ([`crate::components::LaborAllocation::item_budget`]), settled on the claims.
-            let budget = alloc.item_budget(kit_levers.config, &claims.claims);
-            alloc
-                .assignments
-                .iter()
-                .enumerate()
-                .map(|(i, assignment)| {
-                    // **The kit is spread over the take hands** — a keeper carries the keeping
-                    // tools, never the take kit (`docs/plan_site_crews.md` §2.3).
-                    let workers = crate::take_claims::take_hands(
-                        assignment.workers as f32,
-                        claims.keep_hands[i],
-                    );
-                    let row_kit = if assignment.target.is_standing_pool() {
-                        kit_levers.config.no_kit()
-                    } else {
-                        assignment.kit_choice(kit_levers.config)
-                    };
-                    let share =
-                        budget.share_for_source(&assignment.target, &kit, kit_levers.config);
-                    let coverage = kit_levers
-                        .config
-                        .coverage_from_units(&row_kit, workers, &kit, &share);
-                    // **WHICH OF THE KIT'S ITEMS ARE SHORT, BY NAME** (`docs/plan_site_crews.md`
-                    // §2.3) — per item, the units the row claimed (its take hands that would take
-                    // something with the kit, never its head count) beside the units the
-                    // settlement handed it. A row that claims nothing writes no line.
-                    let claim = claims.claims[i];
-                    let kit_toe = row_kit
-                        .uses()
-                        .filter_map(|item| {
-                            let per_unit = kit_levers
-                                .config
-                                .item(item)
-                                .map_or(ONE_WORKER_PER_UNIT, |def| def.workers_per_unit)
-                                as f32;
-                            let required = claim / per_unit;
-                            (required > NOTHING_CLAIMED).then(|| sim_schema::KitToeLineState {
-                                item_id: item.to_string(),
-                                required,
-                                filled: share(item),
-                            })
+            // from ([`crate::components::LaborAllocation::item_budget`]), settled on the claims —
+            // struck by the one function auto-craft's suggestions read too.
+            crate::craft_suggestions::take_row_gear(kit_levers.config, alloc, claims, &kit)
+                .into_iter()
+                .map(|gear| {
+                    let toe = gear
+                        .toe
+                        .into_iter()
+                        .map(|line| sim_schema::KitToeLineState {
+                            item_id: line.item_id,
+                            required: line.required,
+                            filled: line.filled,
                         })
                         .collect();
-                    (row_kit, coverage, kit_toe)
+                    (gear.kit, gear.coverage, toe)
                 })
                 .collect()
         })
@@ -1769,7 +1747,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             })
     });
     // The need row's planned crew for the hunt-turn craft pass, filled in by the row walk below.
-    let hunt_turn_crew: std::cell::Cell<Option<(usize, u32)>> = std::cell::Cell::new(None);
     // Zip each assignment with its retained per-source yield telemetry (same index order). An
     // assignment with no telemetry row yet → default 0 yields rather than a panic.
     const NO_YIELD: SourceYield = SourceYield::ZERO;
@@ -1877,8 +1854,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                             Some((assessment, runway)) => {
                                 row.turns_to_kill = assessment.turns_to_kill;
                                 row.need_runway = runway;
-                                // The crew the hunt-turn craft pass equips, sending or not.
-                                hunt_turn_crew.set(Some((i, assessment.crew)));
                                 // A row with a crew planned is sending, whatever the runway alone
                                 // would say (a hunt in progress sends on the animal, not the larder).
                                 row.turns_until_hunt = if assignment.muster_crew > 0 {
@@ -2176,34 +2151,23 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                         .iter()
                         .map(move |line| (row, line.item_id.as_str(), line.required, line.filled))
                 });
-            let lines = crate::craft_suggestions::band_tool_shortfall_lines(alloc, take_rows);
-            // **THE HUNT TURN'S PASS** - a need row stands at zero hands, so the standing lines
-            // above never see the kit a hunt crew would claim. Clone the allocation, lend the crew
-            // through the one muster function and read the same claims and budget again; each
-            // item's suggestion is the larger shortfall of the two passes (they are the same
-            // people on different days, never a sum).
-            let hunt_turn_lines = hunt_turn_crew.get().map(|(need_idx, crew)| {
-                hunt_turn_shortfall_lines(
-                    alloc,
-                    need_idx,
-                    crew,
-                    idle_workers,
-                    &donor_is_local,
-                    &claim_sources,
-                    &kit,
-                    kit_levers.config,
-                )
-            });
-            let passes: Vec<&[crate::craft_suggestions::ToolShortfallLine]> =
-                std::iter::once(lines.as_slice())
-                    .chain(hunt_turn_lines.as_deref())
-                    .collect();
+            let hunt_turn_lines = hunt_turn_lines(
+                alloc,
+                idle_workers,
+                &donor_is_local,
+                &claim_sources,
+                &kit,
+                kit_levers.config,
+            );
             let mut states = crate::snapshot::crafting::craft_suggestion_states(
-                crate::craft_suggestions::craft_suggestions_over(
-                    &passes,
+                crate::craft_suggestions::band_suggestions(
+                    alloc,
+                    take_rows,
+                    hunt_turn_lines.as_deref(),
                     bench,
                     craft_inputs.recipes,
                     craft_inputs.equipment,
+                    &kit,
                 ),
             );
             // **What the whole count needs that the stock cannot cover**, off the same forecast the
@@ -2651,12 +2615,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             .min()
             .unwrap_or(crate::work_party::NO_LOAD_ON_THE_ROAD),
         homeward_all_home_in: homeward_totals.all_home_in,
-        // **WHAT THIS BAND CAN CARRY** (#732) — its whole working-age hands × one worker's pack, and
-        // the load of everything it holds. Dependants add nothing.
-        carry_capacity: crate::carry::band_carry_capacity(cohort, expedition_levers.carry).to_f32(),
-        carry_load: crate::carry::held_load(&cohort.stores, equipment)
-            .load(expedition_levers.carry)
-            .to_f32(),
         move_ferry_reach_tiles: expedition_levers.move_ferry_reach_tiles,
         // **The long-move forecast is the shed the move would run**, from the same function — no
         // client mirror. A detached party keeps its own rules, so it forecasts nothing.
@@ -2679,6 +2637,10 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         independence_grievance_threshold: wellbeing.independence.grievance_threshold,
         culture_traits,
         culture_ancestor_pull,
+        culture_drift_source_band: culture_drift.map_or(0, |pull| pull.source),
+        culture_drift_axis: culture_drift.map_or(0, |pull| pull.axis as u8),
+        culture_drift_delta: culture_drift.map_or(0.0, |pull| pull.delta.to_f32()),
+        culture_break_away_risk,
     }
 }
 
@@ -3210,6 +3172,8 @@ mod tests {
             belief_relay_region: Vec::new(),
             culture_traits: Vec::new(),
             culture_ancestor_pull: Vec::new(),
+            culture_drift: None,
+            culture_break_away_risk: false,
             entity: Entity::from_raw(1),
             // These fixtures assert on the derived readouts, not on band identity.
             band_id: None,

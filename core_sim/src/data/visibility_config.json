@@ -20,9 +20,14 @@
     "enabled": true,
     "blocking_terrain_tags": ["HIGHLAND", "VOLCANIC"]
   },
-  "terrain_modifiers": {
-    "forest_penalty": -2,
-    "water_bonus": 1
+  "terrain_detection": {
+    "tiles_per_unit": 10.0
+  },
+  "size_sight_bonus": {
+    "_comment": "Opening values, playtest levers. A tile holding more than threshold_people resident people is seen from one tile further per people_per_tile above it, capped at max_tiles. 50 is the settlement camp stage min_size, so a 30-person start band gets 0.",
+    "threshold_people": 50,
+    "people_per_tile": 25,
+    "max_tiles": 4
   },
   "movement": {
     "max_sweep_tiles": 8

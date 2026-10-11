@@ -1970,3 +1970,105 @@ fn the_need_rows_own_projection_is_not_income_to_the_need_clock() {
         "the runway ignores the need row's own projected yield (turns until hunt read {turns_until})"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// AUTO-CRAFT READS THE HUNT-TURN PASS
+// ---------------------------------------------------------------------------------------------
+
+/// Materials enough for any recipe the bench queues here.
+const PLENTY_OF_MATERIAL: f32 = 40.0;
+
+fn bank_material(app: &mut App, band: Entity, material: &str, axes: &[(&str, f32)]) {
+    let materials = app
+        .world
+        .resource::<core_sim::MaterialsConfigHandle>()
+        .get();
+    let readings: std::collections::BTreeMap<String, f32> = axes
+        .iter()
+        .map(|(axis, value)| ((*axis).to_string(), *value))
+        .collect();
+    let key = materials
+        .band_key(material, &readings)
+        .expect("the shipped table carries this material");
+    app.world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the band keeps its cohort")
+        .stores
+        .deposit_material(
+            material,
+            key,
+            core_sim::scalar_from_f32(PLENTY_OF_MATERIAL),
+            &readings,
+        );
+}
+
+/// Give the band an empty auto bench and every material a spear needs.
+fn auto_bench_with_materials(app: &mut App, band: Entity) {
+    bank_material(app, band, "bone", &[("density", 0.5), ("length", 0.5)]);
+    bank_material(app, band, "fibre", &[("fineness", 0.5), ("strength", 0.5)]);
+    bank_material(
+        app,
+        band,
+        "hide",
+        &[("toughness", 0.6), ("suppleness", 0.5)],
+    );
+    app.world
+        .entity_mut(band)
+        .insert(core_sim::BandBench::default());
+    core_sim::auto_craft::set_auto_craft(&mut app.world, band, true);
+}
+
+/// A recipe making what the stalking kit is made of (spears or the sled).
+fn is_stalking_gear(recipe: &str) -> bool {
+    recipe.starts_with("spears") || recipe.starts_with("sled")
+}
+
+fn queued_recipes(app: &App, band: Entity) -> Vec<String> {
+    app.world
+        .get::<core_sim::BandBench>(band)
+        .expect("the band keeps its bench")
+        .orders
+        .iter()
+        .map(|order| order.recipe_id.clone())
+        .collect()
+}
+
+/// ⛔ **AUTO-CRAFT QUEUES THE KIT A GOING-OUT HUNT CREW IS SHORT OF.** Every standing row is fully
+/// kitted, so the standing list is empty and an auto bench would sit idle; the hunt-turn pass makes
+/// spears the panel's top suggestion, and auto-craft reads the same list (`band_suggestions`), so it
+/// queues them. The control is the same band with the crew's gear in hand: nothing to make, nothing
+/// queued.
+#[test]
+fn auto_craft_queues_the_kit_a_hunt_crew_is_short_of() {
+    let (mut app, band) = world_hunting(CREW_NEEDS_THE_DONORS, RABBITS);
+    arm_the_band(&mut app, band, STALKING_HANDS);
+    set_meat(&mut app, band, LEAN_LARDER);
+    turn(&mut app);
+    assert!(
+        row(&app, band, NEED_HERD).muster_crew > 0,
+        "liveness: a crew is going out"
+    );
+    assert!(
+        suggested(&app, "spears").is_some(),
+        "the panel suggests spears"
+    );
+
+    auto_bench_with_materials(&mut app, band);
+    let queued = queued_recipes(&app, band);
+    assert!(
+        queued.iter().any(|recipe| is_stalking_gear(recipe)),
+        "auto-craft queued the hunt crew's stalking gear, got {queued:?}"
+    );
+
+    let (mut armed, band_a) = world_hunting(CREW_NEEDS_THE_DONORS, RABBITS);
+    arm_the_band(&mut armed, band_a, ENOUGH_UNITS);
+    set_meat(&mut armed, band_a, LEAN_LARDER);
+    turn(&mut armed);
+    auto_bench_with_materials(&mut armed, band_a);
+    assert!(
+        !queued_recipes(&armed, band_a)
+            .iter()
+            .any(|recipe| is_stalking_gear(recipe)),
+        "control: a crew with its gear in hand queues no stalking gear"
+    );
+}

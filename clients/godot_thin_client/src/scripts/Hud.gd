@@ -188,6 +188,12 @@ signal bench_raise_requested(payload: Dictionary)
 ## of it, that grammar reading a lone trailing token as a herd id. RELAYED from
 ## `CraftingPanelController`.
 signal bench_priority_requested(payload: Dictionary)
+## Emitted when the bench's Auto switch is flipped. Payload keys: { faction, band_id, on }. Main formats
+## `bench_auto <faction> <band> on|off`. RELAYED from `CraftingPanelController`.
+signal bench_auto_requested(payload: Dictionary)
+## Emitted when the Skip link under a waiting auto order is pressed. Payload keys: { faction, band_id }.
+## Main formats `bench_auto_skip <faction> <band>`. RELAYED from `CraftingPanelController`.
+signal bench_auto_skip_requested(payload: Dictionary)
 ## Emitted on EVERY stepper press on the OPENING LOADOUT picker (issue #629) — the card holds no
 ## draft and defers no order. Payload keys:
 ## { faction, band_id, kits: [{id, count}], materials: [{id, units}], revert_kits, revert_materials }.
@@ -812,6 +818,8 @@ func _ready() -> void:
     # viewport describes.
     _crafting = CraftingPanelController.new()
     _crafting.setup(self, _band_labor, floating_room)
+    _crafting.set_build_queue_faces_source(
+        func(band: Dictionary) -> Dictionary: return _bandpanel.build_queue_faces(band))
     _crafting.bench_enqueue_requested.connect(
         func(payload: Dictionary) -> void: bench_enqueue_requested.emit(payload))
     _crafting.bench_crew_requested.connect(
@@ -824,6 +832,10 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: bench_raise_requested.emit(payload))
     _crafting.bench_priority_requested.connect(
         func(payload: Dictionary) -> void: bench_priority_requested.emit(payload))
+    _crafting.bench_auto_requested.connect(
+        func(payload: Dictionary) -> void: bench_auto_requested.emit(payload))
+    _crafting.bench_auto_skip_requested.connect(
+        func(payload: Dictionary) -> void: bench_auto_skip_requested.emit(payload))
     _bandpanel.crafting_requested.connect(
         func(band: Dictionary) -> void: _crafting.toggle_for(band))
     # The knowledge screen, on the same room and the same launch idiom. It takes `_topbar` as well,
@@ -2406,11 +2418,14 @@ func update_band_alerts(populations_variant: Variant) -> void:
     var player_band: Dictionary = {}
     var player_bands: Array = []
     var player_expeditions: Array = []
+    var foreign_bands: Array = []
     for entry_variant in populations:
         if not (entry_variant is Dictionary):
             continue
         var entry: Dictionary = entry_variant
         if int(entry.get("faction", -1)) != HudConst.PLAYER_FACTION_ID:
+            if not bool(entry.get("is_expedition", false)):
+                foreign_bands.append(entry)
             continue
         if bool(entry.get("is_expedition", false)):
             player_expeditions.append(entry)
@@ -2431,6 +2446,7 @@ func update_band_alerts(populations_variant: Variant) -> void:
     # them: a detached party is those same people walking somewhere, not a band to outfit.
     _loadout.set_bands(player_bands)
     # 3. Ingest (overwrites prev_band_sizes) — unchanged.
+    _band_labor.set_foreign_bands(foreign_bands)
     _band_labor.ingest_snapshot_bands(new_sizes, player_band, player_bands, player_expeditions)
     # An open Deny / Trade sheet's highlight and an armed pick are derived from where the bands
     # stand, so they follow this roster (`TargetingController.refresh_live_targets`).

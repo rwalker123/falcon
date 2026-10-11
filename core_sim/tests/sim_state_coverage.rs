@@ -160,7 +160,10 @@ const SIM_STATE_RESOURCES: [&str; 50] = [
 /// The second half is the load-bearing one, and it is why `HerdTelemetry`, `PowerGridState` and
 /// `SimulationMetrics` are not here despite each having a system that rebuilds it: `capture_snapshot`
 /// publishes all three within the same turn. See the comment on them in `SIM_STATE_RESOURCES`.
-const DERIVED_RESOURCES: [(&str, &str); 5] = [
+const DERIVED_RESOURCES: [(&str, &str); 6] = [
+    // Filled by `reconcile_culture_layers` (Influence) and DRAINED by `advance_culture_splits`
+    // (Population) the same turn, so it is empty at the end of every turn.
+    ("CultureSplitQueue", "systems::advance_culture_splits"),
     // Filled by `calculate_visibility` (and the expedition comm flush) and drained + cleared by
     // `advance_connections` in the SAME stage, so it is empty at the end of every turn.
     ("ContactsThisTurn", "connections::advance_connections"),

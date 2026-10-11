@@ -64,5 +64,9 @@
   "knapping": {
     "discovery_id": 2017,
     "observability": 0.7
+  },
+  "storage": {
+    "discovery_id": 2018,
+    "observability": 0.9
   }
 }

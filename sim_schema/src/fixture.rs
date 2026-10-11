@@ -464,6 +464,8 @@ fn seed_snapshot() -> WorldSnapshot {
                 short_to_finish: rows_of(MaterialShortfallState::default()),
                 ..Default::default()
             }),
+            // The skipped item ids — a repeated string field, seeded so the guard decodes one.
+            auto_skipped: vec!["spears".to_string(), "hoes".to_string()],
             ..Default::default()
         };
         // **WHAT TO MAKE NEXT** — a repeated field whose rows carry a repeated field of their own
@@ -627,6 +629,10 @@ fn seed_snapshot() -> WorldSnapshot {
         cohort.belief_relay_reach_y = vec![0u32; ROWS];
         cohort.culture_traits = vec![0.0f32; ROWS];
         cohort.culture_ancestor_pull = vec![0.0f32; ROWS];
+        cohort.culture_drift_source_band = 1;
+        cohort.culture_drift_axis = 1;
+        cohort.culture_drift_delta = 0.02;
+        cohort.culture_break_away_risk = true;
         cohort.knowledge_fragments = rows();
         // The cohort's optional tables, on the even rows only — see [`seeded_on`].
         cohort.harvest_task = seeded_on(row).then(HarvestTaskState::default);

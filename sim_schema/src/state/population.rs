@@ -1686,16 +1686,8 @@ pub struct PopulationCohortState {
     /// Turns until the last homeward hand is back; `0` = nobody walking home. Appended last.
     #[serde(default)]
     pub homeward_all_home_in: u32,
-    /// **What this band can carry** (#732) — whole working-age hands × one worker's pack, in
-    /// food-unit load. Dependants add nothing. Appended last.
-    #[serde(default)]
-    pub carry_capacity: f32,
-    /// **The load of everything this band holds** — larder, hay, every item (bench tools included)
-    /// and every material unit. Appended last.
-    #[serde(default)]
-    pub carry_load: f32,
     /// **How far a move keeps everything**, in hex steps — echoed per cohort. A move farther than
-    /// this sheds the band to [`Self::carry_capacity`]. Appended last.
+    /// this sheds the band down to what its workers can carry. Appended last.
     #[serde(default)]
     pub move_ferry_reach_tiles: u32,
     /// **What a long move would leave behind right now**: food. Computed by the shedding function the
@@ -1799,6 +1791,20 @@ pub struct PopulationCohortState {
     /// order, with no head-count. Empty when none. Appended last.
     #[serde(default)]
     pub breeding_peoples: Vec<BreedingPeopleState>,
+    /// **The band this band's strongest contact pull drifted it toward** (issue #702); `0` = no
+    /// pull this turn (`BandId(0)` is "unset"). Own bands only. Appended last.
+    #[serde(default)]
+    pub culture_drift_source_band: u64,
+    /// The trait axis (`CultureTraitAxis` index, `culture_traits` order) that pull moved most.
+    /// Appended last.
+    #[serde(default)]
+    pub culture_drift_axis: u8,
+    /// That axis's signed delta this turn. Appended last.
+    #[serde(default)]
+    pub culture_drift_delta: f32,
+    /// The band may break away over its culture (issue #702). Own bands only. Appended last.
+    #[serde(default)]
+    pub culture_break_away_risk: bool,
     /// **Hunting by need** (#798) — the idle hands the muster takes next turn for the band's need
     /// row. Appended last.
     #[serde(default)]
@@ -2161,6 +2167,13 @@ pub struct BenchState {
     /// that holds a pile or can draw one), else the head. `0` on an idle bench. Appended last.
     #[serde(default)]
     pub worked: u32,
+    /// **Auto-craft is on for this bench** — an empty queue is refilled from the craft suggestions.
+    /// Appended last.
+    #[serde(default)]
+    pub auto: bool,
+    /// **The item ids the player skipped** while auto-craft waited on them, sorted. Appended last.
+    #[serde(default)]
+    pub auto_skipped: Vec<String>,
 }
 
 /// **One order on a bench's queue** — `recipe × count`, a row of [`BenchState::orders`].
@@ -2189,6 +2202,9 @@ pub struct BenchOrderState {
     /// empty when every pass still to draw is covered. See `snapshot.fbs`.
     #[serde(default)]
     pub short_to_finish: Vec<MaterialShortfallState>,
+    /// Auto-craft queued this order rather than the player — the only kind a skip applies to.
+    #[serde(default)]
+    pub auto: bool,
 }
 
 /// **One craft suggestion** — an item the band's consumers went without, and how many to make. A row
@@ -2216,7 +2232,7 @@ pub struct CraftSuggestionState {
 /// The `kind` / `job` / target keys are spelled as `snapshot.fbs`'s `CraftSuggestionSource` states.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct CraftSuggestionSourceState {
-    /// `"pool"` | `"site"` | `"take"`.
+    /// `"pool"` | `"site"` | `"take"` | `"build_queue"`.
     pub kind: String,
     /// The pool token, or the labor row's kind.
     pub job: String,
@@ -2228,8 +2244,11 @@ pub struct CraftSuggestionSourceState {
     pub missing_units: f32,
     /// `missing_units × workers_per_unit`.
     pub workers_without: f32,
-    /// `workers_without × build_work` on a pool or site; `0` on a take row.
+    /// `workers_without × build_work` on a pool, site or queued build; `0` on a take row.
     pub work_per_turn: f32,
+    /// The queued build's place in the build queue (`kind == "build_queue"` only; `0` otherwise).
+    #[serde(default)]
+    pub queue_position: u32,
 }
 
 /// **One material of the pile a bench has already withdrawn** for the item in flight — a row of

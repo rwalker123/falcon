@@ -16,6 +16,7 @@ use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tracing::{info, warn};
 use tracing_subscriber::prelude::*;
 
+use core_sim::auto_craft::AutoSkipRefusal;
 use core_sim::log_stream::start_log_stream_server;
 use core_sim::port_alloc;
 
@@ -1593,6 +1594,17 @@ enum Command {
         faction: FactionId,
         band_id: u64,
         level: String,
+    },
+    /// **Turn one band's bench auto-craft on or off** — see `handle_bench_auto`.
+    BenchAuto {
+        faction: FactionId,
+        band_id: u64,
+        enabled: bool,
+    },
+    /// **Skip the auto order the bench is waiting on** — see `handle_bench_auto_skip`.
+    BenchAutoSkip {
+        faction: FactionId,
+        band_id: u64,
     },
     /// Say how one band splits a maintenance pool it cannot stretch — `spread` or `priority`
     /// (`docs/plan_standing_upkeep.md` §2.5). See `handle_upkeep_mode`.
@@ -8821,6 +8833,11 @@ fn handle_bench_queue_edit(
     };
     match outcome {
         Ok((sentence, detail)) => {
+            // **Removing the last order can leave the queue empty** - an auto bench refills it at
+            // once, so the player sees the next auto order rather than an idle bench for a turn.
+            if edit == BenchQueueEdit::Remove {
+                core_sim::auto_craft::auto_craft_fill(&mut app.world, band.entity);
+            }
             let tick = app.world.resource::<SimulationTick>().0;
             push_command_event(app, tick, event_kind, faction, sentence, Some(detail));
         }
@@ -8914,6 +8931,88 @@ fn handle_bench_priority(
             priority.as_str()
         )),
     );
+}
+
+/// **TURN A BAND'S BENCH AUTO-CRAFT ON OR OFF** — `bench_auto <faction> <band> on|off` (#779,
+/// `.claude/rules/core_sim/crafting.md` → "Auto-craft").
+///
+/// On: an empty queue is filled at once from the band's top craft suggestion (a non-empty queue is
+/// left alone). Off: the skipped set is forgotten and every order — auto ones included — is left as
+/// it is, so an auto order simply becomes an order the player can edit. **Never touches the crew.**
+fn handle_bench_auto(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: u64,
+    enabled: bool,
+) {
+    let event_kind = CommandEventKind::Craft;
+    let Some(band) = select_starting_band(app, faction, Some(band_id), "bench_auto", event_kind)
+    else {
+        return;
+    };
+    // Inserted on demand, as every bench verb does, so a band spawned before the component existed
+    // can still switch it on.
+    let _ = band_bench_mut(app, band.entity);
+    core_sim::auto_craft::set_auto_craft(&mut app.world, band.entity, enabled);
+    let tick = app.world.resource::<SimulationTick>().0;
+    let state = if enabled { "on" } else { "off" };
+    push_command_event(
+        app,
+        tick,
+        event_kind,
+        faction,
+        format!("{}: bench auto-craft {state}", band.label),
+        Some(format!(
+            "status=applied action=bench_auto enabled={enabled} band={band_id}"
+        )),
+    );
+}
+
+/// **SKIP THE AUTO ORDER THE BENCH IS WAITING ON** — `bench_auto_skip <faction> <band>`.
+///
+/// Valid only when the bench has **no order it can work** and its **head order is auto-craft's**;
+/// otherwise refused by name. The head's item is set aside (it comes back only when the queue is
+/// next empty and one of it can be drawn), the head order is removed — it has drawn nothing, since a
+/// drawn order is workable — and the next suggestion is queued.
+fn handle_bench_auto_skip(app: &mut bevy::prelude::App, faction: FactionId, band_id: u64) {
+    let event_kind = CommandEventKind::Craft;
+    let verb = "bench_auto_skip";
+    let Some(band) = select_starting_band(app, faction, Some(band_id), verb, event_kind) else {
+        return;
+    };
+    match core_sim::auto_craft::auto_craft_skip(&mut app.world, band.entity) {
+        Ok(item) => {
+            let tick = app.world.resource::<SimulationTick>().0;
+            push_command_event(
+                app,
+                tick,
+                event_kind,
+                faction,
+                format!("{} skipped {item} on the bench", band.label),
+                Some(format!(
+                    "status=applied action={verb} item={item} band={band_id}"
+                )),
+            );
+        }
+        Err(refusal) => {
+            let reason = match refusal {
+                AutoSkipRefusal::NoBench => "has no crafting bench",
+                AutoSkipRefusal::NothingQueued => "has nothing queued to skip",
+                AutoSkipRefusal::BenchIsWorking => {
+                    "is working an order - there is nothing to skip past"
+                }
+                AutoSkipRefusal::HeadNotAuto => {
+                    "is waiting on an order you queued - remove it to move on"
+                }
+            };
+            emit_command_failure(
+                app,
+                event_kind,
+                faction,
+                format!("{verb}: {} {reason}.", band.label),
+            );
+        }
+    }
 }
 
 /// **Re-crew a band's bench** — `bench_crew <faction> <band> workers <n>`. The queue and every
@@ -10905,6 +11004,22 @@ fn command_from_payload(
             band_id,
             level,
         }),
+        ProtoCommandPayload::BenchAuto {
+            faction_id,
+            band_id,
+            enabled,
+        } => Some(Command::BenchAuto {
+            faction: FactionId(faction_id),
+            band_id,
+            enabled,
+        }),
+        ProtoCommandPayload::BenchAutoSkip {
+            faction_id,
+            band_id,
+        } => Some(Command::BenchAutoSkip {
+            faction: FactionId(faction_id),
+            band_id,
+        }),
         ProtoCommandPayload::UpkeepMode {
             faction_id,
             band_id,
@@ -11698,6 +11813,8 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
         Command::WorkPriority { faction, .. } => Some((*faction, "work_priority")),
         Command::BuildPriority { faction, .. } => Some((*faction, "build_priority")),
         Command::BenchPriority { faction, .. } => Some((*faction, "bench_priority")),
+        Command::BenchAuto { faction, .. } => Some((*faction, "bench_auto")),
+        Command::BenchAutoSkip { faction, .. } => Some((*faction, "bench_auto_skip")),
         Command::UpkeepMode { faction, .. } => Some((*faction, "upkeep_mode")),
         Command::ExtendPen { faction, .. } => Some((*faction, "extend_pen")),
         Command::SetHerdOutput { faction, .. } => Some((*faction, "set_herd_output")),
@@ -12245,6 +12362,16 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
             level,
         } => {
             handle_bench_priority(app, faction, band_id, level);
+        }
+        Command::BenchAuto {
+            faction,
+            band_id,
+            enabled,
+        } => {
+            handle_bench_auto(app, faction, band_id, enabled);
+        }
+        Command::BenchAutoSkip { faction, band_id } => {
+            handle_bench_auto_skip(app, faction, band_id);
         }
         Command::CancelOrder {
             faction,
@@ -27532,7 +27659,32 @@ mod long_move_tests {
         transfer_sent: f32,
     }
 
-    fn read_carry(app: &bevy::prelude::App, band_id: u64) -> PublishedCarry {
+    /// The band's carry capacity and held load — the sim's own functions, since the cohort row
+    /// publishes neither.
+    fn sim_carry(app: &mut bevy::prelude::App, band_id: u64) -> (f32, f32) {
+        let carry = app
+            .world
+            .resource::<ExpeditionConfigHandle>()
+            .get()
+            .carry
+            .clone();
+        let (cohort, equipment) = app
+            .world
+            .query::<(&BandId, &PopulationCohort, Option<&BandEquipment>)>()
+            .iter(&app.world)
+            .find(|(id, _, _)| id.0 == band_id)
+            .map(|(_, cohort, equipment)| (cohort.clone(), equipment.cloned()))
+            .expect("the band is alive");
+        (
+            core_sim::carry::band_carry_capacity(&cohort, &carry).to_f32(),
+            core_sim::carry::held_load(&cohort.stores, equipment.as_ref())
+                .load(&carry)
+                .to_f32(),
+        )
+    }
+
+    fn read_carry(app: &mut bevy::prelude::App, band_id: u64) -> PublishedCarry {
+        let (carry_capacity, carry_load) = sim_carry(app, band_id);
         let snapshot = app
             .world
             .resource::<SnapshotHistory>()
@@ -27551,8 +27703,8 @@ mod long_move_tests {
             .find(|cohort| cohort.bandId() == band_id)
             .expect("the band publishes a row");
         PublishedCarry {
-            carry_capacity: row.carryCapacity(),
-            carry_load: row.carryLoad(),
+            carry_capacity,
+            carry_load,
             move_ferry_reach_tiles: row.moveFerryReachTiles(),
             leaves_food: row.longMoveLeavesFood(),
             leaves_items: row.longMoveLeavesItems(),
@@ -27705,7 +27857,7 @@ mod long_move_tests {
 
         // **The identity, turn frame to turn frame, across the shedding move.**
         core_sim::run_turn(&mut app);
-        let turn = read_carry(&app, band_id);
+        let turn = read_carry(&mut app, band_id);
         let larder_after = holdings(&app, band).0;
         let identity = turn.food_income
             - turn.food_consumption

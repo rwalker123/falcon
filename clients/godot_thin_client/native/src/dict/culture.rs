@@ -352,6 +352,14 @@ fn culture_axis_to_key(axis: fb::CultureTraitAxis) -> &'static str {
     CULTURE_AXIS_KEYS.get(idx).copied().unwrap_or("Trait")
 }
 
+/// The `A ↔ B` label for a raw `CultureTraitAxis` index (a cohort row carries the index alone).
+pub(crate) fn culture_axis_label_for_index(idx: u8) -> &'static str {
+    CULTURE_AXIS_LABELS
+        .get(usize::from(idx))
+        .copied()
+        .unwrap_or("Trait")
+}
+
 fn culture_axis_to_label(axis: fb::CultureTraitAxis) -> &'static str {
     let idx = axis.0 as usize;
     CULTURE_AXIS_LABELS.get(idx).copied().unwrap_or("Trait")

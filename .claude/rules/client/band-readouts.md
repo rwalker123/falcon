@@ -82,7 +82,7 @@ which is a property of the tier and not of the merge.
 
 | Script | Purpose |
 |--------|---------|
-| `ui/hud/BandDetailLines.gd` | `RefCounted` producer (HUD decomposition, `docs/plan_hud_decomposition.md`) owning the **STATEFUL band/party detail-line producers** — the rows a BAND or a PARTY shows in whichever detail surface hosts it: `unit_summary_lines(unit, terrain_label, ctx, compact, with_position)` (Food · Fodder — on EVERY player band, live or dormant — · **Upkeep**, the standing MATERIAL bill, on a band that holds something which eats a good and NOWHERE else · **Carry** (`_band_carry_line`, plain ink always — see "The `Carry` row is a FACT") · Morale · Growth · Position, registering the Food/Morale/Growth disclosures through `DisclosureController` as it emits them; the **Trade** row and its disclosure were retired with the account by arc #527) and `expedition_summary_lines(unit, ctx)` (Mission · Target + its live `(x, y)` · Phase · Carried/Provisions · Collapse · Position — this producer's output lands in a `clip_contents` strip capped at ~300px; see `band-city-panel.md` → "The parties strip's lines"), plus the private row builders `_band_food_line` / **`_band_material_upkeep_line`** (the good in the WORST state and its runway, registering a fifth `Upkeep` disclosure whose popover states every good — see "THE STANDING MATERIAL BILL" at the foot of this file; **`_band_kit_line` and its `Gear` row are RETIRED** with `BAND_KIT_ROW_*` and the 22px `Zone_band` measurement their entry budget respected) / `_band_morale_line` / `_morale_breakdown_lines`. **The DORMANT fodder row has no private builder here**: it is one dim dash with nothing a band can vary, so `unit_summary_lines` appends the shared static `DetailFormat.fodder_dormant_row()` directly (the gate it is chosen by, `DetailFormat.band_has_fodder_economy`, moved there too when the faction rollup started asking it). **The two trailing flags are DIFFERENT QUESTIONS and must not be folded together**: `compact` is the band zone's HEIGHT TIER (it merges Fodder onto the Food line and Growth onto Morale), while `with_position` is the host saying whether it states the band's coordinates somewhere ELSE — the Band/City dock does, in its panel header, in every tier. **There is no `_band_output_line`**: productivity reads on the WORK zone's head now (see the Civilization Wellbeing bullet below). **It is the stateful HALF of a three-way split**: the PURE producers became `DetailFormat` statics (`herd_summary_lines`, the expedition tooltip trio). (`_format_stockpile_label` was the third piece of that split, via `HudFormat.stockpile_label`; both it and the accessible-stockpile rows it served are retired — see the accessible-stockpile note further down this file.) Hud holds it as `_banddetail`, constructed in `_ready` AFTER `_disclosures` and BEFORE `_bandpanel`; **both detail hosts share the one instance** — the Occupants-card drawer (`Hud._render_occupant_drawer`) and `BandPanelController`'s vitals label + parties inspector strip, which is what retired three of that controller's nine Callable injections. **THE INJECTION SURFACE IS ONE CALLABLE** — `_herd_label_for_id`, which cannot fold onto `HudBandLaborState` because it reads THREE collaborators (`_selectioncard.find_roster_herd` AND `_selection.herd()` AND `_band_labor.find_world_herd`). **THE IS-THIS-MINE TEST IS ONE STATIC ON `HudConst`, AND IT FAILS CLOSED.** `HudConst.is_player_unit(unit)` is a `class_name` static every host calls directly — no preload, no injection, no `Callable` through a constructor, which was the objection the six private `_is_player_unit` copies were justified by. A row that carries NO `faction` key defaults to `HudConst.NO_FACTION_ID` and is therefore NOT the player's; defaulting it to `PLAYER_FACTION_ID` made an unattributed row the player's own and exempted it from every foreign-disclosure gate. **IT NEVER SEES THE SELECTION MODEL**: the old producers read `_selection` at exactly two sites, both `tile_info()["terrain_label"]` for the morale row's "it's the hex you're on" payload, so that ONE display string is now a `terrain_label` PARAMETER and both hosts resolve it through the new `SelectionCardController.selected_terrain_label()`. It also owns `_food_flow_present`, which is a **private handshake between `_band_food_line` (writer) and `unit_summary_lines` (its only reader)** — the formatter has never seen it, so it is deliberately not on the `DetailFormat.Context`. Consts follow the `DetailFormat` rule (a const lives here iff every reader moved here): the Fodder/FULL-badge/morale-arrow/contribution-label vocabulary came (the stockpile-row vocabulary went with those rows). The disclosure `DETAIL_ROW_*` / `BREAKDOWN_KIND_*` protocol vocabulary lives in `hud_disclosure_vocab.gd` and `MORALE_CAUSE_*` in `DetailFormat.gd` — read back as `HudDisclosureVocab.X` / `DetailFormat.X`, NOT as `HudLayer.X`; `Hud.gd` defines none of them |
+| `ui/hud/BandDetailLines.gd` | `RefCounted` producer (HUD decomposition, `docs/plan_hud_decomposition.md`) owning the **STATEFUL band/party detail-line producers** — the rows a BAND or a PARTY shows in whichever detail surface hosts it: `unit_summary_lines(unit, terrain_label, ctx, compact, with_position)` (Food · Fodder — on EVERY player band, live or dormant — · **Upkeep**, the standing MATERIAL bill, on a band that holds something which eats a good and NOWHERE else · Morale · Growth · Position, registering the Food/Morale/Growth disclosures through `DisclosureController` as it emits them; the **Trade** row and its disclosure were retired with the account by arc #527) and `expedition_summary_lines(unit, ctx)` (Mission · Target + its live `(x, y)` · Phase · Carried/Provisions · Collapse · Position — this producer's output lands in a `clip_contents` strip capped at ~300px; see `band-city-panel.md` → "The parties strip's lines"), plus the private row builders `_band_food_line` / **`_band_material_upkeep_line`** (the good in the WORST state and its runway, registering a fifth `Upkeep` disclosure whose popover states every good — see "THE STANDING MATERIAL BILL" at the foot of this file; **`_band_kit_line` and its `Gear` row are RETIRED** with `BAND_KIT_ROW_*` and the 22px `Zone_band` measurement their entry budget respected) / `_band_morale_line` / `_morale_breakdown_lines`. **The DORMANT fodder row has no private builder here**: it is one dim dash with nothing a band can vary, so `unit_summary_lines` appends the shared static `DetailFormat.fodder_dormant_row()` directly (the gate it is chosen by, `DetailFormat.band_has_fodder_economy`, moved there too when the faction rollup started asking it). **The two trailing flags are DIFFERENT QUESTIONS and must not be folded together**: `compact` is the band zone's HEIGHT TIER (it merges Fodder onto the Food line and Growth onto Morale), while `with_position` is the host saying whether it states the band's coordinates somewhere ELSE — the Band/City dock does, in its panel header, in every tier. **There is no `_band_output_line`**: productivity reads on the WORK zone's head now (see the Civilization Wellbeing bullet below). **It is the stateful HALF of a three-way split**: the PURE producers became `DetailFormat` statics (`herd_summary_lines`, the expedition tooltip trio). (`_format_stockpile_label` was the third piece of that split, via `HudFormat.stockpile_label`; both it and the accessible-stockpile rows it served are retired — see the accessible-stockpile note further down this file.) Hud holds it as `_banddetail`, constructed in `_ready` AFTER `_disclosures` and BEFORE `_bandpanel`; **both detail hosts share the one instance** — the Occupants-card drawer (`Hud._render_occupant_drawer`) and `BandPanelController`'s vitals label + parties inspector strip, which is what retired three of that controller's nine Callable injections. **THE INJECTION SURFACE IS ONE CALLABLE** — `_herd_label_for_id`, which cannot fold onto `HudBandLaborState` because it reads THREE collaborators (`_selectioncard.find_roster_herd` AND `_selection.herd()` AND `_band_labor.find_world_herd`). **THE IS-THIS-MINE TEST IS ONE STATIC ON `HudConst`, AND IT FAILS CLOSED.** `HudConst.is_player_unit(unit)` is a `class_name` static every host calls directly — no preload, no injection, no `Callable` through a constructor, which was the objection the six private `_is_player_unit` copies were justified by. A row that carries NO `faction` key defaults to `HudConst.NO_FACTION_ID` and is therefore NOT the player's; defaulting it to `PLAYER_FACTION_ID` made an unattributed row the player's own and exempted it from every foreign-disclosure gate. **IT NEVER SEES THE SELECTION MODEL**: the old producers read `_selection` at exactly two sites, both `tile_info()["terrain_label"]` for the morale row's "it's the hex you're on" payload, so that ONE display string is now a `terrain_label` PARAMETER and both hosts resolve it through the new `SelectionCardController.selected_terrain_label()`. It also owns `_food_flow_present`, which is a **private handshake between `_band_food_line` (writer) and `unit_summary_lines` (its only reader)** — the formatter has never seen it, so it is deliberately not on the `DetailFormat.Context`. Consts follow the `DetailFormat` rule (a const lives here iff every reader moved here): the Fodder/FULL-badge/morale-arrow/contribution-label vocabulary came (the stockpile-row vocabulary went with those rows). The disclosure `DETAIL_ROW_*` / `BREAKDOWN_KIND_*` protocol vocabulary lives in `hud_disclosure_vocab.gd` and `MORALE_CAUSE_*` in `DetailFormat.gd` — read back as `HudDisclosureVocab.X` / `DetailFormat.X`, NOT as `HudLayer.X`; `Hud.gd` defines none of them |
 | `ui/BandFoodStatus.gd` | Single source of truth for band food-supply thresholds (`band_status_config.json`) + the days→green/amber/red color / BBCode-hex mapping (plus the parallel morale and output warn/critical thresholds; morale carries the `color_for_morale`/`hex_for_morale` pair because it really has both a `Label` host and a BBCode host, while **output carries `color_for_output` ALONE** — its one surface is the WORK zone head, which is `Label`s), shared by MapView's band dot and Hud's food/morale lines + alerts |
 | `ui/TileSurvivability.gd` | Single source of truth for the sim's TEMPERATURE-MORTALITY model — the range outside which `systems::population` kills, food or no food. **TWO INDEPENDENT TAILS**, each with its own onset, slope and ceiling: `set_model(cold_onset, cold_scale, cold_max, heat_onset, heat_scale, heat_max)` adopts the constants the sim publishes per-run (`MapSection.temperatureSurvivability` → the native's `overlays.survivability_{cold,heat}_{onset_temp,mortality_scale,max_mortality}`, all six or none), pushed from `MapView._ingest_overlay_channels` on the same presence test the climate cut points use. `has_model()` gates every readout — no published model, no survivability claim. `survivable_min()`/`survivable_max()` are the two ONSETS themselves, so the survivable band is the interval `[cold_onset, heat_onset]` and **not** a deviation from an ambient; `death_rate(temp)` mirrors `active_temperature_tail` + `temperature_fraction` in `core_sim/src/systems/population.rs` (below the cold onset priced by the cold tail, above the heat onset by the heat tail, zero between, each capped by its own ceiling), with `is_lethal` / `is_cold` reading off it. **It is the TILE's base rate**: the sim's per-bracket vulnerabilities are applied after the cap and are deliberately not published, a tile not knowing who stands on it. Consumed by `SelectionCardController._tile_chip_descriptors` (the CLIMATE chip's ⚠, tint and hover — the warning has no chip of its own since the four-pill strip was merged down) and by `MapView._draw_temperature_lethality` / `_build_temperature_legend` (the map overlay's hatch, contour and Lethal row) — one authority, so the card and the map cannot disagree about which ground kills. **It answers about the MODEL, never about how a rate is printed:** the `<0.1%` floor that keeps an unprintably small rate off a rounded zero lives in `HudSelectionVocab`, not here |
 - **RETIRED — the demographics readout, and the wire section with no client reader.** The player
@@ -386,15 +386,12 @@ which is a property of the tier and not of the merge.
   - **NO CARET, AND NOTHING REGISTERED.** `fodder_breakdown_lines` produces no rows for a band with
     neither flow, so the dormant branch registers no disclosure at all and `_key_cell` draws a plain
     dim key. An empty pull-down is worse than no pull-down.
-  - ⛔ **AND IT CARRIES NO HOVER, BECAUSE THE HOVER A ROW REGISTERS HERE IS THE WHOLE BLOCK'S.** The
-    stat block is one `RichTextLabel` and `DetailFormat.block_tooltip` joins every registered row's
-    sentence into its single `tooltip_text` — `[hint=…]` is not parsed by this Godot build, so a
-    sentence cannot be scoped to the row that owns it. The row registered two (a Foddering lock in
-    the forage panel's own words, and a calm *no fodder yet*), and what a player got was a paragraph
-    about hay popping out from under a cursor resting on **Growth**, **Morale** or **Food** — rows a
-    fodder lock bears on not at all, on a block where hay is the one term that is dormant. Reported
-    from play. **A dormant account states itself with the dim dash and nothing else**; anything more
-    waits for a surface that can hover one row.
+  - **AND IT CARRIES NO HOVER.** A dormant account states itself with the dim dash and nothing
+    else. The row once registered two sentences (a Foddering lock in the forage panel's words, and a
+    calm *no fodder yet*); while a detail block had one block-wide tooltip they surfaced under a cursor
+    on **Growth**, **Morale** or **Food** (reported from play). Hovers are per-row now
+    (`DetailFormat.hover_wrap` / `wire_row_hovers`), but the dormant row still has nothing to say a
+    hover would add.
   - **AND THE KNOWLEDGE READ WENT WITH BOTH SENTENCES.** The live Foddering percent was the only
     thing either scale needed that a band dict does not carry, so `BandDetailLines` holds no
     `FactionReadouts` cluster now and `FactionRollup.build_band_zone` takes no `knowledge` row: the
@@ -1436,29 +1433,14 @@ the parties strip's seven-line worst case, which is a HUNT party's.
 
 Frame: `trade_party_panel`.
 
-## The `Carry` row is a FACT, never a warning (#732)
+## There is no `Carry` row; the long-move warning is the one place carry is said (#732)
 
-`BandDetailLines._band_carry_line` draws `Carry: 48 / 102` beneath the stores it weighs: the sim's
-`carry_load` over its `carry_capacity` (food-unit load — food, weighted hay, items and materials),
-rounded to whole units. The client adds nothing up. A band the wire states no capacity for draws no
-row, since `0 / 0` would read as a band that can carry nothing. One line, no disclosure.
-
-⛔ **PLAIN INK, ALWAYS — never amber, whatever the two numbers are.** A band that is not moving is
-never warned that it is over its carry: the cap bounds what walks away, not what a band owns, and the
-long-move targeting warning is the ONE place over-carry is stated
-(`.claude/rules/core_sim/band-carry.md` → "IT CAPS THE TRANSFER, NEVER THE STORAGE"). The row once
-tinted its value amber through a `ctx.carry_over` flag; the flag is gone with the tint, and nothing
-may put a severity on this row again.
-
-**The hover is the MOVE RULE, stated as information** (`BAND_CARRY_TOOLTIP_FORMAT`, *"A move farther
-than N tiles leaves behind what the band can't carry."*, N from `move_ferry_reach_tiles`). It is
-registered only while the load is above the carry — the one case a long move would leave something
-behind — because a detail block is one `RichTextLabel` whose hover answers for every row
-(`DetailFormat.block_tooltip`), and a sentence on every band would greet a cursor resting on Food. It
-says what a move does, not that anything is wrong.
-
-Pinned by `chapters/band_expedition.gd` `_carry_states` (`harness-ui-preview.md`): a pair on one band
-with only the load moving, the value NOT in warn ink on either half, the hover present only over.
+The band panel once drew `Carry: 48 / 102`. It is **retired**: a band that is not moving is never
+warned that it is over its carry (the cap bounds what walks away, not what a band owns), and the
+long-move targeting warning (`TargetingController`, off the published `long_move_leaves_*` and
+`move_ferry_reach_tiles`) is the ONE place over-carry is stated
+(`.claude/rules/core_sim/band-carry.md` -> "IT CAPS THE TRANSFER, NEVER THE STORAGE"). The outfit
+card's `carry_capacity` (the window's, `hud_loadout_vocab.gd`) is a different reader and stays.
 
 ## THE STANDING MATERIAL BILL, and the `Gear` row it replaced (`docs/plan_standing_upkeep.md` §2.7)
 
@@ -1751,6 +1733,39 @@ with no pull adds nothing there (`_band_beliefs_compact_clause`).
   the mark), one line. The hover leads with the values, `Devout 0.4, traditional 0.3.` (one decimal,
   first word capitalised), then the pull sentence or the untied invitation; the pull magnitudes stay
   two decimals. It is an ordinary key/value row.
+- **The break-away warning (#702).** `culture_break_away_risk` (`cultureBreakAwayRisk`) is the sim's own
+  verdict — past the soft divergence limit for the trigger ticks, purist, with a sibling band in its
+  people — never derived here. When true the Beliefs value gains an AMBER clause,
+  `Beliefs  devout · traditional · may break away` (`HudStyle.WARN_HEX`), and the row's hover gains one
+  sentence. **The compact tier carries the same amber words** as a clause on the Morale line (a
+  warning must not vanish where Beliefs has no row), wearing the Beliefs hover itself. Strings and the
+  key live in `HudDisclosureVocab` (`BELIEFS_BREAK_AWAY_*`). Frame `band_beliefs_break_away`; the compact
+  claims are in `band_panel_preview` (`_assert_beliefs_compact_clause`).
+- **EVERY ROW'S HOVER SHOWS OVER THAT ROW ONLY.** `ctx.row_tooltips` (keyed by row) is still the one
+  source, but `DetailFormat.block_tooltip` (one `tooltip_text` joining every row's sentence) is
+  retired: it put the Carry sentence under a cursor on Beliefs. A row with a hover wears a
+  `[url=hover:<key>]` run over its key and value (`DetailFormat.hover_wrap`) and every host calls
+  `DetailFormat.wire_row_hovers(label, ctx)`, which turns `meta_underlined` off (a hover is not a link;
+  links underline themselves with `[u]`) and sets/clears `tooltip_text` from `meta_hover_started/ended`.
+  `[hint=…]` is still unparsed by this Godot build. Harnesses emit the hover signals and read
+  `tooltip_text` (`workings.gd` `_assert_hovers_are_per_row` is the pair claim); `Readout.detail_excerpt`
+  strips hover runs so its fixed window still reads the value.
+- **The contact-drift mark (#702)** replaces the two-line drift row, which was too big, named the
+  player's own band and could print `+0.00`. When a FOREIGN people's band pulls this band's culture, a
+  small arrow (`HudDisclosureVocab.BELIEFS_DRIFT_GLYPH`, `→`, in `HudStyle.BELIEF` through the urn's
+  `BELIEFS_ANCESTORS_MARK_FORMAT`) ends the Beliefs value, after the urn; the compact tier carries it
+  on the same Morale-line clause with the same hover. The Beliefs hover gains
+  `Drifting toward the Red Hill band (Ashfolk) — Open +0.02/turn.` The wire is `culture_drift_source_band`
+  (foreign pulls only: kin pulls are never published, 0 = none), `culture_drift_axis_label` (the
+  decoder's `A ↔ B` axis label; negative delta = first pole, positive = second; the figure is a
+  magnitude toward the pole so it reads `+`) and `culture_drift_delta`. **The rounds-to-zero rule is the
+  precision constant**: the magnitude is printed at `BELIEFS_DRIFT_DECIMALS` and a pull whose printed
+  value is zero hides BOTH the arrow and the sentence. The band is joined through
+  `HudBandLaborState.foreign_band` (the visible foreign bands, set by `Hud.update_band_alerts`), its
+  people through `FactionNames`; an unseen band reads `another band`, an unnamed people drops the
+  parenthetical, and no raw id or `Faction N` is ever printed. Frame `band_culture_drift`; the claims
+  (arrow and sentence, opposite pole, unresolvable source, no people, rounds-to-zero, source 0) are in
+  `chapters/band_expedition.gd`, the compact arrow in `band_panel_preview`.
 - **Frames:** `band_beliefs_tied`, `band_beliefs_untied` (`chapters/band_expedition.gd`, after the
   ancestors states). The chapter also asserts the flipped words, no row on an empty layer, no row on a
   rival, that the row fits one line, and (`band_panel_preview`, `_assert_beliefs_compact_clause` on

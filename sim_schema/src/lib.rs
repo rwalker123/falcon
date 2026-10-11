@@ -34,6 +34,53 @@ mod tests {
     use super::*;
     use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
+    /// **The bench's auto-craft state rides the wire** (`BenchState.auto` / `autoSkipped`,
+    /// `BenchOrder.auto`). Encode, decode, compare the decoded rows - an appended field that never
+    /// reached the codec passes an in-process assertion and fails this one.
+    #[test]
+    fn the_benchs_auto_state_and_an_orders_auto_tag_ride_the_wire() {
+        let snapshot = WorldSnapshot {
+            populations: vec![PopulationCohortState {
+                entity: 7,
+                bench: BenchState {
+                    auto: true,
+                    auto_skipped: vec!["clubs".to_string(), "hoes".to_string()],
+                    orders: vec![
+                        BenchOrderState {
+                            recipe_id: "baskets".to_string(),
+                            count: 2,
+                            auto: true,
+                            ..Default::default()
+                        },
+                        BenchOrderState {
+                            recipe_id: "sled".to_string(),
+                            count: 1,
+                            auto: false,
+                            ..Default::default()
+                        },
+                    ],
+                    ..Default::default()
+                },
+                ..Default::default()
+            }],
+            ..WorldSnapshot::default()
+        };
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let decoded = decode_snapshot_flatbuffer(&bytes).expect("the snapshot decodes");
+        let bench = &decoded.populations[0].bench;
+        assert!(bench.auto, "the toggle");
+        assert_eq!(bench.auto_skipped, vec!["clubs", "hoes"], "the skipped ids");
+        assert_eq!(
+            bench
+                .orders
+                .iter()
+                .map(|order| order.auto)
+                .collect::<Vec<_>>(),
+            vec![true, false],
+            "each order's own tag, not one value for the queue"
+        );
+    }
+
     /// A `WorldSnapshot` carrying exactly one herd — the rest of the world is irrelevant to the herd
     /// telemetry's wire encoding.
     fn snapshot_with_herd(herd: HerdTelemetryState) -> WorldSnapshot {
@@ -1714,5 +1761,54 @@ mod tests {
             RETIRED_BUILD_RATE,
             "the retired slot publishes its own neutral, never the successor's number"
         );
+    }
+
+    /// **A full encoded snapshot passes the FlatBuffers VERIFIER — through every cohort's craft
+    /// suggestions, the deepest nesting on the cohort row.**
+    ///
+    /// `root_as_envelope` is the verifying entry (the unchecked one is `root_as_envelope_unchecked`),
+    /// and it is what `decode_frame_flatbuffer` and every seat run on every frame. This test names
+    /// that claim and pins it on the saturated fixture, whose cohorts carry craft suggestions with
+    /// sources and shortfalls, so a schema or encoder change that leaves a misaligned or
+    /// out-of-bounds table fails `cargo test` instead of only failing a running seat.
+    ///
+    /// **What it cannot catch, and why the bench did:** the verifier reads bytes against the schema
+    /// the READER was built with. A producer and a consumer built from different `snapshot.fbs`
+    /// revisions (a stale `server` binary beside a fresh `sim_ai`, or the reverse — a field added or
+    /// deleted mid-table shifts every later field id) verify nothing in a single-build test, and
+    /// surface as exactly this `Type u32 ... is unaligned` error. A rebuild of BOTH binaries is the
+    /// fix for that class.
+    #[test]
+    fn a_full_encoded_snapshot_passes_the_flatbuffers_verifier() {
+        let snapshot = crate::fixture::saturated_snapshot().expect("the saturated fixture builds");
+        let suggestions: usize = snapshot
+            .populations
+            .iter()
+            .map(|cohort| cohort.craft_suggestions.len())
+            .sum();
+        assert!(
+            suggestions > 0
+                && snapshot
+                    .populations
+                    .iter()
+                    .flat_map(|cohort| &cohort.craft_suggestions)
+                    .any(|suggestion| !suggestion.sources.is_empty()),
+            "**LIVENESS**: the fixture's cohorts carry craft suggestions with sources"
+        );
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        // Verified, with the default options a seat uses.
+        let envelope = fb::root_as_envelope(&bytes).expect("the encoded snapshot verifies");
+        let published: usize = envelope
+            .payload_as_snapshot()
+            .and_then(|snapshot| snapshot.population())
+            .and_then(|section| section.populations())
+            .expect("the cohort list is published")
+            .iter()
+            .map(|cohort| cohort.craftSuggestions().map_or(0, |list| list.len()))
+            .sum();
+        assert_eq!(published, suggestions);
+        // And the whole decode path a seat runs, which verifies first.
+        decode_frame_flatbuffer(&bytes).expect("the encoded snapshot decodes through the verifier");
     }
 }

@@ -15,6 +15,7 @@ pub(crate) const BUILD_ID: &str = match option_env!("CORE_SIM_BUILD_ID") {
     None => "dev-unknown",
 };
 
+pub mod auto_craft;
 mod band_names;
 pub mod belief;
 mod belief_config;
@@ -91,7 +92,7 @@ mod sites;
 mod sites_config;
 mod snapshot;
 mod snapshot_overlays_config;
-mod spoilage;
+pub mod spoilage;
 mod start_profile;
 pub mod starting_loadout;
 mod supply;
@@ -147,10 +148,10 @@ pub use components::{
     FinishedBatch, FoodBatch, FoodMix, Improvement, KeepingIssue, KeepingToolLine,
     KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch,
     MaterialDraw, MoraleCause, MusterKit, MusterPlan, PoolToeLine, PopulationCohort, PowerNode,
-    ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep, ShedSubject, SourcePriority,
-    SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile, TownCenter, TransferCause,
-    TransferCounterparty, TransferCrossing, TransferDirection, TransferLedger, TransferLink,
-    YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER, MIN_ORDER_COUNT,
+    QueuedBuildToe, ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep, ShedSubject,
+    SourcePriority, SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile, TownCenter,
+    TransferCause, TransferCounterparty, TransferCrossing, TransferDirection, TransferLedger,
+    TransferLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER, MIN_ORDER_COUNT,
     NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
 };
 pub use config_fingerprint::{
@@ -188,11 +189,12 @@ pub use crisis_config::{
     BUILTIN_CRISIS_TELEMETRY_CONFIG,
 };
 pub use culture::{
-    culture_region_at, reconcile_band_culture_layers, reconcile_culture_layers,
-    seeded_modifiers_for_band, CultureEffectsCache, CultureLayer, CultureLayerId,
-    CultureLayerScope, CultureManager, CultureOwner, CultureSchismEvent, CultureTensionEvent,
-    CultureTensionKind, CultureTensionRecord, CultureTraitAxis, CultureTraitVector,
-    CULTURE_TRAIT_AXES, FALLBACK_CULTURE_REGION_ID,
+    culture_region_at, may_break_away, mutual_contact_ties, reconcile_band_culture_layers,
+    reconcile_culture_layers, seeded_modifiers_for_band, ContactPull, ContactTie,
+    CultureEffectsCache, CultureLayer, CultureLayerId, CultureLayerScope, CultureManager,
+    CultureOwner, CultureSchismEvent, CultureSplitQueue, CultureTensionEvent, CultureTensionKind,
+    CultureTensionRecord, CultureTraitAxis, CultureTraitVector, CULTURE_TRAIT_AXES,
+    CULTURE_TRAIT_SPAN, FALLBACK_CULTURE_REGION_ID,
 };
 pub use culture_corruption_config::{
     CorruptionSeverityConfig, CultureCorruptionConfig, CultureCorruptionConfigHandle,
@@ -435,9 +437,10 @@ pub use visibility::{
 };
 pub use visibility_config::{
     load_visibility_config_from_env, DecayConfig, ElevationConfig, LineOfSightConfig,
-    SightRangeConfig, TerrainModifierConfig, VisibilityConfig, VisibilityConfigHandle,
-    VisibilityConfigMetadata, BUILTIN_VISIBILITY_CONFIG,
+    SightRangeConfig, SizeSightBonusConfig, TerrainDetectionConfig, VisibilityConfig,
+    VisibilityConfigHandle, VisibilityConfigMetadata, BUILTIN_VISIBILITY_CONFIG,
 };
+pub use visibility_systems::terrain_sight_modifier;
 pub use wellbeing_config::{
     load_wellbeing_config_from_env, CultureConfig, DiscontentConfig, MigrationConfig,
     ProductivityConfig, WellbeingConfig, WellbeingConfigHandle, WellbeingConfigMetadata,
@@ -477,18 +480,18 @@ pub use snapshot::{
 };
 pub use systems::spawn_initial_world;
 pub use systems::{
-    advance_band_independence, advance_band_movement, advance_crafting, advance_expeditions,
-    advance_labor_allocation, advance_party_defection, advance_population_migration,
-    advance_predator_raids, advance_tick, announce_bench_material_short, bench_material_rate,
-    bench_tiers, bill_and_stock_roads, bring_the_dropped_party_home, deliver_bench_output,
-    denial_forecast, expedition_returned_event, fold_party_into_band, follow_hunted_herds,
-    grow_faction_roster, hunt_per_worker_provisions, hunt_report_event, hunt_take,
-    output_multiplier, party_owes_a_report, prospective_keep_hands, publish_turn_transfers,
-    settle_bands_roadwork, settle_scarce_tools, simulate_population, simulate_power,
-    source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers, DenialForecast,
-    DenialOutcome, HeartLedger, HeartReading, HuntOutcome, PartyGear, PartySightings, PoolToolPlan,
-    PowerSimParams, RaidRoll, SplitBand, SplitRefusal, SplitRefusals, ToolClaimStage,
-    TradeDiffusionEvent,
+    advance_band_independence, advance_band_movement, advance_crafting, advance_culture_splits,
+    advance_expeditions, advance_labor_allocation, advance_party_defection,
+    advance_population_migration, advance_predator_raids, advance_tick,
+    announce_bench_material_short, bench_material_rate, bench_tiers, bill_and_stock_roads,
+    bring_the_dropped_party_home, deliver_bench_output, denial_forecast, expedition_returned_event,
+    fold_party_into_band, follow_hunted_herds, grow_faction_roster, hunt_per_worker_provisions,
+    hunt_report_event, hunt_take, output_multiplier, party_owes_a_report, prospective_keep_hands,
+    publish_turn_transfers, settle_bands_roadwork, settle_scarce_tools, simulate_population,
+    simulate_power, source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers,
+    DenialForecast, DenialOutcome, HeartLedger, HeartReading, HuntOutcome, PartyGear,
+    PartySightings, PoolToolPlan, PowerSimParams, RaidRoll, SplitBand, SplitRefusal, SplitRefusals,
+    ToolClaimStage, TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,
@@ -918,6 +921,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(visibility::VisibilitySweepTracker::default())
         .insert_resource(connections::ConnectionLedger::default())
         .insert_resource(systems::HeartLedger::default())
+        .insert_resource(culture::CultureSplitQueue::default())
         .insert_resource(lineage::FreeBreedingPeoples::default())
         // **The roads and this turn's traffic** (`docs/plan_standing_upkeep.md` §4.13). The registry
         // is world state; the traffic log is a hand-off from the three things that move —
@@ -1274,7 +1278,12 @@ pub fn build_headless_app() -> App {
                     // The bench runs right after labor, for two reasons that both have to hold: it
                     // draws on the materials THIS turn's take just delivered, and its crew came out
                     // of the same worker pool the assignment loop above spends.
+                    // **Auto-craft fills an EMPTY queue** right before the bench works, and again
+                    // right after it (so an order that completes this turn has its successor in
+                    // the snapshot). See `auto_craft`.
+                    auto_craft::advance_auto_craft,
                     systems::advance_crafting,
+                    auto_craft::advance_auto_craft_after_bench,
                     // The bench-queue shortage notice reads the stock the draw just left, so it
                     // follows the draw directly.
                     systems::announce_bench_material_short,
@@ -1296,6 +1305,10 @@ pub fn build_headless_app() -> App {
                     // now is — and a band that went over this turn is not judged by the people it
                     // left.
                     systems::advance_band_independence,
+                    // A purist band whose cultural strain held splits off (#702): after
+                    // independence, so every band's people is final and one independence took
+                    // this turn is skipped.
+                    systems::advance_culture_splits,
                     sedentarization::sedentarization_tick,
                 )
                     .chain(),

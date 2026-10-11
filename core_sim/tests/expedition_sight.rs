@@ -477,3 +477,98 @@ fn a_bare_party_maps_the_world_for_free() {
         "the party's kit carries no wayfinding item, so nothing of it may be spent"
     );
 }
+
+/// The bare party's observe radius (`wayfinding`'s unequipped side), and what a camp of
+/// `LARGE_CAMP` people adds to the reach into its own tile (`floor((110 - 50) / 25) = 2`).
+const BARE_REACH: u32 = 6;
+const LARGE_CAMP_BONUS: u32 = 2;
+const LARGE_CAMP: u32 = 110;
+const START_BAND: u32 = 30;
+const SUBJECT_BAND_ID: u64 = 2;
+
+/// Observe once with a resident band of `people` standing on `at`, and return what the bare party
+/// buffered.
+fn buffered_with_a_camp(people: u32, at: UVec2) -> Vec<UVec2> {
+    let mut app = spawn_world();
+    // Line of sight is the live sweep's concern (`tests/large_group_detection.rs` pins the ridge);
+    // here the geometry under test is the disc, so a valley at the map's middle must not hide it.
+    let mut vis = VisibilityConfig::default();
+    vis.line_of_sight.enabled = false;
+    app.world
+        .insert_resource(VisibilityConfigHandle::new(Arc::new(vis)));
+    let centre = map_centre(&app);
+    let home = spawn_home_band(&mut app, centre);
+    let bare = bare_kit(&app);
+    let party = spawn_scout_party(&mut app, home, centre, bare);
+    let tile = tile_at(&app, at);
+    let mut camp = cohort(tile, people);
+    camp.size = people;
+    app.world.spawn((
+        camp,
+        ResidentBand,
+        BandId(SUBJECT_BAND_ID),
+        BandEquipment::start_stocked(&EquipmentConfig::builtin()),
+    ));
+    app.world.run_system_once(advance_expeditions);
+    buffered(&app, party)
+}
+
+/// ⛔ **The expedition's observe pass sees a large band beyond its normal reach** — the same
+/// effective-range rule as the live sweep, because both read one `SightModifiers`. A start-sized
+/// band at the same tile is not seen (the bonus is the cause), and an empty tile at the same
+/// distance stays unbuffered (only the occupied tile lights).
+#[test]
+fn an_expedition_observes_a_large_band_beyond_its_normal_reach() {
+    let app = spawn_world();
+    let centre = map_centre(&app);
+    let (width, height) = map_size(&app);
+    let terrain_cfg = core_sim::TerrainDetectionConfig::default();
+    let ring = BARE_REACH + LARGE_CAMP_BONUS;
+    let mut candidates: Vec<UVec2> =
+        core_sim::grid_utils::hex_range_tiles(centre, ring, width, height, true)
+            .into_iter()
+            .filter(|tile| {
+                core_sim::grid_utils::hex_distance_wrapped(centre, *tile, width, true) == ring
+            })
+            .filter(|tile| {
+                let data = app
+                    .world
+                    .get::<core_sim::Tile>(tile_at(&app, *tile))
+                    .expect("tile");
+                !data.terrain_tags.contains(sim_runtime::TerrainTags::WATER)
+                    && core_sim::terrain_sight_modifier(
+                        core_sim::terrain_definition(data.terrain).detection_modifier,
+                        &terrain_cfg,
+                    ) == 0
+            })
+            .collect();
+    candidates.sort_by_key(|tile| (tile.y, tile.x));
+
+    let mut proven = false;
+    for (index, target) in candidates.iter().enumerate() {
+        let with_camp = buffered_with_a_camp(LARGE_CAMP, *target);
+        if !with_camp.contains(target) {
+            continue; // a ridge or the like hides this one; try another
+        }
+        proven = true;
+        assert!(
+            !buffered_with_a_camp(START_BAND, *target).contains(target),
+            "a start-sized band at {target:?} is beyond a bare party's reach"
+        );
+        let empty = candidates
+            .get(index + 1)
+            .or_else(|| candidates.first())
+            .expect("at least the target itself");
+        if empty != target {
+            assert!(
+                !with_camp.contains(empty),
+                "an empty tile at the same distance stays unobserved"
+            );
+        }
+        break;
+    }
+    assert!(
+        proven,
+        "some ring tile is observed once a large camp stands on it (liveness)"
+    );
+}

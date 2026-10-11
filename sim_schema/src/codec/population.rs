@@ -737,6 +737,13 @@ fn create_populations<'a>(
                     .collect();
                 let drawn_inputs = builder.create_vector(&drawn_inputs);
                 let orders = create_bench_orders(builder, &cohort.bench.orders);
+                let auto_skipped: Vec<_> = cohort
+                    .bench
+                    .auto_skipped
+                    .iter()
+                    .map(|item| builder.create_string(item))
+                    .collect();
+                let auto_skipped = builder.create_vector(&auto_skipped);
                 fb::BenchState::create(
                     builder,
                     &fb::BenchStateArgs {
@@ -766,6 +773,9 @@ fn create_populations<'a>(
                         orders: Some(orders),
                         // The index the scalars above describe — appended last.
                         worked: cohort.bench.worked,
+                        // **AUTO-CRAFT** — appended last.
+                        auto: cohort.bench.auto,
+                        autoSkipped: Some(auto_skipped),
                     },
                 )
             };
@@ -1170,9 +1180,7 @@ fn create_populations<'a>(
                     homewardFoodSpoils: cohort.homeward_food_spoils,
                     homewardNextLoadIn: cohort.homeward_next_load_in,
                     homewardAllHomeIn: cohort.homeward_all_home_in,
-                    // WHAT THIS BAND CAN CARRY — appended last (#732).
-                    carryCapacity: cohort.carry_capacity,
-                    carryLoad: cohort.carry_load,
+                    // THE LONG MOVE — appended last (#732).
                     moveFerryReachTiles: cohort.move_ferry_reach_tiles,
                     longMoveLeavesFood: cohort.long_move_leaves_food,
                     longMoveLeavesItems: cohort.long_move_leaves_items,
@@ -1202,6 +1210,10 @@ fn create_populations<'a>(
                     cultureAncestorPull: culture_ancestor_pull,
                     breedingMembers: Some(breeding_members),
                     breedingPeoples: Some(breeding_peoples),
+                    cultureDriftSourceBand: cohort.culture_drift_source_band,
+                    cultureDriftAxis: cohort.culture_drift_axis,
+                    cultureDriftDelta: cohort.culture_drift_delta,
+                    cultureBreakAwayRisk: cohort.culture_break_away_risk,
                     idleMustered: cohort.idle_mustered,
                     huntMeals: Some(hunt_meals),
                 },
@@ -1234,6 +1246,7 @@ fn create_bench_orders<'a>(
                     blockedReason: Some(blocked_reason),
                     blockedSeverity: Some(blocked_severity),
                     shortToFinish: Some(short_to_finish),
+                    auto: order.auto,
                 },
             )
         })
@@ -1269,6 +1282,7 @@ fn create_craft_suggestions<'a>(
                             missingUnits: source.missing_units,
                             workersWithout: source.workers_without,
                             workPerTurn: source.work_per_turn,
+                            queuePosition: source.queue_position,
                         },
                     )
                 })
@@ -1534,8 +1548,11 @@ fn decode_bench(bench: fb::BenchState<'_>) -> Result<BenchState, DecodeError> {
             blocked_reason: text(order.blockedReason()),
             blocked_severity: text(order.blockedSeverity()),
             short_to_finish: decode_shortfalls(order.shortToFinish()),
+            auto: order.auto(),
         }),
         worked: bench.worked(),
+        auto: bench.auto(),
+        auto_skipped: decode_strings(bench.autoSkipped()),
     })
 }
 
@@ -1824,8 +1841,6 @@ fn decode_population(
         homeward_food_spoils: cohort.homewardFoodSpoils(),
         homeward_next_load_in: cohort.homewardNextLoadIn(),
         homeward_all_home_in: cohort.homewardAllHomeIn(),
-        carry_capacity: cohort.carryCapacity(),
-        carry_load: cohort.carryLoad(),
         move_ferry_reach_tiles: cohort.moveFerryReachTiles(),
         long_move_leaves_food: cohort.longMoveLeavesFood(),
         long_move_leaves_items: cohort.longMoveLeavesItems(),
@@ -1847,6 +1862,7 @@ fn decode_population(
                     missing_units: source.missingUnits(),
                     workers_without: source.workersWithout(),
                     work_per_turn: source.workPerTurn(),
+                    queue_position: source.queuePosition(),
                 }),
                 shortfalls: decode_shortfalls(suggestion.shortfalls()),
             }
@@ -1869,6 +1885,10 @@ fn decode_population(
         independence_grievance_threshold: cohort.independenceGrievanceThreshold(),
         culture_traits: decode_scalars(cohort.cultureTraits()),
         culture_ancestor_pull: decode_scalars(cohort.cultureAncestorPull()),
+        culture_drift_source_band: cohort.cultureDriftSourceBand(),
+        culture_drift_axis: cohort.cultureDriftAxis(),
+        culture_drift_delta: cohort.cultureDriftDelta(),
+        culture_break_away_risk: cohort.cultureBreakAwayRisk(),
         breeding_members: map_rows(cohort.breedingMembers(), |member| BreedingMemberState {
             band_id: member.bandId(),
             lines: member.lines(),

@@ -44,6 +44,10 @@ signal bench_raise_requested(payload: Dictionary)
 ## there is no order argument to disambiguate — and it is legal on an IDLE bench, a rank being a standing
 ## statement about the bench rather than about the job on it.
 signal bench_priority_requested(payload: Dictionary)
+## Switch auto-craft on or off for the band's bench - `bench_auto <faction> <band> on|off`. Payload: { faction, band_id, on }.
+signal bench_auto_requested(payload: Dictionary)
+## Pass over the waiting auto order's item - `bench_auto_skip <faction> <band>`. Payload: { faction, band_id }.
+signal bench_auto_skip_requested(payload: Dictionary)
 
 # --- Collaborators handed in by HudLayer (the SAME instances it holds) ---
 var _band_labor: HudBandLaborState = null
@@ -69,6 +73,13 @@ var _materials: Array = []
 var _band_legend: Array = []
 var _recipes: Array = []
 var _craft_knowledge: Array = []
+
+## The Work tab's build-queue labels for a band, `{rank: face}` - handed in by the coordinator so this
+## controller never holds the band panel's.
+var _build_queue_faces: Callable = Callable()
+
+func set_build_queue_faces_source(source: Callable) -> void:
+	_build_queue_faces = source
 
 func setup(host: Node, band_labor: HudBandLaborState, room_bounds: Control = null) -> void:
 	_host = host
@@ -157,6 +168,8 @@ func render() -> void:
 		# out (a worker at the bench is assigned labor); the stepper asks how many COULD stand at the
 		# bench, which keeps the crew already on it — the sim's `benchable()` against its `idle()`.
 		CraftingPanel.PAYLOAD_IDLE_WORKERS: _band_labor.benchable_workers(band),
+		CraftingPanel.PAYLOAD_BUILD_QUEUE_FACES: _build_queue_faces.call(band) \
+			if _build_queue_faces.is_valid() else {},
 	})
 
 ## The room the card is bounded by changed shape — a panel docked or released an edge, or the event
@@ -190,6 +203,8 @@ func _ensure_panel() -> void:
 	_panel.order_remove_requested.connect(_on_order_remove_requested)
 	_panel.order_raise_requested.connect(_on_order_raise_requested)
 	_panel.bench_priority_requested.connect(_on_bench_priority_requested)
+	_panel.bench_auto_requested.connect(_on_bench_auto_requested)
+	_panel.bench_auto_skip_requested.connect(_on_bench_auto_skip_requested)
 
 func _on_band_selected(entity: int) -> void:
 	_open_entity = entity
@@ -275,6 +290,26 @@ func _on_bench_priority_requested(level: String) -> void:
 		"faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
 		"band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
 		"level": level,
+	})
+
+## Auto names the band and the state it asks for, and nothing else (one bench per band).
+func _on_bench_auto_requested(on: bool) -> void:
+	var band := _open_band()
+	if band.is_empty():
+		return
+	bench_auto_requested.emit({
+		"faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+		"band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
+		"on": on,
+	})
+
+func _on_bench_auto_skip_requested() -> void:
+	var band := _open_band()
+	if band.is_empty():
+		return
+	bench_auto_skip_requested.emit({
+		"faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+		"band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
 	})
 
 # ---- lookups ----------------------------------------------------------------

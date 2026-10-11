@@ -310,6 +310,26 @@ layers. A far band that stops gathering **diverges**, and hard divergence is alr
 splitting into a new faction. That is the cultural drift a far band undergoes, and it is the same
 machinery as the fission rule's independence, fed by the same missing contact.
 
+**Settled by #702.** Convergence is not a gathering-specific rule: bands at a shared place are in
+contact, contact makes ties, and #530's contact drift (`docs/plan_contact_and_logistics.md`
+§Settled by #530) converges tied bands — #702 built it. What the strain becomes reads the band's
+own Syncretic ↔ Purist value:
+
+- **A purist band splits.** When its band layer raises the existing schism risk (past the hard
+  threshold for the band scope's trigger ticks) and its people has another band, it alone breaks
+  away as a new people, through independence's break-away path, announced with a culture cause.
+- **An accepting band never splits.** Its kin are tied to it and, being receptive, drift toward it —
+  that is the absorption; no second rule.
+- **A people of one band does not split from itself**, which also keeps a fresh splinter from
+  splitting again.
+- **Any band may split, the home band included.** The amber *may break away* warning is the
+  player's guard; a home band that drifts away anyway is a consequence, not something the rules
+  forbid.
+
+Levers: `culture.contact_drift.rate` and `culture.split_min_purist` in
+`culture_corruption_config.json`. As-built: `.claude/rules/core_sim/ecs-systems.md` (contact drift)
+and `.claude/rules/core_sim/independence.md` (the split).
+
 ### The decisions it creates
 
 - **Where to stand** — the belief tile or the richer patch; morale against food.
@@ -726,8 +746,10 @@ Every decision this doc leaves unmade is owned by an issue, so it cannot be lost
 - ~~**When a far party's haul is delivered, and what gates its launch**~~ — **decided** on the
   work-party slice (#684), before implementation, and it dissolved rather than resolved: a standing
   posting has no launch and no shipment, so there is nothing to gate. See "The model" above.
-- **The storage lesson's pace** — a meaningful default from the existing ~20-work lessons and the
-  ladder's pacing (#707), adjusted from the measurement (#705) and playtesting.
+- ~~**The storage lesson's pace**~~ — **set** on the lesson slice (#707): a lesson cost of 20, the
+  same as the other rung-2 lessons, and a band earns one full turn of practice on any turn its larder
+  rots at least one turn of its own need (`storage_lesson_rot_turns`), in proportion below that.
+  Playtesting adjusts both dials. See `.claude/rules/core_sim/campaign.md` → "Rot teaches storage".
 - **Why moving never paid** — the measurement (#705).
 - **Writing, the third ceiling** — the design task (#712).
 

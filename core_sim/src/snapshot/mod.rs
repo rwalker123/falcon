@@ -119,7 +119,7 @@ mod flora_quotes;
 mod governance;
 mod knowledge;
 mod map;
-mod population;
+pub(crate) mod population;
 mod publish;
 mod routes;
 mod subsistence;
@@ -1452,6 +1452,8 @@ mod tests {
             belief_relay_region: Vec::new(),
             culture_traits: Vec::new(),
             culture_ancestor_pull: Vec::new(),
+            culture_drift: None,
+            culture_break_away_risk: false,
             entity: Entity::from_raw(1),
             // This fixture asserts on the derived readouts, not on band identity.
             band_id: None,
@@ -1567,6 +1569,7 @@ mod tests {
             last_roadwork_supplied: 0.0,
             last_keeping_issued: Default::default(),
             last_pool_toe: Vec::new(),
+            last_queued_build_toe: Vec::new(),
             last_pool_crew: Vec::new(),
             last_fodder_need: 0.0,
             last_fodder_inflow: 0.0,
@@ -1695,6 +1698,7 @@ mod tests {
             last_roadwork_supplied: 0.0,
             last_keeping_issued: Default::default(),
             last_pool_toe: Vec::new(),
+            last_queued_build_toe: Vec::new(),
             last_pool_crew: Vec::new(),
             last_fodder_need: 0.0,
             last_fodder_inflow: 0.0,
@@ -1764,6 +1768,7 @@ mod tests {
             last_roadwork_supplied: 0.0,
             last_keeping_issued: Default::default(),
             last_pool_toe: Vec::new(),
+            last_queued_build_toe: Vec::new(),
             last_pool_crew: Vec::new(),
             last_fodder_need: 0.0,
             last_fodder_inflow: 0.0,

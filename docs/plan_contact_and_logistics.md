@@ -81,8 +81,7 @@ because it is choosing to be**, not because it is small, and a party that *wants
 should be. That is a scouting mechanism and it belongs to the scouting arc; here it is enough that
 **scouting is the verb that temporarily extends a band's range**, which is already true.
 
-> **Open:** whether a large group is detectable *beyond* anyone's range — smoke on the horizon. It
-> would be a per-target sight bonus rather than a per-group stat, and nothing in this arc needs it.
+> **Settled by #533 — a large group is seen from further away.** See §Open items, "Settled by #533".
 
 ---
 
@@ -252,7 +251,7 @@ pace in the game is tuned in ONE file"* — so a route branch is paced against t
 | **`movement` profile** | **nobody** — see the correction below |
 | `logistics_penalty` | morale hardness (`systems/population.rs`) |
 | `attrition_rate` | morale (`systems/population.rs`) |
-| **`detection_modifier`** | **nobody** |
+| **`detection_modifier`** | the sight sweep — the per-target terrain term (#533) |
 | **`infrastructure_cost`** | **nobody — until `plan_standing_upkeep.md` §4.13 wires it as the route rung's scale term** |
 
 > **⛔ THE "DEAD LOGISTICS SIM" IS DELETED, so two rows no longer name it.** They read *"the dead
@@ -270,13 +269,13 @@ pace in the game is tuned in ONE file"* — so a route branch is paced against t
 > `visibility_config.rs`'s `MovementConfig`. Three distinct types, one word.
 >
 > **The error made the row look half-live and so softened the callout below**, which is the argument
-> §4.13's whole payoff choice rests on: the row belongs in the same **nobody** class as
-> `detection_modifier`, and the terrain cost table's *travel* half is authored but entirely unread.
+> §4.13's whole payoff choice rests on: the row belongs in the **nobody** class, and the terrain cost
+> table's *travel* half is authored but entirely unread.
 
-`detection_modifier` and `infrastructure_cost` have never been read by any system. `detection_modifier`
-is *how well you see, and are seen, in this terrain* — the range question, already answered per biome.
-`infrastructure_cost` is *what it costs to hold a route through here* — the route-upkeep question.
-**This arc's cost model is substantially already authored**; it has simply never been wired to anything.
+`detection_modifier` is *how well you see, and are seen, in this terrain* — the range question,
+already answered per biome; #533 made the sight sweep read it. `infrastructure_cost` is *what it
+costs to hold a route through here* — the route-upkeep question, read by the route rung's scale term.
+**This arc's cost model was substantially already authored** before either was wired.
 
 > **⛔ AND THE *OTHER* HALF OF THE LADDER'S CLAIM HAS NO DATA WAITING FOR IT.** A rung is
 > *"cheaper to travel and dearer to keep"*, and only the dearer half is authored here. **Band movement
@@ -528,7 +527,37 @@ connections this arc owns.
 
 ## Open items
 
-- **Whether a large group is detectable beyond anyone's range** — #533 (§Q1).
+None — every item below is settled.
+
+### Settled by #533 — a large group is seen from further away
+
+You no longer find people only by looking hard enough: a big camp is visible from further off than
+a small party. **The shape is a per-target sight bonus, not a per-group stat.** The sight sweep
+already gave each target tile its own range (base plus a terrain term); a tile holding resident
+bands adds a bonus from their combined head count. No group projects a radius of its own, so range
+stays one field and the "no fifth radius" rule holds.
+
+- **Only the occupied tile lights.** The ground around a large camp stays fogged. Contact follows
+  through the same reveal, so nothing new decides who has met whom.
+- **The keystone is untouched.** The observer is standing where they are and looking; the bonus
+  changes what that look reaches, it grants nothing through a connection.
+- **Line of sight still applies.** A ridge hides a large camp as it hides a small one.
+- **Head count alone decides it**, summed over every resident band on the tile, whatever its
+  people. Being settled rather than nomadic is not a second input.
+- **The scout party's invisibility is still a choice, not a size**: a detached expedition is not a
+  subject at all, so this bonus never applies to one.
+
+**`detection_modifier` became the one terrain sight term in the same change.** The sweep's terrain
+term used to be keyed on tags: wetland −2 tiles, water +1. Actual forests (Mixed Woodland, Boreal
+Taiga) carry no wetland tag, so the "forest penalty" never applied to a forest. The authored
+`detection_modifier` already said what the tag rule meant to say — forest −0.15/−0.20, steppe +0.20
+— so it replaced the tag rule outright rather than sitting beside it as a second answer. That moves
+ordinary sight everywhere: forests hide and open grassland shows more. **Open water now
+*shortens* sight** (deep ocean −0.20), the reverse of the old +1 water bonus, because that is what
+the table authors.
+
+The levers, the arithmetic and the tests are `.claude/rules/core_sim/connections.md` → "A large
+group is seen from further away".
 
 ### Settled by #538 — connection strength
 

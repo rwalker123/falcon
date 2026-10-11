@@ -1197,14 +1197,8 @@ func _build_vitals_label(band: Dictionary) -> RichTextLabel:
     detail_label.text = DetailFormat.detail_bbcode(
         _banddetail.unit_summary_lines(band, _selectioncard.selected_terrain_label(), ctx,
             _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT, false), ctx)
-    # **THE HOVER A ROW REGISTERED, ANSWERED BY THE BLOCK** — a lapsed rung, an under-kept pen.
-    # `[hint=…]` is not parsed by this Godot build (see `DetailFormat.block_tooltip`), so the label
-    # carries every registered sentence at once and a cursor anywhere over the block gets all of
-    # them; `SubjectDrawerController` does exactly this for the OTHER detail host. That is also the
-    # reason the dormant `Fodder:` row registers nothing at all: its sentence reached a cursor
-    # resting on Growth, Morale or Food. Empty for a block whose every row is live, which shows no
-    # tooltip at all.
-    detail_label.tooltip_text = DetailFormat.block_tooltip(ctx)
+    # **A ROW'S HOVER SHOWS OVER THAT ROW ALONE** (`DetailFormat.wire_row_hovers`).
+    DetailFormat.wire_row_hovers(detail_label, ctx)
     return detail_label
 
 ## "PEOPLE" — who the band IS: a stacked children/working-age/elders bar plus its key and the
@@ -1844,6 +1838,17 @@ func _pending_head_build_target(band: Dictionary) -> Dictionary:
     # VERB in it, which is not a rung and must never be offered as one.
     return {BUILD_TARGET_BRANCH_KEY: branch,
         BUILD_TARGET_RUNG_KEY: _queue_model_build_rung(head, branch)}
+
+## **THE WORK TAB'S QUEUE ROW LABELS BY WIRE RANK** - `{rank: face}`, the very list and face the block draws,
+## for a surface (the crafting panel's suggestions) that names a queued build by its position.
+func build_queue_faces(band: Dictionary) -> Dictionary:
+    var faces: Dictionary = {}
+    for model_variant in _build_queue_models(band, _work_source_models(band, 0)):
+        var model: Dictionary = model_variant
+        var rank := _build_queue_row_rank(model)
+        if rank >= 0:
+            faces[rank] = _build_queue_job_face(model)
+    return faces
 
 ## **THE RUNG A QUEUE MODEL IS BEING RAISED TO — `BUILD_RUNG_ANY` unless it is a road.** It was ONE
 ## derivation shared with the queue row's kit picker, so the header's kit line and that row's dropdown

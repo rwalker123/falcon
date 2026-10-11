@@ -3628,6 +3628,12 @@ pub struct LadderKnowledge {
     /// by a gathering band (fibre is everywhere) and Bone-working slowly by anyone (bone is the
     /// scarcest yield on the roster), with no per-craft dial saying so.
     pub craft_lesson_per_item: f32,
+    /// **How much rot is one full turn of STORAGE practice** (#707), in turns of the band's OWN
+    /// need: food rotting in one turn equal to this many turns of need counts as one full turn of
+    /// practice (`learn_rate` worth). A sibling of [`Self::learn_rate`] because the quantum differs;
+    /// crew-blind because rot is measured against the band's own need, so band size cancels.
+    /// See `spoilage::storage_practice`.
+    pub storage_lesson_rot_turns: f32,
 }
 
 impl LadderKnowledge {
@@ -4432,7 +4438,11 @@ impl LadderConfig {
             .rungs
             .iter()
             .filter_map(|rung| rung.earns_knowledge.as_deref());
-        for name in taught.chain(crate::crafting::CRAFTS_WITH_A_DISCOVERY) {
+        let rot_taught = std::iter::once(crate::spoilage::STORAGE_KNOWLEDGE);
+        for name in taught
+            .chain(crate::crafting::CRAFTS_WITH_A_DISCOVERY.iter().copied())
+            .chain(rot_taught)
+        {
             if self.knowledge.lesson_cost(name).is_none() {
                 return Err(LadderConfigError::Invalid {
                     field: format!("knowledge.lesson_costs[{name}]"),
@@ -4752,6 +4762,8 @@ const FIRST_RUNG_ORDER: u32 = 1;
 fn discovery_id_for(name: &str) -> Option<u32> {
     match name {
         "cultivation" => Some(CULTIVATION_DISCOVERY_ID),
+        // Rot teaches storage (#707) - no rung or bench does - so its id is coded beside the system.
+        "storage" => Some(crate::spoilage::STORAGE_DISCOVERY_ID),
         "herding" => Some(HERDING_DISCOVERY_ID),
         // Slice 4's two new rung-3 gates. `seed_selection`'s *consumer* (the `Field`/`Sow` rung) is
         // slice 5 — it is earned now and spent later, which is the pacing model working as intended,
@@ -4838,6 +4850,20 @@ fn validate_knowledge(knowledge: &LadderKnowledge) -> Result<(), LadderConfigErr
             value: format!(
                 "craft_lesson_per_item = {}",
                 knowledge.craft_lesson_per_item
+            ),
+        });
+    }
+    if !knowledge.storage_lesson_rot_turns.is_finite() || knowledge.storage_lesson_rot_turns <= 0.0
+    {
+        return Err(LadderConfigError::Invalid {
+            field: "knowledge".to_string(),
+            constraint: "count a positive number of turns of need as one full turn of storage \
+                         practice — at `storage_lesson_rot_turns <= 0` the rot ratio is undefined \
+                         and storage is never learned"
+                .to_string(),
+            value: format!(
+                "storage_lesson_rot_turns = {}",
+                knowledge.storage_lesson_rot_turns
             ),
         });
     }
@@ -7365,6 +7391,41 @@ mod tests {
                 .remove("weaving");
         });
         assert_rejects(err, "knowledge.lesson_costs[weaving]");
+        // …and storage, which neither a rung nor a bench teaches: rot does.
+        let err = reject(|json| {
+            json["knowledge"]["lesson_costs"]
+                .as_object_mut()
+                .expect("lesson_costs is a map")
+                .remove(crate::spoilage::STORAGE_KNOWLEDGE);
+        });
+        assert_rejects(err, "knowledge.lesson_costs[storage]");
+    }
+
+    /// **The rot that counts as a full turn of storage practice must be a positive, finite number
+    /// of turns of need.** `0` divides by zero (infinite practice for any rot, NaN for none), a
+    /// negative flips the sign, and a non-finite value poisons the ratio — each would silently
+    /// break the lesson's pace. Checked on the struct because JSON cannot spell NaN or infinity.
+    #[test]
+    fn rejects_a_storage_lesson_that_cannot_be_paced() {
+        /// A negative dial, to pin the sign check apart from the zero check.
+        const NEGATIVE_ROT_TURNS: f32 = -1.0;
+        for bad in [
+            0.0,
+            NEGATIVE_ROT_TURNS,
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+        ] {
+            let mut knowledge = LadderConfig::builtin().knowledge.clone();
+            knowledge.storage_lesson_rot_turns = bad;
+            let err = validate_knowledge(&knowledge).expect_err(&format!(
+                "storage_lesson_rot_turns = {bad} must be rejected"
+            ));
+            assert!(
+                err.to_string().contains("storage_lesson_rot_turns"),
+                "{bad}: {err}"
+            );
+        }
     }
 
     #[test]

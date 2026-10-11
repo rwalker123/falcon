@@ -148,6 +148,41 @@ reading was in touch, **of the same people**, that is cut off this turn. A band 
 has no previous reading and fires nothing (a fresh world, a load); a band that changed people this
 turn is not losing touch with the people it left.
 
+## A purist band that diverges too far splits off (#702)
+
+The second way a band breaks away, and it needs no cut-off and no grievance. `reconcile_culture_layers`
+(Influence) reads the band layers' **level** state (`culture::bands_in_strain`), never the one-turn
+`SchismRisk` record: a band is in the hard state while `ticks_above_hard >= hard_trigger_ticks`, and
+it is re-judged every turn it stays there. ⛔ Read off the record, which fires only on the crossing, a
+band that crossed while it had no sibling (or was still accepting) was never queued again and wore
+the amber warning forever (PR #807 review). A band in the hard state is **queued** (`CultureSplitQueue`,
+band -> the people it was judged as) when its Syncretic<->Purist value is **above**
+`culture.split_min_purist` (default `0.0`) **and** its people has at least one other resident band.
+An accepting band (at or below the lever) never splits: its kin's contact drift is the absorption. A
+people of one band has nothing to break away from, which also stops a just-split band re-splitting.
+**The heart may split** — unlike grievance independence, which never lets the heart group go. A
+purist home band that drifts past the hard limit leaves with its roads, improvements and parties; the
+amber warning is the player's guard against it, and there is deliberately no heart exclusion.
+
+`systems::advance_culture_splits` drains the queue **directly after `advance_band_independence`** in
+the Population chain, so every band's people is final for the turn. It re-checks that the band's
+people still equals the one culture judged (independence, a defection or a remnant flip may have
+moved it) and that a sibling remains, then breaks that ONE band (not its tie-joined group) away
+through `break_away_as_new_people` — the per-group hand-over `advance_band_independence` shares
+(roster growth, discovery seed, remembered fog, `cohort.faction`, grievance reset, both peoples
+told), then `follow_the_band_to_its_new_people`. Its culture layer is untouched. Independence has
+already rebuilt the turn's `HeartLedger`, so the split writes the band's reading as a sole-band
+heart's.
+
+The announcement is `band_broke_away` with the same two rows and `side=` tokens; the detail also
+carries **`cause=culture`** and the label reads as culture (*"... grew too far from our ways ..."*).
+The grievance break-away carries no `cause` token. **The player is warned first:** a band in the
+drift-warning **or** hard state (`bands_in_strain`, the same level read the split uses) that passes
+the same predicate (`culture::may_break_away`: purist above the lever and a sibling) is published as
+`cultureBreakAwayRisk:bool` on its cohort row (own bands only; `CultureManager::break_away_risk`,
+checkpointed, save format 32), because band tensions never reach `active_tensions`. The queue is a derived resource (filled and
+drained within one turn), listed in `sim_state_coverage.rs`'s `DERIVED_RESOURCES`.
+
 ## Events
 
 | Kind | Rows | Label | Detail |
