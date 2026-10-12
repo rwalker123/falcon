@@ -699,12 +699,18 @@ second computation; the head-count is live, summed over the group's members when
 - **The lines are COPIED, and the parent keeps every one of its own.** The child holds
   `max(1, ceil(|parent lines| × child people ÷ parent people before))`, capped at the parent's, the
   highest ids (`FoundingLines::copy_share`). Two DIFFERENT peoples each count a shared line whole; only
-  holders within one people divide its `K`. Dividing, as a player's split does, would leave the parent
-  still over — its ceiling falls by `E · c / t`, short of `E` — and it would break off again every
-  turn. Copying lands the parent exactly at its ceiling (to within the whole worker the split rounds
-  to), and the union of two peoples still in touch gains nothing from the copy, so it is no exploit.
-  A residue the rounding leaves leaks to the child, which is a destination (a full tie, a group with
-  headroom).
+  holders within one people divide its `K`. **While the two stay in touch the choice changes
+  nothing**: the split's full tie puts each side's lines in the other's union ("Another people's
+  lines count only while in touch"), so parent and child both read the whole set, ~`L × K`. It
+  decides what happens **once the tie bleeds out**. Divided, the parent would fall to its remaining
+  lines — its ceiling down by about `E · c / t` while its head-count is already at `c` — and would
+  shed or break off again. Copied, the parent keeps its whole ceiling; the child falls back to its
+  copied share. The copy adds no line to the union of any population, so it is no exploit.
+- **The child is the next turn's destination.** It is another people (outside the parent's group),
+  fully tied and standing on the same tile, its borders open by default, and its group's ceiling
+  counts the parent's lines while in touch, so it has headroom. The parent's later excess (including
+  the residue the split's worker rounding leaves) therefore leaks into it, and a second break-off
+  waits until no band anywhere can take them.
 - **A split nobody commanded.** The dowry, the culture layer, the full tie both ways and the inherited
   heart reading are right as they are. The outfitting window is the player's chance to revise a split
   they made, so `StartingLoadout::close` shuts the child's the moment the split returns; the goods the

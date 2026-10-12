@@ -225,9 +225,11 @@ partners, or off the tile that held its belief — and then it leaks back down. 
 their own breeding population, with room under its own ceiling. They carry no lines. When no band
 can take them, the excess breaks off as one group and becomes a new people. **The break-off copies
 its share of lines; the group it leaves keeps all of its own.** Two different peoples each count a
-shared line whole, so this is the existing rule — and dividing instead would leave the group behind
-still over its ceiling (its ceiling falls by less than its headcount did), so it would break off
-again every turn.
+shared line whole, so this is the existing rule. While the two stay in touch each counts the other's
+lines anyway; the copy matters once they drift apart, when dividing would leave the group behind
+over its ceiling (its ceiling falls by less than its headcount did) and shedding again. The new
+people is itself the next destination: tied, beside them, with room, so a later excess joins it
+rather than breaking off a second time.
 
 What falls out without further rules:
 

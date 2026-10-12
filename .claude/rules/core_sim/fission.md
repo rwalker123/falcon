@@ -274,8 +274,9 @@ leaves the parent's lines untouched. See `campaign.md` → "Founding lines".
 `split_band_from_parent_with(.., LineDivision::Copy)`; the player's verb is
 `LineDivision::Partition`, the behaviour above. **A copy is the exception**, and it exists because the
 child is about to become a DIFFERENT people: two peoples each count a shared line whole (only holders
-within one people divide its `K`), and partitioning would leave the parent still over its ceiling to
-break off again every turn. The child takes `max(1, ceil(lines × child people ÷ parent people))` of
+within one people divide its `K`), and partitioning would leave the parent over its ceiling once the
+two lose touch (while the tie holds, each counts the other's lines and the choice changes nothing).
+The child takes `max(1, ceil(lines × child people ÷ parent people))` of
 the highest ids and the parent keeps all of its own (`FoundingLines::copy_share`). Everything else the
 split does is unchanged for a split nobody commanded, except that the caller closes the child's
 outfitting window (`StartingLoadout::close`): see `campaign.md` → "Shedding above the ceiling".
