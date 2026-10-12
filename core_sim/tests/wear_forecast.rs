@@ -735,3 +735,116 @@ fn publishing_the_forecast_leaves_the_real_ledger_untouched() {
         "no charge, no retirement, no window write"
     );
 }
+
+/// Queue `count` spears ahead of everything: a long lead that nets none of the forecast items away.
+fn long_queue(app: &mut App, band: Entity, count: u32) {
+    let mut bench = app.world.get_mut::<BandBench>(band).expect("bench");
+    bench.orders.clear();
+    bench.orders.push(BenchOrder::new(SPEARS, count));
+}
+
+/// **`expiresInTurns` IS WHEN THE SHORTAGE STARTS, NOT WHEN THE UNIT IN HAND RUNS OUT.** Need 2, three
+/// held, the one in hand 10 from spent at 4 a turn: the spare absorbs that loss, and nobody goes short
+/// until the second unit is gone at (10 + 100) / 4 = 27.5 turns. Paired with the control without the
+/// spare, which goes short at the first loss, 2.5 turns.
+#[test]
+fn expiry_is_the_turn_the_shortage_starts_and_a_spare_defers_it() {
+    let (mut app, band) = world();
+    let window = window_turns(&app) as f32;
+    let fixture = |app: &mut App, held: u32| {
+        bare_bench(app, band, FOUR_CRAFTERS);
+        consumers(app, band, &[(HOES, 2.0, 2.0)]);
+        hold(app, band, HOES, held, 90.0 - 4.0 * window);
+        warm_up(app, band, HOES, WearQuantum::BuildProgress, FOUR_A_TURN);
+        long_queue(app, band, 9);
+    };
+    fixture(&mut app, 3);
+    let rows = publish(&mut app, band);
+    let spared = find(&rows, HOES).expect("the second loss is still coming");
+    assert!(
+        spared.lead >= 28,
+        "the lead reaches the second loss: {}",
+        spared.lead
+    );
+    assert!(
+        (spared.expires - 27.5).abs() < 1e-3,
+        "the turn of the second loss: {}",
+        spared.expires
+    );
+    assert_eq!(spared.upcoming, 1);
+
+    fixture(&mut app, 2);
+    let rows = publish(&mut app, band);
+    let bare = find(&rows, HOES).expect("suggested");
+    assert!(
+        (bare.expires - 2.5).abs() < 1e-3,
+        "the first loss: {}",
+        bare.expires
+    );
+}
+
+/// **AN EARLY EXPIRY WITH A LATE SHORTAGE RANKS BELOW AN ITEM THAT REALLY GOES SHORT SOONER.** The
+/// hoes' unit in hand lasts 2.5 turns but a spare holds the line until turn 27.5; the baskets' only
+/// unit goes at turn 3.
+#[test]
+fn ranking_follows_when_the_shortage_starts() {
+    let (mut app, band) = world();
+    let window = window_turns(&app) as f32;
+    bare_bench(&mut app, band, FOUR_CRAFTERS);
+    consumers(&mut app, band, &[(HOES, 2.0, 2.0), (BASKETS, 1.0, 1.0)]);
+    hold(&mut app, band, HOES, 3, 90.0 - 4.0 * window);
+    hold(&mut app, band, BASKETS, 1, 88.0 - 4.0 * window);
+    for _ in 0..window_turns(&app) {
+        wear_turn(
+            &mut app,
+            band,
+            HOES,
+            WearQuantum::BuildProgress,
+            FOUR_A_TURN,
+        );
+        let config = app.world.resource::<EquipmentConfigHandle>().get();
+        app.world
+            .get_mut::<BandEquipment>(band)
+            .expect("ledger")
+            .wear_item(
+                &config,
+                BASKETS,
+                WearQuantum::BiomassGathered,
+                FOUR_A_TURN_GATHERING,
+            );
+    }
+    long_queue(&mut app, band, 9);
+    let rows = publish(&mut app, band);
+    let order: Vec<&str> = rows.iter().map(|row| row.item.as_str()).collect();
+    assert_eq!(order, vec![BASKETS, HOES], "baskets really go short first");
+    assert!(rows[0].expires < rows[1].expires);
+}
+
+/// **A HUGE QUEUE CHANGES NOTHING ONCE EVERY UNIT IS GONE**: the walk stops, and the answer is the
+/// one a queue just long enough gives.
+#[test]
+fn a_huge_queue_gives_the_answer_a_long_enough_one_does() {
+    let (mut app, band) = world();
+    let window = window_turns(&app) as f32;
+    bare_bench(&mut app, band, FOUR_CRAFTERS);
+    consumers(&mut app, band, &[(HOES, 2.0, 2.0)]);
+    hold(&mut app, band, HOES, 2, 90.0 - 4.0 * window);
+    warm_up(
+        &mut app,
+        band,
+        HOES,
+        WearQuantum::BuildProgress,
+        FOUR_A_TURN,
+    );
+    long_queue(&mut app, band, 9);
+    let enough = publish(&mut app, band);
+    long_queue(&mut app, band, 1000);
+    let huge = publish(&mut app, band);
+    let (enough, huge) = (find(&enough, HOES).unwrap(), find(&huge, HOES).unwrap());
+    assert!(
+        huge.lead > enough.lead,
+        "LIVENESS: the lead really is longer"
+    );
+    assert_eq!((huge.count, huge.upcoming), (enough.count, enough.upcoming));
+    assert_eq!(huge.expires, enough.expires);
+}

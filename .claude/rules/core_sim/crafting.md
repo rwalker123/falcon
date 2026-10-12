@@ -1465,7 +1465,12 @@ only wearing out is a `CraftSuggestion` like any other, with empty `sources`.
   (the forecast - whatever of the queue exceeds today's shortfall). `upcomingCount` is the second
   term. An item with no source rank in the new last tier, ordered by `expiresInTurns` (the unit in
   hand's remaining condition over the rate) then item id; every other entry ranks as before.
-  `expiresInTurns` and `leadTurns` are `0` for an item with no forecast.
+  `expiresInTurns` is **when the shortage starts**, not when the unit in hand runs out: the first
+  turn of the clone's walk whose loss leaves more of `need` unheld than today, as `turns before it +
+  the share of that turn the serving unit lasted` (fractional), so a spare unit defers it to the turn
+  its own loss lands. It is the coming-up ranking key. The walk stops once no live unit is left (the
+  queue ahead has no cap, so it must not run its whole length). `expiresInTurns` and `leadTurns` are
+  `0` for an item with no forecast.
 - **Auto-craft is untouched**: it reads the same list, so it reaches a coming-up item only when
   nothing above it is usable, and its stale-skip rule drops a skip once the item leaves the list.
   The one difference to know: auto-craft runs mid-turn, so the newest slot it reads may not yet hold

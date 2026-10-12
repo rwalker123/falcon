@@ -160,7 +160,8 @@ pub struct CraftSuggestion {
     /// the bench could replace them, netted against the queue after the current shortfall is.
     /// `count - upcoming_count` is what is short today.
     pub upcoming_count: u32,
-    /// Turns until the unit in hand wears out at the recent wear rate. `0` with no forecast.
+    /// Turns until the first forecast shortage starts (fractional): when the loss that leaves a
+    /// consumer without lands, not when the unit in hand runs out. `0` with no forecast.
     pub expires_in_turns: f32,
     /// The bench's lead time for one more unit, in whole turns (`>= 1`). `0` with no forecast.
     pub lead_turns: u32,
@@ -631,7 +632,8 @@ pub struct UpcomingWear {
     /// Units that will wear out within the lead time and are not covered by a spare: the whole units
     /// short after the lead minus the whole units short now.
     pub units: u32,
-    /// Turns until the unit in hand wears out at the recent rate.
+    /// Turns until the first forecast shortage starts: the (fractional) turn the loss that leaves a
+    /// consumer without lands, not when the unit in hand runs out - a spare absorbs that.
     pub expires_in_turns: f32,
     /// The bench's lead time for one more unit of the item, in whole turns.
     pub lead_turns: u32,
@@ -758,25 +760,39 @@ fn wear_forecast(
         }
         let lead = queued_lead + recipe.work / per_pass / crafting_rate;
         let lead_turns = (lead - WHOLE_UNIT_TOLERANCE).ceil().max(MIN_LEAD_TURNS);
-        let mut after = wear.clone();
-        for _ in 0..lead_turns as u32 {
-            after.charge_condition(equipment, item, rate);
-        }
         let short = |live: u32| {
             (need - live as f32 - WHOLE_UNIT_TOLERANCE)
                 .ceil()
                 .max(NOTHING_MISSING)
         };
-        let units =
-            short(after.live_units(item, equipment)) - short(wear.live_units(item, equipment));
-        if units <= NOTHING_MISSING {
-            continue;
+        let short_now = short(wear.live_units(item, equipment));
+        let mut after = wear.clone();
+        // **The turn the shortage really starts**, as a fractional turn: the first turn of the
+        // clone's walk whose loss leaves more of `need` unheld than today, counted from the turns
+        // before it plus the share of that turn the serving unit lasted.
+        let mut shortage_starts: Option<f32> = None;
+        for turn in 0..lead_turns as u32 {
+            let left_in_hand = after.remaining(item, equipment);
+            after.charge_condition(equipment, item, rate);
+            let live = after.live_units(item, equipment);
+            if shortage_starts.is_none() && short(live) > short_now {
+                shortage_starts = Some(turn as f32 + (left_in_hand / rate).min(1.0));
+            }
+            // **Nothing further can change the result** once no live unit is left; the queue ahead
+            // has no cap, so the walk must not run its whole length.
+            if live == 0 {
+                break;
+            }
         }
+        let units = short(after.live_units(item, equipment)) - short_now;
+        let Some(expires_in_turns) = shortage_starts.filter(|_| units > NOTHING_MISSING) else {
+            continue;
+        };
         forecast.insert(
             item.to_string(),
             UpcomingWear {
                 units: units as u32,
-                expires_in_turns: wear.remaining(item, equipment) / rate,
+                expires_in_turns,
                 lead_turns: lead_turns as u32,
             },
         );
