@@ -224,7 +224,7 @@ pub enum LineDivision {
 }
 
 /// [`split_band_from_parent`] with the line division named — the one body both callers run.
-pub(crate) fn split_band_from_parent_with(
+pub fn split_band_from_parent_with(
     world: &mut World,
     parent: Entity,
     asked: u32,

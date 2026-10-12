@@ -667,3 +667,132 @@ fn a_band_that_changed_people_after_the_pre_pass_is_not_grouped_by_its_stale_rea
     assert_eq!((total(&app, home), total(&app, rival)), before);
     assert!(events(&app, CommandEventKind::Migrated).is_empty());
 }
+
+/// Turns long enough for a full tie to drain to zero at the shipped bleed (the same figure
+/// `lineage_contact.rs` uses).
+const TURNS_TO_BLEED_OUT: u64 = 100;
+
+/// Let every tie bleed out: one `decay_all` per quiet turn, as the schedule does. Only the ledger's
+/// own clock runs — nothing here records contact, so the two bands stay out of touch.
+fn bleed_ties_out(app: &mut App) {
+    let cfg = ConnectionsConfig::default();
+    for turn in 0..=TURNS_TO_BLEED_OUT {
+        app.world
+            .resource_mut::<ConnectionLedger>()
+            .decay_all(turn, &cfg);
+    }
+}
+
+/// The published reading of `band`'s breeding group: `(ceiling, head-count)`.
+fn reading(app: &App, band: Band) -> (u32, u32) {
+    let reading = cohort(app, band).last_breeding;
+    (reading.ceiling, reading.headcount)
+}
+
+/// The home band seated stranded over its lines, with this turn's ceiling readings parked.
+fn stranded_home_band() -> (App, Band) {
+    let mut app = one_faction_world();
+    let parent = first_band(&mut app, HOME);
+    seat(
+        &mut app,
+        parent,
+        STRANDED_PEOPLE,
+        own_lines(parent, HOME_LINES),
+    );
+    demographic_turn(&mut app);
+    (app, parent)
+}
+
+/// **The copy-vs-divide decision matters once the two LOSE TOUCH.** While their tie is live each
+/// counts the other's lines, so both read the full set either way. After it bleeds out the parent
+/// counts only its own: with the lines COPIED it still holds all of them and sits at its ceiling;
+/// DIVIDED it would be left over it. The control arm is the same split with the lines partitioned.
+#[test]
+fn after_the_break_off_drifts_out_of_touch_the_parent_keeps_its_whole_ceiling() {
+    let k = {
+        let probe = one_faction_world();
+        shipped_k(&probe)
+    };
+    let full_ceiling = f32::from(HOME_LINES) * k;
+
+    // ---- The break-off, as the sim makes it ----
+    let (mut app, parent) = stranded_home_band();
+    shed(&mut app);
+    let child = app
+        .world
+        .query_filtered::<(Entity, &BandId), With<ResidentBand>>()
+        .iter(&app.world)
+        .find(|(_, id)| **id != parent.id)
+        .map(|(entity, id)| Band { entity, id: *id })
+        .expect("the break-off band exists");
+    let child_lines = cohort(&app, child).founding_lines.len() as f32;
+    let child_workers = core_sim::available_workers(cohort(&app, child).working);
+    assert!(
+        child_lines < f32::from(HOME_LINES),
+        "liveness: it copied a share, not the lot"
+    );
+
+    bleed_ties_out(&mut app);
+    demographic_turn(&mut app);
+
+    let (parent_ceiling, parent_heads) = reading(&app, parent);
+    assert_eq!(
+        parent_ceiling as f32, full_ceiling,
+        "out of touch, the parent still counts all of its own lines"
+    );
+    assert!(
+        parent_heads as f32 <= full_ceiling + WORKER_ROUNDING_SLACK_PEOPLE,
+        "and sits at its ceiling: {parent_heads}"
+    );
+    assert_eq!(
+        reading(&app, child).0 as f32,
+        child_lines * k,
+        "the child's ceiling fell to its copied lines × K"
+    );
+    let parent_before = total(&app, parent);
+    let lines_before = cohort(&app, parent).founding_lines;
+
+    shed(&mut app);
+
+    assert_eq!(
+        total(&app, parent),
+        parent_before,
+        "nothing sheds from the parent"
+    );
+    assert_eq!(cohort(&app, parent).founding_lines, lines_before);
+    let home_bands = app
+        .world
+        .query_filtered::<&PopulationCohort, With<ResidentBand>>()
+        .iter(&app.world)
+        .filter(|cohort| cohort.faction == HOME)
+        .count();
+    assert_eq!(
+        home_bands, 1,
+        "no second break-off from the parent's people"
+    );
+
+    // ---- Control: the same split, lines DIVIDED ----
+    let (mut twin, twin_parent) = stranded_home_band();
+    let settle = twin
+        .world
+        .resource::<ExpeditionConfigHandle>()
+        .get()
+        .settle
+        .clone();
+    core_sim::split_band_from_parent_with(
+        &mut twin.world,
+        twin_parent.entity,
+        child_workers,
+        &settle,
+        core_sim::LineDivision::Partition,
+    )
+    .expect("the same split is allowed");
+    bleed_ties_out(&mut twin);
+    demographic_turn(&mut twin);
+    let (divided_ceiling, divided_heads) = reading(&twin, twin_parent);
+    assert!(
+        divided_ceiling < divided_heads,
+        "divided, the parent is left over its ceiling ({divided_heads} people against \
+         {divided_ceiling}) — the cascade copying prevents"
+    );
+}

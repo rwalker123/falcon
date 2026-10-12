@@ -489,10 +489,11 @@ pub use systems::{
     hunt_per_worker_provisions, hunt_report_event, hunt_take, output_multiplier,
     party_owes_a_report, prospective_keep_hands, publish_turn_transfers, settle_bands_roadwork,
     settle_scarce_tools, shed_breeding_excess, simulate_population, simulate_power,
-    source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers, BreakOffAsk,
-    BreedingBreakOffs, DenialForecast, DenialOutcome, HeartLedger, HeartReading, HuntOutcome,
-    PartyGear, PartySightings, PoolToolPlan, PowerSimParams, RaidRoll, SplitBand, SplitRefusal,
-    SplitRefusals, ToolClaimStage, TradeDiffusionEvent,
+    source_has_a_meter_at_risk, split_band_from_parent, split_band_from_parent_with,
+    split_refusals, BenchTiers, BreakOffAsk, BreedingBreakOffs, DenialForecast, DenialOutcome,
+    HeartLedger, HeartReading, HuntOutcome, LineDivision, PartyGear, PartySightings, PoolToolPlan,
+    PowerSimParams, RaidRoll, SplitBand, SplitRefusal, SplitRefusals, ToolClaimStage,
+    TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,
