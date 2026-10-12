@@ -217,10 +217,13 @@ pub enum LineDivision {
     /// holders within one people divide a line's `K`.
     Partition,
     /// The sim's breeding break-off (#690): the child is about to become a DIFFERENT people, which
-    /// counts a shared line whole, so it takes a COPY and the parent keeps all of its own
-    /// ([`crate::lineage::FoundingLines::copy_share`]). Partitioning would leave the parent still
+    /// counts a shared line whole, so it takes a COPY — enough lines to hold its own people at
+    /// `people_per_line` (`K`) — and the parent keeps all of its own
+    /// ([`crate::lineage::FoundingLines::copy_to_hold`]). Partitioning would leave the parent still
     /// over its ceiling and break off again next turn.
-    Copy,
+    Copy {
+        people_per_line: std::num::NonZeroU16,
+    },
 }
 
 /// [`split_band_from_parent`] with the line division named — the one body both callers run.
@@ -281,9 +284,9 @@ pub fn split_band_from_parent_with(
     let mut parent_lines = cohort.founding_lines.clone();
     child.founding_lines = match line_division {
         LineDivision::Partition => parent_lines.split_off_share(share),
-        LineDivision::Copy => parent_lines.copy_share(
+        LineDivision::Copy { people_per_line } => parent_lines.copy_to_hold(
             taken_working + taken_children + taken_elders,
-            cohort.total(),
+            people_per_line,
         ),
     };
 

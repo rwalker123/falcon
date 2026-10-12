@@ -276,8 +276,11 @@ leaves the parent's lines untouched. See `campaign.md` → "Founding lines".
 child is about to become a DIFFERENT people: two peoples each count a shared line whole (only holders
 within one people divide its `K`), and partitioning would leave the parent over its ceiling once the
 two lose touch (while the tie holds, each counts the other's lines and the choice changes nothing).
-The child takes `max(1, ceil(lines × child people ÷ parent people))` of
-the highest ids and the parent keeps all of its own (`FoundingLines::copy_share`). Everything else the
+The child takes enough lines to hold its own people, `max(1, ceil(child people ÷ K))` of the
+highest ids (`lineage::lines_to_hold`, `FoundingLines::copy_to_hold`; `LineDivision::Copy` carries
+`K`), so it is not born over its own ceiling, and the parent keeps all of its own. A parent holding
+fewer lines than that does not break off at all (the caller checks first; `campaign.md` →
+"Shedding above the ceiling"). Everything else the
 split does is unchanged for a split nobody commanded, except that the caller closes the child's
 outfitting window (`StartingLoadout::close`): see `campaign.md` → "Shedding above the ceiling".
 

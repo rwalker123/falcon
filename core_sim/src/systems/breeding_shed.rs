@@ -25,7 +25,7 @@
 
 use std::collections::BTreeMap;
 
-use std::collections::HashMap;
+use std::{collections::HashMap, num::NonZeroU16};
 
 use bevy::{ecs::system::SystemParam, math::UVec2, prelude::*};
 
@@ -39,7 +39,7 @@ use crate::{
     connections::ConnectionLedger,
     demographics_config::DemographicsConfigHandle,
     intensification::LadderConfigHandle,
-    lineage::{FreeBreedingPeoples, NO_INBREEDING_CEILING},
+    lineage::{lines_to_hold, FreeBreedingPeoples, NO_INBREEDING_CEILING},
     orders::FactionId,
     resources::TileRegistry,
     resources::{CommandEventLog, FactionBorderPolicies, SimulationConfig, SimulationTick},
@@ -104,6 +104,8 @@ struct Row {
     morale: Scalar,
     total: Scalar,
     working: Scalar,
+    /// How many founding lines the band itself holds — what a break-off can copy from.
+    lines: usize,
     /// `None` for a band with no published reading (a fresh splinter): no known group, so neither
     /// a source nor a destination.
     group: Option<Group>,
@@ -147,7 +149,9 @@ pub fn shed_breeding_excess(
     tiles: Query<&Tile>,
     mut cohorts: Query<(Entity, &mut PopulationCohort, Option<&BandId>), With<ResidentBand>>,
 ) {
-    let share = scalar_from_f32(inputs.demographics.get().lineage.shed_share);
+    let lineage = inputs.demographics.get().lineage.clone();
+    let share = scalar_from_f32(lineage.shed_share);
+    let people_per_line = lineage.people_per_line;
     let mig_cfg = inputs.wellbeing.get().migration.clone();
     let dependent_weight = scalar_from_f32(mig_cfg.dependent_weight);
     let walk = crate::supply::WalkReach::for_people(
@@ -180,6 +184,7 @@ pub fn shed_breeding_excess(
                 morale: cohort.morale,
                 total: cohort.total(),
                 working: cohort.working,
+                lines: cohort.founding_lines.len(),
                 group,
             }
         })
@@ -273,7 +278,7 @@ pub fn shed_breeding_excess(
             .map(|&member| destinations_of(member, &headroom))
             .collect();
         if eligible.iter().all(Vec::is_empty) {
-            if let Some(ask) = break_off_ask(&rows, info, excess) {
+            if let Some(ask) = break_off_ask(&rows, info, excess, people_per_line) {
                 asks.push(ask);
             }
             continue;
@@ -411,9 +416,20 @@ pub fn shed_breeding_excess(
 /// **The break-off a stranded group asks for**: the member with the most workers (ties to the
 /// first in entity order) sends `round(E × working ÷ total)` workers, so about `E` people leave
 /// once its children and elders follow by share. Capped at what the parent can give; `None` when
-/// that comes to nobody, which is a break-off with nothing to send. The floors
-/// (`min_founding_workers`, `parent_min_workers`) are the split's own and refuse there.
-fn break_off_ask(rows: &[Row], info: &GroupInfo, excess: Scalar) -> Option<BreakOffAsk> {
+/// that comes to nobody, which is a break-off with nothing to send.
+///
+/// **`None` too when the parent holds too few lines to found them**: a new people needs enough
+/// founding families that its own ceiling holds its head-count at birth
+/// ([`lines_to_hold`]), and the parent can copy no more than it has. Such a group stays, births
+/// stop, and it shrinks by ordinary deaths — checked here, before any split, so nothing is split
+/// and then undone. The split's own floors (`min_founding_workers`, `parent_min_workers`) refuse in
+/// the split.
+fn break_off_ask(
+    rows: &[Row],
+    info: &GroupInfo,
+    excess: Scalar,
+    people_per_line: NonZeroU16,
+) -> Option<BreakOffAsk> {
     let parent = info
         .members
         .iter()
@@ -426,13 +442,18 @@ fn break_off_ask(rows: &[Row], info: &GroupInfo, excess: Scalar) -> Option<Break
             }
         })
         .map(|index| &rows[index])?;
-    if parent.total <= scalar_zero() {
+    if parent.total <= scalar_zero() || parent.working <= scalar_zero() {
         return None;
     }
     let asked = (excess * parent.working / parent.total)
         .to_u32()
         .min(available_workers(parent.working));
-    (asked > 0).then_some(BreakOffAsk {
+    if asked == 0 {
+        return None;
+    }
+    // The people the split will move: the workers asked and the dependants that follow by share.
+    let leaving = Scalar::from_u32(asked) * parent.total / parent.working;
+    (lines_to_hold(leaving, people_per_line) <= parent.lines).then_some(BreakOffAsk {
         parent: parent.entity,
         asked,
     })

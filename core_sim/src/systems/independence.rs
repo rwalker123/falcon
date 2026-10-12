@@ -694,7 +694,7 @@ struct BreakOffHandover<'w, 's> {
 /// An EXCLUSIVE system, because the split spawns a band: it drains the asks
 /// [`super::breeding_shed::shed_breeding_excess`] queued this turn and, for each, runs the one
 /// split the player's `split_band` verb runs ([`split_band_from_parent_with`]) with the lines
-/// COPIED ([`LineDivision::Copy`]: the parent keeps all of its own, so it lands exactly at its
+/// COPIED ([`LineDivision::Copy`], enough of them to hold the child's people: the parent keeps all of its own, so it lands exactly at its
 /// ceiling and the next turn breaks nothing off). A split that refuses (the new band under
 /// `min_founding_workers`, or the parent left under `parent_min_workers`) leaves everyone where
 /// they are. The child is then handed to [`break_away_as_new_people`] — the grow-the-roster,
@@ -719,6 +719,11 @@ pub fn break_off_breeding_excess(world: &mut World) {
         .get()
         .settle
         .clone();
+    let people_per_line = world
+        .resource::<crate::demographics_config::DemographicsConfigHandle>()
+        .get()
+        .lineage
+        .people_per_line;
     let mut children: Vec<(Entity, BandId, FactionId)> = Vec::new();
     for ask in asks {
         let Some(from) = world
@@ -727,8 +732,13 @@ pub fn break_off_breeding_excess(world: &mut World) {
         else {
             continue;
         };
-        match split_band_from_parent_with(world, ask.parent, ask.asked, &settle, LineDivision::Copy)
-        {
+        match split_band_from_parent_with(
+            world,
+            ask.parent,
+            ask.asked,
+            &settle,
+            LineDivision::Copy { people_per_line },
+        ) {
             Ok(split) => {
                 if let Some(mut loadout) =
                     world.get_resource_mut::<crate::starting_loadout::StartingLoadout>()

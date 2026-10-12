@@ -573,9 +573,14 @@ fn a_stranded_group_breaks_its_excess_off_as_a_new_people_with_copied_lines() {
         "the parent keeps every one of its own lines"
     );
     let child_people = total(&app, child);
-    let expected_copies =
-        ((f32::from(HOME_LINES) * child_people / parent_before).ceil() as usize).max(1);
+    // Enough families to hold its own people: the proportional share (`8 × 148 / 300` = 4 lines,
+    // a ceiling of 76) would have left it born at nearly twice its ceiling.
+    let expected_copies = (child_people / shipped_k(&app)).ceil() as usize;
     assert_eq!(child_lines.len(), expected_copies);
+    assert!(
+        child_lines.len() as f32 * shipped_k(&app) >= child_people,
+        "the break-off is born at or under its own ceiling"
+    );
     assert!(
         child_lines.is_subset(&parent_lines),
         "the child holds copies of the parent's lines"
@@ -668,6 +673,12 @@ fn a_band_that_changed_people_after_the_pre_pass_is_not_grouped_by_its_stale_rea
     assert!(events(&app, CommandEventKind::Migrated).is_empty());
 }
 
+/// Lines the drift fixture's parent holds: enough that the break-off (about 72 people, 4 lines) is
+/// a share of them, so copying and dividing give different parents.
+const DRIFT_LINES: u16 = 12;
+/// Lines of an over-grown group too poor to found a people with: its excess needs far more.
+const TOO_FEW_LINES: u16 = 1;
+
 /// Turns long enough for a full tie to drain to zero at the shipped bleed (the same figure
 /// `lineage_contact.rs` uses).
 const TURNS_TO_BLEED_OUT: u64 = 100;
@@ -690,15 +701,10 @@ fn reading(app: &App, band: Band) -> (u32, u32) {
 }
 
 /// The home band seated stranded over its lines, with this turn's ceiling readings parked.
-fn stranded_home_band() -> (App, Band) {
+fn stranded_home_band(lines: u16) -> (App, Band) {
     let mut app = one_faction_world();
     let parent = first_band(&mut app, HOME);
-    seat(
-        &mut app,
-        parent,
-        STRANDED_PEOPLE,
-        own_lines(parent, HOME_LINES),
-    );
+    seat(&mut app, parent, STRANDED_PEOPLE, own_lines(parent, lines));
     demographic_turn(&mut app);
     (app, parent)
 }
@@ -713,10 +719,10 @@ fn after_the_break_off_drifts_out_of_touch_the_parent_keeps_its_whole_ceiling() 
         let probe = one_faction_world();
         shipped_k(&probe)
     };
-    let full_ceiling = f32::from(HOME_LINES) * k;
+    let full_ceiling = f32::from(DRIFT_LINES) * k;
 
     // ---- The break-off, as the sim makes it ----
-    let (mut app, parent) = stranded_home_band();
+    let (mut app, parent) = stranded_home_band(DRIFT_LINES);
     shed(&mut app);
     let child = app
         .world
@@ -728,7 +734,7 @@ fn after_the_break_off_drifts_out_of_touch_the_parent_keeps_its_whole_ceiling() 
     let child_lines = cohort(&app, child).founding_lines.len() as f32;
     let child_workers = core_sim::available_workers(cohort(&app, child).working);
     assert!(
-        child_lines < f32::from(HOME_LINES),
+        child_lines < f32::from(DRIFT_LINES),
         "liveness: it copied a share, not the lot"
     );
 
@@ -772,7 +778,7 @@ fn after_the_break_off_drifts_out_of_touch_the_parent_keeps_its_whole_ceiling() 
     );
 
     // ---- Control: the same split, lines DIVIDED ----
-    let (mut twin, twin_parent) = stranded_home_band();
+    let (mut twin, twin_parent) = stranded_home_band(DRIFT_LINES);
     let settle = twin
         .world
         .resource::<ExpeditionConfigHandle>()
@@ -795,4 +801,42 @@ fn after_the_break_off_drifts_out_of_touch_the_parent_keeps_its_whole_ceiling() 
         "divided, the parent is left over its ceiling ({divided_heads} people against \
          {divided_ceiling}) — the cascade copying prevents"
     );
+}
+
+/// **A group that holds too few lines to found a people does not break off.** One line carries 19
+/// people; the excess of a 300-person group needs ~15 lines to be viable, and the parent has one.
+/// Nobody leaves: births stop and the group shrinks by ordinary deaths — and the check comes before
+/// the split, so nothing is split and undone.
+#[test]
+fn a_group_with_too_few_lines_to_found_a_people_stays_and_dwindles() {
+    let (mut app, parent) = stranded_home_band(TOO_FEW_LINES);
+    let ceiling = f32::from(TOO_FEW_LINES) * shipped_k(&app);
+    let before = total(&app, parent);
+    assert!(
+        before > 2.0 * ceiling,
+        "liveness: far over what its lines carry"
+    );
+    let (peoples, bands) = (
+        app.world.resource::<FactionRegistry>().factions().len(),
+        band_count(&mut app),
+    );
+
+    shed(&mut app);
+
+    assert_eq!(total(&app, parent), before, "no shed moved anybody");
+    assert_eq!(band_count(&mut app), bands, "no new band");
+    assert_eq!(
+        app.world.resource::<FactionRegistry>().factions().len(),
+        peoples,
+        "no new people"
+    );
+    assert!(events(&app, CommandEventKind::BandBrokeAway).is_empty());
+
+    // Births are zero: the ceiling factor is closed, and the group only loses people.
+    demographic_turn(&mut app);
+    assert_eq!(
+        cohort(&app, parent).last_fertility_factors.ceiling,
+        core_sim::Scalar::zero()
+    );
+    assert!(total(&app, parent) <= before);
 }

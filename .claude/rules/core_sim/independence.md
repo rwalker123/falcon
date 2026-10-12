@@ -191,7 +191,8 @@ eligible destination for any member sends its excess out as one band
 (`systems::break_off_breeding_excess`, `campaign.md` → "Shedding above the ceiling"). It runs in the
 Population chain after `shed_breeding_excess` and before `advance_band_independence`, which then
 judges the roster it grew: the child is a one-band people, its own heart. The split is the ordinary
-`fission::split_band_from_parent_with` with the lines COPIED; the child's outfitting window is closed
+`fission::split_band_from_parent_with` with the lines COPIED — enough of them to hold the child's people, and a parent with fewer does
+not break off (`campaign.md` → "Shedding above the ceiling"); the child's outfitting window is closed
 at once. Because the split spawns a band the system is exclusive and drives the hand-over through a
 `SystemState` of the same parameters `advance_culture_splits` takes. The announcement is
 `band_broke_away` with **`cause=breeding`** (`BREEDING_CAUSE_TOKEN`) and a label that reads as

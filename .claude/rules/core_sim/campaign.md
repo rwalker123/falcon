@@ -687,6 +687,11 @@ second computation; the head-count is live, summed over the group's members when
   fragments scaled by `migration_fragment_scaling` and the share of the band that left, merged into the
   destination band, credited to the destination people, with the same "via migration" telemetry and
   diffusion events).
+- **A group that cannot carry its excess stays.** If the parent band holds fewer lines than
+  `lines_to_hold` of the planned break-off (its workers asked, with the dependants that follow by
+  share), nobody breaks off: births stop and the group shrinks by ordinary deaths — people leave only
+  when there is somewhere to go. The check is made before the split, so nothing is split and undone.
+  There is no lever for it; the line count is the viability.
 - **The break-off.** A group over its ceiling with **no eligible destination for any member** (not
   merely none with room left this turn) breaks the excess off as one group and a people of its own.
   The member with the most workers is the parent and sends `round(E × working ÷ total)` workers, so
@@ -696,16 +701,21 @@ second computation; the head-count is live, summed over the group's members when
   moves (the excess is tried again next turn). The child then takes the independence break-away
   (`independence.md`: `break_away_as_new_people`, then `follow_the_band_to_its_new_people`) under
   `cause=breeding`.
-- **The lines are COPIED, and the parent keeps every one of its own.** The child holds
-  `max(1, ceil(|parent lines| × child people ÷ parent people before))`, capped at the parent's, the
-  highest ids (`FoundingLines::copy_share`). Two DIFFERENT peoples each count a shared line whole; only
+- **The lines are COPIED, enough to hold the child's people, and the parent keeps every one of its
+  own.** The child holds `max(1, ceil(child people ÷ K))` lines (`lineage::lines_to_hold`), the
+  highest ids (`FoundingLines::copy_to_hold`), counted on the people the split actually moves after
+  the worker rounding — so its own ceiling `n × K` is at least its head-count at birth. A new people
+  needs enough founding families to be viable; a proportional share of the parent's lines left it born
+  over its own ceiling, where it broke off again, in a chain. Two DIFFERENT peoples each count a shared line whole; only
   holders within one people divide its `K`. **While the two stay in touch the choice changes
   nothing**: the split's full tie puts each side's lines in the other's union ("Another people's
   lines count only while in touch"), so parent and child both read the whole set, ~`L × K`. It
   decides what happens **once the tie bleeds out**. Divided, the parent would fall to its remaining
   lines — its ceiling down by about `E · c / t` while its head-count is already at `c` — and would
   shed or break off again. Copied, the parent keeps its whole ceiling; the child falls back to its
-  copied share. The copy adds no line to the union of any population, so it is no exploit.
+  copied lines, which held its people at birth — if it grew past them on the parent's lines while in
+  touch, it sheds that excess like any group, or stays and dwindles when it holds too few lines to
+  carry it. The copy adds no line to the union of any population, so it is no exploit.
 - **The child is the next turn's destination.** It is another people (outside the parent's group),
   fully tied and standing on the same tile, its borders open by default, and its group's ceiling
   counts the parent's lines while in touch, so it has headroom. The parent's later excess (including
@@ -723,7 +733,8 @@ second computation; the head-count is live, summed over the group's members when
 Pinned by `core_sim/tests/breeding_shed.rs`: the leak moves `shed_share × E` to a neighbour with room
 and moves no line; a destination takes no more than its headroom; nothing moves under the ceiling,
 for a free-breeding people, to a band of the same group, behind closed borders or out of reach; a
-stranded group founds exactly one new band in a new people with copied lines, the parent at its
+stranded group founds exactly one new band in a new people with enough copied lines to hold its
+people, the parent at its
 ceiling and no second break-off the next turn; an excess too small to found a band stays put.
 
 #### Another people's lines count only while in touch (#691)

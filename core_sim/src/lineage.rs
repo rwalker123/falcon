@@ -108,23 +108,25 @@ impl FoundingLines {
     /// `E`), and the next turn would break off again, every turn. Copying leaves the parent exactly
     /// at its ceiling, and the union of two peoples in touch gains nothing from the copy.
     ///
-    /// The child holds `max(1, ceil(len × child_people ÷ parent_people))` lines, capped at what the
-    /// parent holds, taken from the **highest** ids as `split_off_share` picks them. A parent of
-    /// nobody copies the one line a band cannot be without.
-    pub fn copy_share(&self, child_people: Scalar, parent_people: Scalar) -> Self {
-        let held = self.len();
-        let floor = usize::from(MIN_BAND_LINES);
-        let (child, parent) = (child_people.raw(), parent_people.raw());
-        let proportional = if parent > 0 && child > 0 {
-            let scaled = held as i128 * i128::from(child);
-            let quotient = (scaled + i128::from(parent) - 1) / i128::from(parent);
-            usize::try_from(quotient).unwrap_or(held)
-        } else {
-            floor
-        };
-        let taken = proportional.max(floor).min(held);
+    /// The child takes [`lines_to_hold`]`(people, K)` of them — enough families that its own ceiling
+    /// is at least its head-count at birth, so it is not born over it — from the **highest** ids as
+    /// `split_off_share` picks them, and never more than the parent holds (the caller has already
+    /// refused a break-off the parent cannot cover).
+    pub fn copy_to_hold(&self, people: Scalar, people_per_line: NonZeroU16) -> Self {
+        let taken = lines_to_hold(people, people_per_line).min(self.len());
         Self(self.0.iter().rev().take(taken).copied().collect())
     }
+}
+
+/// **How many founding lines it takes to hold `people`** — `max(1, ceil(people ÷ K))`, so a group
+/// of that many lines has a ceiling (`lines × K`) at least its head-count.
+pub fn lines_to_hold(people: Scalar, people_per_line: NonZeroU16) -> usize {
+    let per_line = i128::from(people_per_line.get()) * i128::from(Scalar::SCALE);
+    let raw = i128::from(people.raw().max(0));
+    let lines = (raw + per_line - 1) / per_line;
+    usize::try_from(lines)
+        .unwrap_or(usize::MAX)
+        .max(usize::from(MIN_BAND_LINES))
 }
 
 /// **A breeding population's ceiling, in people** (issue #688) — `lines × people_per_line`, where
@@ -372,25 +374,24 @@ mod tests {
     }
 
     #[test]
-    fn a_break_off_copies_the_highest_ids_by_ceiling_and_the_parent_keeps_them_all() {
+    fn a_break_off_copies_enough_lines_to_hold_its_people_and_the_parent_keeps_them_all() {
         let parent = FoundingLines::founded(ORIGIN, LINES);
         let before = parent.clone();
-        let people = |n: u32| Scalar::from_u32(n);
-        // 8 lines × 148 / 300 = 3.95 → 4.
-        let child = parent.copy_share(people(148), people(300));
-        assert_eq!(child.len(), 4);
+        let people = Scalar::from_u32;
+        // 148 people at K = 19 need ceil(7.79) = 8 lines; 76 need exactly 4; 77 need 5.
+        assert_eq!(parent.copy_to_hold(people(148), k()).len(), 8);
+        assert_eq!(parent.copy_to_hold(people(76), k()).len(), 4);
+        assert_eq!(parent.copy_to_hold(people(77), k()).len(), 5);
         assert_eq!(parent, before, "copying removes nothing from the parent");
-        assert!(child.iter().min() > parent.iter().nth(LINES as usize - 5));
-        // A sliver still takes one; the whole band takes them all and no more.
-        assert_eq!(parent.copy_share(people(1), people(300)).len(), 1);
+        let child = parent.copy_to_hold(people(40), k());
+        assert!(child.iter().min() > parent.iter().nth(LINES as usize - 4));
+        // Never fewer than one, never more than the parent holds.
+        assert_eq!(parent.copy_to_hold(people(0), k()).len(), 1);
         assert_eq!(
-            parent.copy_share(people(300), people(300)).len(),
+            parent.copy_to_hold(people(900), k()).len(),
             usize::from(LINES)
         );
-        assert_eq!(
-            parent.copy_share(people(900), people(300)).len(),
-            usize::from(LINES)
-        );
+        assert_eq!(lines_to_hold(people(900), k()), 48);
     }
 
     #[test]

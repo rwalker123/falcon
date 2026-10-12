@@ -224,8 +224,12 @@ partners, or off the tile that held its belief — and then it leaks back down. 
 **walk the network** to a connected band and join it (#690): a band within walking reach, outside
 their own breeding population, with room under its own ceiling. They carry no lines. When no band
 can take them, the excess breaks off as one group and becomes a new people. **The break-off copies
-its share of lines; the group it leaves keeps all of its own.** Two different peoples each count a
-shared line whole, so this is the existing rule. While the two stay in touch each counts the other's
+enough lines to hold its own people** (its head-count ÷ `K`, rounded up), **and the group it leaves
+keeps all of its own.** A new people needs enough families to be viable: a group that holds too few
+lines to carry its excess does not break off — it stays, bears nobody, and shrinks by its ordinary
+deaths. Without that, a small break-off that grew on its parent's lines while in touch and then
+drifted away would break off again and again off the one line it owned. Two different peoples each
+count a shared line whole, so copying is the existing rule. While the two stay in touch each counts the other's
 lines anyway; the copy matters once they drift apart, when dividing would leave the group behind
 over its ceiling (its ceiling falls by less than its headcount did) and shedding again. The new
 people is itself the next destination: tied, beside them, with room, so a later excess joins it
