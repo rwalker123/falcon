@@ -256,17 +256,17 @@ has both outcomes on the map.
 
 ## Slices
 
-1. **Archetypes and personalities** (`core_sim`, client New Game). Covers the two catalogs, the
+1. **Archetypes and personalities** (#818) (`core_sim`, client New Game). Covers the two catalogs, the
    seeded draws, per-archetype separation and capacity, and per-archetype counts in `NewGameCommand`
    and the capacity query. Done when a Standard map starts with majors and minors at their own sizes.
-2. **Extinction** (`core_sim`, launcher). Covers the extinct flag, leaving the turn queue, roster
+2. **Extinction** (#819) (`core_sim`, launcher). Covers the extinct flag, leaving the turn queue, roster
    drop, victory skip and save format bump. This is useful on its own, since defection can already
    empty a people.
-3. **Culture strength and pressure** (`core_sim`). Covers the strength sum, per-band pressure and
+3. **Culture strength and pressure** (#820) (`core_sim`). Covers the strength sum, per-band pressure and
    phase, the pair clock, and the readout on the band (phase 1). No one changes hands yet.
-4. **Joining** (`core_sim`, client). Covers the offer state on both seats, the answer command, the
+4. **Joining** (#821) (`core_sim`, client). Covers the offer state on both seats, the answer command, the
    phase 3 forced join, the hand-over and its events.
-5. **A brain for every people** (`sim_ai`). Covers culture-derived behaviour weights, answering join
+5. **A brain for every people** (#822) (`sim_ai`). Covers culture-derived behaviour weights, answering join
    offers, a `sim_ai` CPU/RSS measurement at 1 + M seats, and a bench run in which minors start and
    play rather than starve. One process per seat stays unless this measurement says otherwise.
 
