@@ -37,10 +37,11 @@ fission, and the same machinery handles both.
   and the turn queue indefinitely.
 - **Changing hands.** Defection (#512) moves bands one at a time, driven by misery, across a live tie
   and into open borders. The leftover band changes faction when it drops below
-  `settle.parent_min_workers`. **No whole-people join exists.**
+  `settle.parent_min_workers`. **Nothing moves a band for its culture.**
 - **Culture.** There is a 15-axis vector per band. Contact drift pulls tied bands toward each other,
   weighted by headcount and damped by the receiver's Purist lean. `faction_trait_average` rolls bands
-  up into a per-people average. **There is no people-to-people culture distance.**
+  up into a per-people average. **There is no people-to-people culture distance, and no culture
+  strength**: headcount is the only weight, and it already sets the drift pull.
 - **Starts.** One start profile (`late_forager_tribe`: 1 band of 30) is applied identically to every
   people. Placement keeps starts at least `faction_start_min_separation` (20) apart. The map sets a
   ceiling on how many starts fit (Tiny 3 … Huge 17).
@@ -67,7 +68,7 @@ have never been measured.** That is the number that could make "one process per 
 
 **Hosting several brains in one process is allowed and changes nothing in the sim.** It is still one
 connection, one claim and one seat token per people. Either layout looks the same from the server. We
-consolidate only if the measurement in Slice 4 says to; until then one process per seat stays,
+consolidate only if the measurement in Slice 5 says to; until then one process per seat stays,
 because it is the shape the launcher already supervises.
 
 ### Starts: an archetype sets size, a personality sets character
@@ -79,16 +80,26 @@ Two independent config catalogs, each drawn per people at world build:
   the first archetype. The archetype is used at world build and then forgotten. **No minor flag goes
   into `SimState`.**
 - **Personalities** set the character: a lean added to each starting band's culture seed, per axis
-  (for example `syncretic_purist` +0.8, or `passive_aggressive` +0.5). Majors and minors draw from the same catalog, so any
-  people can be any personality. The draw is seeded (`map_seed ^ faction_id`), so a seed reproduces
-  its world.
+  (for example `syncretic_purist` +0.8, or `passive_aggressive` +0.5). Majors and minors draw from
+  the same catalog, so any people can be any personality. The draw is seeded
+  (`map_seed ^ faction_id`), so a seed reproduces its world.
 
 A people born by fission draws neither. It inherits its bands as they stand, culture included, which
 is already the as-built rule.
 
-**The AI side of personality is the launcher's job.** The launcher picks a `sim_ai` profile per seat
-with the same seeded draw and passes `--profile`. The sim never learns which profile a seat runs. See
-Open items for whether a brain should read its people's culture.
+### AI play style follows its people's culture
+
+A brain reads its own people's culture from its frame (the bands' `cultureTraits`, which every seat
+already receives for its own bands) and derives its behaviour weights from it. An Expansionist
+people's brain roams and founds; an Insular one consolidates; a Purist one turns down join offers and
+an accepting one takes them. `sim_ai/data/ai_profiles.json` becomes the **mapping from culture axes to
+behaviour weights** rather than a list of named profiles that the launcher would pick from. The
+launcher passes no profile.
+
+This keeps the sim AI-blind: culture is game state every player sees, and the brain reads it the way
+a human reads the culture panel. It also follows drift, so a people whose culture shifts over the
+game shifts its play with it, and a break-away people plays its own culture from its first turn with
+no draw.
 
 ### Placement: majors first, minors into the gaps
 
@@ -102,42 +113,81 @@ archetype, computed from that archetype's own separation over the space the earl
 free. New Game asks for a count per archetype: "Rivals" and "Minor peoples". As now, a request over
 the ceiling is clamped, never refused.
 
-### Peaceful absorption: joining, with kinship as the first pathway
+### Peaceful absorption: culture pressure, band by band
 
-**Joining** is a whole people changing hands without a fight. It is built as a shared hand-over plus
-a list of **pathways**, where each pathway is a test that one people joins another. This draft
-specifies one pathway. Others, such as overwhelming culture, are added as further tests that call the
-same hand-over.
+**Joining** is a band changing hands without a fight because another people's culture outweighs its
+own. It works **band by band**, like every other rule that moves people (defection, independence). A
+band far from any band of the other people feels nothing, so a people is never pulled whole because
+one frontier touches a neighbour. A whole people joins only when each of its bands has gone over. A
+one- or two-band minor people beside a strong neighbour is exactly that case.
 
-**Kinship (the first pathway).** People A joins people B when all of the following hold for
-`joining.kinship.turns` consecutive turns:
+This is the first **absorption pathway**. Later pathways, such as conquest and other forms of
+overwhelming culture, are further tests that call the same hand-over.
 
-1. **A long tie.** At least one live tie exists between a band of A and a band of B
-   (`ConnectionLedger::tie_is_live`).
-2. **Converged culture.** The culture distance between A and B is at most
-   `joining.kinship.max_culture_distance`. Distance is the **largest per-axis gap** between the two
-   people-weighted averages (`faction_trait_average`), the same metric divergence already uses.
-3. **A is the smaller people,** counted by headcount. This sets the direction of the join; it is not a
-   separate rule.
-4. **B's borders are open,** the same consent defection asks of the receiver. A people that does not
-   want new members closes its borders.
+#### Culture strength: a people's weight of tradition
 
-If any condition fails for one turn, the clock resets to zero. It is a whole-turn accumulator, not a
-smoothed average. The clock is per ordered pair and lives in `SimState`, so it is saved.
+A new per-people number, separate from headcount, because headcount already sets the pull in contact
+drift. It is a weighted sum of inputs, on the sedentarization score's pattern, so a new source is one
+more row:
 
-**What drives it is already in the game.** Contact drift pulls tied bands together, the larger
-people's pull dominates, and a Purist lean resists. A small accepting people beside a big neighbour
-converges and joins. A small purist people holds out and must be fought or left alone. Personality
-therefore decides who gets absorbed, with no special-case code.
+`strength = base + Σ weight_i × (input_i / reference_i)`
 
-**The hand-over** reuses defection's path. Every band of A moves to B, along with A's parties, roads
-and improvements (`follow_the_band_to_its_new_people`). Knowledge merges into B's ledger the way a
-defecting band's does. Ties are untouched. One event is recorded: "*A* joined *B*". A then has no
-bands and goes extinct (next section).
+Opening inputs:
 
-**The player sees it coming.** A people within reach of joining shows a risk line, following the
-`cultureBreakAwayRisk` precedent: who it would join and how many turns of kinship are left. This
-appears on both sides, the people about to be absorbed and the one about to absorb.
+| Input | What it counts | Why |
+|---|---|---|
+| **Belief** | the belief held at the anchors of the people's bands, each anchor counted once | tradition: the dead a people honours; gatherings and monuments raise it later through the same seam |
+| **Ties** | the people's live ties to other peoples' bands | a people that knows many others is the one others learn from |
+| **Discoveries** | wondrous sites discovered (a Verdant Basin, and so on) | renown |
+
+`base` keeps a new people's strength above zero, so a ratio between two fresh peoples is defined.
+Inputs are **not** clamped: belief never decays, so an old rooted people keeps growing heavier, which
+is the point.
+
+#### Pressure: how hard people B weighs on one band of people A
+
+Computed each turn for each band of A that has a **live tie to a band of B**. A band without one has
+no pressure from B.
+
+`pressure = (strength_B / strength_A) × (people_B / people_A) ^ size_exponent`
+
+The size term means a much larger neighbour needs only a small culture edge, and a much smaller one
+needs a large edge. When the sizes are nearly equal, culture decides: a people one person smaller
+with double the strength absorbs the larger one. Both sizes are whole-people headcounts; the band is
+only where the pressure lands.
+
+#### Three phases on one number
+
+| Phase | Needs | What happens |
+|---|---|---|
+| **1. Pulled** | `pressure ≥ joining.pulled` | The band's owner is told "*B*'s culture is pulling *band*." No mechanics. |
+| **2. Asked** | `pressure ≥ joining.asked` **and** the band's culture is close to B's, both held `joining.turns` turns | The band asks to join B. The band's owner chooses whether to let it go, and B chooses whether to take it. It joins only if both agree. |
+| **3. Forced** | `pressure ≥ joining.forced` **and** close, both held `joining.turns` turns | The band joins B if B agrees. Its owner is not asked. |
+
+- **"Close"** means the largest per-axis gap between the **band's** culture and B's people-weighted
+  average (`faction_trait_average`) is at most `joining.max_culture_distance`. This is the same metric
+  divergence uses. Phase 1 does not need it, because the pull is what brings cultures together.
+- **The receiver always agrees.** B's seat accepts or declines in phases 2 and 3. This holds for now
+  and may change in playtest. An unanswered offer stands while its conditions hold, so a seat nobody
+  plays never takes anyone in.
+- **A refusal holds only until phase 3.** If the owner says no in phase 2, nothing else happens. If
+  the pressure keeps rising, the band reaches phase 3 and the owner loses the choice.
+- **The clock** is per (band, people) pair, counts whole turns, and resets the turn a condition fails.
+  It lives in `SimState`.
+
+**What drives it is already in the game.** Contact drift pulls tied bands' cultures together, and a
+Purist lean resists that pull. A purist band can sit under heavy pressure and never become "close",
+so it never reaches phase 2 or 3. It has to be conquered or left alone. Personality therefore
+decides who is absorbed, with no special-case code.
+
+**The hand-over is the defection remnant's.** The band changes faction with its parties, roads and
+improvements (`follow_the_band_to_its_new_people`) and its knowledge. Ties are untouched. The
+existing `band_changed_hands` pair of rows tells both peoples, with `cause=culture`. A people whose
+last band joins goes extinct (next section).
+
+**Both sides see it.** The band readout shows its pressure and phase toward each people pressing on
+it, and the offers wait on both seats. The AI answers them from its own culture (see "AI play style
+follows its people's culture").
 
 ### Extinction: an empty people leaves the table
 
@@ -178,22 +228,31 @@ failure columns say which way each lever breaks.
 with a handful of entries, including one strongly Purist and one strongly Syncretic, so absorption
 has both outcomes on the map.
 
-**`wellbeing_config.json` → `joining.kinship`**
+**`culture_corruption_config.json` → `culture.strength`**
 
 | Lever | Opening | Too low | Too high |
 |---|---|---|---|
-| `turns` | 20 | Minors join before they're met | Nobody ever joins |
-| `max_culture_distance` | 0.3 | Only identical peoples join | Strangers join (soft divergence is 0.6) |
+| `base` | 1.0 | Ratios between young peoples swing wildly | Every people weighs the same for a long time |
+| `weights.belief` / `references.belief` | 1.0 / 20 dead-equivalents | Old rooted peoples don't outweigh newcomers | Belief is all that matters |
+| `weights.ties` / `references.ties` | 0.5 / 4 ties | Contact counts for nothing | Most-met people swallows everyone |
+| `weights.discoveries` / `references.discoveries` | 0.5 / 2 sites | Sites carry no renown | A lucky scout decides absorption |
+
+**`culture_corruption_config.json` → `culture.joining`**
+
+| Lever | Opening | Too low | Too high |
+|---|---|---|---|
+| `size_exponent` | 0.5 | Size stops mattering; culture alone decides | Big always absorbs small, culture irrelevant |
+| `pulled` | 1.5 | Every tie reads as a pull; the message is noise | Players learn of pressure only when asked |
+| `asked` | 2.0 | Offers arrive constantly | Nobody is ever asked |
+| `forced` | 4.0 | A refusal means nothing | Nobody is ever forced; phase 2 is the only path |
+| `max_culture_distance` | 0.3 | Only identical cultures join | Strangers join (band soft divergence is 0.6) |
+| `turns` | 10 | Bands flip on a passing contact | Nobody ever holds the conditions long enough |
 
 ## Open items
 
-- **Does an absorbed people consent?** As drafted, kinship joining is emergent like defection: A's
-  seat is not asked. That includes a human seat that is the smaller people. The alternative is a
-  join *offer* that the smaller people's seat accepts, which is a verb the AI then has to play.
-- **Should a brain read its people's culture?** As drafted, the launcher draws the AI profile
-  independently of the personality, so a Purist people might be played by an expansionist brain.
-  Coupling them means the brain derives its weights from the culture in its snapshot, which keeps the
-  sim AI-blind. It could be deferred to an AI slice.
+- **Culture strength inputs beyond the opening three.** Gatherings and monuments arrive through
+  belief with no change here. Knowledge, influential people and later sources are candidates, each
+  one more weighted row.
 
 ## Slices
 
@@ -203,11 +262,13 @@ has both outcomes on the map.
 2. **Extinction** (`core_sim`, launcher). Covers the extinct flag, leaving the turn queue, roster
    drop, victory skip and save format bump. This is useful on its own, since defection can already
    empty a people.
-3. **Joining: kinship pathway** (`core_sim` + client risk line). Covers the pair clock, culture
-   distance, the hand-over, events, and the risk readout on both sides.
-4. **A brain for every people** (launcher, `sim_ai`). Covers the per-seat `--profile` draw, a
-   `sim_ai` CPU/RSS measurement at 1 + M seats, and a bench run in which minors start and play rather
-   than starve. One process per seat stays unless this measurement says otherwise.
+3. **Culture strength and pressure** (`core_sim`). Covers the strength sum, per-band pressure and
+   phase, the pair clock, and the readout on the band (phase 1). No one changes hands yet.
+4. **Joining** (`core_sim`, client). Covers the offer state on both seats, the answer command, the
+   phase 3 forced join, the hand-over and its events.
+5. **A brain for every people** (`sim_ai`). Covers culture-derived behaviour weights, answering join
+   offers, a `sim_ai` CPU/RSS measurement at 1 + M seats, and a bench run in which minors start and
+   play rather than starve. One process per seat stays unless this measurement says otherwise.
 
 ## See Also
 
