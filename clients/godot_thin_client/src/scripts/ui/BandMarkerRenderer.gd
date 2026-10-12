@@ -424,12 +424,16 @@ func _draw_expedition_body(unit: Dictionary, center: Vector2, marker_radius: flo
 	# The mission's ART key: a party that is not denying or trading is a SCOUTING party, whatever its
 	# mission string says, exactly as the glyph default above reads it.
 	var art_mission := HudExpeditionVocab.EXPEDITION_MISSION_SCOUT
-	if mission == _view.EXPEDITION_DENY_MISSION or mission == _view.EXPEDITION_TRADE_MISSION:
+	if mission == _view.EXPEDITION_DENY_MISSION or mission == _view.EXPEDITION_TRADE_MISSION \
+			or mission == _view.EXPEDITION_STATION_MISSION:
+		# A mission with no bundled art (station) resolves no sprite and falls to its glyph below.
 		art_mission = mission
 	if mission == _view.EXPEDITION_DENY_MISSION:
 		glyph = _view.EXPEDITION_DENY_GLYPH
 	elif mission == _view.EXPEDITION_TRADE_MISSION:
 		glyph = _view.EXPEDITION_TRADE_GLYPH
+	elif mission == _view.EXPEDITION_STATION_MISSION:
+		glyph = _view.EXPEDITION_STATION_GLYPH
 	# Dark backing disc keeps the glyph legible over any terrain (mirrors the site/herd markers).
 	_view.draw_circle(center, marker_radius, Color(0.04, 0.06, 0.07, _view.EXPEDITION_DISC_ALPHA))
 	# Hollow faction ring — no solid fill, so it never reads as a resident band's dot.

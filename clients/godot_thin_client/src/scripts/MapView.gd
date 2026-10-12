@@ -721,6 +721,10 @@ const EXPEDITION_DENY_GLYPH := "💀"
 # too, so the three surfaces agree.
 const EXPEDITION_TRADE_MISSION := "trade"
 const EXPEDITION_TRADE_GLYPH := "📦"
+# STATIONED party (issue #774) — people posted at a tied band. Its own marker, the ⚓ the Parties row
+# wears (`HudFormat.PANEL_EXPEDITION_STATION_GLYPH`); it has no bundled art, so the glyph IS the face.
+const EXPEDITION_STATION_MISSION := "station"
+const EXPEDITION_STATION_GLYPH := "⚓"
 
 ## Channel key -> the tint its ramp climbs to. BUILT IN `apply_palette`, not here: every value in it is
 ## a themed colour, and a dictionary initializer runs at script load, before any theme is installed —

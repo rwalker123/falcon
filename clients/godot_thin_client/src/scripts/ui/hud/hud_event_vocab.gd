@@ -456,6 +456,15 @@ static func apply_palette() -> void:
 			"rung": RUNG_ROUTINE},
 		"severity=warn": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN,
 			"rung": RUNG_NOTABLE},
+		# **A POST THAT ENDS WITHOUT THE PLAYER ASKING IS NOTABLE** (issue #774): borders closed on the
+		# party, the home band unable to feed it, or the host gone. The player's own recall
+		# (`reason=recalled`) is a receipt for something asked for and stays on the kind's Routine rung.
+		"reason=borders_closed": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN,
+			"rung": RUNG_NOTABLE},
+		"reason=home_short": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN,
+			"rung": RUNG_NOTABLE},
+		"reason=host_gone": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN,
+			"rung": RUNG_NOTABLE},
 		"severity=danger": {"glyph": STATUS_SHED_GLYPH, "color": HudStyle.WARN,
 			"rung": RUNG_ALERT},
 
@@ -572,6 +581,13 @@ const SIM_BAND_LABEL_FORMAT := "Band %d"
 ## rewritten with the other's name if they shared a key.
 const DETAIL_DESTINATION_KEY := "destination"
 
+## **THE THIRD ROLE** (issue #774): the band a STATIONED party is posted with, repeated as `host=<id>`
+## on its launch, arrival and end lines beside a label that names it through
+## `ExpeditionMission::host_display` — the name when the mission carries one, else the same
+## lower-case `band <id>` spelling `SIM_DESTINATION_LABEL_FORMAT` pins. Its own key because a line can
+## name the home band as `band=` and the host as `host=` at once.
+const DETAIL_HOST_KEY := "host"
+
 ## **THE SIM'S OWN SPELLING FOR THE DESTINATION, and it is LOWER-CASE** —
 ## `ExpeditionMission::destination_display`'s last-resort tier, `format!("band {}", id)` — reached
 ## when the party's destination is outside the viewer's roster, so no name can be resolved for it. Byte-identical to the sim or the substitution is a
@@ -594,6 +610,7 @@ const SIM_FACTION_LABEL_FORMAT := "Faction %d"
 const BAND_ID_TOKEN_LABELS := {
 	DETAIL_BAND_KEY: SIM_BAND_LABEL_FORMAT,
 	DETAIL_DESTINATION_KEY: SIM_DESTINATION_LABEL_FORMAT,
+	DETAIL_HOST_KEY: SIM_DESTINATION_LABEL_FORMAT,
 }
 
 # ---- rendering a detail as PROSE -------------------------------------------
@@ -612,6 +629,9 @@ const DETAIL_KEY_HIDDEN := {
 	"band": true,
 	"count": true,
 	"expedition": true,
+	# A stationed party's host is NAMED in the label (swapped through `BAND_ID_TOKEN_LABELS`); the id
+	# beside it is the join key and never a thing to print.
+	"host": true,
 	# `killed` is the LABEL's own number — the sim writes "The aurochs hunt cost the party three
 	# lives" and then `killed=3.000` beside it, so showing both says one thing twice in two
 	# different notations. `wounded` deliberately stays: it is the half the label never carries.
@@ -693,6 +713,11 @@ const DETAIL_VALUE_LABELS := {
 	"pruned": "pruned",
 	"untended": "untended",
 	"slipping": "slipping",
+	# A stationed party's post ending of its own accord (issue #774): the phrase continues the label
+	# ("Party lost Rushford — returning home" · "borders closed"), so lower-case like its neighbours.
+	"borders_closed": "borders closed",
+	"home_short": "home band short of food",
+	"host_gone": "host not found",
 }
 
 ## Fragment separator. A middot rather than a comma: the fragments are peers, not a list.

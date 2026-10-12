@@ -3818,3 +3818,23 @@ authored rows, not the function under test) and that 4 is below the useful crew 
 drive `SourceForecast.hunt_need_crew`: smallest reaching row, cap at useful, a meal no row reaches, no meal
 for the class, a sub-animal meal asking one, and an unbounded useful crew passing through.
 `EXPECTED_CHECKPOINTS` is 31.
+
+## `chapters/station.gd` — the stationed party (issue #774)
+
+Appended LAST in `CHAPTERS`, so no existing frame moves; it hands the reference band back. Six frames
+(`station_peoples`, `station_parties`, `station_party_detail`, `station_sheet`, `station_sheet_people`,
+`station_event_dock`); `EXPECTED_CHECKPOINTS` is the floor in the chapter. The behaviour is
+`band-city-panel.md` -> "STATION PEOPLE" and `event-dock.md`'s `host=` bullet.
+
+- **The sheet is opened through the roster's own link**, never by calling the verb: the link is the only
+  way in, and the stepper is raised through its real `+`. The send is asserted on the command LINE
+  through `Main.format_station_expedition` by equality.
+- **The Peoples frame is four rows on purpose** — stationed, walking, offered, parked — because each row
+  is the others' control: `Stationed` link on two rows with only one `stationed` word, an enabled link on
+  exactly one, a greyed one on the parked tie.
+- **Hosts are named only by their tie** (`subject_name`) for the stationed, offered and parked rows and
+  by the roster for the walking one, so both labelling tiers are exercised, and no row or party row may
+  carry the `FIXTURE_BAND_ID_OFFSET`-derived id.
+- The dock block injects a real `EventDockPanel`, ingests the sim's own label shapes, and asserts the
+  host swap, the Notable rung on the three involuntary endings and the Routine receipt on a recall.
+

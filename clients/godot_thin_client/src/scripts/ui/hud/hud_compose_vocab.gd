@@ -1172,6 +1172,25 @@ const COMPOSE_MISSION_SPLIT := "split"
 ## one. No quarry, no floor, no policy, no trip forecast; a destination, a party and a cargo list.
 const COMPOSE_MISSION_TRADE := "trade"
 
+## **THE STATIONED PARTY** (issue #774) — people a band posts at a band it holds a LIVE tie with. Not
+## a button on the action bar (`BAND_VERBS` does not list it): it opens from the Peoples tab's
+## `Station people` link, on the sender's own drawer, as a sheet of the same kind the shipment's is.
+const COMPOSE_MISSION_STATION := "station"
+const STATION_SHEET_NAME := "Station"
+const STATION_TITLE_FORMAT := "Station people with %s"
+const STATION_FIELD_WITH := "With"
+const STATION_PEOPLE_LABEL := "People"
+const STATION_PEOPLE_SUB_FORMAT := "%d of %d free workers · fed from %s's food"
+const STATION_PEOPLE_AT_MAX_REASON := "No more free workers. Take someone off a work row to station another."
+## The sheet's one explanation: the tie stays full, and what they see reaches home a walk late.
+const STATION_NEWS_LATE_FORMAT := "Keeps the tie from fading. Their news reaches you about %d turns late."
+const STATION_NEWS_LATE_UNKNOWN := "Keeps the tie from fading. Their news reaches you a walk late."
+const STATION_SEND_BUTTON := "Station them"
+const STATION_SEND_HINT := "Post these people with them. You feed them; they come home when you recall them."
+const STATION_SEND_NO_FREE_REASON := "No free workers — take someone off a work row to station them."
+const STATION_SEND_NO_TIE_REASON := "No live tie with them — meet them again first."
+const STATION_SEND_ALREADY_REASON := "Your people are already posted with them."
+
 # =====================================================================================
 #  THE BAND VERBS (issue #529) — ONE list, read by both surfaces that offer them
 # =====================================================================================

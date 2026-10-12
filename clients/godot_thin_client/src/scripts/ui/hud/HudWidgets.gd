@@ -1028,6 +1028,8 @@ const CARGO_GRADES_TOGGLE_META := "cargo_grades_toggle"
 ## branch rendered is only checkable if all five wear one findable mark. It is set on the DISABLED
 ## branches too: a form that built nothing at all would otherwise satisfy an absence assertion.
 const SEND_TRADE_CONFIRM_META := "send_trade_confirm"
+## The station sheet's send (issue #774) — live or greyed, the one handle a harness finds it by.
+const SEND_STATION_CONFIRM_META := "send_station_confirm"
 
 ## The DENIAL raid's confirm button (`docs/plan_denial_raid.md`). **Its OWN meta, not the hunt one**,
 ## and for the reason the two forms are separate at all: a harness that pressed "the send button" on a

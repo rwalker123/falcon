@@ -295,6 +295,26 @@ func party_cancels_in_camp(exp: Dictionary) -> bool:
 	var home_y := int(home.get("current_y", HOME_POSITION_UNKNOWN))
 	return party_x == home_x and party_y == home_y
 
+## **THE PARTY THIS BAND HAS POSTED WITH (OR IS WALKING TO) `host_band_id`**, or `{}` — a station party
+## (issue #774) whose `expedition_destination_band` is the host, outbound or stationed. A party that is
+## already returning does not count: the post is over. One post per host per band is the offer the
+## client makes, so this is a lookup, not a sum.
+func station_party_for_host(band_id: int, host_band_id: int) -> Dictionary:
+	var band := player_band_by_band_id(band_id)
+	if band.is_empty():
+		return {}
+	for exp_variant in band_parties(band):
+		var exp: Dictionary = exp_variant
+		if String(exp.get("expedition_mission", "")) != HudExpeditionVocab.EXPEDITION_MISSION_STATION:
+			continue
+		var phase := String(exp.get("expedition_phase", ""))
+		if phase != HudExpeditionVocab.EXPEDITION_PHASE_OUTBOUND \
+				and phase != HudExpeditionVocab.EXPEDITION_PHASE_STATIONED:
+			continue
+		if int(exp.get("expedition_destination_band", HudConst.NO_BAND_ID)) == host_band_id:
+			return exp
+	return {}
+
 ## Workers currently out with this band's parties — the Workforce bar's Parties segment.
 func band_party_workers(band: Dictionary) -> int:
 	var total := 0
@@ -361,6 +381,28 @@ func band_label_for_id(band_id: int) -> String:
 		var party: Dictionary = party_variant
 		if int(party.get("band_id", HudConst.NO_BAND_ID)) == band_id:
 			return HudFormat.band_name(party)
+	return ""
+
+## **WHAT TO CALL A BAND THIS FACTION MAY NOT HOLD — a tie's subject, a stationed party's host.** The
+## roster's own label (`band_label_for_id`) when it holds the band; else the name the tie REMEMBERS
+## (clock 1, `subject_name`); else `Band near (x, y)` at the tile the tie last saw them. `""` only where
+## no tie names the band either. The `BandId` is a database key and never reaches the label — the same
+## three tiers as `ConnectionsRoster.subject_label`, asked by id rather than by tie row.
+func host_label_for_id(band_id: int) -> String:
+	var label := band_label_for_id(band_id)
+	if label != "":
+		return label
+	for row_variant in _connections:
+		if not (row_variant is Dictionary):
+			continue
+		var row: Dictionary = row_variant
+		if int(row.get("subject_band_id", HudConst.NO_BAND_ID)) != band_id:
+			continue
+		var remembered := String(row.get("subject_name", ""))
+		if remembered != "":
+			return remembered
+		return HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_LABEL_FORMAT % [
+			int(row.get("last_seen_x", -1)), int(row.get("last_seen_y", -1))]
 	return ""
 
 ## **A LIVE TIE IS ONE WITH STRENGTH ABOVE ZERO** — the sim's own gate (`strength > NO_TIE`), read in

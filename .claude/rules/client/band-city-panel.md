@@ -7650,6 +7650,51 @@ at the foot), `connections_roster_scrolled`, `connections_roster_ties_only`,
 (the no-dock drawer), in `chapters/trade.gd`; `band_panel_preview`'s `peoples_wide` (the
 bottom dock's wide shell, the section under Parties after Trade's), in `band_panel_trade_tab.gd`.
 
+### STATION PEOPLE — the roster's link, and the sheet it opens (issue #774)
+
+A band posts some of its people at a band it holds a LIVE tie with (sim half:
+`.claude/rules/core_sim/expeditions.md` → "A stationed party"). The client half is four small pieces,
+none of them a new panel.
+
+- **The link.** Line 2 of every roster row carries `Station people` at its right end
+  (`ConnectionsRoster._build_station_link`), so a row stays two lines and the remembered-sighting
+  sentence ellipsises first. It is ALWAYS drawn and greys WITH ITS REASON, in this precedence: people
+  already posted or walking there (`Stationed`), a PARKED tie (`No tie — meet them again first.`), no
+  free workers. **Borders are the server's to refuse and the client does not gate on them**: a tie
+  carries no faction on its subject, and `FactionPolicyState` publishes only the viewer's OWN
+  `openBorders`, so a closed host surfaces as the server's refusal in the feed. One post per host per
+  band is the client's offer (`HudBandLaborState.station_party_for_host`, outbound or stationed); no
+  server rule backs it.
+- **The row while posted.** `stationed` (HEALTHY) replaces growing / fading once the party has
+  ARRIVED (phase `stationed`) — a party still walking leaves the tie's own word, since saying
+  `stationed` over a tie that is still fading would be untrue. The hover adds
+  `N of your people are stationed with them · news about K turns old`, K = current turn −
+  `last_seen_turn`. `ConnectionsRoster.tie_state` stays pure; the override is `_build_row`'s.
+- **The sheet** is a verb sheet of its own mission (`HudComposeVocab.COMPOSE_MISSION_STATION`) that is
+  NOT on the action bar: only the link opens it (`BandPanelController._on_station_link_pressed`, the
+  `dispatch_verb` machinery with the host fixed in `_station_host`, cleared with the rest of the verb
+  state). Built by `_fill_station_compose_sheet`: `With <host> · N tiles <bearing>` (the shipment's
+  `To` row sentence and remembered-sighting hover), a `People` stepper capped at the free workers,
+  `N of M free workers · fed from <band>'s food`, and one explanation line. The lag in it is
+  `SourceForecast.outbound_travel_turns` from where the tie last saw the host to this band — the
+  shipment's own definition of travel — and reads `a walk` where the band publishes no move rate.
+  No kit row: the server defaults it, so `format_station_expedition` sends none.
+- **The order** rides its own `station_expedition_requested` signal (`BandPanelController` →
+  `HudLayer` → `Main._on_hud_station_expedition`), the `send_trade_expedition_requested` precedent, and
+  `Main.format_station_expedition` is its own builder: `station_expedition <f> <band> <workers>
+  <host>`.
+- **The Parties row** reads `Stationed with <host>` / `Going to stay with <host>` / `Coming home from
+  <host>` (`HudFormat.panel_expedition_summary`, `HudExpeditionVocab.STATION_ROW_*`), marked `⚓`
+  (`PANEL_EXPEDITION_STATION_GLYPH`, text, so `expedition_mission_glyph` does not hand it the scout
+  flag). The party's strip names its `Host` and states NO `Provisions` / `Carried` row
+  (`BandDetailLines._station_summary_lines`): the home band feeds it, and its `turns_of_food` of 999
+  would print a runway for a larder it does not have. **The host's name goes through
+  `HudBandLaborState.host_label_for_id`** — the roster's label, else the name the tie remembers, else
+  `Band near (x, y)` — and that is now the label every party row uses, shipments included.
+
+Frames: `station_peoples`, `station_parties`, `station_party_detail`, `station_sheet`,
+`station_sheet_people` and `station_event_dock`, in `chapters/station.gd` (`harness-ui-preview.md`).
+
 ## The Trade tab (issue #731)
 
 The band page's fourth zone: what crossed this band's store with SOMEBODY ELSE this turn, by the link

@@ -326,6 +326,12 @@ One mission, one glyph, on all three surfaces it appears on — the map marker, 
 (`HudFormat.PANEL_EXPEDITION_*_GLYPH`) and the band verb that launches it
 (`HudComposeVocab.BAND_VERBS`) — so a party's mark means the same thing at every scale.
 
+**A STATIONED PARTY IS THE FIFTH, AND IT HAS NO ART** (issue #774): `MapView.EXPEDITION_STATION_MISSION` /
+`EXPEDITION_STATION_GLYPH` (⚓, the Parties row's own mark). `_draw_expedition_body` keys the art lookup
+on the mission, finds no `ExpeditionSprites` entry and so draws the glyph — the point being that an
+unrecognised mission otherwise falls to the scout FLAG and sprite. `map_preview`'s `map_expedition_art`
+frame stages one beside the scout, deny and trade parties.
+
 **THE MAP MARKER DRAWS ART, THE GLYPH IS ITS FALLBACK.** Scout, deny and trade resolve bundled PNGs
 through `ExpeditionSprites.for_mission` (`assets/icons/expeditions/` — the footprints, the animal
 skull and the cloth bundle, the band verb's `hud/` subjects redrawn in the map-marker house style),

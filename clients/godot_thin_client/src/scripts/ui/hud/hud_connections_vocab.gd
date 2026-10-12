@@ -27,6 +27,9 @@ const EMPTY := "This band has met no other people yet."
 const STATE_GROWING := 0
 const STATE_FADING := 1
 const STATE_PARKED := 2
+## **STATIONED** (issue #774) — THIS band has people posted with the subject and standing there. It
+## replaces growing / fading on the row, because a post gets contact every turn and the tie cannot fade.
+const STATE_STATIONED := 3
 
 ## The turn before any is known (`HudBandLaborState`'s own initial `_current_turn`). Never equal to a
 ## real turn, so it never reads as contact.
@@ -36,6 +39,7 @@ const STATE_WORDS := {
 	STATE_GROWING: "growing",
 	STATE_FADING: "fading",
 	STATE_PARKED: "parked",
+	STATE_STATIONED: "stationed",
 }
 
 ## What each state's word says on hover.
@@ -43,6 +47,7 @@ const STATE_TOOLTIPS := {
 	STATE_GROWING: "In contact this turn — the tie is strengthening.",
 	STATE_FADING: "Not seen this turn — the tie weakens every turn without contact.",
 	STATE_PARKED: "No tie left. Nothing can flow until they are met again.",
+	STATE_STATIONED: "Your people are posted with them — the tie gets contact every turn.",
 }
 
 ## Strength as a whole percent of a full tie (`0..1` on the wire).
@@ -79,3 +84,24 @@ const ROWS_NAME := "ConnectionsRosterRows"
 const LIST_NAME := "PeoplesList"
 ## The scrollbar gutter between that scroll and the rows box.
 const GUTTER_NAME := "PeoplesListGutter"
+
+# ---- STATION PEOPLE (issue #774) -----------------------------------------------------------------
+# The inline link on a live tie's row, and the words on the row of a band this one has people posted
+# with. The compose sheet it opens is `BandPanelController._fill_station_compose_sheet`.
+
+## The link on line 2 of a row, and what it reads once people are posted (or walking) there.
+const STATION_LINK := "Station people"
+const STATION_LINK_DONE := "Stationed"
+const STATION_LINK_TOOLTIP := "Post some of your people with them. It keeps the tie from fading."
+const STATION_LINK_DONE_TOOLTIP := "Your people are already posted with them. Recall them from the Parties tab."
+## A PARKED tie has nothing to post people at — the link stays so the row teaches that the tie is the gate.
+const STATION_LINK_PARKED_REASON := "No tie — meet them again first."
+const STATION_LINK_NO_FREE_REASON := "No free workers — take someone off a work row to station them."
+
+## The hover line added to a stationed row: how many are posted, and how stale their news is.
+const STATION_ROW_HOVER_FORMAT := "%d of your people are stationed with them · news about %d %s old"
+const STATION_TURN_ONE := "turn"
+const STATION_TURN_MANY := "turns"
+
+## Metadata the harness finds the link by (value: the subject's `band_id`).
+const STATION_LINK_META := &"connections_station_link"

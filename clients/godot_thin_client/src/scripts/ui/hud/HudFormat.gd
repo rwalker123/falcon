@@ -43,6 +43,10 @@ const PANEL_EXPEDITION_DENY_GLYPH := "💀"
 ## The SHIPMENT's mark (arc #527) — the same 📦 its footer button and its map marker wear, the rule
 ## the denial glyph above states: one mission, one glyph, at every scale.
 const PANEL_EXPEDITION_TRADE_GLYPH := "📦"
+## The STATIONED party's mark (issue #774) — a party that has dropped anchor at a tied band. Text, not
+## art: the mission has no bundled sprite, and `expedition_mission_glyph` must not hand it the scout
+## flag, which would read a posted party as one out looking for something.
+const PANEL_EXPEDITION_STATION_GLYPH := "⚓"
 
 ## The mark for a party on `expedition_mission` — the ONE resolution of the three constants above, so
 ## a surface that marks a party by its mission cannot pick a different glyph from the one
@@ -56,6 +60,8 @@ static func expedition_mission_glyph(mission: String) -> String:
         return PANEL_EXPEDITION_DENY_GLYPH
     if key == HudExpeditionVocab.EXPEDITION_MISSION_TRADE:
         return PANEL_EXPEDITION_TRADE_GLYPH
+    if key == HudExpeditionVocab.EXPEDITION_MISSION_STATION:
+        return PANEL_EXPEDITION_STATION_GLYPH
     return PANEL_EXPEDITION_SCOUT_GLYPH
 
 ## **THE LAST-RESORT BAND NAME, KEYED ON THE DURABLE `band_id` — NEVER ON A ROW NUMBER.** Used only
@@ -448,6 +454,19 @@ static func panel_expedition_summary(exp: Dictionary, herd_label_for_id: Callabl
         if destination == "":
             return "%s%s" % [PANEL_EXPEDITION_TRADE_GLYPH, phase_suffix]
         return "%s %s%s" % [PANEL_EXPEDITION_TRADE_GLYPH, destination, phase_suffix]
+    # A STATIONED party names the band it is posted with, in a sentence per phase. The phase reads in
+    # the sentence, so only `returning` keeps its glyph; `stationed` has none and `outbound`'s arrow
+    # would repeat "Going to stay". Carries no food runway and no cargo — the home band feeds it.
+    if mission == HudExpeditionVocab.EXPEDITION_MISSION_STATION:
+        var host := expedition_destination_label(exp, band_label_for_id)
+        var phase := expedition_phase_key(exp)
+        var sentence_format := HudExpeditionVocab.STATION_ROW_OUTBOUND_FORMAT
+        if phase == HudExpeditionVocab.EXPEDITION_PHASE_STATIONED:
+            sentence_format = HudExpeditionVocab.STATION_ROW_STATIONED_FORMAT
+        elif phase == HudExpeditionVocab.EXPEDITION_PHASE_RETURNING:
+            sentence_format = HudExpeditionVocab.STATION_ROW_RETURNING_FORMAT
+        var tail := phase_suffix if phase == HudExpeditionVocab.EXPEDITION_PHASE_RETURNING else ""
+        return "%s %s%s" % [PANEL_EXPEDITION_STATION_GLYPH, sentence_format % host, tail]
     var x := int(exp.get("current_x", -1))
     var y := int(exp.get("current_y", -1))
     return "%s → (%d, %d)%s" % [PANEL_EXPEDITION_SCOUT_GLYPH, x, y, phase_suffix]

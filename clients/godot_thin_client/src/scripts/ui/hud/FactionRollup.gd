@@ -690,7 +690,7 @@ static func build_parties_zone(labor: HudBandLaborState, herd_label_for_id: Call
         block.add_child(_summary_row(
             String(names.get(int(party.get("home_band_entity", -1)), "")),
             HudFormat.panel_expedition_summary(party, herd_label_for_id,
-                labor.band_label_for_id),
+                labor.host_label_for_id),
             worst_severity(alerts), entity, int(party.get("home_band_entity", -1)),
             on_toggle, on_jump))
         if entity == open_owner:
