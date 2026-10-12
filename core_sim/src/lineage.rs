@@ -99,6 +99,34 @@ impl FoundingLines {
         self.0.retain(|line| !walked.contains(line));
         Self(walked)
     }
+
+    /// **The lines a break-off walks off with, COPIED — the parent keeps every one** (issue #690).
+    ///
+    /// A break-off becomes a different people, and two different peoples each count a shared line
+    /// whole; only holders within one people divide its `K`. Partitioning (`split_off_share`) would
+    /// leave the parent still over its ceiling (it falls by only `E · c / t` against an excess of
+    /// `E`), and the next turn would break off again, every turn. Copying leaves the parent exactly
+    /// at its ceiling, and the union of two peoples in touch gains nothing from the copy.
+    ///
+    /// The child takes [`lines_to_hold`]`(people, K)` of them — enough families that its own ceiling
+    /// is at least its head-count at birth, so it is not born over it — from the **highest** ids as
+    /// `split_off_share` picks them, and never more than the parent holds (the caller has already
+    /// refused a break-off the parent cannot cover).
+    pub fn copy_to_hold(&self, people: Scalar, people_per_line: NonZeroU16) -> Self {
+        let taken = lines_to_hold(people, people_per_line).min(self.len());
+        Self(self.0.iter().rev().take(taken).copied().collect())
+    }
+}
+
+/// **How many founding lines it takes to hold `people`** — `max(1, ceil(people ÷ K))`, so a group
+/// of that many lines has a ceiling (`lines × K`) at least its head-count.
+pub fn lines_to_hold(people: Scalar, people_per_line: NonZeroU16) -> usize {
+    let per_line = i128::from(people_per_line.get()) * i128::from(Scalar::SCALE);
+    let raw = i128::from(people.raw().max(0));
+    let lines = (raw + per_line - 1) / per_line;
+    usize::try_from(lines)
+        .unwrap_or(usize::MAX)
+        .max(usize::from(MIN_BAND_LINES))
 }
 
 /// **A breeding population's ceiling, in people** (issue #688) — `lines × people_per_line`, where
@@ -271,6 +299,11 @@ pub struct BreedingPeople {
 /// cohort reads before its first turn.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BreedingReading {
+    /// The people the band belonged to when the pre-pass grouped it. A band that changes people
+    /// later in the turn (a remnant flip in migration) carries a reading for the people it LEFT, so
+    /// readers that act on the grouping (`systems::breeding_shed`) compare this with the cohort's
+    /// own faction and skip the band when they differ. `None` before the band's first turn.
+    pub faction: Option<FactionId>,
     /// Everyone in the breeding population after this turn's births and deaths, in whole people —
     /// the members' fixed-point head-counts summed, then rounded once. On the wire as
     /// `PopulationCohortState.breedingPopulation`.
@@ -338,6 +371,27 @@ mod tests {
         let lines = FoundingLines::founded(ORIGIN, LINES);
         assert_eq!(lines.len(), usize::from(LINES));
         assert!(lines.iter().all(|line| line.origin_band == ORIGIN.0));
+    }
+
+    #[test]
+    fn a_break_off_copies_enough_lines_to_hold_its_people_and_the_parent_keeps_them_all() {
+        let parent = FoundingLines::founded(ORIGIN, LINES);
+        let before = parent.clone();
+        let people = Scalar::from_u32;
+        // 148 people at K = 19 need ceil(7.79) = 8 lines; 76 need exactly 4; 77 need 5.
+        assert_eq!(parent.copy_to_hold(people(148), k()).len(), 8);
+        assert_eq!(parent.copy_to_hold(people(76), k()).len(), 4);
+        assert_eq!(parent.copy_to_hold(people(77), k()).len(), 5);
+        assert_eq!(parent, before, "copying removes nothing from the parent");
+        let child = parent.copy_to_hold(people(40), k());
+        assert!(child.iter().min() > parent.iter().nth(LINES as usize - 4));
+        // Never fewer than one, never more than the parent holds.
+        assert_eq!(parent.copy_to_hold(people(0), k()).len(), 1);
+        assert_eq!(
+            parent.copy_to_hold(people(900), k()).len(),
+            usize::from(LINES)
+        );
+        assert_eq!(lines_to_hold(people(900), k()), 48);
     }
 
     #[test]

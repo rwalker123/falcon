@@ -130,7 +130,7 @@ id after it is `Ai`, by construction.
 - **`ResetMap` carries the roster it had**, per archetype, re-clamped in catalog order to the grid
   it is moving to (`start_archetype_assignment.counts(..)` in the dispatch arm). The per-archetype
   counts are a world-build parameter that rides the save header (`WorldIdentity.archetype_counts`,
-  format version 35), and `apply_save` rebuilds the assignment from them by archetype id — so a
+  format version 36), and `apply_save` rebuilds the assignment from them by archetype id — so a
   loaded game followed by `ResetMap` carries the split it was built with. A resize is a map reroll, not a re-pick of who
   is playing — and without the re-clamp a shrink could register more factions than the new map
   seats, while a grow would silently drop this world's rivals back to the config default.

@@ -12569,6 +12569,88 @@ pub struct MigrationKnowledgeSinks<'w> {
     pub trade_events: EventWriter<'w, TradeDiffusionEvent>,
 }
 
+/// One cross-people move's knowledge credit: `(from people, to people, fragment)`.
+pub(crate) type KnowledgeCredit = (FactionId, FactionId, ContractKnowledgeFragment);
+
+/// **Knowledge travels with people, in proportion** — the one statement of the cross-people
+/// knowledge credit, shared by the unhappy trickle ([`advance_population_migration`]) and the
+/// breeding shed (`systems::breeding_shed`): a person crossing into another people is the same act
+/// whatever sent them. The source band's knowledge is scaled by `migration_fragment_scaling`, then
+/// by `share` — the fraction of the band that left (its pre-move total) — so a brain drain is
+/// proportional, never all-or-nothing. Each surviving fragment is queued for the destination band's
+/// merge (`knowledge_in`) and for the destination people's credit (`credits`).
+pub(crate) fn carry_knowledge_across(
+    source: &PopulationCohort,
+    share: Scalar,
+    fragment_scaling: Scalar,
+    (from, to): (FactionId, FactionId),
+    dest_entity: Entity,
+    knowledge_in: &mut HashMap<Entity, Vec<ContractKnowledgeFragment>>,
+    credits: &mut Vec<KnowledgeCredit>,
+) {
+    let scaled = scale_migration_fragments(
+        &fragments_to_contract(&source.knowledge),
+        fragment_scaling.raw(),
+    );
+    for mut fragment in scaled {
+        fragment.progress = (Scalar::from_raw(fragment.progress) * share).raw();
+        if fragment.progress <= 0 {
+            continue;
+        }
+        knowledge_in
+            .entry(dest_entity)
+            .or_default()
+            .push(fragment.clone());
+        credits.push((from, to, fragment));
+    }
+}
+
+/// **The destination peoples' discovery credit, telemetry and diffusion events** for the credits
+/// [`carry_knowledge_across`] queued, in the order they were queued. The "via migration" rows the
+/// knowledge panel publishes come from here.
+pub(crate) fn credit_migrated_knowledge(
+    credits: &[KnowledgeCredit],
+    tick: u64,
+    sinks: &mut MigrationKnowledgeSinks,
+) {
+    for (from, to, fragment) in credits {
+        let delta = Scalar::from_raw(fragment.progress);
+        sinks
+            .discovery
+            .add_progress(*to, fragment.discovery_id, delta);
+        sinks.telemetry.tech_diffusion_applied =
+            sinks.telemetry.tech_diffusion_applied.saturating_add(1);
+        sinks.telemetry.migration_transfers = sinks.telemetry.migration_transfers.saturating_add(1);
+        sinks.telemetry.push_record(TradeDiffusionRecord {
+            tick,
+            from: *from,
+            to: *to,
+            discovery_id: fragment.discovery_id,
+            delta,
+            via_migration: true,
+            herd_density: 0.0,
+        });
+        sinks.trade_events.send(TradeDiffusionEvent {
+            tick,
+            from: *from,
+            to: *to,
+            discovery_id: fragment.discovery_id,
+            delta,
+            via_migration: true,
+        });
+    }
+}
+
+/// Merge the fragments a destination band received into its own knowledge.
+pub(crate) fn merge_migrated_knowledge(
+    cohort: &mut PopulationCohort,
+    payload: &[ContractKnowledgeFragment],
+) {
+    let mut knowledge = fragments_to_contract(&cohort.knowledge);
+    merge_fragment_payload(&mut knowledge, payload, Scalar::one().raw());
+    cohort.knowledge = fragments_from_contract(&knowledge);
+}
+
 /// **Everything that belongs to a band and must go with it when it changes people** — the state a
 /// remnant flip (`advance_population_migration`) and a break-away (`advance_band_independence`)
 /// re-point at the band's new people, bundled so each system stays inside Bevy's argument budget.
@@ -12758,6 +12840,79 @@ pub(crate) fn follow_the_band_to_its_new_people(
     }
 }
 
+/// One end of a would-be move: the band's people, its durable id (a band with none can be neither
+/// tie-checked nor named) and the tile its people walk from — its home.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct WalkEnd {
+    pub faction: FactionId,
+    pub band_id: Option<BandId>,
+    pub pos: UVec2,
+}
+
+/// Whose band a destination is, to the people leaving for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DestinationKind {
+    OwnPeople,
+    OtherPeople,
+}
+
+/// **The destination predicate, minus morale** — the one test of whether `dest` is somewhere
+/// `src`'s people may go, shared by the unhappy trickle ([`advance_population_migration`]) and the
+/// breeding shed (`systems::breeding_shed`), so "where people can move to" has one statement.
+///
+/// - **Reach**: `dest` is within [`crate::supply::WalkReach`] of `src` — hex steps less whatever a
+///   road shortens.
+/// - **Own people**: nothing more.
+/// - **Another people**: *perception* — a live band-to-band tie (`ConnectionLedger::tie_is_live`),
+///   so both bands need a durable id — and *consent* — the receiving people's borders are open.
+pub(crate) fn walkable_destination(
+    walk: &crate::supply::WalkReach,
+    roads: &crate::routes::RoadRegistry,
+    connections: &ConnectionLedger,
+    borders: &FactionBorderPolicies,
+    src: WalkEnd,
+    dest: WalkEnd,
+) -> Option<DestinationKind> {
+    if !walk.within(roads, src.pos, dest.pos) {
+        return None;
+    }
+    if dest.faction == src.faction {
+        return Some(DestinationKind::OwnPeople);
+    }
+    let (src_id, dest_id) = (src.band_id?, dest.band_id?);
+    (connections.tie_is_live(src_id, dest_id) && borders.is_open(dest.faction))
+        .then_some(DestinationKind::OtherPeople)
+}
+
+/// **How a number of leavers divides across a band's brackets** — `requested` split ∝
+/// `bracket_size × weight` (working `1.0`, children and elders `dependent_weight`), so the headline
+/// head-count stays exact while working-age dominates the composition. Returns `(total leaving,
+/// working, children, elders)`. The total is clamped to the weighted denominator so no bracket can
+/// be over-drafted (`move_x ≤ w_x ≤ bracket_x`), which keeps population conserved; that is a no-op
+/// under shipped tuning and a safety net for a very low `dependent_weight` on a dependent-heavy
+/// band. Shared by the unhappy trickle and the breeding shed.
+pub(crate) fn weighted_leavers(
+    cohort: &PopulationCohort,
+    requested: Scalar,
+    dependent_weight: Scalar,
+) -> (Scalar, Scalar, Scalar, Scalar) {
+    let w_working = cohort.working;
+    let w_children = cohort.children * dependent_weight;
+    let w_elders = cohort.elders * dependent_weight;
+    let denom = w_working + w_children + w_elders;
+    let total_leaving = requested.min(denom);
+    if denom > scalar_zero() {
+        (
+            total_leaving,
+            total_leaving * w_working / denom,
+            total_leaving * w_children / denom,
+            total_leaving * w_elders / denom,
+        )
+    } else {
+        (total_leaving, scalar_zero(), scalar_zero(), scalar_zero())
+    }
+}
+
 /// **Who may a band's leavers join** — the three facts the destination search reads beyond the
 /// bands themselves, bundled so the system stays well inside Bevy's argument budget.
 #[derive(bevy::ecs::system::SystemParam)]
@@ -12870,25 +13025,10 @@ pub fn advance_population_migration(
         .iter()
         .map(|(entity, cohort, band_id)| {
             let move_fraction = migration_move_fraction(cohort.morale, mig_cfg);
-            // Weighted bracket masses; the total is apportioned in proportion to these.
-            let w_working = cohort.working;
-            let w_children = cohort.children * dependent_weight;
-            let w_elders = cohort.elders * dependent_weight;
-            let denom = w_working + w_children + w_elders;
-            // Clamp the headline leaving amount to the weighted denominator so no bracket can be
-            // over-drafted (`move_x ≤ w_x ≤ bracket_x`), preserving population conservation.
-            // A no-op under shipped tuning (`total × max_rate ≤ denom` always), but a safety net for
-            // extreme-but-valid config (e.g. a very low `dependent_weight` on a dependent-heavy band).
-            let total_leaving = (cohort.total() * move_fraction).min(denom);
-            let (move_working, move_children, move_elders) = if denom > scalar_zero() {
-                (
-                    total_leaving * w_working / denom,
-                    total_leaving * w_children / denom,
-                    total_leaving * w_elders / denom,
-                )
-            } else {
-                (scalar_zero(), scalar_zero(), scalar_zero())
-            };
+            // The total leaving is `total × move_fraction`, apportioned across brackets by the
+            // shared weighting ([`weighted_leavers`]).
+            let (total_leaving, move_working, move_children, move_elders) =
+                weighted_leavers(cohort, cohort.total() * move_fraction, dependent_weight);
             Band {
                 entity,
                 band_id: band_id.copied(),
@@ -12932,23 +13072,27 @@ pub fn advance_population_migration(
             if dest.morale < attractive_morale || dest.morale <= bands[i].morale + min_gap {
                 continue;
             }
-            if !walk.within(&followers.roads, src_pos, dest_pos) {
+            let Some(kind) = walkable_destination(
+                &walk,
+                &followers.roads,
+                &gates.connections,
+                &gates.borders,
+                WalkEnd {
+                    faction: bands[i].faction,
+                    band_id: bands[i].band_id,
+                    pos: src_pos,
+                },
+                WalkEnd {
+                    faction: dest.faction,
+                    band_id: dest.band_id,
+                    pos: dest_pos,
+                },
+            ) else {
                 continue;
-            }
-            let best = if dest.faction == bands[i].faction {
-                &mut best_own
-            } else {
-                // Perception: a live tie between THESE two bands; consent: the receiving people's
-                // borders are open. A band with no durable id can be neither tie-checked nor named.
-                let (Some(src_id), Some(dest_id)) = (bands[i].band_id, dest.band_id) else {
-                    continue;
-                };
-                if !gates.connections.tie_is_live(src_id, dest_id)
-                    || !gates.borders.is_open(dest.faction)
-                {
-                    continue;
-                }
-                &mut best_foreign
+            };
+            let best = match kind {
+                DestinationKind::OwnPeople => &mut best_own,
+                DestinationKind::OtherPeople => &mut best_foreign,
             };
             if best.is_none_or(|(_, m)| dest.morale > m) {
                 *best = Some((j, dest.morale));
@@ -12997,58 +13141,23 @@ pub fn advance_population_migration(
         }
         *dst_tally.immigrated_foreign.entry(from_people).or_default() += moved_head;
         tallies.entry(src_entity).or_default().joined_people = Some(to_people);
-        // **Knowledge travels with people, in proportion.** The source band's knowledge is scaled
-        // by `migration_fragment_scaling`, then by the share of the band that left — so a brain
-        // drain is proportional, never all-or-nothing.
         let Ok((_, source_cohort, _)) = cohorts.get(src_entity) else {
             continue;
         };
-        let share = (mw + mc + me) / bands[i].total;
-        let scaled = scale_migration_fragments(
-            &fragments_to_contract(&source_cohort.knowledge),
-            sim_config.migration_fragment_scaling.raw(),
+        carry_knowledge_across(
+            source_cohort,
+            (mw + mc + me) / bands[i].total,
+            sim_config.migration_fragment_scaling,
+            (from_people, to_people),
+            dest_entity,
+            &mut knowledge_in,
+            &mut credits,
         );
-        for mut fragment in scaled {
-            fragment.progress = (Scalar::from_raw(fragment.progress) * share).raw();
-            if fragment.progress <= 0 {
-                continue;
-            }
-            knowledge_in
-                .entry(dest_entity)
-                .or_default()
-                .push(fragment.clone());
-            credits.push((from_people, to_people, fragment));
-        }
     }
 
     // The destination peoples' discovery credit, telemetry and diffusion events — in the order the
     // sources were walked, which is the entity-sorted snapshot order.
-    for (from, to, fragment) in &credits {
-        let delta = Scalar::from_raw(fragment.progress);
-        sinks
-            .discovery
-            .add_progress(*to, fragment.discovery_id, delta);
-        sinks.telemetry.tech_diffusion_applied =
-            sinks.telemetry.tech_diffusion_applied.saturating_add(1);
-        sinks.telemetry.migration_transfers = sinks.telemetry.migration_transfers.saturating_add(1);
-        sinks.telemetry.push_record(TradeDiffusionRecord {
-            tick: tick.0,
-            from: *from,
-            to: *to,
-            discovery_id: fragment.discovery_id,
-            delta,
-            via_migration: true,
-            herd_density: 0.0,
-        });
-        sinks.trade_events.send(TradeDiffusionEvent {
-            tick: tick.0,
-            from: *from,
-            to: *to,
-            discovery_id: fragment.discovery_id,
-            delta,
-            via_migration: true,
-        });
-    }
+    credit_migrated_knowledge(&credits, tick.0, &mut sinks);
 
     // Apply relocation + refresh the derived per-turn emigrant/immigrant readouts + accrue/decay
     // the grievance accumulator. Base accrual is `grievance_gain × discontent_fraction` (the 0.6
@@ -13084,9 +13193,7 @@ pub fn advance_population_migration(
             cohort.sync_size();
         }
         if let Some(payload) = knowledge_in.get(&entity) {
-            let mut knowledge = fragments_to_contract(&cohort.knowledge);
-            merge_fragment_payload(&mut knowledge, payload, Scalar::one().raw());
-            cohort.knowledge = fragments_from_contract(&knowledge);
+            merge_migrated_knowledge(&mut cohort, payload);
         }
         // **A band too small to staff itself does not linger as a husk.** Only a cross-people move
         // can trigger this, and it reads the source's POST-move brackets: the remnant goes over to

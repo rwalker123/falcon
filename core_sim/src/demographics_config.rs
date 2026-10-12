@@ -305,8 +305,8 @@ pub struct DemographicsLineage {
     /// and a `0` is a parse error rather than a band with no lines.
     pub founding_lines: NonZeroU16,
     /// `K` — **how many people one founding line can carry** before inbreeding stops a breeding
-    /// population's births (issue #688). A breeding population — the bands in one supply network,
-    /// or a lone band — ceilings at `|union of its members' lines| × K`. With the shipped `L` an
+    /// population's births (issue #688). A breeding population — a people's tie-joined group of
+    /// bands (`lineage::tie_joined_groups`), or a lone band — ceilings at `|union of its members' lines| × K`. With the shipped `L` an
     /// isolated starting band ceilings at `L × K`, which must sit above the starting band's size
     /// (pinned by a test, not by load-time validation). **At least one**, enforced by the type: a
     /// `0` would ceiling every people at nobody, so it is a parse error.
@@ -318,6 +318,27 @@ pub struct DemographicsLineage {
     /// the shipped `L × K`, or a lone starting band would open unrestricted (pinned by a test, not by
     /// load-time validation). **At least one**, enforced by the type.
     pub free_breeding_at: NonZeroU32,
+    /// **The share of a breeding population's excess over its ceiling that leaves each turn**
+    /// (issue #690), in `(0, 1]`. A population above `|lines| × K` (a lifter lapsed) sheds
+    /// `shed_share × (head-count − ceiling)` people a turn along the ways the unhappy trickle
+    /// already walks, into groups with headroom; with nowhere to go, the whole excess breaks off as
+    /// a people of its own. A PLAYTEST DIAL: `1` clears the excess in one turn, a small share bleeds
+    /// it off slowly. Validated finite and in `(0, 1]` at parse.
+    pub shed_share: f32,
+}
+
+impl DemographicsLineage {
+    /// **`shed_share` is a share of an excess**: finite, above `0` (or the leak never moves
+    /// anybody) and at most `1` (a share cannot shed more than the excess).
+    pub fn validate(&self) -> Result<(), String> {
+        if !(self.shed_share.is_finite() && self.shed_share > 0.0 && self.shed_share <= 1.0) {
+            return Err(format!(
+                "lineage.shed_share must be a finite share in (0, 1], got {}",
+                self.shed_share
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Root demographic configuration.
@@ -370,6 +391,10 @@ impl DemographicsConfig {
         let config: Self = serde_json::from_str(json)?;
         config
             .keeping
+            .validate()
+            .map_err(DemographicsConfigError::Invalid)?;
+        config
+            .lineage
             .validate()
             .map_err(DemographicsConfigError::Invalid)?;
         Ok(config)
@@ -736,6 +761,32 @@ mod tests {
             }
         }
         assert!(checked > 0, "the shipped profiles carry a starting unit");
+    }
+
+    /// `lineage.shed_share` is a share of the excess: zero never sheds, above one sheds more than
+    /// there is, and neither a missing key nor a non-finite value may fall back silently.
+    #[test]
+    fn a_shed_share_outside_zero_to_one_is_rejected() {
+        for bad in [0.0, -0.1, 1.5] {
+            let mut value = builtin_value();
+            value["lineage"]["shed_share"] = serde_json::json!(bad);
+            assert!(
+                DemographicsConfig::from_json_str(&value.to_string()).is_err(),
+                "a shed_share of {bad} is not a share of an excess"
+            );
+        }
+        let mut value = builtin_value();
+        value["lineage"]
+            .as_object_mut()
+            .expect("lineage is an object")
+            .remove("shed_share");
+        assert!(
+            DemographicsConfig::from_json_str(&value.to_string()).is_err(),
+            "every key is required"
+        );
+        let mut whole = builtin_value();
+        whole["lineage"]["shed_share"] = serde_json::json!(1.0);
+        assert!(DemographicsConfig::from_json_str(&whole.to_string()).is_ok());
     }
 
     /// `lineage.free_breeding_at = 0` would lift every ceiling, so it is a parse error.
