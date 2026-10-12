@@ -149,10 +149,10 @@ pub use components::{
     KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch,
     MaterialDraw, MoraleCause, MusterKit, MusterPlan, PoolToeLine, PopulationCohort, PowerNode,
     QueuedBuildToe, ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep, ShedSubject,
-    SourcePriority, SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile, TownCenter,
-    TransferCause, TransferCounterparty, TransferCrossing, TransferDirection, TransferLedger,
-    TransferLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER, MIN_ORDER_COUNT,
-    NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
+    SourcePriority, SourceShedFacts, SourceYield, StartingUnit, StationReport, TakeSelection, Tile,
+    TownCenter, TransferCause, TransferCounterparty, TransferCrossing, TransferDirection,
+    TransferLedger, TransferLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER,
+    MIN_ORDER_COUNT, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
 };
 pub use config_fingerprint::{
     current_config_fingerprint, drift_between, ConfigDigest, ConfigFingerprint,
@@ -491,7 +491,7 @@ pub use systems::{
     simulate_power, source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers,
     DenialForecast, DenialOutcome, HeartLedger, HeartReading, HuntOutcome, PartyGear,
     PartySightings, PoolToolPlan, PowerSimParams, RaidRoll, SplitBand, SplitRefusal, SplitRefusals,
-    ToolClaimStage, TradeDiffusionEvent,
+    ToolClaimStage, TradeDiffusionEvent, POST_RECALLED,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,

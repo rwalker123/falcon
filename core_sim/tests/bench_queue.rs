@@ -373,6 +373,7 @@ fn a_detached_party_publishes_no_suggestions() {
                 kit,
                 cargo: LocalStore::new(),
                 defection_pull: core_sim::Scalar::zero(),
+                station_reports: Vec::new(),
             },
         ))
         .id();

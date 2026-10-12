@@ -1,5 +1,5 @@
 use super::*;
-use crate::components::{BandName, RaidOrders};
+use crate::components::{BandName, RaidOrders, StationReport};
 use crate::connections::Sighting;
 use crate::fauna::AnimalTake;
 
@@ -8,6 +8,29 @@ use crate::fauna::AnimalTake;
 /// turns for home still carrying it; the trade verb's twin of the raid's lost-herd exit, which
 /// reports [`DenialOutcome::HerdLost`].
 const DESTINATION_GONE_MID_TRADE: &str = "destination_gone";
+
+/// **The reason tokens a stationed party's post ends on** (`ExpeditionMission::Station`), carried in
+/// the `reason=` of the `ExpeditionRecalled` line beside `host=<id>`. A recall by the player is the
+/// fourth, written by `handle_recall_expedition` (`POST_RECALLED`).
+const HOST_GONE_MID_POST: &str = "host_gone";
+const BORDERS_CLOSED_MID_POST: &str = "borders_closed";
+const HOME_COULD_NOT_FEED_POST: &str = "home_short";
+/// The player's own recall of a stationed party — see `handle_recall_expedition`.
+pub const POST_RECALLED: &str = "recalled";
+
+/// **How many turns a stationed party's report takes to reach its home band.**
+///
+/// Zero inside the effective comm range (the scouts' rule: a report lands the turn it leaves);
+/// otherwise a runner's walk over the hex `distance`, at the one walking pace a band and a work
+/// party already share ([`crate::work_party::walk_turns`], `labor_config.json` →
+/// `band_move_tiles_per_turn`). The walk is the WHOLE distance, not the distance past an apron: a
+/// runner is leaving the party, not working a source beside the camp.
+pub fn station_report_delay(distance: u32, comm_range: u32, tiles_per_turn: u32) -> u64 {
+    if distance <= comm_range {
+        return 0;
+    }
+    u64::from(crate::work_party::walk_turns(distance, tiles_per_turn))
+}
 
 /// **Everything one detached party is, as a query tuple.** Named because the tuple grew past the
 /// point of readability when the party's own kit joined it: **a detached party carries its OWN kit**
@@ -84,6 +107,10 @@ pub struct ExpeditionConfigs<'w> {
     /// **How food keeps** (#706) — a party eats its pack fastest-rotting first, and what it gathers
     /// or kills on the road lands in a keeping class. In the bundle for the 16-parameter reason.
     pub demographics: Option<Res<'w, DemographicsConfigHandle>>,
+    /// **Every people's Open Borders** — a stationed party's host of another people must keep its
+    /// borders open for the post to last. `None` reads as open (the seeded value), for the hand-rolled
+    /// test worlds that never installed the resource. In the bundle for the 16-parameter reason.
+    pub borders: Option<Res<'w, crate::resources::FactionBorderPolicies>>,
 }
 
 /// The configs and logs [`advance_band_movement`] reads, bundled (the [`ExpeditionConfigs`] idiom).
@@ -917,12 +944,89 @@ pub fn advance_expeditions(
             }
         }
 
+        // **A stationed party's post ends on any one of four things** (the fourth is the recall verb):
+        // the host band can no longer be resolved, the host's people closed their borders (another
+        // people's host only — see `FactionBorderPolicies::admits_posting`), or the home band could
+        // not feed its people this turn. The party turns for home and folds back by the ordinary
+        // `Returning` path, carrying whatever news is still in transit.
+        //
+        // **The shortfall is the band's own published signal** — `need − eaten` off
+        // `last_food_need` / `last_food_consumption`, the pair `foodShortfall` is cut from — and the
+        // party's rations are inside that need (`simulate_population` charges them), so a band that
+        // cannot cover its party shows a shortfall in the same turn.
+        if let Some(host) = mission.host_band() {
+            if matches!(
+                expedition.phase,
+                ExpeditionPhase::Outbound | ExpeditionPhase::Stationed
+            ) {
+                let host_faction = resident_positions
+                    .get(&host)
+                    .and_then(|(host_entity, _)| bands.get(*host_entity).ok())
+                    .map(|(_, host_cohort, ..)| host_cohort.faction);
+                let home_short = bands
+                    .get(expedition.home_band)
+                    .ok()
+                    .is_some_and(|(_, home, ..)| home.last_food_need > home.last_food_consumption);
+                let post_ends = match host_faction {
+                    None => Some((
+                        HOST_GONE_MID_POST,
+                        format!("Party lost {} — returning home", mission.host_display()),
+                    )),
+                    Some(host_faction)
+                        if !configs.borders.as_deref().is_none_or(|borders| {
+                            borders.admits_posting(host_faction, faction)
+                        }) =>
+                    {
+                        Some((
+                            BORDERS_CLOSED_MID_POST,
+                            format!(
+                                "{} closed its borders — party returning home",
+                                mission.host_display()
+                            ),
+                        ))
+                    }
+                    Some(_) if home_short => Some((
+                        HOME_COULD_NOT_FEED_POST,
+                        format!(
+                            "The home band could not feed its party at {} — returning home",
+                            mission.host_display()
+                        ),
+                    )),
+                    Some(_) => None,
+                };
+                if let Some((reason, label)) = post_ends {
+                    expedition.phase = ExpeditionPhase::Returning;
+                    event_log.push(CommandEventEntry::new(
+                        current_turn,
+                        CommandEventKind::ExpeditionRecalled,
+                        faction,
+                        label,
+                        // **`host=` rides along, exactly as `destination=` does on a shipment's
+                        // lines**: the label names the band through `host_display()`'s `band <id>`
+                        // fallback, and this token is the key a client swaps its own roster label in
+                        // by.
+                        Some(format!(
+                            "status=returning reason={} host={} expedition={}",
+                            reason,
+                            host.0,
+                            entity.to_bits()
+                        )),
+                    ));
+                }
+            }
+        }
+
         // ---- Map documentation (SHARED — all missions, scout AND hunt) ----
         // A ranging party maps the terrain it crosses regardless of verb, so observe + comm-flush is
         // mission-agnostic. Scout-specific bits (upkeep, replenish, awaiting-orders) stay below.
         // a. Observe into the private buffer — no faction-map mutation here. Dedup against an
         // O(1) `HashSet` scratch (built once) instead of an O(n) `Vec::contains` per tile.
         let mut seen: HashSet<UVec2> = expedition.pending_reveal.iter().copied().collect();
+        // **A stationed party does not re-report ground a runner is already carrying home**, nor
+        // charge its wayfinding gear again for looking at it: the tiles in transit count as seen.
+        for report in &expedition.station_reports {
+            seen.extend(report.tiles.iter().copied());
+        }
         // **What this party will be charged for on `WearQuantum::TileRevealed`** — counted here, at
         // the moment of looking, and only for ground that is genuinely new. See the charge below.
         let mut newly_seen: u32 = 0;
@@ -998,7 +1102,62 @@ pub fn advance_expeditions(
         // For a raiding party this naturally fires on its Returning fold-back (it's near the band
         // then), so its findings report home with the haul; sites on the flushed tiles ride
         // `discover_sites` for free, same as the scout.
-        if near_home {
+        if matches!(mission, ExpeditionMission::Station { .. }) {
+            // **A stationed party reports every turn, and the news walks home.** Instead of the
+            // comm-range flush, each turn's observations are bundled into one report that lands
+            // after the runner's walk (`station_report_delay`); every report falling due lands the
+            // way the flush below lands its buffer. The fold-back lands everything still in transit
+            // — the party carries its own news home.
+            match home_pos {
+                Some(home) => {
+                    if !expedition.pending_reveal.is_empty()
+                        || !expedition.pending_contacts.is_empty()
+                    {
+                        let distance = crate::grid_utils::hex_distance_wrapped(
+                            exp_pos,
+                            home,
+                            grid_width,
+                            wrap_horizontal,
+                        );
+                        let delay = station_report_delay(
+                            distance,
+                            comm_range,
+                            labor.band_move_tiles_per_turn,
+                        );
+                        let report = StationReport {
+                            land_turn: current_turn + delay,
+                            tiles: std::mem::take(&mut expedition.pending_reveal),
+                            sightings: std::mem::take(&mut expedition.pending_contacts),
+                        };
+                        expedition.station_reports.push(report);
+                    }
+                }
+                // Nobody to report to: what the party saw is simply lost, as its carried food is.
+                None => {
+                    expedition.pending_reveal.clear();
+                    expedition.pending_contacts.clear();
+                    expedition.station_reports.clear();
+                }
+            }
+            let folding = matches!(expedition.phase, ExpeditionPhase::Returning)
+                && (near_home || home_pos.is_none());
+            let (due, in_transit): (Vec<StationReport>, Vec<StationReport>) =
+                std::mem::take(&mut expedition.station_reports)
+                    .into_iter()
+                    .partition(|report| folding || report.land_turn <= current_turn);
+            expedition.station_reports = in_transit;
+            if let (false, Some(observer)) = (due.is_empty(), home_band_id) {
+                let map = ledger.ensure_faction(faction, elevation.width, elevation.height);
+                for report in due {
+                    for pos in report.tiles {
+                        map.discover(pos.x, pos.y, current_turn);
+                    }
+                    for (subject, sighting) in report.sightings {
+                        contacts.record(observer, subject, sighting);
+                    }
+                }
+            }
+        } else if near_home {
             let map = ledger.ensure_faction(faction, elevation.width, elevation.height);
             for pos in expedition.pending_reveal.drain(..) {
                 map.discover(pos.x, pos.y, current_turn);
@@ -1431,6 +1590,50 @@ pub fn advance_expeditions(
                     }
                 }
             }
+            ExpeditionPhase::Outbound if mission.host_band().is_some() => {
+                // **A stationed party walks its host down and stays.** Retargeted at the host's LIVE
+                // tile every turn (bands are nomadic), and arrival is the comm-range proximity a
+                // shipment uses. The host is resolvable here by construction: the guard above turned
+                // the party for home if it was not.
+                let host = mission
+                    .host_band()
+                    .expect("this arm is gated on a station mission");
+                if let Some(&(_, host_pos)) = resident_positions.get(&host) {
+                    commands.entity(entity).insert(BandTravel::to(host_pos));
+                    let arrived = crate::grid_utils::hex_distance_wrapped(
+                        exp_pos,
+                        host_pos,
+                        grid_width,
+                        wrap_horizontal,
+                    ) <= comm_range;
+                    if arrived {
+                        expedition.phase = ExpeditionPhase::Stationed;
+                        event_log.push(CommandEventEntry::new(
+                            current_turn,
+                            CommandEventKind::ExpeditionArrived,
+                            faction,
+                            format!("Party stationed with {}", mission.host_display()),
+                            Some(format!(
+                                "status=stationed host={} expedition={}",
+                                host.0,
+                                entity.to_bits()
+                            )),
+                        ));
+                    }
+                }
+            }
+            ExpeditionPhase::Stationed => {
+                // **It stays, and follows.** The host's live tile is chased every turn so the party
+                // is wherever the host camps; standing on it, there is nothing to walk.
+                if let Some(&(_, host_pos)) = mission
+                    .host_band()
+                    .and_then(|host| resident_positions.get(&host))
+                {
+                    if exp_pos != host_pos {
+                        commands.entity(entity).insert(BandTravel::to(host_pos));
+                    }
+                }
+            }
             ExpeditionPhase::Outbound => {
                 // Scout arrived when `advance_band_movement` (earlier this turn) removed the travel
                 // order → awaiting orders (the decision point) + a one-shot feed line.
@@ -1767,6 +1970,16 @@ pub fn advance_expeditions(
                 }
             }
         }
+
+        // **Presence keeps the tie alive.** Every turn a party is stationed — the arrival turn
+        // included — the home band's edge toward the host takes one contact turn WITHOUT a sighting
+        // (`ConnectionLedger::credit_contact`): the stationed people are the maintained presence,
+        // so the tie never decays while they stay. What they SEE goes home as reports above.
+        if matches!(expedition.phase, ExpeditionPhase::Stationed) {
+            if let (Some(observer), Some(host)) = (home_band_id, mission.host_band()) {
+                contacts.credit(observer, host);
+            }
+        }
     }
 }
 
@@ -2090,7 +2303,8 @@ pub fn expedition_returned_event(
 /// both exactly as the `Returning` arm does, so making a party standing in camp with a full pack wait
 /// a turn would reintroduce the round trip a cancel exists to remove.
 pub fn party_owes_a_report(expedition: &Expedition) -> bool {
-    !expedition.pending_reveal.is_empty()
+    // A stationed party's news in transit is owed too: only the `Returning` arm lands it.
+    !expedition.pending_reveal.is_empty() || !expedition.station_reports.is_empty()
 }
 
 /// A haul as feed-line prose — *"12 provisions"*, *"4.00 materials"*, *"12 provisions and 4.00
@@ -3086,5 +3300,37 @@ mod denial_outcome_tests {
             !DenialOutcome::Horizon.succeeded(),
             "a raid still grinding when the forecast ran out has not driven the herd down"
         );
+    }
+}
+
+#[cfg(test)]
+mod station_report_tests {
+    use super::station_report_delay;
+
+    /// Inside the comm range a report lands the turn it leaves; past it, it takes the band's walk —
+    /// the whole distance, at the shared pace.
+    #[test]
+    fn a_report_is_instant_inside_the_comm_range_and_a_walk_beyond_it() {
+        const COMM: u32 = 2;
+        assert_eq!(station_report_delay(0, COMM, 1), 0);
+        assert_eq!(
+            station_report_delay(COMM, COMM, 1),
+            0,
+            "the range is inclusive"
+        );
+        assert_eq!(station_report_delay(COMM + 1, COMM, 1), u64::from(COMM + 1));
+        assert_eq!(
+            station_report_delay(10, COMM, 3),
+            4,
+            "ceil(10 / 3): the walk rounds up to whole turns"
+        );
+    }
+
+    /// Widening the range (the comm-tech hook) widens the instant zone until a report is instant
+    /// anywhere.
+    #[test]
+    fn a_wide_enough_range_makes_every_report_instant() {
+        assert_eq!(station_report_delay(40, 40, 1), 0);
+        assert_eq!(station_report_delay(40, 39, 1), 40);
     }
 }

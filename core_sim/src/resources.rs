@@ -1344,6 +1344,16 @@ impl FactionBorderPolicies {
         self.open.insert(faction, open);
     }
 
+    /// **May a party of `from` be stationed at a band of `host`?** — a stationed party's one faction
+    /// comparison, asked at its launch and again every turn of the post (`ExpeditionMission::Station`).
+    ///
+    /// A people's own bands never ask it (`factions.md`: moving between your own camps is not
+    /// crossing a border), so a same-people host is welcome whatever its borders say. Another
+    /// people's host is welcome only while that people's borders are open.
+    pub fn admits_posting(&self, host: FactionId, from: FactionId) -> bool {
+        host == from || self.is_open(host)
+    }
+
     /// Whether this faction was **seeded a row of its own**. [`Self::is_open`]'s fallback *is* the
     /// seeded value, so a forgotten faction reads exactly like a seeded one there; the seeding paths
     /// are asserted through this instead (`FactionSecurityPolicies::contains`'s reason).

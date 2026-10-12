@@ -203,6 +203,9 @@ feeding needs no mechanism of its own. The whole take walks home, and a party ca
 separately from its band: if the larder runs dry, the band starves by the ordinary demographic rules,
 and its party with it.
 
+A **stationed party** (`expeditions.md` → "A stationed party") is the same rule for a detached party:
+it carries no larder, and its workers are charged to the home band's meal from launch until fold-back.
+
 > #### RETIRED: an eat-first rule
 >
 > The first caravan had the party eat its upkeep out of its own take before anything was loaded,

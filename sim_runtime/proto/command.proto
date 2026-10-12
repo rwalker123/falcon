@@ -521,6 +521,28 @@ message SendTradeExpeditionCommand {
   optional string kit_id = 6;
 }
 
+// Post part of a band at another band it holds a live tie with — a STATIONED PARTY
+// (docs/plan_contact_and_logistics.md "Settled by #774"). The party walks to the host, follows it
+// wherever it camps, keeps the tie alive for as long as it stays, and sends what it sees home as
+// reports that arrive a runner's walk behind. It carries no larder: the home band feeds it.
+//
+// GATED ON A CONNECTION: the sending band must hold a live tie to the host (strength > 0; a parked
+// edge refuses). A host of ANOTHER people additionally needs that people's Open Borders; a host of the
+// sender's own people never asks it. A post ends — the party walks home and folds back — on a recall,
+// the host's people closing their borders, the home band being unable to feed the party, or the host
+// no longer being a band.
+//
+// IT FAILS CLOSED, before anything is drawn: a refused launch leaves the band exactly as it stood.
+message StationExpeditionCommand {
+  uint32 faction_id = 1;
+  optional uint64 band_id = 2;
+  uint32 party_workers = 3;
+  // The host's BandId — the durable id, never an entity.
+  uint64 host_band_id = 4;
+  // THE KIT the party is sent out with — same rule as SendDenialRaidCommand.kit_id.
+  optional string kit_id = 5;
+}
+
 // Ask the server to republish the world as a FULL snapshot.
 //
 // Client-initiated recovery for delta streaming: a client that cannot apply a delta (its
@@ -1679,5 +1701,7 @@ message CommandEnvelope {
     // 81 is held by `bench_raise`, so auto-craft's two verbs take 82-83 (append-only; never renumber).
     BenchAutoCommand bench_auto = 82;
     BenchAutoSkipCommand bench_auto_skip = 83;
+    // 83 is held by `bench_auto_skip`, so the stationed party takes 84 (append-only; never renumber).
+    StationExpeditionCommand station_expedition = 84;
   }
 }

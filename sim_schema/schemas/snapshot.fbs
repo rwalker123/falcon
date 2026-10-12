@@ -910,6 +910,12 @@ table PopulationCohortState {
   // *** THERE IS NO FACTION FIELD, AND THAT IS THE ARC'S DISCIPLINE. *** Faction is a property of
   // the endpoint (`.claude/rules/core_sim/connections.md`), never a branch: a shipment to your own
   // splinter and a shipment to strangers are the same row.
+  //
+  // *** A STATIONED PARTY (expeditionMission == "station", issue #774) PUBLISHES ITS HOST HERE. ***
+  // The one band a party is bound for, whichever verb sent it: a shipment's destination, a post's
+  // host. expeditionMission says which, and expeditionPhase is "stationed" once the party has
+  // reached the host and stays. There is deliberately NO report-lag field: how old the news from the
+  // host is, is ConnectionState.lastSeenTurn against the current turn.
   expeditionDestinationBand:ulong = 0;
   expeditionDestinationName:string;
   // What the party is carrying, in the three accounts a band store holds. `expeditionCargoFood` is

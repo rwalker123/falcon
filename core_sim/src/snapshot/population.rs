@@ -636,9 +636,10 @@ fn food_terms_over(
     is_expedition: bool,
     counts: &dyn Fn(&str) -> bool,
 ) -> BandFoodTerms {
+    // **The forward need counts the party the band feeds**, the same mouths its meal does.
     let demand = food_demand(
         cohort.children,
-        cohort.working,
+        cohort.working + cohort.fed_party_workers,
         cohort.elders,
         &demographics.consumption,
     );
@@ -1716,7 +1717,15 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     let idle_workers = workforce.idle();
     // **The band's runway, resolved ONCE** — the published `turnsOfFood` and the figure a need row's
     // `turnsUntilHunt` counts down from.
-    let turns_of_food = band_turns_of_food(cohort, allocation, demographics, expedition.is_some());
+    // **A party its home band feeds has no larder to run out of** — its rations are part of that
+    // band's meal (`ExpeditionMission::fed_by_home_band`), so its pack reading empty is not a
+    // famine. It reports the not-food-limited sentinel; the home band's own runway (and the post
+    // ending when the band is short) is where that hunger shows.
+    let turns_of_food = if expedition.is_some_and(|exp| exp.mission.fed_by_home_band()) {
+        NOT_FOOD_LIMITED_TURNS
+    } else {
+        band_turns_of_food(cohort, allocation, demographics, expedition.is_some())
+    };
     // **THE MUSTER THE NEXT TURN WILL APPLY**, from the one function the labor pass applies
     // (`LaborAllocation::muster_donors`), so a donor row's `lentToHunt` and the band's
     // `idleMustered` are what the turn takes. A band has at most one need row.
@@ -2076,8 +2085,9 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         Some(ExpeditionMission::Trade { .. }) => {
             crate::carry::carry_capacity(working_age, expedition_levers.carry).to_f32()
         }
-        // A scout hauls nothing it was sent for, and a resident band is not a party.
-        Some(ExpeditionMission::Scout) | None => 0.0,
+        // A scout hauls nothing it was sent for, a stationed party carries no pack at all (its home
+        // band feeds it), and a resident band is not a party.
+        Some(ExpeditionMission::Scout | ExpeditionMission::Station { .. }) | None => 0.0,
     };
     // **The shipment a trade party is carrying** — read off `Expedition::cargo`, which is a store of
     // its own and deliberately *not* the party's pack (`cohort.stores`, published as `stores` and
@@ -2096,16 +2106,18 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         expedition_cargo_fodder,
         expedition_cargo_materials,
     ) = match expedition {
-        Some(exp) if exp.mission.destination_band().is_some() => (
+        Some(exp) if exp.mission.bound_for_band().is_some() => (
+            // **A shipment's destination or a post's host** — the one band this party is bound for,
+            // whichever verb sent it (`expeditionMission` says which).
             exp.mission
-                .destination_band()
+                .bound_for_band()
                 .map(|band| band.0)
                 .unwrap_or_default(),
             // **The raw name, not the display fallback.** `destination_display` prints the band's
             // id when there is no name, which is right for the sim's own feed prose and wrong for a
             // wire field: the client already has a label for a band, and an id-shaped string would
             // fight it. Empty means "no name" — see `ExpeditionMission::Trade::destination_name`.
-            exp.mission.destination_name().to_string(),
+            exp.mission.bound_for_name().to_string(),
             exp.cargo.get(FOOD).to_f32(),
             // **The hay account, published apart from the food one** — two keys on the shipment's
             // store that never convert, and a client that summed them would be reinventing the
@@ -3127,6 +3139,7 @@ mod tests {
             morale: scalar_one(),
             last_food_consumption: 0.0,
             last_food_need: 0.0,
+            fed_party_workers: Default::default(),
             last_food_spoiled: 0.0,
             last_turn_food_transfers: Default::default(),
             last_turn_fodder_transfers: Default::default(),
@@ -3304,6 +3317,7 @@ mod tests {
                 .default_kit(crate::equipment_config::KitJob::Hunt),
             cargo: LocalStore::new(),
             defection_pull: Scalar::zero(),
+            station_reports: Vec::new(),
         };
         let runway = captured_runway(&cohort, None, Some(&expedition));
         let historical = TEST_LARDER / demand_of(&cohort);

@@ -826,6 +826,55 @@ A pending offer is "an item addressed to a people, answered by a command". That 
 future trade proposal would reuse. A general inbox is not designed here, and an attack does not fit
 the shape, because its target does not answer it.
 
+### Settled by #774 — a stationed party: contact now, news later
+
+A band can station some of its people at a band it holds a live tie with. It is the first use of
+the keystone's maintained presence that is not a route: the stationed people *are* the presence, so
+the tie never decays while they stay. What they *see* is a different question, and it is answered
+by how news travels at the time, not by the fact of their being there.
+
+#### Two things, on two clocks
+
+- **The tie is credited live.** Every turn the party is posted, its home band's directed edge
+  toward the host takes contact (clock 2). Strength does not drain, and the edge is never reaped.
+- **The news travels.** What the party sees — the host's position and name, and the ground in its
+  sight — goes home as a **report**, one dispatched every turn, landing after the time a runner
+  takes to walk it: the hex distance from the party to the home band's live tile, at the walking
+  pace a band and a work party already share (`labor_config.json` → `band_move_tiles_per_turn`,
+  `work_party::walk_turns`). Inside the effective comm range a report lands the turn it leaves,
+  which is the scouts' rule today. So the home band receives a steady stream that runs a walk
+  behind, not one lump on return.
+- **Better communication shortens the walk.** The comm range is `comm_range_tiles ×
+  comm_range_tech_factor`; raising the factor widens the instant zone until a report is instant
+  anywhere. Nothing raises the factor yet; that is the hook, not a second mechanism.
+
+A report lands exactly as a returning scout's does: tiles promote to **Discovered**, never Active,
+and the sighting enters the ledger with the turn it was **observed** beside the turn it **landed**
+(§connections → "A report carries TWO turns"). So the host is drawn where it stood a walk ago, the
+same as any remembered band. The issue's first wording, *"that band stays Seen"*, is superseded:
+under the keystone it stays **known**, a runner's walk out of date.
+
+#### The home band feeds them, abstracted
+
+The party carries no larder. Its people's rations are part of the home band's ordinary consumption
+every turn, from launch until they rejoin — supplies are assumed to reach them, and nothing walks
+them there. This is the work-party rule (`work-party.md` → "The home band feeds its party") applied
+to a detached party. If the home band cannot cover their rations in a turn, the post ends.
+
+#### Who may host, and what ends a post
+
+- **Any band the sender holds a live tie with**, of any people. A splinter of your own is the
+  plainest case: it is the band most likely to fade from you.
+- **Another people's band requires that people's Open Borders** (`FactionBorderPolicies`). Your own
+  bands never ask it, the same rule as moving between your own camps (`factions.md`).
+- **A post ends**, and the party walks home and folds back, on any of: a recall; the host's people
+  closing their borders; the home band unable to feed them; the host band no longer resolvable.
+- **One-way.** The host takes no tie toward the sender from having them in its camp — a party is not
+  a contact subject (§connections → "Subjects are resident bands only").
+
+Not in this slice: espionage, improving relations, any other use of a stationed party, and the AI
+driver issuing the order.
+
 ## See Also
 
 - `docs/plan_band_fission.md` — the arc that makes this necessary: a splinter that walks away is

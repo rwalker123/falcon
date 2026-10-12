@@ -364,6 +364,7 @@ fn band_handle(payload: &CommandPayload) -> BandHandle {
         | CommandPayload::SendExpedition { band_id, .. }
         | CommandPayload::SendDenialRaid { band_id, .. }
         | CommandPayload::SendTradeExpedition { band_id, .. }
+        | CommandPayload::StationExpedition { band_id, .. }
         | CommandPayload::SplitBand { band_id, .. } => *band_id,
         // ⛔ **THE ROUTE BRANCH'S TWO TILE VERBS NAME A BAND, and no other tile verb does** (arc
         // #532). A patch's keeper is whoever is already foraging it; a road has no work row at all,
@@ -467,6 +468,7 @@ fn kit_token(payload: &CommandPayload) -> KitToken {
         CommandPayload::AssignLabor { kit_id, .. }
         | CommandPayload::SendDenialRaid { kit_id, .. }
         | CommandPayload::SendTradeExpedition { kit_id, .. }
+        | CommandPayload::StationExpedition { kit_id, .. }
         | CommandPayload::SendExpedition { kit_id, .. } => kit_id.clone(),
         _ => return KitToken::NotKitBearing,
     };

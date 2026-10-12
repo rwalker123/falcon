@@ -1582,6 +1582,13 @@ pub struct PopulationCohort {
     /// hand-to-mouth hits every turn even when its income covers its need on average. Set each turn
     /// by `simulate_population`; `0.0` before a band's first turn. On the wire as `foodNeed`.
     pub last_food_need: f32,
+    /// **Working-age people this band is feeding out in the field** — the stationed parties it sent
+    /// out ([`ExpeditionMission::fed_by_home_band`]), as `simulate_population` counted them into this
+    /// turn's meal. Their rations are inside [`Self::last_food_need`]; this is what the FORWARD
+    /// readings (the runway, the hunting need clock) add to the band's own brackets so they count the
+    /// same mouths the meal does. Rewritten every turn (zero when none); one turn stale across a
+    /// launch or a fold-back, for the reason `last_food_need` is.
+    pub fed_party_workers: Scalar,
     /// **The food that ROTTED this turn** (#706) — the larder rot `systems::rot_band_larders` struck
     /// right after the meal (which also resets it each turn), plus the transit rot of any caravan
     /// pack that landed home after a walk longer than its class keeps (`systems::labor`). One term,
@@ -2206,6 +2213,26 @@ pub enum ExpeditionMission {
         /// scheme to fill it is a separate piece of design, not a field default.
         destination_name: String,
     },
+    /// **Post part of a band at another band it holds a live tie with** — a stationed party
+    /// (`docs/plan_contact_and_logistics.md` "Settled by #774", `.claude/rules/core_sim/expeditions.md`
+    /// → "A stationed party").
+    ///
+    /// The party walks to the host, **stays and follows it** ([`ExpeditionPhase::Stationed`]), keeps
+    /// the home band's tie toward the host alive for as long as it stays, and sends what it sees home
+    /// as reports that land a runner's walk behind ([`Expedition::station_reports`]). It carries no
+    /// larder: the home band's ordinary consumption feeds it.
+    ///
+    /// Like [`Self::Trade`], **it names its host by [`BandId`]** and follows that id (fission keeps the
+    /// id with one half), and **the only faction comparison on its path** is
+    /// [`crate::resources::FactionBorderPolicies::admits_posting`].
+    Station {
+        /// The host band's durable id — the key, never rendered.
+        host_band: BandId,
+        /// The host's display name, resolved ONCE at launch off its [`BandName`] (empty when the band
+        /// carries none). Carried for [`ExpeditionMission::Trade::destination_name`]'s reason: the
+        /// party outlives the host's presence in the viewer's world.
+        host_name: String,
+    },
 }
 
 /// **The orders a party works a herd under** — [`ExpeditionMission::Deny`]'s, resolved once so the
@@ -2227,6 +2254,7 @@ impl ExpeditionMission {
             ExpeditionMission::Scout => "scout",
             ExpeditionMission::Deny { .. } => "deny",
             ExpeditionMission::Trade { .. } => "trade",
+            ExpeditionMission::Station { .. } => "station",
         }
     }
 
@@ -2237,6 +2265,7 @@ impl ExpeditionMission {
             ExpeditionMission::Scout => "scouting",
             ExpeditionMission::Deny { .. } => "raiding",
             ExpeditionMission::Trade { .. } => "trading",
+            ExpeditionMission::Station { .. } => "stationed",
         }
     }
 
@@ -2262,6 +2291,10 @@ impl ExpeditionMission {
                 destination_band: BandId(destination_band),
                 destination_faction: FactionId(destination_faction),
                 destination_name: destination_name.to_string(),
+            },
+            "station" => ExpeditionMission::Station {
+                host_band: BandId(destination_band),
+                host_name: destination_name.to_string(),
             },
             _ => ExpeditionMission::Scout,
         }
@@ -2313,6 +2346,50 @@ impl ExpeditionMission {
         }
     }
 
+    /// **The band a stationed party is posted at**, for the one mission that names one — `None`
+    /// for every other verb. Deliberately NOT folded into [`Self::destination_band`]: that one is a
+    /// shipment's, and the trade arm's guards and its consignee read it.
+    pub fn host_band(&self) -> Option<BandId> {
+        match self {
+            ExpeditionMission::Station { host_band, .. } => Some(*host_band),
+            _ => None,
+        }
+    }
+
+    /// **The band this party is bound for, whichever verb sent it** — a shipment's destination or a
+    /// post's host. What the wire's `expeditionDestinationBand` publishes.
+    pub fn bound_for_band(&self) -> Option<BandId> {
+        self.destination_band().or_else(|| self.host_band())
+    }
+
+    /// The display name of [`Self::bound_for_band`] as it is PUBLISHED: the destination's name for a
+    /// shipment, the host's for a post, `""` for everything else (and for a band with no name — the
+    /// same *"empty is no name"* contract as [`Self::destination_name`]).
+    pub fn bound_for_name(&self) -> &str {
+        match self {
+            ExpeditionMission::Station { host_name, .. } => host_name,
+            _ => self.destination_name(),
+        }
+    }
+
+    /// The host's name for the sim's OWN feed prose: the name when there is one, `band <id>`
+    /// otherwise. Empty for every other mission. Never published — see [`Self::destination_display`].
+    pub fn host_display(&self) -> String {
+        match self {
+            ExpeditionMission::Station {
+                host_band,
+                host_name,
+            } => {
+                if host_name.is_empty() {
+                    format!("band {}", host_band.0)
+                } else {
+                    host_name.clone()
+                }
+            }
+            _ => String::new(),
+        }
+    }
+
     /// **The string the SIM'S OWN EVENT FEED prints for a shipment's destination** — the name when
     /// there is one, the band's id as a last resort, exactly as [`Self::target_display`] falls back
     /// for a quarry. Empty for every non-`Trade` mission.
@@ -2344,7 +2421,9 @@ impl ExpeditionMission {
     pub fn target_herd(&self) -> &str {
         match self {
             ExpeditionMission::Deny { fauna_id, .. } => fauna_id,
-            ExpeditionMission::Scout | ExpeditionMission::Trade { .. } => "",
+            ExpeditionMission::Scout
+            | ExpeditionMission::Trade { .. }
+            | ExpeditionMission::Station { .. } => "",
         }
     }
 
@@ -2358,7 +2437,9 @@ impl ExpeditionMission {
     pub fn target_species(&self) -> &str {
         match self {
             ExpeditionMission::Deny { target_species, .. } => target_species,
-            ExpeditionMission::Scout | ExpeditionMission::Trade { .. } => "",
+            ExpeditionMission::Scout
+            | ExpeditionMission::Trade { .. }
+            | ExpeditionMission::Station { .. } => "",
         }
     }
 
@@ -2396,8 +2477,17 @@ impl ExpeditionMission {
                 floor: STRIP_IT_BARE,
                 stop: crate::fauna::EngagementStop::Never,
             }),
-            ExpeditionMission::Scout | ExpeditionMission::Trade { .. } => None,
+            ExpeditionMission::Scout
+            | ExpeditionMission::Trade { .. }
+            | ExpeditionMission::Station { .. } => None,
         }
+    }
+
+    /// **Does the home band feed this party out of its own larder?** A stationed party carries no
+    /// larder of its own — its rations are part of the home band's ordinary consumption from launch
+    /// until fold-back (`.claude/rules/core_sim/work-party.md` → "The home band feeds its party").
+    pub fn fed_by_home_band(&self) -> bool {
+        matches!(self, ExpeditionMission::Station { .. })
     }
 }
 
@@ -2411,6 +2501,10 @@ pub enum ExpeditionPhase {
     AwaitingOrders,
     Returning,
     Hunting,
+    /// **A stationed party standing at its host** ([`ExpeditionMission::Station`]) — it stays, follows
+    /// the host's live tile every turn and credits the home band's tie toward it. Genuinely new state:
+    /// no other phase both stays and moves.
+    Stationed,
 }
 
 impl ExpeditionPhase {
@@ -2421,6 +2515,7 @@ impl ExpeditionPhase {
             ExpeditionPhase::AwaitingOrders => "awaiting",
             ExpeditionPhase::Returning => "returning",
             ExpeditionPhase::Hunting => "hunting",
+            ExpeditionPhase::Stationed => "stationed",
         }
     }
 
@@ -2430,9 +2525,28 @@ impl ExpeditionPhase {
             "awaiting" => ExpeditionPhase::AwaitingOrders,
             "returning" => ExpeditionPhase::Returning,
             "hunting" => ExpeditionPhase::Hunting,
+            "stationed" => ExpeditionPhase::Stationed,
             _ => ExpeditionPhase::Outbound,
         }
     }
+}
+
+/// **One report a stationed party has sent home and not yet landed** — everything its observe pass
+/// found on one turn, bundled and carried by a runner who is walking it home
+/// (`.claude/rules/core_sim/connections.md` → "A stationed party's reports").
+///
+/// The tiles and sightings carry their OBSERVED turn (a [`Sighting`](crate::connections::Sighting) stamps it), so landing the report
+/// late never rewrites when something was seen: the home ledger's clock 1 reads the observation turn
+/// and clocks 2 and 3 read the turn the report landed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StationReport {
+    /// The first turn this report lands on: dispatch turn + the runner's walk (`0` inside the
+    /// effective comm range, where it lands the turn it leaves).
+    pub land_turn: u64,
+    /// The tiles the party's sight found, landed as `Discovered` — never `Active`.
+    pub tiles: Vec<UVec2>,
+    /// The peoples it found, subject band → where and when it saw them.
+    pub sightings: std::collections::BTreeMap<BandId, crate::connections::Sighting>,
 }
 
 /// Marks a detached traveling party (a scout, a denial raid or a shipment). Reuses `PopulationCohort` +
@@ -2529,6 +2643,12 @@ pub struct Expedition {
     /// is accrued across turns: a rollback that zeroed it would silently delay a defection the
     /// discarded future had already made inevitable.
     pub defection_pull: Scalar,
+    /// **A stationed party's reports in transit** ([`ExpeditionMission::Station`] only; empty for every
+    /// other verb). Dispatched one per turn the party has anything to report, each with the turn it
+    /// lands; landed in `advance_expeditions` the turn it falls due, and every one still in transit
+    /// lands when the party folds back — it carries its own news home. Rides the checkpoint whole
+    /// with the rest of the `Expedition`.
+    pub station_reports: Vec<StationReport>,
 }
 
 /// Permanent settlement seeded by a founding action.

@@ -340,6 +340,14 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
                 [kit <id>]",
     },
     CommandVerbHelp {
+        verb: "station_expedition",
+        aliases: &[],
+        summary: "Post part of a band at another band it holds a live tie with — the party follows \
+                  the host, keeps the tie alive and sends news home a runner's walk behind. The home \
+                  band feeds it; a host of another people needs that people's Open Borders.",
+        usage: "station_expedition <faction_id> <band_id> <party_workers> <host_band_id> [kit <id>]",
+    },
+    CommandVerbHelp {
         verb: "export_map",
         aliases: &["export"],
         summary: "Write the current world map (terrain + seed) to a JSON file for inspection and tests.",
@@ -1861,6 +1869,45 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                     "send_trade_expedition destination_band_id",
                 )?,
                 cargo,
+                kit_id,
+            })
+        }
+        // **A stationed party's grammar is four positional tokens and an optional named `kit <id>`**,
+        // closed to everything else on `send_denial_raid`'s rule: there is no cargo and no floor, so
+        // any other trailing token is a misunderstanding of the verb and is refused.
+        "station_expedition" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
+            let workers_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("party_workers"))?;
+            let host_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("host_band_id"))?;
+            let mut kit_id: Option<String> = None;
+            while let Some(token) = parts.next() {
+                match token.to_ascii_lowercase().as_str() {
+                    "kit" => {
+                        let id = parts.next().ok_or(CommandParseError::MissingArgument(
+                            "station_expedition kit id",
+                        ))?;
+                        if kit_id.is_some() {
+                            return Err(CommandParseError::UnexpectedArgument(token.to_string()));
+                        }
+                        kit_id = Some(id.to_string());
+                    }
+                    _ => return Err(CommandParseError::UnexpectedArgument(token.to_string())),
+                }
+            }
+            Ok(CommandPayload::StationExpedition {
+                faction_id: parse_u32(faction_str, "station_expedition faction")?,
+                band_id: Some(parse_u64(band_str, "station_expedition band_id")?),
+                party_workers: parse_u32(workers_str, "station_expedition party_workers")?,
+                host_band_id: parse_u64(host_str, "station_expedition host_band_id")?,
                 kit_id,
             })
         }
@@ -3784,6 +3831,30 @@ mod tests {
             parse_command_line("work_priority 1 7 4 9 wood extra low"),
             Err(CommandParseError::UnexpectedToken(_))
         ));
+    }
+
+    #[test]
+    fn parse_station_expedition_reads_four_tokens_and_an_optional_kit() {
+        assert_eq!(
+            parse_command_line("station_expedition 0 7 4 12").unwrap(),
+            CommandPayload::StationExpedition {
+                faction_id: 0,
+                band_id: Some(7),
+                party_workers: 4,
+                host_band_id: 12,
+                kit_id: None,
+            }
+        );
+        let CommandPayload::StationExpedition { kit_id, .. } =
+            parse_command_line("station_expedition 0 7 4 12 kit none").unwrap()
+        else {
+            panic!("a station order parses to a station payload");
+        };
+        assert_eq!(kit_id.as_deref(), Some("none"));
+        assert!(parse_command_line("station_expedition 0 7 4").is_err());
+        assert!(parse_command_line("station_expedition 0 7 4 12 food 3").is_err());
+        assert!(parse_command_line("station_expedition 0 7 4 12 kit a kit b").is_err());
+        assert!(parse_command_line("station_expedition 0 7 4 12 kit").is_err());
     }
 
     /// **`bench_auto` takes a band and `on|off`; `bench_auto_skip` takes a band alone.**

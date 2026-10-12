@@ -585,6 +585,22 @@ pub enum CommandPayload {
         /// [`Self::SendDenialRaid::kit_id`].
         kit_id: Option<String>,
     },
+    /// **Post part of a band at another band it holds a live tie with** — a stationed party
+    /// (`docs/plan_contact_and_logistics.md` "Settled by #774"). Proto field 84.
+    ///
+    /// Gated on a connection to the host; a host of another people also needs that people's Open
+    /// Borders, a host of the sender's own never asks it. The home band feeds the party, so the
+    /// launch draws no provisions.
+    StationExpedition {
+        faction_id: u32,
+        band_id: Option<u64>,
+        party_workers: u32,
+        /// The host's `BandId` — a durable id, never an entity.
+        host_band_id: u64,
+        /// **The kit the party is sent out with**, resolved once at launch — same rule as
+        /// [`Self::SendDenialRaid::kit_id`].
+        kit_id: Option<String>,
+    },
     ExportMap {
         path: Option<String>,
     },
@@ -2181,6 +2197,19 @@ impl CommandEnvelope {
                 fauna_id: fauna_id.clone(),
                 kit_id: kit_id.clone(),
             }),
+            CommandPayload::StationExpedition {
+                faction_id,
+                band_id,
+                party_workers,
+                host_band_id,
+                kit_id,
+            } => pb::command_envelope::Command::StationExpedition(pb::StationExpeditionCommand {
+                faction_id: *faction_id,
+                band_id: *band_id,
+                party_workers: *party_workers,
+                host_band_id: *host_band_id,
+                kit_id: kit_id.clone(),
+            }),
             CommandPayload::SendTradeExpedition {
                 faction_id,
                 band_id,
@@ -2764,6 +2793,15 @@ impl CommandEnvelope {
                 fauna_id: cmd.fauna_id,
                 kit_id: cmd.kit_id,
             },
+            pb::command_envelope::Command::StationExpedition(cmd) => {
+                CommandPayload::StationExpedition {
+                    faction_id: cmd.faction_id,
+                    band_id: cmd.band_id,
+                    party_workers: cmd.party_workers,
+                    host_band_id: cmd.host_band_id,
+                    kit_id: cmd.kit_id,
+                }
+            }
             pb::command_envelope::Command::SendTradeExpedition(cmd) => {
                 CommandPayload::SendTradeExpedition {
                     faction_id: cmd.faction_id,
