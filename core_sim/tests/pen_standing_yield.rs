@@ -1127,6 +1127,7 @@ fn seed_the_hunt_row(app: &mut App, keeper: Entity, herd_id: &str) {
         intrinsic: creatures.person(),
         tuning: combat.tuning(),
         hunt_injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
+        drives_known: false,
     }
     .party_against(core_sim::Quarry::Mass(herd.body_mass));
 

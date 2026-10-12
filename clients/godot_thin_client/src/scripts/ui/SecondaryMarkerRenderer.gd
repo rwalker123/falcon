@@ -381,6 +381,40 @@ func draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
 				_view.draw_line(tile_center, next_center, _view.HERD_MIGRATION_ARROW_COLOR, _view.HERD_MIGRATION_ARROW_WIDTH)
 				_view._draw_arrowhead(tile_center, next_center, _view.HERD_MIGRATION_ARROW_COLOR)
 
+	# Herd Lore: the herd's next seasonal ground. Marker always (herd row is already fog-filtered);
+	# the ground tile is deliberately NOT visibility-checked. Dotted tether on the same
+	# followed/hovered/selected rule as the arrow.
+	var ground_x := int(herd.get("next_ground_x", -1))
+	var ground_y := int(herd.get("next_ground_y", -1))
+	if ground_x >= 0 and ground_y >= 0:
+		var ground_center: Vector2 = _view._hex_center_wrapped(ground_x, ground_y, radius, origin)
+		var ground_too_far: bool = abs(tile_center.x - ground_center.x) > _view.last_map_size.x * 0.4
+		if (followed or tile == _view._hovered_tile or tile == _view.selected_tile) and not ground_too_far:
+			_draw_ground_tether(tile_center, ground_center, radius)
+		_draw_ground_mark(ground_center, radius)
+
+func _draw_ground_mark(center: Vector2, radius: float) -> void:
+	var r: float = radius * _view.HERD_GROUND_MARK_RADIUS_FACTOR
+	var pts := PackedVector2Array([
+		center + Vector2(0, -r), center + Vector2(r, 0), center + Vector2(0, r),
+		center + Vector2(-r, 0), center + Vector2(0, -r)])
+	_view.draw_polyline(pts, _view.HERD_GROUND_MARK_COLOR, _view.HERD_GROUND_MARK_WIDTH)
+	_view.draw_circle(center, radius * _view.HERD_GROUND_MARK_DOT_FACTOR, _view.HERD_GROUND_MARK_COLOR)
+
+func _draw_ground_tether(from: Vector2, to: Vector2, radius: float) -> void:
+	var span := to - from
+	var length := span.length()
+	var period: float = radius * _view.HERD_GROUND_LINE_DOT_PERIOD_FACTOR
+	if length <= 0.0 or period <= 0.0:
+		return
+	var dir := span / length
+	var dot_len: float = period * _view.HERD_GROUND_LINE_DOT_SHARE
+	var d := 0.0
+	while d < length:
+		var end: float = min(d + dot_len, length)
+		_view.draw_line(from + dir * d, from + dir * end, _view.HERD_GROUND_LINE_COLOR, _view.HERD_GROUND_LINE_WIDTH)
+		d += period
+
 func draw_food_site(site: Dictionary, radius: float, origin: Vector2) -> void:
 	var x: int = int(site.get("x", -1))
 	var y: int = int(site.get("y", -1))

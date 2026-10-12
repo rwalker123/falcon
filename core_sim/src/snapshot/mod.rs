@@ -1008,6 +1008,7 @@ mod tests {
             graze: &graze,
             visibility,
             viewer: VIEWER,
+            herd_lore_known: false,
             fog_enabled,
             parties: &HashMap::new(),
             penned_parties: &HashMap::new(),

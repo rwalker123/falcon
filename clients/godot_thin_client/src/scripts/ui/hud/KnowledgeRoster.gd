@@ -116,10 +116,24 @@ static func build_domains(model: Dictionary) -> Array[Dictionary]:
 		# cannot happen today; it is stated because the guard is the rule.
 		if nodes.is_empty():
 			continue
+		# **A BRANCH WITH NO STEP IN IT HAS NO CHAIN TO DRAW** — the roaming skills (`roam`) are
+		# standalone knowledges no rung waits on, so a rail between them would claim an order they
+		# do not have. Same rule as the craft row: no steps, a FAN.
+		var has_step := false
+		for row_variant in rows:
+			if bool((row_variant as Dictionary).get(HudKnowledgeVocab.ROSTER_IS_STEP, false)):
+				has_step = true
+				break
+		# A knowledge in a step-less branch is STANDALONE: it works on its own, so the panel must not
+		# tag it "gates nothing" (that tag is for a capability hanging off a ladder, like foddering).
+		if not has_step:
+			for node in nodes:
+				node[HudKnowledgeVocab.NODE_STANDALONE] = true
 		domains.append({
 			HudKnowledgeVocab.DOMAIN_KEY: branch,
 			HudKnowledgeVocab.DOMAIN_LABEL: HudKnowledgeVocab.domain_label(branch),
-			HudKnowledgeVocab.DOMAIN_SHAPE: HudKnowledgeVocab.DOMAIN_SHAPE_LADDER,
+			HudKnowledgeVocab.DOMAIN_SHAPE: HudKnowledgeVocab.DOMAIN_SHAPE_LADDER if has_step \
+				else HudKnowledgeVocab.DOMAIN_SHAPE_FAN,
 			# **THE AREA IS READ OFF THE ROW, NEVER OFF A TABLE HERE.** Every row of one branch carries
 			# the same area — it is a property of the BRANCH, published per row because the roster has
 			# no branch table of its own — so the first row answers for all of them. A row whose

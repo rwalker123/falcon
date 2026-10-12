@@ -52,6 +52,7 @@ const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 const DOMAIN_KEY_LAND := &"plant"
 const DOMAIN_KEY_HERDS := &"animal"
 const DOMAIN_KEY_ROUTES := &"route"
+const DOMAIN_KEY_ROAM := &"roam"
 const DOMAIN_KEY_CRAFT := &"craft"
 
 const DOMAIN_SHAPE_LADDER := "ladder"
@@ -71,6 +72,7 @@ const DOMAIN_BRANCH_LABELS := {
 	DOMAIN_KEY_LAND: "Land",
 	DOMAIN_KEY_HERDS: "Herds",
 	DOMAIN_KEY_ROUTES: "Roads",
+	DOMAIN_KEY_ROAM: "Roaming",
 }
 
 ## The CRAFT row's label. Its nodes are not declared either: they come off the wire's own
@@ -173,6 +175,9 @@ const NODE_UNSPENT := "unspent"
 ## filter's count and the detail pane's line can tell *"nothing is using it"* apart from *"there is
 ## nothing for anything to use"*.
 const NODE_UNSPENT_TESTABLE := "unspent_testable"
+## True on every node of a branch with no step in it (the roaming skills): it works on its own rather
+## than hanging off a ladder, so it never wears the `gates nothing` capsule. Absent otherwise.
+const NODE_STANDALONE := "standalone"
 ## Was this knowledge completed THIS turn — see `KnowledgePanelController`.
 const NODE_NEW := "new_this_turn"
 ## What the knowledge lets the faction's hands do, one sentence.
@@ -437,6 +442,10 @@ const PRACTISE_NOTES := {
 	# being USED and being HELD. `route:trail` earns `roadbuilding`, `route:dirt_road` earns `paving`.
 	"roadbuilding": "Your people learn it from a trail their own traffic keeps wearing in.",
 	"paving": "Your people learn it by keeping a dirt road in good repair.",
+	# **THE ROAMING SKILLS** (#799) — standalone knowledges, no rung teaches them.
+	"herd_lore": "Learned walking with a migrating herd.",
+	"travois": "Learned from goods left behind on long moves.",
+	"drives": "Learned from camp kills on a herd you follow.",
 }
 
 ## The craft half, which needs no table: every craft is learned the same way, and the sim charges the

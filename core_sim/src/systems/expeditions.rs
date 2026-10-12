@@ -84,6 +84,9 @@ pub struct ExpeditionConfigs<'w> {
     /// **How food keeps** (#706) — a party eats its pack fastest-rotting first, and what it gathers
     /// or kills on the road lands in a keeping class. In the bundle for the 16-parameter reason.
     pub demographics: Option<Res<'w, DemographicsConfigHandle>>,
+    /// **What each people has learned** (#799) — a party hunts under its home people's `drives`.
+    /// Optional, for the minimal worlds that never insert a ledger: no ledger knows nothing.
+    pub discovery: Option<Res<'w, DiscoveryProgressLedger>>,
 }
 
 /// The configs and logs [`advance_band_movement`] reads, bundled (the [`ExpeditionConfigs`] idiom).
@@ -100,6 +103,12 @@ pub struct BandMovementParams<'w> {
     pub tick: Res<'w, SimulationTick>,
     pub event_log: ResMut<'w, CommandEventLog>,
     pub route_traffic: ResMut<'w, crate::routes::RouteTrafficLog>,
+    /// **The herds a band walks beside** (#799) — herd lore is learned from a herd on a `Migrate` leg.
+    pub herds: Option<Res<'w, HerdRegistry>>,
+    /// **What each people has learned** — the roaming skills are credited here (herd lore on a step
+    /// beside a migrating herd, travois on a departure's shed) and travois lifts the pack the shed
+    /// is measured against.
+    pub discovery: Option<ResMut<'w, DiscoveryProgressLedger>>,
 }
 
 /// One band on the move, with what a departure's long-move shed touches.
@@ -158,13 +167,21 @@ pub fn advance_band_movement(
 ) {
     let labor = params.labor.get();
     let ladder = params.ladder.get();
-    let carry = params.expedition.get().carry.clone();
+    let carry_config = params.expedition.get().carry.clone();
     let reach = crate::carry::move_ferry_reach_tiles(&params.supply.get());
     let width = params.tile_registry.width;
     let wrap_horizontal = params.sim.map_topology.wrap_horizontal;
     let tick = params.tick.0;
-    for (entity, mut cohort, mut travel, equipment, allocation, band_id, resident, expedition) in
-        cohorts.iter_mut()
+    for (
+        entity,
+        mut cohort,
+        mut travel,
+        equipment,
+        mut allocation,
+        band_id,
+        resident,
+        expedition,
+    ) in cohorts.iter_mut()
     {
         let current = tiles
             .get(cohort.current_tile)
@@ -185,10 +202,40 @@ pub fn advance_band_movement(
                 wrap_horizontal,
             ) > reach;
             if long && resident && !expedition {
-                if let Some(entry) =
-                    shed_at_departure(&mut cohort, equipment, allocation, band_id, &carry, tick)
-                {
+                // **The pack as THIS people carries it** — travois, once learned, lifts every
+                // worker's load, so the shed (and the practice it pays) is measured against it.
+                let carry =
+                    carry_config.for_faction(params.discovery.as_deref().is_some_and(|ledger| {
+                        crate::roaming_skills::faction_knows(
+                            ledger,
+                            &ladder,
+                            cohort.faction,
+                            crate::roaming_skills::TRAVOIS_DISCOVERY_ID,
+                        )
+                    }));
+                if let Some((entry, shed_share)) = shed_at_departure(
+                    &mut cohort,
+                    equipment,
+                    allocation.as_deref_mut(),
+                    band_id,
+                    &carry,
+                    tick,
+                ) {
                     params.event_log.push(entry);
+                    // **WHAT A LONG MOVE LEAVES BEHIND TEACHES TRAVOIS**, in proportion to the share
+                    // of the load shed. Once per departure, because this is the departure branch.
+                    let practice =
+                        crate::roaming_skills::travois_practice(shed_share, &ladder.knowledge);
+                    if let Some(ledger) = params.discovery.as_deref_mut() {
+                        crate::roaming_skills::credit(
+                            ledger,
+                            &ladder,
+                            cohort.faction,
+                            crate::roaming_skills::TRAVOIS,
+                            crate::roaming_skills::TRAVOIS_DISCOVERY_ID,
+                            practice,
+                        );
+                    }
                 }
             }
         }
@@ -202,6 +249,30 @@ pub fn advance_band_movement(
         if let Some(tile_entity) = params.tile_registry.index(next.x, next.y) {
             cohort.current_tile = tile_entity;
             cohort.home = tile_entity;
+        }
+        // **WALKING BESIDE A MIGRATING HERD TEACHES HERD LORE** (#799): each hex a RESIDENT band
+        // steps while it follows a herd that is on a `Migrate` leg is practice.
+        if resident && !expedition && current != next {
+            let followed = allocation
+                .as_deref()
+                .and_then(|allocation| allocation.followed_herd())
+                .and_then(|id| params.herds.as_deref()?.find(id));
+            if let Some(herd) = followed {
+                let hexes =
+                    crate::grid_utils::hex_distance_wrapped(current, next, width, wrap_horizontal);
+                let practice =
+                    crate::roaming_skills::herd_lore_practice(hexes, herd, &ladder.knowledge);
+                if let Some(ledger) = params.discovery.as_deref_mut() {
+                    crate::roaming_skills::credit(
+                        ledger,
+                        &ladder,
+                        cohort.faction,
+                        crate::roaming_skills::HERD_LORE,
+                        crate::roaming_skills::HERD_LORE_DISCOVERY_ID,
+                        practice,
+                    );
+                }
+            }
         }
         // **The boots that actually crossed the ground**, recorded only where the party moved —
         // `marched` carries the same `from != to` guard, and a party held at its own tile wears
@@ -286,11 +357,11 @@ pub fn follow_hunted_herds(
 fn shed_at_departure(
     cohort: &mut PopulationCohort,
     mut equipment: Option<Mut<BandEquipment>>,
-    allocation: Option<Mut<LaborAllocation>>,
+    allocation: Option<&mut LaborAllocation>,
     band_id: Option<&BandId>,
     carry: &crate::carry::CarryConfig,
     tick: u64,
-) -> Option<CommandEventEntry> {
+) -> Option<(CommandEventEntry, f32)> {
     let plan = crate::carry::plan_long_move_shed(
         &cohort.stores,
         equipment.as_deref(),
@@ -300,11 +371,14 @@ fn shed_at_departure(
     if plan.is_empty() {
         return None;
     }
+    // **The share of the load this departure leaves behind**, struck BEFORE the shed is applied — the
+    // travois lesson's practice quantum (`roaming_skills::travois_practice`).
+    let shed_share = crate::carry::shed_share(&cohort.stores, equipment.as_deref(), &plan, carry);
     let food_left =
         crate::carry::shed_for_long_move(&mut cohort.stores, equipment.as_deref_mut(), &plan);
     // **Booked on the food ledger, or the identity is false on the turn a band walks away** — the
     // larder fell by food that passed through no income, meal, rot or transfer.
-    if let Some(mut allocation) = allocation {
+    if let Some(allocation) = allocation {
         allocation.last_food_left_behind += food_left.to_f32();
     }
     let food = food_left.to_f32();
@@ -333,10 +407,11 @@ fn shed_at_departure(
              materials={materials:.2}{band_token}"
         )),
     );
-    Some(match band_id {
+    let entry = match band_id {
         Some(band) => entry.with_band(*band),
         None => entry,
-    })
+    };
+    Some((entry, shed_share))
 }
 
 /// **Which bands each detached party saw on its own sweep THIS turn** — derived, cleared and rebuilt
@@ -682,6 +757,7 @@ pub fn advance_expeditions(
     let combat_tuning = combat_config.expedition_tuning();
     let materials_cfg = configs.materials.get();
     let flora = configs.flora.get();
+    let ladder = configs.ladder.get();
     let demographics_cfg = demographics_or_builtin(configs.demographics.as_deref());
     let keeping = &demographics_cfg.keeping;
     let person_profile = configs.creatures.get().person();
@@ -819,6 +895,14 @@ pub fn advance_expeditions(
             intrinsic: person_profile,
             tuning: combat_tuning,
             hunt_injury_damage_per_animal: combat_config.hunt_injury_damage_per_animal,
+            drives_known: configs.discovery.as_deref().is_some_and(|ledger| {
+                crate::roaming_skills::faction_knows(
+                    ledger,
+                    &ladder,
+                    faction,
+                    crate::roaming_skills::DRIVES_DISCOVERY_ID,
+                )
+            }),
         };
         let party_for = |body_mass: f32| {
             party_resolution.party_against(crate::equipment_config::Quarry::Mass(body_mass))

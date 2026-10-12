@@ -2328,9 +2328,9 @@ because it names no declared area, not because the compiler knows the word.
 
 **`areas` is the display order, and it is not optional.** Areas are peers, so first-seen order read
 off the rungs would reshuffle the whole screen whenever a rung was added — the same defect that made
-column order unstable before the roster carried it. `reach`, `lore` and `war` have no branch today
-and are listed anyway, because the order has to already be right on the day a branch lands in one;
-an area with no domains is never drawn. Areas answer *"what part of the game is this"*, which is a
+column order unstable before the roster carried it. `lore` and `war` have no branch today (`reach`
+holds the roaming skills, see "Knowledge no rung teaches") and are listed anyway, because the order
+has to already be right on the day a branch lands in one; an area with no domains is never drawn. Areas answer *"what part of the game is this"*, which is a
 short, stable list, while domains grow without limit — that bound is why the level exists at all.
 The token is wire vocabulary and never player copy: the client spells `food` as *Food*.
 
@@ -2355,5 +2355,29 @@ has shipped once.
 
 **The craft fan is not a ladder branch**, so no descriptor here names its area; the crafts are
 taught by a bench rather than by a rung, and their area is named where their nodes are built.
+
+## Knowledge no rung teaches — `standalone_knowledges`
+
+`knowledge_roster()` derives from the rungs' `earns_knowledge`, so a knowledge taught by a practice
+signal instead of a rung (`storage` by rot, the crafts by a bench) is absent from it. The three
+roaming skills (`herd_lore`, `travois`, `drives`; `work-party.md` → "The roaming skills") are the ones
+that must be on the wire, so the config files them: **`standalone_knowledges`** is a required list of
+`{ knowledge, branch, area, order }` records.
+
+- `branch` is a **wire token, not a `RungBranch`** (`roam` today) — no rung sits on it, so it needs no
+  enum variant and no ladder machinery to draw as a column. `LadderKnowledgeEntry::branch` is a `&str`
+  for this reason (a rung-taught entry's is `RungBranch::as_str`).
+- `area` must name a member of `areas` (`reach` for the roaming branch, which is why that area is no
+  longer empty); `order` is the position in the column, bottom first.
+- The roster appends them after the rung-taught knowledges in the config's order, with
+  `is_step: false` (nothing waits on them) and the `discovery_id` that `discovery_id_for` resolves.
+- `validate` rejects an entry whose name resolves to no discovery id, an empty branch, or an area
+  outside `areas`; `validate_lesson_cost_coverage` requires a `lesson_costs` entry for every name in
+  `roaming_skills::ROAMING_SKILLS`.
+
+A client therefore reads the roaming branch exactly as it reads any other column: the
+`LadderKnowledgeState` row's `branch` / `area` / `order`, and progress from
+`IntensificationKnowledgeState.knowledges`.
+
 
 ---

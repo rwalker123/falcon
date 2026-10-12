@@ -1258,6 +1258,18 @@ func _ready() -> void:
 	_assert_map("…and with the flag off no herd is followed and no badge is worn",
 		_map.followed_herd_ids().is_empty() and not MapView.unit_follows_herd(_map.units[0]))
 
+	# State N3 — HERD LORE (#799): the followed herd's next seasonal ground wears a hollow diamond and a
+	# dotted tether back to the herd. A second frame has the herd unfollowed and unselected: the diamond
+	# stays (the viewer knows the ground), the tether goes.
+	_map.display_snapshot(_snapshot_follow(true, true))
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_herd_lore_ground")
+	_map.display_snapshot(_snapshot_follow(false, true))
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_herd_lore_ground_unfollowed")
+
 	# State O — WRAP-AWARE seam-crossing destination: a horizontally-wrapping map with the band near
 	# the left edge and its target near the RIGHT edge. The short path crosses the seam, so the line
 	# must head LEFT (toward the wrapped-nearest copy of the target), not shoot right across the map.
@@ -4859,7 +4871,10 @@ func _snapshot_travel_band() -> Dictionary:
 const FOLLOW_HERD_ID := "game_mammoth_fm"
 const FOLLOW_OTHER_HERD_ID := "game_deer_07"
 const FOLLOW_OTHER_BAND_ENTITY := 7102
-func _snapshot_follow(followed: bool = true) -> Dictionary:
+## Herd Lore (#799): the followed mammoth herd's next seasonal ground, a few hexes off its tile.
+const FOLLOW_GROUND_DX := 4
+const FOLLOW_GROUND_DY := 2
+func _snapshot_follow(followed: bool = true, with_ground: bool = false) -> Dictionary:
 	var band := _band([{"kind": "hunt", "workers": 2, "fauna_id": FOLLOW_HERD_ID,
 		"target_x": BAND_X, "target_y": BAND_Y, "move_with_herd": followed}], 2, 0)
 	var other := _band_at(FOLLOW_OTHER_BAND_ENTITY, BAND_X + 3, BAND_Y + 2)
@@ -4868,6 +4883,9 @@ func _snapshot_follow(followed: bool = true) -> Dictionary:
 	var herd := {"id": FOLLOW_HERD_ID, "label": "Woolly Mammoth (%s)" % FOLLOW_HERD_ID,
 		"x": BAND_X, "y": BAND_Y, "next_x": BAND_X + 1, "next_y": BAND_Y,
 		"biomass": 4000.0, "huntable": true, "size_class": "migratory"}
+	if with_ground:
+		herd["next_ground_x"] = BAND_X + FOLLOW_GROUND_DX
+		herd["next_ground_y"] = BAND_Y + FOLLOW_GROUND_DY
 	var snap := _base_snapshot(band, [herd, _deer_herd()])
 	snap["populations"].append(other)
 	return snap

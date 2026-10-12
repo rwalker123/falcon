@@ -342,6 +342,7 @@ fn with_hunt_curve<R>(
         tuning: hunt_crew_levers.combat.tuning(),
         hunt_injury_damage_per_animal: hunt_crew_levers.combat.hunt_injury_damage_per_animal,
         range_sigmas: hunt_crew_levers.combat.forecast_range_sigmas,
+        drives_known: hunt_crew_levers.drives_known,
         floor: *floor,
         baseline_haul_rate: hunt_crew_levers.baseline_haul_rate,
         max_workers: crew_pool,
@@ -944,6 +945,10 @@ pub(crate) struct HuntCrewLevers<'a> {
     /// The ladder a kept herd's bill is read off, so a row's curve nets the hands its crew keeps
     /// with first (`docs/plan_site_crews.md` §2.2) — the useful crew then counts its keepers too.
     pub(crate) ladder: &'a crate::intensification::LadderConfig,
+    /// **Whether this band's faction knows `drives`** (#799) — the roaming skill that raises a
+    /// crew's reach on a large herd. Per band (the struct is built inside the per-band pass), so
+    /// every hunt row's curve and claim is struck at the reach the turn's take will have.
+    pub(crate) drives_known: bool,
 }
 
 /// `BandId → name` over every live band, the lookup a crossing's counterparty is named from.
@@ -1239,6 +1244,7 @@ pub(crate) fn builtin_hunt_crew_levers() -> &'static HuntCrewLevers<'static> {
             .get_or_init(crate::labor_config::LaborConfig::builtin)
             .hunt
             .per_worker_biomass_capacity,
+        drives_known: false,
     })
 }
 
@@ -1447,6 +1453,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         materials: build_sources.materials,
         combat: hunt_crew_levers.combat,
         person: kit_levers.person_intrinsic,
+        drives_known: hunt_crew_levers.drives_known,
         start: crate::fauna::ProjectionStart::BeforeRegrowth,
     };
     let row_claims =

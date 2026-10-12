@@ -2988,13 +2988,25 @@ pub fn capture_snapshot(
         // than a per-band allocation because the fallback is taken on the first turn of every game.
         static NO_CRAFTS_KNOWN: std::sync::LazyLock<std::collections::BTreeMap<String, bool>> =
             std::sync::LazyLock::new(std::collections::BTreeMap::new);
+        // **The pack as the VIEWER's people carry it** (#799, travois). Only the viewer's own bands
+        // get full rows (a foreign band's row is redacted above this), so one faction's resolved
+        // config serves every row builder — capacity, the long-move forecast, the shipment cap and
+        // the `carryPerWorker` echo all read the same number the turn's shed does.
+        let viewer_carry = expedition_cfg
+            .carry
+            .for_faction(crate::intensification::knows(
+                &discovery_progress,
+                viewer,
+                crate::roaming_skills::TRAVOIS_DISCOVERY_ID,
+                knowledge_threshold,
+            ));
         let expedition_levers = ExpeditionLevers {
             hunt_per_worker_carry: expedition_cfg.hunt.per_worker_carry,
             // **The config, not a resolved number.** Shipment carry has two rules resolved off it —
             // the per-worker echo the outfit UI multiplies, and a live party's own cap — and the row
             // builder runs both, so a term that scales with the party rather than with a worker cannot
             // slip past one of them.
-            carry: &expedition_cfg.carry,
+            carry: &viewer_carry,
             carry_material_weight: expedition_cfg.carry.material_carry_weight,
             carry_fodder_weight: expedition_cfg.carry.fodder_carry_weight,
             // **The EQUIPPED reference rate, resolved through the item table's default tier** — an
@@ -3022,7 +3034,7 @@ pub fn capture_snapshot(
                 crate::snapshot::population::band_loadout_windows(
                     windows,
                     &equipment_config,
-                    &expedition_cfg.carry,
+                    &viewer_carry,
                     populations.iter().filter_map(
                         |(entity, cohort, _, _, _, band_id, _, equipment, _)| {
                             band_id.map(|band| (entity, *band, equipment, cohort))
@@ -3208,6 +3220,12 @@ pub fn capture_snapshot(
                             // against; a stalked row's kill curve never reads it.
                             baseline_haul_rate: labor_config.hunt.per_worker_biomass_capacity,
                             ladder: &ladder_config,
+                            drives_known: crate::intensification::knows(
+                                &discovery_progress,
+                                cohort.faction,
+                                crate::roaming_skills::DRIVES_DISCOVERY_ID,
+                                knowledge_threshold,
+                            ),
                         },
                         bench,
                         // **This band's outfitting window**, or `None` when it has nothing to outfit.
@@ -3693,6 +3711,12 @@ pub fn capture_snapshot(
             graze: &graze_registry,
             visibility: &visibility_ledger,
             viewer,
+            herd_lore_known: crate::intensification::knows(
+                &discovery_progress,
+                viewer,
+                crate::roaming_skills::HERD_LORE_DISCOVERY_ID,
+                knowledge_threshold,
+            ),
             fog_enabled: config.fog_enabled,
             // **THIS QUARRY'S own default kit, deliberately** — the herd row is a fact about the herd
             // and has no band to ask, but it can ask the *animal*, so each species' row is quoted at

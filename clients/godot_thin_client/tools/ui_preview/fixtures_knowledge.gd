@@ -44,6 +44,12 @@ const BRANCH_EXTRACTION := "extraction"
 const AREA_FOOD := "food"
 const AREA_MAKING := "making"
 const AREA_WORKS := "works"
+const AREA_REACH := "reach"
+## The standalone roaming branch (#799): three non-step knowledges under `reach`, no rung chain.
+const BRANCH_ROAM := "roam"
+const KNOWLEDGE_HERD_LORE := "herd_lore"
+const KNOWLEDGE_TRAVOIS := "travois"
+const KNOWLEDGE_DRIVES := "drives"
 
 ## **THE DISPLAY ORDER THE SIM PUBLISHES** — the config's `areas` list verbatim
 ## (`SubsistenceSection.ladderAreas`), including the three areas no branch teaches under yet. Those
@@ -93,6 +99,9 @@ static func ladder_roster() -> Array:
 		_row(KNOWLEDGE_WOODCRAFT, "Woodcraft", BRANCH_FORESTRY, 1, true, AREA_MAKING),
 		_row(KNOWLEDGE_CONSERVATIONISM, "Conservationism", BRANCH_FORESTRY, 2, true, AREA_MAKING),
 		_row(KNOWLEDGE_QUARRYING, "Quarrying", BRANCH_EXTRACTION, 1, true, AREA_MAKING),
+		_row(KNOWLEDGE_HERD_LORE, "Herd Lore", BRANCH_ROAM, 1, false, AREA_REACH),
+		_row(KNOWLEDGE_TRAVOIS, "Travois", BRANCH_ROAM, 2, false, AREA_REACH),
+		_row(KNOWLEDGE_DRIVES, "Drives", BRANCH_ROAM, 3, false, AREA_REACH),
 	]
 
 # ---- the two DEGENERATE rosters, one per FALLBACK ----------------------------------------------

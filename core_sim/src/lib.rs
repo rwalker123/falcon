@@ -79,6 +79,7 @@ mod provinces;
 mod recipes_config;
 pub mod record;
 mod resources;
+pub mod roaming_skills;
 pub mod routes;
 pub mod save;
 pub mod save_store;

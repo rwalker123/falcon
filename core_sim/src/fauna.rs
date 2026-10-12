@@ -6229,7 +6229,7 @@ impl HuntProjection {
         // **The party's REACH, in animals** — how many it can bring into contact this turn
         // (`docs/plan_hunt_through_combat.md` §2). **A PEN HAS ONE TOO**: [`herd_engage_rate`]
         // folds `husbandry.pen_engage_gain` in and hands the wild rate back on an un-penned herd.
-        let reach = animals_engaged(workers, herd_engage_rate(quarry, fauna));
+        let reach = animals_engaged(workers, herd_engage_rate(quarry, fauna, party.drives_known));
         // Logistics: regrow first (sets `quarry.biomass_before_regrowth`, then grows
         // `quarry.biomass`) — unless this turn's regrowth already happened ([`ProjectionStart`]),
         // in which case this turn's growth is already standing and `growth_this_turn` reads it.
@@ -6376,7 +6376,10 @@ pub fn project_arrivals_hunt(
     // hands the wild rate back on an un-penned herd, so the twin in [`project_realized_hunt`] and
     // this one read one term at every rung. [`herd_wariness`] beside it is the retreat's own rung
     // seam, the same stepped shape.
-    let reach = animals_engaged(workers, herd_engage_rate(&quarry, fauna));
+    let reach = animals_engaged(
+        workers,
+        herd_engage_rate(&quarry, fauna, party.drives_known),
+    );
     let wariness = herd_wariness(&quarry, fauna);
     // **The fight is resolved PER TURN, not once for the run**, because its wounds accumulate
     // (§4.2): a sub-threshold party lands nothing for several turns and then a whole animal, and that
@@ -7989,6 +7992,12 @@ pub struct HuntingParty {
     /// could only arm half its people with the stand-off device is *loud*, and buying the quiet
     /// approach means buying enough of it.
     pub dispersion: f32,
+    /// **Does this party's PEOPLE know `drives`** (#799)? The roaming skill raises the reach of every
+    /// crew in the party (`herd_engage_rate`'s drive arm), so it is a fact about the party's faction
+    /// and rides the party — the one value every take and forecast path already carries to the
+    /// engagement stage, which is what makes the live take, the forecasts and the crew curves read
+    /// one reach. `false` on a fixture and on any party with no faction to ask.
+    pub drives_known: bool,
 }
 
 /// **One run of hunters holding the same gear** — the party's own
@@ -8051,6 +8060,10 @@ pub struct PartyResolution<'a> {
     /// [`crate::combat_config::CombatConfig::hunt_injury_damage_per_animal`], **before** a crew's own
     /// `exposure` scales it.
     pub hunt_injury_damage_per_animal: f32,
+    /// **Whether the party's faction knows `drives`** (#799) — copied onto the [`HuntingParty`] it
+    /// resolves, where the engagement stage reads it. A required field rather than a default so a
+    /// new construction site has to answer the question.
+    pub drives_known: bool,
 }
 
 impl PartyResolution<'_> {
@@ -8103,7 +8116,8 @@ impl PartyResolution<'_> {
                 self.hunt_injury_damage_per_animal
                     * self.equipment.exposure(self.coverage.kit(), self.wear),
                 self.equipment.dispersion(self.coverage.kit(), self.wear),
-            );
+            )
+            .with_drives(self.drives_known);
         }
         HuntingParty {
             crews,
@@ -8117,6 +8131,7 @@ impl PartyResolution<'_> {
                 .iter()
                 .map(|crew| self.equipment.dispersion(&crew.kit, self.wear))
                 .fold(f32::NEG_INFINITY, f32::max),
+            drives_known: self.drives_known,
         }
     }
 
@@ -8149,7 +8164,14 @@ impl HuntingParty {
             }],
             tuning,
             dispersion,
+            drives_known: false,
         }
+    }
+
+    /// This party, with its people's `drives` knowledge set (#799) — see [`Self::drives_known`].
+    pub fn with_drives(mut self, drives_known: bool) -> Self {
+        self.drives_known = drives_known;
+        self
     }
 
     /// **The best-equipped crew's hunter** — what a party *can* do at its best, for a readout with
@@ -9473,7 +9495,7 @@ pub fn hunt_useful_take_hands(
         room,
         herd.body_mass,
         herd_carry_rate(herd, fauna, equipped_haul),
-        herd_engage_rate(herd, fauna),
+        herd_engage_rate(herd, fauna, equipped_party.drives_known),
         equipped_party.stay_fraction(herd_wariness(herd, fauna)),
     );
     let Some(quarry) = herd_fight_stage(herd, fauna) else {
@@ -9511,6 +9533,7 @@ pub fn hunt_crew_needed(
     carry_per_worker: impl Fn(&crate::equipment_config::KitChoice) -> f32,
     bare_carry: f32,
     stay: f32,
+    drives_known: bool,
 ) -> u32 {
     let body = herd.body_mass;
     if !body.is_finite() || body <= 0.0 {
@@ -9526,7 +9549,7 @@ pub fn hunt_crew_needed(
     haul.max(hunt_engage_workers(
         room,
         body,
-        herd_engage_rate(herd, fauna),
+        herd_engage_rate(herd, fauna, drives_known),
         stay,
     ))
 }
@@ -9572,7 +9595,7 @@ pub fn herd_hunt_yield(herd: &Herd, fauna: &FaunaConfig) -> HuntYield {
 /// set at completion, and half a fence is no fence — the animals are still roaming and nothing about
 /// handling them has changed. That is the deliberate difference from the plant web's Field, where a
 /// half-sown field genuinely has half a crop in the ground.
-pub fn herd_engage_rate(herd: &Herd, fauna: &FaunaConfig) -> f32 {
+pub fn herd_engage_rate(herd: &Herd, fauna: &FaunaConfig, drives_known: bool) -> f32 {
     let wild = fauna.engage_rate_for(&herd.species);
     if herd.is_corralled() {
         // **THROUGH THE PER-SPECIES SEAM** ([`FaunaConfig::pen_engage_gain_for`]) — this animal's own
@@ -9590,7 +9613,17 @@ pub fn herd_engage_rate(herd: &Herd, fauna: &FaunaConfig) -> f32 {
         // number could not describe both.
         wild * fauna.pastoral_engage_gain_for(&herd.species)
     } else {
-        wild
+        // **A DRIVE (#799, the `drives` roaming skill)** — the wild arm's reach grows with the herd
+        // when the hunting faction has learned to drive: `1 + drive_engage_gain × min(head_count /
+        // drive_full_head_count, 1)`. It is the wild arm alone because a pen and a halter already
+        // have their own reach gains and nobody drives a fenced animal. The identity (`× 1`) when
+        // the skill is not known, so every faction without it reads the species' own rate.
+        wild * crate::roaming_skills::drive_engage_multiplier(
+            drives_known,
+            herd_head_count(herd.biomass, herd.body_mass),
+            fauna.hunt.drive_engage_gain,
+            fauna.hunt.drive_full_head_count,
+        )
     }
 }
 
@@ -9916,7 +9949,7 @@ pub fn resolve_hunt_engagement(
     // (`systems::labor`'s `herd_is_workable`): a fully-committed dairy herd is still a legal thing
     // to gentle or to fence, and a scaled room there would make it unbuildable.
     let EngagementReach { ceiling, engaged } =
-        engagement_reach(herd, fauna, workers, floor, quantum);
+        engagement_reach(herd, fauna, workers, floor, quantum, party.drives_known);
     // **BOTH TERMS ARE READ AT THE HERD'S OWN RUNG**, through the two seams that step at the fence
     // ([`herd_engage_rate`], [`herd_wariness`]) rather than off the species table. Both are
     // identities on a wild herd, so nothing on the range moved; what changed is that a *penned* herd
@@ -9974,9 +10007,10 @@ pub fn engagement_reach(
     workers: f32,
     floor: f32,
     quantum: EngagementQuantum,
+    drives_known: bool,
 ) -> EngagementReach {
     let ceiling = herd_take_room(herd, floor, fauna) * herd.meat_take_fraction();
-    let reach = animals_engaged(workers, herd_engage_rate(herd, fauna));
+    let reach = animals_engaged(workers, herd_engage_rate(herd, fauna, drives_known));
     let engaged = match quantum {
         EngagementQuantum::WholeAnimals => reach.min(animals_affordable(ceiling, herd.body_mass)),
         EngagementQuantum::Rate => reach.min(animals_sparable(ceiling, herd.body_mass)),
@@ -10086,6 +10120,9 @@ pub struct HuntCrewCurveInputs<'a> {
     /// the range does, and what stops a penned row rising past the kill rate is the keepers running
     /// out of hands to carry the meat home with.
     pub baseline_haul_rate: f32,
+    /// **Whether the band's faction knows `drives`** (#799) — set on every party the curve resolves,
+    /// so the curve's reach is the live take's.
+    pub drives_known: bool,
     /// The largest crew the curve is asked about — the source's own crew pool (the hands on it plus
     /// the band's idle ones), which is every crew the stepper beside it can reach.
     pub max_workers: u32,
@@ -10189,6 +10226,7 @@ fn curve_useful_take_hands(inputs: &HuntCrewCurveInputs<'_>, quarry: &Herd) -> f
             intrinsic: inputs.intrinsic,
             tuning: inputs.tuning,
             hunt_injury_damage_per_animal: inputs.hunt_injury_damage_per_animal,
+            drives_known: inputs.drives_known,
         }
         .party_against(crate::equipment_config::Quarry::Mass(quarry.body_mass)),
     )
@@ -10296,6 +10334,7 @@ pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTak
                 intrinsic: inputs.intrinsic,
                 tuning: inputs.tuning,
                 hunt_injury_damage_per_animal: inputs.hunt_injury_damage_per_animal,
+                drives_known: inputs.drives_known,
             }
             .party_against(crate::equipment_config::Quarry::Mass(quarry.body_mass));
             // **The keepers' haul, in animals a turn** — `None` on the range, where the haul is a
@@ -10336,6 +10375,7 @@ pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTak
                 workers,
                 inputs.floor,
                 EngagementQuantum::Rate,
+                inputs.drives_known,
             )
             .engaged;
             // **ONE DISTRIBUTION FOR ALL THREE ROWS** — the retreat's discrete outcomes, enumerated
@@ -10474,6 +10514,7 @@ pub fn hunt_armed_crew(inputs: &HuntCrewCurveInputs<'_>) -> u32 {
         intrinsic: inputs.intrinsic,
         tuning: inputs.tuning,
         hunt_injury_damage_per_animal: inputs.hunt_injury_damage_per_animal,
+        drives_known: inputs.drives_known,
     }
     .party_against(crate::equipment_config::Quarry::Mass(quarry.body_mass));
     // **The zip is exact, not an alignment assumption**: [`PartyResolution::party_against`] emits one
@@ -10622,6 +10663,7 @@ pub fn hunt_crew_turns_to_kill(
         intrinsic: inputs.intrinsic,
         tuning: inputs.tuning,
         hunt_injury_damage_per_animal: inputs.hunt_injury_damage_per_animal,
+        drives_known: inputs.drives_known,
     }
     .party_against(crate::equipment_config::Quarry::Mass(quarry.body_mass));
     let arrivals = project_arrivals_hunt(
@@ -10744,7 +10786,7 @@ pub(crate) fn hunt_forecast(
         // The engagement throughput the take is bounded by, so preview and take agree on how many
         // animals the party can even reach — the keepers' handling rate on a pen, which
         // [`herd_engage_rate`] folds the pen gain into.
-        engage_rate: herd_engage_rate(herd, fauna),
+        engage_rate: herd_engage_rate(herd, fauna, party.drives_known),
         // ...and the fight that decides how many of those actually go down (§4).
         // ...carrying **this herd's** accumulated wounds, so a single-turn preview says "this is the
         // turn it finally goes down" on the turn it does (`herd_quarry_fight`, §4.2), and its
@@ -11095,7 +11137,7 @@ pub fn hunt_take_overdraws(
     // What the party puts on the ground in a turn: reached, less what breaks off, in biomass —
     // both terms at the herd's **own rung** ([`herd_engage_rate`], [`herd_wariness`]), so the ⚠ is
     // answered against the take that will really be paid. Identities on a wild herd.
-    let reach = animals_engaged(workers, herd_engage_rate(herd, fauna))
+    let reach = animals_engaged(workers, herd_engage_rate(herd, fauna, party.drives_known))
         * party.stay_fraction(herd_wariness(herd, fauna))
         * herd.body_mass.max(0.0);
     let (low, high) = floor_reach_band(floor, biomass, cap);
@@ -12813,9 +12855,9 @@ mod tests {
 
         let wild = herd_at_capacity();
         assert!(
-            (herd_engage_rate(&wild, &fauna) - TRIAL_ENGAGE_RATE).abs() < SAME_RATE,
+            (herd_engage_rate(&wild, &fauna, false) - TRIAL_ENGAGE_RATE).abs() < SAME_RATE,
             "liveness: the wild boar must reach at the trial's rate {TRIAL_ENGAGE_RATE}, got {}",
-            herd_engage_rate(&wild, &fauna)
+            herd_engage_rate(&wild, &fauna, false)
         );
 
         let mut penned = herd_at_capacity();
@@ -12828,10 +12870,85 @@ mod tests {
             "the boar must be pennable — its husbandry_ceiling is the pen"
         );
         assert!(
-            (herd_engage_rate(&penned, &fauna) - PRE_TRIAL_PEN_HANDLING).abs() < SAME_RATE,
+            (herd_engage_rate(&penned, &fauna, false) - PRE_TRIAL_PEN_HANDLING).abs() < SAME_RATE,
             "a boar pen handles {PRE_TRIAL_PEN_HANDLING} animals per keeper, as it did before the \
              trial; got {}",
-            herd_engage_rate(&penned, &fauna)
+            herd_engage_rate(&penned, &fauna, false)
+        );
+    }
+
+    /// **A DRIVE RAISES THE WILD REACH WITH THE HERD, AND CAPS AT A FULL DRIVE** (#799). The skill is
+    /// an identity until the faction knows it; known, the gain grows linearly with head count up to
+    /// `drive_full_head_count` and is flat above it; and the single seam carries it to the live
+    /// engagement (`resolve_hunt_engagement`) the same way.
+    #[test]
+    fn a_drive_scales_the_wild_reach_with_head_count_and_caps() {
+        const REINDEER: &str = "Wild Reindeer";
+        const HALF: f32 = 0.5;
+        const SAME_RATE: f32 = 1e-4;
+        let fauna = FaunaConfig::builtin();
+        let def = fauna
+            .species_by_display(REINDEER)
+            .expect("the fixture names a shipped species");
+        let full = fauna.hunt.drive_full_head_count;
+        let gain = fauna.hunt.drive_engage_gain;
+        let herd_of_heads = |heads: f32| {
+            let biomass = heads * def.body_mass;
+            Herd::new(
+                "drive_probe".to_string(),
+                REINDEER.to_string(),
+                def.size_class,
+                vec![UVec2::new(1, 1)],
+                biomass,
+                biomass,
+                def.fodder_per_biomass,
+                def.regrowth_rate.unwrap_or(fauna.ecology.regrowth_rate),
+                def.body_mass,
+            )
+        };
+        let bare = fauna.engage_rate_for(REINDEER);
+
+        let half_herd = herd_of_heads(full * HALF);
+        assert!(
+            (herd_engage_rate(&half_herd, &fauna, false) - bare).abs() < SAME_RATE,
+            "without the lesson a drive changes nothing"
+        );
+        assert!(
+            (herd_engage_rate(&half_herd, &fauna, true) - bare * (1.0 + gain * HALF)).abs()
+                < SAME_RATE,
+            "half a full drive buys half the gain"
+        );
+        let full_herd = herd_of_heads(full);
+        let huge_herd = herd_of_heads(full * 10.0);
+        assert!(
+            (herd_engage_rate(&full_herd, &fauna, true) - bare * (1.0 + gain)).abs() < SAME_RATE,
+            "a full drive buys the whole gain"
+        );
+        assert!(
+            (herd_engage_rate(&huge_herd, &fauna, true)
+                - herd_engage_rate(&full_herd, &fauna, true))
+            .abs()
+                < SAME_RATE,
+            "a herd past the full-drive head count gains no more"
+        );
+
+        // The live engagement reads the same value: a party that knows drives reaches further.
+        let party = HuntingParty::builtin_equipped();
+        let reach = |party: &HuntingParty| {
+            resolve_hunt_engagement(
+                &full_herd,
+                &fauna,
+                party,
+                ONE_WORKER,
+                MSY_BIOMASS_FRACTION,
+                HuntDraw::EXPECTED,
+                EngagementQuantum::Rate,
+            )
+            .engaged
+        };
+        assert!(
+            reach(&party.clone().with_drives(true)) > reach(&party),
+            "the engagement stage reads the drive through the party"
         );
     }
 
@@ -12877,9 +12994,9 @@ mod tests {
 
             let wild = herd_at_capacity();
             assert!(
-                (herd_engage_rate(&wild, &fauna) - engage_after).abs() < SAME_RATE,
+                (herd_engage_rate(&wild, &fauna, false) - engage_after).abs() < SAME_RATE,
                 "liveness: wild {species} must reach at the retuned rate {engage_after}, got {}",
-                herd_engage_rate(&wild, &fauna)
+                herd_engage_rate(&wild, &fauna, false)
             );
 
             let mut penned = herd_at_capacity();
@@ -12893,10 +13010,10 @@ mod tests {
             );
             let handling_before = engage_before * pen_gain_before;
             assert!(
-                (herd_engage_rate(&penned, &fauna) - handling_before).abs() < SAME_RATE,
+                (herd_engage_rate(&penned, &fauna, false) - handling_before).abs() < SAME_RATE,
                 "a {species} pen handles {handling_before} animals per keeper, as it did before the \
                  retune; got {}",
-                herd_engage_rate(&penned, &fauna)
+                herd_engage_rate(&penned, &fauna, false)
             );
         }
     }

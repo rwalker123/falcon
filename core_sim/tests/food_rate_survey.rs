@@ -255,6 +255,7 @@ fn hunt_party(g: &Gear, body_mass: f32, s: &Shipped) -> HuntingParty {
         intrinsic: s.creatures.person(),
         tuning: s.combat.tuning(),
         hunt_injury_damage_per_animal: s.combat.hunt_injury_damage_per_animal,
+        drives_known: false,
     }
     .party_against(Quarry::Mass(body_mass))
 }

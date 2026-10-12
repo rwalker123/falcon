@@ -222,6 +222,17 @@
       "env_var": "EXPEDITION_CONFIG_PATH",
       "params": [
         {
+          "pointer": "/carry/travois_carry_multiplier",
+          "label": "Travois pack multiplier",
+          "type": "float",
+          "min": 1.0,
+          "max": 3.0,
+          "step": 0.05,
+          "default": 1.5,
+          "unit": "x",
+          "hint": "What one worker's pack is multiplied by once the faction has learned Travois. 1.0 changes nothing."
+        },
+        {
           "pointer": "/observe_sight_range",
           "label": "Scout sight range",
           "type": "int",

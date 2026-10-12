@@ -2510,7 +2510,8 @@ fn a_fractional_pen_handling_rate_collects_whole_animals() {
 
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
         assert!(
-            (core_sim::herd_engage_rate(&herd_of(&app, &id), &fauna) - handling_per_keeper).abs()
+            (core_sim::herd_engage_rate(&herd_of(&app, &id), &fauna, false) - handling_per_keeper)
+                .abs()
                 < SAME_BIOMASS,
             "the fixture must hand one keeper a fractional rate, or this test is about nothing"
         );

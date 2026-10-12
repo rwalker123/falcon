@@ -68,5 +68,17 @@
   "storage": {
     "discovery_id": 2018,
     "observability": 0.9
+  },
+  "herd_lore": {
+    "discovery_id": 2019,
+    "observability": 0.4
+  },
+  "travois": {
+    "discovery_id": 2020,
+    "observability": 0.9
+  },
+  "drives": {
+    "discovery_id": 2021,
+    "observability": 0.6
   }
 }

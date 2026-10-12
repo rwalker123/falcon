@@ -890,6 +890,18 @@ pub struct HuntConfig {
     pub pursuit_radius: u32,
     pub pursuit_tiles_per_turn: u32,
     pub max_pursuit_turns: u32,
+    /// **What a DRIVE adds to a hunting crew's reach at a full herd** (#799, the `drives` roaming
+    /// skill): `herd_engage_rate` is multiplied by `1 + drive_engage_gain × min(head_count /
+    /// drive_full_head_count, 1)` for a faction that knows drives, on the same seam the pastoral and
+    /// pen gains use. The shipped `0.5` is half again as many animals engaged from a full herd.
+    /// Validated finite and `>= 0` (`0` is "drives change nothing"). **Playtest dial.**
+    pub drive_engage_gain: f32,
+    /// **The head count at which a drive is at full strength** (#799): the gain scales linearly with
+    /// the herd's head count (`biomass / body_mass`) up to this and is flat above it. The shipped
+    /// `100` sits at the small end of a typical light-bodied migratory herd (4,000-12,000 biomass
+    /// over body masses 20-53 is 75-600 head), so reindeer, horses, steppe runners and marsh
+    /// grazers reach it and a mammoth herd (5-15 head) barely gains. Validated finite and `> 0`.
+    pub drive_full_head_count: f32,
 }
 
 impl Default for HuntConfig {
@@ -899,6 +911,8 @@ impl Default for HuntConfig {
             pursuit_radius: 1,
             pursuit_tiles_per_turn: 3,
             max_pursuit_turns: 12,
+            drive_engage_gain: 0.5,
+            drive_full_head_count: 100.0,
         }
     }
 }
@@ -2252,6 +2266,14 @@ impl FaunaConfig {
         require_positive_finite(
             "hunt.provisions_per_biomass",
             self.hunt.provisions_per_biomass,
+        )?;
+
+        // --- Drives (#799): a negative or non-finite gain would shrink the reach of the people who
+        // learned the skill, and a head count at or below zero divides the gain by nothing.
+        require_non_negative_finite("hunt.drive_engage_gain", self.hunt.drive_engage_gain)?;
+        require_positive_finite(
+            "hunt.drive_full_head_count",
+            self.hunt.drive_full_head_count,
         )?;
 
         // NB: **the retired multiples-of-MSY ordering and the Surplus raid-floor bounds are GONE**
@@ -3641,6 +3663,10 @@ mod tests {
             pursuit_radius: _,
             pursuit_tiles_per_turn: _,
             max_pursuit_turns: _,
+            // The drive pair multiplies the party's REACH (`herd_engage_rate`), not the take: the
+            // take is still the room above the floor, the fight and the carry.
+            drive_engage_gain: _,
+            drive_full_head_count: _,
         } = FaunaConfig::builtin().hunt;
     }
 
@@ -4013,6 +4039,14 @@ mod tests {
     fn validate_rejects_a_negative_need_margin() {
         let err = reject(|json| json["follow"]["need_margin_turns"] = (-1.0).into());
         assert_rejects_field(err, "follow.need_margin_turns");
+    }
+
+    #[test]
+    fn validate_rejects_an_unusable_drive_pair() {
+        let err = reject(|json| json["hunt"]["drive_engage_gain"] = (-0.1).into());
+        assert_rejects_field(err, "hunt.drive_engage_gain");
+        let err = reject(|json| json["hunt"]["drive_full_head_count"] = (0.0).into());
+        assert_rejects_field(err, "hunt.drive_full_head_count");
     }
 
     #[test]

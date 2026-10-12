@@ -81,6 +81,31 @@ pub struct CarryConfig {
     /// animals eat. It is a
     /// **playtest dial**. `0.0` is legal and means *"hay is weightless"*.
     pub fodder_carry_weight: f32,
+    /// **What knowing TRAVOIS does to one person's pack** (#799) — `per_worker_carry` is multiplied
+    /// by this for a faction that knows the lesson. The shipped `1.5` is a worker hauling half again
+    /// what a bare back does. Validated finite and `>= 1.0` (a skill that SHRANK the pack would be a
+    /// penalty for learning), so the resolved carry stays positive. Applied through
+    /// [`CarryConfig::for_faction`], which every faction-aware reader of the pack goes through.
+    pub travois_carry_multiplier: f32,
+}
+
+impl CarryConfig {
+    /// **The pack as one FACTION sees it** — this config with `per_worker_carry` multiplied by
+    /// [`Self::travois_carry_multiplier`] when the faction `travois_known`, and unchanged otherwise.
+    ///
+    /// This is how the roaming skill reaches the one carry seam ([`per_worker_carry`]): the seam
+    /// reads whatever config it is handed, so a caller that knows whose back is under the load hands
+    /// it the faction's config, and capacity ([`carry_capacity`], [`band_carry_capacity`]), the
+    /// ferry load, the long-move shed and the published echo all agree because they all read the
+    /// same number off the same copy. A caller with no faction in hand (a unit fixture) reads the
+    /// bare config, which is the un-skilled pack.
+    pub fn for_faction(&self, travois_known: bool) -> CarryConfig {
+        let mut carry = self.clone();
+        if travois_known {
+            carry.per_worker_carry *= self.travois_carry_multiplier;
+        }
+        carry
+    }
 }
 
 /// **The resolved carry of ONE worker** — what the sim says a person hauls, not a lever read. Today
@@ -136,6 +161,31 @@ pub fn band_carry_workers(cohort: &PopulationCohort) -> Scalar {
 /// Read by the long move, the published `carryCapacity` and the long-move forecast alike.
 pub fn band_carry_capacity(cohort: &PopulationCohort, carry: &CarryConfig) -> Scalar {
     carry_capacity_of(band_carry_workers(cohort), carry)
+}
+
+/// **The share of a band's held load a long-move plan leaves behind**, in `0..=1` — shed load over
+/// load before the shed, both measured by [`CarryLoad::load`] so food, hay, tools and materials
+/// weigh what they weigh in the pack. `0` when the band holds nothing. This is the travois lesson's
+/// practice quantum (`roaming_skills::travois_practice`): what a long move sheds is what teaches it.
+pub fn shed_share(
+    stores: &LocalStore,
+    equipment: Option<&BandEquipment>,
+    plan: &LongMoveShed,
+    carry: &CarryConfig,
+) -> f32 {
+    let held = held_load(stores, equipment).load(carry).to_f32();
+    if held <= 0.0 {
+        return 0.0;
+    }
+    let shed = CarryLoad {
+        food: plan.food,
+        fodder: plan.fodder,
+        items: plan.item_units(),
+        materials: plan.material_units(),
+    }
+    .load(carry)
+    .to_f32();
+    (shed / held).clamp(0.0, 1.0)
 }
 
 /// **Where a fit over its room cuts** — the one materials-before-tools staging, decided on the two
@@ -531,6 +581,56 @@ mod tests {
         carry.item_carry_weight = 1.0;
         carry.material_carry_weight = 1.0;
         carry
+    }
+
+    /// **TRAVOIS LIFTS THE PACK AT THE ONE SEAM, AND ONLY FOR THE PEOPLE WHO KNOW IT** (#799) — the
+    /// resolved per-worker carry, every capacity through it, and the share a long move sheds agree
+    /// on one number, which stays positive.
+    #[test]
+    fn travois_multiplies_the_pack_for_a_faction_that_knows_it() {
+        let bare = carry();
+        let skilled = bare.for_faction(true);
+        assert_eq!(
+            per_worker_carry(&bare.for_faction(false)),
+            per_worker_carry(&bare)
+        );
+        assert_eq!(
+            per_worker_carry(&skilled),
+            bare.per_worker_carry * bare.travois_carry_multiplier
+        );
+        assert!(per_worker_carry(&skilled) > 0.0, "the pack stays positive");
+        assert!(
+            carry_capacity(10, &skilled) > carry_capacity(10, &bare),
+            "capacity reads the lifted pack"
+        );
+    }
+
+    /// **THE SHARE SHED IS LOAD LEFT OVER LOAD HELD** — `0` when nothing is shed, a fraction when the
+    /// band is overloaded, and smaller for the people with the lifted pack.
+    #[test]
+    fn the_shed_share_is_load_left_behind_over_load_held() {
+        let bare = carry();
+        let mut stores = LocalStore::new();
+        stores.add_food("flesh", Scalar::from_u32(1000));
+        let working = Scalar::from_u32(10);
+        let share = |config: &CarryConfig| {
+            let plan = plan_long_move_shed(&stores, None, working, config);
+            shed_share(&stores, None, &plan, config)
+        };
+        let unskilled = share(&bare);
+        let skilled = share(&bare.for_faction(true));
+        assert!(
+            unskilled > 0.0 && unskilled < 1.0,
+            "overloaded: some, not all"
+        );
+        assert!(skilled < unskilled, "a lifted pack sheds a smaller share");
+        let light = LocalStore::new();
+        let plan = plan_long_move_shed(&light, None, working, &bare);
+        assert_eq!(
+            shed_share(&light, None, &plan, &bare),
+            0.0,
+            "nothing held, nothing shed"
+        );
     }
 
     /// **Workers × one pack, and dependants add nothing** — 17 hands carry `17 × per_worker_carry`,

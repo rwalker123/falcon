@@ -150,6 +150,9 @@ pub struct DefectionConfig {
 /// `0` reach can never be satisfied against a roaming herd, a `0` `low_turns` never triggers a
 /// replenish. That is a silently disabled feature, not a tuning — so these levers are bounded here.
 const MIN_COUNTED_LEVER: u32 = 1;
+/// The floor of `carry.travois_carry_multiplier`: `1.0` is "the skill changes nothing", and below it
+/// the lesson would shrink the pack of the people who learned it.
+const MIN_TRAVOIS_CARRY_MULTIPLIER: f32 = 1.0;
 
 impl ExpeditionConfig {
     pub fn builtin() -> Arc<Self> {
@@ -229,6 +232,17 @@ impl ExpeditionConfig {
         )?;
         require_non_negative_finite("carry.fodder_carry_weight", self.carry.fodder_carry_weight)?;
         require_non_negative_finite("carry.item_carry_weight", self.carry.item_carry_weight)?;
+        // TRAVOIS multiplies the pack. Below 1.0 learning it would SHRINK a back's load, and a
+        // non-finite value would poison every capacity.
+        if !self.carry.travois_carry_multiplier.is_finite()
+            || self.carry.travois_carry_multiplier < MIN_TRAVOIS_CARRY_MULTIPLIER
+        {
+            return Err(ExpeditionConfigError::Invalid {
+                field: "carry.travois_carry_multiplier",
+                constraint: format!("be finite and at least {MIN_TRAVOIS_CARRY_MULTIPLIER}"),
+                value: self.carry.travois_carry_multiplier.to_string(),
+            });
+        }
 
         // Scouts top up below `party × upkeep × low_turns`; `0` never triggers, and a `0` reach
         // demands the herd's exact tile.

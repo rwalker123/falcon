@@ -2364,6 +2364,8 @@
       ],
       "meter_rot_per_turn": 36.529999,
       "neglect_grace_remaining": 142,
+      "next_ground_x": 22,
+      "next_ground_y": 11,
       "next_x": 68,
       "next_y": 57,
       "pastoral_material": [
@@ -2612,6 +2614,8 @@
       ],
       "meter_rot_per_turn": 45.049999,
       "neglect_grace_remaining": 57,
+      "next_ground_x": 149,
+      "next_ground_y": 160,
       "next_x": 1,
       "next_y": 12,
       "pastoral_material": [
@@ -2860,6 +2864,8 @@
       ],
       "meter_rot_per_turn": 50.34,
       "neglect_grace_remaining": 8,
+      "next_ground_x": 28,
+      "next_ground_y": 17,
       "next_x": 18,
       "next_y": 7,
       "pastoral_material": [

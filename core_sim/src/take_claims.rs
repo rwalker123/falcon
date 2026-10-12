@@ -67,6 +67,9 @@ pub struct ClaimSources<'a> {
     pub combat: &'a CombatConfig,
     /// The `person` roster row — what a hunter is before any gear.
     pub person: CombatStats,
+    /// **Whether the band's people know `drives`** (#799) — the hunt arm resolves its party with it,
+    /// so a claim is struck at the reach the turn's take will have.
+    pub drives_known: bool,
     /// **When the surface reads the source** — inside the turn after its regrowth, or between turns
     /// before the next one.
     pub start: ProjectionStart,
@@ -119,7 +122,11 @@ impl ClaimSources<'_> {
 /// A world missing a registry or a config — a hand-built fixture — reads it as empty or as the
 /// shipped table, the reading every surface already gives such a world: no source to claim, and the
 /// shipped dials.
-pub fn with_world_sources<R>(world: &World, read: impl FnOnce(&ClaimSources<'_>) -> R) -> R {
+pub fn with_world_sources<R>(
+    world: &World,
+    faction: crate::orders::FactionId,
+    read: impl FnOnce(&ClaimSources<'_>) -> R,
+) -> R {
     fn config<H: bevy::prelude::Resource, T>(
         world: &World,
         get: impl Fn(&H) -> std::sync::Arc<T>,
@@ -191,6 +198,11 @@ pub fn with_world_sources<R>(world: &World, read: impl FnOnce(&ClaimSources<'_>)
         materials: &materials,
         combat: &combat,
         person,
+        drives_known: crate::roaming_skills::world_faction_knows(
+            world,
+            faction,
+            crate::roaming_skills::DRIVES_DISCOVERY_ID,
+        ),
         start: ProjectionStart::BeforeRegrowth,
     })
 }
@@ -271,6 +283,7 @@ pub fn useful_take_hands(
                     intrinsic: sources.person,
                     tuning: sources.combat.tuning(),
                     hunt_injury_damage_per_animal: sources.combat.hunt_injury_damage_per_animal,
+                    drives_known: sources.drives_known,
                 }
                 .party_against(Quarry::Mass(herd.body_mass)),
             )

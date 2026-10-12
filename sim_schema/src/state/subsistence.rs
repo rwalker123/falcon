@@ -969,6 +969,21 @@ pub struct HerdTelemetryState {
     /// Appended last.
     #[serde(default)]
     pub keeping: String,
+    /// **The next seasonal ground of a migratory herd** (#799, the `herd_lore` knowledge): the
+    /// route anchor it goes to after the one it is at, or is already walking to. `-1` unless the
+    /// viewer's people know herd lore and the herd is visible (the ground tile is not fog-checked).
+    /// Appended last.
+    #[serde(default = "no_next_ground")]
+    pub next_ground_x: i32,
+    /// See [`Self::next_ground_x`].
+    #[serde(default = "no_next_ground")]
+    pub next_ground_y: i32,
+}
+
+/// The `-1` "no ground to show" sentinel of the next-seasonal-ground pair — the same convention
+/// `next_x`/`next_y` use for "no heading".
+fn no_next_ground() -> i32 {
+    -1
 }
 
 impl Default for HerdTelemetryState {
@@ -1080,6 +1095,8 @@ impl Default for HerdTelemetryState {
             upkeep_tools_short: false,
             predator_eaten_by: String::new(),
             keeping: String::new(),
+            next_ground_x: no_next_ground(),
+            next_ground_y: no_next_ground(),
             predator_eaten: 0.0,
             corral_material: Vec::new(),
             pastoral_material: Vec::new(),

@@ -125,8 +125,14 @@ fn resolve_ask(
     // **The party is quoted on the kit the launch would ISSUE it** — `take_party_issue`'s counts,
     // previewed off the band's live ledger — so the sheet and the raid that leaves describe the same
     // people. A band short of spears is told the raid's real (bare or partial) yield.
-    let (party, per_worker_haul) =
-        issued_raid_party(world, &wear, &kit, party_workers, herd.body_mass);
+    let (party, per_worker_haul) = issued_raid_party(
+        world,
+        &wear,
+        &kit,
+        party_workers,
+        herd.body_mass,
+        FactionId(faction_id),
+    );
     Ok(ResolvedAsk {
         herd,
         party,
@@ -206,18 +212,19 @@ fn resolve_quarry_and_kit(
         move_with_herd: false,
     };
     // **Every row's claim, struck the way the turn strikes it** ([`crate::take_claims`]).
-    let other_rows = crate::take_claims::with_world_sources(world, |sources| {
-        allocation
-            .as_ref()
-            .map(|allocation| {
-                allocation.rows_excluding_source(
-                    &equipment,
-                    &herd_row,
-                    &crate::take_claims::row_claims(sources, allocation, &wear).claims,
-                )
-            })
-            .unwrap_or_default()
-    });
+    let other_rows =
+        crate::take_claims::with_world_sources(world, FactionId(faction_id), |sources| {
+            allocation
+                .as_ref()
+                .map(|allocation| {
+                    allocation.rows_excluding_source(
+                        &equipment,
+                        &herd_row,
+                        &crate::take_claims::row_claims(sources, allocation, &wear).claims,
+                    )
+                })
+                .unwrap_or_default()
+        });
     let priority = allocation
         .as_ref()
         .map_or_else(crate::components::SourcePriority::default, |allocation| {
@@ -299,7 +306,7 @@ fn muster_scene(world: &mut World, faction: FactionId, band_id: u64) -> Option<M
     let band_pos = world
         .get::<crate::components::Tile>(cohort.current_tile)
         .map(|tile| tile.position);
-    let claims = crate::take_claims::with_world_sources(world, |sources| {
+    let claims = crate::take_claims::with_world_sources(world, faction, |sources| {
         crate::take_claims::row_claims(sources, &allocation, &wear).claims
     });
     Some(MusterScene {
@@ -345,6 +352,7 @@ fn query_hunting_party(
     coverage: &crate::equipment_config::KitCoverage,
     wear: &BandEquipment,
     quarry_body_mass: f32,
+    drives_known: bool,
 ) -> HuntingParty {
     let combat = world.resource::<CombatConfigHandle>().get();
     let intrinsic = world.resource::<CreaturesConfigHandle>().get().person();
@@ -355,6 +363,7 @@ fn query_hunting_party(
         intrinsic,
         tuning: combat.expedition_tuning(),
         hunt_injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
+        drives_known,
     }
     .party_against(crate::equipment_config::Quarry::Mass(quarry_body_mass))
 }
@@ -391,12 +400,25 @@ pub fn issued_raid_party(
     kit: &crate::equipment_config::KitChoice,
     party_workers: u32,
     quarry_body_mass: f32,
+    faction: FactionId,
 ) -> (HuntingParty, f32) {
     let equipment = world.resource::<EquipmentConfigHandle>().get();
     let issued = band_ledger.party_issue(&equipment, kit, party_workers);
     let coverage = equipment.coverage(kit, party_workers as f32, &issued);
     (
-        query_hunting_party(world, &equipment, &coverage, &issued, quarry_body_mass),
+        query_hunting_party(
+            world,
+            &equipment,
+            &coverage,
+            &issued,
+            quarry_body_mass,
+            // The raid's people are the home band's: they drive if their faction has learned to.
+            crate::roaming_skills::world_faction_knows(
+                world,
+                faction,
+                crate::roaming_skills::DRIVES_DISCOVERY_ID,
+            ),
+        ),
         query_per_worker_haul(world, &equipment, &coverage, &issued),
     )
 }
@@ -684,6 +706,11 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
             .hunt
             .per_worker_biomass_capacity,
         max_workers,
+        drives_known: crate::roaming_skills::world_faction_knows(
+            world,
+            FactionId(ask.faction_id),
+            crate::roaming_skills::DRIVES_DISCOVERY_ID,
+        ),
         // **Each row is what its crew collects after keeping** (`docs/plan_site_crews.md` §2.2) —
         // the deposit curve's rule ([`crate::extraction::deposit_crew_quote`]).
         keeping: crate::fauna::herd_crew_keeping_next_turn(
@@ -950,7 +977,7 @@ fn answer_deposit_crew_take(world: &mut World, ask: &DepositCrewTakeQuery) -> Qu
         floor: ask.floor,
     };
     // **Every committed row's claim, struck the way the turn strikes it** ([`crate::take_claims`]).
-    let claims = crate::take_claims::with_world_sources(world, |sources| {
+    let claims = crate::take_claims::with_world_sources(world, faction, |sources| {
         crate::take_claims::row_claims(sources, &allocation, &wear).claims
     });
     let per_crew = (1..=ask.max_workers)
@@ -1116,6 +1143,13 @@ fn answer_work_party_forecast(
     }
     let wanted = BandId(ask.band_id);
     let faction = FactionId(ask.faction_id);
+    // **The reach this band's people hunt at** (#799) — read once, so every party the forecast
+    // resolves fights the engagement the turn's take will.
+    let drives_known = crate::roaming_skills::world_faction_knows(
+        world,
+        faction,
+        crate::roaming_skills::DRIVES_DISCOVERY_ID,
+    );
     let Some(band) = world
         .query::<(bevy::prelude::Entity, &BandId, &PopulationCohort)>()
         .iter(world)
@@ -1344,7 +1378,7 @@ fn answer_work_party_forecast(
     };
     // **The asked crew's planned split and every committed row's claim**, struck the way the turn
     // strikes them ([`crate::take_claims`]).
-    let (split, claims) = crate::take_claims::with_world_sources(world, |sources| {
+    let (split, claims) = crate::take_claims::with_world_sources(world, faction, |sources| {
         (
             crate::take_claims::take_kit_claim(
                 sources,
@@ -1464,8 +1498,14 @@ fn answer_work_party_forecast(
     let take_at_the_source = |turns: u32| -> f32 {
         match &asked {
             Asked::Hunt(herd) => {
-                let hunters =
-                    pricing.hunters(&equipment, &wear, &combat, intrinsic, herd.body_mass);
+                let hunters = pricing.hunters(
+                    &equipment,
+                    &wear,
+                    &combat,
+                    intrinsic,
+                    herd.body_mass,
+                    drives_known,
+                );
                 crate::fauna::project_realized_hunt(
                     herd,
                     &fauna,
@@ -1599,7 +1639,14 @@ fn answer_work_party_forecast(
     party.restamp(source_pos, ask.workers, walk_tiles, walk_turns);
     let forecast = match &asked {
         Asked::Hunt(herd) => {
-            let hunters = pricing.hunters(&equipment, &wear, &combat, intrinsic, herd.body_mass);
+            let hunters = pricing.hunters(
+                &equipment,
+                &wear,
+                &combat,
+                intrinsic,
+                herd.body_mass,
+                drives_known,
+            );
             crate::work_party::forecast_hunt_caravan(
                 &party,
                 herd,
@@ -2090,6 +2137,7 @@ mod tests {
             &fully_armed(&equipment, &kit, &fresh),
             &fresh,
             test_herd().body_mass,
+            false,
         );
 
         assert_eq!(
@@ -2257,6 +2305,7 @@ mod tests {
             // not `expedition_tuning`.
             tuning: combat.tuning(),
             hunt_injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
+            drives_known: false,
         }
         .party_against(crate::equipment_config::Quarry::Mass(body_mass))
     }
@@ -3645,6 +3694,7 @@ mod tests {
             &fully_armed(&equipment, &kit, &fresh),
             &fresh,
             herd.body_mass,
+            false,
         );
         let per_worker_haul = query_per_worker_haul(
             &world,
@@ -3719,6 +3769,7 @@ mod tests {
             &fully_armed(&equipment, &kit, &fresh),
             &fresh,
             herd.body_mass,
+            false,
         );
         let per_worker_haul = query_per_worker_haul(
             &world,

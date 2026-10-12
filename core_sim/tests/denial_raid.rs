@@ -2213,6 +2213,7 @@ fn resident_party_like(app: &App, party: bevy::prelude::Entity, body_mass: f32) 
         intrinsic: person,
         tuning: combat.expedition_tuning(),
         hunt_injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
+        drives_known: false,
     }
     .party_against(core_sim::Quarry::Mass(body_mass))
 }

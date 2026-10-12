@@ -13,6 +13,8 @@ paths:
   - "core_sim/tests/migration_mode.rs"
   - "core_sim/src/hunt_by_need.rs"
   - "core_sim/tests/hunt_by_need.rs"
+  - "core_sim/src/roaming_skills.rs"
+  - "core_sim/tests/roaming_skills.rs"
 ---
 
 # The work party — hunt, forage and extract are one model, and distance is a caravan
@@ -854,6 +856,54 @@ herd, the save and the wire both ways), `components::tests` (the donor order and
 `bin/server.rs` `a_follow_order_creates_the_need_row_at_zero_…` / `unfollowing_…` /
 `a_move_order_ends_a_need_row`.
 
+## The roaming skills — herd lore, travois, drives (#799)
+
+Design: `docs/plan_roaming_bands.md` §"The roaming skills — decided". Three **faction knowledges** on
+the discovery ledger, owned by `core_sim/src/roaming_skills.rs`. They are not ladder rungs — nothing
+is built or held — so each has its **own practice signal**, the way `storage` is taught by rot, and
+each is priced in `intensification_ladder.json` → `knowledge.lesson_costs` (all **20**, like every
+lesson) and credited through `LadderKnowledge::ledger_credit` (practice ÷ cost), the one seam that
+turns practice into ledger progress. Ids continue the sequence (2011 is retired, 2018 is storage):
+`herd_lore` **2019**, `travois` **2020**, `drives` **2021**, resolved by `discovery_id_for` and
+mirrored in `start_profile_knowledge_tags.json` (which grants none of them at the start).
+
+| Skill | Taught by (quantum) | Effect |
+|---|---|---|
+| `herd_lore` | each hex a **resident** band steps in `advance_band_movement` while the herd its hunt row follows (`LaborAllocation::followed_herd`) is on a `RoamState::Migrate` leg — `learn_rate` per hex. A herd that loiters teaches nothing; a band under a plain move order is not following | `HerdTelemetryState.nextGroundX/Y` — see below |
+| `travois` | a departure's long-move shed: `learn_rate × shed share`, share = shed load ÷ held load (`carry::shed_share`, both measured by `CarryLoad::load`), clamped `0..=1`, **once per departure** (the `!departed` branch). A move that sheds nothing teaches nothing | `carry.travois_carry_multiplier` on `per_worker_carry` — see `band-carry.md` |
+| `drives` | each turn a crew works the herd its band follows (`move_with_herd`) **as a camp kill** — the same `crew_at_the_source && working_the_herd` gate as the hunt lesson, and the herd inside `band_work_range` (`work_party::party_begins_past`), not a posting. `learn_rate` per source per turn, never scaled by the crew | `hunt.drive_engage_gain` / `hunt.drive_full_head_count` on `herd_engage_rate` |
+
+**Herd lore's field is the grounds the herd goes to next, in both phases.** `step_index` is the anchor
+the herd is AT while it loiters and the anchor it LEFT while it migrates (arrival advances it), so
+`route[(step_index + 1) % len]` ([`roaming_skills::next_ground`]) is the ground it leaves for after
+the current loiter and, mid-leg, the destination it is already walking to. `nextX`/`nextY` stay the
+leg's next single hex. The pair is `-1` unless the viewer's people know herd lore, and always `-1` for
+a graze-wandering herd or a route of fewer than two anchors. It rides the herd row, so the row's own
+fog gate (`herd_is_visible`) is the visibility gate; **the ground tile is deliberately not
+fog-checked** — seeing past the fog to where a herd is going is the lesson. `HerdSnapshotInputs
+.herd_lore_known` is resolved once per capture off the ledger.
+
+**Drives is one multiplier on one seam.** `fauna::herd_engage_rate(herd, fauna, drives_known)` takes a
+wild herd's rate × `1 + drive_engage_gain × min(head_count / drive_full_head_count, 1)`
+(`roaming_skills::drive_engage_multiplier`; head count = `biomass / body_mass`). It is the wild arm
+alone — a pen and a halter have their own reach gains. The flag travels on the party:
+`HuntingParty::drives_known`, set from `PartyResolution::drives_known` (a **required** field, so a new
+construction site must answer), and on `HuntCrewCurveInputs` / `HuntCrewLevers` / `ClaimSources` where
+no party exists yet. `resolve_hunt_engagement`, `engagement_reach`, `hunt_useful_take_hands`,
+`hunt_crew_needed`, the projections and `forecast_source_yield`'s `engage_rate` therefore read one
+value; every construction site resolves it for ITS faction (`labor.rs` per band, `advance_expeditions`
+off the home people, `forecast_query` / `seed_source_yield` off the asking band,
+`take_claims::with_world_sources(world, faction, ..)`). The shipped `drive_full_head_count` **100** is
+in heads: a migratory herd is 4,000–12,000 biomass, which at the light roster's body masses
+(reindeer 20 … steppe runner 53) is roughly 75–600 head, while a mammoth herd (5–15 head) gains almost
+nothing.
+
+**The roster carries them as a branch of their own.** `LadderConfig::standalone_knowledges` (required)
+files a knowledge no rung teaches under a wire `branch` token and an `area` (here `roam` / `reach`,
+orders 1–3); `knowledge_roster()` appends them after the rung-taught ones with `is_step: false`, so
+`ladderKnowledge` and `intensificationKnowledge` publish them with no client list. See
+`intensification.md` → "Knowledge no rung teaches".
+
 ## The tests that carry the arc
 
 | test | claim |
@@ -878,3 +928,9 @@ herd, the save and the wire both ways), `components::tests` (the donor order and
 | `work_party_caravan::a_far_felling_crew_with_the_woodcutting_kit_carries_the_sled_pack` | the kit is claimed whole, so a felling party's pack is the sled's haul over the weight, larger than bare |
 | `work_party_caravan::a_local_extract_take_is_capped_by_carry_over_weight` | on a material heavy enough, a bare crew's cut is exactly its carry over the weight, and the sled raises it |
 | `work_party_caravan::a_pack_is_the_haul_carry_over_the_materials_weight` | twice the weight, half the units per pack — the material's one number is the whole difference |
+| `roaming_skills::walking_beside_a_migrating_herd_teaches_herd_lore_a_hex_at_a_time` and its two negatives (`following_a_loitering_herd_…`, `a_band_that_is_not_following_the_herd_…`) | herd lore: one `learn_rate` per hex stepped beside a `Migrate` herd, nothing for a loitering herd or an unfollowing band |
+| `roaming_skills::a_departure_that_sheds_teaches_travois_once`, `a_long_move_that_sheds_nothing_teaches_no_travois`, `knowing_travois_sheds_less_and_lifts_the_published_pack` | travois: credited once per departure in proportion to the share shed, not at all when nothing is shed; a knowing band walks off with `travois_carry_multiplier` times the pack and the wire's `carryPerWorker` echoes it |
+| `roaming_skills::camp_kills_on_a_followed_herd_teach_drives_a_turn_at_a_time` and its two negatives (`a_camp_kill_on_a_herd_nobody_follows_…`, `a_band_still_catching_up_to_the_herd_…`) | drives: one `learn_rate` per worked camp-kill turn on a followed herd; not on an unfollowed herd, not beyond `band_work_range` |
+| `roaming_skills::the_next_ground_is_published_only_with_herd_lore_and_is_the_next_anchor_in_both_phases`, `…_wraps_the_route`, `a_graze_wandering_herd_…`, `a_herd_in_the_fog_…` | the encoded `nextGroundX/Y`: `-1` without the lesson, the next anchor with it in both phases, wrapping, absent for a graze-wanderer, no row in the fog |
+| `roaming_skills::the_roaming_skills_ride_the_roster_as_a_branch_in_the_reach_area` | the three on the encoded roster as branch `roam`, area `reach`, `is_step` false, progress riding `intensificationKnowledge` |
+| `fauna::tests::a_drive_scales_the_wild_reach_with_head_count_and_caps` | the engage gain is the identity unknown, scales with head count, caps at `drive_full_head_count`, and reaches `resolve_hunt_engagement` through the party |

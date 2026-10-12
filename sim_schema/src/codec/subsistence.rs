@@ -699,6 +699,8 @@ fn create_herds<'a>(
                 upkeepToolsShort: herd.upkeep_tools_short,
                 predatorEatenBy: Some(predator_eaten_by),
                 keeping: Some(keeping),
+                nextGroundX: herd.next_ground_x,
+                nextGroundY: herd.next_ground_y,
                 predatorEaten: herd.predator_eaten,
                 // **WHAT A PEN RING SWALLOWS TO RAISE** — appended last (append-only wire), and
                 // the material twin of `corralWorkCost`. It carries what `buildMaterialCost` above
@@ -1602,6 +1604,8 @@ fn decode_herd(herd: fb::HerdTelemetryState<'_>) -> HerdTelemetryState {
         upkeep_tools_short: herd.upkeepToolsShort(),
         predator_eaten_by: text(herd.predatorEatenBy()),
         keeping: text(herd.keeping()),
+        next_ground_x: herd.nextGroundX(),
+        next_ground_y: herd.nextGroundY(),
         predator_eaten: herd.predatorEaten(),
     }
 }

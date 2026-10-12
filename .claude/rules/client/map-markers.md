@@ -415,3 +415,17 @@ new (its travel line covers it).
   ring" note: that rule was about a selection ring diverging from the hex outline, and this ring is a
   standing state, not a selection.
 - Frame and claims: `map_follow_herd` (`harness-map-probes.md`).
+
+## HERD LORE'S SEASONAL-GROUND MARK — a hollow diamond at the herd's next grounds (#799)
+
+A herd row carries `next_ground_x/y` (FlatBuffers `nextGroundX/Y`, `-1` = none) only when the viewer
+knows Herd Lore and the herd is migratory. `SecondaryMarkerRenderer.draw_herd` draws a small hollow
+`SIGNAL` diamond with a centre dot at that tile (`_draw_ground_mark`, `HERD_GROUND_*` in `MapView`),
+distinct from the orange next-step arrow and the dashed follow ring. While the herd is followed,
+hovered or selected (the arrow's own rule) a dotted tether runs from the herd to it
+(`_draw_ground_tether`).
+
+**The ground tile is deliberately NOT fog-checked.** The server publishes it unfogged, so the marker
+never gates on `_is_tile_visible` of the ground — only the herd's own tile (already required by
+`draw_herd`). Colours are `static var`s filled in `apply_palette` (a `const` cannot read `HudStyle`).
+Frames: `map_herd_lore_ground`, `map_herd_lore_ground_unfollowed` (`map_preview`).

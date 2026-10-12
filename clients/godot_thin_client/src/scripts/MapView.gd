@@ -688,6 +688,23 @@ const HERD_FOLLOW_RING_DASHES := 14
 const HERD_FOLLOW_RING_DASH_SHARE := 0.55
 const HERD_FOLLOW_RING_DASH_SEGMENTS := 4
 
+# --- HERD LORE seasonal-ground marker (docs/plan_roaming_bands.md §The roaming skills) ---------------
+# Once the viewer knows Herd Lore, a migratory herd's row carries its NEXT SEASONAL GROUND. That tile
+# wears a small hollow diamond (a "pasture to come" mark, deliberately not the next-step arrow nor the
+# followed herd's dashed ring) and, while the herd is followed / hovered / selected, a faint dotted
+# line runs from the herd to it. The ground is not fog-checked: the server publishes it unfogged.
+## DERIVED from `HudStyle.SIGNAL` in `apply_palette` (see `HERD_DISTRESS_COLOR` for why not a const).
+static var HERD_GROUND_MARK_COLOR: Color = Color()
+const HERD_GROUND_MARK_ALPHA := 0.85
+const HERD_GROUND_MARK_RADIUS_FACTOR := 0.22   # diamond half-diagonal, in hex radii
+const HERD_GROUND_MARK_WIDTH := 2.0
+const HERD_GROUND_MARK_DOT_FACTOR := 0.05      # centre dot radius, in hex radii
+static var HERD_GROUND_LINE_COLOR: Color = Color()
+const HERD_GROUND_LINE_ALPHA := 0.7
+const HERD_GROUND_LINE_WIDTH := 1.8
+const HERD_GROUND_LINE_DOT_PERIOD_FACTOR := 0.18   # spacing between dots, in hex radii
+const HERD_GROUND_LINE_DOT_SHARE := 0.5            # drawn share of each dot-and-gap period
+
 # --- Scouting-expedition marker (docs/plan_exploration_and_sites.md §2) ---
 # A detached party reads as a hollow, flag-marked disc — deliberately distinct from a resident
 # band's SOLID faction dot, so an expedition says "party out on a venture, not a settlement-band"
@@ -760,6 +777,8 @@ static func apply_palette(p: Dictionary) -> void:
 	HUNT_DANGER_OVERLAY_COLOR = HudStyle.HUNT_DANGER_ACCENT
 	READY_FOR_IMPROVEMENT_OVERLAY_COLOR = HudStyle.HEALTHY
 	HERD_DISTRESS_COLOR = HudStyle.DANGER
+	HERD_GROUND_MARK_COLOR = Color(HudStyle.SIGNAL, HERD_GROUND_MARK_ALPHA)
+	HERD_GROUND_LINE_COLOR = Color(HudStyle.SIGNAL, HERD_GROUND_LINE_ALPHA)
 	OVERLAY_COLORS = {
 		"sentiment": SENTIMENT_COLOR,
 		"corruption": CORRUPTION_COLOR,

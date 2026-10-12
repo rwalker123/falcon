@@ -5454,6 +5454,14 @@ pub fn advance_labor_allocation(
             .cloned()
             .unwrap_or_else(|| BandEquipment::start_stocked_for(&equipment_cfg, available as f32));
         let faction = cohort.faction;
+        // **Does this band's people know `drives`?** (#799) Resolved once per band per turn, like the
+        // kit tiers above, so every party this band fields this turn reaches at one rate.
+        let drives_known = crate::intensification::knows(
+            &discovery,
+            faction,
+            crate::roaming_skills::DRIVES_DISCOVERY_ID,
+            knowledge_dials.completion_threshold,
+        );
         // **THE SIZE OF THE LAND UNDER A PLANT CLAIM** — the tile's own `K` through the one
         // `forage::tile_forage_capacity` seam, resolved the way every other tile reading in this
         // system is (the registry index, then the query), and handed to
@@ -5665,6 +5673,7 @@ pub fn advance_labor_allocation(
                         materials: &materials_cfg,
                         combat: &combat_config,
                         person: person_profile,
+                        drives_known,
                         start: fauna::ProjectionStart::AfterRegrowth,
                     },
                     &allocation,
@@ -6145,6 +6154,7 @@ pub fn advance_labor_allocation(
                     materials: &materials_cfg,
                     combat: &combat_config,
                     person: person_profile,
+                    drives_known,
                     start: fauna::ProjectionStart::AfterRegrowth,
                 },
                 &allocation,
@@ -6414,6 +6424,7 @@ pub fn advance_labor_allocation(
                 intrinsic: person_profile,
                 tuning: combat_tuning,
                 hunt_injury_damage_per_animal: hunt_injury_damage,
+                drives_known,
             };
             let party_for = |body_mass: f32| {
                 party_resolution.party_against(crate::equipment_config::Quarry::Mass(body_mass))
@@ -6447,6 +6458,7 @@ pub fn advance_labor_allocation(
                         &combat_config,
                         person_profile,
                         body_mass,
+                        drives_known,
                     )
                 })
             };
@@ -7691,7 +7703,10 @@ pub fn advance_labor_allocation(
                     };
                 }
                 LaborTarget::Hunt {
-                    fauna_id, floor, ..
+                    fauna_id,
+                    floor,
+                    move_with_herd,
+                    ..
                 } => {
                     if registry.find(fauna_id).is_none() {
                         // Herd despawned (extinction / another hunter) → lapse.
@@ -8597,6 +8612,7 @@ pub fn advance_labor_allocation(
                                 ),
                                 party_for(herd.body_mass)
                                     .stay_fraction(fauna::herd_wariness(herd, &fauna)),
+                                drives_known,
                             ),
                             overdraws: false,
                         };
@@ -8714,6 +8730,28 @@ pub fn advance_labor_allocation(
                         faction,
                         &mut discovery,
                     );
+                    // **A DRIVE IS PRACTICED BY A CAMP KILL ON A FOLLOWED HERD** (#799, the `drives`
+                    // roaming skill): the band is camped in the herd it follows
+                    // (`move_with_herd`), the crew is working it (the same gate as the lesson above),
+                    // and the kill is made inside `band_work_range` — a far posting walks its take
+                    // home and is not a drive. Once per source per turn, never scaled by the crew.
+                    let camp_kill = !postings.contains_key(&idx)
+                        && crate::grid_utils::hex_distance_wrapped(
+                            band_pos,
+                            herd.position(),
+                            grid_width,
+                            wrap_horizontal,
+                        ) <= crate::work_party::party_begins_past(&labor);
+                    if *move_with_herd && crew_at_the_source && working_the_herd && camp_kill {
+                        crate::roaming_skills::credit(
+                            &mut discovery,
+                            &ladder,
+                            faction,
+                            crate::roaming_skills::DRIVES,
+                            crate::roaming_skills::DRIVES_DISCOVERY_ID,
+                            crate::roaming_skills::drives_practice(knowledge_dials),
+                        );
+                    }
                     // **THE take's yield: product × intensity** (`docs/plan_hunt_yield_model.md`).
                     // `hunt_take` above decided HOW MUCH biomass came home (the policy's job); the
                     // species' `HuntYield` decides WHAT that biomass is worth, in one call that
@@ -9347,6 +9385,7 @@ pub fn advance_labor_allocation(
                             &band_kit,
                         ),
                         party_for(herd.body_mass).stay_fraction(fauna::herd_wariness(herd, &fauna)),
+                        drives_known,
                     );
                     // **The arrival schedule — computed POST-take, unlike `realized`.** It
                     // answers "when does the next food land", so it must start from the state the
@@ -10558,6 +10597,7 @@ pub fn advance_labor_allocation(
                     combat: &combat_config,
                     person: person_profile,
                     // Between turns, exactly as the snapshot's readout is struck.
+                    drives_known,
                     start: fauna::ProjectionStart::BeforeRegrowth,
                 },
                 &allocation,
@@ -10636,6 +10676,7 @@ pub fn advance_labor_allocation(
                             range_sigmas: combat_config.forecast_range_sigmas,
                             floor: *floor,
                             baseline_haul_rate,
+                            drives_known,
                             max_workers: allocation.musterable_pool(idle_now, idx, &is_local),
                             keeping: fauna::herd_crew_keeping_next_turn(
                                 herd, &fauna, &ladder, None,
@@ -13172,6 +13213,10 @@ pub struct RaidConfigs<'w> {
     pub extraction: Res<'w, crate::extraction_config::ExtractionConfigHandle>,
     /// What a death adds to the place it happens on (`crate::belief`).
     pub belief: Res<'w, BeliefConfigHandle>,
+    /// What each people has learned (#799) — the warrior line's take-kit claim is struck at the
+    /// reach the band's hunt rows have, so it reads the band's `drives`. Optional, for the minimal
+    /// worlds that never insert a ledger.
+    pub discovery: Option<Res<'w, DiscoveryProgressLedger>>,
 }
 
 /// **Predators Phase 1b — the raid trigger, and the Warrior role's first live consumer**
@@ -13324,6 +13369,14 @@ pub fn advance_predator_raids(
                     materials: &configs.materials.get(),
                     combat: &configs.combat.get(),
                     person,
+                    drives_known: configs.discovery.as_deref().is_some_and(|ledger| {
+                        crate::roaming_skills::faction_knows(
+                            ledger,
+                            &configs.ladder.get(),
+                            cohort.faction,
+                            crate::roaming_skills::DRIVES_DISCOVERY_ID,
+                        )
+                    }),
                     start: fauna::ProjectionStart::AfterRegrowth,
                 },
                 &alloc,
@@ -15122,7 +15175,7 @@ mod labor_yield_tests {
                 herd.body_mass,
                 // The keepers' handling rate — the species' own reach through
                 // `husbandry.pen_engage_gain`.
-                crate::fauna::herd_engage_rate(herd, &fauna),
+                crate::fauna::herd_engage_rate(herd, &fauna, false),
                 // …and the retreat a fence calms the herd to, at the party this harness fields.
                 // The bands here carry no `BandEquipment`, which every rate in this module reads as
                 // the fully-kitted reference (`equipped_haul_rate`), so the shipped equipped party

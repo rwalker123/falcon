@@ -3660,7 +3660,9 @@ table LadderKnowledgeState {
   // "Seed Selection" — the id, underscores to spaces and each word capitalized, resolved sim-side so
   // no client authors a second spelling of it.
   displayName:string;
-  // The branch of the rung that TEACHES it: "plant" | "animal" | "route". WHICH COLUMN.
+  // The branch of the rung that TEACHES it: "plant" | "animal" | "route" | ... - or, for a knowledge no
+  // rung teaches, the `standalone_knowledges` token the config files it under ("roam": herd_lore,
+  // travois, drives). WHICH COLUMN.
   branch:string;
   // ...and that rung's `order`. THE POSITION WITHIN THE COLUMN, bottom step first.
   order:uint = 0;
@@ -3669,7 +3671,8 @@ table LadderKnowledgeState {
   // changes what a pen may draw on rather than opening a further rung. DERIVED, never declared.
   isStep:bool = false;
   // --- THE SUBJECT AREA (appended last) ---------------------------------------------------------
-  // The subject area of the branch that TEACHES it: "food", "making", "works". WHICH HEADING, one
+  // The subject area of the branch that TEACHES it: "food", "making", "works", "reach" (the roaming
+  // skills, via `standalone_knowledges`). WHICH HEADING, one
   // level above `branch`. Off `intensification_ladder.json`'s `branches` table, never a client-side
   // list — a hard-coded area table is the `LADDER_DOMAINS` bug one level up. "" when the branch's
   // descriptor names none, which the client draws under a fallback heading rather than dropping.
@@ -4628,6 +4631,17 @@ table HerdTelemetryState {
   // to size a hunting-by-need crew before the row exists. Empty only for a species the fauna table
   // cannot resolve; the reader then has no meal and sizes nothing.
   keeping:string;
+  // --- THE NEXT SEASONAL GROUND (appended last, #799 herd lore) ---------------------------------
+  // The route anchor this MIGRATORY herd goes to next: `route[(step_index + 1) % len]` - in BOTH
+  // phases the grounds the herd leaves for after the one it is at: while loitering at anchor i it is
+  // anchor i+1, and mid-leg it is the leg's destination (the anchor the herd is already walking to;
+  // `nextX`/`nextY` stay the leg's next single hex). Published only when the viewer's faction knows
+  // the `herd_lore` knowledge; the row itself is already fog-filtered, so the herd is one the viewer
+  // can see, and the GROUND tile is deliberately not fog-checked (seeing where a herd is going past
+  // the fog is the lesson). -1 on both axes otherwise - a client cannot tell "unknown skill" from
+  // "no ground to show" - and always -1 for a non-migratory herd or a single-anchor route.
+  nextGroundX:int = -1;
+  nextGroundY:int = -1;
 }
 
 table CommandEventState {

@@ -124,6 +124,10 @@ const KNOWLEDGE_UNLOCK_NOTES := {
 	# pen taught your people, and what it buys is an account they could not bank before. Said in the
 	# siblings' voice — what the capability bought, and where it now lands.
 	"foddering": "Hay you gather now goes into the fodder store and feeds your pens.",
+	# The roaming skills (#799): standalone, each a standing effect rather than a new verb.
+	"herd_lore": "See where a migrating herd goes next.",
+	"travois": "Each worker carries more on the move.",
+	"drives": "Hunters take more from a big herd.",
 }
 
 # --- Owned state (moved off HudLayer) ---
