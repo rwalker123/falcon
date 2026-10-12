@@ -60,9 +60,9 @@ would make the sim tell a commanded people apart from an uncommanded one, which 
 distinction it must never make.
 
 **Cost, as measured.** The server pays per *occupied* seat on the turn thread: about **+3.1 ms
-`run_turn` and +2.5 ms snapshot capture per seat** on a Standard map
+`run_turn` per seat** on a Standard map, of which about 2.5 ms is the seat's snapshot capture
 (`.claude/rules/core_sim/turn-profiling.md`). Four majors plus eight minors is 12 seats, roughly
-+60 ms per turn over a single seat. That is well within what a turn-based game can absorb. Each
++34 ms per turn over a single seat. That is well within what a turn-based game can absorb. Each
 `sim_ai` process decodes the full frame and runs its specialists every tick, but **its CPU and memory
 have never been measured.** That is the number that could make "one process per seat" too expensive.
 
@@ -104,7 +104,7 @@ no draw.
 ### Placement: majors first, minors into the gaps
 
 Archetypes are placed in catalog order. Each one has its own minimum separation, measured against
-every start already placed. Majors keep their 20 and minors take a smaller number, so minors land in
+every start already placed. Majors keep their 20 (now `archetypes.major.min_separation`) and minors take a smaller number, so minors land in
 the space between majors. The existing relaxed pass (keep the minimum distance as large as possible
 and warn) applies per archetype.
 
@@ -153,7 +153,8 @@ no pressure from B.
 
 The size term means a much larger neighbour needs only a small culture edge, and a much smaller one
 needs a large edge. When the sizes are nearly equal, culture decides: a people one person smaller
-with double the strength absorbs the larger one. Both sizes are whole-people headcounts; the band is
+with triple the strength is asked to absorb the larger one (pressure about 2.9 at the opening
+levers), though it cannot force the join. Both sizes are whole-people headcounts; the band is
 only where the pressure lands.
 
 #### Three phases on one number
@@ -167,7 +168,7 @@ only where the pressure lands.
 - **"Close"** means the largest per-axis gap between the **band's** culture and B's people-weighted
   average (`faction_trait_average`) is at most `joining.max_culture_distance`. This is the same metric
   divergence uses. Phase 1 does not need it, because the pull is what brings cultures together.
-- **The receiver always agrees.** B's seat accepts or declines in phases 2 and 3. This holds for now
+- **The receiver always decides.** B's seat accepts or declines in phases 2 and 3. This holds for now
   and may change in playtest. An unanswered offer stands while its conditions hold, so a seat nobody
   plays never takes anyone in.
 - **A refusal holds only until phase 3.** If the owner says no in phase 2, nothing else happens. If
@@ -176,9 +177,10 @@ only where the pressure lands.
   It lives in `SimState`.
 
 **What drives it is already in the game.** Contact drift pulls tied bands' cultures together, and a
-Purist lean resists that pull. A purist band can sit under heavy pressure and never become "close",
-so it never reaches phase 2 or 3. It has to be conquered or left alone. Personality therefore
-decides who is absorbed, with no special-case code.
+Purist lean slows that pull: receptiveness is `1 − purist / 2.5`, so a lean of +0.8 still takes about
+two thirds of it, and the purist axis itself drifts toward the other people's. A purist band
+therefore reaches "close" later than an accepting one, but it gets there unless something breaks
+the tie. Personality decides how fast a band is absorbed, with no special-case code.
 
 **The hand-over is the defection remnant's.** The band changes faction with its parties, roads and
 improvements (`follow_the_band_to_its_new_people`) and its knowledge. Ties are untouched. The
@@ -219,14 +221,15 @@ failure columns say which way each lever breaks.
 
 | Lever | Opening | Too low | Too high |
 |---|---|---|---|
+| `major.min_separation` | 20 tiles (moves here from `simulation_config.json` `faction_start_min_separation`, which is retired) | Majors crowd each other | Few majors fit |
 | `minor.band_size` | 12 | Starves before contact matters | Indistinguishable from a major |
 | `minor.loadout` | major's, minus kits | — | No disadvantage |
 | `minor.min_separation` | 8 tiles | Minors crowd each other and majors | No room left; few minors fit |
 | `minor.default_count` | null (derive from map) | Empty early game | Map is all minors |
 
 **`personalities.json`** — each entry is `{id, culture_lean: {axis: offset}, weight}`. It starts
-with a handful of entries, including one strongly Purist and one strongly Syncretic, so absorption
-has both outcomes on the map.
+with a handful of entries, including one strongly Purist and one strongly Syncretic, so the map
+holds both slow and fast absorption.
 
 **`culture_corruption_config.json` → `culture.strength`**
 
