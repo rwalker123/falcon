@@ -25,7 +25,7 @@ use core_sim::{
     KnowledgeFragment, LaborAllocation, PopulationCohort, ResidentBand, Sighting, StartingLoadout,
     Tile, FULL_TIE,
 };
-use faction_support::{one_faction_world, two_faction_world, HOME, RIVAL};
+use faction_support::{one_faction_world, two_faction_world, world_with, HOME, RIVAL};
 
 /// A larder many lifetimes deep, so no fixture band is ever hungry and fertility is the only thing
 /// the ceiling moves.
@@ -56,6 +56,16 @@ const WORKER_ROUNDING_SLACK_PEOPLE: f32 = 1.0;
 /// A discovery id the home band is seeded with, and the progress it holds on it.
 const KNOWN_DISCOVERY: u32 = 7;
 const KNOWN_PROGRESS: f32 = 0.8;
+/// Rivals for the three-people fixture: the pair of over-ceiling peoples and the one they both shed
+/// into.
+const TWO_RIVALS: u32 = 2;
+/// The people of the shared destination band.
+const SHARED_DESTINATION: FactionId = FactionId(2);
+/// The destination's room, as a multiple of the SMALLER over-ceiling group's leak: whichever group
+/// allocates first fills it entirely, leaving the other none to see on the live headroom.
+const SHARED_ROOM_IN_LEAKS: f32 = 0.5;
+/// How much larger the second over-ceiling group is than the first, so the two orders differ.
+const LARGER_GROUP_EXTRA_PEOPLE: f32 = 10.0;
 /// Fixed-point comparisons: how close two head-counts must be to be "the same amount".
 const EPSILON_PEOPLE: f32 = 0.01;
 
@@ -839,4 +849,83 @@ fn a_group_with_too_few_lines_to_found_a_people_stays_and_dwindles() {
         core_sim::Scalar::zero()
     );
     assert!(total(&app, parent) <= before);
+}
+
+/// **8. Eligibility is struck on the headroom the turn OPENED with.** Two over-ceiling groups whose
+/// only destination is one band with room for less than both leaks: the first group's allocation
+/// drains the room, and the second must not read that as "nowhere to go" and break off. The room is
+/// shared, the unplaced excess waits, and the result is the same whichever group comes first in key
+/// order.
+#[test]
+fn groups_sharing_one_destination_do_not_break_off_when_the_first_drains_its_room() {
+    for (home_people, rival_people) in [
+        (OVER_PEOPLE, OVER_PEOPLE + LARGER_GROUP_EXTRA_PEOPLE),
+        (OVER_PEOPLE + LARGER_GROUP_EXTRA_PEOPLE, OVER_PEOPLE),
+    ] {
+        let mut app = world_with(TWO_RIVALS, |_| {});
+        let a = first_band(&mut app, HOME);
+        let b = first_band(&mut app, RIVAL);
+        let c = first_band(&mut app, SHARED_DESTINATION);
+        // The destination's group unions all three peoples' lines (it ties to both), capped at the
+        // free-breeding size.
+        let free_at = app
+            .world
+            .resource::<DemographicsConfigHandle>()
+            .get()
+            .lineage
+            .free_breeding_at
+            .get() as f32;
+        let destination_ceiling =
+            (f32::from(2 * HOME_LINES + NEIGHBOUR_LINES) * shipped_k(&app)).min(free_at);
+        let source_ceiling = f32::from(HOME_LINES + NEIGHBOUR_LINES) * shipped_k(&app);
+        let one_leak = shed_share(&app) * (home_people.min(rival_people) - source_ceiling);
+        let destination_people = destination_ceiling - SHARED_ROOM_IN_LEAKS * one_leak;
+        seat(&mut app, a, home_people, own_lines(a, HOME_LINES));
+        seat(&mut app, b, rival_people, own_lines(b, HOME_LINES));
+        seat(
+            &mut app,
+            c,
+            destination_people,
+            own_lines(c, NEIGHBOUR_LINES),
+        );
+        stand_beside(&mut app, b, a);
+        stand_beside(&mut app, c, a);
+        forget_ties(&mut app);
+        // The two sources are NOT tied to each other: C is the only band either can walk to.
+        tie(&mut app, a, c);
+        tie(&mut app, b, c);
+        demographic_turn(&mut app);
+
+        let before = (total(&app, a), total(&app, b), total(&app, c));
+        let room = destination_ceiling - before.2;
+        assert!(
+            before.0 > source_ceiling && before.1 > source_ceiling,
+            "liveness: both groups are over their ceiling"
+        );
+        assert!(
+            room > 0.0 && room < one_leak,
+            "liveness: the destination has room for less than either leak: {room}"
+        );
+        let bands = band_count(&mut app);
+        let peoples = app.world.resource::<FactionRegistry>().factions().len();
+
+        shed(&mut app);
+
+        assert_eq!(band_count(&mut app), bands, "nobody broke off");
+        assert_eq!(
+            app.world.resource::<FactionRegistry>().factions().len(),
+            peoples,
+            "no new people"
+        );
+        assert!(
+            (total(&app, c) - destination_ceiling).abs() < EPSILON_PEOPLE,
+            "the shared destination fills to its headroom: {}",
+            total(&app, c)
+        );
+        let left = (before.0 - total(&app, a)) + (before.1 - total(&app, b));
+        assert!(
+            (left - room).abs() < EPSILON_PEOPLE,
+            "the two groups shared exactly the room: {left} against {room}"
+        );
+    }
 }

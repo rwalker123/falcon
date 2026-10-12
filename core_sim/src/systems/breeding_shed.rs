@@ -217,6 +217,9 @@ pub fn shed_breeding_excess(
                 .map(|ceiling| (*group, ceiling - info.headcount))
         })
         .collect();
+    // The headroom the turn OPENED with, frozen before any allocation: eligibility (leak or
+    // break-off) is struck on this, while the allocation below draws down the live map.
+    let opening_headroom = headroom.clone();
     let has_room = |headroom: &BTreeMap<Group, Scalar>, group: &Group| {
         headroom.get(group).is_none_or(|room| *room > scalar_zero())
     };
@@ -275,7 +278,7 @@ pub fn shed_breeding_excess(
         let eligible: Vec<Vec<usize>> = info
             .members
             .iter()
-            .map(|&member| destinations_of(member, &headroom))
+            .map(|&member| destinations_of(member, &opening_headroom))
             .collect();
         if eligible.iter().all(Vec::is_empty) {
             if let Some(ask) = break_off_ask(&rows, info, excess, people_per_line) {

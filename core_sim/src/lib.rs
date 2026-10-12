@@ -1320,14 +1320,16 @@ pub fn build_headless_app() -> App {
                     sedentarization::sedentarization_tick,
                 )
                     .chain(),
-                // Pure telemetry: reads `TradeTelemetry`, which only `advance_population_migration`
-                // writes (the cross-people knowledge credit). Ordered after that writer and nothing
-                // else, so it stays free of the labor run the migration follows. The one other edge
-                // is `break_off_breeding_excess`, an EXCLUSIVE system (it spawns a band) and so in
+                // Pure telemetry: reads `TradeTelemetry`, which two systems write (the cross-people
+                // knowledge credit): `advance_population_migration` and `shed_breeding_excess`
+                // (through `MigrationKnowledgeSinks`). Ordered after both and nothing else, so it
+                // stays free of the labor run the migration follows. The one other edge is
+                // `break_off_breeding_excess`, an EXCLUSIVE system (it spawns a band) and so in
                 // conflict with every system; the telemetry reads nothing it writes, so it simply
                 // takes its place after it.
                 systems::publish_trade_telemetry
                     .after(systems::advance_population_migration)
+                    .after(systems::shed_breeding_excess)
                     .after(systems::break_off_breeding_excess),
                 // **RETIRED: `settle_route_keeping`, the third keeping pool as a SYSTEM OF ITS
                 // OWN.** It ran `.after(advance_labor_allocation)` because the `roadwork` head count

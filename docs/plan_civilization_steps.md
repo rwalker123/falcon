@@ -768,8 +768,8 @@ Every decision this doc leaves unmade is owned by an issue, so it cannot be lost
 Decided since first listed: **belief is per place** (it exists to promote settling *there*; whose
 dead are in the ground is The Telling's to narrate). **People shed with no route stay** — they leave
 only when there is somewhere to go; when no practical band can take them, the second choice is to
-break off *as a group* and form their own faction (#690, copying its share of lines — see "Shedding
-goes along routes"). **Everyone in a
+break off *as a group* and form their own faction (#690, copying enough lines to hold its own people, or not breaking off
+at all if the parent holds fewer — see "Shedding goes along routes"). **Everyone in a
 work party eats** — the party feeds itself from its own take, and what is left goes to the connected
 band or rots; a party has no store, so nothing of its own to tether it. The monument's upkeep and
 decay are a rung's, like any other (see the catalog section).
