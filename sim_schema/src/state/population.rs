@@ -2226,6 +2226,13 @@ pub struct CraftSuggestionState {
     /// empty when covered or when no recipe makes the item.
     #[serde(default)]
     pub shortfalls: Vec<MaterialShortfallState>,
+    /// **The share of [`Self::count`] that is a forecast** (#778): units that will wear out before
+    /// the bench could replace them. `count - upcoming_count` is what is short today.
+    pub upcoming_count: u32,
+    /// Turns until the unit in hand wears out at the recent wear rate; `0` with no forecast.
+    pub expires_in_turns: f32,
+    /// The bench's lead time for one more unit, in whole turns (`>= 1`); `0` with no forecast.
+    pub lead_turns: u32,
 }
 
 /// **One consumer going without a suggested item** — a row of [`CraftSuggestionState::sources`].

@@ -2166,9 +2166,15 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     take_rows,
                     hunt_turn_lines.as_deref(),
                     bench,
-                    craft_inputs.recipes,
-                    craft_inputs.equipment,
+                    crate::craft_suggestions::SuggestionConfigs {
+                        recipes: craft_inputs.recipes,
+                        equipment: craft_inputs.equipment,
+                    },
                     &kit,
+                    Some(crate::craft_suggestions::ForecastInputs {
+                        offers: &craft_offers,
+                        materials: craft_inputs.materials,
+                    }),
                 ),
             );
             // **What the whole count needs that the stock cannot cover**, off the same forecast the

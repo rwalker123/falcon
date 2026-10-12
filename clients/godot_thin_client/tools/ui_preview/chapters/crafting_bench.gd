@@ -757,6 +757,7 @@ func _crafting_states() -> void:
 	await _recipe_states()
 	await _shrug_with_a_link_state()
 	await _queue_and_suggestion_states()
+	await _coming_up_state()
 	await _short_head_state()
 	await _material_shortage_state()
 	await _worked_forecast_state()
@@ -797,6 +798,47 @@ const SUGGEST_SPEARS_TITLE := "Spears ×3"
 const SUGGEST_SPEARS_LINE := "3 hunters without"
 const SUGGEST_SLED_TITLE := "Sled ×2"
 const SUGGEST_SLED_LINE := "+1.6 work a turn"
+## **COMING UP (#778)**: a merged entry (spears: short today AND one wearing out) keeps its amber
+## shortage line with a `+1 wearing out` note; a coming-up-only entry (clubs) sits beneath the "Coming
+## up" subhead in the neutral ink, saying when it runs out (turns rounded UP) and hovering the lead time.
+const COMING_UP_CLUBS_COUNT := 2
+const COMING_UP_CLUBS_EXPIRES := 3.2
+const COMING_UP_SPEARS_EXPIRES := 2.0
+const COMING_UP_LEAD_TURNS := 4
+const COMING_UP_SPEARS_UPCOMING := 1
+
+func _coming_up_state() -> void:
+	var band := _crafting_band()
+	var merged := _suggestion("spears", SUGGEST_SPEARS_COUNT, 3.0, 0.0, [
+		_source(HudCraftingVocab.SOURCE_KIND_TAKE, "hunt", 0, 0, "red_deer", "", 2.0, 2.0, 0.0)])
+	merged["upcoming_count"] = COMING_UP_SPEARS_UPCOMING
+	merged["expires_in_turns"] = COMING_UP_SPEARS_EXPIRES
+	merged["lead_turns"] = COMING_UP_LEAD_TURNS
+	var only := _suggestion("clubs", COMING_UP_CLUBS_COUNT, 0.0, 0.0, [])
+	only["upcoming_count"] = COMING_UP_CLUBS_COUNT
+	only["expires_in_turns"] = COMING_UP_CLUBS_EXPIRES
+	only["lead_turns"] = COMING_UP_LEAD_TURNS
+	band["craft_suggestions"] = [merged, only]
+	h._hud.update_band_alerts([band])
+	h._hud.open_crafting_panel(band)
+	await h._settle()
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting/coming-up — the panel is open", false)
+		return
+	var rows := _suggestion_rows(panel)
+	h._assert_hud("crafting/coming-up — two rows, merged first (%d)" % rows.size(), rows.size() == 2)
+	if rows.size() == 2:
+		var merged_texts := _label_texts(rows[0])
+		var only_texts := _label_texts(rows[1])
+		h._assert_hud("crafting/coming-up — the merged row keeps its shortage and notes the wear (%s)" % [merged_texts],
+			merged_texts.any(func(t: String) -> bool: return t.ends_with("· +1 wearing out")))
+		h._assert_hud("crafting/coming-up — the coming-up row says when, rounded up (%s)" % [only_texts],
+			only_texts.has("wear out in ~4 turns"))
+		h._assert_hud("crafting/coming-up — the coming-up row hovers the lead time (%s)" % [rows[1].tooltip_text],
+			rows[1].tooltip_text.contains("about %d turns" % COMING_UP_LEAD_TURNS))
+	await h._save("crafting_coming_up")
+
 ## The spears suggestion's hover, one line per source.
 const SUGGEST_SPEARS_TOOLTIP := "Hunters on Red Deer: 2 missing, 2 without\nHunters on Aurochs: 1 missing, 1 without"
 

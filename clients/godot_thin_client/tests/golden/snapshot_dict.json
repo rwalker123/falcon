@@ -4762,7 +4762,9 @@
       "craft_suggestions": [
         {
           "count": 85,
+          "expires_in_turns": 84.720001,
           "item_id": "hoes",
+          "lead_turns": 197,
           "shortfalls": [
             {
               "held": 5.17,
@@ -4821,12 +4823,15 @@
               "workers_without": 11.57
             }
           ],
+          "upcoming_count": 12,
           "work_per_turn": 19.709999,
           "workers_without": 65.790001
         },
         {
           "count": 126,
+          "expires_in_turns": 94.589996,
           "item_id": "spears",
+          "lead_turns": 136,
           "shortfalls": [
             {
               "held": 95.349998,
@@ -4885,6 +4890,7 @@
               "workers_without": 55.669998
             }
           ],
+          "upcoming_count": 149,
           "work_per_turn": 58.299999,
           "workers_without": 22.379999
         }
@@ -6239,7 +6245,9 @@
       "craft_suggestions": [
         {
           "count": 100,
+          "expires_in_turns": 38.599998,
           "item_id": "hoes",
+          "lead_turns": 126,
           "shortfalls": [
             {
               "held": 32.84,
@@ -6298,12 +6306,15 @@
               "workers_without": 77.43
             }
           ],
+          "upcoming_count": 139,
           "work_per_turn": 21.93,
           "workers_without": 44.080002
         },
         {
           "count": 131,
+          "expires_in_turns": 79.279999,
           "item_id": "spears",
+          "lead_turns": 187,
           "shortfalls": [
             {
               "held": 110.419998,
@@ -6362,6 +6373,7 @@
               "workers_without": 103.510002
             }
           ],
+          "upcoming_count": 74,
           "work_per_turn": 55.919998,
           "workers_without": 55.77
         }
@@ -7677,7 +7689,9 @@
       "craft_suggestions": [
         {
           "count": 135,
+          "expires_in_turns": 63.07,
           "item_id": "hoes",
+          "lead_turns": 7,
           "shortfalls": [
             {
               "held": 14.59,
@@ -7736,12 +7750,15 @@
               "workers_without": 66.57
             }
           ],
+          "upcoming_count": 118,
           "work_per_turn": 86.199997,
           "workers_without": 96.959999
         },
         {
           "count": 184,
+          "expires_in_turns": 98.82,
           "item_id": "spears",
+          "lead_turns": 162,
           "shortfalls": [
             {
               "held": 73.239998,
@@ -7800,6 +7817,7 @@
               "workers_without": 4.36
             }
           ],
+          "upcoming_count": 175,
           "work_per_turn": 85.519997,
           "workers_without": 102.519997
         }

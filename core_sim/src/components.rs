@@ -4000,6 +4000,17 @@ pub struct BandEquipment {
     /// An item with no entry has retired none. **Not gameplay**: nothing in the sim branches on it,
     /// and it must not become a repair discount or a durability bonus — it is the readout's memory.
     retired: std::collections::BTreeMap<String, std::collections::BTreeMap<String, u32>>,
+    /// **THE CONDITION EACH ITEM WAS CHARGED, PER TURN, over the last `wear_forecast.window_turns`
+    /// turns** (#778) - the rate behind the "coming up" craft suggestions. One slot per turn, oldest
+    /// first; [`Self::wear_item`] writes the condition it charged into the newest slot, and
+    /// [`Self::open_wear_slot`] (the per-turn system) opens the next and drops the slots beyond the
+    /// window.
+    ///
+    /// **Recorded at the one seam every wear charge passes through**, so it is exactly what the
+    /// ledger was charged and cannot drift from it. **Not gameplay**: only the suggestion forecast
+    /// reads it, through [`Self::wear_rate`]. It rides `BandRecord::equipment` with the rest of the
+    /// ledger; a splinter's ledger is built empty and so measures its own.
+    wear_window: std::collections::VecDeque<std::collections::BTreeMap<String, f32>>,
 }
 
 /// **Which units a removal takes first** — the two answers to two different questions:
@@ -4496,12 +4507,39 @@ impl BandEquipment {
         if charged <= 0.0 {
             return self;
         }
-        let Some(index) = self.serving_index(item, def) else {
+        let Some(consumed) = self.consume_condition(def, item, charged) else {
             return self;
         };
-        let Some(batches) = self.batches.get_mut(item) else {
-            return self;
-        };
+        // **The readout's memory, written on the one seam that destroys a unit.** See the field's
+        // docs: an emptied batch is removed, so without this the panel could not say *"worn out"*.
+        if consumed.retired > 0 {
+            *self
+                .retired
+                .entry(item.to_string())
+                .or_default()
+                .entry(consumed.tier)
+                .or_default() += consumed.retired;
+        }
+        self.record_wear(item, charged);
+        self
+    }
+
+    /// **CHARGE `charged` CONDITION TO THE BATCH IN HAND** - the consumption step `wear_item` and
+    /// the wear forecast share ([`Self::charge_condition`]). Wear past the tier's durability
+    /// consumes the unit in hand and carries the remainder onto the next one; a batch that runs out
+    /// of units is dropped and the charge stops there rather than spilling onto stock that never
+    /// went out. `None` when the band has no batch in condition to charge.
+    ///
+    /// **Touches neither the readout's `retired` memory nor the wear window** - those are
+    /// `wear_item`'s, so the forecast can run this on a clone without recording anything.
+    fn consume_condition(
+        &mut self,
+        def: &crate::equipment_config::ItemDefinition,
+        item: &str,
+        charged: f32,
+    ) -> Option<ConsumedCondition> {
+        let index = self.serving_index(item, def)?;
+        let batches = self.batches.get_mut(item)?;
         let batch = &mut batches[index];
         let durability = def.tier_or_default(&batch.tier).starting_durability;
         batch.wear += charged;
@@ -4511,27 +4549,73 @@ impl BandEquipment {
             batch.wear -= durability;
             retired += 1;
         }
-        // **The tier is read off the batch being spent**, before it can be dropped — this seam knows
+        // **The tier is read off the batch being spent**, before it can be dropped - this seam knows
         // which tier it is destroying, so the readout never has to guess one later.
         let tier = batch.tier.clone();
-        let emptied = batch.count == 0;
-        if emptied {
+        if batch.count == 0 {
             batches.remove(index);
             if batches.is_empty() {
                 self.batches.remove(item);
             }
         }
-        // **The readout's memory, written on the one seam that destroys a unit.** See the field's
-        // docs: an emptied batch is removed, so without this the panel could not say *"worn out"*.
-        if retired > 0 {
-            *self
-                .retired
-                .entry(item.to_string())
-                .or_default()
-                .entry(tier)
-                .or_default() += retired;
+        Some(ConsumedCondition { retired, tier })
+    }
+
+    /// **CHARGE `item` a raw amount of CONDITION through the ledger's own consumption step** - the
+    /// forecast's spend ([`crate::craft_suggestions`]), run on a clone. Records nothing: no
+    /// `retired` memory, no wear window.
+    pub(crate) fn charge_condition(
+        &mut self,
+        config: &crate::equipment_config::EquipmentConfig,
+        item: &str,
+        charged: f32,
+    ) {
+        let Some(def) = config.item(item) else {
+            return;
+        };
+        if charged.is_finite() && charged > 0.0 {
+            self.consume_condition(def, item, charged);
         }
-        self
+    }
+
+    /// Add `charged` condition to `item` in the newest wear slot, opening one when the window is
+    /// empty (a ledger no turn system has touched yet).
+    fn record_wear(&mut self, item: &str, charged: f32) {
+        if self.wear_window.is_empty() {
+            self.wear_window.push_back(Default::default());
+        }
+        if let Some(slot) = self.wear_window.back_mut() {
+            *slot.entry(item.to_string()).or_default() += charged;
+        }
+    }
+
+    /// **OPEN THE NEXT TURN'S WEAR SLOT** and drop the oldest beyond `window_turns` - the per-turn
+    /// system's one call. Every band calls it once a turn, so the slot count is the turns recorded.
+    pub fn open_wear_slot(&mut self, window_turns: u32) {
+        self.wear_window.push_back(Default::default());
+        while self.wear_window.len() > window_turns as usize {
+            self.wear_window.pop_front();
+        }
+    }
+
+    /// **THE CONDITION `item` LOSES PER TURN**, averaged over the turns the window has recorded
+    /// (never more than `window_turns`). `0` for an item never charged in the window - and for a
+    /// ledger with no slot at all, which forecasts nothing.
+    pub fn wear_rate(&self, item: &str) -> f32 {
+        if self.wear_window.is_empty() {
+            return 0.0;
+        }
+        let charged: f32 = self
+            .wear_window
+            .iter()
+            .filter_map(|slot| slot.get(item))
+            .sum();
+        charged / self.wear_window.len() as f32
+    }
+
+    /// How many turns the wear window has recorded (never more than `window_turns`).
+    pub fn wear_turns_recorded(&self) -> usize {
+        self.wear_window.len()
     }
 
     /// **Whole units of `item` this band has worn out**, ever, across every tier. `0` for an item it
@@ -4588,6 +4672,13 @@ impl BandEquipment {
         }
         self
     }
+}
+
+/// What [`BandEquipment::consume_condition`] spent: the units it retired and the tier of the batch
+/// it charged.
+struct ConsumedCondition {
+    retired: u32,
+    tier: String,
 }
 
 /// **What a spawn stocks of each start-kit item: one.** One unit is one item's

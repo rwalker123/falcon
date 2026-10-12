@@ -1042,6 +1042,14 @@ pub fn build_headless_app() -> App {
             Update,
             systems::deliver_bench_output.before(TurnStage::Influence),
         )
+        // **Each ledger opens this turn's wear slot** - the window the "coming up" craft suggestions
+        // read their rate off (#778). After the delivery only because both write `BandEquipment`.
+        .add_systems(
+            Update,
+            systems::open_wear_slots
+                .after(systems::deliver_bench_output)
+                .before(TurnStage::Influence),
+        )
         .add_systems(
             Update,
             (

@@ -736,6 +736,16 @@ pub struct LifeReadoutConfig {
     pub danger_fraction: f32,
 }
 
+/// **How many turns of recorded wear the "coming up" craft suggestions average** (#778). The rate
+/// behind an item's forecast is the condition it was charged over the last `window_turns` turns,
+/// divided by the turns actually recorded. Nothing but the suggestion list reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WearForecastConfig {
+    /// Turns of per-item wear a band keeps. At least 1.
+    pub window_turns: u32,
+}
+
 /// An item's use quantum and what one use costs it.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct WearConfig {
@@ -2207,8 +2217,12 @@ pub struct EquipmentConfig {
     /// **The life readout's two colour seams.** See [`LifeReadoutConfig`] — presentation tuning for
     /// the published `lifeSeverity`, and the only thing in this file the sim itself never reads.
     pub life_readout: LifeReadoutConfig,
+    /// **The wear forecast's window** (#778). See [`WearForecastConfig`].
+    pub wear_forecast: WearForecastConfig,
 }
 
+/// The fewest turns [`WearForecastConfig::window_turns`] may hold.
+const MIN_WEAR_WINDOW_TURNS: u32 = 1;
 /// The [`EquipmentConfig::start_stock_fraction`] at or below which a spawn stocks **nothing**.
 const NO_START_STOCK: f32 = 0.0;
 /// What [`EquipmentConfig::start_stock_units`] answers under [`NO_START_STOCK`].
@@ -3846,6 +3860,15 @@ impl EquipmentConfig {
                 field: "life_readout.danger_fraction".to_string(),
                 constraint: "be strictly below warn_fraction".to_string(),
                 value: format!("{} vs warn {}", life.danger_fraction, life.warn_fraction),
+            });
+        }
+        // **The wear window holds at least one turn**: zero would record nothing, and a forecast
+        // with no wear to read forecasts nothing, silently.
+        if self.wear_forecast.window_turns < MIN_WEAR_WINDOW_TURNS {
+            return Err(EquipmentConfigError::Invalid {
+                field: "wear_forecast.window_turns".to_string(),
+                constraint: format!("be at least {MIN_WEAR_WINDOW_TURNS}"),
+                value: self.wear_forecast.window_turns.to_string(),
             });
         }
         self.validate_bench_tools()?;
@@ -6113,6 +6136,24 @@ mod tests {
         );
     }
 
+    /// **THE WEAR WINDOW HOLDS AT LEAST ONE TURN** (#778) - zero would record nothing and the
+    /// forecast would silently never fire. Paired with the shipped window, which loads.
+    #[test]
+    fn validate_rejects_an_empty_wear_window() {
+        let mut json: serde_json::Value =
+            serde_json::from_str(BUILTIN_EQUIPMENT_CONFIG).expect("the builtin parses");
+        let shipped =
+            EquipmentConfig::from_json_str(&json.to_string()).expect("the shipped window is valid");
+        assert!(shipped.wear_forecast.window_turns >= MIN_WEAR_WINDOW_TURNS);
+        json["wear_forecast"]["window_turns"] = serde_json::json!(0);
+        let err = EquipmentConfig::from_json_str(&json.to_string())
+            .expect_err("a window of no turns must be rejected");
+        assert!(
+            matches!(&err, EquipmentConfigError::Invalid { field, .. } if field == "wear_forecast.window_turns"),
+            "got {err}"
+        );
+    }
+
     #[test]
     fn validate_rejects_a_kit_born_dry() {
         let err = EquipmentConfig::from_json_str(&kit_json("2.0", "0.02", "0.0"))
@@ -6317,7 +6358,8 @@ mod tests {
                 "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" , "roadwork": "big_game", "expedition": "big_game", "extract": "big_game", "quarrywork": "big_game" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
-            "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
+            "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 },
+            "wear_forecast": { "window_turns": 10 }"#,
             ),
             (
                 "a kit that can be sent on nothing",
@@ -6327,7 +6369,8 @@ mod tests {
                 "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" , "roadwork": "big_game", "expedition": "big_game", "extract": "big_game", "quarrywork": "big_game" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
-            "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
+            "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 },
+            "wear_forecast": { "window_turns": 10 }"#,
             ),
             (
                 "a default naming no roster entry",
@@ -6337,7 +6380,8 @@ mod tests {
                 "default_kits": { "hunt": "ghost", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" , "roadwork": "big_game", "expedition": "big_game", "extract": "big_game", "quarrywork": "big_game" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
-            "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
+            "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 },
+            "wear_forecast": { "window_turns": 10 }"#,
             ),
             (
                 "a default whose jobs do not cover its own job",
@@ -6348,7 +6392,8 @@ mod tests {
                 "default_kits": { "hunt": "gathering", "forage": "gathering", "scout": "gathering", "warrior": "gathering", "agriculture": "gathering", "husbandry": "gathering", "builders": "gathering" , "roadwork": "gathering", "expedition": "gathering", "extract": "gathering", "quarrywork": "gathering" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
-            "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
+            "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 },
+            "wear_forecast": { "window_turns": 10 }"#,
             ),
         ];
         for (what, roster) in cases {
@@ -6378,7 +6423,8 @@ mod tests {
             "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "big_game", "warrior": "big_game", "agriculture": "big_game", "husbandry": "big_game", "builders": "big_game" , "roadwork": "big_game", "expedition": "big_game", "extract": "big_game", "quarrywork": "big_game" },
                 "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
-            "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#,
+            "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 },
+            "wear_forecast": { "window_turns": 10 }"#,
         ))
         .expect_err("an item that does not exist is invalid");
         assert!(
@@ -6430,7 +6476,8 @@ mod tests {
             "default_kits": { "hunt": "big_game", "forage": "big_game", "scout": "warrior", "warrior": "warrior", "agriculture": "warrior", "husbandry": "warrior", "builders": "warrior" , "roadwork": "warrior", "expedition": "warrior", "extract": "warrior", "quarrywork": "warrior" },
             "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
-            "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }
+            "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 },
+            "wear_forecast": { "window_turns": 10 }
         }"#;
         let err = EquipmentConfig::from_json_str(json)
             .expect_err("a warrior kit carrying a mass-bounded weapon is invalid");
@@ -6452,5 +6499,6 @@ mod tests {
             "default_kits": { "hunt": "big_game", "forage": "gathering", "scout": "none", "warrior": "none", "agriculture": "none", "husbandry": "none", "builders": "none" , "roadwork": "none", "expedition": "none", "extract": "none", "quarrywork": "none" },
             "quarry_default_kit_margin": 0.25,
                 "start_stock_fraction": 1.5,
-            "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }"#;
+            "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 },
+            "wear_forecast": { "window_turns": 10 }"#;
 }
