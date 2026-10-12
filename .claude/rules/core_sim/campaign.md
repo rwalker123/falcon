@@ -8,10 +8,10 @@ paths:
   - "core_sim/src/starting_loadout.rs"
   - "core_sim/src/data/start_profiles.json"
   - "core_sim/tests/starting_loadout.rs"
-  - "core_sim/src/systems/{population,trade}.rs"
+  - "core_sim/src/systems/{population,trade,breeding_shed}.rs"
   - "core_sim/src/snapshot/population.rs"
   - "core_sim/src/data/{demographics_config,supply_network_config,sedentarization_config}.json"
-  - "core_sim/tests/{supply_network,sedentarization,founding_lines}.rs"
+  - "core_sim/tests/{supply_network,sedentarization,founding_lines,breeding_shed}.rs"
   - "core_sim/src/lineage.rs"
   - "core_sim/src/spoilage.rs"
   - "core_sim/tests/storage_lesson.rs"
@@ -30,7 +30,7 @@ paths:
 | File | Purpose |
 |------|---------|
 | `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population/belief), and saturation `references` |
-| `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), **`keeping`** (how food keeps, #706 — `classes`, each `{ id, shelf_life_turns }`: **`flesh` 4.0**, **`fresh_plant` 8.0**, **`dry` 60.0**; `startup_class` **`dry`**, the class the opening reserve is seeded into; `plant_fallback_class` **`fresh_plant`** / `kill_fallback_class` **`flesh`**, where a take's food lands when no species says. Validated at parse — unique ids, finite positive shelf lives, every named class present — and every fauna/flora species' `keeping` is reconciled against it at boot; see "Food spoils by keeping class" below), `births` (`birth_rate` + the `reserve` stock factor (`bonus`/`saturation_turns`) + the `trend` flow factor (`surplus_gain`/`surplus_saturation`/`deficit_penalty`/`deficit_saturation`); morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `lineage.founding_lines` (`L`, **8**, a `NonZeroU16` so `0` is a parse error — how many founding lines a starting band holds; see "Founding lines" below), `lineage.people_per_line` (`K`, **19**, a `NonZeroU16` — how many people one line carries before births stop; an isolated starting band ceilings at `L × K` = 152, pinned above the shipped `band_size` by `demographics_config::tests::the_shipped_starting_band_opens_below_its_breeding_ceiling`; see "The breeding ceiling" below), `lineage.free_breeding_at` (**500** PEOPLE, a `NonZeroU32` — the head-count at which a people breeds freely for good: a people is latched into `FreeBreedingPeoples`, and no population of it is capped again, in the pre-pass of the turn a breeding population opens at it or its own ceiling is at least it and its uncapped births carry it there (that turn's births are uncapped, so the head-count can pass it); before the latch the effective ceiling is `min(shared ceiling, free_breeding_at)`; pinned above the shipped `L × K` by `demographics_config::tests::the_shipped_lone_band_ceiling_sits_below_the_free_breeding_size`, so a lone band opens capped; see "The breeding ceiling" below), `cold` and `heat` (the two temperature tails — `onset_temp` / `mortality_scale` / `max_mortality` plus each tail's own `child_vulnerability` 1.25 / `working_vulnerability` 1.0 / `elder_vulnerability` 1.5, a different ordering from `scarcity`'s; see “The cold/heat death model is PUBLISHED” below for why the two tails differ in all three parameters and why both are calibrated ahead of the map's current range). **This file is the SOLE source of demographics tuning** (#350): `demographics_config.rs` has no hand-written `Default` impls — `DemographicsConfig::default()` parses the builtin JSON, and every field is required with `deny_unknown_fields`, so a missing or unknown key is a parse error rather than a silent fallback to a second set of numbers that can drift (it did: `per_capita_draw` was 0.03 in Rust against 0.16 here). Do not re-add `#[serde(default)]` — the root `Default` parses through serde, so a container-level default would make it recurse. **The loader is strict to match**, and that strictness is no longer demographics-specific: it now lives in the shared `config_load.rs` seam and applies to every boot config (see `.claude/rules/core_sim/config-loading.md`). Strictness without a loud loader would only move the silent substitution one layer out — the whole file instead of one key |
+| `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), **`keeping`** (how food keeps, #706 — `classes`, each `{ id, shelf_life_turns }`: **`flesh` 4.0**, **`fresh_plant` 8.0**, **`dry` 60.0**; `startup_class` **`dry`**, the class the opening reserve is seeded into; `plant_fallback_class` **`fresh_plant`** / `kill_fallback_class` **`flesh`**, where a take's food lands when no species says. Validated at parse — unique ids, finite positive shelf lives, every named class present — and every fauna/flora species' `keeping` is reconciled against it at boot; see "Food spoils by keeping class" below), `births` (`birth_rate` + the `reserve` stock factor (`bonus`/`saturation_turns`) + the `trend` flow factor (`surplus_gain`/`surplus_saturation`/`deficit_penalty`/`deficit_saturation`); morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `lineage.founding_lines` (`L`, **8**, a `NonZeroU16` so `0` is a parse error — how many founding lines a starting band holds; see "Founding lines" below), `lineage.people_per_line` (`K`, **19**, a `NonZeroU16` — how many people one line carries before births stop; an isolated starting band ceilings at `L × K` = 152, pinned above the shipped `band_size` by `demographics_config::tests::the_shipped_starting_band_opens_below_its_breeding_ceiling`; see "The breeding ceiling" below), `lineage.free_breeding_at` (**500** PEOPLE, a `NonZeroU32` — the head-count at which a people breeds freely for good: a people is latched into `FreeBreedingPeoples`, and no population of it is capped again, in the pre-pass of the turn a breeding population opens at it or its own ceiling is at least it and its uncapped births carry it there (that turn's births are uncapped, so the head-count can pass it); before the latch the effective ceiling is `min(shared ceiling, free_breeding_at)`; pinned above the shipped `L × K` by `demographics_config::tests::the_shipped_lone_band_ceiling_sits_below_the_free_breeding_size`, so a lone band opens capped; see "The breeding ceiling" below), `lineage.shed_share` (**0.25**, an `f32` validated in `(0, 1]` at parse: the share of a breeding population's excess over its ceiling that leaves each turn, a PLAYTEST DIAL; see "Shedding above the ceiling" below), `cold` and `heat` (the two temperature tails — `onset_temp` / `mortality_scale` / `max_mortality` plus each tail's own `child_vulnerability` 1.25 / `working_vulnerability` 1.0 / `elder_vulnerability` 1.5, a different ordering from `scarcity`'s; see “The cold/heat death model is PUBLISHED” below for why the two tails differ in all three parameters and why both are calibrated ahead of the map's current range). **This file is the SOLE source of demographics tuning** (#350): `demographics_config.rs` has no hand-written `Default` impls — `DemographicsConfig::default()` parses the builtin JSON, and every field is required with `deny_unknown_fields`, so a missing or unknown key is a parse error rather than a silent fallback to a second set of numbers that can drift (it did: `per_capita_draw` was 0.03 in Rust against 0.16 here). Do not re-add `#[serde(default)]` — the root `Default` parses through serde, so a container-level default would make it recurse. **The loader is strict to match**, and that strictness is no longer demographics-specific: it now lives in the shared `config_load.rs` seam and applies to every boot config (see `.claude/rules/core_sim/config-loading.md`). Strictness without a loud loader would only move the silent substitution one layer out — the whole file instead of one key |
 | `src/data/start_profiles.json` | Campaign initialization. Per profile: `starting_units` (`kind`/`count`/`band_size`), `starting_knowledge_tags`, `inventory`, `food_modules`, `victory_modes_enabled` (AI tuning is per seat and lives in `sim_ai/data/ai_profiles.json`, not here) — plus the **required** `opening_loadout` block: `pickable_materials` (`bone`, `fibre`, `hide`, `wood`, `stone` — the picker's list, in the order it is drawn), `material_defaults` (`bone 2` / `fibre 12` / `hide 6`) and **`kit_defaults`** (`big_game 5` / `trapping 5` / `gathering 7` — one kit per hand on the shipped 30-person band). Together they are the **opening band's** default outfit (load 47 against its ≈ 47 goods allowance), APPLIED after the world-build meal, not suggested; a splinter's default is `split_default_outfit`, not these. ⛔ **There is no budget in this file**: what a band may outfit is its CARRY less its larder (`.claude/rules/core_sim/band-carry.md`), and the retired `material_points` key is **refused at load**, not ignored (`start_profile::the_retired_material_points_key_is_refused`). `StartProfiles::validate_against_materials` rejects a pickable or default naming a material the roster does not carry, and `validate_against_equipment` rejects a `kit_defaults` key the equipment roster does not carry **or one whose `uses` is empty** — both run from `build_headless_app`. Defaults over the band's allowance are fitted at apply (`fit_to_carry`, materials cut before tools); the full rules are `starting-loadout.md` |
 | `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius, in **hex steps**), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer_fraction` (the dead-band, as a fraction of the node's own per-capita fair share of that commodity — see "The dead-band is RELATIVE, because one balancer serves food and a bone pile" below) |
 | `src/data/wellbeing_config.json` | Civilization Wellbeing tuning: `discontent` (`content_morale`/`floor_morale` productivity curve, `grievance_gain`/`grievance_decay`/`trapped_multiplier`), `productivity` (`floor_mult`, `discontent_weight`), `migration` (own morale-scaled onset: `morale_threshold`, `max_rate`, `base_reach`, `attractive_morale`, `min_morale_gap`, `dependent_weight`), `independence` (`grievance_threshold` — see `independence.md`), `culture` (the near / far from the ancestors morale term: `near_bonus`, `away_drag`, `belief_half_saturation` — key table in `belief.md`) |
@@ -620,8 +620,8 @@ adds that people's lines while the touch lasts, and a population that reaches
   and `advance_demographics` multiplies its would-be births by it. Fixed point truncates toward
   zero, so `Σ births × factor ≤ headroom` exactly and `opening − deaths + births ≤ ceiling` holds
   with no epsilon. Deaths, maturation, aging and the bracket floors are untouched: **the ceiling
-  never kills**, and a population above it (its tie bled out) bears nobody and shrinks only by its
-  ordinary deaths. Shedding above the ceiling along routes is #690.
+  never kills**, and a population above it (its tie bled out) bears nobody. What it does with the
+  excess is "Shedding above the ceiling" below.
 - **It is the fourth fertility factor.** `FertilityFactors.ceiling` sits beside `hunger`, `reserve`
   and `trend` and is in `multiplier()`, so `last_fertility_factors` attributes a withheld birth to
   the ceiling exactly as it attributes a hungry one to `hunger`. `food_multiplier()` is the three
@@ -648,6 +648,94 @@ adds that people's lines while the touch lasts, and a population that reaches
   preview needs ride `CampaignSection.lineagePeoplePerLine` / `lineageFreeBreedingAt`, read off the
   live `DemographicsConfigHandle` at capture (`LineageConstantsState`, diffed whole). Checkpointed:
   the cohort carries the reading and `SimState` carries the latch; `SAVE_FORMAT_VERSION` 30.
+
+#### Shedding above the ceiling — the leak, and the break-off (#690)
+
+A population can sit ABOVE its ceiling when a lifter lapses (a foreign tie bled out, a relink dropped
+a shared line's `K`). Births stop; this is what moves the excess. `systems::breeding_shed`
+(`shed_breeding_excess`, then the exclusive `break_off_breeding_excess`) runs in the Population chain
+**after `advance_population_migration`**, not straight after `simulate_population`: migration writes
+every band's `last_emigrated` / `last_immigrated` unconditionally, so a shed booked before it would be
+overwritten. The ceiling is still this turn's — it is the reading `simulate_population`'s pre-pass
+parked on each cohort (`last_breeding`: the group's lowest member id, its effective ceiling), not a
+second computation; the head-count is live, summed over the group's members when the shed runs.
+
+- **A stale reading is never trusted.** `BreedingReading.faction` records the people the pre-pass
+  grouped the band as; a band whose cohort faction differs (a remnant flipped in migration earlier this
+  turn) is skipped as source and destination until the next pre-pass regroups it.
+- **Trigger.** A group whose people is not in `FreeBreedingPeoples`, with a live head-count above its
+  ceiling. `E = head-count − ceiling`.
+- **The leak.** The group sheds `lineage.shed_share × E` a turn (`demographics_config.json`, **0.25**,
+  validated in `(0, 1]` — a PLAYTEST DIAL). Each member band carries its share of the head-count; within
+  a band the people are apportioned across brackets by migration's own weighting
+  (`labor::weighted_leavers`: working `1.0`, children and elders `migration.dependent_weight`).
+  Moves are instant, computed from one pre-move snapshot and applied together. **Shed people carry no
+  founding lines**, exactly as migrants carry none.
+- **Where they may go** is migration's predicate, factored into `labor::walkable_destination` and
+  shared by both: within `WalkReach` (a road widens it); the source's own people, or another people's
+  band only with a live band-to-band tie **and** open borders. Two more conditions: the destination is
+  **not in the source's own breeding group**, and **its group has headroom** (`ceiling − head-count >
+  0`; a latched people has none to run out of). Own people first, then the highest morale. No morale
+  pull is asked: these people leave because the group is too big, not because they are unhappy.
+- **Headroom is spent as the turn allocates.** A destination group takes no more than it has left and
+  the shed spills to the next eligible band; whatever cannot be placed stays and is tried again next
+  turn. A group is never pushed over its own ceiling by the leak.
+- **Booked through migration's readouts and feed** — `last_emigrated` / `last_immigrated` and
+  `push_migration_events`, one line per destination people. Neither carries a cause, and none was
+  added. A shed move to another people carries knowledge exactly as migration's does
+  (`labor::carry_knowledge_across`, `credit_migrated_knowledge`, `merge_migrated_knowledge`: the source's
+  fragments scaled by `migration_fragment_scaling` and the share of the band that left, merged into the
+  destination band, credited to the destination people, with the same "via migration" telemetry and
+  diffusion events).
+- **A group that cannot carry its excess stays.** If the parent band holds fewer lines than
+  `lines_to_hold` of the planned break-off (its workers asked, with the dependants that follow by
+  share), nobody breaks off: births stop and the group shrinks by ordinary deaths — people leave only
+  when there is somewhere to go. The check is made before the split, so nothing is split and undone.
+  There is no lever for it; the line count is the viability.
+- **The break-off.** A group over its ceiling with **no eligible destination for any member** (not
+  merely none with room left this turn) breaks the excess off as one group and a people of its own.
+  The member with the most workers is the parent and sends `round(E × working ÷ total)` workers, so
+  about `E` people leave once the split's share carries the children and elders. That is the ordinary
+  split (`fission::split_band_from_parent_with`), so its floors apply: below
+  `min_founding_workers`, or leaving the parent under `parent_min_workers`, it refuses and nobody
+  moves (the excess is tried again next turn). The child then takes the independence break-away
+  (`independence.md`: `break_away_as_new_people`, then `follow_the_band_to_its_new_people`) under
+  `cause=breeding`.
+- **The lines are COPIED, enough to hold the child's people, and the parent keeps every one of its
+  own.** The child holds `max(1, ceil(child people ÷ K))` lines (`lineage::lines_to_hold`), the
+  highest ids (`FoundingLines::copy_to_hold`), counted on the people the split actually moves after
+  the worker rounding — so its own ceiling `n × K` is at least its head-count at birth. A new people
+  needs enough founding families to be viable; a proportional share of the parent's lines left it born
+  over its own ceiling, where it broke off again, in a chain. Two DIFFERENT peoples each count a shared line whole; only
+  holders within one people divide its `K`. **While the two stay in touch the choice changes
+  nothing**: the split's full tie puts each side's lines in the other's union ("Another people's
+  lines count only while in touch"), so parent and child both read the whole set, ~`L × K`. It
+  decides what happens **once the tie bleeds out**. Divided, the parent would fall to its remaining
+  lines — its ceiling down by about `E · c / t` while its head-count is already at `c` — and would
+  shed or break off again. Copied, the parent keeps its whole ceiling; the child falls back to its
+  copied lines, which held its people at birth — if it grew past them on the parent's lines while in
+  touch, it sheds that excess like any group, or stays and dwindles when it holds too few lines to
+  carry it. The copy adds no line to the union of any population, so it is no exploit.
+- **The child is the next turn's destination.** It is another people (outside the parent's group),
+  fully tied and standing on the same tile, its borders open by default, and its group's ceiling
+  counts the parent's lines while in touch, so it has headroom. The parent's later excess (including
+  the residue the split's worker rounding leaves) therefore leaks into it, and a second break-off
+  waits until no band anywhere can take them.
+- **A split nobody commanded.** The dowry, the culture layer, the full tie both ways and the inherited
+  heart reading are right as they are. The outfitting window is the player's chance to revise a split
+  they made, so `StartingLoadout::close` shuts the child's the moment the split returns; the goods the
+  split moved stay moved.
+- **Derived queue.** `BreedingBreakOffs` is filled by the shed and drained by the break-off in the same
+  chain, so it is empty at the end of every turn (`sim_state_coverage.rs` → `DERIVED_RESOURCES`). The
+  break-off is exclusive (it spawns a band), which conflicts with every system, so
+  `publish_trade_telemetry` is ordered after it.
+
+Pinned by `core_sim/tests/breeding_shed.rs`: the leak moves `shed_share × E` to a neighbour with room
+and moves no line; a destination takes no more than its headroom; nothing moves under the ceiling,
+for a free-breeding people, to a band of the same group, behind closed borders or out of reach; a
+stranded group founds exactly one new band in a new people with enough copied lines to hold its
+people, the parent at its
+ceiling and no second break-off the next turn; an excess too small to found a band stays put.
 
 #### Another people's lines count only while in touch (#691)
 

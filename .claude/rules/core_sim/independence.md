@@ -2,6 +2,7 @@
 paths:
   - "core_sim/src/systems/independence.rs"
   - "core_sim/tests/band_independence.rs"
+  - "core_sim/tests/breeding_shed.rs"
   - "core_sim/src/wellbeing_config.rs"
   - "core_sim/src/data/wellbeing_config.json"
 ---
@@ -183,11 +184,25 @@ the same predicate (`culture::may_break_away`: purist above the lever and a sibl
 checkpointed, save format 32), because band tensions never reach `active_tensions`. The queue is a derived resource (filled and
 drained within one turn), listed in `sim_state_coverage.rs`'s `DERIVED_RESOURCES`.
 
+## A breeding population with nowhere to shed breaks off (#690)
+
+The third caller of `break_away_as_new_people`. A tie-joined group above its breeding ceiling with no
+eligible destination for any member sends its excess out as one band
+(`systems::break_off_breeding_excess`, `campaign.md` → "Shedding above the ceiling"). It runs in the
+Population chain after `shed_breeding_excess` and before `advance_band_independence`, which then
+judges the roster it grew: the child is a one-band people, its own heart. The split is the ordinary
+`fission::split_band_from_parent_with` with the lines COPIED — enough of them to hold the child's people, and a parent with fewer does
+not break off (`campaign.md` → "Shedding above the ceiling"); the child's outfitting window is closed
+at once. Because the split spawns a band the system is exclusive and drives the hand-over through a
+`SystemState` of the same parameters `advance_culture_splits` takes. The announcement is
+`band_broke_away` with **`cause=breeding`** (`BREEDING_CAUSE_TOKEN`) and a label that reads as
+leaving to find mates; a client with an unknown cause token falls back to the raw word.
+
 ## Events
 
 | Kind | Rows | Label | Detail |
 |---|---|---|---|
-| `band_broke_away` | two per band, one per people (`push_band_changed_hands_events`' shape) | lost: *"Band 7 no longer answers to us — they call themselves Faction 1."* / gained: *"Band 7 broke away from Faction 0 — we answer to no one but ourselves."* | `band= from= to= side=lost\|gained` |
+| `band_broke_away` | two per band, one per people (`push_band_changed_hands_events`' shape) | lost: *"Band 7 no longer answers to us — they call themselves Faction 1."* / gained: *"Band 7 broke away from Faction 0 — we answer to no one but ourselves."* | `band= from= to= side=lost\|gained`, plus `cause=culture` or `cause=breeding` when it is not a grievance |
 | `lost_touch` | one, the band's own people | *"We have lost touch with Band 7."* | `band=` |
 
 Labels name the durable ids (`band_label` / `faction_label`); the client substitutes names by joining
