@@ -711,27 +711,32 @@ fn a_same_people_host_never_asks_open_borders() {
     }
 }
 
-/// **A home band that cannot cover its meal, party included, ends the post.**
+/// **A home band that cannot cover its meal, party included, does NOT end the post.** The party
+/// stays and keeps the tie credited; the shortfall is the band's, borne through its ordinary meal.
 #[test]
-fn a_home_band_that_cannot_feed_its_party_ends_the_post() {
+fn a_starving_home_band_keeps_its_party_stationed() {
     let mut rig = same_faction_rig();
-    let (home, host, party, host_id) = (rig.home, rig.host, rig.party, rig.host_id);
+    let (home, host, party) = (rig.home, rig.host, rig.party);
     run_until_stationed(&mut rig.app, party, &[home, host]);
-    rig.app
-        .world
-        .get_mut::<PopulationCohort>(home)
-        .expect("home")
-        .stores
-        .reset_food("dry", scalar_from_f32(0.0));
-    feed(&mut rig.app, host);
-    run_turn(&mut rig.app);
+    for _ in 0..5 {
+        set_larder(&mut rig.app, home, 0.0);
+        feed(&mut rig.app, host);
+        pin_people(&mut rig.app, host);
+        run_turn(&mut rig.app);
 
-    assert_eq!(phase(&rig.app, party), Some(ExpeditionPhase::Returning));
-    let detail = latest_recall_detail(&rig.app).expect("the post's end is on the feed");
-    assert!(
-        detail.contains("reason=home_short") && detail.contains(&format!("host={}", host_id.0)),
-        "{detail}"
-    );
+        let cohort = rig.app.world.get::<PopulationCohort>(home).expect("home");
+        assert!(
+            cohort.last_food_need > cohort.last_food_consumption,
+            "liveness: the band is short this turn"
+        );
+        assert_eq!(cohort.stores.get(FOOD), Scalar::zero());
+        assert_eq!(phase(&rig.app, party), Some(ExpeditionPhase::Stationed));
+        assert_eq!(
+            edge(&rig.app, rig.home_id, rig.host_id).map(|c| c.last_contact_turn),
+            Some(tick(&rig.app) - 1),
+            "and the tie is still credited"
+        );
+    }
 }
 
 /// **A host that is no longer a band ends the post.**

@@ -457,11 +457,9 @@ static func apply_palette() -> void:
 		"severity=warn": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN,
 			"rung": RUNG_NOTABLE},
 		# **A POST THAT ENDS WITHOUT THE PLAYER ASKING IS NOTABLE** (issue #774): borders closed on the
-		# party, the home band unable to feed it, or the host gone. The player's own recall
+		# party or the host gone. The player's own recall
 		# (`reason=recalled`) is a receipt for something asked for and stays on the kind's Routine rung.
 		"reason=borders_closed": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN,
-			"rung": RUNG_NOTABLE},
-		"reason=home_short": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN,
 			"rung": RUNG_NOTABLE},
 		"reason=host_gone": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN,
 			"rung": RUNG_NOTABLE},
@@ -716,7 +714,6 @@ const DETAIL_VALUE_LABELS := {
 	# A stationed party's post ending of its own accord (issue #774): the phrase continues the label
 	# ("Party lost Rushford — returning home" · "borders closed"), so lower-case like its neighbours.
 	"borders_closed": "borders closed",
-	"home_short": "home band short of food",
 	"host_gone": "host not found",
 }
 

@@ -1306,7 +1306,8 @@ each turn, at the working-age ration, as part of that band's ordinary consumptio
   takes the same number, so the two cannot diverge.
 - **The larder identity is unchanged**: the charge is inside `last_food_consumption`, the larder's
   one debit, so `larder_delta == -foodConsumption` (plus the other terms) closes to the fixed-point
-  unit. `last_food_need` includes the party, so a band that cannot cover it shows a `foodShortfall`.
+  unit. `last_food_need` includes the party, so a band that cannot cover it shows a `foodShortfall`
+  and its people take the deficit like any other hunger.
 - **The forward readings count the same mouths.** `PopulationCohort::fed_party_workers` is that
   head-count as the turn's meal took it (rewritten every turn, one turn stale across a launch or a
   fold-back); `snapshot::band_food_terms` adds it to the band's own working bracket, so the home
@@ -1325,15 +1326,18 @@ on a shipment's lines):
 |---|---|
 | `host_gone` | the host `BandId` no longer resolves to a resident band |
 | `borders_closed` | the host's people are not the party's and their borders are closed |
-| `home_short` | the home band's `last_food_need > last_food_consumption` this turn (the signal `foodShortfall` is cut from; `simulate_population` runs first) |
 | `recalled` | the player's `recall_expedition` (written by the verb, with `host=`) |
 
+**A home band that cannot cover its party's rations does not end the post.** The party stays and
+the tie stays credited; the shortfall is the band's, borne through the ordinary meal its
+demographics already run (a non-zero `foodShortfall`, starvation by the usual rules). Nothing is
+gained by walking the party home, so bringing it back for hunger is the player's recall.
 ### Tests
 
 `core_sim/tests/station_expedition.rs` drives real turns: the posted tie at full for 100 turns beside a
 control edge that bleeds out, with the host gaining no edge; the report lag equal to `walk_turns`;
 lag 0 under a widened comm range; `Discovered` not `Active`; the fold-back landing in-transit news;
-each ending; the meal against a twin world and the larder identity in fixed point; the checkpoint
+each ending, and a starving home band keeping its party; the meal against a twin world and the larder identity in fixed point; the checkpoint
 round trip with reports in transit; the mission, host and phase off the encoded frame. The launch
 gates and the recall verb are `server::tests::{a_station_order_*, every_station_refusal_*,
 a_stationed_party_can_be_recalled_*}`; `connections::tests` pins the credit.

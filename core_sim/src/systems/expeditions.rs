@@ -11,10 +11,9 @@ const DESTINATION_GONE_MID_TRADE: &str = "destination_gone";
 
 /// **The reason tokens a stationed party's post ends on** (`ExpeditionMission::Station`), carried in
 /// the `reason=` of the `ExpeditionRecalled` line beside `host=<id>`. A recall by the player is the
-/// fourth, written by `handle_recall_expedition` (`POST_RECALLED`).
+/// third, written by `handle_recall_expedition` (`POST_RECALLED`).
 const HOST_GONE_MID_POST: &str = "host_gone";
 const BORDERS_CLOSED_MID_POST: &str = "borders_closed";
-const HOME_COULD_NOT_FEED_POST: &str = "home_short";
 /// The player's own recall of a stationed party — see `handle_recall_expedition`.
 pub const POST_RECALLED: &str = "recalled";
 
@@ -944,16 +943,12 @@ pub fn advance_expeditions(
             }
         }
 
-        // **A stationed party's post ends on any one of four things** (the fourth is the recall verb):
-        // the host band can no longer be resolved, the host's people closed their borders (another
-        // people's host only — see `FactionBorderPolicies::admits_posting`), or the home band could
-        // not feed its people this turn. The party turns for home and folds back by the ordinary
-        // `Returning` path, carrying whatever news is still in transit.
-        //
-        // **The shortfall is the band's own published signal** — `need − eaten` off
-        // `last_food_need` / `last_food_consumption`, the pair `foodShortfall` is cut from — and the
-        // party's rations are inside that need (`simulate_population` charges them), so a band that
-        // cannot cover its party shows a shortfall in the same turn.
+        // **A stationed party's post ends on any one of three things** (the third is the recall
+        // verb): the host band can no longer be resolved, or the host's people closed their borders
+        // (another people's host only — see `FactionBorderPolicies::admits_posting`). The party turns
+        // for home and folds back by the ordinary `Returning` path, carrying whatever news is still
+        // in transit. A home band that cannot cover its party's rations does NOT end the post: the
+        // shortfall is the band's, borne through its ordinary meal.
         if let Some(host) = mission.host_band() {
             if matches!(
                 expedition.phase,
@@ -963,10 +958,6 @@ pub fn advance_expeditions(
                     .get(&host)
                     .and_then(|(host_entity, _)| bands.get(*host_entity).ok())
                     .map(|(_, host_cohort, ..)| host_cohort.faction);
-                let home_short = bands
-                    .get(expedition.home_band)
-                    .ok()
-                    .is_some_and(|(_, home, ..)| home.last_food_need > home.last_food_consumption);
                 let post_ends = match host_faction {
                     None => Some((
                         HOST_GONE_MID_POST,
@@ -985,13 +976,6 @@ pub fn advance_expeditions(
                             ),
                         ))
                     }
-                    Some(_) if home_short => Some((
-                        HOME_COULD_NOT_FEED_POST,
-                        format!(
-                            "The home band could not feed its party at {} — returning home",
-                            mission.host_display()
-                        ),
-                    )),
                     Some(_) => None,
                 };
                 if let Some((reason, label)) = post_ends {

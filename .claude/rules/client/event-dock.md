@@ -578,7 +578,7 @@ Four details:
   `SIM_DESTINATION_LABEL_FORMAT`. The raw id is also hidden from the detail column
   (`DETAIL_KEY_HIDDEN`). **The sim writes the sentences** (`Party stationed with band 5`, `band 5 closed
   its borders — party returning home`, …) and the client only swaps the name in; it does not rewrite
-  them. **A post that ends of its own accord is NOTABLE**: `reason=borders_closed|home_short|host_gone`
+  them. **A post that ends of its own accord is NOTABLE**: `reason=borders_closed|host_gone`
   are `DETAIL_STATUS_STYLE` rows at `RUNG_NOTABLE`, because `expedition_recalled` is otherwise Routine
   and a player at the default floor would never learn their people were on the road home. The
   player's own `reason=recalled` stays the Routine receipt it is.

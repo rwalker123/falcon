@@ -14,7 +14,7 @@ extends RefCounted
 ## The command it ends in is asserted by EQUALITY through the real `Main.format_station_expedition`.
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
-const EXPECTED_CHECKPOINTS := 52
+const EXPECTED_CHECKPOINTS := 50
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
@@ -240,7 +240,6 @@ func _event_dock_states() -> void:
 	var launch_label := "%s party -> stationed with %s" % [HOME_NAME, sim_host]
 	var arrived_label := "Party stationed with %s" % sim_host
 	var borders_label := "%s closed its borders — party returning home" % sim_host
-	var short_label := "The home band could not feed its party at %s — returning home" % sim_host
 	var gone_label := "Party lost %s — returning home" % sim_host
 	var recalled_label := "%s recalled — returning home" % HOME_NAME
 	dock.ingest_events([
@@ -252,8 +251,6 @@ func _event_dock_states() -> void:
 		{"tick": TURN, "kind": "expedition_recalled", "faction": 0, "label": borders_label,
 			"detail": "status=returning reason=borders_closed host=%d expedition=7" % host_id,
 			"seq": 703},
-		{"tick": TURN, "kind": "expedition_recalled", "faction": 0, "label": short_label,
-			"detail": "status=returning reason=home_short host=%d expedition=7" % host_id, "seq": 704},
 		{"tick": TURN, "kind": "expedition_recalled", "faction": 0, "label": gone_label,
 			"detail": "status=returning reason=host_gone host=%d expedition=7" % host_id, "seq": 705},
 		{"tick": TURN, "kind": "expedition_recalled", "faction": 0, "label": recalled_label,
@@ -262,7 +259,7 @@ func _event_dock_states() -> void:
 	dock.set_expanded(true)
 	await h._settle()
 	await h._save("station_event_dock")
-	for label in [launch_label, arrived_label, borders_label, short_label, gone_label]:
+	for label in [launch_label, arrived_label, borders_label, gone_label]:
 		var swapped := String(label).replace(sim_host, STATIONED_NAME)
 		h._assert_hud("station dock: `%s` names the host by the roster's name" % swapped,
 			_label_count(dock, swapped) == 1)
@@ -272,7 +269,6 @@ func _event_dock_states() -> void:
 			not phrase.contains(str(host_id)))
 	h._assert_hud("station dock: a post ended by the world is NOTABLE (visible at the default floor)",
 		_rung(dock, borders_label) == HudEventVocab.RUNG_NOTABLE
-			and _rung(dock, short_label) == HudEventVocab.RUNG_NOTABLE
 			and _rung(dock, gone_label) == HudEventVocab.RUNG_NOTABLE)
 	h._assert_hud("station dock: …the player's own recall stays a ROUTINE receipt",
 		_rung(dock, recalled_label) == HudEventVocab.RUNG_ROUTINE)

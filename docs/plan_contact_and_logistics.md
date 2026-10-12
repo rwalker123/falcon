@@ -859,7 +859,9 @@ under the keystone it stays **known**, a runner's walk out of date.
 The party carries no larder. Its people's rations are part of the home band's ordinary consumption
 every turn, from launch until they rejoin — supplies are assumed to reach them, and nothing walks
 them there. This is the work-party rule (`work-party.md` → "The home band feeds its party") applied
-to a detached party. If the home band cannot cover their rations in a turn, the post ends.
+to a detached party. **A short larder does not end the post.** Their mouths are in the home band's
+meal, so a shortfall falls on the home band by the ordinary demographic rules, and the party stays.
+Nothing is gained by walking them home; the player recalls them when they choose.
 
 #### Who may host, and what ends a post
 
@@ -868,7 +870,7 @@ to a detached party. If the home band cannot cover their rations in a turn, the 
 - **Another people's band requires that people's Open Borders** (`FactionBorderPolicies`). Your own
   bands never ask it, the same rule as moving between your own camps (`factions.md`).
 - **A post ends**, and the party walks home and folds back, on any of: a recall; the host's people
-  closing their borders; the home band unable to feed them; the host band no longer resolvable.
+  closing their borders; the host band no longer resolvable.
 - **One-way.** The host takes no tie toward the sender from having them in its camp — a party is not
   a contact subject (§connections → "Subjects are resident bands only").
 
