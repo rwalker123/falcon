@@ -1,0 +1,11 @@
+{
+  "_comment": "THE PERSONALITY CATALOG: one lean per entry, drawn once per STARTING faction at world build (weighted, seeded from the map seed and the faction id) and added to that faction's starting bands' culture MODIFIER - not the baseline, which relaxes back to the parent province, so the lean persists. `culture_lean` keys are culture axis keys (culture.rs `culture_axis_key`); an offset's SIGN follows the axis name: the axis `a_b` runs from -span (pole `a`) to +span (pole `b`), so `syncretic_purist: 0.8` leans PURIST and `-0.8` leans SYNCRETIC. A faction born mid-game (fission, independence) draws nothing. `weight` is the relative draw chance, > 0.",
+  "personalities": [
+    { "id": "purist", "culture_lean": { "syncretic_purist": 0.8 }, "weight": 1.0 },
+    { "id": "syncretic", "culture_lean": { "syncretic_purist": -0.8 }, "weight": 1.0 },
+    { "id": "warlike", "culture_lean": { "passive_aggressive": 0.5 }, "weight": 1.0 },
+    { "id": "wanderers", "culture_lean": { "expansionist_insular": -0.5 }, "weight": 1.0 },
+    { "id": "homebodies", "culture_lean": { "expansionist_insular": 0.5 }, "weight": 1.0 },
+    { "id": "steady", "culture_lean": {}, "weight": 1.0 }
+  ]
+}

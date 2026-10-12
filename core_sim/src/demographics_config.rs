@@ -721,14 +721,18 @@ mod tests {
         let profiles = crate::start_profile::StartProfiles::builtin();
         let mut checked = 0;
         for profile in profiles.iter() {
-            for unit in &profile.overrides().starting_units {
-                assert!(
-                    unit.band_size() < ceiling,
-                    "profile '{}' opens a {}-person band at or above its breeding ceiling {ceiling}",
-                    profile.id,
-                    unit.band_size()
-                );
-                checked += 1;
+            for archetype in &profile.overrides().archetypes {
+                for unit in &archetype.starting_units {
+                    assert!(
+                        unit.band_size() < ceiling,
+                        "profile '{}' archetype '{}' opens a {}-person band at or above its \
+                         breeding ceiling {ceiling}",
+                        profile.id,
+                        archetype.id,
+                        unit.band_size()
+                    );
+                    checked += 1;
+                }
             }
         }
         assert!(checked > 0, "the shipped profiles carry a starting unit");

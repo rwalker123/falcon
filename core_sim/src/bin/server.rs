@@ -45,7 +45,7 @@ use core_sim::{
 };
 use core_sim::{
     build_headless_app, clear_config_overrides, denial_forecast, expedition_returned_event,
-    fold_party_into_band, granted_ai_faction_count, install_config_override, party_owes_a_report,
+    fold_party_into_band, granted_archetype_counts, install_config_override, party_owes_a_report,
     publish_baseline_snapshot, recapture_snapshot_in_place, run_turn, scalar_from_f32,
     split_band_from_parent, AgentAssignment, BandId, BandIdAllocator, BandName, CommandEventEntry,
     CommandEventKind, CommandEventLog, CounterIntelBudgets, CrisisArchetypeCatalog,
@@ -553,16 +553,17 @@ fn main() {
                 // seeded against the CONFIG FILE's grid, so without this a shrink could register
                 // more factions than the new map seats — and a grow would silently drop the rivals
                 // this world was actually playing with back to the file's default.
-                let carried_ai_factions =
-                    app.world.resource::<FactionRegistry>().ai_faction_count();
+                let carried_archetype_counts = current_config
+                    .start_archetype_assignment
+                    .counts(current_config.start_profile_overrides.archetypes.len());
                 let reset_land_fraction = core_sim::faction_start_land_fraction(
                     &app.world.resource::<core_sim::MapPresetsHandle>().get(),
                     &new_config.map_preset_id,
                 );
-                let granted_ai_factions = granted_ai_faction_count(
-                    carried_ai_factions,
+                let granted_archetype_counts = granted_archetype_counts(
+                    &carried_archetype_counts,
+                    &new_config.start_profile_overrides.archetypes,
                     new_config.grid_size,
-                    new_config.faction_start_min_separation,
                     reset_land_fraction,
                 );
 
@@ -574,7 +575,7 @@ fn main() {
                     &watch_paths,
                     &snapshot_flat_server,
                     &mut world_epoch,
-                    move |new_app| seed_faction_roster(new_app, granted_ai_factions),
+                    move |new_app| seed_faction_roster(new_app, &granted_archetype_counts),
                 );
                 world_active = true;
                 // A new world: nothing before this point is reachable.
@@ -595,7 +596,7 @@ fn main() {
                 height,
                 seed,
                 profile_id,
-                ai_faction_count,
+                archetype_counts,
             } => {
                 handle_new_game(
                     &mut app,
@@ -607,7 +608,7 @@ fn main() {
                     height,
                     seed,
                     profile_id,
-                    ai_faction_count,
+                    archetype_counts,
                     &snapshot_flat_server,
                 );
                 retain_claimed_seats(&app, &mut seats);
@@ -1667,9 +1668,10 @@ enum Command {
         height: u32,
         seed: u64,
         profile_id: String,
-        /// **How many AI factions the player picked, not counting their own.** `None` means
-        /// *"nobody picked"* — the unattended roster, which is not the same as `Some(0)`.
-        ai_faction_count: Option<u32>,
+        /// **How many peoples of each archetype the player picked, not counting their own.** An
+        /// archetype left out means *"nobody picked"* - its unattended count, which is not the same
+        /// as an explicit 0.
+        archetype_counts: Vec<sim_runtime::ArchetypeCount>,
     },
     /// **One band's outfitting loadout** — the one source of a faction's gear and material. Field
     /// 69. See `handle_set_starting_loadout`; it fails **closed and whole**.
@@ -2171,15 +2173,31 @@ fn answer_query(
         // the question — see `faction_start_land_fraction`, where that limitation is recorded.
         let presets = world.resource::<core_sim::MapPresetsHandle>().get();
         let config = world.resource::<SimulationConfig>();
-        let capacity = core_sim::faction_start_capacity(
+        // **The profile asked about**: the one the ask names, else the ACTIVE one - the screen asks
+        // about the profile it is about to start, which is not necessarily the one the idle server
+        // booted on.
+        let profiles = world.resource::<StartProfilesHandle>().get();
+        let overrides = profiles
+            .get(&ask.profile_id)
+            .map(|profile| profile.overrides())
+            .unwrap_or(&config.start_profile_overrides);
+        let capacities = core_sim::archetype_capacities(
+            &overrides.archetypes,
             UVec2::new(ask.width, ask.height),
-            config.faction_start_min_separation,
             core_sim::faction_start_land_fraction(&presets, &config.map_preset_id),
-            config.default_ai_faction_count,
         );
         return QueryReply::FactionCapacity(FactionCapacityReply {
-            default_ai_faction_count: capacity.default_ai_factions,
-            max_ai_faction_count: capacity.max_ai_factions,
+            archetypes: overrides
+                .archetypes
+                .iter()
+                .zip(capacities)
+                .map(|(archetype, capacity)| sim_runtime::ArchetypeCapacity {
+                    id: archetype.id.clone(),
+                    display_label: archetype.display_label.clone(),
+                    site_count: capacity.site_count,
+                    default_count: capacity.default_count,
+                })
+                .collect(),
         });
     }
     if !world_active {
@@ -2634,23 +2652,37 @@ fn rebuild_world_from_config(
     new_app
 }
 
-/// **What an AI-faction count on the wire resolves to before the grid clamps it.**
+/// **What the archetype counts on the wire resolve to before the grid clamps them**, in catalog
+/// order.
 ///
-/// `None` is *not* `Some(0)`: absent means **nobody picked** — a direct scene launch, a CLI
-/// `new_game`, a test — and 0 means a player who chose to play alone. The two arrive on the same
-/// wire field precisely so a client can leave the choice to the sim, and collapsing them here would
-/// make the unattended roster unreachable from every caller that does.
+/// An archetype that is not listed is *not* listed-as-0: absent means **nobody picked** - a direct
+/// scene launch, a CLI `new_game`, a test - and an explicit 0 means a player who chose none of
+/// them. Collapsing the two would make the unattended roster unreachable from every caller that
+/// leaves the choice to the sim.
 ///
-/// ⛔ **An absent pick resolves to [`core_sim::unattended_ai_faction_count`], NOT to the count the
-/// New Game screen pre-selects.** The screen's number is derived from the map and can be several
-/// rivals; this path is what a `cargo run` server and a scripted launch get, and it stays at zero
-/// rivals until something drives them. `simulation_config.json`'s `default_ai_faction_count` pins it
-/// when a headless run wants otherwise.
+/// ⛔ **An unlisted archetype resolves to its UNATTENDED count
+/// ([`core_sim::unattended_archetype_counts`]), NOT to the count the New Game screen pre-selects.**
+/// The screen's number is derived from the map; this path is what a `cargo run` server and a
+/// scripted launch get, and it stays at the archetype's own `default_count` pin, else none.
 ///
-/// `config` is the config the NEW world will run on — `load_simulation_config_for_new_world`'s, not
-/// the outgoing world's — because the pin is a tuning value and tuning is re-read at world start.
-fn requested_ai_faction_count(picked: Option<u32>, config: &SimulationConfig) -> u32 {
-    picked.unwrap_or_else(|| core_sim::unattended_ai_faction_count(config.default_ai_faction_count))
+/// `Err(id)` names an id the profile does not carry (or one listed twice): the command is rejected
+/// rather than guessed at.
+fn requested_archetype_counts(
+    picked: &[sim_runtime::ArchetypeCount],
+    archetypes: &[core_sim::StartArchetype],
+) -> Result<Vec<u32>, String> {
+    let mut counts = core_sim::unattended_archetype_counts(archetypes);
+    let mut seen = vec![false; archetypes.len()];
+    for entry in picked {
+        let Some(index) = archetypes.iter().position(|a| a.id == entry.id) else {
+            return Err(entry.id.clone());
+        };
+        if std::mem::replace(&mut seen[index], true) {
+            return Err(entry.id.clone());
+        }
+        counts[index] = entry.count;
+    }
+    Ok(counts)
 }
 
 /// Generate a world on demand from the `new_game` wire command (the server boots idle). Validates
@@ -2667,7 +2699,7 @@ fn handle_new_game(
     height: u32,
     seed: u64,
     profile_id: String,
-    ai_faction_count: Option<u32>,
+    archetype_counts: Vec<sim_runtime::ArchetypeCount>,
     snapshot_server_flat: &Arc<SnapshotServer>,
 ) {
     if width == 0 || height == 0 {
@@ -2727,11 +2759,23 @@ fn handle_new_game(
         &app.world.resource::<core_sim::MapPresetsHandle>().get(),
         &new_config.map_preset_id,
     );
-    let requested_ai_factions = requested_ai_faction_count(ai_faction_count, &new_config);
-    let granted_ai_factions = granted_ai_faction_count(
-        requested_ai_factions,
+    let archetypes = &profile.overrides().archetypes;
+    let requested_counts = match requested_archetype_counts(&archetype_counts, archetypes) {
+        Ok(counts) => counts,
+        Err(archetype) => {
+            warn!(
+                target: "shadow_scale::server",
+                profile = %profile.id,
+                %archetype,
+                "new_game.rejected=unknown_archetype"
+            );
+            return;
+        }
+    };
+    let granted_counts = granted_archetype_counts(
+        &requested_counts,
+        archetypes,
         new_config.grid_size,
-        new_config.faction_start_min_separation,
         new_game_land_fraction,
     );
 
@@ -2742,8 +2786,8 @@ fn handle_new_game(
         height,
         seed,
         profile = %profile.id,
-        requested_ai_factions,
-        granted_ai_factions,
+        requested = ?requested_counts,
+        granted = ?granted_counts,
         "new_game.begin"
     );
 
@@ -2760,7 +2804,7 @@ fn handle_new_game(
             // **The roster is seeded here, not by the profile**: `build_headless_app` seeded it from
             // the config file's own count and grid, and this world is neither. See
             // `seed_faction_roster` for the five resources that ride on it.
-            seed_faction_roster(new_app, granted_ai_factions);
+            seed_faction_roster(new_app, &granted_counts);
         },
     );
     *world_active = true;
@@ -3117,7 +3161,8 @@ fn apply_start_profile(app: &mut bevy::prelude::App, profile: &StartProfile) {
     }
 }
 
-/// **Seat one human and `ai_faction_count` rivals in a world about to be generated**, and re-seed
+/// **Seat one human and `archetype_counts` rivals (per archetype, catalog order) in a world about to
+/// be generated**, and re-seed
 /// everything the boot path derives from that roster.
 ///
 /// Called inside `rebuild_world_from_config`'s `configure` hook, i.e. after the replacement app is
@@ -3126,8 +3171,8 @@ fn apply_start_profile(app: &mut bevy::prelude::App, profile: &StartProfile) {
 /// the count the player picked reached `SimulationConfig` and nothing that resolves a turn ever
 /// heard about it.
 ///
-/// The count is expected to be **already clamped** by
-/// [`core_sim::granted_ai_faction_count`] — the clamp is the caller's, because only the caller knows
+/// The counts are expected to be **already clamped** by
+/// [`core_sim::granted_archetype_counts`] — the clamp is the caller's, because only the caller knows
 /// which grid the world is being built on.
 ///
 /// ⛔ **EVERY resource `build_headless_app` seeds from the roster is re-seeded here.** The list is
@@ -3141,8 +3186,14 @@ fn apply_start_profile(app: &mut bevy::prelude::App, profile: &StartProfile) {
 /// `Startup` system that seeds from whatever registry it finds, and the caller runs Startup after
 /// this — so re-seeding it here would be a second, earlier copy of a job the schedule already does
 /// against the same roster.
-fn seed_faction_roster(app: &mut bevy::prelude::App, ai_faction_count: u32) {
-    let registry = FactionRegistry::with_ai_factions(ai_faction_count);
+fn seed_faction_roster(app: &mut bevy::prelude::App, archetype_counts: &[u32]) {
+    // Who is which archetype: transient and config-side, read by worldgen in the Startup the caller
+    // runs next (see `StartArchetypeAssignment`).
+    app.world
+        .resource_mut::<SimulationConfig>()
+        .start_archetype_assignment =
+        core_sim::StartArchetypeAssignment::from_counts(archetype_counts);
+    let registry = FactionRegistry::with_ai_factions(archetype_counts.iter().sum());
     let factions = registry.factions().to_vec();
     app.world.insert_resource(registry);
     app.world.insert_resource(TurnQueue::new(factions.clone()));
@@ -11140,14 +11191,14 @@ fn command_from_payload(
             height,
             seed,
             profile_id,
-            ai_faction_count,
+            archetype_counts,
         } => Some(Command::NewGame {
             preset_id,
             width,
             height,
             seed,
             profile_id,
-            ai_faction_count,
+            archetype_counts,
         }),
         // The one payload that carries a way BACK. `reply` is this connection's writer channel, so
         // the answer reaches the client that asked even if it is computed several commands later.
@@ -13293,7 +13344,7 @@ mod tests {
             16,
             7,
             "late_forager_tribe".to_string(),
-            None,
+            Vec::new(),
             flat,
         );
         assert!(*world_active, "the fixture world must build");
@@ -13559,7 +13610,7 @@ mod tests {
             WORLD_GRID.y,
             WORLD_SEED,
             "late_forager_tribe".to_string(),
-            None,
+            Vec::new(),
             &flat,
         );
         assert!(world_active, "the fixture world must build");
@@ -13849,7 +13900,7 @@ mod tests {
             NEXT_GRID.y,
             NEXT_SEED,
             "no_such_profile".to_string(),
-            None,
+            Vec::new(),
             &flat,
         );
         let kept = command_log
@@ -13868,7 +13919,7 @@ mod tests {
             NEXT_GRID.y,
             NEXT_SEED,
             "late_forager_tribe".to_string(),
-            None,
+            Vec::new(),
             &flat,
         );
         let log = command_log.expect("a new game leaves a log in place");
@@ -14178,7 +14229,7 @@ mod tests {
             32,
             7,
             "no_such_profile".to_string(),
-            None,
+            Vec::new(),
             &flat,
         );
         assert!(!world_active, "an unknown profile must not build a world");
@@ -14202,7 +14253,7 @@ mod tests {
             32,
             7,
             "late_forager_tribe".to_string(),
-            None,
+            Vec::new(),
             &flat,
         );
         assert!(!world_active, "zero width must be rejected");
@@ -14223,7 +14274,7 @@ mod tests {
             32,
             7,
             "late_forager_tribe".to_string(),
-            None,
+            Vec::new(),
             &flat,
         );
         assert!(world_active, "a valid new_game activates the world");
@@ -14262,7 +14313,7 @@ mod tests {
             32,
             7,
             "late_forager_tribe".to_string(),
-            None,
+            Vec::new(),
             &flat,
         );
         assert_eq!(world_epoch, 2, "the next world build increments the epoch");
@@ -14285,13 +14336,40 @@ mod tests {
     /// different rejection (`new_game.rejected=unknown_profile`), and the fixture has to be able to
     /// tell that apart from a roster that came out wrong.
     fn profiles_named(id: &str) -> StartProfilesHandle {
-        let json = format!(
-            "{{\"profiles\": [{{\"id\": \"{id}\", \
-             \"opening_loadout\": {{\"pickable_materials\": [\"bone\"]}}}}]}}"
-        );
+        let archetype = |archetype_id: &str, separation: u32| {
+            serde_json::json!({
+                "id": archetype_id,
+                "display_label": archetype_id,
+                "min_separation": separation,
+                "opening_loadout": {"pickable_materials": ["bone"]},
+            })
+        };
+        let json = serde_json::json!({"profiles": [{
+            "id": id,
+            "archetypes": [
+                archetype(FIXTURE_MAJOR, FIXTURE_MAJOR_SEPARATION),
+                archetype(FIXTURE_MINOR, FIXTURE_MINOR_SEPARATION),
+            ],
+        }]})
+        .to_string();
         StartProfilesHandle::new(std::sync::Arc::new(
             core_sim::StartProfiles::from_json_str(&json).expect("the fixture profiles parse"),
         ))
+    }
+
+    /// The fixture profile's two archetypes and the separations they are placed at - the shipped
+    /// profile's shape, restated so the clamp tests read against numbers they control.
+    const FIXTURE_MAJOR: &str = "major";
+    const FIXTURE_MINOR: &str = "minor";
+    const FIXTURE_MAJOR_SEPARATION: u32 = 20;
+    const FIXTURE_MINOR_SEPARATION: u32 = 8;
+
+    /// `count` peoples of the fixture's major archetype, as a `new_game` would carry them.
+    fn majors(count: u32) -> Vec<sim_runtime::ArchetypeCount> {
+        vec![sim_runtime::ArchetypeCount {
+            id: FIXTURE_MAJOR.to_string(),
+            count,
+        }]
     }
 
     /// The land share this app's capacity answers are discounted by — its own preset's, exactly as
@@ -14308,8 +14386,8 @@ mod tests {
     /// ⛔ **`new_game` SEEDS THE ROSTER THE PLAYER PICKED**, not the boot config's.
     ///
     /// `rebuild_world_from_config` builds the replacement app first — `build_headless_app` seeds
-    /// `FactionRegistry` and `TurnQueue` from `simulation_config.json`'s own
-    /// `default_ai_faction_count`, against that file's grid — and configures it second. Without
+    /// `FactionRegistry` and `TurnQueue` from the start profiles' own unattended archetype counts,
+    /// against the config file's grid — and configures it second. Without
     /// `seed_faction_roster`, a picked count reached `SimulationConfig` and nothing that resolves a
     /// turn ever heard about it.
     #[test]
@@ -14337,7 +14415,7 @@ mod tests {
             32,
             7,
             "two_sided".to_string(),
-            Some(1),
+            majors(1),
             &flat,
         );
 
@@ -14420,7 +14498,7 @@ mod tests {
             32,
             7,
             "alone".to_string(),
-            Some(0),
+            majors(0),
             &flat,
         );
 
@@ -14449,13 +14527,9 @@ mod tests {
         app.world
             .insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
         app.world.insert_resource(profiles_named("crowded"));
-        let separation = app
-            .world
-            .resource::<SimulationConfig>()
-            .faction_start_min_separation;
         let land = capacity_land_fraction(&app);
         let grid = UVec2::new(60, 40);
-        let ceiling = core_sim::max_faction_starts(grid, separation, land) - 1;
+        let ceiling = core_sim::max_faction_starts(grid, FIXTURE_MAJOR_SEPARATION, land) - 1;
         assert!(
             (1..9).contains(&ceiling),
             "fixture: the grid must seat SOME rivals but fewer than the count asked for, or the \
@@ -14475,7 +14549,7 @@ mod tests {
             grid.y,
             7,
             "crowded".to_string(),
-            Some(9),
+            majors(9),
             &flat,
         );
 
@@ -14497,68 +14571,148 @@ mod tests {
         );
     }
 
-    /// **An absent count is the UNATTENDED roster, and it is not `Some(0)`.** The wire
+    /// **An unlisted archetype is the UNATTENDED count, and it is not an explicit 0.** The wire
     /// distinguishes them, and only this says the server honours the distinction.
     ///
-    /// ⛔ Absent resolves to **no rivals**, not to the map-scaled count the New Game screen
-    /// pre-selects. A scripted launch and a `cargo run` server are not a player looking at a
-    /// screen, and there is still no AI to drive a rival — sabotaged by routing this through
-    /// `faction_start_capacity`, which the first case catches.
-    ///
-    /// Asserted on the resolution rule rather than through `handle_new_game`, because the count a
-    /// rebuild defaults to comes from the config FILE (`load_simulation_config_for_new_world` re-reads
-    /// it, carrying only fog and the binds), and steering a file would mean a process-global env var
-    /// a parallel test would race on.
+    /// ⛔ Unlisted resolves to the archetype's own pin, else **none**, not to the map-scaled count
+    /// the New Game screen pre-selects. A scripted launch and a `cargo run` server are not a player
+    /// looking at a screen - sabotaged by routing this through `archetype_capacities`, which the
+    /// first case catches.
     #[test]
-    fn an_absent_rival_count_resolves_to_the_unattended_roster() {
-        let app = build_test_app();
-        let mut config = app.world.resource::<SimulationConfig>().clone();
+    fn an_unlisted_archetype_resolves_to_the_unattended_count() {
+        let profiles = profiles_named("unattended");
+        let profile = profiles.get().get("unattended").cloned().expect("fixture");
+        let mut archetypes = profile.overrides().archetypes.clone();
+        let count = |id: &str, n: u32| sim_runtime::ArchetypeCount {
+            id: id.to_string(),
+            count: n,
+        };
         assert_eq!(
-            config.default_ai_faction_count, None,
-            "fixture: the shipped config derives rather than pinning"
-        );
-        assert_eq!(
-            requested_ai_faction_count(None, &config),
-            0,
+            requested_archetype_counts(&[], &archetypes),
+            Ok(vec![0, 0]),
             "nobody picked, and nothing pins it: the world that has always shipped"
         );
         assert_eq!(
-            requested_ai_faction_count(Some(2), &config),
-            2,
-            "a pick is honoured"
+            requested_archetype_counts(&[count(FIXTURE_MAJOR, 2)], &archetypes),
+            Ok(vec![2, 0]),
+            "a pick is honoured, and the archetype left out stays unattended"
         );
-
-        config.default_ai_faction_count = Some(3);
+        archetypes[1].default_count = Some(3);
         assert_eq!(
-            requested_ai_faction_count(None, &config),
-            3,
-            "absent takes the config pin when there is one"
-        );
-        assert_eq!(
-            requested_ai_faction_count(Some(0), &config),
-            0,
-            "and an explicit 0 is a player who chose to play alone, not an absent field"
+            requested_archetype_counts(&[], &archetypes),
+            Ok(vec![0, 3]),
+            "an unlisted archetype takes its own pin"
         );
         assert_eq!(
-            requested_ai_faction_count(Some(1), &config),
-            1,
-            "a pick overrides the pin"
+            requested_archetype_counts(&[count(FIXTURE_MINOR, 0)], &archetypes),
+            Ok(vec![0, 0]),
+            "and an explicit 0 is a player who chose none, not an absent entry"
+        );
+        assert_eq!(
+            requested_archetype_counts(&[count("ghost", 1)], &archetypes),
+            Err("ghost".to_string()),
+            "an id the profile does not carry is refused, not guessed at"
+        );
+        assert_eq!(
+            requested_archetype_counts(
+                &[count(FIXTURE_MAJOR, 1), count(FIXTURE_MAJOR, 2)],
+                &archetypes
+            ),
+            Err(FIXTURE_MAJOR.to_string()),
+            "and so is an archetype listed twice"
         );
     }
 
-    /// **The New Game screen's two numbers come from the sim, and are answerable with no world.**
+    /// **A `new_game` naming an archetype the profile does not carry builds NO world.**
+    #[test]
+    fn new_game_with_an_unknown_archetype_is_rejected() {
+        let mut app = build_test_app();
+        app.world
+            .insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
+        app.world.insert_resource(profiles_named("strict"));
+        let flat = loopback_snapshot_server();
+        let mut world_active = false;
+        let mut world_epoch: u32 = 0;
+        handle_new_game(
+            &mut app,
+            &mut world_active,
+            &mut world_epoch,
+            &mut None,
+            "earthlike".to_string(),
+            48,
+            32,
+            7,
+            "strict".to_string(),
+            vec![sim_runtime::ArchetypeCount {
+                id: "ghost".to_string(),
+                count: 1,
+            }],
+            &flat,
+        );
+        assert!(!world_active, "an unknown archetype id rejects the command");
+    }
+
+    /// **Majors and minors both seat, in catalog order**: the roster is the human, then the major
+    /// rivals, then the minors, and the assignment says so.
+    #[test]
+    fn new_game_seats_majors_then_minors_in_catalog_order() {
+        let mut app = build_test_app();
+        app.world
+            .insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
+        app.world.insert_resource(profiles_named("mixed"));
+        let flat = loopback_snapshot_server();
+        let mut world_active = false;
+        let mut world_epoch: u32 = 0;
+        handle_new_game(
+            &mut app,
+            &mut world_active,
+            &mut world_epoch,
+            &mut None,
+            "earthlike".to_string(),
+            80,
+            52,
+            7,
+            "mixed".to_string(),
+            vec![
+                sim_runtime::ArchetypeCount {
+                    id: FIXTURE_MAJOR.to_string(),
+                    count: 1,
+                },
+                sim_runtime::ArchetypeCount {
+                    id: FIXTURE_MINOR.to_string(),
+                    count: 2,
+                },
+            ],
+            &flat,
+        );
+        assert!(world_active, "the world is built");
+        assert_eq!(
+            app.world.resource::<FactionRegistry>().factions().len(),
+            4,
+            "human + 1 major + 2 minors"
+        );
+        let assignment = app
+            .world
+            .resource::<SimulationConfig>()
+            .start_archetype_assignment
+            .clone();
+        let archetypes: Vec<usize> = (0..4)
+            .map(|id| assignment.archetype_index(FactionId(id)))
+            .collect();
+        assert_eq!(archetypes, vec![0, 0, 1, 1]);
+    }
+
+    /// **The New Game screen's per-archetype rows come from the sim, and are answerable with no
+    /// world.**
     ///
     /// Asked before `world_active` for the reason the slot list is: a player configures a game
-    /// before there is one. It answers about the grid IN THE ASK, not the one the server holds —
+    /// before there is one. It answers about the grid IN THE ASK, not the one the server holds -
     /// sabotaged by answering from `SimulationConfig::grid_size`, which the differing sizes below
-    /// would catch.
+    /// would catch - and about the profile the ask names.
     #[test]
     fn the_faction_capacity_query_is_answered_idle_for_the_asked_grid() {
         let mut app = build_test_app();
-        let separation = app
-            .world
-            .resource::<SimulationConfig>()
-            .faction_start_min_separation;
+        app.world.insert_resource(profiles_named("asked"));
         let land = capacity_land_fraction(&app);
 
         let roomy = UVec2::new(80, 52);
@@ -14569,51 +14723,63 @@ mod tests {
             "fixture: the asked grid must differ from the server's, or the ask is unread"
         );
 
-        let answer = answer_query(
-            false,
-            &mut app.world,
-            &QueryPayload::FactionCapacity(sim_runtime::FactionCapacityQuery {
-                width: roomy.x,
-                height: roomy.y,
-            }),
-        );
-        let QueryReply::FactionCapacity(roomy_reply) = answer else {
-            panic!("the capacity query is answered even with no world: {answer:?}");
+        let ask = |app: &mut bevy::prelude::App, grid: UVec2, profile: &str| {
+            let answer = answer_query(
+                false,
+                &mut app.world,
+                &QueryPayload::FactionCapacity(sim_runtime::FactionCapacityQuery {
+                    width: grid.x,
+                    height: grid.y,
+                    profile_id: profile.to_string(),
+                }),
+            );
+            let QueryReply::FactionCapacity(reply) = answer else {
+                panic!("the capacity query is answered even with no world: {answer:?}");
+            };
+            reply
         };
+
+        let roomy_reply = ask(&mut app, roomy, "asked");
         assert_eq!(
-            roomy_reply.max_ai_faction_count,
-            core_sim::max_faction_starts(roomy, separation, land) - 1,
-            "the ceiling is the sim's own rule, not a second copy of it"
+            roomy_reply
+                .archetypes
+                .iter()
+                .map(|row| row.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![FIXTURE_MAJOR, FIXTURE_MINOR],
+            "one row per archetype of the ASKED profile, in catalog order"
+        );
+        assert_eq!(
+            roomy_reply.archetypes[0].site_count,
+            core_sim::max_faction_starts(roomy, FIXTURE_MAJOR_SEPARATION, land),
+            "the site count is the sim's own rule, not a second copy of it"
+        );
+        assert_eq!(
+            roomy_reply.archetypes[1].site_count,
+            core_sim::max_faction_starts(roomy, FIXTURE_MINOR_SEPARATION, land)
         );
         assert!(
-            roomy_reply.default_ai_faction_count > 0,
+            roomy_reply.archetypes[0].default_count > 0,
             "and with nothing pinned the screen pre-selects a world with neighbours, unlike the \
              unattended roster the same server would boot with"
         );
 
-        let answer = answer_query(
-            false,
-            &mut app.world,
-            &QueryPayload::FactionCapacity(sim_runtime::FactionCapacityQuery {
-                width: cramped.x,
-                height: cramped.y,
-            }),
-        );
-        let QueryReply::FactionCapacity(cramped_reply) = answer else {
-            panic!("the capacity query is answered even with no world: {answer:?}");
-        };
+        let cramped_reply = ask(&mut app, cramped, "asked");
         assert_eq!(
-            cramped_reply.max_ai_faction_count, 0,
+            cramped_reply.archetypes[0].site_count, 1,
             "a grid that seats one start offers no rivals at all"
         );
+        assert_eq!(cramped_reply.archetypes[0].default_count, 0);
         assert!(
-            cramped_reply.max_ai_faction_count < roomy_reply.max_ai_faction_count,
+            cramped_reply.archetypes[0].site_count < roomy_reply.archetypes[0].site_count,
             "and the answer follows the grid in the ask"
         );
-        assert!(
-            cramped_reply.default_ai_faction_count <= cramped_reply.max_ai_faction_count,
-            "the offered default is always grantable"
-        );
+
+        // An empty or unknown profile id reads as the ACTIVE profile, which is the shipped one.
+        let shipped = ask(&mut app, roomy, "");
+        let unknown = ask(&mut app, roomy, "no_such_profile");
+        assert_eq!(shipped, unknown);
+        assert_eq!(shipped.archetypes[0].id, "major");
     }
 
     /// **What the band has DECLARED on its single worked source** — what the four build verbs
@@ -26444,6 +26610,7 @@ mod tests {
             QueryPayload::FactionCapacity(sim_runtime::commands::FactionCapacityQuery {
                 width: QUERY_GATE_GRID.x,
                 height: QUERY_GATE_GRID.y,
+                profile_id: String::new(),
             }),
         ] {
             for asker in [UNSEATED_CLIENT, HOME_CLIENT, ConnectionId::INTERNAL] {

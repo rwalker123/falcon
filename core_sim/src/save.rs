@@ -69,8 +69,8 @@ use crate::{
     },
     sim_state::{capture_sim_state, restore_sim_state, SimState},
     start_profile::{
-        resolve_active_profile, ActiveStartProfile, CampaignLabel, StartProfileLookup,
-        StartProfileOverrides, StartProfilesHandle,
+        resolve_active_profile, ActiveStartProfile, CampaignLabel, StartArchetypeAssignment,
+        StartProfileLookup, StartProfileOverrides, StartProfilesHandle,
     },
 };
 
@@ -129,7 +129,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 32 | Break-away warning (#702): `CultureManagerCheckpoint` gained `break_away_risk` (the bands that may break away over their culture, published as `PopulationCohortState.cultureBreakAwayRisk`). A version-31 blob lacks it |
 /// | 33 | Auto-craft (#779): `BandBench` gained `auto` (the per-band toggle) and `auto_skipped` (the item ids the player skipped while auto waited on them), and `BenchOrder` gained `auto` (whether auto-craft queued it); `LaborAllocation` gained `last_queued_build_toe` (the tools each queued build behind the head will need, which the craft suggestions read). The bench rides `BandRecord::bench` and the allocation `BandRecord::labor`, so a version-32 blob has none of them |
 /// | 34 | Hunting by need (#798): `LaborAssignment` gained `muster_crew` — the hands a need row (a hunt row in migration mode) sends next turn, the fact the labor pass restamps at its foot. A version-30 blob has no such field. and `planned_crew` — the meal-sized crew the row would send, sending or waiting, which the craft suggestions equip ahead of the hunt. A version-33 blob has neither. |
-pub const SAVE_FORMAT_VERSION: u32 = 34;
+/// | 35 | `WorldIdentity` gained `archetype_counts` — the per-archetype rival counts the world was built with (`(archetype id, count)` in catalog order), so a load rebuilds the transient faction-to-archetype assignment and a later `ResetMap` carries the same split. A version-34 header lacks it |
+pub const SAVE_FORMAT_VERSION: u32 = 35;
 
 /// gzip level for the payload document.
 ///
@@ -151,6 +152,10 @@ pub struct WorldIdentity {
     pub width: u32,
     pub height: u32,
     pub start_profile_id: String,
+    /// **The per-archetype rival counts the world was built with**, `(archetype id, count)` in
+    /// catalog order - a world-build parameter like the preset, seed and size. A load rebuilds the
+    /// transient `StartArchetypeAssignment` from it, so a later `ResetMap` carries the same split.
+    pub archetype_counts: Vec<(String, u32)>,
 }
 
 /// Everything needed to render a save-slot row, plus the version and fingerprint gates.
@@ -257,6 +262,17 @@ fn capture_header(world: &World, sim: &SimState) -> SaveHeader {
             width: config.grid_size.x,
             height: config.grid_size.y,
             start_profile_id: world.resource::<StartProfileLookup>().id.clone(),
+            archetype_counts: config
+                .start_profile_overrides
+                .archetypes
+                .iter()
+                .zip(
+                    config
+                        .start_archetype_assignment
+                        .counts(config.start_profile_overrides.archetypes.len()),
+                )
+                .map(|(archetype, count)| (archetype.id.clone(), count))
+                .collect(),
         },
         turn: sim.tick.0,
         campaign_title: label
@@ -434,6 +450,26 @@ pub fn apply_save(world: &mut World, header: &SaveHeader, payload: &SavePayload)
     // 1. The rollback path rebuilds it from the registry for the same reason; putting it beside the
     // registry restore is what keeps the next caller of `apply_save` from having to remember.
     let factions = world.resource::<FactionRegistry>().factions().to_vec();
+    // **The assignment is rebuilt from the world-build counts the header recorded**, by archetype
+    // id against the catalog live now (an id the catalog no longer carries counts for nothing), so
+    // a later `ResetMap` carries the split the world was built with.
+    {
+        let mut config = world.resource_mut::<SimulationConfig>();
+        let counts: Vec<u32> = config
+            .start_profile_overrides
+            .archetypes
+            .iter()
+            .map(|archetype| {
+                header
+                    .world
+                    .archetype_counts
+                    .iter()
+                    .find(|(id, _)| *id == archetype.id)
+                    .map_or(0, |(_, count)| *count)
+            })
+            .collect();
+        config.start_archetype_assignment = StartArchetypeAssignment::from_counts(&counts);
+    }
     world.insert_resource(TurnQueue::new(factions));
 
     // --- 6: the power grid's adjacency, sized from the tiles pass 5 spawned --------------------

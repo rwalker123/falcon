@@ -7,15 +7,15 @@ extends Node
 ## so launching `Main.tscn` directly still yields a playable map).
 ##
 ## Shape when set: {preset_id: String, width: int, height: int, seed: String, profile_id: String,
-## ai_faction_count: int}. **`seed` IS TEXT, and carrying it as an `int` is a data-loss bug**: the
+## archetype_counts: Array}. **`seed` IS TEXT, and carrying it as an `int` is a data-loss bug**: the
 ## server parses the seed as a u64 and mints seeds across that whole range, while a GDScript `int` is
 ## signed 64-bit and stops at 9223372036854775807. Roughly half of all clock-derived seeds are above
 ## that, so an `int` hop would accept the digits and hand `Main` a different world
 ## (`.claude/rules/client/new-game-setup.md`). `"0"` means "derive from the run clock".
-## **`ai_faction_count` is `FactionCapacity.NO_COUNT` for "the player was
-## never offered a choice"** — the New Game screen's capacity ask went unanswered — and `Main` then
-## omits the argument, which the server answers with its unattended roster: no rivals, unless its
-## config pins some. An explicit `0` is a different request naming that count outright.
+## **`archetype_counts` is an Array of `{id: String, count: int}`, one per start archetype in catalog
+## order, and EMPTY for "the player was never offered a choice"** — the New Game screen's capacity ask
+## went unanswered — and `Main` then appends no `<id>=<count>` tokens, which the server answers with
+## its unattended roster. An explicit `count: 0` is a different request naming that count outright.
 var pending_new_game = null
 
 ## The world epoch (monotonic worldgen counter from the snapshot header) that `Main` last REVEALED.

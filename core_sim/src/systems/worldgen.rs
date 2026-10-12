@@ -111,6 +111,9 @@ pub fn spawn_initial_world(
     // always had.
     faction_registry: Option<Res<crate::orders::FactionRegistry>>,
     tile_registry: Option<Res<TileRegistry>>,
+    // The catalog every STARTING faction draws its cultural lean from. `Option` for the reason the
+    // start-kit handles are: absent reads as the builtin catalog.
+    personalities: Option<Res<crate::personalities::PersonalityCatalogHandle>>,
 ) {
     // Guard FIRST: the starting inventory, knowledge and culture seeding below all run ahead of any
     // tile work, so a guard placed lower would still double the start profile's grants. Unlike the
@@ -129,8 +132,28 @@ pub fn spawn_initial_world(
     let mut prototypes: Vec<TilePrototype> = Vec::with_capacity(width * height);
     let mut tiles: Vec<Entity> = Vec::with_capacity(width * height);
     let knowledge_catalog = knowledge_tags.get();
-    let knowledge_fragments =
-        starting_knowledge_fragments(&config.start_profile_overrides, knowledge_catalog.as_ref());
+    // **Each faction opens with its OWN archetype's grants.** The catalog is ordered, the human seat
+    // takes entry 0, and `start_archetype_assignment` says which entry every other roster id
+    // is (transient, config-side - nothing after the world is built reads it). A world with no
+    // catalog (a hand-rolled test `World` that never applied a start profile) has one empty opening.
+    let archetype_assignment = config.start_archetype_assignment.clone();
+    let archetypes = config.start_profile_overrides.archetypes.clone();
+    let no_archetype = StartArchetype::default();
+    let archetype_for = |faction: FactionId| -> &StartArchetype {
+        archetypes
+            .get(archetype_assignment.archetype_index(faction))
+            .unwrap_or(&no_archetype)
+    };
+    let knowledge_fragments_by_archetype: Vec<Vec<KnowledgeFragment>> = archetypes
+        .iter()
+        .map(|archetype| starting_knowledge_fragments(archetype, knowledge_catalog.as_ref()))
+        .collect();
+    let no_knowledge: Vec<KnowledgeFragment> = Vec::new();
+    let knowledge_fragments_for = |faction: FactionId| -> &Vec<KnowledgeFragment> {
+        knowledge_fragments_by_archetype
+            .get(archetype_assignment.archetype_index(faction))
+            .unwrap_or(&no_knowledge)
+    };
     // Resolved once and reused for the placement below, so the roster that is stocked and the roster
     // that is placed cannot differ.
     let faction_roster: Vec<FactionId> = faction_registry
@@ -145,13 +168,10 @@ pub fn spawn_initial_world(
     // The profile declares one roster of units, one stockpile and one knowledge set; each registered
     // faction opens the campaign with its own copy, around its own start.
     for &faction in &faction_roster {
-        let inventory_summary = seed_starting_inventory(
-            faction,
-            &config.start_profile_overrides,
-            &mut faction_inventory,
-        );
+        let inventory_summary =
+            seed_starting_inventory(faction, archetype_for(faction), &mut faction_inventory);
         let knowledge_seeded =
-            seed_starting_knowledge(faction, &knowledge_fragments, &mut discovery);
+            seed_starting_knowledge(faction, knowledge_fragments_for(faction), &mut discovery);
 
         if let Some((entries, total_quantity)) = inventory_summary {
             info!(
@@ -168,7 +188,7 @@ pub fn spawn_initial_world(
                 "start_profile.knowledge.seeded faction={} grants={} tags={}",
                 faction.0,
                 knowledge_seeded,
-                config.start_profile_overrides.starting_knowledge_tags.len()
+                archetype_for(faction).starting_knowledge_tags.len()
             );
         }
     }
@@ -831,8 +851,11 @@ pub fn spawn_initial_world(
         .iter()
         .copied()
         .zip(faction_start_tiles(
-            faction_roster.len(),
-            config.faction_start_min_separation,
+            &faction_roster
+                .iter()
+                .map(|faction| archetype_assignment.archetype_index(*faction))
+                .collect::<Vec<_>>(),
+            &config.start_profile_overrides.archetypes,
             width as u32,
             height as u32,
             &tags_grid,
@@ -891,7 +914,25 @@ pub fn spawn_initial_world(
         working_fraction: start_kit_demographics.initial_distribution.working,
         founding_lines: start_kit_demographics.lineage.founding_lines.get(),
     };
-    if config.start_profile_overrides.starting_units.is_empty() {
+    // **A faction's personality is drawn once, here, for every faction that exists at world build** -
+    // the human seat, the majors and the minors alike - and rides its starting bands as a transient
+    // lean (`culture::StartingCultureLean`). A faction born mid-game draws nothing.
+    let personality_catalog = personalities
+        .as_ref()
+        .map(|handle| handle.get())
+        .unwrap_or_else(crate::personalities::PersonalityCatalog::builtin);
+    let world_seed_for_draws = config.map_seed;
+    let culture_lean_of = |faction: FactionId| -> StartingCultureLean {
+        let personality = personality_catalog.draw(faction, world_seed_for_draws);
+        info!(
+            target: "shadow_scale::campaign",
+            "start_profile.personality.drawn faction={} personality={}",
+            faction.0,
+            personality.id
+        );
+        StartingCultureLean(personality.lean_vector())
+    };
+    if archetype_for(FactionId(0)).starting_units.is_empty() {
         // **The no-`starting_units` fallback stays faction 0's alone, deliberately.** It is the
         // degenerate/debug path — a lattice of 1,000-person clusters around one point, which no
         // campaign profile takes — so giving every faction a copy would multiply a scaffold, not
@@ -914,8 +955,9 @@ pub fn spawn_initial_world(
             start_y,
             config.population_cluster_stride,
             &mut cohort_index,
-            &knowledge_fragments,
+            knowledge_fragments_for(FactionId(0)),
             &start_kit,
+            culture_lean_of(FactionId(0)),
         );
     } else {
         // Every faction spawns the profile's roster once, around its own start.
@@ -930,10 +972,11 @@ pub fn spawn_initial_world(
                 width,
                 height,
                 start,
-                &config.start_profile_overrides,
+                archetype_for(faction),
                 &mut cohort_index,
-                &knowledge_fragments,
+                knowledge_fragments_for(faction),
                 &start_kit,
+                culture_lean_of(faction),
             );
         }
     }
@@ -2784,25 +2827,36 @@ fn seeded_modifiers_for_position(position: UVec2) -> [Scalar; CULTURE_TRAIT_AXES
     modifiers
 }
 
-/// **How many peoples this map can seat, and how many rivals that leaves** — the one statement of
-/// the ceiling, asked by the boot path, by `new_game`, and by the client through the faction
-/// capacity query. It is never restated in GDScript, which is the whole reason it is a function.
+/// **One archetype's row of the capacity answer** - what the map seats of it and what a New Game
+/// screen pre-selects. The one statement of the ceiling, asked by the boot path, by `new_game`, by
+/// `ResetMap` and by the client through the faction capacity query. It is never restated in
+/// GDScript, which is the whole reason it is a function.
+///
+/// ## The model
+///
+/// Each archetype has its own lattice of start sites: `site_count` is
+/// [`max_faction_starts`] at that archetype's `min_separation`. Starts are laid down in catalog
+/// order, and **every start of an earlier archetype consumes one site of a later archetype's
+/// lattice** (one for one), as does the human seat. So an archetype's ceiling is
+///
+/// `ceiling_k = max(0, site_count_k - 1 - sum_{j<k} count_j)`
+///
+/// where the `1` is the human seat and `count_j` are the counts of the EARLIER archetypes. A
+/// client computes the same ceiling from `site_count` and the earlier rows' current counts
+/// ([`archetype_ceiling`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FactionStartCapacity {
-    /// The AI count a New Game screen **pre-selects**: `simulation_config.json`'s
-    /// `default_ai_faction_count` when that key pins a number, otherwise
-    /// [`DEFAULT_AI_FACTIONS_FLOOR`] plus [`Self::max_ai_factions`] over
-    /// [`DEFAULT_AI_FACTIONS_CEILING_DIVISOR`]. Always clamped by the ceiling, so a control never
-    /// opens on an ungrantable value — including on a degenerate grid whose ceiling is 0 or 1,
-    /// where the floor alone would over-promise.
+pub struct ArchetypeCapacity {
+    /// How many starts the grid seats at this archetype's separation, the human included.
+    pub site_count: u32,
+    /// The count a New Game screen **pre-selects**: the archetype's pinned `default_count` when it
+    /// has one, otherwise [`DEFAULT_ARCHETYPE_COUNT_FLOOR`] plus the ceiling over
+    /// [`DEFAULT_ARCHETYPE_COUNT_CEILING_DIVISOR`]. Always clamped by the ceiling (computed against
+    /// the EARLIER archetypes' defaults), so a control never opens on an ungrantable value.
     ///
     /// ⛔ **This is the OFFER, not the roster an unattended server boots with.** A `cargo run`
-    /// server, a test harness and a `new_game` that carried no pick all go through
-    /// [`unattended_ai_faction_count`] instead, which stays at zero rivals.
-    pub default_ai_factions: u32,
-    /// The most AI factions this grid can seat at `faction_start_min_separation`, i.e. one fewer
-    /// than the starts that fit, because the player is one of the peoples.
-    pub max_ai_factions: u32,
+    /// server, a test harness and a `new_game` that listed no count for an archetype all go through
+    /// [`unattended_archetype_counts`] instead, which stays at the pin or zero.
+    pub default_count: u32,
 }
 
 /// **The area one start occupies at a minimum separation of `d`: `d² · √3/2`.**
@@ -2816,17 +2870,17 @@ pub struct FactionStartCapacity {
 /// value: nothing about this number is a design choice.
 const HEX_PACKING_CELL_AREA_FACTOR: f64 = 0.866_025_403_784_438_6;
 
-/// **The rival every map that can seat one opens with.**
+/// **The first of an archetype every map that can seat one opens with.**
 ///
 /// The floor term of the pre-selection: a world with nobody else in it is the thing this game is
 /// least interesting as, so even the smallest map starts the player with company rather than with a
 /// number a player has to notice and raise. Added to the share below, so the smallest shipped map
 /// (a ceiling of 3) pre-selects **2** rather than 1.
-const DEFAULT_AI_FACTIONS_FLOOR: u32 = 1;
+const DEFAULT_ARCHETYPE_COUNT_FLOOR: u32 = 1;
 
 /// **The share of a map's rival ceiling the New Game screen pre-selects on top of that floor**,
 /// written as the divisor of an integer division so the pre-selection is exact arithmetic rather
-/// than a rounding of a fraction: half the ceiling, plus [`DEFAULT_AI_FACTIONS_FLOOR`].
+/// than a rounding of a fraction: half the ceiling, plus [`DEFAULT_ARCHETYPE_COUNT_FLOOR`].
 ///
 /// Half rather than the third this replaced because a share alone could not give the five shipped
 /// sizes five *distinct* pre-selections — at ceilings of 3/4/6/11/17 every fraction collapses Tiny
@@ -2835,16 +2889,20 @@ const DEFAULT_AI_FACTIONS_FLOOR: u32 = 1;
 /// distinct, each comfortably under its own ceiling so the pre-selection is never the cramped end of
 /// the range a player would have to dial back from.
 ///
-/// Both terms are constants rather than config levers deliberately: `default_ai_faction_count`
+/// Both terms are constants rather than config levers deliberately: an archetype's `default_count`
 /// already pins the pre-selection outright, and two levers moving one number is one too many.
-const DEFAULT_AI_FACTIONS_CEILING_DIVISOR: u32 = 2;
+const DEFAULT_ARCHETYPE_COUNT_CEILING_DIVISOR: u32 = 2;
 
-/// **What an unattended server starts with when nobody picked a count: no rivals.**
+/// **What an unattended server starts with when nobody picked a count: none of the archetype.**
 ///
-/// There is no AI driving a rival yet, so a faction the player did not ask for would sit and pass.
-/// A boot with no pick therefore opens the single-faction world that has always shipped — this is
-/// the half of "the default" that is deliberately *not* derived from the map.
-const UNATTENDED_AI_FACTION_COUNT: u32 = 0;
+/// A boot with no pick opens the single-faction world that has always shipped - this is the half
+/// of "the default" that is deliberately *not* derived from the map.
+const UNATTENDED_ARCHETYPE_COUNT: u32 = 0;
+
+/// **The separation a start is placed at when the world has no archetype catalog** - a hand-rolled
+/// test world that never applied a start profile. One tile apart is "not on the same hex", the
+/// least a placement can mean; a shipped profile always names its own (validated `> 0`).
+const NO_CATALOG_START_SEPARATION: u32 = 1;
 
 /// **How many starts fit on this grid at `min_separation`, once the sea is discounted** — the
 /// ceiling the New Game screen stops its rival control at.
@@ -2901,7 +2959,7 @@ pub fn max_faction_starts(grid_size: UVec2, min_separation: u32, land_fraction: 
 /// > currently holds. A New Game screen offering a preset picker therefore gets a ceiling computed
 /// > against the running server's preset, not the one in the dropdown — on a preset whose land
 /// > target differs sharply from it the offered ceiling is wrong, in whichever direction the
-/// > difference runs. It is bounded by the clamp (`granted_ai_faction_count` re-derives against the
+/// > difference runs. It is bounded by the clamp (`granted_archetype_counts` re-derives against the
 /// > preset the world is actually built on) and by the relaxation beneath that, so the failure is a
 /// > misleading control rather than a broken world. Fixing it properly means putting the preset id
 /// > on the query.
@@ -2915,101 +2973,130 @@ pub fn faction_start_land_fraction(
         .unwrap_or_else(|| crate::map_preset::MacroLandConfig::default().target_land_pct)
 }
 
-/// The capacity a New Game screen draws its control from: the value to **pre-select** and the
-/// ceiling to stop at, both derived here so the two cannot disagree.
-///
-/// `configured_default` is `simulation_config.json`'s `default_ai_faction_count`, and `None` is not
-/// `Some(0)`: absent means *"derive it from what this map can seat"*, which is the shipped setting,
-/// while `Some(0)` pins a lone-player pre-selection. That is character for character the
-/// distinction the optional `new_game` wire field already draws.
-pub fn faction_start_capacity(
+/// **How many of an archetype fit once the human seat and every EARLIER archetype's starts have
+/// taken their sites**: `max(0, site_count - 1 - earlier_total)`. The `1` is the human seat. The
+/// one statement of the ceiling formula - the client restates it from the wire's `site_count`.
+pub fn archetype_ceiling(site_count: u32, earlier_total: u32) -> u32 {
+    site_count.saturating_sub(1).saturating_sub(earlier_total)
+}
+
+/// The sites each archetype's lattice seats on this grid, in catalog order.
+fn archetype_site_counts(
+    archetypes: &[StartArchetype],
     grid_size: UVec2,
-    min_separation: u32,
     land_fraction: f32,
-    configured_default: Option<u32>,
-) -> FactionStartCapacity {
-    let max_ai_factions =
-        max_faction_starts(grid_size, min_separation, land_fraction).saturating_sub(1);
-    let offered = configured_default.unwrap_or_else(|| {
-        DEFAULT_AI_FACTIONS_FLOOR + max_ai_factions / DEFAULT_AI_FACTIONS_CEILING_DIVISOR
-    });
-    FactionStartCapacity {
-        default_ai_factions: offered.min(max_ai_factions),
-        max_ai_factions,
-    }
+) -> Vec<u32> {
+    archetypes
+        .iter()
+        .map(|archetype| max_faction_starts(grid_size, archetype.min_separation, land_fraction))
+        .collect()
 }
 
-/// **The roster a server builds a world with when NOBODY picked a count** — a boot, a test harness,
-/// a `new_game` that carried no `ai_faction_count`.
+/// The capacity a New Game screen draws its controls from: per archetype, the sites it seats and
+/// the value to **pre-select**, both derived here so the two cannot disagree. Catalog order.
 ///
-/// Deliberately *not* [`FactionStartCapacity::default_ai_factions`]. That number is an **offer**
-/// made to a player looking at a New Game screen, and it scales with the map; this one is what an
-/// unattended process starts with, and it is [`UNATTENDED_AI_FACTION_COUNT`] — no rivals — until
-/// there is an AI to drive one. Splitting them is what lets the screen pre-select a world with
-/// neighbours without a `cargo run` server quietly gaining peoples that sit and pass.
-///
-/// `configured` pins it: `simulation_config.json`'s `default_ai_faction_count` is the escape hatch a
-/// headless run, a test or a designer uses to boot with rivals without touching the UI.
-pub fn unattended_ai_faction_count(configured: Option<u32>) -> u32 {
-    configured.unwrap_or(UNATTENDED_AI_FACTION_COUNT)
+/// An archetype's `default_count` pin is clamped like any other value, and `None` is not `Some(0)`:
+/// absent means *"derive it from what this map can seat"*, which is the shipped setting, while
+/// `Some(0)` pins none. Each default is clamped against a ceiling computed from the EARLIER
+/// archetypes' defaults, so the offered roster is one the map can actually place.
+pub fn archetype_capacities(
+    archetypes: &[StartArchetype],
+    grid_size: UVec2,
+    land_fraction: f32,
+) -> Vec<ArchetypeCapacity> {
+    let mut earlier_total = 0u32;
+    archetype_site_counts(archetypes, grid_size, land_fraction)
+        .into_iter()
+        .zip(archetypes)
+        .map(|(site_count, archetype)| {
+            let ceiling = archetype_ceiling(site_count, earlier_total);
+            let offered = archetype.default_count.unwrap_or_else(|| {
+                DEFAULT_ARCHETYPE_COUNT_FLOOR + ceiling / DEFAULT_ARCHETYPE_COUNT_CEILING_DIVISOR
+            });
+            let default_count = offered.min(ceiling);
+            earlier_total += default_count;
+            ArchetypeCapacity {
+                site_count,
+                default_count,
+            }
+        })
+        .collect()
 }
 
-/// **What a requested AI count is actually granted** — the request, clamped to what the grid can
-/// seat, with a warning naming both numbers when the clamp binds.
+/// **The roster a server builds a world with when NOBODY picked a count** - a boot, a test
+/// harness, a `new_game` line that listed no count for an archetype. Per archetype, in catalog
+/// order: its pinned `default_count`, else [`UNATTENDED_ARCHETYPE_COUNT`] (none).
 ///
-/// Clamped rather than refused: a player who asked for more rivals than the map holds still gets a
+/// Deliberately *not* [`ArchetypeCapacity::default_count`]. That number is an **offer** made to a
+/// player looking at a New Game screen and scales with the map; this one is what an unattended
+/// process starts with. Splitting them is what lets the screen pre-select a world with neighbours
+/// without a `cargo run` server quietly gaining peoples that sit and pass.
+pub fn unattended_archetype_counts(archetypes: &[StartArchetype]) -> Vec<u32> {
+    archetypes
+        .iter()
+        .map(|archetype| {
+            archetype
+                .default_count
+                .unwrap_or(UNATTENDED_ARCHETYPE_COUNT)
+        })
+        .collect()
+}
+
+/// **What requested counts are actually granted** - each archetype's request, clamped IN ORDER to
+/// what the grid can seat once the earlier archetypes' GRANTED counts and the human seat have taken
+/// their sites, with a warning naming both numbers for every clamp that binds. `requested` is in
+/// catalog order; a missing tail reads as zero.
+///
+/// Clamped rather than refused: a player who asked for more peoples than the map holds still gets a
 /// game, and `worldgen.start_separation_relaxed` is the second net beneath that. Every path that
-/// takes a count — boot, `new_game`, `ResetMap` — goes through here, so "the map decides the
+/// takes counts - boot, `new_game`, `ResetMap` - goes through here, so "the map decides the
 /// ceiling" has exactly one implementation.
-pub fn granted_ai_faction_count(
-    requested: u32,
+pub fn granted_archetype_counts(
+    requested: &[u32],
+    archetypes: &[StartArchetype],
     grid_size: UVec2,
-    min_separation: u32,
     land_fraction: f32,
-) -> u32 {
-    let capacity =
-        faction_start_capacity(grid_size, min_separation, land_fraction, Some(requested));
-    if requested > capacity.max_ai_factions {
-        warn!(
-            target: "shadow_scale::worldgen",
-            "worldgen.ai_faction_count_clamped requested={} granted={} min_separation={} land_fraction={} grid={}x{}",
-            requested,
-            capacity.max_ai_factions,
-            min_separation,
-            land_fraction,
-            grid_size.x,
-            grid_size.y
-        );
-    }
-    capacity.default_ai_factions
+) -> Vec<u32> {
+    let mut earlier_total = 0u32;
+    archetype_site_counts(archetypes, grid_size, land_fraction)
+        .into_iter()
+        .zip(archetypes)
+        .enumerate()
+        .map(|(index, (site_count, archetype))| {
+            let asked = requested.get(index).copied().unwrap_or(0);
+            let ceiling = archetype_ceiling(site_count, earlier_total);
+            let granted = asked.min(ceiling);
+            if asked > ceiling {
+                warn!(
+                    target: "shadow_scale::worldgen",
+                    "worldgen.archetype_count_clamped archetype={} requested={} granted={} min_separation={} land_fraction={} grid={}x{}",
+                    archetype.id,
+                    asked,
+                    granted,
+                    archetype.min_separation,
+                    land_fraction,
+                    grid_size.x,
+                    grid_size.y
+                );
+            }
+            earlier_total += granted;
+            granted
+        })
+        .collect()
 }
 
-/// **One start tile per faction, scored once and picked greedily.**
+/// **One start tile per faction: archetypes laid down in catalog order, each at its own separation,
+/// the tiles scored once and reused.**
 ///
-/// Scoring is [`score_start_tiles`] and is untouched by the arrival of a second faction: the first
-/// pick is the argmax over every land tile, exactly the tile a one-faction world has always opened
-/// on. Each later faction takes the best *remaining* tile that is at least `min_separation` from
-/// every start already picked.
-///
-/// **Distance is Euclidean, compared squared** — the metric the curated food-site pass already
-/// spaces markers by (`min_spacing_sq`), so the file has one notion of "far enough apart".
-///
-/// **Relaxation degrades gracefully, and never fails.** If no remaining tile clears the separation,
-/// the pick becomes the tile **farthest from every start already placed** — score only breaks the
-/// tie — and the shortfall is warned. A cramped map is a worse world, not a dead one: a faction left
-/// unplaced would have no land, no band and nobody to play it.
-///
-/// ⛔ **The fallback must NOT be "the best remaining tile".** That was the original rule and it is
-/// the worst possible answer for the case it exists to handle: good ground clusters, so the
-/// highest-scoring *remaining* tile is normally a neighbour of the start that just took the
-/// highest-scoring tile outright — the moment the separation stops being satisfiable, peoples stack
-/// on adjacent hexes. Maximising the minimum distance instead spreads them as far as the land
-/// allows. Guarded by
-/// `start_tile_selection_tests::a_separation_nothing_can_satisfy_spreads_the_starts_out`.
-#[allow(clippy::too_many_arguments)] // the scoring inputs, plus how many starts to pick and how far apart
+/// `archetype_of_faction[i]` is the catalog index of roster position `i`'s archetype; the returned
+/// tiles are in roster order. Scoring is [`score_start_tiles`] and is untouched by the arrival of a
+/// second faction: the first pick (the human seat, archetype 0) is the argmax over every land tile,
+/// exactly the tile a one-faction world has always opened on. Majors are placed first, then each
+/// later archetype fills the gaps they left - see [`place_archetype_starts`].
+#[allow(clippy::too_many_arguments)] // the scoring inputs, plus who is placed and how far apart
 fn faction_start_tiles(
-    faction_count: usize,
-    min_separation: u32,
+    archetype_of_faction: &[usize],
+    archetypes: &[StartArchetype],
     width: u32,
     height: u32,
     tags_grid: &[sim_runtime::TerrainTags],
@@ -3027,12 +3114,81 @@ fn faction_start_tiles(
         food_sites,
         food_radius,
     );
-    // What an all-water map (or a map with fewer land tiles than factions) falls back to — the same
+    // What an all-water map (or a map with fewer land tiles than factions) falls back to - the same
     // centre `best_start_tile` has always returned when it found nothing to score.
     let fallback = (width / 2, height / 2);
+    let mut picked: Vec<(u32, u32)> = Vec::with_capacity(archetype_of_faction.len());
+    let mut tile_of_faction = vec![fallback; archetype_of_faction.len()];
+    // A faction whose archetype index is past the catalog (or a world with no catalog) is placed
+    // after the catalog's own, at the no-catalog separation.
+    let group_count = archetypes.len().max(1);
+    let past_catalog = archetype_of_faction
+        .iter()
+        .any(|index| *index >= group_count);
+    for group in 0..group_count + usize::from(past_catalog) {
+        let members: Vec<usize> = archetype_of_faction
+            .iter()
+            .enumerate()
+            .filter(|(_, index)| (**index).min(group_count) == group)
+            .map(|(faction, _)| faction)
+            .collect();
+        if members.is_empty() {
+            continue;
+        }
+        let (label, separation) = match archetypes.get(group) {
+            Some(archetype) => (archetype.id.as_str(), archetype.min_separation),
+            None => ("-", NO_CATALOG_START_SEPARATION),
+        };
+        let first = picked.len();
+        place_archetype_starts(
+            &scored,
+            fallback,
+            &mut picked,
+            members.len(),
+            separation,
+            label,
+        );
+        for (faction, tile) in members.into_iter().zip(&picked[first..]) {
+            tile_of_faction[faction] = *tile;
+        }
+    }
+    tile_of_faction
+}
+
+/// **Place `count` starts of one archetype, given the starts already placed (`picked`, which this
+/// extends).**
+///
+/// **Pass 1** - strict `>`, over the tiles in scan order: among the candidates that clear
+/// `min_separation` from EVERY start already placed (of any archetype), the highest score, with the
+/// lowest `(y, then x)` winning a tie. That is what makes a one-faction world's pick byte-identical
+/// to the argmax it always was.
+///
+/// **Distance is Euclidean, compared squared** - the metric the curated food-site pass already
+/// spaces markers by (`min_spacing_sq`), so the file has one notion of "far enough apart".
+///
+/// **Relaxation degrades gracefully, and never fails.** If no remaining tile clears the separation,
+/// the pick becomes the tile **farthest from every start already placed** - score only breaks the
+/// tie - and the shortfall is warned. A cramped map is a worse world, not a dead one: a faction left
+/// unplaced would have no land, no band and nobody to play it.
+///
+/// ⛔ **The fallback must NOT be "the best remaining tile".** That was the original rule and it is
+/// the worst possible answer for the case it exists to handle: good ground clusters, so the
+/// highest-scoring *remaining* tile is normally a neighbour of the start that just took the
+/// highest-scoring tile outright - the moment the separation stops being satisfiable, peoples stack
+/// on adjacent hexes. Maximising the minimum distance instead spreads them as far as the land
+/// allows. Guarded by
+/// `start_tile_selection_tests::a_separation_nothing_can_satisfy_spreads_the_starts_out`.
+fn place_archetype_starts(
+    scored: &[(i32, (u32, u32))],
+    fallback: (u32, u32),
+    picked: &mut Vec<(u32, u32)>,
+    count: usize,
+    min_separation: u32,
+    archetype: &str,
+) {
     let min_separation_sq = (min_separation as i64) * (min_separation as i64);
     // How far a candidate is from the *nearest* start already picked, squared. `None` when nothing
-    // has been picked yet — a first pick has nothing to be far from, which is a different answer
+    // has been picked yet - a first pick has nothing to be far from, which is a different answer
     // from "zero away".
     let nearest_picked_sq = |candidate: (u32, u32), picked: &[(u32, u32)]| -> Option<i64> {
         let mut nearest = i64::MAX;
@@ -3044,21 +3200,18 @@ fn faction_start_tiles(
         (nearest != i64::MAX).then_some(nearest)
     };
 
-    let mut picked: Vec<(u32, u32)> = Vec::with_capacity(faction_count);
-    for index in 0..faction_count {
-        // **Pass 1 — strict `>`, over the tiles in scan order**: among the candidates that clear the
-        // separation, the highest score, with the lowest `(y, then x)` winning a tie. That is what
-        // makes a one-faction world's pick byte-identical to the argmax it always was.
+    for _ in 0..count {
+        let index = picked.len();
         let mut best_separated: Option<(i32, (u32, u32))> = None;
-        // **Pass 2 — the graceful degradation**: the candidate that MAXIMISES THE MINIMUM DISTANCE
+        // **Pass 2 - the graceful degradation**: the candidate that MAXIMISES THE MINIMUM DISTANCE
         // to every start already placed, ordered `(distance, score)` so the score is only a
         // tie-break, and the scan order breaks the rest. Read only when pass 1 finds nothing.
         let mut best_spread: Option<(i64, i32, (u32, u32))> = None;
-        for &(score, pos) in &scored {
+        for &(score, pos) in scored {
             if picked.contains(&pos) {
                 continue;
             }
-            let nearest_sq = nearest_picked_sq(pos, &picked);
+            let nearest_sq = nearest_picked_sq(pos, picked);
             let spread_key = (nearest_sq.unwrap_or(0), score);
             if best_spread.is_none_or(|(far, best_score, _)| spread_key > (far, best_score)) {
                 best_spread = Some((spread_key.0, spread_key.1, pos));
@@ -3074,8 +3227,9 @@ fn faction_start_tiles(
             (None, Some((nearest_sq, _, pos))) => {
                 warn!(
                     target: "shadow_scale::worldgen",
-                    "worldgen.start_separation_relaxed=unachievable faction={} min_separation={} achieved={:.2} pick=farthest_from_every_placed_start",
+                    "worldgen.start_separation_relaxed=unachievable faction={} archetype={} min_separation={} achieved={:.2} pick=farthest_from_every_placed_start",
                     index,
+                    archetype,
                     min_separation,
                     (nearest_sq as f64).sqrt()
                 );
@@ -3084,14 +3238,14 @@ fn faction_start_tiles(
             (None, None) => {
                 warn!(
                     target: "shadow_scale::worldgen",
-                    "worldgen.start_separation_relaxed=no_land_left faction={}",
-                    index
+                    "worldgen.start_separation_relaxed=no_land_left faction={} archetype={}",
+                    index,
+                    archetype
                 );
                 picked.push(fallback);
             }
         }
     }
-    picked
 }
 
 /// Every land tile and what it is worth as a start, in row-major scan order.
@@ -3318,6 +3472,7 @@ fn spawn_default_population_clusters(
     cohort_index: &mut usize,
     knowledge: &[KnowledgeFragment],
     start_kit: &StartKit<'_>,
+    lean: StartingCultureLean,
 ) {
     let stride = max(1, stride_tiles) as i32;
     let radius: i32 = (stride * 3).max(3);
@@ -3345,6 +3500,7 @@ fn spawn_default_population_clusters(
                     None,
                     knowledge,
                     start_kit,
+                    lean,
                 );
             }
         }
@@ -3362,13 +3518,14 @@ fn spawn_profile_population(
     width: usize,
     height: usize,
     start: (u32, u32),
-    overrides: &StartProfileOverrides,
+    archetype: &StartArchetype,
     cohort_index: &mut usize,
     knowledge: &[KnowledgeFragment],
     start_kit: &StartKit<'_>,
+    lean: StartingCultureLean,
 ) {
     let mut spawned_total = 0u32;
-    for spec in &overrides.starting_units {
+    for spec in &archetype.starting_units {
         let count = spec.count.max(1);
         for _ in 0..count {
             if let Some((tx, ty)) =
@@ -3387,6 +3544,7 @@ fn spawn_profile_population(
                     Some(marker),
                     knowledge,
                     start_kit,
+                    lean,
                 );
                 spawned_total += 1;
             }
@@ -3408,6 +3566,7 @@ fn spawn_profile_population(
             cohort_index,
             knowledge,
             start_kit,
+            lean,
         );
     } else {
         info!(
@@ -3446,6 +3605,7 @@ fn spawn_population_entity(
     marker: Option<StartingUnit>,
     knowledge: &[KnowledgeFragment],
     start_kit: &StartKit<'_>,
+    lean: StartingCultureLean,
 ) {
     let generation = registry.assign_for_index(*cohort_index);
     *cohort_index = cohort_index.saturating_add(1);
@@ -3539,17 +3699,19 @@ fn spawn_population_entity(
     // networks, default-band command pickers). Detached expeditions are spawned separately and
     // deliberately lack it, so they are excluded from those systems by construction.
     entity.insert(ResidentBand);
+    // The people's drawn personality, consumed (and removed) when the band's culture layer is made.
+    entity.insert(lean);
     if let Some(marker) = marker {
         entity.insert(marker);
     }
 }
 
 fn starting_knowledge_fragments(
-    overrides: &StartProfileOverrides,
+    archetype: &StartArchetype,
     knowledge_tags: &StartProfileKnowledgeTags,
 ) -> Vec<KnowledgeFragment> {
     let mut fragments = Vec::new();
-    for tag in &overrides.starting_knowledge_tags {
+    for tag in &archetype.starting_knowledge_tags {
         if let Some(definition) = knowledge_tags.get(tag.as_str()) {
             fragments.push(KnowledgeFragment::new(
                 definition.discovery_id(),
@@ -3579,18 +3741,18 @@ fn seed_starting_knowledge(
 
 fn seed_starting_inventory(
     faction: FactionId,
-    overrides: &StartProfileOverrides,
+    archetype: &StartArchetype,
     inventory: &mut FactionInventory,
 ) -> Option<(usize, i64)> {
-    if overrides.inventory.is_empty() {
+    if archetype.inventory.is_empty() {
         return None;
     }
     let mut total_quantity = 0i64;
-    for entry in &overrides.inventory {
+    for entry in &archetype.inventory {
         inventory.add_stockpile(faction, entry.item.clone(), entry.quantity);
         total_quantity += entry.quantity;
     }
-    Some((overrides.inventory.len(), total_quantity))
+    Some((archetype.inventory.len(), total_quantity))
 }
 
 fn resolve_starting_unit_tile(
@@ -3705,6 +3867,16 @@ mod start_tile_selection_tests {
         vec![sim_runtime::TerrainTags::empty(); (width * height) as usize]
     }
 
+    /// A bare archetype: just an id and a separation.
+    fn archetype(id: &str, min_separation: u32) -> StartArchetype {
+        StartArchetype {
+            id: id.to_string(),
+            min_separation,
+            ..StartArchetype::default()
+        }
+    }
+
+    /// `faction_count` factions of ONE archetype at `min_separation`.
     fn pick(
         faction_count: usize,
         min_separation: u32,
@@ -3712,9 +3884,25 @@ mod start_tile_selection_tests {
         height: u32,
         tags: &[sim_runtime::TerrainTags],
     ) -> Vec<(u32, u32)> {
+        pick_archetypes(
+            &vec![0; faction_count],
+            &[archetype("major", min_separation)],
+            width,
+            height,
+            tags,
+        )
+    }
+
+    fn pick_archetypes(
+        archetype_of_faction: &[usize],
+        archetypes: &[StartArchetype],
+        width: u32,
+        height: u32,
+        tags: &[sim_runtime::TerrainTags],
+    ) -> Vec<(u32, u32)> {
         faction_start_tiles(
-            faction_count,
-            min_separation,
+            archetype_of_faction,
+            archetypes,
             width,
             height,
             tags,
@@ -3723,6 +3911,73 @@ mod start_tile_selection_tests {
             &[],
             1,
         )
+    }
+
+    fn distance_sq(a: (u32, u32), b: (u32, u32)) -> i64 {
+        let dx = a.0 as i64 - b.0 as i64;
+        let dy = a.1 as i64 - b.1 as i64;
+        dx * dx + dy * dy
+    }
+
+    /// **Majors are placed first, each minor then fills the gaps at ITS OWN separation.** Two
+    /// majors at 12 apart and three minors at 4 on a flat 24x24: every pair of majors clears 12,
+    /// every minor clears 4 from EVERY start (majors included), and the human (faction 0) still
+    /// gets the argmax tile.
+    #[test]
+    fn minors_are_placed_after_majors_at_their_own_separation() {
+        let (width, height) = (24u32, 24u32);
+        let archetypes = [archetype("major", 12), archetype("minor", 4)];
+        // Roster: human + one major rival (archetype 0), then three minors (archetype 1).
+        let roster = [0usize, 0, 1, 1, 1];
+        let picked = pick_archetypes(
+            &roster,
+            &archetypes,
+            width,
+            height,
+            &flat_land(width, height),
+        );
+        assert_eq!(picked.len(), roster.len());
+        assert_eq!(picked[0], (0, 0), "the human takes the argmax");
+        assert!(
+            distance_sq(picked[0], picked[1]) >= 12 * 12,
+            "majors clear 12"
+        );
+        for minor in &picked[2..] {
+            for other in picked.iter().filter(|other| *other != minor) {
+                assert!(
+                    distance_sq(*minor, *other) >= 4 * 4,
+                    "{minor:?} is closer than 4 to {other:?}"
+                );
+            }
+        }
+    }
+
+    /// **Relaxation is per archetype.** A minor separation nothing can satisfy relaxes (spreads) only
+    /// the minors; the majors, placed first at an achievable separation, are untouched.
+    #[test]
+    fn the_relaxed_pass_is_per_archetype() {
+        let (width, height) = (12u32, 12u32);
+        let archetypes = [archetype("major", 6), archetype("minor", 100)];
+        let roster = [0usize, 0, 1, 1];
+        let picked = pick_archetypes(
+            &roster,
+            &archetypes,
+            width,
+            height,
+            &flat_land(width, height),
+        );
+        assert!(
+            distance_sq(picked[0], picked[1]) >= 6 * 6,
+            "majors still clear 6"
+        );
+        let mut unique = picked.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(
+            unique.len(),
+            4,
+            "relaxed minors still land on distinct tiles"
+        );
     }
 
     /// ⛔ **THE TIE-BREAK.** Every tile of this grid scores the same, so the winner is decided
@@ -3874,23 +4129,27 @@ mod start_tile_selection_tests {
         );
     }
 
-    /// A grid too small for two starts seats exactly one, so it offers **no** rivals — and the
+    /// A grid too small for two starts seats exactly one, so it offers **no** rivals - and the
     /// ceiling never reads zero seats, because a map always seats the player. A land fraction that
     /// is not a number is a broken config, and fails to *one* seat rather than to `u32::MAX`.
     #[test]
     fn a_grid_too_small_for_two_starts_offers_no_rivals() {
         let tiny = UVec2::new(10, 10);
         assert_eq!(max_faction_starts(tiny, 20, 1.0), 1);
-        let capacity = faction_start_capacity(tiny, 20, 1.0, Some(4));
-        assert_eq!(capacity.max_ai_factions, 0);
+        let pinned = StartArchetype {
+            default_count: Some(4),
+            ..archetype("major", 20)
+        };
+        let capacity = archetype_capacities(&[pinned], tiny, 1.0);
+        assert_eq!(capacity[0].site_count, 1);
         assert_eq!(
-            capacity.default_ai_factions, 0,
+            capacity[0].default_count, 0,
             "the offered default is clamped too, so a control never opens on an ungrantable value"
         );
         assert_eq!(
-            faction_start_capacity(tiny, 20, 1.0, None).default_ai_factions,
+            archetype_capacities(&[archetype("major", 20)], tiny, 1.0)[0].default_count,
             0,
-            "and the DERIVED default is clamped by the same ceiling — the floor term would \
+            "and the DERIVED default is clamped by the same ceiling - the floor term would \
              otherwise pre-select a rival this grid cannot seat"
         );
         assert_eq!(
@@ -3905,86 +4164,175 @@ mod start_tile_selection_tests {
         );
     }
 
-    /// **A pinned count is offered as-is; an absent one is DERIVED from the map** — the two
-    /// readings of `default_ai_faction_count`, and the reason it is an `Option` rather than a `u32`
-    /// with 0 doing double duty.
-    ///
-    /// Sabotaged by collapsing `None` into `Some(0)`, which the derived case catches, or by
-    /// deriving unconditionally, which the pinned cases do.
+    /// **The ceiling formula**: `max(0, site_count - 1 - earlier)`, the 1 being the human seat.
     #[test]
-    fn a_pinned_default_is_offered_and_an_absent_one_is_derived() {
-        let grid = UVec2::new(80, 52);
-        let separation = 20u32;
-        let land = 0.38f32;
-        let ceiling = max_faction_starts(grid, separation, land) - 1;
-        assert!(ceiling >= 2, "fixture: the shipped grid seats rivals");
-
+    fn the_ceiling_is_the_sites_less_the_human_and_every_earlier_start() {
+        assert_eq!(archetype_ceiling(7, 0), 6);
+        assert_eq!(archetype_ceiling(7, 4), 2);
+        assert_eq!(archetype_ceiling(7, 6), 0);
+        assert_eq!(archetype_ceiling(7, 99), 0, "never negative");
         assert_eq!(
-            faction_start_capacity(grid, separation, land, Some(2)).default_ai_factions,
-            2,
-            "a pinned count under the ceiling is offered untouched"
+            archetype_ceiling(1, 0),
+            0,
+            "a one-site grid seats only the human"
+        );
+        assert_eq!(archetype_ceiling(0, 0), 0);
+    }
+
+    fn standard_catalog() -> Vec<StartArchetype> {
+        vec![archetype("major", 20), archetype("minor", 8)]
+    }
+
+    /// **A later archetype's ceiling depends on how many of the earlier one were asked for**: each
+    /// major consumes one site of the minor lattice, one for one.
+    #[test]
+    fn a_minor_ceiling_falls_as_majors_are_added() {
+        let grid = UVec2::new(80, 52);
+        let land = 0.38f32;
+        let catalog = standard_catalog();
+        let sites = max_faction_starts(grid, 8, land);
+        for majors in [0u32, 3, 6] {
+            let granted = granted_archetype_counts(&[majors, 999], &catalog, grid, land);
+            assert_eq!(granted[0], majors);
+            assert_eq!(
+                granted[1],
+                archetype_ceiling(sites, majors),
+                "{majors} majors leave {sites} - 1 - {majors} minor sites"
+            );
+        }
+    }
+
+    /// **Requests clamp IN ORDER**: an over-asked major count is granted down first, and the minor
+    /// ceiling is computed from what the majors were actually GRANTED.
+    #[test]
+    fn requests_clamp_in_catalog_order_against_the_granted_earlier_counts() {
+        let grid = UVec2::new(80, 52);
+        let land = 0.38f32;
+        let catalog = standard_catalog();
+        let major_ceiling = max_faction_starts(grid, 20, land) - 1;
+        assert_eq!(
+            major_ceiling, 6,
+            "the shipped Standard grid at the shipped separation"
+        );
+        let granted = granted_archetype_counts(&[99, 99], &catalog, grid, land);
+        assert_eq!(granted[0], major_ceiling);
+        assert_eq!(
+            granted[1],
+            archetype_ceiling(max_faction_starts(grid, 8, land), major_ceiling)
         );
         assert_eq!(
-            faction_start_capacity(grid, separation, land, Some(ceiling + 5)).default_ai_factions,
+            granted_archetype_counts(&[0, 0], &catalog, grid, land),
+            vec![0, 0]
+        );
+        assert_eq!(
+            granted_archetype_counts(&[2], &catalog, grid, land),
+            vec![2, 0],
+            "a missing tail reads as zero"
+        );
+    }
+
+    /// **A pinned default is offered as-is; an absent one is DERIVED from the map** - per archetype,
+    /// the two readings of `default_count`, and the reason it is an `Option` rather than a `u32`
+    /// with 0 doing double duty.
+    #[test]
+    fn a_pinned_default_is_offered_and_an_absent_one_is_derived_per_archetype() {
+        let grid = UVec2::new(80, 52);
+        let land = 0.38f32;
+        let ceiling = max_faction_starts(grid, 20, land) - 1;
+        assert!(ceiling >= 2, "fixture: the shipped grid seats rivals");
+
+        let with_pin = |pin: Option<u32>| {
+            let mut catalog = standard_catalog();
+            catalog[0].default_count = pin;
+            archetype_capacities(&catalog, grid, land)
+        };
+        assert_eq!(
+            with_pin(Some(2))[0].default_count,
+            2,
+            "a pin under the ceiling is untouched"
+        );
+        assert_eq!(
+            with_pin(Some(ceiling + 5))[0].default_count,
             ceiling,
             "and one over it is granted down"
         );
         assert_eq!(
-            faction_start_capacity(grid, separation, land, Some(0)).default_ai_factions,
+            with_pin(Some(0))[0].default_count,
             0,
-            "an explicit zero is a pin, not an absent key"
+            "an explicit zero is a pin"
         );
 
-        let derived = faction_start_capacity(grid, separation, land, None).default_ai_factions;
+        let derived = with_pin(None);
         assert_eq!(
-            derived,
-            DEFAULT_AI_FACTIONS_FLOOR + ceiling / DEFAULT_AI_FACTIONS_CEILING_DIVISOR
+            derived[0].default_count,
+            DEFAULT_ARCHETYPE_COUNT_FLOOR + ceiling / DEFAULT_ARCHETYPE_COUNT_CEILING_DIVISOR
+        );
+        // The minor default is derived against the majors' DEFAULT, not the majors' ceiling.
+        let minor_ceiling = archetype_ceiling(derived[1].site_count, derived[0].default_count);
+        assert_eq!(
+            derived[1].default_count,
+            (DEFAULT_ARCHETYPE_COUNT_FLOOR
+                + minor_ceiling / DEFAULT_ARCHETYPE_COUNT_CEILING_DIVISOR)
+                .min(minor_ceiling)
         );
         assert!(
-            derived > 0,
-            "an absent key on a grid that seats rivals must offer some — deriving zero everywhere \
-             is the complaint this replaced"
+            derived[1].default_count > 0,
+            "the shipped grid offers minors too"
         );
-        assert!(derived <= ceiling, "and it is always grantable");
     }
 
     /// **An UNATTENDED roster is not the offered default**, and that split is the whole point: the
     /// New Game screen pre-selects a map-scaled count, while a `cargo run` server, a test harness
-    /// and a `new_game` carrying no pick keep the zero-rival world that ships. The config pin moves
-    /// both.
+    /// and a `new_game` carrying no pick keep the zero-rival world that ships. A pin moves both.
     #[test]
-    fn an_unattended_boot_takes_no_rivals_unless_the_config_pins_some() {
-        assert_eq!(unattended_ai_faction_count(None), 0);
-        assert_eq!(unattended_ai_faction_count(Some(0)), 0);
-        assert_eq!(unattended_ai_faction_count(Some(3)), 3);
+    fn an_unattended_boot_takes_none_unless_the_archetype_pins_some() {
+        let mut catalog = standard_catalog();
+        assert_eq!(unattended_archetype_counts(&catalog), vec![0, 0]);
+        catalog[0].default_count = Some(0);
+        catalog[1].default_count = Some(3);
+        assert_eq!(unattended_archetype_counts(&catalog), vec![0, 3]);
 
-        let grid = UVec2::new(128, 80);
-        let offered = faction_start_capacity(grid, 20, 0.38, None).default_ai_factions;
+        let offered = archetype_capacities(&standard_catalog(), UVec2::new(128, 80), 0.38);
         assert!(
-            offered > unattended_ai_faction_count(None),
-            "the offer scales with the map and the unattended roster does not — if these ever \
+            offered[0].default_count > unattended_archetype_counts(&standard_catalog())[0],
+            "the offer scales with the map and the unattended roster does not - if these ever \
              agree, the two paths have been merged back together"
         );
     }
 
-    /// The clamp and the capacity are the same rule: a request under the ceiling is granted whole,
-    /// one over it comes back as the ceiling.
+    /// Per-preset capacity, printed on demand for the issue's table:
+    /// `cargo test -p core_sim print_the_per_preset_capacity_table -- --nocapture --ignored`.
     #[test]
-    fn a_request_over_the_ceiling_is_granted_down_to_it() {
-        let grid = UVec2::new(80, 52);
-        let separation = 20u32;
-        let land = 0.38f32;
-        let ceiling = max_faction_starts(grid, separation, land) - 1;
-        assert_eq!(
-            ceiling, 6,
-            "the shipped Standard grid at the shipped separation"
-        );
-        assert_eq!(granted_ai_faction_count(0, grid, separation, land), 0);
-        assert_eq!(granted_ai_faction_count(2, grid, separation, land), 2);
-        assert_eq!(
-            granted_ai_faction_count(99, grid, separation, land),
-            ceiling
-        );
+    #[ignore = "prints a table; not an assertion"]
+    fn print_the_per_preset_capacity_table() {
+        let profiles = crate::start_profile::StartProfiles::builtin();
+        let catalog = &profiles
+            .get("late_forager_tribe")
+            .expect("the shipped profile")
+            .overrides()
+            .archetypes;
+        let presets = crate::map_preset::MapPresets::builtin();
+        let land = faction_start_land_fraction(&presets, "earthlike");
+        for (name, width, height) in [
+            ("Tiny", 56u32, 36u32),
+            ("Small", 66, 42),
+            ("Standard", 80, 52),
+            ("Large", 104, 64),
+            ("Huge", 128, 80),
+        ] {
+            let rows = archetype_capacities(catalog, UVec2::new(width, height), land);
+            println!(
+                "{name} {width}x{height} land={land:.2}: {}",
+                rows.iter()
+                    .zip(catalog)
+                    .map(|(row, a)| format!(
+                        "{} sites={} default={}",
+                        a.id, row.site_count, row.default_count
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            );
+        }
     }
 
     /// The good ground still wins: separation reorders *which* tile each later faction gets, it
@@ -4699,9 +5047,12 @@ mod inventory_effect_tests {
 
     fn configured_world(provisions: i64) -> World {
         let mut config = SimulationConfig::builtin();
-        config.start_profile_overrides.inventory = vec![InventoryEntry {
-            item: "provisions".to_string(),
-            quantity: provisions,
+        config.start_profile_overrides.archetypes = vec![StartArchetype {
+            inventory: vec![InventoryEntry {
+                item: "provisions".to_string(),
+                quantity: provisions,
+            }],
+            ..StartArchetype::default()
         }];
         let mut world = World::default();
         world.insert_resource(config);

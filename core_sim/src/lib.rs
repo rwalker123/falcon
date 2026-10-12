@@ -73,6 +73,7 @@ mod materials_config;
 pub mod metrics;
 pub mod network;
 mod orders;
+pub mod personalities;
 pub mod port_alloc;
 mod power;
 mod provinces;
@@ -193,8 +194,8 @@ pub use culture::{
     reconcile_culture_layers, seeded_modifiers_for_band, ContactPull, ContactTie,
     CultureEffectsCache, CultureLayer, CultureLayerId, CultureLayerScope, CultureManager,
     CultureOwner, CultureSchismEvent, CultureSplitQueue, CultureTensionEvent, CultureTensionKind,
-    CultureTensionRecord, CultureTraitAxis, CultureTraitVector, CULTURE_TRAIT_AXES,
-    CULTURE_TRAIT_SPAN, FALLBACK_CULTURE_REGION_ID,
+    CultureTensionRecord, CultureTraitAxis, CultureTraitVector, StartingCultureLean,
+    CULTURE_TRAIT_AXES, CULTURE_TRAIT_SPAN, FALLBACK_CULTURE_REGION_ID,
 };
 pub use culture_corruption_config::{
     CorruptionSeverityConfig, CultureCorruptionConfig, CultureCorruptionConfigHandle,
@@ -315,6 +316,10 @@ pub use lineage::{
     BreedingMember, BreedingPeople, BreedingReading, FoundingLines, FreeBreedingPeoples, LineId,
     TieJoinedGroup, MIN_BAND_LINES, NO_INBREEDING_CEILING,
 };
+pub use personalities::{
+    load_personalities_from_env, PersonalitiesError, Personality, PersonalityCatalog,
+    PersonalityCatalogHandle, PersonalityCatalogMetadata, BUILTIN_PERSONALITIES, PERSONALITY_SALT,
+};
 // The drainage-network measurement instrument (consumed by the `#[ignore]`d census test).
 pub use extraction::{
     advance_deposits, deposit_at_risk_rung, deposit_keeper_loads, deposit_keeping_basis,
@@ -409,6 +414,7 @@ pub use start_profile::{
     StartProfileOverrides, StartProfiles, StartProfilesHandle, StartProfilesMetadata,
     StartingUnitSpec,
 };
+pub use start_profile::{StartArchetype, StartArchetypeAssignment};
 pub use starting_loadout::{
     allocation_load, apply_starting_loadout, fit_to_carry, order_load, split_default_outfit,
     FittedLoadout, KitAllocation, LoadoutRejection, LoadoutSupply, LoadoutWindow,
@@ -497,12 +503,12 @@ pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,
     reconcile_coastal_shelf, reconcile_food_modules,
 };
-/// **The map's say in how many peoples it seats** — the ceiling, the offered default, and the clamp
-/// every path that takes an AI count runs through. Exported because the boot path, the `new_game`
-/// handler and the capacity query all ask the same function.
+/// **The map's say in how many peoples it seats** — the per-archetype ceiling, the offered default,
+/// and the clamp every path that takes archetype counts runs through. Exported because the boot
+/// path, the `new_game` handler and the capacity query all ask the same functions.
 pub use systems::{
-    faction_start_capacity, faction_start_land_fraction, granted_ai_faction_count,
-    max_faction_starts, unattended_ai_faction_count, FactionStartCapacity,
+    archetype_capacities, archetype_ceiling, faction_start_land_fraction, granted_archetype_counts,
+    max_faction_starts, unattended_archetype_counts, ArchetypeCapacity,
 };
 pub use telling::{
     load_beat_catalog_from_env, load_beat_config_from_env, telling_tick, BeatCatalog,
@@ -592,20 +598,22 @@ pub fn build_headless_app() -> App {
     let active_profile_resource = ActiveStartProfile::new(active_profile.clone());
     let profile_lookup = StartProfileLookup::new(active_profile.id.clone());
 
-    // **Who plays this world is a COUNT OF RIVALS, not a profile declaration**: one human — the
-    // player — plus however many AI factions were asked for. A world built here was asked by
-    // nobody: it is the UNATTENDED roster, so an absent `default_ai_faction_count` means no rivals
-    // rather than the map-scaled count a New Game screen is offered (`unattended_ai_faction_count`
-    // vs `faction_start_capacity`). A `new_game` re-seeds this from the count the player picked.
-    // The count is clamped to what the grid can seat before the registry is built, so no path can
+    // **Who plays this world is a COUNT OF RIVALS PER ARCHETYPE, not a profile declaration**: one
+    // human — the player — plus however many AI factions of each start archetype were asked for. A
+    // world built here was asked by nobody: it is the UNATTENDED roster, so an archetype with no
+    // `default_count` pin means no rivals rather than the map-scaled count a New Game screen is
+    // offered (`unattended_archetype_counts` vs `archetype_capacities`). A `new_game` re-seeds this
+    // from the counts the player picked. The counts are clamped to what the grid can seat before the registry is built, so no path can
     // register a faction worldgen has nowhere to put; the turn queue then awaits exactly the roster
     // the registry was seeded with.
-    let faction_registry = orders::FactionRegistry::with_ai_factions(granted_ai_faction_count(
-        unattended_ai_faction_count(config.default_ai_faction_count),
+    let archetype_counts = granted_archetype_counts(
+        &unattended_archetype_counts(&config.start_profile_overrides.archetypes),
+        &config.start_profile_overrides.archetypes,
         config.grid_size,
-        config.faction_start_min_separation,
         faction_start_land_fraction(&map_presets, &config.map_preset_id),
-    ));
+    );
+    config.start_archetype_assignment = StartArchetypeAssignment::from_counts(&archetype_counts);
+    let faction_registry = orders::FactionRegistry::with_ai_factions(archetype_counts.iter().sum());
     let turn_queue = orders::TurnQueue::new(faction_registry.factions().to_vec());
     // Depth is decided in ONE place — `snapshot::PUBLICATION_RING_DEPTH`, which
     // `capture_snapshot` no longer has to re-assert every turn.
@@ -668,6 +676,10 @@ pub fn build_headless_app() -> App {
     let (faction_names_catalog, faction_names_metadata) =
         faction_names::load_faction_names_from_env();
     let faction_names_handle = faction_names::FactionNameCatalogHandle::new(faction_names_catalog);
+    // The lean a starting faction is born with. Content on the same boot seam as the name pools.
+    let (personalities_catalog, personalities_metadata) =
+        personalities::load_personalities_from_env();
+    let personalities_handle = personalities::PersonalityCatalogHandle::new(personalities_catalog);
     // **The materials table loads FIRST of the three**, because both food webs' yield edges are
     // reconciled against it: a species (plant or animal) naming a material that does not exist, or
     // stating a reading on an axis that material does not declare, is a boot panic rather than a
@@ -846,6 +858,8 @@ pub fn build_headless_app() -> App {
         .insert_resource(band_names_metadata)
         .insert_resource(faction_names_handle)
         .insert_resource(faction_names_metadata)
+        .insert_resource(personalities_handle)
+        .insert_resource(personalities_metadata)
         // Empty until worldgen mints it from the roster and the final map seed (Startup).
         .insert_resource(faction_names::FactionNames::default())
         .insert_resource(sim_state::Replaying::default())

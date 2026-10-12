@@ -434,6 +434,6 @@ A `SimState` shape change has no migration path by design: `SAVE_FORMAT_VERSION`
 
 | File | Key | Purpose |
 |---|---|---|
-| `src/data/start_profiles.json` | `opening_loadout.pickable_materials` | The grant's pick list, in the order it is drawn. Binds a grant window only |
+| `src/data/start_profiles.json` | `archetypes[*].opening_loadout.pickable_materials` | The grant's pick list, in the order it is drawn. Binds a grant window only. **Each faction's opening window is stocked from ITS archetype's loadout** (`outfit_band_with_defaults` reads the faction's archetype off the transient `start_archetype_assignment`, on the world-build pass); the post-build pick-list check reads the human seat's archetype |
 | | `opening_loadout.material_defaults` / `kit_defaults` | The **opening band's** default outfit, applied after the world-build meal so it fits the allowance the card shows. Shipped: kits `big_game 5 / trapping 5 / gathering 7` (one per hand on the 30-person band, so an untouched proportional split hands a kit per splinter worker) and `bone 2 / fibre 12 / hide 6` — load 47 against ≈ 47.2, fitting whole. A splinter's default is `split_default_outfit`, not these |
 | `src/data/expedition_config.json` | `carry.per_worker_carry` and the carry weights | The grant's size and every order's load — see `band-carry.md` → Config files. There is deliberately no loadout-specific dial: the budget is the band's own workers × one pack |
