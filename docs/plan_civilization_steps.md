@@ -221,7 +221,13 @@ reaches its ~150 ceiling in about three generations.
 **Shedding goes along routes, not into the void.** Births stop at the ceiling; a group pushed above
 it sheds people. A group goes above its ceiling only when a lifter lapses — it walked away from its
 partners, or off the tile that held its belief — and then it leaks back down. The people who leave
-**walk the network** to a connected band and join it (#690).
+**walk the network** to a connected band and join it (#690): a band within walking reach, outside
+their own breeding population, with room under its own ceiling. They carry no lines. When no band
+can take them, the excess breaks off as one group and becomes a new people. **The break-off copies
+its share of lines; the group it leaves keeps all of its own.** Two different peoples each count a
+shared line whole, so this is the existing rule — and dividing instead would leave the group behind
+still over its ceiling (its ceiling falls by less than its headcount did), so it would break off
+again every turn.
 
 What falls out without further rules:
 
@@ -756,7 +762,8 @@ Every decision this doc leaves unmade is owned by an issue, so it cannot be lost
 Decided since first listed: **belief is per place** (it exists to promote settling *there*; whose
 dead are in the ground is The Telling's to narrate). **People shed with no route stay** — they leave
 only when there is somewhere to go; when no practical band can take them, the second choice is to
-break off *as a group* and form their own faction (waits on multi-faction, #513). **Everyone in a
+break off *as a group* and form their own faction (#690, copying its share of lines — see "Shedding
+goes along routes"). **Everyone in a
 work party eats** — the party feeds itself from its own take, and what is left goes to the connected
 band or rots; a party has no store, so nothing of its own to tether it. The monument's upkeep and
 decay are a rung's, like any other (see the catalog section).

@@ -1322,7 +1322,9 @@ fn publish_breeding_readings(cohorts: &mut DemographicBands, breeding: &Breeding
                 member.people = whole_people.get(member_entity).copied().unwrap_or(0);
             }
         }
+        let faction = cohort.faction;
         cohort.last_breeding = crate::lineage::BreedingReading {
+            faction: Some(faction),
             headcount: headcounts.get(group).copied().unwrap_or_default().to_u32(),
             ceiling: ceiling
                 .people

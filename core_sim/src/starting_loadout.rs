@@ -395,6 +395,14 @@ impl StartingLoadout {
         self.windows.insert(band, window);
     }
 
+    /// **Shut this band's window** — removed, since a closed window is an absent one. For a band
+    /// the SIM split off (`systems::break_off_breeding_excess`): the outfitting window is the
+    /// player's chance to revise a split they made, and nobody made this one. The goods the split
+    /// moved stay moved. Returns whether a window was there.
+    pub fn close(&mut self, band: BandId) -> bool {
+        self.windows.remove(&band).is_some()
+    }
+
     /// Every window, in band order.
     pub fn iter(&self) -> impl Iterator<Item = (BandId, &LoadoutWindow)> {
         self.windows.iter().map(|(band, window)| (*band, window))

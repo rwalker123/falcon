@@ -206,6 +206,31 @@ pub fn split_band_from_parent(
     asked: u32,
     settle: &SettleConfig,
 ) -> Result<SplitBand, SplitRefusals> {
+    split_band_from_parent_with(world, parent, asked, settle, LineDivision::Partition)
+}
+
+/// **How a split divides the founding lines.**
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineDivision {
+    /// The player's split: the lines are PARTITIONED on the worker share and leave the parent
+    /// ([`crate::lineage::FoundingLines::split_off_share`]) — both halves are one people, and only
+    /// holders within one people divide a line's `K`.
+    Partition,
+    /// The sim's breeding break-off (#690): the child is about to become a DIFFERENT people, which
+    /// counts a shared line whole, so it takes a COPY and the parent keeps all of its own
+    /// ([`crate::lineage::FoundingLines::copy_share`]). Partitioning would leave the parent still
+    /// over its ceiling and break off again next turn.
+    Copy,
+}
+
+/// [`split_band_from_parent`] with the line division named — the one body both callers run.
+pub(crate) fn split_band_from_parent_with(
+    world: &mut World,
+    parent: Entity,
+    asked: u32,
+    settle: &SettleConfig,
+    line_division: LineDivision,
+) -> Result<SplitBand, SplitRefusals> {
     if world.get::<ResidentBand>(parent).is_none() {
         return Err(SplitRefusals::from(vec![SplitRefusal::NotAResidentBand]));
     }
@@ -248,11 +273,19 @@ pub fn split_band_from_parent(
     child.elders = taken_elders;
 
     // ---- Divide the founding lines ----
-    // On the same people share, and PARTITIONED: the lines that walk off leave the parent, which is
-    // what lowers both halves' ceilings (`crate::lineage`). Taken off a copy here and written to the
-    // parent below, with the rest of what leaves it.
+    // On the same people share, and (for a player's split) PARTITIONED: the lines that walk off
+    // leave the parent, which is what lowers both halves' ceilings (`crate::lineage`). A breeding
+    // break-off COPIES instead ([`LineDivision::Copy`]) — the parent below is rewritten with the
+    // very set it started with. Taken off a copy here and written to the parent below, with the
+    // rest of what leaves it.
     let mut parent_lines = cohort.founding_lines.clone();
-    child.founding_lines = parent_lines.split_off_share(share);
+    child.founding_lines = match line_division {
+        LineDivision::Partition => parent_lines.split_off_share(share),
+        LineDivision::Copy => parent_lines.copy_share(
+            taken_working + taken_children + taken_elders,
+            cohort.total(),
+        ),
+    };
 
     // ---- What the splinter can CARRY ----
     // **One rule on every turn: a departing band takes what its workers can carry**

@@ -13,10 +13,12 @@
 
 use std::collections::BTreeMap;
 
-use bevy::ecs::system::SystemParam;
+use bevy::ecs::system::{SystemParam, SystemState};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use super::breeding_shed::BreedingBreakOffs;
+use super::fission::{split_band_from_parent_with, LineDivision};
 use super::labor::{follow_the_band_to_its_new_people, BandFlip, BandFlipFollowers};
 use crate::{
     components::{BandId, PopulationCohort, ResidentBand},
@@ -294,10 +296,17 @@ enum BreakAwayCause {
     /// A purist band whose cultural strain held past the hard threshold ([`advance_culture_splits`],
     /// #702). The detail carries [`CULTURE_CAUSE_TOKEN`].
     Culture,
+    /// A breeding population over its ceiling with nowhere to shed to broke its excess off as a
+    /// people of its own ([`break_off_breeding_excess`], #690). The detail carries
+    /// [`BREEDING_CAUSE_TOKEN`].
+    Breeding,
 }
 
 /// The `cause=` token a culture split carries on its `band_broke_away` detail.
 pub const CULTURE_CAUSE_TOKEN: &str = "culture";
+
+/// The `cause=` token a breeding break-off carries on its `band_broke_away` detail.
+pub const BREEDING_CAUSE_TOKEN: &str = "breeding";
 
 /// **Tell both peoples a band broke away** — one row under the people it left, one under the people
 /// it founded, on `push_band_changed_hands_events`' shape (`side=lost|gained`, same tokens).
@@ -316,6 +325,7 @@ fn push_band_broke_away_events(
         Some(match cause {
             BreakAwayCause::Grievance => base,
             BreakAwayCause::Culture => format!("{base} cause={CULTURE_CAUSE_TOKEN}"),
+            BreakAwayCause::Breeding => format!("{base} cause={BREEDING_CAUSE_TOKEN}"),
         })
     };
     let (lost, gained) = match cause {
@@ -333,6 +343,16 @@ fn push_band_broke_away_events(
             ),
             format!(
                 "{name} broke away from {} over its ways — we answer to no one but ourselves.",
+                faction_label(from)
+            ),
+        ),
+        BreakAwayCause::Breeding => (
+            format!(
+                "{name} left to find mates — we were too many for our lines — and they call \
+                 themselves {people}."
+            ),
+            format!(
+                "{name} left {} to find mates — we answer to no one but ourselves.",
                 faction_label(from)
             ),
         ),
@@ -643,4 +663,123 @@ pub fn advance_culture_splits(
     if !flips.is_empty() {
         follow_the_band_to_its_new_people(&mut followers, &cohorts, flips, sim_config.map_seed);
     }
+}
+
+/// Everything the break-off's hand-over needs, in the shape [`advance_culture_splits`] takes it as
+/// system parameters — bundled so an exclusive system can borrow it from the world after the split
+/// has spawned the child.
+#[derive(SystemParam)]
+struct BreakOffHandover<'w, 's> {
+    sim_config: Res<'w, SimulationConfig>,
+    tick: Res<'w, SimulationTick>,
+    event_log: ResMut<'w, CommandEventLog>,
+    roster: RosterResources<'w>,
+    seeds: NewPeopleSeeds<'w>,
+    followers: BandFlipFollowers<'w, 's>,
+    cohorts: Query<
+        'w,
+        's,
+        (
+            Entity,
+            &'static mut PopulationCohort,
+            Option<&'static BandId>,
+        ),
+        With<ResidentBand>,
+    >,
+}
+
+/// **A breeding population with nowhere to shed breaks its excess off as a people of its own**
+/// (#690, `.claude/rules/core_sim/campaign.md` → "The breeding ceiling").
+///
+/// An EXCLUSIVE system, because the split spawns a band: it drains the asks
+/// [`super::breeding_shed::shed_breeding_excess`] queued this turn and, for each, runs the one
+/// split the player's `split_band` verb runs ([`split_band_from_parent_with`]) with the lines
+/// COPIED ([`LineDivision::Copy`]: the parent keeps all of its own, so it lands exactly at its
+/// ceiling and the next turn breaks nothing off). A split that refuses (the new band under
+/// `min_founding_workers`, or the parent left under `parent_min_workers`) leaves everyone where
+/// they are. The child is then handed to [`break_away_as_new_people`] — the grow-the-roster,
+/// knowledge, fog and `BandFlip` hand-over a grievance break-away uses — under
+/// [`BreakAwayCause::Breeding`].
+///
+/// **Side effects of the split, checked for a split nobody commanded.** The dowry (a worker-share of
+/// the larder, kit and material) is right: the people leave with their share. The culture layer
+/// attaches from the parent, as for any splinter. The full tie both ways and the inherited heart
+/// reading hold the two together for the ordinary clock (the heart reading is rebuilt by
+/// [`advance_band_independence`], later in this chain, and its faction mismatch keeps a spurious
+/// lost-touch line from firing). The one change: **the child's outfitting window is closed
+/// immediately** ([`crate::starting_loadout::StartingLoadout::close`]) — it is the player's chance
+/// to revise a split they made, and no player made this one.
+pub fn break_off_breeding_excess(world: &mut World) {
+    let asks = std::mem::take(&mut world.resource_mut::<BreedingBreakOffs>().asks);
+    if asks.is_empty() {
+        return;
+    }
+    let settle = world
+        .resource::<crate::expedition_config::ExpeditionConfigHandle>()
+        .get()
+        .settle
+        .clone();
+    let mut children: Vec<(Entity, BandId, FactionId)> = Vec::new();
+    for ask in asks {
+        let Some(from) = world
+            .get::<PopulationCohort>(ask.parent)
+            .map(|cohort| cohort.faction)
+        else {
+            continue;
+        };
+        match split_band_from_parent_with(world, ask.parent, ask.asked, &settle, LineDivision::Copy)
+        {
+            Ok(split) => {
+                if let Some(mut loadout) =
+                    world.get_resource_mut::<crate::starting_loadout::StartingLoadout>()
+                {
+                    loadout.close(split.band);
+                }
+                let child = world
+                    .query::<(Entity, &BandId)>()
+                    .iter(world)
+                    .find(|(_, band)| **band == split.band)
+                    .map(|(entity, _)| entity);
+                if let Some(child) = child {
+                    children.push((child, split.band, from));
+                }
+            }
+            Err(refusals) => debug!(
+                target: "shadow_scale::population",
+                "breeding.break_off.refused={} asked={}",
+                refusals.tokens(),
+                ask.asked
+            ),
+        }
+    }
+    if children.is_empty() {
+        return;
+    }
+    let mut state: SystemState<BreakOffHandover> = SystemState::new(world);
+    {
+        let mut handover = state.get_mut(world);
+        let (map_seed, now) = (handover.sim_config.map_seed, handover.tick.0);
+        let mut flips: Vec<BandFlip> = Vec::new();
+        for (child, band, from) in children {
+            let (_, child_flips) = break_away_as_new_people(
+                &mut handover.roster,
+                &mut handover.seeds,
+                &mut handover.event_log,
+                &mut handover.cohorts,
+                map_seed,
+                now,
+                from,
+                &[(child, band)],
+                BreakAwayCause::Breeding,
+            );
+            flips.extend(child_flips);
+        }
+        follow_the_band_to_its_new_people(
+            &mut handover.followers,
+            &handover.cohorts,
+            flips,
+            map_seed,
+        );
+    }
+    state.apply(world);
 }

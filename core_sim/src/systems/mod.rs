@@ -217,6 +217,7 @@ pub fn reset_transfer_ledger(mut allocations: Query<&mut LaborAllocation>) {
     }
 }
 
+mod breeding_shed;
 mod crafting;
 mod expeditions;
 mod fission;
@@ -227,6 +228,7 @@ mod power;
 mod trade;
 mod worldgen;
 
+pub use breeding_shed::*;
 pub use crafting::*;
 pub use expeditions::*;
 pub use fission::*;

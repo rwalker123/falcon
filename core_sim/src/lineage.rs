@@ -99,6 +99,32 @@ impl FoundingLines {
         self.0.retain(|line| !walked.contains(line));
         Self(walked)
     }
+
+    /// **The lines a break-off walks off with, COPIED — the parent keeps every one** (issue #690).
+    ///
+    /// A break-off becomes a different people, and two different peoples each count a shared line
+    /// whole; only holders within one people divide its `K`. Partitioning (`split_off_share`) would
+    /// leave the parent still over its ceiling (it falls by only `E · c / t` against an excess of
+    /// `E`), and the next turn would break off again, every turn. Copying leaves the parent exactly
+    /// at its ceiling, and the union of two peoples in touch gains nothing from the copy.
+    ///
+    /// The child holds `max(1, ceil(len × child_people ÷ parent_people))` lines, capped at what the
+    /// parent holds, taken from the **highest** ids as `split_off_share` picks them. A parent of
+    /// nobody copies the one line a band cannot be without.
+    pub fn copy_share(&self, child_people: Scalar, parent_people: Scalar) -> Self {
+        let held = self.len();
+        let floor = usize::from(MIN_BAND_LINES);
+        let (child, parent) = (child_people.raw(), parent_people.raw());
+        let proportional = if parent > 0 && child > 0 {
+            let scaled = held as i128 * i128::from(child);
+            let quotient = (scaled + i128::from(parent) - 1) / i128::from(parent);
+            usize::try_from(quotient).unwrap_or(held)
+        } else {
+            floor
+        };
+        let taken = proportional.max(floor).min(held);
+        Self(self.0.iter().rev().take(taken).copied().collect())
+    }
 }
 
 /// **A breeding population's ceiling, in people** (issue #688) — `lines × people_per_line`, where
@@ -271,6 +297,11 @@ pub struct BreedingPeople {
 /// cohort reads before its first turn.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BreedingReading {
+    /// The people the band belonged to when the pre-pass grouped it. A band that changes people
+    /// later in the turn (a remnant flip in migration) carries a reading for the people it LEFT, so
+    /// readers that act on the grouping (`systems::breeding_shed`) compare this with the cohort's
+    /// own faction and skip the band when they differ. `None` before the band's first turn.
+    pub faction: Option<FactionId>,
     /// Everyone in the breeding population after this turn's births and deaths, in whole people —
     /// the members' fixed-point head-counts summed, then rounded once. On the wire as
     /// `PopulationCohortState.breedingPopulation`.
@@ -338,6 +369,28 @@ mod tests {
         let lines = FoundingLines::founded(ORIGIN, LINES);
         assert_eq!(lines.len(), usize::from(LINES));
         assert!(lines.iter().all(|line| line.origin_band == ORIGIN.0));
+    }
+
+    #[test]
+    fn a_break_off_copies_the_highest_ids_by_ceiling_and_the_parent_keeps_them_all() {
+        let parent = FoundingLines::founded(ORIGIN, LINES);
+        let before = parent.clone();
+        let people = |n: u32| Scalar::from_u32(n);
+        // 8 lines × 148 / 300 = 3.95 → 4.
+        let child = parent.copy_share(people(148), people(300));
+        assert_eq!(child.len(), 4);
+        assert_eq!(parent, before, "copying removes nothing from the parent");
+        assert!(child.iter().min() > parent.iter().nth(LINES as usize - 5));
+        // A sliver still takes one; the whole band takes them all and no more.
+        assert_eq!(parent.copy_share(people(1), people(300)).len(), 1);
+        assert_eq!(
+            parent.copy_share(people(300), people(300)).len(),
+            usize::from(LINES)
+        );
+        assert_eq!(
+            parent.copy_share(people(900), people(300)).len(),
+            usize::from(LINES)
+        );
     }
 
     #[test]

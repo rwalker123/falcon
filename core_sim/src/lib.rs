@@ -484,14 +484,15 @@ pub use systems::{
     advance_expeditions, advance_labor_allocation, advance_party_defection,
     advance_population_migration, advance_predator_raids, advance_tick,
     announce_bench_material_short, bench_material_rate, bench_tiers, bill_and_stock_roads,
-    bring_the_dropped_party_home, deliver_bench_output, denial_forecast, expedition_returned_event,
-    fold_party_into_band, follow_hunted_herds, grow_faction_roster, hunt_per_worker_provisions,
-    hunt_report_event, hunt_take, output_multiplier, party_owes_a_report, prospective_keep_hands,
-    publish_turn_transfers, settle_bands_roadwork, settle_scarce_tools, simulate_population,
-    simulate_power, source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers,
-    DenialForecast, DenialOutcome, HeartLedger, HeartReading, HuntOutcome, PartyGear,
-    PartySightings, PoolToolPlan, PowerSimParams, RaidRoll, SplitBand, SplitRefusal, SplitRefusals,
-    ToolClaimStage, TradeDiffusionEvent,
+    break_off_breeding_excess, bring_the_dropped_party_home, deliver_bench_output, denial_forecast,
+    expedition_returned_event, fold_party_into_band, follow_hunted_herds, grow_faction_roster,
+    hunt_per_worker_provisions, hunt_report_event, hunt_take, output_multiplier,
+    party_owes_a_report, prospective_keep_hands, publish_turn_transfers, settle_bands_roadwork,
+    settle_scarce_tools, shed_breeding_excess, simulate_population, simulate_power,
+    source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers, BreakOffAsk,
+    BreedingBreakOffs, DenialForecast, DenialOutcome, HeartLedger, HeartReading, HuntOutcome,
+    PartyGear, PartySightings, PoolToolPlan, PowerSimParams, RaidRoll, SplitBand, SplitRefusal,
+    SplitRefusals, ToolClaimStage, TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,
@@ -921,6 +922,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(visibility::VisibilitySweepTracker::default())
         .insert_resource(connections::ConnectionLedger::default())
         .insert_resource(systems::HeartLedger::default())
+        .insert_resource(systems::BreedingBreakOffs::default())
         .insert_resource(culture::CultureSplitQueue::default())
         .insert_resource(lineage::FreeBreedingPeoples::default())
         // **The roads and this turn's traffic** (`docs/plan_standing_upkeep.md` §4.13). The registry
@@ -1295,6 +1297,11 @@ pub fn build_headless_app() -> App {
                     // morale/discontent are current and productivity has already been applied at each
                     // yield site; it then relocates discontented people (population conserved).
                     systems::advance_population_migration,
+                    // A breeding population above its ceiling sheds the excess (#690): after
+                    // migration, which overwrites each band's `last_emigrated` / `last_immigrated`,
+                    // and before independence, which judges the roster the break-off may grow.
+                    systems::shed_breeding_excess,
+                    systems::break_off_breeding_excess,
                     // A detached party defects whole (`docs/plan_band_fission.md` §Defection): it
                     // reads its home band's morale, which demographics made current, and the
                     // sightings `advance_expeditions` recorded this turn; it runs after the trickle
@@ -1314,8 +1321,13 @@ pub fn build_headless_app() -> App {
                     .chain(),
                 // Pure telemetry: reads `TradeTelemetry`, which only `advance_population_migration`
                 // writes (the cross-people knowledge credit). Ordered after that writer and nothing
-                // else, so it stays free of the labor run the migration follows.
-                systems::publish_trade_telemetry.after(systems::advance_population_migration),
+                // else, so it stays free of the labor run the migration follows. The one other edge
+                // is `break_off_breeding_excess`, an EXCLUSIVE system (it spawns a band) and so in
+                // conflict with every system; the telemetry reads nothing it writes, so it simply
+                // takes its place after it.
+                systems::publish_trade_telemetry
+                    .after(systems::advance_population_migration)
+                    .after(systems::break_off_breeding_excess),
                 // **RETIRED: `settle_route_keeping`, the third keeping pool as a SYSTEM OF ITS
                 // OWN.** It ran `.after(advance_labor_allocation)` because the `roadwork` head count
                 // it divides has to be the one the shedding order left — and that put the payment a
