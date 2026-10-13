@@ -14044,6 +14044,33 @@ func _assert_kit_reprices_the_source() -> void:
 			% str(trapped[KitRoster.SOURCE_STAY_FRACTION]),
 		is_equal_approx(float(trapped[KitRoster.SOURCE_STAY_FRACTION]),
 			KitRoster.STAY_FRACTION_NONE_BREAKS_OFF))
+	# **A PARTLY-ARMED CREW RETREATS PER CREW** (`fauna::HuntingParty::stay_fraction`): 2 hunters, 1 trap
+	# (`dispersion 0`) = half the party at the trap's stay (1.0) and half bare at the species' own (STAY),
+	# i.e. their share-weighted mean — NOT the trap's stay for both.
+	var half_share := KitRoster.armed_share_of(2, 1, true)
+	var half_trapped := KitRoster.repriced_source(src, "", PUBLISHED_CARRY, PUBLISHED_CARRY, 0.0,
+		KitRoster.COVERAGE_UNSTATED, KitRoster.COVERAGE_UNSTATED, 0, half_share)
+	var half_expected := 0.5 * KitRoster.STAY_FRACTION_NONE_BREAKS_OFF + 0.5 * STAY
+	_assert_band_panel("a half-armed trapping crew quotes the share-weighted stay (%s, expected %s)"
+			% [str(half_trapped[KitRoster.SOURCE_STAY_FRACTION]), str(half_expected)],
+		is_equal_approx(half_share, 0.5)
+			and is_equal_approx(float(half_trapped[KitRoster.SOURCE_STAY_FRACTION]), half_expected)
+			and float(half_trapped[KitRoster.SOURCE_STAY_FRACTION])
+				< float(trapped[KitRoster.SOURCE_STAY_FRACTION]))
+	# …the control: a FULLY armed crew (or a roster stating no saturating term) is the single-kit stay,
+	# unchanged; and a crew with no armed hand is the species' own.
+	var full_trapped := KitRoster.repriced_source(src, "", PUBLISHED_CARRY, PUBLISHED_CARRY, 0.0,
+		KitRoster.COVERAGE_UNSTATED, KitRoster.COVERAGE_UNSTATED, 0,
+		KitRoster.armed_share_of(2, 2, true))
+	var unstated := KitRoster.armed_share_of(2, 0, false)
+	var none_armed := KitRoster.repriced_source(src, "", PUBLISHED_CARRY, PUBLISHED_CARRY, 0.0,
+		KitRoster.COVERAGE_UNSTATED, KitRoster.COVERAGE_UNSTATED, 0,
+		KitRoster.armed_share_of(2, 0, true))
+	_assert_band_panel("a fully armed crew keeps the single-kit stay, an unstated one is fully armed, a bare one reads the species' own",
+		is_equal_approx(float(full_trapped[KitRoster.SOURCE_STAY_FRACTION]),
+			float(trapped[KitRoster.SOURCE_STAY_FRACTION]))
+			and is_equal_approx(unstated, KitRoster.ARMED_SHARE_ALL)
+			and is_equal_approx(float(none_armed[KitRoster.SOURCE_STAY_FRACTION]), STAY))
 	# The claim that motivated the whole substitution: same carry, same reach, different take.
 	_assert_band_panel("…so two kits with the SAME carry still quote different takes",
 		not is_equal_approx(float(trapped[KitRoster.SOURCE_STAY_FRACTION]),

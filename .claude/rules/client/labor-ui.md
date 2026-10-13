@@ -2807,6 +2807,19 @@ into the reach because the two stages are separately observable — `engage_rate
 quarry, `dispersion` moves the retreat alone — and the fold makes Big-game and Trapping quote the
 identical hunt on a herd whose whole difference is how much of what they reach stands still.
 
+**THE PARTY'S STAY IS THE SHARE-WEIGHTED MEAN OF ITS CREWS' OWN** — the sim resolves the retreat per crew
+(`fauna::HuntingParty::stay_fraction`): armed hunters break off at the kit's own `dispersion`, bare
+hunters at the bare tier's (the neutral `1.0`, `DISPERSION_NEUTRAL`). `KitRoster.party_stay_fraction`
+writes it as `armed_share × stay_at(kit dispersion) + (1 − armed_share) × stay_at(1.0)`,
+`stay_at(d) = clamp(1 − (1 − stayFraction) × d, 0, 1)`, with `armed_share = min(w, saturating crew) / w`
+(`armed_share_of`, the same coverage term `carry_per_worker` reads; `priced_source` passes it). Two
+hunters with one trap quote half the trap's stay and half the bare hand's, not the trap's stay for both.
+A fully covered crew, an uncomposed one, or a roster stating no saturating term is `ARMED_SHARE_ALL` and
+reads exactly the single-kit substitution above. It feeds `forecast_inputs`, so `expected_yield`,
+`max_useful_workers` and the crew targets price the same retreat as the sim's curve rows. Pinned by
+`band_panel_preview._assert_kit_reprices_the_source` (half-armed `0.625` against the species' `0.25` and
+the trap's `1.0`, plus the fully-armed and bare controls).
+
 `SourceForecast.animals_stayed` is the client mirror of `animals_that_stay` at the quantile a forecast
 reads it at (the analytic mean `floor(engaged) × stay`; `animals_engaged` already floors), applied in
 the sim's own order — **engage → retreat → convert**.
