@@ -1029,6 +1029,9 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     # whole section: absence means unchanged, so a quiet turn leaves the ties standing.
     if snapshot.has("connections") and SnapshotSections.changed(snapshot, "connections"):
         _hud_invoke("update_connections", [snapshot["connections"]])
+        # …and the map, which draws a ghost marker for every tied band it cannot currently see.
+        if map_view != null and map_view.has_method("set_connections"):
+            map_view.set_connections(snapshot["connections"])
     if snapshot.has("kits") and SnapshotSections.changed(snapshot, "kits"):
         # The KIT ROSTER + the FIVE job defaults, forwarded as ONE call: the compose sheets' pickers
         # need the list and the "what does the verb take when I name none" answer together, and a

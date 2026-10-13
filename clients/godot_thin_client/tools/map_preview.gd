@@ -2050,6 +2050,7 @@ func _ready() -> void:
 	await _exchange_network_states()
 	# APPENDED, so no earlier frame moves.
 	await _band_ancestors_states()
+	await _remembered_band_states()
 
 	_finish()
 
@@ -7537,6 +7538,106 @@ func _hex_probe_rect(image: Image, tile: Vector2i, radii: float) -> Rect2i:
 	var half: float = radii * float(_map.last_hex_radius) * px_scale
 	return Rect2i(Vector2i(int(center.x * px_scale - half), int(center.y * px_scale - half)),
 		Vector2i(int(half * 2.0), int(half * 2.0)))
+
+## **STATE "remembered bands" — A TIE'S GHOST ON THE MAP.** One live band (own tile, no ghost) beside
+## three remembered ones at tie strength 1.0 / 0.4 / 0.0 (parked), plus a FOURTH subject that is live
+## (has a band marker) and must draw no ghost, and a SECOND tie to the faded subject with an older
+## sighting + weaker strength (the latest sighting places it, the strongest strength fades it).
+## Judged by the PNG (`map_remembered_bands.png`: grey, graded, parked still faint) and by
+## mean |dL| against the same frame with no ties.
+const REMEMBERED_LIVE_BAND_ID := 900
+const REMEMBERED_TILES := [Vector2i(5, 3), Vector2i(8, 3), Vector2i(11, 3)]
+const REMEMBERED_STRENGTHS := [1.0, 0.4, 0.0]
+const REMEMBERED_STALE_TILE := Vector2i(2, 9)   # an older sighting of the faded subject: must NOT draw
+const REMEMBERED_LIVE_TILE := Vector2i(11, 9)
+const REMEMBERED_TURN := 21
+const REMEMBERED_STALE_TURNS_AGO := 5
+const REMEMBERED_STALE_STRENGTH := 0.1
+const REMEMBERED_LIVE_SUBJECT_ID := 920
+const REMEMBERED_FADED_SUBJECT_ID := 911
+const REMEMBERED_SUBJECT_ID_BASE := 910
+const REMEMBERED_PROBE_RADII := 0.5
+
+func _remembered_ties() -> Array:
+	var ties: Array = []
+	for i in range(REMEMBERED_TILES.size()):
+		ties.append({"observer_band_id": REMEMBERED_LIVE_BAND_ID,
+			"subject_band_id": REMEMBERED_SUBJECT_ID_BASE + i,
+			"subject_name": "Goosefen" if i == 1 else "People %d" % i,
+			"strength": REMEMBERED_STRENGTHS[i],
+			"last_seen_x": REMEMBERED_TILES[i].x, "last_seen_y": REMEMBERED_TILES[i].y,
+			"last_seen_turn": REMEMBERED_TURN})
+	ties.append({"observer_band_id": REMEMBERED_LIVE_BAND_ID + 1,
+		"subject_band_id": REMEMBERED_FADED_SUBJECT_ID,
+		"subject_name": "Goosefen", "strength": REMEMBERED_STALE_STRENGTH,
+		"last_seen_x": REMEMBERED_STALE_TILE.x, "last_seen_y": REMEMBERED_STALE_TILE.y,
+		"last_seen_turn": REMEMBERED_TURN - REMEMBERED_STALE_TURNS_AGO})
+	ties.append({"observer_band_id": REMEMBERED_LIVE_BAND_ID,
+		"subject_band_id": REMEMBERED_LIVE_SUBJECT_ID,
+		"subject_name": "Livefen", "strength": 0.9,
+		"last_seen_x": REMEMBERED_LIVE_TILE.x, "last_seen_y": REMEMBERED_LIVE_TILE.y,
+		"last_seen_turn": REMEMBERED_TURN})
+	return ties
+
+func _remembered_band_states() -> void:
+	_map.set_fow_enabled(false)
+	_map.set_labor_pending({})
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
+	var snapshot := _snapshot_stack(1)
+	var own: Dictionary = snapshot["populations"][0]
+	own["band_id"] = REMEMBERED_LIVE_BAND_ID
+	var live := _band_at(STACK_ENTITY_BASE + 40, REMEMBERED_LIVE_TILE.x, REMEMBERED_LIVE_TILE.y,
+		STAGE_NOMADIC, 1)
+	live["band_id"] = REMEMBERED_LIVE_SUBJECT_ID
+	snapshot["populations"].append(live)
+	_map.set_connections([])
+	_map.display_snapshot(snapshot)
+	_map.selected_unit_id = -1
+	_map._fit_map_to_view()
+	await _settle()
+	var bare: Image = await _capture()
+	_map.set_connections(_remembered_ties())
+	await _settle()
+	var ghosts: Image = await _capture()
+	await _save("map_remembered_bands")
+	var deltas: Array = []
+	for tile in REMEMBERED_TILES:
+		deltas.append(_mean_abs_delta(bare, ghosts, _hex_probe_rect(ghosts, tile, REMEMBERED_PROBE_RADII)))
+	_assert_map("remembered - parked tie still shows faintly (%.4f)" % deltas[2], deltas[2] > 0.0)
+	_assert_map("remembered - opacity grades with strength (%.4f > %.4f > %.4f)" % [deltas[0], deltas[1], deltas[2]],
+		deltas[0] > deltas[1] and deltas[1] > deltas[2])
+	_assert_map("remembered - an older sighting of the same subject draws nothing",
+		_count_changed_pixels(bare, ghosts, _hex_probe_rect(ghosts, REMEMBERED_STALE_TILE, REMEMBERED_PROBE_RADII)) == 0)
+	_assert_map("remembered - a subject with a live band marker draws no ghost",
+		_count_changed_pixels(bare, ghosts, _hex_probe_rect(ghosts, REMEMBERED_LIVE_TILE, REMEMBERED_PROBE_RADII)) == 0)
+	var rows: Array = _map.remembered_bands()
+	_assert_map("remembered - one row per unseen subject", rows.size() == REMEMBERED_TILES.size())
+	var faded: Dictionary = {}
+	for row in rows:
+		if int(row["subject_band_id"]) == REMEMBERED_FADED_SUBJECT_ID:
+			faded = row
+	_assert_map("remembered - latest sighting places it, strongest tie fades it",
+		int(faded.get("last_seen_x", -1)) == REMEMBERED_TILES[1].x
+			and is_equal_approx(float(faded.get("strength", -1.0)), REMEMBERED_STRENGTHS[1]))
+	var info: Dictionary = _map._tile_info_at(REMEMBERED_TILES[1].x, REMEMBERED_TILES[1].y)
+	_assert_map("remembered - the hex tooltip info carries the ghost",
+		(info.get("remembered_bands", []) as Array).size() == 1)
+	var hover := ConnectionsRoster.remembered_hover_line(faded, HudBandLaborState.new())
+	_assert_map("remembered - hover line names the band and when (%s)" % hover,
+		hover == "Goosefen — last seen turn 21, may have moved")
+	_map.set_connections([])
+
+## Mean per-pixel |dL| between two same-size frames inside `rect` - a perceptible-magnitude measure,
+## not a changed-pixel count (a count passes on an invisible 1-level wash).
+func _mean_abs_delta(before: Image, after: Image, rect: Rect2i) -> float:
+	var total := 0.0
+	var n := 0
+	for y in range(maxi(rect.position.y, 0), mini(rect.end.y, before.get_height())):
+		for x in range(maxi(rect.position.x, 0), mini(rect.end.x, before.get_width())):
+			total += absf(before.get_pixel(x, y).get_luminance() - after.get_pixel(x, y).get_luminance())
+			n += 1
+	return total / float(maxi(n, 1))
 
 func _band_ancestors_states() -> void:
 	_map.set_fow_enabled(false)

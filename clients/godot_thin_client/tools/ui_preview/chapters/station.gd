@@ -242,7 +242,15 @@ func _event_dock_states() -> void:
 	var borders_label := "%s closed its borders — party returning home" % sim_host
 	var gone_label := "Party lost %s — returning home" % sim_host
 	var recalled_label := "%s recalled — returning home" % HOME_NAME
+	var not_found_label := "Party found no sign of %s where they were last seen — coming home" % sim_host
+	var dest_not_found_label := "Shipment found no sign of %s where they were last seen — coming home" % sim_host
 	dock.ingest_events([
+		{"tick": TURN, "kind": "expedition_recalled", "faction": 0, "label": not_found_label,
+			"detail": "status=returning reason=host_not_found host=%d expedition=7" % host_id,
+			"seq": 707},
+		{"tick": TURN, "kind": "expedition_recalled", "faction": 0, "label": dest_not_found_label,
+			"detail": "status=returning reason=destination_not_found destination=%d expedition=8" % host_id,
+			"seq": 708},
 		{"tick": TURN, "kind": "expedition_sent", "faction": 0, "label": launch_label,
 			"detail": "status=applied mission=station workers=2 host=%d distance=9 expedition=7" % host_id,
 			"seq": 701},
@@ -259,7 +267,7 @@ func _event_dock_states() -> void:
 	dock.set_expanded(true)
 	await h._settle()
 	await h._save("station_event_dock")
-	for label in [launch_label, arrived_label, borders_label, gone_label]:
+	for label in [launch_label, arrived_label, borders_label, gone_label, not_found_label, dest_not_found_label]:
 		var swapped := String(label).replace(sim_host, STATIONED_NAME)
 		h._assert_hud("station dock: `%s` names the host by the roster's name" % swapped,
 			_label_count(dock, swapped) == 1)
@@ -269,13 +277,31 @@ func _event_dock_states() -> void:
 			not phrase.contains(str(host_id)))
 	h._assert_hud("station dock: a post ended by the world is NOTABLE (visible at the default floor)",
 		_rung(dock, borders_label) == HudEventVocab.RUNG_NOTABLE
-			and _rung(dock, gone_label) == HudEventVocab.RUNG_NOTABLE)
+			and _rung(dock, gone_label) == HudEventVocab.RUNG_NOTABLE
+			and _rung(dock, not_found_label) == HudEventVocab.RUNG_NOTABLE
+			and _rung(dock, dest_not_found_label) == HudEventVocab.RUNG_NOTABLE)
 	h._assert_hud("station dock: …the player's own recall stays a ROUTINE receipt",
 		_rung(dock, recalled_label) == HudEventVocab.RUNG_ROUTINE)
 	dock.set_band_labels({})
 	dock.queue_free()
 	await h.get_tree().process_frame
 	await h._settle()
+	await _remembered_hover_state()
+
+
+## The map hover for a remembered band (a tied people the viewer cannot see): the hex tooltip gains a
+## line naming the band and when, in the Peoples tab's words. Fed the tile-info shape `MapView` builds.
+func _remembered_hover_state() -> void:
+	var tie := {"subject_band_id": 77, "subject_name": "Goosefen", "strength": 0.2,
+		"last_seen_x": 71, "last_seen_y": 8, "last_seen_turn": 21}
+	h._hud.show_tooltip({"x": 71, "y": 8, "terrain_label": "Grassland", "visibility_state": "discovered",
+		"remembered_bands": [tie]})
+	await h._settle()
+	await h._save("remembered_band_hover")
+	var text: String = h._hud.tooltip_label.text
+	h._assert_hud("remembered hover: the tooltip names the band and when",
+		text.contains("Goosefen \u2014 last seen turn 21, may have moved"))
+	h._hud.show_tooltip({})
 
 
 # ---- finders ----------------------------------------------------------------------------------

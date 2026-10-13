@@ -58,6 +58,53 @@ func draw_primary_bands(radius: float, origin: Vector2) -> void:
 	for tile in order:
 		_draw_band_stack(by_tile[tile], radius, origin)
 
+## **REMEMBERED BANDS** — a ghost token for every people the viewer holds a tie to and cannot
+## currently see (`MapView.remembered_bands`), at the tile it was last seen on. Same stage art a band
+## token wears, desaturated, at `lerp(REMEMBERED_MIN_ALPHA, REMEMBERED_MAX_ALPHA, strength)`. Drawn in
+## the live `_draw` (above the fog tint, which is a terrain tint), no nameplate and no decorations.
+func draw_remembered_bands(radius: float, origin: Vector2) -> void:
+	var rows: Array = _view.remembered_bands()
+	if rows.is_empty():
+		return
+	var tex := _grey_stage_texture(_view.REMEMBERED_STAGE_ID)
+	if tex == null:
+		return
+	var token_radius := radius * _view.BAND_TOKEN_RADIUS_FACTOR
+	var glyph_size := int(maxf(_view.SECONDARY_ICON_MIN_SIZE, token_radius * _view.BAND_STAGE_GLYPH_SIZE_FACTOR))
+	for tie in rows:
+		var alpha := lerpf(_view.REMEMBERED_MIN_ALPHA, _view.REMEMBERED_MAX_ALPHA,
+			clampf(float(tie.get("strength", 0.0)), 0.0, 1.0))
+		var center: Vector2 = _view._hex_center_wrapped(
+			int(tie.get("last_seen_x", 0)), int(tie.get("last_seen_y", 0)), radius, origin)
+		var box := Rect2(center - Vector2(glyph_size, glyph_size) * 0.5, Vector2(glyph_size, glyph_size))
+		var shadow: Color = _view.MARKER_GLYPH_SHADOW_COLOR
+		shadow.a *= alpha
+		_view.draw_texture_rect(tex, Rect2(box.position + _view.MARKER_GLYPH_SHADOW_OFFSET, box.size), false, shadow)
+		_view.draw_texture_rect(tex, box, false, Color(1.0, 1.0, 1.0, alpha))
+
+var _grey_textures: Dictionary = {}   # stage id -> ImageTexture
+
+## The stage sprite with its colour drained toward luminance grey (`REMEMBERED_GREY_AMOUNT`), cached.
+func _grey_stage_texture(stage_id: String) -> Texture2D:
+	if _grey_textures.has(stage_id):
+		return _grey_textures[stage_id]
+	var source := StageSprites.for_stage(stage_id)
+	if source == null:
+		return null
+	var image := source.get_image()
+	if image == null:
+		return null
+	image.convert(Image.FORMAT_RGBA8)
+	for y in range(image.get_height()):
+		for x in range(image.get_width()):
+			var c := image.get_pixel(x, y)
+			var luma := c.get_luminance()
+			var grey := Color(luma, luma, luma, c.a)
+			image.set_pixel(x, y, c.lerp(grey, _view.REMEMBERED_GREY_AMOUNT))
+	var tex := ImageTexture.create_from_image(image)
+	_grey_textures[stage_id] = tex
+	return tex
+
 ## Which tiles won a name pill in the last pass (see `MapView.band_label_tiles`).
 func placed_label_tiles() -> Array:
 	return _label_grants.keys()

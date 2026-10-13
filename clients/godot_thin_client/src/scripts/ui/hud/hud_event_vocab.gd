@@ -463,6 +463,13 @@ static func apply_palette() -> void:
 			"rung": RUNG_NOTABLE},
 		"reason=host_gone": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN,
 			"rung": RUNG_NOTABLE},
+		# **ARRIVING AT THE REMEMBERED PLACE AND FINDING NOBODY** — the host (station) or the receiving
+		# band (trade) was not where the tie last saw them. Same rung as `host_gone`: a post or a
+		# delivery ended without the player asking. `destination=<id>` / `host=<id>` carry the band.
+		"reason=host_not_found": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN,
+			"rung": RUNG_NOTABLE},
+		"reason=destination_not_found": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN,
+			"rung": RUNG_NOTABLE},
 		"severity=danger": {"glyph": STATUS_SHED_GLYPH, "color": HudStyle.WARN,
 			"rung": RUNG_ALERT},
 
@@ -630,6 +637,8 @@ const DETAIL_KEY_HIDDEN := {
 	# A stationed party's host is NAMED in the label (swapped through `BAND_ID_TOKEN_LABELS`); the id
 	# beside it is the join key and never a thing to print.
 	"host": true,
+	# …and a shipment's destination, on the same test: named in the label, the id is the join key.
+	"destination": true,
 	# `killed` is the LABEL's own number — the sim writes "The aurochs hunt cost the party three
 	# lives" and then `killed=3.000` beside it, so showing both says one thing twice in two
 	# different notations. `wounded` deliberately stays: it is the half the label never carries.
@@ -715,6 +724,8 @@ const DETAIL_VALUE_LABELS := {
 	# ("Party lost Rushford — returning home" · "borders closed"), so lower-case like its neighbours.
 	"borders_closed": "borders closed",
 	"host_gone": "host not found",
+	"host_not_found": "no sign of them where last seen",
+	"destination_not_found": "no sign of them where last seen",
 }
 
 ## Fragment separator. A middot rather than a comma: the fragments are peers, not a list.

@@ -62,6 +62,9 @@ const PARKED_HINT_FORMAT := "No tie — meet them again. Last seen at (%d, %d), 
 ## …and the same row when no position was ever recorded.
 const PARKED_HINT := "No tie — meet them again before anything can flow."
 
+## The map tooltip line for a remembered band's ghost marker (name, sighting turn).
+const REMEMBERED_HOVER_FORMAT := "%s — last seen turn %d, may have moved"
+
 ## The row's hover: when the tie began and when it last saw contact.
 const ROW_TOOLTIP_FORMAT := "First met turn %d · last contact turn %d"
 

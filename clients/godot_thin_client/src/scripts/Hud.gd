@@ -2915,6 +2915,13 @@ func show_tooltip(info: Dictionary) -> void:
     if String(info.get("visibility_state", "")) == "discovered":
         lines.append("(last seen — incomplete)")
 
+    # Remembered bands last seen here (map ghost markers): name + when, in the Peoples tab's words.
+    var remembered_variant: Variant = info.get("remembered_bands", [])
+    if remembered_variant is Array:
+        for tie_variant in remembered_variant:
+            if tie_variant is Dictionary:
+                lines.append(ConnectionsRoster.remembered_hover_line(tie_variant, _band_labor))
+
     # Food
     var food := String(info.get("food_module_label", ""))
     if food != "" and food != "None":

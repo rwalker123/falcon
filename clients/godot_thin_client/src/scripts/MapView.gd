@@ -348,6 +348,15 @@ const BAND_STACK_CARD_STEP := Vector2(0.10, -0.10)   # per-card offset (× hex r
 # alpha < 1 fades. Scale lever: back-card token radius × this factor (< 1 pushes them "back").
 const BAND_STACK_BEHIND_TINT := Color(0.28, 0.28, 0.28, 1.0)
 const BAND_STACK_BEHIND_SCALE := 0.75   # back-card size vs the front card (perspective shrink)
+# REMEMBERED BANDS (peoples the viewer holds a tie to but cannot currently see — drawn at the tile
+# they were last seen on). Opacity is `lerp(MIN, MAX, tie strength)`: MAX stays below 1 so even a full
+# tie reads as "not live", MIN stays above 0 so a PARKED (0%) tie still shows faintly — the marker
+# leaves only when the edge itself is reaped off the wire. The art is desaturated by
+# `REMEMBERED_GREY_AMOUNT` (1.0 = pure luminance grey) so colour never suggests a live band.
+const REMEMBERED_MIN_ALPHA := 0.25
+const REMEMBERED_MAX_ALPHA := 0.7
+const REMEMBERED_GREY_AMOUNT := 1.0
+const REMEMBERED_STAGE_ID := "nomadic"   # the stage art every remembered band wears (its real stage is unknown)
 const BAND_COUNT_BADGE_OFFSET := Vector2(0.34, 0.30)  # from token center (× hex radius), bottom-right
 
 # Secondary edge icons: fixed corner slots around the hex (pointy-top; the top &
@@ -919,6 +928,7 @@ var terrain_palette: Dictionary = {}
 var terrain_tags_overlay: PackedInt32Array = PackedInt32Array()
 var terrain_tag_labels: Dictionary = {}
 var units: Array = []
+var _connection_ties: Array = []   # the viewer's contact ties (see set_connections)
 var herds: Array = []
 var food_sites: Array = []
 var food_site_lookup: Dictionary = {}
@@ -2192,6 +2202,7 @@ func _draw() -> void:
 	# across it (and is drawn only while its map-layer toggle is on — see the renderer).
 	_exchange_network.draw_network(radius, origin)
 	_band_markers.draw_primary_bands(radius, origin)
+	_band_markers.draw_remembered_bands(radius, origin)
 
 	# (Slots were computed above, before the worked-source marks that dock to them.)
 	_secondary_markers.set_followed_herds(followed_herd_ids())
@@ -2973,6 +2984,54 @@ func _terrain_id_at(x: int, y: int) -> int:
 		return -1
 	return int(terrain_overlay[index])
 
+## Coordinator push (Main ← snapshot `connections`): the viewer's own contact ties, kept whole.
+## Non-Array = unchanged (a delta that carried no ties never means "forgot everyone").
+func set_connections(rows: Variant) -> void:
+	if not (rows is Array):
+		return
+	_connection_ties = rows
+	queue_redraw()
+
+## **THE REMEMBERED BANDS — one row per subject band the viewer knows of but does not currently see.**
+## A subject with a band marker drawn this frame (`units`, fog-gated by `_unit_hidden_by_fog`) is live
+## and gets none. Of several ties to one subject the LATEST sighting places it and the STRONGEST
+## strength fades it. Rows are the winning tie dict plus `strength` overridden by the max. Pure over
+## `units` + `_connection_ties`, so the draw and the hover tooltip cannot disagree.
+func remembered_bands() -> Array:
+	var live_ids: Dictionary = {}
+	for unit in units:
+		if _unit_hidden_by_fog(unit):
+			continue
+		live_ids[int(unit.get("band_id", HudConst.NO_BAND_ID))] = true
+	var best: Dictionary = {}   # subject_band_id -> tie dict (copy)
+	var strongest: Dictionary = {}
+	for tie_variant in _connection_ties:
+		if not (tie_variant is Dictionary):
+			continue
+		var tie: Dictionary = tie_variant
+		var subject := int(tie.get("subject_band_id", HudConst.NO_BAND_ID))
+		if subject == HudConst.NO_BAND_ID or live_ids.has(subject):
+			continue
+		if int(tie.get("last_seen_x", -1)) < 0 or int(tie.get("last_seen_y", -1)) < 0:
+			continue
+		strongest[subject] = maxf(float(strongest.get(subject, 0.0)), float(tie.get("strength", 0.0)))
+		if not best.has(subject) \
+				or int(tie.get("last_seen_turn", 0)) > int((best[subject] as Dictionary).get("last_seen_turn", 0)):
+			best[subject] = tie
+	var rows: Array = []
+	for subject in best.keys():
+		var row: Dictionary = (best[subject] as Dictionary).duplicate()
+		row["strength"] = float(strongest[subject])
+		rows.append(row)
+	return rows
+
+func _remembered_on_tile(col: int, row: int) -> Array:
+	var matches: Array = []
+	for tie in remembered_bands():
+		if int(tie.get("last_seen_x", -1)) == col and int(tie.get("last_seen_y", -1)) == row:
+			matches.append(tie)
+	return matches
+
 func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 	units = []
 	_has_awaiting_expedition = false
@@ -3727,6 +3786,8 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 	var herds_here := _herds_on_tile(col, row)
 	info["units"] = units_here
 	info["herds"] = herds_here
+	# Remembered (ghost) bands last seen on this hex — the HUD tooltip names them.
+	info["remembered_bands"] = _remembered_on_tile(col, row)
 	info["unit_count"] = units_here.size()
 	info["herd_count"] = herds_here.size()
 	var harvest_here: Variant = harvest_sites.get(Vector2i(col, row), null)

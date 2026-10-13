@@ -421,3 +421,22 @@ new (its travel line covers it).
   ring" note: that rule was about a selection ring diverging from the hex outline, and this ring is a
   standing state, not a selection.
 - Frame and claims: `map_follow_herd` (`harness-map-probes.md`).
+
+## REMEMBERED BANDS — a tied people you cannot currently see keeps a ghost on the map
+
+The Peoples tab lists a band at "Last seen at (x, y), turn N"; the map used to show nothing there.
+`MapView.remembered_bands()` is the one rule (the draw and the hover tooltip both read it): one row per
+**subject band** in the viewer's `connections` ties (`MapView.set_connections`, pushed by `Main` beside
+`update_connections`) that has **no band marker drawn this frame** (`units`, fog-gated by
+`_unit_hidden_by_fog` — a foreign band on a fogged tile counts as not drawn, so its ghost shows). Of
+several ties to one subject the **latest `last_seen_turn`** places it and the **strongest `strength`**
+fades it. `BandMarkerRenderer.draw_remembered_bands` (called right after `draw_primary_bands`, in the
+live `_draw`, so above the fog tint, which is a terrain tint) draws the nomadic stage sprite
+(`REMEMBERED_STAGE_ID` — the real stage is unknown) desaturated (`REMEMBERED_GREY_AMOUNT`, a cached
+`ImageTexture` per stage) at `lerp(REMEMBERED_MIN_ALPHA 0.25, REMEMBERED_MAX_ALPHA 0.7, strength)`; no
+nameplate, no decorations. MAX stays under 1 so a full tie still reads "not live"; MIN stays above 0
+so a PARKED tie shows faintly — the ghost leaves only when the edge drops off the wire.
+`_tile_info_at` stamps `remembered_bands` (the tie rows on that hex); `Hud.show_tooltip` adds
+`ConnectionsRoster.remembered_hover_line` (`HudConnectionsVocab.REMEMBERED_HOVER_FORMAT`, name via
+`subject_label`): `Goosefen — last seen turn 21, may have moved`. Not clickable. Frame:
+`map_remembered_bands.png` (`harness-map-probes.md`).

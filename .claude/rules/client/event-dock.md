@@ -1244,3 +1244,13 @@ alone is satisfied by the capitalised fallback.
 > elders from reading as a weather report — and it is **not** to be special-cased. It only matters
 > here because an elder fixture written to exercise this vocabulary would fail for a reason that has
 > nothing to do with it.
+
+## `reason=host_not_found` / `reason=destination_not_found` — arrived at the remembered place, found nobody
+
+Two more `expedition_recalled` end reasons beside `host_gone`: a stationed party reached where its host
+was last seen and found nobody (`status=returning reason=host_not_found host=<id>`), and a shipment's
+destination likewise (`reason=destination_not_found destination=<id>`). Both are `DETAIL_STATUS_STYLE`
+rows at `RUNG_NOTABLE` with the reduced mark, exactly `host_gone`'s; the phrase table says "no sign of
+them where last seen". The sim writes the sentence and `BAND_ID_TOKEN_LABELS` swaps the band's name in.
+**`destination` joined `host` in `DETAIL_KEY_HIDDEN`**: its raw id had been printing as
+`Destination 5183` beside the already-named label.

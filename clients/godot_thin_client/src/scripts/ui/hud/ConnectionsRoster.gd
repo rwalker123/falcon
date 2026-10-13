@@ -76,6 +76,11 @@ static func subject_label(tie: Dictionary, band_labor: HudBandLaborState) -> Str
 	return HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_LABEL_FORMAT % [
 		int(tie.get("last_seen_x", -1)), int(tie.get("last_seen_y", -1))]
 
+## The map-hover line for a remembered band's ghost marker: `Goosefen — last seen turn 21, may have moved`.
+static func remembered_hover_line(tie: Dictionary, band_labor: HudBandLaborState) -> String:
+	return HudConnectionsVocab.REMEMBERED_HOVER_FORMAT % [
+		subject_label(tie, band_labor), int(tie.get("last_seen_turn", 0))]
+
 ## The remembered-position sentence, or `""` when no tile was ever recorded. Shared wording with the
 ## shipment picker (`HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_FORMAT`).
 static func remembered_line(tie: Dictionary) -> String:
