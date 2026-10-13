@@ -945,7 +945,7 @@ Godot client declined to *draw* most of it, which is presentation, not a boundar
 | Tier | Which band | What the frame carries |
 |---|---|---|
 | 1 | **your own** | the full row, unchanged in every field |
-| 2 | **a foreign band standing where you can see** | a **redacted** row: `entity`, `band_id`, `faction`, `name`, `current_x`/`current_y`, `size`. Everything else at its default |
+| 2 | **a foreign band standing where you can see** | a **redacted** row: `entity`, `band_id`, `faction`, `name`, `current_x`/`current_y`, `size`, `settlement_stage`. Everything else at its default |
 | 3 | **a foreign band anywhere else** | **no row at all** |
 
 **Tier 2 exists rather than folding into tier 3** because the client already colours foreign markers
@@ -961,7 +961,14 @@ leave the append-only delta unable to tell two of them apart.
 
 ### The redaction is an ALLOW-LIST, not a set of deletions
 
-`redacted_population_state` names six fields and takes **everything else from `Default`**. A row
+**`settlement_stage` is on the list because the client draws the marker from it** (id/label/icon);
+left at default, foreign bands render as a gray box. It is safe **only while the stage is a pure
+function of `size`** (`SettlementStageInputs` carries nothing else), and `size` is already published,
+so it discloses nothing new. It is resolved from `cohort.size` through the same helper the owner's row
+uses, never copied from a full row. If the stage ever gains a criterion beyond size (improvements, …),
+it must leave the redacted row.
+
+`redacted_population_state` names seven fields and takes **everything else from `Default`**. A row
 built the other way round — full, then blanked — fails open on exactly the field nobody thought
 about, and the wire is append-only, so there is always a next field. Built this way, a field added
 to `PopulationCohortState` later is redacted by construction.
