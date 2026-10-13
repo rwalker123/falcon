@@ -128,7 +128,7 @@ const TEST_STOCKPILE_ITEM: &str = "test_stockpile_item";
 fn second_worldgen_pass_does_not_re_grant_starting_inventory() {
     let mut app = app_on_test_map();
     let mut config = app.world.resource::<SimulationConfig>().clone();
-    config.start_profile_overrides.inventory = vec![InventoryEntry {
+    config.start_profile_overrides.archetypes[0].inventory = vec![InventoryEntry {
         item: TEST_STOCKPILE_ITEM.to_string(),
         quantity: TEST_STOCKPILE,
     }];

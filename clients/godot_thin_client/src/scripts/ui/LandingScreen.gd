@@ -100,16 +100,16 @@ func _send_query(request_id: int, ask: Dictionary) -> bool:
 ## anywhere on this path: a GDScript `int` is signed 64-bit and cannot hold the top half of the range
 ## the server mints seeds from, so a conversion here would silently rebuild a different world
 ## (`.claude/rules/client/new-game-setup.md`).
-func _on_new_game_requested(preset_id: String, width: int, height: int, seed: String, profile_id: String, ai_faction_count: int) -> void:
+func _on_new_game_requested(preset_id: String, width: int, height: int, seed: String, profile_id: String, archetype_counts: Array) -> void:
 	GameLaunch.pending_new_game = {
 		"preset_id": preset_id,
 		"width": width,
 		"height": height,
 		"seed": seed,
 		"profile_id": profile_id,
-		# `FactionCapacity.NO_COUNT` here means the shell never got an answer to offer a choice from;
-		# `Main` omits the argument for it, which is not the same request as an explicit 0.
-		"ai_faction_count": ai_faction_count,
+		# `{id, count}` per archetype in catalog order. EMPTY means the shell never got an answer to offer
+		# a choice from; `Main` appends no tokens for it, which is not the same request as `count: 0`.
+		"archetype_counts": archetype_counts,
 	}
 	GameLaunch.pending_load_slot = ""
 	get_tree().change_scene_to_file("res://src/Main.tscn")

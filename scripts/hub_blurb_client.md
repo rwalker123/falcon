@@ -49,7 +49,7 @@ wrapped `##` section instead. Follow the shape the file already uses.
 | `overlay-channels.md` | Selected-band/herd overlays, annotations, worked-source marks | `BandOverlayRenderer.gd`, `AnnotationRenderer.gd` |
 | `save-load-menu.md` | The save/load menu: the query-worker seam, the panes and their four list states, the load handoff, the config-drift notice | `SaveSlots.gd`, `ConfigDriftNotice.gd`, `MenuShell.gd`, `LandingScreen.gd` |
 | `command-transport.md` | One seated command connection: the seat claim, the token the SNAPSHOT stream greets with, which verbs stay off it, reconnect, and End Turn as a submission | `CommandClient.gd`, `SeatClaim.gd`, `SnapshotStream.gd`, `SnapshotLoader.gd`, `bridge/command_link.rs`, `Main.gd` |
-| `new-game-setup.md` | The New Game pane's rival-peoples count: the capacity ask, the optional argument that means "you decide", and the shared query-id allocator | `FactionCapacity.gd`, `MenuShell.gd`, `LandingScreen.gd`, `Main.gd` |
+| `new-game-setup.md` | The New Game pane's per-archetype people counts (Rivals, Minor peoples): the capacity ask, the omitted count that means "you decide", and the shared query-id allocator | `FactionCapacity.gd`, `MenuShell.gd`, `LandingScreen.gd`, `Main.gd` |
 | `inspector-panels.md` | Every `ui/inspector/` panel | `Inspector.gd`, `ui/inspector/**` |
 | `workbench.md` | The designer surface replacing the Inspector: shell, page registry, config tuning | `ui/workbench/**`, `tools/workbench_*` |
 | `telling-panel.md` | The Telling book UX and the narrative fork | `TellingPanel.gd`, `NarrativeForkPanel.gd` |

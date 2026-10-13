@@ -133,10 +133,10 @@ pub(crate) const QUERY_KIND_LOAD_GAME: &str = "load_game";
 pub(crate) const QUERY_KIND_DELETE_SAVE: &str = "delete_save";
 /// The `SaveOpReply` answer kind — what a save, load or delete comes back as.
 pub(crate) const QUERY_KIND_SAVE_OP: &str = "save_op";
-/// **"How many rivals may I ask for on a grid this size?"** — the New Game screen's ask, answered
-/// from the sim's own ceiling rule so the control's bounds are never restated in GDScript. Both
-/// directions use this one kind: the ask carries `width`/`height`, the answer carries
-/// `default_ai_faction_count` and `max_ai_faction_count`.
+/// **"How many peoples of each start archetype may I ask for on a grid this size?"** — the New Game
+/// screen's ask, answered from the sim's own ceiling rule so the control's bounds are never restated
+/// in GDScript. Both directions use this one kind: the ask carries `width`/`height`/`profile_id`, the
+/// answer carries `archetypes: [{id, display_label, site_count, default_count}]` in catalog order.
 pub(crate) const QUERY_KIND_FACTION_CAPACITY: &str = "faction_capacity";
 /// **The seat claim's answer kind** — *"do I drive this faction?"*. A `ClaimSeatCommand` is a command
 /// that answers on this envelope, exactly as the save verbs do — but it is the one answer this module
@@ -329,6 +329,7 @@ pub(crate) fn dispatch(
                     query: QueryPayload::FactionCapacity(FactionCapacityQuery {
                         width: dict_u32(ask, "width"),
                         height: dict_u32(ask, "height"),
+                        profile_id: dict_string(ask, "profile_id"),
                     }),
                 },
                 SAVE_REPLY_TIMEOUT,
@@ -654,14 +655,16 @@ fn answer_to_dict(answer: &QueryAnswer) -> VarDictionary {
         Ok(QueryReply::FactionCapacity(reply)) => {
             let _ = dict.insert("ok", true);
             let _ = dict.insert("kind", QUERY_KIND_FACTION_CAPACITY);
-            let _ = dict.insert(
-                "default_ai_faction_count",
-                i64::from(reply.default_ai_faction_count),
-            );
-            let _ = dict.insert(
-                "max_ai_faction_count",
-                i64::from(reply.max_ai_faction_count),
-            );
+            let mut archetypes = VarArray::new();
+            for archetype in &reply.archetypes {
+                let mut row = VarDictionary::new();
+                let _ = row.insert("id", archetype.id.as_str());
+                let _ = row.insert("display_label", archetype.display_label.as_str());
+                let _ = row.insert("site_count", i64::from(archetype.site_count));
+                let _ = row.insert("default_count", i64::from(archetype.default_count));
+                archetypes.push(&row.to_variant());
+            }
+            let _ = dict.insert("archetypes", &archetypes);
         }
         // Shaped like `save_op`'s: a command's answer riding the query channel, with `ok` from the
         // reply itself and the server's refusal token (`sim_runtime::commands::seat_error`) in
@@ -955,6 +958,7 @@ mod tests {
             FactionCapacityQuery {
                 width: 1,
                 height: 1,
+                profile_id: String::new(),
             }
         )));
     }

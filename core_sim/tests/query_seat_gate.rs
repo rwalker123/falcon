@@ -56,6 +56,8 @@ const MAP_SEED: u64 = 11;
 /// home seat's would be refused by the roster rather than by the gate, and the case would prove
 /// nothing.
 const ONE_RIVAL: u32 = 1;
+/// The start archetype the test's rival is (`start_profiles.json` `archetypes[0].id`).
+const RIVAL_ARCHETYPE: &str = "major";
 
 /// **How far apart this test's world puts two starts.** The shipped separation seats exactly one
 /// faction on a map this small (`max_faction_starts`), so a 24x16 world asked for a rival would be
@@ -327,6 +329,7 @@ fn start_server(case: &str) -> (ServerProcess, Scratch, PathBuf, Ports) {
     let saves = scratch.dir.join("saves");
     fs::create_dir_all(&saves).expect("scratch save directory");
     let config_path = write_test_config(&scratch.dir);
+    let profiles_path = write_test_start_profiles(&scratch.dir);
     let ports_path = scratch.dir.join("ports.json");
     let log_path = scratch.dir.join("server.log");
 
@@ -336,6 +339,7 @@ fn start_server(case: &str) -> (ServerProcess, Scratch, PathBuf, Ports) {
         .current_dir(&scratch.dir)
         .env("SIM_SAVE_DIR", &saves)
         .env("SIM_CONFIG_PATH", &config_path)
+        .env("START_PROFILES_PATH", &profiles_path)
         .env("SIM_PORTS_FILE", &ports_path)
         .env("RUST_LOG", SERVER_LOG_FILTER)
         // An explicit base is honoured EXACTLY and a busy block is fatal; the config file's base
@@ -352,8 +356,7 @@ fn start_server(case: &str) -> (ServerProcess, Scratch, PathBuf, Ports) {
     (process, scratch, log_path, ports)
 }
 
-/// The shipped simulation config with its port block moved to [`TEST_PORT_BASE`] and its start
-/// separation shrunk to [`TEST_START_SEPARATION`].
+/// The shipped simulation config with its port block moved to [`TEST_PORT_BASE`].
 fn write_test_config(dir: &Path) -> PathBuf {
     let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/data/simulation_config.json");
     let raw = fs::read_to_string(&shipped).expect("the shipped simulation config reads");
@@ -373,8 +376,6 @@ fn write_test_config(dir: &Path) -> PathBuf {
     ] {
         json[key] = serde_json::Value::String(addr.to_string());
     }
-    json["faction_start_min_separation"] =
-        serde_json::Value::from(u64::from(TEST_START_SEPARATION));
 
     let path = dir.join("simulation_config.json");
     fs::write(
@@ -382,6 +383,28 @@ fn write_test_config(dir: &Path) -> PathBuf {
         serde_json::to_string_pretty(&json).expect("the patched config serialises"),
     )
     .expect("the patched config writes");
+    path
+}
+
+/// The shipped start profiles with every archetype's separation shrunk to
+/// [`TEST_START_SEPARATION`] - the separation lives in the profile now, not in
+/// `simulation_config.json`.
+fn write_test_start_profiles(dir: &Path) -> PathBuf {
+    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/data/start_profiles.json");
+    let raw = fs::read_to_string(&shipped).expect("the shipped start profiles read");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&raw).expect("the shipped start profiles are JSON");
+    for profile in json["profiles"].as_array_mut().expect("profiles") {
+        for archetype in profile["archetypes"].as_array_mut().expect("archetypes") {
+            archetype["min_separation"] = serde_json::Value::from(u64::from(TEST_START_SEPARATION));
+        }
+    }
+    let path = dir.join("start_profiles.json");
+    fs::write(
+        &path,
+        serde_json::to_string_pretty(&json).expect("the patched profiles serialise"),
+    )
+    .expect("the patched profiles write");
     path
 }
 
@@ -448,7 +471,10 @@ fn new_game() -> CommandPayload {
         height: MAP_HEIGHT,
         seed: MAP_SEED,
         profile_id: START_PROFILE.to_string(),
-        ai_faction_count: Some(ONE_RIVAL),
+        archetype_counts: vec![sim_runtime::ArchetypeCount {
+            id: RIVAL_ARCHETYPE.to_string(),
+            count: ONE_RIVAL,
+        }],
     }
 }
 
@@ -572,6 +598,7 @@ fn a_question_about_another_seats_faction_is_refused_over_the_socket() {
         QueryPayload::FactionCapacity(FactionCapacityQuery {
             width: MAP_WIDTH,
             height: MAP_HEIGHT,
+            profile_id: String::new(),
         }),
         "the rival ceiling for a grid",
     ) {

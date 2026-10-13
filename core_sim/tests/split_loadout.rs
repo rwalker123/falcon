@@ -880,9 +880,7 @@ fn a_fully_outfitted_parent() -> (App, Entity, BandId) {
     let budget = grant_of(&app, parent_band);
     let pre_fill: Vec<MaterialAllocation> = {
         let profile = app.world.resource::<core_sim::ActiveStartProfile>();
-        profile
-            .profile()
-            .overrides()
+        profile.profile().overrides().archetypes[0]
             .opening_loadout
             .material_defaults
             .iter()
@@ -2370,6 +2368,7 @@ fn the_shipped_opening_default_fits_whole_and_an_untouched_split_gets_a_kit_per_
             .resource::<core_sim::ActiveStartProfile>()
             .profile()
             .overrides()
+            .archetypes[0]
             .opening_loadout;
         (
             opening.kit_defaults.clone(),

@@ -6336,6 +6336,9 @@ func _work_row_party_lines_text(model: Dictionary) -> Array[String]:
     var homeward := String(model.get("homeward_line", ""))
     if homeward != "":
         lines.append(homeward)
+    var rejoining := String(model.get("rejoining_line", ""))
+    if rejoining != "":
+        lines.append(rejoining)
     return lines
 
 ## The posted party's own lines — `[]` on a row with no party out.
@@ -7684,6 +7687,8 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # …and the one line saying who is walking home from this source and when they are free
             # (`HudWorkVocab.row_homeward_line`), `""` while nobody is. The party block closes on it.
             "homeward_line": HudWorkVocab.row_homeward_line(m),
+            # …and the one saying how many of the row's own hands are walking back to it.
+            "rejoining_line": HudWorkVocab.row_rejoining_line(m),
             # **`build_queue_position` IS NOT ON THIS MODEL, AND ITS ABSENCE IS THE POINT**
             # (`docs/plan_standing_upkeep.md` §4.9 item 9a). It rode here as the queue block's rank
             # until the block learned that the field is published per SOURCE and rides the WINNING

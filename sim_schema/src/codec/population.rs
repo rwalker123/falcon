@@ -466,6 +466,9 @@ fn create_populations<'a>(
                                 turnsToKill: assignment.turns_to_kill,
                                 killProgress: assignment.kill_progress,
                                 needRunway: assignment.need_runway,
+                                rejoiningWorkers: assignment.rejoining_workers,
+                                rejoiningAllHomeIn: assignment.rejoining_all_home_in,
+                                rejoiningFood: assignment.rejoining_food,
                             },
                         )
                     })
@@ -1490,6 +1493,9 @@ fn decode_labor_assignment(
         turns_to_kill: assignment.turnsToKill(),
         kill_progress: assignment.killProgress(),
         need_runway: assignment.needRunway(),
+        rejoining_workers: assignment.rejoiningWorkers(),
+        rejoining_all_home_in: assignment.rejoiningAllHomeIn(),
+        rejoining_food: assignment.rejoiningFood(),
     })
 }
 

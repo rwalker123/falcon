@@ -717,7 +717,7 @@ pub fn migration_move_fraction(
 /// token, and the client substitutes what IT calls that band over this rendering; that join is what
 /// keeps a row's name current, and it needs a spelling it can find. A label baked from the name
 /// would freeze the name the band had when the event fired.
-pub(crate) fn band_label(band: BandId) -> String {
+pub fn band_label(band: BandId) -> String {
     format!("Band {}", band.0)
 }
 
@@ -1322,7 +1322,9 @@ fn publish_breeding_readings(cohorts: &mut DemographicBands, breeding: &Breeding
                 member.people = whole_people.get(member_entity).copied().unwrap_or(0);
             }
         }
+        let faction = cohort.faction;
         cohort.last_breeding = crate::lineage::BreedingReading {
+            faction: Some(faction),
             headcount: headcounts.get(group).copied().unwrap_or_default().to_u32(),
             ceiling: ceiling
                 .people

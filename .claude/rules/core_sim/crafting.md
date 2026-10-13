@@ -1476,7 +1476,7 @@ only wearing out is a `CraftSuggestion` like any other, with empty `sources`.
   The one difference to know: auto-craft runs mid-turn, so the newest slot it reads may not yet hold
   that turn's later charges; the capture reads the finished turn.
 - **Rides the save.** `wear_window` is on `BandEquipment`, which `BandRecord::equipment` clones whole
-  (`SAVE_FORMAT_VERSION` 35). A fission splinter's ledger is built from `BandEquipment::default()`
+  (`SAVE_FORMAT_VERSION` 38). A fission splinter's ledger is built from `BandEquipment::default()`
   plus the units `take_units` moved, so it starts with no window.
 - **Wire**: `CraftSuggestion.upcomingCount` / `expiresInTurns` / `leadTurns`, appended last.
 
