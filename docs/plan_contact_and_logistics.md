@@ -829,14 +829,20 @@ the shape, because its target does not answer it.
 ### Settled by #774 — a stationed party: contact now, news later
 
 A band can station some of its people at a band it holds a live tie with. It is the first use of
-the keystone's maintained presence that is not a route: the stationed people *are* the presence, so
-the tie never decays while they stay. What they *see* is a different question, and it is answered
-by how news travels at the time, not by the fact of their being there.
+the keystone's maintained presence that is not a route: the stationed people are there, watching
+the host. But a tie is how well the home band *knows* the host, so it rises only when news of the
+host reaches home, and news travels at the time a runner takes, not at the fact of their being there.
 
-#### Two things, on two clocks
+#### One stream of news, and the tie rides it
 
-- **The tie is credited live.** Every turn the party is posted, its home band's directed edge
-  toward the host takes contact (clock 2). Strength does not drain, and the edge is never reaped.
+- **The tie is raised by landed reports and by nothing else.** Each report that reaches the home
+  band is one contact on its `home -> host` edge (`gain_per_contact`), exactly as a returning
+  scout's flushed report is. A post far beyond the comm range therefore **holds the tie at full a
+  runner's walk late**: from arrival the tie keeps decaying at the ordinary rate until the first
+  report lands, then climbs by one contact per landed report (one a turn) to full and holds there
+  while a report lands every turn. Inside the comm range the first report lands the turn it leaves,
+  so the tie rises from the first turn the party has news. A tie that decayed to nothing is parked,
+  not deleted, and a landing report still raises it; nothing ends a post because its tie is parked.
 - **The news travels.** What the party sees — the host's position and name, and the ground in its
   sight — goes home as a **report**, one dispatched every turn, landing after the time a runner
   takes to walk it: the hex distance from the party to the home band's live tile, at the walking
@@ -853,6 +859,16 @@ and the sighting enters the ledger with the turn it was **observed** beside the 
 (§connections → "A report carries TWO turns"). So the host is drawn where it stood a walk ago, the
 same as any remembered band. The issue's first wording, *"that band stays Seen"*, is superseded:
 under the keystone it stays **known**, a runner's walk out of date.
+
+#### Why the tie is not credited live (replaced)
+
+The first cut credited the home band's edge toward the host every turn the party stood there,
+whether or not any news had come home. Ray's playtest showed the defect: the tie read 25% after the
+scout and **100% the moment the post arrived**, with nothing yet known of the host. Strength is how
+well the people know the host, and freshness is clock 1 (`last_seen_turn`); a live credit made
+strength current while the remembered position was a walk old. The live credit is deleted
+(`ConnectionLedger::credit_contact`, `ContactsThisTurn::credit`), and a post raises its tie through
+landed reports alone. See `.claude/rules/core_sim/connections.md` -> "A stationed party's reports".
 
 #### The home band feeds them, abstracted
 

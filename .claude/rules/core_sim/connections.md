@@ -196,30 +196,37 @@ captured on the march, not at the flush, so a report says what the party saw.
 The buffer rides the existing checkpoint path unchanged — `capture_sim_state` clones the whole
 `Expedition` into `ExpeditionRecord` and restore clones it back.
 
-## A stationed party's credit and reports
+## A stationed party's reports
 
-Design of record: `docs/plan_contact_and_logistics.md` → "Settled by #774";
-`expeditions.md` → "A stationed party" has the party's side. Two things reach the ledger from a party
-posted at a band, on two different clocks.
+Design of record: `docs/plan_contact_and_logistics.md` -> "Settled by #774";
+`expeditions.md` -> "A stationed party" has the party's side.
 
-**The tie is credited live.** `ConnectionLedger::credit_contact(key, turn, cfg)` gives the edge ONE
-contact turn without a report: strength rises by `gain_per_contact` (capped at `FULL_TIE`) and
-`last_contact_turn` becomes `turn`. **Clock 1 is untouched** — `last_seen_position` /
-`last_seen_turn` / `subject_name` move only when a report lands, because being posted somewhere is not
-a sighting. It is a no-op on a missing edge (presence does not found a tie) and on an edge already
-contacted that turn, so a report landing the same turn is the one contact, never two. The name carries
-no rider vocabulary, as the module requires. A party reaches it through
-`ContactsThisTurn::credit(observer, subject)`; `advance_connections` applies the turn's credits
-**after** its reports and before `decay_all`, so a credited edge reads as contacted and a posted
-tie is never reaped.
+**A post raises its tie only through landed reports, one contact per landed report.** A stationed
+party's observe-pass output is bundled once a turn into a `StationReport` that lands after the
+runner's walk (`station_report_delay`). A landed report enters `ContactsThisTurn::record` with its
+**observed** turn, exactly as a returning scout's does, so `record_contact` adds `gain_per_contact`,
+stamps `last_contact_turn` with the landed turn, and moves clock 1 (`last_seen_turn`) to the observed
+turn: `last_seen_turn` trails `last_contact_turn` by the walk (zero inside the effective comm range).
+Reports in transit are `Expedition` state and ride the checkpoint with it.
 
-**The news is delayed.** A stationed party's observe-pass output is bundled once a turn into a
-`StationReport` that lands after the runner's walk (`station_report_delay`). A landed report enters
-`ContactsThisTurn::record` with its **observed** turn, exactly as a returning scout's does, so
-`last_seen_turn` trails `last_contact_turn` by the walk (zero inside the effective comm range). The
-"report carries two turns" rule above is what makes both clocks honest at once: the tie is current,
-the knowledge of where the host stands is a walk old. Reports in transit are `Expedition` state and
-ride the checkpoint with it.
+**There is no live credit, and that is the point.** Strength is how well the people know the host,
+and freshness is clock 1 (`last_seen_turn`). A credit with no news home would make the strength
+current while the remembered position is a walk old: the tie read 100% the moment a post arrived
+although nothing had been learned (Ray's playtest: 25% after the scout, 100% on arrival). So the
+ledger has no presence-credit seam, and `ContactsThisTurn` carries sightings only.
+
+What follows from it, all intended:
+
+- A post far beyond comm range: the tie keeps decaying on the ordinary clock from arrival until the
+  first runner's report lands, then rises by `gain_per_contact` per landed report (one a turn) to
+  `FULL_TIE` and holds there while a report lands each turn.
+- Inside comm range a report lands the turn it leaves, so the tie rises from the first turn the
+  party has news.
+- A tie that decayed to `NO_TIE` is parked, never deleted, and a landing report still raises it;
+  nothing in the post's phases or gates reads the tie's strength after launch, so a parked tie ends
+  no post.
+- A posted edge is reaped on the ordinary third clock (`forget_turns` from the last landed report)
+  and only if reports stop landing for that long.
 
 ## A traveling party aims at what its people know
 

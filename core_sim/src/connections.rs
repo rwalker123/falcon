@@ -51,7 +51,7 @@
 //! rather than a duplicate of the second.
 
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use bevy::prelude::*;
 
@@ -302,29 +302,6 @@ impl ConnectionLedger {
         }
     }
 
-    /// **Credit the tie `key` ONE contact turn without a report** — a stationed party standing at its
-    /// host (`ExpeditionMission::Station`) is the home band's maintained presence there, so the edge
-    /// takes contact every turn it stays.
-    ///
-    /// Strength rises by the config's `gain_per_contact` (capped at [`FULL_TIE`]) and
-    /// `last_contact_turn` becomes `turn`, so clocks 2 and 3 treat it as a contact turn.
-    /// **Clock 1 is untouched** — `last_seen_position` / `last_seen_turn` / `subject_name` move only
-    /// when a report lands ([`Self::record_contact`]): being posted somewhere is not a sighting.
-    ///
-    /// A no-op when the edge does not exist (presence does not found a tie; a launch gate checked
-    /// one), and when the edge was already contacted on `turn` — a report landing the same turn is the
-    /// one contact, never two.
-    pub fn credit_contact(&mut self, key: &ConnectionKey, turn: u64, cfg: &ConnectionsConfig) {
-        let gain = Scalar::from_f32(cfg.strength.gain_per_contact);
-        if let Some(connection) = self.edges.get_mut(key) {
-            if connection.last_contact_turn == turn {
-                return;
-            }
-            connection.strength = (connection.strength + gain).min(FULL_TIE);
-            connection.last_contact_turn = turn;
-        }
-    }
-
     /// Run clocks 2 and 3 over every edge that saw no contact on `turn`, and return how many edges
     /// clock 3 reaped.
     ///
@@ -364,9 +341,6 @@ impl ConnectionLedger {
 #[derive(Resource, Default, Debug, Clone)]
 pub struct ContactsThisTurn {
     sightings: BTreeMap<ConnectionKey, Sighting>,
-    /// **Edges maintained by presence this turn** — a stationed party credits its home band's tie
-    /// toward the host without a sighting (see [`ConnectionLedger::credit_contact`]).
-    credits: BTreeSet<ConnectionKey>,
 }
 
 impl ContactsThisTurn {
@@ -385,20 +359,9 @@ impl ContactsThisTurn {
         }
     }
 
-    /// Record `observer`'s presence at `subject` this turn: the edge takes a contact turn with no
-    /// sighting behind it.
-    pub fn credit(&mut self, observer: BandId, subject: BandId) {
-        self.credits.insert(ConnectionKey::new(observer, subject));
-    }
-
     /// Every contact, in key order.
     pub fn iter(&self) -> impl Iterator<Item = (&ConnectionKey, &Sighting)> {
         self.sightings.iter()
-    }
-
-    /// Every edge credited by presence this turn, in key order.
-    pub fn credits(&self) -> impl Iterator<Item = &ConnectionKey> {
-        self.credits.iter()
     }
 
     pub fn len(&self) -> usize {
@@ -406,12 +369,11 @@ impl ContactsThisTurn {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.sightings.is_empty() && self.credits.is_empty()
+        self.sightings.is_empty()
     }
 
     pub fn clear(&mut self) {
         self.sightings.clear();
-        self.credits.clear();
     }
 }
 
@@ -439,11 +401,6 @@ pub fn advance_connections(
         if ledger.record_contact(*key, sighting, turn, &cfg) {
             formed += 1;
         }
-    }
-    // **Presence after the reports**, so an edge a report already contacted this turn is not credited
-    // twice (`credit_contact` skips it).
-    for key in contacts.credits() {
-        ledger.credit_contact(key, turn, &cfg);
     }
     let reaped = ledger.decay_all(turn, &cfg);
     contacts.clear();
@@ -631,96 +588,6 @@ mod tests {
         assert_eq!(connection.last_seen_turn, MARCH_TURN);
         assert_eq!(connection.last_contact_turn, FLUSH_TURN);
         assert_eq!(connection.first_contact_turn, FLUSH_TURN);
-    }
-
-    /// **Presence credits the tie without touching clock 1.** A stationed party's turn raises the
-    /// strength and refreshes clocks 2 and 3, and leaves where and when the subject was last SEEN
-    /// (and by what name) exactly as the last report left them.
-    #[test]
-    fn a_credit_raises_the_tie_and_never_touches_the_remembered_sighting() {
-        const CREDIT_TURN: u64 = 7;
-        let cfg = config();
-        let mut ledger = ConnectionLedger::default();
-        ledger.record_contact(edge(), &seen(SOMEWHERE, 0), 0, &cfg);
-        let before = ledger.get(&edge()).expect("the edge formed").clone();
-
-        ledger.credit_contact(&edge(), CREDIT_TURN, &cfg);
-
-        let after = ledger.get(&edge()).expect("the edge");
-        assert!(
-            after.strength > before.strength,
-            "the credit raised the tie"
-        );
-        assert_eq!(after.last_contact_turn, CREDIT_TURN);
-        assert_eq!(
-            (
-                &after.last_seen_position,
-                after.last_seen_turn,
-                &after.subject_name,
-                after.first_contact_turn
-            ),
-            (
-                &before.last_seen_position,
-                before.last_seen_turn,
-                &before.subject_name,
-                before.first_contact_turn
-            ),
-            "presence is not a sighting"
-        );
-    }
-
-    /// A credit saturates at a full tie, keeps one at a full tie forever against the decay it is
-    /// run beside, forms no edge, and never counts a turn twice.
-    #[test]
-    fn a_credit_caps_at_full_forms_nothing_and_counts_a_turn_once() {
-        let cfg = config();
-        let mut ledger = ConnectionLedger::default();
-        ledger.credit_contact(&edge(), 1, &cfg);
-        assert!(ledger.is_empty(), "presence does not found a tie");
-
-        ledger.record_contact(edge(), &seen(SOMEWHERE, 0), 0, &cfg);
-        for turn in 1..200 {
-            ledger.credit_contact(&edge(), turn, &cfg);
-            ledger.decay_all(turn, &cfg);
-            assert!(
-                ledger.get(&edge()).expect("never reaped").strength >= cfg_gain_floor(&cfg),
-                "turn {turn}"
-            );
-        }
-        assert_eq!(ledger.get(&edge()).expect("edge").strength, FULL_TIE);
-
-        // A report that already contacted the edge this turn is the one contact: the credit adds
-        // nothing on top of it.
-        let mut once = ConnectionLedger::default();
-        once.record_contact(edge(), &seen(SOMEWHERE, 3), 3, &cfg);
-        let reported = once.get(&edge()).expect("edge").strength;
-        once.credit_contact(&edge(), 3, &cfg);
-        assert_eq!(once.get(&edge()).expect("edge").strength, reported);
-    }
-
-    /// The least a credited tie may ever read once it has formed: one contact's gain.
-    fn cfg_gain_floor(cfg: &ConnectionsConfig) -> Scalar {
-        Scalar::from_f32(cfg.strength.gain_per_contact)
-    }
-
-    #[test]
-    fn the_turns_credits_ride_the_contact_set_and_clear_with_it() {
-        let mut contacts = ContactsThisTurn::default();
-        assert!(contacts.is_empty());
-        contacts.credit(OBSERVER, SUBJECT);
-        contacts.credit(OBSERVER, SUBJECT);
-        assert_eq!(
-            contacts.credits().count(),
-            1,
-            "an edge is credited once a turn"
-        );
-        assert!(
-            contacts.iter().next().is_none(),
-            "a credit carries no sighting"
-        );
-        assert!(!contacts.is_empty());
-        contacts.clear();
-        assert!(contacts.is_empty());
     }
 
     #[test]

@@ -2078,16 +2078,6 @@ pub fn advance_expeditions(
                 }
             }
         }
-
-        // **Presence keeps the tie alive.** Every turn a party is stationed — the arrival turn
-        // included — the home band's edge toward the host takes one contact turn WITHOUT a sighting
-        // (`ConnectionLedger::credit_contact`): the stationed people are the maintained presence,
-        // so the tie never decays while they stay. What they SEE goes home as reports above.
-        if matches!(expedition.phase, ExpeditionPhase::Stationed) {
-            if let (Some(observer), Some(host)) = (home_band_id, mission.host_band()) {
-                contacts.credit(observer, host);
-            }
-        }
     }
 }
 

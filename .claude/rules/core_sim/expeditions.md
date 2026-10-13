@@ -1227,8 +1227,8 @@ the shipment's arrival at the destination, and every fold-back including the in-
 
 Design of record: `docs/plan_contact_and_logistics.md` → "Settled by #774". The fifth verb on the one
 traveling-party system, and the first use of the connection primitive that is not a route: the posted
-people *are* the maintained presence, so the tie never decays while they stay. What they *see* is a
-different question, and news travels at the pace a runner walks.
+people are standing with the host, but a tie is how well the home band knows the host, so it rises
+only as news reaches home, and news travels at the pace a runner walks.
 
 `ExpeditionMission::Station { host_band, host_name }`, launched by `station_expedition <faction>
 <band> <party_workers> <host_band_id> [kit <id>]` (`StationExpeditionCommand`, proto field **84**).
@@ -1261,14 +1261,17 @@ follows: it chases the host's live tile whenever it is not standing on it (the p
 them, which is presence). `Returning` and the fold-back
 are the shared path. `Stationed` is genuinely new state — no other phase both stays and moves.
 
-### The tie is credited live
+### The tie rises only on landed reports
 
-Every turn the phase is `Stationed` (the arrival turn included), `advance_expeditions` calls
-`ContactsThisTurn::credit(home, host)`; `advance_connections` then applies it through
-`ConnectionLedger::credit_contact` — one contact turn on the **home -> host** edge, with no sighting.
-See `connections.md` → "A stationed party's credit and reports". A posted tie therefore sits at full
-strength and is never reaped. **One-way**: the host gains no edge toward the sender, and the party is
-not a contact subject (subjects are resident bands only).
+A stationed party credits nothing to the ledger directly. The tie `home -> host` gains
+`gain_per_contact` for each landed `StationReport` (`ContactsThisTurn::record`, below), exactly as a
+returning scout's flushed report does, and decays at the ordinary rate on every turn no report lands.
+A far post's tie therefore keeps fading for a runner's walk after arrival, then climbs one contact per
+landed report to full and holds there while a report lands each turn; inside the comm range it rises
+from the first turn the party has news. A tie that decayed to nothing is parked, not deleted, and a
+landing report raises it again; no post-ending check reads the tie's strength, so a parked tie never
+ends a post. See `connections.md` -> "A stationed party's reports". **One-way**: the host gains no edge
+toward the sender, and the party is not a contact subject (subjects are resident bands only).
 
 ### The news is a stream of reports, a runner's walk behind
 
@@ -1339,7 +1342,7 @@ on a shipment's lines):
 | `recalled` | the player's `recall_expedition` (written by the verb, with `host=`) |
 
 **A home band that cannot cover its party's rations does not end the post.** The party stays and
-the tie stays credited; the shortfall is the band's, borne through the ordinary meal its
+the tie goes on rising on landed reports; the shortfall is the band's, borne through the ordinary meal its
 demographics already run (a non-zero `foodShortfall`, starvation by the usual rules). Nothing is
 gained by walking the party home, so bringing it back for hunger is the player's recall.
 ### A party aims at what its people know
@@ -1371,10 +1374,12 @@ control that sees the target.
 
 ### Tests
 
-`core_sim/tests/station_expedition.rs` drives real turns: the posted tie at full for 100 turns beside a
-control edge that bleeds out, with the host gaining no edge; the report lag equal to `walk_turns`;
+`core_sim/tests/station_expedition.rs` drives real turns: a far post's tie decaying until the first
+report lands, rising by exactly one contact per landed report to full and holding there for 100 post
+turns beside a control edge that bleeds out (the parked tie raised again included), with the host
+gaining no edge; the tie rising from the first report inside the comm range; the report lag equal to `walk_turns`;
 lag 0 under a widened comm range; `Discovered` not `Active`; the fold-back landing in-transit news;
 each ending, and a starving home band keeping its party; the meal against a twin world and the larder identity in fixed point; the checkpoint
 round trip with reports in transit; the mission, host and phase off the encoded frame. The launch
 gates and the recall verb are `server::tests::{a_station_order_*, every_station_refusal_*,
-a_stationed_party_can_be_recalled_*}`; `connections::tests` pins the credit.
+a_stationed_party_can_be_recalled_*}`.

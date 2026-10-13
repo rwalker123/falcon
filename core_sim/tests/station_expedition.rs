@@ -4,7 +4,7 @@
 //! The launch **gates** (the tie, the borders, the party bound, the refusals leaving the band as it
 //! stood) and the recall verb live where the command handlers live, in `core_sim/src/bin/server.rs`'s
 //! test module, beside the trade verb's. What is pinned here is what a party does once it is on the
-//! map: that it keeps its tie alive while the same tie bleeds out beside it, that what it sees reaches
+//! map: that its tie rises only as its news lands at home (and a control tie bleeds out beside it), that what it sees reaches
 //! the home band a runner's walk behind and not at once, that the home band's larder pays for it, and
 //! that each thing that ends a post turns the party for home.
 //!
@@ -20,10 +20,10 @@ use bevy::prelude::{Entity, With};
 use core_sim::connections::{Connection, ConnectionKey, ConnectionLedger, FULL_TIE, NO_TIE};
 use core_sim::{
     build_test_app, run_turn, scalar_from_f32, split_band_from_parent, BandId, BandTravel,
-    CommandEventKind, CommandEventLog, Expedition, ExpeditionMission, ExpeditionPhase, FactionId,
-    LaborAllocation, LocalStore, PopulationCohort, ResidentBand, Scalar, SettleConfig, Sighting,
-    SimulationConfig, SimulationTick, SnapshotHistory, StartingUnit, Tile, TileRegistry,
-    VisibilityLedger, FOOD,
+    CommandEventKind, CommandEventLog, ConnectionsConfigHandle, Expedition, ExpeditionMission,
+    ExpeditionPhase, FactionId, LaborAllocation, LocalStore, PopulationCohort, ResidentBand,
+    Scalar, SettleConfig, Sighting, SimulationConfig, SimulationTick, SnapshotHistory,
+    StartingUnit, Tile, TileRegistry, VisibilityLedger, FOOD,
 };
 
 mod faction_support;
@@ -48,9 +48,6 @@ const LARDER: f32 = 4_000.0;
 const ARRIVAL_BUDGET: u32 = 120;
 /// Turns a post is held in the long-run tie test.
 const LONG_POST_TURNS: u32 = 100;
-/// Turns after arrival the tie needs to be back at full strength: `FULL_TIE / gain_per_contact`
-/// (four at the shipped 0.25) plus slack.
-const TURNS_TO_FULL: u32 = 8;
 /// Slack on `f32` sums of `Scalar`-quantised amounts.
 const EPSILON: f32 = 0.001;
 /// A tech factor wide enough that the effective comm range covers any distance on the map.
@@ -341,17 +338,49 @@ fn cross_faction_rig() -> Rig {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The tie: credited live, and never reaped
+// The tie: raised only by news that has reached home
 // ---------------------------------------------------------------------------------------------
 
-/// **A posted tie sits at full strength and is never reaped, while an identical unposted tie beside
-/// it bleeds out** — across a people line, with the host gaining nothing toward the sender.
+/// A RIVAL host with a FRESH tie toward it — the one meeting's `gain_per_contact`, not a splinter's
+/// kinship — so the tie has room to rise and every rise is visible.
+fn cross_faction_rig_with_a_fresh_tie() -> Rig {
+    let mut app = two_faction_world();
+    let home = resident_of(&mut app, HOME);
+    let host = resident_of(&mut app, RIVAL);
+    let (home_id, host_id) = (band_id(&app, home), band_id(&app, host));
+    let host_pos = band_position(&app, host);
+    let turn = tick(&app);
+    let cfg = app.world.resource::<ConnectionsConfigHandle>().get();
+    app.world.resource_mut::<ConnectionLedger>().record_contact(
+        ConnectionKey::new(home_id, host_id),
+        &Sighting::new(host_pos, turn, HOST_NAME),
+        turn,
+        &cfg,
+    );
+    // The formation turn is itself a contact turn and so is exempt from decay; run it out so the
+    // tie enters the post on the ordinary clock.
+    run_turn(&mut app);
+    let party = launch_station(&mut app, home, host_id, host_pos);
+    Rig {
+        app,
+        home,
+        home_id,
+        host,
+        host_id,
+        party,
+    }
+}
+
+/// **A post raises its tie only as its news lands at home.** A far post's tie keeps fading after the
+/// party arrives, for as long as the first runner is walking; it then climbs by exactly one
+/// `gain_per_contact` per landed report and, once full, holds there while a report lands every turn.
+/// An unposted control edge beside it bleeds out to nothing.
 ///
-/// The control edge is a splinter of the home band walked far away: same strength to begin with,
-/// same distance in sight terms, no party.
+/// Every turn is classified by the ledger's own stamp: a turn on which `last_contact_turn` is that
+/// turn is a landed report, and it is the only kind of turn on which strength may rise.
 #[test]
-fn a_posted_tie_stays_at_full_while_a_control_edge_decays() {
-    let mut rig = cross_faction_rig();
+fn a_posted_tie_rises_only_as_reports_land_and_then_holds_at_full() {
+    let mut rig = cross_faction_rig_with_a_fresh_tie();
     let (home, host, home_id, host_id, party) =
         (rig.home, rig.host, rig.home_id, rig.host_id, rig.party);
     let (control, control_id) = split_off(&mut rig.app, home);
@@ -362,42 +391,98 @@ fn a_posted_tie_stays_at_full_while_a_control_edge_decays() {
     );
     walk_to(&mut rig.app, control, control_pos);
     pin_people(&mut rig.app, control);
-    assert_eq!(
-        edge(&rig.app, home_id, control_id).map(|c| c.strength),
-        Some(FULL_TIE),
-        "the control edge starts as strong as the posted one"
-    );
+    let strength_cfg = rig
+        .app
+        .world
+        .resource::<ConnectionsConfigHandle>()
+        .get()
+        .strength
+        .clone();
+    let gain = Scalar::from_f32(strength_cfg.gain_per_contact);
+    let drain = Scalar::from_f32(strength_cfg.decay_per_turn);
 
-    let arrived_after = run_until_stationed(&mut rig.app, party, &[home, host, control]);
-    for _ in 0..TURNS_TO_FULL {
+    let mut previous = edge(&rig.app, home_id, host_id)
+        .expect("the fresh tie")
+        .strength;
+    let mut stationed_without_news = 0u32;
+    let mut landed_while_rising = 0u32;
+    let mut first_seen_turn = None;
+    let mut reached_full = false;
+    let mut parked_before_rising = false;
+    let mut post_turns = 0u32;
+    for _ in 0..ARRIVAL_BUDGET {
+        if post_turns >= LONG_POST_TURNS {
+            break;
+        }
         for band in [home, host, control] {
             feed(&mut rig.app, band);
         }
         pin_people(&mut rig.app, control);
+        let was_stationed = phase(&rig.app, party) == Some(ExpeditionPhase::Stationed);
         run_turn(&mut rig.app);
-    }
-    for turn in 0..LONG_POST_TURNS {
-        for band in [home, host, control] {
-            feed(&mut rig.app, band);
+        let ran = tick(&rig.app) - 1;
+        let tie = edge(&rig.app, home_id, host_id).expect("a posted tie is never reaped");
+        let report_landed = tie.last_contact_turn == ran;
+        if report_landed {
+            first_seen_turn.get_or_insert(tie.last_seen_turn);
+            assert_eq!(
+                tie.strength,
+                (previous + gain).min(FULL_TIE),
+                "turn {ran}: a landed report adds exactly one contact's gain, capped at full"
+            );
+            if previous < FULL_TIE {
+                landed_while_rising += 1;
+            }
+        } else {
+            assert_eq!(
+                tie.strength,
+                (previous - drain).max(NO_TIE),
+                "turn {ran}: with no news landing the tie only decays, posted or not"
+            );
+            if was_stationed {
+                stationed_without_news += 1;
+            }
         }
-        pin_people(&mut rig.app, control);
-        run_turn(&mut rig.app);
-        assert_eq!(
-            phase(&rig.app, party),
-            Some(ExpeditionPhase::Stationed),
-            "the post holds on turn {turn} after arrival ({arrived_after} turns out)"
-        );
-        let posted = edge(&rig.app, home_id, host_id).expect("a posted tie is never reaped");
-        assert_eq!(
-            posted.strength, FULL_TIE,
-            "the posted tie is at full strength on post turn {turn}"
-        );
-        assert_eq!(
-            posted.last_contact_turn,
-            tick(&rig.app) - 1,
-            "and it was credited THIS turn, not merely left high"
-        );
+        if was_stationed {
+            post_turns += 1;
+        }
+        parked_before_rising |= tie.strength == NO_TIE && !reached_full;
+        if reached_full {
+            assert!(
+                report_landed && tie.strength == FULL_TIE,
+                "turn {ran}: once full, the tie holds there because a report lands every turn"
+            );
+        }
+        reached_full |= tie.strength == FULL_TIE;
+        previous = tie.strength;
     }
+
+    assert!(
+        stationed_without_news > 0,
+        "liveness: the party stood at its host while the first runner was still walking, and the \
+         tie did not rise on those turns"
+    );
+    assert!(
+        landed_while_rising > 0,
+        "liveness: reports landed while the tie had room to rise"
+    );
+    assert!(
+        first_seen_turn.is_some(),
+        "liveness: the home ledger's last_seen_turn advanced off a landed report"
+    );
+    assert_eq!(
+        phase(&rig.app, party),
+        Some(ExpeditionPhase::Stationed),
+        "the post held for the whole run"
+    );
+    let posted = edge(&rig.app, home_id, host_id).expect("the posted tie");
+    assert_eq!(posted.strength, FULL_TIE, "the post ends the run at full");
+    assert!(reached_full, "liveness: the tie did climb to full");
+    assert!(
+        parked_before_rising,
+        "the tie ran down to nothing before the first report landed, and a landing report still \
+         raised the parked edge"
+    );
 
     let control_edge = edge(&rig.app, home_id, control_id).expect("the control edge still exists");
     assert_eq!(
@@ -419,12 +504,71 @@ fn a_posted_tie_stays_at_full_while_a_control_edge_decays() {
     );
 }
 
+/// **Inside the comm range the tie rises from the first turn the party has news.** The report lands
+/// the turn it leaves, so there is no runner's walk to fade through: from the first sighting every
+/// turn adds one contact's gain until the tie is full, and no turn before it rises.
+#[test]
+fn a_post_inside_comm_range_raises_its_tie_from_the_first_report() {
+    let mut rig = cross_faction_rig_with_a_fresh_tie();
+    let (home, host, home_id, host_id, party) =
+        (rig.home, rig.host, rig.home_id, rig.host_id, rig.party);
+    let mut config = (*core_sim::ExpeditionConfig::builtin()).clone();
+    config.comm_range_tech_factor = BOUNDLESS_COMM_FACTOR;
+    rig.app
+        .world
+        .resource_mut::<core_sim::ExpeditionConfigHandle>()
+        .replace(std::sync::Arc::new(config));
+    let gain = Scalar::from_f32(
+        rig.app
+            .world
+            .resource::<ConnectionsConfigHandle>()
+            .get()
+            .strength
+            .gain_per_contact,
+    );
+
+    let mut previous = edge(&rig.app, home_id, host_id)
+        .expect("the fresh tie")
+        .strength;
+    let mut rises = 0u32;
+    for _ in 0..ARRIVAL_BUDGET {
+        feed(&mut rig.app, home);
+        feed(&mut rig.app, host);
+        run_turn(&mut rig.app);
+        let ran = tick(&rig.app) - 1;
+        let tie = edge(&rig.app, home_id, host_id).expect("the posted tie");
+        if tie.last_contact_turn == ran {
+            assert_eq!(
+                tie.last_seen_turn, ran,
+                "turn {ran}: a report inside the comm range was observed the turn it landed"
+            );
+            assert_eq!(tie.strength, (previous + gain).min(FULL_TIE), "turn {ran}");
+            rises += 1;
+        } else {
+            assert!(
+                tie.strength <= previous,
+                "turn {ran}: the tie never rises on a turn no report lands"
+            );
+        }
+        previous = tie.strength;
+        if previous == FULL_TIE {
+            break;
+        }
+    }
+    assert!(rises > 0, "liveness: reports landed");
+    assert_eq!(
+        previous, FULL_TIE,
+        "the tie climbed to full on landed reports"
+    );
+    assert_eq!(phase(&rig.app, party), Some(ExpeditionPhase::Stationed));
+}
+
 // ---------------------------------------------------------------------------------------------
 // The news: a runner's walk behind
 // ---------------------------------------------------------------------------------------------
 
 /// **Report lag is exactly the walk.** With the host beyond the comm range, the home ledger's
-/// `last_seen_turn` trails the turn the tie was credited by `walk_turns(distance)`, while
+/// `last_seen_turn` trails the turn the news landed by `walk_turns(distance)`, while
 /// `last_contact_turn` is the current turn. The ground the party sees reaches the home faction as
 /// `Discovered`, never `Active`.
 #[test]
@@ -480,7 +624,10 @@ fn a_far_hosts_news_arrives_a_runners_walk_behind() {
 
     let tie = edge(&rig.app, rig.home_id, rig.host_id).expect("the posted tie");
     let now = tick(&rig.app) - 1;
-    assert_eq!(tie.last_contact_turn, now, "the tie is credited live");
+    assert_eq!(
+        tie.last_contact_turn, now,
+        "a report lands every turn once the pipeline is full"
+    );
     assert_eq!(
         tie.last_seen_turn + delay,
         now,
@@ -713,7 +860,7 @@ fn a_same_people_host_never_asks_open_borders() {
 }
 
 /// **A home band that cannot cover its meal, party included, does NOT end the post.** The party
-/// stays and keeps the tie credited; the shortfall is the band's, borne through its ordinary meal.
+/// stays and keeps its tie; the shortfall is the band's, borne through its ordinary meal.
 #[test]
 fn a_starving_home_band_keeps_its_party_stationed() {
     let mut rig = same_faction_rig();
@@ -732,10 +879,9 @@ fn a_starving_home_band_keeps_its_party_stationed() {
         );
         assert_eq!(cohort.stores.get(FOOD), Scalar::zero());
         assert_eq!(phase(&rig.app, party), Some(ExpeditionPhase::Stationed));
-        assert_eq!(
-            edge(&rig.app, rig.home_id, rig.host_id).map(|c| c.last_contact_turn),
-            Some(tick(&rig.app) - 1),
-            "and the tie is still credited"
+        assert!(
+            edge(&rig.app, rig.home_id, rig.host_id).is_some(),
+            "and the tie to the host is still held"
         );
     }
 }
