@@ -409,7 +409,7 @@ pay again*, and it was answered by measurement rather than by the section table.
 **Standard recipe, plus one change**: release, `map_seed` pinned, 80×52 `earthlike` /
 `late_forager_tribe`, publisher **shut down**, 5 warm-ups, mean of 30 frames, and the three seat
 counts **interleaved** — one turn of each per round, all three worlds resident, exactly as the
-map-size sweep does. The change is `default_ai_faction_count: 3`, so every seat in the 4-seat arm is
+map-size sweep does. The change is the major archetype's `default_count: 3` (a scratch `start_profiles.json` via `START_PROFILES_PATH`), so every seat in the 4-seat arm is
 a real faction with land, people and fog of its own: a seat naming a faction the roster does not have
 captures a fully redacted world, which is the *cheap* path and would flatter the sweep.
 `core_sim/examples/publish_profile.rs` prints it as row 5.

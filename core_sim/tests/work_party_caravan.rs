@@ -973,7 +973,8 @@ fn party_home_booked(app: &App, band: Entity) -> f32 {
 /// ⛔ **A HERD THAT WANDERS BACK INSIDE THE APRON SENDS THE PARTY WALKING HOME, ONCE.** The row
 /// stops posting — the band's own hands reach the herd again — so its caravan has ended. Nothing is
 /// handed over at once: the party takes the turn's step, and every pack and the load land over the
-/// walk home, on the route arm, and never again; the row carries no party and publishes none.
+/// walk home, on the route arm, and never again; the row carries no party and publishes none. The
+/// walkers are the row's own hands, so the row — not the band — publishes them walking back.
 #[test]
 fn a_herd_back_inside_the_apron_walks_its_caravan_home_once() {
     let (mut app, band) = world_hunting_at(5);
@@ -1010,10 +1011,17 @@ fn a_herd_back_inside_the_apron_walks_its_caravan_home_once() {
         (0, 0, 0, 0, 0),
         "the published row carries no party fields: {published:?}"
     );
-    let walking = published_homeward(&app);
+    // The hands are the row's own (it keeps the crew the player set), so the band does not count
+    // them as walkers; the row publishes them walking back to it, with the load they carry.
+    assert_eq!(
+        published_homeward(&app).workers,
+        0,
+        "the band's walkers are hands on no row, and these are on the hunt row"
+    );
+    let walking = published_hunt_row(&app);
     assert!(
-        walking.workers > 0 && walking.food > 0.0,
-        "the band publishes the party still walking home with its load: {walking:?}"
+        walking.rejoining_workers > 0 && walking.rejoining_food > 0.0,
+        "the row publishes its hands still walking back with the load: {walking:?}"
     );
     walk_them_all_home(&mut app, band);
     let routed = route_received(&app, band) - route_before;
@@ -2495,4 +2503,479 @@ fn a_herd_crossing_the_apron_changes_how_each_kill_is_taken_but_never_what_is_ke
         second_credit >= full_body * (1.0 - SAME_FOOD),
         "and keeps the whole body: {second_credit} against {full_body}"
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// ⛔ A RE-ENTERED ROW'S WALKERS ARE ITS OWN HANDS, COUNTED ONCE — THEY REJOIN IT WHEN THEY LAND
+// (`.claude/rules/core_sim/work-party.md` → "A source that stopped posting")
+// ---------------------------------------------------------------------------------------------
+
+/// The band's working-age pool in the rejoining fixtures — two rows of [`RAY_ROW`] and three idle.
+const RAY_POOL: u32 = 11;
+/// The crew each of the two rows holds.
+const RAY_ROW: u32 = 4;
+/// The hands the fixture leaves idle.
+const RAY_IDLE: u32 = RAY_POOL - 2 * RAY_ROW;
+/// A distance past the apron, and a walk of three turns.
+const FAR: u32 = 5;
+/// A guard against a hang while the fixture waits for a state, not a prediction.
+const TURNS_TO_WAIT: usize = 40;
+
+/// **Ray's band**: a pool of [`RAY_POOL`], a far hunt of [`RAY_ROW`] (first, so the caravan
+/// helpers find it) and a second row of [`RAY_ROW`] — a `Scout` role standing in for the forage row,
+/// because a role row has no source that can lapse.
+fn rays_band() -> (App, Entity) {
+    let (mut app, band) = world_hunting_at(FAR);
+    app.world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the band keeps its cohort")
+        .working = scalar_from_f32(RAY_POOL as f32);
+    {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the band keeps its allocation");
+        allocation.assignments[0].workers = RAY_ROW;
+        allocation.assignments.push(LaborAssignment {
+            party: None,
+            muster_crew: 0,
+            planned_crew: 0,
+            target: LaborTarget::Scout,
+            workers: RAY_ROW,
+            kit: None,
+            priority: SourcePriority::default(),
+        });
+        allocation.last_yields = vec![core_sim::SourceYield::ZERO; allocation.assignments.len()];
+    }
+    (app, band)
+}
+
+/// What the fixture's hunt row and band publish, off the ENCODED buffer.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct HuntRowReading {
+    workers: u32,
+    rejoining_workers: u32,
+    rejoining_all_home_in: u32,
+    rejoining_food: f32,
+    homeward_workers: u32,
+    actual_yield: f32,
+    band_homeward_workers: u32,
+    band_idle: u32,
+}
+
+fn published_hunt_row(app: &App) -> HuntRowReading {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let cohort = envelope
+        .payload_as_snapshot()
+        .and_then(|snapshot| snapshot.population())
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.bandId() == BAND)
+        .expect("the fixture band is on the wire");
+    let row = cohort
+        .laborAssignments()
+        .into_iter()
+        .flatten()
+        .find(|row| row.kind().unwrap_or_default() == "hunt")
+        .expect("the hunt row is on the wire");
+    HuntRowReading {
+        workers: row.workers(),
+        rejoining_workers: row.rejoiningWorkers(),
+        rejoining_all_home_in: row.rejoiningAllHomeIn(),
+        rejoining_food: row.rejoiningFood(),
+        homeward_workers: row.homewardWorkers(),
+        actual_yield: row.actualYield(),
+        band_homeward_workers: cohort.homewardWorkers(),
+        band_idle: cohort.idleWorkers(),
+    }
+}
+
+/// The hunt row's rejoining hands and the band's plain walkers, in process — only to drive a loop.
+fn rejoining_and_plain(app: &App, band: Entity) -> (u32, u32) {
+    let allocation = app
+        .world
+        .get::<LaborAllocation>(band)
+        .expect("the band keeps its allocation");
+    (
+        allocation.rejoining_to(&hunt_target()),
+        allocation.walking_home(),
+    )
+}
+
+/// **Ray's band with a caravan out, then the herd drifts inside the apron and the sweep runs.**
+/// Returns the world on the turn the walkers were stood down.
+fn rays_band_the_turn_its_herd_comes_back_in() -> (App, Entity) {
+    let (mut app, band) = rays_band();
+    a_caravan_carrying_food(&mut app, band);
+    move_the_herd_to(&mut app, INSIDE_THE_APRON);
+    resolve_a_turn(&mut app);
+    (app, band)
+}
+
+/// ⛔ **RAY'S CASE (turn 39): THE HANDS WALKING BACK ARE COUNTED ONCE.** A band of eleven holds a
+/// four-hand row beside its far hunt of four, the hunt's herd drifts inside the apron, and the party
+/// is stood down. The hunt row keeps the four hands the player set; the walkers are THEIR hands on
+/// the road, so they are not also counted as the band's walkers. Read off the ENCODED frame:
+/// `idleWorkers` is the pool less both rows (not less the walkers a second time), the band publishes
+/// no plain walkers, and a bench crew of one is within what the bench command clamps against.
+#[test]
+fn a_herd_back_inside_the_apron_does_not_count_its_walkers_twice() {
+    let (app, band) = rays_band_the_turn_its_herd_comes_back_in();
+    let read = published_hunt_row(&app);
+    assert_eq!(
+        read.workers, RAY_ROW,
+        "the row keeps the crew the player set"
+    );
+    assert!(
+        read.rejoining_workers > 0 && read.rejoining_workers <= RAY_ROW,
+        "liveness: hands are on the road back to the row: {read:?}"
+    );
+    assert!(
+        read.rejoining_all_home_in > 0,
+        "…and the row says when the last is home: {read:?}"
+    );
+    assert_eq!(
+        read.band_homeward_workers, 0,
+        "they are on a row, so they are not the band's walkers: {read:?}"
+    );
+    assert_eq!(
+        read.homeward_workers, 0,
+        "…nor the row's own plain walkers (hands that left it): {read:?}"
+    );
+    assert_eq!(
+        read.band_idle, RAY_IDLE,
+        "idle is the pool less the two rows — {RAY_POOL} - 2 × {RAY_ROW}, nothing twice: {read:?}"
+    );
+    let workforce = core_sim::BandWorkforce::resolve(
+        app.world.get::<PopulationCohort>(band),
+        app.world.get::<LaborAllocation>(band),
+        None,
+    );
+    assert!(
+        workforce.benchable().min(1) == 1 && workforce.benchable() == RAY_IDLE,
+        "a bench crew of one is within what the bench clamps against: idle {}, benchable {}",
+        read.band_idle,
+        workforce.benchable()
+    );
+}
+
+/// ⛔ **EVERY TURN, A ROW'S HANDS ARE COUNTED ONCE UNTIL THE LAST WALKER LANDS.** Row workers plus
+/// the band's plain walkers never exceed the crew the player set (no cut was made, so no plain
+/// walker may exist), the idle count never moves, and when the last rejoining hand lands the row is
+/// still the crew it was.
+#[test]
+fn a_rejoining_rows_hands_are_counted_once_every_turn_until_they_land() {
+    let (mut app, band) = rays_band_the_turn_its_herd_comes_back_in();
+    let mut landed = false;
+    for _ in 0..TURNS_TO_WAIT {
+        let read = published_hunt_row(&app);
+        assert!(
+            read.workers + read.band_homeward_workers <= RAY_ROW,
+            "the row and its plain walkers never exceed the crew set: {read:?}"
+        );
+        assert_eq!(read.band_idle, RAY_IDLE, "idle never moves: {read:?}");
+        assert!(
+            read.rejoining_workers <= read.workers,
+            "a row cannot have more hands walking back than it has: {read:?}"
+        );
+        if read.rejoining_workers == 0 {
+            landed = true;
+            break;
+        }
+        resolve_a_turn(&mut app);
+    }
+    assert!(landed, "liveness: the last walker lands");
+    let (rejoining, plain) = rejoining_and_plain(&app, band);
+    assert_eq!((rejoining, plain), (0, 0), "nobody is left on the road");
+    let read = published_hunt_row(&app);
+    assert_eq!(
+        (read.workers, read.band_idle),
+        (RAY_ROW, RAY_IDLE),
+        "the row is the crew it was and idle is unchanged: {read:?}"
+    );
+}
+
+/// ⛔ **A RE-ENTERED ROW TAKES WITH THE HANDS PRESENT, NOT THE CREW THE PLAYER SET.** The turn after
+/// the sweep, the row is local with some hands still on the road. Its take is the take of a row
+/// whose crew is only those present — asserted against a control built with exactly that crew — and
+/// it is not the take of the full crew.
+#[test]
+fn a_re_entered_rows_take_is_priced_on_the_hands_present() {
+    let (mut app, band) = rays_band_the_turn_its_herd_comes_back_in();
+    // The herd as the measured turn finds it - the caravan hunted it for several turns, so it
+    // carries wounds a fresh herd does not, and a control must start from the same animals.
+    let herds_at_the_start = app.world.resource::<HerdRegistry>().clone();
+    resolve_a_turn(&mut app);
+    let (rejoining, _) = rejoining_and_plain(&app, band);
+    let present = RAY_ROW - rejoining;
+    assert!(
+        rejoining > 0 && present < RAY_ROW,
+        "liveness: some hands are still away on the turn the row is measured"
+    );
+    let taken = published_hunt_row(&app).actual_yield;
+    let control = |crew: u32| {
+        let (mut control, band) = world_hunting_at(INSIDE_THE_APRON);
+        *control.world.resource_mut::<HerdRegistry>() = herds_at_the_start.clone();
+        control
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the control keeps its allocation")
+            .assignments[0]
+            .workers = crew;
+        resolve_a_turn(&mut control);
+        published_hunt_row(&control).actual_yield
+    };
+    let present_control = control(present);
+    let full_control = control(RAY_ROW);
+    assert!(
+        (taken - present_control).abs() < SAME_FOOD,
+        "the row takes what {present} hunters take: {taken} against {present_control}"
+    );
+    assert!(
+        (full_control - present_control).abs() > SAME_FOOD,
+        "liveness: {RAY_ROW} hunters would have taken a different amount ({full_control} against \
+         {present_control}), so the control can tell the two apart"
+    );
+}
+
+/// ⛔ **A CUT BELOW THE REJOINING COUNT FLIPS THE EXCESS TO PLAIN WALKERS.** Present hands are cut
+/// first; only the walkers beyond the new crew stop rejoining. They become ordinary walkers going
+/// home, counted in the band's walkers and landing into idle.
+#[test]
+fn a_cut_below_the_rejoining_count_flips_the_excess_to_plain_walkers() {
+    /// The crew the row is cut to — fewer than the hands on the road.
+    const KEPT: u32 = 1;
+    let (mut app, band) = rays_band_the_turn_its_herd_comes_back_in();
+    let (rejoining_before, _) = rejoining_and_plain(&app, band);
+    assert!(
+        rejoining_before > KEPT,
+        "fixture: more hands away than the cut keeps"
+    );
+    let idle_before = published_hunt_row(&app).band_idle;
+    let assignable = core_sim::BandWorkforce::resolve(
+        app.world.get::<PopulationCohort>(band),
+        app.world.get::<LaborAllocation>(band),
+        None,
+    )
+    .assignable();
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the band keeps its allocation")
+        .set_assignment(hunt_target(), KEPT, assignable, None);
+    recapture_snapshot_in_place(&mut app.world);
+    let present_before = RAY_ROW - rejoining_before;
+    let (rejoining, plain) = rejoining_and_plain(&app, band);
+    assert_eq!(
+        rejoining, KEPT,
+        "the row keeps the rejoining hands its crew holds"
+    );
+    assert_eq!(
+        plain,
+        rejoining_before - KEPT,
+        "the walkers beyond the new crew walk home plain"
+    );
+    let read = published_hunt_row(&app);
+    assert_eq!(read.workers, KEPT);
+    assert_eq!(
+        read.band_homeward_workers, plain,
+        "…and the band counts them"
+    );
+    assert_eq!(
+        read.band_idle,
+        idle_before + present_before,
+        "only the present hands the cut dropped are free at once: {read:?}"
+    );
+    for _ in 0..TURNS_TO_WAIT {
+        if homeward_walks(&app, band).is_empty() {
+            break;
+        }
+        resolve_a_turn(&mut app);
+    }
+    let after = published_hunt_row(&app);
+    assert_eq!(
+        after.band_idle,
+        idle_before + (RAY_ROW - KEPT),
+        "the flipped walkers land into idle: {after:?}"
+    );
+}
+
+/// ⛔ **AN UNASSIGN FLIPS EVERY REJOINING WALK TO PLAIN.** The row ends (it survives only as a
+/// holding at zero crew), so no walker can rejoin it.
+#[test]
+fn an_unassign_flips_every_rejoining_walk_to_plain() {
+    let (mut app, band) = rays_band_the_turn_its_herd_comes_back_in();
+    let (rejoining_before, _) = rejoining_and_plain(&app, band);
+    assert!(rejoining_before > 0, "liveness: hands are walking back");
+    let assignable = core_sim::BandWorkforce::resolve(
+        app.world.get::<PopulationCohort>(band),
+        app.world.get::<LaborAllocation>(band),
+        None,
+    )
+    .assignable();
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the band keeps its allocation")
+        .set_assignment(hunt_target(), 0, assignable, None);
+    recapture_snapshot_in_place(&mut app.world);
+    let (rejoining, plain) = rejoining_and_plain(&app, band);
+    assert_eq!((rejoining, plain), (0, rejoining_before));
+    assert_eq!(
+        published_hunt_row(&app).band_homeward_workers,
+        rejoining_before,
+        "the band now counts them as its walkers"
+    );
+}
+
+/// ⛔ **A LAPSE FLIPS EVERY REJOINING WALK TO PLAIN.** The herd leaves the registry on the turn
+/// after the sweep; the row lapses, and the hands still on the road walk home as the band's own.
+#[test]
+fn a_lapse_flips_every_rejoining_walk_to_plain() {
+    let (mut app, band) = rays_band_the_turn_its_herd_comes_back_in();
+    let (rejoining_before, _) = rejoining_and_plain(&app, band);
+    assert!(rejoining_before > 0, "liveness: hands are walking back");
+    app.world.resource_mut::<HerdRegistry>().clear();
+    resolve_a_turn(&mut app);
+    let allocation = app
+        .world
+        .get::<LaborAllocation>(band)
+        .expect("the band keeps its allocation");
+    assert!(
+        allocation
+            .assignments
+            .iter()
+            .all(|row| row.target != hunt_target()),
+        "the row whose herd is gone lapses"
+    );
+    assert!(
+        allocation.homeward.iter().all(|walk| !walk.rejoins_row),
+        "no walk is left rejoining a row that is gone"
+    );
+    assert_eq!(
+        published_homeward(&app).workers,
+        allocation.walking_home(),
+        "the band publishes the survivors as its own walkers"
+    );
+}
+
+/// ⛔ **THE STARVATION SHED DISCARDS THE REJOINING WALKERS IT TRIMS.** The shed takes present hands
+/// first and then rejoining ones; a hand it removes is a person the band no longer has, so it leaves
+/// without walking home — no plain walker appears.
+#[test]
+fn the_shed_discards_the_rejoining_walkers_it_trims() {
+    /// The pool the band is left with.
+    const SHRUNK_POOL: u32 = 2;
+    let (mut app, band) = rays_band_the_turn_its_herd_comes_back_in();
+    {
+        // Only the hunt row competes for the hands, and the band shrinks below it.
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the band keeps its allocation");
+        allocation
+            .assignments
+            .retain(|row| row.target == hunt_target());
+        allocation.last_yields = vec![core_sim::SourceYield::ZERO; 1];
+    }
+    app.world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the band keeps its cohort")
+        .working = scalar_from_f32(SHRUNK_POOL as f32);
+    let (rejoining_before, _) = rejoining_and_plain(&app, band);
+    assert!(
+        rejoining_before > SHRUNK_POOL,
+        "fixture: the shrunken crew holds fewer hands than are walking back"
+    );
+    resolve_a_turn(&mut app);
+    let allocation = app
+        .world
+        .get::<LaborAllocation>(band)
+        .expect("the band keeps its allocation");
+    let row = allocation
+        .assignments
+        .iter()
+        .find(|row| row.target == hunt_target())
+        .expect("the row survives, thinned");
+    assert!(
+        row.workers <= SHRUNK_POOL,
+        "the shed cut the row: {}",
+        row.workers
+    );
+    assert_eq!(
+        allocation.walking_home(),
+        0,
+        "shed hands leave without walking home"
+    );
+    assert!(
+        allocation.rejoining_to(&hunt_target()) <= row.workers,
+        "no more hands walk back than the thinned row holds"
+    );
+    assert!(
+        allocation.rejoining_to(&hunt_target()) < rejoining_before,
+        "…the excess was discarded"
+    );
+}
+
+/// ⛔ **THE ROW GOES FAR AGAIN WHILE HANDS ARE STILL WALKING BACK.** The party posts with the hands
+/// present as its crew; each rejoining hand that lands on a turn the row has a party joins it as a
+/// porter heading back out empty, with the whole walk ahead — it is not at the source at once.
+#[test]
+fn a_rejoining_hand_landing_on_a_re_posted_party_walks_back_out_the_whole_walk() {
+    let (mut app, band) = rays_band_the_turn_its_herd_comes_back_in();
+    let (rejoining_before, _) = rejoining_and_plain(&app, band);
+    assert!(
+        rejoining_before > 1,
+        "fixture: enough hands away to see one land"
+    );
+    move_the_herd_to(&mut app, FAR);
+    let mut saw_one_join = false;
+    for _ in 0..TURNS_TO_WAIT {
+        let (rejoining_then, _) = rejoining_and_plain(&app, band);
+        resolve_a_turn(&mut app);
+        let (rejoining_now, plain) = rejoining_and_plain(&app, band);
+        assert_eq!(plain, 0, "nothing walks home plain: no cut was made");
+        let allocation = app
+            .world
+            .get::<LaborAllocation>(band)
+            .expect("the band keeps its allocation");
+        let row = &allocation.assignments[0];
+        let party = row
+            .party
+            .as_ref()
+            .expect("the herd is far again: the row posts a party");
+        assert_eq!(
+            party.workers + rejoining_now,
+            row.workers,
+            "the party's crew is the hands present or arriving; the rest are still walking back"
+        );
+        if rejoining_now < rejoining_then {
+            let returning = party
+                .on_the_road
+                .iter()
+                .filter(|walker| walker.cargo == 0.0 && walker.turns_out >= walker.walk_turns)
+                .count() as u32;
+            assert!(
+                returning >= rejoining_then - rejoining_now,
+                "each hand that landed joined the party as a porter heading back out: {party:?}"
+            );
+            assert!(
+                party.hunters_present() + party.hunters_on_the_road() <= party.workers,
+                "it is on the road, not at the source"
+            );
+            saw_one_join = true;
+        }
+        if rejoining_now == 0 {
+            break;
+        }
+    }
+    assert!(saw_one_join, "liveness: a walker landed on a posted party");
 }

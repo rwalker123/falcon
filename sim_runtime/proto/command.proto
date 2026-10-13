@@ -753,17 +753,28 @@ message NewGameCommand {
   uint32 height = 3;
   uint64 seed = 4;
   string profile_id = 5;
-  // HOW MANY AI FACTIONS THE PLAYER PICKED, NOT COUNTING THEIR OWN. 2 means a world of three
-  // peoples: the human at FactionId(0) and rivals at 1 and 2. 0 is the single-faction world.
+  // HOW MANY PEOPLES OF EACH START ARCHETYPE THE PLAYER PICKED, NOT COUNTING THEIR OWN. The human
+  // seat is always FactionId(0) and always takes the profile's FIRST archetype; roster ids are then
+  // handed out in catalog order (archetype 0's rivals, then archetype 1's, ...). `major=2` and
+  // `minor=1` is a world of four peoples.
   //
-  // OPTIONAL, and absent is NOT the same as 0: absent means "nobody picked" — a dev typing
-  // `new_game` without the argument, a scripted launch — and resolves to the UNATTENDED roster,
-  // which is no rivals unless simulation_config.json's `default_ai_faction_count` pins some. An
-  // explicit 0 is a player who chose to play alone. Absent is NOT the count `faction_capacity`
-  // pre-selects: that number scales with the map, so a client showing it must send it explicitly.
-  // A count above what the grid can seat at `faction_start_min_separation` is CLAMPED with a
-  // warning naming both numbers — the new game is never refused over it.
-  optional uint32 ai_faction_count = 6;
+  // An archetype NOT LISTED here is "nobody picked it" - a dev typing `new_game` without the
+  // argument, a scripted launch - and resolves to the UNATTENDED count: the archetype's own
+  // `default_count` pin in start_profiles.json, else 0. An explicit `count: 0` is a player who chose
+  // none. Absent is NOT the count `faction_capacity` pre-selects: that number scales with the map, so
+  // a client showing it must send it explicitly.
+  //
+  // An id the profile does not carry REJECTS the command (the world is NOT built). A count above
+  // what the grid can seat is CLAMPED, in catalog order, with a warning naming both numbers - the
+  // new game is never refused over it. The ceiling is the formula on `ArchetypeCapacity`.
+  repeated ArchetypeCount archetype_counts = 6;
+}
+
+// One archetype's requested count in a NewGameCommand.
+message ArchetypeCount {
+  // An `id` from the profile's `archetypes` (`FactionCapacityReply.archetypes[].id`).
+  string id = 1;
+  uint32 count = 2;
 }
 
 // Which boot config a staged tuning override applies to. Deliberately a SHORT list: these are the
@@ -1206,23 +1217,46 @@ message WorkPartyExtractSource {
 // disk. It takes the grid the player is CONFIGURING rather than the one the server is running,
 // because the ceiling is a property of the map about to be built.
 //
-// It exists so the rule ("how many starts fit at `faction_start_min_separation`, minus one for the
-// player") has one implementation, in the sim. A client that computed its own spinner bounds would
-// be a second copy of it, free to disagree with the clamp the server actually applies.
+// It exists so the rule ("how many starts fit at each archetype's `min_separation`, minus the human
+// seat and the earlier archetypes' starts") has one implementation, in the sim. A client that
+// computed its own spinner bounds would be a second copy of it, free to disagree with the clamp the
+// server actually applies.
 message FactionCapacityQuery {
   uint32 width = 1;
   uint32 height = 2;
+  // The start profile whose archetypes are asked about. Empty or unknown means the server's ACTIVE
+  // profile.
+  string profile_id = 3;
 }
 
 message FactionCapacityReply {
-  // The count a rival control PRE-SELECTS, already clamped to `max_ai_faction_count`, so the number
-  // a client opens on is always grantable. Derived from what this grid seats unless
-  // simulation_config.json's `default_ai_faction_count` pins one. NOT what `new_game` uses when
-  // `ai_faction_count` is absent — that is the unattended roster — so a client showing this number
-  // must send it explicitly.
-  uint32 default_ai_faction_count = 1;
-  // The most rivals this grid seats. 0 means the grid holds one start, so the player plays alone.
-  uint32 max_ai_faction_count = 2;
+  // One row per start archetype of the profile, in CATALOG ORDER. The human seat takes the first
+  // archetype and is not counted in any row's count.
+  repeated ArchetypeCapacity archetypes = 1;
+}
+
+// One archetype's capacity row.
+//
+// THE CEILING CONTRACT - a client computes how many of archetype k it may ask for as
+//
+//   ceiling_k = max(0, site_count_k - 1 - sum over j < k of count_j)
+//
+// where the 1 is the human seat and count_j is the CURRENT count the player has chosen for each
+// EARLIER archetype (catalog order). The server applies the same formula (in order, against the
+// earlier GRANTED counts) and clamps with a warning, so a client that stays inside it is always
+// granted exactly what it asked.
+message ArchetypeCapacity {
+  // Stable key; what a NewGameCommand's `archetype_counts` names.
+  string id = 1;
+  // What the New Game screen calls this kind of people.
+  string display_label = 2;
+  // How many starts this grid seats at this archetype's separation, the human seat included.
+  uint32 site_count = 3;
+  // The count a control PRE-SELECTS: the archetype's pinned `default_count`, else a share of the
+  // ceiling - clamped against the EARLIER archetypes' defaults, so the default roster is placeable.
+  // NOT what `new_game` uses for an archetype it does not list (that is the unattended count), so a
+  // client showing this number must send it explicitly.
+  uint32 default_count = 4;
 }
 
 // "What does a raid of `party_workers` from `band_id`, carrying `kit_id`, do to `herd_id`?" No

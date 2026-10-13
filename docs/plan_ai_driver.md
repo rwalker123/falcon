@@ -482,8 +482,8 @@ already holds. No new server code: everything below is in the frame this seat is
 **Decision log** — `decisions.jsonl`, one row per proposal per turn (§5), plus one row per `Plan`
 adopted and per `Alarm` raised. This is the instrument that measures a *part* rather than the whole.
 
-**Bench** — `sim_ai bench`: start a server on a private port block with `map_seed` and
-`default_ai_faction_count` pinned (the config keys a headless run is documented to set), seat one
+**Bench** — `sim_ai bench`: start a server on a private port block with `map_seed` pinned and the rivals requested
+through `new_game` (`major=<seats>`), seat one
 `sim_ai` process per rival with the requested brain/profile/difficulty/seed, and let it run. **No host
 is needed** — once every occupied seat has submitted, the server resolves the turn itself
 (`SeatTurnGate` → `TurnWait::Resolve`) — so a bench is exactly N AI processes and a server, and the

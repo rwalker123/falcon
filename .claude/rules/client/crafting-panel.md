@@ -622,6 +622,21 @@ Each row is TWO lines and one button (`_build_suggestion_row`, keyed `SUGGESTION
   under it in the FAINT ink — the suggestion still says who is going without, and the refusal says
   why queueing it cannot happen yet.
 
+**Coming up (#778).** `craft_suggestions[]` also carries `upcoming_count`, `expires_in_turns` and
+`lead_turns` (`dict/population.rs`; the wear forecast, `docs/plan_crafting_and_materials.md` →
+"Coming up"). The panel does not re-sort: the sim ranks coming-up-only entries after every shortage.
+
+- **Coming-up-only** (`sources` empty, `upcoming_count > 0`; `_is_coming_up_only`) rows sit under a
+  small "Coming up" subhead, drawn only when one exists, before the first of them. Same row, same
+  Queue offer join as a shortage row, tagged `SUGGESTION_COMING_UP_META` = item id. Line two is
+  `wear out in ~N turns` (`expires_in_turns` rounded UP, `~1 turn` at one) in `INK_DIM`, never WARN:
+  nobody is without it yet. The hover is one sentence, the bench needing about `lead_turns` turns,
+  so start now.
+- **Merged** (sources AND `upcoming_count > 0`) keeps its WARN shortage line and appends
+  ` · +N wearing out`.
+- `upcoming_count == 0` shows nothing forecast-related, whatever `expires_in_turns`/`lead_turns` say.
+- Preview: `crafting_coming_up.png` (`_coming_up_state`, one merged, one coming-up-only).
+
 ### The stepper's ceiling is `idle + the crew at the bench`, which is NOT the band's idle count
 
 **IDLE MEANS IDLE.** `PopulationCohortState.idleWorkers` is `working_age − assigned − bench.workers`

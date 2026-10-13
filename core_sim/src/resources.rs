@@ -17,7 +17,7 @@ use crate::{
     culture::CultureTensionRecord,
     orders::FactionId,
     scalar::{scalar_from_f32, Scalar},
-    start_profile::StartProfileOverrides,
+    start_profile::{StartArchetypeAssignment, StartProfileOverrides},
     FoodModule, FoodSiteKind,
 };
 use bitflags::bitflags;
@@ -98,6 +98,10 @@ pub struct SimulationConfig {
     pub map_seed: u64,
     pub start_profile_id: String,
     pub start_profile_overrides: StartProfileOverrides,
+    /// **Which archetype each roster id is** - transient and config-side, rebuilt by every
+    /// world-build path from the per-archetype counts the world was asked for, and read only by
+    /// worldgen. Not part of the checkpoint. See [`StartArchetypeAssignment`].
+    pub start_archetype_assignment: StartArchetypeAssignment,
     pub hydrology: HydrologyOverrides,
     pub ambient_temperature: Scalar,
     pub temperature_lerp: Scalar,
@@ -110,39 +114,6 @@ pub struct SimulationConfig {
     pub temperature_morale_tolerance: Scalar,
     pub population_cluster_stride: u32,
     pub population_cap: u32,
-    /// **How far apart worldgen tries to put two factions' start tiles, in tiles.**
-    ///
-    /// Measured the way the curated food-site pass measures spacing — Euclidean distance on tile
-    /// coordinates, compared squared — so the file has one notion of "far enough apart".
-    ///
-    /// It is a *target*, not a guarantee: on a map with no land pair that far apart, worldgen takes
-    /// the best remaining tile and warns rather than failing to place a faction (see
-    /// `systems::worldgen`). Validated `> 0` at parse, because a separation of zero would let two
-    /// peoples open the campaign on the same hex.
-    pub faction_start_min_separation: u32,
-    /// **The pin on how many AI factions a world gets when nobody picked a number, or `None` for
-    /// "derive it from the map".**
-    ///
-    /// `None` is not `Some(0)` — the same distinction the optional `new_game` wire field draws, and
-    /// on the wire it is a JSON `null`, which is what ships:
-    ///
-    /// - **`None` (shipped)** — the New Game screen pre-selects
-    ///   `systems::worldgen::faction_start_capacity`'s share of what the chosen grid can seat, and
-    ///   an **unattended** boot (`build_headless_app`, a `new_game` carrying no count) opens with
-    ///   no rivals at all (`systems::worldgen::unattended_ai_faction_count`). The two are
-    ///   deliberately different numbers: one is an offer to a player, the other is what a process
-    ///   nobody is watching starts with, and there is no AI to drive a rival yet.
-    /// - **`Some(n)`** — pins **both** to `n`. The escape hatch a headless run, a test or a
-    ///   designer uses to boot with rivals without touching the UI.
-    ///
-    /// **It counts rivals, not the roster** — 0 is the single-faction world, 2 is a world of three
-    /// peoples.
-    ///
-    /// Clamped, never refused: a count above what the grid can hold at
-    /// [`Self::faction_start_min_separation`] is granted down to the ceiling with a warning, the
-    /// same answer the `new_game` command gets, because the grid a world is finally built on is not
-    /// the grid this file was parsed against.
-    pub default_ai_faction_count: Option<u32>,
     pub power_adjust_rate: Scalar,
     pub max_power_generation: Scalar,
     pub max_power_efficiency: Scalar,
@@ -293,12 +264,6 @@ pub enum SimulationConfigError {
          at all"
     )]
     NonPositiveSeatTurnTimeout,
-    #[error(
-        "`faction_start_min_separation` must be at least 1: it is the distance worldgen holds \
-         between two factions' start tiles, and 0 would let two peoples open the campaign standing \
-         on the same hex — which is not a cramped map, it is no placement at all"
-    )]
-    ZeroFactionStartMinSeparation,
 }
 
 impl ConfigLoadError for SimulationConfigError {
@@ -340,11 +305,6 @@ struct SimulationConfigData {
     temperature_morale_tolerance: f32,
     population_cluster_stride: u32,
     population_cap: u32,
-    #[serde(default = "default_faction_start_min_separation")]
-    faction_start_min_separation: u32,
-    /// Absent **and** explicit `null` both mean "derive it" — see the resource field's doc.
-    #[serde(default)]
-    default_ai_faction_count: Option<u32>,
     power_adjust_rate: f32,
     max_power_generation: f32,
     max_power_efficiency: f32,
@@ -519,9 +479,6 @@ impl SimulationConfigData {
         if self.command_events_retention_turns == 0 {
             return Err(SimulationConfigError::ZeroCommandEventsRetentionTurns);
         }
-        if self.faction_start_min_separation == 0 {
-            return Err(SimulationConfigError::ZeroFactionStartMinSeparation);
-        }
         if !self.seat_turn_timeout_seconds.is_finite() || self.seat_turn_timeout_seconds <= 0.0 {
             return Err(SimulationConfigError::NonPositiveSeatTurnTimeout);
         }
@@ -535,6 +492,7 @@ impl SimulationConfigData {
             map_seed: self.map_seed,
             start_profile_id: self.start_profile_id,
             start_profile_overrides: StartProfileOverrides::default(),
+            start_archetype_assignment: StartArchetypeAssignment::default(),
             hydrology: self
                 .hydrology
                 .map(|d| d.into_overrides())
@@ -547,8 +505,6 @@ impl SimulationConfigData {
             temperature_morale_tolerance: scalar_from_f32(self.temperature_morale_tolerance),
             population_cluster_stride: self.population_cluster_stride,
             population_cap: self.population_cap,
-            faction_start_min_separation: self.faction_start_min_separation,
-            default_ai_faction_count: self.default_ai_faction_count,
             power_adjust_rate: scalar_from_f32(self.power_adjust_rate),
             max_power_generation: scalar_from_f32(self.max_power_generation),
             max_power_efficiency: scalar_from_f32(self.max_power_efficiency),
@@ -579,16 +535,6 @@ impl SimulationConfigData {
 
 fn default_fog_enabled() -> bool {
     true
-}
-
-/// 20 tiles — a quarter of the shipped map's width (`grid_size.x = 80`).
-///
-/// Far enough that two peoples do not open the campaign sharing one food shed and have to travel to
-/// meet each other, close enough that the greedy placement can still satisfy it on a map whose land
-/// is a fraction of the grid. The single source of the number, so an untouched config and an absent
-/// key cannot disagree.
-fn default_faction_start_min_separation() -> u32 {
-    20
 }
 
 /// 20 turns of world events: long enough that a player returning from a few quick turns can read
@@ -823,7 +769,7 @@ pub fn carry_runtime_owned_fields(config: &mut SimulationConfig, outgoing: &Simu
 /// | `map_topology` | Every hex distance on the live map is measured under this wrap |
 /// | `map_preset_id` | Written into the save header; the load re-derives the biome palette from it |
 /// | `map_seed` | Worldgen writes the resolved seed back here, and it is then the seed's source of truth — flora realization, band-name minting, `export_map`. The shipped file's `0` means "random", which is no seed at all |
-/// | `start_profile_id` / `start_profile_overrides` | The campaign this world was started on (`apply_start_profile`), not the file's default |
+/// | `start_profile_id` / `start_profile_overrides` / `start_archetype_assignment` | The campaign this world was started on (`apply_start_profile`) and who was seated in it, not the file's default |
 /// | `fog_enabled` | The player's preference, the same row [`carry_runtime_owned_fields`] carries |
 ///
 /// **Deliberately NOT [`carry_runtime_owned_fields`]' list**, which is shared with the world-build
@@ -837,6 +783,7 @@ pub fn carry_world_identity(config: &mut SimulationConfig, outgoing: &Simulation
     config.map_seed = outgoing.map_seed;
     config.start_profile_id = outgoing.start_profile_id.clone();
     config.start_profile_overrides = outgoing.start_profile_overrides.clone();
+    config.start_archetype_assignment = outgoing.start_archetype_assignment.clone();
     config.fog_enabled = outgoing.fog_enabled;
 }
 

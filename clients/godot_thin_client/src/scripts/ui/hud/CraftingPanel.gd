@@ -2090,11 +2090,20 @@ func _build_suggestions(payload: Dictionary) -> void:
 	table.add_theme_constant_override("separation", 0)
 	table.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	table.add_child(_rule(HudStyle.LINE))
+	# The sim ranks coming-up-only entries after every shortage, so one pass keeps its order; the
+	# "Coming up" subhead is dropped in before the first of them.
+	var coming_up_head_drawn := false
 	for suggestion_variant in suggestions:
 		if not (suggestion_variant is Dictionary):
 			continue
 		var suggestion: Dictionary = suggestion_variant
 		var item_id := String(suggestion.get(HudCraftingVocab.SUGGESTION_ITEM_ID_KEY, ""))
+		if _is_coming_up_only(suggestion) and not coming_up_head_drawn:
+			coming_up_head_drawn = true
+			var sub_head := _zone_head(HudCraftingVocab.SUGGESTIONS_COMING_UP_HEAD)
+			sub_head.add_theme_color_override("font_color", HudStyle.INK_DIM)
+			table.add_child(sub_head)
+			table.add_child(_rule(HudStyle.LINE))
 		table.add_child(_build_suggestion_row(suggestion, payload))
 		# The recipe picker, when this suggestion's Queue opened it — under the suggestion, where the
 		# choice was asked, never under the ledger row of the same item.
@@ -2118,11 +2127,14 @@ func _build_suggestions(payload: Dictionary) -> void:
 func _build_suggestion_row(suggestion: Dictionary, payload: Dictionary) -> Control:
 	var item_id := String(suggestion.get(HudCraftingVocab.SUGGESTION_ITEM_ID_KEY, ""))
 	var count := int(suggestion.get(HudCraftingVocab.SUGGESTION_COUNT_KEY, 0))
+	var coming_up_only := _is_coming_up_only(suggestion)
 	var ledger_row := _row_in(payload, item_id)
 	var row := _ledger_row_container()
 	row.set_meta(HudCraftingVocab.SUGGESTION_META, item_id)
-	row.tooltip_text = _suggestion_tooltip(suggestion)
+	row.tooltip_text = _coming_up_tooltip(suggestion) if coming_up_only else _suggestion_tooltip(suggestion)
 	row.mouse_filter = Control.MOUSE_FILTER_PASS
+	if coming_up_only:
+		row.set_meta(HudCraftingVocab.SUGGESTION_COMING_UP_META, item_id)
 
 	var skipped: bool = _auto_skipped_items(payload).has(item_id)
 	var words := VBoxContainer.new()
@@ -2133,10 +2145,18 @@ func _build_suggestion_row(suggestion: Dictionary, payload: Dictionary) -> Contr
 	title.add_theme_color_override("font_color", HudStyle.INK)
 	words.add_child(title)
 	var consequence := Label.new()
-	consequence.text = _suggestion_consequence(suggestion, payload)
 	consequence.add_theme_font_size_override("font_size", HudCraftingVocab.SUGGESTION_LINE_FONT_SIZE)
-	# AMBER: people are working short right now — a warning beside the number it explains.
-	consequence.add_theme_color_override("font_color", HudStyle.WARN)
+	if coming_up_only:
+		# NEUTRAL: nobody is without it yet, so no amber - only when the stock runs out.
+		consequence.text = _wear_out_text(suggestion)
+		consequence.add_theme_color_override("font_color", HudStyle.INK_DIM)
+	else:
+		consequence.text = _suggestion_consequence(suggestion, payload)
+		var upcoming := int(suggestion.get(HudCraftingVocab.SUGGESTION_UPCOMING_COUNT_KEY, 0))
+		if upcoming > 0:
+			consequence.text += HudCraftingVocab.SUGGESTION_WEARING_OUT_NOTE_FORMAT % upcoming
+		# AMBER: people are working short right now — a warning beside the number it explains.
+		consequence.add_theme_color_override("font_color", HudStyle.WARN)
 	words.add_child(consequence)
 	var short_text := _shortfall_text(suggestion.get(HudCraftingVocab.SUGGESTION_SHORTFALLS_KEY, []),
 		HudCraftingVocab.SUGGESTION_SHORTFALL_TAIL_FORMAT, count)
@@ -2184,6 +2204,27 @@ func _build_suggestion_row(suggestion: Dictionary, payload: Dictionary) -> Contr
 			action.add_child(why)
 	row.add_child(_column_cell(action, HudCraftingVocab.SUGGESTION_ACTION_WIDTH, false))
 	return row
+
+## A coming-up-only entry: the wear forecast alone put it here - no consumer is short today.
+func _is_coming_up_only(suggestion: Dictionary) -> bool:
+	var sources: Array = suggestion.get(HudCraftingVocab.SUGGESTION_SOURCES_KEY, [])
+	return sources.is_empty() \
+		and int(suggestion.get(HudCraftingVocab.SUGGESTION_UPCOMING_COUNT_KEY, 0)) > 0
+
+## `wear out in ~4 turns`: the published turns rounded UP, `~1 turn` at one.
+func _wear_out_text(suggestion: Dictionary) -> String:
+	var turns := maxi(1, ceili(float(suggestion.get(HudCraftingVocab.SUGGESTION_EXPIRES_IN_TURNS_KEY, 0.0))))
+	if turns == 1:
+		return HudCraftingVocab.SUGGESTION_WEAR_OUT_ONE
+	return HudCraftingVocab.SUGGESTION_WEAR_OUT_FORMAT % turns
+
+func _coming_up_tooltip(suggestion: Dictionary) -> String:
+	var lead := int(suggestion.get(HudCraftingVocab.SUGGESTION_LEAD_TURNS_KEY, 0))
+	if lead < 1:
+		return ""
+	if lead == 1:
+		return HudCraftingVocab.SUGGESTION_COMING_UP_TOOLTIP_ONE
+	return HudCraftingVocab.SUGGESTION_COMING_UP_TOOLTIP_FORMAT % lead
 
 ## The item's name — the sim's `displayName` on the item's offers, which the ledger row already
 ## carries. An item this band has no offer for (the catalogues not yet ingested) names itself by id

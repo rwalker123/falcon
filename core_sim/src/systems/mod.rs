@@ -35,7 +35,7 @@ use crate::{
     culture::{
         CultureEffectsCache, CultureLayerId, CultureManager, CultureSchismEvent,
         CultureTensionEvent, CultureTensionKind, CultureTensionRecord, CultureTraitAxis,
-        CULTURE_TRAIT_AXES, FALLBACK_CULTURE_REGION_ID,
+        StartingCultureLean, CULTURE_TRAIT_AXES, FALLBACK_CULTURE_REGION_ID,
     },
     culture_corruption_config::{CorruptionSeverityConfig, CultureCorruptionConfigHandle},
     demographics_config::{DemographicsConfig, DemographicsConfigHandle, DemographicsConsumption},
@@ -83,8 +83,8 @@ use crate::{
     scalar::{scalar_from_f32, scalar_from_u32, scalar_one, scalar_zero, Scalar},
     snapshot_overlays_config::SnapshotOverlaysConfigHandle,
     start_profile::{
-        FoodModulePreference, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
-        StartProfileOverrides, StartingUnitSpec,
+        FoodModulePreference, StartArchetype, StartProfileKnowledgeTags,
+        StartProfileKnowledgeTagsHandle, StartingUnitSpec,
     },
     terrain::{terrain_definition, terrain_for_position_with_classifier, TerrainDefinition},
     turn_pipeline_config::TurnPipelineConfigHandle,
@@ -217,6 +217,7 @@ pub fn reset_transfer_ledger(mut allocations: Query<&mut LaborAllocation>) {
     }
 }
 
+mod breeding_shed;
 mod crafting;
 mod expeditions;
 mod fission;
@@ -227,6 +228,7 @@ mod power;
 mod trade;
 mod worldgen;
 
+pub use breeding_shed::*;
 pub use crafting::*;
 pub use expeditions::*;
 pub use fission::*;

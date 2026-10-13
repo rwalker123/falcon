@@ -395,6 +395,14 @@ impl StartingLoadout {
         self.windows.insert(band, window);
     }
 
+    /// **Shut this band's window** — removed, since a closed window is an absent one. For a band
+    /// the SIM split off (`systems::break_off_breeding_excess`): the outfitting window is the
+    /// player's chance to revise a split they made, and nobody made this one. The goods the split
+    /// moved stay moved. Returns whether a window was there.
+    pub fn close(&mut self, band: BandId) -> bool {
+        self.windows.remove(&band).is_some()
+    }
+
     /// Every window, in band order.
     pub fn iter(&self) -> impl Iterator<Item = (BandId, &LoadoutWindow)> {
         self.windows.iter().map(|(band, window)| (*band, window))
@@ -743,7 +751,18 @@ pub(crate) fn outfit_band_with_defaults(world: &mut World, faction: FactionId, b
     let Some(profile) = world.get_resource::<ActiveStartProfile>() else {
         return;
     };
-    let opening = &profile.profile().overrides().opening_loadout;
+    // **The faction's OWN archetype's loadout** - a minor people opens with its own kit defaults,
+    // not the majors'. This runs on the world-build pass, the one moment the transient
+    // faction -> archetype assignment is guaranteed to describe the roster.
+    let archetype_index = world
+        .get_resource::<crate::resources::SimulationConfig>()
+        .map_or(0, |config| {
+            config.start_archetype_assignment.archetype_index(faction)
+        });
+    let Some(archetype) = profile.profile().overrides().archetype(archetype_index) else {
+        return;
+    };
+    let opening = &archetype.opening_loadout;
     let equipment = world.resource::<EquipmentConfigHandle>().get();
     let goods_allowance = window.goods_allowance(&people, &expedition.carry);
     let fitted = fit_to_carry(
@@ -1171,12 +1190,16 @@ pub fn apply_starting_loadout(
             // **The pick list is the GRANT's rule.** It says which materials the world hands out at
             // the start, so it binds exactly the window that mints and deliberately not a take,
             // whose only question is whether the parent has the stuff.
+            // The human seat's archetype's list: this runs after the world is built, and nothing
+            // after world build reads the faction -> archetype assignment (a load restores it from
+            // the save header only so a later `ResetMap` can rebuild the same split).
             let pickable = &world
                 .resource::<ActiveStartProfile>()
                 .profile()
                 .overrides()
-                .opening_loadout
-                .pickable_materials;
+                .human_archetype()
+                .map(|archetype| archetype.opening_loadout.pickable_materials.as_slice())
+                .unwrap_or_default();
             for allocation in materials {
                 if !pickable.iter().any(|id| id == &allocation.material_id) {
                     return Err(LoadoutRejection::UnpickableMaterial(

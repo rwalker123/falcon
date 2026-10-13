@@ -753,7 +753,8 @@ const FIXTURE_EQUIPMENT: &str = r#"{
   "default_kits": { "hunt": "big_game", "forage": "none", "scout": "none", "warrior": "none", "agriculture": "none", "husbandry": "none", "builders": "none", "roadwork": "none", "expedition": "none", "extract": "none", "quarrywork": "none" },
   "quarry_default_kit_margin": 0.25,
   "start_stock_fraction": 1.5,
-  "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 }
+  "life_readout": { "warn_fraction": 0.34, "danger_fraction": 0.10 },
+            "wear_forecast": { "window_turns": 10 }
 }"#;
 
 /// **A PASS THAT MAKES THREE MAKES THREE.** `RecipeOutput::amount` used to be read by nothing on

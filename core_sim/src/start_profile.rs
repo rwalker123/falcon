@@ -123,23 +123,123 @@ pub enum FactionControl {
     Ai,
 }
 
-/// **A profile does not say who plays the world.** It stocks the opening — units, knowledge,
-/// inventory, the loadout window — and the roster comes from the new game's own AI-faction count,
-/// so `Default` is derivable again: every field's default is the empty/`Default` one.
+/// **A profile does not say who plays the world.** It stocks the opening — one [`StartArchetype`]
+/// per kind of people — and the roster comes from the new game's own per-archetype counts, so
+/// `Default` is derivable: every field's default is the empty/`Default` one.
+///
+/// The per-people opening (units, knowledge, inventory, loadout window) lives on the archetype;
+/// what stays here is what is true of the whole campaign.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct StartProfileOverrides {
+    /// **The kinds of people this campaign starts, in catalog order** — see [`StartArchetype`].
+    /// Validated non-empty at load. A default-built overrides (a hand-rolled test world that never
+    /// applied a profile) carries none, which worldgen reads as "no starting units".
+    #[serde(default)]
+    pub archetypes: Vec<StartArchetype>,
+    #[serde(default)]
+    pub victory_modes_enabled: Vec<String>,
+    #[serde(default)]
+    pub food_modules: FoodModulePreference,
+}
+
+impl StartProfileOverrides {
+    /// The archetype at catalog position `index`, if the profile has one.
+    pub fn archetype(&self, index: usize) -> Option<&StartArchetype> {
+        self.archetypes.get(index)
+    }
+
+    /// **The human seat's archetype** — faction 0 always takes the first entry of the catalog.
+    pub fn human_archetype(&self) -> Option<&StartArchetype> {
+        self.archetypes.first()
+    }
+}
+
+/// **Which archetype each roster id is** - the per-faction mapping worldgen reads to stock and place
+/// every people with ITS archetype's opening.
+///
+/// Built from the per-archetype counts a world was asked for, in catalog order: faction 0 is the
+/// human seat and always takes archetype 0, then archetype 0's rivals take the next ids, then
+/// archetype 1's, and so on - the same positional ids `FactionRegistry::with_ai_factions` hands out.
+///
+/// ⛔ **Transient and config-side, NOT part of `SimState`.** It lives in `SimulationConfig` beside
+/// `start_profile_overrides`, is rebuilt by every world-build path (boot, `new_game`, `ResetMap`),
+/// and nothing after the world is built reads it - what a faction is stocked with is on its bands.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StartArchetypeAssignment {
+    per_faction: Vec<usize>,
+}
+
+impl StartArchetypeAssignment {
+    /// The assignment for a roster of one human plus `counts[k]` rivals of archetype `k`.
+    pub fn from_counts(counts: &[u32]) -> Self {
+        let mut per_faction = vec![0usize];
+        for (archetype, count) in counts.iter().enumerate() {
+            per_faction.extend(std::iter::repeat_n(archetype, *count as usize));
+        }
+        Self { per_faction }
+    }
+
+    /// The rival count of each of `archetype_count` archetypes, in catalog order - the inverse of
+    /// [`Self::from_counts`]. The human seat is not a rival and is not counted.
+    pub fn counts(&self, archetype_count: usize) -> Vec<u32> {
+        let mut counts = vec![0u32; archetype_count];
+        for index in self.per_faction.iter().skip(1) {
+            if let Some(slot) = counts.get_mut(*index) {
+                *slot += 1;
+            }
+        }
+        counts
+    }
+
+    /// The catalog index of `faction`'s archetype. A roster id the assignment does not cover reads
+    /// as archetype 0 - the only archetype a hand-rolled test world with no assignment has.
+    pub fn archetype_index(&self, faction: crate::orders::FactionId) -> usize {
+        self.per_faction
+            .get(faction.0 as usize)
+            .copied()
+            .unwrap_or(0)
+    }
+}
+
+/// **One kind of people a campaign can start** (`docs/plan_minor_peoples.md` §Starts): how far apart
+/// its starts are held, how many a world gets by default, and what each of them opens with.
+///
+/// The catalog is ordered: the human seat takes entry 0, roster ids are handed out in catalog order
+/// (entry 0's rivals, then entry 1's, ...), and placement lays the entries down in the same order so
+/// the later, smaller-separation ones fill the gaps the earlier ones left.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct StartArchetype {
+    /// Stable key - the wire names an archetype by it (`new_game <...> <id>=<count>`).
+    pub id: String,
+    /// What a New Game screen calls this kind of people.
+    pub display_label: String,
+    /// **How far apart worldgen tries to put one of this archetype's starts from every start
+    /// already placed, in tiles.** Euclidean on tile coordinates, compared squared - the metric the
+    /// curated food-site pass spaces markers by. A *target*: on a map with no land pair that far
+    /// apart, worldgen takes the best remaining tile and warns. Validated `> 0`, because zero would
+    /// let two peoples open on one hex.
+    pub min_separation: u32,
+    /// **The pin on how many of this archetype a world gets when nobody picked**, or `None` for
+    /// "derive it": a New Game screen pre-selects a share of what the map seats, and an unattended
+    /// boot opens with none. `None` is not `Some(0)`. A number pins both. Always clamped to what the
+    /// map can seat - see `systems::worldgen::archetype_capacities`.
+    #[serde(default)]
+    pub default_count: Option<u32>,
+    /// **The share of what fits that a New Game screen pre-selects**, or `None` for the shared
+    /// floor-plus-half rule. When present the derived default is `floor(ceiling x default_share)`,
+    /// the ceiling being computed against the EARLIER archetypes' defaults. A `default_count` pin
+    /// beats it. Validated finite and in `(0, 1]`.
+    #[serde(default)]
+    pub default_share: Option<f32>,
     #[serde(default)]
     pub starting_units: Vec<StartingUnitSpec>,
     #[serde(default)]
     pub starting_knowledge_tags: Vec<String>,
     #[serde(default)]
     pub inventory: Vec<InventoryEntry>,
-    #[serde(default)]
-    pub victory_modes_enabled: Vec<String>,
-    #[serde(default)]
-    pub food_modules: FoodModulePreference,
-    /// **The turn-one outfitting window's dials** — see [`OpeningLoadoutConfig`]. **Required**: a
-    /// profile with no opening loadout spawns a band that owns nothing and can never be given
+    /// **The turn-one outfitting window's dials** - see [`OpeningLoadoutConfig`]. **Required**: an
+    /// archetype with no opening loadout spawns a band that owns nothing and can never be given
     /// anything, so an absent block is a campaign that cannot be played rather than a default worth
     /// guessing.
     pub opening_loadout: OpeningLoadoutConfig,
@@ -409,7 +509,7 @@ impl StartProfiles {
             if index.insert(profile.id.clone(), idx).is_some() {
                 return Err(StartProfilesError::DuplicateId(profile.id.clone()));
             }
-            validate_opening_loadout(&profile.id, &profile.overrides.opening_loadout)?;
+            validate_archetypes(&profile.id, &profile.overrides.archetypes)?;
         }
 
         Ok(Self {
@@ -431,17 +531,19 @@ impl StartProfiles {
         materials: &crate::materials_config::MaterialsConfig,
     ) -> Result<(), StartProfilesError> {
         for profile in &self.profiles {
-            let loadout = &profile.overrides.opening_loadout;
-            for id in loadout
-                .pickable_materials
-                .iter()
-                .chain(loadout.material_defaults.keys())
-            {
-                if materials.material(id).is_none() {
-                    return Err(StartProfilesError::UnknownOpeningMaterial {
-                        profile: profile.id.clone(),
-                        material: id.clone(),
-                    });
+            for archetype in &profile.overrides.archetypes {
+                let loadout = &archetype.opening_loadout;
+                for id in loadout
+                    .pickable_materials
+                    .iter()
+                    .chain(loadout.material_defaults.keys())
+                {
+                    if materials.material(id).is_none() {
+                        return Err(StartProfilesError::UnknownOpeningMaterial {
+                            profile: archetype_scope(&profile.id, &archetype.id),
+                            material: id.clone(),
+                        });
+                    }
                 }
             }
         }
@@ -466,18 +568,20 @@ impl StartProfiles {
         equipment: &crate::equipment_config::EquipmentConfig,
     ) -> Result<(), StartProfilesError> {
         for profile in &self.profiles {
-            for id in profile.overrides.opening_loadout.kit_defaults.keys() {
-                let Some(definition) = equipment.kit_definition(id) else {
-                    return Err(StartProfilesError::UnknownOpeningKit {
-                        profile: profile.id.clone(),
-                        kit: id.clone(),
-                    });
-                };
-                if definition.uses.is_empty() {
-                    return Err(StartProfilesError::OpeningKitBuysNothing {
-                        profile: profile.id.clone(),
-                        kit: id.clone(),
-                    });
+            for archetype in &profile.overrides.archetypes {
+                for id in archetype.opening_loadout.kit_defaults.keys() {
+                    let Some(definition) = equipment.kit_definition(id) else {
+                        return Err(StartProfilesError::UnknownOpeningKit {
+                            profile: archetype_scope(&profile.id, &archetype.id),
+                            kit: id.clone(),
+                        });
+                    };
+                    if definition.uses.is_empty() {
+                        return Err(StartProfilesError::OpeningKitBuysNothing {
+                            profile: archetype_scope(&profile.id, &archetype.id),
+                            kit: id.clone(),
+                        });
+                    }
                 }
             }
         }
@@ -506,6 +610,56 @@ impl StartProfiles {
     pub fn is_empty(&self) -> bool {
         self.profiles.is_empty()
     }
+}
+
+/// How an error names one archetype of one profile: `profile/archetype`.
+fn archetype_scope(profile: &str, archetype: &str) -> String {
+    format!("{profile}/{archetype}")
+}
+
+/// **The archetype catalog's intra-file bounds**: at least one entry (the human seat takes entry
+/// 0), unique ids (the wire names an archetype by id), a positive separation, and a valid opening
+/// loadout on each.
+fn validate_archetypes(
+    profile: &str,
+    archetypes: &[StartArchetype],
+) -> Result<(), StartProfilesError> {
+    if archetypes.is_empty() {
+        return Err(StartProfilesError::NoArchetypes {
+            profile: profile.to_string(),
+        });
+    }
+    for (index, archetype) in archetypes.iter().enumerate() {
+        if archetypes[..index]
+            .iter()
+            .any(|seen| seen.id == archetype.id)
+        {
+            return Err(StartProfilesError::DuplicateArchetypeId {
+                profile: profile.to_string(),
+                archetype: archetype.id.clone(),
+            });
+        }
+        if archetype.min_separation == 0 {
+            return Err(StartProfilesError::ZeroArchetypeSeparation {
+                profile: profile.to_string(),
+                archetype: archetype.id.clone(),
+            });
+        }
+        if let Some(share) = archetype.default_share {
+            if !share.is_finite() || share <= 0.0 || share > 1.0 {
+                return Err(StartProfilesError::InvalidDefaultShare {
+                    profile: profile.to_string(),
+                    archetype: archetype.id.clone(),
+                    share,
+                });
+            }
+        }
+        validate_opening_loadout(
+            &archetype_scope(profile, &archetype.id),
+            &archetype.opening_loadout,
+        )?;
+    }
+    Ok(())
 }
 
 /// The opening loadout's **intra-file** bounds. Cross-config checks (does the materials table carry
@@ -573,6 +727,26 @@ pub enum StartProfilesError {
     },
     #[error("duplicate start profile id `{0}`")]
     DuplicateId(String),
+    #[error("start profile `{profile}` lists no archetypes: the human seat takes the first one")]
+    NoArchetypes { profile: String },
+    #[error("start profile `{profile}` lists archetype `{archetype}` twice")]
+    DuplicateArchetypeId { profile: String, archetype: String },
+    #[error(
+        "start profile `{profile}` archetype `{archetype}` has a `min_separation` of 0: it is the \
+         distance worldgen holds between starts, and 0 would let two peoples open standing on the \
+         same hex - which is not a cramped map, it is no placement at all"
+    )]
+    ZeroArchetypeSeparation { profile: String, archetype: String },
+    #[error(
+        "start profile `{profile}` archetype `{archetype}` has a `default_share` of {share}: it \
+         is the fraction of what fits that a New Game screen pre-selects, so it must be finite and \
+         in (0, 1]"
+    )]
+    InvalidDefaultShare {
+        profile: String,
+        archetype: String,
+        share: f32,
+    },
     #[error("start profile `{profile}` has an invalid opening_loadout: {reason}")]
     InvalidOpeningLoadout { profile: String, reason: String },
     #[error(
@@ -775,9 +949,11 @@ impl CampaignProfileSnapshot {
     }
 
     pub fn to_schema(&self) -> CampaignProfileState {
-        let starting_units: Vec<CampaignStartingUnitState> = self
-            .overrides
-            .starting_units
+        // The campaign card describes the human seat's people - archetype 0.
+        let human = self.overrides.human_archetype();
+        let starting_units: Vec<CampaignStartingUnitState> = human
+            .map(|archetype| archetype.starting_units.as_slice())
+            .unwrap_or_default()
             .iter()
             .map(|unit| CampaignStartingUnitState {
                 kind: unit.kind.clone(),
@@ -785,9 +961,9 @@ impl CampaignProfileSnapshot {
                 tags: unit.tags.clone(),
             })
             .collect();
-        let inventory: Vec<CampaignInventoryEntryState> = self
-            .overrides
-            .inventory
+        let inventory: Vec<CampaignInventoryEntryState> = human
+            .map(|archetype| archetype.inventory.as_slice())
+            .unwrap_or_default()
             .iter()
             .map(|entry| CampaignInventoryEntryState {
                 item: entry.item.clone(),
@@ -802,7 +978,9 @@ impl CampaignProfileSnapshot {
             subtitle_loc_key: self.subtitle.loc_key.clone(),
             starting_units,
             inventory,
-            knowledge_tags: self.overrides.starting_knowledge_tags.clone(),
+            knowledge_tags: human
+                .map(|archetype| archetype.starting_knowledge_tags.clone())
+                .unwrap_or_default(),
             primary_food_module: self
                 .overrides
                 .food_modules
@@ -902,9 +1080,12 @@ mod tests {
                 assert!(
                     !profile
                         .overrides
-                        .starting_knowledge_tags
+                        .archetypes
                         .iter()
-                        .any(|granted| granted == tag),
+                        .any(|archetype| archetype
+                            .starting_knowledge_tags
+                            .iter()
+                            .any(|granted| granted == tag)),
                     "start profile '{}' grants the ladder knowledge '{tag}' — it must be EARNED \
                      (practice rung N unlocks rung N+1), never handed out at start",
                     profile.id
@@ -949,9 +1130,12 @@ mod tests {
                 assert!(
                     !profile
                         .overrides
-                        .starting_knowledge_tags
+                        .archetypes
                         .iter()
-                        .any(|granted| granted == tag),
+                        .any(|archetype| archetype
+                            .starting_knowledge_tags
+                            .iter()
+                            .any(|granted| granted == tag)),
                     "start profile '{}' grants the craft '{tag}' — a band learns Tanning by \
                      tanning, which is what makes 'tools are earned, never a prerequisite' true",
                     profile.id
@@ -983,7 +1167,7 @@ mod tests {
     fn mutated_loadout(mutate: impl FnOnce(&mut Value)) -> StartProfilesError {
         let mut json: Value =
             serde_json::from_str(BUILTIN_START_PROFILES).expect("the builtin parses as json");
-        mutate(&mut json["profiles"][0]["opening_loadout"]);
+        mutate(&mut json["profiles"][0]["archetypes"][0]["opening_loadout"]);
         StartProfiles::from_json_str(&json.to_string())
             .expect_err("the mutated profile must be rejected")
     }
@@ -1002,9 +1186,16 @@ mod tests {
             .expect("every pre-filled kit must be on the shipped roster and carry something");
         let mut checked = 0;
         for profile in profiles.iter() {
-            let loadout = &profile.overrides().opening_loadout;
-            checked += 1;
-            assert!(!loadout.pickable_materials.is_empty(), "{}", profile.id);
+            for archetype in &profile.overrides().archetypes {
+                let loadout = &archetype.opening_loadout;
+                checked += 1;
+                assert!(
+                    !loadout.pickable_materials.is_empty(),
+                    "{}/{}",
+                    profile.id,
+                    archetype.id
+                );
+            }
         }
         assert!(
             checked > 0,
@@ -1019,9 +1210,9 @@ mod tests {
     fn a_profile_with_no_opening_loadout_is_rejected() {
         let mut json: Value =
             serde_json::from_str(BUILTIN_START_PROFILES).expect("the builtin parses as json");
-        json["profiles"][0]
+        json["profiles"][0]["archetypes"][0]
             .as_object_mut()
-            .expect("a profile is an object")
+            .expect("an archetype is an object")
             .remove("opening_loadout");
         assert!(matches!(
             StartProfiles::from_json_str(&json.to_string()),
@@ -1054,7 +1245,8 @@ mod tests {
     fn the_retired_material_points_key_is_refused() {
         let mut json: Value =
             serde_json::from_str(BUILTIN_START_PROFILES).expect("the builtin parses as json");
-        json["profiles"][0]["opening_loadout"]["material_points"] = Value::from(30);
+        json["profiles"][0]["archetypes"][0]["opening_loadout"]["material_points"] =
+            Value::from(30);
         assert!(matches!(
             StartProfiles::from_json_str(&json.to_string()),
             Err(StartProfilesError::Parse(_))
@@ -1068,9 +1260,9 @@ mod tests {
     fn a_pickable_material_the_roster_does_not_carry_is_rejected() {
         let mut json: Value =
             serde_json::from_str(BUILTIN_START_PROFILES).expect("the builtin parses as json");
-        json["profiles"][0]["opening_loadout"]["pickable_materials"] =
+        json["profiles"][0]["archetypes"][0]["opening_loadout"]["pickable_materials"] =
             Value::Array(vec![Value::from("hyde")]);
-        json["profiles"][0]["opening_loadout"]["material_defaults"] =
+        json["profiles"][0]["archetypes"][0]["opening_loadout"]["material_defaults"] =
             Value::Object(serde_json::Map::new());
         let profiles =
             StartProfiles::from_json_str(&json.to_string()).expect("it parses and self-validates");
@@ -1095,6 +1287,7 @@ mod tests {
             .get("late_forager_tribe")
             .expect("the shipped profile")
             .overrides()
+            .archetypes[0]
             .opening_loadout;
         assert_eq!(
             loadout
@@ -1114,7 +1307,7 @@ mod tests {
     fn a_pre_filled_kit_the_roster_does_not_carry_is_rejected() {
         let mut json: Value =
             serde_json::from_str(BUILTIN_START_PROFILES).expect("the builtin parses as json");
-        json["profiles"][0]["opening_loadout"]["kit_defaults"] =
+        json["profiles"][0]["archetypes"][0]["opening_loadout"]["kit_defaults"] =
             serde_json::json!({ "ballista": 1 });
         let profiles =
             StartProfiles::from_json_str(&json.to_string()).expect("it parses and self-validates");
@@ -1131,7 +1324,8 @@ mod tests {
     fn a_pre_filled_kit_that_carries_nothing_is_rejected() {
         let mut json: Value =
             serde_json::from_str(BUILTIN_START_PROFILES).expect("the builtin parses as json");
-        json["profiles"][0]["opening_loadout"]["kit_defaults"] = serde_json::json!({ "none": 1 });
+        json["profiles"][0]["archetypes"][0]["opening_loadout"]["kit_defaults"] =
+            serde_json::json!({ "none": 1 });
         let profiles =
             StartProfiles::from_json_str(&json.to_string()).expect("it parses and self-validates");
         assert!(matches!(
@@ -1160,7 +1354,7 @@ mod tests {
     fn a_kit_pre_fill_over_any_plausible_budget_still_parses() {
         let mut json: Value =
             serde_json::from_str(BUILTIN_START_PROFILES).expect("the builtin parses as json");
-        json["profiles"][0]["opening_loadout"]["kit_defaults"] =
+        json["profiles"][0]["archetypes"][0]["opening_loadout"]["kit_defaults"] =
             serde_json::json!({ "big_game": 900 });
         let profiles =
             StartProfiles::from_json_str(&json.to_string()).expect("no load-time sum check exists");
@@ -1169,10 +1363,136 @@ mod tests {
                 .get("late_forager_tribe")
                 .expect("the shipped profile")
                 .overrides()
+                .archetypes[0]
                 .opening_loadout
                 .kit_defaults
                 .get("big_game"),
             Some(&900)
         );
+    }
+
+    /// **The assignment is the roster ids in catalog order**: the human first, then archetype 0's
+    /// rivals, then archetype 1's - and `counts` reads it back.
+    #[test]
+    fn the_assignment_hands_out_roster_ids_in_catalog_order() {
+        use crate::orders::FactionId;
+        let assignment = StartArchetypeAssignment::from_counts(&[2, 3]);
+        let indices: Vec<usize> = (0..6)
+            .map(|id| assignment.archetype_index(FactionId(id)))
+            .collect();
+        assert_eq!(indices, vec![0, 0, 0, 1, 1, 1]);
+        assert_eq!(assignment.counts(2), vec![2, 3]);
+        assert_eq!(
+            assignment.archetype_index(FactionId(99)),
+            0,
+            "an id the assignment does not cover reads as archetype 0"
+        );
+        assert_eq!(StartArchetypeAssignment::default().counts(2), vec![0, 0]);
+    }
+
+    /// The shipped file with the archetype catalog replaced.
+    fn mutated_archetypes(
+        mutate: impl FnOnce(&mut Value),
+    ) -> Result<StartProfiles, StartProfilesError> {
+        let mut json: Value =
+            serde_json::from_str(BUILTIN_START_PROFILES).expect("the builtin parses as json");
+        mutate(&mut json["profiles"][0]["archetypes"]);
+        StartProfiles::from_json_str(&json.to_string())
+    }
+
+    /// **The shipped catalog**: majors first (the human seat takes entry 0) at the wide separation,
+    /// minors second at the tight one, each with its own band size - and minors carry no kits.
+    #[test]
+    fn the_shipped_profile_ships_a_major_then_a_minor_archetype() {
+        let profiles = StartProfiles::builtin();
+        let archetypes = &profiles
+            .get("late_forager_tribe")
+            .expect("the shipped profile")
+            .overrides()
+            .archetypes;
+        assert_eq!(
+            archetypes.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(),
+            vec!["major", "minor"]
+        );
+        assert!(archetypes[0].min_separation > archetypes[1].min_separation);
+        assert_eq!(archetypes[0].starting_units[0].band_size(), 30);
+        assert_eq!(archetypes[1].starting_units[0].band_size(), 12);
+        assert!(!archetypes[0].opening_loadout.kit_defaults.is_empty());
+        assert!(archetypes[1].opening_loadout.kit_defaults.is_empty());
+    }
+
+    #[test]
+    fn a_profile_with_no_archetypes_is_rejected() {
+        assert!(matches!(
+            mutated_archetypes(|archetypes| *archetypes = Value::Array(Vec::new())),
+            Err(StartProfilesError::NoArchetypes { .. })
+        ));
+        let mut json: Value =
+            serde_json::from_str(BUILTIN_START_PROFILES).expect("the builtin parses as json");
+        json["profiles"][0]
+            .as_object_mut()
+            .expect("a profile is an object")
+            .remove("archetypes");
+        assert!(matches!(
+            StartProfiles::from_json_str(&json.to_string()),
+            Err(StartProfilesError::NoArchetypes { .. })
+        ));
+    }
+
+    #[test]
+    fn a_duplicate_archetype_id_is_rejected() {
+        assert!(matches!(
+            mutated_archetypes(|archetypes| archetypes[1]["id"] = Value::from("major")),
+            Err(StartProfilesError::DuplicateArchetypeId { .. })
+        ));
+    }
+
+    #[test]
+    fn a_default_share_outside_zero_to_one_is_rejected() {
+        for bad in [0.0, -0.5, 1.5] {
+            assert!(
+                matches!(
+                    mutated_archetypes(
+                        |archetypes| archetypes[1]["default_share"] = Value::from(bad)
+                    ),
+                    Err(StartProfilesError::InvalidDefaultShare { .. })
+                ),
+                "{bad} must be rejected"
+            );
+        }
+        assert!(
+            mutated_archetypes(|archetypes| archetypes[1]["default_share"] = Value::from(1.0))
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_zero_archetype_separation_is_rejected() {
+        assert!(matches!(
+            mutated_archetypes(|archetypes| archetypes[1]["min_separation"] = Value::from(0)),
+            Err(StartProfilesError::ZeroArchetypeSeparation { .. })
+        ));
+    }
+
+    /// `deny_unknown_fields` on the archetype: a per-people field left on the profile is silently
+    /// dead, but one mistyped on the archetype is refused.
+    #[test]
+    fn an_unknown_archetype_field_is_rejected() {
+        assert!(matches!(
+            mutated_archetypes(
+                |archetypes| archetypes[0]["faction_start_min_separation"] = Value::from(20)
+            ),
+            Err(StartProfilesError::Parse(_))
+        ));
+    }
+
+    /// A bad loadout on a LATER archetype is caught too - every archetype runs the same checks.
+    #[test]
+    fn every_archetype_runs_the_opening_loadout_checks() {
+        assert!(matches!(
+            mutated_archetypes(|archetypes| archetypes[1]["opening_loadout"]
+                ["pickable_materials"] = Value::Array(Vec::new())),
+            Err(StartProfilesError::InvalidOpeningLoadout { .. })
+        ));
     }
 }

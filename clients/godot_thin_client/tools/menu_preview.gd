@@ -39,40 +39,47 @@ const NEW_GAME_PANE_ID := "new_game"
 const BEGIN_BUTTON_LABEL := "Begin the trail"
 
 # ---- faction-capacity fixtures --------------------------------------------------------------------
-# The ceiling is a property of the GRID (`core_sim`'s `faction_start_capacity`: a hex-packing count
-# over the map's LAND, at the shipped `faction_start_min_separation`), and the offer is derived from
-# it. These are the numbers a real server answers for the shipped grids:
+# The answer is ONE ROW PER START ARCHETYPE, in catalog order, each `{id, display_label, site_count,
+# default_count}`; the ceiling of a row is NOT in the reply, it is the contract formula
+# `max(0, site_count - 1 - sum of the EARLIER rows' counts)` (`FactionCapacity.ceiling_at`). So these
+# fixtures state the inputs the server sends and the assertions state the ceilings they imply:
 #
-#     grid          Tiny  Small  Standard  Large  Huge
-#     ceiling          3      4         6     11    17
-#     pre-selects      2      3         4      6     9
+#     grid        major sites  default  ceiling | minor sites  default  ceiling (after the default major)
+#     Tiny              4         2        3    |      5          1        2
+#     Standard          7         4        6    |     10          2        5
+#     Huge             18         9       17    |     30          4       20
+#     (alone)           1         0        0    |      1          0        0
 #
-# **They are fixtures for the ROW's states, not a restatement of the rule** — the client never
-# computes this, which is the whole reason the query exists. They are written down anyway because
-# this harness ANSWERS THE QUERY ITSELF: a drifted fixture stays perfectly green while rendering a
-# state no player can reach, which is worth less than no frame at all. Both numbers have moved once
-# already; re-derive them from `faction_start_capacity` rather than trusting this block.
-## **EVERY ANSWER IS FOR A GRID, so the pairs are per grid.** Answering a Tiny map with Standard's
-## ceiling is the same drift as a stale constant and one step harder to see, because the numbers are
-## individually right.
-const CAPACITY_MAX_SMALLEST := 3
-const CAPACITY_DEFAULT_SMALLEST := 2
-const CAPACITY_MAX_STANDARD := 6
-const CAPACITY_DEFAULT_STANDARD := 4
-# What the player drags the slider to, for the frame that shows a CHOSEN count. Well below the
+# **They are fixtures for the ROWS' states, not a restatement of the rule** - the client never
+# computes the count of starts a grid seats, which is the whole reason the query exists. They are
+# written down anyway because this harness ANSWERS THE QUERY ITSELF: a drifted fixture stays perfectly
+# green while rendering a state no player can reach. The ids and labels are the shipped catalog's
+# (`start_profiles.json`: `major` "Rivals", `minor` "Minor peoples"), but the UI under test names
+# neither - it renders whatever the reply carries, in the order it carries it.
+## **EVERY ANSWER IS FOR A GRID, so the rows are per grid.** Answering a Tiny map with Standard's
+## sites is the same drift as a stale constant and one step harder to see.
+const ARCHETYPE_MAJOR := "major"
+const ARCHETYPE_MINOR := "minor"
+const LABEL_MAJOR := "Rivals"
+const LABEL_MINOR := "Minor peoples"
+const GRID_TINY := [[ARCHETYPE_MAJOR, LABEL_MAJOR, 4, 2], [ARCHETYPE_MINOR, LABEL_MINOR, 5, 1]]
+const GRID_STANDARD := [[ARCHETYPE_MAJOR, LABEL_MAJOR, 7, 4], [ARCHETYPE_MINOR, LABEL_MINOR, 10, 2]]
+const GRID_HUGE := [[ARCHETYPE_MAJOR, LABEL_MAJOR, 18, 9], [ARCHETYPE_MINOR, LABEL_MINOR, 30, 4]]
+# A genuine 0 ceiling on every row - a grid with no room for a second start - which the rows must
+# render as "you will be alone" rather than as a failure. **No offered map size produces it**: the
+# smallest, Tiny, still seats 3. So it is answered here rather than reached.
+const GRID_ALONE := [[ARCHETYPE_MAJOR, LABEL_MAJOR, 1, 0], [ARCHETYPE_MINOR, LABEL_MINOR, 1, 0]]
+# What the player drags the first row to, for the frame that shows a CHOSEN count. Well below the
 # Standard offer of 4 and nowhere near the ceiling of 6, so the grabber sits visibly left of where the
-# answer put it — a one-step nudge would read as a rounding artefact rather than as a decision. It is
-# also the one value that exercises the readout's singular form ("1 rival", not "1 rivals").
+# answer put it.
 const CAPACITY_PICKED := 1
-# A genuine 0 ceiling — a grid with no room for a second start — which the row must render as "you
-# will be alone" rather than as a failure. **No offered map size produces it**: the smallest, Tiny,
-# still seats 3 rivals. So it is answered here rather than reached — a heavier separation or a preset
-# with very little land is what would make it real, and the row has to be right when it does.
-const CAPACITY_MAX_ALONE := 0
-# The roomiest offered grid, for the re-ask frames: the pick made against it has to survive the
-# switch to a smaller map, clamped rather than reset.
-const CAPACITY_MAX_ROOMIEST := 17
-const CAPACITY_DEFAULT_ROOMIEST := 9
+# The re-clamp legs (Standard grid): the minor row is dragged to its ceiling with the default major
+# count in front of it, then the major row is raised so far that the minor row's ceiling falls under
+# the pick. Ceilings are the contract formula's, written out: 10 - 1 - 4 = 5, then 10 - 1 - 6 = 3.
+const HUGE_MAJOR_CEILING := 17  # 18 sites - the human seat
+const MINOR_PICKED_HIGH := 5
+const MAJOR_PICKED_HIGH := 6
+const MINOR_CEILING_AFTER_HIGH_MAJOR := 3
 # The two map sizes the frames switch between, named from the shared registry rather than typed as
 # ids: switching size is what re-asks the ceiling, and `MapSizes` is the one list of them.
 const SIZE_KEY_SMALLEST := "tiny"
@@ -299,19 +306,16 @@ func _run_new_game_states() -> void:
 	await _save("menu_new_game_rivals_pending")
 
 	# --- answered: the slider, opened on the server's default ------------------------------------
-	_answer_capacity(CAPACITY_DEFAULT_STANDARD, CAPACITY_MAX_STANDARD)
+	_answer_capacity(GRID_STANDARD)
 	await _settle()
-	if _shell._rival_count != CAPACITY_DEFAULT_STANDARD:
-		_fail("rivals: an answered ask left the control on %d, not the server's default %d"
-			% [_shell._rival_count, CAPACITY_DEFAULT_STANDARD])
+	_assert_two_rows_named("answered")
+	_assert_sent_counts("an answered ask", {ARCHETYPE_MAJOR: 4, ARCHETYPE_MINOR: 2})
 	await _save("menu_new_game_rivals")
 
 	# --- the player picks some. The count is what "Begin the trail" would carry. ------------------
-	_drag_rival_slider(CAPACITY_PICKED)
+	_drag_rival_slider(ARCHETYPE_MAJOR, CAPACITY_PICKED)
 	await _settle()
-	if _shell._resolved_rival_count() != CAPACITY_PICKED:
-		_fail("rivals: a picked %d resolved to %d on the wire"
-			% [CAPACITY_PICKED, _shell._resolved_rival_count()])
+	_assert_sent_counts("a picked major count", {ARCHETYPE_MAJOR: CAPACITY_PICKED, ARCHETYPE_MINOR: 2})
 	await _save("menu_new_game_rivals_picked")
 
 	# --- A GRID WITH NO ROOM. Not a failure, and not rendered as one: no slider, and a caption that
@@ -320,12 +324,13 @@ func _run_new_game_states() -> void:
 	_pick_map_size(SIZE_KEY_SMALLEST)
 	if _capacity_seam.state != FactionCapacity.STATE_PENDING:
 		_fail("rivals: changing the map size did not re-ask the ceiling (%s)" % _capacity_seam.state)
-	_answer_capacity(0, CAPACITY_MAX_ALONE)
+	_answer_capacity(GRID_ALONE)
 	await _settle()
-	_assert_no_rival_slider("ceiling 0")
-	if _shell._resolved_rival_count() != 0:
-		_fail("rivals: a 0 ceiling left %d on the wire instead of an explicit none"
-			% _shell._resolved_rival_count())
+	for id in [ARCHETYPE_MAJOR, ARCHETYPE_MINOR]:
+		var locked := _find_slider_for(id)
+		if locked == null or locked.editable or int(locked.max_value) != 0:
+			_fail("rivals (ceiling 0): the %s row offers a range where the grid seats nobody" % id)
+	_assert_sent_counts("a 0 ceiling", {ARCHETYPE_MAJOR: 0, ARCHETYPE_MINOR: 0})
 	await _save("menu_new_game_rivals_alone")
 
 	# --- A SERVER ANSWERED AND STILL GAVE NO COUNT, and the screen starts a game anyway. The argument
@@ -338,14 +343,15 @@ func _run_new_game_states() -> void:
 	_fail_capacity(FactionCapacity.ERROR_WRONG_ANSWERER)
 	await _settle()
 	_assert_no_rival_slider("failed")
-	if _shell._resolved_rival_count() != FactionCapacity.NO_COUNT:
-		_fail("rivals: a failed ask put %d on the wire instead of omitting the argument"
-			% _shell._resolved_rival_count())
+	if not _shell._resolved_archetype_counts().is_empty():
+		_fail("rivals: a failed ask put %s on the wire instead of omitting every token"
+			% str(_shell._resolved_archetype_counts()))
 	_assert_says_none("a server answered without a count")
 	_assert_begin_is_offered("a server answered without a count")
 	await _save("menu_new_game_rivals_unavailable")
 
 	await _assert_the_shown_count_is_the_count_sent()
+	await _assert_a_later_row_follows_an_earlier_one()
 	await _run_rivals_reask_states()
 	await _assert_row_height_is_stable()
 	await _assert_an_answer_survives_leaving_the_pane()
@@ -403,9 +409,9 @@ func _run_server_unreachable_states() -> void:
 	_assert_notice_reads("a retry of an unreachable server", MenuShell.NOTICE_NO_SERVER)
 
 	# --- THE SERVER CAME BACK. The unreachable state must not outlive the problem.
-	_answer_capacity(CAPACITY_DEFAULT_STANDARD, CAPACITY_MAX_STANDARD)
+	_answer_capacity(GRID_STANDARD)
 	await _settle()
-	if _shell._rival_caption.text != MenuShell.RIVALS_CAPTION_CEILING_FORMAT % CAPACITY_MAX_STANDARD:
+	if _shell._rival_caption.text != MenuShell.RIVALS_CAPTION_SHARED:
 		_fail("rivals: an answer after an unreachable server left the caption reading %s"
 			% _shell._rival_caption.text)
 	_assert_begin_is_offered("the server came back")
@@ -433,7 +439,7 @@ func _assert_a_bounced_sessions_notice_is_retracted_too() -> void:
 		_fail("landing notice: the shell says the same thing in %d boxes at once"
 			% _count_notice_boxes(_shell))
 	_capacity_seam.retry()
-	_answer_capacity(CAPACITY_DEFAULT_SMALLEST, CAPACITY_MAX_SMALLEST)
+	_answer_capacity(GRID_TINY)
 	await _settle()
 	_assert_notice_reads("a bounced session, after the server answered", "")
 
@@ -468,7 +474,7 @@ func _assert_an_answer_survives_leaving_the_pane() -> void:
 	_pick_map_size(SIZE_KEY_SMALLEST)
 	_shell._activate_item(OPTIONS_PANE_ID)
 	await _settle()
-	_answer_capacity(CAPACITY_DEFAULT_SMALLEST, CAPACITY_MAX_SMALLEST)
+	_answer_capacity(GRID_TINY)
 	await _settle()
 	if _capacity_seam.state != FactionCapacity.STATE_READY:
 		_fail("rivals: an answer delivered after a pane change left the seam in %s" % _capacity_seam.state)
@@ -479,63 +485,128 @@ func _assert_an_answer_survives_leaving_the_pane() -> void:
 		_fail("rivals: reopening the pane after an off-pane answer offered no slider")
 
 
-## **THE COUNT ON SCREEN IS THE COUNT ON THE WIRE — including the one nobody touched.**
+## **THE COUNTS ON SCREEN ARE THE COUNTS ON THE WIRE - including the ones nobody touched, PER
+## ARCHETYPE.**
 ##
-## The row opens on the server's map-scaled offer (4 rivals on a Standard grid), and a player who
-## never drags the slider still SENDS that number: `_on_capacity_changed` seeds the pick from the
-## answer and nothing downstream re-derives it. Since an absent count no longer means "the server's
-## configured default" but its UNATTENDED roster — **zero rivals** — a break in that chain is the
-## difference between the world the screen promised and an empty one, and it would look completely
-## normal in every frame. No PNG for the same reason.
+## Each row opens on the server's map-scaled offer (4 majors and 2 minors on a Standard grid), and a
+## player who never drags a slider still SENDS those numbers: `_on_capacity_changed` seeds the picks from
+## the answer and nothing downstream re-derives them. Since an omitted id means the archetype's
+## UNATTENDED count - usually zero - a break in that chain is the difference between the world the
+## screen promised and an empty one, and it would look completely normal in every frame. No PNG for the
+## same reason.
 ##
 ## The chain is walked at both ends: the shell's own `new_game_requested`, which is what
 ## `LandingScreen` stashes, and `Main.new_game_line`, which is what actually reaches the socket.
 func _assert_the_shown_count_is_the_count_sent() -> void:
 	# **THE STATE A SCREEN NOBODY HAS TOUCHED IS IN**, staged explicitly: the frames above dragged the
-	# slider, and a pick is deliberately kept across pane changes and re-asks, so it would otherwise be
-	# inherited here and this assertion would be about a player who DID choose. These two fields are
-	# the whole of "untouched" — the pick, and the flag that says an answer may seat it.
-	_shell._rival_picked = false
-	_shell._rival_count = FactionCapacity.NO_COUNT
+	# sliders, and a pick is deliberately kept across pane changes and re-asks, so it would otherwise be
+	# inherited here and this assertion would be about a player who DID choose.
+	_shell._picked = {}
+	_shell._counts = {}
 	_pick_map_size(SIZE_KEY_STANDARD)
-	_answer_capacity(CAPACITY_DEFAULT_STANDARD, CAPACITY_MAX_STANDARD)
+	_answer_capacity(GRID_STANDARD)
 	await _settle()
-	var slider := _find_slider(_shell._rivals_box)
-	if slider == null:
-		_fail("shown-is-sent: the answered row offered no control to read")
-		return
-	if int(slider.value) != CAPACITY_DEFAULT_STANDARD:
-		_fail("shown-is-sent: the row opened on %d, not the server's offer of %d"
-			% [int(slider.value), CAPACITY_DEFAULT_STANDARD])
+	var shown := {}
+	for id in [ARCHETYPE_MAJOR, ARCHETYPE_MINOR]:
+		var slider := _find_slider_for(id)
+		if slider == null:
+			_fail("shown-is-sent: the answered %s row offered no control to read" % id)
+			return
+		shown[id] = int(slider.value)
+	if shown != {ARCHETYPE_MAJOR: 4, ARCHETYPE_MINOR: 2}:
+		_fail("shown-is-sent: the rows opened on %s, not the server's offer of major 4 / minor 2" % str(shown))
 
-	# THE SHELL'S OUTPUT. Driven through the handler the Begin button is connected to — the button
+	# THE SHELL'S OUTPUT. Driven through the handler the Begin button is connected to - the button
 	# itself sits below this harness window's fold, and a click that lands on nothing would assert
 	# nothing.
-	var emitted: Array = []
-	var sink := func(_preset: String, _w: int, _h: int, _seed: String, _profile: String, count: int) -> void:
-		emitted.append(count)
-	_shell.new_game_requested.connect(sink)
-	_shell._on_begin_pressed()
-	_shell.new_game_requested.disconnect(sink)
-	if emitted.size() != 1:
-		_fail("shown-is-sent: Begin emitted %d requests, not one" % emitted.size())
-	elif int(emitted[0]) != CAPACITY_DEFAULT_STANDARD:
-		_fail("shown-is-sent: the row showed %d and the request carried %d"
-			% [CAPACITY_DEFAULT_STANDARD, int(emitted[0])])
+	var emitted := _emitted_request()
+	if emitted.is_empty():
+		_fail("shown-is-sent: Begin emitted no request")
+		return
+	var carried := {}
+	for entry in (emitted["counts"] as Array):
+		carried[String(entry["id"])] = int(entry["count"])
+	if carried != shown:
+		_fail("shown-is-sent: the rows showed %s and the request carried %s" % [str(shown), str(carried)])
 
-	# THE WIRE. `Main` appends the count only when there is one, and that rule is the last place the
-	# player's pick can be dropped.
+	# THE WIRE. `Main` appends one `<id>=<count>` token per archetype, in catalog order.
 	var line: String = MAIN_SCRIPT.new_game_line(
-		WIRE_PRESET, WIRE_WIDTH, WIRE_HEIGHT, WIRE_SEED, WIRE_PROFILE, CAPACITY_DEFAULT_STANDARD)
-	if not line.ends_with(" %d" % CAPACITY_DEFAULT_STANDARD):
-		_fail("shown-is-sent: the new_game line does not carry the count (%s)" % line)
+		WIRE_PRESET, WIRE_WIDTH, WIRE_HEIGHT, WIRE_SEED, WIRE_PROFILE, emitted["counts"])
+	var expected := "new_game %s %d %d %s %s major=4 minor=2" % [
+		WIRE_PRESET, WIRE_WIDTH, WIRE_HEIGHT, WIRE_SEED, WIRE_PROFILE]
+	if line != expected:
+		_fail("shown-is-sent: the new_game line reads %s, not %s" % [line, expected])
+	# An explicit 0 is a token (a player who chose none), distinct from an absent one.
+	var explicit_zero: String = MAIN_SCRIPT.new_game_line(
+		WIRE_PRESET, WIRE_WIDTH, WIRE_HEIGHT, WIRE_SEED, WIRE_PROFILE,
+		[{"id": ARCHETYPE_MAJOR, "count": 0}])
+	if not explicit_zero.ends_with(" major=0"):
+		_fail("shown-is-sent: an explicit 0 vanished from the line (%s)" % explicit_zero)
 	# …and the absent case still carries NOTHING, which is a different request from a trailing 0.
 	var omitted: String = MAIN_SCRIPT.new_game_line(
-		WIRE_PRESET, WIRE_WIDTH, WIRE_HEIGHT, WIRE_SEED, WIRE_PROFILE, FactionCapacity.NO_COUNT)
+		WIRE_PRESET, WIRE_WIDTH, WIRE_HEIGHT, WIRE_SEED, WIRE_PROFILE, [])
 	if omitted != "new_game %s %d %d %s %s" % [WIRE_PRESET, WIRE_WIDTH, WIRE_HEIGHT, WIRE_SEED, WIRE_PROFILE]:
 		_fail("shown-is-sent: an unanswered ask put something on the line (%s)" % omitted)
 	# Left as it was found: untouched, so the next state stages its own starting point.
-	_shell._rival_picked = false
+	_shell._picked = {}
+
+
+## **A ROW'S CEILING IS THE ROWS BEFORE IT, so moving an earlier row re-clamps every later one.** The
+## Standard grid: the minor row is dragged to its ceiling behind the default 4 majors (10 - 1 - 4 = 5),
+## then the major row is raised to 6 and the minor row's ceiling becomes 10 - 1 - 6 = 3 - its slider's
+## bound, its readout and the count that would be SENT must all follow, in place (the same node).
+## Asserted on the rows AND the wire, because a slider that clamps visually while the model keeps 5
+## would send a count the screen no longer shows.
+func _assert_a_later_row_follows_an_earlier_one() -> void:
+	_shell._picked = {}
+	_shell._counts = {}
+	_pick_map_size(SIZE_KEY_STANDARD)
+	_answer_capacity(GRID_STANDARD)
+	await _settle()
+	var minor := _find_slider_for(ARCHETYPE_MINOR)
+	if minor == null:
+		_fail("re-clamp: no minor slider to drag")
+		return
+	var minor_id := minor.get_instance_id()
+	_drag_rival_slider(ARCHETYPE_MINOR, MINOR_PICKED_HIGH)
+	_assert_sent_counts("a minor pick at its ceiling", {ARCHETYPE_MAJOR: 4, ARCHETYPE_MINOR: MINOR_PICKED_HIGH})
+	_drag_rival_slider(ARCHETYPE_MAJOR, MAJOR_PICKED_HIGH)
+	await _settle()
+	if int(minor.max_value) != MINOR_CEILING_AFTER_HIGH_MAJOR:
+		_fail("re-clamp: the minor slider's bound is %d after 6 majors, not %d"
+			% [int(minor.max_value), MINOR_CEILING_AFTER_HIGH_MAJOR])
+	if int(minor.value) != MINOR_CEILING_AFTER_HIGH_MAJOR:
+		_fail("re-clamp: the minor slider still shows %d under a ceiling of %d"
+			% [int(minor.value), MINOR_CEILING_AFTER_HIGH_MAJOR])
+	if _find_slider_for(ARCHETYPE_MINOR) != minor or minor.get_instance_id() != minor_id:
+		_fail("re-clamp: the minor row was rebuilt under the player instead of updated in place")
+	_assert_sent_counts("a major raise that squeezes the minor row",
+		{ARCHETYPE_MAJOR: MAJOR_PICKED_HIGH, ARCHETYPE_MINOR: MINOR_CEILING_AFTER_HIGH_MAJOR})
+	await _save("menu_new_game_archetypes_reclamped")
+	_shell._picked = {}
+	# Moved off Standard so the next state's click on it is a real re-ask that re-seeds the rows.
+	_pick_map_size(SIZE_KEY_ROOMIEST)
+
+
+## The rows the reply named, each under the server's label and in the reply's order - and nothing in
+## the pane names an archetype of its own.
+func _assert_two_rows_named(state_name: String) -> void:
+	var headings: Array = []
+	for child in _shell._rivals_box.get_children():
+		if child is Label and child != _shell._rival_caption and not (child as Label).text.is_empty():
+			headings.append((child as Label).text)
+	var wanted := [LABEL_MAJOR.to_upper(), LABEL_MINOR.to_upper()]
+	if headings != wanted:
+		_fail("rows (%s): the headings read %s, not the server's labels %s" % [state_name, str(headings), str(wanted)])
+
+
+## What a Begin pressed now would carry, per archetype, against what the rows should be sending.
+func _assert_sent_counts(state_name: String, expected: Dictionary) -> void:
+	var actual := {}
+	for entry in _shell._resolved_archetype_counts():
+		actual[String(entry["id"])] = int(entry["count"])
+	if actual != expected:
+		_fail("rivals (%s): the wire carries %s, not %s" % [state_name, str(actual), str(expected)])
 
 
 ## **THE SEED THE PLAYER TYPES BACK IN, AND WHETHER IT REACHES THE SOCKET UNCHANGED.** Reported from
@@ -558,7 +629,7 @@ func _assert_the_shown_count_is_the_count_sent() -> void:
 func _run_seed_states() -> void:
 	_shell._activate_item(NEW_GAME_PANE_ID)
 	_pick_map_size(SIZE_KEY_STANDARD)
-	_answer_capacity(CAPACITY_DEFAULT_STANDARD, CAPACITY_MAX_STANDARD)
+	_answer_capacity(GRID_STANDARD)
 	_shell.set_notice("")
 	await _settle()
 	_assert_begin_is_offered("a seeded screen with a server answering")
@@ -650,7 +721,7 @@ func _assert_a_seed_is_refused(typed: String, state_name: String) -> void:
 	if not emitted.is_empty():
 		_fail("seed (%s): a seed that cannot be parsed was still sent (%s)"
 			% [state_name, MAIN_SCRIPT.new_game_line(WIRE_PRESET, WIRE_WIDTH, WIRE_HEIGHT,
-				String(emitted["seed"]), WIRE_PROFILE, FactionCapacity.NO_COUNT)])
+				String(emitted["seed"]), WIRE_PROFILE, emitted["counts"])])
 
 
 ## Type into the REAL field, through the path that enforces its cap. `set_text` does not, so assigning
@@ -671,13 +742,13 @@ func _emitted_request() -> Dictionary:
 	# MUTATED, never reassigned: a GDScript lambda captures a local by value, so `captured = {…}` would
 	# rebind the lambda's own copy and this function would report every press as "emitted nothing".
 	var captured := {}
-	var sink := func(preset: String, w: int, h: int, seed: String, profile: String, count: int) -> void:
+	var sink := func(preset: String, w: int, h: int, seed: String, profile: String, counts: Array) -> void:
 		captured["preset"] = preset
 		captured["width"] = w
 		captured["height"] = h
 		captured["seed"] = seed
 		captured["profile"] = profile
-		captured["rivals"] = count
+		captured["counts"] = counts
 	_shell.new_game_requested.connect(sink)
 	_shell._on_begin_pressed()
 	_shell.new_game_requested.disconnect(sink)
@@ -693,7 +764,7 @@ func _line_for_the_emitted_request(state_name: String) -> String:
 		return ""
 	return MAIN_SCRIPT.new_game_line(
 		String(emitted["preset"]), int(emitted["width"]), int(emitted["height"]),
-		String(emitted["seed"]), String(emitted["profile"]), int(emitted["rivals"]))
+		String(emitted["seed"]), String(emitted["profile"]), emitted["counts"])
 
 
 ## Everything the summary row says, in one string — the row is a box of key/value pairs, so the
@@ -725,11 +796,11 @@ func _run_rivals_reask_states() -> void:
 	# failed state left it there), and `_on_size_input` ignores a click on the size already selected,
 	# so this walk moves standard -> roomiest.
 	_pick_map_size(SIZE_KEY_STANDARD)
-	_answer_capacity(CAPACITY_DEFAULT_STANDARD, CAPACITY_MAX_STANDARD)
+	_answer_capacity(GRID_STANDARD)
 	await _settle()
-	_drag_rival_slider(CAPACITY_PICKED)
+	_drag_rival_slider(ARCHETYPE_MAJOR, CAPACITY_PICKED)
 	await _settle()
-	var before := _find_slider(_shell._rivals_box)
+	var before := _find_slider_for(ARCHETYPE_MAJOR)
 	if before == null:
 		_fail("rivals re-ask: no slider to preserve before the size click")
 		return
@@ -737,12 +808,12 @@ func _run_rivals_reask_states() -> void:
 	var before_rect := before.get_global_rect()
 	var before_height := _shell._rivals_box.size.y
 	# The summary reads the same resolved count the wire would carry, so it flickers with it.
-	var before_summary := _shell._rivals_summary_text()
+	var before_summary := str(_shell._resolved_archetype_counts())
 
 	# THE CLICK. The ask is now in flight and the answer has not landed.
 	_pick_map_size(SIZE_KEY_ROOMIEST)
 	await _settle()
-	var during := _find_slider(_shell._rivals_box)
+	var during := _find_slider_for(ARCHETYPE_MAJOR)
 	if during == null:
 		_fail("rivals re-ask: the control vanished while the new ceiling was in flight")
 	elif during.get_instance_id() != before_id:
@@ -754,26 +825,26 @@ func _run_rivals_reask_states() -> void:
 	if _shell._rivals_box.size.y != before_height:
 		_fail("rivals re-ask: the row changed height during the ask (%f -> %f)"
 			% [before_height, _shell._rivals_box.size.y])
-	if _shell._rivals_summary_text() != before_summary:
-		_fail("rivals re-ask: the summary flipped to %s during the ask (was %s)"
-			% [_shell._rivals_summary_text(), before_summary])
-	if _shell._resolved_rival_count() != CAPACITY_PICKED:
-		_fail("rivals re-ask: the pick became %d while the new ceiling was in flight"
-			% _shell._resolved_rival_count())
+	if str(_shell._resolved_archetype_counts()) != before_summary:
+		_fail("rivals re-ask: the counts flipped to %s during the ask (were %s)"
+			% [str(_shell._resolved_archetype_counts()), before_summary])
+	if not _summary_text().contains(LABEL_MAJOR.to_upper()) or not _summary_text().contains(LABEL_MINOR.to_upper()):
+		_fail("rivals re-ask: the summary lost the server's labels during the ask (%s)" % _summary_text())
+	_assert_sent_counts("a re-ask in flight", {ARCHETYPE_MAJOR: CAPACITY_PICKED, ARCHETYPE_MINOR: 2})
 	await _save("menu_new_game_rivals_reask")
 
 	# …and the answer lands, updating the SAME nodes: new ceiling, pick clamped to it. The ROOMIEST
 	# grid's own pair — the click above asked about that map, so this is the answer it would get.
-	_answer_capacity(CAPACITY_DEFAULT_ROOMIEST, CAPACITY_MAX_ROOMIEST)
+	_answer_capacity(GRID_HUGE)
 	await _settle()
-	var after := _find_slider(_shell._rivals_box)
+	var after := _find_slider_for(ARCHETYPE_MAJOR)
 	if after == null:
 		_fail("rivals re-ask: the answer left no control at all")
 	elif after.get_instance_id() != before_id:
 		_fail("rivals re-ask: the answer replaced the control instead of updating it")
-	elif int(after.max_value) != CAPACITY_MAX_ROOMIEST:
+	elif int(after.max_value) != HUGE_MAJOR_CEILING:
 		_fail("rivals re-ask: the control kept the old ceiling %d, not the answered %d"
-			% [int(after.max_value), CAPACITY_MAX_ROOMIEST])
+			% [int(after.max_value), HUGE_MAJOR_CEILING])
 	await _save("menu_new_game_rivals_reasked")
 
 
@@ -784,11 +855,11 @@ func _assert_row_height_is_stable() -> void:
 	# Incoming size is the roomiest; each step names a different one so every click really re-asks,
 	# and each is answered with ITS OWN grid's numbers.
 	_pick_map_size(SIZE_KEY_SMALLEST)
-	_answer_capacity(CAPACITY_DEFAULT_SMALLEST, CAPACITY_MAX_SMALLEST)
+	_answer_capacity(GRID_TINY)
 	await _settle()
 	var with_slider := _shell._rivals_box.size.y
 	_pick_map_size(SIZE_KEY_STANDARD)
-	_answer_capacity(0, CAPACITY_MAX_ALONE)
+	_answer_capacity(GRID_ALONE)
 	await _settle()
 	var without_slider := _shell._rivals_box.size.y
 	if with_slider != without_slider:
@@ -859,11 +930,12 @@ func _count_notice_boxes(node: Node) -> int:
 ## caption is EMPTY, no sentence about servers or capacity queries. Asserted rather than eyeballed
 ## because a paragraph creeping back under this row looks like a deliberate caption in a frame.
 func _assert_says_none(state_name: String) -> void:
-	if _shell._rival_readout == null or not is_instance_valid(_shell._rival_readout):
+	var readout := _find_readout(_shell._rivals_box)
+	if readout == null:
 		_fail("rivals (%s): the row shows no count at all" % state_name)
-	elif _shell._rival_readout.text != MenuShell.RIVALS_READOUT_NONE:
+	elif readout.text != MenuShell.RIVALS_READOUT_NONE:
 		_fail("rivals (%s): the readout reads %s, not the count that will be used"
-			% [state_name, _shell._rival_readout.text])
+			% [state_name, readout.text])
 	if _shell._rival_caption == null or not is_instance_valid(_shell._rival_caption):
 		_fail("rivals (%s): the caption node is gone, so the row's height is not held" % state_name)
 	elif _shell._rival_caption.text != "":
@@ -890,21 +962,33 @@ func _assert_capacity_ids_are_disjoint_from_the_save_seam() -> void:
 		"request_id": _last_request_id,
 		"ok": true,
 		"kind": FactionCapacity.KIND_CAPACITY,
-		"default_ai_faction_count": CAPACITY_DEFAULT_STANDARD,
-		"max_ai_faction_count": CAPACITY_MAX_STANDARD,
+		"archetypes": _archetype_rows(GRID_STANDARD),
 	}])
 	if saves.list_state != SaveSlots.LIST_PENDING:
 		_fail("rivals: a capacity answer moved the save seam's list to %s" % saves.list_state)
 
 
+## A grid fixture as the bridge publishes it: `archetypes: [{id, display_label, site_count,
+## default_count}]` in catalog order.
+func _archetype_rows(grid: Array) -> Array:
+	var rows: Array = []
+	for entry in grid:
+		rows.append({
+			"id": entry[0],
+			"display_label": entry[1],
+			"site_count": entry[2],
+			"default_count": entry[3],
+		})
+	return rows
+
+
 ## Answer the ask the seam has in flight, in the bridge's own reply shape.
-func _answer_capacity(default_count: int, max_count: int) -> void:
+func _answer_capacity(grid: Array) -> void:
 	_capacity_seam.deliver([{
 		"request_id": _last_request_id,
 		"ok": true,
 		"kind": FactionCapacity.KIND_CAPACITY,
-		"default_ai_faction_count": default_count,
-		"max_ai_faction_count": max_count,
+		"archetypes": _archetype_rows(grid),
 	}])
 
 
@@ -927,12 +1011,32 @@ func _pick_map_size(key: String) -> void:
 
 
 ## Move the slider through its own `value_changed`, so the pick goes down the shipped path.
-func _drag_rival_slider(count: int) -> void:
-	var slider := _find_slider(_shell._rivals_box)
+func _drag_rival_slider(id: String, count: int) -> void:
+	var slider := _find_slider_for(id)
 	if slider == null:
-		_fail("rivals: no slider to drag")
+		_fail("rivals: no %s slider to drag" % id)
 		return
 	slider.value = count
+
+
+## The slider of one archetype row, by the id the reply named it with.
+func _find_slider_for(id: String) -> HSlider:
+	var rows: Dictionary = _shell._rival_rows
+	if not rows.has(id):
+		return null
+	var slider: HSlider = (rows[id] as Dictionary).get("slider", null)
+	return slider if slider != null and is_instance_valid(slider) else null
+
+
+## The first count readout under a node - the one the unanswered row carries.
+func _find_readout(node: Node) -> Label:
+	if node is Label and (node as Label).custom_minimum_size.x == MenuShell.RIVALS_READOUT_MIN_WIDTH:
+		return node as Label
+	for child in node.get_children():
+		var found := _find_readout(child)
+		if found != null:
+			return found
+	return null
 
 
 func _find_slider(node: Node) -> HSlider:

@@ -4762,7 +4762,9 @@
       "craft_suggestions": [
         {
           "count": 85,
+          "expires_in_turns": 84.720001,
           "item_id": "hoes",
+          "lead_turns": 197,
           "shortfalls": [
             {
               "held": 5.17,
@@ -4821,12 +4823,15 @@
               "workers_without": 11.57
             }
           ],
+          "upcoming_count": 12,
           "work_per_turn": 19.709999,
           "workers_without": 65.790001
         },
         {
           "count": 126,
+          "expires_in_turns": 94.589996,
           "item_id": "spears",
+          "lead_turns": 136,
           "shortfalls": [
             {
               "held": 95.349998,
@@ -4885,6 +4890,7 @@
               "workers_without": 55.669998
             }
           ],
+          "upcoming_count": 149,
           "work_per_turn": 58.299999,
           "workers_without": 22.379999
         }
@@ -5273,6 +5279,9 @@
           "party_y": 15,
           "priority": "normal",
           "realized_yield": 50.82,
+          "rejoining_all_home_in": 18,
+          "rejoining_food": 67.699997,
+          "rejoining_workers": 190,
           "species": "populations[0].labor_assignments[0].species",
           "spoiled_rate_home": 62.150002,
           "sustainable_yield": 16.4,
@@ -5393,6 +5402,9 @@
           "party_y": 184,
           "priority": "high",
           "realized_yield": 67.830002,
+          "rejoining_all_home_in": 73,
+          "rejoining_food": 56.619999,
+          "rejoining_workers": 89,
           "species": "populations[0].labor_assignments[1].species",
           "spoiled_rate_home": 1.6,
           "sustainable_yield": 35.830002,
@@ -5513,6 +5525,9 @@
           "party_y": 49,
           "priority": "low",
           "realized_yield": 40.889999,
+          "rejoining_all_home_in": 160,
+          "rejoining_food": 26.139999,
+          "rejoining_workers": 44,
           "species": "populations[0].labor_assignments[2].species",
           "spoiled_rate_home": 30.200001,
           "sustainable_yield": 68.709999,
@@ -6239,7 +6254,9 @@
       "craft_suggestions": [
         {
           "count": 100,
+          "expires_in_turns": 38.599998,
           "item_id": "hoes",
+          "lead_turns": 126,
           "shortfalls": [
             {
               "held": 32.84,
@@ -6298,12 +6315,15 @@
               "workers_without": 77.43
             }
           ],
+          "upcoming_count": 139,
           "work_per_turn": 21.93,
           "workers_without": 44.080002
         },
         {
           "count": 131,
+          "expires_in_turns": 79.279999,
           "item_id": "spears",
+          "lead_turns": 187,
           "shortfalls": [
             {
               "held": 110.419998,
@@ -6362,6 +6382,7 @@
               "workers_without": 103.510002
             }
           ],
+          "upcoming_count": 74,
           "work_per_turn": 55.919998,
           "workers_without": 55.77
         }
@@ -6750,6 +6771,9 @@
           "party_y": 90,
           "priority": "normal",
           "realized_yield": 31.379999,
+          "rejoining_all_home_in": 31,
+          "rejoining_food": 53.32,
+          "rejoining_workers": 135,
           "species": "populations[1].labor_assignments[0].species",
           "spoiled_rate_home": 57.459999,
           "sustainable_yield": 23.76,
@@ -6870,6 +6894,9 @@
           "party_y": 105,
           "priority": "high",
           "realized_yield": 16.93,
+          "rejoining_all_home_in": 200,
+          "rejoining_food": 67.5,
+          "rejoining_workers": 68,
           "species": "populations[1].labor_assignments[1].species",
           "spoiled_rate_home": 9.36,
           "sustainable_yield": 31.49,
@@ -6990,6 +7017,9 @@
           "party_y": 16,
           "priority": "low",
           "realized_yield": 33.75,
+          "rejoining_all_home_in": 97,
+          "rejoining_food": 96.339996,
+          "rejoining_workers": 89,
           "species": "populations[1].labor_assignments[2].species",
           "spoiled_rate_home": 49.360001,
           "sustainable_yield": 65.809998,
@@ -7677,7 +7707,9 @@
       "craft_suggestions": [
         {
           "count": 135,
+          "expires_in_turns": 63.07,
           "item_id": "hoes",
+          "lead_turns": 7,
           "shortfalls": [
             {
               "held": 14.59,
@@ -7736,12 +7768,15 @@
               "workers_without": 66.57
             }
           ],
+          "upcoming_count": 118,
           "work_per_turn": 86.199997,
           "workers_without": 96.959999
         },
         {
           "count": 184,
+          "expires_in_turns": 98.82,
           "item_id": "spears",
+          "lead_turns": 162,
           "shortfalls": [
             {
               "held": 73.239998,
@@ -7800,6 +7835,7 @@
               "workers_without": 4.36
             }
           ],
+          "upcoming_count": 175,
           "work_per_turn": 85.519997,
           "workers_without": 102.519997
         }
@@ -8188,6 +8224,9 @@
           "party_y": 193,
           "priority": "normal",
           "realized_yield": 82.589996,
+          "rejoining_all_home_in": 176,
+          "rejoining_food": 99.760002,
+          "rejoining_workers": 92,
           "species": "populations[2].labor_assignments[0].species",
           "spoiled_rate_home": 60.459999,
           "sustainable_yield": 14.97,
@@ -8308,6 +8347,9 @@
           "party_y": 10,
           "priority": "high",
           "realized_yield": 107.459999,
+          "rejoining_all_home_in": 95,
+          "rejoining_food": 86.32,
+          "rejoining_workers": 79,
           "species": "populations[2].labor_assignments[1].species",
           "spoiled_rate_home": 54.16,
           "sustainable_yield": 54.080002,
@@ -8428,6 +8470,9 @@
           "party_y": 23,
           "priority": "low",
           "realized_yield": 75.220001,
+          "rejoining_all_home_in": 194,
+          "rejoining_food": 59.139999,
+          "rejoining_workers": 150,
           "species": "populations[2].labor_assignments[2].species",
           "spoiled_rate_home": 40.009998,
           "sustainable_yield": 89.739998,

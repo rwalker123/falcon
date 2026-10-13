@@ -1134,7 +1134,7 @@ pub fn useful_cutters(
     if room <= DEPOSIT_EMPTY {
         return USEFUL_CUTTERS_BARREN;
     }
-    let crew = assignment.workers;
+    let crew = allocation.hands_present_on(assignment);
     let keep_hands = crew_keep_hands(equipment, band_kit, &working, ground, config, ladder, crew);
     let reach = allocation
         .item_budget(equipment, claims)

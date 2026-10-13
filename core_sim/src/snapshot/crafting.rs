@@ -777,6 +777,9 @@ pub(crate) fn craft_suggestion_states(
             work_per_turn: suggestion.work_per_turn,
             // Filled by [`suggestion_shortfalls`] once the offers are marked.
             shortfalls: Vec::new(),
+            upcoming_count: suggestion.upcoming_count,
+            expires_in_turns: suggestion.expires_in_turns,
+            lead_turns: suggestion.lead_turns,
             sources: suggestion
                 .sources
                 .into_iter()

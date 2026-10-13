@@ -25,9 +25,9 @@ use faction_support::{one_faction_world, world_with, HOME, NO_RIVALS, ONE_RIVAL,
 /// while satisfying every relational assertion in this file.
 const HARNESS_SEED_START: UVec2 = UVec2::new(28, 18);
 
-/// The shipped `faction_start_min_separation`, restated so the assertions below read against a
+/// The shipped major archetype's `min_separation`, restated so the assertions below read against a
 /// number rather than against the config they are checking. Kept in step with
-/// `simulation_config.json` by [`the_pinned_separation_is_the_shipped_one`].
+/// `start_profiles.json` by [`the_pinned_separation_is_the_shipped_one`].
 const SHIPPED_SEPARATION: u32 = 20;
 
 /// **What "spread out, not stacked" has to mean to be falsifiable.** When the separation cannot be
@@ -62,7 +62,9 @@ fn the_pinned_separation_is_the_shipped_one() {
         world
             .world
             .resource::<core_sim::SimulationConfig>()
-            .faction_start_min_separation,
+            .start_profile_overrides
+            .archetypes[0]
+            .min_separation,
         SHIPPED_SEPARATION,
         "the constant these assertions read must track `simulation_config.json`"
     );
@@ -174,7 +176,7 @@ fn each_faction_gets_its_own_seeded_stockpile_and_knowledge() {
     // The shipped profile ships an empty `inventory`, so the stockpile half needs a grant to exist
     // at all — stated here rather than in the shipped config, which is not this test's subject.
     let world = world_with(ONE_RIVAL, |config| {
-        config.start_profile_overrides.inventory = vec![InventoryEntry {
+        config.start_profile_overrides.archetypes[0].inventory = vec![InventoryEntry {
             item: "provisions".to_string(),
             quantity: 7,
         }];
@@ -196,6 +198,7 @@ fn each_faction_gets_its_own_seeded_stockpile_and_knowledge() {
         .world
         .resource::<core_sim::SimulationConfig>()
         .start_profile_overrides
+        .archetypes[0]
         .starting_knowledge_tags;
     assert!(
         !tags.is_empty(),
