@@ -37,6 +37,7 @@
           "display_label": "Minor peoples",
           "min_separation": 8,
           "default_count": null,
+          "default_share": 0.25,
           "starting_units": [
             { "kind": "BandScout", "count": 1, "band_size": 12 }
           ],

@@ -226,6 +226,12 @@ pub struct StartArchetype {
     /// map can seat - see `systems::worldgen::archetype_capacities`.
     #[serde(default)]
     pub default_count: Option<u32>,
+    /// **The share of what fits that a New Game screen pre-selects**, or `None` for the shared
+    /// floor-plus-half rule. When present the derived default is `floor(ceiling x default_share)`,
+    /// the ceiling being computed against the EARLIER archetypes' defaults. A `default_count` pin
+    /// beats it. Validated finite and in `(0, 1]`.
+    #[serde(default)]
+    pub default_share: Option<f32>,
     #[serde(default)]
     pub starting_units: Vec<StartingUnitSpec>,
     #[serde(default)]
@@ -639,6 +645,15 @@ fn validate_archetypes(
                 archetype: archetype.id.clone(),
             });
         }
+        if let Some(share) = archetype.default_share {
+            if !share.is_finite() || share <= 0.0 || share > 1.0 {
+                return Err(StartProfilesError::InvalidDefaultShare {
+                    profile: profile.to_string(),
+                    archetype: archetype.id.clone(),
+                    share,
+                });
+            }
+        }
         validate_opening_loadout(
             &archetype_scope(profile, &archetype.id),
             &archetype.opening_loadout,
@@ -722,6 +737,16 @@ pub enum StartProfilesError {
          same hex - which is not a cramped map, it is no placement at all"
     )]
     ZeroArchetypeSeparation { profile: String, archetype: String },
+    #[error(
+        "start profile `{profile}` archetype `{archetype}` has a `default_share` of {share}: it \
+         is the fraction of what fits that a New Game screen pre-selects, so it must be finite and \
+         in (0, 1]"
+    )]
+    InvalidDefaultShare {
+        profile: String,
+        archetype: String,
+        share: f32,
+    },
     #[error("start profile `{profile}` has an invalid opening_loadout: {reason}")]
     InvalidOpeningLoadout { profile: String, reason: String },
     #[error(
@@ -1420,6 +1445,25 @@ mod tests {
             mutated_archetypes(|archetypes| archetypes[1]["id"] = Value::from("major")),
             Err(StartProfilesError::DuplicateArchetypeId { .. })
         ));
+    }
+
+    #[test]
+    fn a_default_share_outside_zero_to_one_is_rejected() {
+        for bad in [0.0, -0.5, 1.5] {
+            assert!(
+                matches!(
+                    mutated_archetypes(
+                        |archetypes| archetypes[1]["default_share"] = Value::from(bad)
+                    ),
+                    Err(StartProfilesError::InvalidDefaultShare { .. })
+                ),
+                "{bad} must be rejected"
+            );
+        }
+        assert!(
+            mutated_archetypes(|archetypes| archetypes[1]["default_share"] = Value::from(1.0))
+                .is_ok()
+        );
     }
 
     #[test]

@@ -2849,7 +2849,8 @@ pub struct ArchetypeCapacity {
     /// How many starts the grid seats at this archetype's separation, the human included.
     pub site_count: u32,
     /// The count a New Game screen **pre-selects**: the archetype's pinned `default_count` when it
-    /// has one, otherwise [`DEFAULT_ARCHETYPE_COUNT_FLOOR`] plus the ceiling over
+    /// has one, else `floor(ceiling x default_share)` when the archetype sets a share, otherwise
+    /// [`DEFAULT_ARCHETYPE_COUNT_FLOOR`] plus the ceiling over
     /// [`DEFAULT_ARCHETYPE_COUNT_CEILING_DIVISOR`]. Always clamped by the ceiling (computed against
     /// the EARLIER archetypes' defaults), so a control never opens on an ungrantable value.
     ///
@@ -3010,9 +3011,16 @@ pub fn archetype_capacities(
         .zip(archetypes)
         .map(|(site_count, archetype)| {
             let ceiling = archetype_ceiling(site_count, earlier_total);
-            let offered = archetype.default_count.unwrap_or_else(|| {
-                DEFAULT_ARCHETYPE_COUNT_FLOOR + ceiling / DEFAULT_ARCHETYPE_COUNT_CEILING_DIVISOR
-            });
+            let offered =
+                archetype
+                    .default_count
+                    .unwrap_or_else(|| match archetype.default_share {
+                        Some(share) => (ceiling as f32 * share).floor() as u32,
+                        None => {
+                            DEFAULT_ARCHETYPE_COUNT_FLOOR
+                                + ceiling / DEFAULT_ARCHETYPE_COUNT_CEILING_DIVISOR
+                        }
+                    });
             let default_count = offered.min(ceiling);
             earlier_total += default_count;
             ArchetypeCapacity {
@@ -4273,11 +4281,33 @@ mod start_tile_selection_tests {
             derived[1].default_count,
             (DEFAULT_ARCHETYPE_COUNT_FLOOR
                 + minor_ceiling / DEFAULT_ARCHETYPE_COUNT_CEILING_DIVISOR)
-                .min(minor_ceiling)
+                .min(minor_ceiling),
+            "an archetype with no share takes the floor-plus-half rule"
         );
         assert!(
             derived[1].default_count > 0,
             "the shipped grid offers minors too"
+        );
+    }
+
+    /// **A `default_share` derives `floor(ceiling x share)`** against the earlier archetypes'
+    /// defaults, and a `default_count` pin beats it.
+    #[test]
+    fn a_default_share_is_applied_and_a_pin_beats_it() {
+        let grid = UVec2::new(80, 52);
+        let land = 0.38f32;
+        let mut catalog = standard_catalog();
+        catalog[1].default_share = Some(0.25);
+        let shared = archetype_capacities(&catalog, grid, land);
+        let minor_ceiling = archetype_ceiling(shared[1].site_count, shared[0].default_count);
+        assert!(minor_ceiling >= 4, "fixture: the grid seats minors");
+        assert_eq!(shared[1].default_count, minor_ceiling / 4);
+
+        catalog[1].default_count = Some(1);
+        assert_eq!(
+            archetype_capacities(&catalog, grid, land)[1].default_count,
+            1,
+            "the pin wins over the share"
         );
     }
 

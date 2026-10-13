@@ -205,7 +205,8 @@ consumes one site of a later archetype's lattice, one for one**:
 `ceiling_k = max(0, site_count_k − 1 − Σ_{j<k} count_j)`
 
 For `k = 0` that is the old `starts − 1`. A **default** per archetype is its `default_count` pin if
-set, else `min(ceiling_k, DEFAULT_ARCHETYPE_COUNT_FLOOR + ceiling_k / DEFAULT_ARCHETYPE_COUNT_CEILING_DIVISOR)`
+set, else `floor(ceiling_k × default_share)` when the archetype sets a `default_share`, else
+`min(ceiling_k, DEFAULT_ARCHETYPE_COUNT_FLOOR + ceiling_k / DEFAULT_ARCHETYPE_COUNT_CEILING_DIVISOR)`
 with `ceiling_k` computed against the earlier archetypes' **defaults**; a ceiling of 0 gives a default
 of 0. One function computes all of it, and boot, `new_game`, `ResetMap` and the query all call it.
 The client does **not** restate the pre-selection: it receives `site_count` and `default_count` per
@@ -252,17 +253,18 @@ has no size registry, because a size is a number the player sends.
 
 | Size | Grid | Measured major seats | Major `site_count` (ceiling = −1) | Major default | Minor `site_count` | Minor default |
 |---|---|---|---|---|---|---|
-| Tiny | 56×36 | 4-6 | **4** (3) | **2** | **22** | **10** |
-| Small | 66×42 | 5-7 | **5** (4) | **3** | **31** | **14** |
-| Standard | 80×52 | 8-9 | **7** (6) | **4** | **46** | **21** |
-| Large | 104×64 | 11-13 | **12** (11) | **6** | **74** | **34** |
-| Huge | 128×80 | 15-20 | **18** (17) | **9** | **114** | **53** |
+| Tiny | 56×36 | 4-6 | **4** (3) | **2** | **22** | **4** |
+| Small | 66×42 | 5-7 | **5** (4) | **3** | **31** | **6** |
+| Standard | 80×52 | 8-9 | **7** (6) | **4** | **46** | **10** |
+| Large | 104×64 | 11-13 | **12** (11) | **6** | **74** | **16** |
+| Huge | 128×80 | 15-20 | **18** (17) | **9** | **114** | **26** |
 
 The major columns are the old single-roster table (ceiling 3/4/6/11/17, default 2/3/4/6/9) unchanged.
-The **minor default** is `1 + ceiling/2` against the minor lattice *after* the majors' defaults have
-taken their sites (`ceiling_minor = site_count − 1 − major_default`), so it is large: a Standard map
-pre-selects 21 minors beside 4 majors. That is the derived shape (`default_count: null`), not a tuned
-number — pin the minor archetype's `default_count` to change what a screen opens on.
+The **minor default** is a quarter of what fits: `floor(0.25 × ceiling_minor)` (`minor.default_share`)
+against the minor lattice *after* the majors' defaults have taken their sites
+(`ceiling_minor = site_count − 1 − major_default`), so a Standard map pre-selects 10 minors beside
+4 majors. `major` sets no share and keeps the floor-plus-half rule (2/3/4/6/9). A `default_count`
+pin on `minor` overrides the share.
 
 Pinned by `core_sim/tests/faction_start_capacity.rs`, which reads the levers out of the shipped
 configs rather than restating them, so a tuning change to any of them has to look at this table
@@ -279,13 +281,15 @@ shape as well as agree to the numbers.
 ### ⛔ THE OFFER AND THE UNATTENDED ROSTER ARE TWO NUMBERS, AND THEY ARE NOT THE SAME PATH
 
 A New Game screen **pre-selects `DEFAULT_ARCHETYPE_COUNT_FLOOR + ceiling / DEFAULT_ARCHETYPE_COUNT_CEILING_DIVISOR`**
-per archetype — `1 + ceiling/2` in integer arithmetic, then clamped to the ceiling. The floor term is one rival on
+per archetype with no `default_share` — `1 + ceiling/2` in integer arithmetic, then clamped to the
+ceiling. An archetype with a `default_share` (`minor`: 0.25) pre-selects `floor(ceiling × share)`
+instead; the share is validated finite and in `(0, 1]`, and a `default_count` pin beats both. The floor term is one rival on
 any map that can seat one, because a world with nobody else in it is the thing this game is least
 interesting as; the divisor adds half of what the map holds on top, which is far enough below the
 ceiling that the pre-selection is never the cramped end a player has to dial back from. The clamp is
 what keeps a degenerate grid (a ceiling of 0 or 1) from pre-selecting a start it has nowhere to put.
-Both are **named constants, not config levers**, because an archetype's `default_count` already pins
-the pre-selection outright and two levers moving one number is one too many.
+The floor and divisor are **named constants, not config levers**, because `default_count` already pins
+the pre-selection outright; `default_share` is the per-archetype lever for a share of what fits.
 
 > **A share of the ceiling cannot express this ladder — which is why the rule's SHAPE changed and
 > not its constant.** The pre-selection used to be `DEFAULT_AI_FACTIONS_SHARE_OF_CEILING` (0.34,
@@ -1248,6 +1252,7 @@ The control arm is not optional: it is what distinguishes *"the second faction g
 
 | File | Key | Default | Purpose |
 |---|---|---|---|
+| `src/data/start_profiles.json` | `archetypes[*].default_share` | **absent** (`minor`: **0.25**) | **The share of what fits that a New Game screen pre-selects**: `floor(ceiling × share)`, the ceiling computed against the earlier archetypes' defaults. Absent: the floor-plus-half rule. Finite and in `(0, 1]` or the profile is refused; a `default_count` pin beats it. No effect on an unattended boot |
 | `src/data/start_profiles.json` | `archetypes[*].default_count` | **`null`** | **The pin on how many of this archetype a world gets, or `null` for "derive it".** `null` is not `0` — the same distinction an unlisted vs `=0` `new_game` count draws. Unpinned (shipped): the New Game screen pre-selects a share of what the chosen grid seats, and an **unattended** boot takes **none**, because a faction nobody asked for would sit and pass. Pinned to `n`: **both** become `n` — the escape hatch a headless run, a test or a designer uses to boot with rivals without touching the UI. Counts **rivals, not the roster**. Clamped by the ceiling above, never refused. (Retired from `simulation_config.json`, where it was one number for the whole roster) |
 | `src/data/simulation_config.json` | `seat_turn_timeout_seconds` | **120.0** s | **How long an open turn waits for an OCCUPIED seat that has gone silent** before the server submits `end_turn` for it and resolves. A wedge-breaker, not a chess clock: a turn is legitimately minutes of a human's thinking, so a snug value would end turns players were still taking, and the cost of being generous is that one genuinely dead process holds the others up once, for this long. A **vacant** seat is never waited for, so this has no effect on a single-human game. Read from the live config on every decision, so a hot reload moves it; validated positive and finite at parse (`NonPositiveSeatTurnTimeout`), because 0 would auto-submit for a live player the instant anyone else was ready — not a short wait but no waiting at all |
 | `src/data/expedition_config.json` | `defection.party_pull_threshold` | **0.3** | **The pull a detached party must accrue before it joins another people** (see "A detached party goes whole"). At rock-bottom home morale (rate `max_rate` 0.15) it is 2 turns in sight; at morale 0.2 (rate 0.03), 10. Too low and a party defects the turn it glimpses a camp; too high and it never sits near one long enough. `0` is legal (defect on the first qualifying turn); validated finite and `>= 0` at parse. Every other defection number is the trickle's own `wellbeing_config.json` → `migration.*` — one rule, one set of dials. Ships in the Workbench as an `expedition` row |

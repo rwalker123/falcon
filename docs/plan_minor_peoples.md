@@ -228,7 +228,7 @@ failure columns say which way each lever breaks.
 | `minor.band_size` | 12 | Starves before contact matters | Indistinguishable from a major |
 | `minor.loadout` | major's, minus kits | — | No disadvantage |
 | `minor.min_separation` | 8 tiles | Minors crowd each other and majors | No room left; few minors fit |
-| `minor.default_count` | null (derive from map) | Empty early game | Map is all minors |
+| `minor.default_count` | null (derived as a quarter of what fits, via `minor.default_share` = 0.25) | Empty early game | Map is all minors |
 
 **`personalities.json`** — each entry is `{id, culture_lean: {axis: offset}, weight}`. It starts
 with a handful of entries, including one strongly Purist and one strongly Syncretic, so the map

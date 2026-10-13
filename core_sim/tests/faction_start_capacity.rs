@@ -44,13 +44,13 @@ const SHIPPED_PROFILE: &str = "late_forager_tribe";
 /// (3/4/6/11/17), measured against a sweep of what the land actually seats without the picker
 /// relaxing — 4-6 starts on Tiny, 5-7 Small, 8-9 Standard, 11-13 Large, 15-20 Huge — which these sit
 /// at or just under, deliberately: over-promising costs spacing, under-promising costs a seat. The
-/// pre-selections are `1 + ceiling/2` against the EARLIER archetypes' defaults.
+/// major pre-selections are `1 + ceiling/2` and the minor's is `floor(ceiling x 0.25)` (its `default_share`), each against the EARLIER archetypes' defaults.
 const SHIPPED_OFFERS: [(&str, u32, u32, u32, u32); 5] = [
-    ("tiny", 4, 2, 22, 10),
-    ("small", 5, 3, 31, 14),
-    ("standard", 7, 4, 46, 21),
-    ("large", 12, 6, 74, 34),
-    ("huge", 18, 9, 114, 53),
+    ("tiny", 4, 2, 22, 4),
+    ("small", 5, 3, 31, 6),
+    ("standard", 7, 4, 46, 10),
+    ("large", 12, 6, 74, 16),
+    ("huge", 18, 9, 114, 26),
 ];
 
 fn shipped_catalog() -> Vec<StartArchetype> {
