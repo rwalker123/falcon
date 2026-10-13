@@ -434,8 +434,9 @@ stationed with gets none either**: one of the viewer's own expeditions with miss
 `stationed` and `expedition_destination_band` = that subject suppresses it, because the party's own
 marker already shows where the host is, live (an outbound or returning station party does not suppress
 it — the host is still only remembered). **The ghost fades by the AGE OF THE NEWS, never by tie
-strength**: `news_age` = `_current_turn` (`MapView.set_current_turn`, pushed by `Main` from the
-snapshot `turn`) minus the placing tie's `last_seen_turn`, floored at 0, and
+strength**: `news_age` = `HudConnectionsVocab.age_of(last_seen_turn, _current_turn)` (`MapView.set_current_turn`,
+pushed by `Main` from the snapshot `turn`, which runs one ahead of every contact stamp — see
+`band-city-panel.md` → the Peoples tab — so a band seen in the turn that just resolved is age 0), floored at 0, and
 `BandMarkerRenderer.draw_remembered_bands` draws the nomadic stage sprite (`REMEMBERED_STAGE_ID` — the
 real stage is unknown) desaturated (`REMEMBERED_GREY_AMOUNT`, a cached `ImageTexture` per stage) at
 `lerp(REMEMBERED_MAX_ALPHA 0.7, REMEMBERED_MIN_ALPHA 0.25, clamp(news_age / REMEMBERED_FADE_TURNS, 0, 1))`

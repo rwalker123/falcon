@@ -1459,9 +1459,13 @@ func _render_connections_roster(panel: BandCityPanel, home_band: Dictionary) -> 
 		_row_text(rows, 0).contains(String(HudConnectionsVocab.STATE_WORDS[HudConnectionsVocab.STATE_GROWING])))
 	h._assert_hud("a tie with strength left and no contact reads fading",
 		_row_text(rows, 1).contains(String(HudConnectionsVocab.STATE_WORDS[HudConnectionsVocab.STATE_FADING])))
-	h._assert_hud("a live row's second line is the remembered sighting, worded as one",
-		_row_text(rows, 0).contains(HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_FORMAT % [
-			NEIGHBOUR_LAST_SEEN.x, NEIGHBOUR_LAST_SEEN.y, ROSTER_TURN]))
+	h._assert_hud("a band seen in the turn that just resolved reads `In sight at`, not `may have moved`",
+		_row_text(rows, 0).contains(HudConnectionsVocab.IN_SIGHT_FORMAT % [
+			NEIGHBOUR_LAST_SEEN.x, NEIGHBOUR_LAST_SEEN.y])
+		and not _row_text(rows, 0).contains("may have moved"))
+	h._assert_hud("an older sighting keeps the remembered sentence, worded as one",
+		_row_text(rows, 1).contains("they may have moved since")
+		and not _row_text(rows, 1).contains("In sight"))
 	var parked_row: Control = rows[rows.size() - 1] if not rows.is_empty() else null
 	var parked_word := _label_with_text(parked_row,
 		String(HudConnectionsVocab.STATE_WORDS[HudConnectionsVocab.STATE_PARKED]))
@@ -1502,12 +1506,13 @@ func _render_connections_roster(panel: BandCityPanel, home_band: Dictionary) -> 
 	var block_id := block.get_instance_id() if block != null else 0
 	var list_id := list.get_instance_id() if list != null else 0
 	var moved := _roster_ties()
-	moved.append(_tie(ROSTER_NEW_ENTITY, TIE_STRENGTH_LIVE, NEIGHBOUR_LAST_SEEN, ROSTER_TURN))
+	moved.append(_tie(ROSTER_NEW_ENTITY, TIE_STRENGTH_LIVE, NEIGHBOUR_LAST_SEEN, ROSTER_RESOLVED_TURN))
 	for tie_variant in moved:
 		var tie: Dictionary = tie_variant
 		if int(tie["subject_band_id"]) == BandFx.FIXTURE_BAND_ID_OFFSET + NEIGHBOUR_ENTITY:
 			tie["strength"] = TIES_ONLY_NEIGHBOUR_STRENGTH
 			tie["last_contact_turn"] = ROSTER_TURN - FADING_TURNS_AGO
+			tie["last_seen_turn"] = ROSTER_TURN - FADING_TURNS_AGO   # a sighting is stamped with its contact
 	h._hud.update_connections(moved)
 	await h._settle()
 	await h._save("connections_roster_ties_only")
@@ -1555,6 +1560,9 @@ func _render_connections_roster(panel: BandCityPanel, home_band: Dictionary) -> 
 
 ## The turn the roster states are rendered on; the growing tie's last contact is this turn.
 const ROSTER_TURN := 40
+## Contact stamps run one behind the frame's turn (`HudConnectionsVocab.RESOLVED_TURN_LAG`): a tie seen in
+## the turn that just resolved carries THIS stamp, and is the one that reads growing / "In sight at".
+const ROSTER_RESOLVED_TURN := ROSTER_TURN - HudConnectionsVocab.RESOLVED_TURN_LAG
 ## A subject the player's roster does not hold, remembered by name — and one remembered by nothing
 ## but its tile.
 const FOREIGN_NAMED_ENTITY := 986
@@ -1584,7 +1592,7 @@ const ROSTER_EXTRA_NAME := "Hillfolk"
 const ROSTER_NEW_ENTITY := 1100
 
 func _roster_ties() -> Array:
-	var growing := _tie(NEIGHBOUR_ENTITY, TIE_STRENGTH_LIVE, NEIGHBOUR_LAST_SEEN, ROSTER_TURN)
+	var growing := _tie(NEIGHBOUR_ENTITY, TIE_STRENGTH_LIVE, NEIGHBOUR_LAST_SEEN, ROSTER_RESOLVED_TURN)
 	growing["subject_name"] = NEIGHBOUR_DISPLAY_NAME
 	var named := _tie(FOREIGN_NAMED_ENTITY, FOREIGN_NAMED_STRENGTH, FOREIGN_NAMED_SEEN,
 		ROSTER_TURN - FADING_TURNS_AGO)

@@ -1286,7 +1286,7 @@ func _build_heart_rows(band: Dictionary) -> VBoxContainer:
 func _heart_last_seen_text(last_contact_turn: int) -> String:
     if last_contact_turn == HudWorkVocab.HEART_NO_CONTACT:
         return HudWorkVocab.HEART_NEVER_SEEN_TEXT
-    var ago := _band_labor.current_turn() - last_contact_turn
+    var ago := HudConnectionsVocab.age_of(last_contact_turn, _band_labor.current_turn())
     if ago <= 0:
         return HudWorkVocab.HEART_LAST_SEEN_NOW_TEXT
     if ago == HudWorkVocab.HEART_LAST_SEEN_SINGULAR:
@@ -9493,8 +9493,7 @@ func _trade_destination_notes(band: Dictionary, tie: Dictionary) -> Array[String
     var y := int(tie.get("last_seen_y", -1))
     if x < 0 or y < 0:
         return lines
-    lines.append(HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_FORMAT % [
-        x, y, int(tie.get("last_seen_turn", 0))])
+    lines.append(ConnectionsRoster.remembered_line(tie, _band_labor.current_turn()))
     # **ONE DEFINITION OF TRAVEL IN THIS CLIENT.** `outbound_travel_turns` is the walk OUT, the same
     # reading the denial verdict takes, asked here about the REMEMBERED tile — which is why the
     # sentence says "if they are still there" rather than quoting the arrival as a fact.

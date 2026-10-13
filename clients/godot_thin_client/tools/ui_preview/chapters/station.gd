@@ -49,6 +49,8 @@ const PARKED_SEEN := Vector2i(44, 9)
 
 ## The turn the frames are rendered on, and how stale the stationed row's news is.
 const TURN := 40
+## Contact stamps run one behind the frame turn (`HudConnectionsVocab.RESOLVED_TURN_LAG`).
+const RESOLVED := TURN - HudConnectionsVocab.RESOLVED_TURN_LAG
 const NEWS_AGE_TURNS := 3
 
 ## Tiles per turn the band publishes — without it the sheet cannot price a walk and says `a walk`.
@@ -449,13 +451,13 @@ func _party_walking() -> Dictionary:
 	return _party(WALKING_PARTY_ENTITY, WALKING_PARTY_SIZE, "outbound", WALKING_ENTITY, HOME_TILE)
 
 func _ties() -> Array:
-	var stationed := _tie(STATIONED_ENTITY, TIE_LIVE, STATIONED_SEEN, TURN - NEWS_AGE_TURNS, TURN)
+	var stationed := _tie(STATIONED_ENTITY, TIE_LIVE, STATIONED_SEEN, RESOLVED - NEWS_AGE_TURNS, RESOLVED)
 	stationed["subject_name"] = STATIONED_NAME
-	var open := _tie(OPEN_ENTITY, TIE_LIVE, OPEN_SEEN, TURN - 2, TURN - 2)
+	var open := _tie(OPEN_ENTITY, TIE_LIVE, OPEN_SEEN, RESOLVED - 2, RESOLVED - 2)
 	open["subject_name"] = OPEN_NAME
 	var parked := _tie(PARKED_ENTITY, TIE_PARKED, PARKED_SEEN, 12, 12)
 	parked["subject_name"] = PARKED_NAME
-	var walking := _tie(WALKING_ENTITY, 0.5, WALKING_SEEN, TURN - 1, TURN - 1)
+	var walking := _tie(WALKING_ENTITY, 0.5, WALKING_SEEN, RESOLVED - 1, RESOLVED - 1)
 	return [stationed, open, walking, parked]
 
 func _tie(subject_entity: int, strength: float, seen: Vector2i, seen_turn: int,

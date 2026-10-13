@@ -3003,7 +3003,7 @@ func set_connections(rows: Variant) -> void:
 ## `stationed` whose `expedition_destination_band` is that subject) — the party's own marker already
 ## shows where the host is, live. Outbound/returning station parties do not suppress it. Of several ties
 ## to one subject the LATEST sighting places it. Rows are the winning tie dict plus `news_age` (turns,
-## `_current_turn - last_seen_turn`, floored at 0) which is what fades the marker; strength never does.
+## `HudConnectionsVocab.age_of` — the turn that just resolved less `last_seen_turn`, floored at 0) which is what fades the marker; strength never does.
 ## Pure over `units` + `_connection_ties` + `_current_turn`, so the draw and the hover cannot disagree.
 func remembered_bands() -> Array:
 	var live_ids: Dictionary = {}
@@ -3032,7 +3032,7 @@ func remembered_bands() -> Array:
 	var rows: Array = []
 	for subject in best.keys():
 		var row: Dictionary = (best[subject] as Dictionary).duplicate()
-		row["news_age"] = maxi(0, _current_turn - int(row.get("last_seen_turn", 0)))
+		row["news_age"] = HudConnectionsVocab.age_of(int(row.get("last_seen_turn", 0)), _current_turn)
 		rows.append(row)
 	return rows
 

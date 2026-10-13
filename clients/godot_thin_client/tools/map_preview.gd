@@ -7559,8 +7559,9 @@ const REMEMBERED_OUTBOUND_HOST_TILE := Vector2i(5, 8)
 const REMEMBERED_OUTBOUND_PARTY_TILE := Vector2i(4, 8)
 const REMEMBERED_STALE_TILE := Vector2i(2, 9)   # an older sighting of the faded subject: must NOT draw
 const REMEMBERED_LIVE_TILE := Vector2i(11, 9)
-const REMEMBERED_TURN := 40
-const REMEMBERED_STALE_TURNS_AGO := 15   # older than the REMEMBERED_NEWS_AGES[1] sighting of the same subject
+const REMEMBERED_TURN := 40   # the frame's published turn; contact stamps run one behind it
+const REMEMBERED_RESOLVED_TURN := REMEMBERED_TURN - HudConnectionsVocab.RESOLVED_TURN_LAG
+const REMEMBERED_STALE_TURNS_AGO := 20   # older than the REMEMBERED_NEWS_AGES[1] sighting of the same subject
 const REMEMBERED_STALE_STRENGTH := 0.1
 const REMEMBERED_LIVE_SUBJECT_ID := 920
 const REMEMBERED_FADED_SUBJECT_ID := 911
@@ -7575,27 +7576,27 @@ func _remembered_ties() -> Array:
 			"subject_name": "Goosefen" if i == 1 else "People %d" % i,
 			"strength": REMEMBERED_STRENGTHS[i],
 			"last_seen_x": REMEMBERED_TILES[i].x, "last_seen_y": REMEMBERED_TILES[i].y,
-			"last_seen_turn": REMEMBERED_TURN - REMEMBERED_NEWS_AGES[i]})
+			"last_seen_turn": REMEMBERED_RESOLVED_TURN - REMEMBERED_NEWS_AGES[i]})
 	ties.append({"observer_band_id": REMEMBERED_LIVE_BAND_ID + 1,
 		"subject_band_id": REMEMBERED_FADED_SUBJECT_ID,
 		"subject_name": "Goosefen", "strength": REMEMBERED_STALE_STRENGTH,
 		"last_seen_x": REMEMBERED_STALE_TILE.x, "last_seen_y": REMEMBERED_STALE_TILE.y,
-		"last_seen_turn": REMEMBERED_TURN - REMEMBERED_STALE_TURNS_AGO})
+		"last_seen_turn": REMEMBERED_RESOLVED_TURN - REMEMBERED_STALE_TURNS_AGO})
 	ties.append({"observer_band_id": REMEMBERED_LIVE_BAND_ID,
 		"subject_band_id": REMEMBERED_LIVE_SUBJECT_ID,
 		"subject_name": "Livefen", "strength": 0.9,
 		"last_seen_x": REMEMBERED_LIVE_TILE.x, "last_seen_y": REMEMBERED_LIVE_TILE.y,
-		"last_seen_turn": REMEMBERED_TURN})
+		"last_seen_turn": REMEMBERED_RESOLVED_TURN})
 	ties.append({"observer_band_id": REMEMBERED_LIVE_BAND_ID,
 		"subject_band_id": REMEMBERED_POSTED_HOST_ID,
 		"subject_name": "Posthost", "strength": 0.5,
 		"last_seen_x": REMEMBERED_POSTED_HOST_TILE.x, "last_seen_y": REMEMBERED_POSTED_HOST_TILE.y,
-		"last_seen_turn": REMEMBERED_TURN})
+		"last_seen_turn": REMEMBERED_RESOLVED_TURN})
 	ties.append({"observer_band_id": REMEMBERED_LIVE_BAND_ID,
 		"subject_band_id": REMEMBERED_OUTBOUND_HOST_ID,
 		"subject_name": "Walkhost", "strength": 0.5,
 		"last_seen_x": REMEMBERED_OUTBOUND_HOST_TILE.x, "last_seen_y": REMEMBERED_OUTBOUND_HOST_TILE.y,
-		"last_seen_turn": REMEMBERED_TURN})
+		"last_seen_turn": REMEMBERED_RESOLVED_TURN})
 	return ties
 
 ## A station party (issue #774): `host` rides the expedition's destination band, `phase` decides whether
@@ -7662,7 +7663,7 @@ func _remembered_band_states() -> void:
 		(info.get("remembered_bands", []) as Array).size() == 1)
 	var hover := ConnectionsRoster.remembered_hover_line(faded, HudBandLaborState.new())
 	_assert_map("remembered - hover line names the band and when (%s)" % hover,
-		hover == "Goosefen — last seen turn %d, may have moved" % (REMEMBERED_TURN - REMEMBERED_NEWS_AGES[1]))
+		hover == "Goosefen — last seen turn %d, may have moved" % (REMEMBERED_RESOLVED_TURN - REMEMBERED_NEWS_AGES[1]))
 	_map.set_connections([])
 
 ## Mean per-pixel |dL| between two same-size frames inside `rect` - a perceptible-magnitude measure,

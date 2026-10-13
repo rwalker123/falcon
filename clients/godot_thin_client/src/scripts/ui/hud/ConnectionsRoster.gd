@@ -19,14 +19,16 @@ extends RefCounted
 ##     second line saying what it needs — hiding it would hide that the tie is what gates every rider.
 
 ## The three states, read off the published row and the current turn alone. **Growing** is contact
-## THIS turn (`last_contact_turn == current_turn`, which `record_contact` stamps sim-side). Contact
+## THE TURN THAT JUST RESOLVED (`last_contact_turn == HudConnectionsVocab.resolved_turn(current_turn)`;
+## the frame's turn runs one past the stamp, see `RESOLVED_TURN_LAG`). Contact
 ## always raises strength above zero, so a zero-strength row is parked whatever its stamps say. An
 ## unknown turn (`NO_TURN`, before the first frame) never reads as contact.
 static func tie_state(tie: Dictionary, current_turn: int) -> int:
 	if not HudBandLaborState.tie_is_live(tie):
 		return HudConnectionsVocab.STATE_PARKED
 	if current_turn != HudConnectionsVocab.NO_TURN \
-			and int(tie.get("last_contact_turn", HudConnectionsVocab.NO_TURN)) == current_turn:
+			and int(tie.get("last_contact_turn", HudConnectionsVocab.NO_TURN)) \
+				== HudConnectionsVocab.resolved_turn(current_turn):
 		return HudConnectionsVocab.STATE_GROWING
 	return HudConnectionsVocab.STATE_FADING
 
@@ -81,13 +83,17 @@ static func remembered_hover_line(tie: Dictionary, band_labor: HudBandLaborState
 	return HudConnectionsVocab.REMEMBERED_HOVER_FORMAT % [
 		subject_label(tie, band_labor), int(tie.get("last_seen_turn", 0))]
 
-## The remembered-position sentence, or `""` when no tile was ever recorded. Shared wording with the
-## shipment picker (`HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_FORMAT`).
-static func remembered_line(tie: Dictionary) -> String:
+## The remembered-position sentence, or `""` when no tile was ever recorded; "In sight at" for a band
+## seen in the turn that just resolved. Shared with the shipment picker
+## (`HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_FORMAT`).
+static func remembered_line(tie: Dictionary, current_turn: int) -> String:
 	var x := int(tie.get("last_seen_x", -1))
 	var y := int(tie.get("last_seen_y", -1))
 	if x < 0 or y < 0:
 		return ""
+	if current_turn != HudConnectionsVocab.NO_TURN and HudConnectionsVocab.age_of(
+			int(tie.get("last_seen_turn", 0)), current_turn) == 0:
+		return HudConnectionsVocab.IN_SIGHT_FORMAT % [x, y]
 	return HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_FORMAT % [
 		x, y, int(tie.get("last_seen_turn", 0))]
 
@@ -205,7 +211,8 @@ static func _build_row(tie: Dictionary, band_labor: HudBandLaborState, turn: int
 		band_id: int, on_station: Callable) -> VBoxContainer:
 	var host_id := int(tie.get("subject_band_id", HudConst.NO_BAND_ID))
 	# **A STATION PARTY ON THIS HOST** (issue #774): the state word reads `stationed` once the party has
-	# arrived, in place of growing / fading — a post gets contact every turn, so the tie cannot fade.
+	# arrived, in place of growing / fading. A post's tie rises when a runner's report reaches home, so a far post's
+	# tie can still fade for the runner's walk after arrival; the word says where the people are.
 	var party := band_labor.station_party_for_host(band_id, host_id)
 	var state := tie_state(tie, turn)
 	if not party.is_empty() and state != HudConnectionsVocab.STATE_PARKED \
@@ -242,7 +249,7 @@ static func _build_row(tie: Dictionary, band_labor: HudBandLaborState, turn: int
 	head.add_child(word)
 	row.add_child(head)
 
-	var remembered := remembered_line(tie)
+	var remembered := remembered_line(tie, turn)
 	var second: Label
 	if state == HudConnectionsVocab.STATE_PARKED:
 		var x := int(tie.get("last_seen_x", -1))
@@ -272,7 +279,7 @@ static func _build_row(tie: Dictionary, band_labor: HudBandLaborState, turn: int
 
 ## The newest sighting's age and the head count of the post, for the stationed row's hover.
 static func _stationed_hover(tie: Dictionary, party: Dictionary, turn: int) -> String:
-	var age := maxi(0, turn - int(tie.get("last_seen_turn", turn)))
+	var age := HudConnectionsVocab.age_of(int(tie.get("last_seen_turn", turn)), turn)
 	return HudConnectionsVocab.STATION_ROW_HOVER_FORMAT % [int(party.get("size", 0)), age,
 		HudConnectionsVocab.STATION_TURN_ONE if age == 1 else HudConnectionsVocab.STATION_TURN_MANY]
 

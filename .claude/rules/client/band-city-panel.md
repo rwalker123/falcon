@@ -7618,10 +7618,21 @@ zone is declared on band pages only (`BAND_ZONE_LAYOUT`); the faction page has n
   has met no other people yet.*
 - **A row is two lines.** Line 1: the subject's name · strength as a whole percent · the state word.
   Line 2: the remembered sighting, `HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_FORMAT` — the
-  shipment picker's own sentence. Both lines are single-line labels that ellipsise, so a row cannot
+  shipment picker's own sentence — or `HudConnectionsVocab.IN_SIGHT_FORMAT` (`In sight at (x, y)`)
+  when `last_seen_turn` is the turn that just resolved (`ConnectionsRoster.remembered_line(tie, turn)`,
+  which the picker's destination notes call too, so the two surfaces agree). Both lines are single-line labels that ellipsise, so a row cannot
   wrap to a third. The row's hover is the whole name, then the first-met and last-contact turns.
+- **THE FRAME'S TURN IS ONE AHEAD OF EVERY CONTACT STAMP.** `advance_connections` stamps contact with the
+  tick of the turn being resolved (Visibility stage); `advance_tick` increments it in the Snapshot stage
+  before the frame is captured, so `snapshot["turn"]` / `current_turn()` is one past the turn whose
+  contact the frame carries. "This turn" therefore means the turn that just RESOLVED:
+  `HudConnectionsVocab.resolved_turn(frame_turn)` (`RESOLVED_TURN_LAG`), with `age_of(stamp, frame_turn)`
+  its floored-at-0 age. Every reader goes through it — `tie_state`, `remembered_line`, the stationed
+  hover's news age, the heart's "last seen N turns ago" and the map's remembered-ghost `news_age`.
+  Comparing the raw frame turn to a stamp read `fading` over a band in sight (the % rose every turn,
+  the word never said growing).
 - **The three states** (`ConnectionsRoster.tie_state`): `growing` (HEALTHY) when
-  `last_contact_turn` is the current turn; `fading` (INK_DIM) when there was no contact and strength
+  `last_contact_turn` is the resolved turn; `fading` (INK_DIM) when there was no contact and strength
   is above `HudConst.TIE_STRENGTH_NONE`; `parked` (WARN) at that strength.
 - **A parked tie is shown.** Its second line is amber and says what to do and where:
   `No tie — meet them again. Last seen at (x, y), turn N.` A parked tie with no recorded tile reads
@@ -7667,9 +7678,11 @@ none of them a new panel.
   server rule backs it.
 - **The row while posted.** `stationed` (HEALTHY) replaces growing / fading once the party has
   ARRIVED (phase `stationed`) — a party still walking leaves the tie's own word, since saying
-  `stationed` over a tie that is still fading would be untrue. The hover adds
-  `N of your people are stationed with them · news about K turns old`, K = current turn −
-  `last_seen_turn`. `ConnectionsRoster.tie_state` stays pure; the override is `_build_row`'s.
+  `stationed` over a tie that is still fading would be untrue. A post no longer tops its tie up live: the
+  tie rises when a runner's report reaches home, so a far post's tie can fade for the runner's walk after
+  arrival; the word says where the people are, and its hover says `Their news keeps the tie strong.` The hover adds
+  `N of your people are stationed with them · news about K turns old`, K = `age_of(last_seen_turn,
+  current turn)`. `ConnectionsRoster.tie_state` stays pure; the override is `_build_row`'s.
 - **The sheet** is a verb sheet of its own mission (`HudComposeVocab.COMPOSE_MISSION_STATION`) that is
   NOT on the action bar: only the link opens it (`BandPanelController._on_station_link_pressed`, the
   `dispatch_verb` machinery with the host fixed in `_station_host`, cleared with the rest of the verb
