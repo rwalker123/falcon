@@ -1014,10 +1014,16 @@ lets a trade readout leave them out and a food readout put a homecoming beside t
 `Outbound` → (arrive, deposit) → `Returning` → fold back. **No new `ExpeditionPhase`**: the party does
 exactly two things and both already have a phase.
 
-- **Retargets the destination's LIVE tile every turn**, mirroring the `Hunting` arm's herd retarget —
-  bands are nomadic, and a shipment aimed once at where a people were camped arrives nowhere.
+- **Walks toward `Expedition::aim`, not the destination's live tile** — see "A party aims at what its
+  people know" below. Bands are nomadic, so the aim follows the destination only while the sender
+  knows where it is.
 - **Arrival is the comm-range proximity** the fold-back already uses (*"near enough to hand things
-  over"*), not exact co-location, so a chase between two moving bands converges.
+  over"*), not exact co-location, so a chase between two moving bands converges — and it additionally
+  requires the destination to be known this turn (own people, or seen by the party).
+- **A destination not found turns the party for home CARRYING THE CARGO**: standing on its aim with
+  the destination out of sight, the party turns `Returning` with an `ExpeditionRecalled` line,
+  detail `status=returning reason=destination_not_found destination=<id> expedition=<bits>` — the
+  destination-gone line's shape with its own reason.
 - **A destination that cannot be resolved turns the party for home CARRYING THE CARGO**, the twin of
   the lost-herd guard. Its feed line rides `CommandEventKind::ExpeditionRecalled` — the kind that
   means *"this party has been turned for home"*, the same state change the recall verb makes —
@@ -1246,10 +1252,13 @@ else: **no provisions, no cargo**.
 
 ### Phases
 
-`Outbound` retargets the host's **live** tile every turn (bands are nomadic) and arrives on the
-comm-range proximity a shipment uses; arrival flips to the new `ExpeditionPhase::Stationed` (wire
+`Outbound` walks toward **`Expedition::aim`**, the tile the party's people believe the host is at —
+never the host's live tile for free (see "A party aims at what its people know" below). It arrives
+on the comm-range proximity a shipment uses, and only on a host the party knows the position of this
+turn; arrival flips to the new `ExpeditionPhase::Stationed` (wire
 `stationed`) with one `ExpeditionArrived` line (`status=stationed host=<id>`). `Stationed` stays and
-follows: it chases the host's tile whenever it is not standing on it. `Returning` and the fold-back
+follows: it chases the host's live tile whenever it is not standing on it (the party is standing with
+them, which is presence). `Returning` and the fold-back
 are the shared path. `Stationed` is genuinely new state — no other phase both stays and moves.
 
 ### The tie is credited live
@@ -1290,7 +1299,7 @@ not a second mechanism.
   carrying, and does not charge the wayfinding gear for it again.
 - **`party_owes_a_report` includes reports in transit**, so a recall in camp with news still on the
   way takes the `Returning` path (only that arm lands them) rather than the in-camp cancel.
-- **Reports ride the checkpoint** with the `Expedition` (`SAVE_FORMAT_VERSION` 35).
+- **Reports ride the checkpoint** with the `Expedition`, as does the `aim` (`SAVE_FORMAT_VERSION` 40).
 
 ### The home band feeds the party
 
@@ -1326,12 +1335,40 @@ on a shipment's lines):
 |---|---|
 | `host_gone` | the host `BandId` no longer resolves to a resident band |
 | `borders_closed` | the host's people are not the party's and their borders are closed |
+| `host_not_found` | the party stands on its aim, does not see the host, and the host is not its own people (written by `advance_expeditions`; `host=` rides along) |
 | `recalled` | the player's `recall_expedition` (written by the verb, with `host=`) |
 
 **A home band that cannot cover its party's rations does not end the post.** The party stays and
 the tie stays credited; the shortfall is the band's, borne through the ordinary meal its
 demographics already run (a non-zero `foodShortfall`, starvation by the usual rules). Nothing is
 gained by walking the party home, so bringing it back for hunger is the player's recall.
+### A party aims at what its people know
+
+Applies to a stationed party's `Outbound` phase and a shipment's alike, through one helper
+(`steer_toward_target`). `Expedition::aim: Option<UVec2>` (`None` for the other verbs) is the tile
+the party is walking toward, and it rides the checkpoint with the `Expedition`.
+
+- **At launch** (`resolve_post`, `resolve_shipment`) the aim is `ConnectionLedger::launch_aim`: the
+  target's live tile when the sender knows it (the target is the sender's own people — your own
+  bands are always visible to you — or the target's tile is `Active` on the sender's fog map),
+  otherwise the `last_seen_position` of the `home -> target` edge, which the launch gate guarantees.
+- **Each `Outbound` turn** the aim becomes the target's live tile only if the target is the sender's
+  own people, or the party sees the target this turn (its BandId is among the observe pass's
+  sightings, read before the station bundle drains `pending_contacts`). Otherwise the aim is kept
+  and the party walks to it.
+- **Arrival** is within comm range of the target's live tile **and** the position known this turn.
+- **Not found.** Standing on the aim with the target unknown ends the trip: `Returning` plus an
+  `ExpeditionRecalled` line. A post's line is `status=returning reason=host_not_found host=<id>
+  expedition=<bits>`; a shipment's is `status=returning reason=destination_not_found
+  destination=<id> expedition=<bits>`.
+
+Pinned by `station_expedition::{a_party_finds_no_sign_of_a_host_that_moved_out_of_sight,
+a_party_that_sees_a_host_that_moved_a_little_stations_with_it,
+a_same_people_host_that_moved_is_followed_without_sight, an_aim_set_mid_walk_survives_a_checkpoint_round_trip}`
+and `trade_expedition::{a_shipment_that_finds_nobody_where_the_destination_was_comes_home_with_its_cargo,
+a_shipment_that_sees_a_destination_that_moved_a_little_delivers}`, each not-found case paired with a
+control that sees the target.
+
 ### Tests
 
 `core_sim/tests/station_expedition.rs` drives real turns: the posted tie at full for 100 turns beside a

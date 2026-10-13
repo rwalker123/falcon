@@ -557,6 +557,7 @@ fn spawn_shipment(
                 cargo,
                 defection_pull: core_sim::Scalar::zero(),
                 station_reports: Vec::new(),
+                aim: None,
             },
             BandTravel::to(destination_pos),
         ))

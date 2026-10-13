@@ -9,11 +9,20 @@ use crate::fauna::AnimalTake;
 /// reports [`DenialOutcome::HerdLost`].
 const DESTINATION_GONE_MID_TRADE: &str = "destination_gone";
 
+/// **The reason token for a SHIPMENT that walked to where it was told the destination was and found
+/// nobody it could see there** — the band moved on after it was last seen. The party turns for home
+/// still carrying the cargo, the same exit and the same detail shape as
+/// [`DESTINATION_GONE_MID_TRADE`].
+const DESTINATION_NOT_FOUND_MID_TRADE: &str = "destination_not_found";
+
 /// **The reason tokens a stationed party's post ends on** (`ExpeditionMission::Station`), carried in
 /// the `reason=` of the `ExpeditionRecalled` line beside `host=<id>`. A recall by the player is the
 /// third, written by `handle_recall_expedition` (`POST_RECALLED`).
 const HOST_GONE_MID_POST: &str = "host_gone";
 const BORDERS_CLOSED_MID_POST: &str = "borders_closed";
+/// The party reached the tile it was told the host was at and saw nothing there — see
+/// [`steer_toward_target`].
+const HOST_NOT_FOUND_MID_POST: &str = "host_not_found";
 /// The player's own recall of a stationed party — see `handle_recall_expedition`.
 pub const POST_RECALLED: &str = "recalled";
 
@@ -29,6 +38,55 @@ pub fn station_report_delay(distance: u32, comm_range: u32, tiles_per_turn: u32)
         return 0;
     }
     u64::from(crate::work_party::walk_turns(distance, tiles_per_turn))
+}
+
+/// **What a Station / Trade party does this turn on its way out**, from [`steer_toward_target`].
+enum TargetStep {
+    /// Within comm range of the target's live tile AND the target is known this turn.
+    Arrived,
+    /// Keep walking toward this tile.
+    Walk(UVec2),
+    /// Standing on the aim with the target out of sight: the trip is over.
+    NotFound,
+}
+
+/// **A traveling party aims at what its people know** (`.claude/rules/core_sim/connections.md`).
+/// The target's position is known this turn when the target is the sender's own people (your own
+/// bands are always visible to you) or the party itself sees it; only then does `aim` move to the
+/// target's live tile. Otherwise the party keeps walking at the tile it already had, and standing on
+/// it with the target nowhere in sight ends the trip. Arrival additionally requires the target to be
+/// known this turn: a party never "arrives" on a band it cannot see. One helper serves both the
+/// stationed party and the shipment so the two cannot drift.
+#[allow(clippy::too_many_arguments)]
+fn steer_toward_target(
+    aim: &mut Option<UVec2>,
+    exp_pos: UVec2,
+    target_live: UVec2,
+    own_people: bool,
+    sees_target: bool,
+    comm_range: u32,
+    grid_width: u32,
+    wrap_horizontal: bool,
+) -> TargetStep {
+    let knows = own_people || sees_target;
+    if knows {
+        *aim = Some(target_live);
+    }
+    let aim_tile = aim.unwrap_or(target_live);
+    if knows
+        && crate::grid_utils::hex_distance_wrapped(
+            exp_pos,
+            target_live,
+            grid_width,
+            wrap_horizontal,
+        ) <= comm_range
+    {
+        TargetStep::Arrived
+    } else if !knows && exp_pos == aim_tile {
+        TargetStep::NotFound
+    } else {
+        TargetStep::Walk(aim_tile)
+    }
 }
 
 /// **Everything one detached party is, as a query tuple.** Named because the tuple grew past the
@@ -1014,6 +1072,10 @@ pub fn advance_expeditions(
         // **What this party will be charged for on `WearQuantum::TileRevealed`** — counted here, at
         // the moment of looking, and only for ground that is genuinely new. See the charge below.
         let mut newly_seen: u32 = 0;
+        // **Did the party itself see its target band this turn?** Read off the observe pass below,
+        // before the station bundle drains `pending_contacts`.
+        let target_band = mission.host_band().or_else(|| mission.destination_band());
+        let mut sees_target = false;
         for pos in crate::visibility_systems::visible_tiles_in_range(
             exp_pos,
             observe_sight_range,
@@ -1044,6 +1106,9 @@ pub fn advance_expeditions(
                 for subject in occupants {
                     // The party's own home band is not a stranger. Without this a party camped
                     // beside home would report its own band as a people it had found.
+                    if Some(*subject) == target_band {
+                        sees_target = true;
+                    }
                     if Some(*subject) != home_band_id {
                         let name = resident_names.get(subject).cloned().unwrap_or_default();
                         expedition
@@ -1465,99 +1530,127 @@ pub fn advance_expeditions(
                     .destination_band()
                     .expect("this arm is gated on a trade mission");
                 if let Some(&(host_entity, host_pos)) = resident_positions.get(&destination) {
-                    // **RETARGET EVERY TURN, at the destination's LIVE tile** — bands are nomadic,
-                    // so a shipment aimed once at where a people were camped arrives nowhere. Same
-                    // rule as the `Hunting` arm's herd retarget.
-                    let arrived = crate::grid_utils::hex_distance_wrapped(
+                    // **THE PARTY AIMS AT WHAT ITS PEOPLE KNOW**, not at the destination's live tile
+                    // unconditionally: bands are nomadic, so the aim follows the band only while the
+                    // sender knows where it is (its own people, or in the party's sight).
+                    let own_people = bands
+                        .get(host_entity)
+                        .ok()
+                        .is_some_and(|(_, host_cohort, ..)| host_cohort.faction == faction);
+                    match steer_toward_target(
+                        &mut expedition.aim,
                         exp_pos,
                         host_pos,
+                        own_people,
+                        sees_target,
+                        comm_range,
                         grid_width,
                         wrap_horizontal,
-                    ) <= comm_range;
-                    if !arrived {
-                        commands.entity(entity).insert(BandTravel::to(host_pos));
-                    } else {
-                        // **ARRIVAL IS NOT RE-GATED ON THE TIE.** If the connection decayed to
-                        // nothing while the party walked, the shipment still lands: the party is
-                        // standing in their camp, and presence beats the ledger. The tie gates the
-                        // *launch* — deciding to send goods to a people you have no dealings with —
-                        // and that decision was made turns ago.
-                        let carried_food = expedition.cargo.get(FOOD);
-                        let carried_fodder = expedition.cargo.get(FODDER);
-                        let carried_materials = materials_carried(&expedition.cargo);
-                        // **The sender, named on the host's row** — the band that outfitted the
-                        // party, in the party's own faction (a party is its home band's people).
-                        let sender =
-                            home_band_id.map(|band| TransferCounterparty { band, faction });
-                        let landed = bands.get_mut(host_entity).ok().map(
-                            |(_, mut host, _, _, allocation, _, _)| {
-                                // The shipment lands class by class (#706): the host receives the
-                                // flesh, greens and grain that were loaded, not a classless total.
-                                let moved_mix = expedition.cargo.take_food_mix(carried_food);
-                                host.stores.add_food_mix(&moved_mix);
-                                let moved = moved_mix.total();
-                                // **The hay lands in the host's OWN hay account** — `FODDER` is a
-                                // second key on the same store, so the hand-over is the food
-                                // hand-over verbatim and the two never convert on the way in.
-                                let moved_fodder = expedition.cargo.take(FODDER, carried_fodder);
-                                if moved_fodder > scalar_zero() {
-                                    host.stores.add(FODDER, moved_fodder);
-                                }
-                                // **Batch by batch into the HOST's store** — the shipment's ratings
-                                // are what make it a shipment of goods rather than of a number, so
-                                // two ratings of one material arrive as two batches.
-                                let moved_materials =
-                                    expedition.cargo.drain_materials_into(&mut host.stores);
-                                // The receiving half of a shipment — [`TransferCause::ShipmentIn`],
-                                // on the `TransferLink::Route` arm, because a party carried this
-                                // here. The *sending* half was booked at launch, against the band
-                                // the party was drawn off, as `ShipmentOut`.
-                                //
-                                // **The hay books on its own ledger, never the food one**
-                                // (`book_crossing` routes each key to its account): the food
-                                // identity closes over the FOOD larder, which a bale never enters.
-                                // Materials book per batch, at the rating each one moved at.
-                                if let Some(mut allocation) = allocation {
-                                    for (commodity, amount) in
-                                        [(FOOD, moved), (FODDER, moved_fodder)]
-                                    {
-                                        allocation.book_crossing(
-                                            TransferCrossing::goods(
-                                                commodity,
-                                                TransferDirection::In,
-                                                TransferCause::ShipmentIn,
-                                                amount.to_f32(),
-                                            )
-                                            .with_counterparty(sender)
-                                            .with_party(party_band),
-                                        );
-                                    }
-                                    allocation.book_material_draws(
-                                        &moved_materials,
-                                        TransferDirection::In,
-                                        TransferCause::ShipmentIn,
-                                        sender,
-                                        party_band,
-                                    );
-                                }
-                                (moved, moved_fodder)
-                            },
-                        );
-                        if let Some((moved, moved_fodder)) = landed {
+                    ) {
+                        TargetStep::Walk(aim) => {
+                            commands.entity(entity).insert(BandTravel::to(aim));
+                        }
+                        TargetStep::NotFound => {
+                            expedition.phase = ExpeditionPhase::Returning;
                             event_log.push(CommandEventEntry::new(
                                 current_turn,
-                                CommandEventKind::TradeDelivered,
+                                CommandEventKind::ExpeditionRecalled,
                                 faction,
                                 format!(
-                                    "Trade party delivered {} to {}",
-                                    describe_haul(
-                                        moved.to_i64_whole(),
-                                        moved_fodder.to_i64_whole(),
-                                        carried_materials
-                                    ),
-                                    mission.destination_display()
-                                ),
+                                "Trade party found no sign of {} — returning home with its cargo",
+                                mission.destination_display()
+                            ),
                                 Some(format!(
+                                    "status=returning reason={} destination={} expedition={}",
+                                    DESTINATION_NOT_FOUND_MID_TRADE,
+                                    destination.0,
+                                    entity.to_bits()
+                                )),
+                            ));
+                        }
+                        TargetStep::Arrived => {
+                            // **ARRIVAL IS NOT RE-GATED ON THE TIE.** If the connection decayed to
+                            // nothing while the party walked, the shipment still lands: the party is
+                            // standing in their camp, and presence beats the ledger. The tie gates the
+                            // *launch* — deciding to send goods to a people you have no dealings with —
+                            // and that decision was made turns ago.
+                            let carried_food = expedition.cargo.get(FOOD);
+                            let carried_fodder = expedition.cargo.get(FODDER);
+                            let carried_materials = materials_carried(&expedition.cargo);
+                            // **The sender, named on the host's row** — the band that outfitted the
+                            // party, in the party's own faction (a party is its home band's people).
+                            let sender =
+                                home_band_id.map(|band| TransferCounterparty { band, faction });
+                            let landed = bands.get_mut(host_entity).ok().map(
+                                |(_, mut host, _, _, allocation, _, _)| {
+                                    // The shipment lands class by class (#706): the host receives the
+                                    // flesh, greens and grain that were loaded, not a classless total.
+                                    let moved_mix = expedition.cargo.take_food_mix(carried_food);
+                                    host.stores.add_food_mix(&moved_mix);
+                                    let moved = moved_mix.total();
+                                    // **The hay lands in the host's OWN hay account** — `FODDER` is a
+                                    // second key on the same store, so the hand-over is the food
+                                    // hand-over verbatim and the two never convert on the way in.
+                                    let moved_fodder =
+                                        expedition.cargo.take(FODDER, carried_fodder);
+                                    if moved_fodder > scalar_zero() {
+                                        host.stores.add(FODDER, moved_fodder);
+                                    }
+                                    // **Batch by batch into the HOST's store** — the shipment's ratings
+                                    // are what make it a shipment of goods rather than of a number, so
+                                    // two ratings of one material arrive as two batches.
+                                    let moved_materials =
+                                        expedition.cargo.drain_materials_into(&mut host.stores);
+                                    // The receiving half of a shipment — [`TransferCause::ShipmentIn`],
+                                    // on the `TransferLink::Route` arm, because a party carried this
+                                    // here. The *sending* half was booked at launch, against the band
+                                    // the party was drawn off, as `ShipmentOut`.
+                                    //
+                                    // **The hay books on its own ledger, never the food one**
+                                    // (`book_crossing` routes each key to its account): the food
+                                    // identity closes over the FOOD larder, which a bale never enters.
+                                    // Materials book per batch, at the rating each one moved at.
+                                    if let Some(mut allocation) = allocation {
+                                        for (commodity, amount) in
+                                            [(FOOD, moved), (FODDER, moved_fodder)]
+                                        {
+                                            allocation.book_crossing(
+                                                TransferCrossing::goods(
+                                                    commodity,
+                                                    TransferDirection::In,
+                                                    TransferCause::ShipmentIn,
+                                                    amount.to_f32(),
+                                                )
+                                                .with_counterparty(sender)
+                                                .with_party(party_band),
+                                            );
+                                        }
+                                        allocation.book_material_draws(
+                                            &moved_materials,
+                                            TransferDirection::In,
+                                            TransferCause::ShipmentIn,
+                                            sender,
+                                            party_band,
+                                        );
+                                    }
+                                    (moved, moved_fodder)
+                                },
+                            );
+                            if let Some((moved, moved_fodder)) = landed {
+                                event_log.push(CommandEventEntry::new(
+                                    current_turn,
+                                    CommandEventKind::TradeDelivered,
+                                    faction,
+                                    format!(
+                                        "Trade party delivered {} to {}",
+                                        describe_haul(
+                                            moved.to_i64_whole(),
+                                            moved_fodder.to_i64_whole(),
+                                            carried_materials
+                                        ),
+                                        mission.destination_display()
+                                    ),
+                                    Some(format!(
                                     "status=delivered destination={} fodder={} materials={:.*} \
                                      expedition={}",
                                     destination.0,
@@ -1566,31 +1659,62 @@ pub fn advance_expeditions(
                                     carried_materials,
                                     entity.to_bits()
                                 )),
-                            ));
-                            // One-way in this slice: the party walks home empty rather than
-                            // carrying a priced return flow, which is a later slice's model.
-                            expedition.phase = ExpeditionPhase::Returning;
+                                ));
+                                // One-way in this slice: the party walks home empty rather than
+                                // carrying a priced return flow, which is a later slice's model.
+                                expedition.phase = ExpeditionPhase::Returning;
+                            }
                         }
                     }
                 }
             }
             ExpeditionPhase::Outbound if mission.host_band().is_some() => {
-                // **A stationed party walks its host down and stays.** Retargeted at the host's LIVE
-                // tile every turn (bands are nomadic), and arrival is the comm-range proximity a
-                // shipment uses. The host is resolvable here by construction: the guard above turned
-                // the party for home if it was not.
+                // **A stationed party walks toward what its people KNOW of its host, and stays.**
+                // The aim follows the host's live tile only while the sender knows where it is (its
+                // own people, or in the party's sight this turn); arrival is the comm-range
+                // proximity a shipment uses, and additionally needs the host in sight. The host is
+                // resolvable here by construction: the guard above turned the party for home if it
+                // was not.
                 let host = mission
                     .host_band()
                     .expect("this arm is gated on a station mission");
-                if let Some(&(_, host_pos)) = resident_positions.get(&host) {
-                    commands.entity(entity).insert(BandTravel::to(host_pos));
-                    let arrived = crate::grid_utils::hex_distance_wrapped(
+                if let Some(&(host_entity, host_pos)) = resident_positions.get(&host) {
+                    let own_people = bands
+                        .get(host_entity)
+                        .ok()
+                        .is_some_and(|(_, host_cohort, ..)| host_cohort.faction == faction);
+                    let step = steer_toward_target(
+                        &mut expedition.aim,
                         exp_pos,
                         host_pos,
+                        own_people,
+                        sees_target,
+                        comm_range,
                         grid_width,
                         wrap_horizontal,
-                    ) <= comm_range;
-                    if arrived {
+                    );
+                    if let TargetStep::Walk(aim) = step {
+                        commands.entity(entity).insert(BandTravel::to(aim));
+                    }
+                    if matches!(step, TargetStep::NotFound) {
+                        expedition.phase = ExpeditionPhase::Returning;
+                        event_log.push(CommandEventEntry::new(
+                            current_turn,
+                            CommandEventKind::ExpeditionRecalled,
+                            faction,
+                            format!(
+                                "Party found no sign of {} — returning home",
+                                mission.host_display()
+                            ),
+                            Some(format!(
+                                "status=returning reason={} host={} expedition={}",
+                                HOST_NOT_FOUND_MID_POST,
+                                host.0,
+                                entity.to_bits()
+                            )),
+                        ));
+                    }
+                    if matches!(step, TargetStep::Arrived) {
                         expedition.phase = ExpeditionPhase::Stationed;
                         event_log.push(CommandEventEntry::new(
                             current_turn,

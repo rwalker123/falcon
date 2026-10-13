@@ -870,7 +870,15 @@ Nothing is gained by walking them home; the player recalls them when they choose
 - **Another people's band requires that people's Open Borders** (`FactionBorderPolicies`). Your own
   bands never ask it, the same rule as moving between your own camps (`factions.md`).
 - **A post ends**, and the party walks home and folds back, on any of: a recall; the host's people
-  closing their borders; the host band no longer resolvable.
+  closing their borders; the host band no longer resolvable; the party standing on the tile it was
+  aiming at with the host nowhere in sight (`host_not_found`).
+- **A party aims at what its people know.** A traveling party (a stationed party or a shipment)
+  sets out toward the target's live tile when the sender knows where it is (the target is the
+  sender's own people, or its tile is seen), and otherwise toward the `last_seen_position` of the
+  `home -> target` connection. On the way it re-aims at the live tile only while its own people, or
+  its own sight, tell it where the target is; it arrives only on a target it can see. A foreign band
+  that moved on out of sight is therefore not found, and the trip ends (a shipment brings its cargo
+  home) rather than the party homing on a position it could not know.
 - **One-way.** The host takes no tie toward the sender from having them in its camp — a party is not
   a contact subject (§connections → "Subjects are resident bands only").
 

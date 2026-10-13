@@ -286,6 +286,7 @@ fn spawn_raid_party(
                 cargo: core_sim::LocalStore::new(),
                 defection_pull: core_sim::Scalar::zero(),
                 station_reports: Vec::new(),
+                aim: None,
             },
         ))
         .id()

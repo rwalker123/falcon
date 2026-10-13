@@ -59,6 +59,7 @@ use crate::{
     components::BandId,
     connections_config::{ConnectionsConfig, ConnectionsConfigHandle},
     metrics::SimulationMetrics,
+    orders::FactionId,
     resources::SimulationTick,
     scalar::Scalar,
 };
@@ -155,6 +156,30 @@ pub struct ConnectionLedger {
 }
 
 impl ConnectionLedger {
+    /// **The tile a traveling party sets out toward** — what its people know of where `target` is,
+    /// never where it really is. The target's live tile when the sender knows it: the target is the
+    /// sender's own people (your own bands are always visible to you), or its tile is `Active` on the
+    /// sending faction's map. Otherwise the `home -> target` edge's `last_seen_position`; with no
+    /// edge at all (the launch gate prevents it), the live tile is the only position there is.
+    pub fn launch_aim(
+        &self,
+        visibility: &crate::visibility::VisibilityLedger,
+        sender_faction: FactionId,
+        home: BandId,
+        target: BandId,
+        target_faction: FactionId,
+        target_live_tile: UVec2,
+    ) -> UVec2 {
+        let known = sender_faction == target_faction
+            || visibility.is_visible(sender_faction, target_live_tile.x, target_live_tile.y);
+        if known {
+            return target_live_tile;
+        }
+        self.get(&ConnectionKey::new(home, target))
+            .map(|connection| connection.last_seen_position)
+            .unwrap_or(target_live_tile)
+    }
+
     pub fn get(&self, key: &ConnectionKey) -> Option<&Connection> {
         self.edges.get(key)
     }
@@ -450,6 +475,49 @@ mod tests {
 
     fn seen(position: UVec2, observed_turn: u64) -> Sighting {
         Sighting::new(position, observed_turn, SUBJECT_NAME)
+    }
+
+    #[test]
+    fn a_launch_aims_at_the_live_tile_only_when_the_sender_knows_it() {
+        const MINE: FactionId = FactionId(0);
+        const THEIRS: FactionId = FactionId(1);
+        const MAP_SIDE: u32 = 16;
+        let cfg = config();
+        let mut ledger = ConnectionLedger::default();
+        ledger.record_contact(edge(), &seen(SOMEWHERE, 1), 1, &cfg);
+        let mut visibility = crate::visibility::VisibilityLedger::default();
+        let _ = visibility.ensure_faction(MINE, MAP_SIDE, MAP_SIDE);
+        let aim = |ledger: &ConnectionLedger,
+                   visibility: &crate::visibility::VisibilityLedger,
+                   target_faction: FactionId| {
+            ledger.launch_aim(
+                visibility,
+                MINE,
+                OBSERVER,
+                SUBJECT,
+                target_faction,
+                ELSEWHERE,
+            )
+        };
+        assert_eq!(
+            aim(&ledger, &visibility, THEIRS),
+            SOMEWHERE,
+            "a foreign band out of sight is where it was last seen"
+        );
+        assert_eq!(
+            aim(&ledger, &visibility, MINE),
+            ELSEWHERE,
+            "your own people are always known"
+        );
+        visibility
+            .get_faction_mut(MINE)
+            .expect("map")
+            .mark_active(ELSEWHERE.x, ELSEWHERE.y, 1);
+        assert_eq!(
+            aim(&ledger, &visibility, THEIRS),
+            ELSEWHERE,
+            "a foreign band on a tile you see is where it is"
+        );
     }
 
     #[test]

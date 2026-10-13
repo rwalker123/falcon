@@ -368,6 +368,7 @@ fn spawn_party(
                 // empty for the party's whole life.
                 defection_pull: core_sim::Scalar::zero(),
                 station_reports: Vec::new(),
+                aim: None,
             },
         ))
         .id()

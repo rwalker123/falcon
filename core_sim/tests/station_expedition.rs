@@ -181,6 +181,7 @@ fn launch_station(app: &mut App, home: Entity, host: BandId, host_pos: UVec2) ->
                 cargo: LocalStore::new(),
                 defection_pull: Scalar::zero(),
                 station_reports: Vec::new(),
+                aim: Some(host_pos),
             },
             BandTravel::to(host_pos),
         ))
@@ -954,4 +955,178 @@ fn the_mission_host_and_phase_are_published() {
     let (_, phase_key, bound_for, _, _) = party_row(&rig.app, party_id);
     assert_eq!(phase_key, "stationed");
     assert_eq!(bound_for, host_id.0);
+}
+
+// ---------------------------------------------------------------------------------------------
+// A party aims at what its people know
+// ---------------------------------------------------------------------------------------------
+
+/// How far from the home band the host was last seen — far enough that the walk takes many turns.
+const LAST_SEEN_TILES: u32 = 12;
+/// How far the host has moved on since it was last seen, in the "gone out of sight" cases — past
+/// every sight range a party has.
+const MOVED_FAR_TILES: u32 = 30;
+/// How far the host has moved in the control: one tile, inside the party's sight from the last-seen tile.
+const MOVED_NEAR_TILES: u32 = 1;
+
+/// A RIVAL host last seen `LAST_SEEN_TILES` from the home band (the tie's remembered position, and
+/// the party's launch aim), and standing `moved` tiles from there now. Returns the rig and the
+/// last-seen tile.
+fn stale_host_rig(moved: u32) -> (Rig, UVec2) {
+    let mut app = two_faction_world();
+    let home = resident_of(&mut app, HOME);
+    let host = resident_of(&mut app, RIVAL);
+    let (home_id, host_id) = (band_id(&app, home), band_id(&app, host));
+    let last_seen = offset_from(&app, band_position(&app, home), LAST_SEEN_TILES);
+    let now_at = offset_from(&app, last_seen, moved);
+    walk_to(&mut app, host, now_at);
+    seed_full_tie(&mut app, home_id, host_id, last_seen);
+    let party = launch_station(&mut app, home, host_id, last_seen);
+    (
+        Rig {
+            app,
+            home,
+            home_id,
+            host,
+            host_id,
+            party,
+        },
+        last_seen,
+    )
+}
+
+/// **A party walks to where its people last saw a foreign host, not to where the host really is** —
+/// and on standing there with nothing in sight, the trip ends: `Returning`, `host_not_found`.
+#[test]
+fn a_party_finds_no_sign_of_a_host_that_moved_out_of_sight() {
+    let (mut rig, last_seen) = stale_host_rig(MOVED_FAR_TILES);
+    let (home, host, party, host_id) = (rig.home, rig.host, rig.party, rig.host_id);
+    let host_now = band_position(&rig.app, host);
+    assert_ne!(
+        host_now, last_seen,
+        "liveness: the host really has moved on"
+    );
+
+    let mut turns = 0;
+    while phase(&rig.app, party) == Some(ExpeditionPhase::Outbound) {
+        assert!(turns < ARRIVAL_BUDGET, "the party never gave up looking");
+        feed(&mut rig.app, home);
+        feed(&mut rig.app, host);
+        run_turn(&mut rig.app);
+        turns += 1;
+    }
+
+    assert_eq!(phase(&rig.app, party), Some(ExpeditionPhase::Returning));
+    assert_eq!(
+        band_position(&rig.app, party),
+        last_seen,
+        "it walked to the last-seen tile, not toward the host's real position"
+    );
+    assert!(
+        turns > 1,
+        "liveness: the walk to the last-seen tile took turns"
+    );
+    let detail = latest_recall_detail(&rig.app).expect("the trip's end is on the feed");
+    assert_eq!(
+        detail,
+        format!(
+            "status=returning reason=host_not_found host={} expedition={}",
+            host_id.0,
+            party.to_bits()
+        )
+    );
+}
+
+/// **Control: a host that moved only a short way is still in the party's sight from the last-seen
+/// spot**, so the party sees it, re-aims, and stations — the not-found end is not just "the host is
+/// not on the remembered tile".
+#[test]
+fn a_party_that_sees_a_host_that_moved_a_little_stations_with_it() {
+    let (mut rig, last_seen) = stale_host_rig(MOVED_NEAR_TILES);
+    let (home, host, party) = (rig.home, rig.host, rig.party);
+    assert_ne!(
+        band_position(&rig.app, host),
+        last_seen,
+        "liveness: the host is not on the remembered tile"
+    );
+    run_until_stationed(&mut rig.app, party, &[home, host]);
+    assert_eq!(
+        rig.app
+            .world
+            .get::<Expedition>(party)
+            .and_then(|expedition| expedition.aim),
+        Some(band_position(&rig.app, host)),
+        "the party re-aimed at the host it saw"
+    );
+    assert!(
+        latest_recall_detail(&rig.app).is_none(),
+        "nothing ended the trip"
+    );
+}
+
+/// **A host of the sender's own people is always known**: the aim follows its live tile with no
+/// sight at all, and the party stations with it.
+#[test]
+fn a_same_people_host_that_moved_is_followed_without_sight() {
+    let mut rig = same_faction_rig();
+    let (home, host, party) = (rig.home, rig.host, rig.party);
+    let launch_aim = rig
+        .app
+        .world
+        .get::<Expedition>(party)
+        .and_then(|expedition| expedition.aim)
+        .expect("a station party carries an aim");
+    let moved_to = offset_from(&rig.app, launch_aim, MOVED_FAR_TILES);
+    walk_to(&mut rig.app, host, moved_to);
+    pin_people(&mut rig.app, host);
+
+    feed(&mut rig.app, home);
+    feed(&mut rig.app, host);
+    run_turn(&mut rig.app);
+    assert_eq!(
+        rig.app
+            .world
+            .get::<Expedition>(party)
+            .and_then(|expedition| expedition.aim),
+        Some(moved_to),
+        "the aim moved to the host's live tile on the first turn, unseen"
+    );
+    run_until_stationed(&mut rig.app, party, &[home, host]);
+}
+
+/// **The aim rides the checkpoint** with the rest of the `Expedition`.
+#[test]
+fn an_aim_set_mid_walk_survives_a_checkpoint_round_trip() {
+    use core_sim::sim_state::{capture_sim_state, restore_sim_state};
+
+    let (mut rig, last_seen) = stale_host_rig(MOVED_FAR_TILES);
+    let (home, host, party) = (rig.home, rig.host, rig.party);
+    for _ in 0..3 {
+        feed(&mut rig.app, home);
+        feed(&mut rig.app, host);
+        run_turn(&mut rig.app);
+    }
+    let party_band = band_id(&rig.app, party);
+    assert_eq!(
+        phase(&rig.app, party),
+        Some(ExpeditionPhase::Outbound),
+        "liveness: the party is mid-walk"
+    );
+    let checkpoint = capture_sim_state(&rig.app.world);
+    rig.app
+        .world
+        .get_mut::<Expedition>(party)
+        .expect("party")
+        .aim = None;
+
+    restore_sim_state(&mut rig.app.world, &checkpoint);
+
+    let restored = entity_for_band(&mut rig.app, party_band).expect("the party comes back");
+    assert_eq!(
+        rig.app
+            .world
+            .get::<Expedition>(restored)
+            .and_then(|expedition| expedition.aim),
+        Some(last_seen)
+    );
 }

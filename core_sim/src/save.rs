@@ -134,7 +134,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 37 | Rejoining walks: `HomewardWalk` gained `rejoins_row` — a stood-down walk whose row survived (its source drifted back inside the apron) keeps its hands on that row and rejoins it when it lands, instead of being counted a second time as a plain walker. `LaborAllocation::homeward` rides the allocation, so a version-36 blob does not decode |
 /// | 38 | The wear forecast (#778): `BandEquipment` gained `wear_window` - the condition each item was charged, per turn, over the last `equipment.json` `wear_forecast.window_turns` turns, which the "coming up" craft suggestions average into a rate. The ledger rides `BandRecord::equipment`, so a version-37 blob lacks it |
 /// | 39 | Stationed party (#774): `Expedition` gained `station_reports` (the reports a stationed party has sent home and not yet landed, each with its landing turn) and `ExpeditionMission` / `ExpeditionPhase` gained `Station` / `Stationed`; `PopulationCohort` gained `fed_party_workers` (the working-age people a band fed out in the field at the turn's meal). All of them ride `ExpeditionRecord` / `BandRecord`, so a version-38 blob does not decode |
-pub const SAVE_FORMAT_VERSION: u32 = 39;
+/// | 40 | A traveling party aims at what its people know: `Expedition` gained `aim` (the tile a Station / Trade party is walking toward, `None` for every other verb), riding `ExpeditionRecord` whole, so a version-39 blob does not decode |
+pub const SAVE_FORMAT_VERSION: u32 = 40;
 
 /// gzip level for the payload document.
 ///

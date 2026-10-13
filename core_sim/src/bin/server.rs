@@ -5780,6 +5780,7 @@ fn handle_send_expedition(
                 cargo: LocalStore::new(),
                 defection_pull: Scalar::zero(),
                 station_reports: Vec::new(),
+                aim: None,
             },
             BandTravel::to(target),
         ))
@@ -6296,6 +6297,7 @@ fn launch_party_from_band(
                 cargo: orders.cargo,
                 defection_pull: Scalar::zero(),
                 station_reports: Vec::new(),
+                aim: None,
             },
             BandTravel::to(orders.target),
         ))
@@ -6513,7 +6515,9 @@ fn resolve_expedition_job_kit(
 struct ResolvedPost {
     host_band: BandId,
     host_name: String,
-    host_pos: UVec2,
+    /// **Where the party sets out toward** — what the sender knows of the host's whereabouts
+    /// (`ConnectionLedger::launch_aim`), not necessarily where the host is now.
+    aim: UVec2,
     distance: u32,
 }
 
@@ -6617,6 +6621,17 @@ fn resolve_post(
         );
         return None;
     }
+    let aim = app
+        .world
+        .resource::<core_sim::connections::ConnectionLedger>()
+        .launch_aim(
+            app.world.resource::<core_sim::VisibilityLedger>(),
+            faction,
+            home_band,
+            host_band,
+            host_faction,
+            host_pos,
+        );
     let home_pos = app
         .world
         .get::<PopulationCohort>(home_entity)
@@ -6630,13 +6645,13 @@ fn resolve_post(
             .map_topology
             .wrap_horizontal;
         home_pos
-            .map(|from| hex_distance_wrapped(from, host_pos, grid_width, wrap_horizontal))
+            .map(|from| hex_distance_wrapped(from, aim, grid_width, wrap_horizontal))
             .unwrap_or(0)
     };
     Some(ResolvedPost {
         host_band,
         host_name,
-        host_pos,
+        aim,
         distance,
     })
 }
@@ -6682,7 +6697,7 @@ fn handle_station_expedition(
         mission,
         LaunchOrders {
             phase: ExpeditionPhase::Outbound,
-            target: post.host_pos,
+            target: post.aim,
             provisions: FoodMix::default(),
             cargo: LocalStore::new(),
         },
@@ -6696,6 +6711,9 @@ fn handle_station_expedition(
         );
         return;
     };
+    if let Some(mut expedition) = app.world.get_mut::<Expedition>(expedition_entity) {
+        expedition.aim = Some(post.aim);
+    }
     let tick = app.world.resource::<SimulationTick>().0;
     push_band_event(
         app,
@@ -6726,7 +6744,9 @@ struct ResolvedShipment {
     /// the destination for a client that may have no row for a foreign band.
     destination_faction: FactionId,
     destination_name: String,
-    destination_pos: UVec2,
+    /// **Where the party sets out toward** — what the sender knows of the destination's whereabouts
+    /// (`ConnectionLedger::launch_aim`), not necessarily where it is now.
+    aim: UVec2,
     /// The FOOD the shipment will carry, summed over the order's food lines.
     food: Scalar,
     /// The FODDER the shipment will carry, summed over the order's hay lines. **A third account,
@@ -6830,6 +6850,18 @@ fn resolve_shipment(
         );
         return None;
     }
+
+    let aim = app
+        .world
+        .resource::<core_sim::connections::ConnectionLedger>()
+        .launch_aim(
+            app.world.resource::<core_sim::VisibilityLedger>(),
+            faction,
+            home_band,
+            destination_band,
+            destination_faction,
+            destination_pos,
+        );
 
     // --- the cargo lines, summed per key ------------------------------------------------------
     if cargo.is_empty() {
@@ -7001,7 +7033,7 @@ fn resolve_shipment(
         // load-bearing: a foreign band's name has to come from the sim, the client having no roster
         // to resolve one from.
         destination_name: String::new(),
-        destination_pos,
+        aim,
         food,
         fodder,
         materials,
@@ -7070,9 +7102,7 @@ fn handle_send_trade_expedition(
             .map_topology
             .wrap_horizontal;
         band_pos
-            .map(|from| {
-                hex_distance_wrapped(from, shipment.destination_pos, grid_width, wrap_horizontal)
-            })
+            .map(|from| hex_distance_wrapped(from, shipment.aim, grid_width, wrap_horizontal))
             .unwrap_or(0)
     };
     let cfg = app.world.resource::<ExpeditionConfigHandle>().get();
@@ -7160,7 +7190,7 @@ fn handle_send_trade_expedition(
             // A shipment reuses the scout's `Outbound`; there is no trade phase, because the party
             // does exactly two things and both already have one.
             phase: ExpeditionPhase::Outbound,
-            target: shipment.destination_pos,
+            target: shipment.aim,
             provisions,
             cargo: shipment_store,
         },
@@ -7174,6 +7204,9 @@ fn handle_send_trade_expedition(
         );
         return;
     };
+    if let Some(mut expedition) = app.world.get_mut::<Expedition>(expedition_entity) {
+        expedition.aim = Some(shipment.aim);
+    }
 
     // **The sending half of the transfer terms, on the `TransferLink::Route` arm — and SPLIT BY
     // CAUSE.** Two different things left this band's store with the party:
@@ -17213,6 +17246,7 @@ mod tests {
                 cargo: LocalStore::new(),
                 defection_pull: Scalar::zero(),
                 station_reports: Vec::new(),
+                aim: None,
             },
         ));
 

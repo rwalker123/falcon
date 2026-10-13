@@ -240,6 +240,7 @@ fn launch_shipment(
                 cargo,
                 defection_pull: core_sim::Scalar::zero(),
                 station_reports: Vec::new(),
+                aim: Some(destination_pos),
             },
             BandTravel::to(destination_pos),
         ))
@@ -1212,5 +1213,171 @@ fn a_trade_partys_carry_cap_is_quoted_at_the_resolved_shipment_carry() {
     assert_eq!(
         band_cap, 0.0,
         "a resident band is not a party and carries no pack"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// A shipment aims at what its people know
+// ---------------------------------------------------------------------------------------------
+
+/// How far from the sender the destination was last seen.
+const LAST_SEEN_TILES: u32 = 12;
+/// How far the destination has moved on since — past every sight range a party has.
+const MOVED_FAR_TILES: u32 = 30;
+/// How far it has moved in the control: one tile, inside the party's sight from the last-seen tile.
+const MOVED_NEAR_TILES: u32 = 1;
+
+fn place_at(app: &mut App, band: Entity, target: UVec2) {
+    let tile = app
+        .world
+        .resource::<TileRegistry>()
+        .index(target.x, target.y)
+        .expect("the target tile is on the map");
+    let mut cohort = app
+        .world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the band exists");
+    cohort.current_tile = tile;
+    cohort.home = tile;
+}
+
+fn shifted(app: &App, from: UVec2, dx: u32) -> UVec2 {
+    let registry = app.world.resource::<TileRegistry>();
+    UVec2::new((from.x + dx) % registry.width.max(1), from.y)
+}
+
+/// A shipment launched at a foreign destination last seen `LAST_SEEN_TILES` out, which has since
+/// moved `moved` tiles from there. Returns `(app, sender, party, last_seen, destination_id)`.
+fn stale_destination(moved: u32) -> (App, Entity, Entity, UVec2, BandId) {
+    let mut app = spawn_world();
+    let sender = first_band(&mut app);
+    let (destination, destination_id) = split_off(&mut app, sender);
+    make_foreign(&mut app, destination);
+    let last_seen = shifted(&app, band_position(&app, sender), LAST_SEEN_TILES);
+    let now_at = shifted(&app, last_seen, moved);
+    place_at(&mut app, destination, now_at);
+    let party = launch_shipment(
+        &mut app,
+        sender,
+        destination_id,
+        last_seen,
+        food_cargo(CARGO_FOOD),
+    );
+    (app, sender, party, last_seen, destination_id)
+}
+
+fn recall_details(app: &App) -> Vec<String> {
+    app.world
+        .resource::<core_sim::CommandEventLog>()
+        .iter()
+        .filter(|entry| matches!(entry.kind, core_sim::CommandEventKind::ExpeditionRecalled))
+        .filter_map(|entry| entry.detail.clone())
+        .collect()
+}
+
+/// **A shipment walks to where its people last saw the destination, finds nobody, and brings the
+/// cargo home** — `destination_not_found`, with the cargo intact and back in the sender's store.
+#[test]
+fn a_shipment_that_finds_nobody_where_the_destination_was_comes_home_with_its_cargo() {
+    let (mut app, sender, party, last_seen, destination_id) = stale_destination(MOVED_FAR_TILES);
+
+    let mut turns = 0;
+    while app
+        .world
+        .get::<Expedition>(party)
+        .is_some_and(|expedition| expedition.phase == ExpeditionPhase::Outbound)
+    {
+        assert!(turns < MAX_TURNS_HOME, "the party never gave up looking");
+        run_turn(&mut app);
+        turns += 1;
+    }
+
+    let expedition = app.world.get::<Expedition>(party).expect("party");
+    assert_eq!(expedition.phase, ExpeditionPhase::Returning);
+    assert_eq!(
+        band_position(&app, party),
+        last_seen,
+        "it walked to the last-seen tile, not toward the destination's real position"
+    );
+    assert!(
+        turns > 1,
+        "liveness: the walk to the last-seen tile took turns"
+    );
+    assert!(
+        (expedition.cargo.get(FOOD).to_f32() - CARGO_FOOD).abs() < EPSILON,
+        "the cargo is still aboard"
+    );
+    assert_eq!(
+        recall_details(&app).last().map(String::as_str),
+        Some(
+            format!(
+                "status=returning reason=destination_not_found destination={} expedition={}",
+                destination_id.0,
+                party.to_bits()
+            )
+            .as_str()
+        )
+    );
+
+    let mut returned = 0.0;
+    for _ in 0..MAX_TURNS_HOME {
+        if app.world.get::<Expedition>(party).is_none() {
+            break;
+        }
+        run_turn(&mut app);
+        returned += app
+            .world
+            .get::<PopulationCohort>(sender)
+            .expect("the band")
+            .last_turn_transfer_crossings
+            .iter()
+            .filter(|crossing| {
+                crossing.commodity == FOOD && crossing.cause == TransferCause::ShipmentReturned
+            })
+            .map(|crossing| crossing.amount)
+            .sum::<f32>();
+    }
+    assert!(
+        app.world.get::<Expedition>(party).is_none(),
+        "the party folds back"
+    );
+    assert!(
+        (returned - CARGO_FOOD).abs() < EPSILON,
+        "the whole shipment came back to the sender as ShipmentReturned: {returned}"
+    );
+}
+
+/// **Control: a destination that moved only a tile is in the party's sight from the last-seen
+/// spot**, so the shipment re-aims and delivers.
+#[test]
+fn a_shipment_that_sees_a_destination_that_moved_a_little_delivers() {
+    let (mut app, _sender, party, last_seen, _destination_id) = stale_destination(MOVED_NEAR_TILES);
+    let mut delivered = false;
+    for _ in 0..MAX_TURNS_HOME {
+        run_turn(&mut app);
+        delivered = app
+            .world
+            .resource::<core_sim::CommandEventLog>()
+            .iter()
+            .any(|entry| matches!(entry.kind, core_sim::CommandEventKind::TradeDelivered));
+        if delivered {
+            break;
+        }
+    }
+    assert!(delivered, "the shipment was delivered");
+    assert!(
+        app.world
+            .get::<Expedition>(party)
+            .is_none_or(|expedition| expedition.cargo.get(FOOD).to_f32() < EPSILON),
+        "the cargo left the party"
+    );
+    assert_ne!(
+        shifted(&app, last_seen, MOVED_NEAR_TILES),
+        last_seen,
+        "liveness: the destination really was off the remembered tile"
+    );
+    assert!(
+        recall_details(&app).is_empty(),
+        "nothing turned the party round"
     );
 }

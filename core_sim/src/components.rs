@@ -2649,6 +2649,13 @@ pub struct Expedition {
     /// lands when the party folds back — it carries its own news home. Rides the checkpoint whole
     /// with the rest of the `Expedition`.
     pub station_reports: Vec<StationReport>,
+    /// **The tile a Station / Trade party is walking toward** — what its people KNOW about where the
+    /// target band is, not where it is (`.claude/rules/core_sim/connections.md`). Set at launch to
+    /// the target's live tile when the sender knows it (own people, or visible) and otherwise to the
+    /// connection edge's `last_seen_position`; refreshed each `Outbound` turn only when the target is
+    /// the sender's own people or the party sees it. `None` for every other verb. Rides the
+    /// checkpoint with the rest of the `Expedition`.
+    pub aim: Option<UVec2>,
 }
 
 /// Permanent settlement seeded by a founding action.

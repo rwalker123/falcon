@@ -221,6 +221,17 @@ tie is never reaped.
 the knowledge of where the host stands is a walk old. Reports in transit are `Expedition` state and
 ride the checkpoint with it.
 
+## A traveling party aims at what its people know
+
+The keystone applied to a walk. A stationed party and a shipment (`expeditions.md`) never home on a
+band's live tile for free: `Expedition::aim` is the tile the party is walking toward, set at launch
+by `ConnectionLedger::launch_aim` (the target's live tile when the sender's people know it — the
+target is the sender's own people, or its tile is `Active` on the sender's map — otherwise this
+ledger's `last_seen_position` for the `home -> target` edge) and refreshed each `Outbound` turn only
+when the target is the sender's own people or the party itself sees it that turn. Where the target
+cannot be seen, the party walks to the remembered tile and, finding nothing there, turns home. A
+`Stationed` party is standing with its host, which is presence, so it follows the host's live tile.
+
 ## The three clocks
 
 They decay at genuinely different speeds and are three separate levers.

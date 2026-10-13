@@ -3343,6 +3343,7 @@ mod tests {
             cargo: LocalStore::new(),
             defection_pull: Scalar::zero(),
             station_reports: Vec::new(),
+            aim: None,
         };
         let runway = captured_runway(&cohort, None, Some(&expedition));
         let historical = TEST_LARDER / demand_of(&cohort);
