@@ -7,6 +7,9 @@ paths:
   - "core_sim/src/start_profile.rs"
   - "core_sim/src/data/start_profiles.json"
   - "core_sim/src/data/simulation_config.json"
+  - "core_sim/src/personalities.rs"
+  - "core_sim/src/data/personalities.json"
+  - "core_sim/src/culture.rs"
   - "core_sim/src/metrics.rs"
   - "core_sim/src/victory.rs"
   - "sim_runtime/proto/command.proto"
@@ -46,9 +49,11 @@ New Game, and the registry is built from it: `FactionId(0)` is always the human 
 and ids `1..=N` are the sim's. Pick 2 and the world holds three peoples; pick 0 and it is the
 single-faction world that has always shipped.
 
-**The count is rivals, not roster size.** Naming it for what it is (`ai_faction_count`) is what keeps
-the off-by-one out of every caller's head — nobody has to remember whether "2 factions" includes
-themselves.
+**The count is rivals, not roster size.** The registry is built from one total
+(`with_ai_factions(n)`, `ai_faction_count()` reads it back), which is what keeps the off-by-one out of
+every caller's head — nobody has to remember whether "2 factions" includes themselves. The player
+picks that total **per start archetype** — see "Start archetypes" below — and the ids are handed out
+in catalog order.
 
 Two things fall out of that shape, and both used to be rules enforced against an authored list:
 
@@ -63,8 +68,8 @@ Two things fall out of that shape, and both used to be rules enforced against an
 > **The start profile no longer declares a roster.** `StartProfileOverrides.factions`, `FactionSpec`,
 > `default_factions`, `validate_factions` and `faction_roster_error` are all gone. A profile that
 > named who plays the world made the roster authored content a player could not reach — which is the
-> whole reason it moved. A profile still stocks the opening (units, knowledge, inventory, the loadout
-> window), and swapping one mid-session leaves the peoples alone. `FactionControl` stays: the
+> whole reason it moved. A profile still stocks the opening (per archetype: units, knowledge,
+> inventory, the loadout window), and swapping one mid-session leaves the peoples alone. `FactionControl` stays: the
 > registry still *records* how each faction is driven, it is simply derived from an id's position.
 
 ## The registry's invariant, and its one constructor
@@ -104,23 +109,29 @@ id after it is `Ai`, by construction.
 
 ## Where the roster comes from
 
-- **`build_headless_app`** seeds the registry from `unattended_ai_faction_count` — **no rivals**
-  unless `simulation_config.json`'s `default_ai_faction_count` pins some — clamped against that
-  file's own grid, before `TurnQueue::new(registry.factions().to_vec())`. Pinning the count
+- **`build_headless_app`** seeds the registry from `unattended_archetype_counts` — **no rivals of
+  any archetype** unless that archetype's `default_count` in `start_profiles.json` pins some —
+  clamped (`granted_archetype_counts`) against that file's own grid, before
+  `TurnQueue::new(registry.factions().to_vec())`. It also writes
+  `config.start_archetype_assignment` from the granted counts. Pinning the count
   therefore extends the await set with no further edit. This is the roster a test harness and a
   `ResetMap` rebuild start from — the shipped server boots idle and builds no world at all.
   ⛔ It is deliberately **not** the map-scaled count a New Game screen pre-selects; see "THE OFFER
   AND THE UNATTENDED ROSTER ARE TWO NUMBERS" below.
 - **`seed_faction_roster`** (`bin/server.rs`) seeds the registry **and everything else the boot path
-  seeds from it** from the count a `new_game` carried. It has to: `rebuild_world_from_config` calls
+  seeds from it** from the per-archetype counts a `new_game` carried — and rewrites
+  `start_archetype_assignment` for the Startup the caller runs next. It has to: `rebuild_world_from_config` calls
   `build_headless_app` *first*, so the replacement app arrives holding the **config file's** roster,
   clamped against the **config file's** grid — and a `new_game` is neither of those things. See the
   table below for the set. The count it takes is expected to be already clamped, because only the
   caller knows which grid the world is being built on.
 - **`apply_start_profile` does NOT touch the roster**, and no longer can: a profile declares none.
   A `set_start_profile` mid-session restocks the opening and leaves the peoples alone.
-- **`ResetMap` carries the roster it had**, re-clamped to the grid it is moving to
-  (`registry.ai_faction_count()` in the dispatch arm). A resize is a map reroll, not a re-pick of who
+- **`ResetMap` carries the roster it had**, per archetype, re-clamped in catalog order to the grid
+  it is moving to (`start_archetype_assignment.counts(..)` in the dispatch arm). The per-archetype
+  counts are a world-build parameter that rides the save header (`WorldIdentity.archetype_counts`,
+  format version 36), and `apply_save` rebuilds the assignment from them by archetype id — so a
+  loaded game followed by `ResetMap` carries the split it was built with. A resize is a map reroll, not a re-pick of who
   is playing — and without the re-clamp a shrink could register more factions than the new map
   seats, while a grow would silently drop this world's rivals back to the config default.
 - **`save::apply_save`** rebuilds the `TurnQueue` from the registry it has just restored, beside that
@@ -177,11 +188,30 @@ constrains:
 
 | Function | Answers |
 |---|---|
-| `max_faction_starts(grid, min_separation, land_fraction)` | how many starts fit — `area / (d² · √3/2) · √land_fraction`, rounded, never below 1 |
+| `max_faction_starts(grid, min_separation, land_fraction)` | how many starts fit at ONE separation — `area / (d² · √3/2) · √land_fraction`, rounded, never below 1 |
 | `faction_start_land_fraction(presets, preset_id)` | the land share to discount by: that preset's `target_land_pct` |
-| `faction_start_capacity(grid, min_separation, land_fraction, configured_default)` | the value a New Game control **pre-selects** and the **ceiling** to stop it at: `max_ai_factions = starts - 1` |
-| `unattended_ai_faction_count(configured_default)` | what a process **nobody picked for** builds a world with — see the split below |
-| `granted_ai_faction_count(requested, grid, min_separation, land_fraction)` | what a request is actually granted, warning `worldgen.ai_faction_count_clamped` with both numbers when the clamp binds |
+| `archetype_ceiling(site_count, earlier_total)` | `max(0, site_count − 1 − earlier_total)`: the human seat is the 1, `earlier_total` the starts of earlier archetypes |
+| `archetype_capacities(archetypes, grid, land_fraction)` | per archetype, in catalog order: `site_count` (`max_faction_starts` at ITS separation) and the `default_count` a New Game control **pre-selects** |
+| `unattended_archetype_counts(archetypes)` | what a process **nobody picked for** builds a world with — each archetype's `default_count` pin, else 0 — see the split below |
+| `granted_archetype_counts(requested, archetypes, grid, land_fraction)` | what a request is actually granted, **clamped in catalog order** against the earlier GRANTED counts, warning `worldgen.archetype_count_clamped` with both numbers per clamp that binds |
+
+### Hex-lattice sites, one lattice per archetype
+
+Each archetype has its own separation, so each has its own lattice of start sites:
+`site_count_k = max_faction_starts(grid, archetype_k.min_separation, land_fraction)`. Placement lays
+archetypes down in catalog order, and **every start of an earlier archetype (and the human seat)
+consumes one site of a later archetype's lattice, one for one**:
+
+`ceiling_k = max(0, site_count_k − 1 − Σ_{j<k} count_j)`
+
+For `k = 0` that is the old `starts − 1`. A **default** per archetype is its `default_count` pin if
+set, else `floor(ceiling_k × default_share)` when the archetype sets a `default_share`, else
+`min(ceiling_k, DEFAULT_ARCHETYPE_COUNT_FLOOR + ceiling_k / DEFAULT_ARCHETYPE_COUNT_CEILING_DIVISOR)`
+with `ceiling_k` computed against the earlier archetypes' **defaults**; a ceiling of 0 gives a default
+of 0. One function computes all of it, and boot, `new_game`, `ResetMap` and the query all call it.
+The client does **not** restate the pre-selection: it receives `site_count` and `default_count` per
+archetype and computes only the ceiling above from the earlier rows' current counts (the contract is
+the comment on `ArchetypeCapacity` in `command.proto`).
 
 ### An AREA estimate discounted for water, not a lattice count
 
@@ -217,20 +247,27 @@ relaxation is the net beneath it, not a competing rule.
 
 ### What each shipped map size offers and pre-selects
 
-At the shipped `faction_start_min_separation` of 20 and the `earthlike` preset's `target_land_pct`
-of 0.38. The sizes are the client's (`clients/godot_thin_client/src/scripts/MapSizes.gd`); the sim
+At the shipped archetype separations (`major` 20, `minor` 8 — `start_profiles.json`) and the
+`earthlike` preset's `target_land_pct` of 0.38. The sizes are the client's (`clients/godot_thin_client/src/scripts/MapSizes.gd`); the sim
 has no size registry, because a size is a number the player sends.
 
-| Size | Grid | Measured seats | Ceiling (`max_ai_factions`) | Pre-selected | Old lattice ceiling |
-|---|---|---|---|---|---|
-| Tiny | 56×36 | 4-6 | **3** | **2** | 5 |
-| Small | 66×42 | 5-7 | **4** | **3** | 11 |
-| Standard | 80×52 | 8-9 | **6** | **4** | 11 |
-| Large | 104×64 | 11-13 | **11** | **6** | 23 |
-| Huge | 128×80 | 15-20 | **17** | **9** | 27 |
+| Size | Grid | Measured major seats | Major `site_count` (ceiling = −1) | Major default | Minor `site_count` | Minor default |
+|---|---|---|---|---|---|---|
+| Tiny | 56×36 | 4-6 | **4** (3) | **2** | **22** | **4** |
+| Small | 66×42 | 5-7 | **5** (4) | **3** | **31** | **6** |
+| Standard | 80×52 | 8-9 | **7** (6) | **4** | **46** | **10** |
+| Large | 104×64 | 11-13 | **12** (11) | **6** | **74** | **16** |
+| Huge | 128×80 | 15-20 | **18** (17) | **9** | **114** | **26** |
+
+The major columns are the old single-roster table (ceiling 3/4/6/11/17, default 2/3/4/6/9) unchanged.
+The **minor default** is a quarter of what fits: `floor(0.25 × ceiling_minor)` (`minor.default_share`)
+against the minor lattice *after* the majors' defaults have taken their sites
+(`ceiling_minor = site_count − 1 − major_default`), so a Standard map pre-selects 10 minors beside
+4 majors. `major` sets no share and keeps the floor-plus-half rule (2/3/4/6/9). A `default_count`
+pin on `minor` overrides the share.
 
 Pinned by `core_sim/tests/faction_start_capacity.rs`, which reads the levers out of the shipped
-configs rather than restating them, so a tuning change to any of the three has to look at this table
+configs rather than restating them, so a tuning change to any of them has to look at this table
 and agree to it. The pre-selections are also asserted as *properties* there — strictly increasing
 across the five sizes, all five distinct, each within its own ceiling — so a retune has to keep the
 shape as well as agree to the numbers.
@@ -243,14 +280,16 @@ shape as well as agree to the numbers.
 
 ### ⛔ THE OFFER AND THE UNATTENDED ROSTER ARE TWO NUMBERS, AND THEY ARE NOT THE SAME PATH
 
-A New Game screen **pre-selects `DEFAULT_AI_FACTIONS_FLOOR + ceiling / DEFAULT_AI_FACTIONS_CEILING_DIVISOR`**
-— `1 + ceiling/2` in integer arithmetic, then clamped to the ceiling. The floor term is one rival on
+A New Game screen **pre-selects `DEFAULT_ARCHETYPE_COUNT_FLOOR + ceiling / DEFAULT_ARCHETYPE_COUNT_CEILING_DIVISOR`**
+per archetype with no `default_share` — `1 + ceiling/2` in integer arithmetic, then clamped to the
+ceiling. An archetype with a `default_share` (`minor`: 0.25) pre-selects `floor(ceiling × share)`
+instead; the share is validated finite and in `(0, 1]`, and a `default_count` pin beats both. The floor term is one rival on
 any map that can seat one, because a world with nobody else in it is the thing this game is least
 interesting as; the divisor adds half of what the map holds on top, which is far enough below the
 ceiling that the pre-selection is never the cramped end a player has to dial back from. The clamp is
 what keeps a degenerate grid (a ceiling of 0 or 1) from pre-selecting a start it has nowhere to put.
-Both are **named constants, not config levers**, because `default_ai_faction_count` already pins the
-pre-selection outright and two levers moving one number is one too many.
+The floor and divisor are **named constants, not config levers**, because `default_count` already pins
+the pre-selection outright; `default_share` is the per-archetype lever for a share of what fits.
 
 > **A share of the ceiling cannot express this ladder — which is why the rule's SHAPE changed and
 > not its constant.** The pre-selection used to be `DEFAULT_AI_FACTIONS_SHARE_OF_CEILING` (0.34,
@@ -261,18 +300,20 @@ pre-selection outright and two levers moving one number is one too many.
 > and starting with company rather than with a number the player has to notice and raise.
 
 **An unattended process gets none of that.** `build_headless_app`, a test harness, and a `new_game`
-that carried no `ai_faction_count` all resolve through `unattended_ai_faction_count`, which is
-`UNATTENDED_AI_FACTION_COUNT` — **zero rivals** — unless the config pins a number. There is still no
+that listed no count for an archetype all resolve through `unattended_archetype_counts`, which is
+`UNATTENDED_ARCHETYPE_COUNT` — **none** — unless the archetype's `default_count` pins a number. There is still no
 AI driving a rival, so a faction nobody asked for would sit and pass; the split is what lets the
 screen offer a populated world without a `cargo run` server quietly gaining peoples.
 
-**A client that shows the pre-selection must SEND it.** Omitting `ai_faction_count` is a request for
-the unattended roster, not for the number the capacity query just answered with.
+**A client that shows the pre-selection must SEND it.** Leaving an archetype out of `new_game`'s
+counts is a request for its unattended count, not for the number the capacity query just answered
+with.
 
-**Clamped, never refused.** A player who asked for more rivals than the map holds still gets a game;
-refusing would leave somebody who moved a slider with no world at all. Every path that takes a count
-— boot, `new_game`, `ResetMap` — goes through `granted_ai_faction_count`, so there is one
-implementation of *"the map decides"*.
+**Clamped, never refused.** A player who asked for more peoples than the map holds still gets a game;
+refusing would leave somebody who moved a slider with no world at all. Every path that takes counts
+— boot, `new_game`, `ResetMap` — goes through `granted_archetype_counts`, so there is one
+implementation of *"the map decides"*. (An archetype **id the profile does not carry** is the one
+refusal: `new_game.rejected=unknown_archetype`, and no world is built.)
 
 **There is no boot panic left to write.** The count is a `u32`, so `N >= 0` is the type; the only
 other rule is the clamp, and it binds at boot the same way it binds at runtime — because the grid the
@@ -288,10 +329,11 @@ on a screen where **there is no world**. Neither half fits a snapshot header:
 - The ceiling is a property of the map **about to be built**. A header describes the world the server
   is running, which on the New Game screen is either nothing or the previous game.
 
-So it rides the query channel — `QueryPayload::FactionCapacity { width, height }` →
-`QueryReply::FactionCapacity { default_ai_faction_count, max_ai_faction_count }` — answered by
-`answer_query` **ahead of the `world_active` gate**, from the live `SimulationConfig` and the grid in
-the ask. That is character for character the arrangement `list_saves` already has, and for the same
+So it rides the query channel — `QueryPayload::FactionCapacity { width, height, profile_id }` →
+`QueryReply::FactionCapacity { archetypes: [{ id, display_label, site_count, default_count }] }`, one
+row per archetype of the asked profile in catalog order (an empty or unknown `profile_id` reads as
+the active profile) — answered by `answer_query` **ahead of the `world_active` gate**, from the live
+`SimulationConfig` and the grid in the ask. That is character for character the arrangement `list_saves` already has, and for the same
 reason: a player opens the load menu before there is a world too. **The `.fbs` is unchanged**; this
 is the command protocol, not the snapshot.
 
@@ -314,8 +356,59 @@ clamp the server actually applies.
 
 > **The answer is read off the config the SERVER currently holds**, while a `new_game` rebuild
 > re-reads every config from disk (`config-loading.md` → staged overrides). A staged override to
-> `faction_start_min_separation` between the ask and the pick would therefore move the ceiling under
+> a start profile's separations between the ask and the pick would therefore move the ceiling under
 > the answer. The clamp is what makes that harmless — the pick is granted down, never refused.
+
+## Start archetypes — more than one kind of people in a world
+
+A start profile carries an ordered `archetypes` array (`start_profile.rs` `StartArchetype`), and the
+per-people opening **moved from the profile onto each entry**: `starting_units`,
+`starting_knowledge_tags`, `inventory`, `opening_loadout`, plus `id`, `display_label`,
+`min_separation` and `default_count`. Profile-wide fields (`victory_modes_enabled`, `food_modules`,
+display text) stay on the profile. Validation: at least one archetype, unique ids, `min_separation > 0`
+(`deny_unknown_fields` on the entry), and every archetype's loadout through the same checks. The
+shipped `late_forager_tribe` has `major` (a 30-person band, kits in its default outfit, separation 20,
+label "Rivals") and `minor` (a 12-person band, **no kits** in its default outfit, separation 8, label
+"Minor peoples").
+
+- **Roster ids are handed out in catalog order**: faction 0 is the human and always takes archetype 0,
+  then archetype 0's rivals, then archetype 1's, and so on. The mapping is
+  `StartArchetypeAssignment` (`from_counts`, `archetype_index`, `counts`), held in
+  `SimulationConfig.start_archetype_assignment` beside `start_profile_overrides`.
+- **⛔ Transient, NOT `SimState`.** It is rebuilt by every world-build path (boot, `new_game`,
+  `ResetMap`) and read only by worldgen (`spawn_initial_world`: stock, knowledge, inventory, units,
+  placement) and, on the same world-build pass, `outfit_band_with_defaults` (each faction's default
+  outfit is its own archetype's). **Nothing after world build reads it** — what a faction was stocked
+  with is on its bands — so a load rebuilds it only from the header's counts, and the post-build `UnpickableMaterial` check
+  in `apply_starting_loadout` reads the human archetype's pick list. `carry_world_identity` carries it
+  across a hot reload.
+- **The wire** names an archetype by id: `new_game <preset> <w> <h> <seed> <profile> [<id>=<count> ...]`
+  (`NewGameCommand.archetype_counts`); an archetype not listed is its unattended count, an unknown id
+  rejects the command. `FactionCapacityReply.archetypes` carries `id`, `display_label`, `site_count`
+  and `default_count` per archetype for the profile named by `FactionCapacityQuery.profile_id`.
+- **The human's card is archetype 0's**: `CampaignProfileState` and `openingLoadout` on the frame
+  describe the human seat's people.
+
+## Personalities — the cultural lean a starting faction is born with
+
+`src/data/personalities.json` (`personalities.rs`, `PERSONALITIES_PATH`) is a catalog of
+`{ id, culture_lean: { <axis key>: offset }, weight }`. At world build every faction in the roster —
+the human, the majors and the minors alike — draws one: a weighted pick from one `splitmix64` of
+`map_seed ^ PERSONALITY_SALT ^ faction_id`, so the draw is a pure function of the world and the
+faction. A faction born mid-game (fission, independence) draws nothing.
+
+**An offset's sign follows the axis name**: the axis `a_b` runs from `−span` (pole `a`) to `+span`
+(pole `b`), the convention the Syncretic↔Purist reads already assume (`receptiveness = 1 −
+purist/span`). Shipped: `purist` `syncretic_purist +0.8`, `syncretic` `syncretic_purist −0.8`,
+`warlike` `passive_aggressive +0.5`, `wanderers` `expansionist_insular −0.5`, `homebodies`
+`expansionist_insular +0.5`, `steady` no lean; all weight 1.0.
+
+The lean is applied to each **starting** band's culture **modifier**, not its baseline (the baseline
+relaxes back to the parent province, so only the modifier persists): worldgen inserts a transient
+`StartingCultureLean` component on the band, and `reconcile_band_culture_layers` hands it to
+`CultureManager::attach_band_with_lean` on the band's first layer, which adds it to
+`seeded_modifiers_for_band` (clamped to `±CULTURE_TRAIT_SPAN`) and then **removes** the component.
+Fission's `attach_band_from_source` is untouched — a splinter inherits its source as it always has.
 
 ## Command authorization
 
@@ -656,13 +749,17 @@ worlds have always had.
 ### The starts are scored once and picked greedily, a minimum distance apart
 
 `faction_start_tiles` scores every land tile with `score_start_tiles` — **the same per-tile scoring as
-before, unchanged**, because this arc changed *selection*, not what makes ground good — and then
-picks one start per faction:
+before, unchanged**, because this arc changed *selection*, not what makes ground good — **once**, and
+then lays the archetypes down in catalog order through `place_archetype_starts`, each at its own
+`min_separation` against EVERY start already placed: majors first (the human, faction 0, still takes
+the argmax), then the minors into the gaps. Both passes below run **per archetype**, and the relaxed
+pass warns `worldgen.start_separation_relaxed=unachievable faction= archetype= min_separation= achieved=`.
+It picks one start per faction:
 
 - The **first** pick is the argmax over every land tile, so a one-faction world opens on exactly the
   tile it always has. Pinned by `multi_faction_start::a_one_faction_world_opens_on_the_tile_it_has_always_opened_on`.
-- Each **later** faction takes the highest-scoring remaining tile that is at least
-  `faction_start_min_separation` from every start already picked.
+- Each **later** faction takes the highest-scoring remaining tile that is at least its archetype's
+  `min_separation` from every start already picked (of any archetype).
 - **Ties keep the strict `>` over the row-major scan**, so the lowest `(y, then x)` maximum wins.
   Determinism is load-bearing: a replay that picked a different maximum would build a different world
   from the same seed. A real map's winner is a wide *unique* maximum, so the tie-break is only
@@ -676,9 +773,9 @@ picks one start per faction:
 > and nobody to play it, which is a strictly worse outcome than two peoples starting near each
 > other. So `faction_start_tiles` never refuses a faction. It picks in **two passes**:
 >
-> 1. among the candidates that clear `faction_start_min_separation`, **the highest score**;
+> 1. among the candidates that clear the archetype's `min_separation`, **the highest score**;
 > 2. when none clear it, **the candidate that maximises the minimum distance to every start already
->    placed** — score is only the tie-break, and the row-major `(y, then x)` order breaks the rest,
+>    placed (of any archetype)** — score is only the tie-break, and the row-major `(y, then x)` order breaks the rest,
 >    so determinism is unchanged. It warns
 >    `worldgen.start_separation_relaxed=unachievable` with the faction, the target and the distance
 >    actually achieved.
@@ -848,7 +945,7 @@ Godot client declined to *draw* most of it, which is presentation, not a boundar
 | Tier | Which band | What the frame carries |
 |---|---|---|
 | 1 | **your own** | the full row, unchanged in every field |
-| 2 | **a foreign band standing where you can see** | a **redacted** row: `entity`, `band_id`, `faction`, `name`, `current_x`/`current_y`, `size`. Everything else at its default |
+| 2 | **a foreign band standing where you can see** | a **redacted** row: `entity`, `band_id`, `faction`, `name`, `current_x`/`current_y`, `size`, `settlement_stage`. Everything else at its default |
 | 3 | **a foreign band anywhere else** | **no row at all** |
 
 **Tier 2 exists rather than folding into tier 3** because the client already colours foreign markers
@@ -864,7 +961,14 @@ leave the append-only delta unable to tell two of them apart.
 
 ### The redaction is an ALLOW-LIST, not a set of deletions
 
-`redacted_population_state` names six fields and takes **everything else from `Default`**. A row
+**`settlement_stage` is on the list because the client draws the marker from it** (id/label/icon);
+left at default, foreign bands render as a gray box. It is safe **only while the stage is a pure
+function of `size`** (`SettlementStageInputs` carries nothing else), and `size` is already published,
+so it discloses nothing new. It is resolved from `cohort.size` through the same helper the owner's row
+uses, never copied from a full row. If the stage ever gains a criterion beyond size (improvements, …),
+it must leave the redacted row.
+
+`redacted_population_state` names seven fields and takes **everything else from `Default`**. A row
 built the other way round — full, then blanked — fails open on exactly the field nobody thought
 about, and the wire is append-only, so there is always a next field. Built this way, a field added
 to `PopulationCohortState` later is redacted by construction.
@@ -1155,17 +1259,21 @@ The control arm is not optional: it is what distinguishes *"the second faction g
 
 | File | Key | Default | Purpose |
 |---|---|---|---|
-| `src/data/simulation_config.json` | `default_ai_faction_count` | **`null`** | **The pin on the AI count, or `null` for "derive it".** `null` is not `0` — the same distinction the optional `new_game` wire field draws. Unpinned (shipped): the New Game screen pre-selects a share of what the chosen grid seats, and an **unattended** boot takes **no rivals**, because the AI that would drive one does not exist yet and a faction nobody asked for would sit and pass. Pinned to `n`: **both** become `n` — the escape hatch a headless run, a test or a designer uses to boot with rivals without touching the UI. Counts **rivals, not the roster**: 0 is the single-faction world, 2 is three peoples. Clamped by the ceiling above, never refused |
+| `src/data/start_profiles.json` | `archetypes[*].default_share` | **absent** (`minor`: **0.25**) | **The share of what fits that a New Game screen pre-selects**: `floor(ceiling × share)`, the ceiling computed against the earlier archetypes' defaults. Absent: the floor-plus-half rule. Finite and in `(0, 1]` or the profile is refused; a `default_count` pin beats it. No effect on an unattended boot |
+| `src/data/start_profiles.json` | `archetypes[*].default_count` | **`null`** | **The pin on how many of this archetype a world gets, or `null` for "derive it".** `null` is not `0` — the same distinction an unlisted vs `=0` `new_game` count draws. Unpinned (shipped): the New Game screen pre-selects a share of what the chosen grid seats, and an **unattended** boot takes **none**, because a faction nobody asked for would sit and pass. Pinned to `n`: **both** become `n` — the escape hatch a headless run, a test or a designer uses to boot with rivals without touching the UI. Counts **rivals, not the roster**. Clamped by the ceiling above, never refused. (Retired from `simulation_config.json`, where it was one number for the whole roster) |
 | `src/data/simulation_config.json` | `seat_turn_timeout_seconds` | **120.0** s | **How long an open turn waits for an OCCUPIED seat that has gone silent** before the server submits `end_turn` for it and resolves. A wedge-breaker, not a chess clock: a turn is legitimately minutes of a human's thinking, so a snug value would end turns players were still taking, and the cost of being generous is that one genuinely dead process holds the others up once, for this long. A **vacant** seat is never waited for, so this has no effect on a single-human game. Read from the live config on every decision, so a hot reload moves it; validated positive and finite at parse (`NonPositiveSeatTurnTimeout`), because 0 would auto-submit for a live player the instant anyone else was ready — not a short wait but no waiting at all |
 | `src/data/expedition_config.json` | `defection.party_pull_threshold` | **0.3** | **The pull a detached party must accrue before it joins another people** (see "A detached party goes whole"). At rock-bottom home morale (rate `max_rate` 0.15) it is 2 turns in sight; at morale 0.2 (rate 0.03), 10. Too low and a party defects the turn it glimpses a camp; too high and it never sits near one long enough. `0` is legal (defect on the first qualifying turn); validated finite and `>= 0` at parse. Every other defection number is the trickle's own `wellbeing_config.json` → `migration.*` — one rule, one set of dials. Ships in the Workbench as an `expedition` row |
-| `src/data/simulation_config.json` | `faction_start_min_separation` | **20** tiles | How far apart worldgen tries to put two factions' start tiles — a quarter of the shipped map's width, far enough that two peoples do not open sharing one food shed. Euclidean, compared squared. A **target**: on a map with no land pair that far apart, worldgen relaxes and warns rather than failing to place a faction. Validated `> 0` at parse (`ZeroFactionStartMinSeparation`), because zero would let two peoples open on the same hex |
+| `src/data/start_profiles.json` | `archetypes[*].min_separation` | **20** (`major`), **8** (`minor`) tiles | How far apart worldgen tries to put one of this archetype's starts from every start already placed — 20 is a quarter of the shipped map's width, far enough that two majors do not open sharing one food shed; 8 lets a minor people fill a gap between majors. Euclidean, compared squared. A **target**: on a map with no land pair that far apart, worldgen relaxes (per archetype) and warns rather than failing to place a faction. Validated `> 0` at parse (`StartProfilesError::ZeroArchetypeSeparation`), because zero would let two peoples open on the same hex. (Retired from `simulation_config.json`'s `faction_start_min_separation`) |
+| `src/data/personalities.json` | `personalities[*]` (`id`, `culture_lean`, `weight`) | six entries, weight **1.0** each | The cultural lean a starting faction is born with — see "Personalities" below. `PERSONALITIES_PATH` overrides the file. Validated: at least one entry, unique ids, every `culture_lean` key a known culture axis key, weight finite and `> 0` |
 
 ## Saves win over profile edits
 
 `FactionRegistry` is **ground truth in the save** — `SimState::factions`, captured whole and restored
-whole (checkpoint state since a people can break away mid-game, `independence.md`). The AI count, by contrast, is a *request*: `simulation_config.json`'s
-`default_ai_faction_count` is re-read on every world build, and the pick that built this world is not
-recorded anywhere except in the registry itself.
+whole (checkpoint state since a people can break away mid-game, `independence.md`). The archetype
+counts, by contrast, are a *request*: each archetype's `default_count` is re-read on every world
+build. The pick that built this world rides the save header as a world-build parameter
+(`WorldIdentity.archetype_counts`, see "Start archetypes"), which is what a `ResetMap` after a load
+rebuilds from.
 
 So the two can drift, and the rule is that **the save's registry wins**: a world loaded from a save
 has the roster it was created with, whatever the config default says now. That is the same reason

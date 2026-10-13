@@ -12,9 +12,10 @@ class_name MenuShell
 ## items (New Game, Resume, Abandon, Exit) emit signals the owner acts on; Map Selection still
 ## renders an inert placeholder pane.
 ##
-## **The New Game pane's rival count is LIVE too**, over the injected `FactionCapacity` seam
-## (`set_faction_capacity`): the ceiling on rival peoples belongs to the GRID, so the pane asks the
-## server about the size the player has picked and re-asks when that pick changes.
+## **The New Game pane's peoples counts are LIVE too**, over the injected `FactionCapacity` seam
+## (`set_faction_capacity`): the ceilings belong to the GRID, so the pane asks the server about the
+## size and start profile the player has picked and re-asks when either changes. It renders ONE count
+## row per start archetype the server reports, in catalog order and under the server's own label.
 ##
 ## **The Load and Save panes are LIVE**, over the injected `SaveSlots` seam (`set_save_slots`): they
 ## list what is on disk, write a slot, delete one, and emit `load_requested` for the one act that
@@ -23,7 +24,7 @@ class_name MenuShell
 ## `CommandClient`, and must not grow one.
 ##
 ## Signals out — the owner (LandingScreen / Main's PauseLayer) wires these:
-##   new_game_requested(preset_id, width, height, seed, profile_id, ai_faction_count)
+##   new_game_requested(preset_id, width, height, seed, profile_id, archetype_counts)
 ##   load_requested(slot)
 ##   resume_requested / abandon_requested / exit_requested / apply_theme_requested
 
@@ -34,16 +35,17 @@ const MapSizes = preload("res://src/scripts/MapSizes.gd")
 ## about the viewport, so that "this is a text field" has exactly one spelling in the client.
 const TextEntryFocus = preload("res://src/scripts/TextEntryFocus.gd")
 
-## `ai_faction_count` is how many RIVAL peoples the player asked for, or `FactionCapacity.NO_COUNT`
-## when they were never offered the choice (the capacity ask went unanswered). The two are different
-## requests and the owner must keep them apart: `0` says "I play alone", while `NO_COUNT` says "send
-## no count at all" — which the server answers with its unattended roster, no rivals.
+## `archetype_counts` is an Array of `{id: String, count: int}`, one per start archetype the player was
+## offered, in catalog order. It is EMPTY when they were never offered a choice (the capacity ask went
+## unanswered). The two are different requests and the owner must keep them apart: `count: 0` says "I
+## play alone", while an empty array says "send no counts at all" — which the server answers with its
+## unattended roster.
 ##
 ## **`seed` IS A STRING OF DIGITS, and that is not cosmetic.** The server parses the seed as a u64,
 ## whose top half does not fit a GDScript `int`; carrying the text is what lets the whole range
 ## survive the handoff. `"0"` means "derive from the run clock". Never emitted with a value this
 ## shell would refuse — `seed_error` gates the press.
-signal new_game_requested(preset_id: String, width: int, height: int, seed: String, profile_id: String, ai_faction_count: int)
+signal new_game_requested(preset_id: String, width: int, height: int, seed: String, profile_id: String, archetype_counts: Array)
 signal resume_requested
 signal abandon_requested
 signal exit_requested
@@ -155,22 +157,22 @@ const DELETE_IN_FLIGHT_LINE := "Deleting…"
 const SAVE_DONE_FORMAT := "Saved to “%s”."
 const DELETE_DONE_FORMAT := "Deleted “%s”."
 
-# ---- New Game: the rival-peoples count ------------------------------------------------------------
-# The control is a COUNT OF OTHERS, and it is worded that way everywhere: the player says how many
-# rival peoples share the world, never how many factions the world has. Its bounds are the server's
-# (`FactionCapacity`), because how many starts fit is a property of the grid.
+# ---- New Game: the peoples counts ----------------------------------------------------------------
+# Each control is a COUNT OF OTHERS, and it is worded that way everywhere: the player says how many
+# peoples of a kind share the world, never how many factions the world has. The KINDS, their labels
+# and their bounds are the server's (`FactionCapacity`): this file names no archetype.
 
 ## The setup pane's id, matched on rather than compared to a literal at the four sites that open,
 ## rebuild or return to it.
 const PANE_NEW_GAME := "new_game"
 
-const RIVALS_FIELD_LABEL := "Rival peoples"
+## The row's label while no answer has named the archetypes yet: the one row there is states the
+## count the world will be built with (none), under a heading that claims no kind.
+const RIVALS_FIELD_LABEL := "Other peoples"
 
-## The slider's readout. Singular is spelled out rather than formatted, because "1 rivals" is the
-## kind of thing that ships.
+## The slider's readout: `0` is a word, every other count is the number.
 const RIVALS_READOUT_NONE := "None"
-const RIVALS_READOUT_ONE := "1 rival"
-const RIVALS_READOUT_FORMAT := "%d rivals"
+const RIVALS_READOUT_FORMAT := "%d"
 ## Holds the readout's column while the word under it changes width, so dragging the slider does not
 ## make the row breathe.
 const RIVALS_READOUT_MIN_WIDTH := 88.0
@@ -196,10 +198,12 @@ const RIVALS_CAPTION_PENDING := "Asking how many this map can seat…"
 ## A genuine 0 ceiling: a grid too small to seat a second start at the distance worldgen keeps between
 ## them. Not a failure, and not rendered as one.
 const RIVALS_CAPTION_ALONE := "This map is too small to seat another people apart from yours — you will be alone in the world."
+## The working-state caption, one line under all the rows: the per-row ceilings are what the sliders
+## stop at, so the sentence states the premise rather than a number.
 ## The row's caption in its working state carries the BLURB as well as the ceiling, in one line
 ## rather than two: this is the tallest pane in the shell, and every line added above the actions row
 ## pushes "Begin the trail" further under the fold on a short window.
-const RIVALS_CAPTION_CEILING_FORMAT := "Others share the world, each taking its own start far from you — up to %d on a map this size. Nothing drives them yet."
+const RIVALS_CAPTION_SHARED := "Others share the world, each taking its own start far from you, up to what this map can seat. Nothing drives them yet."
 
 ## The summary line's value for a count that was never offered. It stays distinct from an explicit
 ## `none` because the REQUEST is different — no count is named, and the server answers that with its
@@ -214,6 +218,8 @@ const RIVALS_CAPTION_CEILING_FORMAT := "Others share the world, each taking its 
 const RIVALS_RETRY_SECONDS := 3.0
 
 const RIVALS_SUMMARY_UNSET := "none asked for"
+## The summary pair's key while no archetype is known to name.
+const RIVALS_SUMMARY_KEY_UNSET := "Others"
 const RIVALS_SUMMARY_NONE := "none"
 
 # ---- the rail notice: what is wrong with this session ---------------------------------------------
@@ -379,22 +385,26 @@ var _theme_apply: Button = null
 ## channel below: this file holds no socket. Null until the owner hands one in — which is exactly the
 ## state a harness renders in, and the state the pane must still offer a startable game from.
 var _faction_capacity: FactionCapacity = null
-## The player's rival count, or `FactionCapacity.NO_COUNT` for "never offered a choice" — the value
-## that makes `Main` omit the argument entirely.
-var _rival_count: int = FactionCapacity.NO_COUNT
-## Has the player MOVED the control? An answer that lands before they touch it opens the control on
-## the server's default; one that lands after (a map size changed) must keep their pick, clamped to
-## the new ceiling, rather than silently resetting it to the default.
-var _rival_picked := false
-## The rival row's contents, held so an answer landing can update the row IN PLACE. The setup pane is
-## not rebuilt for it — the seed field lives in that pane, and a rebuild under a player mid-word is
-## the caret defect the Save pane already paid for — and neither are these nodes, which is a separate
-## promise: see `_refresh_rivals_row`.
+## The player's count per archetype, keyed by the archetype id the server reported. A row absent here
+## has not been seeded from an answer yet.
+var _counts: Dictionary = {}
+## The server's `display_label` per archetype id, remembered from the last answer.
+var _labels: Dictionary = {}
+## Has the player MOVED this row's control, by archetype id? An answer that lands before they touch a
+## row opens it on the server's default; one that lands after (a map size changed) must keep their pick,
+## clamped to the new ceiling, rather than silently resetting it to the default.
+var _picked: Dictionary = {}
+## The rows' contents, held so an answer landing can update them IN PLACE. The setup pane is not rebuilt
+## for it — the seed field lives in that pane, and a rebuild under a player mid-word is the caret defect
+## the Save pane already paid for — and neither are these nodes, which is a separate promise: see
+## `_refresh_rivals_row`. `_rival_rows` maps an archetype id to `{slider, readout}`.
 var _rivals_box: VBoxContainer = null
-var _rival_slider: HSlider = null
-var _rival_readout: Label = null
+var _rival_rows: Dictionary = {}
 var _rival_caption: Label = null
-## Has this row ever rendered an ANSWER? It is what makes a re-ask different from a first ask: there
+## The ids the standing rows were built for, joined (`""` before any answer). A row set is rebuilt only
+## when this changes, never for a new count or a new ceiling.
+var _rivals_shape := ""
+## Has this row set ever rendered an ANSWER? It is what makes a re-ask different from a first ask: there
 ## is something worth keeping on screen only once there is something on screen. Reset with the pane,
 ## because a freshly built row has nothing to preserve.
 var _rivals_answered_once := false
@@ -750,12 +760,12 @@ func _show_pane(pane_id: String) -> void:
 	# field). `queue_free` releases focus only when the node actually leaves the tree at the end of
 	# the frame, so the release is made HERE, before the rebuild — see `release_text_focus`.
 	release_text_focus()
-	# The rival row is rebuilt with the pane it lives in; a reference to the outgoing one would have
+	# The rival rows are rebuilt with the pane they live in; a reference to the outgoing ones would have
 	# `_refresh_rivals_row` writing into a freed node on the next answer.
 	_rivals_box = null
-	_rival_slider = null
-	_rival_readout = null
+	_rival_rows = {}
 	_rival_caption = null
+	_rivals_shape = ""
 	_rivals_answered_once = false
 	_begin_button = null
 	_seed_note = null
@@ -793,7 +803,6 @@ func _build_setup_pane() -> void:
 	_add_field_label("Map size")
 	_pane_body.add_child(_make_size_row())
 
-	_add_field_label(RIVALS_FIELD_LABEL)
 	_pane_body.add_child(_make_rivals_row())
 
 	_add_field_label("Seed")
@@ -1428,7 +1437,7 @@ func _on_begin_pressed() -> void:
 		int(dims["height"]),
 		seed_digits(_seed_field_text()),
 		DEFAULT_PROFILE_ID,
-		_resolved_rival_count()
+		_resolved_archetype_counts()
 	)
 
 
@@ -1498,7 +1507,7 @@ func _request_faction_capacity() -> void:
 	if _faction_capacity == null:
 		return
 	var dims := MapSizes.option_for(_selected_size)
-	_faction_capacity.request(int(dims["width"]), int(dims["height"]))
+	_faction_capacity.request(int(dims["width"]), int(dims["height"]), DEFAULT_PROFILE_ID)
 
 
 ## **THE ANSWER RE-DERIVES THE ROW IN PLACE — it does not rebuild the pane.** The seed `LineEdit`
@@ -1508,11 +1517,7 @@ func _on_capacity_changed() -> void:
 	# Read FIRST: the caption and the primary action both derive from it.
 	_note_server_reachability()
 	if _faction_capacity != null and _faction_capacity.state == FactionCapacity.STATE_READY:
-		if _rival_picked:
-			# A pick made on a bigger map cannot outlive the switch to a smaller one.
-			_rival_count = _faction_capacity.clamp_count(_rival_count)
-		else:
-			_rival_count = _faction_capacity.default_count
+		_seed_counts_from_answer()
 	_refresh_rivals_row()
 	_refresh_summary()
 	_refresh_begin_enabled()
@@ -1583,114 +1588,202 @@ func _on_capacity_retry_timeout() -> void:
 	_faction_capacity.retry()
 
 
-## The row: the slider and its readout when there is a range to offer, and the caption in every state.
-## Built empty and filled by `_refresh_rivals_row`, so the answer landing and the first build go down
-## exactly the same path.
+## The rows: one per archetype once an answer names them, and the caption in every state. Built empty
+## and filled by `_refresh_rivals_row`, so the answer landing and the first build go down exactly the
+## same path.
 func _make_rivals_row() -> VBoxContainer:
 	_rivals_box = VBoxContainer.new()
 	_rivals_box.add_theme_constant_override("separation", SPEED_ROW_SEPARATION)
 	_rivals_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_rival_slider = null
-	_rival_readout = null
+	_rival_rows = {}
 	_rival_caption = null
+	_rivals_shape = ""
 	_rivals_answered_once = false
 	_refresh_rivals_row()
 	return _rivals_box
 
 
-## **WHAT THE CONTROL LOOKS LIKE IN EACH STATE — AND WHAT IT DOES *BETWEEN* THEM.**
+## The answer's archetype ids, in catalog order. Empty unless the seam is READY.
+func _archetype_ids() -> Array:
+	var ids: Array = []
+	if _faction_capacity == null or _faction_capacity.state != FactionCapacity.STATE_READY:
+		return ids
+	for row in _faction_capacity.archetypes:
+		ids.append(String((row as Dictionary).get("id", "")))
+	return ids
+
+
+## The current count of every archetype row, in catalog order, for the ceiling formula. A row not
+## seeded yet takes the server's opening pick.
+func _current_counts() -> Array:
+	var out: Array = []
+	if _faction_capacity == null:
+		return out
+	for index in range(_faction_capacity.archetypes.size()):
+		var id := String((_faction_capacity.archetypes[index] as Dictionary).get("id", ""))
+		out.append(int(_counts.get(id, _faction_capacity.default_at(index))))
+	return out
+
+
+## **SEED THE COUNTS FROM AN ANSWER.** A row the player has moved keeps its pick and every other row
+## follows the server's default; then the whole set is re-clamped in catalog order, because a row's
+## ceiling depends on the rows before it. Ids the new answer no longer carries are dropped.
+func _seed_counts_from_answer() -> void:
+	var wanted: Array = []
+	var ids := _archetype_ids()
+	for index in range(ids.size()):
+		var id := String(ids[index])
+		if bool(_picked.get(id, false)) and _counts.has(id):
+			wanted.append(int(_counts[id]))
+		else:
+			wanted.append(_faction_capacity.default_at(index))
+	var clamped := _faction_capacity.clamp_all(wanted)
+	for row in _faction_capacity.archetypes:
+		var row_label := String((row as Dictionary).get("display_label", ""))
+		if row_label != "":
+			_labels[String((row as Dictionary).get("id", ""))] = row_label
+	var fresh: Dictionary = {}
+	var kept_picks: Dictionary = {}
+	for index in range(ids.size()):
+		var id := String(ids[index])
+		fresh[id] = int(clamped[index])
+		if bool(_picked.get(id, false)):
+			kept_picks[id] = true
+	_counts = fresh
+	_picked = kept_picks
+
+
+## **WHAT THE ROWS LOOK LIKE IN EACH STATE — AND WHAT THEY DO *BETWEEN* THEM.**
 ##
-## A slider exists only when the server has said how far it may go and that ceiling is at least one:
-## a range invented while the answer is in flight, or after it failed, would be a promise this screen
-## cannot keep. Every state without a slider still has a caption saying which number the world will
-## be built with, and none of them stops the player pressing "Begin the trail".
+## Before an answer there is nothing to name, so there is ONE row: the readout alone, reading `None`
+## under the generic heading — the count the world is built with, stated without inventing a range
+## or a kind. Once the server has answered there is one row per archetype, each a slider that stops at
+## that row's ceiling (disabled at 0, never removed, so dragging an earlier row never rebuilds the
+## control under the player's hand). Every state has a caption saying which number the world will be
+## built with, and none of them stops the player pressing "Begin the trail".
 ##
 ## **A RE-ASK IS NOT A STATE CHANGE.** Clicking through the map sizes re-asks on every click, and this
 ## used to free the row's children and redraw them twice per click — control gone, pending caption in,
 ## control back — which read as a flash and moved every row below it by the difference in height.
 ## So:
 ##
-## - while a re-ask is in flight over a row that has already been answered, NOTHING here changes;
+## - while a re-ask is in flight over rows that have already been answered, NOTHING here changes;
 ##   briefly-stale bounds beat a control that vanishes and returns,
-## - an answer that keeps the row's shape updates the EXISTING nodes — bounds, value, readout,
+## - an answer that keeps the same archetypes updates the EXISTING nodes — bounds, values, readouts,
 ##   caption — and frees nothing,
-## - only a real shape change (no-slider → slider, slider → no-slider) rebuilds children, and the two
-##   shapes are the same HEIGHT, so even that moves nothing below the row.
+## - only a real shape change (unanswered → answered, or a different archetype set) rebuilds children.
 func _refresh_rivals_row() -> void:
 	if _rivals_box == null or not is_instance_valid(_rivals_box):
 		return
 	var state := _faction_capacity.state if _faction_capacity != null else FactionCapacity.STATE_IDLE
-	# The re-ask, over a row that already says something true. Leave it entirely alone.
+	# The re-ask, over rows that already say something true. Leave them entirely alone.
 	if _rivals_answered_once and state == FactionCapacity.STATE_PENDING and _rivals_row_is_built():
 		return
 	var answered := state == FactionCapacity.STATE_READY
-	var ceiling: int = _faction_capacity.max_count if answered else 0
-	var wants_slider := answered and ceiling > 0
-	var has_slider := _rival_slider != null and is_instance_valid(_rival_slider)
-	if wants_slider != has_slider or not _rivals_row_is_built():
-		_rebuild_rivals_row(wants_slider, ceiling)
-	elif wants_slider:
-		# Same shape, new bounds: the one path a map-size answer takes, and it touches no node's
-		# lifetime. `set_value_no_signal`, because this is not the player moving the control.
-		_rival_slider.max_value = ceiling
-		_rival_slider.set_value_no_signal(_rival_slider_value(ceiling))
-		_rival_readout.text = _rival_readout_text(int(_rival_slider.value))
-	_apply_rivals_caption(state, answered, ceiling)
+	var shape := ",".join(PackedStringArray(_archetype_ids())) if answered else ""
+	if shape != _rivals_shape or not _rivals_row_is_built():
+		_rebuild_rivals_rows(answered)
+		_rivals_shape = shape
+	elif answered:
+		# Same archetypes, new bounds: the one path a map-size answer takes, and it touches no node's
+		# lifetime.
+		_sync_rival_widgets()
+	_apply_rivals_caption(state, answered)
 	if answered:
 		_rivals_answered_once = true
 
 
-## Is the row standing? The caption is in every shape, so it is the one node that answers this.
+## Is the row set standing? The caption is in every shape, so it is the one node that answers this.
 func _rivals_row_is_built() -> bool:
 	return _rival_caption != null and is_instance_valid(_rival_caption)
 
 
-## The value the control should carry for a ceiling — the pick, held inside the new bounds.
-func _rival_slider_value(ceiling: int) -> int:
-	return clampi(maxi(0, _rival_count), 0, ceiling)
+## Write the current counts and ceilings onto the standing sliders, without emitting: this is the seam
+## or an earlier row moving, not the player moving this control.
+func _sync_rival_widgets() -> void:
+	if _faction_capacity == null:
+		return
+	var counts := _current_counts()
+	for index in range(_faction_capacity.archetypes.size()):
+		var id := String((_faction_capacity.archetypes[index] as Dictionary).get("id", ""))
+		if not _rival_rows.has(id):
+			continue
+		var widgets: Dictionary = _rival_rows[id]
+		var slider: HSlider = widgets.get("slider", null)
+		var readout: Label = widgets.get("readout", null)
+		var ceiling := _faction_capacity.ceiling_at(index, counts)
+		var count := clampi(int(counts[index]), 0, ceiling)
+		if slider != null and is_instance_valid(slider):
+			slider.max_value = ceiling
+			slider.editable = ceiling > 0
+			slider.set_value_no_signal(count)
+		if readout != null and is_instance_valid(readout):
+			readout.text = _rival_readout_text(count)
 
 
-## Build the row's children for a shape. **The only path that frees anything**, and the two shapes
-## reserve the same height (`RIVALS_CONTROL_ROW_HEIGHT`) so a shape change moves nothing below.
-func _rebuild_rivals_row(wants_slider: bool, ceiling: int) -> void:
+## A heading for one row, built free-standing because the rows live in `_rivals_box`, not the pane.
+func _make_rival_heading(text: String) -> Label:
+	var l := Label.new()
+	l.text = text.to_upper()
+	l.add_theme_font_size_override("font_size", EYEBROW_SIZE)
+	l.add_theme_color_override("font_color", HudStyle.INK_DIM)
+	return l
+
+
+func _make_rival_readout(count: int) -> Label:
+	var readout := Label.new()
+	readout.text = _rival_readout_text(count)
+	readout.custom_minimum_size.x = RIVALS_READOUT_MIN_WIDTH
+	readout.add_theme_font_size_override("font_size", SPEED_ROW_TITLE_SIZE)
+	readout.add_theme_color_override("font_color", HudStyle.SIGNAL)
+	return readout
+
+
+## Build the rows' children for a shape. **The only path that frees anything.** Both shapes use rows of
+## `RIVALS_CONTROL_ROW_HEIGHT`, so the unanswered row and an answered one stack the same way.
+func _rebuild_rivals_rows(answered: bool) -> void:
 	for child in _rivals_box.get_children():
 		_rivals_box.remove_child(child)
 		child.queue_free()
-	_rival_slider = null
-	_rival_readout = null
+	_rival_rows = {}
 	_rival_caption = null
 
-	if wants_slider:
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", SPEED_ROW_SEPARATION)
-		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		row.custom_minimum_size.y = RIVALS_CONTROL_ROW_HEIGHT
+	if answered:
+		var counts := _current_counts()
+		for index in range(_faction_capacity.archetypes.size()):
+			var archetype := _faction_capacity.archetypes[index] as Dictionary
+			var id := String(archetype.get("id", ""))
+			var label := String(archetype.get("display_label", ""))
+			_rivals_box.add_child(_make_rival_heading(label if label != "" else id))
 
-		_rival_slider = HSlider.new()
-		_rival_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		_rival_slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		_rival_slider.min_value = 0
-		_rival_slider.max_value = ceiling
-		_rival_slider.step = RIVALS_SLIDER_STEP
-		_rival_slider.value = _rival_slider_value(ceiling)
-		HudStyle.apply_slider(_rival_slider)
-		row.add_child(_rival_slider)
+			var ceiling := _faction_capacity.ceiling_at(index, counts)
+			var count := clampi(int(counts[index]), 0, ceiling)
+			var row := HBoxContainer.new()
+			row.add_theme_constant_override("separation", SPEED_ROW_SEPARATION)
+			row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			row.custom_minimum_size.y = RIVALS_CONTROL_ROW_HEIGHT
 
-		_rival_readout = Label.new()
-		_rival_readout.text = _rival_readout_text(int(_rival_slider.value))
-		_rival_readout.custom_minimum_size.x = RIVALS_READOUT_MIN_WIDTH
-		_rival_readout.add_theme_font_size_override("font_size", SPEED_ROW_TITLE_SIZE)
-		_rival_readout.add_theme_color_override("font_color", HudStyle.SIGNAL)
-		row.add_child(_rival_readout)
+			var slider := HSlider.new()
+			slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			slider.min_value = 0
+			slider.max_value = ceiling
+			slider.step = RIVALS_SLIDER_STEP
+			slider.value = count
+			slider.editable = ceiling > 0
+			HudStyle.apply_slider(slider)
+			row.add_child(slider)
 
-		_rival_slider.value_changed.connect(_on_rival_slider_changed)
-		_rivals_box.add_child(row)
+			var readout := _make_rival_readout(count)
+			row.add_child(readout)
+			slider.value_changed.connect(_on_rival_slider_changed.bind(id))
+			_rivals_box.add_child(row)
+			_rival_rows[id] = {"slider": slider, "readout": readout}
 	else:
-		# **NO RANGE TO OFFER, SO THE ROW SHOWS THE COUNT AND NOT A CONTROL.** The readout sits where the
-		# slider's readout sits, reading `None`: with no answer the world is built with no rivals, and
-		# that is a number the row can state without inventing a range it cannot honour. The row keeps
-		# `RIVALS_CONTROL_ROW_HEIGHT`, so the seed field and the summary below do not move when an
-		# answer changes the row's shape.
+		# **NOTHING TO NAME YET, SO THE ROW SHOWS THE COUNT AND NOT A CONTROL.** The readout sits where a
+		# slider's readout sits, reading `None`: with no answer the world is built with no other peoples,
+		# and that is a number the row can state without inventing a range or a kind.
+		_rivals_box.add_child(_make_rival_heading(RIVALS_FIELD_LABEL))
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", SPEED_ROW_SEPARATION)
 		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1700,13 +1793,7 @@ func _rebuild_rivals_row(wants_slider: bool, ceiling: int) -> void:
 		reserved.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		reserved.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(reserved)
-
-		_rival_readout = Label.new()
-		_rival_readout.text = _rival_readout_text(0)
-		_rival_readout.custom_minimum_size.x = RIVALS_READOUT_MIN_WIDTH
-		_rival_readout.add_theme_font_size_override("font_size", SPEED_ROW_TITLE_SIZE)
-		_rival_readout.add_theme_color_override("font_color", HudStyle.SIGNAL)
-		row.add_child(_rival_readout)
+		row.add_child(_make_rival_readout(0))
 		_rivals_box.add_child(row)
 
 	_rival_caption = Label.new()
@@ -1714,7 +1801,7 @@ func _rebuild_rivals_row(wants_slider: bool, ceiling: int) -> void:
 	_rival_caption.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_rival_caption.add_theme_font_size_override("font_size", HINT_SIZE)
 	# **THE CAPTION HOLDS ITS LINE EVEN WHEN IT HAS NOTHING TO SAY.** A failed ask leaves the text
-	# empty, and an empty Label is zero pixels tall — everything below the row would rise by a line
+	# empty, and an empty Label is zero pixels tall — everything below the rows would rise by a line
 	# the moment an ask failed. The reserved height is READ from the font the label will draw in
 	# rather than written down, so a theme change cannot make it wrong.
 	var caption_font := _rival_caption.get_theme_font("font")
@@ -1723,18 +1810,23 @@ func _rebuild_rivals_row(wants_slider: bool, ceiling: int) -> void:
 	_rivals_box.add_child(_rival_caption)
 
 
-## The player moved the control. The ONLY place a pick is recorded, which is why the seam's own
-## updates go through `set_value_no_signal`.
-func _on_rival_slider_changed(value: float) -> void:
-	_rival_count = int(value)
-	_rival_picked = true
-	if _rival_readout != null and is_instance_valid(_rival_readout):
-		_rival_readout.text = _rival_readout_text(_rival_count)
+## The player moved a row's control. The ONLY place a pick is recorded, which is why the seam's own
+## updates go through `set_value_no_signal`. **A row's count is every later row's ceiling**, so the
+## whole set is re-clamped in catalog order and the later sliders follow in place.
+func _on_rival_slider_changed(value: float, id: String) -> void:
+	_counts[id] = int(value)
+	_picked[id] = true
+	if _faction_capacity != null:
+		var clamped := _faction_capacity.clamp_all(_current_counts())
+		for index in range(_faction_capacity.archetypes.size()):
+			var row_id := String((_faction_capacity.archetypes[index] as Dictionary).get("id", ""))
+			_counts[row_id] = int(clamped[index])
+	_sync_rival_widgets()
 	_refresh_summary()
 
 
 ## The caption's words and tone for a state, written onto the node that is already there.
-func _apply_rivals_caption(state: String, answered: bool, ceiling: int) -> void:
+func _apply_rivals_caption(state: String, answered: bool) -> void:
 	if not _rivals_row_is_built():
 		return
 	if not answered:
@@ -1748,42 +1840,53 @@ func _apply_rivals_caption(state: String, answered: bool, ceiling: int) -> void:
 		_rival_caption.text = RIVALS_CAPTION_PENDING
 		_rival_caption.add_theme_color_override("font_color", HudStyle.INK_FAINT)
 		return
-	_rival_caption.text = RIVALS_CAPTION_ALONE if ceiling == 0 else RIVALS_CAPTION_CEILING_FORMAT % ceiling
+	# Alone only when NO row can seat anyone: each ceiling is read against the others being none.
+	var seats_anyone := false
+	for index in range(_faction_capacity.archetypes.size()):
+		if _faction_capacity.ceiling_at(index, []) > 0:
+			seats_anyone = true
+	_rival_caption.text = RIVALS_CAPTION_SHARED if seats_anyone else RIVALS_CAPTION_ALONE
 	_rival_caption.add_theme_color_override("font_color", HudStyle.INK_FAINT)
 
 
-## The readout's words. `0` is "None" rather than "0 rivals": the count the player is most likely to
-## choose deserves to read as a sentence.
+## The readout's words. `0` is "None" rather than "0": the count the player is most likely to choose
+## deserves to read as a word.
 func _rival_readout_text(count: int) -> String:
 	if count <= 0:
 		return RIVALS_READOUT_NONE
-	if count == 1:
-		return RIVALS_READOUT_ONE
 	return RIVALS_READOUT_FORMAT % count
 
 
-## **THE COUNT THAT GOES ON THE WIRE — or the absence of one.** A pick the current answer does not
-## permit (there is no answer, or it is for a different grid, or it failed) is sent as
-## `FactionCapacity.NO_COUNT`, which makes `Main` omit the argument; the server answers that with its
-## unattended roster, no rivals. Guessing a number here would either refuse a count the map could
-## seat or ask for one it could not.
+## **THE COUNTS THAT GO ON THE WIRE — or the absence of any.** An Array of `{id, count}` in catalog
+## order. A pick the current answer does not permit (there is no answer, or it is for a different grid,
+## or it failed) is sent as NOTHING: the array is empty, which makes `Main` append no tokens, and the
+## server answers that with its unattended roster. Guessing a number here would either refuse a count
+## the map could seat or ask for one it could not.
 ##
-## **EVERYTHING ELSE IS SENT AS SHOWN.** A player who never touches the slider still sends the count
-## the row opened on — the seam's map-scaled default — because `_on_capacity_changed` seeds
-## `_rival_count` from it and nothing downstream re-derives it. That is the difference between the
-## two rivals the screen promised and none at all, so `menu_preview` pins it.
-func _resolved_rival_count() -> int:
+## **EVERYTHING ELSE IS SENT AS SHOWN.** A player who never touches a slider still sends the counts the
+## rows opened on — the seam's map-scaled defaults — because `_seed_counts_from_answer` seeds `_counts`
+## from them and nothing downstream re-derives them. That is the difference between the two peoples
+## the screen promised and none at all, so `menu_preview` pins it, per archetype.
+func _resolved_archetype_counts() -> Array:
+	var out: Array = []
 	if _faction_capacity == null:
-		return FactionCapacity.NO_COUNT
-	# **A RE-ASK DOES NOT UNMAKE THE PICK.** While a new ceiling is in flight over a row that is still
-	# showing the old one, the count on screen is the count that would be sent — anything else makes
+		return out
+	# **A RE-ASK DOES NOT UNMAKE THE PICK.** While a new answer is in flight over rows that are still
+	# showing the old one, the counts on screen are the counts that would be sent — anything else makes
 	# the summary read "server default" for the few milliseconds after every map-size click, and
 	# would quietly discard the player's pick if they pressed Begin inside that window. The server
 	# clamps a count the new grid cannot seat; it cannot recover one this screen threw away.
 	if _rivals_answered_once and _faction_capacity.state == FactionCapacity.STATE_PENDING:
-		return _rival_count
-	var count := _faction_capacity.clamp_count(_rival_count)
-	return count if _faction_capacity.permits(count) else FactionCapacity.NO_COUNT
+		for id_variant in _rival_rows.keys():
+			out.append({"id": String(id_variant), "count": int(_counts.get(id_variant, 0))})
+		return out
+	if _faction_capacity.state != FactionCapacity.STATE_READY:
+		return out
+	var counts := _faction_capacity.clamp_all(_current_counts())
+	for index in range(_faction_capacity.archetypes.size()):
+		var id := String((_faction_capacity.archetypes[index] as Dictionary).get("id", ""))
+		out.append({"id": id, "count": int(counts[index])})
+	return out
 
 
 # ---- selectable cards -------------------------------------------------------
@@ -2211,19 +2314,28 @@ func _refresh_summary() -> void:
 	_add_summary_pair("World", world_name)
 	_add_summary_pair("Grid", "%s · %d × %d" % [String(dims["label"]), int(dims["width"]), int(dims["height"])])
 	_add_summary_pair("Seed", seed_text)
-	_add_summary_pair("Rivals", _rivals_summary_text())
+	_add_rivals_summary_pairs()
 
 
-## The summary's rival value. **"server default" is its own state**, not a stand-in for none: it says
-## the command will carry no count and the server will pick, which is a different world from the one
-## the player chose to be alone in.
-func _rivals_summary_text() -> String:
-	var count := _resolved_rival_count()
-	if count == FactionCapacity.NO_COUNT:
-		return RIVALS_SUMMARY_UNSET
-	if count == 0:
-		return RIVALS_SUMMARY_NONE
-	return str(count)
+## One summary pair per archetype the player was offered. **"none asked for" is its own state**, not a
+## stand-in for none: it says the command will carry no counts and the server will pick, which is a
+## different world from the one the player chose to be alone in.
+func _add_rivals_summary_pairs() -> void:
+	var entries := _resolved_archetype_counts()
+	if entries.is_empty():
+		_add_summary_pair(RIVALS_SUMMARY_KEY_UNSET, RIVALS_SUMMARY_UNSET)
+		return
+	for entry in entries:
+		var id := String((entry as Dictionary)["id"])
+		var count := int((entry as Dictionary)["count"])
+		_add_summary_pair(_archetype_label(id), RIVALS_SUMMARY_NONE if count == 0 else str(count))
+
+
+## The server's label for an archetype id. Read from `_labels`, which is written whenever an answer
+## lands and KEPT across a re-ask: the seam clears its rows while a new answer is in flight, and the
+## summary must not flip from "Rivals" to the bare id for the length of a round trip.
+func _archetype_label(id: String) -> String:
+	return String(_labels.get(id, id))
 
 
 func _add_summary_pair(key: String, value: String) -> void:

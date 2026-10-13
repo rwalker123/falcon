@@ -206,7 +206,7 @@ pub(crate) fn muster_kit(
                 })
                 .max()
                 .unwrap_or(0)
-                .min(row.workers)
+                .min(allocation.hands_present_on(row))
         })
         .collect();
     MusterKit { shortfall, carried }
@@ -292,7 +292,7 @@ impl MusterPricing<'_> {
         let plan = self.plan_at(crew, hunt_kit, equipment, wear);
         let mut claims = self.standing_claims();
         for (row, lent) in &plan.from_rows {
-            let held = self.allocation.assignments[*row].workers;
+            let held = self.allocation.hands_present(*row);
             if held > 0 {
                 claims[*row] *= (held - lent) as f32 / held as f32;
             }

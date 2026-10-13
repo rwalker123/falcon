@@ -597,18 +597,18 @@ pub enum CommandPayload {
         height: u32,
         seed: u64,
         profile_id: String,
-        /// **How many AI factions the player asked for, NOT counting their own.** 2 builds a world
-        /// of three peoples; 0 is the single-faction world.
+        /// **How many peoples of each start archetype the player asked for, NOT counting their
+        /// own.** The human seat is faction 0 and always takes the profile's first archetype.
         ///
-        /// `None` is not `Some(0)`: it means *"nobody picked"* — the text grammar's optional
-        /// argument, a direct scene launch, any caller that does not care — and resolves
-        /// server-side to the **unattended** roster, which is no rivals unless
-        /// `simulation_config.json`'s `default_ai_faction_count` pins some. That is deliberately
-        /// **not** the [`FactionCapacityReply::default_ai_faction_count`] a New Game screen
-        /// pre-selects: that number scales with the map, and a process nobody is watching should
-        /// not gain peoples from it. A count above what the grid seats is clamped server-side with
-        /// a warning, never a refusal.
-        ai_faction_count: Option<u32>,
+        /// An archetype **not listed** means *"nobody picked"* - the text grammar's optional
+        /// arguments, a direct scene launch, any caller that does not care - and resolves
+        /// server-side to the **unattended** count: the archetype's own `default_count` pin, else
+        /// none. An explicit `0` is a player who chose none. That is deliberately **not** the
+        /// [`ArchetypeCapacity::default_count`] a New Game screen pre-selects: that number scales
+        /// with the map, and a process nobody is watching should not gain peoples from it. An id
+        /// the profile does not carry rejects the command. A count above what the grid seats is
+        /// clamped server-side with a warning, never a refusal.
+        archetype_counts: Vec<ArchetypeCount>,
     },
     /// Stage a config-tuning override, applied at the **next** `new_game`. Proto field 47.
     ///
@@ -928,30 +928,57 @@ pub struct WorkPartyForecastReply {
     pub materials_rate_home: Vec<MaterialPayoff>,
 }
 
+/// One archetype's requested count in a [`CommandPayload::NewGame`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArchetypeCount {
+    /// An archetype id from the start profile's catalog.
+    pub id: String,
+    pub count: u32,
+}
+
 /// The grid the player is **configuring**, not the one the server is running: the ceiling is a
 /// property of the map about to be built.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FactionCapacityQuery {
     pub width: u32,
     pub height: u32,
+    /// The start profile whose archetypes are asked about. Empty or unknown reads as the server's
+    /// active profile.
+    pub profile_id: String,
 }
 
-/// **What the New Game screen draws its rival control from.** Both numbers come from one function in
-/// the sim (`core_sim::faction_start_capacity`) so a client never restates the rule; a second copy
-/// in GDScript would be free to disagree with the clamp the server actually applies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// **What the New Game screen draws its people controls from**: one row per start archetype of the
+/// profile, in catalog order. The rows come from one function in the sim
+/// (`core_sim::archetype_capacities`) so a client never restates the pre-selection; the ceiling it
+/// stops each control at is [`ArchetypeCapacity`]'s formula.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FactionCapacityReply {
-    /// **The count the control PRE-SELECTS**, already clamped — so the value it opens on is always
-    /// one the server will grant. Derived from what this grid seats unless
-    /// `simulation_config.json`'s `default_ai_faction_count` pins a number.
+    pub archetypes: Vec<ArchetypeCapacity>,
+}
+
+/// **One archetype's capacity row.**
+///
+/// # The ceiling contract
+///
+/// A client computes how many of archetype `k` it may ask for as
+/// `max(0, site_count_k - 1 - sum_{j<k} count_j)`: the `1` is the human seat and `count_j` is the
+/// CURRENT count chosen for each EARLIER archetype. The server applies the same formula in order
+/// against the earlier GRANTED counts and clamps with a warning.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArchetypeCapacity {
+    /// Stable key; what a new game's [`ArchetypeCount::id`] names.
+    pub id: String,
+    /// What the New Game screen calls this kind of people.
+    pub display_label: String,
+    /// How many starts the grid seats at this archetype's separation, the human seat included.
+    pub site_count: u32,
+    /// **The count the control PRE-SELECTS**, already clamped against the earlier archetypes'
+    /// defaults.
     ///
-    /// ⛔ **Not what an absent `ai_faction_count` resolves to.** That is the unattended roster (no
-    /// rivals, absent a config pin); this is an offer to a player looking at a screen. A client
-    /// that pre-selects this value must therefore **send it explicitly** — omitting the field
-    /// requests a different world.
-    pub default_ai_faction_count: u32,
-    /// The most rivals this grid seats. 0 means the player plays alone on it.
-    pub max_ai_faction_count: u32,
+    /// ⛔ **Not what an unlisted archetype resolves to.** That is the unattended count (the pin,
+    /// else none); this is an offer to a player looking at a screen. A client that pre-selects
+    /// this value must therefore **send it explicitly**.
+    pub default_count: u32,
 }
 
 /// *"What does this raid, off this band, carrying this kit, do to this herd?"* No floor, because the
@@ -2216,14 +2243,20 @@ impl CommandEnvelope {
                 height,
                 seed,
                 profile_id,
-                ai_faction_count,
+                archetype_counts,
             } => pb::command_envelope::Command::NewGame(pb::NewGameCommand {
                 preset_id: preset_id.clone(),
                 width: *width,
                 height: *height,
                 seed: *seed,
                 profile_id: profile_id.clone(),
-                ai_faction_count: *ai_faction_count,
+                archetype_counts: archetype_counts
+                    .iter()
+                    .map(|entry| pb::ArchetypeCount {
+                        id: entry.id.clone(),
+                        count: entry.count,
+                    })
+                    .collect(),
             }),
             CommandPayload::SetConfigOverride { kind, patch_json } => {
                 pb::command_envelope::Command::SetConfigOverride(pb::SetConfigOverrideCommand {
@@ -2316,6 +2349,7 @@ impl CommandEnvelope {
                             pb::query_command::Query::FactionCapacity(pb::FactionCapacityQuery {
                                 width: ask.width,
                                 height: ask.height,
+                                profile_id: ask.profile_id.clone(),
                             })
                         }
                         QueryPayload::ForageCrewTake(ask) => {
@@ -2791,7 +2825,14 @@ impl CommandEnvelope {
                 height: cmd.height,
                 seed: cmd.seed,
                 profile_id: cmd.profile_id,
-                ai_faction_count: cmd.ai_faction_count,
+                archetype_counts: cmd
+                    .archetype_counts
+                    .into_iter()
+                    .map(|entry| ArchetypeCount {
+                        id: entry.id,
+                        count: entry.count,
+                    })
+                    .collect(),
             },
             pb::command_envelope::Command::SetConfigOverride(cmd) => {
                 CommandPayload::SetConfigOverride {
@@ -2821,6 +2862,7 @@ impl CommandEnvelope {
                         QueryPayload::FactionCapacity(FactionCapacityQuery {
                             width: ask.width,
                             height: ask.height,
+                            profile_id: ask.profile_id,
                         })
                     }
                     pb::query_command::Query::HuntCrewTake(ask) => {
@@ -3087,8 +3129,16 @@ impl QueryReplyEnvelope {
             }
             QueryReply::FactionCapacity(reply) => {
                 pb::query_reply_envelope::Reply::FactionCapacity(pb::FactionCapacityReply {
-                    default_ai_faction_count: reply.default_ai_faction_count,
-                    max_ai_faction_count: reply.max_ai_faction_count,
+                    archetypes: reply
+                        .archetypes
+                        .iter()
+                        .map(|row| pb::ArchetypeCapacity {
+                            id: row.id.clone(),
+                            display_label: row.display_label.clone(),
+                            site_count: row.site_count,
+                            default_count: row.default_count,
+                        })
+                        .collect(),
                 })
             }
             QueryReply::Error(reason) => pb::query_reply_envelope::Reply::Error(pb::QueryError {
@@ -3217,8 +3267,16 @@ impl QueryReplyEnvelope {
             }
             pb::query_reply_envelope::Reply::FactionCapacity(reply) => {
                 QueryReply::FactionCapacity(FactionCapacityReply {
-                    default_ai_faction_count: reply.default_ai_faction_count,
-                    max_ai_faction_count: reply.max_ai_faction_count,
+                    archetypes: reply
+                        .archetypes
+                        .into_iter()
+                        .map(|row| ArchetypeCapacity {
+                            id: row.id,
+                            display_label: row.display_label,
+                            site_count: row.site_count,
+                            default_count: row.default_count,
+                        })
+                        .collect(),
                 })
             }
             pb::query_reply_envelope::Reply::Error(error) => QueryReply::Error(error.reason),
@@ -3881,6 +3939,87 @@ mod tests {
         assert_eq!(
             CommandEnvelope::decode(&bytes).expect("decode").payload,
             payload
+        );
+    }
+
+    /// **Archetype counts and the capacity rows survive the wire**, in catalog order, with the
+    /// listed-vs-unlisted distinction intact (an empty list is not a list of zeros).
+    #[test]
+    fn archetype_counts_and_capacity_rows_round_trip() {
+        for counts in [
+            Vec::new(),
+            vec![
+                ArchetypeCount {
+                    id: "major".to_string(),
+                    count: 2,
+                },
+                ArchetypeCount {
+                    id: "minor".to_string(),
+                    count: 0,
+                },
+            ],
+        ] {
+            let payload = CommandPayload::NewGame {
+                preset_id: "earthlike".to_string(),
+                width: 80,
+                height: 52,
+                seed: 9,
+                profile_id: "late_forager_tribe".to_string(),
+                archetype_counts: counts,
+            };
+            let envelope = CommandEnvelope {
+                payload: payload.clone(),
+                correlation_id: None,
+            };
+            let bytes = envelope.encode_to_vec().expect("encode");
+            assert_eq!(
+                CommandEnvelope::decode(&bytes).expect("decode").payload,
+                payload
+            );
+        }
+
+        let query = CommandPayload::Query {
+            request_id: 5,
+            query: QueryPayload::FactionCapacity(FactionCapacityQuery {
+                width: 80,
+                height: 52,
+                profile_id: "late_forager_tribe".to_string(),
+            }),
+        };
+        let bytes = CommandEnvelope {
+            payload: query.clone(),
+            correlation_id: None,
+        }
+        .encode_to_vec()
+        .expect("encode");
+        assert_eq!(
+            CommandEnvelope::decode(&bytes).expect("decode").payload,
+            query
+        );
+
+        let answer = QueryReplyEnvelope {
+            request_id: 5,
+            reply: QueryReply::FactionCapacity(FactionCapacityReply {
+                archetypes: vec![
+                    ArchetypeCapacity {
+                        id: "major".to_string(),
+                        display_label: "Rivals".to_string(),
+                        site_count: 7,
+                        default_count: 4,
+                    },
+                    ArchetypeCapacity {
+                        id: "minor".to_string(),
+                        display_label: "Minor peoples".to_string(),
+                        site_count: 46,
+                        default_count: 21,
+                    },
+                ],
+            }),
+        };
+        let bytes = answer.encode_to_vec().expect("the reply encodes");
+        assert_eq!(
+            QueryReplyEnvelope::decode(&bytes).expect("the reply decodes"),
+            answer
         );
     }
 

@@ -491,6 +491,16 @@ pub struct LaborAssignmentState {
     /// Appended last.
     #[serde(default)]
     pub need_runway: f32,
+    /// **Hands of this row walking back to it** - already inside `workers`, not at the source until
+    /// they land (the row's take is priced on `workers - rejoining_workers`). Appended last.
+    #[serde(default)]
+    pub rejoining_workers: u32,
+    /// Turns until the last of those hands is back; `0` = none. Appended last.
+    #[serde(default)]
+    pub rejoining_all_home_in: u32,
+    /// The food they carry, gross of the walk's rot. Appended last.
+    #[serde(default)]
+    pub rejoining_food: f32,
 }
 
 /// **ONE LINE OF ONE TAKE ROW'S TABLE OF EQUIPMENT** — a row of [`LaborAssignmentState::kit_toe`].

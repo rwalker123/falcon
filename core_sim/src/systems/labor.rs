@@ -4,8 +4,8 @@ use super::*;
 
 use crate::belief::BeliefRegistry;
 use crate::belief_config::{BeliefConfig, BeliefConfigHandle};
-use crate::components::BandWorkforce;
-use crate::work_party::WorkParty;
+use crate::components::{BandWorkforce, ExcessRejoining};
+use crate::work_party::{WorkParty, WALKS_BACK_TO_ITS_ROW, WALKS_PLAIN};
 
 /// **"Is this crew actually working the source?"** — THE eligibility term that replaced the
 /// `EcologyPhase::Thriving` gate on both webs (`docs/plan_harvest_floor.md` §3.2), asked of the
@@ -2233,7 +2233,8 @@ impl SiteCrews {
         for allocation in allocations {
             for row in &allocation.assignments {
                 if let Some(source) = BuildSource::of(&row.target) {
-                    *crews.entry(source).or_insert(NO_CREW_ON_THIS_ACTIVITY) += row.workers;
+                    *crews.entry(source).or_insert(NO_CREW_ON_THIS_ACTIVITY) +=
+                        allocation.hands_present_on(row);
                 }
             }
         }
@@ -2303,7 +2304,8 @@ fn site_keeping_claims(
 ) -> Vec<KeepingClaim> {
     let mut claims: Vec<KeepingClaim> = Vec::new();
     for (index, assignment) in allocation.assignments.iter().enumerate() {
-        let crew = assignment.workers;
+        // The keeping is paid by the hands PRESENT at the site, not those still walking back.
+        let crew = allocation.hands_present_on(assignment);
         if crew == NO_CREW_ON_THIS_ACTIVITY {
             continue;
         }
@@ -2437,7 +2439,9 @@ fn site_keeping_asks(
             let crew = allocation
                 .assignments
                 .get(claim.index)
-                .map_or(NO_CREW_ON_THIS_ACTIVITY, |row| row.workers);
+                .map_or(NO_CREW_ON_THIS_ACTIVITY, |row| {
+                    allocation.hands_present_on(row)
+                });
             let rate = fully_equipped_keeper_rate(
                 equipment,
                 band_kit,
@@ -4327,6 +4331,7 @@ fn post_a_party(
     source_pos: UVec2,
     band_pos: UVec2,
     workers: u32,
+    returning: u32,
     geometry: (u32, u32, bool),
     labor: &crate::labor_config::LaborConfig,
     supply: &crate::supply_network_config::SupplyNetworkConfig,
@@ -4364,10 +4369,23 @@ fn post_a_party(
     if shed {
         let _gone_with_the_shed = party.cut_crew(workers, target);
     }
+    // HANDS THAT REJOINED THIS TURN ARRIVE AT THE SOURCE BY WALKING. A rejoining walk landed at the
+    // top of the pass, but the row has posted a party (it went far again), so its hand is home, not
+    // at the herd: it joins the party as a porter heading back out empty with the whole walk ahead
+    // (the state a porter is in the moment its pack lands), is counted in the party's crew
+    // (`workers`) but not among the hunters present, and takes no step this turn, as the porter
+    // that landed this turn does not.
+    for _ in 0..returning {
+        party.on_the_road.push(crate::work_party::Walker {
+            walk_turns: party.walk_turns,
+            turns_out: party.walk_turns,
+            ..Default::default()
+        });
+    }
     let working_crew = if shed && open.present > NO_CREW_ON_THIS_ACTIVITY {
         party.hunters_present()
     } else {
-        open.present
+        open.present.saturating_sub(returning)
     };
     Some(PartyPosting {
         working_crew,
@@ -4388,7 +4406,7 @@ pub fn bring_the_dropped_party_home(world: &mut World, band: Entity, row: &Labor
         return;
     };
     if let Some(mut allocation) = world.get_mut::<LaborAllocation>(band) {
-        stand_down_party(&mut allocation, party, &row.target);
+        stand_down_party(&mut allocation, party, &row.target, WALKS_PLAIN);
     }
 }
 
@@ -4402,12 +4420,22 @@ pub fn bring_the_dropped_party_home(world: &mut World, band: Entity, row: &Labor
 /// finishes its walk, the hands at the source carry the load over the whole walk, and the cargo
 /// rots by its walk when it lands — the same rule a live pack lands by. One step is what keeps any
 /// of those paths from settling a party differently.
+///
+/// ⛔ **`rejoins_row` says whether the row SURVIVES the stand-down.** A row that does (its source
+/// drifted back inside the apron, so it is plainly local now) keeps the crew the player set, and the
+/// walkers are some of those hands on the road — [`crate::work_party::HomewardWalk::rejoins_row`], counted once, on
+/// the row. Every other exit ends the row (or its hands) and walks plain.
 pub(crate) fn stand_down_party(
     allocation: &mut LaborAllocation,
     party: WorkParty,
     target: &LaborTarget,
+    rejoins_row: bool,
 ) {
-    allocation.homeward.extend(party.walk_home(target));
+    let mut walks = party.walk_home(target);
+    for walk in &mut walks {
+        walk.rejoins_row = rejoins_row;
+    }
+    allocation.homeward.extend(walks);
 }
 
 /// **[`stand_down_party`] for a party the labor pass ends BEFORE its turn opened** — a row the shed
@@ -4427,7 +4455,9 @@ fn stand_down_unopened_party(
 ) -> f32 {
     let open = party.open_turn();
     let spoiled = bring_the_party_home(stores, allocation, &open.packs, home, keeping);
-    stand_down_party(allocation, party, target);
+    // The row is still there (or lapses further down this pass, and `settle_rejoining` flips these
+    // to plain walks when it goes), so its hands walk back to it.
+    stand_down_party(allocation, party, target, WALKS_BACK_TO_ITS_ROW);
     spoiled
 }
 
@@ -5569,10 +5599,18 @@ pub fn advance_labor_allocation(
         // A group stood down later in this pass is pushed after this step and so takes its first
         // step next turn — nothing a posting ends with arrives the turn it ends.
         let homeward = std::mem::take(&mut allocation.homeward);
+        // The hands of rejoining walks that land this turn, by the row they rejoin. A hand lands
+        // exactly as a plain one does (cargo, rot) and changes no head count: it is on its row
+        // already, and is *present* from now on. If the row posts a party this turn the hand joins
+        // it as a walker heading back out ([`post_a_party`]).
+        let mut rejoined: Vec<(LaborTarget, u32)> = Vec::new();
         for mut walk in homeward {
             if !walk.step() {
                 allocation.homeward.push(walk);
                 continue;
+            }
+            if walk.rejoins_row {
+                rejoined.push((walk.target.clone(), walk.workers));
             }
             let spoiled = bring_the_party_home(
                 &mut cohort.stores,
@@ -6157,6 +6195,17 @@ pub fn advance_labor_allocation(
         // `assignments` immutably — the same shape `lapsed` and `repaired_takes` take.
         let mut postings: BTreeMap<usize, PartyPosting> = BTreeMap::new();
         for (idx, assignment) in allocation.assignments.iter().enumerate() {
+            // ⛔ **THE HANDS PRESENT AT THIS ROW'S SOURCE** — its crew less the hands still walking
+            // back to it ([`LaborAllocation::hands_present`]). Everything the row prices (the party's
+            // crew, the take, the keeping, the kit claim, the lesson) reads this, never the crew the
+            // player set; `assignment.workers` still answers *"is this row held"*.
+            let present_hands = allocation.hands_present(idx);
+            // The rejoining hands that landed this turn on this row, who walk out to a party it posts.
+            let rejoined_here: u32 = rejoined
+                .iter()
+                .filter(|(target, _)| target.same_source(&assignment.target))
+                .map(|(_, hands)| hands)
+                .sum();
             // ⛔ **WHAT THIS ROW ACTUALLY STAFFS AT THE SOURCE.** A row whose source is past the
             // band's own hands posts a **work party** rather than lapsing
             // (`docs/plan_civilization_steps.md` §One work party). Its hunters walk packs home one
@@ -6174,7 +6223,8 @@ pub fn advance_labor_allocation(
                         &assignment.target,
                         source,
                         band_pos,
-                        assignment.workers,
+                        present_hands,
+                        rejoined_here,
                         (grid_width, grid_height, wrap_horizontal),
                         &labor,
                         &supply_cfg,
@@ -6184,7 +6234,7 @@ pub fn advance_labor_allocation(
                 });
             let workers = posting
                 .as_ref()
-                .map_or(assignment.workers, |posting| posting.working_crew);
+                .map_or(present_hands, |posting| posting.working_crew);
             if let Some(posting) = posting {
                 postings.insert(idx, posting);
             }
@@ -6425,7 +6475,7 @@ pub fn advance_labor_allocation(
                 crate::work_party::CaravanPricing::resolve(
                     &equipment_cfg,
                     &crew_kit,
-                    take_hands_after_keeping(assignment.workers, row_claims.keep_hands[idx]),
+                    take_hands_after_keeping(present_hands, row_claims.keep_hands[idx]),
                     row_claims.claims[idx],
                     assignment.priority,
                     &band_kit,
@@ -7109,7 +7159,7 @@ pub fn advance_labor_allocation(
                             ),
                             &equipment_cfg,
                             &band_kit,
-                            assignment.workers,
+                            present_hands,
                         );
                         posting.forecast = Some(crate::work_party::forecast_forage_caravan(
                             &posting.party,
@@ -8200,7 +8250,7 @@ pub fn advance_labor_allocation(
                                 ),
                                 &equipment_cfg,
                                 &band_kit,
-                                assignment.workers,
+                                present_hands,
                             );
                             posting.forecast = Some(crate::work_party::forecast_hunt_caravan(
                                 &posting.party,
@@ -9113,7 +9163,7 @@ pub fn advance_labor_allocation(
                             ),
                             &equipment_cfg,
                             &band_kit,
-                            assignment.workers,
+                            present_hands,
                         );
                         posting.forecast = Some(crate::work_party::forecast_hunt_caravan(
                             &posting.party,
@@ -9774,7 +9824,7 @@ pub fn advance_labor_allocation(
                                 ground,
                                 &extraction_cfg,
                                 &ladder,
-                                assignment.workers,
+                                present_hands,
                             ),
                             realized_horizon,
                         ));
@@ -10391,7 +10441,7 @@ pub fn advance_labor_allocation(
             // the road with the workers.
             if row_lapsed {
                 let target = allocation.assignments[idx].target.clone();
-                stand_down_party(&mut allocation, posting.party, &target);
+                stand_down_party(&mut allocation, posting.party, &target, WALKS_PLAIN);
                 continue;
             }
             // ⛔ **THE ROW'S FORWARD PROJECTIONS ARE WHAT ARRIVES HOME, NOT WHAT IS TAKEN.**
@@ -10422,7 +10472,7 @@ pub fn advance_labor_allocation(
             // walks home. The row itself survives as a holding.
             if allocation.assignments[idx].workers == NO_CREW_ON_THIS_ACTIVITY {
                 let target = allocation.assignments[idx].target.clone();
-                stand_down_party(&mut allocation, posting.party, &target);
+                stand_down_party(&mut allocation, posting.party, &target, WALKS_PLAIN);
                 allocation.assignments[idx].party = None;
                 continue;
             }
@@ -10460,6 +10510,9 @@ pub fn advance_labor_allocation(
             );
             cohort.last_food_spoiled += spoiled;
         }
+        // A row held at zero hands (or crew-short after the shed) cannot have its walkers rejoin
+        // it: whatever the row does not hold hands for walks home as an ordinary walker.
+        allocation.settle_rejoining(ExcessRejoining::WalkHomePlain);
         // **THE REPAIRED TAKE SELECTIONS, written back** — before the `lapsed` removal shuffles the
         // indices they were collected against.
         for (idx, repaired) in repaired_takes {
@@ -10508,6 +10561,9 @@ pub fn advance_labor_allocation(
             allocation.assignments.remove(idx);
             yields.remove(idx);
         }
+        // A lapsed row ends: the hands still walking back to it walk home plain, as a lapse always
+        // did (`LaborAllocation::settle_rejoining`).
+        allocation.settle_rejoining(ExcessRejoining::WalkHomePlain);
         allocation.last_yields = yields;
         // ## ⛔ HUNTING BY NEED — THE DECISION FOR NEXT TURN
         //

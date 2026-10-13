@@ -684,6 +684,7 @@ fn a_spawned_band_owns_exactly_its_default_outfit() {
         .resource::<core_sim::ActiveStartProfile>()
         .profile()
         .overrides()
+        .archetypes[0]
         .opening_loadout
         .material_defaults
         .clone();
@@ -747,8 +748,7 @@ fn every_material_a_rung_eats_is_produced_or_pickable_at_the_start() {
     let pickable: Vec<String> = core_sim::StartProfiles::builtin()
         .iter()
         .flat_map(|profile| {
-            profile
-                .overrides()
+            profile.overrides().archetypes[0]
                 .opening_loadout
                 .pickable_materials
                 .clone()

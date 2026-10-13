@@ -172,7 +172,12 @@ pub(crate) fn snapshot_opening_loadout(
     known_crafts: &BTreeMap<String, bool>,
     carry: &crate::carry::CarryConfig,
 ) -> OpeningLoadoutState {
-    let loadout = &profile.overrides().opening_loadout;
+    // The card the client draws is the human seat's: faction 0 always takes archetype 0.
+    let loadout = profile
+        .overrides()
+        .human_archetype()
+        .map(|archetype| archetype.opening_loadout.clone())
+        .unwrap_or_default();
     OpeningLoadoutState {
         pickable_materials: loadout.pickable_materials.clone(),
         material_defaults: loadout

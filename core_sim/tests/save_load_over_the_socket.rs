@@ -42,8 +42,21 @@ use sim_runtime::{CommandEnvelope, CommandPayload, QueryReply, QueryReplyEnvelop
 
 /// A small map: the properties under test are about publication, not about terrain, and every
 /// second of worldgen here is a second on the suite. Same dimensions the in-process save tests use.
-const MAP_WIDTH: u32 = 24;
-const MAP_HEIGHT: u32 = 16;
+const MAP_WIDTH: u32 = 40;
+const MAP_HEIGHT: u32 = 28;
+
+/// The start separations the test profiles are shrunk to, so a 40x28 map seats the roster under
+/// test: the major archetype's, then the minor's.
+const TEST_MAJOR_SEPARATION: u64 = 6;
+const TEST_MINOR_SEPARATION: u64 = 3;
+
+/// The roster the archetype-split test builds: major rivals beside the human, and minor peoples.
+const MAJOR_RIVALS: u32 = 2;
+const MINORS: u32 = 3;
+
+/// The shipped band sizes (`start_profiles.json`): the 30-person major, the 12-person minor.
+const MAJOR_BAND_SIZE: u32 = 30;
+const MINOR_BAND_SIZE: u32 = 12;
 const MAP_PRESET: &str = "earthlike";
 const START_PROFILE: &str = "late_forager_tribe";
 /// Fixed and non-zero: `seed == 0` asks the server to randomise, and a test that cannot say which
@@ -126,7 +139,7 @@ const LOG_TAIL_LINES: usize = 40;
 // =================================================================================================
 
 /// The four header fields this test judges a frame by, decoded from the published bytes.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct FrameInfo {
     world_epoch: u32,
     tick: u64,
@@ -135,6 +148,9 @@ struct FrameInfo {
     /// delta is not a baseline — a field that happens to equal its default compares unchanged and is
     /// never sent — so the client's reveal gate waits for a full frame and only a full frame.
     full: bool,
+    /// `(faction, size)` of every band row a FULL frame publishes (empty on a delta). With fog off
+    /// a rival's band still arrives, redacted to faction, position and size.
+    bands: Vec<(u32, u32)>,
 }
 
 impl FrameInfo {
@@ -158,11 +174,22 @@ impl FrameInfo {
             other => panic!("a published frame carried neither a snapshot nor a delta: {other:?}"),
         };
         let header = header.expect("every published frame carries a header");
+        let bands = if full {
+            envelope
+                .payload_as_snapshot()
+                .and_then(|snapshot| snapshot.population())
+                .and_then(|section| section.populations())
+                .map(|rows| rows.iter().map(|row| (row.faction(), row.size())).collect())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         Self {
             world_epoch: header.worldEpoch(),
             tick: header.tick(),
             frame_seq: header.frameSeq(),
             full,
+            bands,
         }
     }
 
@@ -246,6 +273,7 @@ impl Harness {
         let saves = scratch.dir.join("saves");
         fs::create_dir_all(&saves).expect("scratch save directory");
         let config_path = write_test_config(&scratch.dir);
+        let profiles_path = write_test_start_profiles(&scratch.dir);
         let ports_path = scratch.dir.join("ports.json");
         let log_path = scratch.dir.join("server.log");
 
@@ -255,6 +283,7 @@ impl Harness {
             .current_dir(&scratch.dir)
             .env("SIM_SAVE_DIR", &saves)
             .env("SIM_CONFIG_PATH", &config_path)
+            .env("START_PROFILES_PATH", &profiles_path)
             .env("SIM_PORTS_FILE", &ports_path)
             .env("RUST_LOG", SERVER_LOG_FILTER)
             // An explicit base is honoured EXACTLY and a busy block is fatal; the config file's
@@ -489,15 +518,17 @@ impl Harness {
     /// world's first means we joined late — and the retry is the client's own
     /// retry-until-answered. After it, our socket is provably registered: we received a frame on it.
     fn reveal_a_new_world(&mut self) -> FrameInfo {
-        self.send(new_game(), "the first world");
+        self.reveal_world(new_game())
+    }
+
+    /// [`Self::reveal_a_new_world`] for a `new_game` the caller composed.
+    fn reveal_world(&mut self, new_game: CommandPayload) -> FrameInfo {
+        self.send(new_game.clone(), "the first world");
         let first = self.next_frame("the first world's baseline frame");
         let baseline = if first.frame_seq == FIRST_PUBLICATION_SEQ {
             first
         } else {
-            self.send(
-                new_game(),
-                "a second world after joining the first one late",
-            );
+            self.send(new_game, "a second world after joining the first one late");
             self.frame_matching("a world whose first publication we did not miss", |frame| {
                 frame.frame_seq == FIRST_PUBLICATION_SEQ
             })
@@ -598,15 +629,19 @@ fn claim_seat_on(link: &mut TcpStream, log_path: &Path) -> SeatClaimReply {
 }
 
 fn new_game() -> CommandPayload {
+    new_game_with(Vec::new())
+}
+
+fn new_game_with(archetype_counts: Vec<sim_runtime::ArchetypeCount>) -> CommandPayload {
     CommandPayload::NewGame {
         preset_id: MAP_PRESET.to_string(),
         width: MAP_WIDTH,
         height: MAP_HEIGHT,
         seed: MAP_SEED,
         profile_id: START_PROFILE.to_string(),
-        // No count: this suite is about saving and loading, so it takes whatever roster the config
-        // default gives, exactly as a `new_game` typed without the argument does.
-        ai_faction_count: None,
+        // No counts: this suite is about saving and loading, so it takes whatever roster the
+        // profile's defaults give, exactly as a `new_game` typed without the arguments does.
+        archetype_counts,
     }
 }
 
@@ -634,12 +669,35 @@ fn write_test_config(dir: &Path) -> PathBuf {
         json[key] = serde_json::Value::String(addr.to_string());
     }
 
+    // Fog off, so a rival's bands arrive on the (viewer-scoped) frame as redacted rows carrying
+    // their faction and size - what the archetype-split test reads.
+    json["fog_enabled"] = serde_json::Value::Bool(false);
+
     let path = dir.join("simulation_config.json");
     fs::write(
         &path,
         serde_json::to_string_pretty(&json).expect("the patched config serialises"),
     )
     .expect("the patched config writes");
+    path
+}
+
+/// The shipped start profiles with each archetype's separation shrunk to the test map's scale.
+fn write_test_start_profiles(dir: &Path) -> PathBuf {
+    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/data/start_profiles.json");
+    let raw = fs::read_to_string(&shipped).expect("the shipped start profiles read");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&raw).expect("the shipped start profiles are JSON");
+    for profile in json["profiles"].as_array_mut().expect("profiles") {
+        profile["archetypes"][0]["min_separation"] = serde_json::Value::from(TEST_MAJOR_SEPARATION);
+        profile["archetypes"][1]["min_separation"] = serde_json::Value::from(TEST_MINOR_SEPARATION);
+    }
+    let path = dir.join("start_profiles.json");
+    fs::write(
+        &path,
+        serde_json::to_string_pretty(&json).expect("the patched profiles serialise"),
+    )
+    .expect("the patched profiles write");
     path
 }
 
@@ -812,5 +870,75 @@ fn a_load_over_the_socket_publishes_the_saved_world_as_a_full_frame() {
     assert!(
         resynced.frame_seq > baseline.frame_seq,
         "a resync claims a live sequence number; a stale one reopens the gap it was asked to close"
+    );
+}
+
+/// **A loaded game followed by `ResetMap` rebuilds with the split the world was built with**, driven
+/// through the live server: `new_game` with `major=2 minor=3` -> save -> load -> `ResetMap` -> the
+/// rebuilt world's first full frame carries 3 majors' bands at 30 (the human and two rivals) and 3
+/// minors' at 12. The per-archetype counts ride the save header; without them the reset would
+/// rebuild every rival as the first archetype.
+#[test]
+fn a_reset_after_a_load_rebuilds_the_same_archetype_split() {
+    let mut server = Harness::start("reset_after_load");
+    let counts = vec![
+        sim_runtime::ArchetypeCount {
+            id: "major".to_string(),
+            count: MAJOR_RIVALS,
+        },
+        sim_runtime::ArchetypeCount {
+            id: "minor".to_string(),
+            count: MINORS,
+        },
+    ];
+    let revealed = server.reveal_world(new_game_with(counts));
+    let sizes_of = |frame: &FrameInfo| {
+        let count = |size: u32| frame.bands.iter().filter(|(_, s)| *s == size).count() as u32;
+        (count(MAJOR_BAND_SIZE), count(MINOR_BAND_SIZE))
+    };
+    assert_eq!(
+        sizes_of(&revealed),
+        (1 + MAJOR_RIVALS, MINORS),
+        "fixture: the built world holds the requested split, got {:?}",
+        revealed.bands
+    );
+
+    let saved = server.save_op(
+        SAVE_REQUEST_ID,
+        CommandPayload::SaveGame {
+            request_id: SAVE_REQUEST_ID,
+            slot: SAVE_SLOT.to_string(),
+        },
+        "the save",
+    );
+    assert!(saved.ok, "the save was refused with `{}`", saved.error);
+    let loaded = server.save_op(
+        LOAD_REQUEST_ID,
+        CommandPayload::LoadGame {
+            request_id: LOAD_REQUEST_ID,
+            slot: SAVE_SLOT.to_string(),
+        },
+        "the load",
+    );
+    assert!(loaded.ok, "the load was refused with `{}`", loaded.error);
+    let after_load = server.frame_matching("a frame from the loaded world", |frame| {
+        frame.world_epoch != revealed.world_epoch && frame.full
+    });
+
+    server.send(
+        CommandPayload::ResetMap {
+            width: MAP_WIDTH,
+            height: MAP_HEIGHT,
+        },
+        "the reset after the load",
+    );
+    let rebuilt = server.frame_matching("the rebuilt world's full frame", |frame| {
+        frame.world_epoch > after_load.world_epoch && frame.full
+    });
+    assert_eq!(
+        sizes_of(&rebuilt),
+        (1 + MAJOR_RIVALS, MINORS),
+        "the reset must rebuild the split the world was built with, got {:?}",
+        rebuilt.bands
     );
 }

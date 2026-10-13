@@ -42,12 +42,15 @@ fission, and the same machinery handles both.
   weighted by headcount and damped by the receiver's Purist lean. `faction_trait_average` rolls bands
   up into a per-people average. **There is no people-to-people culture distance, and no culture
   strength**: headcount is the only weight, and it already sets the drift pull.
-- **Starts.** One start profile (`late_forager_tribe`: 1 band of 30) is applied identically to every
-  people. Placement keeps starts at least `faction_start_min_separation` (20) apart. The map sets a
-  ceiling on how many starts fit (Tiny 3 … Huge 17).
+- **Starts.** A start profile carries an ordered `archetypes` array (`late_forager_tribe`: `major`, 1
+  band of 30, and `minor`, 1 band of 12 with no kits). The human seat takes archetype 0; each
+  archetype's starts are placed at its own `min_separation` (major 20, minor 8) against every start
+  already placed. The map sets a per-archetype ceiling on how many starts fit
+  (`site_count − 1 − earlier starts`; majors Tiny 3 … Huge 17).
 - **Personality.** Starting culture comes from **the place**: the province layer plus a small per-band
-  modifier. Nothing is set per people. AI personality is a `sim_ai` profile (`forager`, `rover`) that
-  the launcher never passes, so every rival runs the default.
+  modifier — and, for a starting faction, the lean of the personality it drew from
+  `personalities.json` (`factions.md` → "Personalities"). AI personality is a `sim_ai` profile
+  (`forager`, `rover`) that the launcher never passes, so every rival runs the default.
 - **Victory.** `victory_tick` scores every people. Only Hegemony is enabled.
 
 ## Decided
@@ -225,7 +228,7 @@ failure columns say which way each lever breaks.
 | `minor.band_size` | 12 | Starves before contact matters | Indistinguishable from a major |
 | `minor.loadout` | major's, minus kits | — | No disadvantage |
 | `minor.min_separation` | 8 tiles | Minors crowd each other and majors | No room left; few minors fit |
-| `minor.default_count` | null (derive from map) | Empty early game | Map is all minors |
+| `minor.default_count` | null (derived as a quarter of what fits, via `minor.default_share` = 0.25) | Empty early game | Map is all minors |
 
 **`personalities.json`** — each entry is `{id, culture_lean: {axis: offset}, weight}`. It starts
 with a handful of entries, including one strongly Purist and one strongly Syncretic, so the map

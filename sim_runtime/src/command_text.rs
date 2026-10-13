@@ -31,7 +31,7 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         verb: "new_game",
         aliases: &[],
         summary: "Generate a world on demand (the server boots idle). seed 0 randomizes.",
-        usage: "new_game <preset_id> <width> <height> <seed> <profile_id> [ai_factions]",
+        usage: "new_game <preset_id> <width> <height> <seed> <profile_id> [<archetype_id>=<count> ...]",
     },
     CommandVerbHelp {
         verb: "order",
@@ -366,8 +366,8 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
 ];
 
 use crate::{
-    CancelScope, CommandPayload, ConfigOverrideKind, OrdersDirective, ReloadConfigKind,
-    SecurityPolicyKind,
+    ArchetypeCount, CancelScope, CommandPayload, ConfigOverrideKind, OrdersDirective,
+    ReloadConfigKind, SecurityPolicyKind,
 };
 
 #[derive(Debug, Error)]
@@ -462,22 +462,28 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let profile_id = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("profile_id"))?;
-            // **The rival count is the one OPTIONAL argument**, and omitting it is not the same as
-            // typing 0: absent leaves the server on its unattended roster — no rivals unless
-            // `default_ai_faction_count` pins some — while `0` is an explicit "I play alone".
-            // Optional so every existing script and replay line keeps parsing and keeps meaning
-            // what it meant.
-            let ai_faction_count = match parts.next() {
-                Some(token) => Some(parse_u32(token, "new_game ai_factions")?),
-                None => None,
-            };
+            // **The archetype counts are the OPTIONAL tail**, one `<archetype_id>=<count>` token per
+            // archetype the caller picked. An archetype left off is not the same as `=0`: absent
+            // leaves the server on that archetype's unattended count - its `default_count` pin,
+            // else none - while `=0` is an explicit "none of these".
+            let mut archetype_counts = Vec::new();
+            for token in parts.by_ref() {
+                let (id, count) = token
+                    .split_once('=')
+                    .filter(|(id, _)| !id.is_empty())
+                    .ok_or_else(|| CommandParseError::UnexpectedArgument(token.to_string()))?;
+                archetype_counts.push(ArchetypeCount {
+                    id: id.to_string(),
+                    count: parse_u32(count, "new_game archetype count")?,
+                });
+            }
             Ok(CommandPayload::NewGame {
                 preset_id: preset_id.to_string(),
                 width: parse_u32(width_str, "new_game width")?,
                 height: parse_u32(height_str, "new_game height")?,
                 seed: parse_u64(seed_str, "new_game seed")?,
                 profile_id: profile_id.to_string(),
-                ai_faction_count,
+                archetype_counts,
             })
         }
         "order" => {
@@ -2587,7 +2593,7 @@ mod tests {
                 height: 52,
                 seed: 0,
                 profile_id: "late_forager_tribe".to_string(),
-                ai_faction_count: None,
+                archetype_counts: Vec::new(),
             }
         );
         // A non-zero seed is preserved verbatim (u64 range).
@@ -2599,37 +2605,56 @@ mod tests {
                 height: 52,
                 seed: 119304647,
                 profile_id: "late_forager_tribe".to_string(),
-                ai_faction_count: None,
+                archetype_counts: Vec::new(),
             }
         );
-        // **The rival count is the one optional argument, and absent is NOT zero.** An explicit 0
-        // says "I play alone"; leaving it off says "use the config default", and the two must not
-        // collapse into one payload.
+        // **The archetype counts are the optional tail, and an archetype left off is NOT zero.** An
+        // explicit `=0` says "none of these"; leaving it off says "use the unattended count", and
+        // the two must not collapse into one payload.
+        let counts = |entries: &[(&str, u32)]| -> Vec<ArchetypeCount> {
+            entries
+                .iter()
+                .map(|(id, count)| ArchetypeCount {
+                    id: (*id).to_string(),
+                    count: *count,
+                })
+                .collect()
+        };
         assert_eq!(
-            parse_command_line("new_game earthlike 80 52 0 late_forager_tribe 2").unwrap(),
+            parse_command_line("new_game earthlike 80 52 0 late_forager_tribe major=2 minor=3")
+                .unwrap(),
             CommandPayload::NewGame {
                 preset_id: "earthlike".to_string(),
                 width: 80,
                 height: 52,
                 seed: 0,
                 profile_id: "late_forager_tribe".to_string(),
-                ai_faction_count: Some(2),
+                archetype_counts: counts(&[("major", 2), ("minor", 3)]),
             }
         );
         assert_eq!(
-            parse_command_line("new_game earthlike 80 52 0 late_forager_tribe 0").unwrap(),
+            parse_command_line("new_game earthlike 80 52 0 late_forager_tribe major=0").unwrap(),
             CommandPayload::NewGame {
                 preset_id: "earthlike".to_string(),
                 width: 80,
                 height: 52,
                 seed: 0,
                 profile_id: "late_forager_tribe".to_string(),
-                ai_faction_count: Some(0),
+                archetype_counts: counts(&[("major", 0)]),
             }
         );
         assert!(matches!(
-            parse_command_line("new_game earthlike 80 52 0 late_forager_tribe many"),
+            parse_command_line("new_game earthlike 80 52 0 late_forager_tribe major=many"),
             Err(CommandParseError::InvalidInteger { .. })
+        ));
+        // The retired bare positional count, and a token with no id, are refused rather than guessed.
+        assert!(matches!(
+            parse_command_line("new_game earthlike 80 52 0 late_forager_tribe 2"),
+            Err(CommandParseError::UnexpectedArgument(_))
+        ));
+        assert!(matches!(
+            parse_command_line("new_game earthlike 80 52 0 late_forager_tribe =2"),
+            Err(CommandParseError::UnexpectedArgument(_))
         ));
         // Every other positional argument is required.
         assert!(matches!(

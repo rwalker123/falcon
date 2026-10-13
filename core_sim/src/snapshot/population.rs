@@ -1242,6 +1242,23 @@ pub(crate) fn builtin_hunt_crew_levers() -> &'static HuntCrewLevers<'static> {
     })
 }
 
+/// The settlement stage a band of `size` people resolves to, as the view the client draws its
+/// marker from. ONE resolution shared by the owner's row and the redacted foreign row, so the two
+/// can never disagree about what stage a band is.
+fn settlement_stage_view(
+    size: u32,
+    config: &crate::settlement_stage_config::SettlementStageConfig,
+) -> SettlementStageViewState {
+    let inputs = crate::settlement_stage_config::SettlementStageInputs { size };
+    crate::settlement_stage_config::resolve_settlement_stage(&inputs, &config.stages)
+        .map(|stage| SettlementStageViewState {
+            id: stage.id.clone(),
+            label: stage.label.clone(),
+            icon: stage.icon.clone(),
+        })
+        .unwrap_or_default()
+}
+
 /// ⛔ **A FOREIGN BAND'S ROW, REDACTED TO WHAT AN OBSERVER CAN ACTUALLY SEE.**
 ///
 /// Standing on a ridge watching a stranger's camp tells you **where they are, roughly how many
@@ -1253,7 +1270,7 @@ pub(crate) fn builtin_hunt_crew_levers() -> &'static HuntCrewLevers<'static> {
 ///
 /// # The allow-list is the WHOLE construction, not a set of deletions
 ///
-/// Six fields are named and **everything else comes from `Default`**. That is the load-bearing
+/// Seven fields are named and **everything else comes from `Default`**. That is the load-bearing
 /// choice: a field appended to `PopulationCohortState` later is redacted *by construction* rather
 /// than by whoever added it remembering to come here. A redaction written as "build the full row,
 /// then blank the sensitive parts" fails open on exactly the field nobody thought about, which is
@@ -1266,6 +1283,7 @@ pub(crate) fn builtin_hunt_crew_levers() -> &'static HuntCrewLevers<'static> {
 /// | `faction` | whose people they are — the thing you learn *first* by looking at them |
 /// | `name` | who they say they are |
 /// | `current_x` / `current_y` | where they are standing, which is the only reason this row exists at all |
+/// | `settlement_stage` | the marker the client draws. ⛔ **Safe ONLY because the stage is a pure function of `size`** (`SettlementStageInputs` carries nothing else), and `size` is already published in the row above, so it discloses nothing new. It is resolved from `cohort.size` through the same helper the owner's row uses, never copied from a full row. **If the stage ever gains a criterion beyond size (improvements, …) it MUST leave this allow-list** |
 /// | `size` | a camp's rough scale is legible from outside, and the client sizes its marker with it. Taken from `cohort.size`, which is exactly the `size` the owner's own row publishes (`whole_age_brackets` sums its triple back to it), so an observer and the owner never disagree about how many people are there |
 ///
 /// **The published triple is left at zero, and that is not a broken invariant.** `population_state`
@@ -1279,6 +1297,7 @@ pub(crate) fn redacted_population_state(
     band_name: Option<&BandName>,
     cohort: &PopulationCohort,
     current_position: Option<UVec2>,
+    settlement_stage_config: &crate::settlement_stage_config::SettlementStageConfig,
 ) -> PopulationCohortState {
     PopulationCohortState {
         entity: entity.to_bits(),
@@ -1288,6 +1307,8 @@ pub(crate) fn redacted_population_state(
         current_x: current_position.map(|p| p.x).unwrap_or(0),
         current_y: current_position.map(|p| p.y).unwrap_or(0),
         size: cohort.size,
+        // Allow-listed ONLY while the stage is a pure function of `size` (see the table above).
+        settlement_stage: settlement_stage_view(cohort.size, settlement_stage_config),
         ..PopulationCohortState::default()
     }
 }
@@ -1840,6 +1861,15 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     row.homeward_workers = walking_home.workers;
                     row.homeward_all_home_in = walking_home.all_home_in;
                     row.homeward_food = walking_home.food;
+                    // **THIS ROW'S HANDS WALKING BACK TO IT** — already in `workers`, so they are in
+                    // none of the band's homeward figures; the row's own fields state them.
+                    let rejoining = crate::work_party::HomewardTotals::rejoining_for_source(
+                        &a.homeward,
+                        &assignment.target,
+                    );
+                    row.rejoining_workers = rejoining.workers;
+                    row.rejoining_all_home_in = rejoining.all_home_in;
+                    row.rejoining_food = rejoining.food;
                     // **HUNTING BY NEED (#798)** — a need row publishes the crew it sends, the wait
                     // before one goes and the animal's progress; a donor row what it lends. Every
                     // other row keeps the zeros.
@@ -2044,18 +2074,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     };
     // Resolve the band's settlement stage from the data-driven config (interim input: head-count).
     // Empty config would yield None; fall back to the empty view so the field is always present.
-    let settlement_stage_inputs =
-        crate::settlement_stage_config::SettlementStageInputs { size: cohort.size };
-    let settlement_stage = crate::settlement_stage_config::resolve_settlement_stage(
-        &settlement_stage_inputs,
-        &settlement_stage_config.stages,
-    )
-    .map(|stage| SettlementStageViewState {
-        id: stage.id.clone(),
-        label: stage.label.clone(),
-        icon: stage.icon.clone(),
-    })
-    .unwrap_or_default();
+    let settlement_stage = settlement_stage_view(cohort.size, settlement_stage_config);
     // **THIS PARTY'S PACK** = `party_workers × the per-worker carry of the pack its MISSION fills`
     // (`0` for a scout and for a normal band). The party's worker count is its working-age head-count.
     //

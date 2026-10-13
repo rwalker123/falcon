@@ -278,11 +278,13 @@ const NOT_SIM_STATE_RESOURCES: [(&str, &str); 11] = [
 /// record beside each handle. `SimulationConfig` sits here because it is config the operator edits,
 /// not state the turn evolves — note the hot-reload path in `bin/server.rs` means a replay is only
 /// reproducible against the config it originally ran with.
-const CONFIG_RESOURCES: [&str; 46] = [
+const CONFIG_RESOURCES: [&str; 48] = [
     "BandNameCatalogHandle",
     "BandNameCatalogMetadata",
     "FactionNameCatalogHandle",
     "FactionNameCatalogMetadata",
+    "PersonalityCatalogHandle",
+    "PersonalityCatalogMetadata",
     "BeatCatalogHandle",
     "BeatCatalogMetadata",
     "BeatConfigHandle",
@@ -405,7 +407,12 @@ const SIM_STATE_COMPONENTS: [&str; 17] = [
     "SiteTag",
 ];
 
-const NOT_SIM_STATE_COMPONENTS: [(&str, &str); 0] = [];
+const NOT_SIM_STATE_COMPONENTS: [(&str, &str); 1] = [(
+    "StartingCultureLean",
+    "A transient: worldgen inserts it on a starting band and `reconcile_band_culture_layers` consumes \
+     and removes it on the band's first culture layer, in the same first update that builds the \
+     world. What it leaves behind is the band's culture MODIFIER, which the culture layers carry.",
+)];
 
 fn leaf(type_path: &str) -> &str {
     type_path.rsplit("::").next().unwrap_or(type_path)

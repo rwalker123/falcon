@@ -1,13 +1,20 @@
 extends RefCounted
 class_name FactionCapacity
 
-## **THE "HOW MANY RIVALS MAY I ASK FOR?" SEAM** — the client's half of the `faction_capacity` query
+## **THE "HOW MANY PEOPLES MAY I ASK FOR?" SEAM** — the client's half of the `faction_capacity` query
 ## (`clients/godot_thin_client/native/src/bridge/query.rs` → `QUERY_KIND_FACTION_CAPACITY`).
 ##
-## The ceiling on rival peoples is a property of the GRID, not of the running world: it falls out of
-## how many starts fit at `faction_start_min_separation` (`core_sim`'s `faction_start_capacity`). So
-## the New Game screen cannot compute it, and must not restate it — it asks, for the width and height
-## the player has actually picked, and re-asks when that pick changes.
+## The ceiling on other peoples is a property of the GRID, not of the running world: it falls out of
+## how many starts fit at each start archetype's `min_separation`. The answer is one row per ARCHETYPE
+## of the chosen start profile, in catalog order (`archetypes`), each carrying the number of starts the
+## grid seats at that archetype's separation (`site_count`). The New Game screen asks, for the width,
+## height and profile the player has actually picked, and re-asks when any of them changes.
+##
+## **THE CEILING CONTRACT** (`ArchetypeCapacity` in `command.proto`): how many of archetype k a player
+## may ask for is `max(0, site_count_k - 1 - sum over j < k of count_j)`, the 1 being the human seat and
+## `count_j` the CURRENT counts of the EARLIER rows. That is the one piece of arithmetic this file
+## implements (`ceiling_at`); the server applies the same formula and clamps, so a client inside it is
+## granted exactly what it asked for.
 ##
 ## **ANSWERABLE WITH NO WORLD RUNNING**, which is the whole point: the server boots idle and publishes
 ## no frame until `new_game`, and this question is asked before that command exists.
@@ -44,6 +51,10 @@ const STATE_FAILED := "failed"
 ## screen states the consequence rather than implying a number.
 const NO_COUNT := -1
 
+## The seat the contract subtracts from every row's `site_count`: the human's own start, which is
+## never one of the counted peoples (`ArchetypeCapacity` in `command.proto`).
+const HUMAN_SEATS := 1
+
 ## The bridge's own failure token, in the same vocabulary the server's refusals use.
 ## **IT IS THE ONE TOKEN THAT MEANS "NO SERVER ANSWERED AT ALL"** — nothing reached a listener, so
 ## nothing about the map, the count or the run is known. Every other token in this field came FROM a
@@ -58,17 +69,16 @@ const ERROR_WRONG_ANSWERER := "wrong_answerer"
 
 var state: String = STATE_IDLE
 var error: String = ""
-## The server's opening count for the asked grid — already clamped to `max_ai_factions`, so it is
-## always a grantable pick. `NO_COUNT` until an answer lands.
-var default_count: int = NO_COUNT
-## The most rivals the asked grid can seat. **May legitimately be 0** on a grid too small to hold a
-## second start at the configured separation; the control renders that as "you are alone", not as a
-## failure. `NO_COUNT` until an answer lands.
-var max_count: int = NO_COUNT
+## The archetype rows of the current answer, in catalog order: `{id, display_label, site_count,
+## default_count}`. Empty until an answer lands, and after a failure — there is no honest row to show.
+var archetypes: Array = []
 ## The grid the current answer (or the ask in flight) is about. An answer is only ever read against
 ## these, so a reply for a size the player has since changed cannot be shown for the new one.
 var asked_width: int = 0
 var asked_height: int = 0
+## The start profile the answer is about. A different profile is a different roster, so it is part of
+## the question exactly as the grid is.
+var asked_profile_id: String = ""
 
 var _sender: Callable = Callable()
 var _next_request_id: int = QueryRequestIds.REQUEST_ID_BASE
@@ -88,25 +98,26 @@ func set_sender(sender: Callable) -> void:
 	_sender = sender
 
 
-## **ASK FOR THIS GRID'S CEILING.** Called when the setup pane is opened and whenever the map size
-## changes, because the answer is about the map being made and not about the one the server is
-## holding.
+## **ASK FOR THIS GRID'S CEILINGS.** Called when the setup pane is opened and whenever the map size or
+## the start profile changes, because the answer is about the world being made and not about the one
+## the server is holding.
 ##
-## Re-asking the same grid while an answer for it is already in hand is dropped: the ceiling is a pure
-## function of the grid, so a second round trip cannot say anything new.
-func request(width: int, height: int) -> void:
+## Re-asking the same grid and profile while an answer for them is already in hand is dropped: the
+## ceilings are a pure function of both, so a second round trip cannot say anything new.
+func request(width: int, height: int, profile_id: String = "") -> void:
 	if width <= 0 or height <= 0:
 		return
-	if width == asked_width and height == asked_height and (state == STATE_PENDING or state == STATE_READY):
+	if width == asked_width and height == asked_height and profile_id == asked_profile_id \
+			and (state == STATE_PENDING or state == STATE_READY):
 		return
 	asked_width = width
 	asked_height = height
+	asked_profile_id = profile_id
 	state = STATE_PENDING
 	error = ""
-	default_count = NO_COUNT
-	max_count = NO_COUNT
+	archetypes = []
 	capacity_changed.emit()
-	if not _dispatch(width, height):
+	if not _dispatch(width, height, profile_id):
 		state = STATE_FAILED
 		error = ERROR_TRANSPORT
 		capacity_changed.emit()
@@ -123,9 +134,10 @@ func retry() -> void:
 		return
 	var width := asked_width
 	var height := asked_height
+	var profile_id := asked_profile_id
 	asked_width = 0
 	asked_height = 0
-	request(width, height)
+	request(width, height, profile_id)
 
 
 ## Pump the native drain in. Called once a frame by the owner; ids that are not ours are ignored, so
@@ -146,31 +158,75 @@ func server_is_unreachable() -> bool:
 	return state == STATE_FAILED and error == ERROR_TRANSPORT
 
 
-## Is `count` a rival count this grid's answer permits? `NO_COUNT` — "let the server decide" — is
-## permitted in every state, because it is the absence of a pick rather than a pick.
-func permits(count: int) -> bool:
+## The ceiling for the archetype at `index`, by the contract formula, given `counts` — the CURRENT count
+## of each row, in catalog order (only the entries BEFORE `index` are read; a `NO_COUNT` or missing
+## entry counts as 0). `0` when there is no answer or `index` is out of range.
+func ceiling_at(index: int, counts: Array) -> int:
+	if state != STATE_READY or index < 0 or index >= archetypes.size():
+		return 0
+	var taken := 0
+	for earlier in range(mini(index, counts.size())):
+		taken += maxi(0, int(counts[earlier]))
+	var sites := int((archetypes[index] as Dictionary).get("site_count", 0))
+	return maxi(0, sites - HUMAN_SEATS - taken)
+
+
+## Is `count` a count the answer permits for the archetype at `index`, given the earlier rows'
+## `counts`? `NO_COUNT` — "let the server decide" — is permitted in every state, because it is the
+## absence of a pick rather than a pick.
+func permits(index: int, count: int, counts: Array) -> bool:
 	if count == NO_COUNT:
 		return true
 	if state != STATE_READY:
 		return false
-	return count >= 0 and count <= max_count
+	return count >= 0 and count <= ceiling_at(index, counts)
 
 
-## The pick clamped to what the answer allows, so a count chosen on a big map cannot survive a switch
-## to a small one. `NO_COUNT` in, `NO_COUNT` out — an unmade pick is not clamped into a made one.
-func clamp_count(count: int) -> int:
+## The pick clamped to what the answer allows for the archetype at `index`, so a count chosen on a big
+## map cannot survive a switch to a small one. `NO_COUNT` in, `NO_COUNT` out — an unmade pick is not
+## clamped into a made one.
+func clamp_count(index: int, count: int, counts: Array) -> int:
 	if count == NO_COUNT or state != STATE_READY:
 		return count
-	return clampi(count, 0, max_count)
+	return clampi(count, 0, ceiling_at(index, counts))
 
 
-func _dispatch(width: int, height: int) -> bool:
+## **EVERY ROW RE-CLAMPED, IN ORDER.** A ceiling depends on the rows before it, so changing one row
+## can shrink every later one; this walks the rows once, each clamped against the already-clamped
+## earlier ones. `counts` is read by position, and a missing entry takes the row's opening pick.
+## Returns one count per archetype row.
+func clamp_all(counts: Array) -> Array:
+	var out: Array = []
+	for index in range(archetypes.size()):
+		var wanted: int = int(counts[index]) if index < counts.size() else default_at(index)
+		out.append(clamp_count(index, wanted, out))
+	return out
+
+
+## The server's opening pick for the archetype at `index`, before it is held inside the ceiling the
+## earlier rows leave. `NO_COUNT` when there is no such row.
+func default_at(index: int) -> int:
+	if state != STATE_READY or index < 0 or index >= archetypes.size():
+		return NO_COUNT
+	return int((archetypes[index] as Dictionary).get("default_count", 0))
+
+
+## Every row's opening pick, each clamped against the earlier ones (the server already did, so this
+## keeps "the opening picks are always grantable" true of this seam alone).
+func default_counts() -> Array:
+	var wanted: Array = []
+	for index in range(archetypes.size()):
+		wanted.append(default_at(index))
+	return clamp_all(wanted)
+
+
+func _dispatch(width: int, height: int, profile_id: String) -> bool:
 	if not _sender.is_valid():
 		return false
 	_next_request_id += 1
 	var request_id := _next_request_id
 	_inflight_request_id = request_id
-	if not bool(_sender.call(request_id, {"kind": KIND_CAPACITY, "width": width, "height": height})):
+	if not bool(_sender.call(request_id, {"kind": KIND_CAPACITY, "width": width, "height": height, "profile_id": profile_id})):
 		_inflight_request_id = QueryRequestIds.NO_REQUEST_ID
 		return false
 	return true
@@ -190,15 +246,21 @@ func _deliver_one(reply: Dictionary) -> void:
 		error = String(reply.get("error", ""))
 		if error.is_empty():
 			error = ERROR_TRANSPORT
-		default_count = NO_COUNT
-		max_count = NO_COUNT
+		archetypes = []
 		capacity_changed.emit()
 		return
-	max_count = maxi(0, int(reply.get("max_ai_faction_count", 0)))
-	# The offer the server sends is already grantable — it is a share of this grid's ceiling, or a
-	# pinned config value, clamped to that ceiling either way. Clamping again here costs nothing and
-	# keeps "the opening pick is always grantable" true of this seam alone.
-	default_count = clampi(int(reply.get("default_ai_faction_count", 0)), 0, max_count)
+	archetypes = []
+	var rows_variant: Variant = reply.get("archetypes", [])
+	if rows_variant is Array:
+		for row_variant in (rows_variant as Array):
+			if row_variant is Dictionary:
+				var row := row_variant as Dictionary
+				archetypes.append({
+					"id": String(row.get("id", "")),
+					"display_label": String(row.get("display_label", "")),
+					"site_count": maxi(0, int(row.get("site_count", 0))),
+					"default_count": maxi(0, int(row.get("default_count", 0))),
+				})
 	state = STATE_READY
 	error = ""
 	capacity_changed.emit()

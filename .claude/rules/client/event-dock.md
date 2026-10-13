@@ -559,6 +559,11 @@ The join needs the roster, which the HUD owns, and the dock is `Main`'s panel â€
 `HudLayer.update_band_alerts` publishes `band_labels_changed({band_id: name})` and `Main` relays it.
 The sim's label is never changed; neither surface reaches into the other.
 
+**The join is kind-agnostic.** `_row_label` walks `BAND_ID_TOKEN_LABELS` on every row, so the command
+echoes pushed through the sim's `push_band_event` (craft queue/edits/priority/auto-craft/skip/crew,
+`assign_labor`, `move_band`, `cancel_order`, expedition sends, split, shipment) are re-labelled from
+their `band=` token with no per-kind entry; a kind needs none unless it names the band by a different token.
+
 Four details:
 
 - **Resolved at RENDER time, not stamped at ingest** (`_row_label`), so a roster change relabels rows

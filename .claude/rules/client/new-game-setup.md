@@ -11,68 +11,91 @@ paths:
   - "clients/godot_thin_client/src/scripts/Main.gd"
 ---
 
-# New Game setup: how many rivals, and who decides
+# New Game setup: how many peoples of each kind, and who decides
 
 The New Game pane's world settings were a pure function of what the client already knew — a preset,
-a size from `MapSizes`, a seed. **The rival count is the first one that is not**, and everything
+a size from `MapSizes`, a seed. **The peoples counts are the first that are not**, and everything
 below follows from that.
 
-## The player counts OTHERS, and the sim owns the ceiling
+## The player counts OTHERS, one row per start archetype, and the sim owns the ceilings
 
-The control is **a count of rival peoples**: pick 2 and the world holds three peoples, theirs and two
-others. Not a faction count, not a roster size — the player's own people are never a number they
-choose.
+Each control is **a count of peoples of one start archetype**: pick 2 of the first and 1 of the second
+and the world holds four peoples, theirs and three others. Not a faction count, not a roster size — the
+player's own people (always the profile's first archetype) are never a number they choose.
+
+**THE ROWS ARE THE SERVER'S, NOT THE UI's.** The `faction_capacity` reply carries
+`archetypes: [{id, display_label, site_count, default_count}]` in catalog order, and `MenuShell`
+renders one slider per row under the row's `display_label` — it names no archetype of its own (the
+shipped catalog is `major` "Rivals" and `minor` "Minor peoples", but a third archetype in
+`start_profiles.json` appears here with no client change). The only copy it keeps is `_labels`,
+remembered across a re-ask so the summary does not flip to bare ids while a new answer is in flight.
 
 How many peoples a map can seat is a property of the **grid**, not of the running world: it is how
-many starts fit at `faction_start_min_separation` (`core_sim`'s `faction_start_capacity`, one
+many starts fit at each archetype's `min_separation` (`core_sim`'s `archetype_capacities`, one
 implementation, `.claude/rules/core_sim/` owns the rule). The client therefore **asks** — the
-`faction_capacity` query, answered while the server is idle, for the width and height the player has
-actually picked — and never restates the arithmetic in GDScript. A size click is a NEW question,
-because it is a question about the map being made.
+`faction_capacity` query, answered while the server is idle, for the width, height and start profile the
+player has actually picked — and never restates the seating arithmetic in GDScript. A size click is a
+NEW question, because it is a question about the map being made, and so is a change of profile
+(`FactionCapacity.request` carries `profile_id`; a repeat of an answered grid AND profile is dropped).
+
+**THE ONE FORMULA THE CLIENT DOES HOLD** is the ceiling contract on `ArchetypeCapacity` in
+`command.proto`: `ceiling_k = max(0, site_count_k − 1 − Σ_{j<k} count_j)` — the 1 is the human seat and
+`count_j` the CURRENT counts of the EARLIER rows (`FactionCapacity.ceiling_at`, with
+`permits`/`clamp_count` per row and `clamp_all` walking the set in order). It is a contract and not a
+restatement of the rule, because the server applies the same formula to the earlier GRANTED counts: a
+client that stays inside it is granted exactly what it asked. **Moving an earlier row re-clamps every
+later one** — the later sliders' bound, value, readout and the count that would be SENT all follow, in
+place (`_on_rival_slider_changed` → `_sync_rival_widgets`).
 
 ## Omitting the argument is a REQUEST, not a fallback
 
-`new_game <preset> <w> <h> <seed> <profile> [rivals]` takes the count as its one optional argument,
+`new_game <preset> <w> <h> <seed> <profile> [<archetype_id>=<count> ...]` takes the counts as its optional tail (one token per archetype),
 and the three states are genuinely three:
 
 | The pane | On the wire | What the server does |
 |---|---|---|
-| The player picked *n* | `… <profile> n` | seats *n* rivals, clamped to what the grid holds |
-| The player picked none | `… <profile> 0` | the player is alone — an explicit choice |
-| No answer to offer a choice from | `… <profile>` | its **unattended roster**: no rivals, unless `simulation_config.json` pins `default_ai_faction_count` |
+| The player picked *n* of `major` and *m* of `minor` | `… <profile> major=n minor=m` | seats that many of each, clamped in catalog order to what the grid holds |
+| The player picked none | `… <profile> major=0 minor=0` | the player is alone — an explicit choice |
+| No answer to offer a choice from | `… <profile>` | each archetype's **unattended count**: its own `default_count` pin in `start_profiles.json`, else 0 |
 
-`FactionCapacity.NO_COUNT` (`-1`) is that third state, and it travels the whole way: the shell emits
-it on `new_game_requested`, `GameLaunch.pending_new_game` carries it, and `Main.new_game_line`
-appends nothing for it. **A guessed number would be worse than no number** — it would either refuse a
+**An empty `archetype_counts` array is that third state, and it travels the whole way:** the shell emits
+`[]` on `new_game_requested` (the signal carries an Array of `{id, count}` in catalog order),
+`GameLaunch.pending_new_game["archetype_counts"]` carries it, and `Main.new_game_line` appends no token
+for it. `Main._sanitized_archetype_counts` also drops an entry whose id is empty or holds a space or `=`
+(each would corrupt its neighbour's token) and one whose count is negative (`FactionCapacity.NO_COUNT`,
+"not offered a choice"). **A guessed number would be worse than no number** — it would either refuse a
 count the map could seat or ask for one it could not — and a capacity ask that failed must never stop
 a player starting a game.
 
-> ⛔ **AN ABSENT COUNT MEANS ZERO RIVALS, and it did not always.** It used to resolve to the server's
-> configured `default_ai_faction_count`; it now resolves to `worldgen::unattended_ai_faction_count`,
-> which is **none** — the roster a `cargo run` server, a test harness or an unattended `new_game`
-> comes up with, deliberately split from the map-scaled number the New Game screen pre-selects. The
-> two requests are still different (an explicit `0` names the count whatever the config says), but
-> the world they land on is the same by default. The row says so without a sentence: with no answer to
-> offer, the readout reads `None`, which is the count the absent argument lands on.
+> ⛔ **AN ABSENT COUNT MEANS THE UNATTENDED COUNT — usually zero — NOT THE NUMBER THE SCREEN OFFERS.**
+> It resolves to `worldgen::unattended_archetype_counts`, the roster a `cargo run` server, a test
+> harness or an unattended `new_game` comes up with, deliberately split from the map-scaled
+> `default_count` the New Game screen pre-selects. The two requests are different (an explicit `0` names
+> the count whatever the profile pins), though the world they land on is the same by default. The pane
+> says so without a sentence: with no answer to offer, the one readout reads `None`, which is the count
+> the absent tokens land on.
 
-**So "the count shown is the count sent" is load-bearing, not incidental.** A player who never
-touches the slider still sends the number the row opened on — `_on_capacity_changed` seeds
-`_rival_count` from the answer and nothing downstream re-derives it — and if that chain broke, the
-screen would promise two rivals and hand over an empty world, looking entirely normal doing it.
-`menu_preview` pins both ends: the shell's `new_game_requested` payload, and `Main.new_game_line`,
-which is `static` precisely so the rule that decides between a trailing count and none is reachable
-without standing a client up.
+**So "the counts shown are the counts sent" is load-bearing, not incidental — per archetype.** A player
+who never touches a slider still sends the numbers the rows opened on — `_on_capacity_changed` →
+`_seed_counts_from_answer` seeds `_counts` from the answer (an unpicked row follows the server's
+`default_count`, a picked one keeps its pick; the set is then re-clamped in catalog order) and nothing
+downstream re-derives it — and if that chain broke, the screen would promise two of each and hand over an
+empty world, looking entirely normal doing it. `menu_preview` pins both ends, row by row: the shell's
+`new_game_requested` payload, and `Main.new_game_line`, which is `static` precisely so the rule that
+decides between trailing tokens and none is reachable without standing a client up.
 
 ## The control shows only what it has been told
 
-A slider exists **only** when the answer landed and its ceiling is at least one. Every other state
-shows **the readout alone, reading `None`** — the count the world will actually be built with — in the
-same column the slider's readout occupies, so the row always states a number and never invents a range
-it cannot honour.
+Sliders exist **only** once an answer has landed, one per archetype row. Every other state shows
+**ONE row — a generic "Other peoples" heading and the readout alone, reading `None`** — the count the
+world will actually be built with — in the same column a slider's readout occupies, so the pane always
+states a number and never invents a range or a kind it cannot honour.
 
-- **A 0 ceiling is not a failure.** A grid with no room for a second start reads as *"you will be
-  alone in the world"* under the `None`, and the pane sends an explicit `0` — the count it just told
-  the player they are getting.
+- **A 0 ceiling is not a failure, and its slider stays.** A row the grid cannot seat anyone for keeps
+  its slider, disabled at `0..0` (`editable = false`), rather than disappearing — a later row's ceiling
+  moves as an earlier row is dragged, and rebuilding that control under the player's hand would drop the
+  drag. When NO row can seat anyone the caption reads *"you will be alone in the world"*, and the pane
+  sends an explicit `0` per row — the count it just told the player they are getting.
 - **A FAILED ASK GETS NO CAPTION AT ALL.** There were two sentences under this row — one for a server
   that answered without a count, one for a server that never answered — and both are gone. The row's
   question is *how many others?*, its answer is *none*, and the readout says that in one word; a
@@ -111,12 +134,12 @@ it cannot honour.
   different even though both worlds end up with no rivals.
 
 **The pick survives a size change; the ceiling clamps it.** A count chosen on a roomy map meets the
-smaller map's ceiling through `clamp_count`, and a player who has NOT touched the control follows the
-server's default on every answer (`_rival_picked` is what tells those two apart).
+smaller map's ceiling through `clamp_all`, and a row the player has NOT touched follows the server's
+default on every answer (`_picked`, keyed by archetype id, is what tells those two apart).
 
 ## A RE-ASK IS NOT A STATE CHANGE
 
-`_on_capacity_changed` touches only the rival row. The setup pane also holds the seed `LineEdit`, and
+`_on_capacity_changed` touches only the peoples rows. The setup pane also holds the seed `LineEdit`, and
 rebuilding a text field under a player mid-word is the caret defect the Save pane already paid for
 (`.claude/rules/client/save-load-menu.md`); nothing else in the pane depends on the answer.
 
@@ -127,24 +150,22 @@ slider row, the seed field, the summary and the actions row all moved 22px each 
 flash, and it was reported from a playtest. So the row obeys three rules, and they are about the
 transitions rather than the states:
 
-- **A re-ask over an already-answered row changes nothing.** `_refresh_rivals_row` returns
-  immediately while the seam is `PENDING` and the row has rendered an answer before
+- **A re-ask over already-answered rows changes nothing.** `_refresh_rivals_row` returns
+  immediately while the seam is `PENDING` and the rows have rendered an answer before
   (`_rivals_answered_once`). Briefly-stale bounds beat a control that vanishes and returns.
-- **An answer that keeps the shape updates the EXISTING nodes** — `max_value`, the value (through
-  `set_value_no_signal`, since this is not the player moving the control), the readout, the caption.
-  `_rebuild_rivals_row` is the only path that frees anything, and only a genuine shape change
-  (no-slider → slider, or the reverse) reaches it.
-- **Both shapes are the same height.** The no-slider state puts its readout in a row of
-  `RIVALS_CONTROL_ROW_HEIGHT`, so even a real shape change moves nothing below the row — and the
-  caption reserves one line of its own font's height even when a failed ask leaves it EMPTY, since a
-  zero-height Label would raise everything below it the moment an ask failed.
-  Measured across all seven rendered states: the caption sits at the same y, and so do the seed field
-  and the summary.
+- **An answer that names the same archetypes updates the EXISTING nodes** — `max_value`, the value
+  (through `set_value_no_signal`, since this is not the player moving the control), the readout, the
+  caption. `_rebuild_rivals_rows` is the only path that frees anything, and only a genuine shape change
+  (`_rivals_shape`, the joined archetype ids: unanswered → answered, or a different roster) reaches it.
+- **Every shape holds its height.** The unanswered row puts its readout in a row of
+  `RIVALS_CONTROL_ROW_HEIGHT`, and the caption reserves one line of its own font's height even when a
+  failed ask leaves it EMPTY, since a zero-height Label would raise everything below it the moment an
+  ask failed.
 
-**The pick survives the flight, too.** `_resolved_rival_count` returns the player's count while a
-re-ask is in flight over an answered row, rather than collapsing to `NO_COUNT` — otherwise the
-summary reads "server default" for the few milliseconds after every click, and a Begin pressed in
-that window would silently discard the pick. The server clamps a count the new grid cannot seat; it
+**The pick survives the flight, too.** `_resolved_archetype_counts` returns the player's counts while a
+re-ask is in flight over answered rows, rather than collapsing to `[]` — otherwise the summary reads
+"none asked for" for the few milliseconds after every click, and a Begin pressed in that window would
+silently discard the picks. The server clamps a count the new grid cannot seat; it
 cannot recover one this screen threw away.
 
 ## THE SEED IS A STRING, FROM THE KEYSTROKE TO THE SOCKET
@@ -205,25 +226,28 @@ the load once reported as a success, are in `save-load-menu.md`.
 
 | Script | Purpose |
 |--------|---------|
-| `FactionCapacity.gd` (`class_name FactionCapacity`) | The `faction_capacity` seam, modelled on `SaveSlots`: `set_sender`/`deliver`, `request(width, height)` (a repeat of an answered grid is dropped), `retry`, the four states, `permits`/`clamp_count`, `NO_COUNT` — "never offered a choice", which is not a number — and **`server_is_unreachable()`**, the one place the `transport` token is told apart from a refusal a server sent, since this seam owns the token vocabulary. **Owns no socket** |
+| `FactionCapacity.gd` (`class_name FactionCapacity`) | The `faction_capacity` seam, modelled on `SaveSlots`: `set_sender`/`deliver`, `request(width, height, profile_id)` (a repeat of an answered grid AND profile is dropped), `retry`, the four states, the parsed `archetypes` rows, the contract formula (`ceiling_at`) with per-row `permits`/`clamp_count`/`clamp_all`/`default_at`/`default_counts`, `NO_COUNT` — "never offered a choice", which is not a number — and **`server_is_unreachable()`**, the one place the `transport` token is told apart from a refusal a server sent, since this seam owns the token vocabulary. **Owns no socket** |
 | `QueryRequestIds.gd` (`class_name QueryRequestIds`) | The one request-id allocator for every seam on the native query worker: `REQUEST_ID_BASE` (clear of `ForecastQuery`), `IDS_PER_SESSION`, `reserve_block()` |
 
 ## Verify
 
-`menu_preview` renders the row through the seam's real `deliver`, from canned replies —
+`menu_preview` renders the rows (two archetypes, `major` and `minor`) through the seam's real `deliver`, from canned replies —
 `menu_new_game_rivals_pending`, `menu_new_game_rivals`, `menu_new_game_rivals_picked`,
 `menu_new_game_rivals_alone`, `menu_new_game_rivals_unavailable` (a server answered, no count),
 `menu_new_game_rivals_no_server` (nothing answered), `menu_new_game_rivals_recovered` (it came back),
 `menu_landing_seat_refused` (the rail notice), and the map-size click itself in
-`menu_new_game_rivals_reask` / `_reasked` — and asserts what a frame cannot show: that no slider is
-offered without a ceiling, that an unanswered ask reads `None` and adds no sentence, that
+`menu_new_game_rivals_reask` / `_reasked`, plus `menu_new_game_archetypes_reclamped` (an earlier row
+raised so a later row's ceiling falls under its pick) — and asserts what a frame cannot show: that no
+slider is offered before an answer names the rows, that each row is headed by the server's label, that a
+0-ceiling row is a disabled slider, that an unanswered ask reads `None` and adds no sentence, that
 `Begin the trail` is offered in every state but the unreachable one and withheld in that one, that the
 rail notice is up in that state and GONE once a server answers — including the copy a bounced session
-handed in — that the retry does not change what is on screen, that the resolved count on the wire
-matches the pick, that
+handed in — that the retry does not change what is on screen, that the resolved counts on the wire
+match the picks, per archetype, that moving an earlier row re-clamps a later one in place (the same
+slider node, and the wire agreeing with the screen), that
 the control across a re-ask is the SAME NODE at the SAME RECT with the row's height and the summary
-unchanged, that the row is the same height with and without a slider, and that the capacity seam's ids
-are disjoint from the save seam's.
+labels unchanged, that the rows are the same height with a ceiling and without one, and that the
+capacity seam's ids are disjoint from the save seam's.
 
 **The seed has its own block** (`_run_seed_states`, with one still, `menu_new_game_seed_refused`): both
 playtest seeds are typed into the real field and asserted to reach the composed `new_game` line digit

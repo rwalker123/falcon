@@ -26052,6 +26052,50 @@ func _row_homeward_band_fixture() -> Dictionary:
 	band["size"] = int(band["size"]) + ROW_HOMEWARD_NEAR_WORKERS
 	return band
 
+## **A ROW'S OWN HANDS WALKING BACK TO IT** (`rejoining_*`) — the far hunt's source drifted back inside
+## work range, so its party's walkers stay on the row and rejoin it on landing. The row's `workers`
+## already holds them: Hunt keeps its crew, the band's `homeward_*` is empty, and those hands are
+## neither idle nor a "Walking home" segment. The band reads the idle hands it really has.
+const ROW_REJOINING_WORKERS := PARTY_PELT_WORKERS
+const ROW_REJOINING_FOOD := HOMEWARD_FOOD
+const ROW_REJOINING_ALL_HOME_IN := 1
+
+func _row_rejoining_band_fixture() -> Dictionary:
+	var band := _work_party_spoil_band_fixture()
+	for key in [HudWorkVocab.HOMEWARD_WORKERS_KEY, HudWorkVocab.HOMEWARD_FOOD_KEY,
+			HudWorkVocab.HOMEWARD_FOOD_SPOILS_KEY, HudWorkVocab.HOMEWARD_NEXT_LOAD_IN_KEY,
+			HudWorkVocab.HOMEWARD_ALL_HOME_IN_KEY]:
+		band.erase(key)
+	for row_variant in band["labor_assignments"]:
+		var row: Dictionary = row_variant
+		if String(row.get("fauna_id", "")) == PARTY_FAR_HERD_ID:
+			row[HudWorkVocab.REJOINING_WORKERS_KEY] = ROW_REJOINING_WORKERS
+			row[HudWorkVocab.REJOINING_ALL_HOME_IN_KEY] = ROW_REJOINING_ALL_HOME_IN
+			row[HudWorkVocab.REJOINING_FOOD_KEY] = ROW_REJOINING_FOOD
+	return band
+
+## `band_panel_work_row_rejoining`: the hunt row's walking-back line, and the band's idle count.
+func _render_work_row_rejoining_state() -> void:
+	_set_world_herds(_herd_fixtures())
+	_push_bands([_row_rejoining_band_fixture()])
+	await _pin_canvas(Vector2i(ULTRAWIDE_WIDTH, DOCKROW_CANVAS.y))
+	_panel.set_dock(SIDE_BOTTOM)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	await _save("band_panel_work_row_rejoining")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	var want := HudWorkVocab.ROW_REJOINING_LINE_FORMAT % [ROW_REJOINING_WORKERS,
+		HudWorkVocab.HOMEWARD_FOOD_CLAUSE_FORMAT % SourceForecast.format_magnitude(
+			ROW_REJOINING_FOOD), HudWorkVocab.ROW_REJOINING_HERE_NEXT_TURN]
+	var lines := _work_party_lines(_work_row_for_herd(PARTY_FAR_HERD_ID))
+	_assert_band_panel("band_panel_work_row_rejoining: the hunt row says its hands are walking back - want [%s], got %s"
+			% [want, str(lines)], lines.has(want))
+	var band: Dictionary = _hud._band_labor._panel_band
+	_assert_band_panel("...and those hands are in the row, so the band's idle is the %d it really has (got %d)"
+			% [ROW_REJOINING_WORKERS, _hud._band_labor.effective_idle(band)],
+		_hud._band_labor.effective_idle(band) == ROW_REJOINING_WORKERS)
+
 ## `band_panel_work_row_homeward`: each row's walker line, in the quiet ink, under the right row.
 func _render_work_row_homeward_state() -> void:
 	_set_world_herds(_herd_fixtures() + [{"id": PARTY_PELT_HERD_ID, "species": "Grey Wolf",
@@ -26171,6 +26215,7 @@ func _render_work_party_spoil_states() -> void:
 	# Each ROW's own walkers (the per-row `homeward_*` keys) — before the hand-back, so no later
 	# frame moves.
 	await _render_work_row_homeward_state()
+	await _render_work_row_rejoining_state()
 
 	# Hand the world and the reference band back.
 	_set_forage_patches([])

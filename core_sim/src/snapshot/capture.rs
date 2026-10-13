@@ -3119,6 +3119,7 @@ pub fn capture_snapshot(
                             band_name,
                             cohort,
                             current_pos,
+                            &settlement_stage_config,
                         ));
                     }
                     // A band is "traveling" while a `move_band` order is still en route to its target.

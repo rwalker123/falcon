@@ -1275,9 +1275,10 @@ each `~` a specialist left off the roster, both `utility` only. `1=pass`, `2=scr
 `1=utility:forager`, `1=utility:rover@hard~land~food`.
 
 Per seed, under `<out>/<seed>/`: the scratch `simulation_config.json` (the shipped one with
-`map_seed` and `default_ai_faction_count` = the seat count pinned, and the four port keys rewritten
-to a probed free base from 46000 up — the same four-key rewrite as `core_sim::apply_port_base`,
-restated; **nothing else moves**, the separation is the shipped `faction_start_min_separation`),
+`map_seed` pinned, and the four port keys rewritten to a probed free base from 46000 up — the same
+four-key rewrite as `core_sim::apply_port_base`, restated; **nothing else moves**, the separations
+are the shipped profile's archetype `min_separation`s; the seat count rides `new_game` as
+`major=<seats>`),
 `ports.json`, `server.log`, `saves/`, and one `seat_<f>/` per seat holding its three instruments
 and `sim_ai.log`. The server is started with `SIM_CONFIG_PATH` / `SIM_PORTS_FILE` / `SIM_SAVE_DIR`
 set and `SIM_PORT_BASE` removed, exactly as `core_sim/tests/query_seat_gate.rs` does. Seats are this
@@ -1293,9 +1294,9 @@ the script's `OPTIONS` block and holds the table to it — start profile `late_f
 shipped separation, seed pinned per run. The size is written to `report.json` (`map_size`, top
 level) and nowhere else: the observation already carries the grid's `width`/`height`, and the
 scoreboard row has no header. Before `new_game` the harness asks the server `FactionCapacity {
-width, height }` on the same unseated connection (`UnseatedConnection::ask`) and fails the run
-with `WorldTooSmall` naming the size and both numbers if `max_ai_faction_count` is below the seats
-requested — the alternative is a clamped roster and a rival waiting forever on `unknown_seat`.
+width, profile_id }` on the same unseated connection (`UnseatedConnection::ask`) and fails the run
+with `WorldTooSmall` naming the size and both numbers if the `major` archetype's `site_count − 1` is
+below the seats requested — the alternative is a clamped roster and a rival waiting forever on `unknown_seat`.
 Then `new_game` is sent and synchronised by a `ListSaves` question behind it. A 3-turn seed is
 ~3.5 s wall on Tiny and ~13 s on Huge (release build; the world generation dominates).
 
