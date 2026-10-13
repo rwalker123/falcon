@@ -1055,8 +1055,7 @@ func run(harness) -> void:
 	var idle_advice: String = SourceForecast.MAX_USEFUL_NOTE_FORMAT % [fowl_haul_crew,
 		SourceForecast.MAX_USEFUL_NOUN_ONE if fowl_haul_crew == 1 \
 			else SourceForecast.MAX_USEFUL_NOUN_MANY]
-	var wanted_advice: String = SourceForecast.LABOR_BOUND_NOTE_FORMAT % [fowl_assignable,
-		fowl_engage_crew]
+	var wanted_advice: String = SourceForecast.LABOR_BOUND_NOTE_FORMAT % fowl_assignable
 
 	var fowl_reaching := _engagement_fowl_herd(FOWL_ENGAGE_RATE)
 	h._hud._compose.reset_hunt_source()
@@ -1071,11 +1070,28 @@ func run(harness) -> void:
 		Readout.yields_text(reaching_sheet).contains(reach_face)
 			and not Readout.yields_text(reaching_sheet).contains(carry_face))
 	# THE ADVICE, WHICH IS THE OTHER HALF OF THE DEFECT. With the reach bound live the herd can use far
-	# more hunters than this band HAS, so the stepper is labor-bound and says so — and the sentence
-	# claiming more hands would be idle must be nowhere on the sheet.
-	h._assert_hud("more hunters are wanted, not idle — the cap reads \"%s\"" % wanted_advice,
-		Q.has_label_containing(reaching_sheet, wanted_advice)
+	# more hunters than this band HAS, so the stepper is labor-bound — but the labor note is shown ONLY
+	# at the band's cap, so the one-hunter sheet states neither sentence (the `+` still works), and the
+	# sentence claiming more hands would be idle must be nowhere on it.
+	h._assert_hud("below the band's cap (%d of %d) the sheet prints no labor note, and no idle claim"
+			% [FOWL_HUNTERS, fowl_assignable],
+		not Q.has_label_containing(reaching_sheet, wanted_advice)
+			and not Q.has_label_containing(reaching_sheet, "is all this band can send")
 			and not Q.has_label_containing(reaching_sheet, idle_advice))
+	# …and AT the cap the same sheet names the band's limit, with the greyed `+` carrying it on hover.
+	h._compose_herd(fowl_reaching, fowl_assignable, SourceForecast.FLOOR_FOOD_PEAK)
+	await h._settle()
+	await h._save("herd_hunt_labor_bound")
+	var capped_sheet: Control = h._hud._drawercompose._compose_sheet
+	var plus := Q.find_button_by_text(capped_sheet, HudWorkVocab.STEPPER_PLUS_FACE)
+	h._assert_hud("at the band's cap the sheet reads \"%s\", the useful figure nowhere" % wanted_advice,
+		Q.has_label_containing(capped_sheet, wanted_advice)
+			and not Q.has_label_containing(capped_sheet, " useful — free up"))
+	h._assert_hud("…and the greyed `+` carries the same sentence on hover",
+		plus != null and plus.disabled and plus.tooltip_text == wanted_advice)
+	h._compose_herd(fowl_reaching, FOWL_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
+	await h._settle()
+	reaching_sheet = h._hud._drawercompose._compose_sheet
 	# **THE THIRD SURFACE THE SAME BOUND HAS TO REACH — the CREW TARGETS and the verdict beneath them.**
 	# The take and the cap became engagement-aware while the chart's targets went on dividing the room
 	# by the CARRY alone, so this sheet offered `2 clear it now` for a herd two hunters would take ~47

@@ -1107,8 +1107,9 @@ engageCrew      = ceil((floor(ceiling / bodyMass) + 1) / engageRate)
   whole-animal quantum (fodder; a source the wire states none for) has **no** engagement arm rather
   than a zero one.
 - **Frames: `herd_hunt_engagement_bound` / `herd_hunt_engagement_unbounded`** — one Wild Fowl, one
-  hunter, one floor, `engage_rate` the only difference. Bound reads `0.03 FOOD` under *"26 of 47
-  useful — free up idle workers to send more"*; unbounded reads `0.80 → 0.05 FOOD` under *"max 2
+  hunter, one floor, `engage_rate` the only difference. Bound reads `0.03 FOOD` with no labor note at one hunter
+  (the `+` still works; the note appears only at the band's cap — frame `herd_hunt_labor_bound`, *"26 is
+  all this band can send — free up workers to send more"*); unbounded reads `0.80 → 0.05 FOOD` under *"max 2
   workers useful here"*, which is the honest advice for a pen. Both takes are stated by the harness's
   own `HerdFx.hunt_take_oracle` (the sim's `quantise_animal_take` restated in food, now taking
   `engaged`),
@@ -2633,8 +2634,8 @@ The resolver therefore used to reach `player_band()` — the FIRST player-factio
 `update_band_alerts` — on the ordinary path. That was harmless while a faction had one band and
 became a defect the moment an expedition could found a second (issue #510): the sheet composed for
 the PARENT while the Band/City panel showed the colony, so the picker read `Band 1` under a `Band 2`
-header and the crew stepper capped at the parent's spent idle workers ("1 of 30 useful — free up idle
-workers to send more"). Every number was arithmetically honest and about the wrong band.
+header and the crew stepper capped at the parent's spent idle workers (the then-wording read "1 of 30 useful —
+free up idle workers to send more"). Every number was arithmetically honest and about the wrong band.
 
 **The panel band is the right subject because it survives everything a sheet does to the selection.**
 Selecting a herd or an empty tile leaves it intact (`band-city-panel.md` — the panel persists across
@@ -4311,8 +4312,9 @@ what it was before the two-crew sheet and is what it is again (`docs/plan_standi
 `compose_pool_take_full` / `compose_pool_take_freed` are RETIRED with the shared pool they staged;
 `forage_reopened_crews` carries the surviving half.
 
-**AND THE CAP NOTE HAS ONE REMEDY AGAIN.** `SourceForecast.LABOR_BOUND_NOTE_FORMAT` reads *"N of M
-useful — free up idle workers to send more"*. `BUILD_BOUND_NOTE_FORMAT` — the same line naming this
+**AND THE CAP NOTE HAS ONE REMEDY AGAIN.** `SourceForecast.LABOR_BOUND_NOTE_FORMAT` reads *"N is
+all this band can send — free up workers to send more"* (N = the band's crew pool; see the cap-note rule
+under "THERE IS ONLY ONE SUPPLY CONSTRAINT"). `BUILD_BOUND_NOTE_FORMAT` — the same line naming this
 sheet's own builders stepper first — is deleted with that stepper: there is one control here, so
 there is one nearer lever, and `_forecast_worker_cap` takes no `build_crew` argument.
 
@@ -6122,10 +6124,17 @@ spelled and never a raw count.
       Wild Fowl herd owing 3 keepers whose take saturates at 2, staffed at 2 with idle workers free —
       the row must carry the under-herded ⚠ AND keep its `+` live, and both twins must gate at 3.
     **When the *labor* cap binds instead** (idle workers run out *below* the usefulness ceiling), the
-    silent-disable case is filled by a companion note — `LABOR_BOUND_NOTE_FORMAT` = `"N of M useful —
-    free up idle workers to send more"` (M = the usefulness ceiling, so it tracks the selected policy).
-    The cap value is unchanged (still `min(labor, usefulness)`); only the note now names *which*
-    ceiling bound and the M you're working toward, so a disabled `+` is never mute.
+    silent-disable case is filled by a companion note — `LABOR_BOUND_NOTE_FORMAT` = `"N is all
+    this band can send — free up workers to send more"`, N the band's crew pool and its ONLY argument.
+    The cap value is unchanged (still `min(labor, usefulness)`). **The note is shown only once the
+    composed crew is AT the cap** (`DrawerComposeController._cap_mount_note`; the cap dict carries it as
+    `labor_note`, apart from the source-bound `note`, which always shows) — below the cap the `+` still
+    works and there is nothing to explain — and the greyed `+`'s hover carries it
+    (`_crew_cap_reason`). **The useful figure was dropped from it**: past the crew curve's asked rows
+    (`1..pool`) `max_useful_workers` falls back to the closed-form `take_workers`, a rough estimate that
+    disagreed with the *clear it now* pill (30 beside 29 on a Wild Boar) and named a number that
+    appeared nowhere else on the sheet. The band's limit is the one fact the note owns; the pills own the
+    source's.
     **THERE IS ONLY ONE SUPPLY CONSTRAINT, SO THERE IS ONLY ONE NOTE.** `PARTY_SIZE_BOUND_NOTE_FORMAT`
     ("N of M useful — at the max party size") and the branch that chose it are DELETED with the cap
     they described: the party cap answers the band's idle workforce alone, so

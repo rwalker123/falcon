@@ -1712,7 +1712,7 @@ func run(harness) -> void:
 
 	# State 2-labor — the SAME food tile, but the actor band has only 2 idle workers, BELOW Sustain's
 	# max-useful of 3: the Foragers stepper caps at 2 (LABOR, not usefulness) and the note names the
-	# reason — "2 of 3 useful — free up idle workers to send more" — so a `+` gone dead at idle reads as
+	# reason — "2 is all this band can send — free up workers to send more" — so a `+` gone dead at idle reads as
 	# fixable by reassigning labor, not as a silent bug. The usefulness ceiling (3) is unchanged; only
 	# the note differs from the usefulness-bound `forage_forecast_cap` above.
 	var forage_labor_band: Dictionary = BandFx.forage_range_bands()[0].duplicate(true)

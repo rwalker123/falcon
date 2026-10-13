@@ -1708,10 +1708,11 @@ const MAX_USEFUL_NOTE_GEAR_FORMAT := "max %d %s useful here — the rest have no
 # (see `source_worker_cap_state`). Worded from the row's point of view ("fully staffed") rather than
 # the compose stepper's ("max N useful here"), because the player is looking at a running assignment.
 const MAX_USEFUL_CAPPED_TOOLTIP := "Fully staffed — this source can use at most %d %s; more would idle here."
-# The OTHER binding cap: idle workers run out BELOW the usefulness ceiling, so the `+` caps at labor,
-# not usefulness. Named in the "N of M" spirit (N = the labor cap you're at, M = the useful ceiling),
-# so a capped `+` reads as "fixable by reassigning labor" rather than as a silent bug.
-const LABOR_BOUND_NOTE_FORMAT := "%d of %d useful — free up idle workers to send more"
+# The OTHER binding cap: idle workers run out BELOW the usefulness ceiling, so the `+` caps at the band's
+# hands, not usefulness. The sentence names only the band's limit (the one arg: the crew pool) and is
+# shown ONLY once the composed crew is at it — the useful figure is deliberately not quoted: past the
+# crew curve's asked rows it was a rough estimate that disagreed with the "clear it now" pill.
+const LABOR_BOUND_NOTE_FORMAT := "%d is all this band can send — free up workers to send more"
 # RETIRED — **`BUILD_BOUND_NOTE_FORMAT`**, the same cap worded to name the sheet's OWN builders
 # stepper (`docs/plan_standing_upkeep.md` §2.5). It existed because the take and the build shared one
 # source pool, so the nearer lever for freeing a hand was sometimes two rows down on the same sheet.
@@ -3030,7 +3031,7 @@ static func crew_take_plateau(per_crew: Array) -> int:
 ##
 ## The question is asked for crews `1..the band's own pool` (`DrawerComposeController._crew_take_view`),
 ## because that is every crew the stepper beside it can reach. But two readings on this sheet are about
-## crews the band CANNOT field: *"26 of 47 useful — free up idle workers to send more"* names the
+## crews the band CANNOT field: the retired *"26 of 47 useful — free up idle workers to send more"* named the
 ## demand-side ceiling as the thing to work toward, and the *clear it now* pill on a Wild Fowl herd
 ## named 47 hands to a band holding 26. Truncating those at the pool does not make them honest, it
 ## deletes them.
