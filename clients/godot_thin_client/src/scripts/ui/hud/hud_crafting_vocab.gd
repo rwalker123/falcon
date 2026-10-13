@@ -179,6 +179,12 @@ const SUGGESTION_WORKERS_WITHOUT_KEY := "workers_without"
 ## the people going without, the score's own unit.
 const SUGGESTION_WORK_PER_TURN_KEY := "work_per_turn"
 const SUGGESTION_SOURCES_KEY := "sources"
+## **THE WEAR FORECAST (#778)**: the part of `count` that is not short yet but will be, the turns until
+## the first unit in use runs out, and the turns the bench needs to make a replacement. An entry with no
+## sources and `upcoming_count > 0` is coming-up only; with sources it is short today AND wearing out.
+const SUGGESTION_UPCOMING_COUNT_KEY := "upcoming_count"
+const SUGGESTION_EXPIRES_IN_TURNS_KEY := "expires_in_turns"
+const SUGGESTION_LEAD_TURNS_KEY := "lead_turns"
 ## The materials the WHOLE suggested count is short of, against the stock the queue leaves — the
 ## `MaterialShortfall` row shape. Empty when the stock covers it.
 const SUGGESTION_SHORTFALLS_KEY := "shortfalls"
@@ -601,6 +607,18 @@ const SUGGESTION_WORK_FORMAT := "+%s work a turn"
 const SUGGESTION_WITHOUT_FORMAT := "%s %s without"
 const SUGGESTION_WORKER_NOUN := "workers"
 const SUGGESTION_QUEUE_LABEL := "Queue"
+## The subhead over the coming-up-only rows, drawn only when at least one exists.
+const SUGGESTIONS_COMING_UP_HEAD := "Coming up"
+## A coming-up row's second line: `wear out in ~4 turns` (turns rounded up), singular at one.
+const SUGGESTION_WEAR_OUT_FORMAT := "wear out in ~%d turns"
+const SUGGESTION_WEAR_OUT_ONE := "wear out in ~1 turn"
+## The note a merged entry (short today and wearing out) appends to its consequence line.
+const SUGGESTION_WEARING_OUT_NOTE_FORMAT := " · +%d wearing out"
+## A coming-up row's hover: the bench's lead time, and why that means starting now.
+const SUGGESTION_COMING_UP_TOOLTIP_FORMAT := "The bench needs about %d turns to make a new one, so start now."
+const SUGGESTION_COMING_UP_TOOLTIP_ONE := "The bench needs about 1 turn to make a new one, so start now."
+## Marks a coming-up-only row, valued the ITEM ID.
+const SUGGESTION_COMING_UP_META := "crafting_suggestion_coming_up"
 ## The tooltip: one line per source — who, where, how many units short, and what it costs.
 const SUGGESTION_SOURCE_FORMAT := "%s: %s missing, %s without"
 const SUGGESTION_SOURCE_WORK_FORMAT := ", +%s work a turn"

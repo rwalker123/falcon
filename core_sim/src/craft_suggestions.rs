@@ -55,13 +55,17 @@
 
 use std::collections::BTreeMap;
 
+use sim_schema::CraftOfferState;
+
 use crate::{
     components::{BandBench, BandEquipment, BuildSource, LaborAllocation, LaborTarget},
     equipment_config::{
         EffectTier, EquipmentConfig, EquipmentEffect, EquipmentStat, ItemDefinition, KitJob,
     },
     intensification::NO_BUILD_GEAR,
-    recipes_config::RecipesConfig,
+    materials_config::MaterialsConfig,
+    recipes_config::{RecipeDef, RecipesConfig},
+    systems::{bench_tiers, rate_per_turn},
 };
 
 /// **WHO WENT WITHOUT** — the consumer a [`ToolShortfallLine`] belongs to, keyed so a reader can join
@@ -149,8 +153,18 @@ pub struct CraftSuggestion {
     pub workers_without: f32,
     /// [`SuggestionSourceLine::work_per_turn`] summed over [`Self::sources`].
     pub work_per_turn: f32,
-    /// Every consumer short of the item, in the order the lines arrived.
+    /// Every consumer short of the item, in the order the lines arrived. **Empty for an item that is
+    /// only coming up** (see [`Self::upcoming_count`]).
     pub sources: Vec<SuggestionSourceLine>,
+    /// **The share of [`Self::count`] that is a forecast** (#778): units that will wear out before
+    /// the bench could replace them, netted against the queue after the current shortfall is.
+    /// `count - upcoming_count` is what is short today.
+    pub upcoming_count: u32,
+    /// Turns until the first forecast shortage starts (fractional): when the loss that leaves a
+    /// consumer without lands, not when the unit in hand runs out. `0` with no forecast.
+    pub expires_in_turns: f32,
+    /// The bench's lead time for one more unit, in whole turns (`>= 1`). `0` with no forecast.
+    pub lead_turns: u32,
 }
 
 /// **A LINE THAT IS NOT SHORT** — the boundary at and below which a consumer went without nothing.
@@ -355,19 +369,31 @@ pub fn band_suggestions<'a>(
     take_rows: impl IntoIterator<Item = (usize, &'a str, f32, f32)>,
     hunt_turn: Option<&[ToolShortfallLine]>,
     bench: Option<&BandBench>,
-    recipes: &RecipesConfig,
-    equipment: &EquipmentConfig,
+    configs: SuggestionConfigs<'_>,
     wear: &BandEquipment,
+    forecast: Option<ForecastInputs<'_>>,
 ) -> Vec<CraftSuggestion> {
+    let SuggestionConfigs { recipes, equipment } = configs;
     let lines = band_tool_shortfall_lines(allocation, take_rows, equipment, wear);
     let passes: Vec<&[ToolShortfallLine]> =
         std::iter::once(lines.as_slice()).chain(hunt_turn).collect();
-    craft_suggestions_over(&passes, bench, recipes, equipment)
+    let upcoming = forecast.map_or_else(BTreeMap::new, |inputs| {
+        wear_forecast(
+            &item_needs(&passes),
+            bench,
+            recipes,
+            equipment,
+            wear,
+            &inputs,
+        )
+    });
+    suggestions_over(&passes, bench, recipes, equipment, &upcoming)
 }
 
-/// **RANK WHAT TO MAKE NEXT** — see the module docs for every rule.
+/// **RANK WHAT TO MAKE NEXT** - see the module docs for every rule.
 ///
-/// `bench` is the band's bench, whose queue nets the counts; `None` nets nothing.
+/// `bench` is the band's bench, whose queue nets the counts; `None` nets nothing. This is the list
+/// of what is short **today**; [`band_suggestions`] adds what is coming up.
 pub fn craft_suggestions(
     lines: &[ToolShortfallLine],
     bench: Option<&BandBench>,
@@ -388,6 +414,16 @@ pub fn craft_suggestions_over(
     recipes: &RecipesConfig,
     equipment: &EquipmentConfig,
 ) -> Vec<CraftSuggestion> {
+    suggestions_over(passes, bench, recipes, equipment, &BTreeMap::new())
+}
+
+fn suggestions_over(
+    passes: &[&[ToolShortfallLine]],
+    bench: Option<&BandBench>,
+    recipes: &RecipesConfig,
+    equipment: &EquipmentConfig,
+    upcoming: &WearForecast,
+) -> Vec<CraftSuggestion> {
     let mut by_item: BTreeMap<&str, Vec<SuggestionSourceLine>> = BTreeMap::new();
     for pass in passes {
         for (item, sources) in group_missing(pass, equipment) {
@@ -402,7 +438,7 @@ pub fn craft_suggestions_over(
             }
         }
     }
-    suggestions_from(by_item, bench, recipes)
+    suggestions_from(by_item, bench, recipes, upcoming)
 }
 
 /// One pass's missing units per item, as source lines.
@@ -438,34 +474,56 @@ fn group_missing<'a>(
     by_item
 }
 
-/// Net each item's shortfall against the queue and rank the survivors.
+/// Net each item's shortfall - and what is coming up - against the queue and rank the survivors.
+///
+/// **One suggestion per item.** Its count is today's whole shortfall plus the forecast's units, the
+/// queue struck from the shortfall first and what is left of it from the forecast.
 fn suggestions_from(
-    by_item: BTreeMap<&str, Vec<SuggestionSourceLine>>,
+    shortages: BTreeMap<&str, Vec<SuggestionSourceLine>>,
     bench: Option<&BandBench>,
     recipes: &RecipesConfig,
+    upcoming: &WearForecast,
 ) -> Vec<CraftSuggestion> {
-    let mut suggestions: Vec<CraftSuggestion> = by_item
+    let mut items: BTreeMap<&str, Vec<SuggestionSourceLine>> = BTreeMap::new();
+    for (item, forecast) in upcoming {
+        if forecast.units > 0 {
+            items.entry(item.as_str()).or_default();
+        }
+    }
+    items.extend(shortages);
+    let mut suggestions: Vec<CraftSuggestion> = items
         .into_iter()
         .filter_map(|(item, sources)| {
             let missing: f32 = sources.iter().map(|line| line.missing_units).sum();
-            let whole_shortfall = (missing - WHOLE_UNIT_TOLERANCE).ceil();
-            let netted = (whole_shortfall - queued_units(bench, recipes, item)).ceil();
-            if netted <= NOTHING_TO_MAKE {
+            let whole_shortfall = (missing - WHOLE_UNIT_TOLERANCE).ceil().max(NOTHING_TO_MAKE);
+            let queued = queued_units(bench, recipes, item);
+            let current = (whole_shortfall - queued).ceil().max(NOTHING_TO_MAKE);
+            let forecast = upcoming.get(item);
+            let coming = forecast.map_or(NOTHING_TO_MAKE, |forecast| forecast.units as f32);
+            // What the queue owes beyond today's shortfall serves the forecast.
+            let spare_queue = (queued - whole_shortfall).max(NOTHING_TO_MAKE);
+            let coming = (coming - spare_queue).ceil().max(NOTHING_TO_MAKE);
+            let count = current + coming;
+            if count <= NOTHING_TO_MAKE {
                 return None;
             }
             Some(CraftSuggestion {
                 item: item.to_string(),
-                count: netted as u32,
+                count: count as u32,
                 workers_without: sources.iter().map(|line| line.workers_without).sum(),
                 work_per_turn: sources.iter().map(|line| line.work_per_turn).sum(),
                 sources,
+                upcoming_count: coming as u32,
+                expires_in_turns: forecast.map_or(NO_FORECAST_TURNS, |f| f.expires_in_turns),
+                lead_turns: forecast.map_or(NO_FORECAST_LEAD, |f| f.lead_turns),
             })
         })
         .collect();
     // **The order** (module docs): every non-build shortage first, by workers going without; then
-    // the build — the head's builders line as position 0, the queued jobs behind it in queue order.
-    // An item short in both places ranks at its earliest position. Ties by item id, which the
-    // `BTreeMap` walk already put in order — a stable sort keeps it.
+    // the build - the head's builders line as position 0, the queued jobs behind it in queue order;
+    // then what is only coming up, soonest to run out first. An item short in both places ranks at
+    // its earliest position. Ties by item id, which the `BTreeMap` walk already put in order - a
+    // stable sort keeps it.
     suggestions.sort_by(|a, b| {
         rank_of(a)
             .partial_cmp(&rank_of(b))
@@ -474,10 +532,14 @@ fn suggestions_from(
     suggestions
 }
 
-/// **WHERE A SUGGESTION RANKS** — `(tier, key)`, smaller first. Tier 0 is any non-build shortage,
+/// **WHERE A SUGGESTION RANKS** - `(tier, key)`, smaller first. Tier 0 is any non-build shortage,
 /// keyed by the people going without it there (negated, so more first); tier 1 is build-only, keyed
-/// by the earliest build position it is short at.
+/// by the earliest build position it is short at; tier 2 is coming up only, keyed by the turns until
+/// the unit in hand runs out.
 fn rank_of(suggestion: &CraftSuggestion) -> (u8, f32) {
+    if suggestion.sources.is_empty() {
+        return (COMING_UP_TIER, suggestion.expires_in_turns);
+    }
     let non_build: f32 = suggestion
         .sources
         .iter()
@@ -504,8 +566,14 @@ fn rank_of(suggestion: &CraftSuggestion) -> (u8, f32) {
 const NON_BUILD_TIER: u8 = 0;
 /// The tier of a suggestion short only for the build queue.
 const BUILD_TIER: u8 = 1;
+/// The tier of a suggestion that is only coming up: nothing is short of it today.
+const COMING_UP_TIER: u8 = 2;
 /// The head job's place in the build queue.
 const HEAD_BUILD_POSITION: u32 = 0;
+/// The `expiresInTurns` of an item with no wear forecast.
+const NO_FORECAST_TURNS: f32 = 0.0;
+/// The `leadTurns` of an item with no wear forecast.
+const NO_FORECAST_LEAD: u32 = 0;
 
 /// **UNITS OF `item` ALREADY COMING FROM THE BENCH** — what the queue still owes, `(count − made) ×
 /// the output amount` over every order whose recipe makes the item, **plus** what the bench has
@@ -543,6 +611,195 @@ pub fn queued_units(bench: Option<&BandBench>, recipes: &RecipesConfig, item: &s
         .map(|batch| batch.count as f32)
         .sum();
     owed + parked
+}
+
+/// **THE TWO CONFIGS A SUGGESTION LIST IS RANKED AND NETTED WITH.**
+#[derive(Clone, Copy)]
+pub struct SuggestionConfigs<'a> {
+    pub recipes: &'a RecipesConfig,
+    pub equipment: &'a EquipmentConfig,
+}
+
+/// **WHAT A SUGGESTION'S FORECAST NEEDS BEYOND THE LINES** - the offers (the recipe the ledger marks
+/// `suggested` for each item) and the materials table (to resolve the bench's rate per recipe).
+#[derive(Clone, Copy)]
+pub struct ForecastInputs<'a> {
+    pub offers: &'a [CraftOfferState],
+    pub materials: &'a MaterialsConfig,
+}
+
+/// **ONE ITEM'S WEAR FORECAST** (#778).
+#[derive(Debug, Clone, PartialEq)]
+pub struct UpcomingWear {
+    /// Units that will wear out within the lead time and are not covered by a spare: the whole units
+    /// short after the lead minus the whole units short now.
+    pub units: u32,
+    /// Turns until the first forecast shortage starts: the (fractional) turn the loss that leaves a
+    /// consumer without lands, not when the unit in hand runs out - a spare absorbs that.
+    pub expires_in_turns: f32,
+    /// The bench's lead time for one more unit of the item, in whole turns.
+    pub lead_turns: u32,
+}
+
+/// The forecast for every item that has one, by item id.
+pub type WearForecast = BTreeMap<String, UpcomingWear>;
+
+/// **THE CREW A LEAD TIME IS QUOTED AT WHEN NOBODY IS AT THE BENCH** - one crafter, not never. The
+/// player staffs the bench and the sim never picks the crew, so an unstaffed bench is quoted at the
+/// smallest crew that could make progress.
+const UNSTAFFED_BENCH_QUOTE_CREW: u32 = 1;
+
+/// **THE SHORTEST LEAD TIME** - a turn. Whatever the bench's rate, a unit is not made inside the
+/// turn it was asked for.
+const MIN_LEAD_TURNS: f32 = 1.0;
+
+/// **EACH ITEM'S NEED: THE UNITS ITS CONSUMERS REQUIRE** - `Σ required` over its lines, the larger of
+/// the passes (the same two readings [`craft_suggestions_over`] takes the larger of).
+fn item_needs<'a>(passes: &[&'a [ToolShortfallLine]]) -> BTreeMap<&'a str, f32> {
+    let mut needs: BTreeMap<&str, f32> = BTreeMap::new();
+    for pass in passes {
+        let mut sums: BTreeMap<&str, f32> = BTreeMap::new();
+        for line in pass.iter() {
+            *sums.entry(line.item.as_str()).or_default() += line.required;
+        }
+        for (item, sum) in sums {
+            let held = needs.entry(item).or_default();
+            *held = held.max(sum);
+        }
+    }
+    needs
+}
+
+/// **THE BENCH'S RATE ON A RECIPE** - [`rate_per_turn`] at the bench's crew (one crafter when it has
+/// none) through the recipe's bench material. `0` when no tool and no bare hand can work the
+/// material, or the recipe has no bench material.
+fn quoted_rate(
+    bench: Option<&BandBench>,
+    recipe: &RecipeDef,
+    recipes: &RecipesConfig,
+    inputs: &ForecastInputs<'_>,
+    equipment: &EquipmentConfig,
+    wear: &BandEquipment,
+) -> f32 {
+    let Some(material) = recipe.bench_material() else {
+        return 0.0;
+    };
+    let crew = bench
+        .map(|bench| bench.workers)
+        .filter(|workers| *workers > 0)
+        .unwrap_or(UNSTAFFED_BENCH_QUOTE_CREW);
+    let tiers = bench_tiers(material, inputs.materials, equipment, wear);
+    rate_per_turn(crew, &recipes.crafting, tiers.speed)
+}
+
+/// **TURNS THE BENCH NEEDS TO FINISH THE WORK ALREADY QUEUED** - each order's remaining passes times
+/// its recipe's work, less the progress banked on the pass in flight, over that order's rate. An
+/// order the bench cannot advance (rate `0`) adds nothing.
+fn queued_lead_turns(
+    bench: Option<&BandBench>,
+    recipes: &RecipesConfig,
+    inputs: &ForecastInputs<'_>,
+    equipment: &EquipmentConfig,
+    wear: &BandEquipment,
+) -> f32 {
+    let Some(bench) = bench else {
+        return 0.0;
+    };
+    bench
+        .orders
+        .iter()
+        .filter_map(|order| {
+            let recipe = recipes.recipe(&order.recipe_id)?;
+            let rate = quoted_rate(Some(bench), recipe, recipes, inputs, equipment, wear);
+            if rate <= 0.0 {
+                return None;
+            }
+            let work = order.remaining() as f32 * recipe.work - order.progress.to_f32();
+            Some(work.max(0.0) / rate)
+        })
+        .sum()
+}
+
+/// **THE WEAR FORECAST** (`docs/plan_crafting_and_materials.md` -> "Coming up"): for every item some
+/// consumer needs, the units that will wear out before the bench could replace one.
+///
+/// The rate is the condition the band was charged per turn over its wear window
+/// ([`BandEquipment::wear_rate`]); the horizon is the bench's lead time for one more unit; the loss
+/// is struck by the ledger's own consumption step on a **clone** of it, a turn at a time, so the
+/// forecast spends units in the order the turns will and the real ledger is never touched.
+fn wear_forecast(
+    needs: &BTreeMap<&str, f32>,
+    bench: Option<&BandBench>,
+    recipes: &RecipesConfig,
+    equipment: &EquipmentConfig,
+    wear: &BandEquipment,
+    inputs: &ForecastInputs<'_>,
+) -> WearForecast {
+    let queued_lead = queued_lead_turns(bench, recipes, inputs, equipment, wear);
+    let mut forecast = WearForecast::new();
+    for (&item, &need) in needs {
+        let rate = wear.wear_rate(item);
+        if need <= NOTHING_MISSING || rate <= 0.0 {
+            continue;
+        }
+        let Some(recipe) = inputs
+            .offers
+            .iter()
+            .find(|offer| offer.suggested && offer.output_item_id == item)
+            .and_then(|offer| recipes.recipe(&offer.recipe_id))
+        else {
+            continue;
+        };
+        let per_pass: f32 = recipe
+            .outputs
+            .iter()
+            .filter(|output| output.equipment_id() == Some(item))
+            .map(|output| output.amount)
+            .sum();
+        let crafting_rate = quoted_rate(bench, recipe, recipes, inputs, equipment, wear);
+        if per_pass <= 0.0 || crafting_rate <= 0.0 {
+            continue;
+        }
+        let lead = queued_lead + recipe.work / per_pass / crafting_rate;
+        let lead_turns = (lead - WHOLE_UNIT_TOLERANCE).ceil().max(MIN_LEAD_TURNS);
+        let short = |live: u32| {
+            (need - live as f32 - WHOLE_UNIT_TOLERANCE)
+                .ceil()
+                .max(NOTHING_MISSING)
+        };
+        let short_now = short(wear.live_units(item, equipment));
+        let mut after = wear.clone();
+        // **The turn the shortage really starts**, as a fractional turn: the first turn of the
+        // clone's walk whose loss leaves more of `need` unheld than today, counted from the turns
+        // before it plus the share of that turn the serving unit lasted.
+        let mut shortage_starts: Option<f32> = None;
+        for turn in 0..lead_turns as u32 {
+            let left_in_hand = after.remaining(item, equipment);
+            after.charge_condition(equipment, item, rate);
+            let live = after.live_units(item, equipment);
+            if shortage_starts.is_none() && short(live) > short_now {
+                shortage_starts = Some(turn as f32 + (left_in_hand / rate).min(1.0));
+            }
+            // **Nothing further can change the result** once no live unit is left; the queue ahead
+            // has no cap, so the walk must not run its whole length.
+            if live == 0 {
+                break;
+            }
+        }
+        let units = short(after.live_units(item, equipment)) - short_now;
+        let Some(expires_in_turns) = shortage_starts.filter(|_| units > NOTHING_MISSING) else {
+            continue;
+        };
+        forecast.insert(
+            item.to_string(),
+            UpcomingWear {
+                units: units as u32,
+                expires_in_turns,
+                lead_turns: lead_turns as u32,
+            },
+        );
+    }
+    forecast
 }
 
 /// **THE WORK ONE HOLDER OF THIS ITEM ADDS** — the `build_work` `equipped` value at the item's

@@ -132,7 +132,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 35 | Breeding shed (#690): `BreedingReading` (carried on `PopulationCohort::last_breeding`) gained `faction`, the people the pre-pass grouped the band as, so the shed can skip a band that changed people later in the turn. |
 /// | 36 | `WorldIdentity` gained `archetype_counts` — the per-archetype rival counts the world was built with (`(archetype id, count)` in catalog order), so a load rebuilds the transient faction-to-archetype assignment and a later `ResetMap` carries the same split. A version-35 header lacks it |
 /// | 37 | Rejoining walks: `HomewardWalk` gained `rejoins_row` — a stood-down walk whose row survived (its source drifted back inside the apron) keeps its hands on that row and rejoins it when it lands, instead of being counted a second time as a plain walker. `LaborAllocation::homeward` rides the allocation, so a version-36 blob does not decode |
-pub const SAVE_FORMAT_VERSION: u32 = 37;
+/// | 38 | The wear forecast (#778): `BandEquipment` gained `wear_window` - the condition each item was charged, per turn, over the last `equipment.json` `wear_forecast.window_turns` turns, which the "coming up" craft suggestions average into a rate. The ledger rides `BandRecord::equipment`, so a version-37 blob lacks it |
+pub const SAVE_FORMAT_VERSION: u32 = 38;
 
 /// gzip level for the payload document.
 ///

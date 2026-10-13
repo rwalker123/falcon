@@ -1302,6 +1302,9 @@ fn create_craft_suggestions<'a>(
                     workPerTurn: suggestion.work_per_turn,
                     sources: Some(sources),
                     shortfalls: Some(shortfalls),
+                    upcomingCount: suggestion.upcoming_count,
+                    expiresInTurns: suggestion.expires_in_turns,
+                    leadTurns: suggestion.lead_turns,
                 },
             )
         })
@@ -1871,6 +1874,9 @@ fn decode_population(
                     queue_position: source.queuePosition(),
                 }),
                 shortfalls: decode_shortfalls(suggestion.shortfalls()),
+                upcoming_count: suggestion.upcomingCount(),
+                expires_in_turns: suggestion.expiresInTurns(),
+                lead_turns: suggestion.leadTurns(),
             }
         }),
         fertility_ceiling: cohort.fertilityCeiling(),

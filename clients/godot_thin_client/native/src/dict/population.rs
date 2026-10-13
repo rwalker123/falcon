@@ -1618,6 +1618,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // `> 0` only for gear that adds build or keeping work; `0` reads as the people going
             // without, which is the score's own unit.
             let _ = row.insert("work_per_turn", suggestion.workPerTurn() as f64);
+            // The wear forecast (#778): the part of `count` that is not short yet but will be,
+            // the turns until the first unit in use runs out, and the bench's lead time.
+            let _ = row.insert("upcoming_count", suggestion.upcomingCount() as i64);
+            let _ = row.insert("expires_in_turns", suggestion.expiresInTurns() as f64);
+            let _ = row.insert("lead_turns", suggestion.leadTurns() as i64);
             let mut sources = VarArray::new();
             if let Some(list) = suggestion.sources() {
                 for source in list.iter() {

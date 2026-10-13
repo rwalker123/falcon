@@ -1426,6 +1426,67 @@ those zeros as the zeros they are.
 - **Auto-craft needs nothing here**: it takes the top usable suggestion, so a queued job's tools are
   crafted ahead of the job reaching the head (`auto_craft::auto_crafts_the_tools_a_queued_build_will_need`).
 
+### Coming up - the kit that wears out before a new one could be made (#778)
+
+Design: `docs/plan_crafting_and_materials.md` -> "Coming up". The list is one list: an item that is
+only wearing out is a `CraftSuggestion` like any other, with empty `sources`.
+
+- **The rate is recorded at the one wear seam.** `BandEquipment::wear_item` adds the condition it
+  charged (`usable_uses(uses) * wear.amount`, only when a batch in condition took it) to the newest
+  slot of `BandEquipment::wear_window`, a `VecDeque<BTreeMap<item, f32>>` with one slot per turn.
+  `systems::open_wear_slots` (registered `.after(deliver_bench_output).before(TurnStage::Influence)`,
+  after it only because both write the ledger) opens each ledger's slot at the top of the turn and
+  drops slots beyond `equipment.json` `wear_forecast.window_turns` (**10**, validated `>= 1`).
+  `BandEquipment::wear_rate(item)` is the item's sum over the recorded slots divided by the slots
+  recorded (never more than the window); a ledger with no slot, or an item never charged in the
+  window, reads `0` and is not forecast. `wear_item` opens a slot itself when the window is empty, so
+  a fixture driving the seam directly records without the system.
+- **One consumption step.** `BandEquipment::consume_condition` is the step `wear_item` and the
+  forecast share (charge the serving batch, retire units at the tier's durability, carry the
+  remainder, drop an emptied batch). `wear_item` adds the `retired` memory and the window write around
+  it; the forecast calls `charge_condition` (`pub(crate)`, no recording) on a **clone**, once per turn
+  of the lead, so units are spent in the order the turns will spend them and the real ledger is never
+  touched (`publishing_the_forecast_leaves_the_real_ledger_untouched`).
+- **The horizon is the lead time** (`craft_suggestions::wear_forecast`). Recipe = the offer marked
+  `suggested` for the item, so `band_suggestions` takes the offers (`ForecastInputs`, with the
+  materials table) and both callers build them first (`snapshot::population` already had them;
+  `auto_craft::band_suggestions_and_offers` now builds the offers before the list). Lead = the queued
+  orders' remaining work (`remaining() x recipe.work - progress`, over each order's own rate; an
+  order at rate `0` adds nothing) plus `recipe.work / per-pass output / rate` for the item, ceiled
+  with `WHOLE_UNIT_TOLERANCE`, minimum one turn. A rate is `systems::rate_per_turn` at the bench's
+  crew, **one crafter when the bench is unstaffed** (`UNSTAFFED_BENCH_QUOTE_CREW`). An item with no
+  recipe, or whose recipe one crafter cannot advance, has no forecast.
+- **Units coming up** = `short(live after) - short(live now)` where `short(live)` is
+  `ceil(need - live - WHOLE_UNIT_TOLERANCE)` floored at zero and `need` is the sum of `required` over
+  the item's lines (the larger of the standing and hunt-turn passes, `item_needs`). A spare unit
+  nobody holds absorbs the loss; a unit already short is not counted twice; a bench tool, appearing
+  on no line, is never forecast.
+- **Merge and rank** (`suggestions_from`): count = (today's whole shortfall - queued, floored at 0) +
+  (the forecast - whatever of the queue exceeds today's shortfall). `upcomingCount` is the second
+  term. An item with no source rank in the new last tier, ordered by `expiresInTurns` (the unit in
+  hand's remaining condition over the rate) then item id; every other entry ranks as before.
+  `expiresInTurns` is **when the shortage starts**, not when the unit in hand runs out: the first
+  turn of the clone's walk whose loss leaves more of `need` unheld than today, as `turns before it +
+  the share of that turn the serving unit lasted` (fractional), so a spare unit defers it to the turn
+  its own loss lands. It is the coming-up ranking key. The walk stops once no live unit is left (the
+  queue ahead has no cap, so it must not run its whole length). `expiresInTurns` and `leadTurns` are
+  `0` for an item with no forecast.
+- **Auto-craft is untouched**: it reads the same list, so it reaches a coming-up item only when
+  nothing above it is usable, and its stale-skip rule drops a skip once the item leaves the list.
+  The one difference to know: auto-craft runs mid-turn, so the newest slot it reads may not yet hold
+  that turn's later charges; the capture reads the finished turn.
+- **Rides the save.** `wear_window` is on `BandEquipment`, which `BandRecord::equipment` clones whole
+  (`SAVE_FORMAT_VERSION` 38). A fission splinter's ledger is built from `BandEquipment::default()`
+  plus the units `take_units` moved, so it starts with no window.
+- **Wire**: `CraftSuggestion.upcomingCount` / `expiresInTurns` / `leadTurns`, appended last.
+
+Pinned off the encoded frame by `core_sim/tests/wear_forecast.rs`: forecast equals actual
+(`a_unit_forecast_to_wear_out_within_the_lead_really_does`, with its fresh-unit control), the spare
+unit (`a_spare_unit_absorbs_the_forecast_loss`), the merged entry and its queue netting, the ranking,
+the lead time (crew, one-crafter quote, queue ahead), no window, the rolling window, the schedule
+opening a slot, auto-craft with and without a usable shortage above, the stale skip, the save round
+trip and the splinter.
+
 Pinned by `craft_suggestions::tests` (ranking and ties, work only where gear adds work, queue netting
 to zero, fractional shortfalls, the cumulative queued-job walk, the build/non-build order and the
 merge), `build_queue::the_jobs_behind_the_head_are_suggested_their_tools_off_the_encoded_frame` and, off the encoded frame, by

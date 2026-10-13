@@ -5272,6 +5272,20 @@ table CraftSuggestion {
   // after the whole queue's claims (a queued suggestion lands at the queue's end). Empty when no
   // recipe makes the item or the stock covers it. Appended last.
   shortfalls:[MaterialShortfall];
+  // COMING UP (#778) - the share of `count` that is a forecast rather than a shortage today: units
+  // that will wear out before the bench could replace them, netted against the queue AFTER the
+  // current shortfall is. `count - upcomingCount` is what is short now. An item that is only coming
+  // up has empty `sources`, `workersWithout` 0 and `workPerTurn` 0, and ranks below every shortage.
+  // Appended last.
+  upcomingCount:uint = 0;
+  // Turns until the band goes short of the item at the recent wear rate - a spare nobody holds
+  // covers the first loss, so this can be later than the unit in hand's life (a float: the rate is
+  // an average). 0 with no forecast for the item. Only the coming-up entries are ordered by it.
+  expiresInTurns:float = 0;
+  // The bench's lead time for one more unit of the item, in whole turns (>= 1): the work already
+  // queued ahead plus one unit, at the bench's crew (one crafter when unstaffed). It is the horizon
+  // the forecast looks ahead by. 0 with no forecast for the item.
+  leadTurns:uint = 0;
 }
 
 // ONE CONSUMER GOING WITHOUT AN ITEM — a row of CraftSuggestion.sources, keyed so the client can

@@ -717,5 +717,9 @@
   "life_readout": {
     "warn_fraction": 0.34,
     "danger_fraction": 0.1
+  },
+  "_comment_wear_forecast": "THE WINDOW THE 'COMING UP' CRAFT SUGGESTIONS READ A WEAR RATE OFF (#778). Every wear charge passes through BandEquipment::wear_item, which records the condition each item lost, per turn; the forecast rate for an item is the condition charged over the last window_turns turns divided by the turns actually recorded (never more than this). A longer window averages a hunt's lumpy strikes more honestly but lags a change of staffing by more turns; a shorter one follows staffing faster and swings with each lump. 10 is roughly the span a kit item's life is quoted over in life_readout. PLAYTEST DIAL; must be at least 1. Nothing but the suggestion list reads it.",
+  "wear_forecast": {
+    "window_turns": 10
   }
 }
