@@ -60,7 +60,7 @@ func draw_primary_bands(radius: float, origin: Vector2) -> void:
 
 ## **REMEMBERED BANDS** — a ghost token for every people the viewer holds a tie to and cannot
 ## currently see (`MapView.remembered_bands`), at the tile it was last seen on. Same stage art a band
-## token wears, desaturated, at `lerp(REMEMBERED_MIN_ALPHA, REMEMBERED_MAX_ALPHA, strength)`. Drawn in
+## token wears, desaturated, at faded by the age of the news (`REMEMBERED_FADE_TURNS`). Drawn in
 ## the live `_draw` (above the fog tint, which is a terrain tint), no nameplate and no decorations.
 func draw_remembered_bands(radius: float, origin: Vector2) -> void:
 	var rows: Array = _view.remembered_bands()
@@ -72,8 +72,8 @@ func draw_remembered_bands(radius: float, origin: Vector2) -> void:
 	var token_radius := radius * _view.BAND_TOKEN_RADIUS_FACTOR
 	var glyph_size := int(maxf(_view.SECONDARY_ICON_MIN_SIZE, token_radius * _view.BAND_STAGE_GLYPH_SIZE_FACTOR))
 	for tie in rows:
-		var alpha := lerpf(_view.REMEMBERED_MIN_ALPHA, _view.REMEMBERED_MAX_ALPHA,
-			clampf(float(tie.get("strength", 0.0)), 0.0, 1.0))
+		var alpha := lerpf(_view.REMEMBERED_MAX_ALPHA, _view.REMEMBERED_MIN_ALPHA,
+			clampf(float(tie.get("news_age", 0)) / float(_view.REMEMBERED_FADE_TURNS), 0.0, 1.0))
 		var center: Vector2 = _view._hex_center_wrapped(
 			int(tie.get("last_seen_x", 0)), int(tie.get("last_seen_y", 0)), radius, origin)
 		var box := Rect2(center - Vector2(glyph_size, glyph_size) * 0.5, Vector2(glyph_size, glyph_size))

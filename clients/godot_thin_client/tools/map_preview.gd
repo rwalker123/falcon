@@ -7547,11 +7547,20 @@ func _hex_probe_rect(image: Image, tile: Vector2i, radii: float) -> Rect2i:
 ## mean |dL| against the same frame with no ties.
 const REMEMBERED_LIVE_BAND_ID := 900
 const REMEMBERED_TILES := [Vector2i(5, 3), Vector2i(8, 3), Vector2i(11, 3)]
-const REMEMBERED_STRENGTHS := [1.0, 0.4, 0.0]
+# Strength runs OPPOSITE to freshness on purpose: the ghost fades by the age of the news, so the
+# strongest tie must be the faintest ghost (strength is how well you know them, not how fresh).
+const REMEMBERED_STRENGTHS := [0.0, 0.5, 1.0]
+const REMEMBERED_NEWS_AGES := [0, 15, 30]   # turns old at REMEMBERED_TURN (fresh / halfway / fully faded)
+const REMEMBERED_POSTED_HOST_ID := 930      # the viewer has people STATIONED with this band: no ghost
+const REMEMBERED_POSTED_HOST_TILE := Vector2i(8, 8)
+const REMEMBERED_POSTED_PARTY_TILE := Vector2i(9, 8)
+const REMEMBERED_OUTBOUND_HOST_ID := 931    # a party is only WALKING there: the ghost stays
+const REMEMBERED_OUTBOUND_HOST_TILE := Vector2i(5, 8)
+const REMEMBERED_OUTBOUND_PARTY_TILE := Vector2i(4, 8)
 const REMEMBERED_STALE_TILE := Vector2i(2, 9)   # an older sighting of the faded subject: must NOT draw
 const REMEMBERED_LIVE_TILE := Vector2i(11, 9)
-const REMEMBERED_TURN := 21
-const REMEMBERED_STALE_TURNS_AGO := 5
+const REMEMBERED_TURN := 40
+const REMEMBERED_STALE_TURNS_AGO := 15   # older than the REMEMBERED_NEWS_AGES[1] sighting of the same subject
 const REMEMBERED_STALE_STRENGTH := 0.1
 const REMEMBERED_LIVE_SUBJECT_ID := 920
 const REMEMBERED_FADED_SUBJECT_ID := 911
@@ -7566,7 +7575,7 @@ func _remembered_ties() -> Array:
 			"subject_name": "Goosefen" if i == 1 else "People %d" % i,
 			"strength": REMEMBERED_STRENGTHS[i],
 			"last_seen_x": REMEMBERED_TILES[i].x, "last_seen_y": REMEMBERED_TILES[i].y,
-			"last_seen_turn": REMEMBERED_TURN})
+			"last_seen_turn": REMEMBERED_TURN - REMEMBERED_NEWS_AGES[i]})
 	ties.append({"observer_band_id": REMEMBERED_LIVE_BAND_ID + 1,
 		"subject_band_id": REMEMBERED_FADED_SUBJECT_ID,
 		"subject_name": "Goosefen", "strength": REMEMBERED_STALE_STRENGTH,
@@ -7577,7 +7586,25 @@ func _remembered_ties() -> Array:
 		"subject_name": "Livefen", "strength": 0.9,
 		"last_seen_x": REMEMBERED_LIVE_TILE.x, "last_seen_y": REMEMBERED_LIVE_TILE.y,
 		"last_seen_turn": REMEMBERED_TURN})
+	ties.append({"observer_band_id": REMEMBERED_LIVE_BAND_ID,
+		"subject_band_id": REMEMBERED_POSTED_HOST_ID,
+		"subject_name": "Posthost", "strength": 0.5,
+		"last_seen_x": REMEMBERED_POSTED_HOST_TILE.x, "last_seen_y": REMEMBERED_POSTED_HOST_TILE.y,
+		"last_seen_turn": REMEMBERED_TURN})
+	ties.append({"observer_band_id": REMEMBERED_LIVE_BAND_ID,
+		"subject_band_id": REMEMBERED_OUTBOUND_HOST_ID,
+		"subject_name": "Walkhost", "strength": 0.5,
+		"last_seen_x": REMEMBERED_OUTBOUND_HOST_TILE.x, "last_seen_y": REMEMBERED_OUTBOUND_HOST_TILE.y,
+		"last_seen_turn": REMEMBERED_TURN})
 	return ties
+
+## A station party (issue #774): `host` rides the expedition's destination band, `phase` decides whether
+## it has arrived (stationed: the host's ghost is suppressed) or is still walking (outbound: it is not).
+func _remembered_station_party(entity: int, tile: Vector2i, host: int, phase: String) -> Dictionary:
+	var party := _expedition(entity, tile.x, tile.y, phase)
+	party["expedition_mission"] = HudExpeditionVocab.EXPEDITION_MISSION_STATION
+	party["expedition_destination_band"] = host
+	return party
 
 func _remembered_band_states() -> void:
 	_map.set_fow_enabled(false)
@@ -7591,8 +7618,14 @@ func _remembered_band_states() -> void:
 		STAGE_NOMADIC, 1)
 	live["band_id"] = REMEMBERED_LIVE_SUBJECT_ID
 	snapshot["populations"].append(live)
+	snapshot["populations"].append(_remembered_station_party(STACK_ENTITY_BASE + 41,
+		REMEMBERED_POSTED_PARTY_TILE, REMEMBERED_POSTED_HOST_ID, "stationed"))
+	snapshot["populations"].append(_remembered_station_party(STACK_ENTITY_BASE + 42,
+		REMEMBERED_OUTBOUND_PARTY_TILE, REMEMBERED_OUTBOUND_HOST_ID, "outbound"))
+	snapshot["turn"] = REMEMBERED_TURN
 	_map.set_connections([])
 	_map.display_snapshot(snapshot)
+	_map.set_current_turn(REMEMBERED_TURN)
 	_map.selected_unit_id = -1
 	_map._fit_map_to_view()
 	await _settle()
@@ -7604,28 +7637,32 @@ func _remembered_band_states() -> void:
 	var deltas: Array = []
 	for tile in REMEMBERED_TILES:
 		deltas.append(_mean_abs_delta(bare, ghosts, _hex_probe_rect(ghosts, tile, REMEMBERED_PROBE_RADII)))
-	_assert_map("remembered - parked tie still shows faintly (%.4f)" % deltas[2], deltas[2] > 0.0)
-	_assert_map("remembered - opacity grades with strength (%.4f > %.4f > %.4f)" % [deltas[0], deltas[1], deltas[2]],
+	_assert_map("remembered - news a full fade window old still shows faintly (%.4f)" % deltas[2], deltas[2] > 0.0)
+	_assert_map("remembered - opacity grades by news AGE, against strength (%.4f > %.4f > %.4f)" % [deltas[0], deltas[1], deltas[2]],
 		deltas[0] > deltas[1] and deltas[1] > deltas[2])
+	_assert_map("remembered - a subject we are stationed with draws no ghost",
+		_count_changed_pixels(bare, ghosts, _hex_probe_rect(ghosts, REMEMBERED_POSTED_HOST_TILE, REMEMBERED_PROBE_RADII)) == 0)
+	_assert_map("remembered - a host a party is only walking to keeps its ghost",
+		_mean_abs_delta(bare, ghosts, _hex_probe_rect(ghosts, REMEMBERED_OUTBOUND_HOST_TILE, REMEMBERED_PROBE_RADII)) > 0.0)
 	_assert_map("remembered - an older sighting of the same subject draws nothing",
 		_count_changed_pixels(bare, ghosts, _hex_probe_rect(ghosts, REMEMBERED_STALE_TILE, REMEMBERED_PROBE_RADII)) == 0)
 	_assert_map("remembered - a subject with a live band marker draws no ghost",
 		_count_changed_pixels(bare, ghosts, _hex_probe_rect(ghosts, REMEMBERED_LIVE_TILE, REMEMBERED_PROBE_RADII)) == 0)
 	var rows: Array = _map.remembered_bands()
-	_assert_map("remembered - one row per unseen subject", rows.size() == REMEMBERED_TILES.size())
+	_assert_map("remembered - one row per unseen subject", rows.size() == REMEMBERED_TILES.size() + 1)   # + the outbound host
 	var faded: Dictionary = {}
 	for row in rows:
 		if int(row["subject_band_id"]) == REMEMBERED_FADED_SUBJECT_ID:
 			faded = row
-	_assert_map("remembered - latest sighting places it, strongest tie fades it",
+	_assert_map("remembered - latest sighting places it and ages it",
 		int(faded.get("last_seen_x", -1)) == REMEMBERED_TILES[1].x
-			and is_equal_approx(float(faded.get("strength", -1.0)), REMEMBERED_STRENGTHS[1]))
+			and int(faded.get("news_age", -1)) == REMEMBERED_NEWS_AGES[1])
 	var info: Dictionary = _map._tile_info_at(REMEMBERED_TILES[1].x, REMEMBERED_TILES[1].y)
 	_assert_map("remembered - the hex tooltip info carries the ghost",
 		(info.get("remembered_bands", []) as Array).size() == 1)
 	var hover := ConnectionsRoster.remembered_hover_line(faded, HudBandLaborState.new())
 	_assert_map("remembered - hover line names the band and when (%s)" % hover,
-		hover == "Goosefen — last seen turn 21, may have moved")
+		hover == "Goosefen — last seen turn %d, may have moved" % (REMEMBERED_TURN - REMEMBERED_NEWS_AGES[1]))
 	_map.set_connections([])
 
 ## Mean per-pixel |dL| between two same-size frames inside `rect` - a perceptible-magnitude measure,

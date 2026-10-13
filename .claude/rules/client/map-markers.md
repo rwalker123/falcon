@@ -429,13 +429,21 @@ The Peoples tab lists a band at "Last seen at (x, y), turn N"; the map used to s
 **subject band** in the viewer's `connections` ties (`MapView.set_connections`, pushed by `Main` beside
 `update_connections`) that has **no band marker drawn this frame** (`units`, fog-gated by
 `_unit_hidden_by_fog` — a foreign band on a fogged tile counts as not drawn, so its ghost shows). Of
-several ties to one subject the **latest `last_seen_turn`** places it and the **strongest `strength`**
-fades it. `BandMarkerRenderer.draw_remembered_bands` (called right after `draw_primary_bands`, in the
-live `_draw`, so above the fog tint, which is a terrain tint) draws the nomadic stage sprite
-(`REMEMBERED_STAGE_ID` — the real stage is unknown) desaturated (`REMEMBERED_GREY_AMOUNT`, a cached
-`ImageTexture` per stage) at `lerp(REMEMBERED_MIN_ALPHA 0.25, REMEMBERED_MAX_ALPHA 0.7, strength)`; no
-nameplate, no decorations. MAX stays under 1 so a full tie still reads "not live"; MIN stays above 0
-so a PARKED tie shows faintly — the ghost leaves only when the edge drops off the wire.
+several ties to one subject the **latest `last_seen_turn`** places it. **A subject the viewer has people
+stationed with gets none either**: one of the viewer's own expeditions with mission `station`, phase
+`stationed` and `expedition_destination_band` = that subject suppresses it, because the party's own
+marker already shows where the host is, live (an outbound or returning station party does not suppress
+it — the host is still only remembered). **The ghost fades by the AGE OF THE NEWS, never by tie
+strength**: `news_age` = `_current_turn` (`MapView.set_current_turn`, pushed by `Main` from the
+snapshot `turn`) minus the placing tie's `last_seen_turn`, floored at 0, and
+`BandMarkerRenderer.draw_remembered_bands` draws the nomadic stage sprite (`REMEMBERED_STAGE_ID` — the
+real stage is unknown) desaturated (`REMEMBERED_GREY_AMOUNT`, a cached `ImageTexture` per stage) at
+`lerp(REMEMBERED_MAX_ALPHA 0.7, REMEMBERED_MIN_ALPHA 0.25, clamp(news_age / REMEMBERED_FADE_TURNS, 0, 1))`
+(`REMEMBERED_FADE_TURNS` = 30, the playtest lever; a plain `MapView` const because the client has no
+display-tuning surface). Strength is how well you know them, not how fresh the news is, so it does not
+touch the marker. Called right after `draw_primary_bands`, in the live `_draw`, so above the fog tint
+(a terrain tint); no nameplate, no decorations. MAX stays under 1 so a ghost never reads "live"; MIN
+stays above 0 so old news still shows faintly — the ghost leaves only when the edge drops off the wire.
 `_tile_info_at` stamps `remembered_bands` (the tie rows on that hex); `Hud.show_tooltip` adds
 `ConnectionsRoster.remembered_hover_line` (`HudConnectionsVocab.REMEMBERED_HOVER_FORMAT`, name via
 `subject_label`): `Goosefen — last seen turn 21, may have moved`. Not clickable. Frame:

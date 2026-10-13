@@ -952,6 +952,8 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     # is not expected to skip; the wins are the quiet sections — `intensification_knowledge`,
     # `discovered_sites`, `faction_inventory`, `food_modules`, `sedentarization`.
     _hud_invoke("update_overlay", [snapshot.get("turn", 0), metrics])
+    if map_view != null and map_view.has_method("set_current_turn"):
+        map_view.set_current_turn(int(snapshot.get("turn", 0)))
     if snapshot.has("server_build"):
         _hud_invoke("update_build_info", [String(snapshot["server_build"])])
     if snapshot.has("sedentarization") and SnapshotSections.changed(snapshot, "sedentarization"):
