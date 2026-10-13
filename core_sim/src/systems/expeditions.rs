@@ -2568,7 +2568,8 @@ fn expedition_take_biomass(
     // `docs/plan_hunt_through_combat.md` §1, in the same order `systems::hunt_take` runs them.
     // Wariness `0` makes the retreat an exact identity that consumes no randomness, so a raid is
     // byte-identical until values are authored.
-    let engaged = fauna::animals_engaged(workers as f32, engage_rate)
+    let reach = fauna::animals_engaged(workers as f32, engage_rate);
+    let engaged = reach
         // **Restraint is free** — the mission's floor bounds what the party goes after, so a raid at
         // its floor takes no casualties for animals it was never going to kill (§1).
         .min(fauna::animals_affordable(ceiling, body_mass));
@@ -2576,10 +2577,13 @@ fn expedition_take_biomass(
     // `systems::hunt_take` uses; see the note there. A raid quoted for a trapping party must project
     // the trap's stand-off, and `expedition_take_biomass` is both the raid's take and its own
     // forecast, so the two cannot diverge once this is right.
+    // **Reach AND the room-clamped engagement** - the retreat is each crew's own, and splitting a
+    // clamped engagement between crews needs the reach it was clamped from ([`fauna::Contact`]).
+    let contact = fauna::Contact { reach, engaged };
     let (stayed, fight) = match roll {
         RaidRoll::Live(seed) => {
             let draw = fauna::HuntDraw::Seeded(seed);
-            let stayed = party.stayers(engaged, wariness, draw);
+            let stayed = party.stayers(contact, wariness, draw);
             // **The fight decides the kill** (§4) — the same resolution the resident band runs.
             // A detached party builds nothing, so its whole crew fights.
             (
@@ -2593,9 +2597,9 @@ fn expedition_take_biomass(
         // seam the resident band's projections read ([`fauna::kill_over_retreat`]), banked into
         // whole bodies on the quarry's own wound ledger exactly as `fauna::KillCarry` banks them.
         RaidRoll::Forecast(reading) => {
-            let outcomes = party.stayer_outcomes(engaged, wariness);
+            let outcomes = party.stayer_outcomes(contact, wariness);
             let bodies = fauna::kill_over_retreat(
-                engaged,
+                contact,
                 wariness,
                 workers as f32,
                 party,

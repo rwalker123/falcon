@@ -6259,7 +6259,10 @@ impl HuntProjection {
         // the kill arm's own carry.
         let brought_down = {
             let expected = expected_kill_over_retreat(
-                reach.min(animals_affordable(rate, quarry.body_mass)),
+                Contact {
+                    reach,
+                    engaged: reach.min(animals_affordable(rate, quarry.body_mass)),
+                },
                 self.wariness,
                 workers,
                 party,
@@ -6418,7 +6421,10 @@ pub fn project_arrivals_hunt(
             // ([`HuntProjection::step`]), so the two readings count the same animals.
             let brought_down = {
                 let expected = expected_kill_over_retreat(
-                    reach.min(animals_affordable(ceiling, quarry.body_mass)),
+                    Contact {
+                        reach,
+                        engaged: reach.min(animals_affordable(ceiling, quarry.body_mass)),
+                    },
                     wariness,
                     workers,
                     party,
@@ -6607,7 +6613,8 @@ pub(crate) fn forecast_take_outcomes(
                         ceiling.component(axis),
                         quantum.component(axis),
                     ));
-                    let outcomes = party.stayer_outcomes(engaged, quarry.profile.wariness);
+                    let outcomes =
+                        party.stayer_outcomes(Contact { reach, engaged }, quarry.profile.wariness);
                     // **The same kill arm the take runs** — a fight, or the pen's slaughter. A
                     // forecast that fought a pen the turn does not would be exactly the
                     // forecast-vs-actual split `yield-forecast.md` forbids. Whole bodies, off the
@@ -7462,11 +7469,35 @@ pub struct RetreatOutcome {
 /// paid, an aurochs herd `5.38` against `4.70`. [`expected_kill_over_retreat`] resolves the fight on
 /// each outcome instead, which is what makes a projection the take's expectation.
 pub fn retreat_outcomes(engaged: f32, wariness: f32) -> Vec<RetreatOutcome> {
+    let pmf = retreat_pmf(engaged, wariness);
+    pmf.points
+        .iter()
+        .map(|&(bodies, probability)| RetreatOutcome {
+            probability: probability as f32,
+            stayed: bodies as f32 + pmf.kept_partial,
+        })
+        .collect()
+}
+
+/// **A retreat's distribution as whole bodies** - `stayed = bodies + kept_partial` with the
+/// probability of each body count, in `f64` so [`retreat_outcomes_runs`] can convolve runs without
+/// compounding `f32` error. The single place the binomial is walked.
+struct RetreatPmf {
+    /// The part body kept at its expectation on every outcome (or the whole engagement when no
+    /// draw is made).
+    kept_partial: f32,
+    /// `(whole bodies that stayed, probability)`, ascending, tails below
+    /// [`NEGLIGIBLE_RETREAT_OUTCOME`] dropped.
+    points: Vec<(u32, f64)>,
+}
+
+/// [`retreat_outcomes`]' walk, as a distribution over whole bodies. See that function for the model.
+fn retreat_pmf(engaged: f32, wariness: f32) -> RetreatPmf {
     if wariness <= 0.0 || !engaged.is_finite() || engaged <= 0.0 {
-        return vec![RetreatOutcome {
-            probability: 1.0,
-            stayed: engaged,
-        }];
+        return RetreatPmf {
+            kept_partial: engaged,
+            points: vec![(0, 1.0)],
+        };
     }
     let bodies = engaged.floor();
     let partial = (engaged - bodies).max(0.0);
@@ -7474,32 +7505,173 @@ pub fn retreat_outcomes(engaged: f32, wariness: f32) -> Vec<RetreatOutcome> {
     let kept_partial = partial * stay_chance;
     let whole = bodies as u32;
     if stay_chance <= 0.0 {
-        // Everything breaks off — the draw's `gen_bool(1.0)` on every body.
-        return vec![RetreatOutcome {
-            probability: 1.0,
-            stayed: kept_partial,
-        }];
+        // Everything breaks off - the draw's `gen_bool(1.0)` on every body.
+        return RetreatPmf {
+            kept_partial,
+            points: vec![(0, 1.0)],
+        };
     }
     // The binomial pmf, walked in log space so a large engagement cannot underflow its first term:
-    // `ln P(0) = n·ln(1 − p)`, and each next term multiplies by `(n − k)/(k + 1) · p/(1 − p)`.
+    // `ln P(0) = n*ln(1 - p)`, and each next term multiplies by `(n - k)/(k + 1) * p/(1 - p)`.
     let p = f64::from(stay_chance);
     let n = f64::from(whole);
     let (ln_p, ln_q) = (p.ln(), (1.0 - p).ln());
     let mut ln_pmf = n * ln_q;
-    let mut outcomes = Vec::new();
+    let mut points = Vec::new();
     for k in 0..=whole {
         if k > 0 {
             let k_f = f64::from(k);
             ln_pmf += ((n - k_f + 1.0) / k_f).ln() + ln_p - ln_q;
         }
-        // `wariness > 0` was checked above, so `1 − p > 0` and `ln_q` is finite.
+        // `wariness > 0` was checked above, so `1 - p > 0` and `ln_q` is finite.
         let probability = ln_pmf.exp();
         if probability >= NEGLIGIBLE_RETREAT_OUTCOME {
-            outcomes.push(RetreatOutcome {
-                probability: probability as f32,
-                stayed: k as f32 + kept_partial,
-            });
+            points.push((k, probability));
         }
+    }
+    RetreatPmf {
+        kept_partial,
+        points,
+    }
+}
+
+/// **What a hunt reached, before the retreat** - the party's unclamped reach and the engagement the
+/// herd's escapement room left of it.
+///
+/// The retreat is each CREW's own ([`HuntingParty::contacts`]), and splitting a clamped engagement
+/// between crews needs the reach it was clamped from: when the room does not bind every crew gets its
+/// whole reach, and when it does the quietest crews fill it first.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Contact {
+    /// `workers x engage_rate` ([`animals_engaged`]) - what the party would reach with no room bound.
+    pub reach: f32,
+    /// The reach after the room clamped it - the animals actually brought into contact.
+    pub engaged: f32,
+}
+
+impl Contact {
+    /// An engagement the room did not clamp (a fixture, a closed form): `engaged == reach`.
+    pub fn unclamped(engaged: f32) -> Self {
+        Self {
+            reach: engaged,
+            engaged,
+        }
+    }
+}
+
+/// **One run of crews that retreat together** - the animals they brought into contact and the
+/// effective wariness (`clamp(wariness x dispersion, 0, 1)`) they break off at.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CrewContact {
+    pub engaged: f32,
+    pub wariness: f32,
+}
+
+/// The seed offset a run after the first draws from, per position. Any odd 64-bit constant; named so
+/// the draw's determinism is a stated property rather than an accident (the golden-ratio increment
+/// `SplitMix64` uses).
+const RUN_SEED_STRIDE: u64 = 0x9E37_79B9_7F4A_7C15;
+
+/// **The runs' stayers, summed** - `draw_one` (the whole-animal or rate form of the single-binomial
+/// draw) applied to each run and added.
+///
+/// - **One run** is `draw_one` itself, byte-for-byte.
+/// - **A seeded draw** draws each run from the seed offset by its position, so the live take is
+///   deterministic per event and the runs are independent.
+/// - **A quantile** combines the runs as the sum of independent binomials does: means and variances
+///   add, and the `sigmas` deviation is read once on the sum (clamped to `0..=Sigma engaged`) - not
+///   once per run, which would widen the band by the number of runs.
+fn animals_that_stay_runs(
+    runs: &[CrewContact],
+    draw: HuntDraw,
+    draw_one: fn(f32, f32, HuntDraw) -> f32,
+) -> f32 {
+    if let [only] = runs {
+        return draw_one(only.engaged, only.wariness, draw);
+    }
+    match draw {
+        HuntDraw::Seeded(seed) => runs
+            .iter()
+            .enumerate()
+            .map(|(index, run)| {
+                let offset = RUN_SEED_STRIDE.wrapping_mul(index as u64);
+                draw_one(
+                    run.engaged,
+                    run.wariness,
+                    HuntDraw::Seeded(seed.wrapping_add(offset)),
+                )
+            })
+            .sum(),
+        HuntDraw::Quantile { sigmas } => {
+            // Each run's mean and variance are read off its own zero-sigma and unit-sigma draws, so
+            // the whole-animal / rate distinction and the identity guards stay `draw_one`'s.
+            let (mut mean, mut variance, mut ceiling) = (0.0f32, 0.0f32, 0.0f32);
+            for run in runs {
+                let at_mean = draw_one(
+                    run.engaged,
+                    run.wariness,
+                    HuntDraw::Quantile { sigmas: 0.0 },
+                );
+                let unit = draw_one(
+                    run.engaged,
+                    run.wariness,
+                    HuntDraw::Quantile { sigmas: 1.0 },
+                );
+                mean += at_mean;
+                variance += (unit - at_mean).powi(2);
+                // A run's most is everything it reached.
+                ceiling += run.engaged;
+            }
+            (mean + sigmas * variance.sqrt()).clamp(0.0, ceiling.max(mean))
+        }
+    }
+}
+
+/// **The sum of every run's own retreat** - [`retreat_outcomes`] of each run, convolved. One run is
+/// [`retreat_outcomes`] exactly.
+///
+/// The body counts add, so the convolution is taken over body counts (the tails below
+/// [`NEGLIGIBLE_RETREAT_OUTCOME`] are dropped after each run, exactly as one run drops them), and the
+/// kept part bodies add into the offset every outcome carries. This is the distribution the live
+/// take samples run by run, which is what keeps the band's edges ([`retreat_band_edge`]) the
+/// quantiles of the take rather than of a stand-in.
+pub fn retreat_outcomes_runs(runs: &[CrewContact]) -> Vec<RetreatOutcome> {
+    if let [only] = runs {
+        return retreat_outcomes(only.engaged, only.wariness);
+    }
+    let mut kept_partial = 0.0f32;
+    let mut sum: Vec<f64> = vec![1.0];
+    for run in runs {
+        let pmf = retreat_pmf(run.engaged, run.wariness);
+        kept_partial += pmf.kept_partial;
+        let top = pmf.points.last().map_or(0, |&(bodies, _)| bodies) as usize;
+        let mut next = vec![0.0f64; sum.len() + top];
+        for (have, probability) in sum.iter().enumerate() {
+            if *probability < NEGLIGIBLE_RETREAT_OUTCOME {
+                continue;
+            }
+            for &(bodies, chance) in &pmf.points {
+                next[have + bodies as usize] += probability * chance;
+            }
+        }
+        sum = next;
+    }
+    let outcomes: Vec<RetreatOutcome> = sum
+        .iter()
+        .enumerate()
+        .filter(|(_, probability)| **probability >= NEGLIGIBLE_RETREAT_OUTCOME)
+        .map(|(bodies, probability)| RetreatOutcome {
+            probability: *probability as f32,
+            stayed: bodies as f32 + kept_partial,
+        })
+        .collect();
+    if outcomes.is_empty() {
+        // Every run's mass sat below the cutoff (a degenerate input); one certain outcome at the
+        // expected head count is the honest answer.
+        return vec![RetreatOutcome {
+            probability: CERTAIN_OUTCOME,
+            stayed: kept_partial,
+        }];
     }
     outcomes
 }
@@ -7532,7 +7704,7 @@ pub fn retreat_outcomes(engaged: f32, wariness: f32) -> Vec<RetreatOutcome> {
 /// Fractional, deliberately: a projection that needs whole bodies banks it forward itself
 /// ([`KillCarry`]), the same way the take's own ledger does.
 pub fn expected_kill_over_retreat(
-    engaged: f32,
+    contact: Contact,
     wariness: f32,
     workers: f32,
     party: &HuntingParty,
@@ -7540,7 +7712,7 @@ pub fn expected_kill_over_retreat(
     wounds: DamageLedger,
     quantum: EngagementQuantum,
 ) -> f32 {
-    let outcomes = party.stayer_outcomes(engaged, wariness);
+    let outcomes = party.stayer_outcomes(contact, wariness);
     let kills = OutcomeKills::resolve(
         &outcomes,
         workers,
@@ -7558,7 +7730,7 @@ pub fn expected_kill_over_retreat(
 /// the kill through, so an edge is always a kill some retreat outcome produces.
 #[allow(clippy::too_many_arguments)] // the kill arm's inputs, plus which reading of it
 pub fn kill_over_retreat(
-    engaged: f32,
+    contact: Contact,
     wariness: f32,
     workers: f32,
     party: &HuntingParty,
@@ -7569,10 +7741,10 @@ pub fn kill_over_retreat(
 ) -> f32 {
     match reading {
         TakeReading::Mean => {
-            expected_kill_over_retreat(engaged, wariness, workers, party, quarry, wounds, quantum)
+            expected_kill_over_retreat(contact, wariness, workers, party, quarry, wounds, quantum)
         }
         TakeReading::Edge { sigmas } => {
-            let outcomes = party.stayer_outcomes(engaged, wariness);
+            let outcomes = party.stayer_outcomes(contact, wariness);
             let kills = OutcomeKills::resolve(
                 &outcomes,
                 workers,
@@ -7962,6 +8134,9 @@ impl QuarryFight {
 /// **A partly-equipped party is SEVERAL parties**, which is why the profile is a list: see
 /// [`HuntCrew`], and [`crate::equipment_config::EquipmentConfig::coverage`] for how the gear divides
 /// the people.
+///
+/// **There is no party-wide dispersion.** The retreat is each crew's own
+/// ([`HuntCrew::dispersion`], [`HuntingParty::contacts`]).
 #[derive(Debug, Clone, PartialEq)]
 pub struct HuntingParty {
     /// **The runs of hunters holding the same gear**, best-equipped first, and `Σ share == 1`.
@@ -7970,25 +8145,6 @@ pub struct HuntingParty {
     /// The resolver severity dials this party fights at. An expedition passes the
     /// `expedition_danger_multiplier`-scaled lethality; a resident band the base tuning.
     pub tuning: CombatTuning,
-    /// **Multiplies the quarry's own `wariness` at the retreat**
-    /// ([`crate::equipment_config::EquipmentStat::Dispersion`]), neutral at `1.0`.
-    ///
-    /// A multiplier rather than a subtraction so the **species** decides how much a noisy approach
-    /// costs: at `wariness 0.85` a gazelle loses almost everything to one, at `0.10` a mammoth barely
-    /// notices. That is what lets a single spear line scatter a warren and contain a mammoth with no
-    /// per-target authoring — and why a targets/size-class axis on equipment was not needed.
-    ///
-    /// `0` (a trap) means **nothing breaks off**, which is the `wariness 0` identity the retreat has
-    /// always had rather than a new branch.
-    ///
-    /// # It is PARTY-WIDE, and it is the MAX across the crews
-    ///
-    /// The same clause [`crate::equipment_config::KitChoice::best_declared`] resolves an item's
-    /// multipliers with, one level up: if part of your party is running up and throwing spears, the
-    /// herd is scared — the trap line the other half set does not un-scare it. So a party that
-    /// could only arm half its people with the stand-off device is *loud*, and buying the quiet
-    /// approach means buying enough of it.
-    pub dispersion: f32,
 }
 
 /// **One run of hunters holding the same gear** — the party's own
@@ -8013,6 +8169,17 @@ pub struct HuntCrew {
     /// One hunter's combat profile in this run — intrinsic ⊕ what *this* run is holding. `attack 1`
     /// bare-handed, `20` speared.
     pub hunter: CombatStats,
+    /// **How loud THIS run approaches** — the dispersion of the kit *this* run is holding
+    /// ([`crate::equipment_config::EquipmentStat::Dispersion`]), multiplying the quarry's own
+    /// `wariness` at the retreat. Neutral `1.0`, `0` for a trap.
+    ///
+    /// ⛔ **It is a CREW's, never the party's.** It used to be one party-wide figure, the MAX across
+    /// the crews, so a bare hunter added to a one-trap party made the whole party loud and cut a Wild
+    /// Fowl take from `10` to `6.95` a turn. Each hunter's gear now decides what that hunter keeps:
+    /// the trapper still keeps every animal the trap line reaches, and the bare hand keeps its own
+    /// share of what *it* reaches ([`HuntingParty::contacts`]) — so another hunter never lowers the
+    /// take, the way a forage or extract crew already behaves.
+    pub dispersion: f32,
     /// **The hunt's own hazard, per animal engaged**
     /// ([`crate::combat_config::CombatConfig::hunt_injury_damage_per_animal`]) — damage the *activity*
     /// does to the party whatever the quarry swings (§4.6).
@@ -8077,6 +8244,7 @@ impl PartyResolution<'_> {
                         .equipment
                         .hunter_profile_unbounded(self.intrinsic, &crew.kit, self.wear),
                 },
+                dispersion: self.equipment.dispersion(&crew.kit, self.wear),
                 injury_damage_per_animal: self.hunt_injury_damage_per_animal
                     * self.equipment.exposure(&crew.kit, self.wear),
             })
@@ -8108,15 +8276,6 @@ impl PartyResolution<'_> {
         HuntingParty {
             crews,
             tuning: self.tuning,
-            // **The MAX across the crews** — see [`HuntingParty::dispersion`]. Resolved from each
-            // crew's own kit rather than the party's, so a party that could not arm everybody with
-            // the quiet instrument is priced at the loud one.
-            dispersion: self
-                .coverage
-                .crews()
-                .iter()
-                .map(|crew| self.equipment.dispersion(&crew.kit, self.wear))
-                .fold(f32::NEG_INFINITY, f32::max),
         }
     }
 
@@ -8145,10 +8304,10 @@ impl HuntingParty {
                 share: 1.0,
                 kit: None,
                 hunter,
+                dispersion,
                 injury_damage_per_animal,
             }],
             tuning,
-            dispersion,
         }
     }
 
@@ -8164,43 +8323,131 @@ impl HuntingParty {
             .unwrap_or_default()
     }
 
-    /// **How many of the animals it reached stay to be fought** — [`animals_that_stay`] with the
-    /// kit's `dispersion` applied to the quarry's own `wariness`.
+    /// **WHO REACHES WHAT, AND AT WHOSE VOLUME** - the party's engagement split into the runs that
+    /// retreat together, each at its own crew's dispersion.
     ///
-    /// The product is **clamped into `0..=1`** because both factors are authored: a species may ship
-    /// `wariness 0.85` and a future kit a dispersion above `1.0` (a noisy drive), and a probability
-    /// above one is not a probability. `0` is the identity the retreat has always had — no draw is
-    /// made at all — so a trap line lands in a tested regime rather than a new branch.
-    pub fn stayers(&self, engaged: f32, wariness: f32, draw: HuntDraw) -> f32 {
-        animals_that_stay(engaged, effective_wariness(wariness, self.dispersion), draw)
+    /// # Each hunter's gear decides what that hunter keeps
+    ///
+    /// A crew reaches `contact.reach * share` animals (its own head count's reach), and **those**
+    /// animals break off at `clamp(wariness * crew.dispersion, 0, 1)`. A trapper keeps every animal
+    /// the trap line reaches and a bare hand keeps its own share of what it reaches, so adding a
+    /// hunter - armed or bare - can only add stayers. The retired party-wide MAX dispersion made one
+    /// bare hand loud for the whole party and cut a one-trap Wild Fowl party from `10` to `6.95` a
+    /// turn when a second, bare hunter joined.
+    ///
+    /// # The room is spent QUIETEST FIRST
+    ///
+    /// `contact.engaged` is the reach after the herd's escapement room clamped it
+    /// ([`animals_affordable`] / [`animals_sparable`]). When the room binds, the crews fill it in
+    /// ascending order of effective wariness, so a hunter who adds reach beyond the room adds nothing
+    /// rather than displacing a quieter crew's animals: the take stays non-decreasing in the party.
+    /// When it does not bind every crew gets its whole reach.
+    ///
+    /// # Runs of equal wariness MERGE
+    ///
+    /// Crews at the same effective wariness (a spear crew and a bare crew are both at the neutral
+    /// `1.0`) are one binomial over their summed engagement, so a party whose crews do not differ in
+    /// dispersion resolves **byte-identically** to the single-profile retreat it always was. The
+    /// result is sorted quietest first and is never empty.
+    pub fn contacts(&self, contact: Contact, wariness: f32) -> Vec<CrewContact> {
+        let single = |crew_wariness: f32| {
+            vec![CrewContact {
+                engaged: contact.engaged,
+                wariness: crew_wariness,
+            }]
+        };
+        // A non-finite engagement (a pen with no engagement stage, a plant) has nothing to split and
+        // nothing to retreat from; one crew answers it unchanged.
+        if !contact.engaged.is_finite() || !contact.reach.is_finite() {
+            return single(self.quietest_wariness(wariness));
+        }
+        let mut crews: Vec<(f32, f32)> = self
+            .crews
+            .iter()
+            .map(|crew| {
+                (
+                    effective_wariness(wariness, crew.dispersion),
+                    contact.reach * crew.share,
+                )
+            })
+            .collect();
+        crews.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut runs: Vec<CrewContact> = Vec::with_capacity(crews.len());
+        let mut room = contact.engaged.max(0.0);
+        for (crew_wariness, reach) in &crews {
+            let engaged = reach.min(room);
+            room -= engaged;
+            match runs.last_mut() {
+                Some(run) if run.wariness == *crew_wariness => run.engaged += engaged,
+                _ => runs.push(CrewContact {
+                    engaged,
+                    wariness: *crew_wariness,
+                }),
+            }
+        }
+        match runs.len() {
+            0 => single(self.quietest_wariness(wariness)),
+            1 => {
+                // One run is exactly the engagement the caller computed - not a re-summed copy.
+                runs[0].engaged = contact.engaged;
+                runs
+            }
+            _ => runs,
+        }
     }
 
-    /// **[`stayers`](Self::stayers) WITHOUT THE WHOLE-ANIMAL FLOOR** — the retreat applied to a
+    /// The effective wariness of the quietest crew - the answer for an engagement with nothing to
+    /// split.
+    fn quietest_wariness(&self, wariness: f32) -> f32 {
+        self.crews
+            .iter()
+            .map(|crew| effective_wariness(wariness, crew.dispersion))
+            .fold(f32::INFINITY, f32::min)
+            .min(1.0)
+    }
+
+    /// **How many of the animals it reached stay to be fought** - each run of crews drawn at its own
+    /// dispersion ([`Self::contacts`]) and summed.
+    ///
+    /// A run that is the whole party is [`animals_that_stay`] itself; further runs draw from the same
+    /// seed offset by their position, so a live take stays deterministic per event. The clamp into
+    /// `0..=1` is [`effective_wariness`]'s: both factors are authored.
+    pub fn stayers(&self, contact: Contact, wariness: f32, draw: HuntDraw) -> f32 {
+        animals_that_stay_runs(&self.contacts(contact, wariness), draw, animals_that_stay)
+    }
+
+    /// **[`stayers`](Self::stayers) WITHOUT THE WHOLE-ANIMAL FLOOR** - the retreat applied to a
     /// fractional engagement, for [`EngagementQuantum::Rate`].
-    ///
-    /// **The whole rate reads one continuous binomial**, rather than [`stayers`](Self::stayers)'s
-    /// drawn bodies plus a closed-form remainder. The two agree on the mean and differ only in the
-    /// spread a [`HuntDraw::Quantile`] reports — this one takes its deviation over the whole
-    /// fractional `n`, which is the reading a *rate* wants, while a turn's draw can only deviate on
-    /// the bodies it actually rolled.
-    pub fn stayers_at_rate(&self, engaged: f32, wariness: f32, draw: HuntDraw) -> f32 {
-        animals_that_stay_at_rate(engaged, effective_wariness(wariness, self.dispersion), draw)
+    pub fn stayers_at_rate(&self, contact: Contact, wariness: f32, draw: HuntDraw) -> f32 {
+        animals_that_stay_runs(
+            &self.contacts(contact, wariness),
+            draw,
+            animals_that_stay_at_rate,
+        )
     }
 
-    /// **[`stayers`](Self::stayers)' whole distribution** — [`retreat_outcomes`] at this party's
-    /// dispersion, so a projection averages over exactly the draw the live take samples.
-    pub fn stayer_outcomes(&self, engaged: f32, wariness: f32) -> Vec<RetreatOutcome> {
-        retreat_outcomes(engaged, effective_wariness(wariness, self.dispersion))
+    /// **[`stayers`](Self::stayers)' whole distribution** - the sum of each run's own binomial
+    /// ([`retreat_outcomes_runs`]), so a projection averages over exactly the draw the live take
+    /// samples.
+    pub fn stayer_outcomes(&self, contact: Contact, wariness: f32) -> Vec<RetreatOutcome> {
+        retreat_outcomes_runs(&self.contacts(contact, wariness))
     }
 
-    /// **The closed form of [`stayers`](Self::stayers)** — the share of an engagement this party
-    /// keeps against a quarry of `wariness`, with its kit's `dispersion` folded in.
+    /// **The closed form of [`stayers`](Self::stayers)** - the share of an engagement this party keeps
+    /// against a quarry of `wariness`: each crew's own `1 - clamp(wariness * dispersion)` weighted by
+    /// its share of the party, which is the share of the reach it brings.
     ///
-    /// The one seam every *rate* reads the retreat through: [`per_hunter_take_biomass`] prices a kit
-    /// with it and [`hunt_engage_workers`] sizes a crew with it, so a compose sheet cannot quote a
-    /// take at one dispersion beside a crew at another.
+    /// Exact wherever the room does not bind (reach is linear in the head count); where it does,
+    /// [`Self::contacts`] fills the room quietest first and keeps at least this much, so a rate priced
+    /// here is never above what the take pays. The seam every *rate* reads the retreat through:
+    /// [`hunt_engage_workers`] sizes a crew with it, so a compose sheet cannot quote a take at one
+    /// dispersion beside a crew at another. [`per_hunter_take_biomass`] prices ONE kit, with that
+    /// kit's own dispersion.
     pub fn stay_fraction(&self, wariness: f32) -> f32 {
-        stay_fraction(wariness, self.dispersion)
+        self.crews
+            .iter()
+            .map(|crew| crew.share * stay_fraction(wariness, crew.dispersion))
+            .sum()
     }
 
     /// **The shipped, fully-kitted party at the base tuning** — the `person` row's intrinsic profile
@@ -9915,8 +10162,12 @@ pub fn resolve_hunt_engagement(
     // **⛔ It is NOT scaled inside [`herd_take_room`]**, which is also the *build* gate
     // (`systems::labor`'s `herd_is_workable`): a fully-committed dairy herd is still a legal thing
     // to gentle or to fence, and a scaled room there would make it unbuildable.
-    let EngagementReach { ceiling, engaged } =
-        engagement_reach(herd, fauna, workers, floor, quantum);
+    let EngagementReach {
+        ceiling,
+        reach,
+        engaged,
+    } = engagement_reach(herd, fauna, workers, floor, quantum);
+    let contact = Contact { reach, engaged };
     // **BOTH TERMS ARE READ AT THE HERD'S OWN RUNG**, through the two seams that step at the fence
     // ([`herd_engage_rate`], [`herd_wariness`]) rather than off the species table. Both are
     // identities on a wild herd, so nothing on the range moved; what changed is that a *penned* herd
@@ -9924,8 +10175,8 @@ pub fn resolve_hunt_engagement(
     // rung tunes the reach and the retreat only.
     let wariness = herd_wariness(herd, fauna);
     let stayed = match quantum {
-        EngagementQuantum::WholeAnimals => party.stayers(engaged, wariness, draw),
-        EngagementQuantum::Rate => party.stayers_at_rate(engaged, wariness, draw),
+        EngagementQuantum::WholeAnimals => party.stayers(contact, wariness, draw),
+        EngagementQuantum::Rate => party.stayers_at_rate(contact, wariness, draw),
     };
     // **The kill arm, at this herd's rung** — a fight on the range and on a halter, a SLAUGHTER
     // behind a fence ([`herd_fight_stage`]). The two stages above are unchanged at every rung: a pen
@@ -9955,6 +10206,9 @@ pub struct EngagementReach {
     /// The escapement room at the caller's floor, in **biomass**, on the meat side of the standing
     /// split.
     pub ceiling: f32,
+    /// What the party would reach with no room bound ([`animals_engaged`]) - the denominator the
+    /// retreat splits `engaged` between the crews with ([`Contact`]).
+    pub reach: f32,
     /// Animals brought into contact — the reach, clamped by what the herd can spare.
     pub engaged: f32,
 }
@@ -9981,7 +10235,11 @@ pub fn engagement_reach(
         EngagementQuantum::WholeAnimals => reach.min(animals_affordable(ceiling, herd.body_mass)),
         EngagementQuantum::Rate => reach.min(animals_sparable(ceiling, herd.body_mass)),
     };
-    EngagementReach { ceiling, engaged }
+    EngagementReach {
+        ceiling,
+        reach,
+        engaged,
+    }
 }
 
 /// What [`resolve_hunt_engagement`] worked out — every intermediate the take reports on, so a caller
@@ -10330,14 +10588,17 @@ pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTak
             });
             // **THE ONE CALLER THAT WANTS A RATE** — these rows are documented as a per-turn rate,
             // and are un-floored at the room and the fight. See [`EngagementQuantum`].
-            let engaged = engagement_reach(
+            let reached = engagement_reach(
                 &quarry,
                 inputs.fauna,
                 workers,
                 inputs.floor,
                 EngagementQuantum::Rate,
-            )
-            .engaged;
+            );
+            let contact = Contact {
+                reach: reached.reach,
+                engaged: reached.engaged,
+            };
             // **ONE DISTRIBUTION FOR ALL THREE ROWS** — the retreat's discrete outcomes, enumerated
             // once. `likely` is the take's MEAN over them, not the take at the retreat's mean: the
             // fight clamps each turn's blow to the bodies standing, and that clamp is concave, so the
@@ -10345,7 +10606,7 @@ pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTak
             // the same mean the work row's `realized` and arrival schedule average through, so the
             // sheet and the row quote one take. The edges are [`retreat_band_edge`] over the same
             // outcomes, each at the fight's own `±sigmas` draw.
-            let outcomes = party.stayer_outcomes(engaged, wariness);
+            let outcomes = party.stayer_outcomes(contact, wariness);
             let take_at = |kills: &OutcomeKills, stayed: f32| {
                 let brought_down = kills.projected(stayed, EngagementQuantum::Rate);
                 // A `min` against a term that does not move with the outcome is monotone, so it
@@ -14370,4 +14631,109 @@ mod tests {
     }
 
     // ---- The DENIAL requirement (`docs/plan_denial_raid.md` §3.1) --------------------------------
+
+    // ---- The retreat is each CREW's own (`HuntingParty::contacts`) --------------------------------
+
+    /// A party of `trappers` quiet hunters and `bare` loud ones over one wary quarry.
+    fn mixed_party(trappers: f32, bare: f32) -> HuntingParty {
+        const QUIET: f32 = 0.0;
+        const LOUD: f32 = 1.0;
+        let person = crate::creatures_config::CreaturesConfig::builtin().person();
+        let crew = |share: f32, dispersion: f32| HuntCrew {
+            share,
+            kit: None,
+            hunter: person,
+            dispersion,
+            injury_damage_per_animal: 0.0,
+        };
+        let total = trappers + bare;
+        let mut crews = Vec::new();
+        if trappers > 0.0 {
+            crews.push(crew(trappers / total, QUIET));
+        }
+        if bare > 0.0 {
+            crews.push(crew(bare / total, LOUD));
+        }
+        HuntingParty {
+            crews,
+            tuning: crate::combat_config::CombatConfig::builtin().tuning(),
+        }
+    }
+
+    const CREW_WARINESS: f32 = 0.65;
+    const REACH_PER_HUNTER: f32 = 10.0;
+
+    fn expected_stayers_of(party: &HuntingParty, reach: f32, engaged: f32) -> f32 {
+        party.stayers(
+            Contact { reach, engaged },
+            CREW_WARINESS,
+            HuntDraw::EXPECTED,
+        )
+    }
+
+    #[test]
+    fn each_crew_keeps_what_its_own_gear_lets_it_keep() {
+        // One trapper keeps all it reaches; the bare hand beside it keeps 35% of ITS reach - never
+        // dragging the trapper down to the loud rate.
+        let party = mixed_party(1.0, 1.0);
+        let reach = 2.0 * REACH_PER_HUNTER;
+        let kept = expected_stayers_of(&party, reach, reach);
+        let expected = REACH_PER_HUNTER + REACH_PER_HUNTER * (1.0 - CREW_WARINESS);
+        assert!((kept - expected).abs() < 1e-3, "{kept} vs {expected}");
+    }
+
+    #[test]
+    fn another_hunter_never_lowers_the_stayers_even_when_the_room_binds() {
+        // Sweep bare hands onto one trapper at a room that binds from the second hunter on.
+        const ROOM: f32 = 12.0;
+        let mut last = 0.0f32;
+        for bare in 0..=6 {
+            let party = mixed_party(1.0, bare as f32);
+            let reach = (1.0 + bare as f32) * REACH_PER_HUNTER;
+            let kept = expected_stayers_of(&party, reach, reach.min(ROOM));
+            assert!(
+                kept + 1e-4 >= last,
+                "{bare} bare hands: {kept} stayers fell below {last}"
+            );
+            last = kept;
+        }
+    }
+
+    #[test]
+    fn crews_at_one_wariness_resolve_as_the_single_binomial() {
+        // Two crews with the same dispersion are one run, byte-for-byte the uniform retreat.
+        let person = crate::creatures_config::CreaturesConfig::builtin().person();
+        let crew = |share: f32| HuntCrew {
+            share,
+            kit: None,
+            hunter: person,
+            dispersion: 1.0,
+            injury_damage_per_animal: 0.0,
+        };
+        let split = HuntingParty {
+            crews: vec![crew(0.25), crew(0.75)],
+            tuning: crate::combat_config::CombatConfig::builtin().tuning(),
+        };
+        let engaged = 7.4;
+        let runs = split.contacts(Contact::unclamped(engaged), CREW_WARINESS);
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].engaged, engaged);
+        assert_eq!(
+            split.stayer_outcomes(Contact::unclamped(engaged), CREW_WARINESS),
+            retreat_outcomes(engaged, CREW_WARINESS)
+        );
+    }
+
+    #[test]
+    fn the_summed_distribution_has_the_summed_mean_and_unit_mass() {
+        let party = mixed_party(1.0, 2.0);
+        let reach = 3.0 * 4.0;
+        let contact = Contact::unclamped(reach);
+        let outcomes = party.stayer_outcomes(contact, CREW_WARINESS);
+        let mass: f32 = outcomes.iter().map(|outcome| outcome.probability).sum();
+        assert!((mass - 1.0).abs() < 1e-4, "mass {mass}");
+        let mean = expected_stayers(&outcomes);
+        let closed = expected_stayers_of(&party, reach, reach);
+        assert!((mean - closed).abs() < 1e-3, "{mean} vs {closed}");
+    }
 }

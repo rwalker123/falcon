@@ -292,7 +292,7 @@ fn retuned(party: HuntingParty, combat: &CombatConfig) -> HuntingParty {
         party.best_equipped_hunter(),
         combat.tuning(),
         combat.hunt_injury_damage_per_animal,
-        party.dispersion,
+        party.crews[0].dispersion,
     )
 }
 

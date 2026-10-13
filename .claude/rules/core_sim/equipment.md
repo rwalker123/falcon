@@ -2011,8 +2011,9 @@ not rationed"* rule already answers.
 
 ### `HuntingParty` carries its composition, in SHARES
 
-`HuntingParty` is `{ crews: Vec<HuntCrew>, tuning, dispersion }` and is **Clone, not Copy**;
-`HuntCrew` is `{ share, hunter, injury_damage_per_animal }`.
+`HuntingParty` is `{ crews: Vec<HuntCrew>, tuning }` and is **Clone, not Copy**;
+`HuntCrew` is `{ share, kit, hunter, dispersion, injury_damage_per_animal }`. **There is no party-level
+dispersion** - it is a crew's, see below.
 
 > **`share` is a FRACTION of the party, never a head count** — that is what keeps the struct
 > **scale-free**, exactly as the single-profile form was. Every call site still passes its own
@@ -2027,11 +2028,40 @@ not rationed"* rule already answers.
   because a mass-bounded weapon cannot be resolved before the target is known. That is the
   `party_for = |body_mass| …` factory `advance_labor_allocation` and `advance_expeditions` already
   used, given a name so the coverage behind it is resolved once per party per turn.
-- **`dispersion` is PARTY-WIDE and is the MAX across the crews.** The same clause
-  `KitChoice::multiplier` resolves an item's multipliers with, one level up: if part of your party is
-  running up and throwing spears, the herd is scared — the trap line the other half set does not
-  un-scare it. So buying the quiet approach means buying **enough** of it. `stayers` / `stay_fraction`
-  are unchanged.
+- **`dispersion` is PER CREW, and each crew retreats on its own** (`HuntCrew::dispersion`,
+  `HuntingParty::contacts`). A hunter's gear decides what THAT hunter keeps: a crew reaches
+  `reach x share` animals and those animals break off at `clamp(wariness x crew.dispersion, 0, 1)`.
+  The party's stayers are the sum of the crews' own binomials, then the fight and the room clamp run
+  on the total exactly as before. Forage and extraction crews already worked this way (each crew's
+  rate is its own, summed through `KitCoverage::weighted_rate`); the hunt was the one job where a
+  crew's gear could change another crew's outcome.
+  > **WHY THE PARTY MAX WAS RETIRED (playtest).** The retreat used to read one party-wide dispersion,
+  > the MAX across the crews ("if part of your party is running up and throwing spears the herd is
+  > scared - the trap line the other half set does not un-scare it"). On a Wild Fowl herd with one
+  > Trapping kit held, one trapper took `10` a turn and adding a **bare** second hunter cut it to
+  > `6.95`: the bare hand made the trapper loud too and every animal reached broke off at `0.65`.
+  > At worst another hunter must add nothing. The trapper still keeps every animal the trap line
+  > reaches (`dispersion 0`); the bare hand keeps its own 35% of what it reaches.
+  >
+  > **What did not change:** a single hunter holding spears AND traps is still loud
+  > (`KitChoice::best_declared` is the MAX over that hunter's own items, and `spears` still declare
+  > `dispersion 1.0` so the trap's stand-off is not inherited for free) - that clause is about one
+  > person's kit and stands.
+  - **Where the room binds, the quietest crews fill it first.** `Contact { reach, engaged }` carries
+    the party's unclamped reach beside the room-clamped engagement; crews take their `reach x share`
+    in ascending effective wariness until `engaged` is spent. So an extra hunter's reach beyond the
+    room adds nothing rather than displacing a quieter crew's animals - the take is non-decreasing
+    in the party (`forecast_query::another_hunter_never_lowers_the_take`).
+  - **Crews at the same effective wariness merge into one binomial** (spears and bare hands are both
+    `1.0`), so a party whose crews do not differ in dispersion resolves byte-identically to the
+    single-profile retreat. Different runs are summed: the live draw uses each run's own seed
+    (`seed + run x stride`), the distribution is the convolution over body counts
+    (`retreat_outcomes_runs`), and a quantile edge adds means and variances once rather than
+    widening per run - so the curve's `low`/`likely`/`high` come out of the same per-crew binomials
+    the turn samples.
+  - **`HuntingParty::stay_fraction`** (the closed form `hunt_engage_workers` sizes a crew with) is the
+    share-weighted mean of the crews' own `1 - wariness x dispersion`. Exact wherever the room does not
+    bind; where it does the take keeps at least this much.
 - **`injury_damage_per_animal` is per CREW**, because `exposure` is a kit's: the half holding the
   stand-off device takes the stand-off's hazard. `hunt_injuries` gives each crew `stayed × share` of
   the engagement and caps it at that crew's own people, so a **uniformly** exposed party is
@@ -2189,8 +2219,8 @@ in `bin/server.rs`, and restored by `sim_state.rs` (`BandRecord::equipment`, car
     `forage_forecast`, `project_realized_forage` / `project_arrivals_forage`, and the
     `workers_needed` inversion.
 
-  - `dispersion` (the **trap's**, and the spear's explicit neutral) rides the `HuntingParty` the arm
-    builds, so it reaches all three of the retreat's readers at once: the drawn take (`hunt_take`),
+  - `dispersion` (the **trap's**, and the spear's explicit neutral) rides each `HuntCrew` of the
+    `HuntingParty` the arm builds, so it reaches all three of the retreat's readers at once: the drawn take (`hunt_take`),
     the closed-form take (`per_hunter_take_biomass`) and the **crew** (`hunt_engage_workers`, via
     `HuntingParty::stay_fraction` — `fauna.md` → "THE RETREAT PRICES THE CREW").
 
