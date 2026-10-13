@@ -5539,6 +5539,17 @@ pub struct LaborAllocation {
     /// must stop republishing last turn's tools. **Excluded from equality** below, like the rest of
     /// the per-turn telemetry.
     pub last_pool_toe: Vec<PoolToeLine>,
+    /// **THE QUEUE ENTRY THE BUILDERS' [`Self::last_pool_toe`] LINES WERE STRUCK FOR** — the head
+    /// `(source, declared job)` the turn's `BuildersAsk` was built from, `None` when no ask was made
+    /// (no builders, or a head the ground refused).
+    ///
+    /// ⛔ **THE BUILDERS' LINES NAME THE QUEUE HEAD OR NOTHING.** A completed head retires in the
+    /// same pass that struck the claim on it, so the frame after a completion carries lines for a job
+    /// that is no longer at the head (and a `build_order` / `unqueue` between turns does the same by
+    /// hand). [`Self::published_pool_toe`] withholds the builders' lines unless this stamp is the
+    /// live head, so a reader sees a blank for that one frame rather than the previous job's tools.
+    /// Cleared with [`Self::last_pool_toe`] and rewritten beside it; **excluded from equality**.
+    pub last_pool_toe_head: Option<(BuildSource, BuildJob)>,
     /// **THE TOOLS EACH QUEUED BUILD BEHIND THE HEAD WILL NEED OF THE BUILDERS' HANDS**, one line per
     /// `(queue position, item)` for every entry after the head (the head's own claim is the builders'
     /// [`Self::last_pool_toe`] line). Each is the same requirement the head's claim computes — the
@@ -5991,6 +6002,22 @@ pub struct BuildQueueEntry {
 }
 
 impl LaborAllocation {
+    /// **THE POOL TABLES OF EQUIPMENT AS THE WIRE STATES THEM** — [`Self::last_pool_toe`] with the
+    /// builders' lines dropped unless they were struck for the live queue head
+    /// ([`Self::last_pool_toe_head`]). The live head is read at call time, after every command, so a
+    /// reorder or an unqueue since the turn withholds them the same as a completion does.
+    pub fn published_pool_toe(&self) -> impl Iterator<Item = &PoolToeLine> + '_ {
+        let builders_current = match (&self.last_pool_toe_head, self.build_queue.first()) {
+            (Some((source, declared)), Some(head)) => {
+                *source == head.source && *declared == head.declared
+            }
+            _ => false,
+        };
+        self.last_pool_toe.iter().filter(move |line| {
+            line.pool != crate::equipment_config::KitJob::Builders || builders_current
+        })
+    }
+
     /// ⛔ **THE ONE WAY A CROSSING IS BOOKED** — the ledger arm (for `FOOD` / `FODDER`) and the
     /// crossings row, in one call, so the cause detail and the four arms it refines cannot disagree.
     ///

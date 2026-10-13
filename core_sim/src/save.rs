@@ -135,7 +135,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 38 | The wear forecast (#778): `BandEquipment` gained `wear_window` - the condition each item was charged, per turn, over the last `equipment.json` `wear_forecast.window_turns` turns, which the "coming up" craft suggestions average into a rate. The ledger rides `BandRecord::equipment`, so a version-37 blob lacks it |
 /// | 39 | Stationed party (#774): `Expedition` gained `station_reports` (the reports a stationed party has sent home and not yet landed, each with its landing turn) and `ExpeditionMission` / `ExpeditionPhase` gained `Station` / `Stationed`; `PopulationCohort` gained `fed_party_workers` (the working-age people a band fed out in the field at the turn's meal). All of them ride `ExpeditionRecord` / `BandRecord`, so a version-38 blob does not decode |
 /// | 40 | A traveling party aims at what its people know: `Expedition` gained `aim` (the tile a Station / Trade party is walking toward, `None` for every other verb), riding `ExpeditionRecord` whole, so a version-39 blob does not decode |
-pub const SAVE_FORMAT_VERSION: u32 = 40;
+/// | 41 | `LaborAllocation` gained `last_pool_toe_head` — the queue entry the builders' `last_pool_toe` lines were struck for, which the wire compares with the live head before publishing them; it rides `BandRecord::labor` whole, so a version-40 blob does not decode |
+pub const SAVE_FORMAT_VERSION: u32 = 41;
 
 /// gzip level for the payload document.
 ///

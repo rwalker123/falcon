@@ -2531,8 +2531,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         pool_toe: allocation
             .map(|alloc| {
                 alloc
-                    .last_pool_toe
-                    .iter()
+                    .published_pool_toe()
                     .map(|line| sim_schema::state::PoolToeLineState {
                         pool: line.pool.as_str().to_string(),
                         item_id: line.item.clone(),

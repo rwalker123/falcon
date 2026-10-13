@@ -7,6 +7,7 @@ paths:
   - "integration_tests/tests/equipment_toe.rs"
   - "core_sim/tests/kit_selection.rs"
   - "core_sim/tests/pool_toe.rs"
+  - "core_sim/tests/builders_toe_head.rs"
   - "core_sim/src/take_claims.rs"
   - "core_sim/tests/take_kit_claims.rs"
 ---
@@ -628,6 +629,30 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 > `last_pool_toe`'s *"reported, never recomputed"* discipline, one field over. The capture is written
 > at [`LaborAllocation::record_pool_crew`] from the roadwork pool's paying seat and read straight
 > out at `snapshot::population`, exactly as `last_pool_toe` is.
+>
+> #### ⛔ THE BUILDERS' `poolToe` LINES NAME THE QUEUE HEAD, OR THEY ARE NOT PUBLISHED
+>
+> The builders' claim is struck on the head, and a completed head retires in the same pass
+> (`unqueue_build` at the foot of `advance_labor_allocation`), so the settled `last_pool_toe` of the
+> turn a Cultivate finishes describes the Cultivate while the queue head is already the Tame behind it
+> (reported from play: the Work tab's head row said *"builders short of hoes"* on a Taming job). A
+> `build_order` or an `unqueue` between turns produces the same mismatch by hand.
+>
+> `LaborAllocation::last_pool_toe_head` stamps the lines with the `(source, declared job)` the
+> `BuildersAsk` was built from (cleared and rewritten beside `last_pool_toe`; on the save,
+> `SAVE_FORMAT_VERSION` 41). `LaborAllocation::published_pool_toe` — the only reader the wire uses —
+> drops the `builders` lines unless that stamp equals the **live** `build_queue.first()`, read at
+> capture after every command. The frame of a completion therefore states **no** builders' tools (a
+> blank, not the finished job's), and the next turn states the new head's. Other pools' lines are
+> untouched, and `craft_suggestions` still reads the raw settlement. No schema change: an absent line
+> is the existing "not applicable" reading.
+>
+> Pinned by `builders_toe_head::{the_frame_after_a_completion_states_no_builders_tools_and_then_the_new_heads,
+> a_build_order_withholds_the_builders_tools_until_a_turn_strikes_them_for_the_new_head,
+> an_unqueue_withholds_the_builders_tools, the_published_builders_tools_survive_a_checkpoint_round_trip}`,
+> which drive a Cultivate-then-Tame queue through real turns and read the encoded frame. The same
+> drive finds the Tame's crook on the **second** turn after the completion in the sim — a second
+> stale turn seen in play does not come from the settled lines.
 >
 > #### ⛔ THE IDLE FIGURE IS MEANINGLESS WITHOUT THE HEAD COUNT IT WAS STRUCK AGAINST
 >

@@ -962,12 +962,15 @@ fn the_mission_host_and_phase_are_published() {
 // ---------------------------------------------------------------------------------------------
 
 /// How far from the home band the host was last seen — far enough that the walk takes many turns.
-const LAST_SEEN_TILES: u32 = 12;
+const LAST_SEEN_TILES: u32 = 14;
 /// How far the host has moved on since it was last seen, in the "gone out of sight" cases — past
 /// every sight range a party has.
 const MOVED_FAR_TILES: u32 = 30;
-/// How far the host has moved in the control: one tile, inside the party's sight from the last-seen tile.
-const MOVED_NEAR_TILES: u32 = 1;
+/// How far the host has moved in the control: three tiles, inside the party's sight from the
+/// last-seen tile. **The last-seen tile is chosen on open ground** — sight is line-of-sight, and a host
+/// behind a ridge is genuinely unseen (at 12 tiles out the host's tile sat up a slope, hidden from
+/// two tiles away).
+const MOVED_NEAR_TILES: u32 = 3;
 
 /// A RIVAL host last seen `LAST_SEEN_TILES` from the home band (the tie's remembered position, and
 /// the party's launch aim), and standing `moved` tiles from there now. Returns the rig and the

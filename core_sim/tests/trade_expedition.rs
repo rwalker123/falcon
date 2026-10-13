@@ -1221,11 +1221,12 @@ fn a_trade_partys_carry_cap_is_quoted_at_the_resolved_shipment_carry() {
 // ---------------------------------------------------------------------------------------------
 
 /// How far from the sender the destination was last seen.
-const LAST_SEEN_TILES: u32 = 12;
+const LAST_SEEN_TILES: u32 = 14;
 /// How far the destination has moved on since — past every sight range a party has.
 const MOVED_FAR_TILES: u32 = 30;
-/// How far it has moved in the control: one tile, inside the party's sight from the last-seen tile.
-const MOVED_NEAR_TILES: u32 = 1;
+/// How far it has moved in the control: three tiles, inside the party's sight from the last-seen
+/// tile (open ground — see station_expedition.rs: a ridge genuinely hides a band).
+const MOVED_NEAR_TILES: u32 = 3;
 
 fn place_at(app: &mut App, band: Entity, target: UVec2) {
     let tile = app
