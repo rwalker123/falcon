@@ -1137,6 +1137,17 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                 i64::from(assignment.homewardAllHomeIn()),
             );
             let _ = entry.insert("homeward_food", f64::from(assignment.homewardFood()));
+            // This row's hands walking BACK TO IT after its source drifted inside work range. They
+            // are inside the row's `workers` (counted once), not idle, not in `homeward_*`.
+            let _ = entry.insert(
+                "rejoining_workers",
+                i64::from(assignment.rejoiningWorkers()),
+            );
+            let _ = entry.insert(
+                "rejoining_all_home_in",
+                i64::from(assignment.rejoiningAllHomeIn()),
+            );
+            let _ = entry.insert("rejoining_food", f64::from(assignment.rejoiningFood()));
             // Migration mode: this hunt row moves the band's camp with its migratory herd.
             let _ = entry.insert("move_with_herd", assignment.moveWithHerd());
             // Hunting by need (#798): a need row's crew next turn (0 = waiting), what a donor row

@@ -1840,6 +1840,15 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     row.homeward_workers = walking_home.workers;
                     row.homeward_all_home_in = walking_home.all_home_in;
                     row.homeward_food = walking_home.food;
+                    // **THIS ROW'S HANDS WALKING BACK TO IT** — already in `workers`, so they are in
+                    // none of the band's homeward figures; the row's own fields state them.
+                    let rejoining = crate::work_party::HomewardTotals::rejoining_for_source(
+                        &a.homeward,
+                        &assignment.target,
+                    );
+                    row.rejoining_workers = rejoining.workers;
+                    row.rejoining_all_home_in = rejoining.all_home_in;
+                    row.rejoining_food = rejoining.food;
                     // **HUNTING BY NEED (#798)** — a need row publishes the crew it sends, the wait
                     // before one goes and the animal's progress; a donor row what it lends. Every
                     // other row keeps the zeros.

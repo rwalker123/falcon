@@ -4368,6 +4368,18 @@ keys do (absent and `0` are one reading), and survives a pending crew edit off t
 pending `−` sends nobody home until the turn answers. It feeds the row's walker line only; idle is
 still netted by the band's total.
 
+**A row's own hands walking BACK to it** (`rejoining_workers` / `rejoining_all_home_in` /
+`rejoining_food`, also in `ROW_HOMEWARD_KEYS`, per row only). A far hunt/forage row whose source
+drifted inside work range keeps its party's walkers as members and they rejoin on landing. The row's
+`workers` ALREADY holds them, so `effective_idle` (`working_age - sum(workers) - bench - homeward`)
+subtracts them exactly once and the WORKFORCE bar keeps them in the row's segment (Hunt 4), never a
+"Walking home" segment: the band's `homeward_workers` now means plain walkers only. Nothing in the
+client nets `rejoining_*` out of anything. `HudWorkVocab.row_rejoining_line` says
+`3 walking back with 2.40 food — here in 1 turn` (food clause only when `rejoining_food > 0`),
+appended after the row's `homeward_line` in `_work_row_party_lines_text`; the map's source list
+(`homeward_text`) shows it only when no plain walkers claim the cell. Frame
+`band_panel_work_row_rejoining`.
+
 ### `effective_idle` SUMS `staffed_total`, AND FOR ONE RELEASE IT DID NOT
 
 That helper summed each merged row's `workers` — the TAKE crew alone — so a band with three hands on

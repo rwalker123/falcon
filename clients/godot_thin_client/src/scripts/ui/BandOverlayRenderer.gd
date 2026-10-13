@@ -1261,7 +1261,8 @@ func _source_row(key: String, tile: Vector2i, anchor: Vector2, face: Dictionary,
 		"overdraw": overdraw,
 		"build_text": String(badge.get("build_text", "")),
 		# The hands walking home from this source, `""` while nobody is — the work board row's own line.
-		"homeward_text": HudWorkVocab.row_homeward_line(entry),
+		"homeward_text": HudWorkVocab.row_homeward_line(entry) \
+			if HudWorkVocab.row_homeward_workers(entry) > 0 else HudWorkVocab.row_rejoining_line(entry),
 		"attention": attention,
 		"attention_text": attention_text,
 		# **THE SORT KEY IS THE FIGURE THE ROW HEADLINES, not a second reading of the entry.** It was

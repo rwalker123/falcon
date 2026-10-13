@@ -131,7 +131,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 34 | Hunting by need (#798): `LaborAssignment` gained `muster_crew` — the hands a need row (a hunt row in migration mode) sends next turn, the fact the labor pass restamps at its foot. A version-30 blob has no such field. and `planned_crew` — the meal-sized crew the row would send, sending or waiting, which the craft suggestions equip ahead of the hunt. A version-33 blob has neither. |
 /// | 35 | Breeding shed (#690): `BreedingReading` (carried on `PopulationCohort::last_breeding`) gained `faction`, the people the pre-pass grouped the band as, so the shed can skip a band that changed people later in the turn. |
 /// | 36 | `WorldIdentity` gained `archetype_counts` — the per-archetype rival counts the world was built with (`(archetype id, count)` in catalog order), so a load rebuilds the transient faction-to-archetype assignment and a later `ResetMap` carries the same split. A version-35 header lacks it |
-pub const SAVE_FORMAT_VERSION: u32 = 36;
+/// | 37 | Rejoining walks: `HomewardWalk` gained `rejoins_row` — a stood-down walk whose row survived (its source drifted back inside the apron) keeps its hands on that row and rejoins it when it lands, instead of being counted a second time as a plain walker. `LaborAllocation::homeward` rides the allocation, so a version-36 blob does not decode |
+pub const SAVE_FORMAT_VERSION: u32 = 37;
 
 /// gzip level for the payload document.
 ///

@@ -283,6 +283,19 @@ than no link.
 - **On the `pruned` line it sits before `dropped=`.** That value is a comma-joined list of display
   names, so it can only be the trailing remainder; an appended token would be swallowed by it.
 
+## A command's own echo names the band the same way
+
+Every command echo that is about one band (`assign_labor`, `move_band`, the expedition sends, the
+craft queue and its edits, `bench_crew`, `cancel_order`, a split) is pushed through
+`bin/server.rs`'s `push_band_event`: the label names `Band {id}` (`systems::band_label`, the shared
+spelling) and **never the unit's kind** (`BandScout`, which every band of a people shares), the entry
+carries the durable `BandId` (`CommandEventEntry::with_band`) and the detail a `band=<id>` token unless
+the writer already stated one. `select_starting_band` hands the handler a `SelectedBand { entity, id,
+label }` whose label is that spelling, so a handler cannot reach for the kind. The client's
+`BAND_ID_TOKEN_LABELS` join re-labels the row from the `band=` token like every other band line.
+A refusal's prose detail names the band the same way but cannot be re-labelled (it is a sentence, not
+a label). Pinned by `server::tests::a_craft_line_names_the_band_by_its_durable_id_and_not_its_unit_kind`.
+
 ## The hunt report: facts, and the sim's guess at importance is deliberately absent
 
 `CommandEventKind::HuntReport` (`docs/plan_hunt_through_combat.md` §6.6) fires from every real hunt —

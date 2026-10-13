@@ -256,8 +256,10 @@ pub fn take_row_gear(
         .iter()
         .enumerate()
         .map(|(i, assignment)| {
-            let workers =
-                crate::take_claims::take_hands(assignment.workers as f32, claims.keep_hands[i]);
+            let workers = crate::take_claims::take_hands(
+                allocation.hands_present_on(assignment) as f32,
+                claims.keep_hands[i],
+            );
             let row_kit = if assignment.target.is_standing_pool() {
                 config.no_kit()
             } else {

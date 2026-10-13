@@ -5480,11 +5480,12 @@ fn handle_assign_labor(
     } else {
         String::new()
     };
-    push_command_event(
+    push_band_event(
         app,
         tick,
         event_kind,
         faction,
+        band.id,
         format!("{} {} x{}{}", band.label, kind_label, applied, clamp_note),
         Some(format!(
             "status=applied role={} workers={} assigned_total={} available={}",
@@ -5548,16 +5549,14 @@ fn handle_move_band(
     }
 
     let tick = app.world.resource::<SimulationTick>().0;
-    push_command_event(
+    push_band_event(
         app,
         tick,
         CommandEventKind::CancelOrder,
         faction,
+        band.id,
         format!("{} moving -> ({}, {})", band.label, target_x, target_y),
-        Some(format!(
-            "status=queued action=move_band band={}",
-            band.label
-        )),
+        Some("status=queued action=move_band".to_string()),
     );
 }
 
@@ -5775,11 +5774,12 @@ fn handle_send_expedition(
         .id();
 
     let tick = app.world.resource::<SimulationTick>().0;
-    push_command_event(
+    push_band_event(
         app,
         tick,
         CommandEventKind::ExpeditionSent,
         faction,
+        band.id,
         format!("{} expedition -> ({}, {})", band.label, target_x, target_y),
         Some(format!(
             "status=applied workers={} provisions_drawn={} distance={} expedition={}",
@@ -6425,6 +6425,7 @@ fn handle_send_denial_raid(
     };
 
     let band_label = outfit.band.label.clone();
+    let band_durable_id = outfit.band.id;
     // Read off the outfit BEFORE it is moved into the launch, for the same reason `band_label` is.
     let target_species = outfit.herd_species.clone();
     let mission = ExpeditionMission::Deny {
@@ -6448,11 +6449,12 @@ fn handle_send_denial_raid(
     };
 
     let tick = app.world.resource::<SimulationTick>().0;
-    push_command_event(
+    push_band_event(
         app,
         tick,
         CommandEventKind::ExpeditionSent,
         faction,
+        band_durable_id,
         format!(
             "{} denial raid -> {}{}",
             band_label, target_display, verdict
@@ -6893,6 +6895,7 @@ fn handle_send_trade_expedition(
     };
     let provisions_total = provisions.total();
     let band_label = outfit.band.label.clone();
+    let band_durable_id = outfit.band.id;
     let mission = ExpeditionMission::Trade {
         destination_band: shipment.destination_band,
         destination_faction: shipment.destination_faction,
@@ -6999,11 +7002,12 @@ fn handle_send_trade_expedition(
     }
     manifest.extend(carried_materials);
     let tick = app.world.resource::<SimulationTick>().0;
-    push_command_event(
+    push_band_event(
         app,
         tick,
         CommandEventKind::ExpeditionSent,
         faction,
+        band_durable_id,
         format!(
             "{band_label} shipment -> {destination_label} ({})",
             manifest.join(", ")
@@ -7080,11 +7084,12 @@ fn handle_recall_expedition(
     }
     let tick = app.world.resource::<SimulationTick>().0;
     if let Some(at) = cancel_party_standing_in_camp(app, entity) {
-        push_command_event(
+        push_band_event(
             app,
             tick,
             CommandEventKind::ExpeditionRecalled,
             faction,
+            app.world.get::<BandId>(entity).copied(),
             format!("{} cancelled — the party never left camp", label),
             Some(format!("status=cancelled expedition={}", entity.to_bits())),
         );
@@ -7096,11 +7101,12 @@ fn handle_recall_expedition(
         app.world.despawn(entity);
         return;
     }
-    push_command_event(
+    push_band_event(
         app,
         tick,
         CommandEventKind::ExpeditionRecalled,
         faction,
+        app.world.get::<BandId>(entity).copied(),
         format!("{} recalled — returning home", label),
         Some(format!("status=returning expedition={}", entity.to_bits())),
     );
@@ -7175,11 +7181,12 @@ fn handle_split_band(
         split.share,
         split.provisions.to_f32()
     );
-    push_command_event(
+    push_band_event(
         app,
         tick,
         CommandEventKind::BandFounded,
         faction,
+        band.id,
         format!(
             "{} split off a new band of {} workers at ({}, {})",
             label, split.workers, split.at.x, split.at.y
@@ -7527,11 +7534,7 @@ fn handle_cancel_order(
     }
 
     let tick = app.world.resource::<SimulationTick>().0;
-    let detail = format!(
-        "status=cancelled scope={} band={}",
-        scope.as_str(),
-        band.label
-    );
+    let detail = format!("status=cancelled scope={}", scope.as_str());
     info!(
         target: "shadow_scale::command",
         command = "cancel_order",
@@ -7540,11 +7543,12 @@ fn handle_cancel_order(
         scope = %scope.as_str(),
         "command.cancel_order.applied"
     );
-    push_command_event(
+    push_band_event(
         app,
         tick,
         CommandEventKind::CancelOrder,
         faction,
+        band.id,
         cancel_scope_applied_message(scope, &band.label),
         Some(detail),
     );
@@ -8710,11 +8714,12 @@ fn handle_bench_enqueue(
     } else {
         String::new()
     };
-    push_command_event(
+    push_band_event(
         app,
         tick,
         event_kind,
         faction,
+        band.id,
         format!(
             "{} queued {display_name} x{count}, crew {applied}{clamp_note}",
             band.label
@@ -8890,7 +8895,15 @@ fn handle_bench_queue_edit(
                 core_sim::auto_craft::auto_craft_fill(&mut app.world, band.entity);
             }
             let tick = app.world.resource::<SimulationTick>().0;
-            push_command_event(app, tick, event_kind, faction, sentence, Some(detail));
+            push_band_event(
+                app,
+                tick,
+                event_kind,
+                faction,
+                band.id,
+                sentence,
+                Some(detail),
+            );
         }
         Err(error) => emit_command_failure(
             app,
@@ -8971,11 +8984,12 @@ fn handle_bench_priority(
         SourcePriority::Normal => format!("{}: the bench takes its turn like the rest", band.label),
         SourcePriority::Low => format!("{}: the bench is the first thing given up", band.label),
     };
-    push_command_event(
+    push_band_event(
         app,
         tick,
         event_kind,
         faction,
+        band.id,
         sentence,
         Some(format!(
             "status=applied action=bench_priority level={} band={band_id}",
@@ -9007,11 +9021,12 @@ fn handle_bench_auto(
     core_sim::auto_craft::set_auto_craft(&mut app.world, band.entity, enabled);
     let tick = app.world.resource::<SimulationTick>().0;
     let state = if enabled { "on" } else { "off" };
-    push_command_event(
+    push_band_event(
         app,
         tick,
         event_kind,
         faction,
+        band.id,
         format!("{}: bench auto-craft {state}", band.label),
         Some(format!(
             "status=applied action=bench_auto enabled={enabled} band={band_id}"
@@ -9034,11 +9049,12 @@ fn handle_bench_auto_skip(app: &mut bevy::prelude::App, faction: FactionId, band
     match core_sim::auto_craft::auto_craft_skip(&mut app.world, band.entity) {
         Ok(item) => {
             let tick = app.world.resource::<SimulationTick>().0;
-            push_command_event(
+            push_band_event(
                 app,
                 tick,
                 event_kind,
                 faction,
+                band.id,
                 format!("{} skipped {item} on the bench", band.label),
                 Some(format!(
                     "status=applied action={verb} item={item} band={band_id}"
@@ -9101,11 +9117,12 @@ fn handle_bench_crew(
     } else {
         String::new()
     };
-    push_command_event(
+    push_band_event(
         app,
         tick,
         event_kind,
         faction,
+        band.id,
         format!("{} bench crew x{applied}{clamp_note}", band.label),
         Some(format!(
             "status=applied action=bench_crew recipe={recipe_id} workers={applied} \
@@ -11357,9 +11374,60 @@ fn resolve_starting_unit_entity(
     Some(entity)
 }
 
+/// **A band a command resolved to**, with the one spelling of it every event line uses.
+///
+/// ⛔ `label` is `Band {id}` ([`core_sim::band_label`]) and NEVER the unit's kind. The kind
+/// (`BandScout`, ...) names what sort of unit a band was founded as, so every band of a people shares
+/// it: two bands' craft lines both read "BandScout queued Baskets…". An event names a band the way
+/// every other event does - by the durable [`BandId`] - and carries the id as a `band=` detail token
+/// ([`push_band_event`]), which is what the client joins on to put the band's real name in the line.
 struct SelectedBand {
     entity: Entity,
+    /// The durable id; `None` only for a hand-built fixture band that never minted one.
+    id: Option<BandId>,
     label: String,
+}
+
+/// The [`SelectedBand`] for `entity`.
+fn selected_band(app: &bevy::prelude::App, entity: Entity) -> SelectedBand {
+    SelectedBand {
+        entity,
+        id: app.world.get::<BandId>(entity).copied(),
+        label: starting_unit_label(app, entity),
+    }
+}
+
+/// **Push an event that is about ONE band**, so the line names it the way every other event does:
+/// the entry carries the durable [`BandId`] ([`CommandEventEntry::with_band`]) and its detail a
+/// `band=<id>` token - appended here unless the writer already stated one - which is what the client
+/// re-labels the row by (`event-feed.md` -> "The `band=` token is what makes a loss line clickable").
+/// A band with no durable id (a fixture) publishes its line unchanged and renders linkless.
+fn push_band_event(
+    app: &mut bevy::prelude::App,
+    tick: u64,
+    kind: CommandEventKind,
+    faction: FactionId,
+    band: Option<BandId>,
+    label: String,
+    detail: Option<String>,
+) {
+    let detail = match (band, detail) {
+        (Some(id), Some(detail)) if !has_band_token(&detail) => {
+            Some(format!("{detail} band={}", id.0))
+        }
+        (Some(id), None) => Some(format!("band={}", id.0)),
+        (_, detail) => detail,
+    };
+    let mut entry = CommandEventEntry::new(tick, kind, faction, label, detail);
+    if let Some(id) = band {
+        entry = entry.with_band(id);
+    }
+    push_command_entry(app, entry);
+}
+
+/// Whether a detail already carries a whole `band=` token.
+fn has_band_token(detail: &str) -> bool {
+    detail.split(' ').any(|token| token.starts_with("band="))
 }
 
 fn select_starting_band(
@@ -11371,24 +11439,20 @@ fn select_starting_band(
 ) -> Option<SelectedBand> {
     if let Some(bits) = band_id {
         let entity = resolve_starting_unit_entity(app, faction, bits, command_label, event_kind)?;
-        return Some(SelectedBand {
-            entity,
-            label: starting_unit_label(app, entity),
-        });
+        return Some(selected_band(app, entity));
     }
 
     // Default-band picker: only ever auto-grab a real band (`With<ResidentBand>`) so a band-less
     // command never silently commandeers a detached expedition (which keeps `StartingUnit`).
     let mut query = app
         .world
-        .query_filtered::<(Entity, &PopulationCohort, &StartingUnit), With<ResidentBand>>();
-    for (entity, cohort, unit) in query.iter(&app.world) {
-        if cohort.faction == faction {
-            return Some(SelectedBand {
-                entity,
-                label: unit.kind.clone(),
-            });
-        }
+        .query_filtered::<(Entity, &PopulationCohort), (With<StartingUnit>, With<ResidentBand>)>();
+    let picked = query
+        .iter(&app.world)
+        .find(|(_, cohort)| cohort.faction == faction)
+        .map(|(entity, _)| entity);
+    if let Some(entity) = picked {
+        return Some(selected_band(app, entity));
     }
 
     warn!(
@@ -11415,13 +11479,14 @@ fn select_founder_band(
     let mut query = app
         .world
         .query_filtered::<(Entity, &PopulationCohort, &StartingUnit), With<ResidentBand>>();
-    for (entity, cohort, unit) in query.iter(&app.world) {
-        if cohort.faction == faction && unit.kind.eq_ignore_ascii_case("founders") {
-            return Some(SelectedBand {
-                entity,
-                label: unit.kind.clone(),
-            });
-        }
+    let picked = query
+        .iter(&app.world)
+        .find(|(_, cohort, unit)| {
+            cohort.faction == faction && unit.kind.eq_ignore_ascii_case("founders")
+        })
+        .map(|(entity, _, _)| entity);
+    if let Some(entity) = picked {
+        return Some(selected_band(app, entity));
     }
 
     emit_command_failure(
@@ -11433,7 +11498,13 @@ fn select_founder_band(
     None
 }
 
+/// **How an event line names a band** - `Band {id}` off its durable [`BandId`], never the unit's
+/// kind (see [`SelectedBand`]). Only a band that never minted an id (a hand-built fixture) falls
+/// back to the kind, there being no honest id to state.
 fn starting_unit_label(app: &bevy::prelude::App, entity: Entity) -> String {
+    if let Some(id) = app.world.get::<BandId>(entity).copied() {
+        return core_sim::band_label(id);
+    }
     app.world
         .get::<StartingUnit>(entity)
         .map(|unit| unit.kind.clone())
@@ -21820,6 +21891,73 @@ mod tests {
                     .as_deref()
                     .is_some_and(|detail| detail.contains(needle))
         })
+    }
+
+    /// ⛔ **A CRAFT LINE NAMES THE BAND BY ITS DURABLE ID, NEVER BY THE UNIT'S KIND.** The label used to
+    /// be the `StartingUnit` kind, which every band of a people shares, so two bands' queue lines both
+    /// read "BandScout queued Baskets…". Every craft writer now names `Band {id}` and carries the id
+    /// as a `band=` token (and on the entry), which is what the client re-labels the row by. Asserted
+    /// on three writers - the queue, a queue edit and the crew - against the kind the band is.
+    #[test]
+    fn a_craft_line_names_the_band_by_its_durable_id_and_not_its_unit_kind() {
+        let mut app = build_test_app();
+        app.update();
+        let faction = FactionId(0);
+        let band = first_resident_band(&mut app);
+        let id = *app
+            .world
+            .get::<BandId>(band)
+            .expect("a campaign band carries a durable id");
+        let kind = app
+            .world
+            .get::<StartingUnit>(band)
+            .expect("a campaign band carries its unit")
+            .kind
+            .clone();
+
+        handle_bench_enqueue(
+            &mut app,
+            faction,
+            Some(id.0),
+            BENCH_IDLE_RECIPE,
+            BENCH_TEST_ORDER,
+            BENCH_IDLE_CREW,
+        );
+        handle_bench_queue_edit(&mut app, faction, Some(id.0), HEAD, BenchQueueEdit::Remove);
+        handle_bench_crew(&mut app, faction, Some(id.0), BENCH_IDLE_CREW);
+
+        let lines: Vec<(String, Option<String>, u64)> = app
+            .world
+            .resource::<CommandEventLog>()
+            .iter()
+            .filter(|entry| matches!(entry.kind, CommandEventKind::Craft))
+            .map(|entry| (entry.label.clone(), entry.detail.clone(), entry.band))
+            .collect();
+        assert!(
+            lines.len() >= 3,
+            "liveness: the queue, the edit and the crew each wrote a line: {lines:?}"
+        );
+        for (label, detail, entry_band) in &lines {
+            assert!(
+                label.contains(&core_sim::band_label(id)),
+                "the line names the band as `Band {{id}}`: {label}"
+            );
+            assert!(
+                !label.contains(&kind),
+                "...and never by the unit kind ({kind}): {label}"
+            );
+            let detail = detail.as_deref().unwrap_or_default();
+            assert!(
+                detail
+                    .split(' ')
+                    .any(|token| token == format!("band={}", id.0)),
+                "the detail carries the durable id as a `band=` token: {detail}"
+            );
+            assert_eq!(
+                *entry_band, id.0,
+                "the entry itself names the band: {label}"
+            );
+        }
     }
 
     /// **Naming no crew recruits nobody; naming one is obeyed to the head.**
