@@ -1190,8 +1190,9 @@ pub fn apply_starting_loadout(
             // **The pick list is the GRANT's rule.** It says which materials the world hands out at
             // the start, so it binds exactly the window that mints and deliberately not a take,
             // whose only question is whether the parent has the stuff.
-            // The human seat's archetype's list: this runs after the world is built, when the
-            // faction -> archetype assignment is no longer read (a load does not restore it).
+            // The human seat's archetype's list: this runs after the world is built, and nothing
+            // after world build reads the faction -> archetype assignment (a load restores it from
+            // the save header only so a later `ResetMap` can rebuild the same split).
             let pickable = &world
                 .resource::<ActiveStartProfile>()
                 .profile()

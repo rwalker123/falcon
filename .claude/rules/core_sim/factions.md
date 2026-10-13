@@ -1271,8 +1271,9 @@ The control arm is not optional: it is what distinguishes *"the second faction g
 `FactionRegistry` is **ground truth in the save** — `SimState::factions`, captured whole and restored
 whole (checkpoint state since a people can break away mid-game, `independence.md`). The archetype
 counts, by contrast, are a *request*: each archetype's `default_count` is re-read on every world
-build, and the pick that built this world is not recorded anywhere except in the registry itself —
-which is why the per-archetype counts ride the save header as a world-build parameter (see "Start archetypes").
+build. The pick that built this world rides the save header as a world-build parameter
+(`WorldIdentity.archetype_counts`, see "Start archetypes"), which is what a `ResetMap` after a load
+rebuilds from.
 
 So the two can drift, and the rule is that **the save's registry wins**: a world loaded from a save
 has the roster it was created with, whatever the config default says now. That is the same reason
