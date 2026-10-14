@@ -463,6 +463,9 @@ static func apply_palette() -> void:
 			"rung": RUNG_NOTABLE},
 		"reason=host_gone": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN,
 			"rung": RUNG_NOTABLE},
+		# The party's HOME band is gone: nobody is left to feed or hear them, so the post ends.
+		"reason=home_gone": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN,
+			"rung": RUNG_NOTABLE},
 		# **ARRIVING AT THE REMEMBERED PLACE AND FINDING NOBODY** — the host (station) or the receiving
 		# band (trade) was not where the tie last saw them. Same rung as `host_gone`: a post or a
 		# delivery ended without the player asking. `destination=<id>` / `host=<id>` carry the band.
@@ -724,6 +727,7 @@ const DETAIL_VALUE_LABELS := {
 	# ("Party lost Rushford — returning home" · "borders closed"), so lower-case like its neighbours.
 	"borders_closed": "borders closed",
 	"host_gone": "host not found",
+	"home_gone": "their home band is gone",
 	"host_not_found": "no sign of them where last seen",
 	"destination_not_found": "no sign of them where last seen",
 }

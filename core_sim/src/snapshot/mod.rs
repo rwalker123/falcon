@@ -1447,6 +1447,7 @@ mod tests {
             settle_min_founding_workers: 0,
             settle_parent_min_workers: 0,
             move_ferry_reach_tiles: 0,
+            comm_range_tiles: 0,
         };
         population_state(PopulationStateInputs {
             belief_reach: Vec::new(),

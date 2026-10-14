@@ -1184,6 +1184,7 @@ const STATION_PEOPLE_SUB_FORMAT := "%d of %d free workers · fed from %s's food"
 const STATION_PEOPLE_AT_MAX_REASON := "No more free workers. Take someone off a work row to station another."
 ## The sheet's one explanation: the tie stays full, and what they see reaches home a walk late.
 const STATION_NEWS_LATE_FORMAT := "Keeps the tie from fading. Their news reaches you about %d turns late."
+const STATION_NEWS_SAME_TURN := "Keeps the tie from fading. Their news reaches you the same turn."
 const STATION_NEWS_LATE_UNKNOWN := "Keeps the tie from fading. Their news reaches you a walk late."
 const STATION_SEND_BUTTON := "Station them"
 const STATION_SEND_HINT := "Post these people with them. You feed them; they come home when you recall them."

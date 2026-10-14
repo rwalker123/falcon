@@ -7689,8 +7689,10 @@ none of them a new panel.
   state). Built by `_fill_station_compose_sheet`: `With <host> · N tiles <bearing>` (the shipment's
   `To` row sentence and remembered-sighting hover), a `People` stepper capped at the free workers,
   `N of M free workers · fed from <band>'s food`, and one explanation line. The lag in it is
-  `SourceForecast.outbound_travel_turns` from where the tie last saw the host to this band — the
-  shipment's own definition of travel — and reads `a walk` where the band publishes no move rate.
+  `SourceForecast.station_news_delay_turns`, the sim's `station_report_delay`: the whole wrapped hex
+  distance from where the tie last saw the host to this band's live tile, `0` within the band's
+  `comm_range_tiles` (the line then reads `Their news reaches you the same turn.`), else
+  `ceil(distance / band_move_tiles_per_turn)`. It reads `a walk` where the band publishes no move rate.
   No kit row: the server defaults it, so `format_station_expedition` sends none.
 - **The order** rides its own `station_expedition_requested` signal (`BandPanelController` →
   `HudLayer` → `Main._on_hud_station_expedition`), the `send_trade_expedition_requested` precedent, and

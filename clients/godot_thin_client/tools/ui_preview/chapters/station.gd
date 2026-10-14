@@ -55,6 +55,10 @@ const NEWS_AGE_TURNS := 3
 
 ## Tiles per turn the band publishes — without it the sheet cannot price a walk and says `a walk`.
 const MOVE_TILES_PER_TURN := 2.0
+## How far inside the shipped reach the near-host frame stands its sender from the host.
+const NEAR_HOST_OFFSET_TILES := 1
+## The shipped messenger reach: a host this close reports the same turn.
+const COMM_RANGE_TILES := 2
 
 const TIE_LIVE := 0.75
 const TIE_PARKED := 0.0
@@ -188,7 +192,9 @@ func run(harness) -> void:
 	h._assert_hud("station: …naming where they were last seen, as the shipment sheet's To row does",
 		sheet_text.contains(HudComposeVocab.STATION_FIELD_WITH) and sheet_text.contains(OPEN_NAME))
 	h._assert_hud("station: …pricing the news lag as a walk in turns",
-		sheet_text.contains("turns late"))
+		sheet_text.contains("turns late") and not sheet_text.contains(HudComposeVocab.STATION_NEWS_SAME_TURN))
+	h._assert_hud("station: …and the far host's lag is the sim's rule (%d turns)" % _far_delay(),
+		sheet_text.contains(HudComposeVocab.STATION_NEWS_LATE_FORMAT % _far_delay()))
 	h._assert_hud("station: …with no map pick armed", not h._hud.is_targeting_active())
 	# Raise the party through its own stepper, the shipment sheet's way.
 	_set_people(SHEET_PEOPLE)
@@ -212,6 +218,26 @@ func run(harness) -> void:
 		Q.find_meta_node(h._hud.allocation_panel, HudWidgets.VERB_FORM_META) == null)
 	h._assert_hud("station: a payload with no host builds no command",
 		MAIN_SCRIPT.format_station_expedition({"band_id": 1, "party_workers": 2}).is_empty())
+
+	# ---- (c) THE NEAR HOST: inside messenger reach the news is the same turn ---------------------
+	_pin_news_delay_rule()
+	var near_band := _home_band()
+	near_band["pos"] = [OPEN_SEEN.x - NEAR_HOST_OFFSET_TILES, OPEN_SEEN.y]
+	near_band["current_x"] = OPEN_SEEN.x - NEAR_HOST_OFFSET_TILES
+	near_band["current_y"] = OPEN_SEEN.y
+	h._hud.update_band_alerts([near_band, _walking_band(), _party_stationed(), _party_walking()])
+	h._hud.show_unit_selection(near_band)
+	await h._settle()
+	var near_link := _find_link(panel, BandFx.FIXTURE_BAND_ID_OFFSET + OPEN_ENTITY)
+	h._assert_hud("station: the near host's link is in the Peoples tab", near_link != null)
+	if near_link != null:
+		near_link.emit_signal("pressed")
+	await h._settle()
+	await h._save("station_sheet_near")
+	var near_form := Q.find_meta_node(h._hud.allocation_panel, HudWidgets.VERB_FORM_META) as Control
+	var near_text := _text_of(near_form) if near_form != null else ""
+	h._assert_hud("station: a host inside messenger reach says the news arrives the same turn",
+		near_text.contains(HudComposeVocab.STATION_NEWS_SAME_TURN) and not near_text.contains("turns late"))
 
 	# ---- (d) THE EVENT DOCK ---------------------------------------------------------------------
 	await _event_dock_states()
@@ -244,6 +270,7 @@ func _event_dock_states() -> void:
 	var borders_label := "%s closed its borders — party returning home" % sim_host
 	var gone_label := "Party lost %s — returning home" % sim_host
 	var recalled_label := "%s recalled — returning home" % HOME_NAME
+	var home_gone_label := "Party's home band is gone — returning"
 	var not_found_label := "Party found no sign of %s where they were last seen — coming home" % sim_host
 	var dest_not_found_label := "Shipment found no sign of %s where they were last seen — coming home" % sim_host
 	dock.ingest_events([
@@ -263,13 +290,15 @@ func _event_dock_states() -> void:
 			"seq": 703},
 		{"tick": TURN, "kind": "expedition_recalled", "faction": 0, "label": gone_label,
 			"detail": "status=returning reason=host_gone host=%d expedition=7" % host_id, "seq": 705},
+		{"tick": TURN, "kind": "expedition_recalled", "faction": 0, "label": home_gone_label,
+			"detail": "status=returning reason=home_gone host=%d expedition=7" % host_id, "seq": 709},
 		{"tick": TURN, "kind": "expedition_recalled", "faction": 0, "label": recalled_label,
 			"detail": "status=returning reason=recalled host=%d expedition=7" % host_id, "seq": 706},
 	])
 	dock.set_expanded(true)
 	await h._settle()
 	await h._save("station_event_dock")
-	for label in [launch_label, arrived_label, borders_label, gone_label, not_found_label, dest_not_found_label]:
+	for label in [launch_label, arrived_label, borders_label, gone_label, home_gone_label, not_found_label, dest_not_found_label]:
 		var swapped := String(label).replace(sim_host, STATIONED_NAME)
 		h._assert_hud("station dock: `%s` names the host by the roster's name" % swapped,
 			_label_count(dock, swapped) == 1)
@@ -280,6 +309,7 @@ func _event_dock_states() -> void:
 	h._assert_hud("station dock: a post ended by the world is NOTABLE (visible at the default floor)",
 		_rung(dock, borders_label) == HudEventVocab.RUNG_NOTABLE
 			and _rung(dock, gone_label) == HudEventVocab.RUNG_NOTABLE
+			and _rung(dock, home_gone_label)
 			and _rung(dock, not_found_label) == HudEventVocab.RUNG_NOTABLE
 			and _rung(dock, dest_not_found_label) == HudEventVocab.RUNG_NOTABLE)
 	h._assert_hud("station dock: …the player's own recall stays a ROUTINE receipt",
@@ -386,6 +416,31 @@ func _set_people(target: int) -> void:
 		await h.get_tree().process_frame
 
 
+## The sim's delay for the far host, worked from the same pieces the sheet reads.
+func _far_delay() -> int:
+	return SourceForecast.station_news_delay_turns(_home_band(), OPEN_SEEN.x, OPEN_SEEN.y,
+		h._hud._band_labor.grid_width(), h._hud._band_labor.wrap_horizontal())
+
+## Pins `SourceForecast.station_news_delay_turns` on a flat row, where hex distance is the column gap:
+## AT the reach the news is the same turn, one tile past it is a walk of ceil(distance / rate), no rate
+## reads 0, and a row without the reach field reads 0 reach.
+func _pin_news_delay_rule() -> void:
+	var grid := 100
+	var band := {"pos": [10, 10], "band_move_tiles_per_turn": MOVE_TILES_PER_TURN,
+		SourceForecast.COMM_RANGE_KEY: COMM_RANGE_TILES}
+	var at_reach := SourceForecast.station_news_delay_turns(band, 10 + COMM_RANGE_TILES, 10, grid, false)
+	var past_reach := SourceForecast.station_news_delay_turns(band, 10 + COMM_RANGE_TILES + 1, 10, grid, false)
+	h._assert_hud("station: news delay at distance = reach is 0 (got %d)" % at_reach, at_reach == 0)
+	h._assert_hud("station: news delay at reach+1 is ceil(3/2) = 2 turns (got %d)" % past_reach,
+		past_reach == 2)
+	band.erase("band_move_tiles_per_turn")
+	h._assert_hud("station: no published move rate reads 0 turns",
+		SourceForecast.station_news_delay_turns(band, 40, 10, grid, false) == 0)
+	band["band_move_tiles_per_turn"] = MOVE_TILES_PER_TURN
+	band.erase(SourceForecast.COMM_RANGE_KEY)
+	h._assert_hud("station: a row without the reach field reads 0 reach (distance 1 is late)",
+		SourceForecast.station_news_delay_turns(band, 11, 10, grid, false) == 1)
+
 # ---- fixtures ---------------------------------------------------------------------------------
 
 func _home_band() -> Dictionary:
@@ -399,6 +454,7 @@ func _home_band() -> Dictionary:
 	band["working_age"] = HOME_IDLE + STATIONED_PARTY_SIZE + WALKING_PARTY_SIZE
 	band["labor_assignments"] = []
 	band["band_move_tiles_per_turn"] = MOVE_TILES_PER_TURN
+	band[SourceForecast.COMM_RANGE_KEY] = COMM_RANGE_TILES
 	return band
 
 func _walking_band() -> Dictionary:

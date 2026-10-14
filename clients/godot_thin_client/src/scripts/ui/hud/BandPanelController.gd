@@ -9376,8 +9376,8 @@ func _station_host_label() -> String:
 ##
 ## **THE LAG IS THE REMEMBERED POSITION'S WALK.** What the party sees reaches home a runner's walk
 ## late; the client has no clock for that walk, so it prices the one distance it holds — from where the
-## tie last saw the host to this band — through `SourceForecast.outbound_travel_turns`, the
-## shipment's own definition of travel. Where the band publishes no move rate that walk is `0` and
+## tie last saw the host to this band — through `SourceForecast.station_news_delay_turns`, the
+## sim's `station_report_delay` (within messenger reach: the same turn). Where the band publishes no move rate that walk is `0` and
 ## the line says `a walk` rather than inventing a number.
 func _fill_station_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int) -> void:
     var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
@@ -9405,12 +9405,14 @@ func _fill_station_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: i
         _send_expedition_count, idle, HudFormat.band_name(band)]))
     var seen_x := int(tie.get("last_seen_x", -1))
     var seen_y := int(tie.get("last_seen_y", -1))
-    var late_turns := 0
-    if seen_x >= 0 and seen_y >= 0:
-        late_turns = SourceForecast.outbound_travel_turns(band, {"x": seen_x, "y": seen_y},
-            _band_labor.grid_width(), _band_labor.wrap_horizontal())
+    var late_turns := SourceForecast.station_news_delay_turns(band, seen_x, seen_y,
+        _band_labor.grid_width(), _band_labor.wrap_horizontal())
+    var host_distance := SourceForecast.station_host_distance(band, seen_x, seen_y,
+        _band_labor.grid_width(), _band_labor.wrap_horizontal())
     sheet.add_child(HudWidgets.alloc_hint_label(
-        HudComposeVocab.STATION_NEWS_LATE_FORMAT % late_turns if late_turns > 0
+        HudComposeVocab.STATION_NEWS_SAME_TURN
+        if late_turns == 0 and SourceForecast.station_host_in_reach(band, host_distance)
+        else HudComposeVocab.STATION_NEWS_LATE_FORMAT % late_turns if late_turns > 0
         else HudComposeVocab.STATION_NEWS_LATE_UNKNOWN))
     if idle <= 0:
         sheet.add_child(_blocked_station_send(HudComposeVocab.STATION_SEND_NO_FREE_REASON))

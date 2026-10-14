@@ -2502,8 +2502,10 @@ pub enum ExpeditionPhase {
     Returning,
     Hunting,
     /// **A stationed party standing at its host** ([`ExpeditionMission::Station`]) — it stays, follows
-    /// the host's live tile every turn and credits the home band's tie toward it. Genuinely new state:
-    /// no other phase both stays and moves.
+    /// the host's live tile every turn. It credits the home band's tie
+    /// only through the reports it sends home: the tie rises when a `StationReport` lands, never
+    /// while the party merely stands there (`.claude/rules/core_sim/connections.md`, "There is no
+    /// live credit"). Genuinely new state: no other phase both stays and moves.
     Stationed,
 }
 

@@ -904,6 +904,29 @@ fn a_host_that_is_gone_ends_the_post() {
     );
 }
 
+/// **A home band that no longer exists ends the post.** The party has nobody to feed it or take its
+/// reports, so it turns for home on its own reason and folds where it stands.
+#[test]
+fn a_home_band_that_is_gone_ends_the_post_and_the_party_leaves_the_map() {
+    let mut rig = same_faction_rig();
+    let (home, host, party, host_id) = (rig.home, rig.host, rig.party, rig.host_id);
+    run_until_stationed(&mut rig.app, party, &[home, host]);
+    rig.app.world.despawn(home);
+    feed(&mut rig.app, host);
+    run_turn(&mut rig.app);
+
+    let detail = latest_recall_detail(&rig.app).expect("the post's end is on the feed");
+    assert!(
+        detail.contains("reason=home_gone") && detail.contains(&format!("host={}", host_id.0)),
+        "{detail}"
+    );
+    // The post turns `Returning` and, with no home to walk to, folds where it stands the same turn.
+    assert!(
+        rig.app.world.get_entity(party).is_none(),
+        "the party folds where it stands and leaves the map"
+    );
+}
+
 // ---------------------------------------------------------------------------------------------
 // The home band feeds its party
 // ---------------------------------------------------------------------------------------------
@@ -1101,6 +1124,46 @@ fn the_mission_host_and_phase_are_published() {
     let (_, phase_key, bound_for, _, _) = party_row(&rig.app, party_id);
     assert_eq!(phase_key, "stationed");
     assert_eq!(bound_for, host_id.0);
+}
+
+/// **The messenger reach rides every cohort row**, equal to `effective_comm_range()` — the number a
+/// client mirrors `station_report_delay` with. Non-zero at the shipped config (liveness).
+#[test]
+fn the_comm_range_is_published_on_every_cohort_row() {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let mut rig = same_faction_rig();
+    let home = rig.home;
+    feed(&mut rig.app, home);
+    run_turn(&mut rig.app);
+
+    let expected = rig
+        .app
+        .world
+        .resource::<core_sim::ExpeditionConfigHandle>()
+        .get()
+        .effective_comm_range();
+    assert!(expected > 0, "liveness: the shipped reach is non-zero");
+
+    let snapshot = rig
+        .app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let populations = envelope
+        .payload_as_snapshot()
+        .expect("a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section is published");
+    assert!(!populations.is_empty());
+    for row in populations.iter() {
+        assert_eq!(row.commRangeTiles(), expected);
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

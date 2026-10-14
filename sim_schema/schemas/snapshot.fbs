@@ -1565,6 +1565,12 @@ table PopulationCohortState {
   // the entry named by the herd's `keeping`. Computed by the one function the turn sizes the crew
   // with.
   huntMeals:[KeepingMeal];
+  // --- STATIONED PARTY (appended last, #774) -----------------------------------------------------
+  // The effective communication range in tiles (`expedition_config.effective_comm_range()`,
+  // `comm_range_tiles x comm_range_tech_factor`, rounded). A stationed party's report lands the turn
+  // it leaves when the party stands within this many tiles of its home band; beyond it, a runner's
+  // walk behind. Global config echoed per cohort (the `moveFerryReachTiles` idiom); derived, never saved.
+  commRangeTiles:uint = 0;
 }
 
 // One keeping class's hunting meal - a row of `PopulationCohortState.huntMeals`.

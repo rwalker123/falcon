@@ -1219,6 +1219,7 @@ fn create_populations<'a>(
                     cultureBreakAwayRisk: cohort.culture_break_away_risk,
                     idleMustered: cohort.idle_mustered,
                     huntMeals: Some(hunt_meals),
+                    commRangeTiles: cohort.comm_range_tiles,
                 },
             )
         })
@@ -1917,6 +1918,7 @@ fn decode_population(
             keeping: text(meal.keeping()),
             food: meal.food(),
         }),
+        comm_range_tiles: cohort.commRangeTiles(),
     })
 }
 

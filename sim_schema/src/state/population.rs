@@ -1823,6 +1823,10 @@ pub struct PopulationCohortState {
     /// `keeping.classes` order. Appended last.
     #[serde(default)]
     pub hunt_meals: Vec<KeepingMealState>,
+    /// **The messenger reach**, in tiles (`ExpeditionConfig::effective_comm_range`) — a stationed
+    /// party's report lands the turn it leaves inside it. Global config echoed per cohort. Appended last.
+    #[serde(default)]
+    pub comm_range_tiles: u32,
 }
 
 /// **ONE KEEPING CLASS'S HUNTING MEAL** — a row of [`PopulationCohortState::hunt_meals`]: the food

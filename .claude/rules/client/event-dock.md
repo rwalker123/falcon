@@ -583,7 +583,7 @@ Four details:
   `SIM_DESTINATION_LABEL_FORMAT`. The raw id is also hidden from the detail column
   (`DETAIL_KEY_HIDDEN`). **The sim writes the sentences** (`Party stationed with band 5`, `band 5 closed
   its borders — party returning home`, …) and the client only swaps the name in; it does not rewrite
-  them. **A post that ends of its own accord is NOTABLE**: `reason=borders_closed|host_gone`
+  them. **A post that ends of its own accord is NOTABLE**: `reason=borders_closed|host_gone|home_gone`
   are `DETAIL_STATUS_STYLE` rows at `RUNG_NOTABLE`, because `expedition_recalled` is otherwise Routine
   and a player at the default floor would never learn their people were on the road home. The
   player's own `reason=recalled` stays the Routine receipt it is.
@@ -1252,5 +1252,9 @@ was last seen and found nobody (`status=returning reason=host_not_found host=<id
 destination likewise (`reason=destination_not_found destination=<id>`). Both are `DETAIL_STATUS_STYLE`
 rows at `RUNG_NOTABLE` with the reduced mark, exactly `host_gone`'s; the phrase table says "no sign of
 them where last seen". The sim writes the sentence and `BAND_ID_TOKEN_LABELS` swaps the band's name in.
+
+`reason=home_gone` (`status=returning reason=home_gone host=<id> expedition=<bits>`) is a third
+sim-ended post: the party's own home band is gone. It is a `DETAIL_STATUS_STYLE` row at `RUNG_NOTABLE`
+with the reduced mark, and the phrase table says "their home band is gone".
 **`destination` joined `host` in `DETAIL_KEY_HIDDEN`**: its raw id had been printing as
 `Destination 5183` beside the already-named label.

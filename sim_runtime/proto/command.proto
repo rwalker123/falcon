@@ -529,8 +529,7 @@ message SendTradeExpeditionCommand {
 // GATED ON A CONNECTION: the sending band must hold a live tie to the host (strength > 0; a parked
 // edge refuses). A host of ANOTHER people additionally needs that people's Open Borders; a host of the
 // sender's own people never asks it. A post ends — the party walks home and folds back — on a recall,
-// the host's people closing their borders, the home band being unable to feed the party, or the host
-// no longer being a band.
+// the host's people closing their borders, or the host no longer being a band.
 //
 // IT FAILS CLOSED, before anything is drawn: a refused launch leaves the band exactly as it stood.
 message StationExpeditionCommand {

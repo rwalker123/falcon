@@ -1295,6 +1295,12 @@ home ledger's `last_seen_turn` therefore trails `last_contact_turn` by exactly t
 `comm_range_tech_factor` widens the instant zone until a report is instant anywhere; that is the hook,
 not a second mechanism.
 
+**The reach is on the wire**: `PopulationCohortState.commRangeTiles` (`snapshot.fbs`, appended last; decode key
+`comm_range_tiles`) is `effective_comm_range()` echoed on every cohort, the `moveFerryReachTiles` idiom — global
+config, derived at capture, never saved. A client quoting a report's delay reads it, the cohort's
+`bandMoveTilesPerTurn` and `station_report_delay`'s two branches above. Pinned by
+`station_expedition::the_comm_range_is_published_on_every_cohort_row`.
+
 - **The fold-back lands every report still in transit** (`Returning` and near home, or home
   unresolvable) — the party carries its own news home. A party with no home band to report to
   simply loses it, as a scout loses its findings.
@@ -1336,6 +1342,7 @@ on a shipment's lines):
 
 | reason | when |
 |---|---|
+| `home_gone` | the party's home band no longer exists (nobody to feed it or take its reports); checked first, and the party then folds where it stands through the `home_pos.is_none()` path |
 | `host_gone` | the host `BandId` no longer resolves to a resident band |
 | `borders_closed` | the host's people are not the party's and their borders are closed |
 | `host_not_found` | the party stands on its aim, does not see the host, and the host is not its own people (written by `advance_expeditions`; `host=` rides along) |

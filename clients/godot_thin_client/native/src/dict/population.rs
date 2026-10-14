@@ -1966,6 +1966,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "move_ferry_reach_tiles",
         i64::from(cohort.moveFerryReachTiles()),
     );
+    // The band's messenger reach in tiles (global config, echoed on every row): a station host
+    // within it reports the same turn.
+    let _ = dict.insert("comm_range_tiles", i64::from(cohort.commRangeTiles()));
     let _ = dict.insert(
         "long_move_leaves_food",
         f64::from(cohort.longMoveLeavesFood()),

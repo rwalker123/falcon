@@ -898,6 +898,9 @@ pub(crate) struct ExpeditionLevers<'a> {
     /// [`crate::carry::move_ferry_reach_tiles`] — how far a band moves and keeps everything,
     /// echoed per-cohort on the same idiom as the floors above.
     pub(crate) move_ferry_reach_tiles: u32,
+    /// [`crate::expedition_config::ExpeditionConfig::effective_comm_range`] — the messenger reach a
+    /// stationed party's report lands instantly inside, echoed per-cohort on the same idiom.
+    pub(crate) comm_range_tiles: u32,
 }
 
 /// **The TOE levers a cohort's kit readout is resolved against** — the config, plus the *equipped*
@@ -2653,6 +2656,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             .unwrap_or(crate::work_party::NO_LOAD_ON_THE_ROAD),
         homeward_all_home_in: homeward_totals.all_home_in,
         move_ferry_reach_tiles: expedition_levers.move_ferry_reach_tiles,
+        comm_range_tiles: expedition_levers.comm_range_tiles,
         // **The long-move forecast is the shed the move would run**, from the same function — no
         // client mirror. A detached party keeps its own rules, so it forecasts nothing.
         long_move_leaves_food: long_move.food.to_f32(),
@@ -3145,6 +3149,7 @@ mod tests {
             move_ferry_reach_tiles: crate::carry::move_ferry_reach_tiles(
                 &crate::supply_network_config::SupplyNetworkConfig::builtin(),
             ),
+            comm_range_tiles: cfg.effective_comm_range(),
         }
     }
 

@@ -23,6 +23,9 @@ const BORDERS_CLOSED_MID_POST: &str = "borders_closed";
 /// The party reached the tile it was told the host was at and saw nothing there — see
 /// [`steer_toward_target`].
 const HOST_NOT_FOUND_MID_POST: &str = "host_not_found";
+/// The home band that fed the party and took its reports no longer exists: the party has no one to
+/// report to, so the post ends and the party folds where it stands.
+const HOME_GONE_MID_POST: &str = "home_gone";
 /// The player's own recall of a stationed party — see `handle_recall_expedition`.
 pub const POST_RECALLED: &str = "recalled";
 
@@ -1001,8 +1004,8 @@ pub fn advance_expeditions(
             }
         }
 
-        // **A stationed party's post ends on any one of three things** (the third is the recall
-        // verb): the host band can no longer be resolved, or the host's people closed their borders
+        // **A stationed party's post ends on any one of four things** (the fourth is the recall
+        // verb): the home band no longer exists (nobody to feed the party or take its reports), the host band can no longer be resolved, or the host's people closed their borders
         // (another people's host only — see `FactionBorderPolicies::admits_posting`). The party turns
         // for home and folds back by the ordinary `Returning` path, carrying whatever news is still
         // in transit. A home band that cannot cover its party's rations does NOT end the post: the
@@ -1017,6 +1020,10 @@ pub fn advance_expeditions(
                     .and_then(|(host_entity, _)| bands.get(*host_entity).ok())
                     .map(|(_, host_cohort, ..)| host_cohort.faction);
                 let post_ends = match host_faction {
+                    _ if home_pos.is_none() => Some((
+                        HOME_GONE_MID_POST,
+                        "Party's home band is gone — standing down".to_string(),
+                    )),
                     None => Some((
                         HOST_GONE_MID_POST,
                         format!("Party lost {} — returning home", mission.host_display()),
