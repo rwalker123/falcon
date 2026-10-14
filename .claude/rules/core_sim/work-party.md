@@ -763,8 +763,9 @@ crew ahead of the hunt (`crafting.md` -> "Craft suggestions"). Also outside the 
 save.
 
 **`planned_crew` is the crew the hunt WANTS** (`NeedAssessment::wanted_crew`): the meal-sized crew
-before the equipment cap, so a band short of spears (or holding none) sends the few it can equip, or
-nobody, while the craft suggestions still ask for the spears the wanted crew needs. `muster_crew` is
+before the equipment cap, so where bare hands cannot wound the quarry a band short of spears sends the
+few it can equip, or nobody, and where they can it sends the whole wanted crew; the craft suggestions
+ask for the spears the wanted crew needs. `muster_crew` is
 the capped crew that goes out; the wire's `musterCrew`, `turnsToKill` and `turnsUntilHunt` are read
 off the same capped assessment the turn makes.
 
@@ -775,7 +776,7 @@ off the same capped assessment the turn makes.
 | herd gone, or beyond `band_work_range` of the band | `muster_crew = 0` — **only a camp kill is mustered**; a one-turn crew cannot run a caravan, so a need row never posts a party and a band still catching up hunts nothing |
 | crew | **sized to the meal** (below): the smallest row of `hunt_crew_take_curve(..)` landing the animals the meal calls for, never above `hunt_useful_crew`, priced with `max_workers` = the musterable pool (idle + every donor row's hands) |
 | no crew | `0` |
-| equipment cap | the crew is capped at **the hands the band can fully equip with the need row's take kit** (`MusterPricing::equippable_crew`): per item of the kit, the units no row claims (`unclaimed_units x workers_per_unit`, floored) plus the hands the lendable donor rows' settled units would arm (each row capped at the hands it has present), and the least over the kit's items; a kit that names no item never caps (`NO_KIT_CAP`). `crew = min(meal-sized, cap)`; a cap of `0` sends nobody (`muster_crew` 0, `turnsToKill` 0, `turnsUntilHunt` `NO_HUNT_NEEDED`, even mid-hunt) |
+| equipment cap | the crew is capped at **the hands the band can fully equip with the kit items that bind a camp kill** (`MusterPricing::equippable_crew`): per such item, the units no row claims (`unclaimed_units x workers_per_unit`, floored) plus the hands the lendable donor rows' settled units would arm (each row capped at the hands it has present), and the least over those items. **The items that bind a camp kill** (`hunt_by_need::kill_bearing_items`, one list for the cap and for `muster_kit`'s shortfall) are the kit's items declaring a stat the kill reads - `attack`, `dispersion` or `exposure` (`EquipmentStat::bears_on_a_kill`), on the item or any tier - never an item id; the sled (`hunt_carry`, `deposit_take`) is not one, because a need crew is only mustered inside `band_work_range`, where nothing is hauled and the sled wears nothing. **Never caps (`NO_KIT_CAP`)** when no item of the kit binds a camp kill, or when the bare hunter already wounds the quarry (`combat::strike_damage(inputs.intrinsic.attack, defense) > 0` against the quarry the hunt curve prices): the gate is cleared bare-handed, so a kit shortage does not stop the hunt. `crew = min(meal-sized, cap)`; a cap of `0` sends nobody (`muster_crew` 0, `turnsToKill` 0, `turnsUntilHunt` `NO_HUNT_NEEDED`, even mid-hunt) |
 | a hunt in progress | the crew was out this turn, the herd has `wounds.pending() > 0` and **no kill landed** → send, whatever the larder says |
 | otherwise | send iff `runway <= turns_to_kill + follow.need_margin_turns` (default **1**); `turns_to_kill` is the first non-zero slot of `fauna::project_arrivals_hunt` at that crew (`fauna::hunt_crew_turns_to_kill`), `runway` is the **need clock's** (`snapshot::kill_turns_of_food`, below) and the `NOT_FOOD_LIMITED_TURNS` sentinel never triggers |
 
@@ -879,11 +880,17 @@ numbers; kits come through the ordinary claims at the need row's own Priority. A
   then the kit-carrying donors up to the shortfall, then the rest of the idle hands, then the ordinary
   donor order - so a bare idle hand never takes the place of a hand carrying a spear. With no
   shortfall the order is idle, then Priority alone. `MusterPlan::from_idle` is the total idle taken.
-  Because the crew is capped at what the band can equip, the shortfall is the free kit's gap to the
-  capped crew, and the crafting bench is reached only by a crew the kit fully arms - a band short of
-  spears no longer strips its bench of the crafters who would make them. Pinned by
+  The shortfall is struck over the same kill-binding items as the cap (a sled shortage reorders no
+  donor). On a quarry bare hands cannot wound the curve prices only the hands the kit arms, so the
+  crew is the free kit's hands and the crafting bench is reached only by a crew the kit fully arms - a
+  band short of spears does not strip its bench of the crafters who would make them; on a quarry
+  bare hands wound the shortage caps nothing and the whole wanted crew goes, bare hands included.
+  Pinned by
   `hunt_by_need::{a_band_short_of_the_kit_sends_only_the_hands_it_can_equip_and_leaves_the_bench_alone,
-  a_band_with_no_kit_sends_nobody_and_still_asks_for_spears,
+  a_band_with_no_kit_sends_nobody_on_a_quarry_bare_hands_cannot_wound,
+  a_band_with_no_kit_hunts_bare_where_bare_hands_wound_and_still_asks_for_spears,
+  a_band_with_spears_and_no_sleds_sends_the_speared_crew,
+  a_kit_shortage_binds_only_where_bare_hands_cannot_wound,
   a_short_kit_is_lent_by_its_donor_before_any_idle_hand_goes}` and
   `components::tests::a_short_kit_holds_the_idle_back_until_the_donors_holding_it_have_lent`.
 - **The crafting bench lends like a row.** It is not a `LaborTarget`, so `muster_donors` takes it as
@@ -919,7 +926,9 @@ numbers; kits come through the ordinary claims at the need row's own Priority. A
 - **A going-out crew's kit shortage shows on the rows.** `apply_muster` crews the need row ahead of
   the turn's kit settlement, so while `muster_crew > 0` each take row's published `kitToe` is read
   off the mustered gear (`mustered_take_gear`, shared with the hunt-turn craft lines —
-  `crafting.md` → "Craft suggestions"); a waiting row keeps the standing reading.
+  `crafting.md` → "Craft suggestions"), and so is `kitWorkersHolding` (the same pass's coverage), so
+  the two agree; a waiting row keeps the standing reading for both. Pinned by
+  `hunt_by_need::a_crew_going_out_publishes_the_shortage_on_the_rows_and_a_waiting_row_does_not`.
 - **A donor emptied for the turn is not lapsed**: the holding test asks `row_is_held` (hands before
   the loan), while the lesson test still asks who is actually there.
 - **Priced over the gear the muster brings** (`hunt_by_need::MusterPricing`): a need row holds no

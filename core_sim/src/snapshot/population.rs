@@ -33,7 +33,8 @@ pub(crate) fn labor_assignment_to_state(
     material_upkeep_demand: Vec<sim_runtime::MaterialPayoff>,
     material_upkeep_supplied: Vec<sim_runtime::MaterialPayoff>,
     // **HOW FAR THIS ROW'S GEAR REACHES** — workers on it holding a COMPLETE `resolved_kit`, off
-    // the band-wide item budget the caller cut every row from. Passed in for `build_job`'s reason:
+    // the band-wide item budget the caller cut every row from (the mustered pass's while a need crew
+    // is going out, the standing one otherwise - the same pass the row's `kitToe` is read from). Passed in for `build_job`'s reason:
     // one row cannot resolve it, because the answer depends on what the rows beside it are holding.
     kit_workers_holding: f32,
 ) -> LaborAssignmentState {
@@ -1946,10 +1947,16 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                         material_supplied,
                         // **HOW FAR THIS ROW'S GEAR REACHES** — off the band-wide budget every row
                         // was cut from, so two rows naming one kit state the share each really got.
-                        row_gear[i].1.workers_holding_whole_kit(),
+                        // While a need crew is going out it is the MUSTERED pass's budget (the one
+                        // `kitToe` below reads); a waiting row reads the standing one for both.
+                        match &sending_pass {
+                            Some(pass) => pass.gear[i].coverage.workers_holding_whole_kit(),
+                            None => row_gear[i].1.workers_holding_whole_kit(),
+                        },
                     );
-                    // **WHICH OF ITS KIT ITEMS ARE SHORT, BY NAME** — resolved with the coverage
-                    // above, off the one budget, so the line and the reach beside it agree.
+                    // **WHICH OF ITS KIT ITEMS ARE SHORT, BY NAME** — read off the same pass as the
+                    // coverage above (the mustered one while a crew goes out, the standing one
+                    // otherwise), so the line and the reach beside it agree.
                     row.kit_toe = match &sending_pass {
                         Some(pass) => kit_toe_states(&pass.gear[i].toe),
                         None => row_gear[i].2.clone(),

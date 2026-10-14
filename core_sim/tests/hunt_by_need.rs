@@ -1646,9 +1646,19 @@ const GATHERING_KIT: &str = "gathering";
 
 /// Give the band exactly this gear, and put the Low donor row on the gathering kit.
 fn arm_the_band(app: &mut App, band: Entity, stalking_units: u32) {
+    arm_the_band_with(app, band, stalking_units, stalking_units);
+}
+
+/// [`arm_the_band`] with the stalking kit's two items counted apart: `spears` of the weapon and
+/// `sleds` of the hauler.
+fn arm_the_band_with(app: &mut App, band: Entity, spears: u32, sleds: u32) {
     let mut kit = BandEquipment::default();
-    kit.stock("spears", stalking_units, "plain", None);
-    kit.stock("sled", stalking_units, "plain", None);
+    if spears > 0 {
+        kit.stock("spears", spears, "plain", None);
+    }
+    if sleds > 0 {
+        kit.stock("sled", sleds, "plain", None);
+    }
     kit.stock("baskets", ENOUGH_UNITS, "plain", None);
     *app.world
         .get_mut::<BandEquipment>(band)
@@ -1761,6 +1771,18 @@ const RABBITS: Quarry = Quarry {
     stock: RABBIT_HEAD_COUNT * RABBIT_BODY_MASS,
 };
 
+/// Small game bare hands CANNOT wound (Desert Gazelle, defense 1 against the bare hunter's attack
+/// 1, so the gate deals nothing): the stalking kit is what clears it, so a kit shortage caps the
+/// crew. The fixture every equipment-cap test hunts, beside [`RABBITS`] where bare hands already
+/// take the animal and no shortage caps anything.
+const GAZELLE_BODY_MASS: f32 = 3.3;
+const GAZELLE_HEAD_COUNT: f32 = 2000.0;
+const DEFENDED_GAME: Quarry = Quarry {
+    species: "Desert Gazelle",
+    body_mass: GAZELLE_BODY_MASS,
+    stock: GAZELLE_HEAD_COUNT * GAZELLE_BODY_MASS,
+};
+
 /// A camp small enough that the idle hands cannot make the crew: both donors lend.
 const CREW_NEEDS_THE_DONORS: Stock = Stock {
     working: 5 + LOW_DONOR_HANDS + NORMAL_DONOR_HANDS,
@@ -1771,7 +1793,8 @@ const CREW_NEEDS_THE_DONORS: Stock = Stock {
 /// row stands at zero hands, so the standing pass never sees what its crew would claim. The band holds
 /// exactly the spears its stalking rows use; the mustered crew would need many more, and the shortfall
 /// is the people mustered less the spears held - the stalking donors' own kit moving to the crew,
-/// never counted twice.
+/// never counted twice. The quarry is one bare hands wound, so the whole crew goes out (the
+/// unarmed hands bare) and the suggestions are what arms them.
 #[test]
 fn a_hunt_crews_missing_kit_is_suggested_though_the_standing_rows_are_kitted() {
     let (mut app, band) = world_hunting(CREW_NEEDS_THE_DONORS, RABBITS);
@@ -1787,10 +1810,13 @@ fn a_hunt_crews_missing_kit_is_suggested_though_the_standing_rows_are_kitted() {
         "liveness: the stalking donor lends, so its kit moves to the crew"
     );
     assert_eq!(
-        sent, STALKING_HANDS,
-        "the crew sent is the hands the band can equip"
+        sent, wanted,
+        "bare hands take this quarry, so the kit shortage does not cap the crew"
     );
-    assert!(wanted > sent, "liveness: the hunt wants a bigger crew");
+    assert!(
+        wanted > STALKING_HANDS,
+        "liveness: the hunt wants more hands than the band has spears"
+    );
 
     // The suggestions equip toward the crew the hunt WANTS.
     let spears = suggested(&app, "spears").expect("the crew's spears are suggested");
@@ -2496,6 +2522,38 @@ fn published_kit_toe(app: &App) -> Vec<(String, String, f32, f32)> {
         .collect()
 }
 
+/// Each published row's `(herd, workers, kitWorkersHolding)`.
+fn published_kit_holding(app: &App) -> Vec<(String, u32, f32)> {
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let cohort = envelope
+        .payload_as_snapshot()
+        .and_then(|snapshot| snapshot.population())
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.bandId() == BAND)
+        .expect("the band is on the wire");
+    cohort
+        .laborAssignments()
+        .into_iter()
+        .flatten()
+        .map(|row| {
+            (
+                row.faunaId().unwrap_or_default().to_string(),
+                row.workers(),
+                row.kitWorkersHolding(),
+            )
+        })
+        .collect()
+}
+
 /// Is any published row short of spears?
 fn some_row_is_short_of_spears(lines: &[(String, String, f32, f32)]) -> bool {
     lines
@@ -2513,6 +2571,7 @@ fn a_crew_going_out_publishes_the_shortage_on_the_rows_and_a_waiting_row_does_no
     arm_the_band(&mut sending, band, STALKING_HANDS);
     set_muster(&mut sending, band, CREW_PAST_THE_SPEARS);
     let going = published_kit_toe(&sending);
+    let going_holding = published_kit_holding(&sending);
     assert!(
         going
             .iter()
@@ -2526,10 +2585,53 @@ fn a_crew_going_out_publishes_the_shortage_on_the_rows_and_a_waiting_row_does_no
         "the crew claims spears the band does not hold: some row reads short, got {going:?}"
     );
 
+    // **`kitWorkersHolding` is read off the same mustered pass as `kitToe`**, so the two agree: the
+    // need row holds exactly the spears its `kitToe` line says it was filled, and the donor that
+    // lent its hands (and its kit) holds fewer than the hands it still shows.
+    let holding_of = |herd: &str| {
+        going_holding
+            .iter()
+            .find(|(row_herd, _, _)| row_herd == herd)
+            .map(|(_, workers, holding)| (*workers, *holding))
+            .expect("the row is published")
+    };
+    let need_filled = going
+        .iter()
+        .find(|(herd, item, _, _)| herd == NEED_HERD && item == "spears")
+        .map(|(_, _, _, filled)| *filled)
+        .expect("the need row publishes a spears line");
+    assert!(
+        need_filled > 0.0,
+        "liveness: the crew holds some of the spears"
+    );
+    assert_eq!(
+        holding_of(NEED_HERD).1,
+        need_filled,
+        "the need row's holding agrees with its kitToe line: {going:?} {going_holding:?}"
+    );
+    let (donor_workers, donor_holding) = holding_of(NORMAL_DONOR_HERD);
+    assert!(
+        donor_workers > 0,
+        "liveness: the donor row still shows hands"
+    );
+    assert!(
+        donor_holding < donor_workers as f32,
+        "the lent donor holds fewer than the hands it shows, as its kitToe says: {going_holding:?}"
+    );
+
     let (mut waiting, band_w) = world_hunting(CREW_NEEDS_THE_DONORS, RABBITS);
     arm_the_band(&mut waiting, band_w, STALKING_HANDS);
     recapture_snapshot_in_place(&mut waiting.world);
     assert_eq!(row(&waiting, band_w, NEED_HERD).muster_crew, 0);
+    let waiting_holding = published_kit_holding(&waiting);
+    let waiting_donor = waiting_holding
+        .iter()
+        .find(|(herd, _, _)| herd == NORMAL_DONOR_HERD)
+        .expect("the donor row is published");
+    assert_eq!(
+        waiting_donor.2, waiting_donor.1 as f32,
+        "a waiting row keeps the standing reading for holding as for kitToe: {waiting_holding:?}"
+    );
     let standing = published_kit_toe(&waiting);
     assert!(
         !some_row_is_short_of_spears(&standing),
@@ -2557,8 +2659,18 @@ const CAP_WORLD: Stock = Stock {
 /// A lean band with a bench of `CAP_WORLD_BENCH_HANDS`, `units` sets of the stalking kit and no donor
 /// row holding any of it, after one turn.
 fn capped_world(units: u32) -> (App, Entity) {
-    let (mut app, band) = world_hunting(CAP_WORLD, RABBITS);
-    arm_the_band(&mut app, band, units);
+    capped_world_on(units, DEFENDED_GAME)
+}
+
+/// [`capped_world`] hunting `quarry`.
+fn capped_world_on(units: u32, quarry: Quarry) -> (App, Entity) {
+    capped_world_geared(units, units, quarry)
+}
+
+/// [`capped_world_on`] with `spears` and `sleds` counted apart.
+fn capped_world_geared(spears: u32, sleds: u32, quarry: Quarry) -> (App, Entity) {
+    let (mut app, band) = world_hunting(CAP_WORLD, quarry);
+    arm_the_band_with(&mut app, band, spears, sleds);
     gather_with_the_normal_donor(&mut app, band);
     app.world.entity_mut(band).insert(core_sim::BandBench {
         orders: vec![core_sim::BenchOrder::new(BENCH_RECIPE, UNFINISHED_ORDER)],
@@ -2570,21 +2682,17 @@ fn capped_world(units: u32) -> (App, Entity) {
     (app, band)
 }
 
-/// ⛔ **THE CREW IS CAPPED AT THE HANDS THE BAND CAN FULLY EQUIP, AND THE BENCH LENDS NOTHING.** A
-/// crew sized to the meal regardless of the kit took the idle hands, the donor rows and the crafting
-/// bench, most of them bare - and a bench with no crafters never made the spears. The band here holds
-/// three sets and no donor row holds any: the crew is three, every one of them equipped, the bench
-/// is untouched. The paired control holds the kit for everyone and sends the whole meal crew.
+/// ⛔ **A BAND SHORT OF THE KIT SENDS ONLY THE HANDS IT CAN EQUIP ON A QUARRY BARE HANDS CANNOT
+/// WOUND, AND THE BENCH LENDS NOTHING.** A crew reaching past the kit took the idle hands, the donor
+/// rows and the crafting bench, most of them bare - and a bench with no crafters never made the
+/// spears. The band here holds three sets and no donor row holds any: the crew is three, every one
+/// of them equipped, the bench is untouched. The paired control holds the kit for everyone and sends
+/// the larger crew the hunt wants.
 #[test]
 fn a_band_short_of_the_kit_sends_only_the_hands_it_can_equip_and_leaves_the_bench_alone() {
     let (short, band) = capped_world(FREE_STALKING_SETS);
     let need = row(&short, band, NEED_HERD);
 
-    assert!(
-        need.planned_crew > FREE_STALKING_SETS,
-        "liveness: the meal calls for a bigger crew than the kit arms, got {}",
-        need.planned_crew
-    );
     assert_eq!(
         need.muster_crew, FREE_STALKING_SETS,
         "the crew is the hands the band can equip"
@@ -2592,7 +2700,7 @@ fn a_band_short_of_the_kit_sends_only_the_hands_it_can_equip_and_leaves_the_benc
     assert_eq!(
         published(&short).row(NEED_HERD).muster_crew,
         FREE_STALKING_SETS,
-        "and the wire publishes the capped crew"
+        "and the wire publishes it"
     );
     assert_eq!(
         published_bench_lent(&short),
@@ -2620,32 +2728,26 @@ fn a_band_short_of_the_kit_sends_only_the_hands_it_can_equip_and_leaves_the_benc
     let (armed, band_a) = capped_world(ENOUGH_UNITS);
     let need_a = row(&armed, band_a, NEED_HERD);
     assert_eq!(
-        need_a.planned_crew, need.planned_crew,
-        "the crew the hunt wants does not depend on the kit"
-    );
-    assert_eq!(
         need_a.muster_crew, need_a.planned_crew,
         "with the kit in hand the whole meal crew goes"
     );
-    assert!(need_a.muster_crew > FREE_STALKING_SETS);
+    assert!(
+        need_a.muster_crew > FREE_STALKING_SETS,
+        "liveness: the kit is what bounded the short band's crew"
+    );
 }
 
-/// ⛔ **A BAND WITH NO KIT SENDS NOBODY, BUT THE CRAFT SUGGESTIONS STILL ASK FOR IT.** The crew is
-/// capped at zero, so nothing goes out and the row waits for ever ([`NO_HUNT_NEEDED`]); the planned
-/// crew is the uncapped wanted crew, so the spear suggestion for the crew the hunt wants is on the
-/// panel - and auto-craft queues it.
+/// ⛔ **A BAND WITH NO KIT SENDS NOBODY ON A QUARRY BARE HANDS CANNOT WOUND.** No hand can be
+/// armed and an unarmed one deals nothing, so no crew can be raised: nothing goes out, the row waits
+/// for ever ([`NO_HUNT_NEEDED`]) and the bench and idle hands stay home.
 #[test]
-fn a_band_with_no_kit_sends_nobody_and_still_asks_for_spears() {
-    let (mut app, band) = capped_world(0);
+fn a_band_with_no_kit_sends_nobody_on_a_quarry_bare_hands_cannot_wound() {
+    let (app, band) = capped_world(0);
     let need = row(&app, band, NEED_HERD);
 
     assert_eq!(
         need.muster_crew, 0,
         "nothing can be equipped, so nobody goes"
-    );
-    assert!(
-        need.planned_crew > 0,
-        "the planned crew is the uncapped wanted crew"
     );
     let wire = published(&app);
     assert_eq!(wire.row(NEED_HERD).muster_crew, 0);
@@ -2653,9 +2755,29 @@ fn a_band_with_no_kit_sends_nobody_and_still_asks_for_spears() {
     assert_eq!(wire.row(NEED_HERD).turns_until_hunt, NO_HUNT_NEEDED);
     assert_eq!(wire.idle_mustered, 0, "no idle hand is mustered either");
     assert_eq!(published_bench_lent(&app), 0);
+}
+
+/// ⛔ **A BAND WITH NO KIT STILL HUNTS A QUARRY BARE HANDS WOUND, AND THE CRAFT SUGGESTIONS STILL ASK
+/// FOR THE SPEARS.** The gate is cleared without gear, so a kit shortage must not stop the hunt: the
+/// crew the hunt wants goes out bare, and the spear suggestion for it is on the panel - and
+/// auto-craft queues it. Paired with the defended-game control above, where the same band sends
+/// nobody.
+#[test]
+fn a_band_with_no_kit_hunts_bare_where_bare_hands_wound_and_still_asks_for_spears() {
+    let (mut app, band) = capped_world_on(0, RABBITS);
+    let need = row(&app, band, NEED_HERD);
+
+    assert!(
+        need.planned_crew > 0,
+        "liveness: the hunt wants a crew of this quarry"
+    );
+    assert_eq!(
+        need.muster_crew, need.planned_crew,
+        "bare hands wound it, so the missing kit caps nothing"
+    );
     assert!(
         suggested(&app, "spears").is_some_and(|count| count > 0),
-        "the craft suggestions still ask for the spears the wanted crew needs"
+        "the craft suggestions still ask for the spears the crew needs"
     );
 
     auto_bench_with_materials(&mut app, band);
@@ -2666,12 +2788,64 @@ fn a_band_with_no_kit_sends_nobody_and_still_asks_for_spears() {
     );
 }
 
+/// ⛔ **THE SLED DOES NOT BIND A CAMP KILL.** A need crew is only ever mustered for a kill inside
+/// `band_work_range`, where nothing is hauled: the sled carries nothing and wears nothing there. So
+/// a band holding spears and no sleds sends the speared crew - capped at the spears it holds - and
+/// is not starved by the sled it lacks. The control holds neither and sends nobody.
+#[test]
+fn a_band_with_spears_and_no_sleds_sends_the_speared_crew() {
+    let (speared, band) = capped_world_geared(FREE_STALKING_SETS, 0, DEFENDED_GAME);
+    let need = row(&speared, band, NEED_HERD);
+    assert_eq!(
+        need.muster_crew, FREE_STALKING_SETS,
+        "the crew is the spears the band holds, whatever sleds it lacks"
+    );
+    assert_eq!(
+        published(&speared).row(NEED_HERD).muster_crew,
+        FREE_STALKING_SETS
+    );
+
+    let (short_of_both, band_s) = capped_world_geared(0, 0, DEFENDED_GAME);
+    assert_eq!(
+        row(&short_of_both, band_s, NEED_HERD).muster_crew,
+        0,
+        "control: with no spears either, nobody goes"
+    );
+}
+
+/// ⛔ **A QUARRY BARE HANDS WOUND IS NOT CAPPED BY THE KIT; ONE THEY CANNOT WOUND IS BOUND BY IT.**
+/// The same band, three sets of the kit, the same lean larder: on a defense-0 quarry the bare hunter
+/// already clears the gate, so the crew the hunt wants goes in full, kit short or not; on a quarry
+/// the bare hunter cannot wound (defense 1 against the bare attack of 1) the spears are what clear
+/// it, so the crew is the three that can be armed.
+#[test]
+fn a_kit_shortage_binds_only_where_bare_hands_cannot_wound() {
+    let (undefended, band_u) = capped_world_on(FREE_STALKING_SETS, RABBITS);
+    let need_u = row(&undefended, band_u, NEED_HERD);
+    assert!(
+        need_u.planned_crew > FREE_STALKING_SETS,
+        "liveness: the hunt wants more hands than the band has sets, got {}",
+        need_u.planned_crew
+    );
+    assert_eq!(
+        need_u.muster_crew, need_u.planned_crew,
+        "bare hands wound it, so the short kit does not cap the crew"
+    );
+
+    let (defended, band_d) = capped_world_on(FREE_STALKING_SETS, DEFENDED_GAME);
+    assert_eq!(
+        row(&defended, band_d, NEED_HERD).muster_crew,
+        FREE_STALKING_SETS,
+        "bare hands cannot wound it, so the crew is the hands that can be armed"
+    );
+}
+
 /// ⛔ **THE DONOR HOLDING THE KIT LENDS BEFORE THE IDLE HANDS WHEN THE KIT IS SHORT.** No free set,
 /// idle hands to spare, and a local hunt row of four holding the four sets: the crew is the four the
 /// band can equip, all four from the donor row and none from idle.
 #[test]
 fn a_short_kit_is_lent_by_its_donor_before_any_idle_hand_goes() {
-    let (mut app, band) = world_hunting(CREW_NEEDS_THE_DONORS, RABBITS);
+    let (mut app, band) = world_hunting(CREW_NEEDS_THE_DONORS, DEFENDED_GAME);
     arm_the_band(&mut app, band, STALKING_HANDS);
     set_meat(&mut app, band, LEAN_LARDER);
     turn(&mut app);

@@ -3424,11 +3424,10 @@ fn seed_source_yield(
     }
     // **The band's people, and what they have learned** (#799): the seed resolves the reach the
     // turn's take will have, so a band that knows `drives` is quoted the driven herd.
-    let faction = app
-        .world
-        .get::<PopulationCohort>(band)
-        .map(|cohort| cohort.faction)
-        .expect("a band being seeded is a population cohort");
+    let Some(cohort) = app.world.get::<PopulationCohort>(band) else {
+        return;
+    };
+    let faction = cohort.faction;
     let drives_known = core_sim::roaming_skills::world_faction_knows(
         &app.world,
         faction,
@@ -3487,9 +3486,6 @@ fn seed_source_yield(
     let Some((crew_kit, crew_priority, item_budget, other_rows, crew_split, row_claims)) =
         crew_gear
     else {
-        return;
-    };
-    let Some(cohort) = app.world.get::<PopulationCohort>(band) else {
         return;
     };
     let current_tile = cohort.current_tile;
@@ -6017,17 +6013,13 @@ fn launch_forecast_party(
     kit: &KitChoice,
     party_workers: u32,
     quarry_body_mass: f32,
+    faction: FactionId,
 ) -> (HuntingParty, f32) {
     let ledger = app
         .world
         .get::<BandEquipment>(band)
         .cloned()
         .unwrap_or_default();
-    let faction = app
-        .world
-        .get::<PopulationCohort>(band)
-        .map(|cohort| cohort.faction)
-        .expect("a band launching a raid is a population cohort");
     core_sim::forecast_query::issued_raid_party(
         &app.world,
         &ledger,
@@ -6384,8 +6376,14 @@ fn handle_send_denial_raid(
         registry.find(&fauna_id).map(|herd| {
             // Resolved INSIDE the herd lookup: the attack tier is a fact about this party against
             // THIS animal, not about the party alone.
-            let (party, per_worker_haul) =
-                launch_forecast_party(app, outfit.band.entity, &kit, party_workers, herd.body_mass);
+            let (party, per_worker_haul) = launch_forecast_party(
+                app,
+                outfit.band.entity,
+                &kit,
+                party_workers,
+                herd.body_mass,
+                faction,
+            );
             denial_forecast(
                 party_workers,
                 herd,
