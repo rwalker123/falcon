@@ -240,6 +240,15 @@ const FACTION_SETTLING_BELIEF_VALUE_FORMAT := "+%d"
 const FACTION_SETTLING_BELIEF_NONE := "0 — stand on your dead"
 const FACTION_SETTLING_BELIEF_MIN := 0.5
 
+## The MOBILITY row, the SETTLING block's last (issue #800): the roaming counterpart to the settling
+## score, a `0–100` meter. The row's key names the score; its value is the same `%s  %d/%d` shape the
+## stage row uses, and the HOVER itemizes the two inputs in the player's words — each with the points it
+## contributed this turn (`skills_points` / `distance_points`, pre-smoothing, so the two sum to the
+## turn's target and the meter drifts toward it).
+const FACTION_MOBILITY_KEY := "Mobility"
+const FACTION_MOBILITY_SCALE := 100
+const FACTION_MOBILITY_TOOLTIP_FORMAT := "Roaming skills (herd lore, travois, drives): +%d\nWalking with the herds: +%d"
+
 ## **OPEN BORDERS — the faction page's one control** (issue #512, `docs/plan_band_fission.md`
 ## §Defection). A faction-wide policy with no other home: whether another people's unhappy leavers,
 ## and their defecting parties, may join this people's bands. The checkbox's face is the policy's
@@ -298,7 +307,11 @@ const FACTION_DISCOVERY_COUNT_FORMAT := "%d"
 ## **RE-MEASURED AT 560 WHEN THE `From the dead` ROW LANDED (issue #701)**, over the 531 above — it
 ## moved to 580, the same ~19px margin over the block. The wide dock's tiered block reads 334px of a
 ## 358px box with the row in (24 spare), and the tall side box is still 941.
-const FACTION_BAND_FULL_MIN_HEIGHT := 580.0
+##
+## **RE-MEASURED AT 608 WHEN THE MOBILITY ROW LANDED (issue #800)**, over the 580 above: the full block
+## reads 589px with the row in, so the threshold keeps its ~19px margin. The tiered block drops the row
+## beside DISCOVERIES (334px of the 358px box, unchanged).
+const FACTION_BAND_FULL_MIN_HEIGHT := 608.0
 
 ## A discovered site whose catalog row carries no display name — the site_id is a worse name than
 ## none at all is a lie, so the id stands.

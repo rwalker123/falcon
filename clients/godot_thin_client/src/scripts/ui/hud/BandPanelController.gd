@@ -680,6 +680,10 @@ func _player_knowledge() -> Dictionary:
 func _faction_settling() -> Dictionary:
     return _topbar.faction_sedentarization() if _topbar != null else {}
 
+## The player faction's mobility entry, for the band zone's ROAMING block. `{}` renders nothing.
+func _faction_mobility() -> Dictionary:
+    return _topbar.faction_mobility() if _topbar != null else {}
+
 ## The player faction's policy row (`{faction, open_borders}`), for the band zone's OPEN BORDERS toggle.
 ## `{}` before the snapshot has carried one — the toggle renders nothing rather than a guessed default.
 func _faction_policy() -> Dictionary:
@@ -10761,7 +10765,7 @@ func render_faction() -> void:
         # of its blocks at the page's row size, so DISCOVERIES yields there.
         BandCityPanel.ZONE_BAND:
             HudWidgets.wrap_zone(FactionRollup.build_band_zone(_band_labor, _disclosures,
-                _faction_settling(), _faction_discoveries(), _faction_policy(),
+                _faction_settling(), _faction_mobility(), _faction_discoveries(), _faction_policy(),
                 _emit_open_borders, _faction_band_zone_is_full())),
         BandCityPanel.ZONE_WORK:
             HudWidgets.wrap_zone(FactionRollup.build_work_zone(_band_labor,

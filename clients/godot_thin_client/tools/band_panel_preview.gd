@@ -524,6 +524,10 @@ const FACTION_TAB_LABELS: Array[String] = ["Faction", "Work", "Parties"]
 ## (It was seeded for the top bar's own Sedentarization meter; that meter is retired with the
 ## top-right block, and the seed stays because the faction page now renders off the same cache.)
 const TOPBAR_SEDENTARIZATION_SCORE := 62.0
+## The mobility fixture (issue #800): the smoothed score and the two pre-smoothing inputs.
+const MOBILITY_SCORE := 38.0
+const MOBILITY_SKILLS_POINTS := 22.0
+const MOBILITY_DISTANCE_POINTS := 31.0
 ## The Beliefs fixtures (issue #701), in `CultureTraitAxis` order. The expected strings are LITERALS.
 const BELIEFS_AXIS_COUNT := 15
 const BELIEFS_AXIS_TRADITIONALIST_REVISIONIST := 3
@@ -1008,6 +1012,9 @@ func _ready() -> void:
 	_hud.update_sedentarization([{"faction": 0,
 		"score": TOPBAR_SEDENTARIZATION_SCORE, "stage": TOPBAR_SEDENTARIZATION_STAGE,
 		"belief_points": TOPBAR_SEDENTARIZATION_BELIEF_POINTS}])
+	# The mobility row beside it (issue #800): the viewer's own row, the shape the native decoder emits.
+	_hud.update_mobility([{"faction": 0, "score": MOBILITY_SCORE,
+		"skills_points": MOBILITY_SKILLS_POINTS, "distance_points": MOBILITY_DISTANCE_POINTS}])
 
 	# Slice 3: inject the panel into the HUD and push a player band through the real snapshot
 	# path (update_band_alerts → _refresh_panel_band), so the FULL band detail relocates into the
@@ -9866,6 +9873,10 @@ func _assert_faction_settling_belief() -> void:
 	if zone == null:
 		_assert_band_panel("faction settling belief: the zone exists", false)
 		return
+	var mobility := _faction_stat_value(zone, HudWorkVocab.FACTION_MOBILITY_KEY)
+	_assert_band_panel("faction mobility: the row reads %d/100 (got '%s')" % [
+			int(MOBILITY_SCORE), mobility],
+		mobility.ends_with("%d/%d" % [int(MOBILITY_SCORE), HudWorkVocab.FACTION_MOBILITY_SCALE]))
 	var tied := _faction_stat_value(zone, HudWorkVocab.FACTION_SETTLING_BELIEF_KEY)
 	_assert_band_panel("faction settling belief: a band on its dead reads +%d (got '%s')" % [
 			int(TOPBAR_SEDENTARIZATION_BELIEF_POINTS), tied],

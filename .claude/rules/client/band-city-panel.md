@@ -1564,6 +1564,26 @@ from the player's `sedentarization` entry, which `FactionReadouts.update_sedenta
   `band_panel_faction_settling_untied` (`_assert_faction_settling_belief`, which re-pushes the entry with
   `belief_points` 0 and asserts the zone still fits its box and its width).
 
+## The Settling block's `Mobility` row (issue #800)
+
+`FactionRollup._build_mobility_row` is the Settling block's last row, in the stage row's own form: a
+`Mobility` key over the `HudFormat.meter_bar` meter and `N/100`. The score is the sim's per-faction
+mobility (`docs/plan_roaming_bands.md` -> The mobility score), the roaming counterpart to the settling
+score; `FactionReadouts.update_mobility` / `faction_mobility()` retain the player's row off the
+snapshot's `mobility` key, `Main` calls `update_mobility` only when the key moved (a delta that omits it
+leaves the held value), and `Hud.update_mobility` re-renders the faction page.
+
+- **The hover itemizes the two inputs**, each with the points it gave this turn
+  (`HudWorkVocab.FACTION_MOBILITY_TOOLTIP_FORMAT`): `Roaming skills (herd lore, travois, drives): +N` and
+  `Walking with the herds: +N`, off `skills_points` / `distance_points`. Those are pre-smoothing, so the
+  meter (the smoothed `score`) follows them rather than equalling their sum.
+- **No mobility entry, no row** - never a `0/100` claiming a measurement that was not made.
+- **It is a row, not a block with its own head**, because a block cost 29px more and overflowed the wide
+  dock's 358px box; the row is dropped in the height-capped tier beside DISCOVERIES (`full` false), and
+  `FACTION_BAND_FULL_MIN_HEIGHT` was re-measured 580 -> 608 (full block 589px).
+- **Frame / claim:** `band_panel_faction` carries the seeded row (`MOBILITY_SCORE` 38) and
+  `_assert_faction_settling_belief` asserts it reads `38/100`.
+
 ## The parties strip's lines
 
 The parties inspector strip IS the detail panel for a launched party, and on a horizontal dock it lives

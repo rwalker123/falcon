@@ -121,7 +121,7 @@ const KNOWLEDGE_METER_CELLS := FactionReadouts.KNOWLEDGE_METER_CELLS
 ## player faction's `faction_policies` row (`FactionReadouts.faction_policy`); `on_open_borders` takes
 ## the requested state as a `bool`.
 static func build_band_zone(labor: HudBandLaborState, disclosures: DisclosureController,
-        sedentarization: Dictionary, sites: Array, policy: Dictionary,
+        sedentarization: Dictionary, mobility: Dictionary, sites: Array, policy: Dictionary,
         on_open_borders: Callable, full: bool) -> VBoxContainer:
     var col := HudWidgets.make_zone_column()
     var bands := labor.player_bands()
@@ -129,7 +129,9 @@ static func build_band_zone(labor: HudBandLaborState, disclosures: DisclosureCon
     var people := _build_people_block(bands)
     if people != null:
         col.add_child(people)
-    var settling := _build_settling_block(sedentarization)
+    # The MOBILITY row yields with DISCOVERIES in the height-capped tier: the wide dock's 358px box
+    # holds the tiered block with 24px spare and the row costs 29 (issue #800).
+    var settling := _build_settling_block(sedentarization, mobility if full else {})
     if settling != null:
         col.add_child(settling)
     var borders := _build_open_borders_row(policy, on_open_borders)
@@ -787,7 +789,7 @@ static func _build_people_block(bands: Array) -> VBoxContainer:
 ## it rendered as a lowercase enum key beside the capitalised `Nomadic` the empty case already got.
 ## `HudWorkVocab.FACTION_SETTLING_STAGE_LABELS` is the one home for those words, and an unknown or
 ## absent stage falls back to the `none` row rather than passing the raw token through.
-static func _build_settling_block(sedentarization: Dictionary) -> VBoxContainer:
+static func _build_settling_block(sedentarization: Dictionary, mobility: Dictionary) -> VBoxContainer:
     if sedentarization.is_empty():
         return null
     var score := float(sedentarization.get("score", 0.0))
@@ -811,7 +813,30 @@ static func _build_settling_block(sedentarization: Dictionary) -> VBoxContainer:
             int(round(score)), HudWorkVocab.FACTION_SETTLING_SCALE],
         HudStyle.INK_DIM))
     block.add_child(_build_settling_belief_row(float(sedentarization.get("belief_points", 0.0))))
+    var mobility_row := _build_mobility_row(mobility)
+    if mobility_row != null:
+        block.add_child(mobility_row)
     return block
+
+## THE MOBILITY ROW (issue #800) — the roaming counterpart to the settling meter, the SETTLING block's
+## last row, in the stage row's own form (meter and `N/100`). Null before the snapshot has carried one
+## (no `0/100` claiming a measurement that was not made). The HOVER itemizes the two inputs with the
+## points each gave this turn, in the player's words; the wire's `skills_points` / `distance_points` are
+## the pre-smoothing contributions, so the meter (the smoothed total) follows them rather than equalling
+## their sum. It is a row of the block rather than a block of its own because the wide dock's tiered
+## band zone is 358px and a block with its own head did not fit it.
+static func _build_mobility_row(mobility: Dictionary) -> HBoxContainer:
+    if mobility.is_empty():
+        return null
+    var score := float(mobility.get("score", 0.0))
+    var tip := HudWorkVocab.FACTION_MOBILITY_TOOLTIP_FORMAT % [
+        int(round(float(mobility.get("skills_points", 0.0)))),
+        int(round(float(mobility.get("distance_points", 0.0))))]
+    return _stat_row(HudWorkVocab.FACTION_MOBILITY_KEY,
+        HudWorkVocab.FACTION_SETTLING_VALUE_FORMAT % [
+            HudFormat.meter_bar(score, KNOWLEDGE_METER_CELLS),
+            int(round(score)), HudWorkVocab.FACTION_MOBILITY_SCALE],
+        HudStyle.INK_DIM, tip)
 
 ## **THE SETTLING BLOCK'S SECOND ROW (issue #701): `From the dead  +N`** — how many of the score's 100
 ## points come from a band standing on its dead this turn. At or above `FACTION_SETTLING_BELIEF_MIN` it
