@@ -897,6 +897,10 @@ numbers; kits come through the ordinary claims at the need row's own Priority. A
   call. Pinned by `hunt_by_need::{when_the_hunts_kit_is_short_the_donor_holding_it_lends_first,
   when_the_kit_is_not_short_the_lowest_priority_lends_first, the_turn_lends_the_donors_the_board_named}`
   and `components::tests::a_short_kit_puts_the_donors_holding_it_first_up_to_the_shortfall`.
+- **A going-out crew's kit shortage shows on the rows.** `apply_muster` crews the need row ahead of
+  the turn's kit settlement, so while `muster_crew > 0` each take row's published `kitToe` is read
+  off the mustered gear (`mustered_take_gear`, shared with the hunt-turn craft lines —
+  `crafting.md` → "Craft suggestions"); a waiting row keeps the standing reading.
 - **A donor emptied for the turn is not lapsed**: the holding test asks `row_is_held` (hands before
   the loan), while the lesson test still asks who is actually there.
 - **Priced over the gear the muster brings** (`hunt_by_need::MusterPricing`): a need row holds no

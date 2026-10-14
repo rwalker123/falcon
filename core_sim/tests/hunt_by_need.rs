@@ -2407,3 +2407,92 @@ fn the_quoted_rate_is_the_progress_the_turn_banks_with_hands_lent() {
         "liveness: the quote falls with the loan, got {quoted:?}"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// THE ROWS PUBLISH THE KIT SHORTAGE OF THE HUNT TURN ABOUT TO BE PLAYED
+// ---------------------------------------------------------------------------------------------
+
+/// Spears a sending crew claims beyond what the band holds.
+const CREW_PAST_THE_SPEARS: u32 = 10;
+
+/// Every `(herd, item, required, filled)` kit-toe line the ENCODED frame publishes on the band's
+/// hunt rows.
+fn published_kit_toe(app: &App) -> Vec<(String, String, f32, f32)> {
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let cohort = envelope
+        .payload_as_snapshot()
+        .and_then(|snapshot| snapshot.population())
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.bandId() == BAND)
+        .expect("the band is on the wire");
+    cohort
+        .laborAssignments()
+        .into_iter()
+        .flatten()
+        .flat_map(|row| {
+            let herd = row.faunaId().unwrap_or_default().to_string();
+            row.kitToe()
+                .into_iter()
+                .flatten()
+                .map(|line| {
+                    (
+                        herd.clone(),
+                        line.itemId().unwrap_or_default().to_string(),
+                        line.required(),
+                        line.filled(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// Is any published row short of spears?
+fn some_row_is_short_of_spears(lines: &[(String, String, f32, f32)]) -> bool {
+    lines
+        .iter()
+        .any(|(_, item, required, filled)| item == "spears" && filled + 1e-3 < *required)
+}
+
+/// ⛔ **A CREW GOING OUT SHOWS ITS KIT SHORTAGE ON THE ROWS.** The turn crews the need row before the
+/// kit settles, so the rows genuinely go short; the capture publishes each take row's `kitToe` from
+/// that mustered gear. Control: the same band with the need row waiting keeps the standing reading,
+/// where every row is armed.
+#[test]
+fn a_crew_going_out_publishes_the_shortage_on_the_rows_and_a_waiting_row_does_not() {
+    let (mut sending, band) = world_hunting(CREW_NEEDS_THE_DONORS, RABBITS);
+    arm_the_band(&mut sending, band, STALKING_HANDS);
+    set_muster(&mut sending, band, CREW_PAST_THE_SPEARS);
+    let going = published_kit_toe(&sending);
+    assert!(
+        going
+            .iter()
+            .any(|(herd, item, required, _)| herd == NEED_HERD
+                && item == "spears"
+                && *required > 0.0),
+        "liveness: the crew's own claim is published on the need row, got {going:?}"
+    );
+    assert!(
+        some_row_is_short_of_spears(&going),
+        "the crew claims spears the band does not hold: some row reads short, got {going:?}"
+    );
+
+    let (mut waiting, band_w) = world_hunting(CREW_NEEDS_THE_DONORS, RABBITS);
+    arm_the_band(&mut waiting, band_w, STALKING_HANDS);
+    recapture_snapshot_in_place(&mut waiting.world);
+    assert_eq!(row(&waiting, band_w, NEED_HERD).muster_crew, 0);
+    let standing = published_kit_toe(&waiting);
+    assert!(
+        !some_row_is_short_of_spears(&standing),
+        "a waiting row keeps the standing reading, where the rows are armed: {standing:?}"
+    );
+}

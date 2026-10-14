@@ -430,8 +430,9 @@ fn need_row_assessment(
 /// **THE HUNT-TURN PASS FOR A BAND, or `None` with no crew planned** - the need row whose stored
 /// `LaborAssignment::planned_crew` (the meal-sized crew the labor pass priced at its foot, sending or
 /// waiting, so the kit is flagged ahead of the hunt) is a crew, mustered
-/// through [`hunt_turn_shortfall_lines`]. The snapshot's `craftSuggestions` and auto-craft both take it
+/// through [`mustered_take_gear`]. The snapshot's `craftSuggestions` and auto-craft both take it
 /// through [`crate::craft_suggestions::band_suggestions`], so the two read one list.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn hunt_turn_lines(
     allocation: &LaborAllocation,
     idle: u32,
@@ -440,26 +441,59 @@ pub(crate) fn hunt_turn_lines(
     sources: &crate::take_claims::ClaimSources<'_>,
     wear: &crate::components::BandEquipment,
     equipment: &crate::equipment_config::EquipmentConfig,
+    sent: Option<&MusteredTakeGear>,
 ) -> Option<Vec<crate::craft_suggestions::ToolShortfallLine>> {
     let need_idx = allocation
         .assignments
         .iter()
         .position(|row| row.is_need_row() && row.planned_crew > 0)?;
-    Some(hunt_turn_shortfall_lines(
-        allocation,
-        need_idx,
-        allocation.assignments[need_idx].planned_crew,
-        idle,
-        is_local,
-        bench,
-        sources,
-        wear,
+    let crew = allocation.assignments[need_idx].planned_crew;
+    // **ONE COMPUTATION**: the capture already struck the mustered gear for a crew that is going out;
+    // when that is this very crew it is reused rather than derived a second time.
+    let owned;
+    let pass = match sent.filter(|pass| pass.need_idx == need_idx && pass.crew == crew) {
+        Some(pass) => pass,
+        None => {
+            owned = mustered_take_gear(
+                allocation, need_idx, crew, idle, is_local, bench, sources, wear, equipment,
+            );
+            &owned
+        }
+    };
+    let take_rows = pass.gear.iter().enumerate().flat_map(|(row, gear)| {
+        gear.toe
+            .iter()
+            .map(move |line| (row, line.item_id.as_str(), line.required, line.filled))
+    });
+    Some(crate::craft_suggestions::band_tool_shortfall_lines(
+        &pass.allocation,
+        take_rows,
         equipment,
+        wear,
     ))
 }
 
+/// **THE GEAR EVERY TAKE ROW HOLDS ON THE TURN A NEED CREW GOES OUT** - the allocation with the need
+/// row's `crew` mustered through [`LaborAllocation::muster_donors`], every row's claim struck again
+/// and the budget settled on them, exactly the order the turn runs
+/// (`apply_muster` ahead of the kit settlement). The ONE computation behind both the hunt-turn
+/// craft suggestions ([`hunt_turn_lines`]) and the rows' published `kitToe` while a crew is going
+/// out. Pools and site crews are unchanged by a muster, so only the take rows differ from the
+/// standing pass.
+pub(crate) struct MusteredTakeGear {
+    /// The need row this pass mustered.
+    pub(crate) need_idx: usize,
+    /// The crew it mustered.
+    pub(crate) crew: u32,
+    /// The standing allocation with the donors' hands cut and the need row crewed. Index-aligned
+    /// with the standing allocation.
+    pub(crate) allocation: LaborAllocation,
+    /// Every row's settled gear on that allocation.
+    pub(crate) gear: Vec<crate::craft_suggestions::TakeRowGear>,
+}
+
 #[allow(clippy::too_many_arguments)]
-fn hunt_turn_shortfall_lines(
+pub(crate) fn mustered_take_gear(
     standing: &LaborAllocation,
     need_idx: usize,
     crew: u32,
@@ -469,7 +503,7 @@ fn hunt_turn_shortfall_lines(
     sources: &crate::take_claims::ClaimSources<'_>,
     wear: &crate::components::BandEquipment,
     equipment: &crate::equipment_config::EquipmentConfig,
-) -> Vec<crate::craft_suggestions::ToolShortfallLine> {
+) -> MusteredTakeGear {
     let standing_claims = crate::take_claims::row_claims(sources, standing, wear);
     let hunt_kit = standing.assignments[need_idx].kit_choice(equipment);
     let plan = crate::hunt_by_need::MusterPricing {
@@ -491,12 +525,25 @@ fn hunt_turn_shortfall_lines(
     // The same settled gear the capture and auto-craft read (`take_row_gear`), now for the mustered
     // allocation.
     let gear = crate::craft_suggestions::take_row_gear(equipment, &mustered, &claims, wear);
-    let take_rows = gear.iter().enumerate().flat_map(|(row, gear)| {
-        gear.toe
-            .iter()
-            .map(move |line| (row, line.item_id.as_str(), line.required, line.filled))
-    });
-    crate::craft_suggestions::band_tool_shortfall_lines(&mustered, take_rows, equipment, wear)
+    MusteredTakeGear {
+        need_idx,
+        crew,
+        allocation: mustered,
+        gear,
+    }
+}
+
+/// A row's kit-toe lines as the wire carries them.
+fn kit_toe_states(
+    toe: &[crate::craft_suggestions::KitToeLine],
+) -> Vec<sim_schema::KitToeLineState> {
+    toe.iter()
+        .map(|line| sim_schema::KitToeLineState {
+            item_id: line.item_id.clone(),
+            required: line.required,
+            filled: line.filled,
+        })
+        .collect()
 }
 
 /// Summarize a band's labor allocation into the `activity` string — the dominant assignment's kind,
@@ -1504,15 +1551,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             crate::craft_suggestions::take_row_gear(kit_levers.config, alloc, claims, &kit)
                 .into_iter()
                 .map(|gear| {
-                    let toe = gear
-                        .toe
-                        .into_iter()
-                        .map(|line| sim_schema::KitToeLineState {
-                            item_id: line.item_id,
-                            required: line.required,
-                            filled: line.filled,
-                        })
-                        .collect();
+                    let toe = kit_toe_states(&gear.toe);
                     (gear.kit, gear.coverage, toe)
                 })
                 .collect()
@@ -1796,6 +1835,38 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 .plan_at(crew, &hunt_kit, kit_levers.config, &kit)
             })
     });
+    // **THE MUSTERED GEAR OF A CREW THAT IS GOING OUT** - when a need row has `muster_crew > 0` the
+    // turn crews it before the kit settles, so every take row's `kitToe` is published from this
+    // pass (and the hunt-turn craft lines reuse it). A waiting row keeps the standing reading.
+    let sending_pass = allocation.and_then(|a| {
+        let need_idx = a
+            .assignments
+            .iter()
+            .position(|row| row.is_need_row() && row.muster_crew > 0)?;
+        let pass = mustered_take_gear(
+            a,
+            need_idx,
+            a.assignments[need_idx].muster_crew,
+            idle_workers,
+            &donor_is_local,
+            donor_bench,
+            &claim_sources,
+            &kit,
+            kit_levers.config,
+        );
+        // The clone is index-aligned with the standing allocation by construction; verify rather
+        // than assume, and fall back to the standing reading if it ever is not.
+        let aligned = pass.allocation.assignments.len() == a.assignments.len()
+            && pass.gear.len() == a.assignments.len()
+            && pass
+                .allocation
+                .assignments
+                .iter()
+                .zip(&a.assignments)
+                .all(|(mustered, standing)| mustered.target.same_source(&standing.target));
+        debug_assert!(aligned, "the mustered clone must match the standing rows");
+        aligned.then_some(pass)
+    });
     // The need row's planned crew for the hunt-turn craft pass, filled in by the row walk below.
     // Zip each assignment with its retained per-source yield telemetry (same index order). An
     // assignment with no telemetry row yet → default 0 yields rather than a panic.
@@ -1879,7 +1950,10 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     );
                     // **WHICH OF ITS KIT ITEMS ARE SHORT, BY NAME** — resolved with the coverage
                     // above, off the one budget, so the line and the reach beside it agree.
-                    row.kit_toe = row_gear[i].2.clone();
+                    row.kit_toe = match &sending_pass {
+                        Some(pass) => kit_toe_states(&pass.gear[i].toe),
+                        None => row_gear[i].2.clone(),
+                    };
                     // **THIS ROW'S HANDS STILL WALKING HOME** — its share of the band's walks, by
                     // the same summation as the band's total. A walk whose row is gone is in the
                     // band's figures only.
@@ -2222,6 +2296,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 &claim_sources,
                 &kit,
                 kit_levers.config,
+                sending_pass.as_ref(),
             );
             let mut states = crate::snapshot::crafting::craft_suggestion_states(
                 crate::craft_suggestions::band_suggestions(

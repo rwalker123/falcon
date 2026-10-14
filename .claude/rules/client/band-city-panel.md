@@ -7981,7 +7981,17 @@ The labor-side contract is `labor-ui.md` -> "HUNTING BY NEED". The rows it adds 
   `min(hunt_useful_workers, effective idle)`; ON sends 0 with `follow`.
 - **DONOR ROWS.** A row that lends hands (`lent_to_hunt` > 0) reads `4 -> 3` in its count slot and, on
   its own line in WARN, `N out hunting · back after the kill`. Workings carry the same count and line.
-  The Workforce readout reads `I idle · M out hunting` while `idle_mustered` is positive
-  (`HudWorkVocab.WORKFORCE_IDLE_OUT_FORMAT`).
+- **THE WORKFORCE BAR MOVES EVERY LENT HAND.** `HudBandLaborState.hunt_muster_out(band)` returns the
+  idle hands the muster takes, each kind's `lent_to_hunt` and the bench's. The bar (band zone in
+  `BandPanelController`, faction total in `FactionRollup._build_workforce_block`) subtracts each from
+  its home segment (Forage / Hunt / `Cutters` / Bench / Idle) and draws one WARN `Out hunting` segment
+  (`WORKFORCE_KEY_OUT_HUNTING`) of idle-taken + row-lent + bench-lent, so the segments still partition
+  `working_age`. The header reads `I idle · M out hunting` with the same M
+  (`WORKFORCE_IDLE_OUT_FORMAT`); with nothing lent there is no segment and the plain header. Each term
+  is clamped to the segment it leaves. Role-card ceilings still use the unmustered idle count.
+- **A NEED ROW SHORT OF ITS HUNT-TURN KIT** goes through the same `_work_row_kit_note` as any take row
+  (the model's `kit_note` and the `◆` in `marks`, and the inspector's KITS section): it has no
+  special path. Frames `band_panel_workforce_out_hunting`, `band_panel_workforce_no_lending`,
+  `band_panel_need_kit_short`, `band_panel_need_kit_short_inspector`.
 - **Heights.** The meter is a party line (`_work_row_party_lines`), so the row's height and the
   board's reservation pay for it without a second edit.

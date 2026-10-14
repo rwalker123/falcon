@@ -1340,6 +1340,7 @@ func _build_workforce_block(band: Dictionary) -> VBoxContainer:
     # the segment says how many hands are on that queue at all.
     var build_workers := int(_band_labor.effective_role_workers(
         band, HudConst.LABOR_KIND_BUILDERS).get("workers", 0))
+    var extract_workers := 0
     var merged := _band_labor.effective_worker_map(band)
     for key in merged:
         var m: Dictionary = merged[key]
@@ -1347,6 +1348,7 @@ func _build_workforce_block(band: Dictionary) -> VBoxContainer:
         match String(m.get("kind", "")):
             SourceForecast.LABOR_KIND_FORAGE: forage_workers += workers
             SourceForecast.LABOR_KIND_HUNT: hunt_workers += workers
+            HudConst.LABOR_KIND_EXTRACT: extract_workers += workers
     var scout_eff := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_SCOUT)
     var warrior_eff := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_WARRIOR)
     # **THE ROADWORK POOL IS A ROLE, so it is in the Roles SEGMENT though its line is on the Work
@@ -1359,9 +1361,18 @@ func _build_workforce_block(band: Dictionary) -> VBoxContainer:
     # header's "away" clause instead (`WORKFORCE_AWAY_FORMAT`).
     var away_workers := _band_labor.band_party_workers(band)
     var segments: Array = []
+    # HUNTING BY NEED: lent hands leave their home segment for "Out hunting"; idle hands taken leave Idle.
+    var muster_out := _band_labor.hunt_muster_out(band)
+    var out_by_kind: Dictionary = muster_out["by_kind"]
+    forage_workers -= int(out_by_kind.get(SourceForecast.LABOR_KIND_FORAGE, 0))
+    hunt_workers -= int(out_by_kind.get(SourceForecast.LABOR_KIND_HUNT, 0))
+    extract_workers -= int(out_by_kind.get(HudConst.LABOR_KIND_EXTRACT, 0))
+    var bench_seg := _band_labor.bench_workers(band) - int(muster_out["bench"])
+    var idle_seg := idle - int(muster_out["idle"])
     for spec in [
         [HudWorkVocab.WORKFORCE_KEY_FORAGE, forage_workers, HudStyle.HEALTHY],
         [HudWorkVocab.WORKFORCE_KEY_HUNT, hunt_workers, HudStyle.SIGNAL],
+        [HudWorkVocab.WORKFORCE_KEY_EXTRACT, extract_workers, HudStyle.READY],
         # …and the builders beside the two takes, because a build is staffed ON one of those sources.
         # `SIGNAL_DEEP` is the live cyan a rung under construction already wears, one step down, so it
         # reads as work-in-flight without competing with the Hunt slice it sits next to.
@@ -1370,20 +1381,19 @@ func _build_workforce_block(band: Dictionary) -> VBoxContainer:
         # The bench's crew, between the work and the residual: `effective_idle` nets it out (a worker
         # at the bench is assigned labor), so without a segment of its own it would vanish from a bar
         # whose segments are supposed to partition the same `working_age` the header counts against.
-        [HudWorkVocab.WORKFORCE_KEY_BENCH, _band_labor.bench_workers(band), HudStyle.VOICE_PIGMENT],
+        [HudWorkVocab.WORKFORCE_KEY_BENCH, bench_seg, HudStyle.VOICE_PIGMENT],
         # …and the hands walking home from a stood-down far party (#706), netted out of idle for the
         # same reason, in the dim ink of people who are on their way rather than at work.
         [HudWorkVocab.WORKFORCE_KEY_HOMEWARD, _band_labor.homeward_workers(band), HudStyle.INK_DIM],
-        [HudWorkVocab.WORKFORCE_KEY_IDLE, idle, HudStyle.INK_FAINT],
+        [HudWorkVocab.WORKFORCE_KEY_OUT_HUNTING, int(muster_out["total"]), HudStyle.WARN],
+        [HudWorkVocab.WORKFORCE_KEY_IDLE, idle_seg, HudStyle.INK_FAINT],
     ]:
         if int(spec[1]) > 0:
             segments.append({"key": String(spec[0]), "count": int(spec[1]), "color": spec[2],
                 "tooltip": "%s: %d" % [String(spec[0]), int(spec[1])]})
-    var readout := HudWorkVocab.WORKFORCE_IDLE_FORMAT % [idle, int(band.get("working_age", 0))]
-    # HUNTING BY NEED: the idle hands the next muster takes read as out hunting, not as idle.
-    var idle_out := mini(int(band.get(HudWorkVocab.COHORT_IDLE_MUSTERED_KEY, 0)), idle)
-    if idle_out > 0:
-        readout = HudWorkVocab.WORKFORCE_IDLE_OUT_FORMAT % [idle - idle_out, idle_out]
+    var readout := HudWorkVocab.WORKFORCE_IDLE_FORMAT % [idle_seg, int(band.get("working_age", 0))]
+    if int(muster_out["total"]) > 0:
+        readout = HudWorkVocab.WORKFORCE_IDLE_OUT_FORMAT % [idle_seg, int(muster_out["total"])]
     if away_workers > 0:
         readout += HudWorkVocab.WORKFORCE_AWAY_FORMAT % away_workers
     var block := HudWidgets.make_zone_block()

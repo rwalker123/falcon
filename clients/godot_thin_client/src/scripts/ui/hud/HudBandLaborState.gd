@@ -1311,6 +1311,35 @@ func effective_idle(band: Dictionary) -> int:
 	return max(0, int(band.get("working_age", 0)) - assigned - bench_workers(band)
 		- homeward_workers(band))
 
+## **THE HANDS THE NEXT HUNTING-BY-NEED MUSTER TAKES, AND WHICH SEGMENT EACH ONE COMES OUT OF.**
+## The muster takes idle hands first, then lends hands off the band's local source rows and the
+## bench. The wire keeps every lent hand on its home row/bench (`workers` is the standing crew), so
+## the Workforce bar has to move them: each lent hand leaves its row's kind (`by_kind`) or the
+## Bench, the idle hands taken leave Idle, and the sum is the one "Out hunting" segment.
+## Returns `{idle, by_kind: {kind: n}, bench, total}`. Every term is clamped to the segment it comes
+## out of, so the segments still partition `working_age` whatever the wire says.
+func hunt_muster_out(band: Dictionary) -> Dictionary:
+	var idle_out := mini(maxi(int(band.get(HudWorkVocab.COHORT_IDLE_MUSTERED_KEY, 0)), 0),
+		effective_idle(band))
+	var by_kind: Dictionary = {}
+	var kind_workers: Dictionary = {}
+	var merged := effective_worker_map(band)
+	for key in merged:
+		var m: Dictionary = merged[key]
+		var kind := String(m.get("kind", ""))
+		kind_workers[kind] = int(kind_workers.get(kind, 0)) + staffed_total(m)
+		by_kind[kind] = int(by_kind.get(kind, 0)) + maxi(int(m.get("lent_to_hunt", 0)), 0)
+	var total := idle_out
+	for kind in by_kind.keys():
+		by_kind[kind] = mini(int(by_kind[kind]), int(kind_workers.get(kind, 0)))
+		total += int(by_kind[kind])
+	var bench_out := 0
+	var bench_variant: Variant = band.get(HudCraftingVocab.BAND_BENCH_KEY, {})
+	if bench_variant is Dictionary:
+		bench_out = mini(maxi(int((bench_variant as Dictionary).get(
+			HudCraftingVocab.BENCH_LENT_TO_HUNT_KEY, 0)), 0), bench_workers(band))
+	return {"idle": idle_out, "by_kind": by_kind, "bench": bench_out, "total": total + bench_out}
+
 ## Hands of a stood-down far party still walking home (`PopulationCohortState.homewardWorkers`) —
 ## out of the idle pool until they arrive. 0 = nobody walking home.
 func homeward_workers(band: Dictionary) -> int:

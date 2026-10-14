@@ -940,6 +940,7 @@ static func _build_discoveries_block(sites: Array) -> VBoxContainer:
 static func _build_workforce_block(labor: HudBandLaborState) -> VBoxContainer:
     var idle := 0
     var forage_workers := 0
+    var extract_workers := 0
     var hunt_workers := 0
     # The BUILD crews, for the reason the band zone's own bar carries them: `effective_idle` nets a
     # builder out, so a faction total without this segment loses those hands off a bar that partitions
@@ -948,12 +949,16 @@ static func _build_workforce_block(labor: HudBandLaborState) -> VBoxContainer:
     var role_workers := 0
     var party_workers := 0
     var bench_workers := 0
+    var out_hunting := 0
     var working_age := 0
     for band_variant in labor.player_bands():
         if not (band_variant is Dictionary):
             continue
         var band: Dictionary = band_variant
-        idle += labor.effective_idle(band)
+        # HUNTING BY NEED: each lent hand moves from its home segment to "Out hunting".
+        var muster_out := labor.hunt_muster_out(band)
+        idle += labor.effective_idle(band) - int(muster_out["idle"])
+        out_hunting += int(muster_out["total"])
         working_age += int(band.get("working_age", 0))
         # The PENDING-AWARE worker map, exactly as the band zone reads it — a just-issued assign must
         # count here too, or cycling to this page would undo the optimistic feedback the dock gives.
@@ -964,6 +969,10 @@ static func _build_workforce_block(labor: HudBandLaborState) -> VBoxContainer:
             match String(model.get("kind", "")):
                 SourceForecast.LABOR_KIND_FORAGE: forage_workers += workers
                 SourceForecast.LABOR_KIND_HUNT: hunt_workers += workers
+                HudConst.LABOR_KIND_EXTRACT: extract_workers += workers
+        extract_workers -= int((muster_out["by_kind"] as Dictionary).get(HudConst.LABOR_KIND_EXTRACT, 0))
+        forage_workers -= int((muster_out["by_kind"] as Dictionary).get(SourceForecast.LABOR_KIND_FORAGE, 0))
+        hunt_workers -= int((muster_out["by_kind"] as Dictionary).get(SourceForecast.LABOR_KIND_HUNT, 0))
         # **THE BUILD SEGMENT IS THE `builders` ROLE**, the band zone's own reading one scale up
         # (`docs/plan_standing_upkeep.md` §2.5): there is no per-source build crew to sum any more.
         build_workers += int(labor.effective_role_workers(
@@ -975,11 +984,12 @@ static func _build_workforce_block(labor: HudBandLaborState) -> VBoxContainer:
             + int(labor.effective_role_workers(band, HudConst.LABOR_KIND_WARRIOR).get("workers", 0)) \
             + int(labor.effective_role_workers(band, HudConst.LABOR_KIND_ROADWORK).get("workers", 0))
         party_workers += labor.band_party_workers(band)
-        bench_workers += labor.bench_workers(band)
+        bench_workers += labor.bench_workers(band) - int(muster_out["bench"])
     var segments: Array = []
     for spec in [
         [HudWorkVocab.WORKFORCE_KEY_FORAGE, forage_workers, HudStyle.HEALTHY],
         [HudWorkVocab.WORKFORCE_KEY_HUNT, hunt_workers, HudStyle.SIGNAL],
+        [HudWorkVocab.WORKFORCE_KEY_EXTRACT, extract_workers, HudStyle.READY],
         [HudWorkVocab.WORKFORCE_KEY_BUILD, build_workers, HudStyle.SIGNAL_DEEP],
         [HudWorkVocab.WORKFORCE_KEY_ROLES, role_workers, HudStyle.VOICE_INK],
         # Party crews are NOT a segment here either — the sim removes them from the parent band's
@@ -989,12 +999,15 @@ static func _build_workforce_block(labor: HudBandLaborState) -> VBoxContainer:
         # it out, so a faction total without this segment loses those hands off a bar that is supposed
         # to partition the same `working_age` the header sums.
         [HudWorkVocab.WORKFORCE_KEY_BENCH, bench_workers, HudStyle.VOICE_PIGMENT],
+        [HudWorkVocab.WORKFORCE_KEY_OUT_HUNTING, out_hunting, HudStyle.WARN],
         [HudWorkVocab.WORKFORCE_KEY_IDLE, idle, HudStyle.INK_FAINT],
     ]:
         if int(spec[1]) > 0:
             segments.append({"key": String(spec[0]), "count": int(spec[1]), "color": spec[2],
                 "tooltip": "%s: %d" % [String(spec[0]), int(spec[1])]})
     var readout := HudWorkVocab.WORKFORCE_IDLE_FORMAT % [idle, working_age]
+    if out_hunting > 0:
+        readout = HudWorkVocab.WORKFORCE_IDLE_OUT_FORMAT % [idle, out_hunting]
     if party_workers > 0:
         readout += HudWorkVocab.WORKFORCE_AWAY_FORMAT % party_workers
     var block := HudWidgets.make_zone_block()

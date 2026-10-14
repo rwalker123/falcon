@@ -246,6 +246,7 @@ fn hunt_turn_pass(
             sources,
             wear,
             &configs.equipment,
+            None,
         )
     })
 }

@@ -1395,6 +1395,14 @@ those zeros as the zeros they are.
   auto_craft_queues_the_kit_a_hunt_crew_is_short_of,
   a_waiting_rows_planned_crew_is_equipped_ahead_of_the_hunt}` (each with its control) and
   `craft_suggestions::tests::the_larger_of_two_passes_wins_per_item_and_they_are_never_summed`.
+  **The same mustered pass is published on the rows.** While a crew is going out
+  (`muster_crew > 0`) the turn crews the need row before the kit settles, so the capture publishes
+  every take row's `kitToe` from that mustered gear (`snapshot::population::mustered_take_gear`, the
+  one computation `hunt_turn_lines` reuses, never derived twice): the need row's line is its crew's
+  claim, the donors' and other hunt rows' lines what they hold that turn. A waiting row
+  (`muster_crew == 0`, even with a `planned_crew`) keeps the standing reading, and `craftSuggestions`,
+  `kitItemConditions` / `workersOnQuotedJob` and auto-craft are unchanged. Pinned on the encoded frame
+  by `hunt_by_need::a_crew_going_out_publishes_the_shortage_on_the_rows_and_a_waiting_row_does_not`.
 - **The score is workers going without** — `(required − filled).max(0) × workers_per_unit`, summed
   over sources.
 - **The order** (`craft_suggestions::rank_of`): every **non-build** shortage first (a pool other than

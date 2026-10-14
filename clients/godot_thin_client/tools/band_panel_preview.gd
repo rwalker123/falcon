@@ -12459,11 +12459,164 @@ func _need_row_states() -> void:
 		NEED_DONOR_HUNT_LENT, NEED_IDLE_MUSTERED, NEED_FOOD_TURNS)])
 	_panel.set_active_tab(&"band")
 	await _settle()
-	if not _has_label_containing(_panel, "%d out hunting" % NEED_IDLE_MUSTERED):
-		_fail("the Workforce head does not state the %d idle hands out hunting" % NEED_IDLE_MUSTERED)
+	if not _has_label_containing(_panel, "%d out hunting" % NEED_CREW_OUT):
+		_fail("the Workforce head does not state the %d hands out hunting (idle + lent)" % NEED_CREW_OUT)
 	else:
 		print("band_panel_preview: assert OK — the Workforce head reads idle · N out hunting")
+	await _need_workforce_states()
+	await _need_extract_workforce_states()
+	await _need_row_kit_short_state()
 	_panel.set_active_tab(&"work")
+
+## The Workforce bar of a band whose next muster lends hands off two rows and the bench.
+const NEED_WF_WORKING_AGE := 20
+const NEED_WF_BENCH_STANDING := 3
+const NEED_WF_BENCH_LENT := 2
+
+## The need band with a crafting bench on it, a bigger working bracket (so the idle pool covers the
+## muster) and every lent hand stated.
+func _need_workforce_fixture(lending: bool) -> Dictionary:
+	var band := _need_band_fixture(
+		NEED_CREW_OUT + NEED_WF_BENCH_LENT if lending else 0, HudWorkVocab.NO_HUNT_NEEDED,
+		NEED_FORAGE_LENT if lending else 0, NEED_DONOR_HUNT_LENT if lending else 0,
+		NEED_IDLE_MUSTERED if lending else 0, NEED_FOOD_TURNS)
+	band["working_age"] = NEED_WF_WORKING_AGE
+	band["bench"] = {"workers": NEED_WF_BENCH_STANDING,
+		"lent_to_hunt": NEED_WF_BENCH_LENT if lending else 0}
+	return band
+
+## **THE BAR MOVES EVERY LENT HAND OUT OF ITS HOME SEGMENT INTO ONE `Out hunting` SEGMENT**, and the
+## segments still partition `working_age`. Counts are asserted by EQUALITY off the rendered key.
+func _need_workforce_states() -> void:
+	_set_world_herds(_follow_herd_fixtures(FOLLOW_BAND_TILE, FOLLOW_NO_NEXT))
+	_push_bands([_need_workforce_fixture(true)])
+	_panel.set_active_tab(&"band")
+	await _settle()
+	await _save("band_panel_workforce_out_hunting")
+	var counts := _composition_counts(_panel, HudWorkVocab.ZONE_HEADER_WORKFORCE)
+	var out_total := NEED_IDLE_MUSTERED + NEED_FORAGE_LENT + NEED_DONOR_HUNT_LENT + NEED_WF_BENCH_LENT
+	var idle_total := NEED_WF_WORKING_AGE - (NEED_FORAGE_STANDING + NEED_DONOR_HUNT_STANDING \
+		+ FOLLOW_CREW + NEED_WF_BENCH_STANDING) - NEED_IDLE_MUSTERED
+	var want := {
+		HudWorkVocab.WORKFORCE_KEY_FORAGE: NEED_FORAGE_STANDING - NEED_FORAGE_LENT,
+		HudWorkVocab.WORKFORCE_KEY_HUNT: NEED_DONOR_HUNT_STANDING + FOLLOW_CREW - NEED_DONOR_HUNT_LENT,
+		HudWorkVocab.WORKFORCE_KEY_BENCH: NEED_WF_BENCH_STANDING - NEED_WF_BENCH_LENT,
+		HudWorkVocab.WORKFORCE_KEY_OUT_HUNTING: out_total,
+		HudWorkVocab.WORKFORCE_KEY_IDLE: idle_total,
+	}
+	_assert_band_panel("workforce bar — segments are %s (got %s)" % [str(want), str(counts)],
+		counts == want)
+	var sum := 0
+	for key in counts:
+		sum += int(counts[key])
+	_assert_band_panel("workforce bar — the segments partition working_age (%d of %d)"
+		% [sum, NEED_WF_WORKING_AGE], sum == NEED_WF_WORKING_AGE)
+	var head := HudWorkVocab.WORKFORCE_IDLE_OUT_FORMAT % [idle_total, out_total]
+	_assert_band_panel("workforce bar — the header reads `%s`" % head, _has_label_containing(_panel, head))
+	# CONTROL: nothing lent draws no segment and the plain header.
+	_push_bands([_need_workforce_fixture(false)])
+	await _settle()
+	await _save("band_panel_workforce_no_lending")
+	var plain := _composition_counts(_panel, HudWorkVocab.ZONE_HEADER_WORKFORCE)
+	_assert_band_panel("workforce bar — no lending draws no `Out hunting` segment (%s)" % str(plain),
+		not plain.has(HudWorkVocab.WORKFORCE_KEY_OUT_HUNTING))
+	_assert_band_panel("workforce bar — …and the header does not say out hunting",
+		not _has_label_containing(_panel, "out hunting"))
+
+## An extraction crew on the need band: three cutters on a wood working, one of them lent.
+const NEED_EXTRACT_TILE := Vector2i(68, 22)
+const NEED_EXTRACT_STANDING := 3
+const NEED_EXTRACT_LENT := 1
+
+func _need_extract_fixture(lending: bool, with_extract: bool) -> Dictionary:
+	var band := _need_workforce_fixture(lending)
+	if with_extract:
+		(band["labor_assignments"] as Array).append({"kind": "extract", "workers": NEED_EXTRACT_STANDING,
+			"workers_needed": NEED_EXTRACT_STANDING, "floor": 0.5, "material": "wood",
+			"target_x": NEED_EXTRACT_TILE.x, "target_y": NEED_EXTRACT_TILE.y,
+			"lent_to_hunt": NEED_EXTRACT_LENT if lending else 0})
+	return band
+
+## **A WORKING'S CUTTERS ARE A SEGMENT, AND A LENT CUTTER LEAVES IT FOR `Out hunting`** — so the bar
+## partitions `working_age` on a band with an extraction crew. Band bar, faction bar, and a no-extract
+## control; counts by equality, and the sum.
+func _need_extract_workforce_states() -> void:
+	_set_world_herds(_follow_herd_fixtures(FOLLOW_BAND_TILE, FOLLOW_NO_NEXT))
+	_push_bands([_need_extract_fixture(true, true)])
+	_panel.set_active_tab(&"band")
+	await _settle()
+	await _save("band_panel_workforce_cutters")
+	var out_total := NEED_IDLE_MUSTERED + NEED_FORAGE_LENT + NEED_DONOR_HUNT_LENT \
+		+ NEED_EXTRACT_LENT + NEED_WF_BENCH_LENT
+	var idle_total := NEED_WF_WORKING_AGE - (NEED_FORAGE_STANDING + NEED_DONOR_HUNT_STANDING \
+		+ FOLLOW_CREW + NEED_EXTRACT_STANDING + NEED_WF_BENCH_STANDING) - NEED_IDLE_MUSTERED
+	var want := {
+		HudWorkVocab.WORKFORCE_KEY_FORAGE: NEED_FORAGE_STANDING - NEED_FORAGE_LENT,
+		HudWorkVocab.WORKFORCE_KEY_HUNT: NEED_DONOR_HUNT_STANDING + FOLLOW_CREW - NEED_DONOR_HUNT_LENT,
+		HudWorkVocab.WORKFORCE_KEY_EXTRACT: NEED_EXTRACT_STANDING - NEED_EXTRACT_LENT,
+		HudWorkVocab.WORKFORCE_KEY_BENCH: NEED_WF_BENCH_STANDING - NEED_WF_BENCH_LENT,
+		HudWorkVocab.WORKFORCE_KEY_OUT_HUNTING: out_total,
+		HudWorkVocab.WORKFORCE_KEY_IDLE: idle_total,
+	}
+	var counts := _composition_counts(_panel, HudWorkVocab.ZONE_HEADER_WORKFORCE)
+	_assert_band_panel("workforce cutters — band bar segments are %s (got %s)" % [str(want), str(counts)],
+		counts == want)
+	_assert_band_panel("workforce cutters — the band bar partitions working_age (%d)"
+		% NEED_WF_WORKING_AGE, _sum_counts(counts) == NEED_WF_WORKING_AGE)
+	# The FACTION bar, from the same labor state.
+	var faction_block := FactionRollup._build_workforce_block(_hud._band_labor)
+	var faction_counts := _composition_counts(faction_block, HudWorkVocab.ZONE_HEADER_WORKFORCE)
+	faction_block.free()
+	_assert_band_panel("workforce cutters — the FACTION bar matches with lending (%s)" % str(faction_counts),
+		faction_counts == want and _sum_counts(faction_counts) == NEED_WF_WORKING_AGE)
+	# CONTROL: no extraction crew draws no Cutters segment, and the bar still partitions.
+	_push_bands([_need_extract_fixture(true, false)])
+	await _settle()
+	var plain := _composition_counts(_panel, HudWorkVocab.ZONE_HEADER_WORKFORCE)
+	_assert_band_panel("workforce cutters — no extract rows, no Cutters segment, still partitions (%s)"
+			% str(plain),
+		not plain.has(HudWorkVocab.WORKFORCE_KEY_EXTRACT) and _sum_counts(plain) == NEED_WF_WORKING_AGE)
+
+func _sum_counts(counts: Dictionary) -> int:
+	var total := 0
+	for key in counts:
+		total += int(counts[key])
+	return total
+
+## **A NEED ROW SHORT OF ITS HUNT-TURN KIT** flies the ◆ mark on the board and states "Short of …" on
+## the board model and in its inspector card, exactly as a standing hunt row does.
+func _need_row_kit_short_state() -> void:
+	_hud.update_equipment_config(_kit_toe_equipment_config())
+	var band := _need_band_fixture(NEED_CREW_OUT, HudWorkVocab.NO_HUNT_NEEDED, NEED_FORAGE_LENT,
+		NEED_DONOR_HUNT_LENT, NEED_IDLE_MUSTERED, NEED_FOOD_TURNS)
+	var need: Dictionary = (band["labor_assignments"] as Array)[0]
+	need["kit_id"] = BandFx.KIT_DEFAULT_HUNT
+	need[SourceForecast.ASSIGNMENT_KIT_TOE_KEY] = [
+		_kit_toe_line(KIT_TOE_SPEARS, KIT_TOE_CLAIMED, KIT_TOE_SHORT_FILLED),
+		_kit_toe_line(KIT_TOE_SLED, KIT_TOE_CLAIMED, KIT_TOE_SHORT_FILLED)]
+	_set_world_herds(_follow_herd_fixtures(FOLLOW_BAND_TILE, FOLLOW_NO_NEXT))
+	_push_bands([band])
+	_panel.set_active_tab(&"work")
+	await _settle()
+	var marks := ""
+	var note := ""
+	for model_variant in _hud._bandpanel._work_source_models(_hud._band_labor._panel_band, 0):
+		var model: Dictionary = model_variant
+		if bool(model.get("need_row", false)):
+			marks = String(model.get("marks", ""))
+			note = String(model.get("kit_note", ""))
+	_assert_band_panel("need row kit — the short need row flies the kit mark (\"%s\")" % marks,
+		marks.contains(HudWorkVocab.KIT_SHORT_MARK))
+	_assert_band_panel("need row kit — …and reads `%s` (got \"%s\")" % [_kit_short_sentence(), note],
+		note == _kit_short_sentence())
+	await _save("band_panel_need_kit_short")
+	_open_work_inspector_for_herd(FOLLOW_HERD_ID)
+	await _settle()
+	await _save("band_panel_need_kit_short_inspector")
+	_assert_band_panel("need row kit — the inspector card states the short items",
+		_has_label_containing(_hud, _kit_short_sentence()))
+	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
+	_hud.update_equipment_config(JSON.stringify({}))
 
 ## A press on an unflagged migratory row's toggle re-sends THAT row's `assign_labor` — same herd, floor,
 ## crew — with the flag on. Driven through the real signal, so the line under test is the one `Main`
