@@ -1647,6 +1647,21 @@ enum Command {
         count: u32,
         workers: u32,
     },
+    /// Queue a whole kit as ONE grouped order. See `handle_bench_enqueue_kit`.
+    BenchEnqueueKit {
+        faction: FactionId,
+        band_id: Option<u64>,
+        kit_id: String,
+        people: u32,
+        parts: Vec<sim_runtime::BenchKitPart>,
+    },
+    /// Remove or raise a whole kit order. See `handle_bench_kit_edit`.
+    BenchKitEdit {
+        faction: FactionId,
+        band_id: Option<u64>,
+        kit_order: u32,
+        edit: BenchKitEdit,
+    },
     /// Set, remove or raise one order on a band's bench queue. See `handle_bench_queue_edit`.
     BenchQueueEdit {
         faction: FactionId,
@@ -9113,6 +9128,223 @@ fn bench_queue_refusal(verb: &str, band_label: &str, order: u32, error: BenchQue
         BenchQueueError::AlreadyAtHead => {
             format!("{verb}: order {order} is already being made — it cannot move up.")
         }
+        BenchQueueError::KitPartCannotMove => format!(
+            "{verb}: order {order} is part of a kit order — raise the whole kit with \
+             bench_raise_kit."
+        ),
+        BenchQueueError::NoSuchKitOrder { id } => {
+            format!("{verb}: {band_label} has no kit order {id} on its bench queue.")
+        }
+        BenchQueueError::EmptyKitOrder => format!(
+            "{verb}: a kit order needs at least one part with a count of {MIN_ORDER_COUNT} or \
+             more."
+        ),
+    }
+}
+
+/// **The two whole-kit edits** — remove and raise a kit order (issue #780).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BenchKitEdit {
+    /// `bench_remove_kit … kit_order <id>`.
+    Remove,
+    /// `bench_raise_kit … kit_order <id>`.
+    Raise,
+}
+
+impl BenchKitEdit {
+    fn verb(self) -> &'static str {
+        match self {
+            BenchKitEdit::Remove => "bench_remove_kit",
+            BenchKitEdit::Raise => "bench_raise_kit",
+        }
+    }
+}
+
+/// **Order a whole kit** — `bench_enqueue_kit <faction> <band> kit <id> people <n> recipe <id>
+/// count <n> [...]` (issue #780, `.claude/rules/core_sim/crafting.md` → "Kit orders").
+///
+/// **Fails closed and whole**: the kit must exist and carry something (the shipped `none` carries
+/// nothing and is not orderable), every recipe passes [`bench_recipe_refusal`] exactly as
+/// `bench_enqueue` would, every recipe's output item must be one the kit `uses`, and every count
+/// must be at least [`MIN_ORDER_COUNT`]. **The command carries the counts** — the player orders what
+/// the picker showed, so the sim re-derives nothing. The crew is untouched.
+fn handle_bench_enqueue_kit(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: Option<u64>,
+    kit_id: &str,
+    people: u32,
+    parts: &[sim_runtime::BenchKitPart],
+) {
+    const VERB: &str = "bench_enqueue_kit";
+    let event_kind = CommandEventKind::Craft;
+    let equipment = app.world.resource::<EquipmentConfigHandle>().get();
+    let Some(kit) = equipment
+        .kits()
+        .iter()
+        .find(|kit| kit.id == kit_id && !kit.uses.is_empty())
+    else {
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            format!("{VERB}: '{kit_id}' is not a kit that can be ordered."),
+        );
+        return;
+    };
+    if parts.is_empty() {
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            format!("{VERB}: a kit order needs at least one recipe."),
+        );
+        return;
+    }
+    let mut row_keys: Vec<Option<String>> = Vec::with_capacity(parts.len());
+    for part in parts {
+        let Some(display_name) = bench_recipe_refusal(app, faction, &part.recipe_id, VERB) else {
+            return;
+        };
+        if part.count < MIN_ORDER_COUNT {
+            emit_command_failure(
+                app,
+                event_kind,
+                faction,
+                format!(
+                    "{VERB}: an order of {display_name} needs a count of at least \
+                     {MIN_ORDER_COUNT}."
+                ),
+            );
+            return;
+        }
+        let recipes = app.world.resource::<RecipesConfigHandle>().get();
+        let recipe = recipes
+            .recipe(&part.recipe_id)
+            .expect("bench_recipe_refusal found the recipe");
+        let output_in_kit = recipe
+            .output_equipment_id()
+            .is_some_and(|item| kit.uses.iter().any(|used| used == item));
+        if !output_in_kit {
+            emit_command_failure(
+                app,
+                event_kind,
+                faction,
+                format!(
+                    "{VERB}: {display_name} makes nothing the {} uses.",
+                    kit.display_name
+                ),
+            );
+            return;
+        }
+        row_keys.push(recipe.row_key().map(str::to_string));
+    }
+    let Some(band) = select_starting_band(app, faction, band_id, VERB, event_kind) else {
+        return;
+    };
+    let queue: Vec<(String, u32)> = parts
+        .iter()
+        .map(|part| (part.recipe_id.clone(), part.count))
+        .collect();
+    let id = {
+        let mut bench = band_bench_mut(app, band.entity);
+        let id = bench
+            .enqueue_kit(kit_id, people, queue)
+            .expect("every part was checked to carry a count of at least one");
+        for (part, row) in parts.iter().zip(&row_keys) {
+            if let Some(row) = row.as_deref() {
+                bench.record_started(row, &part.recipe_id);
+            }
+        }
+        id
+    };
+    let items: u32 = parts.iter().map(|part| part.count).sum();
+    let tick = app.world.resource::<SimulationTick>().0;
+    push_band_event(
+        app,
+        tick,
+        event_kind,
+        faction,
+        band.id,
+        format!(
+            "{} queued the {} for {people}: {items} item(s) as one order",
+            band.label, kit.display_name
+        ),
+        Some(format!(
+            "status=applied action={VERB} kit={kit_id} kit_order={id} people={people} \
+             parts={} items={items}",
+            parts.len()
+        )),
+    );
+}
+
+/// **Remove or raise a whole kit order** — `bench_remove_kit` / `bench_raise_kit … kit_order <id>`.
+/// Removal loses drawn piles exactly as [`handle_bench_queue_edit`]'s `Remove` does.
+fn handle_bench_kit_edit(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: Option<u64>,
+    kit_order: u32,
+    edit: BenchKitEdit,
+) {
+    let event_kind = CommandEventKind::Craft;
+    let verb = edit.verb();
+    let Some(band) = select_starting_band(app, faction, band_id, verb, event_kind) else {
+        return;
+    };
+    let outcome = {
+        let mut bench = band_bench_mut(app, band.entity);
+        let kit_id = bench
+            .kit_orders
+            .iter()
+            .find(|kit| kit.id == kit_order)
+            .map(|kit| kit.kit_id.clone())
+            .unwrap_or_default();
+        match edit {
+            BenchKitEdit::Remove => bench.remove_kit(kit_order).map(|removed| {
+                let spent = removed.iter().filter(|part| part.drawn.is_some()).count();
+                (
+                    format!("{} took the {kit_id} kit order off the bench", band.label),
+                    format!(
+                        "status=applied action={verb} kit_order={kit_order} kit={kit_id} \
+                         parts={} piles_spent={spent}",
+                        removed.len()
+                    ),
+                )
+            }),
+            BenchKitEdit::Raise => bench.raise_kit(kit_order).map(|()| {
+                (
+                    format!(
+                        "{}: the {kit_id} kit order moved up the bench queue",
+                        band.label
+                    ),
+                    format!("status=applied action={verb} kit_order={kit_order} kit={kit_id}"),
+                )
+            }),
+        }
+    };
+    match outcome {
+        Ok((sentence, detail)) => {
+            if edit == BenchKitEdit::Remove {
+                core_sim::auto_craft::auto_craft_fill(&mut app.world, band.entity);
+            }
+            let tick = app.world.resource::<SimulationTick>().0;
+            push_band_event(
+                app,
+                tick,
+                event_kind,
+                faction,
+                band.id,
+                sentence,
+                Some(detail),
+            );
+        }
+        Err(error) => emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            bench_queue_refusal(verb, &band.label, kit_order, error),
+        ),
     }
 }
 
@@ -11446,6 +11678,39 @@ fn command_from_payload(
             count,
             workers,
         }),
+        ProtoCommandPayload::BenchEnqueueKit {
+            faction_id,
+            band_id,
+            kit_id,
+            people,
+            parts,
+        } => Some(Command::BenchEnqueueKit {
+            faction: FactionId(faction_id),
+            band_id: Some(band_id),
+            kit_id,
+            people,
+            parts,
+        }),
+        ProtoCommandPayload::BenchRemoveKit {
+            faction_id,
+            band_id,
+            kit_order,
+        } => Some(Command::BenchKitEdit {
+            faction: FactionId(faction_id),
+            band_id: Some(band_id),
+            kit_order,
+            edit: BenchKitEdit::Remove,
+        }),
+        ProtoCommandPayload::BenchRaiseKit {
+            faction_id,
+            band_id,
+            kit_order,
+        } => Some(Command::BenchKitEdit {
+            faction: FactionId(faction_id),
+            band_id: Some(band_id),
+            kit_order,
+            edit: BenchKitEdit::Raise,
+        }),
         ProtoCommandPayload::BenchOrderCount {
             faction_id,
             band_id,
@@ -12261,6 +12526,8 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
         Command::SetHerdOutput { faction, .. } => Some((*faction, "set_herd_output")),
         Command::BenchEnqueue { faction, .. } => Some((*faction, "bench_enqueue")),
         Command::BenchQueueEdit { faction, edit, .. } => Some((*faction, edit.verb())),
+        Command::BenchEnqueueKit { faction, .. } => Some((*faction, "bench_enqueue_kit")),
+        Command::BenchKitEdit { faction, edit, .. } => Some((*faction, edit.verb())),
         Command::BenchCrew { faction, .. } => Some((*faction, "bench_crew")),
         Command::CancelOrder { faction, .. } => Some((*faction, "cancel_order")),
         Command::SetStartingLoadout { faction, .. } => Some((*faction, "set_starting_loadout")),
@@ -12798,6 +13065,23 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
             edit,
         } => {
             handle_bench_queue_edit(app, faction, band_id, order, edit);
+        }
+        Command::BenchEnqueueKit {
+            faction,
+            band_id,
+            kit_id,
+            people,
+            parts,
+        } => {
+            handle_bench_enqueue_kit(app, faction, band_id, &kit_id, people, &parts);
+        }
+        Command::BenchKitEdit {
+            faction,
+            band_id,
+            kit_order,
+            edit,
+        } => {
+            handle_bench_kit_edit(app, faction, band_id, kit_order, edit);
         }
         Command::BenchCrew {
             faction,
@@ -22638,6 +22922,90 @@ mod tests {
             1,
             "a known recipe queues with an empty store"
         );
+    }
+
+    fn kit_part(recipe: &str, count: u32) -> sim_runtime::BenchKitPart {
+        sim_runtime::BenchKitPart {
+            recipe_id: recipe.to_string(),
+            count,
+        }
+    }
+
+    /// **A WHOLE-KIT ORDER QUEUES AS ONE GROUP, AND REFUSES WHOLE** (#780). Every part lands
+    /// contiguously under one kit-order id with the picker's own counts; each part records which
+    /// recipe the band chose for its item. A part making nothing the kit uses, a zero count, the empty
+    /// kit and an unknown kit each queue NOTHING — paired with the accepted order so a handler that
+    /// refuses everything passes neither half.
+    #[test]
+    fn a_kit_order_queues_every_part_as_one_group_and_refuses_whole() {
+        const STALKING: &str = "big_game";
+        const NOT_THE_KITS_ITEM: &str = "baskets";
+        let mut app = build_test_app();
+        app.update();
+        let faction = FactionId(0);
+        let band = first_resident_band(&mut app);
+
+        for (kit, parts, needle) in [
+            (
+                STALKING,
+                vec![
+                    kit_part(BENCH_IDLE_RECIPE, 1),
+                    kit_part(NOT_THE_KITS_ITEM, 1),
+                ],
+                "makes nothing the",
+            ),
+            (STALKING, vec![kit_part(BENCH_IDLE_RECIPE, 0)], "at least"),
+            ("none", vec![kit_part(BENCH_IDLE_RECIPE, 1)], "not a kit"),
+            (
+                "no_such_kit",
+                vec![kit_part(BENCH_IDLE_RECIPE, 1)],
+                "not a kit",
+            ),
+            (STALKING, Vec::new(), "at least one recipe"),
+        ] {
+            handle_bench_enqueue_kit(&mut app, faction, None, kit, 6, &parts);
+            assert!(
+                the_bench(&app, band).orders.is_empty(),
+                "a refused kit order queues nothing ({needle})"
+            );
+            assert!(craft_event_mentions(&app, needle), "{needle}");
+        }
+
+        handle_bench_enqueue_kit(
+            &mut app,
+            faction,
+            None,
+            STALKING,
+            6,
+            &[kit_part(BENCH_IDLE_RECIPE, 2), kit_part("spears", 3)],
+        );
+        let bench = the_bench(&app, band);
+        assert_eq!(
+            bench
+                .orders
+                .iter()
+                .map(|order| (order.recipe_id.as_str(), order.count, order.kit_order))
+                .collect::<Vec<_>>(),
+            vec![(BENCH_IDLE_RECIPE, 2, 1), ("spears", 3, 1)],
+            "both parts, with the picker's counts, under one kit order"
+        );
+        assert_eq!(bench.kit_orders.len(), 1);
+        assert_eq!(bench.kit_orders[0].people, 6);
+        assert_eq!(
+            bench.last_started_for("spears"),
+            Some("spears"),
+            "each part records the recipe the band chose for its item"
+        );
+        assert_eq!(bench.workers, 0, "the crew is untouched");
+
+        handle_bench_kit_edit(&mut app, faction, None, 1, BenchKitEdit::Raise);
+        assert!(
+            craft_event_mentions(&app, "already being made"),
+            "the kit order is already at the head"
+        );
+        handle_bench_kit_edit(&mut app, faction, None, 1, BenchKitEdit::Remove);
+        let bench = the_bench(&app, band);
+        assert!(bench.orders.is_empty() && bench.kit_orders.is_empty());
     }
 
     /// **QUEUEING AN ORDER RECORDS WHICH OF THE ITEM'S RECIPES THE BAND CHOSE — and emptying the

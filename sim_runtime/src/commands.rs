@@ -426,6 +426,29 @@ pub enum CommandPayload {
         band_id: u64,
         order: u32,
     },
+    /// **Order a whole kit** (issue #780): every part queued together as ONE grouped bench order.
+    /// `parts` is what the picker showed — recipe and count per item — and the sim honours it
+    /// rather than re-deriving it. The crew is untouched.
+    BenchEnqueueKit {
+        faction_id: u32,
+        band_id: u64,
+        kit_id: String,
+        /// How many people the order was sized for.
+        people: u32,
+        parts: Vec<BenchKitPart>,
+    },
+    /// **Take a whole kit order off the queue** — every part. `kit_order` is `BenchKitOrder.id`.
+    BenchRemoveKit {
+        faction_id: u32,
+        band_id: u64,
+        kit_order: u32,
+    },
+    /// **Move a whole kit order up** over the unit directly ahead of it.
+    BenchRaiseKit {
+        faction_id: u32,
+        band_id: u64,
+        kit_order: u32,
+    },
     /// Change the crew on a band's bench, leaving the queue and every order's progress alone.
     BenchCrew {
         faction_id: u32,
@@ -703,6 +726,13 @@ pub enum CommandPayload {
         request_id: u64,
         faction_id: u32,
     },
+}
+
+/// One part of a [`CommandPayload::BenchEnqueueKit`] order: `count` items from `recipe_id`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BenchKitPart {
+    pub recipe_id: String,
+    pub count: u32,
 }
 
 /// One line of the kit half of an opening loadout: `count` of an `equipment.json` roster kit. Every
@@ -2000,6 +2030,43 @@ impl CommandEnvelope {
                 band_id: *band_id,
                 order: *order,
             }),
+            CommandPayload::BenchEnqueueKit {
+                faction_id,
+                band_id,
+                kit_id,
+                people,
+                parts,
+            } => pb::command_envelope::Command::BenchEnqueueKit(pb::BenchEnqueueKitCommand {
+                faction_id: *faction_id,
+                band_id: *band_id,
+                kit_id: kit_id.clone(),
+                people: *people,
+                parts: parts
+                    .iter()
+                    .map(|part| pb::BenchKitPart {
+                        recipe_id: part.recipe_id.clone(),
+                        count: part.count,
+                    })
+                    .collect(),
+            }),
+            CommandPayload::BenchRemoveKit {
+                faction_id,
+                band_id,
+                kit_order,
+            } => pb::command_envelope::Command::BenchRemoveKit(pb::BenchRemoveKitCommand {
+                faction_id: *faction_id,
+                band_id: *band_id,
+                kit_order: *kit_order,
+            }),
+            CommandPayload::BenchRaiseKit {
+                faction_id,
+                band_id,
+                kit_order,
+            } => pb::command_envelope::Command::BenchRaiseKit(pb::BenchRaiseKitCommand {
+                faction_id: *faction_id,
+                band_id: *band_id,
+                kit_order: *kit_order,
+            }),
             CommandPayload::BenchCrew {
                 faction_id,
                 band_id,
@@ -2735,6 +2802,32 @@ impl CommandEnvelope {
                 faction_id: cmd.faction_id,
                 band_id: cmd.band_id,
                 order: cmd.order,
+            },
+            pb::command_envelope::Command::BenchEnqueueKit(cmd) => {
+                CommandPayload::BenchEnqueueKit {
+                    faction_id: cmd.faction_id,
+                    band_id: cmd.band_id,
+                    kit_id: cmd.kit_id,
+                    people: cmd.people,
+                    parts: cmd
+                        .parts
+                        .into_iter()
+                        .map(|part| BenchKitPart {
+                            recipe_id: part.recipe_id,
+                            count: part.count,
+                        })
+                        .collect(),
+                }
+            }
+            pb::command_envelope::Command::BenchRemoveKit(cmd) => CommandPayload::BenchRemoveKit {
+                faction_id: cmd.faction_id,
+                band_id: cmd.band_id,
+                kit_order: cmd.kit_order,
+            },
+            pb::command_envelope::Command::BenchRaiseKit(cmd) => CommandPayload::BenchRaiseKit {
+                faction_id: cmd.faction_id,
+                band_id: cmd.band_id,
+                kit_order: cmd.kit_order,
             },
             pb::command_envelope::Command::BenchCrew(cmd) => CommandPayload::BenchCrew {
                 faction_id: cmd.faction_id,

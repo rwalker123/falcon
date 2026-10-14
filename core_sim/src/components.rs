@@ -4952,6 +4952,33 @@ pub struct BenchOrder {
     /// (`bench_auto_skip` is valid only on an auto head) and is otherwise an ordinary order: it can
     /// be counted, raised or removed like any other.
     pub auto: bool,
+    /// **THE KIT ORDER THIS ORDER IS A PART OF** ([`KitOrder::id`]); [`NOT_A_KIT_PART`] (`0`) for a
+    /// plain order. The parts of one kit order stay contiguous on the queue
+    /// ([`BandBench::enqueue_kit`]); every queue editor that moves or removes orders keeps that, and
+    /// drops the [`KitOrder`] once nothing carries its id.
+    pub kit_order: u32,
+}
+
+/// **THE `kit_order` OF AN ORDER THAT BELONGS TO NO KIT ORDER.** Kit order ids start at `1`.
+pub const NOT_A_KIT_PART: u32 = 0;
+
+/// **ONE WHOLE-KIT ORDER** — what the player asked for with *Make* on a kit row: every missing item
+/// of the kit, queued together as one group (issue #780). It owns no queue state itself — the parts
+/// are ordinary [`BenchOrder`]s tagged with [`Self::id`] — it holds the facts the grouped box
+/// shows: which kit, for how many people, and how many items its finished parts made.
+///
+/// **Persisted** with the bench (`BandRecord::bench`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KitOrder {
+    /// This kit order's id, from [`BandBench::next_kit_order`]; never [`NOT_A_KIT_PART`].
+    pub id: u32,
+    /// The `equipment.json` kit id the order outfits.
+    pub kit_id: String,
+    /// How many people the player sized the order for (the picker's stepper).
+    pub people: u32,
+    /// Items the order's **finished** parts made. A part still on the queue reports its own
+    /// [`BenchOrder::made`]; a removed part's items are not counted here.
+    pub done: u32,
 }
 
 /// **THE SMALLEST COUNT AN ORDER MAY CARRY** — one item. An order of zero is not an order.
@@ -4967,6 +4994,9 @@ const ONE_ITEM_MADE: u32 = 1;
 /// **ONE PLACE UP THE QUEUE** — what [`BandBench::raise_order`] moves an order by.
 const ONE_PLACE: usize = 1;
 
+/// **ONE KIT ORDER** — what [`BandBench::enqueue_kit`] adds to the issue counter.
+const ONE_KIT_ORDER: u32 = 1;
+
 /// **AN ORDER THAT HAS MADE NOTHING YET** — the `made` a fresh order starts at.
 const NOTHING_MADE: u32 = 0;
 
@@ -4980,6 +5010,7 @@ impl BenchOrder {
             progress: scalar_zero(),
             drawn: None,
             auto: false,
+            kit_order: NOT_A_KIT_PART,
         }
     }
 
@@ -5007,6 +5038,13 @@ pub enum BenchQueueError {
     CountAtOrBelowMade { made: u32 },
     /// The order is already at the head and cannot move up.
     AlreadyAtHead,
+    /// A single part of a kit order cannot be raised on its own — the kit's parts stay together;
+    /// the whole kit is raised with [`BandBench::raise_kit`].
+    KitPartCannotMove,
+    /// No kit order has that id.
+    NoSuchKitOrder { id: u32 },
+    /// A kit order with no part to queue (every count was zero, or none were given).
+    EmptyKitOrder,
 }
 
 /// **A band's crafting bench — ONE BENCH, ONE QUEUE, worked one order at a time.**
@@ -5108,6 +5146,13 @@ pub struct BandBench {
     /// save format is unchanged.
     #[serde(skip)]
     pub lent_to_hunt: u32,
+    /// **THE LIVE KIT ORDERS** ([`KitOrder`]), oldest first. An entry exists exactly while some
+    /// order on [`Self::orders`] carries its id: the one helper that drops them
+    /// ([`Self::prune_kit_orders`]) runs from every path that removes an order. **Persisted.**
+    pub kit_orders: Vec<KitOrder>,
+    /// **HOW MANY KIT ORDERS THIS BENCH HAS EVER ISSUED** — the next id is this plus one, so ids
+    /// start at `1` and are never reused. **Persisted.**
+    pub next_kit_order: u32,
 }
 
 impl BandBench {
@@ -5195,11 +5240,104 @@ impl BandBench {
                 len: self.orders.len(),
             });
         }
-        Ok(self.orders.remove(index))
+        let removed = self.orders.remove(index);
+        self.prune_kit_orders();
+        Ok(removed)
+    }
+
+    /// **Queue a whole kit as ONE GROUPED ORDER** (issue #780): every `(recipe_id, count)` part is
+    /// appended contiguously at the back, tagged with a fresh kit-order id, and a [`KitOrder`] is
+    /// recorded. Parts with a zero count are omitted; none left is [`BenchQueueError::EmptyKitOrder`].
+    /// Returns the new kit order's id. The crew is untouched.
+    pub fn enqueue_kit(
+        &mut self,
+        kit_id: &str,
+        people: u32,
+        parts: Vec<(String, u32)>,
+    ) -> Result<u32, BenchQueueError> {
+        let parts: Vec<(String, u32)> = parts
+            .into_iter()
+            .filter(|(_, count)| *count >= MIN_ORDER_COUNT)
+            .collect();
+        if parts.is_empty() {
+            return Err(BenchQueueError::EmptyKitOrder);
+        }
+        self.next_kit_order = self.next_kit_order.saturating_add(ONE_KIT_ORDER);
+        let id = self.next_kit_order;
+        for (recipe_id, count) in parts {
+            let mut order = BenchOrder::new(&recipe_id, count);
+            order.kit_order = id;
+            self.orders.push(order);
+        }
+        self.kit_orders.push(KitOrder {
+            id,
+            kit_id: kit_id.to_string(),
+            people,
+            done: NOTHING_MADE,
+        });
+        Ok(id)
+    }
+
+    /// **Drop every [`KitOrder`] no order carries any more** (finished or removed). The one helper
+    /// every order-removing path calls.
+    fn prune_kit_orders(&mut self) {
+        let orders = &self.orders;
+        self.kit_orders
+            .retain(|kit| orders.iter().any(|order| order.kit_order == kit.id));
+    }
+
+    /// The queue indices `[start, end)` of the contiguous block of the kit order `id`, if any part
+    /// is queued.
+    fn kit_block(&self, id: u32) -> Option<(usize, usize)> {
+        let start = self.orders.iter().position(|order| order.kit_order == id)?;
+        let len = self.orders[start..]
+            .iter()
+            .take_while(|order| order.kit_order == id)
+            .count();
+        Some((start, start + len))
+    }
+
+    /// The queue indices `[start, end)` of the **unit** holding the order at `index`: its whole kit
+    /// block when it is a kit part, else just itself.
+    fn unit_at(&self, index: usize) -> (usize, usize) {
+        match self.orders[index].kit_order {
+            NOT_A_KIT_PART => (index, index + ONE_PLACE),
+            id => self.kit_block(id).unwrap_or((index, index + ONE_PLACE)),
+        }
+    }
+
+    /// **Remove every part of a kit order** — each part is lost exactly as a single
+    /// [`Self::remove_order`] loses it (drawn piles forfeited; items already made stay in the
+    /// store). Returns the removed orders.
+    pub fn remove_kit(&mut self, id: u32) -> Result<Vec<BenchOrder>, BenchQueueError> {
+        let (start, end) = self
+            .kit_block(id)
+            .ok_or(BenchQueueError::NoSuchKitOrder { id })?;
+        let removed: Vec<BenchOrder> = self.orders.drain(start..end).collect();
+        self.prune_kit_orders();
+        Ok(removed)
+    }
+
+    /// **Move a whole kit order above the unit directly ahead of it** — a single order or another
+    /// whole kit block. Refused at the head of the queue.
+    pub fn raise_kit(&mut self, id: u32) -> Result<(), BenchQueueError> {
+        let (start, end) = self
+            .kit_block(id)
+            .ok_or(BenchQueueError::NoSuchKitOrder { id })?;
+        if start == HEAD_ORDER {
+            return Err(BenchQueueError::AlreadyAtHead);
+        }
+        let (above_start, _) = self.unit_at(start - ONE_PLACE);
+        self.orders[above_start..end].rotate_left(start - above_start);
+        Ok(())
     }
 
     /// **Move one order up one place.** Raising the second order makes it the head; the order it
     /// displaces keeps its progress and its pile ([`BenchOrder`]) and resumes when it is worked again.
+    ///
+    /// **A plain order whose predecessor is a kit part jumps over that whole kit block** (the block
+    /// stays contiguous). **A kit part itself is refused** ([`BenchQueueError::KitPartCannotMove`]);
+    /// [`Self::raise_kit`] raises the whole kit.
     pub fn raise_order(&mut self, index: usize) -> Result<(), BenchQueueError> {
         if index >= self.orders.len() {
             return Err(BenchQueueError::NoSuchOrder {
@@ -5209,7 +5347,11 @@ impl BandBench {
         if index == HEAD_ORDER {
             return Err(BenchQueueError::AlreadyAtHead);
         }
-        self.orders.swap(index, index - ONE_PLACE);
+        if self.orders[index].kit_order != NOT_A_KIT_PART {
+            return Err(BenchQueueError::KitPartCannotMove);
+        }
+        let (above_start, _) = self.unit_at(index - ONE_PLACE);
+        self.orders[above_start..=index].rotate_right(ONE_PLACE);
         Ok(())
     }
 
@@ -5228,7 +5370,15 @@ impl BandBench {
         order.progress = scalar_zero();
         order.drawn = None;
         if order.is_done() {
-            self.orders.remove(index);
+            let finished = self.orders.remove(index);
+            if let Some(kit) = self
+                .kit_orders
+                .iter_mut()
+                .find(|kit| finished.kit_order != NOT_A_KIT_PART && kit.id == finished.kit_order)
+            {
+                kit.done = kit.done.saturating_add(finished.made);
+            }
+            self.prune_kit_orders();
             return true;
         }
         false
@@ -10576,5 +10726,196 @@ mod tests {
             "the plan went with the flag"
         );
         assert_eq!(board.followed_herd(), None);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Whole-kit orders (#780): the grouped bench orders and their contiguity invariant.
+    // ---------------------------------------------------------------------------------------
+
+    const KIT: &str = "big_game";
+    const KIT_PEOPLE: u32 = 6;
+
+    fn parts(list: &[(&str, u32)]) -> Vec<(String, u32)> {
+        list.iter().map(|(id, n)| (id.to_string(), *n)).collect()
+    }
+
+    /// The queue as `recipe[#kit_order]` words, head first.
+    fn queue_shape(bench: &BandBench) -> Vec<String> {
+        bench
+            .orders
+            .iter()
+            .map(|order| match order.kit_order {
+                NOT_A_KIT_PART => order.recipe_id.clone(),
+                id => format!("{}#{id}", order.recipe_id),
+            })
+            .collect()
+    }
+
+    /// **A kit order's parts are appended contiguously at the back, tagged, and recorded once;**
+    /// a zero-count part is omitted and an empty list is an error.
+    #[test]
+    fn enqueue_kit_appends_the_parts_together_and_records_the_kit_order() {
+        let mut bench = BandBench::default();
+        bench.enqueue("plain", 1);
+        let id = bench
+            .enqueue_kit(
+                KIT,
+                KIT_PEOPLE,
+                parts(&[("spears", 2), ("skipped", 0), ("sled", 1)]),
+            )
+            .expect("a kit order with parts queues");
+        assert_eq!(id, 1, "ids start at 1");
+        assert_eq!(queue_shape(&bench), ["plain", "spears#1", "sled#1"]);
+        assert_eq!(
+            bench.kit_orders,
+            vec![KitOrder {
+                id: 1,
+                kit_id: KIT.to_string(),
+                people: KIT_PEOPLE,
+                done: 0
+            }]
+        );
+        assert_eq!(
+            bench.enqueue_kit(KIT, KIT_PEOPLE, parts(&[("sled", 0)])),
+            Err(BenchQueueError::EmptyKitOrder),
+            "nothing but zero counts is an empty order"
+        );
+        assert_eq!(
+            bench.enqueue_kit(KIT, KIT_PEOPLE, Vec::new()),
+            Err(BenchQueueError::EmptyKitOrder)
+        );
+        assert_eq!(bench.kit_orders.len(), 1, "a refused order records nothing");
+        let second = bench
+            .enqueue_kit(KIT, KIT_PEOPLE, parts(&[("sled", 1)]))
+            .unwrap();
+        assert_eq!(second, 2, "ids are never reused");
+    }
+
+    /// **A plain order raised over a kit block jumps the whole block;** a part cannot be raised on
+    /// its own.
+    #[test]
+    fn raising_a_plain_order_jumps_the_whole_kit_block_and_a_part_is_refused() {
+        let mut bench = BandBench::default();
+        bench
+            .enqueue_kit(KIT, KIT_PEOPLE, parts(&[("spears", 2), ("sled", 1)]))
+            .unwrap();
+        bench.enqueue("plain", 1);
+        assert_eq!(queue_shape(&bench), ["spears#1", "sled#1", "plain"]);
+        bench.raise_order(2).expect("the plain order raises");
+        assert_eq!(
+            queue_shape(&bench),
+            ["plain", "spears#1", "sled#1"],
+            "it jumped the block, which stayed contiguous"
+        );
+        assert_eq!(
+            bench.raise_order(2),
+            Err(BenchQueueError::KitPartCannotMove),
+            "a part cannot be raised alone"
+        );
+        assert_eq!(
+            bench.raise_order(1),
+            Err(BenchQueueError::KitPartCannotMove)
+        );
+        assert_eq!(queue_shape(&bench), ["plain", "spears#1", "sled#1"]);
+    }
+
+    /// **`raise_kit` moves the whole block over the single order or the whole kit block above it,**
+    /// and is refused at the head.
+    #[test]
+    fn raise_kit_moves_the_block_above_a_single_order_or_another_kit() {
+        let mut bench = BandBench::default();
+        bench.enqueue("plain", 1);
+        bench
+            .enqueue_kit(KIT, KIT_PEOPLE, parts(&[("spears", 2), ("sled", 1)]))
+            .unwrap();
+        bench
+            .enqueue_kit("trapping", KIT_PEOPLE, parts(&[("traps", 3)]))
+            .unwrap();
+        assert_eq!(
+            queue_shape(&bench),
+            ["plain", "spears#1", "sled#1", "traps#2"]
+        );
+        bench.raise_kit(2).unwrap();
+        assert_eq!(
+            queue_shape(&bench),
+            ["plain", "traps#2", "spears#1", "sled#1"],
+            "the second kit jumped the first kit's whole block"
+        );
+        bench.raise_kit(1).unwrap();
+        assert_eq!(
+            queue_shape(&bench),
+            ["plain", "spears#1", "sled#1", "traps#2"]
+        );
+        bench.raise_kit(1).unwrap();
+        assert_eq!(
+            queue_shape(&bench),
+            ["spears#1", "sled#1", "plain", "traps#2"],
+            "the kit jumped the single order"
+        );
+        assert_eq!(bench.raise_kit(1), Err(BenchQueueError::AlreadyAtHead));
+        assert_eq!(
+            bench.raise_kit(9),
+            Err(BenchQueueError::NoSuchKitOrder { id: 9 })
+        );
+    }
+
+    /// **`remove_kit` takes every part and drops the kit order;** a drawn pile is lost exactly as a
+    /// single removal loses it, and the other orders are untouched.
+    #[test]
+    fn remove_kit_takes_every_part_and_drops_the_record() {
+        let mut bench = BandBench::default();
+        bench.enqueue("plain", 1);
+        bench
+            .enqueue_kit(KIT, KIT_PEOPLE, parts(&[("spears", 2), ("sled", 1)]))
+            .unwrap();
+        bench.orders[1].drawn = Some(DrawnInputs {
+            reading: None,
+            grade: None,
+            withdrawn: Vec::new(),
+        });
+        let removed = bench.remove_kit(1).expect("the kit order is on the queue");
+        assert_eq!(removed.len(), 2);
+        assert!(removed[0].drawn.is_some(), "the drawn pile went with it");
+        assert_eq!(queue_shape(&bench), ["plain"]);
+        assert!(bench.kit_orders.is_empty());
+        assert_eq!(
+            bench.remove_kit(1),
+            Err(BenchQueueError::NoSuchKitOrder { id: 1 })
+        );
+    }
+
+    /// **A finished part adds its `made` to the kit order's `done`; the kit order is dropped the
+    /// moment no part carries its id** — finishing the last part, or removing the last part singly.
+    #[test]
+    fn done_accumulates_as_parts_finish_and_the_kit_order_drops_with_its_last_part() {
+        let mut bench = BandBench::default();
+        bench
+            .enqueue_kit(KIT, KIT_PEOPLE, parts(&[("spears", 2), ("sled", 1)]))
+            .unwrap();
+        assert!(!bench.complete_item(0), "one of two spears");
+        assert_eq!(
+            bench.kit_orders[0].done, 0,
+            "an unfinished part reports its own made"
+        );
+        assert!(bench.complete_item(0), "the spears part is done and leaves");
+        assert_eq!(
+            bench.kit_orders[0].done, 2,
+            "the finished part's made is banked"
+        );
+        assert_eq!(queue_shape(&bench), ["sled#1"]);
+        assert!(bench.complete_item(0));
+        assert!(
+            bench.kit_orders.is_empty(),
+            "the last part finished: the kit order is gone"
+        );
+
+        // Removing the parts one by one (the well's x) drops the record with the last one.
+        bench
+            .enqueue_kit(KIT, KIT_PEOPLE, parts(&[("spears", 2), ("sled", 1)]))
+            .unwrap();
+        bench.remove_order(0).unwrap();
+        assert_eq!(bench.kit_orders.len(), 1, "one part still carries the id");
+        bench.remove_order(0).unwrap();
+        assert!(bench.kit_orders.is_empty());
     }
 }

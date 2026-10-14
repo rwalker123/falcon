@@ -523,8 +523,9 @@ there in slice 4.
 # The bench
 
 `BandBench` is a component on a band: `{ orders, workers, last_output_grade, priority, last_started,
-finished, auto, auto_skipped }`. **One bench, one queue**: `orders` is an ordered list of `BenchOrder { recipe_id, count, auto,
-made, progress, drawn }` and the bench works **one order a turn — the worked order** (below).
+finished, auto, auto_skipped, kit_orders, next_kit_order }`. **One bench, one queue**: `orders` is an ordered list of `BenchOrder { recipe_id, count, auto,
+made, progress, drawn, kit_order }` and the bench works **one order a turn — the worked order** (below).
+Orders may be grouped into whole-kit orders — see "Kit orders".
 Everything else on the
 bench — the crew, the rank, the band's recipe habits, the parked output — belongs to the bench and
 survives every queue edit.
@@ -1525,6 +1526,85 @@ merge), `build_queue::the_jobs_behind_the_head_are_suggested_their_tools_off_the
 `bench_queue::suggestions_rank_by_workers_without_and_net_out_the_queue`,
 `::a_suggestion_does_not_rise_on_the_turn_its_item_is_made` and
 `::a_detached_party_publishes_no_suggestions` (paired with its home band carrying the same lines).
+
+## Kit orders — a whole kit queued as ONE grouped order (#780)
+
+Design: `docs/plan_crafting_and_materials.md` §7, "Ordering a whole kit". A kit is a set of items for a
+job (`equipment.json` `kits`); the ledger's **Make** on a kit row queues every missing item at once.
+
+**The grouping is queue structure, not a second queue.** A kit order is the ordinary `BenchOrder`s
+for its items, appended contiguously and each tagged `BenchOrder::kit_order` (the id; `0` =
+`NOT_A_KIT_PART`), plus one `KitOrder { id, kit_id, people, done }` on `BandBench::kit_orders`
+(`next_kit_order` counts ids ever issued, so ids start at 1 and are never reused). Everything the bench
+already does — the worked order, per-order pile and progress, the forecast — is untouched; a part is
+worked like any order.
+
+**The invariant is that a kit order's parts stay contiguous**, kept by the editors:
+
+- `raise_order` on a **plain** order whose predecessor is a kit part jumps over that **whole** block
+  (`unit_at` finds it); on a **kit part** it is refused (`BenchQueueError::KitPartCannotMove`) — the kit
+  moves as one.
+- `raise_kit(id)` moves the whole block above the unit directly ahead (a single order, or another
+  kit's whole block); refused at the head.
+- `remove_kit(id)` removes every part; drawn piles are lost exactly as a single `remove_order` loses
+  them (the command's event says `piles_spent`). A single part may still be removed or have its count
+  edited (the well's ✕ and the part stepper) — the block stays contiguous either way.
+- **One helper drops a `KitOrder`**: `prune_kit_orders` retains only the kit orders some order still
+  carries, and `remove_order`, `remove_kit` and `complete_item` all call it. A kit order is therefore
+  never left without parts and never outlives them, however the last one went.
+- `complete_item` banks a finished part's `made` into its `KitOrder::done` before the part leaves; a
+  part still queued reports its own `made` (the grouped box's progress is `done` + the live parts').
+- **Auto-craft is unchanged** — it fills an empty queue only, so it never interleaves with a kit block.
+- **Persisted** (`BandRecord::bench`; `SAVE_FORMAT_VERSION` 42).
+
+**Commands** (proto 85-87, `CommandEventKind::Craft`, band-addressed with a required handle in `xtask`'s
+guard):
+
+| verb | does | refused when |
+|---|---|---|
+| `bench_enqueue_kit <f> <b> kit <id> people <n> recipe <id> count <n> [recipe <id> count <n> …]` | queues every part as one kit order; each part writes `last_started`, as `bench_enqueue` does; the crew is untouched | the kit is unknown or carries nothing (`none`); a recipe fails `bench_recipe_refusal` (the same predicate `bench_enqueue` uses); a recipe's output item is not one the kit `uses`; a count is below 1; no part is named. **Fails whole** — nothing queues on any failure |
+| `bench_remove_kit <f> <b> kit_order <id>` | removes every part | no such kit order |
+| `bench_raise_kit <f> <b> kit_order <id>` | raises the whole block | no such kit order; already at the head |
+
+**Why the command carries counts and recipes.** The picker computes the shortage and the
+per-item count from published terms and the player confirms *that* sheet; the sim re-deriving a count
+at Start could queue something other than what the player was shown (the stock, the queue or the
+people may have moved by one frame). So the sim validates and honours the order. `bench_enqueue_kit`
+checks only what could make the order meaningless (an item the kit does not use), never *how many*.
+
+**`KitNeed` on the wire** (`PopulationCohortState.kitNeeds`, one per kit that carries something, config
+order; `craft_suggestions::band_kit_needs` + `snapshot::crafting::kit_need_states`):
+
+| field | definition |
+|---|---|
+| `people` | `LaborAllocation::workers_on_job` summed over the kit's `jobs` |
+| `have` (per item) | `Σ filled` over the settled lines that serve **this kit's jobs**, plus the **spare** units — `live_units − Σ filled over ALL lines`, floored at zero |
+| `queued` | `craft_suggestions::queued_units` — the very figure the suggestions net by (queue + parked) |
+| `recipes` | one per recipe whose output is the item, book order: `outputPerPass`, and `inputs` — each amount **per pass with the bench's material efficiency applied** (`systems::required`, the call the bench draws with) |
+| `materialsFree` | `QueueForecast::left_of` — the stock left after every queued order's claims, the term `suggestion_shortfalls` strikes a suggestion against — one row per material the band holds or any recipe reads |
+
+- **`have` excludes another job's units** because the picker answers *"how many of my hunters have a
+  sled"*: a sled held by a woodcutter does not equip a hunter, and counting it would tell the player
+  nobody needs a sled while the hunters walk without one. Attribution
+  (`SupplySource::serves_any`): a `Pool(job)` serves a kit listing that job; a `Take { job }` serves it
+  when `KitJob::as_str() == job` (the same spelling the row publishes); a `Site` line is attributed
+  through its source's **keeping job** (`site_keeping_jobs`: patch → agriculture, herd → husbandry,
+  road → roadwork, working → quarrywork or extraction), because a keeping job has no labor row.
+- **A queued-build (`BuildQueue`) line never counts as a unit held** — it is a *forecast* of a later
+  job's claim against the stock the settlement left, and no unit is in anyone's hands for it. It is
+  still part of what is spoken for when the **spare** is struck (the literal Σ over all lines), so a
+  unit reserved for the next build is not offered as spare.
+- **The client does the picker's arithmetic** (passes = `ceil(make / outputPerPass)`, `need = passes ×
+  amount`, `short = need − free`): linear and exact over published terms, the same standing as the
+  estimate precedent in `yield-forecast.md` ("the client draws the curve, the sim states the take"). The
+  sim publishes the terms, never a pre-chosen recipe or a shortage.
+- Pinned by `components::tests` (contiguity, raise over a block, `raise_kit`, `remove_kit`, `done`
+  accounting and the record dropping with its last part), `craft_suggestions::tests` (a woodcutter's
+  sled is not the hunters'; a spare unit counts and a queued-build line does not; `queued`; `none` not
+  listed), `server::tests::a_kit_order_queues_every_part_as_one_group_and_refuses_whole`, the command
+  text and proto round trip in `command_text::tests`, `sim_schema`'s
+  `whole_kit_orders_and_kit_needs_ride_the_wire`, and, off the encoded frame,
+  `bench_queue::a_kit_order_and_the_pickers_terms_reach_the_wire`.
 
 ## Auto-craft — the bench works down the suggestion list on its own (#779)
 

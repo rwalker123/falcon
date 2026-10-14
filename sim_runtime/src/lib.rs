@@ -17,8 +17,8 @@ pub use commands::{
     WorkPartySource,
 };
 pub use commands::{
-    CancelScope, CommandDecodeError, CommandEncodeError, CommandEnvelope, CommandPayload,
-    ConfigOverrideKind, OrdersDirective, ReloadConfigKind, SecurityPolicyKind,
+    BenchKitPart, CancelScope, CommandDecodeError, CommandEncodeError, CommandEnvelope,
+    CommandPayload, ConfigOverrideKind, OrdersDirective, ReloadConfigKind, SecurityPolicyKind,
     StartingKitAllocation, StartingMaterialAllocation, TradeCargoItem, FODDER_CARGO_KEY,
     FOOD_CARGO_KEY, MAX_PROTO_FRAME,
 };

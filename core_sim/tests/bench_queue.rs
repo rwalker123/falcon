@@ -969,3 +969,112 @@ fn a_skipped_orders_reason_quotes_its_forecast_not_one_pass() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// Whole-kit orders (#780), read off the ENCODED frame.
+// ---------------------------------------------------------------------------------------------
+
+/// The stalking kit's id in `equipment.json`.
+const STALKING_KIT: &str = "big_game";
+/// People a kit order is sized for in these fixtures.
+const KIT_PEOPLE: u32 = 6;
+/// Sleds the kit order asks for.
+const KIT_SLEDS: u32 = 2;
+
+/// **A KIT ORDER REACHES THE CLIENT AS A GROUP, AND THE PICKER'S TERMS ARE ON THE SAME FRAME.**
+/// The queued parts carry their kit-order id, the live kit order is listed with its people, the
+/// stalking kit's sled row names the units the bench already owes and one recipe entry per recipe
+/// making it (per-pass inputs, efficiency applied), and the free stock the picker compares those
+/// inputs with is the store LESS what the queue claims: 40 hide, minus two sleds' worth.
+#[test]
+fn a_kit_order_and_the_pickers_terms_reach_the_wire() {
+    let (mut app, band) = world();
+    stock(&mut app, band);
+    {
+        let mut bench = app.world.get_mut::<BandBench>(band).expect("a bench");
+        bench
+            .enqueue_kit(
+                STALKING_KIT,
+                KIT_PEOPLE,
+                vec![(SLED_RECIPE.to_string(), KIT_SLEDS)],
+            )
+            .expect("the kit order queues");
+    }
+    recapture_snapshot_in_place(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let cohort = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.entity() == band.to_bits())
+        .expect("the band is on the wire");
+    let bench = cohort.bench().expect("the bench rides the row");
+
+    let part = bench.orders().expect("the queue").get(HEAD);
+    assert_eq!(part.kitOrder(), ONE, "the part carries its kit order's id");
+    let kit_orders = bench.kitOrders().expect("the kit orders ride the bench");
+    assert_eq!(kit_orders.len(), 1);
+    assert_eq!(kit_orders.get(HEAD).kitId(), Some(STALKING_KIT));
+    assert_eq!(kit_orders.get(HEAD).people(), KIT_PEOPLE);
+    assert_eq!(kit_orders.get(HEAD).done(), NONE_MADE);
+
+    let needs = cohort.kitNeeds().expect("the kit needs ride the row");
+    let stalking = needs
+        .iter()
+        .find(|need| need.kitId() == Some(STALKING_KIT))
+        .expect("the stalking kit is orderable");
+    assert!(
+        needs.iter().all(|need| need.kitId() != Some("none")),
+        "the empty kit is not orderable"
+    );
+    let sled = stalking
+        .items()
+        .expect("items")
+        .iter()
+        .find(|item| item.itemId() == Some(SLED_RECIPE))
+        .expect("the stalking kit uses a sled");
+    assert_eq!(sled.queued(), KIT_SLEDS, "the bench owes both sleds");
+    let recipe = sled
+        .recipes()
+        .expect("recipes")
+        .iter()
+        .find(|recipe| recipe.recipeId() == Some(SLED_RECIPE))
+        .expect("the hide sled is one of the sled's recipes");
+    assert_eq!(recipe.outputPerPass(), 1.0);
+    let hide_per_pass = recipe
+        .inputs()
+        .expect("inputs")
+        .iter()
+        .find(|input| input.materialId() == Some(HIDE))
+        .expect("a sled eats hide")
+        .amount();
+    assert!(hide_per_pass > 0.0);
+    assert!(
+        sled.recipes().expect("recipes").len() > ONE as usize,
+        "one entry per recipe making the item (the framed sled too)"
+    );
+
+    let free_hide = cohort
+        .materialsFree()
+        .expect("the free stock rides the row")
+        .iter()
+        .find(|row| row.materialId() == Some(HIDE))
+        .expect("hide is read by a recipe")
+        .amount();
+    let expected = PLENTY - hide_per_pass * KIT_SLEDS as f32;
+    assert!(
+        (free_hide - expected).abs() < 0.01,
+        "free hide {free_hide} is the 40 held less the queue's claim ({expected})"
+    );
+}
