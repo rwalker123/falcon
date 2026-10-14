@@ -1111,6 +1111,10 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// checkpointed [`crate::systems::HeartLedger`]. `None` for a band no turn has judged (a fresh
     /// world, or a detached party, which is never a member), which publishes as in touch.
     pub(crate) heart: Option<&'a crate::systems::HeartReading>,
+    /// **The peoples pulling this band** (#820), already sorted for the wire, off the checkpointed
+    /// [`crate::systems::CulturePressureLedger`]. Empty for a detached party and for a world no
+    /// turn has judged.
+    pub(crate) culture_pressures: Vec<sim_schema::CulturePressureState>,
 }
 
 /// The two webs' registries, for resolving a queue entry's **live** rung. No ladder: both
@@ -1434,6 +1438,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         build_sources,
         loadout_window,
         heart,
+        culture_pressures,
     } = inputs;
     let homeward: &[crate::work_party::HomewardWalk] =
         allocation.map_or(&[], |allocation| allocation.homeward.as_slice());
@@ -2809,6 +2814,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             .and_then(|reading| reading.last_contact_turn)
             .map_or(sim_schema::state::NO_HEART_CONTACT, |turn| turn as i64),
         independence_grievance_threshold: wellbeing.independence.grievance_threshold,
+        culture_pressures,
         culture_traits,
         culture_ancestor_pull,
         culture_drift_source_band: culture_drift.map_or(0, |pull| pull.source),
@@ -3357,6 +3363,7 @@ mod tests {
             // No world, so no outfitting window either.
             loadout_window: None,
             heart: None,
+            culture_pressures: Vec::new(),
             cohort,
             allocation,
             expedition,
@@ -3978,5 +3985,82 @@ mod tests {
     fn a_band_with_no_allocation_publishes_an_empty_queue() {
         let cohort = cohort(TEST_LARDER);
         assert!(captured(&cohort, None, None).build_queue.is_empty());
+    }
+}
+
+/// **One band's culture-pressure rows for the wire** (#820): every people pulling it, pressure
+/// descending, faction ascending as the tie-break. `turnsToNext` is the clock toward the next
+/// phase (see [`crate::systems::CulturePressureReading::turns_to_next`]).
+pub(crate) fn culture_pressure_rows(
+    ledger: &crate::systems::CulturePressureLedger,
+    band: BandId,
+    joining: &crate::culture_corruption_config::CultureJoiningSettings,
+) -> Vec<sim_schema::CulturePressureState> {
+    let mut rows: Vec<sim_schema::CulturePressureState> = ledger
+        .for_band(band)
+        .map(|(people, reading)| sim_schema::CulturePressureState {
+            faction: people.0,
+            pressure: reading.pressure,
+            phase: reading.phase.wire_code(),
+            close: reading.close,
+            turns_to_next: reading.turns_to_next(joining),
+        })
+        .collect();
+    rows.sort_by(|a, b| {
+        b.pressure
+            .total_cmp(&a.pressure)
+            .then(a.faction.cmp(&b.faction))
+    });
+    rows
+}
+
+#[cfg(test)]
+mod culture_pressure_rows_tests {
+    use super::*;
+    use crate::{
+        culture_corruption_config::CultureCorruptionConfigHandle,
+        systems::{CulturePressureLedger, CulturePressureReading, JoiningPhase},
+    };
+
+    fn reading(pressure: f32, phase: JoiningPhase, asked: u16) -> CulturePressureReading {
+        CulturePressureReading {
+            owner: FactionId(0),
+            pressure,
+            phase,
+            close: true,
+            asked_turns: asked,
+            forced_turns: 0,
+        }
+    }
+
+    #[test]
+    fn rows_sort_by_pressure_descending_then_faction_ascending() {
+        let band = BandId(7);
+        let mut ledger = CulturePressureLedger::default();
+        ledger
+            .pairs
+            .insert((band, FactionId(3)), reading(2.5, JoiningPhase::Asked, 10));
+        ledger
+            .pairs
+            .insert((band, FactionId(1)), reading(1.8, JoiningPhase::Pulled, 4));
+        ledger
+            .pairs
+            .insert((band, FactionId(2)), reading(2.5, JoiningPhase::Asked, 10));
+        // Another band's row is never published on this one.
+        ledger.pairs.insert(
+            (BandId(8), FactionId(1)),
+            reading(9.0, JoiningPhase::Forced, 10),
+        );
+        let config = CultureCorruptionConfigHandle::load_builtin().get();
+        let joining = config.culture().joining();
+
+        let rows = culture_pressure_rows(&ledger, band, joining);
+        let order: Vec<u32> = rows.iter().map(|row| row.faction).collect();
+        assert_eq!(order, vec![2, 3, 1]);
+        // Pulled with 4 asked turns held: turns - 4 left on the asked clock.
+        assert_eq!(rows[2].turns_to_next, joining.turns() - 4);
+        // Asked with no forced clock running: nothing counting down.
+        assert_eq!(rows[0].turns_to_next, 0);
+        assert_eq!(rows[0].phase, 2);
     }
 }

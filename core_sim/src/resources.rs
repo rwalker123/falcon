@@ -1725,6 +1725,13 @@ pub enum CommandEventKind {
     ///
     /// **Appended last**, after [`Self::BandBrokeAway`].
     LostTouch,
+    /// **Another people's culture began pulling one of the owner's bands** — the pair entered
+    /// phase Pulled or above from no entry (`systems::culture_pressure`). Edge-gated: fired on
+    /// entry only, never while the pull stands and never on a later phase change. Filed under the
+    /// band's owner; detail `band=<id> faction=<pulling people's id>`.
+    ///
+    /// **Appended last**, after [`Self::LostTouch`].
+    CulturePull,
 }
 
 impl CommandEventKind {
@@ -1773,6 +1780,7 @@ impl CommandEventKind {
             CommandEventKind::StartingLoadout => "starting_loadout",
             CommandEventKind::BandBrokeAway => "band_broke_away",
             CommandEventKind::LostTouch => "lost_touch",
+            CommandEventKind::CulturePull => "culture_pull",
         }
     }
 }

@@ -498,6 +498,21 @@ pub struct CultureLayer {
     pub last_updated_tick: u64,
 }
 
+/// **The one culture-distance metric**: the largest per-axis gap |a - b| between two trait
+/// vectors. Layer divergence ([`CultureLayer::evaluate_divergence`]) and the joining rule's
+/// "close" test (`systems::culture_pressure`) both read it, so "how far apart are two cultures"
+/// has one answer.
+pub fn max_axis_gap(a: &[Scalar; CULTURE_TRAIT_AXES], b: &[Scalar; CULTURE_TRAIT_AXES]) -> Scalar {
+    let mut max_delta = Scalar::zero();
+    for (left, right) in a.iter().zip(b.iter()) {
+        let diff = (*left - *right).abs();
+        if diff > max_delta {
+            max_delta = diff;
+        }
+    }
+    max_delta
+}
+
 impl CultureLayer {
     pub fn new(id: CultureLayerId, scope: CultureLayerScope) -> Self {
         let settings = ScopeSettings::default_for(scope);
@@ -534,14 +549,7 @@ impl CultureLayer {
     }
 
     fn evaluate_divergence(&mut self, parent_values: &[Scalar; CULTURE_TRAIT_AXES]) {
-        let mut max_delta = Scalar::zero();
-        for (idx, parent_value) in parent_values.iter().enumerate() {
-            let diff = (self.traits.value[idx] - *parent_value).abs();
-            if diff > max_delta {
-                max_delta = diff;
-            }
-        }
-        self.divergence.magnitude = max_delta;
+        self.divergence.magnitude = max_axis_gap(&self.traits.value, parent_values);
     }
 
     fn tick_thresholds(&mut self) -> Option<CultureTensionKind> {

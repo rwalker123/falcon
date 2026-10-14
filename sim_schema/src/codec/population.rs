@@ -11,11 +11,11 @@ use crate::state::population::{
     BandLoadoutSupplyRowState, BandLoadoutWindowState, BenchOrderState, BenchState,
     BreedingMemberState, BreedingPeopleState, BuildQueueEntryState, CharacteristicReadingState,
     CohortStoreState, CraftOfferState, CraftSuggestionSourceState, CraftSuggestionState,
-    DrawnInputState, EquipmentBatchState, GenerationState, HarvestTaskState, KeepingMealState,
-    KitItemConditionState, KitToeLineState, LaborAssignmentState, MaterialBatchState,
-    MaterialShortfallState, PoolCrewLineState, PoolToeLineState, PoolingLinkState,
-    PopulationCohortState, PopulationDemographicsState, ScoutTaskState, SettlementStageViewState,
-    SourcePriorityState, TransferCrossingState,
+    CulturePressureState, DrawnInputState, EquipmentBatchState, GenerationState, HarvestTaskState,
+    KeepingMealState, KitItemConditionState, KitToeLineState, LaborAssignmentState,
+    MaterialBatchState, MaterialShortfallState, PoolCrewLineState, PoolToeLineState,
+    PoolingLinkState, PopulationCohortState, PopulationDemographicsState, ScoutTaskState,
+    SettlementStageViewState, SourcePriorityState, TransferCrossingState,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -936,6 +936,7 @@ fn create_populations<'a>(
             let breeding_members = create_breeding_members(builder, &cohort.breeding_members);
             let breeding_peoples = create_breeding_peoples(builder, &cohort.breeding_peoples);
             let hunt_meals = create_hunt_meals(builder, &cohort.hunt_meals);
+            let culture_pressures = create_culture_pressures(builder, &cohort.culture_pressures);
             let culture_ancestor_pull = (!cohort.culture_ancestor_pull.is_empty())
                 .then(|| builder.create_vector(&cohort.culture_ancestor_pull));
             let belief_reach_y = if cohort.belief_reach_y.is_empty() {
@@ -1222,6 +1223,7 @@ fn create_populations<'a>(
                     idleMustered: cohort.idle_mustered,
                     huntMeals: Some(hunt_meals),
                     commRangeTiles: cohort.comm_range_tiles,
+                    culturePressures: Some(culture_pressures),
                 },
             )
         })
@@ -1922,6 +1924,13 @@ fn decode_population(
             food: meal.food(),
         }),
         comm_range_tiles: cohort.commRangeTiles(),
+        culture_pressures: map_rows(cohort.culturePressures(), |row| CulturePressureState {
+            faction: row.faction(),
+            pressure: row.pressure(),
+            phase: row.phase(),
+            close: row.close(),
+            turns_to_next: row.turnsToNext(),
+        }),
     })
 }
 
@@ -2014,6 +2023,29 @@ fn create_breeding_peoples<'a>(
         })
         .collect();
     builder.create_vector(&rows)
+}
+
+/// `PopulationCohortState.culturePressures`.
+fn create_culture_pressures<'a>(
+    builder: &mut FbBuilder<'a>,
+    rows: &[CulturePressureState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::CulturePressureState<'a>>>> {
+    let offsets: Vec<_> = rows
+        .iter()
+        .map(|row| {
+            fb::CulturePressureState::create(
+                builder,
+                &fb::CulturePressureStateArgs {
+                    faction: row.faction,
+                    pressure: row.pressure,
+                    phase: row.phase,
+                    close: row.close,
+                    turnsToNext: row.turns_to_next,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
 }
 
 /// `PopulationCohortState.huntMeals`.

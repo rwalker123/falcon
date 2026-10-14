@@ -149,6 +149,12 @@ pub struct SnapshotContext<'w> {
     /// cohort row. `Option` so a hand-rolled capture world that never installed it publishes no
     /// reading.
     pub hearts: Option<Res<'w, crate::systems::HeartLedger>>,
+    /// Every band's standing under another people's culture pull (`systems::culture_pressure`),
+    /// published on its cohort row. `Option` for `hearts`' reason.
+    pub culture_pressure: Option<Res<'w, crate::systems::CulturePressureLedger>>,
+    /// The culture levers: the joining clock's length, which the `turnsToNext` readout counts down.
+    pub culture_config:
+        Option<Res<'w, crate::culture_corruption_config::CultureCorruptionConfigHandle>>,
     pub pipeline_config: Res<'w, TurnPipelineConfigHandle>,
     /// How to write the capture result: record a new ring entry (turn path) or refresh the latest
     /// broadcast in place (post-command re-capture). Bundled here to keep `capture_snapshot` within
@@ -2660,10 +2666,19 @@ pub fn capture_snapshot(
         supply_membership,
         supply_network,
         hearts,
+        culture_pressure,
+        culture_config,
         pipeline_config,
         capture_mode,
     } = ctx;
     let overlays_config = overlays.get();
+    // The joining clock's length (`culture.joining.turns`), for each cohort's `turnsToNext`. A
+    // hand-rolled capture world with no handle reads the builtin.
+    let culture_levers = culture_config.map_or_else(
+        crate::culture_corruption_config::CultureCorruptionConfigHandle::load_builtin,
+        |handle| handle.clone(),
+    );
+    let joining_levers = culture_levers.config().culture().joining().clone();
 
     let population_cfg = pipeline_config.config().population();
     // Same place-based morale config the sim uses, so `habitability` matches the applied drain.
@@ -3237,6 +3252,16 @@ pub fn capture_snapshot(
                         heart: band_id.and_then(|band| {
                             hearts.as_deref().and_then(|ledger| ledger.reading(*band))
                         }),
+                        culture_pressures: band_id
+                            .zip(culture_pressure.as_deref())
+                            .map(|(band, ledger)| {
+                                crate::snapshot::population::culture_pressure_rows(
+                                    ledger,
+                                    *band,
+                                    &joining_levers,
+                                )
+                            })
+                            .unwrap_or_default(),
                         // **This band's faction decides which crafts are known**, so the memo is keyed
                         // per faction and resolved lazily — one entry per faction that owns a band,
                         // not one per band.

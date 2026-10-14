@@ -11993,6 +11993,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::StartingLoadout => "Outfit",
         CommandEventKind::BandBrokeAway => "Band broke away",
         CommandEventKind::LostTouch => "Lost touch",
+        CommandEventKind::CulturePull => "Culture pull",
     }
 }
 

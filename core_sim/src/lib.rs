@@ -191,12 +191,12 @@ pub use crisis_config::{
     BUILTIN_CRISIS_TELEMETRY_CONFIG,
 };
 pub use culture::{
-    culture_region_at, may_break_away, mutual_contact_ties, reconcile_band_culture_layers,
-    reconcile_culture_layers, seeded_modifiers_for_band, ContactPull, ContactTie,
-    CultureEffectsCache, CultureLayer, CultureLayerId, CultureLayerScope, CultureManager,
-    CultureOwner, CultureSchismEvent, CultureSplitQueue, CultureTensionEvent, CultureTensionKind,
-    CultureTensionRecord, CultureTraitAxis, CultureTraitVector, StartingCultureLean,
-    CULTURE_TRAIT_AXES, CULTURE_TRAIT_SPAN, FALLBACK_CULTURE_REGION_ID,
+    culture_region_at, max_axis_gap, may_break_away, mutual_contact_ties,
+    reconcile_band_culture_layers, reconcile_culture_layers, seeded_modifiers_for_band,
+    ContactPull, ContactTie, CultureEffectsCache, CultureLayer, CultureLayerId, CultureLayerScope,
+    CultureManager, CultureOwner, CultureSchismEvent, CultureSplitQueue, CultureTensionEvent,
+    CultureTensionKind, CultureTensionRecord, CultureTraitAxis, CultureTraitVector,
+    StartingCultureLean, CULTURE_TRAIT_AXES, CULTURE_TRAIT_SPAN, FALLBACK_CULTURE_REGION_ID,
 };
 pub use culture_corruption_config::{
     CorruptionSeverityConfig, CultureCorruptionConfig, CultureCorruptionConfigHandle,
@@ -487,18 +487,19 @@ pub use snapshot::{
 };
 pub use systems::spawn_initial_world;
 pub use systems::{
-    advance_band_independence, advance_band_movement, advance_crafting, advance_culture_splits,
-    advance_expeditions, advance_labor_allocation, advance_party_defection,
+    advance_band_independence, advance_band_movement, advance_crafting, advance_culture_pressure,
+    advance_culture_splits, advance_expeditions, advance_labor_allocation, advance_party_defection,
     advance_population_migration, advance_predator_raids, advance_tick,
     announce_bench_material_short, band_label, bench_material_rate, bench_tiers,
     bill_and_stock_roads, break_off_breeding_excess, bring_the_dropped_party_home,
-    deliver_bench_output, denial_forecast, expedition_returned_event, fold_party_into_band,
-    follow_hunted_herds, grow_faction_roster, hunt_per_worker_provisions, hunt_report_event,
-    hunt_take, output_multiplier, party_owes_a_report, prospective_keep_hands,
-    publish_turn_transfers, settle_bands_roadwork, settle_scarce_tools, shed_breeding_excess,
-    simulate_population, simulate_power, source_has_a_meter_at_risk, split_band_from_parent,
-    split_band_from_parent_with, split_refusals, BenchTiers, BreakOffAsk, BreedingBreakOffs,
-    DenialForecast, DenialOutcome, HeartLedger, HeartReading, HuntOutcome, LineDivision, PartyGear,
+    culture_strength, deliver_bench_output, denial_forecast, expedition_returned_event,
+    fold_party_into_band, follow_hunted_herds, grow_faction_roster, hunt_per_worker_provisions,
+    hunt_report_event, hunt_take, joining_pressure, output_multiplier, party_owes_a_report,
+    prospective_keep_hands, publish_turn_transfers, settle_bands_roadwork, settle_scarce_tools,
+    shed_breeding_excess, simulate_population, simulate_power, source_has_a_meter_at_risk,
+    split_band_from_parent, split_band_from_parent_with, split_refusals, BenchTiers, BreakOffAsk,
+    BreedingBreakOffs, CulturePressureLedger, CulturePressureReading, DenialForecast,
+    DenialOutcome, HeartLedger, HeartReading, HuntOutcome, JoiningPhase, LineDivision, PartyGear,
     PartySightings, PoolToolPlan, PowerSimParams, RaidRoll, SplitBand, SplitRefusal, SplitRefusals,
     ToolClaimStage, TradeDiffusionEvent, POST_RECALLED,
 };
@@ -938,6 +939,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(visibility::VisibilitySweepTracker::default())
         .insert_resource(connections::ConnectionLedger::default())
         .insert_resource(systems::HeartLedger::default())
+        .insert_resource(systems::CulturePressureLedger::default())
         .insert_resource(systems::BreedingBreakOffs::default())
         .insert_resource(culture::CultureSplitQueue::default())
         .insert_resource(lineage::FreeBreedingPeoples::default())
@@ -1340,6 +1342,9 @@ pub fn build_headless_app() -> App {
                     // independence, so every band's people is final and one independence took
                     // this turn is skipped.
                     systems::advance_culture_splits,
+                    // Culture pressure (#820): read-only. After every band's people is final for
+                    // the turn, measure each people's strength and each band's pull under another.
+                    systems::advance_culture_pressure,
                     sedentarization::sedentarization_tick,
                 )
                     .chain(),

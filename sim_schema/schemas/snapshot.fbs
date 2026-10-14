@@ -1571,6 +1571,26 @@ table PopulationCohortState {
   // it leaves when the party stands within this many tiles of its home band; beyond it, a runner's
   // walk behind. Global config echoed per cohort (the `moveFerryReachTiles` idiom); derived, never saved.
   commRangeTiles:uint = 0;
+  // --- CULTURE PRESSURE (appended last, #820) ---------------------------------------------------
+  // Own bands only: a foreign (redacted) row carries the default (empty). One row per people whose
+  // culture is pulling this band (pressure >= joining.pulled), sorted by pressure descending, then
+  // faction ascending. Read-only: no band changes hands in this slice.
+  culturePressures:[CulturePressureState];
+}
+
+// ONE PEOPLE PULLING ONE BAND - a row of `PopulationCohortState.culturePressures`. Appended last.
+// pressure = (strength_B / strength_A) x (people_B / people_A) ^ size_exponent (docs/plan_minor_peoples.md).
+table CulturePressureState {
+  // The pulling people.
+  faction:uint;
+  pressure:float;
+  // 0 none, 1 pulled, 2 asked, 3 forced.
+  phase:ubyte = 0;
+  // The band's culture is within joining.max_culture_distance of that people's average.
+  close:bool = false;
+  // Turns left on the clock toward the next phase (pulled -> asked, asked -> forced); 0 when that
+  // clock is not running.
+  turnsToNext:ushort = 0;
 }
 
 // One keeping class's hunting meal - a row of `PopulationCohortState.huntMeals`.
