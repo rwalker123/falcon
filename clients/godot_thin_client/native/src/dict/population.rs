@@ -265,6 +265,21 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         }
     }
     let _ = dict.insert("breeding_peoples", &breeding_peoples);
+    // Culture pressure (#820): each people pulling this band, strongest first (the sim sorts; the
+    // client never re-sorts). `turns_to_next` 0 means no clock is running.
+    let mut culture_pressures = VarArray::new();
+    if let Some(rows) = cohort.culturePressures() {
+        for pressure in rows.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("faction", i64::from(pressure.faction()));
+            let _ = row.insert("pressure", f64::from(pressure.pressure()));
+            let _ = row.insert("phase", i64::from(pressure.phase()));
+            let _ = row.insert("close", pressure.close());
+            let _ = row.insert("turns_to_next", i64::from(pressure.turnsToNext()));
+            culture_pressures.push(&row.to_variant());
+        }
+    }
+    let _ = dict.insert("culture_pressures", &culture_pressures);
     // Hunting by need (#798): the idle hands the muster takes next turn.
     let _ = dict.insert("idle_mustered", i64::from(cohort.idleMustered()));
     // Hunting by need (#798): the meal a hunt is sized to, per keeping class. A compose sheet reads

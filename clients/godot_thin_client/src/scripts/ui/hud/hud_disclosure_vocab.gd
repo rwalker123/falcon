@@ -117,6 +117,33 @@ const BELIEFS_BREAK_AWAY_CLAUSE := "may break away"
 const BELIEFS_BREAK_AWAY_TOOLTIP := \
 	"This band's ways have drifted far from its people's; a purist band that drifts further breaks away as a new people."
 
+# ---- CULTURE PRESSURE lines beneath the Beliefs row (#820, read-only: joining is #821). The cohort key
+# carries one row per people pulling the band, strongest first (the sim sorts; never re-sorted here).
+# `phase`: 1 pulled, 2 asked, 3 forced; phase 0 draws nothing. At most `CULTURE_PRESSURE_MAX_LINES`
+# lines, then `+N more`. Each entry is ONE sentence of at most two lines in the drawer, and it says
+# what happens NEXT. Phases 2 and 3 lead with the hazard mark so the renderer tints them amber
+# (`DetailFormat.detail_bbcode`); phase 1 carries no mark and no indent (an unmarked full-width line draws in the muted `INK_DIM`).
+const CULTURE_PRESSURE_KEY := "culture_pressures"
+const CULTURE_PRESSURE_PHASE_PULLED := 1
+const CULTURE_PRESSURE_PHASE_ASKED := 2
+const CULTURE_PRESSURE_PHASE_FORCED := 3
+const CULTURE_PRESSURE_MAX_LINES := 3
+const CULTURE_PRESSURE_MORE_FORMAT := "+%d more"
+const CULTURE_PRESSURE_FACTOR_FORMAT := "×%.1f"
+const CULTURE_PRESSURE_TURNS_ONE := "1 turn"
+const CULTURE_PRESSURE_TURNS_FORMAT := "%d turns"
+# `%s` = people, factor, then (where it applies) the clock.
+const CULTURE_PRESSURE_FAR_FORMAT := \
+	"Pulled by %s's culture %s — too different to join."
+const CULTURE_PRESSURE_CLOSE_CLOCK_FORMAT := \
+	"Pulled by %s's culture %s — asks to join in %s."
+const CULTURE_PRESSURE_CLOSE_WEAK_FORMAT := \
+	"Pulled by %s's culture %s — too weak to ask yet."
+const CULTURE_PRESSURE_ASKED_FORMAT := "Wants to join %s %s"
+const CULTURE_PRESSURE_SENTENCE_END := "."
+const CULTURE_PRESSURE_ASKED_CLOCK_SUFFIX := " — forced in %s."
+const CULTURE_PRESSURE_FORCED_FORMAT := "Will be forced to join %s %s."
+
 # ---- THE CONTACT-DRIFT MARK on the Beliefs row (#702): a small violet arrow at the END of the value
 # (after the ancestors urn) while a FOREIGN people's band is pulling this band's culture, and one hover
 # sentence naming who and which way. The cohort keys are the sim's (`culture_drift_*`, foreign pulls

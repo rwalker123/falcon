@@ -507,6 +507,7 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
                 var beliefs_line := _band_beliefs_line(unit_data, context)
                 if beliefs_line != "":
                     lines.append(beliefs_line)
+                    lines.append_array(_culture_pressure_lines(unit_data))
             if growth_line != "":
                 lines.append(growth_line)
     if with_position:
@@ -984,6 +985,58 @@ func _band_beliefs_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> Str
         value += _drift_mark()
     ctx.row_tooltips[HudDisclosureVocab.DETAIL_ROW_BELIEFS] = _beliefs_hover(reading)
     return HudDisclosureVocab.DETAIL_ROW_BELIEFS + DetailFormat.DETAIL_KV_SEPARATOR + value
+
+## The culture-pressure lines under the Beliefs row (#820): one per pulling people with phase >= 1, at
+## most `CULTURE_PRESSURE_MAX_LINES`, then `+N more`. Text only; the copy lives in the disclosure vocab.
+## `[]` when nothing pulls the band (a foreign band's list is always empty).
+func _culture_pressure_lines(unit_data: Dictionary) -> Array[String]:
+    var out: Array[String] = []
+    var shown := 0
+    var hidden := 0
+    for raw in Array(unit_data.get(HudDisclosureVocab.CULTURE_PRESSURE_KEY, [])):
+        var row: Dictionary = raw
+        if int(row.get("phase", 0)) < HudDisclosureVocab.CULTURE_PRESSURE_PHASE_PULLED:
+            continue
+        if shown >= HudDisclosureVocab.CULTURE_PRESSURE_MAX_LINES:
+            hidden += 1
+            continue
+        shown += 1
+        out.append(_culture_pressure_sentence(row))
+    if hidden > 0:
+        out.append(HudDisclosureVocab.CULTURE_PRESSURE_MORE_FORMAT % hidden)
+    return out
+
+## One pressure row as one sentence saying what happens next. Phases 2 and 3 lead with the hazard mark
+## (the renderer's amber rule); phase 1 is an unmarked line, which the renderer draws in the muted ink.
+static func _culture_pressure_sentence(row: Dictionary) -> String:
+    var people := FactionMark.faction_name(int(row.get("faction", HudConst.NO_FACTION_ID)))
+    var factor := HudDisclosureVocab.CULTURE_PRESSURE_FACTOR_FORMAT % float(row.get("pressure", 0.0))
+    var phase := int(row.get("phase", 0))
+    var turns := int(row.get("turns_to_next", 0))
+    var clock := _culture_pressure_turns(turns)
+    var text := ""
+    if phase >= HudDisclosureVocab.CULTURE_PRESSURE_PHASE_FORCED:
+        text = HudDisclosureVocab.CULTURE_PRESSURE_FORCED_FORMAT % [people, factor]
+    elif phase == HudDisclosureVocab.CULTURE_PRESSURE_PHASE_ASKED:
+        text = HudDisclosureVocab.CULTURE_PRESSURE_ASKED_FORMAT % [people, factor]
+        if turns > 0:
+            text += HudDisclosureVocab.CULTURE_PRESSURE_ASKED_CLOCK_SUFFIX % clock
+        else:
+            text += HudDisclosureVocab.CULTURE_PRESSURE_SENTENCE_END
+    elif not bool(row.get("close", false)):
+        text = HudDisclosureVocab.CULTURE_PRESSURE_FAR_FORMAT % [people, factor]
+    elif turns > 0:
+        text = HudDisclosureVocab.CULTURE_PRESSURE_CLOSE_CLOCK_FORMAT % [people, factor, clock]
+    else:
+        text = HudDisclosureVocab.CULTURE_PRESSURE_CLOSE_WEAK_FORMAT % [people, factor]
+    if phase >= HudDisclosureVocab.CULTURE_PRESSURE_PHASE_ASKED:
+        return HudSelectionVocab.RUNG_HAZARD_GLYPH + " " + text
+    return text
+
+static func _culture_pressure_turns(turns: int) -> String:
+    if turns == 1:
+        return HudDisclosureVocab.CULTURE_PRESSURE_TURNS_ONE
+    return HudDisclosureVocab.CULTURE_PRESSURE_TURNS_FORMAT % turns
 
 ## The contact-drift reading for the Beliefs row: `{sentence}` (the hover's drift half), or `{}` when no
 ## FOREIGN band pulls this band or the pull would print as zero (`BELIEFS_DRIFT_DECIMALS`).
