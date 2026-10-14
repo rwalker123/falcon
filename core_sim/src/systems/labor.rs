@@ -5745,6 +5745,7 @@ pub fn advance_labor_allocation(
         // the shed's `continue`s and rewritten below from the plan this turn actually settled, so a
         // band that loses its last worker stops publishing a TOE for sites it no longer holds.
         allocation.last_pool_toe.clear();
+        allocation.last_pool_toe_head = None;
         // **AND THE QUEUED BUILDS' TOOLS**, on the same rule.
         allocation.last_queued_build_toe.clear();
         // **AND THE SITE CREWS' KEEPING ISSUES**, on the same rule: the take crews' item budget is
@@ -5912,6 +5913,13 @@ pub fn advance_labor_allocation(
         // second derivation there would be free to disagree with the tools these hands actually
         // worked with.
         allocation.last_pool_toe = pool_tools.toe_lines();
+        // **STAMPED WITH THE ENTRY THE BUILDERS' CLAIM WAS STRUCK FOR**, so the capture can withhold
+        // the builders' lines once that entry is no longer the queue head.
+        allocation.last_pool_toe_head = pile_source
+            .as_ref()
+            .filter(|_| builders > NO_CREW_ON_THIS_ACTIVITY)
+            .and(head_entry.as_ref())
+            .map(|entry| (entry.source.clone(), entry.declared));
         allocation.last_keeping_issued = pool_tools.keeping_issued(&site_asks, &allocation);
         // ## ⛔ THE ROADS THIS BAND KEEPS, PAID HERE — AFTER THE SHED AND BEFORE THE QUOTE
         //
@@ -14572,6 +14580,7 @@ mod labor_yield_tests {
                     morale: scalar_one(),
                     last_food_consumption: 0.0,
                     last_food_need: 0.0,
+                    fed_party_workers: Default::default(),
                     last_food_spoiled: 0.0,
                     last_turn_food_transfers: Default::default(),
                     last_turn_fodder_transfers: Default::default(),

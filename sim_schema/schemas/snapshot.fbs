@@ -910,6 +910,12 @@ table PopulationCohortState {
   // *** THERE IS NO FACTION FIELD, AND THAT IS THE ARC'S DISCIPLINE. *** Faction is a property of
   // the endpoint (`.claude/rules/core_sim/connections.md`), never a branch: a shipment to your own
   // splinter and a shipment to strangers are the same row.
+  //
+  // *** A STATIONED PARTY (expeditionMission == "station", issue #774) PUBLISHES ITS HOST HERE. ***
+  // The one band a party is bound for, whichever verb sent it: a shipment's destination, a post's
+  // host. expeditionMission says which, and expeditionPhase is "stationed" once the party has
+  // reached the host and stays. There is deliberately NO report-lag field: how old the news from the
+  // host is, is ConnectionState.lastSeenTurn against the current turn.
   expeditionDestinationBand:ulong = 0;
   expeditionDestinationName:string;
   // What the party is carrying, in the three accounts a band store holds. `expeditionCargoFood` is
@@ -1559,6 +1565,12 @@ table PopulationCohortState {
   // the entry named by the herd's `keeping`. Computed by the one function the turn sizes the crew
   // with.
   huntMeals:[KeepingMeal];
+  // --- STATIONED PARTY (appended last, #774) -----------------------------------------------------
+  // The effective communication range in tiles (`expedition_config.effective_comm_range()`,
+  // `comm_range_tiles x comm_range_tech_factor`, rounded). A stationed party's report lands the turn
+  // it leaves when the party stands within this many tiles of its home band; beyond it, a runner's
+  // walk behind. Global config echoed per cohort (the `moveFerryReachTiles` idiom); derived, never saved.
+  commRangeTiles:uint = 0;
 }
 
 // One keeping class's hunting meal - a row of `PopulationCohortState.huntMeals`.

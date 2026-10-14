@@ -125,6 +125,11 @@ signal send_denial_raid_requested(payload: Dictionary)
 # `send_trade_expedition`'s tail is a repeated `food <amount>` / `material <id> <amount>` manifest,
 # so its payload carries a CARGO LIST that no other party verb's grammar could express.
 signal send_trade_expedition_requested(payload: Dictionary)
+
+## **A STATIONED PARTY** (issue #774) — relayed by HudLayer.station_expedition_requested. Its own signal for
+## the shipment's reason: `station_expedition <f> <band> <workers> <host>` names a host band and
+## nothing else, a grammar no other party verb's payload expresses.
+signal station_expedition_requested(payload: Dictionary)
 # A party was ordered home — relayed to HudLayer.recall_expedition_requested.
 signal recall_expedition_requested(payload: Dictionary)
 # A band was split in two where it stands (issue #511) — relayed to HudLayer.split_band_requested.
@@ -539,6 +544,9 @@ var _split_workers: int = 1
 ## the sheet is open, `HudConst.NO_BAND_ID` when none is. Optional: with none, the send arms the pick.
 ## Reset with the verb (`_reset_verb_state`).
 var _trade_destination: int = HudConst.NO_BAND_ID
+## The host band the open STATION sheet (issue #774) is for — fixed when the Peoples tab's
+## `Station people` link opens it, unlike the shipment's destination, which is picked on the map.
+var _station_host: int = HudConst.NO_BAND_ID
 ## --- THE SHIPMENT BEING LOADED (arc #527) ----------------------------------------------------
 ## The destination is picked on the map AFTER the sheet is filled in — the send arms that pick — so what
 ## is loaded is held here and captured when the pick is armed.
@@ -1113,7 +1121,8 @@ func refresh_connections() -> void:
     var source := _connections_source(_connections_block_band_id)
     if source == _connections_block_source:
         return
-    ConnectionsRoster.refill(_connections_block, _connections_block_band_id, _band_labor)
+    ConnectionsRoster.refill(_connections_block, _connections_block_band_id, _band_labor,
+        _station_press())
     _connections_block_source = source
     if _panel != null and not _panel_is_faction:
         _panel.set_tab_badge(BandCityPanel.ZONE_PEOPLES,
@@ -1277,7 +1286,7 @@ func _build_heart_rows(band: Dictionary) -> VBoxContainer:
 func _heart_last_seen_text(last_contact_turn: int) -> String:
     if last_contact_turn == HudWorkVocab.HEART_NO_CONTACT:
         return HudWorkVocab.HEART_NEVER_SEEN_TEXT
-    var ago := _band_labor.current_turn() - last_contact_turn
+    var ago := HudConnectionsVocab.age_of(last_contact_turn, _band_labor.current_turn())
     if ago <= 0:
         return HudWorkVocab.HEART_LAST_SEEN_NOW_TEXT
     if ago == HudWorkVocab.HEART_LAST_SEEN_SINGULAR:
@@ -8168,7 +8177,7 @@ func _emit_cancel_order(band: Dictionary, scope: String) -> void:
 ## connections-only frame re-fills it there too.
 func build_flat_sections(band: Dictionary) -> Array[Control]:
     var peoples := ConnectionsRoster.build_section(int(band.get("band_id", HudConst.NO_BAND_ID)),
-        _band_labor)
+        _band_labor, _station_press())
     _track_connections_block(peoples, band)
     return [_trade.build_section(band, _trade_zone_box()), peoples]
 
@@ -8179,7 +8188,7 @@ func build_flat_sections(band: Dictionary) -> Array[Control]:
 func build_peoples_zone(band: Dictionary) -> VBoxContainer:
     var box := _panel.zone_size(BandCityPanel.ZONE_PEOPLES) if _panel != null else Vector2.ZERO
     var tab := ConnectionsRoster.build_tab(int(band.get("band_id", HudConst.NO_BAND_ID)), _band_labor,
-        box.y)
+        box.y, _station_press())
     _track_connections_block(tab, band)
     return tab
 
@@ -8319,7 +8328,7 @@ func build_parties_zone(band: Dictionary, with_trade: bool = false,
     # same sanctioned scroll — Trade's wide section scrolls rather than capping, and so does this one.
     if with_peoples:
         var peoples := ConnectionsRoster.build_section(int(band.get("band_id", HudConst.NO_BAND_ID)),
-            _band_labor)
+            _band_labor, _station_press())
         rows.add_child(peoples)
         _track_connections_block(peoples, band)
     return col
@@ -8390,9 +8399,10 @@ func _build_parties_inspector(exp: Dictionary) -> PanelContainer:
     var y := int(exp.get("current_y", -1))
     var head := HBoxContainer.new()
     head.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
+    head.add_child(HudWidgets.build_mission_mark(String(exp.get("expedition_mission", ""))))
     var title := Label.new()
     title.text = HudFormat.panel_expedition_summary(exp, _herd_label_for_id,
-        _band_labor.band_label_for_id)
+        _band_labor.host_label_for_id)
     title.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     title.clip_text = true
     title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -8435,8 +8445,8 @@ func _build_party_row(exp: Dictionary) -> HBoxContainer:
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
     var body := Button.new()
-    body.text = HudFormat.panel_expedition_summary(exp, _herd_label_for_id,
-        _band_labor.band_label_for_id)
+    HudWidgets.set_button_mission_mark(body, String(exp.get("expedition_mission", "")),
+        HudFormat.panel_expedition_summary(exp, _herd_label_for_id, _band_labor.host_label_for_id))
     body.alignment = HORIZONTAL_ALIGNMENT_LEFT
     body.focus_mode = Control.FOCUS_NONE
     body.clip_text = true
@@ -8519,6 +8529,7 @@ func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
     var mission := _compose.verb_mission()
     var is_deny := mission == HudComposeVocab.COMPOSE_MISSION_DENY
     var is_trade := mission == HudComposeVocab.COMPOSE_MISSION_TRADE
+    var is_station := mission == HudComposeVocab.COMPOSE_MISSION_STATION
     var sheet := HudWidgets.make_zone_block()
     var head := HBoxContainer.new()
     var title := Label.new()
@@ -8529,6 +8540,8 @@ func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
         title.text = HudComposeVocab.COMPOSE_TITLE_TRADE
     elif mission == HudComposeVocab.COMPOSE_MISSION_SPLIT:
         title.text = HudComposeVocab.COMPOSE_TITLE_SPLIT
+    elif is_station:
+        title.text = HudComposeVocab.STATION_TITLE_FORMAT % _station_host_label()
     title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     head.add_child(title)
     var cancel := Button.new()
@@ -8545,6 +8558,9 @@ func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
         return sheet
     if is_trade:
         _fill_trade_compose_sheet(sheet, band, idle)
+        return sheet
+    if is_station:
+        _fill_station_compose_sheet(sheet, band, idle)
         return sheet
     if mission == HudComposeVocab.COMPOSE_MISSION_SPLIT:
         _fill_split_compose_sheet(sheet, band)
@@ -9312,6 +9328,126 @@ func _build_field_clear_button(tooltip: String, on_clear: Callable) -> Button:
     clear.pressed.connect(on_clear)
     return clear
 
+## **THE `Station people` PRESS** (issue #774) — the Peoples roster's link. Opens the station sheet on
+## the band's own drawer through the verb machinery the shipment's sheet rides, but with its host
+## already fixed (the link is on the host's row), so there is no map pick. A band with nobody free
+## opens nothing.
+func _on_station_link_pressed(band_id: int, host_id: int) -> void:
+    var band := _band_labor.player_band_by_band_id(band_id)
+    if band.is_empty() or host_id == HudConst.NO_BAND_ID:
+        return
+    if _band_labor.effective_idle(band) <= 0:
+        return
+    _reset_verb_state()
+    _targeting.disarm_verb_picks()
+    band_verb_opened.emit(HudComposeVocab.COMPOSE_MISSION_STATION)
+    _compose.open_verb(HudComposeVocab.COMPOSE_MISSION_STATION,
+        int(band.get("entity", ComposeState.NO_BAND_ENTITY)), band_id, SourceForecast.band_tile(band))
+    _station_host = host_id
+    _select_band_on_map(band)
+    rerender()
+
+## The callable the roster's link calls back through (band id, host band id).
+func _station_press() -> Callable:
+    return Callable(self, "_on_station_link_pressed")
+
+## The tie `band` holds to the open sheet's host, or `{}` when it is parked, gone or none is open.
+func _station_tie(band: Dictionary) -> Dictionary:
+    for tie_variant in _band_labor.connections_for_band(int(band.get("band_id", HudConst.NO_BAND_ID))):
+        var tie: Dictionary = tie_variant as Dictionary
+        if int(tie.get("subject_band_id", HudConst.NO_BAND_ID)) == _station_host \
+                and HudBandLaborState.tie_is_live(tie):
+            return tie
+    return {}
+
+## The open sheet's host, named as the Peoples tab names it (`HudBandLaborState.host_label_for_id`).
+func _station_host_label() -> String:
+    return _band_labor.host_label_for_id(_station_host)
+
+## **THE STATION SHEET** (issue #774) — `With` → `People` → what it costs and does → send, minimal on
+## purpose: the host is fixed, there is no cargo and no kit to choose (the server defaults it).
+##
+## ```
+## With     Rushford · 3 tiles NE
+## People                          [−] 1 [+]
+## 1 of 4 free workers · fed from Firbrook's food
+## Keeps the tie from fading. Their news reaches you about 2 turns late.
+## [ Station them ]
+## ```
+##
+## **THE LAG IS THE REMEMBERED POSITION'S WALK.** What the party sees reaches home a runner's walk
+## late; the client has no clock for that walk, so it prices the one distance it holds — from where the
+## tie last saw the host to this band — through `SourceForecast.station_news_delay_turns`, the
+## sim's `station_report_delay` (within messenger reach: the same turn). Where the band publishes no move rate that walk is `0` and
+## the line says `a walk` rather than inventing a number.
+func _fill_station_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int) -> void:
+    var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
+    var tie := _station_tie(band)
+    if tie.is_empty():
+        sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.STATION_SEND_NO_TIE_REASON))
+        sheet.add_child(_blocked_station_send(HudComposeVocab.STATION_SEND_NO_TIE_REASON))
+        return
+    var label := ConnectionsRoster.subject_label(tie, _band_labor)
+    var where := _trade_destination_where(band, tie)
+    var with_row := HudWidgets.build_read_only_field(HudComposeVocab.STATION_FIELD_WITH,
+        label if where == "" else HudComposeVocab.TRADE_DESTINATION_FORMAT % [label, where])
+    var value := with_row.get_child(with_row.get_child_count() - 1) as Label
+    if value != null:
+        HudWidgets.set_label_tooltip(value, "\n".join(_trade_destination_notes(band, tie)))
+    sheet.add_child(with_row)
+    var party_max: int = maxi(idle, HudConst.WORKER_STEP)
+    _send_expedition_count = clampi(_send_expedition_count, HudConst.WORKER_STEP, party_max)
+    sheet.add_child(HudWidgets.build_party_stepper_row(_send_expedition_count, party_max,
+        func(n: int) -> void:
+            _send_expedition_count = clampi(n, HudConst.WORKER_STEP, party_max)
+            rerender(),
+        HudComposeVocab.STATION_PEOPLE_LABEL, HudComposeVocab.STATION_PEOPLE_AT_MAX_REASON))
+    sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.STATION_PEOPLE_SUB_FORMAT % [
+        _send_expedition_count, idle, HudFormat.band_name(band)]))
+    var seen_x := int(tie.get("last_seen_x", -1))
+    var seen_y := int(tie.get("last_seen_y", -1))
+    var late_turns := SourceForecast.station_news_delay_turns(band, seen_x, seen_y,
+        _band_labor.grid_width(), _band_labor.wrap_horizontal())
+    var host_distance := SourceForecast.station_host_distance(band, seen_x, seen_y,
+        _band_labor.grid_width(), _band_labor.wrap_horizontal())
+    sheet.add_child(HudWidgets.alloc_hint_label(
+        HudComposeVocab.STATION_NEWS_SAME_TURN
+        if late_turns == 0 and SourceForecast.station_host_in_reach(band, host_distance)
+        else HudComposeVocab.STATION_NEWS_LATE_FORMAT % late_turns if late_turns > 0
+        else HudComposeVocab.STATION_NEWS_LATE_UNKNOWN))
+    if idle <= 0:
+        sheet.add_child(_blocked_station_send(HudComposeVocab.STATION_SEND_NO_FREE_REASON))
+        return
+    if not _band_labor.station_party_for_host(band_id, _station_host).is_empty():
+        sheet.add_child(_blocked_station_send(HudComposeVocab.STATION_SEND_ALREADY_REASON))
+        return
+    var host := _station_host
+    var workers := _send_expedition_count
+    var confirm := Button.new()
+    confirm.text = HudComposeVocab.STATION_SEND_BUTTON
+    confirm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    confirm.tooltip_text = HudComposeVocab.STATION_SEND_HINT
+    confirm.set_meta(HudWidgets.SEND_STATION_CONFIRM_META, true)
+    HudStyle.apply_button(confirm, HudComposeVocab.VERB_SEND_STYLE)
+    confirm.pressed.connect(func() -> void:
+        emit_signal("station_expedition_requested", {
+            "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+            "band_id": band_id,
+            "party_workers": workers,
+            "host_band_id": host,
+            "host_label": label,
+        })
+        close_verb_form())
+    sheet.add_child(confirm)
+
+## The station send when it cannot be pressed, wearing its reason.
+func _blocked_station_send(reason: String) -> Button:
+    var blocked := _blocked_send_button(HudComposeVocab.STATION_SEND_BUTTON, reason)
+    blocked.set_meta(HudWidgets.SEND_STATION_CONFIRM_META, true)
+    blocked.remove_meta(HudWidgets.SEND_TRADE_CONFIRM_META)
+    return blocked
+
+
 ## **THE TRADE ORDER** — `send_trade_expedition` to `destination` with the party and the manifest the
 ## sheet composed: the pre-selected destination's Send, or the armed pick's click.
 func _commit_trade(band: Dictionary, destination: int, workers: int, cargo: Array) -> String:
@@ -9360,8 +9496,7 @@ func _trade_destination_notes(band: Dictionary, tie: Dictionary) -> Array[String
     var y := int(tie.get("last_seen_y", -1))
     if x < 0 or y < 0:
         return lines
-    lines.append(HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_FORMAT % [
-        x, y, int(tie.get("last_seen_turn", 0))])
+    lines.append(ConnectionsRoster.remembered_line(tie, _band_labor.current_turn()))
     # **ONE DEFINITION OF TRAVEL IN THIS CLIENT.** `outbound_travel_turns` is the walk OUT, the same
     # reading the denial verdict takes, asked here about the REMEMBERED tile — which is why the
     # sentence says "if they are still there" rather than quoting the arrival as a fact.
@@ -10372,8 +10507,11 @@ func build_verb_form() -> Control:
     form.name = HudWidgets.VERB_FORM_NAME
     form.set_meta(HudWidgets.VERB_FORM_META, mission)
     form.add_theme_constant_override("separation", HudWorkVocab.ZONE_BLOCK_SEPARATION)
+    var verb_name := mission
+    if mission == HudComposeVocab.COMPOSE_MISSION_STATION:
+        verb_name = HudComposeVocab.STATION_SHEET_NAME
     form.add_child(HudWidgets.alloc_section_label(HudComposeVocab.VERB_FORM_HEADER_FORMAT % [
-        String(verb.get(HudComposeVocab.VERB_KEY_TOOLTIP, mission)), HudFormat.band_name(band)]))
+        String(verb.get(HudComposeVocab.VERB_KEY_TOOLTIP, verb_name)), HudFormat.band_name(band)]))
     form.add_child(_build_compose_sheet(band, _band_labor.effective_idle(band)))
     _verb_form_node = form
     # **THE SHEET SCROLLS INSIDE THE DRAWER, so it keeps a gutter the scrollbar's width on its right**,
@@ -10425,6 +10563,7 @@ func _reset_verb_state() -> void:
     # the composed kit).
     _compose.clear_party_quarry()
     _trade_destination = HudConst.NO_BAND_ID
+    _station_host = HudConst.NO_BAND_ID
     _targeting.clear_preselect()
     # …and the manifest with it: goods loaded for a shipment the player cancelled are not goods they
     # asked to send. `_clear_trade_manifest` carries the pairing rule.

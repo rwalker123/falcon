@@ -150,10 +150,10 @@ pub use components::{
     KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MaterialBatch,
     MaterialDraw, MoraleCause, MusterKit, MusterPlan, PoolToeLine, PopulationCohort, PowerNode,
     QueuedBuildToe, ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep, ShedSubject,
-    SourcePriority, SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile, TownCenter,
-    TransferCause, TransferCounterparty, TransferCrossing, TransferDirection, TransferLedger,
-    TransferLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER, MIN_ORDER_COUNT,
-    NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
+    SourcePriority, SourceShedFacts, SourceYield, StartingUnit, StationReport, TakeSelection, Tile,
+    TownCenter, TransferCause, TransferCounterparty, TransferCrossing, TransferDirection,
+    TransferLedger, TransferLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER,
+    MIN_ORDER_COUNT, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
 };
 pub use config_fingerprint::{
     current_config_fingerprint, drift_between, ConfigDigest, ConfigFingerprint,
@@ -249,12 +249,12 @@ pub use fauna::{
     regrowth_delta_at, repopulate_fauna, resolve_hunt_engagement, resolve_hunt_fight,
     retreat_band_edge, retreat_mean, retreat_seed, spawn_initial_herds, species_requires_denial,
     stamp_migratory_game_trails, stay_fraction, sustainable_yield, unqueue_build_and_cancel_ring,
-    would_be_herders_needed, AnimalTake, CrewKeeping, EcologyPhase, EngagementQuantum,
-    EngagementStop, FightCasualties, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
-    HerdTelemetryEntry, HuntCrew, HuntCrewCurveInputs, HuntCrewTake, HuntDraw, HuntEngagement,
-    HuntFight, HuntProjection, HuntTakeBound, HuntingParty, OutcomeKills, PartyResolution,
-    PreyDatum, ProjectedHuntTurn, ProjectionStart, QuarryFight, RetreatOutcome, RoamState,
-    SourceYieldForecast, TakeRange, TakeReading, FODDERING_DISCOVERY_ID, FULLY_HERDED,
+    would_be_herders_needed, AnimalTake, Contact, CrewContact, CrewKeeping, EcologyPhase,
+    EngagementQuantum, EngagementStop, FightCasualties, Herd, HerdDensityMap, HerdRegistry,
+    HerdTelemetry, HerdTelemetryEntry, HuntCrew, HuntCrewCurveInputs, HuntCrewTake, HuntDraw,
+    HuntEngagement, HuntFight, HuntProjection, HuntTakeBound, HuntingParty, OutcomeKills,
+    PartyResolution, PreyDatum, ProjectedHuntTurn, ProjectionStart, QuarryFight, RetreatOutcome,
+    RoamState, SourceYieldForecast, TakeRange, TakeReading, FODDERING_DISCOVERY_ID, FULLY_HERDED,
     HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, NO_DEATHS_TO_REPORT, NO_HANDS,
     NO_STANDING_COMMITMENT, NO_USEFUL_CREW, ONE_KEEPER_LOAD, PENNING_DISCOVERY_ID,
 };
@@ -499,7 +499,7 @@ pub use systems::{
     split_band_from_parent_with, split_refusals, BenchTiers, BreakOffAsk, BreedingBreakOffs,
     DenialForecast, DenialOutcome, HeartLedger, HeartReading, HuntOutcome, LineDivision, PartyGear,
     PartySightings, PoolToolPlan, PowerSimParams, RaidRoll, SplitBand, SplitRefusal, SplitRefusals,
-    ToolClaimStage, TradeDiffusionEvent,
+    ToolClaimStage, TradeDiffusionEvent, POST_RECALLED,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,

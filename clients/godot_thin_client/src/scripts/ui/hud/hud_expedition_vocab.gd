@@ -29,6 +29,16 @@ const EXPEDITION_MISSION_DENY := "deny"
 ## added here.
 const EXPEDITION_MISSION_TRADE := "trade"
 
+const EXPEDITION_MISSION_STATION := "station"
+
+## **A STATIONED PARTY** (issue #774) — people a band posts at a band it holds a live tie with. The
+## host is named exactly as a shipment's destination is (`expedition_destination_band` is the key,
+## `expedition_destination_name` the display twin), and the home band feeds the party from its own
+## food, so it carries no cargo and publishes no food runway (`turns_of_food` reads 999). It walks the
+## shipment's `outbound` phase, then sits in `stationed` until a recall, a closed border, a short
+## larder at home or a vanished host ends the post.
+const EXPEDITION_PHASE_STATIONED := "stationed"
+
 const EXPEDITION_PHASE_OUTBOUND := "outbound"
 
 # One source: the phase key `awaiting` is also the status-glyph key + the orb producer's key.
@@ -42,6 +52,7 @@ const EXPEDITION_MISSION_LABELS := {
 	"scout": "Scouting expedition",
 	"deny": "Denial raid",
 	"trade": "Trade party",
+	"station": "Stationed people",
 }
 
 ## **THE PARENTHETICAL FORMS** — the mission word `HudFormat.band_name` tags a detached party's name
@@ -57,6 +68,7 @@ const PARTY_SHORT_LABELS := {
 	# what the player calls the thing (the same split `EXPEDITION_MISSION_LABELS` makes above).
 	"deny": "Raid",
 	"trade": "Trade",
+	"station": "Station",
 }
 
 ## How the mission word joins the name: `<band> (<mission>)`.
@@ -67,6 +79,7 @@ const EXPEDITION_PHASE_LABELS := {
 	"awaiting": "Awaiting orders",
 	"returning": "Returning",
 	"hunting": "Hunting",
+	"stationed": "Stationed",
 }
 
 # ---- Action-status vocabulary: row GLYPHS, tooltip WORDS ---------------------------------------
@@ -102,6 +115,7 @@ const STATUS_HINTS := {
 	EXPEDITION_PHASE_AWAITING: "parked at the objective — it needs an order",
 	EXPEDITION_PHASE_HUNTING: "taking food from the herd",
 	EXPEDITION_PHASE_RETURNING: "heading home",
+	EXPEDITION_PHASE_STATIONED: "staying with the host, fed from home",
 }
 
 const STATUS_HINT_FORMAT := "%s — %s"
@@ -111,3 +125,13 @@ const STATUS_HINT_FORMAT := "%s — %s"
 ## them — a band splits where it stands (issue #511, `docs/plan_band_fission.md`), so an arrived
 ## scouting party has exactly the two answers below and this sentence must not imply a third.
 const EXPEDITION_AWAITING_CALLOUT := "Reached its objective — Move it onward or Recall it home."
+
+# ---- The stationed party's rows (issue #774) ------------------------------------------------------
+# One sentence per phase on the Parties zone row; `%s` is the host's name, resolved through
+# `HudBandLaborState.host_label_for_id` (a band this faction holds, else the name the tie remembers,
+# else `Band near (x, y)` — never the `BandId`).
+const STATION_ROW_STATIONED_FORMAT := "Stationed with %s"
+const STATION_ROW_OUTBOUND_FORMAT := "Going to stay with %s"
+const STATION_ROW_RETURNING_FORMAT := "Coming home from %s"
+## The drawer / inspector strip's host row key.
+const STATION_HOST_ROW := "Host"

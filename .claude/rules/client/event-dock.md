@@ -577,6 +577,16 @@ Four details:
   regrowing once per producer, and each token is its own ROLE: a line can name the sender as `band=`
   and the receiver as `destination=` at once, and sharing a key would rewrite one with the other's
   name.
+- **A STATIONED PARTY'S `host=<id>` IS THE THIRD ROLE** (issue #774, `DETAIL_HOST_KEY`). Its launch,
+  arrival and end lines name the host through `ExpeditionMission::host_display`, which falls back to
+  the same lower-case `band <id>` spelling as a shipment's destination, so it reuses
+  `SIM_DESTINATION_LABEL_FORMAT`. The raw id is also hidden from the detail column
+  (`DETAIL_KEY_HIDDEN`). **The sim writes the sentences** (`Party stationed with band 5`, `band 5 closed
+  its borders — party returning home`, …) and the client only swaps the name in; it does not rewrite
+  them. **A post that ends of its own accord is NOTABLE**: `reason=borders_closed|host_gone|home_gone`
+  are `DETAIL_STATUS_STYLE` rows at `RUNG_NOTABLE`, because `expedition_recalled` is otherwise Routine
+  and a player at the default floor would never learn their people were on the road home. The
+  player's own `reason=recalled` stays the Routine receipt it is.
 - **A SECOND TOKEN NEEDS A SECOND FORMAT STRING, and the two shipped differ in CASE.** The sim writes
   a band as `Band 3` (`systems::population::band_label`) and a shipment's destination as `band 30`
   (`ExpeditionMission::destination_display`'s last-resort tier, which is the normal path today
@@ -1234,3 +1244,17 @@ alone is satisfied by the capitalised fallback.
 > elders from reading as a weather report — and it is **not** to be special-cased. It only matters
 > here because an elder fixture written to exercise this vocabulary would fail for a reason that has
 > nothing to do with it.
+
+## `reason=host_not_found` / `reason=destination_not_found` — arrived at the remembered place, found nobody
+
+Two more `expedition_recalled` end reasons beside `host_gone`: a stationed party reached where its host
+was last seen and found nobody (`status=returning reason=host_not_found host=<id>`), and a shipment's
+destination likewise (`reason=destination_not_found destination=<id>`). Both are `DETAIL_STATUS_STYLE`
+rows at `RUNG_NOTABLE` with the reduced mark, exactly `host_gone`'s; the phrase table says "no sign of
+them where last seen". The sim writes the sentence and `BAND_ID_TOKEN_LABELS` swaps the band's name in.
+
+`reason=home_gone` (`status=returning reason=home_gone host=<id> expedition=<bits>`) is a third
+sim-ended post: the party's own home band is gone. It is a `DETAIL_STATUS_STYLE` row at `RUNG_NOTABLE`
+with the reduced mark, and the phrase table says "their home band is gone".
+**`destination` joined `host` in `DETAIL_KEY_HIDDEN`**: its raw id had been printing as
+`Destination 5183` beside the already-named label.

@@ -195,6 +195,7 @@ fn spawn_hunters(app: &mut App, pos: UVec2, fauna_id: &str, floor: f32) -> bevy:
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
                 last_food_need: 0.0,
+                fed_party_workers: Default::default(),
                 last_food_spoiled: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
@@ -291,7 +292,7 @@ fn retuned(party: HuntingParty, combat: &CombatConfig) -> HuntingParty {
         party.best_equipped_hunter(),
         combat.tuning(),
         combat.hunt_injury_damage_per_animal,
-        party.dispersion,
+        party.crews[0].dispersion,
     )
 }
 
@@ -902,6 +903,7 @@ fn a_gather_reports_a_point_and_pays_it() {
             morale: scalar_one(),
             last_food_consumption: 0.0,
             last_food_need: 0.0,
+            fed_party_workers: Default::default(),
             last_food_spoiled: 0.0,
             last_turn_food_transfers: Default::default(),
             last_turn_fodder_transfers: Default::default(),

@@ -2153,7 +2153,8 @@ fn steady_terms(
             retreat_seed(DRIVE_MAP_SEED, u64::from(turn), &before.id, workers),
         );
         if room >= quarry.body_mass {
-            let outcomes = party.stayer_outcomes(outcome.engaged, wariness);
+            let outcomes =
+                party.stayer_outcomes(core_sim::Contact::unclamped(outcome.engaged), wariness);
             let fight = herd_fight_stage(&before, fauna);
             let kills = OutcomeKills::resolve(
                 &outcomes,

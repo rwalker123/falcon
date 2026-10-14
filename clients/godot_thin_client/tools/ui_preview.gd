@@ -60,6 +60,7 @@ const CHAPTERS := [
 	"res://tools/ui_preview/chapters/crew_cap_parity.gd",
 	"res://tools/ui_preview/chapters/opening_card.gd",
 	"res://tools/ui_preview/chapters/migration_mode.gd",
+	"res://tools/ui_preview/chapters/station.gd",
 ]
 
 ## The one method a chapter owes the harness (see the chapter contract in

@@ -62,7 +62,7 @@ use core_sim::{
     SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata,
     StartLocation, StartProfileLookup, StartProfilesHandle, StartingUnit, SubmitError,
     SubmitOutcome, Tile, TileRegistry, TownCenter, TurnPipelineConfig, TurnPipelineConfigHandle,
-    TurnPipelineConfigMetadata, TurnQueue, WorldEpoch, FODDER, FOOD,
+    TurnPipelineConfigMetadata, TurnQueue, WorldEpoch, FODDER, FOOD, POST_RECALLED,
 };
 use core_sim::{
     ConnectionId, ConnectionIdAllocator, SeatRegistry, SeatTurnGate, SeatTurnLimits, TurnWait,
@@ -1450,6 +1450,17 @@ enum Command {
         party_workers: u32,
         destination_band_id: u64,
         cargo: Vec<TradeCargoItem>,
+        /// See [`Command::SendDenialRaid::kit_id`].
+        kit_id: Option<String>,
+    },
+    /// **The stationed party** (`docs/plan_contact_and_logistics.md` "Settled by #774") — part of a
+    /// band posted at another band it holds a live tie with. Gated on the connection, and on the
+    /// host's Open Borders only when the host is another people's.
+    StationExpedition {
+        faction: FactionId,
+        band_id: Option<u64>,
+        party_workers: u32,
+        host_band_id: u64,
         /// See [`Command::SendDenialRaid::kit_id`].
         kit_id: Option<String>,
     },
@@ -5768,6 +5779,8 @@ fn handle_send_expedition(
                 // A scout carries no shipment — the cargo store is the trade verb's.
                 cargo: LocalStore::new(),
                 defection_pull: Scalar::zero(),
+                station_reports: Vec::new(),
+                aim: None,
             },
             BandTravel::to(target),
         ))
@@ -6283,6 +6296,8 @@ fn launch_party_from_band(
                 kit,
                 cargo: orders.cargo,
                 defection_pull: Scalar::zero(),
+                station_reports: Vec::new(),
+                aim: None,
             },
             BandTravel::to(orders.target),
         ))
@@ -6469,6 +6484,254 @@ fn handle_send_denial_raid(
     );
 }
 
+/// **The kit a provisioned or posted party is sent out with**, resolved against the `expedition`
+/// job before anything is drawn — the rule the trade shipment and the stationed party share. Absent
+/// names the job's default; an unknown id, or one whose `jobs` does not list `expedition`, is a
+/// command failure (answered `None`) with the reason in the feed.
+fn resolve_expedition_job_kit(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    verb: &str,
+    kit_id: Option<&str>,
+) -> Option<KitChoice> {
+    let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
+    let absent = equipment_cfg.default_kit(KitJob::Expedition);
+    match equipment_cfg.resolve_kit_or(kit_id, KitJob::Expedition, absent) {
+        Ok(kit) => Some(kit),
+        Err(reason) => {
+            emit_command_failure(
+                app,
+                CommandEventKind::ExpeditionSent,
+                faction,
+                format!("{verb}: {reason}."),
+            );
+            None
+        }
+    }
+}
+
+/// **Everything a stationed party's launch needs resolved before a single worker is drawn** — the
+/// host it is posted at, where it stands and how far away that is.
+struct ResolvedPost {
+    host_band: BandId,
+    host_name: String,
+    /// **Where the party sets out toward** — what the sender knows of the host's whereabouts
+    /// (`ConnectionLedger::launch_aim`), not necessarily where the host is now.
+    aim: UVec2,
+    distance: u32,
+}
+
+/// Resolve and validate a stationed party's host. **Fails closed on every axis, before anything is
+/// drawn**: a host that is not a resident band, the home band itself, a host that is not standing
+/// anywhere, no live tie from the home band to the host (a parked edge refuses exactly as a missing
+/// one does), and — for a host of ANOTHER people only — that people's borders being closed. A host of
+/// the sender's own people never asks Open Borders; the one comparison lives in
+/// [`FactionBorderPolicies::admits_posting`].
+fn resolve_post(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    home_entity: Entity,
+    host_band_id: u64,
+) -> Option<ResolvedPost> {
+    const VERB: &str = "station_expedition";
+    let wanted = BandId(host_band_id);
+    let Some(&home_band) = app.world.get::<BandId>(home_entity) else {
+        emit_command_failure(
+            app,
+            CommandEventKind::ExpeditionSent,
+            faction,
+            format!("{VERB}: the sending band has no id to post from."),
+        );
+        return None;
+    };
+    if wanted == home_band {
+        emit_command_failure(
+            app,
+            CommandEventKind::ExpeditionSent,
+            faction,
+            format!("{VERB}: a band cannot station a party at itself."),
+        );
+        return None;
+    }
+    let host = {
+        let mut query = app
+            .world
+            .query_filtered::<(&BandId, &PopulationCohort, Option<&BandName>), With<ResidentBand>>(
+            );
+        query
+            .iter(&app.world)
+            .find(|(id, _, _)| **id == wanted)
+            .map(|(id, cohort, name)| {
+                (
+                    *id,
+                    cohort.current_tile,
+                    cohort.faction,
+                    name.map(|name| name.0.clone()).unwrap_or_default(),
+                )
+            })
+    };
+    let Some((host_band, host_tile, host_faction, host_name)) = host else {
+        emit_command_failure(
+            app,
+            CommandEventKind::ExpeditionSent,
+            faction,
+            format!("{VERB}: band {host_band_id} is not a band to station a party at."),
+        );
+        return None;
+    };
+    let Some(host_pos) = app.world.get::<Tile>(host_tile).map(|t| t.position) else {
+        emit_command_failure(
+            app,
+            CommandEventKind::ExpeditionSent,
+            faction,
+            format!("{VERB}: band {host_band_id} is not standing anywhere."),
+        );
+        return None;
+    };
+    let tie = app
+        .world
+        .resource::<core_sim::connections::ConnectionLedger>()
+        .get(&core_sim::connections::ConnectionKey::new(
+            home_band, host_band,
+        ))
+        .map(|connection| connection.strength)
+        .unwrap_or(core_sim::connections::NO_TIE);
+    if tie <= core_sim::connections::NO_TIE {
+        emit_command_failure(
+            app,
+            CommandEventKind::ExpeditionSent,
+            faction,
+            format!(
+                "{VERB}: no dealings with band {host_band_id} — meet them before you station a \
+                 party with them."
+            ),
+        );
+        return None;
+    }
+    let admitted = app
+        .world
+        .resource::<FactionBorderPolicies>()
+        .admits_posting(host_faction, faction);
+    if !admitted {
+        emit_command_failure(
+            app,
+            CommandEventKind::ExpeditionSent,
+            faction,
+            format!("{VERB}: band {host_band_id}'s people have closed their borders."),
+        );
+        return None;
+    }
+    let aim = app
+        .world
+        .resource::<core_sim::connections::ConnectionLedger>()
+        .launch_aim(
+            app.world.resource::<core_sim::VisibilityLedger>(),
+            faction,
+            home_band,
+            host_band,
+            host_faction,
+            host_pos,
+        );
+    let home_pos = app
+        .world
+        .get::<PopulationCohort>(home_entity)
+        .and_then(|cohort| app.world.get::<Tile>(cohort.current_tile))
+        .map(|tile| tile.position);
+    let distance = {
+        let grid_width = app.world.resource::<TileRegistry>().width;
+        let wrap_horizontal = app
+            .world
+            .resource::<SimulationConfig>()
+            .map_topology
+            .wrap_horizontal;
+        home_pos
+            .map(|from| hex_distance_wrapped(from, aim, grid_width, wrap_horizontal))
+            .unwrap_or(0)
+    };
+    Some(ResolvedPost {
+        host_band,
+        host_name,
+        aim,
+        distance,
+    })
+}
+
+/// Outfit and launch a **stationed party**: draw `party_workers` off the resolved home band and send
+/// them to stay with a band the home band holds a live tie with. Text form: `station_expedition
+/// <faction> <band> <party_workers> <host_band_id> [kit <id>]`.
+///
+/// **No provisions are drawn and no cargo is loaded.** The party carries no larder: from launch to
+/// fold-back its rations are part of the home band's ordinary consumption
+/// (`simulate_population`), so a refused launch has nothing to unwind and an accepted one debits
+/// the band's workers and kit only. Every gate runs before that draw.
+fn handle_station_expedition(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: Option<u64>,
+    party_workers: u32,
+    host_band_id: u64,
+    kit_id: Option<String>,
+) {
+    const VERB: &str = "station_expedition";
+    let Some(kit) = resolve_expedition_job_kit(app, faction, VERB, kit_id.as_deref()) else {
+        return;
+    };
+    let Some(outfit) = outfit_detached_party(app, faction, band_id, party_workers, VERB) else {
+        return;
+    };
+    let Some(post) = resolve_post(app, faction, outfit.band.entity, host_band_id) else {
+        return;
+    };
+
+    let band_label = outfit.band.label.clone();
+    let home_band = outfit.band.id;
+    let mission = ExpeditionMission::Station {
+        host_band: post.host_band,
+        host_name: post.host_name,
+    };
+    let host_label = mission.host_display();
+    let Some(expedition_entity) = launch_party_from_band(
+        app,
+        outfit,
+        party_workers,
+        mission,
+        LaunchOrders {
+            phase: ExpeditionPhase::Outbound,
+            target: post.aim,
+            provisions: FoodMix::default(),
+            cargo: LocalStore::new(),
+        },
+        kit,
+    ) else {
+        emit_command_failure(
+            app,
+            CommandEventKind::ExpeditionSent,
+            faction,
+            format!("{VERB}: {band_label} has no population to outfit from."),
+        );
+        return;
+    };
+    if let Some(mut expedition) = app.world.get_mut::<Expedition>(expedition_entity) {
+        expedition.aim = Some(post.aim);
+    }
+    let tick = app.world.resource::<SimulationTick>().0;
+    push_band_event(
+        app,
+        tick,
+        CommandEventKind::ExpeditionSent,
+        faction,
+        home_band,
+        format!("{band_label} party -> stationed with {host_label}"),
+        Some(format!(
+            "status=applied mission=station workers={} host={} distance={} expedition={}",
+            party_workers,
+            host_band_id,
+            post.distance,
+            expedition_entity.to_bits()
+        )),
+    );
+}
+
 /// **Everything a shipment needs resolved before a single unit is drawn** — the destination it is
 /// bound for and the goods it will hold, each already checked against the sending band's store, the
 /// party's pack space and the tie between the two peoples.
@@ -6481,7 +6744,9 @@ struct ResolvedShipment {
     /// the destination for a client that may have no row for a foreign band.
     destination_faction: FactionId,
     destination_name: String,
-    destination_pos: UVec2,
+    /// **Where the party sets out toward** — what the sender knows of the destination's whereabouts
+    /// (`ConnectionLedger::launch_aim`), not necessarily where it is now.
+    aim: UVec2,
     /// The FOOD the shipment will carry, summed over the order's food lines.
     food: Scalar,
     /// The FODDER the shipment will carry, summed over the order's hay lines. **A third account,
@@ -6585,6 +6850,18 @@ fn resolve_shipment(
         );
         return None;
     }
+
+    let aim = app
+        .world
+        .resource::<core_sim::connections::ConnectionLedger>()
+        .launch_aim(
+            app.world.resource::<core_sim::VisibilityLedger>(),
+            faction,
+            home_band,
+            destination_band,
+            destination_faction,
+            destination_pos,
+        );
 
     // --- the cargo lines, summed per key ------------------------------------------------------
     if cargo.is_empty() {
@@ -6756,7 +7033,7 @@ fn resolve_shipment(
         // load-bearing: a foreign band's name has to come from the sim, the client having no roster
         // to resolve one from.
         destination_name: String::new(),
-        destination_pos,
+        aim,
         food,
         fodder,
         materials,
@@ -6792,21 +7069,8 @@ fn handle_send_trade_expedition(
     // contact, by gathering and by hunting — which is exactly what [`KitJob::Expedition`] covers.
     // (It read the **hunt** job until the ranging kit existed, which armed the roadside kill and
     // left the party unable to gather at all.)
-    let kit = {
-        let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
-        let absent = equipment_cfg.default_kit(KitJob::Expedition);
-        match equipment_cfg.resolve_kit_or(kit_id.as_deref(), KitJob::Expedition, absent) {
-            Ok(kit) => kit,
-            Err(reason) => {
-                emit_command_failure(
-                    app,
-                    CommandEventKind::ExpeditionSent,
-                    faction,
-                    format!("{VERB}: {reason}."),
-                );
-                return;
-            }
-        }
+    let Some(kit) = resolve_expedition_job_kit(app, faction, VERB, kit_id.as_deref()) else {
+        return;
     };
     // The resident-band gate, the party bound and the cohort template — the same seam both raiding
     // verbs outfit through, so this verb could not acquire its own copy of them.
@@ -6838,9 +7102,7 @@ fn handle_send_trade_expedition(
             .map_topology
             .wrap_horizontal;
         band_pos
-            .map(|from| {
-                hex_distance_wrapped(from, shipment.destination_pos, grid_width, wrap_horizontal)
-            })
+            .map(|from| hex_distance_wrapped(from, shipment.aim, grid_width, wrap_horizontal))
             .unwrap_or(0)
     };
     let cfg = app.world.resource::<ExpeditionConfigHandle>().get();
@@ -6928,7 +7190,7 @@ fn handle_send_trade_expedition(
             // A shipment reuses the scout's `Outbound`; there is no trade phase, because the party
             // does exactly two things and both already have one.
             phase: ExpeditionPhase::Outbound,
-            target: shipment.destination_pos,
+            target: shipment.aim,
             provisions,
             cargo: shipment_store,
         },
@@ -6942,6 +7204,9 @@ fn handle_send_trade_expedition(
         );
         return;
     };
+    if let Some(mut expedition) = app.world.get_mut::<Expedition>(expedition_entity) {
+        expedition.aim = Some(shipment.aim);
+    }
 
     // **The sending half of the transfer terms, on the `TransferLink::Route` arm — and SPLIT BY
     // CAUSE.** Two different things left this band's store with the party:
@@ -7101,6 +7366,14 @@ fn handle_recall_expedition(
         app.world.despawn(entity);
         return;
     }
+    // **A stationed party's recall names its host and says why**, in the register the turn's own
+    // post-ending lines use (`reason=` then `host=`), so a client swaps its band label in by one token.
+    let post_detail = app
+        .world
+        .get::<Expedition>(entity)
+        .and_then(|expedition| expedition.mission.host_band())
+        .map(|host| format!(" reason={POST_RECALLED} host={}", host.0))
+        .unwrap_or_default();
     push_band_event(
         app,
         tick,
@@ -7108,7 +7381,10 @@ fn handle_recall_expedition(
         faction,
         app.world.get::<BandId>(entity).copied(),
         format!("{} recalled — returning home", label),
-        Some(format!("status=returning expedition={}", entity.to_bits())),
+        Some(format!(
+            "status=returning{post_detail} expedition={}",
+            entity.to_bits()
+        )),
     );
 }
 
@@ -10837,6 +11113,19 @@ fn command_from_payload(
             cargo,
             kit_id,
         }),
+        ProtoCommandPayload::StationExpedition {
+            faction_id,
+            band_id,
+            party_workers,
+            host_band_id,
+            kit_id,
+        } => Some(Command::StationExpedition {
+            faction: FactionId(faction_id),
+            band_id,
+            party_workers,
+            host_band_id,
+            kit_id,
+        }),
         ProtoCommandPayload::FoundSettlement {
             faction_id,
             target_x,
@@ -11917,6 +12206,7 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
         Command::SplitBand { faction, .. } => Some((*faction, "split_band")),
         Command::SendDenialRaid { faction, .. } => Some((*faction, "send_denial_raid")),
         Command::SendTradeExpedition { faction, .. } => Some((*faction, "send_trade_expedition")),
+        Command::StationExpedition { faction, .. } => Some((*faction, "station_expedition")),
         Command::FoundSettlement { faction, .. } => Some((*faction, "found_settlement")),
         Command::Tame { faction, .. } => Some((*faction, "tame")),
         Command::AnswerFork { faction, .. } => Some((*faction, "answer_fork")),
@@ -12286,6 +12576,15 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
                 cargo,
                 kit_id,
             );
+        }
+        Command::StationExpedition {
+            faction,
+            band_id,
+            party_workers,
+            host_band_id,
+            kit_id,
+        } => {
+            handle_station_expedition(app, faction, band_id, party_workers, host_band_id, kit_id);
         }
         Command::FoundSettlement {
             faction,
@@ -13283,6 +13582,7 @@ mod tests {
                     morale: core_sim::scalar_one(),
                     last_food_consumption: 0.0,
                     last_food_need: 0.0,
+                    fed_party_workers: Default::default(),
                     last_food_spoiled: 0.0,
                     last_turn_food_transfers: Default::default(),
                     last_turn_fodder_transfers: Default::default(),
@@ -16945,6 +17245,8 @@ mod tests {
                 kit: core_sim::EquipmentConfig::builtin().default_kit(KitJob::Hunt),
                 cargo: LocalStore::new(),
                 defection_pull: Scalar::zero(),
+                station_reports: Vec::new(),
+                aim: None,
             },
         ));
 
@@ -23433,6 +23735,422 @@ mod tests {
         assert_eq!(
             parties, 1,
             "a shipment addressed to another party must be refused, not launched"
+        );
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // The stationed party (issue #774) — the launch gates and the recall verb. What the party DOES
+    // once out is `core_sim/tests/station_expedition.rs`.
+    // ------------------------------------------------------------------------------------------
+
+    /// Everything a refused launch must leave alone: the band's whole cohort (brackets, larder,
+    /// hay, batches) and its gear ledger, as the `Debug` text of both.
+    fn band_fingerprint(app: &bevy::prelude::App, band: Entity) -> String {
+        format!(
+            "{:?}|{:?}",
+            app.world
+                .get::<PopulationCohort>(band)
+                .expect("the band exists"),
+            app.world.get::<BandEquipment>(band)
+        )
+    }
+
+    fn parties_out(app: &mut bevy::prelude::App) -> usize {
+        let mut query = app.world.query_filtered::<Entity, With<Expedition>>();
+        query.iter(&app.world).count()
+    }
+
+    fn feed_lines(app: &bevy::prelude::App) -> usize {
+        app.world.resource::<CommandEventLog>().iter().count()
+    }
+
+    /// **One refused order leaves the band exactly as it stood** — nothing drawn, nothing
+    /// launched, and a line on the feed saying so.
+    fn assert_station_refused(
+        app: &mut bevy::prelude::App,
+        faction: FactionId,
+        sender: Entity,
+        host_band_id: u64,
+        workers: u32,
+        why: &str,
+    ) {
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        let before = band_fingerprint(app, sender);
+        let lines_before = feed_lines(app);
+        handle_station_expedition(app, faction, Some(sender_id), workers, host_band_id, None);
+        assert_eq!(parties_out(app), 0, "refused ({why}): no party leaves");
+        assert_eq!(
+            band_fingerprint(app, sender),
+            before,
+            "refused ({why}): the band is exactly as it stood"
+        );
+        assert!(
+            feed_lines(app) > lines_before,
+            "refused ({why}): the refusal is on the feed"
+        );
+    }
+
+    fn make_host_another_people(app: &mut bevy::prelude::App, host: core_sim::BandId) -> FactionId {
+        const OTHER_PEOPLE: FactionId = FactionId(1);
+        let entity = {
+            let mut query = app.world.query::<(Entity, &core_sim::BandId)>();
+            query
+                .iter(&app.world)
+                .find(|(_, id)| **id == host)
+                .map(|(entity, _)| entity)
+                .expect("the host exists")
+        };
+        app.world
+            .get_mut::<PopulationCohort>(entity)
+            .expect("the host cohort")
+            .faction = OTHER_PEOPLE;
+        OTHER_PEOPLE
+    }
+
+    /// **A launch posts the party, draws no provisions and loads no cargo.** The band loses its
+    /// workers and its larder is untouched to the micro-unit — the party's rations are the band's
+    /// ordinary meal from here on.
+    #[test]
+    fn a_station_order_posts_a_party_and_draws_no_provisions() {
+        let mut app = build_world_app();
+        let (sender, host, faction) = two_bands_that_know_each_other(&mut app);
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        let food_before = app
+            .world
+            .get::<PopulationCohort>(sender)
+            .expect("band")
+            .stores
+            .get(FOOD);
+        let working_before = app
+            .world
+            .get::<PopulationCohort>(sender)
+            .expect("band")
+            .working;
+
+        handle_station_expedition(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            host.0,
+            None,
+        );
+
+        let party = launched_party(&mut app).expect("a live tie lets the party leave");
+        let expedition = app.world.get::<Expedition>(party).expect("the party");
+        assert_eq!(expedition.mission.host_band(), Some(host));
+        assert_eq!(expedition.phase, ExpeditionPhase::Outbound);
+        assert_eq!(
+            expedition.cargo.get(FOOD),
+            Scalar::from_i64(0),
+            "it carries no cargo"
+        );
+        let cohort = app.world.get::<PopulationCohort>(sender).expect("band");
+        assert_eq!(
+            cohort.stores.get(FOOD),
+            food_before,
+            "no provisions were drawn: the home band feeds the party"
+        );
+        assert_eq!(
+            app.world
+                .get::<PopulationCohort>(party)
+                .expect("party")
+                .stores
+                .get(FOOD),
+            Scalar::from_i64(0),
+            "and the party's own pack is empty"
+        );
+        assert_eq!(
+            cohort.working,
+            working_before - Scalar::from_u32(TRADE_PARTY),
+            "the band lost exactly the party's workers (liveness: a party really left)"
+        );
+        assert!(
+            last_expedition_detail(&app).contains("mission=station"),
+            "{}",
+            last_expedition_detail(&app)
+        );
+    }
+
+    /// **Every gate refuses before anything is drawn.** No edge, a parked edge, closed borders
+    /// (another people's host), the band itself as host, a host that is not a resident band, and an
+    /// oversized party — each leaves the band exactly as it stood.
+    #[test]
+    fn every_station_refusal_leaves_the_band_as_it_stood() {
+        // No edge at all.
+        let mut app = build_world_app();
+        let (sender, host, faction) = two_bands_that_know_each_other(&mut app);
+        app.world
+            .insert_resource(core_sim::connections::ConnectionLedger::default());
+        assert_station_refused(&mut app, faction, sender, host.0, TRADE_PARTY, "no edge");
+
+        // A parked edge: a tie formed and then bled to nothing.
+        let mut app = build_world_app();
+        let (sender, host, faction) = two_bands_that_know_each_other(&mut app);
+        {
+            let sender_id = *app.world.get::<core_sim::BandId>(sender).expect("an id");
+            let cfg = app
+                .world
+                .resource::<core_sim::ConnectionsConfigHandle>()
+                .get();
+            let mut ledger = core_sim::connections::ConnectionLedger::default();
+            let key = core_sim::connections::ConnectionKey::new(sender_id, host);
+            ledger.record_contact(
+                key,
+                &core_sim::Sighting::new(UVec2::new(0, 0), 0, ""),
+                0,
+                &cfg,
+            );
+            for turn in 1..=(1.0 / cfg.strength.decay_per_turn).ceil() as u64 + 1 {
+                ledger.decay_all(turn, &cfg);
+            }
+            assert_eq!(
+                ledger.get(&key).map(|c| c.strength),
+                Some(core_sim::connections::NO_TIE),
+                "the fixture really parks the edge"
+            );
+            app.world.insert_resource(ledger);
+        }
+        assert_station_refused(
+            &mut app,
+            faction,
+            sender,
+            host.0,
+            TRADE_PARTY,
+            "parked edge",
+        );
+
+        // Another people's host with its borders closed.
+        let mut app = build_world_app();
+        let (sender, host, faction) = two_bands_that_know_each_other(&mut app);
+        let other = make_host_another_people(&mut app, host);
+        app.world
+            .resource_mut::<FactionBorderPolicies>()
+            .set_open(other, false);
+        assert_station_refused(
+            &mut app,
+            faction,
+            sender,
+            host.0,
+            TRADE_PARTY,
+            "closed borders",
+        );
+
+        // The band itself.
+        let mut app = build_world_app();
+        let (sender, _, faction) = two_bands_that_know_each_other(&mut app);
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        assert_station_refused(
+            &mut app,
+            faction,
+            sender,
+            sender_id,
+            TRADE_PARTY,
+            "host is home",
+        );
+
+        // A host that is not a resident band: a stranger's id, and a detached party's own id.
+        let mut app = build_world_app();
+        let (sender, host, faction) = two_bands_that_know_each_other(&mut app);
+        let stranger = app.world.resource_mut::<BandIdAllocator>().allocate().0;
+        assert_station_refused(
+            &mut app,
+            faction,
+            sender,
+            stranger,
+            TRADE_PARTY,
+            "no such band",
+        );
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        handle_station_expedition(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            host.0,
+            None,
+        );
+        let party = launched_party(&mut app).expect("a first party leaves");
+        let party_id = app.world.get::<core_sim::BandId>(party).expect("an id").0;
+        let before = band_fingerprint(&app, sender);
+        handle_station_expedition(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            party_id,
+            None,
+        );
+        assert_eq!(parties_out(&mut app), 1, "a detached party is no host");
+        assert_eq!(band_fingerprint(&app, sender), before);
+
+        // Oversized: past the workers the band can field.
+        let mut app = build_world_app();
+        let (sender, host, faction) = two_bands_that_know_each_other(&mut app);
+        assert_station_refused(
+            &mut app,
+            faction,
+            sender,
+            host.0,
+            TRADE_FIXTURE_WORKERS as u32 + 5,
+            "oversized party",
+        );
+    }
+
+    /// **The borders gate is asked of ANOTHER people's host only** — paired with the refusal above:
+    /// the same closed-borders world launches for a host of the sender's own people, and for another
+    /// people's host that keeps its borders open.
+    #[test]
+    fn a_station_order_asks_open_borders_of_another_peoples_host_only() {
+        // Own people: the sender's borders closed, the host the sender's own.
+        let mut app = build_world_app();
+        let (sender, host, faction) = two_bands_that_know_each_other(&mut app);
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        app.world
+            .resource_mut::<FactionBorderPolicies>()
+            .set_open(faction, false);
+        handle_station_expedition(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            host.0,
+            None,
+        );
+        assert_eq!(parties_out(&mut app), 1, "a people's own band never asks");
+
+        // Another people, borders open.
+        let mut app = build_world_app();
+        let (sender, host, faction) = two_bands_that_know_each_other(&mut app);
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        make_host_another_people(&mut app, host);
+        handle_station_expedition(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            host.0,
+            None,
+        );
+        assert_eq!(
+            parties_out(&mut app),
+            1,
+            "another people's open borders welcome the party"
+        );
+    }
+
+    /// **Recall works on a station party.** In the field it turns the party for home and says why on
+    /// the feed (`reason=recalled host=<id>`); standing in camp with nothing in transit it is
+    /// cancelled on the spot; standing in camp with news still in transit it must walk the
+    /// `Returning` path, because only that arm lands the reports.
+    #[test]
+    fn a_stationed_party_can_be_recalled_in_the_field_in_camp_and_with_news_in_transit() {
+        let tick_event = |app: &bevy::prelude::App| -> Option<String> {
+            app.world
+                .resource::<CommandEventLog>()
+                .iter()
+                .filter(|entry| entry.kind == CommandEventKind::ExpeditionRecalled)
+                .filter_map(|entry| entry.detail.clone())
+                .last()
+        };
+
+        // In the field.
+        let mut app = build_world_app();
+        app.world
+            .insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
+        let (sender, host, faction) = two_bands_that_know_each_other(&mut app);
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        handle_station_expedition(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            host.0,
+            None,
+        );
+        let party = launched_party(&mut app).expect("the party left");
+        let party_id = app.world.get::<core_sim::BandId>(party).expect("id").0;
+        let out_there = {
+            let camp = app
+                .world
+                .get::<PopulationCohort>(party)
+                .expect("p")
+                .current_tile;
+            let camp = app.world.get::<Tile>(camp).expect("tile").position;
+            let registry = app.world.resource::<TileRegistry>();
+            registry
+                .index(camp.x + 5, camp.y)
+                .expect("a tile five columns over")
+        };
+        app.world
+            .get_mut::<PopulationCohort>(party)
+            .expect("p")
+            .current_tile = out_there;
+        handle_recall_expedition(&mut app, faction, party_id);
+        assert_eq!(
+            app.world.get::<Expedition>(party).expect("still out").phase,
+            ExpeditionPhase::Returning
+        );
+        let detail = tick_event(&app).expect("the recall is on the feed");
+        assert!(
+            detail.contains("reason=recalled") && detail.contains(&format!("host={}", host.0)),
+            "{detail}"
+        );
+
+        // In camp, nothing in transit: cancelled at once.
+        let mut app = build_world_app();
+        app.world
+            .insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
+        let (sender, host, faction) = two_bands_that_know_each_other(&mut app);
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        handle_station_expedition(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            host.0,
+            None,
+        );
+        let party = launched_party(&mut app).expect("the party left");
+        let party_id = app.world.get::<core_sim::BandId>(party).expect("id").0;
+        handle_recall_expedition(&mut app, faction, party_id);
+        assert!(
+            !app.world.entities().contains(party),
+            "a party that has not left camp is cancelled, not sent on a round trip"
+        );
+
+        // In camp, news in transit: the Returning arm must land it.
+        let mut app = build_world_app();
+        app.world
+            .insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
+        let (sender, host, faction) = two_bands_that_know_each_other(&mut app);
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        handle_station_expedition(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            host.0,
+            None,
+        );
+        let party = launched_party(&mut app).expect("the party left");
+        let party_id = app.world.get::<core_sim::BandId>(party).expect("id").0;
+        app.world
+            .get_mut::<Expedition>(party)
+            .expect("p")
+            .station_reports
+            .push(core_sim::StationReport {
+                land_turn: u64::MAX,
+                tiles: Vec::new(),
+                sightings: Default::default(),
+            });
+        handle_recall_expedition(&mut app, faction, party_id);
+        assert_eq!(
+            app.world
+                .get::<Expedition>(party)
+                .expect("the party is NOT cancelled while it carries news")
+                .phase,
+            ExpeditionPhase::Returning
         );
     }
 

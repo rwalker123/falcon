@@ -19,14 +19,16 @@ extends RefCounted
 ##     second line saying what it needs — hiding it would hide that the tie is what gates every rider.
 
 ## The three states, read off the published row and the current turn alone. **Growing** is contact
-## THIS turn (`last_contact_turn == current_turn`, which `record_contact` stamps sim-side). Contact
+## THE TURN THAT JUST RESOLVED (`last_contact_turn == HudConnectionsVocab.resolved_turn(current_turn)`;
+## the frame's turn runs one past the stamp, see `RESOLVED_TURN_LAG`). Contact
 ## always raises strength above zero, so a zero-strength row is parked whatever its stamps say. An
 ## unknown turn (`NO_TURN`, before the first frame) never reads as contact.
 static func tie_state(tie: Dictionary, current_turn: int) -> int:
 	if not HudBandLaborState.tie_is_live(tie):
 		return HudConnectionsVocab.STATE_PARKED
 	if current_turn != HudConnectionsVocab.NO_TURN \
-			and int(tie.get("last_contact_turn", HudConnectionsVocab.NO_TURN)) == current_turn:
+			and int(tie.get("last_contact_turn", HudConnectionsVocab.NO_TURN)) \
+				== HudConnectionsVocab.resolved_turn(current_turn):
 		return HudConnectionsVocab.STATE_GROWING
 	return HudConnectionsVocab.STATE_FADING
 
@@ -76,13 +78,22 @@ static func subject_label(tie: Dictionary, band_labor: HudBandLaborState) -> Str
 	return HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_LABEL_FORMAT % [
 		int(tie.get("last_seen_x", -1)), int(tie.get("last_seen_y", -1))]
 
-## The remembered-position sentence, or `""` when no tile was ever recorded. Shared wording with the
-## shipment picker (`HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_FORMAT`).
-static func remembered_line(tie: Dictionary) -> String:
+## The map-hover line for a remembered band's ghost marker: `Goosefen — last seen turn 21, may have moved`.
+static func remembered_hover_line(tie: Dictionary, band_labor: HudBandLaborState) -> String:
+	return HudConnectionsVocab.REMEMBERED_HOVER_FORMAT % [
+		subject_label(tie, band_labor), int(tie.get("last_seen_turn", 0))]
+
+## The remembered-position sentence, or `""` when no tile was ever recorded; "In sight at" for a band
+## seen in the turn that just resolved. Shared with the shipment picker
+## (`HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_FORMAT`).
+static func remembered_line(tie: Dictionary, current_turn: int) -> String:
 	var x := int(tie.get("last_seen_x", -1))
 	var y := int(tie.get("last_seen_y", -1))
 	if x < 0 or y < 0:
 		return ""
+	if current_turn != HudConnectionsVocab.NO_TURN and HudConnectionsVocab.age_of(
+			int(tie.get("last_seen_turn", 0)), current_turn) == 0:
+		return HudConnectionsVocab.IN_SIGHT_FORMAT % [x, y]
 	return HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_FORMAT % [
 		x, y, int(tie.get("last_seen_turn", 0))]
 
@@ -92,7 +103,7 @@ static func remembered_line(tie: Dictionary) -> String:
 ## the list scrolls. The scroll reports no minimum on its axis; its declared viewport is
 ## `list_viewport_height(<the zone's box height>)`, so the list's own height never reaches the panel.
 static func build_tab(band_id: int, band_labor: HudBandLaborState,
-		box_height: float) -> VBoxContainer:
+		box_height: float, on_station: Callable = Callable()) -> VBoxContainer:
 	var column := HudWidgets.make_zone_column()
 	column.name = HudConnectionsVocab.BLOCK_NAME
 	column.add_theme_constant_override("separation", HudWorkVocab.ZONE_BLOCK_SEPARATION)
@@ -121,25 +132,27 @@ static func build_tab(band_id: int, band_labor: HudBandLaborState,
 	rows.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	gutter.add_child(rows)
 	column.add_child(scroll)
-	_fill_rows(rows, ties, band_labor)
+	_fill_rows(rows, ties, band_labor, band_id, on_station)
 	return column
 
 ## **THE WIDE SHELL'S SECTION** — the same head and rows, with no scroll of its own: it rides at the
 ## foot of the Parties zone's sanctioned list, after Trade's section, and that list scrolls.
-static func build_section(band_id: int, band_labor: HudBandLaborState) -> VBoxContainer:
+static func build_section(band_id: int, band_labor: HudBandLaborState,
+		on_station: Callable = Callable()) -> VBoxContainer:
 	var block := HudWidgets.make_zone_block()
 	block.name = HudConnectionsVocab.BLOCK_NAME
 	var ties := ordered(band_labor.connections_for_band(band_id))
 	block.add_child(_build_head(ties.size()))
 	var rows := _make_rows_box()
 	block.add_child(rows)
-	_fill_rows(rows, ties, band_labor)
+	_fill_rows(rows, ties, band_labor, band_id, on_station)
 	return block
 
 ## **RE-FILL A BUILT TAB OR SECTION IN PLACE** — the head's count and the rows, nothing else. The
 ## tab's scroll and its offset survive, which is what lets a connections-only frame refresh the list
 ## without throwing the player back to its top.
-static func refill(block: Control, band_id: int, band_labor: HudBandLaborState) -> void:
+static func refill(block: Control, band_id: int, band_labor: HudBandLaborState,
+		on_station: Callable = Callable()) -> void:
 	var rows := rows_box(block)
 	if block == null or rows == null or block.get_child_count() == 0:
 		return
@@ -150,7 +163,7 @@ static func refill(block: Control, band_id: int, band_labor: HudBandLaborState) 
 	var head := _build_head(ties.size())
 	block.add_child(head)
 	block.move_child(head, 0)
-	_fill_rows(rows, ties, band_labor)
+	_fill_rows(rows, ties, band_labor, band_id, on_station)
 
 ## The rows box inside a built tab or section, found by its node name.
 static func rows_box(block: Node) -> VBoxContainer:
@@ -181,20 +194,31 @@ static func _make_rows_box() -> VBoxContainer:
 	return rows
 
 ## One two-line row per tie in `ordered` order, or the one-line empty state.
-static func _fill_rows(rows: VBoxContainer, ties: Array, band_labor: HudBandLaborState) -> void:
+static func _fill_rows(rows: VBoxContainer, ties: Array, band_labor: HudBandLaborState,
+		band_id: int, on_station: Callable) -> void:
 	HudWidgets.clear_children(rows)
 	if ties.is_empty():
 		rows.add_child(HudWidgets.alloc_hint_label(HudConnectionsVocab.EMPTY))
 		return
 	var turn := band_labor.current_turn()
 	for tie_variant in ties:
-		rows.add_child(_build_row(tie_variant as Dictionary, band_labor, turn))
+		rows.add_child(_build_row(tie_variant as Dictionary, band_labor, turn, band_id, on_station))
 
 ## One tie: **line 1** `Name ……… 75% · growing`, **line 2** where they were. Each line is ONE line,
 ## clipped with an ellipsis, so a row is two lines at any width; the row's hover carries the whole
 ## name and line 2 its whole sentence.
-static func _build_row(tie: Dictionary, band_labor: HudBandLaborState, turn: int) -> VBoxContainer:
+static func _build_row(tie: Dictionary, band_labor: HudBandLaborState, turn: int,
+		band_id: int, on_station: Callable) -> VBoxContainer:
+	var host_id := int(tie.get("subject_band_id", HudConst.NO_BAND_ID))
+	# **A STATION PARTY ON THIS HOST** (issue #774): the state word reads `stationed` once the party has
+	# arrived, in place of growing / fading. A post's tie rises when a runner's report reaches home, so a far post's
+	# tie can still fade for the runner's walk after arrival; the word says where the people are.
+	var party := band_labor.station_party_for_host(band_id, host_id)
 	var state := tie_state(tie, turn)
+	if not party.is_empty() and state != HudConnectionsVocab.STATE_PARKED \
+			and String(party.get("expedition_phase", "")) \
+				== HudExpeditionVocab.EXPEDITION_PHASE_STATIONED:
+		state = HudConnectionsVocab.STATE_STATIONED
 	var row := VBoxContainer.new()
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_theme_constant_override("separation", HudConnectionsVocab.ROW_LINE_SEPARATION)
@@ -202,9 +226,12 @@ static func _build_row(tie: Dictionary, band_labor: HudBandLaborState, turn: int
 		int(tie.get("subject_band_id", HudConst.NO_BAND_ID)))
 	# The row's hover leads with the whole name, which the name label may have clipped.
 	var subject := subject_label(tie, band_labor)
-	row.tooltip_text = "\n".join(PackedStringArray([subject,
+	var hover := PackedStringArray([subject,
 		HudConnectionsVocab.ROW_TOOLTIP_FORMAT % [
-			int(tie.get("first_contact_turn", 0)), int(tie.get("last_contact_turn", 0))]]))
+			int(tie.get("first_contact_turn", 0)), int(tie.get("last_contact_turn", 0))]])
+	if state == HudConnectionsVocab.STATE_STATIONED:
+		hover.append(_stationed_hover(tie, party, turn))
+	row.tooltip_text = "\n".join(hover)
 	row.mouse_filter = Control.MOUSE_FILTER_PASS
 
 	var head := HBoxContainer.new()
@@ -222,7 +249,7 @@ static func _build_row(tie: Dictionary, band_labor: HudBandLaborState, turn: int
 	head.add_child(word)
 	row.add_child(head)
 
-	var remembered := remembered_line(tie)
+	var remembered := remembered_line(tie, turn)
 	var second: Label
 	if state == HudConnectionsVocab.STATE_PARKED:
 		var x := int(tie.get("last_seen_x", -1))
@@ -235,14 +262,55 @@ static func _build_row(tie: Dictionary, band_labor: HudBandLaborState, turn: int
 	elif remembered != "":
 		second = _line_label(remembered, HudStyle.INK_FAINT, HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
 		HudWidgets.set_label_tooltip(second, remembered)
+	# **LINE 2 CARRIES THE LINK AT ITS RIGHT END**, so a row stays two lines. The sentence ellipsises
+	# first and keeps its whole text on its hover.
+	var line_two := HBoxContainer.new()
+	line_two.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	line_two.add_theme_constant_override("separation", HudWorkVocab.ZONE_HEAD_SEPARATION)
 	if second != null:
-		row.add_child(second)
+		line_two.add_child(second)
+	else:
+		var spacer := Control.new()
+		spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		line_two.add_child(spacer)
+	line_two.add_child(_build_station_link(state, party, band_id, host_id, band_labor, on_station))
+	row.add_child(line_two)
 	return row
+
+## The newest sighting's age and the head count of the post, for the stationed row's hover.
+static func _stationed_hover(tie: Dictionary, party: Dictionary, turn: int) -> String:
+	var age := HudConnectionsVocab.age_of(int(tie.get("last_seen_turn", turn)), turn)
+	return HudConnectionsVocab.STATION_ROW_HOVER_FORMAT % [int(party.get("size", 0)), age,
+		HudConnectionsVocab.STATION_TURN_ONE if age == 1 else HudConnectionsVocab.STATION_TURN_MANY]
+
+## **THE `Station people` LINK** (issue #774). Always drawn on a row, and greyed WITH ITS REASON where it
+## cannot be pressed — the roster's rule for a parked tie, which is shown rather than hidden because the
+## tie is what gates the offer. Greyed states, in precedence: people already posted there (`Stationed`),
+## a parked tie, no free workers. **Borders are the server's to refuse**: the client holds no faction
+## on a tie's subject, so a closed border surfaces in the feed rather than here.
+static func _build_station_link(state: int, party: Dictionary, band_id: int, host_id: int,
+		band_labor: HudBandLaborState, on_station: Callable) -> Button:
+	var text := HudConnectionsVocab.STATION_LINK
+	var reason := ""
+	if not party.is_empty():
+		text = HudConnectionsVocab.STATION_LINK_DONE
+		reason = HudConnectionsVocab.STATION_LINK_DONE_TOOLTIP
+	elif state == HudConnectionsVocab.STATE_PARKED:
+		reason = HudConnectionsVocab.STATION_LINK_PARKED_REASON
+	elif band_labor.effective_idle(band_labor.player_band_by_band_id(band_id)) <= 0:
+		reason = HudConnectionsVocab.STATION_LINK_NO_FREE_REASON
+	var link := HudWidgets.build_inline_link(text, HudStyle.SIGNAL, func() -> void:
+		if on_station.is_valid():
+			on_station.call(band_id, host_id))
+	link.set_meta(HudConnectionsVocab.STATION_LINK_META, host_id)
+	link.disabled = reason != ""
+	link.tooltip_text = reason if reason != "" else HudConnectionsVocab.STATION_LINK_TOOLTIP
+	return link
 
 ## The state word's ink: growing reads healthy, fading dim, parked amber.
 static func _state_ink(state: int) -> Color:
 	match state:
-		HudConnectionsVocab.STATE_GROWING:
+		HudConnectionsVocab.STATE_GROWING, HudConnectionsVocab.STATE_STATIONED:
 			return HudStyle.HEALTHY
 		HudConnectionsVocab.STATE_PARKED:
 			return HudStyle.WARN

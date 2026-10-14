@@ -540,6 +540,8 @@ fn an_expedition_reports_a_people_only_when_it_comes_within_comm_range() {
                     kit: core_sim::EquipmentConfig::builtin().default_kit(core_sim::KitJob::Scout),
                     cargo: core_sim::LocalStore::new(),
                     defection_pull: core_sim::Scalar::zero(),
+                    station_reports: Vec::new(),
+                    aim: None,
                 },
             ))
             .id()
@@ -707,6 +709,8 @@ fn an_older_report_refreshes_the_tie_without_rewriting_where_they_were() {
                 kit: core_sim::EquipmentConfig::builtin().default_kit(core_sim::KitJob::Scout),
                 cargo: core_sim::LocalStore::new(),
                 defection_pull: core_sim::Scalar::zero(),
+                station_reports: Vec::new(),
+                aim: None,
             },
         ));
     }
@@ -814,6 +818,8 @@ fn the_remembered_name_survives_a_checkpoint_round_trip() {
                 kit: core_sim::EquipmentConfig::builtin().default_kit(core_sim::KitJob::Scout),
                 cargo: core_sim::LocalStore::new(),
                 defection_pull: core_sim::Scalar::zero(),
+                station_reports: Vec::new(),
+                aim: None,
             },
         ));
     }

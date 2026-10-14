@@ -3,7 +3,7 @@ paths:
   - "core_sim/src/{sites,sites_config,expedition_config}.rs"
   - "core_sim/src/systems/expeditions.rs"
   - "core_sim/src/data/{sites_config,expedition_config}.json"
-  - "core_sim/tests/{raiding_party,denial_raid}.rs"
+  - "core_sim/tests/{raiding_party,denial_raid,station_expedition}.rs"
 ---
 
 <!-- Extracted verbatim from lines 52-53;4004-4381 of core_sim/CLAUDE.md at blob dcc757587f8c9308590997ee600abc64a34e6712
@@ -11,7 +11,7 @@ paths:
      core_sim/CLAUDE.md itself is now the hub, where the routing table lives).
      Regenerate with scripts/split_claude_md.sh -->
 
-# Expeditions — wondrous sites, scouting, raiding parties and shipments
+# Expeditions — wondrous sites, scouting, raiding parties, shipments and stationed parties
 
 ## Config files
 
@@ -86,11 +86,11 @@ override, not on the hot-reload path).
 **A far HUNT is not an expedition.** A hunt that leaves the band's apron is a **work party** posted
 by the band's own labour (`work-party.md`): it follows its herd anywhere, its take flows home, and
 the band feeds it. There is no hunting mission, no hunting launch verb and no hunt-trip forecast on
-this path — `ExpeditionMission` is `Scout | Deny | Trade`.
+this path — `ExpeditionMission` is `Scout | Deny | Trade | Station`.
 
 **An expedition is another `StartingUnit` band.** It reuses `PopulationCohort` + `BandTravel` /
 `advance_band_movement` + `LaborAllocation` + `StartingUnit`, tagged with the `Expedition` component
-(`components.rs`: `home_band`, `mission`, `phase: Outbound|AwaitingOrders|Returning|Hunting`,
+(`components.rs`: `home_band`, `mission`, `phase: Outbound|AwaitingOrders|Returning|Hunting|Stationed`,
 `announced`, `pending_reveal: Vec<UVec2>`) and **deliberately lacking `ResidentBand`**.
 Carrying `StartingUnit` is required: it makes the party a moving snapshot marker and lets `move_band`
 retarget it — but it is **excluded from live faction fog reveal** (`Without<Expedition>` in
@@ -209,8 +209,8 @@ that could differ.
   completion feed lines reuse `Hunt`.
 
 **Snapshot.** `PopulationCohortState` carries client discriminators `isExpedition` /
-`expeditionMission` (`"scout"`|`"deny"`|`"trade"`) / `expeditionPhase`
-(`outbound`|`awaiting`|`returning`|`hunting`) / `expeditionTargetHerd` (the raid's fauna_id — a
+`expeditionMission` (`"scout"`|`"deny"`|`"trade"`|`"station"`) / `expeditionPhase`
+(`outbound`|`awaiting`|`returning`|`hunting`|`stationed`) / `expeditionTargetHerd` (the raid's fauna_id — a
 **string**, since herd ids are non-numeric; the KEY, never rendered — its display twin
 `expeditionTargetSpecies` rides beside it, see "A raiding party carries its quarry's NAME") /
 `expeditionCarryCap` (`party ×` the per-worker carry of the pack the **mission** fills, `0` for a
@@ -1014,10 +1014,16 @@ lets a trade readout leave them out and a food readout put a homecoming beside t
 `Outbound` → (arrive, deposit) → `Returning` → fold back. **No new `ExpeditionPhase`**: the party does
 exactly two things and both already have a phase.
 
-- **Retargets the destination's LIVE tile every turn**, mirroring the `Hunting` arm's herd retarget —
-  bands are nomadic, and a shipment aimed once at where a people were camped arrives nowhere.
+- **Walks toward `Expedition::aim`, not the destination's live tile** — see "A party aims at what its
+  people know" below. Bands are nomadic, so the aim follows the destination only while the sender
+  knows where it is.
 - **Arrival is the comm-range proximity** the fold-back already uses (*"near enough to hand things
-  over"*), not exact co-location, so a chase between two moving bands converges.
+  over"*), not exact co-location, so a chase between two moving bands converges — and it additionally
+  requires the destination to be known this turn (own people, or seen by the party).
+- **A destination not found turns the party for home CARRYING THE CARGO**: standing on its aim with
+  the destination out of sight, the party turns `Returning` with an `ExpeditionRecalled` line,
+  detail `status=returning reason=destination_not_found destination=<id> expedition=<bits>` — the
+  destination-gone line's shape with its own reason.
 - **A destination that cannot be resolved turns the party for home CARRYING THE CARGO**, the twin of
   the lost-herd guard. Its feed line rides `CommandEventKind::ExpeditionRecalled` — the kind that
   means *"this party has been turned for home"*, the same state change the recall verb makes —
@@ -1214,3 +1220,173 @@ turn one. The full argument, the identity and the reset window live in
 `.claude/rules/core_sim/campaign.md` → the transfer callout; what belongs here is which expedition
 seams write it: the launch draw (cargo **and** the walk's larder, for both this verb and the scout's),
 the shipment's arrival at the destination, and every fold-back including the in-camp cancel.
+
+---
+
+## A stationed party — contact now, news later (issue #774)
+
+Design of record: `docs/plan_contact_and_logistics.md` → "Settled by #774". The fifth verb on the one
+traveling-party system, and the first use of the connection primitive that is not a route: the posted
+people are standing with the host, but a tie is how well the home band knows the host, so it rises
+only as news reaches home, and news travels at the pace a runner walks.
+
+`ExpeditionMission::Station { host_band, host_name }`, launched by `station_expedition <faction>
+<band> <party_workers> <host_band_id> [kit <id>]` (`StationExpeditionCommand`, proto field **84**).
+The kit resolves against the `expedition` job exactly as a shipment's does
+(`server::resolve_expedition_job_kit`, shared by both verbs). The host's name is read off its
+`BandName` at launch and carried, for `destination_name`'s reason: the party outlives the host's
+presence in the viewer's world. The host is followed by `BandId`, so a fission that keeps the id with
+one half keeps the post.
+
+### The launch gates, all before anything is drawn
+
+`server::resolve_post` refuses, each as a command failure with a reason, and a refused launch leaves
+the band exactly as it stood: the shared resident-band and party-size gate
+(`outfit_detached_party`); a host that is not a resident band (a detached party is not one); the host
+being the home band; no edge `home -> host` in the `ConnectionLedger`, or a **parked** one
+(`strength > NO_TIE` is the gate, exactly the shipment's); and, for a host of **another people**, that
+people's Open Borders. A same-people host never asks it. **The one faction comparison on the whole
+path** is `FactionBorderPolicies::admits_posting(host, from)` — `host == from || is_open(host)` —
+asked at launch and again every turn of the post. A launch draws workers and the kit and nothing
+else: **no provisions, no cargo**.
+
+### Phases
+
+`Outbound` walks toward **`Expedition::aim`**, the tile the party's people believe the host is at —
+never the host's live tile for free (see "A party aims at what its people know" below). It arrives
+on the comm-range proximity a shipment uses, and only on a host the party knows the position of this
+turn; arrival flips to the new `ExpeditionPhase::Stationed` (wire
+`stationed`) with one `ExpeditionArrived` line (`status=stationed host=<id>`). `Stationed` stays and
+follows: it chases the host's live tile whenever it is not standing on it (the party is standing with
+them, which is presence). `Returning` and the fold-back
+are the shared path. `Stationed` is genuinely new state — no other phase both stays and moves.
+
+### The tie rises only on landed reports
+
+A stationed party credits nothing to the ledger directly. The tie `home -> host` gains
+`gain_per_contact` for each landed `StationReport` (`ContactsThisTurn::record`, below), exactly as a
+returning scout's flushed report does, and decays at the ordinary rate on every turn no report lands.
+A far post's tie therefore keeps fading for a runner's walk after arrival, then climbs one contact per
+landed report to full and holds there while a report lands each turn; inside the comm range it rises
+from the first turn the party has news. A tie that decayed to nothing is parked, not deleted, and a
+landing report raises it again; no post-ending check reads the tie's strength, so a parked tie never
+ends a post. See `connections.md` -> "A stationed party's reports". **One-way**: the host gains no edge
+toward the sender, and the party is not a contact subject (subjects are resident bands only).
+
+### The news is a stream of reports, a runner's walk behind
+
+A station party does **not** use the scouts' "flush only inside the comm range". Each turn the observe
+pass's output (`pending_reveal` and `pending_contacts`, which already carry the observed turn) is
+bundled into one `StationReport { land_turn, tiles, sightings }` on `Expedition::station_reports`:
+
+```text
+d          = hex distance, the party's tile to the home band's LIVE tile, at dispatch
+delay      = 0                                   if d <= effective_comm_range()
+           = work_party::walk_turns(d, labor.band_move_tiles_per_turn)   otherwise
+land_turn  = dispatch turn + delay
+```
+
+`station_report_delay` is that function. The walk is the **whole** distance, not the distance past
+the work apron: a runner is leaving the party, not working a source beside the camp. Each turn every
+report with `land_turn <= now` lands as the scout flush lands its buffer — tiles through
+`FactionVisibilityMap::discover` (`Discovered`, never `Active`), sightings through
+`ContactsThisTurn::record` with the **observed** turn and so the landed turn on clocks 2 and 3. The
+home ledger's `last_seen_turn` therefore trails `last_contact_turn` by exactly the walk. Raising
+`comm_range_tech_factor` widens the instant zone until a report is instant anywhere; that is the hook,
+not a second mechanism.
+
+**The reach is on the wire**: `PopulationCohortState.commRangeTiles` (`snapshot.fbs`, appended last; decode key
+`comm_range_tiles`) is `effective_comm_range()` echoed on every cohort, the `moveFerryReachTiles` idiom — global
+config, derived at capture, never saved. A client quoting a report's delay reads it, the cohort's
+`bandMoveTilesPerTurn` and `station_report_delay`'s two branches above. Pinned by
+`station_expedition::the_comm_range_is_published_on_every_cohort_row`.
+
+- **The fold-back lands every report still in transit** (`Returning` and near home, or home
+  unresolvable) — the party carries its own news home. A party with no home band to report to
+  simply loses it, as a scout loses its findings.
+- **Tiles in transit count as already seen**: the observe pass does not re-report ground a runner is
+  carrying, and does not charge the wayfinding gear for it again.
+- **`party_owes_a_report` includes reports in transit**, so a recall in camp with news still on the
+  way takes the `Returning` path (only that arm lands them) rather than the in-camp cancel.
+- **Reports ride the checkpoint** with the `Expedition`, as does the `aim` (`SAVE_FORMAT_VERSION` 40).
+
+### The home band feeds the party
+
+The party carries no larder: no launch draw, no upkeep, no replenish (the provisions arm is
+`Scout | Trade` only). From launch until fold-back its workers are charged to the **home band's** meal
+each turn, at the working-age ration, as part of that band's ordinary consumption —
+`work-party.md` → "The home band feeds its party" applied to a detached party.
+
+- **The seam is `DemographicState::party_working`** (`systems/population.rs`):
+  `stationed_party_workers` sums, per home band, the working-age head-count of every party whose
+  mission is `fed_by_home_band()`; the meal's demand counts those mouths, and nothing else (they bear
+  no children and age no further). The pre-pass that prices the breeding ceiling's would-be births
+  takes the same number, so the two cannot diverge.
+- **The larder identity is unchanged**: the charge is inside `last_food_consumption`, the larder's
+  one debit, so `larder_delta == -foodConsumption` (plus the other terms) closes to the fixed-point
+  unit. `last_food_need` includes the party, so a band that cannot cover it shows a `foodShortfall`
+  and its people take the deficit like any other hunger.
+- **The forward readings count the same mouths.** `PopulationCohort::fed_party_workers` is that
+  head-count as the turn's meal took it (rewritten every turn, one turn stale across a launch or a
+  fold-back); `snapshot::band_food_terms` adds it to the band's own working bracket, so the home
+  band's `turnsOfFood` and the hunting need clock reckon on the party's rations too.
+- **The party row publishes the not-food-limited runway** (`turnsOfFood` 999): its pack is empty by
+  design, and an empty pack must not read as a famine.
+
+### What ends a post
+
+Checked each turn while `Outbound` or `Stationed`, in this order; any one turns the party `Returning`
+with an `ExpeditionRecalled` line whose detail is `status=returning reason=<token> host=<id>
+expedition=<bits>` (`host=` is the key a client swaps its own band label in by, as `destination=` is
+on a shipment's lines):
+
+| reason | when |
+|---|---|
+| `home_gone` | the party's home band no longer exists (nobody to feed it or take its reports); checked first, and the party then folds where it stands through the `home_pos.is_none()` path |
+| `host_gone` | the host `BandId` no longer resolves to a resident band |
+| `borders_closed` | the host's people are not the party's and their borders are closed |
+| `host_not_found` | the party stands on its aim, does not see the host, and the host is not its own people (written by `advance_expeditions`; `host=` rides along) |
+| `recalled` | the player's `recall_expedition` (written by the verb, with `host=`) |
+
+**A home band that cannot cover its party's rations does not end the post.** The party stays and
+the tie goes on rising on landed reports; the shortfall is the band's, borne through the ordinary meal its
+demographics already run (a non-zero `foodShortfall`, starvation by the usual rules). Nothing is
+gained by walking the party home, so bringing it back for hunger is the player's recall.
+### A party aims at what its people know
+
+Applies to a stationed party's `Outbound` phase and a shipment's alike, through one helper
+(`steer_toward_target`). `Expedition::aim: Option<UVec2>` (`None` for the other verbs) is the tile
+the party is walking toward, and it rides the checkpoint with the `Expedition`.
+
+- **At launch** (`resolve_post`, `resolve_shipment`) the aim is `ConnectionLedger::launch_aim`: the
+  target's live tile when the sender knows it (the target is the sender's own people — your own
+  bands are always visible to you — or the target's tile is `Active` on the sender's fog map),
+  otherwise the `last_seen_position` of the `home -> target` edge, which the launch gate guarantees.
+- **Each `Outbound` turn** the aim becomes the target's live tile only if the target is the sender's
+  own people, or the party sees the target this turn (its BandId is among the observe pass's
+  sightings, read before the station bundle drains `pending_contacts`). Otherwise the aim is kept
+  and the party walks to it.
+- **Arrival** is within comm range of the target's live tile **and** the position known this turn.
+- **Not found.** Standing on the aim with the target unknown ends the trip: `Returning` plus an
+  `ExpeditionRecalled` line. A post's line is `status=returning reason=host_not_found host=<id>
+  expedition=<bits>`; a shipment's is `status=returning reason=destination_not_found
+  destination=<id> expedition=<bits>`.
+
+Pinned by `station_expedition::{a_party_finds_no_sign_of_a_host_that_moved_out_of_sight,
+a_party_that_sees_a_host_that_moved_a_little_stations_with_it,
+a_same_people_host_that_moved_is_followed_without_sight, an_aim_set_mid_walk_survives_a_checkpoint_round_trip}`
+and `trade_expedition::{a_shipment_that_finds_nobody_where_the_destination_was_comes_home_with_its_cargo,
+a_shipment_that_sees_a_destination_that_moved_a_little_delivers}`, each not-found case paired with a
+control that sees the target.
+
+### Tests
+
+`core_sim/tests/station_expedition.rs` drives real turns: a far post's tie decaying until the first
+report lands, rising by exactly one contact per landed report to full and holding there for 100 post
+turns beside a control edge that bleeds out (the parked tie raised again included), with the host
+gaining no edge; the tie rising from the first report inside the comm range; the report lag equal to `walk_turns`;
+lag 0 under a widened comm range; `Discovered` not `Active`; the fold-back landing in-transit news;
+each ending, and a starving home band keeping its party; the meal against a twin world and the larder identity in fixed point; the checkpoint
+round trip with reports in transit; the mission, host and phase off the encoded frame. The launch
+gates and the recall verb are `server::tests::{a_station_order_*, every_station_refusal_*,
+a_stationed_party_can_be_recalled_*}`.

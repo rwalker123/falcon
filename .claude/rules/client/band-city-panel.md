@@ -6546,6 +6546,15 @@ cohort carries `expeditionForecastHorizonTurns` the sentence quotes it:
 
 ### The mission's mark is `💀`, on all three surfaces
 
+**Every party mission mark on the panel is `hud/` ART now.** The Parties row's body `Button` carries
+it on `icon` (`HudWidgets.set_button_mission_mark`), the parties inspector strip's title and the
+faction page's party rows put a `HudWidgets.build_mission_mark` `TextureRect` beside the text, and the
+selection card's party row takes it through `SelectionCardController._band_row_sprite`. The four marks
+are `hud/scout.png`, `deny.png`, `trade.png` and `station.png`, named by
+`HudFormat.expedition_mission_mark`; the text glyph is only the fallback on a null texture.
+`HudFormat.panel_expedition_summary` returns the row text with no mark in it, so no emoji sits inside
+a plain Label string. `ui_preview`'s `station_party_marks` frame draws all four on one Parties list.
+
 `HudComposeVocab.BAND_VERBS`' Deny entry (the verb button), `HudFormat.PANEL_EXPEDITION_DENY_GLYPH`
 (the Active-parties row) and `MapView.EXPEDITION_DENY_GLYPH` (the map marker) are one glyph, so the
 mission reads the same at every scale. The parties row deliberately renders **no floor glyph** — the
@@ -7618,10 +7627,21 @@ zone is declared on band pages only (`BAND_ZONE_LAYOUT`); the faction page has n
   has met no other people yet.*
 - **A row is two lines.** Line 1: the subject's name · strength as a whole percent · the state word.
   Line 2: the remembered sighting, `HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_FORMAT` — the
-  shipment picker's own sentence. Both lines are single-line labels that ellipsise, so a row cannot
+  shipment picker's own sentence — or `HudConnectionsVocab.IN_SIGHT_FORMAT` (`In sight at (x, y)`)
+  when `last_seen_turn` is the turn that just resolved (`ConnectionsRoster.remembered_line(tie, turn)`,
+  which the picker's destination notes call too, so the two surfaces agree). Both lines are single-line labels that ellipsise, so a row cannot
   wrap to a third. The row's hover is the whole name, then the first-met and last-contact turns.
+- **THE FRAME'S TURN IS ONE AHEAD OF EVERY CONTACT STAMP.** `advance_connections` stamps contact with the
+  tick of the turn being resolved (Visibility stage); `advance_tick` increments it in the Snapshot stage
+  before the frame is captured, so `snapshot["turn"]` / `current_turn()` is one past the turn whose
+  contact the frame carries. "This turn" therefore means the turn that just RESOLVED:
+  `HudConnectionsVocab.resolved_turn(frame_turn)` (`RESOLVED_TURN_LAG`), with `age_of(stamp, frame_turn)`
+  its floored-at-0 age. Every reader goes through it — `tie_state`, `remembered_line`, the stationed
+  hover's news age, the heart's "last seen N turns ago" and the map's remembered-ghost `news_age`.
+  Comparing the raw frame turn to a stamp read `fading` over a band in sight (the % rose every turn,
+  the word never said growing).
 - **The three states** (`ConnectionsRoster.tie_state`): `growing` (HEALTHY) when
-  `last_contact_turn` is the current turn; `fading` (INK_DIM) when there was no contact and strength
+  `last_contact_turn` is the resolved turn; `fading` (INK_DIM) when there was no contact and strength
   is above `HudConst.TIE_STRENGTH_NONE`; `parked` (WARN) at that strength.
 - **A parked tie is shown.** Its second line is amber and says what to do and where:
   `No tie — meet them again. Last seen at (x, y), turn N.` A parked tie with no recorded tile reads
@@ -7649,6 +7669,56 @@ at the foot), `connections_roster_scrolled`, `connections_roster_ties_only`,
 `connections_roster_empty`, `connections_roster_drawer` and `connections_roster_drawer_scrolled`
 (the no-dock drawer), in `chapters/trade.gd`; `band_panel_preview`'s `peoples_wide` (the
 bottom dock's wide shell, the section under Parties after Trade's), in `band_panel_trade_tab.gd`.
+
+### STATION PEOPLE — the roster's link, and the sheet it opens (issue #774)
+
+A band posts some of its people at a band it holds a LIVE tie with (sim half:
+`.claude/rules/core_sim/expeditions.md` → "A stationed party"). The client half is four small pieces,
+none of them a new panel.
+
+- **The link.** Line 2 of every roster row carries `Station people` at its right end
+  (`ConnectionsRoster._build_station_link`), so a row stays two lines and the remembered-sighting
+  sentence ellipsises first. It is ALWAYS drawn and greys WITH ITS REASON, in this precedence: people
+  already posted or walking there (`Stationed`), a PARKED tie (`No tie — meet them again first.`), no
+  free workers. **Borders are the server's to refuse and the client does not gate on them**: a tie
+  carries no faction on its subject, and `FactionPolicyState` publishes only the viewer's OWN
+  `openBorders`, so a closed host surfaces as the server's refusal in the feed. One post per host per
+  band is the client's offer (`HudBandLaborState.station_party_for_host`, outbound or stationed); no
+  server rule backs it.
+- **The row while posted.** `stationed` (HEALTHY) replaces growing / fading once the party has
+  ARRIVED (phase `stationed`) — a party still walking leaves the tie's own word, since saying
+  `stationed` over a tie that is still fading would be untrue. A post no longer tops its tie up live: the
+  tie rises when a runner's report reaches home, so a far post's tie can fade for the runner's walk after
+  arrival; the word says where the people are, and its hover says `Their news keeps the tie strong.` The hover adds
+  `N of your people are stationed with them · news about K turns old`, K = `age_of(last_seen_turn,
+  current turn)`. `ConnectionsRoster.tie_state` stays pure; the override is `_build_row`'s.
+- **The sheet** is a verb sheet of its own mission (`HudComposeVocab.COMPOSE_MISSION_STATION`) that is
+  NOT on the action bar: only the link opens it (`BandPanelController._on_station_link_pressed`, the
+  `dispatch_verb` machinery with the host fixed in `_station_host`, cleared with the rest of the verb
+  state). Built by `_fill_station_compose_sheet`: `With <host> · N tiles <bearing>` (the shipment's
+  `To` row sentence and remembered-sighting hover), a `People` stepper capped at the free workers,
+  `N of M free workers · fed from <band>'s food`, and one explanation line. The lag in it is
+  `SourceForecast.station_news_delay_turns`, the sim's `station_report_delay`: the whole wrapped hex
+  distance from where the tie last saw the host to this band's live tile, `0` within the band's
+  `comm_range_tiles` (the line then reads `Their news reaches you the same turn.`), else
+  `ceil(distance / band_move_tiles_per_turn)`. It reads `a walk` where the band publishes no move rate.
+  No kit row: the server defaults it, so `format_station_expedition` sends none.
+- **The order** rides its own `station_expedition_requested` signal (`BandPanelController` →
+  `HudLayer` → `Main._on_hud_station_expedition`), the `send_trade_expedition_requested` precedent, and
+  `Main.format_station_expedition` is its own builder: `station_expedition <f> <band> <workers>
+  <host>`.
+- **The Parties row** reads `Stationed with <host>` / `Going to stay with <host>` / `Coming home from
+  <host>` (`HudFormat.panel_expedition_summary`, `HudExpeditionVocab.STATION_ROW_*`), marked with
+  `hud/station.png` (`HudFormat.expedition_mission_mark("station")`; the `⚓` of
+  `PANEL_EXPEDITION_STATION_GLYPH` is only the fallback, and `expedition_mission_glyph` does not hand
+  it the scout flag). The party's strip names its `Host` and states NO `Provisions` / `Carried` row
+  (`BandDetailLines._station_summary_lines`): the home band feeds it, and its `turns_of_food` of 999
+  would print a runway for a larder it does not have. **The host's name goes through
+  `HudBandLaborState.host_label_for_id`** — the roster's label, else the name the tie remembers, else
+  `Band near (x, y)` — and that is now the label every party row uses, shipments included.
+
+Frames: `station_peoples`, `station_parties`, `station_party_detail`, `station_sheet`,
+`station_sheet_people` and `station_event_dock`, in `chapters/station.gd` (`harness-ui-preview.md`).
 
 ## The Trade tab (issue #731)
 

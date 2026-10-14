@@ -3012,6 +3012,7 @@ pub fn capture_snapshot(
             settle_min_founding_workers: expedition_cfg.settle.min_founding_workers,
             settle_parent_min_workers: expedition_cfg.settle.parent_min_workers,
             move_ferry_reach_tiles: crate::carry::move_ferry_reach_tiles(&supply_network_cfg),
+            comm_range_tiles: expedition_cfg.effective_comm_range(),
         };
         // **EVERY OPEN OUTFITTING WINDOW**, resolved once — a take's cap is a fact about its PARENT's
         // ledger, so this is a lookup rather than a per-band walk. Empty on every turn after the windows

@@ -7,6 +7,7 @@ paths:
   - "integration_tests/tests/equipment_toe.rs"
   - "core_sim/tests/kit_selection.rs"
   - "core_sim/tests/pool_toe.rs"
+  - "core_sim/tests/builders_toe_head.rs"
   - "core_sim/src/take_claims.rs"
   - "core_sim/tests/take_kit_claims.rs"
 ---
@@ -628,6 +629,30 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 > `last_pool_toe`'s *"reported, never recomputed"* discipline, one field over. The capture is written
 > at [`LaborAllocation::record_pool_crew`] from the roadwork pool's paying seat and read straight
 > out at `snapshot::population`, exactly as `last_pool_toe` is.
+>
+> #### ⛔ THE BUILDERS' `poolToe` LINES NAME THE QUEUE HEAD, OR THEY ARE NOT PUBLISHED
+>
+> The builders' claim is struck on the head, and a completed head retires in the same pass
+> (`unqueue_build` at the foot of `advance_labor_allocation`), so the settled `last_pool_toe` of the
+> turn a Cultivate finishes describes the Cultivate while the queue head is already the Tame behind it
+> (reported from play: the Work tab's head row said *"builders short of hoes"* on a Taming job). A
+> `build_order` or an `unqueue` between turns produces the same mismatch by hand.
+>
+> `LaborAllocation::last_pool_toe_head` stamps the lines with the `(source, declared job)` the
+> `BuildersAsk` was built from (cleared and rewritten beside `last_pool_toe`; on the save,
+> `SAVE_FORMAT_VERSION` 41). `LaborAllocation::published_pool_toe` — the only reader the wire uses —
+> drops the `builders` lines unless that stamp equals the **live** `build_queue.first()`, read at
+> capture after every command. The frame of a completion therefore states **no** builders' tools (a
+> blank, not the finished job's), and the next turn states the new head's. Other pools' lines are
+> untouched, and `craft_suggestions` still reads the raw settlement. No schema change: an absent line
+> is the existing "not applicable" reading.
+>
+> Pinned by `builders_toe_head::{the_frame_after_a_completion_states_no_builders_tools_and_then_the_new_heads,
+> a_build_order_withholds_the_builders_tools_until_a_turn_strikes_them_for_the_new_head,
+> an_unqueue_withholds_the_builders_tools, the_published_builders_tools_survive_a_checkpoint_round_trip}`,
+> which drive a Cultivate-then-Tame queue through real turns and read the encoded frame. The same
+> drive finds the Tame's crook on the **second** turn after the completion in the sim — a second
+> stale turn seen in play does not come from the settled lines.
 >
 > #### ⛔ THE IDLE FIGURE IS MEANINGLESS WITHOUT THE HEAD COUNT IT WAS STRUCK AGAINST
 >
@@ -1986,8 +2011,9 @@ not rationed"* rule already answers.
 
 ### `HuntingParty` carries its composition, in SHARES
 
-`HuntingParty` is `{ crews: Vec<HuntCrew>, tuning, dispersion }` and is **Clone, not Copy**;
-`HuntCrew` is `{ share, hunter, injury_damage_per_animal }`.
+`HuntingParty` is `{ crews: Vec<HuntCrew>, tuning }` and is **Clone, not Copy**;
+`HuntCrew` is `{ share, kit, hunter, dispersion, injury_damage_per_animal }`. **There is no party-level
+dispersion** - it is a crew's, see below.
 
 > **`share` is a FRACTION of the party, never a head count** — that is what keeps the struct
 > **scale-free**, exactly as the single-profile form was. Every call site still passes its own
@@ -2002,11 +2028,40 @@ not rationed"* rule already answers.
   because a mass-bounded weapon cannot be resolved before the target is known. That is the
   `party_for = |body_mass| …` factory `advance_labor_allocation` and `advance_expeditions` already
   used, given a name so the coverage behind it is resolved once per party per turn.
-- **`dispersion` is PARTY-WIDE and is the MAX across the crews.** The same clause
-  `KitChoice::multiplier` resolves an item's multipliers with, one level up: if part of your party is
-  running up and throwing spears, the herd is scared — the trap line the other half set does not
-  un-scare it. So buying the quiet approach means buying **enough** of it. `stayers` / `stay_fraction`
-  are unchanged.
+- **`dispersion` is PER CREW, and each crew retreats on its own** (`HuntCrew::dispersion`,
+  `HuntingParty::contacts`). A hunter's gear decides what THAT hunter keeps: a crew reaches
+  `reach x share` animals and those animals break off at `clamp(wariness x crew.dispersion, 0, 1)`.
+  The party's stayers are the sum of the crews' own binomials, then the fight and the room clamp run
+  on the total exactly as before. Forage and extraction crews already worked this way (each crew's
+  rate is its own, summed through `KitCoverage::weighted_rate`); the hunt was the one job where a
+  crew's gear could change another crew's outcome.
+  > **WHY THE PARTY MAX WAS RETIRED (playtest).** The retreat used to read one party-wide dispersion,
+  > the MAX across the crews ("if part of your party is running up and throwing spears the herd is
+  > scared - the trap line the other half set does not un-scare it"). On a Wild Fowl herd with one
+  > Trapping kit held, one trapper took `10` a turn and adding a **bare** second hunter cut it to
+  > `6.95`: the bare hand made the trapper loud too and every animal reached broke off at `0.65`.
+  > At worst another hunter must add nothing. The trapper still keeps every animal the trap line
+  > reaches (`dispersion 0`); the bare hand keeps its own 35% of what it reaches.
+  >
+  > **What did not change:** a single hunter holding spears AND traps is still loud
+  > (`KitChoice::best_declared` is the MAX over that hunter's own items, and `spears` still declare
+  > `dispersion 1.0` so the trap's stand-off is not inherited for free) - that clause is about one
+  > person's kit and stands.
+  - **Where the room binds, the quietest crews fill it first.** `Contact { reach, engaged }` carries
+    the party's unclamped reach beside the room-clamped engagement; crews take their `reach x share`
+    in ascending effective wariness until `engaged` is spent. So an extra hunter's reach beyond the
+    room adds nothing rather than displacing a quieter crew's animals - the take is non-decreasing
+    in the party (`forecast_query::another_hunter_never_lowers_the_take`).
+  - **Crews at the same effective wariness merge into one binomial** (spears and bare hands are both
+    `1.0`), so a party whose crews do not differ in dispersion resolves byte-identically to the
+    single-profile retreat. Different runs are summed: the live draw uses each run's own seed
+    (`seed + run x stride`), the distribution is the convolution over body counts
+    (`retreat_outcomes_runs`), and a quantile edge adds means and variances once rather than
+    widening per run - so the curve's `low`/`likely`/`high` come out of the same per-crew binomials
+    the turn samples.
+  - **`HuntingParty::stay_fraction`** (the closed form `hunt_engage_workers` sizes a crew with) is the
+    share-weighted mean of the crews' own `1 - wariness x dispersion`. Exact wherever the room does not
+    bind; where it does the take keeps at least this much.
 - **`injury_damage_per_animal` is per CREW**, because `exposure` is a kit's: the half holding the
   stand-off device takes the stand-off's hazard. `hunt_injuries` gives each crew `stayed × share` of
   the engagement and caps it at that crew's own people, so a **uniformly** exposed party is
@@ -2164,8 +2219,8 @@ in `bin/server.rs`, and restored by `sim_state.rs` (`BandRecord::equipment`, car
     `forage_forecast`, `project_realized_forage` / `project_arrivals_forage`, and the
     `workers_needed` inversion.
 
-  - `dispersion` (the **trap's**, and the spear's explicit neutral) rides the `HuntingParty` the arm
-    builds, so it reaches all three of the retreat's readers at once: the drawn take (`hunt_take`),
+  - `dispersion` (the **trap's**, and the spear's explicit neutral) rides each `HuntCrew` of the
+    `HuntingParty` the arm builds, so it reaches all three of the retreat's readers at once: the drawn take (`hunt_take`),
     the closed-form take (`per_hunter_take_biomass`) and the **crew** (`hunt_engage_workers`, via
     `HuntingParty::stay_fraction` — `fauna.md` → "THE RETREAT PRICES THE CREW").
 

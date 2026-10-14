@@ -476,6 +476,8 @@ fn spawn_party(app: &mut App, home: Entity, at: Entity) -> (Entity, BandId) {
                 kit: core_sim::EquipmentConfig::builtin().default_kit(core_sim::KitJob::Scout),
                 cargo: LocalStore::new(),
                 defection_pull: Scalar::zero(),
+                station_reports: Vec::new(),
+                aim: None,
             },
         ))
         .id();

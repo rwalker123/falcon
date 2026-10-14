@@ -314,6 +314,8 @@ fn spawn_hay_shipment(
                 kit: core_sim::EquipmentConfig::builtin().default_kit(core_sim::KitJob::Hunt),
                 cargo,
                 defection_pull: core_sim::Scalar::zero(),
+                station_reports: Vec::new(),
+                aim: None,
             },
             BandTravel::to(destination_pos),
         ))

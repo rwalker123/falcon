@@ -925,7 +925,7 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >     hunter puts on the ground — `engage_rate × stay` — and never the raw reach, because
 >     **a party that keeps one animal in four needs four times the hands to draw the same stock
 >     down**. `stay` is the party's OWN [`HuntingParty::stay_fraction`] (the quarry's `wariness` folded
->     with the kit's `dispersion`, `equipment.md`), the identical term the take beside it is priced
+>     with each crew's own `dispersion`, share-weighted, `equipment.md`), the identical term the take beside it is priced
 >     with — never the species' bare `1 − wariness` and never the neutral `1.0`, or a sheet can size a
 >     crew at one dispersion beside a take priced at another. The one exemption is the `fight: None`
 >     branch (`fauna::NO_RETREAT_STAGE_STAY`), where the source has no engagement stage to speak of and

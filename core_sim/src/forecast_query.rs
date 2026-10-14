@@ -1928,6 +1928,7 @@ mod tests {
                     morale: scalar_one(),
                     last_food_consumption: 0.0,
                     last_food_need: 0.0,
+                    fed_party_workers: Default::default(),
                     last_food_spoiled: 0.0,
                     last_turn_food_transfers: Default::default(),
                     last_turn_fodder_transfers: Default::default(),
@@ -3077,7 +3078,10 @@ mod tests {
         let wariness =
             crate::fauna::herd_wariness(&herd_of_biomass(AUROCHS, AUROCHS_BODY, FAT_HERD), &fauna);
         let continuous: f32 = party
-            .stayer_outcomes(engagement.engaged, wariness)
+            .stayer_outcomes(
+                crate::fauna::Contact::unclamped(engagement.engaged),
+                wariness,
+            )
             .iter()
             .map(|outcome| {
                 outcome.probability * (damage / quarry.profile.durability).min(outcome.stayed)
@@ -3879,6 +3883,208 @@ mod tests {
             violations.is_empty(),
             "the seeded band must be made of outcomes:\n{}",
             violations.join("\n")
+        );
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Another hunter never lowers the take: each crew retreats at its own dispersion.
+    // -----------------------------------------------------------------------------------------
+
+    /// Wild Fowl: `engage_rate 10`, `wariness 0.65`, `defense 0` - the quarry on which a trap line
+    /// (`dispersion 0`) keeps every animal it reaches and a bare hand keeps 35% of its own.
+    const FOWL: &str = "Wild Fowl";
+    const FOWL_BODY: f32 = 0.13;
+    /// The widest crew the partly-armed sweep fields: past the one trap, every extra hand is bare.
+    const PARTLY_ARMED_SWEEP: u32 = 8;
+    /// A room-bound herd: a full herd held to a floor at 99.5% of its capacity leaves ~36 animals of
+    /// room, so from the fourth hunter on the escapement room - not the reach - binds, and the
+    /// quietest-first fill of that room is what is under test.
+    const FOWL_ROOM_BOUND_BIOMASS: f32 = 940.0;
+    const FOWL_ROOM_BOUND_CAPACITY: f32 = 940.0;
+    const FOWL_ROOM_BOUND_FLOOR: f32 = 0.995;
+    /// The floor the unbound fixtures hunt at.
+    const FOWL_DEFAULT_FLOOR: f32 = 0.5;
+    /// A fat fowl herd whose room never binds at the sweep's crews.
+    const FOWL_FAT_BIOMASS: f32 = 90_000.0;
+    const FOWL_FAT_CAPACITY: f32 = 100_000.0;
+    const TRAPPING_KIT: &str = "trapping";
+    /// Trap units the control band holds - enough to arm every hand of the sweep.
+    const CONTROL_TRAP_UNITS: u32 = 64;
+
+    fn fowl_herd(biomass: f32, capacity: f32) -> Herd {
+        Herd::new(
+            HERD.to_string(),
+            FOWL.to_string(),
+            SizeClass::Small,
+            vec![UVec2::new(1, 1)],
+            biomass,
+            capacity,
+            0.0,
+            0.4,
+            FOWL_BODY,
+        )
+    }
+
+    /// The band's ledger holding `traps` units of traps and one sled.
+    fn trapping_ledger(traps: u32) -> BandEquipment {
+        let mut wear = BandEquipment::default();
+        wear.stock("traps", traps, "plain", None);
+        wear.stock("sled", 1, "plain", None);
+        wear
+    }
+
+    /// `(curve likely, real mean take, its standard error)` per crew `1..=PARTLY_ARMED_SWEEP`, for a
+    /// band holding `traps` trap units against a fowl herd at `biomass` / `capacity`.
+    fn fowl_trapping_rows(
+        traps: u32,
+        biomass: f32,
+        capacity: f32,
+        floor: f32,
+    ) -> Vec<(f32, f32, f32)> {
+        let wear = trapping_ledger(traps);
+        let mut world = test_world();
+        let band = spawn_band(&mut world, FACTION, BAND);
+        world.entity_mut(band).insert(wear.clone());
+        world.insert_resource(HerdRegistry {
+            herds: vec![fowl_herd(biomass, capacity)],
+        });
+        let mut ask = crew_ask(PARTLY_ARMED_SWEEP, floor);
+        ask.kit_id = TRAPPING_KIT.into();
+        let curve = crew_curve(&mut world, &ask);
+        let equipment = world.resource::<EquipmentConfigHandle>().get();
+        let fauna = world.resource::<FaunaConfigHandle>().get();
+        let combat = world.resource::<CombatConfigHandle>().get();
+        let intrinsic = world.resource::<CreaturesConfigHandle>().get().person();
+        let kit = equipment
+            .resolve_kit_for_job(Some(TRAPPING_KIT), KitJob::Hunt)
+            .expect("the trapping kit resolves");
+        (1..=PARTLY_ARMED_SWEEP)
+            .map(|workers| {
+                let coverage = equipment.coverage(&kit, workers as f32, &wear);
+                let party = crate::fauna::PartyResolution {
+                    equipment: &equipment,
+                    coverage: &coverage,
+                    wear: &wear,
+                    intrinsic,
+                    tuning: combat.tuning(),
+                    hunt_injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
+                }
+                .party_against(crate::equipment_config::Quarry::Mass(FOWL_BODY));
+                let mut herd = fowl_herd(biomass, capacity);
+                let mut turns = Vec::with_capacity(SAMPLED_TURNS as usize);
+                for tick in 0..u64::from(SAMPLED_TURNS) {
+                    crate::fauna::regrow_biomass(&mut herd, &fauna);
+                    let seed = crate::fauna::retreat_seed(
+                        crate::HARNESS_MAP_SEED,
+                        tick,
+                        &herd.id,
+                        workers,
+                    );
+                    let killed = crate::systems::hunt_take(
+                        &mut herd,
+                        workers as f32,
+                        floor,
+                        RESIDENT_CARRY_PER_WORKER,
+                        &party,
+                        &fauna,
+                        f32::INFINITY,
+                        HuntDraw::Seeded(seed),
+                    )
+                    .take
+                    .killed as f32;
+                    turns.push(killed);
+                    herd.biomass = biomass;
+                }
+                let mean = turns.iter().sum::<f32>() / turns.len() as f32;
+                let variance = turns.iter().map(|k| (k - mean).powi(2)).sum::<f32>()
+                    / (turns.len() - 1) as f32;
+                (
+                    curve[workers as usize - 1].animals_likely,
+                    mean,
+                    (variance / turns.len() as f32).sqrt(),
+                )
+            })
+            .collect()
+    }
+
+    /// **ADDING A HUNTER - ARMED OR BARE - NEVER LOWERS THE TAKE**, on the curve AND on the real
+    /// seeded take, and the curve still reproduces that take.
+    ///
+    /// The playtest: a Wild Fowl herd, one Trapping kit held, read `10` a turn for one hunter and
+    /// `6.95` for two. The retreat used one party-wide dispersion (the MAX across the crews), so the
+    /// second, bare hunter made the trapper loud too. Each crew now retreats at its own dispersion.
+    /// Three fixtures: one trap among bare hands (the report), a control armed throughout, and a
+    /// room-bound herd where the escapement room - not the reach - decides, which is what the
+    /// quietest-first fill of the room protects.
+    #[test]
+    fn another_hunter_never_lowers_the_take() {
+        for (name, traps, biomass, capacity, floor) in [
+            (
+                "one trap",
+                1,
+                FOWL_FAT_BIOMASS,
+                FOWL_FAT_CAPACITY,
+                FOWL_DEFAULT_FLOOR,
+            ),
+            (
+                "fully armed",
+                CONTROL_TRAP_UNITS,
+                FOWL_FAT_BIOMASS,
+                FOWL_FAT_CAPACITY,
+                FOWL_DEFAULT_FLOOR,
+            ),
+            (
+                "one trap, room-bound",
+                1,
+                FOWL_ROOM_BOUND_BIOMASS,
+                FOWL_ROOM_BOUND_CAPACITY,
+                FOWL_ROOM_BOUND_FLOOR,
+            ),
+        ] {
+            let rows = fowl_trapping_rows(traps, biomass, capacity, floor);
+            for (index, window) in rows.windows(2).enumerate() {
+                let (before, after) = (window[0], window[1]);
+                assert!(
+                    after.0 + f32::EPSILON >= before.0,
+                    "{name}: the curve fell from crew {} ({}) to crew {} ({})",
+                    index + 1,
+                    before.0,
+                    index + 2,
+                    after.0
+                );
+                let slack = SAMPLED_STANDARD_ERRORS * (before.2 + after.2);
+                assert!(
+                    after.1 + slack >= before.1,
+                    "{name}: the real take fell from crew {} ({}) to crew {} ({})",
+                    index + 1,
+                    before.1,
+                    index + 2,
+                    after.1
+                );
+            }
+            for (index, (curve, real, error)) in rows.iter().enumerate() {
+                assert!(
+                    (curve - real).abs() <= SAMPLED_STANDARD_ERRORS * error + 0.05,
+                    "{name}: crew {} - the curve reads {curve} and the real take pays {real} \
+                     (+/- {error})",
+                    index + 1
+                );
+            }
+            // Liveness: the fixture must actually take something, or `0 >= 0` would pass.
+            assert!(rows[0].0 > 0.0, "{name}: a crew of one takes nothing");
+        }
+    }
+
+    /// The sheet's own report, pinned: a second, bare hunter beside the one trapper takes at least
+    /// what the trapper took alone.
+    #[test]
+    fn a_bare_hunter_beside_a_trapper_adds_to_the_take() {
+        let rows = fowl_trapping_rows(1, FOWL_FAT_BIOMASS, FOWL_FAT_CAPACITY, FOWL_DEFAULT_FLOOR);
+        assert!(
+            rows[1].0 > rows[0].0,
+            "crew 2 ({}) must take more than the trapper alone ({})",
+            rows[1].0,
+            rows[0].0
         );
     }
 }

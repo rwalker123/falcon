@@ -326,7 +326,14 @@ One mission, one glyph, on all three surfaces it appears on — the map marker, 
 (`HudFormat.PANEL_EXPEDITION_*_GLYPH`) and the band verb that launches it
 (`HudComposeVocab.BAND_VERBS`) — so a party's mark means the same thing at every scale.
 
-**THE MAP MARKER DRAWS ART, THE GLYPH IS ITS FALLBACK.** Scout, deny and trade resolve bundled PNGs
+**A STATIONED PARTY IS THE FIFTH, AND ITS ART IS `expeditions/station.png`** (issue #774):
+`MapView.EXPEDITION_STATION_MISSION` / `EXPEDITION_STATION_GLYPH` (⚓) key the lookup, and
+`ExpeditionSprites.for_mission("station")` resolves the PNG; the glyph is the fallback on a null load.
+`_draw_expedition_body` keys the art lookup on the mission — an unrecognised mission otherwise falls to
+the scout FLAG and sprite. `map_preview`'s `map_expedition_art` frame stages one beside the scout, deny
+and trade parties, and asserts the station art resolves and differs from the scout's.
+
+**THE MAP MARKER DRAWS ART, THE GLYPH IS ITS FALLBACK.** Scout, deny, trade and station resolve bundled PNGs
 through `ExpeditionSprites.for_mission` (`assets/icons/expeditions/` — the footprints, the animal
 skull and the cloth bundle, the band verb's `hud/` subjects redrawn in the map-marker house style),
 drawn by `MapView._draw_marker_sprite` centred in the same dark disc and faction ring, in a box of
@@ -415,3 +422,31 @@ new (its travel line covers it).
   ring" note: that rule was about a selection ring diverging from the hex outline, and this ring is a
   standing state, not a selection.
 - Frame and claims: `map_follow_herd` (`harness-map-probes.md`).
+
+## REMEMBERED BANDS — a tied people you cannot currently see keeps a ghost on the map
+
+The Peoples tab lists a band at "Last seen at (x, y), turn N"; the map used to show nothing there.
+`MapView.remembered_bands()` is the one rule (the draw and the hover tooltip both read it): one row per
+**subject band** in the viewer's `connections` ties (`MapView.set_connections`, pushed by `Main` beside
+`update_connections`) that has **no band marker drawn this frame** (`units`, fog-gated by
+`_unit_hidden_by_fog` — a foreign band on a fogged tile counts as not drawn, so its ghost shows). Of
+several ties to one subject the **latest `last_seen_turn`** places it. **A subject the viewer has people
+stationed with gets none either**: one of the viewer's own expeditions with mission `station`, phase
+`stationed` and `expedition_destination_band` = that subject suppresses it, because the party's own
+marker already shows where the host is, live (an outbound or returning station party does not suppress
+it — the host is still only remembered). **The ghost fades by the AGE OF THE NEWS, never by tie
+strength**: `news_age` = `HudConnectionsVocab.age_of(last_seen_turn, _current_turn)` (`MapView.set_current_turn`,
+pushed by `Main` from the snapshot `turn`, which runs one ahead of every contact stamp — see
+`band-city-panel.md` → the Peoples tab — so a band seen in the turn that just resolved is age 0), floored at 0, and
+`BandMarkerRenderer.draw_remembered_bands` draws the nomadic stage sprite (`REMEMBERED_STAGE_ID` — the
+real stage is unknown) desaturated (`REMEMBERED_GREY_AMOUNT`, a cached `ImageTexture` per stage) at
+`lerp(REMEMBERED_MAX_ALPHA 0.7, REMEMBERED_MIN_ALPHA 0.25, clamp(news_age / REMEMBERED_FADE_TURNS, 0, 1))`
+(`REMEMBERED_FADE_TURNS` = 30, the playtest lever; a plain `MapView` const because the client has no
+display-tuning surface). Strength is how well you know them, not how fresh the news is, so it does not
+touch the marker. Called right after `draw_primary_bands`, in the live `_draw`, so above the fog tint
+(a terrain tint); no nameplate, no decorations. MAX stays under 1 so a ghost never reads "live"; MIN
+stays above 0 so old news still shows faintly — the ghost leaves only when the edge drops off the wire.
+`_tile_info_at` stamps `remembered_bands` (the tie rows on that hex); `Hud.show_tooltip` adds
+`ConnectionsRoster.remembered_hover_line` (`HudConnectionsVocab.REMEMBERED_HOVER_FORMAT`, name via
+`subject_label`): `Goosefen — last seen turn 21, may have moved`. Not clickable. Frame:
+`map_remembered_bands.png` (`harness-map-probes.md`).

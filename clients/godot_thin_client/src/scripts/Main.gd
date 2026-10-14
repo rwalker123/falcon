@@ -397,6 +397,8 @@ func _ready() -> void:
             hud.connect("send_denial_raid_requested", Callable(self, "_on_hud_send_denial_raid"))
         if hud.has_signal("send_trade_expedition_requested") and not hud.is_connected("send_trade_expedition_requested", Callable(self, "_on_hud_send_trade_expedition")):
             hud.connect("send_trade_expedition_requested", Callable(self, "_on_hud_send_trade_expedition"))
+        if hud.has_signal("station_expedition_requested") and not hud.is_connected("station_expedition_requested", Callable(self, "_on_hud_station_expedition")):
+            hud.connect("station_expedition_requested", Callable(self, "_on_hud_station_expedition"))
         if hud.has_signal("recall_expedition_requested") and not hud.is_connected("recall_expedition_requested", Callable(self, "_on_hud_recall_expedition")):
             hud.connect("recall_expedition_requested", Callable(self, "_on_hud_recall_expedition"))
         if hud.has_signal("split_band_requested") and not hud.is_connected("split_band_requested", Callable(self, "_on_hud_split_band")):
@@ -950,6 +952,8 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     # is not expected to skip; the wins are the quiet sections — `intensification_knowledge`,
     # `discovered_sites`, `faction_inventory`, `food_modules`, `sedentarization`.
     _hud_invoke("update_overlay", [snapshot.get("turn", 0), metrics])
+    if map_view != null and map_view.has_method("set_current_turn"):
+        map_view.set_current_turn(int(snapshot.get("turn", 0)))
     if snapshot.has("server_build"):
         _hud_invoke("update_build_info", [String(snapshot["server_build"])])
     if snapshot.has("sedentarization") and SnapshotSections.changed(snapshot, "sedentarization"):
@@ -1027,6 +1031,9 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     # whole section: absence means unchanged, so a quiet turn leaves the ties standing.
     if snapshot.has("connections") and SnapshotSections.changed(snapshot, "connections"):
         _hud_invoke("update_connections", [snapshot["connections"]])
+        # …and the map, which draws a ghost marker for every tied band it cannot currently see.
+        if map_view != null and map_view.has_method("set_connections"):
+            map_view.set_connections(snapshot["connections"])
     if snapshot.has("kits") and SnapshotSections.changed(snapshot, "kits"):
         # The KIT ROSTER + the FIVE job defaults, forwarded as ONE call: the compose sheets' pickers
         # need the list and the "what does the verb take when I name none" answer together, and a
@@ -1577,6 +1584,28 @@ static func format_send_denial_raid(payload: Dictionary) -> Dictionary:
         # The receipt states the whole order, because the whole order is two things: a herd and a
         # party. There is no third clause to quote and none to omit.
         "message": "Send denial raid (%d) against %s." % [party_workers, fauna_label],
+    }
+
+## `station_expedition <faction_id> <band_id> <party_workers> <host_band_id>` (issue #774).
+##
+## A stationed party posts some of a band's people at a band it holds a LIVE tie with. The grammar
+## has an optional `kit <id>` tail, which this client never sends: the server defaults the kit, so
+## there is nothing for the player to choose. Its own builder because its own command (the
+## `format_send_trade_expedition` precedent) — it names a HOST band and nothing else.
+static func format_station_expedition(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    var host_band_id := int(payload.get("host_band_id", HudConst.NO_BAND_ID))
+    var party_workers := int(payload.get("party_workers", 0))
+    if band_id == HudConst.NO_BAND_ID or host_band_id == HudConst.NO_BAND_ID or party_workers <= 0:
+        return {}
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
+    var host_label := String(payload.get("host_label", "")).strip_edges()
+    var message := "Station %d people with a tied band." % party_workers
+    if host_label != "":
+        message = "Station %d people with %s." % [party_workers, host_label]
+    return {
+        "line": "station_expedition %d %d %d %d" % [faction, band_id, party_workers, host_band_id],
+        "message": message,
     }
 
 ## `send_trade_expedition <faction_id> <band_id> <party_workers> <destination_band_id>`
@@ -2394,6 +2423,11 @@ func _on_hud_send_denial_raid(payload: Dictionary) -> void:
 ## — the manifest tail no other party verb has; see `format_send_trade_expedition`.
 func _on_hud_send_trade_expedition(payload: Dictionary) -> void:
     _send_formatted_command(format_send_trade_expedition(payload))
+
+## The player posted people at a tied band (issue #774). Its own handler because its own command —
+## see `format_station_expedition`.
+func _on_hud_station_expedition(payload: Dictionary) -> void:
+    _send_formatted_command(format_station_expedition(payload))
 
 ## Extend a built pen by one fenced ring (Grazing 2d-γ). The server works the ring off over ~25
 ## turns (rejecting at max radius / unowned / Herding-unknown with a feed message).

@@ -1708,10 +1708,11 @@ const MAX_USEFUL_NOTE_GEAR_FORMAT := "max %d %s useful here — the rest have no
 # (see `source_worker_cap_state`). Worded from the row's point of view ("fully staffed") rather than
 # the compose stepper's ("max N useful here"), because the player is looking at a running assignment.
 const MAX_USEFUL_CAPPED_TOOLTIP := "Fully staffed — this source can use at most %d %s; more would idle here."
-# The OTHER binding cap: idle workers run out BELOW the usefulness ceiling, so the `+` caps at labor,
-# not usefulness. Named in the "N of M" spirit (N = the labor cap you're at, M = the useful ceiling),
-# so a capped `+` reads as "fixable by reassigning labor" rather than as a silent bug.
-const LABOR_BOUND_NOTE_FORMAT := "%d of %d useful — free up idle workers to send more"
+# The OTHER binding cap: idle workers run out BELOW the usefulness ceiling, so the `+` caps at the band's
+# hands, not usefulness. The sentence names only the band's limit (the one arg: the crew pool) and is
+# shown ONLY once the composed crew is at it — the useful figure is deliberately not quoted: past the
+# crew curve's asked rows it was a rough estimate that disagreed with the "clear it now" pill.
+const LABOR_BOUND_NOTE_FORMAT := "%d is all this band can send — free up workers to send more"
 # RETIRED — **`BUILD_BOUND_NOTE_FORMAT`**, the same cap worded to name the sheet's OWN builders
 # stepper (`docs/plan_standing_upkeep.md` §2.5). It existed because the take and the build shared one
 # source pool, so the nearer lever for freeing a hand was sometimes two rows down on the same sheet.
@@ -2358,6 +2359,33 @@ static func outbound_travel_turns(band: Dictionary, herd: Dictionary,
         grid_width: int, wrap_horizontal: bool) -> int:
     return int(ceil(float(round_trip_travel_turns(band, herd, grid_width, wrap_horizontal))
         / float(TRAVEL_LEGS_PER_ROUND_TRIP)))
+
+## The band dict key carrying the band's messenger reach in tiles (a global config echoed on every
+## cohort row by the native decoder). A row without it reads 0 reach.
+const COMM_RANGE_KEY := "comm_range_tiles"
+
+## Whole wrap-aware hex distance from the band's live tile to a station host's tile, with no apron or
+## road discount; `HEX_DISTANCE_UNKNOWN` when either tile is unknown.
+static func station_host_distance(band: Dictionary, host_x: int, host_y: int,
+        grid_width: int, wrap_horizontal: bool) -> int:
+    var origin := band_tile(band)
+    return hex_distance_wrapped(origin.x, origin.y, host_x, host_y, grid_width, wrap_horizontal)
+
+## Whether a host at `distance` tiles is within the band's messenger reach (`comm_range_tiles`).
+static func station_host_in_reach(band: Dictionary, distance: int) -> bool:
+    return distance >= 0 and distance <= int(band.get(COMM_RANGE_KEY, 0))
+
+## **HOW MANY TURNS LATE A STATIONED PARTY'S NEWS REACHES HOME** — the sim's `station_report_delay`,
+## mirrored exactly: a host within `comm_range_tiles` reports the SAME turn (0), otherwise
+## `ceil(distance / band_move_tiles_per_turn)` over the whole wrap-aware hex distance. `0` too when
+## the move rate is not published or a tile is unknown (the sheet tells those apart by the distance).
+static func station_news_delay_turns(band: Dictionary, host_x: int, host_y: int,
+        grid_width: int, wrap_horizontal: bool) -> int:
+    var distance := station_host_distance(band, host_x, host_y, grid_width, wrap_horizontal)
+    var move_rate := float(band.get("band_move_tiles_per_turn", 0.0))
+    if distance < 0 or station_host_in_reach(band, distance) or move_rate <= 0.0:
+        return 0
+    return int(ceil(float(distance) / move_rate))
 
 ## **THE STOCK STANDING ABOVE `floor`, in biomass** — `max(0, B − floor·K)`, the client half of the
 ## one expression both take paths pay (`fauna::hunt_escapement_ceiling` /
@@ -3030,7 +3058,7 @@ static func crew_take_plateau(per_crew: Array) -> int:
 ##
 ## The question is asked for crews `1..the band's own pool` (`DrawerComposeController._crew_take_view`),
 ## because that is every crew the stepper beside it can reach. But two readings on this sheet are about
-## crews the band CANNOT field: *"26 of 47 useful — free up idle workers to send more"* names the
+## crews the band CANNOT field: the retired *"26 of 47 useful — free up idle workers to send more"* named the
 ## demand-side ceiling as the thing to work toward, and the *clear it now* pill on a Wild Fowl herd
 ## named 47 hands to a band holding 26. Truncating those at the pool does not make them honest, it
 ## deletes them.

@@ -598,6 +598,10 @@ func expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context =
     # Provisions row beneath the raid branches would restate a pack this party states properly.
     if mission == HudExpeditionVocab.EXPEDITION_MISSION_TRADE:
         return _shipment_summary_lines(unit_data, context, lines)
+    # **A STATIONED PARTY STATES NO FOOD AND NO PACK** (issue #774): the home band feeds it, so a
+    # `Provisions:` row would print a 999-turn runway for a larder the party does not have.
+    if mission == HudExpeditionVocab.EXPEDITION_MISSION_STATION:
+        return _station_summary_lines(unit_data, lines)
     if is_raid:
         # The migratory herd it follows (species label from the fauna_id, falling back to the id).
         # A raid's target MIGRATES and is often NOT the herd on the tile the player is looking at, so
@@ -656,6 +660,22 @@ func expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context =
         # over a kill banks its materials exactly as a raid does, and the mission it was sent on is no
         # reason to hide what is in its pack.
         lines.append("Provisions: %d  (%s)%s" % [carried, DetailFormat.food_turns_text(turns), pack])
+    var pos_array: Array = Array(unit_data.get("pos", []))
+    if pos_array.size() == 2:
+        lines.append("Position: (%d, %d)" % [int(pos_array[0]), int(pos_array[1])])
+    return lines
+
+## **A STATIONED PARTY'S ROWS** (issue #774) — `Mission` (already appended by the caller), the host it
+## is posted with, the phase and where it stands. No `Provisions` / `Carried` row: it eats from its
+## home band's food and carries nothing. The host is named through the roster's label path, never the
+## `BandId`; a host nothing can name renders no row.
+func _station_summary_lines(unit_data: Dictionary, lines: Array[String]) -> Array[String]:
+    var host := HudFormat.expedition_destination_label(unit_data, _band_labor.host_label_for_id)
+    if host != "":
+        lines.append("%s: %s" % [HudExpeditionVocab.STATION_HOST_ROW, host])
+    var phase := String(unit_data.get("expedition_phase", "")).strip_edges()
+    if phase != "":
+        lines.append("Phase: %s" % HudFormat.expedition_phase_label(phase))
     var pos_array: Array = Array(unit_data.get("pos", []))
     if pos_array.size() == 2:
         lines.append("Position: (%d, %d)" % [int(pos_array[0]), int(pos_array[1])])
