@@ -260,7 +260,7 @@ fn set_live_herd_bill(app: &mut App, bill: f32) {
     let (held, live) = {
         let herd = &app.world.resource::<HerdRegistry>().herds[0];
         (
-            herd.standing().held,
+            herd.standing().held_key(),
             core_sim::herd_upkeep_demand(
                 &core_sim::next_turns_quarry(herd, &fauna),
                 &fauna,
@@ -324,7 +324,7 @@ fn a_kept_herd_inside_the_apron_is_quoted_what_its_crew_takes_after_keeping() {
             CREW as f32,
         );
         let keeping = core_sim::CrewKeeping {
-            rung: herd.standing().held,
+            rung: herd.standing().held_key(),
             demand: PROBE_BILL,
         };
         PROBE_BILL
@@ -421,7 +421,7 @@ fn a_far_kept_herds_caravan_forecast_is_what_its_party_lands_after_keeping() {
         let stocked = EquipmentConfig::for_a_stocked_fixture();
         let wear = BandEquipment::start_stocked_for(&stocked, CREW as f32);
         let keeping = core_sim::CrewKeeping {
-            rung: herd.standing().held,
+            rung: herd.standing().held_key(),
             demand: PROBE_BILL,
         };
         KEEPING_HANDS * PROBE_BILL / core_sim::crew_keep_hands(Some(keeping), &stocked, &wear, CREW)

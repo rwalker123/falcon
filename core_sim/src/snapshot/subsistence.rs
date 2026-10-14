@@ -1305,6 +1305,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                         graze,
                         &prey_index,
                         fauna,
+                        ladder,
                         width,
                         height,
                         wrap_horizontal,
@@ -1977,6 +1978,7 @@ pub(crate) fn snapshot_forage_patches(
                 tile_capacity,
                 patch,
                 forage,
+                ladder,
             ),
             // **WHAT THE PATCH'S OWN CREW SPENT KEEPING IT THIS TURN** (`docs/plan_site_crews.md`
             // §2.1) — stamped by the labour pass beside `upkeep_supplied`, reported not re-derived.

@@ -217,7 +217,9 @@ fn deposit_row(
                 at.set_ladder_position(
                     position,
                     ladder,
-                    pace.map_or(source.standing().held.branch(), |pace| pace.rung.branch()),
+                    pace.map_or(source.standing().held_key().branch(), |pace| {
+                        pace.rung.branch()
+                    }),
                 );
                 deposit_keeping_basis(&at, measure, ladder)
             },

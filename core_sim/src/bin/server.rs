@@ -3903,7 +3903,7 @@ fn seed_source_yield(
                 .get::<BandEquipment>(band)
                 .cloned()
                 .unwrap_or_default();
-            let held_rung = working.standing().held;
+            let held_rung = working.standing().held_key();
             let held_key = held_rung.wire_key();
             let Some(carry) = core_sim::extraction::DepositCarry::of(
                 &labor,
@@ -4410,7 +4410,7 @@ fn validate_deposit_verb(
         ));
     };
     let destination = RungKey::built_by(improvement);
-    if destination.branch() != deposit.branch {
+    if destination.branch().to_id() != deposit.branch {
         return Err(format!(
             "'{}' is not how you work {material} — that is the other ladder.",
             improvement.as_str()

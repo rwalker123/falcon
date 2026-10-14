@@ -77,10 +77,11 @@ use crate::{
     extraction_config::{ExtractionConfig, NEVER_RENEWS, NO_DEPOSIT},
     intensification::{
         build_fraction, interpolate, neglect_grace_remaining, rung_span, rung_work_done, BuildGate,
-        BuildTurns, LadderConfig, RungBranch, RungDef, RungExtractionPayoff, RungKey, RungStanding,
+        BuildTurns, LadderConfig, RungDef, RungExtractionPayoff, RungKey, RungStanding, SourceKind,
         NEGLECT_NONE, NO_CREW_ON_THIS_ACTIVITY, NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT,
         RUNG_COST_UNSCALED, RUNG_UNSTARTED,
     },
+    ladder_ids::BranchId,
 };
 
 /// **WOODCRAFT** — what gathering deadfall teaches, and the gate on `fell`. Discovery ids 2011 (the
@@ -362,13 +363,18 @@ impl DepositSource {
     /// `branch` is the deposit's ([`crate::extraction_config::DepositDef::branch`]), because the
     /// free floor differs by ladder
     /// and only the config knows which one this material is worked by.
-    pub fn opening(tile: UVec2, material: &str, capacity: f32, branch: RungBranch) -> Self {
+    pub fn opening(
+        tile: UVec2,
+        material: &str,
+        capacity: f32,
+        branch: impl Into<BranchId>,
+    ) -> Self {
         Self {
             tile,
             material: material.to_string(),
             stock: capacity.max(DEPOSIT_EMPTY),
             ladder_position: RUNG_UNSTARTED,
-            standing: RungStanding::unstarted(branch),
+            standing: RungStanding::unstarted(branch.into()),
             upkeep_demanded: None,
             upkeep_supplied: NO_UPKEEP_DEMAND,
             upkeep_hands: NO_HANDS_ON_THE_DEPOSIT,
@@ -420,7 +426,7 @@ impl DepositSource {
 
     /// **THE RUNG THIS WORKING HOLDS IN FULL** — what a lesson is read off and what a readout names.
     pub fn rung(&self) -> RungKey {
-        self.standing.held
+        self.standing.held_key()
     }
 
     /// **THE ONE WRITER OF THE POSITION**, which re-stamps the standing with it.
@@ -428,26 +434,28 @@ impl DepositSource {
         &mut self,
         position: f32,
         ladder: &LadderConfig,
-        branch: RungBranch,
+        branch: impl Into<BranchId>,
     ) {
-        let was = self.standing.held;
+        let was = self.standing.held_key();
         self.ladder_position = position.max(RUNG_UNSTARTED);
         self.standing = deposit_standing(self.ladder_position, ladder, branch);
         // **A FINISHED RUNG STARTS WITH ITS FULL GRACE** ([`crate::intensification::rung_rose`]).
-        if crate::intensification::rung_rose(was, self.standing.held) {
+        if crate::intensification::rung_rose(was, self.standing.held_key()) {
             self.neglect_turns = crate::intensification::NEGLECT_NONE;
-            crate::intensification::raise_peak(&mut self.peak_rung, self.standing.held);
+            crate::intensification::raise_peak(&mut self.peak_rung, self.standing.held_key());
         }
     }
 }
 
 /// **WHERE A POSITION PUTS A WORKING ON ITS BRANCH** — [`RungStanding::at`] at the deposit branches'
 /// flat price ([`DEPOSIT_RUNG_PRICE`]).
-pub fn deposit_standing(position: f32, ladder: &LadderConfig, branch: RungBranch) -> RungStanding {
-    RungStanding::at(ladder, branch, position, |rung| {
-        ladder
-            .rung(rung)
-            .build
+pub fn deposit_standing(
+    position: f32,
+    ladder: &LadderConfig,
+    branch: impl Into<BranchId>,
+) -> RungStanding {
+    RungStanding::at(ladder, branch.into(), position, |rung| {
+        rung.build
             .as_ref()
             .map(|build| build.work_cost * DEPOSIT_RUNG_PRICE)
     })
@@ -456,26 +464,14 @@ pub fn deposit_standing(position: f32, ladder: &LadderConfig, branch: RungBranch
 /// **THE BASE AND WIDTH OF ONE DEPOSIT RUNG**, in cumulative work units — [`deposit_standing`]'s
 /// twin, for a caller that needs to know where a rung's leg starts.
 pub fn deposit_rung_span(rung: RungKey, ladder: &LadderConfig) -> (f32, f32) {
-    rung_span(rung, &|key: RungKey| {
-        ladder
-            .rung(key)
-            .build
+    rung_span(ladder, ladder.rung(rung), &|def: &RungDef| {
+        def.build
             .as_ref()
             .map(|build| build.work_cost * DEPOSIT_RUNG_PRICE)
     })
 }
 
-/// **THE TWO LADDERS A DEPOSIT IS WORKED BY, IN THE ORDER A READER MEETS THEM** — wood first, then
-/// stone and, later, every metal.
-///
-/// It is named rather than written as a `matches!` at each call site because the *order* is part of
-/// what [`deposit_rungs_in_climb_order`] publishes: a catalog whose branches came out of a `HashSet`
-/// walk would reorder itself between runs, and a reader grouping the rows would find them
-/// interleaved differently every world. The day the minerals arc adds a third deposit ladder, this
-/// is the one list that has to grow — and every sweep over it follows without moving.
-pub const DEPOSIT_BRANCHES: [RungBranch; 2] = [RungBranch::Forestry, RungBranch::Extraction];
-
-/// **EVERY RUNG THE TWO DEPOSIT BRANCHES DECLARE, GROUPED BY BRANCH AND CLIMBING WITHIN IT** — the
+/// **EVERY RUNG THE DEPOSIT BRANCHES DECLARE, GROUPED BY BRANCH AND CLIMBING WITHIN IT** — the
 /// branches' catalog, read straight off the config records. `routes::route_rungs_in_climb_order` is
 /// the precedent, one branch wider.
 ///
@@ -486,17 +482,12 @@ pub const DEPOSIT_BRANCHES: [RungBranch; 2] = [RungBranch::Forestry, RungBranch:
 /// reserved above `extraction:quarry` on this same branch.
 ///
 /// Sorted by the record's own `order` within each branch, which the ladder validates as a dense
-/// climb from `1`; the branches themselves come in [`DEPOSIT_BRANCHES`] order.
+/// climb from `1`; the branches themselves come in the config's own order
+/// ([`LadderConfig::branches_of`]) — wood first, then stone, because that is the order the file lists them.
 pub fn deposit_rungs_in_climb_order(ladder: &LadderConfig) -> Vec<&RungDef> {
     let mut rungs: Vec<&RungDef> = Vec::new();
-    for branch in DEPOSIT_BRANCHES {
-        let mut on_this_branch: Vec<&RungDef> = ladder
-            .rungs
-            .iter()
-            .filter(|rung| rung.branch == branch)
-            .collect();
-        on_this_branch.sort_by_key(|rung| rung.order);
-        rungs.append(&mut on_this_branch);
+    for branch in ladder.branches_of(SourceKind::Deposit) {
+        rungs.append(&mut ladder.rungs_of(branch));
     }
     rungs
 }
@@ -583,7 +574,7 @@ pub fn tile_deposit_characteristics(
 
 /// **THE LADDER THIS MATERIAL IS WORKED BY** — `forestry` for wood, `extraction` for stone and every
 /// metal after it. `None` for a material no deposit yields.
-pub fn deposit_branch(config: &ExtractionConfig, material: &str) -> Option<RungBranch> {
+pub fn deposit_branch(config: &ExtractionConfig, material: &str) -> Option<BranchId> {
     config.deposit(material).map(|deposit| deposit.branch)
 }
 
@@ -895,7 +886,7 @@ pub fn deposit_useful_take_hands(
         floor,
     );
     let hand = equipment.one_equipped_hand(kit, band_kit);
-    let held = working.standing().held;
+    let held = working.standing().held_key();
     let tools = equipment
         .deposit_gear(&hand, band_kit, held.branch(), Some(&held.wire_key()))
         .take;
@@ -1389,9 +1380,9 @@ pub fn deposit_keeping_basis(source: &DepositSource, measure: f32, ladder: &Ladd
 /// the same reason: the bill, the grace and the bleed must not read different rungs.
 pub fn deposit_at_risk_rung(standing: &RungStanding) -> RungKey {
     standing
-        .raising
+        .raising_key()
         .filter(|_| standing.banked > crate::intensification::NO_RUNG_WORK_BANKED)
-        .unwrap_or(standing.held)
+        .unwrap_or(standing.held_key())
 }
 
 /// **WHAT THIS WORKING'S METER WILL LOSE ON THE NEXT DECAY PASS**, in work units — the term a build
@@ -2008,7 +1999,7 @@ pub fn advance_deposits(
             source.neglect_turns = NEGLECT_NONE;
         }
         // ## 2 — the bleed.
-        let branch = source.standing.held.branch();
+        let branch = source.standing.held_key().branch();
         let at_risk = deposit_at_risk_rung(&source.standing);
         let decay = ladder
             .rung(at_risk)

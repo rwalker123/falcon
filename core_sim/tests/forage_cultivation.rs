@@ -1457,7 +1457,7 @@ fn a_kept_patchs_next_turn_take_is_quoted_on_the_hands_its_keeping_leaves() {
             .patch(coord)
             .expect("the seated patch")
             .standing()
-            .held;
+            .held_key();
         // The rate one keeping hand works at, read off the seam: a bill of `KEEPING_HANDS` hands.
         let rate = PROBE_BILL
             / core_sim::crew_keep_hands(

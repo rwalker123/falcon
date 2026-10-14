@@ -70,6 +70,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::config_load::{load_config_from_env, ConfigLoadError};
+use crate::equipment_config::KitJob;
+use crate::ladder_ids::{BranchId, RungId, VerbId};
 use crate::{
     components::Improvement,
     fauna::{FODDERING_DISCOVERY_ID, HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID},
@@ -1828,6 +1830,83 @@ impl RungKey {
     }
 }
 
+// **THE BRIDGE BETWEEN THE CODED VIEW AND THE CONFIG'S IDENTITIES.** [`RungKey`] / [`RungBranch`] /
+// [`Improvement`] are the enums the engine names rungs, branches and verbs with today; [`RungId`] /
+// [`BranchId`] / [`VerbId`] are what the config names them with. Until the enums are retired the two
+// are the same fact in two spellings, and these are the only conversions between them — each one a
+// total map in one direction and a lookup in the other, so neither can drift without the pins in
+// `ladder_ids_bridge_tests` failing.
+
+/// **EVERY CODED RUNG'S ID**, built once, in [`RungKey::ALL`]'s order. A table rather than a
+/// per-call `format!` + intern because the standing resolves a rung on the engine's hottest paths.
+fn coded_rung_ids() -> &'static [RungId; RungKey::ALL.len()] {
+    static IDS: std::sync::OnceLock<[RungId; RungKey::ALL.len()]> = std::sync::OnceLock::new();
+    IDS.get_or_init(|| RungKey::ALL.map(|key| RungId::new(key.branch().to_id(), key.id())))
+}
+
+/// **THE CODED VIEW OF A BRANCH THE WALK STILL NEEDS** — the ladder walk follows the coded climb
+/// until it reads the config's `order` directly, so a branch no code names cannot be walked yet.
+fn coded_branch(branch: BranchId) -> RungBranch {
+    branch.to_branch().unwrap_or_else(|| {
+        panic!(
+            "branch '{}' is declared by config but no code names it, and the standing walk still \
+             follows the coded climb",
+            branch.as_str()
+        )
+    })
+}
+
+impl RungBranch {
+    /// This branch's config identity.
+    pub fn to_id(self) -> BranchId {
+        BranchId::new(self.as_str())
+    }
+}
+
+impl BranchId {
+    /// The coded view of this branch, or `None` for a branch the config added that no code names.
+    pub fn to_branch(self) -> Option<RungBranch> {
+        ALL_BRANCHES
+            .into_iter()
+            .find(|branch| branch.as_str() == self.as_str())
+    }
+}
+
+impl RungKey {
+    /// **THIS RUNG'S CONFIG IDENTITY** — `plant:tended` as a [`RungId`].
+    pub fn to_id(self) -> RungId {
+        let index = RungKey::ALL
+            .iter()
+            .position(|key| *key == self)
+            .expect("RungKey::ALL lists every rung");
+        coded_rung_ids()[index]
+    }
+}
+
+impl RungId {
+    /// **THE CODED VIEW OF THIS RUNG**, or `None` for a rung the config added that no code names.
+    pub fn to_key(self) -> Option<RungKey> {
+        coded_rung_ids()
+            .iter()
+            .position(|id| *id == self)
+            .map(|index| RungKey::ALL[index])
+    }
+}
+
+impl Improvement {
+    /// This verb's config identity.
+    pub fn verb_id(self) -> VerbId {
+        VerbId::new(self.as_str())
+    }
+}
+
+impl VerbId {
+    /// The coded view of this verb, or `None` for a verb the config added that no code names.
+    pub fn to_improvement(self) -> Option<Improvement> {
+        Improvement::from_str(self.as_str()).ok()
+    }
+}
+
 /// **NO FRACTION OF A RUNG IN FLIGHT IS CREDITED** — [`RungStanding::credit`]'s neutral, and it means
 /// two things that are the same thing: a standing that is raising nothing (the source stands at the
 /// top of its branch) has no step to be part-way up, and an [`RungPartialCredit::OnCompletion`] rung
@@ -1845,12 +1924,19 @@ pub const NO_RUNG_CREDIT: f32 = 0.0;
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct RungStanding {
     /// **The highest rung whose meter is FULL** — what the source is entitled to in full. Never
-    /// `None`: a position of zero already holds its branch's [`RungBranch::root_rung`], which costs
-    /// nothing to reach.
-    pub held: RungKey,
+    /// absent: a position of zero already holds its branch's order-1 rung, which costs nothing to
+    /// reach. A config identity, so a branch the code has never heard of has a standing too.
+    pub held: RungId,
+    /// **THE HELD RUNG'S `order`** on its branch, stamped so "is this source at or above rung N" is a
+    /// comparison and not a lookup — a standing is `Copy` and read on paths that hold no config.
+    pub held_order: u8,
+    /// **WHAT A SOURCE HOLDING THIS RUNG *IS*** — the held rung's [`RungTrait`]s, stamped from its
+    /// config record. `is_cultivated` / `is_field` / `is_domesticated` / `is_corralled` read this and
+    /// never a rung's name.
+    pub traits: RungTraits,
     /// **The rung currently being raised**, if any. `None` at the top of a branch — there is nothing
     /// left to climb, which is the honest answer rather than a rung quoted out of the other web.
-    pub raising: Option<RungKey>,
+    pub raising: Option<RungId>,
     /// **How far into [`Self::raising`]**, `0.0..=1.0` — and a full rung is never reported here:
     /// the walk moves it into [`Self::held`] and starts the next one at [`NO_RUNG_CREDIT`], which
     /// is what makes *"the rung below is at 100%"* a statement about `held` rather than a float
@@ -1884,99 +1970,177 @@ pub struct RungStanding {
 pub const NO_RUNG_WORK_BANKED: f32 = 0.0;
 
 impl RungStanding {
-    /// **RESOLVE A POSITION INTO A STANDING** — walk `branch`'s rungs in ladder order, accumulating
-    /// each one's [`RungBuild::work_cost`], and stop at the first rung the position does not cover.
-    ///
-    /// The walk follows the **coded** climb ([`RungKey::above`] from [`RungBranch::root_rung`]),
-    /// which `the_coded_climb_matches_the_shipped_ladders_own_order` pins against the records' own
-    /// `order` — so it is the config's order, resolved through the one seam that is exhaustive over
-    /// the rungs the engine names.
+    /// **STAMP A STANDING FROM THE RECORDS IT NAMES** — the one place the held rung's id, order and
+    /// traits are copied out of the config, so the three can never come from different rungs.
+    fn stamped(held: &RungDef, raising: Option<&RungDef>, credit: f32, banked: f32) -> Self {
+        Self {
+            held: held.rung_id(),
+            held_order: u8::try_from(held.order)
+                .expect("validate bounds every rung's order to a byte"),
+            traits: held.trait_set(),
+            raising: raising.map(RungDef::rung_id),
+            credit,
+            banked,
+        }
+    }
+
+    /// **RESOLVE A POSITION INTO A STANDING** — walk `branch`'s rungs in the config's own `order`,
+    /// accumulating each one's [`RungBuild::work_cost`], and stop at the first rung the position does
+    /// not cover. The walk reads the **config**, not a coded climb: a branch the code has never heard
+    /// of is walked exactly as `plant` is.
     ///
     /// **`cost_at` is THIS SOURCE'S price for a rung, not the ladder's** — `build_cost` at whatever
-    /// multiplier the source carries: [`RUNG_COST_UNSCALED`] on the plant web, a species'
-    /// `taming_cost_multiplier` on the animal one. A ladder-wide reading would put every herd's
-    /// `animal:pastoral` boundary at 50 units when a Steppe Runner's is 250, so the resolver is the
-    /// caller's rather than a lookup in here.
+    /// multiplier the source carries ([`CostScale`] names which measure a rung is priced by). A
+    /// ladder-wide reading would put every herd's `animal:pastoral` boundary at 50 units when a
+    /// Steppe Runner's is 250, so the resolver is the caller's rather than a lookup in here.
     ///
     /// A rung with **no `build`** answers `None`, costs nothing to raise, and is stepped straight
     /// over: the two wild rungs are the floor, not a step, so a position of `RUNG_UNSTARTED` holds
     /// `wild` and is raising the rung above it at [`NO_RUNG_CREDIT`]. A position past the top of the
     /// branch holds the top rung and raises nothing; a negative one is read as zero.
-    pub fn at<F: Fn(RungKey) -> Option<f32>>(
+    pub fn at<F: Fn(&RungDef) -> Option<f32>>(
         ladder: &LadderConfig,
-        branch: RungBranch,
+        branch: impl Into<BranchId>,
         position: f32,
         cost_at: F,
     ) -> Self {
+        let branch = branch.into();
         let position = position.max(RUNG_UNSTARTED);
-        let mut held = branch.root_rung();
-        loop {
-            let Some(next) = held.above() else {
-                return Self {
-                    held,
-                    raising: None,
-                    credit: NO_RUNG_CREDIT,
-                    banked: NO_RUNG_WORK_BANKED,
-                };
-            };
-            let (base, width) = rung_span(next, &cost_at);
+        let rungs = ladder.rungs_of(branch);
+        let mut held = *rungs.first().unwrap_or_else(|| {
+            panic!(
+                "branch '{}' has no rungs — validate requires an order-1 rung on every branch",
+                branch.as_str()
+            )
+        });
+        let mut base = RUNG_UNSTARTED;
+        for next in rungs.iter().skip(1).copied() {
+            let width = cost_at(next).unwrap_or(NO_RUNG_WIDTH);
             if position >= base + width {
                 held = next;
+                base += width;
                 continue;
             }
             let credit = if width <= NO_RUNG_WIDTH {
                 NO_RUNG_CREDIT
             } else {
-                match ladder.rung(next).partial_credit_mode() {
+                match next.partial_credit_mode() {
                     RungPartialCredit::Continuous => (position - base) / width,
                     RungPartialCredit::OnCompletion => NO_RUNG_CREDIT,
                 }
             };
-            return Self {
+            // **What has been PUT INTO the rung**, whatever the partial-credit mode says it is
+            // worth — see [`Self::banked`].
+            return Self::stamped(
                 held,
-                raising: Some(next),
+                Some(next),
                 credit,
-                // **What has been PUT INTO the rung**, whatever the partial-credit mode says it is
-                // worth — see [`Self::banked`].
-                banked: (position - base).max(NO_RUNG_WORK_BANKED),
-            };
+                (position - base).max(NO_RUNG_WORK_BANKED),
+            );
         }
+        Self::stamped(held, None, NO_RUNG_CREDIT, NO_RUNG_WORK_BANKED)
     }
 
-    /// **A SOURCE NOBODY HAS WORKED** — the standing of a position of [`RUNG_UNSTARTED`], answered
-    /// **without a ladder** so the constructors that fabricate a fresh source (a worldgen patch, a
-    /// spawned herd) need no config in scope.
+    /// **A SOURCE NOBODY HAS WORKED, resolved against the config** — the standing of a position of
+    /// [`RUNG_UNSTARTED`]: it holds the branch's order-1 rung and is raising whatever sits above it,
+    /// at no credit. The one thing it assumes — that the rung above the root is an investment rather
+    /// than another zero-width step — is pinned against the shipped ladder by
+    /// `an_unstarted_standing_is_the_walks_own_answer`.
+    pub fn unstarted_on(ladder: &LadderConfig, branch: impl Into<BranchId>) -> Self {
+        let branch = branch.into();
+        let root = ladder.root_of(branch).unwrap_or_else(|| {
+            panic!(
+                "branch '{}' has no order-1 rung — validate requires one on every branch",
+                branch.as_str()
+            )
+        });
+        Self::stamped(
+            root,
+            ladder.above_rung(root),
+            NO_RUNG_CREDIT,
+            NO_RUNG_WORK_BANKED,
+        )
+    }
+
+    /// **A SOURCE NOBODY HAS WORKED, answered WITHOUT a ladder** so the constructors that fabricate
+    /// a fresh source (a worldgen patch, a spawned herd) need no config in scope — the cost of which
+    /// is that it can only answer for the branches the code names, with the coded root and **no
+    /// traits** (a shipped root rung is none of the four). A source on any other branch is built
+    /// with [`Self::unstarted_on`], by code that has the ladder in hand.
     ///
-    /// It is safe to answer ladder-free because a zero position cannot be *inside* any rung: it
-    /// holds the branch's root and is raising whatever sits above it, at no credit. The one thing it
-    /// assumes — that the rung above the root is an investment rather than another zero-width step —
-    /// is pinned against the shipped ladder by `an_unstarted_standing_is_the_walks_own_answer`.
-    pub fn unstarted(branch: RungBranch) -> Self {
+    /// It is safe to answer ladder-free for those branches because a zero position cannot be
+    /// *inside* any rung, and `an_unstarted_standing_is_the_walks_own_answer` pins this against
+    /// [`Self::unstarted_on`] on the shipped ladder.
+    pub fn unstarted(branch: impl Into<BranchId>) -> Self {
+        let branch = coded_branch(branch.into());
         let held = branch.root_rung();
         Self {
-            held,
-            raising: held.above(),
+            held: held.to_id(),
+            held_order: u8::try_from(FIRST_RUNG_ORDER).expect("order 1 fits a byte"),
+            traits: RungTraits::NONE,
+            raising: held.above().map(RungKey::to_id),
             credit: NO_RUNG_CREDIT,
             banked: NO_RUNG_WORK_BANKED,
         }
     }
 
     /// **A SOURCE THAT HAS ARRIVED AT `rung`** — the standing of a position sitting exactly on that
-    /// rung's top, answered **without a ladder** for [`Self::unstarted`]'s reason: it is the rung
-    /// held in full, raising whatever sits above it at no credit.
+    /// rung's top: the rung held in full, raising whatever sits above it at no credit.
     ///
     /// It is what a **destination** reading is struck at (`forage::patch_destination_capacity`,
     /// `fauna::herd_destination_capacity`): a queue entry names the rung its climb ends on, and
     /// every per-rung quantity is [`interpolate`]d, which at [`NO_RUNG_CREDIT`] answers exactly
     /// `value_at(rung)`. So the destination figure and the live one are **one expression at two
     /// standings**, never two formulas that agree today.
-    pub fn arrived_at(rung: RungKey) -> Self {
-        Self {
-            held: rung,
-            raising: rung.above(),
-            credit: NO_RUNG_CREDIT,
-            banked: NO_RUNG_WORK_BANKED,
-        }
+    pub fn arrived_at(ladder: &LadderConfig, rung: impl Into<RungId>) -> Self {
+        let rung = rung.into();
+        let held = ladder
+            .rung_by_id(rung)
+            .unwrap_or_else(|| panic!("rung '{rung}' is not defined by the ladder"));
+        Self::stamped(
+            held,
+            ladder.above_rung(held),
+            NO_RUNG_CREDIT,
+            NO_RUNG_WORK_BANKED,
+        )
+    }
+
+    /// Does the held rung carry `trait_`? — the question `is_cultivated` and its siblings ask.
+    pub fn has(&self, trait_: RungTrait) -> bool {
+        self.traits.has(trait_)
+    }
+
+    /// **Does the source hold `rung`, or stand above it, on the same branch?** The ladder-free
+    /// ordering test: a rung of another branch is neither above nor below.
+    pub fn holds_at_or_above(&self, rung: &RungDef) -> bool {
+        self.held.branch == rung.branch && u32::from(self.held_order) >= rung.order
+    }
+
+    /// The held rung as the coded view the engine's remaining identity sites speak. **A bridge**:
+    /// a branch the code does not name has no `RungKey`, and asking is a fault in the caller, which
+    /// should have read a property instead.
+    pub fn held_key(&self) -> RungKey {
+        self.held.to_key().unwrap_or_else(|| {
+            panic!(
+                "rung '{}' has no coded view — read a property of the standing instead",
+                self.held
+            )
+        })
+    }
+
+    /// The rung being raised as the coded view — [`Self::held_key`]'s twin, with its caveat.
+    pub fn raising_key(&self) -> Option<RungKey> {
+        self.raising.map(|rung| {
+            rung.to_key().unwrap_or_else(|| {
+                panic!("rung '{rung}' has no coded view — read a property of the standing instead")
+            })
+        })
+    }
+}
+
+impl From<RungKey> for RungId {
+    fn from(key: RungKey) -> Self {
+        key.to_id()
     }
 }
 
@@ -1996,19 +2160,22 @@ pub const NO_RUNG_WIDTH: f32 = 0.0;
 ///
 /// `cost_at` is the source's own resolver, exactly as [`RungStanding::at`] takes it. A branch's root
 /// answers `(RUNG_UNSTARTED, NO_RUNG_WIDTH)` — it is where the ladder starts and costs nothing.
-pub fn rung_span<F: Fn(RungKey) -> Option<f32>>(rung: RungKey, cost_at: &F) -> (f32, f32) {
+pub fn rung_span<F: Fn(&RungDef) -> Option<f32>>(
+    ladder: &LadderConfig,
+    rung: &RungDef,
+    cost_at: &F,
+) -> (f32, f32) {
     let mut base = RUNG_UNSTARTED;
-    let mut cursor = rung.branch().root_rung();
-    while cursor != rung {
-        let next = cursor
-            .above()
-            .expect("the coded climb reaches every rung of its own branch");
-        let width = cost_at(next).unwrap_or(NO_RUNG_WIDTH);
-        if next == rung {
+    // The branch's order-1 rung is where the ladder starts: no width, and nothing beneath it.
+    if rung.order == FIRST_RUNG_ORDER {
+        return (base, NO_RUNG_WIDTH);
+    }
+    for below in ladder.rungs_of(rung.branch).into_iter().skip(1) {
+        let width = cost_at(below).unwrap_or(NO_RUNG_WIDTH);
+        if below.order == rung.order {
             return (base, width);
         }
         base += width;
-        cursor = next;
     }
     (base, NO_RUNG_WIDTH)
 }
@@ -2044,7 +2211,7 @@ pub fn rung_work_done(
     span: (f32, f32),
 ) -> f32 {
     let (base, width) = span;
-    if standing.held.is_at_or_above(rung) {
+    if standing.held_key().is_at_or_above(rung) {
         return width;
     }
     (position - base).clamp(RUNG_UNSTARTED, width)
@@ -2139,11 +2306,11 @@ pub fn keeping_is_short(
 /// [`interpolate`], so there is one arithmetic and this is one enumeration.
 pub fn standing_material_ids(standing: &RungStanding, ladder: &LadderConfig) -> Vec<String> {
     let mut ids: Vec<String> = ladder
-        .rung(standing.held)
+        .rung(standing.held_key())
         .upkeep_materials()
         .map(|(id, _)| id.to_string())
         .collect();
-    if let Some(raising) = standing.raising {
+    if let Some(raising) = standing.raising_key() {
         for (id, _) in ladder.rung(raising).upkeep_materials() {
             if !ids.iter().any(|held| held == id) {
                 ids.push(id.to_string());
@@ -2155,8 +2322,8 @@ pub fn standing_material_ids(standing: &RungStanding, ladder: &LadderConfig) -> 
 }
 
 pub fn interpolate<F: Fn(RungKey) -> f32>(standing: &RungStanding, value_at: F) -> f32 {
-    let held = value_at(standing.held);
-    match standing.raising {
+    let held = value_at(standing.held_key());
+    match standing.raising_key() {
         Some(raising) => held + standing.credit * (value_at(raising) - held),
         None => held,
     }
@@ -2203,8 +2370,8 @@ pub fn interpolate_composition<'a, F>(
 where
     F: Fn(RungKey) -> Cow<'a, [FloraShare]>,
 {
-    let held = composition_at(standing.held);
-    let Some(raising) = standing.raising else {
+    let held = composition_at(standing.held_key());
+    let Some(raising) = standing.raising_key() else {
         return held;
     };
     if standing.credit <= NO_RUNG_CREDIT {
@@ -2724,8 +2891,9 @@ pub enum RungPartialCredit {
 pub struct RungDef {
     /// Rung name, unique within its branch (`wild`, `tended`, `pastoral`, `pen`, …).
     pub id: String,
-    /// Which food web this rung belongs to.
-    pub branch: RungBranch,
+    /// Which branch this rung belongs to — a config identity, whose [`SourceKind`] is
+    /// [`LadderConfig::source_kind`].
+    pub branch: BranchId,
     /// Position on its branch's ladder, `1` = the wild source. Unique within the branch; the ladder
     /// is strictly sequential (see `requires_rung`).
     pub order: u32,
@@ -2807,6 +2975,46 @@ pub struct RungDef {
     /// (`docs/plan_extraction.md` §4c) — see the type's own doc.
     #[serde(default)]
     pub extraction_payoff: Option<RungExtractionPayoff>,
+    /// **WHAT A SOURCE STANDING HERE *IS*** — the [`RungTrait`]s a source holding this rung carries,
+    /// stamped onto its [`RungStanding`] so `is_cultivated` / `is_field` / `is_domesticated` /
+    /// `is_corralled` read a property instead of a rung's name. Absent ⇒ none (every wild rung).
+    #[serde(default)]
+    pub traits: Vec<RungTrait>,
+    /// **WHICH MEASURE OF THE SOURCE THIS RUNG'S PRICE IS MULTIPLIED BY** ([`CostScale`]). Absent ⇒
+    /// [`CostScale::Unscaled`]. Validated against the branch's [`SourceKind`]: a scale whose measure
+    /// the kind does not have would price every source at the unscaled cost without saying so.
+    #[serde(default)]
+    pub cost_scale: CostScale,
+    /// **THE RUNG'S GATE WANTS ROOM TO WORK** — something must stand above the crew's floor
+    /// (`systems::labor::crew_is_working_the_source`) for the build to bank. The Cultivate and Tame
+    /// gates carry it; Sow and Corral deliberately do not (bare ground stands below every floor, and
+    /// a fence goes up around a flock already drawn down to its keeper's floor).
+    #[serde(default)]
+    pub requires_work_room: bool,
+    /// **THE RUNG'S GATE WANTS A CROP** — the source must have a committed species, or the selection
+    /// must resolve to one that climbs here. A patch with nothing sowable on it has nothing to raise.
+    #[serde(default)]
+    pub requires_crop: bool,
+    /// **THE RUNG'S GATE WANTS THE RUNG BELOW HELD** — the source must already stand on the rung
+    /// directly beneath (`Corral` demands a herd you already tamed). The ladder's *shape* is
+    /// `requires_rung`; this is the per-source precondition `requires_rung` deliberately is not.
+    #[serde(default)]
+    pub requires_held_rung_below: bool,
+    /// **THE RUNG'S GATE REFUSES A SOURCE ANOTHER PEOPLE HOLD** — the owner (or, on a road, the
+    /// keeper) must be the faction raising it, or nobody.
+    #[serde(default)]
+    pub requires_ownership: bool,
+    /// **RAISING THIS RUNG CAN CREATE THE SOURCE** — a Sow on a gathering site that carries no patch
+    /// places one. Without it the verb refuses ground with nothing on it.
+    #[serde(default)]
+    pub places_source: bool,
+    /// **WHAT THE FEED CALLS A SOURCE STANDING ON THIS RUNG**, capitalised to lead a line — the
+    /// subject of a slip or a loss (`Field at (44, 24) is slipping — 94%`).
+    pub label: String,
+    /// **WHAT A LOSS LEAVES BEHIND, IN THE FEED'S WORDS** — the rung a source falls *back to*
+    /// (`… lost — back to a tended patch`). The article is part of the config: "a tended patch" but
+    /// "wild ground", and no rule derives one from the other.
+    pub label_fallback: String,
 }
 
 /// **WHAT AN EXTRACTION OR FORESTRY RUNG BUYS** (`docs/plan_extraction.md` §4c), on
@@ -2907,7 +3115,24 @@ impl RungDef {
     /// reaches the wire without a code edit; `RungKey::wire_key` answers for the rungs a system
     /// *names*, and the two agree by construction.
     pub fn wire_key(&self) -> String {
-        format!("{}:{}", self.branch.as_str(), self.id)
+        self.rung_id().wire_key()
+    }
+
+    /// **THIS RECORD'S IDENTITY** — the interned `branch:id`.
+    pub fn rung_id(&self) -> RungId {
+        RungId::new(self.branch, &self.id)
+    }
+
+    /// **THE VERB THAT RAISES THIS RUNG, as an identity** — `None` for a rung no verb drives. Unlike
+    /// [`Self::verb_improvement`] it names a verb the code has never heard of, which is what a
+    /// branch added by config carries.
+    pub fn verb_id(&self) -> Option<VerbId> {
+        self.verb.as_deref().map(VerbId::new)
+    }
+
+    /// **THE TRAITS A SOURCE STANDING ON THIS RUNG CARRIES**, as the set a [`RungStanding`] stamps.
+    pub fn trait_set(&self) -> RungTraits {
+        RungTraits::of(&self.traits)
     }
 
     /// **THE WIRE KEY OF THE RUNG DIRECTLY BENEATH THIS ONE** — `requires_rung` is a bare id within
@@ -2920,11 +3145,12 @@ impl RungDef {
     }
 
     /// The improvement that drives this rung's build meter, already parsed. `None` for a rung no verb
-    /// drives today. (Validated at load, so the parse cannot fail here.)
+    /// drives today **and for a rung whose verb is one the code has no `Improvement` for** — a
+    /// branch added by config; [`Self::verb_id`] names that verb.
     pub fn verb_improvement(&self) -> Option<Improvement> {
         self.verb
             .as_deref()
-            .map(|verb| Improvement::from_str(verb).expect("validated at load"))
+            .and_then(|verb| Improvement::from_str(verb).ok())
     }
 
     /// **THIS RUNG'S PARTIAL-CREDIT SHAPE, WITH THE ABSENCE RESOLVED** — an unstated
@@ -3836,6 +4062,202 @@ pub struct BranchDef {
     ///
     /// **Wire vocabulary, never player copy**: the client spells `food` as *Food*.
     pub area: String,
+    /// **WHAT KIND OF THING STANDS ON THIS BRANCH** — the one coded primitive a branch declares
+    /// ([`SourceKind`]). Code owns the kinds because each one is a source with its own state, its
+    /// own registry and its own turn arm; the config owns everything else about the ladder, so a
+    /// branch that recombines an existing kind is a JSON edit and nothing more.
+    pub source: SourceKind,
+    /// **THE KEEPING ROLE THIS BRANCH'S SITES ARE HELD BY** — the [`KitJob`] whose roster entries
+    /// equip a keeper here (`agriculture`, `husbandry`, `roadwork`, `quarrywork`). It replaces the
+    /// branch-keyed `match` in the equipment seams: a branch declares its keeping job rather than
+    /// being recognised by name.
+    pub keeping_job: KitJob,
+    /// **THE BRANCH'S NAME IN PLAYER COPY** — a heading the client puts over the branch's rungs.
+    /// Presentation only: nothing reads it to decide a rule.
+    pub label: String,
+}
+
+/// **WHAT KIND OF SOURCE A BRANCH'S RUNGS ARE RAISED ON** — the bounded coded set the ladder is
+/// "data over" (`docs/plan_intensification_ladder.md` §5).
+///
+/// ⛔ **THE KIND IS CODE AND THE BRANCH IS CONFIG.** A source kind is a thing the simulation can
+/// hold — it has state, a registry, a turn arm and a command grammar — so a new kind is a coded
+/// change, once. A branch merely *declares* which kind it is, which is why the validation counts
+/// kinds ([`LadderConfig::validate`]) rather than recognising branch names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceKind {
+    /// A forage patch (`forage.rs`) — worked by a Forage row.
+    Patch,
+    /// A herd (`fauna.rs`) — worked by a Hunt row.
+    Herd,
+    /// A road on one tile (`routes.rs`) — kept by a band's roadwork pool, owned by nobody's row.
+    Road,
+    /// A deposit (`extraction.rs`) — worked by an Extract row, named by a material.
+    Deposit,
+    /// An improvement on one tile (`TileImprovementRegistry`) — the road's shape for a thing that is
+    /// not a road: a standing, a keeper, an upkeep and a grace, with no crew row.
+    Tile,
+}
+
+impl SourceKind {
+    /// Every kind, in declaration order.
+    pub const ALL: [SourceKind; 5] = [
+        SourceKind::Patch,
+        SourceKind::Herd,
+        SourceKind::Road,
+        SourceKind::Deposit,
+        SourceKind::Tile,
+    ];
+
+    /// The kind's config / wire token.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SourceKind::Patch => "patch",
+            SourceKind::Herd => "herd",
+            SourceKind::Road => "road",
+            SourceKind::Deposit => "deposit",
+            SourceKind::Tile => "tile",
+        }
+    }
+
+    /// **HOW MANY BRANCHES OF THIS KIND A LADDER MUST DECLARE, at least** — and, for the three
+    /// singleton kinds, at most. A patch, a herd and a road each have exactly one ladder because
+    /// the sim holds one registry of each; a deposit ladder is named by every `extraction.json`
+    /// row (so there is at least one); a tile ladder is optional and unbounded.
+    pub fn branch_count_bounds(self) -> (usize, Option<usize>) {
+        match self {
+            SourceKind::Patch | SourceKind::Herd | SourceKind::Road => (1, Some(1)),
+            SourceKind::Deposit => (1, None),
+            SourceKind::Tile => (0, None),
+        }
+    }
+}
+
+impl From<RungBranch> for BranchId {
+    fn from(branch: RungBranch) -> Self {
+        branch.to_id()
+    }
+}
+
+/// **A PROPERTY OF THE RUNG A SOURCE STANDS ON** — what a source *is*, as opposed to which rung it
+/// stands on. Code asks `standing.has(RungTrait::Domesticated)`, never *"is this `animal:pastoral`
+/// or above"*, so a new branch's rung is a domesticated one by declaring it.
+///
+/// Bounded and coded: each trait is a predicate the sim already has call sites for
+/// (`ForagePatch::is_cultivated`, `is_field`, `Herd::is_domesticated`, `is_corralled`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RungTrait {
+    /// The source is worked in place by people — a tended patch, a Field, a tamed or penned herd.
+    Managed,
+    /// Seed was put in the ground — a Field.
+    Sown,
+    /// Its reproduction is under human control — a tamed or penned herd.
+    Domesticated,
+    /// It stands behind a fence — a penned herd.
+    Enclosed,
+}
+
+impl RungTrait {
+    /// Every trait, in declaration order.
+    pub const ALL: [RungTrait; 4] = [
+        RungTrait::Managed,
+        RungTrait::Sown,
+        RungTrait::Domesticated,
+        RungTrait::Enclosed,
+    ];
+
+    fn bit(self) -> u8 {
+        1 << RungTrait::ALL
+            .iter()
+            .position(|trait_| *trait_ == self)
+            .expect("ALL lists every trait")
+    }
+}
+
+/// **A SET OF [`RungTrait`]s**, one bit each. `Copy`, so a [`RungStanding`] that carries it stays
+/// `Copy`; serialised as the list of trait names, so a save never carries a bit position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct RungTraits(u8);
+
+impl RungTraits {
+    /// The empty set — a rung that is none of the above (every wild rung).
+    pub const NONE: RungTraits = RungTraits(0);
+
+    /// The set holding exactly `traits`.
+    pub fn of(traits: &[RungTrait]) -> Self {
+        RungTraits(traits.iter().fold(0, |bits, trait_| bits | trait_.bit()))
+    }
+
+    /// Does the set hold `trait_`?
+    pub fn has(self, trait_: RungTrait) -> bool {
+        self.0 & trait_.bit() != 0
+    }
+
+    /// The members, in [`RungTrait::ALL`] order.
+    pub fn members(self) -> impl Iterator<Item = RungTrait> {
+        RungTrait::ALL
+            .into_iter()
+            .filter(move |trait_| self.has(*trait_))
+    }
+}
+
+impl Serialize for RungTraits {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(self.members())
+    }
+}
+
+impl<'de> Deserialize<'de> for RungTraits {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let traits = Vec::<RungTrait>::deserialize(deserializer)?;
+        Ok(RungTraits::of(&traits))
+    }
+}
+
+/// **WHAT A RUNG'S PRICE IS MULTIPLIED BY, PER SOURCE** — the one place a build's cost depends on
+/// the source it is raised on. A bounded coded primitive on the `behavior` idiom: the *measure* of
+/// each is coded beside the source kind that has it, and the rung declares which one it takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CostScale {
+    /// The ladder's declared `work_cost`, whoever the source is. The default — pricing a rung by
+    /// its source is the exception that has to be argued for in the config.
+    #[default]
+    Unscaled,
+    /// The species' own `taming_cost_multiplier` (`FaunaConfig::taming_cost_multiplier_for`) — a
+    /// Steppe Runner is five times the work to tame. Herds only.
+    SpeciesTaming,
+    /// How much of the tile the crop still has to displace
+    /// (`forage::field_cost_multiplier_at_share`) — sowing a crop that holds most of the ground is
+    /// tidying, sowing one that holds a tenth is replacing the tile. Patches only.
+    ReplacedShare,
+    /// How far the site is from the band that keeps it (`routes::remoteness_multiplier`,
+    /// `route_range.remote_cost_multiplier`). Roads only.
+    Remoteness,
+}
+
+impl CostScale {
+    /// The source kind whose measure this scale reads, or `None` for [`CostScale::Unscaled`].
+    pub fn source_kind(self) -> Option<SourceKind> {
+        match self {
+            CostScale::Unscaled => None,
+            CostScale::SpeciesTaming => Some(SourceKind::Herd),
+            CostScale::ReplacedShare => Some(SourceKind::Patch),
+            CostScale::Remoteness => Some(SourceKind::Road),
+        }
+    }
+
+    /// The scale's config token.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CostScale::Unscaled => "unscaled",
+            CostScale::SpeciesTaming => "species_taming",
+            CostScale::ReplacedShare => "replaced_share",
+            CostScale::Remoteness => "remoteness",
+        }
+    }
 }
 
 /// **A KNOWLEDGE NO RUNG TEACHES, FILED UNDER A BRANCH OF ITS OWN** — the roaming skills (#799:
@@ -3904,14 +4326,16 @@ pub struct LadderConfig {
     pub knowledge: LadderKnowledge,
     /// **THE BRANCH DESCRIPTORS**, keyed by the branch token itself — see [`BranchDef`].
     ///
-    /// Serde keys the map by [`RungBranch`], so an unknown branch name fails the **parse** rather
-    /// than resolving to a default nobody chose — the same coded-primitive discipline the `behavior`
-    /// block follows. Read it through [`Self::branch_area`], never directly.
+    /// Keyed by the branch's config identity ([`BranchId`]) and iterated alphabetically — an
+    /// interner's numbering is not deterministic, so the map's order is the string's. **Every
+    /// branch a rung names must have an entry**, because the entry is where the branch declares its
+    /// [`SourceKind`]: the ladder is data over the coded kinds, and a branch with no kind is a
+    /// ladder nothing can drive. Read the area through [`Self::branch_area`].
     ///
     /// **Required, with no `#[serde(default)]`.** A config that omits it is a broken override, and
-    /// the boot loader already handles that by logging at error and falling back to the builtin; a
-    /// serde default would instead silently publish a screen with no areas on it.
-    pub branches: BTreeMap<RungBranch, BranchDef>,
+    /// the boot loader refuses it; a serde default would instead silently publish a screen with no
+    /// areas on it.
+    pub branches: BTreeMap<BranchId, BranchDef>,
     /// **THE SUBJECT AREAS, IN DISPLAY ORDER** — `["food", "making", "works", …]`.
     ///
     /// The order is **not optional**: areas are peers, so first-seen order read off the rungs would
@@ -3944,7 +4368,7 @@ impl LadderConfig {
         if let Some(upkeep) = scaled
             .rungs
             .iter_mut()
-            .find(|def| def.branch == rung.branch() && def.id == rung.id())
+            .find(|def| def.branch == rung.branch().to_id() && def.id == rung.id())
             .and_then(|def| def.upkeep.as_mut())
         {
             upkeep.work_per_turn *= factor;
@@ -4211,18 +4635,100 @@ impl LadderConfig {
     /// not an error**: the knowledge still draws, under the client's fallback heading
     /// (`docs/plan_knowledge_rows.md` §5). A knowledge that vanishes because a config edit was
     /// incomplete is the worst failure this screen has, and it is one it has shipped once.
-    pub fn branch_area(&self, branch: RungBranch) -> &str {
+    pub fn branch_area(&self, branch: impl Into<BranchId>) -> &str {
         self.branches
-            .get(&branch)
+            .get(&branch.into())
             .map(|def| def.area.as_str())
             .unwrap_or(NO_SUBJECT_AREA)
     }
 
     /// A rung by branch + id, if it exists.
-    pub fn find(&self, branch: RungBranch, id: &str) -> Option<&RungDef> {
+    pub fn find(&self, branch: impl Into<BranchId>, id: &str) -> Option<&RungDef> {
+        let branch = branch.into();
         self.rungs
             .iter()
             .find(|rung| rung.branch == branch && rung.id == id)
+    }
+
+    /// **A rung by its identity**, if the config defines it.
+    pub fn rung_by_id(&self, rung: RungId) -> Option<&RungDef> {
+        self.find(rung.branch, rung.id_str())
+    }
+
+    /// **THE BRANCH'S DESCRIPTOR**, if the config declares one.
+    pub fn branch_def(&self, branch: impl Into<BranchId>) -> Option<&BranchDef> {
+        self.branches.get(&branch.into())
+    }
+
+    /// **WHAT KIND OF SOURCE A BRANCH'S RUNGS ARE RAISED ON** — `None` for a branch the config does
+    /// not declare.
+    pub fn source_kind(&self, branch: impl Into<BranchId>) -> Option<SourceKind> {
+        self.branch_def(branch).map(|def| def.source)
+    }
+
+    /// **EVERY BRANCH OF ONE KIND**, in the config's own order ([`Self::branches_in_config_order`]).
+    pub fn branches_of(&self, kind: SourceKind) -> impl Iterator<Item = BranchId> + '_ {
+        self.branches_in_config_order()
+            .into_iter()
+            .filter(move |branch| self.source_kind(*branch) == Some(kind))
+    }
+
+    /// **EVERY DECLARED BRANCH, IN THE ORDER THE CONFIG'S RUNG LIST FIRST NAMES IT** — the config's
+    /// own position, which is the order a published catalog must keep (the interner's numbering is
+    /// not deterministic, and the descriptor map is alphabetical). A declared branch no rung names
+    /// follows, alphabetically; [`Self::validate`] refuses one, so that tail is empty on any loaded
+    /// ladder.
+    pub fn branches_in_config_order(&self) -> Vec<BranchId> {
+        let mut ordered: Vec<BranchId> = Vec::new();
+        for rung in &self.rungs {
+            if !ordered.contains(&rung.branch) {
+                ordered.push(rung.branch);
+            }
+        }
+        for branch in self.branches.keys() {
+            if !ordered.contains(branch) {
+                ordered.push(*branch);
+            }
+        }
+        ordered
+    }
+
+    /// **A BRANCH'S RUNGS IN LADDER ORDER**, bottom first — the config's own `order`, never the
+    /// order the records happen to be listed in.
+    pub fn rungs_of(&self, branch: impl Into<BranchId>) -> Vec<&RungDef> {
+        let branch = branch.into();
+        let mut rungs: Vec<&RungDef> = self
+            .rungs
+            .iter()
+            .filter(|rung| rung.branch == branch)
+            .collect();
+        rungs.sort_by_key(|rung| rung.order);
+        rungs
+    }
+
+    /// **THE RUNG A BRANCH STANDS ON BEFORE ANY WORK IS DONE** — the order-1 record, which
+    /// [`Self::validate`] guarantees exists exactly once per branch.
+    pub fn root_of(&self, branch: impl Into<BranchId>) -> Option<&RungDef> {
+        let branch = branch.into();
+        self.rungs
+            .iter()
+            .find(|rung| rung.branch == branch && rung.order == FIRST_RUNG_ORDER)
+    }
+
+    /// **THE RUNG DIRECTLY ABOVE `rung` ON ITS BRANCH** — `None` at the top. The ladder is strictly
+    /// sequential (`order + 1`), so this is a lookup by order, not a walk of `requires_rung`.
+    pub fn above_rung(&self, rung: &RungDef) -> Option<&RungDef> {
+        self.rungs
+            .iter()
+            .find(|other| other.branch == rung.branch && other.order == rung.order + 1)
+    }
+
+    /// **THE RUNG THAT `verb` BUILDS** — verbs are globally unique ([`Self::validate`]), so a verb
+    /// names exactly one rung of exactly one branch.
+    pub fn rung_for_verb(&self, verb: VerbId) -> Option<&RungDef> {
+        self.rungs
+            .iter()
+            .find(|rung| rung.verb.as_deref() == Some(verb.as_str()))
     }
 
     /// Invariants a ladder must satisfy to be drivable. A ladder that breaks one doesn't crash — it
@@ -4317,11 +4823,19 @@ impl LadderConfig {
             });
         }
 
-        let mut seen_ids: HashSet<(RungBranch, &str)> = HashSet::new();
-        let mut seen_orders: HashSet<(RungBranch, u32)> = HashSet::new();
+        self.validate_branches()?;
+
+        let mut seen_ids: HashSet<(BranchId, &str)> = HashSet::new();
+        let mut seen_orders: HashSet<(BranchId, u32)> = HashSet::new();
+        let mut seen_verbs: HashSet<&str> = HashSet::new();
 
         for rung in &self.rungs {
             let where_ = format!("rungs[{}:{}]", rung.branch.as_str(), rung.id);
+            // `validate_branches` has already required a descriptor for every branch a rung names,
+            // so the kind is always present here.
+            let source = self
+                .source_kind(rung.branch)
+                .expect("validate_branches requires every rung's branch to be declared");
 
             if !seen_ids.insert((rung.branch, rung.id.as_str())) {
                 return Err(LadderConfigError::Invalid {
@@ -4330,6 +4844,17 @@ impl LadderConfig {
                                  every by-name lookup ambiguous"
                         .to_string(),
                     value: format!("id '{}' appears twice", rung.id),
+                });
+            }
+            if u8::try_from(rung.order).is_err() {
+                return Err(LadderConfigError::Invalid {
+                    field: where_,
+                    constraint: format!(
+                        "keep a rung's order within {} — a standing stamps the held rung's order \
+                         in a byte",
+                        u8::MAX
+                    ),
+                    value: format!("order {}", rung.order),
                 });
             }
             if !seen_orders.insert((rung.branch, rung.order)) {
@@ -4341,28 +4866,40 @@ impl LadderConfig {
                     value: format!("order {} appears twice", rung.order),
                 });
             }
+            if let Some(verb) = rung.verb.as_deref() {
+                if !seen_verbs.insert(verb) {
+                    return Err(LadderConfigError::Invalid {
+                        field: where_,
+                        constraint: "give each verb to exactly one rung across the whole ladder — \
+                                     a verb names the rung it builds, so two rungs sharing one \
+                                     make every command that types it ambiguous"
+                            .to_string(),
+                        value: format!("verb '{verb}' appears twice"),
+                    });
+                }
+            }
             self.validate_sequence(rung, &where_)?;
             validate_links(rung, &where_)?;
             validate_build(rung, &where_)?;
-            validate_upkeep(rung, &where_)?;
+            validate_upkeep(rung, source, &where_)?;
             self.validate_upkeep_climbs(rung, &where_)?;
             validate_partial_credit(rung, &where_)?;
             validate_site_requirement(rung, &where_)?;
-            validate_route_payoff(rung, &where_)?;
+            validate_route_payoff(rung, source, &where_)?;
             self.validate_route_payoff_climbs(rung, &where_)?;
-            validate_extraction_payoff(rung, &where_)?;
+            validate_extraction_payoff(rung, source, &where_)?;
             self.validate_extraction_payoff_climbs(rung, &where_)?;
+            validate_rung_properties(rung, source, &where_)?;
         }
 
-        // ⛔ **`ALL_BRANCHES`, NOT A HAND-WRITTEN LIST.** This read `[RungBranch::Plant,
-        // RungBranch::Animal]` — an array literal, so adding the route branch left it silently
-        // sweeping two of three and the new branch's root rung unchecked. That is precisely the
-        // failure the constant's rename exists to make impossible; a literal here re-opens it.
-        for branch in ALL_BRANCHES {
+        // Every branch has exactly one order-1 rung — the wild source every ladder starts from. It
+        // walks the DECLARED branches, not a coded list: a list literal here is what once left a
+        // newly added branch's root rung unchecked.
+        for branch in self.branches.keys() {
             let roots = self
                 .rungs
                 .iter()
-                .filter(|rung| rung.branch == branch && rung.order == FIRST_RUNG_ORDER)
+                .filter(|rung| rung.branch == *branch && rung.order == FIRST_RUNG_ORDER)
                 .count();
             if roots != 1 {
                 return Err(LadderConfigError::Invalid {
@@ -4383,12 +4920,103 @@ impl LadderConfig {
         // Every rung a system reaches for by name must exist, so `rung()` is infallible and an
         // override can't silently delete a shipped rung out from under the engine.
         for key in RungKey::ALL {
-            if self.find(key.branch(), key.id()).is_none() {
+            let Some(rung) = self.find(key.branch(), key.id()) else {
                 return Err(LadderConfigError::Invalid {
                     field: format!("rungs[{}:{}]", key.branch().as_str(), key.id()),
                     constraint: "define every rung the simulation drives by name (see RungKey)"
                         .to_string(),
                     value: "missing".to_string(),
+                });
+            };
+            // The coded rungs' verbs are pinned to the coded map — a typo here would leave the rung
+            // defined, validated and never driven, with nothing on the map to say why.
+            let coded_verb = key.builder_verb().map(Improvement::as_str);
+            if rung.verb.as_deref() != coded_verb {
+                return Err(LadderConfigError::Invalid {
+                    field: format!("rungs[{}:{}].verb", key.branch().as_str(), key.id()),
+                    constraint: format!(
+                        "keep the verb the simulation drives this rung with ({})",
+                        coded_verb.unwrap_or("null")
+                    ),
+                    value: format!("{:?}", rung.verb),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// **THE BRANCH TABLE IS KIND-LEVEL: every branch declares a [`SourceKind`], and the kinds are
+    /// counted.** A patch, a herd and a road each have exactly one ladder (the sim holds one
+    /// registry of each); a deposit ladder is at least one (every `extraction.json` row names one);
+    /// a tile ladder is optional and unbounded.
+    ///
+    /// ⛔ **THIS COUNTS KINDS AND NEVER RECOGNISES A NAME.** It replaced a `[plant, animal, route,
+    /// forestry, extraction]` literal, which is the shape that let a newly added branch go
+    /// unchecked. A rung naming a branch with no descriptor is refused here, because the descriptor
+    /// is where the branch says what kind of thing stands on it.
+    fn validate_branches(&self) -> Result<(), LadderConfigError> {
+        for rung in &self.rungs {
+            if !self.branches.contains_key(&rung.branch) {
+                return Err(LadderConfigError::Invalid {
+                    field: format!("rungs[{}:{}]", rung.branch.as_str(), rung.id),
+                    constraint: "name a branch declared in `branches` — the descriptor is where \
+                                 the branch says what kind of source its rungs are raised on"
+                        .to_string(),
+                    value: format!("branch '{}' has no descriptor", rung.branch.as_str()),
+                });
+            }
+        }
+        for (branch, def) in &self.branches {
+            if def.label.trim().is_empty() {
+                return Err(LadderConfigError::Invalid {
+                    field: format!("branches[{}].label", branch.as_str()),
+                    constraint: "give the branch a player-facing label — the client heads its \
+                                 rungs with it"
+                        .to_string(),
+                    value: "empty".to_string(),
+                });
+            }
+        }
+        for kind in SourceKind::ALL {
+            let count = self.branches_of(kind).count();
+            let (at_least, at_most) = kind.branch_count_bounds();
+            if count < at_least || at_most.is_some_and(|most| count > most) {
+                let bound = match at_most {
+                    Some(most) if most == at_least => format!("exactly {at_least}"),
+                    Some(most) => format!("{at_least} to {most}"),
+                    None => format!("at least {at_least}"),
+                };
+                return Err(LadderConfigError::Invalid {
+                    field: format!("branches[*].source = {}", kind.as_str()),
+                    constraint: format!(
+                        "declare {bound} `{}` branch(es) — the simulation holds that many \
+                         registries of the kind",
+                        kind.as_str()
+                    ),
+                    value: format!("{count} declared"),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// **EVERY DEPOSIT THE EXTRACTION TABLE NAMES MUST BE WORKED BY A `deposit` BRANCH** — the
+    /// cross-file half of the kind-level rule, run at boot where both configs are in scope (on
+    /// [`Self::validate_against_materials`]' pattern: `validate` runs inside `from_json_str` and a
+    /// `LadderConfig` holds no extraction table).
+    pub fn validate_against_extraction(
+        &self,
+        extraction: &crate::extraction_config::ExtractionConfig,
+    ) -> Result<(), LadderConfigError> {
+        for (material, def) in extraction.deposits() {
+            if self.source_kind(def.branch) != Some(SourceKind::Deposit) {
+                return Err(LadderConfigError::Invalid {
+                    field: format!("extraction.deposits.{material}.branch"),
+                    constraint: "be worked by a ladder branch declared `source: deposit` — a \
+                                 deposit on a food web's branch would be a source that pays no \
+                                 food standing on a ladder whose every rung is about food"
+                        .to_string(),
+                    value: def.branch.as_str().to_string(),
                 });
             }
         }
@@ -4932,19 +5560,15 @@ fn validate_knowledge(knowledge: &LadderKnowledge) -> Result<(), LadderConfigErr
     Ok(())
 }
 
-/// The verb (when named) has to be a real improvement, and the knowledge links (when named) real
-/// discoveries — otherwise the rung is unreachable in a way nothing on the map would explain.
+/// The knowledge links (when named) have to be real discoveries — otherwise the rung is unreachable
+/// in a way nothing on the map would explain.
+///
+/// **A VERB IS NO LONGER REQUIRED TO BE ONE THE CODE KNOWS.** It used to have to parse as an
+/// [`Improvement`], which made a branch added by config impossible; a verb is an identity now
+/// ([`VerbId`]), unique across the ladder, and the coded rungs' verbs are pinned against their
+/// [`RungKey::builder_verb`] in [`LadderConfig::validate`] instead — so a typo on a shipped rung
+/// still fails the load, and a new rung's verb is free.
 fn validate_links(rung: &RungDef, where_: &str) -> Result<(), LadderConfigError> {
-    if let Some(verb) = rung.verb.as_deref() {
-        if Improvement::from_str(verb).is_err() {
-            return Err(LadderConfigError::Invalid {
-                field: where_.to_string(),
-                constraint: "name a real Improvement in `verb` (or null for a rung no verb drives)"
-                    .to_string(),
-                value: format!("verb = '{verb}'"),
-            });
-        }
-    }
     for (field, knowledge) in [
         ("unlock_knowledge", rung.unlock_knowledge.as_deref()),
         ("earns_knowledge", rung.earns_knowledge.as_deref()),
@@ -4979,8 +5603,12 @@ fn validate_links(rung: &RungDef, where_: &str) -> Result<(), LadderConfigError>
 /// The converse — a payoff on a patch or a herd — is rejected rather than ignored, on
 /// `partial_credit`'s rule: a key that parses and does nothing reads to a designer as the seam that
 /// would carry a fix.
-fn validate_route_payoff(rung: &RungDef, where_: &str) -> Result<(), LadderConfigError> {
-    let is_route = rung.branch == RungBranch::Route;
+fn validate_route_payoff(
+    rung: &RungDef,
+    source: SourceKind,
+    where_: &str,
+) -> Result<(), LadderConfigError> {
+    let is_route = source == SourceKind::Road;
     let Some(payoff) = rung.route_payoff.as_ref() else {
         if is_route {
             return Err(LadderConfigError::Invalid {
@@ -4997,11 +5625,11 @@ fn validate_route_payoff(rung: &RungDef, where_: &str) -> Result<(), LadderConfi
     if !is_route {
         return Err(LadderConfigError::Invalid {
             field: where_.to_string(),
-            constraint: "declare `route_payoff` on route rungs only — reach and friction are \
-                         properties of a road, and a key that parses and does nothing reads as the \
-                         seam that would carry a fix"
+            constraint: "declare `route_payoff` on the rungs of a `road` branch only — reach and \
+                         friction are properties of a road, and a key that parses and does nothing \
+                         reads as the seam that would carry a fix"
                 .to_string(),
-            value: format!("branch '{}'", rung.branch.as_str()),
+            value: format!("branch '{}' ({})", rung.branch.as_str(), source.as_str()),
         });
     }
     if !payoff.friction_multiplier.is_finite()
@@ -5028,8 +5656,12 @@ fn validate_route_payoff(rung: &RungDef, where_: &str) -> Result<(), LadderConfi
 ///
 /// **One rule, both branches** — the whole point of §4c is that nothing in the engine asks *which*
 /// of the two a rung is on.
-fn validate_extraction_payoff(rung: &RungDef, where_: &str) -> Result<(), LadderConfigError> {
-    let works_a_deposit = matches!(rung.branch, RungBranch::Forestry | RungBranch::Extraction);
+fn validate_extraction_payoff(
+    rung: &RungDef,
+    source: SourceKind,
+    where_: &str,
+) -> Result<(), LadderConfigError> {
+    let works_a_deposit = source == SourceKind::Deposit;
     let Some(payoff) = rung.extraction_payoff.as_ref() else {
         if works_a_deposit {
             return Err(LadderConfigError::Invalid {
@@ -5045,12 +5677,12 @@ fn validate_extraction_payoff(rung: &RungDef, where_: &str) -> Result<(), Ladder
     if !works_a_deposit {
         return Err(LadderConfigError::Invalid {
             field: where_.to_string(),
-            constraint: "declare `extraction_payoff` on the deposit branches only (`forestry`, \
-                         `extraction`) — a take rate, a reach and a regrowth multiplier are \
-                         properties of a deposit, and a key that parses and does nothing reads as \
-                         the seam that would carry a fix"
+            constraint: "declare `extraction_payoff` on the rungs of a `deposit` branch only — a \
+                         take rate, a reach and a regrowth multiplier are properties of a deposit, \
+                         and a key that parses and does nothing reads as the seam that would carry \
+                         a fix"
                 .to_string(),
-            value: format!("branch '{}'", rung.branch.as_str()),
+            value: format!("branch '{}' ({})", rung.branch.as_str(), source.as_str()),
         });
     }
     if !payoff.yield_per_worker_turn.is_finite() || payoff.yield_per_worker_turn <= 0.0 {
@@ -5087,6 +5719,97 @@ fn validate_extraction_payoff(rung: &RungDef, where_: &str) -> Result<(), Ladder
             ),
             value: payoff.regrowth_multiplier.to_string(),
         });
+    }
+    Ok(())
+}
+
+/// **THE RUNG'S OWN PROPERTIES ARE CONSISTENT WITH ITS BRANCH'S KIND.** Each is a lever the engine
+/// reads for one kind of source, and a lever on a rung where nothing reads it is the "parses and does
+/// nothing" shape this file refuses everywhere else.
+fn validate_rung_properties(
+    rung: &RungDef,
+    source: SourceKind,
+    where_: &str,
+) -> Result<(), LadderConfigError> {
+    for (field, text) in [
+        ("label", &rung.label),
+        ("label_fallback", &rung.label_fallback),
+    ] {
+        if text.trim().is_empty() {
+            return Err(LadderConfigError::Invalid {
+                field: format!("{where_}.{field}"),
+                constraint: "word the rung for the feed — a slip or a loss line is built from it"
+                    .to_string(),
+                value: "empty".to_string(),
+            });
+        }
+    }
+    let mut seen: HashSet<RungTrait> = HashSet::new();
+    for trait_ in &rung.traits {
+        if !seen.insert(*trait_) {
+            return Err(LadderConfigError::Invalid {
+                field: format!("{where_}.traits"),
+                constraint: "list each trait once".to_string(),
+                value: format!("{trait_:?} appears twice"),
+            });
+        }
+    }
+    let gates = [
+        ("requires_work_room", rung.requires_work_room),
+        ("requires_crop", rung.requires_crop),
+        ("requires_held_rung_below", rung.requires_held_rung_below),
+        ("requires_ownership", rung.requires_ownership),
+        ("places_source", rung.places_source),
+    ];
+    if rung.verb.is_none() {
+        if let Some((field, _)) = gates.iter().find(|(_, set)| *set) {
+            return Err(LadderConfigError::Invalid {
+                field: format!("{where_}.{field}"),
+                constraint: "state a gate only on a rung a verb raises — a gate is the refusal \
+                             that verb is judged by, and a rung with no `verb` is never judged"
+                    .to_string(),
+                value: "true on a rung with `verb: null`".to_string(),
+            });
+        }
+        if rung.cost_scale != CostScale::Unscaled {
+            return Err(LadderConfigError::Invalid {
+                field: format!("{where_}.cost_scale"),
+                constraint: "scale the price of a rung a verb raises — a rung with no `verb` is \
+                             not priced per source"
+                    .to_string(),
+                value: rung.cost_scale.as_str().to_string(),
+            });
+        }
+    }
+    if let Some(needs) = rung.cost_scale.source_kind() {
+        if needs != source {
+            return Err(LadderConfigError::Invalid {
+                field: format!("{where_}.cost_scale"),
+                constraint: format!(
+                    "use a scale whose measure the branch's source has — `{}` reads a {}, and \
+                     this branch holds a {}",
+                    rung.cost_scale.as_str(),
+                    needs.as_str(),
+                    source.as_str()
+                ),
+                value: rung.cost_scale.as_str().to_string(),
+            });
+        }
+    }
+    for (field, set) in [
+        ("requires_crop", rung.requires_crop),
+        ("places_source", rung.places_source),
+    ] {
+        if set && source != SourceKind::Patch {
+            return Err(LadderConfigError::Invalid {
+                field: format!("{where_}.{field}"),
+                constraint:
+                    "declare this on a `patch` branch only — a crop is a patch's, and only \
+                             a patch can be placed by sowing"
+                        .to_string(),
+                value: format!("branch source is {}", source.as_str()),
+            });
+        }
     }
     Ok(())
 }
@@ -5239,7 +5962,11 @@ fn validate_partial_credit(rung: &RungDef, where_: &str) -> Result<(), LadderCon
 /// **The upkeep block's bounds** — stated here, beside the build's, because
 /// [`LadderConfig::validate`] already owns every ladder bound and a rate that describes both webs
 /// belongs to the ladder.
-fn validate_upkeep(rung: &RungDef, where_: &str) -> Result<(), LadderConfigError> {
+fn validate_upkeep(
+    rung: &RungDef,
+    source: SourceKind,
+    where_: &str,
+) -> Result<(), LadderConfigError> {
     let Some(upkeep) = rung.upkeep.as_ref() else {
         return Ok(());
     };
@@ -5299,9 +6026,7 @@ fn validate_upkeep(rung: &RungDef, where_: &str) -> Result<(), LadderConfigError
     // working and stay there, which is `docs/plan_standing_upkeep.md` §2.7's own pile-versus-rate
     // distinction. Giving one branch a standing rate means building the settle pass first, and then
     // deleting this check deliberately rather than discovering it was never enforced.
-    if matches!(rung.branch, RungBranch::Forestry | RungBranch::Extraction)
-        && !upkeep.materials.is_empty()
-    {
+    if source == SourceKind::Deposit && !upkeep.materials.is_empty() {
         return Err(LadderConfigError::Invalid {
             field: format!("{where_}.upkeep.materials"),
             constraint: "hold a deposit working with WORK alone — the two extraction branches                          settle no standing material, so a rate here would publish a demand that                          nothing ever pays. A material that goes INTO the working belongs on                          `build.materials`"
@@ -5422,11 +6147,55 @@ mod tests {
     use super::*;
     use serde_json::Value;
 
+    /// **THE BRIDGE IS A BIJECTION ON THE CODED RUNGS** — every [`RungKey`] converts to an id that
+    /// converts back to it, the id's wire spelling is the key's own, and a rung no code names is
+    /// `None` rather than a guess.
+    #[test]
+    fn ladder_ids_bridge_tests_every_coded_rung_round_trips() {
+        for key in RungKey::ALL {
+            let id = key.to_id();
+            assert_eq!(id.to_key(), Some(key));
+            assert_eq!(id.wire_key(), key.wire_key());
+            assert_eq!(id.branch.to_branch(), Some(key.branch()));
+            assert_eq!(key.branch().to_id(), id.branch);
+        }
+        let unknown = RungId::new(BranchId::new("plant"), "no_such_rung");
+        assert_eq!(unknown.to_key(), None);
+        assert_eq!(BranchId::new("no_such_branch").to_branch(), None);
+    }
+
+    /// **EVERY CODED VERB BRIDGES BOTH WAYS**, and `shipped::*` names the same ids the bridge does.
+    #[test]
+    fn ladder_ids_bridge_tests_every_verb_round_trips_and_shipped_agrees() {
+        for verb in Improvement::ALL {
+            assert_eq!(verb.verb_id().to_improvement(), Some(verb));
+        }
+        assert_eq!(VerbId::new("no_such_verb").to_improvement(), None);
+        assert_eq!(
+            crate::ladder_ids::shipped::plant_tended(),
+            RungKey::PlantTended.to_id()
+        );
+        assert_eq!(
+            crate::ladder_ids::shipped::extraction_quarry(),
+            RungKey::ExtractionQuarry.to_id()
+        );
+        assert_eq!(
+            crate::ladder_ids::shipped::corral(),
+            Improvement::Corral.verb_id()
+        );
+        assert_eq!(
+            crate::ladder_ids::shipped::forestry(),
+            RungBranch::Forestry.to_id()
+        );
+    }
+
     /// A two-rung standing part-way up, for the basket blend below.
     fn part_way_up(credit: f32) -> RungStanding {
         RungStanding {
-            held: RungKey::PlantWild,
-            raising: Some(RungKey::PlantTended),
+            held: RungKey::PlantWild.to_id(),
+            held_order: 1,
+            traits: RungTraits::NONE,
+            raising: Some(RungKey::PlantTended.to_id()),
             credit,
             banked: 1.0,
         }
@@ -5531,7 +6300,9 @@ mod tests {
 
         // The top of a branch raises nothing, so there is nothing to blend toward.
         let topped_out = resolve(&RungStanding {
-            held: RungKey::PlantWild,
+            held: RungKey::PlantWild.to_id(),
+            held_order: 1,
+            traits: RungTraits::NONE,
             raising: None,
             credit: 0.5,
             banked: NO_RUNG_WORK_BANKED,
@@ -5624,7 +6395,7 @@ mod tests {
         // Both branches, all five coded rungs.
         for key in RungKey::ALL {
             let rung = ladder.rung(key);
-            assert_eq!(rung.branch, key.branch());
+            assert_eq!(rung.branch, key.branch().to_id());
             assert_eq!(rung.id, key.id());
         }
     }
@@ -5672,36 +6443,37 @@ mod tests {
         assert_eq!(road.area, "works", "the route branch is a works domain");
     }
 
-    /// **A BRANCH WITH NO DESCRIPTOR NAMES NO AREA, AND THAT IS A FALLBACK RATHER THAN A FAULT.**
-    /// It still draws, under the client's fallback heading — a knowledge that vanishes because a
-    /// config edit was incomplete is the worst failure this screen has.
+    /// **A BRANCH THE LADDER DOES NOT DECLARE NAMES NO AREA** — `branch_area` still answers the
+    /// fallback for it, so a lookup never panics. A *rung* naming such a branch is a different
+    /// matter and is refused (`a_rung_on_an_undeclared_branch_is_rejected`): the descriptor is where
+    /// the branch declares what kind of source it is.
     #[test]
-    fn a_branch_with_no_descriptor_reports_no_subject_area() {
-        let mut json: Value =
-            serde_json::from_str(BUILTIN_INTENSIFICATION_LADDER).expect("builtin parses as json");
-        json["branches"]
-            .as_object_mut()
-            .expect("branches is a table")
-            .remove("route")
-            .expect("the builtin describes the route branch");
-        let ladder = LadderConfig::from_json_str(&json.to_string())
-            .expect("a branch without a descriptor is legal");
-
-        assert_eq!(ladder.branch_area(RungBranch::Route), NO_SUBJECT_AREA);
-        let road = ladder
-            .knowledge_roster()
-            .into_iter()
-            .find(|entry| entry.knowledge == "roadbuilding")
-            .expect("roadbuilding is still taught");
+    fn an_undeclared_branch_reports_no_subject_area() {
+        let ladder = LadderConfig::builtin();
         assert_eq!(
-            road.area, NO_SUBJECT_AREA,
-            "the row is published with no area, never dropped"
+            ladder.branch_area(BranchId::new("no_such_branch")),
+            NO_SUBJECT_AREA
         );
         assert_eq!(
             ladder.branch_area(RungBranch::Plant),
             "food",
-            "the described branches are untouched by a neighbour's missing record"
+            "the declared branches answer their own area"
         );
+    }
+
+    /// **EVERY BRANCH A RUNG NAMES MUST BE DECLARED** — the descriptor carries the branch's
+    /// `source`, so a branch without one is a ladder nothing can drive. This is the rule that
+    /// replaced *"a branch with no descriptor is a legal fallback"*, which required no source.
+    #[test]
+    fn a_rung_on_an_undeclared_branch_is_rejected() {
+        let err = reject(|json| {
+            json["branches"]
+                .as_object_mut()
+                .expect("branches is a table")
+                .remove("route")
+                .expect("the builtin describes the route branch");
+        });
+        assert_rejects(err, "rungs[route:");
     }
 
     /// **AN AREA WITH NO POSITION IN THE DISPLAY ORDER HAS NOWHERE TO BE DRAWN.**
@@ -5748,20 +6520,13 @@ mod tests {
         assert_rejects(err, "branches[animal].area");
     }
 
-    /// **AN UNKNOWN BRANCH KEY FAILS THE PARSE**, which is precisely why
-    /// [`LadderConfig::validate_areas`] carries no *"every branch must be described"* rule. The
-    /// descriptor table is keyed by [`RungBranch`] itself, so `serde` refuses a token nobody coded
-    /// before any validation runs — the same coded-primitive discipline `behavior` follows.
-    ///
-    /// **It is pinned because it stands in for a validation rule.** A missing descriptor is a legal
-    /// fallback (`a_branch_with_no_descriptor_reports_no_subject_area`), and only the parse tells a
-    /// deliberate omission apart from a typo. Were an unknown key ever merely *ignored* — a catch-all
-    /// [`RungBranch`] arm, a loosened `serde` attribute — `"plnat"` would load clean, every knowledge
-    /// the plant branch teaches would publish [`NO_SUBJECT_AREA`], and the lot would drop under the
-    /// client's fallback heading with the whole suite green. That is the failure the table exists to
-    /// prevent, so the change that would widen the fallback has to fail HERE.
+    /// **A MISSPELT BRANCH KEY IS REFUSED, BY VALIDATION RATHER THAN BY THE PARSE.** Branches are
+    /// config identities now, so `"plnat"` parses as a branch. What refuses it is that the plant
+    /// rungs then name a branch with no descriptor, and that the ladder is left with no `patch`
+    /// branch at all — the typo that used to fail the parse still cannot load, and it cannot turn
+    /// every plant knowledge into one filed under the fallback heading.
     #[test]
-    fn rejects_an_unknown_branch_key() {
+    fn rejects_a_misspelt_branch_key() {
         let err = reject(|json| {
             let branches = json["branches"]
                 .as_object_mut()
@@ -5772,9 +6537,448 @@ mod tests {
             branches.insert("plnat".to_string(), plant);
         });
         assert!(
-            matches!(err, LadderConfigError::Parse(_)),
-            "a misspelled branch key must fail the PARSE, not describe a branch nobody coded: {err:?}"
+            matches!(err, LadderConfigError::Invalid { .. }),
+            "a misspelled branch key must fail validation: {err:?}"
         );
+    }
+
+    /// **AN UNKNOWN SOURCE KIND FAILS THE PARSE** — the kinds are the coded set the ladder is data
+    /// over, and a typo must not resolve to a default nobody chose.
+    #[test]
+    fn rejects_an_unknown_source_kind() {
+        let err = reject(|json| {
+            json["branches"]["plant"]["source"] = Value::String("orchard".to_string());
+        });
+        assert!(
+            matches!(err, LadderConfigError::Parse(_)),
+            "an unknown source kind must fail the PARSE: {err:?}"
+        );
+    }
+
+    /// **THE KINDS ARE COUNTED, NEVER THE NAMES.** One patch, one herd, one road; at least one
+    /// deposit; any number of tile branches.
+    #[test]
+    fn the_source_kinds_are_counted_and_not_named() {
+        // A second patch branch: refused.
+        let err = reject(|json| {
+            json["branches"]["animal"]["source"] = Value::String("patch".to_string());
+        });
+        assert_rejects(err, "branches[*].source = patch");
+        // No herd branch left: refused.
+        let err = reject(|json| {
+            json["branches"]["animal"]["source"] = Value::String("tile".to_string());
+        });
+        assert_rejects(err, "branches[*].source = herd");
+        // No deposit branch at all: refused.
+        let err = reject(|json| {
+            for branch in ["forestry", "extraction"] {
+                json["branches"][branch]["source"] = Value::String("tile".to_string());
+            }
+        });
+        assert_rejects(err, "branches[*].source");
+    }
+
+    /// **A SECOND DEPOSIT BRANCH IS FINE** — the count is `at least one`, which is what lets the
+    /// minerals arc add a branch without a code edit. This is the same branch re-declared under
+    /// another kind's quota: it must still obey the deposit-only payoff rules.
+    #[test]
+    fn a_deposit_branch_obeys_the_deposit_rules_whatever_its_name() {
+        // `forestry` re-declared as a road: its rungs now carry an `extraction_payoff` on a road
+        // branch, and no `route_payoff` — both refused.
+        let err = reject(|json| {
+            json["branches"]["forestry"]["source"] = Value::String("road".to_string());
+        });
+        assert!(matches!(err, LadderConfigError::Invalid { .. }), "{err:?}");
+    }
+
+    /// **A COST SCALE NAMES A MEASURE THE BRANCH'S SOURCE HAS.** A `species_taming` scale on a
+    /// patch would price every patch at the unscaled cost without saying so.
+    #[test]
+    fn a_cost_scale_must_belong_to_the_branchs_source_kind() {
+        let err = reject(|json| {
+            let index = rung_index(json, "plant", "tended");
+            json["rungs"][index]["cost_scale"] = Value::String("species_taming".to_string());
+        });
+        assert_rejects(err, "plant:tended].cost_scale");
+    }
+
+    /// **A GATE ON A RUNG NO VERB RAISES IS DEAD** — the refusal a verb is judged by has nothing to
+    /// judge. `crop` and `places_source` are patch-only, because only a patch has a crop to be
+    /// committed and only a patch can be placed by sowing.
+    #[test]
+    fn a_gate_is_stated_only_where_a_verb_is_judged_by_it() {
+        let err = reject(|json| {
+            let index = rung_index(json, "plant", "wild");
+            json["rungs"][index]["requires_work_room"] = Value::Bool(true);
+        });
+        assert_rejects(err, "plant:wild].requires_work_room");
+        let err = reject(|json| {
+            let index = rung_index(json, "animal", "pastoral");
+            json["rungs"][index]["requires_crop"] = Value::Bool(true);
+        });
+        assert_rejects(err, "animal:pastoral].requires_crop");
+        let err = reject(|json| {
+            let index = rung_index(json, "animal", "pen");
+            json["rungs"][index]["places_source"] = Value::Bool(true);
+        });
+        assert_rejects(err, "animal:pen].places_source");
+    }
+
+    /// **A VERB NAMES EXACTLY ONE RUNG** across the whole ladder.
+    #[test]
+    fn a_verb_is_unique_across_the_ladder() {
+        let err = reject(|json| {
+            let index = rung_index(json, "plant", "field");
+            json["rungs"][index]["verb"] = Value::String("cultivate".to_string());
+        });
+        assert_rejects(err, "plant:field");
+    }
+
+    /// **A SHIPPED RUNG'S VERB IS PINNED TO THE CODED ONE**, now that a verb no longer has to parse
+    /// as an `Improvement`: a typo here would leave the rung defined, validated and never driven.
+    #[test]
+    fn a_coded_rungs_verb_cannot_be_retyped() {
+        let err = reject(|json| {
+            let index = rung_index(json, "plant", "tended");
+            json["rungs"][index]["verb"] = Value::String("cultivte".to_string());
+        });
+        assert_rejects(err, "plant:tended].verb");
+    }
+
+    /// **THE SHIPPED LADDER'S PROPERTIES ARE WHAT THE ENGINE'S IDENTITY TESTS USED TO BE.** Each
+    /// assertion here is a rung identity a call site tests today, restated as the property the
+    /// config now carries — so the property sites that replace them have something true to read.
+    #[test]
+    fn the_shipped_properties_state_what_the_identity_sites_assume() {
+        let ladder = LadderConfig::builtin();
+        let rung = |branch: &str, id: &str| {
+            ladder
+                .find(BranchId::new(branch), id)
+                .unwrap_or_else(|| panic!("{branch}:{id} is shipped"))
+        };
+        let tended = rung("plant", "tended");
+        let field = rung("plant", "field");
+        let pastoral = rung("animal", "pastoral");
+        let pen = rung("animal", "pen");
+        assert_eq!(tended.trait_set(), RungTraits::of(&[RungTrait::Managed]));
+        assert_eq!(
+            field.trait_set(),
+            RungTraits::of(&[RungTrait::Managed, RungTrait::Sown])
+        );
+        assert!(pastoral.trait_set().has(RungTrait::Domesticated));
+        assert!(!pastoral.trait_set().has(RungTrait::Enclosed));
+        assert!(pen.trait_set().has(RungTrait::Enclosed));
+        assert_eq!(pastoral.cost_scale, CostScale::SpeciesTaming);
+        assert_eq!(field.cost_scale, CostScale::ReplacedShare);
+        assert_eq!(rung("route", "dirt_road").cost_scale, CostScale::Remoteness);
+        assert_eq!(tended.cost_scale, CostScale::Unscaled);
+        // The Cultivate and Tame gates carry a work predicate; Sow and Corral deliberately do not.
+        assert!(tended.requires_work_room && pastoral.requires_work_room);
+        assert!(!field.requires_work_room && !pen.requires_work_room);
+        assert!(tended.requires_crop && field.requires_crop);
+        assert!(field.places_source && !tended.places_source);
+        assert!(pen.requires_held_rung_below && !pastoral.requires_held_rung_below);
+        // Every shipped rung carries the words the feed is built from.
+        for rung in &ladder.rungs {
+            let key = rung
+                .rung_id()
+                .to_key()
+                .expect("every shipped rung is coded");
+            assert_eq!(rung.label, key.feed_name(), "{}", rung.wire_key());
+            assert_eq!(
+                rung.label_fallback,
+                key.feed_fallback(),
+                "{}",
+                rung.wire_key()
+            );
+        }
+        // And the branches declare the kinds and keeping jobs the equipment seams match by name.
+        for branch in ALL_BRANCHES {
+            let def = ladder.branch_def(branch).expect("every shipped branch");
+            assert_eq!(
+                def.keeping_job,
+                crate::equipment_config::EquipmentConfig::keeping_job(branch),
+                "{}",
+                branch.as_str()
+            );
+        }
+        assert_eq!(
+            ladder.source_kind(RungBranch::Plant),
+            Some(SourceKind::Patch)
+        );
+        assert_eq!(
+            ladder.source_kind(RungBranch::Animal),
+            Some(SourceKind::Herd)
+        );
+        assert_eq!(
+            ladder.source_kind(RungBranch::Route),
+            Some(SourceKind::Road)
+        );
+        assert_eq!(
+            ladder.source_kind(RungBranch::Forestry),
+            Some(SourceKind::Deposit)
+        );
+        assert_eq!(
+            ladder.source_kind(RungBranch::Extraction),
+            Some(SourceKind::Deposit)
+        );
+    }
+
+    /// **THE SHIPPED LADDER PLUS A TWO-RUNG `tile` BRANCH THE CODE HAS NEVER HEARD OF**, built by
+    /// appending JSON records to the builtin's own — so what is under test is what a config file
+    /// would produce, not a hand-built `LadderConfig` that could disagree with one. Its verb
+    /// (`graft`) and its branch (`orchard`) are in no enum.
+    fn ladder_with_orchard() -> LadderConfig {
+        let mut json: Value =
+            serde_json::from_str(BUILTIN_INTENSIFICATION_LADDER).expect("builtin parses as json");
+        json["branches"]["orchard"] = serde_json::json!({
+            "area": "food", "source": "tile", "keeping_job": "agriculture", "label": "Orchards"
+        });
+        let mut root = json["rungs"][rung_index(&json, "plant", "wild")].clone();
+        root["branch"] = Value::String("orchard".to_string());
+        root["id"] = Value::String("bare_ground".to_string());
+        root["earns_knowledge"] = Value::Null;
+        root["site_requirement"] = Value::Null;
+        root["label"] = Value::String("Bare ground".to_string());
+        root["label_fallback"] = Value::String("bare ground".to_string());
+        let mut grafted = json["rungs"][rung_index(&json, "plant", "tended")].clone();
+        grafted["branch"] = Value::String("orchard".to_string());
+        grafted["id"] = Value::String("grafted".to_string());
+        grafted["order"] = Value::from(2);
+        grafted["verb"] = Value::String("graft".to_string());
+        grafted["requires_rung"] = Value::String("bare_ground".to_string());
+        grafted["unlock_knowledge"] = Value::Null;
+        grafted["earns_knowledge"] = Value::Null;
+        grafted["site_requirement"] = Value::Null;
+        grafted["requires_crop"] = Value::Bool(false);
+        grafted["traits"] = serde_json::json!(["managed"]);
+        grafted["label"] = Value::String("Grafted orchard".to_string());
+        grafted["label_fallback"] = Value::String("a grafted orchard".to_string());
+        let rungs = json["rungs"].as_array_mut().expect("rungs is an array");
+        rungs.push(root);
+        rungs.push(grafted);
+        LadderConfig::from_json_str(&json.to_string())
+            .expect("a tile branch recombining existing primitives is a pure config edit")
+    }
+
+    /// **A NEW BRANCH IS A JSON EDIT.** A two-rung `tile` branch with a verb the code has never
+    /// heard of loads, validates, resolves by identity and is walked by `rungs_of` — nothing in
+    /// `intensification.rs` names it. (It is the shape slice 8's tile registry stands on.)
+    #[test]
+    fn a_tile_branch_with_a_novel_verb_loads_from_json_alone() {
+        let ladder = ladder_with_orchard();
+        let orchard = BranchId::new("orchard");
+        assert_eq!(ladder.source_kind(orchard), Some(SourceKind::Tile));
+        assert_eq!(
+            ladder
+                .rungs_of(orchard)
+                .iter()
+                .map(|rung| rung.id.as_str())
+                .collect::<Vec<_>>(),
+            ["bare_ground", "grafted"]
+        );
+        let graft = ladder
+            .rung_for_verb(VerbId::new("graft"))
+            .expect("the novel verb names its rung");
+        assert_eq!(graft.rung_id(), RungId::new(orchard, "grafted"));
+        assert_eq!(graft.verb_improvement(), None, "no coded verb drives it");
+        let above_root = ladder
+            .above_rung(ladder.root_of(orchard).expect("a root"))
+            .map(RungDef::rung_id);
+        assert_eq!(above_root, Some(graft.rung_id()));
+        assert!(graft.trait_set().has(RungTrait::Managed));
+        assert_eq!(
+            ladder.branches_of(SourceKind::Tile).collect::<Vec<_>>(),
+            [orchard]
+        );
+    }
+
+    /// **THE STANDING WALK READS THE CONFIG, NOT A CODED CLIMB** — it resolves a position on a
+    /// branch no enum names, stamps the held rung's id, order and traits, and agrees with itself
+    /// across `at`, `unstarted_on`, `arrived_at` and `rung_span`.
+    #[test]
+    fn the_standing_walk_follows_the_configs_order_on_a_branch_the_code_never_named() {
+        let ladder = ladder_with_orchard();
+        let orchard = BranchId::new("orchard");
+        let graft_cost = ladder
+            .rung_for_verb(VerbId::new("graft"))
+            .and_then(|rung| rung.build_cost(RUNG_COST_UNSCALED))
+            .expect("grafting is a job");
+        let price = |rung: &RungDef| rung.build_cost(RUNG_COST_UNSCALED);
+
+        let bare = RungStanding::at(&ladder, orchard, RUNG_UNSTARTED, price);
+        assert_eq!(bare.held, RungId::new(orchard, "bare_ground"));
+        assert_eq!(bare.held_order, 1);
+        assert_eq!(bare.traits, RungTraits::NONE);
+        assert_eq!(bare.raising, Some(RungId::new(orchard, "grafted")));
+        assert_eq!(bare, RungStanding::unstarted_on(&ladder, orchard));
+
+        let half = RungStanding::at(&ladder, orchard, graft_cost * 0.5, price);
+        assert_eq!(half.held, bare.held, "half a rung holds the rung below");
+        assert!((half.credit - 0.5).abs() < 1e-6);
+        assert!((half.banked - graft_cost * 0.5).abs() < 1e-4);
+
+        let done = RungStanding::at(&ladder, orchard, graft_cost, price);
+        assert_eq!(done.held, RungId::new(orchard, "grafted"));
+        assert_eq!(done.held_order, 2);
+        assert!(
+            done.has(RungTrait::Managed),
+            "the held rung's traits are stamped"
+        );
+        assert_eq!(
+            done.raising, None,
+            "nothing sits above the top of the branch"
+        );
+        assert_eq!(
+            done,
+            RungStanding::arrived_at(&ladder, RungId::new(orchard, "grafted"))
+        );
+
+        let graft = ladder.rung_by_id(done.held).expect("defined");
+        assert_eq!(rung_span(&ladder, graft, &price), (0.0, graft_cost));
+        assert!(done.holds_at_or_above(graft));
+        assert!(!bare.holds_at_or_above(graft));
+        let plant_tended = ladder.rung(RungKey::PlantTended);
+        assert!(
+            !done.holds_at_or_above(plant_tended),
+            "a rung of another branch is neither above nor below"
+        );
+    }
+
+    /// **THE LADDER-FREE `unstarted` IS THE WALK'S OWN ANSWER** for every branch the code names —
+    /// the constructors that fabricate a fresh source with no config in scope rely on it, and the
+    /// shipped roots carry no traits, which is the one thing it assumes.
+    #[test]
+    fn an_unstarted_standing_is_the_walks_own_answer() {
+        let ladder = LadderConfig::builtin();
+        for branch in ALL_BRANCHES {
+            assert_eq!(
+                RungStanding::unstarted(branch),
+                RungStanding::unstarted_on(&ladder, branch),
+                "{}",
+                branch.as_str()
+            );
+            let walked = RungStanding::at(&ladder, branch, RUNG_UNSTARTED, |rung| {
+                rung.build_cost(RUNG_COST_UNSCALED)
+            });
+            assert_eq!(
+                walked,
+                RungStanding::unstarted(branch),
+                "{}",
+                branch.as_str()
+            );
+        }
+    }
+
+    /// **`rung_span` ON THE CONFIG'S ORDER IS THE CODED CLIMB'S SPAN, rung for rung** — including a
+    /// branch's root, which starts the ladder at zero with no width. (A root that fell through the
+    /// walk answered the sum of the whole branch, and seated every fixture at the top.)
+    #[test]
+    fn rung_span_follows_the_config_to_the_same_spans_the_coded_climb_gave() {
+        let ladder = LadderConfig::builtin();
+        let price = |rung: &RungDef| rung.build_cost(RUNG_COST_UNSCALED);
+        for key in RungKey::ALL {
+            let mut expected_base = RUNG_UNSTARTED;
+            let mut cursor = key.branch().root_rung();
+            while cursor != key {
+                cursor = cursor.above().expect("the coded climb reaches every rung");
+                if cursor != key {
+                    expected_base += price(ladder.rung(cursor)).unwrap_or(NO_RUNG_WIDTH);
+                }
+            }
+            let expected_width = if key == key.branch().root_rung() {
+                NO_RUNG_WIDTH
+            } else {
+                price(ladder.rung(key)).unwrap_or(NO_RUNG_WIDTH)
+            };
+            assert_eq!(
+                rung_span(&ladder, ladder.rung(key), &price),
+                (expected_base, expected_width),
+                "{}",
+                key.wire_key()
+            );
+        }
+    }
+
+    /// **A STANDING'S TRAITS ARE THE HELD RUNG'S, AND ONLY THE HELD RUNG'S.** A half-sown Field is
+    /// still a tended patch to everything that asks what it *is*; it becomes sown when the rung is
+    /// whole.
+    #[test]
+    fn the_shipped_standings_carry_the_traits_of_the_rung_they_hold() {
+        let ladder = LadderConfig::builtin();
+        let price = |rung: &RungDef| rung.build_cost(RUNG_COST_UNSCALED);
+        let tended = raise_cost(&ladder, RungKey::PlantTended);
+        let field = raise_cost(&ladder, RungKey::PlantField);
+        let at = |position| RungStanding::at(&ladder, RungBranch::Plant, position, price);
+        assert_eq!(at(RUNG_UNSTARTED).traits, RungTraits::NONE);
+        let tended_done = at(tended);
+        assert!(tended_done.has(RungTrait::Managed) && !tended_done.has(RungTrait::Sown));
+        let half_field = at(tended + field * 0.5);
+        assert!(half_field.has(RungTrait::Managed) && !half_field.has(RungTrait::Sown));
+        let field_done = at(tended + field);
+        assert!(field_done.has(RungTrait::Managed) && field_done.has(RungTrait::Sown));
+
+        let pastoral = raise_cost(&ladder, RungKey::AnimalPastoral);
+        let pen = raise_cost(&ladder, RungKey::AnimalPen);
+        let animal = |position| RungStanding::at(&ladder, RungBranch::Animal, position, price);
+        assert!(animal(pastoral).has(RungTrait::Domesticated));
+        assert!(!animal(pastoral).has(RungTrait::Enclosed));
+        assert!(!animal(pastoral + pen * 0.99).has(RungTrait::Enclosed));
+        assert!(animal(pastoral + pen).has(RungTrait::Enclosed));
+    }
+
+    /// **A STANDING SURVIVES A SAVE AS NAMES**, so a blob written by one process reads in another
+    /// whose interner was filled in a different order.
+    #[test]
+    fn a_standing_round_trips_through_serde_as_names() {
+        let ladder = ladder_with_orchard();
+        let orchard = BranchId::new("orchard");
+        let done = RungStanding::at(&ladder, orchard, 1_000.0, |rung| {
+            rung.build_cost(RUNG_COST_UNSCALED)
+        });
+        let json = serde_json::to_string(&done).expect("a standing serialises");
+        assert!(json.contains("orchard:grafted"), "{json}");
+        assert!(json.contains("managed"), "{json}");
+        let back: RungStanding = serde_json::from_str(&json).expect("and reads back");
+        assert_eq!(back, done);
+    }
+
+    /// **THE CONFIG'S BRANCH ORDER IS THE ORDER THE FILE LISTS THEM**, not alphabetical and not
+    /// interning order — wood before stone, because the published catalog has always read that way.
+    #[test]
+    fn deposit_branches_come_in_the_configs_own_order() {
+        let ladder = LadderConfig::builtin();
+        let deposit: Vec<&str> = ladder
+            .branches_of(SourceKind::Deposit)
+            .map(BranchId::as_str)
+            .collect();
+        assert_eq!(deposit, ["forestry", "extraction"]);
+    }
+
+    /// **THE EXTRACTION TABLE IS RECONCILED AGAINST THE KINDS.** A deposit naming a food web's
+    /// branch is refused at boot, as is one naming a branch the ladder does not declare.
+    #[test]
+    fn a_deposit_must_name_a_deposit_branch() {
+        let ladder = LadderConfig::builtin();
+        let mut extraction = (*crate::extraction_config::ExtractionConfig::builtin()).clone();
+        ladder
+            .validate_against_extraction(&extraction)
+            .expect("the shipped deposits name deposit branches");
+        extraction
+            .deposits
+            .get_mut("wood")
+            .expect("wood is shipped")
+            .branch = RungBranch::Plant.to_id();
+        let err = ladder
+            .validate_against_extraction(&extraction)
+            .expect_err("a deposit on a food web's branch is refused");
+        assert_rejects(err, "extraction.deposits.wood.branch");
+        extraction
+            .deposits
+            .get_mut("wood")
+            .expect("wood is shipped")
+            .branch = BranchId::new("no_such_branch");
+        assert!(ladder.validate_against_extraction(&extraction).is_err());
     }
 
     /// The ladder must describe **what the sim does today**, not the target model — later slices
@@ -8096,42 +9300,42 @@ mod tests {
         let field = raise_cost(&ladder, RungKey::PlantField);
 
         let unstarted = RungStanding::at(&ladder, RungBranch::Plant, RUNG_UNSTARTED, |key| {
-            ladder.rung(key).build_cost(RUNG_COST_UNSCALED)
+            key.build_cost(RUNG_COST_UNSCALED)
         });
-        assert_eq!(unstarted.held, RungKey::PlantWild);
-        assert_eq!(unstarted.raising, Some(RungKey::PlantTended));
+        assert_eq!(unstarted.held_key(), RungKey::PlantWild);
+        assert_eq!(unstarted.raising_key(), Some(RungKey::PlantTended));
         assert!((unstarted.credit - NO_RUNG_CREDIT).abs() < 1e-6);
 
         let mid_tended =
             RungStanding::at(&ladder, RungBranch::Plant, tended * HALF_WAY_UP, |key| {
-                ladder.rung(key).build_cost(RUNG_COST_UNSCALED)
+                key.build_cost(RUNG_COST_UNSCALED)
             });
-        assert_eq!(mid_tended.held, RungKey::PlantWild);
-        assert_eq!(mid_tended.raising, Some(RungKey::PlantTended));
+        assert_eq!(mid_tended.held_key(), RungKey::PlantWild);
+        assert_eq!(mid_tended.raising_key(), Some(RungKey::PlantTended));
         assert!((mid_tended.credit - HALF_WAY_UP).abs() < 1e-6);
 
         let tended_done = RungStanding::at(&ladder, RungBranch::Plant, tended, |key| {
-            ladder.rung(key).build_cost(RUNG_COST_UNSCALED)
+            key.build_cost(RUNG_COST_UNSCALED)
         });
-        assert_eq!(tended_done.held, RungKey::PlantTended);
-        assert_eq!(tended_done.raising, Some(RungKey::PlantField));
+        assert_eq!(tended_done.held_key(), RungKey::PlantTended);
+        assert_eq!(tended_done.raising_key(), Some(RungKey::PlantField));
         assert!((tended_done.credit - NO_RUNG_CREDIT).abs() < 1e-6);
 
         let mid_field = RungStanding::at(
             &ladder,
             RungBranch::Plant,
             tended + field * HALF_WAY_UP,
-            |key| ladder.rung(key).build_cost(RUNG_COST_UNSCALED),
+            |rung| rung.build_cost(RUNG_COST_UNSCALED),
         );
-        assert_eq!(mid_field.held, RungKey::PlantTended);
-        assert_eq!(mid_field.raising, Some(RungKey::PlantField));
+        assert_eq!(mid_field.held_key(), RungKey::PlantTended);
+        assert_eq!(mid_field.raising_key(), Some(RungKey::PlantField));
         assert!((mid_field.credit - HALF_WAY_UP).abs() < 1e-6);
 
         let topped_out = RungStanding::at(&ladder, RungBranch::Plant, tended + field, |key| {
-            ladder.rung(key).build_cost(RUNG_COST_UNSCALED)
+            key.build_cost(RUNG_COST_UNSCALED)
         });
-        assert_eq!(topped_out.held, RungKey::PlantField);
-        assert_eq!(topped_out.raising, None);
+        assert_eq!(topped_out.held_key(), RungKey::PlantField);
+        assert_eq!(topped_out.raising_key(), None);
     }
 
     /// **THE DELTA FORM: a Field half-raised pays a whole Tended patch plus half the Field's extra.**
@@ -8151,7 +9355,7 @@ mod tests {
             &ladder,
             RungBranch::Plant,
             tended + field * HALF_WAY_UP,
-            |key| ladder.rung(key).build_cost(RUNG_COST_UNSCALED),
+            |rung| rung.build_cost(RUNG_COST_UNSCALED),
         );
         let paid = interpolate(&standing, value_at);
         assert!(
@@ -8160,7 +9364,7 @@ mod tests {
         );
 
         let held_outright = RungStanding::at(&ladder, RungBranch::Plant, tended + field, |key| {
-            ladder.rung(key).build_cost(RUNG_COST_UNSCALED)
+            key.build_cost(RUNG_COST_UNSCALED)
         });
         assert!(
             (interpolate(&held_outright, value_at) - FIELD_PAYS).abs() < 1e-6,
@@ -8191,9 +9395,9 @@ mod tests {
             &ladder,
             RungBranch::Animal,
             pastoral + pen * ALL_BUT_FINISHED,
-            |key| ladder.rung(key).build_cost(RUNG_COST_UNSCALED),
+            |rung| rung.build_cost(RUNG_COST_UNSCALED),
         );
-        assert_eq!(nearly.raising, Some(RungKey::AnimalPen));
+        assert_eq!(nearly.raising_key(), Some(RungKey::AnimalPen));
         assert!((nearly.credit - NO_RUNG_CREDIT).abs() < 1e-6);
         assert!(
             (interpolate(&nearly, value_at) - TENDED_PAYS).abs() < 1e-6,
@@ -8201,10 +9405,10 @@ mod tests {
         );
 
         let fenced = RungStanding::at(&ladder, RungBranch::Animal, pastoral + pen, |key| {
-            ladder.rung(key).build_cost(RUNG_COST_UNSCALED)
+            key.build_cost(RUNG_COST_UNSCALED)
         });
-        assert_eq!(fenced.held, RungKey::AnimalPen);
-        assert_eq!(fenced.raising, None);
+        assert_eq!(fenced.held_key(), RungKey::AnimalPen);
+        assert_eq!(fenced.raising_key(), None);
         assert!(
             (interpolate(&fenced, value_at) - FIELD_PAYS).abs() < 1e-6,
             "a finished pen is worth the pen"
@@ -8214,7 +9418,7 @@ mod tests {
         // assertions above are about the flag rather than about the walk answering zero everywhere.
         let mid_tame =
             RungStanding::at(&ladder, RungBranch::Animal, pastoral * HALF_WAY_UP, |key| {
-                ladder.rung(key).build_cost(RUNG_COST_UNSCALED)
+                key.build_cost(RUNG_COST_UNSCALED)
             });
         assert!((mid_tame.credit - HALF_WAY_UP).abs() < 1e-6);
     }

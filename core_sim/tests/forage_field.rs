@@ -1599,7 +1599,7 @@ fn a_field_finished_short_of_its_bill_keeps_the_rung_for_its_full_grace() {
         patch.neglect_turns = WELL_PAST_ANY_GRACE;
         patch.set_ladder_position(base + width, &ladder);
         assert!(
-            patch.standing().held == RungKey::PlantField,
+            patch.standing().held_key() == RungKey::PlantField,
             "fixture: the Field is finished"
         );
     }
@@ -1609,7 +1609,7 @@ fn a_field_finished_short_of_its_bill_keeps_the_rung_for_its_full_grace() {
             .patch(coord)
             .expect("the fixture patch")
             .standing()
-            .held
+            .held_key()
             == RungKey::PlantField
     };
     for turn in 1..=field_grace(&app) {

@@ -1292,7 +1292,7 @@ fn keep_hands_of(app: &App, crew: u32, wear: &BandEquipment) -> f32 {
     core_sim::prospective_keep_hands(
         &EquipmentConfig::builtin(),
         wear,
-        herd.standing().held,
+        herd.standing().held_key(),
         core_sim::herd_keeping_basis(herd, &fauna, &ladder),
         crew,
     )

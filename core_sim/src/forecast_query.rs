@@ -1072,7 +1072,9 @@ fn herd_once_raised(
 ) -> Option<crate::fauna::Herd> {
     use crate::intensification::RungKey;
     let standing = herd.standing();
-    let rung = standing.raising.or_else(|| standing.held.above())?;
+    let rung = standing
+        .raising_key()
+        .or_else(|| standing.held_key().above())?;
     let mut raised = herd.clone();
     raised.upkeep_demanded = None;
     raised.owner.get_or_insert(faction);
@@ -1124,7 +1126,9 @@ fn patch_once_raised(
     tile_capacity: Option<f32>,
 ) -> Option<crate::forage::ForagePatch> {
     let standing = patch.standing();
-    let rung = standing.raising.or_else(|| standing.held.above())?;
+    let rung = standing
+        .raising_key()
+        .or_else(|| standing.held_key().above())?;
     let (base, width) = crate::forage::patch_rung_span(patch, rung, ladder);
     let mut raised = patch.clone();
     raised.set_ladder_position(base + width, ladder);
@@ -1298,8 +1302,8 @@ fn answer_work_party_forecast(
                             Some(crop.to_string())
                         } else {
                             standing
-                                .raising
-                                .or_else(|| standing.held.above())
+                                .raising_key()
+                                .or_else(|| standing.held_key().above())
                                 .and_then(|rung| {
                                     crate::forage::default_species_for_rung(
                                         &composition,
@@ -1417,7 +1421,7 @@ fn answer_work_party_forecast(
     // **What one worker's tools add to this working's cut**, at the rung it holds — the pricing's
     // own crew-weighted rate, the term the turn's forecast steps with.
     let deposit_gear_per_worker = |working: &crate::extraction::DepositSource| {
-        let rung = working.standing().held;
+        let rung = working.standing().held_key();
         pricing.deposit_gear_per_worker(&equipment, &wear, rung.branch(), &rung.wire_key())
     };
     let walk = crate::work_party::resolve_walk(
@@ -3513,7 +3517,7 @@ mod tests {
             let mut herd = world.resource::<HerdRegistry>().herds[0].clone();
             herd.tame_outright(FACTION, &ladder);
             let keeping = crate::fauna::CrewKeeping {
-                rung: herd.standing().held,
+                rung: herd.standing().held_key(),
                 demand: PROBE_BILL,
             };
             PROBE_BILL / crate::fauna::crew_keep_hands(Some(keeping), &equipment, &wear, SWEEP_CREW)

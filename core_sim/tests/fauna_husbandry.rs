@@ -5023,7 +5023,7 @@ fn a_monotone_animal_meter_stays_building_until_it_completes() {
     // **THE PRECONDITION** — the state really is part-fenced, and the credit really is zero, or the
     // arm under test is being asked an easier question than the defect was.
     assert_eq!(
-        part_fenced.standing().raising,
+        part_fenced.standing().raising_key(),
         Some(core_sim::RungKey::AnimalPen),
         "fixture: the herd must be raising the pen"
     );

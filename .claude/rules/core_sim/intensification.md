@@ -1,6 +1,6 @@
 ---
 paths:
-  - "core_sim/src/{intensification,knowledge_ledger}.rs"
+  - "core_sim/src/{intensification,knowledge_ledger,ladder_ids}.rs"
   - "core_sim/src/data/intensification_ladder.json"
 ---
 
@@ -2355,6 +2355,51 @@ has shipped once.
 
 **The craft fan is not a ladder branch**, so no descriptor here names its area; the crafts are
 taught by a bench rather than by a rung, and their area is named where their nodes are built.
+
+## Identities, source kinds and rung properties (`ladder_ids.rs`)
+
+**A branch, a rung and a verb are config strings, interned** (`ladder_ids::{Sym, BranchId, VerbId,
+RungId}`), so a new branch is a JSON edit. `RungId` serialises as the `branch:id` wire key and every id
+serialises as its **string**, never its number — a save written by one process reads in another whose
+interner filled in a different order. **Every `Ord` compares the strings**: the interning order depends
+on which test or load touched a name first, so nothing deterministic may iterate in `Sym` order.
+`RungKey` / `RungBranch` / `Improvement` survive as a *view* of the shipped ids, bridged both ways
+(`RungKey::to_id`, `RungId::to_key`, `RungBranch::to_id`, `BranchId::to_branch`, `Improvement::verb_id`,
+`VerbId::to_improvement`); `ladder_ids::shipped::*` names the shipped rungs for tests and appears in no
+non-test source.
+
+**Source kind is code; the branch declares it.** `branches.<id>.source` is one of `patch | herd | road
+| deposit | tile` (`SourceKind`), and `LadderConfig::validate` **counts kinds and never recognises a
+branch name**: exactly one `patch`, one `herd` and one `road` branch, at least one `deposit` branch
+(`LadderConfig::validate_against_extraction` requires every `extraction.json` deposit to name one, at
+boot), any number of `tile` branches. `route_payoff` is required on a `road` branch's rungs and refused
+elsewhere, `extraction_payoff` likewise on a `deposit` branch's, and a `deposit` rung may declare no
+`upkeep.materials` — each decided by the branch's kind. A branch descriptor is also `keeping_job` (the
+`KitJob` equipping a keeper) and `label`; **every branch a rung names must have a descriptor**, because
+the descriptor is where the kind is declared. `LadderConfig::branches_in_config_order` is the order the
+config's rung list first names the branches, and the order a published catalog keeps.
+
+**A rung's properties are what code reads instead of its name.** `traits` (`managed | sown |
+domesticated | enclosed`) are stamped onto `RungStanding` with the held rung's id and `order`, and
+`is_cultivated` / `is_field` / `is_domesticated` read them; `Herd::is_corralled` still reads the stored
+`corralled_at`, which carries the fence tile. `cost_scale` (`unscaled | species_taming | replaced_share
+| remoteness`) names which measure of the source prices the rung, and the standing walk's price
+resolvers read it; it must belong to the branch's source kind. The gate flags `requires_work_room`,
+`requires_crop`, `requires_held_rung_below`, `requires_ownership` and `places_source` state the refusal
+a rung's verb is judged by (only on a rung a verb raises; `requires_crop` and `places_source` on a
+`patch` branch only). `label` / `label_fallback` are the feed's words for the rung, articles included.
+The shipped values restate what the identity sites assume
+(`the_shipped_properties_state_what_the_identity_sites_assume`).
+
+**A verb no longer has to parse as an `Improvement`.** Verbs are unique across the ladder
+(`LadderConfig::rung_for_verb`), and the coded rungs' verbs are pinned to `RungKey::builder_verb` at
+load, so a typo on a shipped rung still fails the load while a configured rung's verb is free.
+
+**The standing walk reads the config.** `RungStanding::at` / `unstarted_on` / `arrived_at` walk
+`LadderConfig::rungs_of(branch)` in the config's `order`; `rung_span` takes a `&RungDef` and the
+resolvers read `cost_scale`, so a branch the code has never named has a standing. The ladder-free
+`RungStanding::unstarted(branch)` that constructors without a config in scope use answers for the
+coded branches only, with no traits.
 
 ## Knowledge no rung teaches — `standalone_knowledges`
 

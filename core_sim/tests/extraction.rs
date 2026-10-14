@@ -1569,7 +1569,12 @@ fn no_rung_on_either_branch_may_raise_capacity() {
         assert!(land > 0.0, "fixture: {terrain:?} must hold {material}");
         let branch = core_sim::extraction::deposit_branch(&config, material)
             .expect("a shipped deposit names its branch");
-        let mut rung = Some(branch.root_rung());
+        let mut rung = Some(
+            branch
+                .to_branch()
+                .expect("a shipped deposit branch is coded")
+                .root_rung(),
+        );
         let mut seen = 0;
         while let Some(key) = rung {
             let (base, width) = core_sim::extraction::deposit_rung_span(key, &ladder);
@@ -4063,6 +4068,8 @@ mod wire {
         "verb": null,
         "unlock_knowledge": "conservationism",
         "earns_knowledge": null,
+        "label": "Old growth",
+        "label_fallback": "an old-growth wood",
         "requires_rung": "coppice",
         "ceiling_required": null,
         "site_requirement": null,

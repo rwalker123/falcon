@@ -84,10 +84,10 @@ use crate::{
     flora_config::{FloraConfig, FloraShare},
     food::FoodModuleTag,
     intensification::{
-        self, interpolate, rung_span, upkeep_shortfall, BuildLeg, LadderConfig, LadderConfigHandle,
-        RungBranch, RungDef, RungKey, RungStanding, SiteRefusal, LEG_ALREADY_PAID, NEGLECT_NONE,
-        NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_RUNG_CREDIT, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND,
-        RUNG_COST_UNSCALED, RUNG_UNSTARTED,
+        self, interpolate, rung_span, upkeep_shortfall, BuildLeg, CostScale, LadderConfig,
+        LadderConfigHandle, RungBranch, RungDef, RungKey, RungStanding, RungTrait, SiteRefusal,
+        LEG_ALREADY_PAID, NEGLECT_NONE, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_RUNG_CREDIT,
+        NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
     },
     labor_config::{ForageLaborConfig, LaborConfigHandle, NO_FORAGE_CAPACITY},
     materials_config::MaterialPayoff,
@@ -486,7 +486,7 @@ pub fn patch_build_verb(patch: &ForagePatch, declared: Option<Improvement>) -> O
     // **THE RUNG BEING RAISED IS THE FLOOR OF THE ANSWER.** `None` at the top of the branch: a Field
     // has nothing above it, so a `Cultivate` declared on one is dead rather than stalled — the case
     // that used to need the retired "nothing left to build" test.
-    let raising = patch.standing().raising?;
+    let raising = patch.standing().raising_key()?;
 
     // **A LIVE DECLARATION NAMES THE JOB, and it may name a rung ABOVE the one in flight.** A `sow`
     // on untended ground is the player asking for a Field: the crew works toward `plant:field` and
@@ -539,7 +539,7 @@ pub fn patch_rung_already_built(patch: &ForagePatch, declared: Improvement) -> b
     let target = RungKey::built_by(declared);
     // A rung the animal web owns can never stand on ground; `is_at_or_above` answers `false` across
     // branches, so the cross-web case needs no arm of its own.
-    patch.standing().held.is_at_or_above(target)
+    patch.standing().held_key().is_at_or_above(target)
 }
 
 /// **WHERE A BUILD METER LANDS THIS TURN** — what was banked plus what the crew produced, capped at
@@ -724,16 +724,16 @@ impl ForagePatch {
     /// tended rung's top and is the ladder's own, never this patch's — the multiplier scales
     /// `plant:field` alone, so nothing below it can move.
     pub fn set_ladder_position(&mut self, position: f32, ladder: &LadderConfig) {
-        let was = self.standing.held;
+        let was = self.standing.held_key();
         self.ladder_position = position.max(RUNG_UNSTARTED);
         if self.ladder_position <= plant_rung_span(RungKey::PlantField, ladder).0 {
             self.field_cost_multiplier = None;
         }
         self.standing = plant_standing(self.ladder_position, ladder, self.field_cost_in_force());
         // **A FINISHED RUNG STARTS WITH ITS FULL GRACE** ([`crate::intensification::rung_rose`]).
-        if crate::intensification::rung_rose(was, self.standing.held) {
+        if crate::intensification::rung_rose(was, self.standing.held_key()) {
             self.neglect_turns = crate::intensification::NEGLECT_NONE;
-            crate::intensification::raise_peak(&mut self.peak_rung, self.standing.held);
+            crate::intensification::raise_peak(&mut self.peak_rung, self.standing.held_key());
         }
         self.reconcile_owner();
     }
@@ -774,7 +774,7 @@ impl ForagePatch {
     /// each turn (place-local, in `advance_labor_allocation`) and is not gather-drawn. The plant
     /// mirror of `Herd::is_domesticated`.
     ///
-    /// **It is the STANDING, and it is still ladder-free** — `standing.held` is the highest rung this
+    /// **It is the STANDING, and it is still ladder-free** — `standing.held_key()` is the highest rung this
     /// patch's position has fully covered, so *"tended or better"* is one enum comparison and the ~100
     /// call sites that ask it are untouched.
     ///
@@ -782,7 +782,7 @@ impl ForagePatch {
     /// Field's range begins where the tended rung's ends, so no position exists at which
     /// [`Self::is_field`] holds and this does not.
     pub fn is_cultivated(&self) -> bool {
-        self.standing.held.is_at_or_above(RungKey::PlantTended)
+        self.standing.has(RungTrait::Managed)
     }
 
     /// A fully-sown **Field** (the plant ladder's rung 3): pays the band that works it more than a
@@ -791,7 +791,7 @@ impl ForagePatch {
     /// conversion (`cultivation.field_conversion_gain`), never an exemption from the draw: §4.10
     /// retired the flat managed harvest that made it one. The plant mirror of `Herd::is_corralled`.
     pub fn is_field(&self) -> bool {
-        self.standing.held == RungKey::PlantField
+        self.standing.has(RungTrait::Sown)
     }
 
     // **RETIRED: `cultivation_meter_full` / `field_meter_full`.** They asked whether a rung's own
@@ -833,7 +833,7 @@ impl ForagePatch {
         amount: f32,
         ladder: &LadderConfig,
     ) -> Vec<RungKey> {
-        let Some(raising) = self.standing.raising else {
+        let Some(raising) = self.standing.raising_key() else {
             // Top of the branch — there is nothing left to raise, so there is nothing to bank.
             return Vec::new();
         };
@@ -872,7 +872,7 @@ impl ForagePatch {
         target: RungKey,
         ladder: &LadderConfig,
     ) -> Vec<RungKey> {
-        let Some(raising) = self.standing.raising else {
+        let Some(raising) = self.standing.raising_key() else {
             return Vec::new();
         };
         if !target.is_at_or_above(raising) {
@@ -884,7 +884,7 @@ impl ForagePatch {
         if self.owner != Some(faction) {
             return Vec::new();
         }
-        let was = self.standing.held;
+        let was = self.standing.held_key();
         // **THIS PATCH'S OWN TOP, not the ladder's** — the destination's span on the price list this
         // patch is climbing at, so a Sow quoted dear has more rung to cover and one quoted cheap has
         // less.
@@ -895,7 +895,7 @@ impl ForagePatch {
         // destination and lays every leg to it, so a `sow` on untended ground raises the tended rung
         // on the way — and *that* completion is news a player who ordered "take it to Field" wants
         // to see. The queue still retires only at the destination; only the announcement is per rung.
-        rungs_between(was, self.standing.held)
+        rungs_between(was, self.standing.held_key())
     }
 
     /// **The `Cultivate` arm's accrual** — banks toward `plant:tended` and no further, so a crew that
@@ -944,7 +944,7 @@ impl ForagePatch {
         }
         let (base, width) = patch_rung_span(self, rung, ladder);
         self.set_ladder_position(base + width, ladder);
-        self.standing.held.is_at_or_above(rung)
+        self.standing.held_key().is_at_or_above(rung)
     }
 
     /// **DECAY EATS FROM THE TOP, FOR FREE** — the position simply falls by `amount`, floored at
@@ -973,11 +973,11 @@ impl ForagePatch {
     /// only because the payout interpolates: at 49.99 of the tended rung's 50 the patch pays 99.98%
     /// of a tended patch, so the predicate flipping there is a rounding rather than a cliff.
     pub fn decay_ladder(&mut self, amount: f32, ladder: &LadderConfig) -> Vec<RungKey> {
-        let was = self.standing.held;
+        let was = self.standing.held_key();
         self.set_ladder_position(self.ladder_position - amount, ladder);
         // Newest first, which is the order the unwind runs in: the Field goes before the ground
         // beneath it, so the feed reads the way the loss happened.
-        let mut lost = rungs_between(self.standing.held, was);
+        let mut lost = rungs_between(self.standing.held_key(), was);
         lost.reverse();
         lost
     }
@@ -1053,13 +1053,9 @@ fn rungs_between(floor: RungKey, ceiling: RungKey) -> Vec<RungKey> {
 /// named function rather than a closure at four call sites so *"only the Field is priced per patch"*
 /// is stated once — the exact shape `Herd::standing_at` uses for `taming_cost_multiplier` on
 /// `animal:pastoral`.
-fn plant_rung_cost(
-    rung: RungKey,
-    ladder: &LadderConfig,
-    field_cost_multiplier: f32,
-) -> Option<f32> {
-    ladder.rung(rung).build_cost(match rung {
-        RungKey::PlantField => field_cost_multiplier,
+fn plant_rung_cost(rung: &RungDef, field_cost_multiplier: f32) -> Option<f32> {
+    rung.build_cost(match rung.cost_scale {
+        CostScale::ReplacedShare => field_cost_multiplier,
         _ => RUNG_COST_UNSCALED,
     })
 }
@@ -1081,8 +1077,8 @@ fn plant_rung_span_at(
     ladder: &LadderConfig,
     field_cost_multiplier: f32,
 ) -> (f32, f32) {
-    rung_span(rung, &|key| {
-        plant_rung_cost(key, ladder, field_cost_multiplier)
+    rung_span(ladder, ladder.rung(rung), &|def| {
+        plant_rung_cost(def, field_cost_multiplier)
     })
 }
 
@@ -1103,8 +1099,8 @@ fn plant_standing(
     ladder: &LadderConfig,
     field_cost_multiplier: f32,
 ) -> RungStanding {
-    RungStanding::at(ladder, RungBranch::Plant, position, |key| {
-        plant_rung_cost(key, ladder, field_cost_multiplier)
+    RungStanding::at(ladder, RungBranch::Plant, position, |def| {
+        plant_rung_cost(def, field_cost_multiplier)
     })
 }
 
@@ -2972,9 +2968,9 @@ pub fn patch_unwinding_rung<'a>(
 pub fn patch_unwinding_key(patch: &ForagePatch) -> Option<RungKey> {
     let standing = patch.standing();
     if standing.credit > NO_RUNG_CREDIT {
-        return standing.raising;
+        return standing.raising_key();
     }
-    (standing.held != RungKey::PlantWild).then_some(standing.held)
+    (standing.held_key() != RungKey::PlantWild).then_some(standing.held_key())
 }
 
 /// **Turns of SHORTFALL this patch can still absorb before its feral bleed starts** — the wire's
@@ -3103,7 +3099,7 @@ pub fn patch_crew_keeping(
 ) -> Option<crate::fauna::CrewKeeping> {
     patch_claims_keeping(patch, patch_build_verb(patch, declared)).then(|| {
         crate::fauna::CrewKeeping {
-            rung: patch.standing().held,
+            rung: patch.standing().held_key(),
             demand: patch_upkeep_demand(
                 patch,
                 ladder,
@@ -3676,7 +3672,7 @@ pub(crate) fn patch_rung<'a>(patch: &ForagePatch, ladder: &'a LadderConfig) -> &
 /// projection that re-derived it from `is_cultivated()` at its own call site is the second copy this
 /// seam was created to prevent.
 pub(crate) fn patch_rung_key(patch: &ForagePatch) -> RungKey {
-    patch.standing().held
+    patch.standing().held_key()
 }
 
 /// The forage counterpart of `fauna::hunt_take`: resolve the **escapement ceiling**, cap it by the
@@ -4171,11 +4167,12 @@ pub fn patch_destination_capacity(
     tile_capacity: f32,
     patch: &ForagePatch,
     forage: &ForageLaborConfig,
+    ladder: &LadderConfig,
 ) -> Option<f32> {
     let destination = patch.build_destination?;
     Some(patch_capacity_at(
         tile_capacity,
-        &RungStanding::arrived_at(destination),
+        &RungStanding::arrived_at(ladder, destination),
         forage,
     ))
 }
@@ -5978,8 +5975,8 @@ mod tests {
     fn a_wild_patch_is_not_cultivated_even_though_its_position_reads_zero() {
         let patch = ForagePatch::new(UVec2::new(7, 7), 120.0);
         assert_eq!(patch.ladder_position(), RUNG_UNSTARTED);
-        assert_eq!(patch.standing().held, RungKey::PlantWild);
-        assert_eq!(patch.standing().raising, Some(RungKey::PlantTended));
+        assert_eq!(patch.standing().held_key(), RungKey::PlantWild);
+        assert_eq!(patch.standing().raising_key(), Some(RungKey::PlantTended));
         assert!(!patch.is_cultivated());
         assert!(!patch.is_field());
         assert!(!patch.is_managed());

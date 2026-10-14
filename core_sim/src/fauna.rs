@@ -29,9 +29,10 @@ use crate::{
     },
     hashing::FnvHasher,
     intensification::{
-        interpolate, LadderConfig, LadderConfigHandle, RungBranch, RungDef, RungKey, RungMovement,
-        RungStanding, NEGLECT_NONE, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_NEGLECT_GRACE,
-        NO_RUNG_WORK_BANKED, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
+        interpolate, CostScale, LadderConfig, LadderConfigHandle, RungBranch, RungDef, RungKey,
+        RungMovement, RungStanding, RungTrait, NEGLECT_NONE, NO_BUILD_GEAR,
+        NO_CREW_ON_THIS_ACTIVITY, NO_NEGLECT_GRACE, NO_RUNG_WORK_BANKED, NO_UPKEEP_DECAY,
+        NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
     },
     mapgen::WorldGenSeed,
     orders::FactionId,
@@ -966,12 +967,12 @@ impl Herd {
     /// herd's owner lapses when it sheds its last animal (`advance_husbandry`), never when its
     /// position moves, because taming is monotone-up — neglect sheds *animals*, not tameness.
     pub fn set_ladder_position(&mut self, position: f32, ladder: &LadderConfig) {
-        let was = self.standing.held;
+        let was = self.standing.held_key();
         self.ladder_position = position.max(RUNG_UNSTARTED);
         self.standing = self.standing_at(self.ladder_position, ladder);
         // **A FINISHED RUNG STARTS WITH ITS FULL GRACE** ([`crate::intensification::rung_rose`]) —
         // a Tame or a pen completed by keepers short of the bill does not shed on the next turn.
-        if crate::intensification::rung_rose(was, self.standing.held) {
+        if crate::intensification::rung_rose(was, self.standing.held_key()) {
             self.neglect_turns = crate::intensification::NEGLECT_NONE;
         }
     }
@@ -981,8 +982,8 @@ impl Herd {
     fn standing_at(&self, position: f32, ladder: &LadderConfig) -> RungStanding {
         let multiplier = self.taming_cost_multiplier;
         RungStanding::at(ladder, RungBranch::Animal, position, |rung| {
-            ladder.rung(rung).build_cost(match rung {
-                RungKey::AnimalPastoral => multiplier,
+            rung.build_cost(match rung.cost_scale {
+                CostScale::SpeciesTaming => multiplier,
                 _ => RUNG_COST_UNSCALED,
             })
         })
@@ -1014,9 +1015,9 @@ impl Herd {
     /// `(base, width)` of `rung` on this herd's own price list.
     pub(crate) fn rung_span(&self, rung: RungKey, ladder: &LadderConfig) -> (f32, f32) {
         let multiplier = self.taming_cost_multiplier;
-        crate::intensification::rung_span(rung, &|key| {
-            ladder.rung(key).build_cost(match key {
-                RungKey::AnimalPastoral => multiplier,
+        crate::intensification::rung_span(ladder, ladder.rung(rung), &|def| {
+            def.build_cost(match def.cost_scale {
+                CostScale::SpeciesTaming => multiplier,
                 _ => RUNG_COST_UNSCALED,
             })
         })
@@ -1030,9 +1031,9 @@ impl Herd {
     /// It honours `partial_credit` for free — `animal:pen` is `on_completion`, so its credit is
     /// already zero and this reads `0` until the fence closes and `1` after.
     pub fn rung_fraction(&self, rung: RungKey) -> f32 {
-        if self.standing.held.is_at_or_above(rung) {
+        if self.standing.held_key().is_at_or_above(rung) {
             WHOLE_RUNG
-        } else if self.standing.raising == Some(rung) {
+        } else if self.standing.raising_key() == Some(rung) {
             self.standing.credit
         } else {
             RUNG_UNSTARTED
@@ -1104,7 +1105,7 @@ impl Herd {
     /// **`cost > RUNG_UNSTARTED` is load-bearing**: a wild herd carries `0` in both fields, and
     /// `0 >= 0` would read every animal on the map as tame.
     pub fn is_domesticated(&self) -> bool {
-        self.standing.held.is_at_or_above(RungKey::AnimalPastoral)
+        self.standing.has(RungTrait::Domesticated)
     }
 
     /// **Can this herd be tamed** (Grazing 2d-δ)? Gated by the species' `husbandry_ceiling` — a `Wild`
@@ -1201,7 +1202,7 @@ impl Herd {
     /// `cost > RUNG_UNSTARTED` is load-bearing for `is_domesticated`'s reason: a wild herd carries
     /// `0` in both fields and `0 >= 0` would read it as finished.
     pub fn corral_meter_full(&self) -> bool {
-        self.standing.held.is_at_or_above(RungKey::AnimalPen)
+        self.standing.held_key().is_at_or_above(RungKey::AnimalPen)
     }
 
     /// A **corralled** (penned) herd: fixed at `corralled_at`, doesn't roam, and is paid its keeper
@@ -1544,7 +1545,7 @@ pub fn herd_ecology(herd: &Herd, fauna: &FaunaConfig) -> EcologyConfig {
         regrowth_rate: interpolate(&herd.standing(), |rung| {
             rung_regrowth_rate(rung, herd, fauna)
         }),
-        ..rung_ecology_bands(herd.standing().held, fauna)
+        ..rung_ecology_bands(herd.standing().held_key(), fauna)
     }
 }
 
@@ -3271,9 +3272,9 @@ impl CapacityStanding {
     /// **WHERE THE HERD WILL STAND ONCE IT ARRIVES AT `rung`.** A pen already built stays a pen (a
     /// destination cannot un-fence a herd), so the fencing is *either* — which is also what keeps an
     /// `extend_pen` entry, whose destination is the rung it already holds, reading over its fence.
-    fn arrived_at(rung: RungKey, herd: &Herd) -> Self {
+    fn arrived_at(ladder: &LadderConfig, rung: RungKey, herd: &Herd) -> Self {
         Self {
-            standing: RungStanding::arrived_at(rung),
+            standing: RungStanding::arrived_at(ladder, rung),
             penned: herd.corralled_at.is_some() || rung.is_at_or_above(RungKey::AnimalPen),
         }
     }
@@ -3322,12 +3323,13 @@ pub fn herd_destination_capacity(
     graze: &GrazeRegistry,
     prey: &[PreyDatum],
     fauna: &FaunaConfig,
+    ladder: &LadderConfig,
     width: u32,
     height: u32,
     wrap: bool,
 ) -> Option<f32> {
     let destination = herd.build_destination?;
-    let at = CapacityStanding::arrived_at(destination, herd);
+    let at = CapacityStanding::arrived_at(ladder, destination, herd);
     Some(settled_capacity(
         ecological_carrying_capacity(herd, def, graze, prey, fauna, width, height, wrap, at),
         at.penned,
@@ -4719,9 +4721,9 @@ pub fn herd_keeping_rung<'a>(herd: &Herd, ladder: &'a LadderConfig) -> Option<&'
     }
     // The rung being raised owns the risk while it carries work; otherwise the held rung does.
     let key = standing
-        .raising
+        .raising_key()
         .filter(|_| standing.credit > NO_RUNG_CREDIT_HELD);
-    Some(ladder.rung(key.unwrap_or(standing.held)))
+    Some(ladder.rung(key.unwrap_or(standing.held_key())))
 }
 
 /// **THE WHOLE OF A RUNG** — the fraction [`Herd::rung_fraction`] reports for a rung the herd holds.
@@ -4767,7 +4769,7 @@ pub fn herd_build_verb(
     // either rung — which is also why one arm now serves both.
     let standing = herd.standing();
     if standing.banked > NO_RUNG_WORK_BANKED {
-        if let Some(verb) = standing.raising.and_then(RungKey::builder_verb) {
+        if let Some(verb) = standing.raising_key().and_then(RungKey::builder_verb) {
             return Some(verb);
         }
     }
@@ -6687,7 +6689,7 @@ pub fn herd_crew_keeping(
     declared: Option<crate::components::Improvement>,
 ) -> Option<CrewKeeping> {
     herd_claims_keeping(herd, herd_build_verb(herd, declared)).then(|| CrewKeeping {
-        rung: herd.standing().held,
+        rung: herd.standing().held_key(),
         demand: herd_upkeep_demand(herd, fauna, ladder),
     })
 }
@@ -13530,8 +13532,8 @@ mod tests {
         // **THE PRECONDITION** — the position really is a tenth of the way up, so a pass cannot come
         // from the fixture having seated nothing (or everything).
         let standing = herd.standing();
-        assert_eq!(standing.held, RungKey::AnimalWild);
-        assert_eq!(standing.raising, Some(RungKey::AnimalPastoral));
+        assert_eq!(standing.held_key(), RungKey::AnimalWild);
+        assert_eq!(standing.raising_key(), Some(RungKey::AnimalPastoral));
         assert!(
             (standing.credit - A_TENTH_TAMED).abs() < 1e-4,
             "fixture: the herd must stand a tenth up the pastoral rung, not {}",

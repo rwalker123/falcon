@@ -65,6 +65,7 @@ pub mod knowledge_contact;
 mod knowledge_contact_config;
 mod knowledge_ledger;
 mod labor_config;
+pub mod ladder_ids;
 mod lineage;
 pub mod log_stream;
 mod map_preset;
@@ -325,7 +326,7 @@ pub use personalities::{
 pub use extraction::{
     advance_deposits, deposit_at_risk_rung, deposit_keeper_loads, deposit_keeping_basis,
     deposit_measure, deposit_meter_rot, deposit_rungs_in_climb_order, deposit_upkeep_demand,
-    renew_deposit, DepositRegistry, DepositSource, DEPOSIT_BRANCHES, DEPOSIT_EMPTY,
+    renew_deposit, DepositRegistry, DepositSource, DEPOSIT_EMPTY,
 };
 pub use extraction_config::{
     load_extraction_config_from_env, DepositDef, DepositTerrain, ExtractionConfig,
@@ -344,9 +345,9 @@ pub use intensification::{
     upkeep_shortfall, upkeep_shortfall_fraction, BuildGate, BuildTurns, LadderConfig,
     LadderConfigHandle, LadderConfigMetadata, RungBehavior, RungBranch, RungBuild, RungDef,
     RungExtractionPayoff, RungKey, RungMeterDecay, RungMovement, RungPartialCredit,
-    RungSiteRequirement, RungStanding, RungUpkeep, SiteRefusal, UpkeepFundMode, UpkeepScale,
-    ALL_BRANCHES, BUILTIN_INTENSIFICATION_LADDER, FABRICATED_BUILD_COST, FULLY_SUPPLIED,
-    NOTHING_IN_FLIGHT, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_DEPOSIT_FLOOR,
+    RungSiteRequirement, RungStanding, RungUpkeep, SiteRefusal, SourceKind, UpkeepFundMode,
+    UpkeepScale, ALL_BRANCHES, BUILTIN_INTENSIFICATION_LADDER, FABRICATED_BUILD_COST,
+    FULLY_SUPPLIED, NOTHING_IN_FLIGHT, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_DEPOSIT_FLOOR,
     NO_DEPOSIT_REACHED, NO_RUNG_CREDIT, NO_RUNG_WORK_BANKED, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND,
     PER_WORKER_OUTPUT, PRACTICE_AT_THE_PLAIN_RATE, REGROWTH_UNCHANGED, RUNG_COST_UNSCALED,
     RUNG_UNSTARTED, SITE_ACCEPTED, WHOLE_DEPOSIT_REACHED, WHOLLY_UNSUPPLIED,
@@ -360,6 +361,7 @@ pub use labor_config::{
     load_labor_config_from_env, LaborConfig, LaborConfigHandle, LaborConfigMetadata,
     BUILTIN_LABOR_CONFIG, NO_FORAGE_CAPACITY,
 };
+pub use ladder_ids::{shipped, BranchId, RungId, Sym, VerbId};
 pub use map_preset::{ErosionConfig, MapPreset, MapPresets, MapPresetsHandle, BUILTIN_MAP_PRESETS};
 pub use mapgen::WorldGenSeed;
 pub use materials_config::{
@@ -721,6 +723,13 @@ pub fn build_headless_app() -> App {
     // (`docs/plan_standing_upkeep.md` §2.7).
     if let Err(err) = ladder_config.validate_against_materials(&materials_config) {
         panic!("intensification ladder does not reconcile with the materials table: {err}");
+    }
+    // **Every deposit in the extraction table is worked by a `deposit` branch** — the cross-file half
+    // of the ladder's kind-level rule. A deposit naming a food web's branch (or a branch the ladder
+    // does not declare) would otherwise parse on both sides and then be raised by a ladder whose
+    // rungs are about something else.
+    if let Err(err) = ladder_config.validate_against_extraction(&extraction_handle.get()) {
+        panic!("intensification ladder does not reconcile with the extraction table: {err}");
     }
     // **Every knowledge tag contact can teach is priced** (`docs/plan_contact_and_logistics.md`
     // §Settled by #531): the rider can teach any tag in `start_profile_knowledge_tags.json`, so a

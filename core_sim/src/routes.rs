@@ -81,7 +81,7 @@ use crate::{
     grid_utils::{hex_distance_wrapped, hex_neighbor, HEX_DIRECTION_COUNT},
     intensification::{
         build_fraction, interpolate, neglect_grace_remaining, rung_work_done, upkeep_shortfall,
-        LadderConfig, RungBranch, RungDef, RungKey, RungRoutePayoff, RungStanding,
+        CostScale, LadderConfig, RungBranch, RungDef, RungKey, RungRoutePayoff, RungStanding,
         FRICTION_UNCHANGED, NEGLECT_NONE, NO_CREW_ON_THIS_ACTIVITY, NO_RUNG_WORK_BANKED,
         NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT, RUNG_UNSTARTED,
     },
@@ -345,13 +345,13 @@ impl Road {
     /// a fresh `grade` leaves — keeper set, first work not yet banked — and clearing it there would
     /// undo the command on the turn it was typed.
     pub fn set_position(&mut self, position: f32, ladder: &LadderConfig) {
-        let was = self.standing.held;
+        let was = self.standing.held_key();
         self.position = position.max(RUNG_UNSTARTED);
         self.standing = road_standing_at(ladder, self.position, self.keeper_remoteness);
         // **A FINISHED RUNG STARTS WITH ITS FULL GRACE** ([`crate::intensification::rung_rose`]).
-        if crate::intensification::rung_rose(was, self.standing.held) {
+        if crate::intensification::rung_rose(was, self.standing.held_key()) {
             self.neglect_turns = NEGLECT_NONE;
-            crate::intensification::raise_peak(&mut self.peak_rung, self.standing.held);
+            crate::intensification::raise_peak(&mut self.peak_rung, self.standing.held_key());
         }
         self.payoff = road_payoff_at(ladder, self.position, self.keeper_remoteness);
         if self.position < traffic_ceiling(ladder) {
@@ -387,7 +387,7 @@ impl Road {
 
     /// The rung this road **holds** — what it is entitled to in full.
     pub fn held_rung(&self) -> RungKey {
-        self.standing.held
+        self.standing.held_key()
     }
 
     /// **Is this road one somebody BUILT and somebody keeps?** — `true` at [`FIRST_BUILT_RUNG`] and
@@ -959,9 +959,9 @@ pub fn road_meter_rot(road: &Road, measure: f32, ladder: &LadderConfig) -> f32 {
 /// one branch over.
 pub fn road_at_risk_rung(standing: &RungStanding) -> RungKey {
     standing
-        .raising
+        .raising_key()
         .filter(|_| standing.banked > NO_RUNG_WORK_BANKED)
-        .unwrap_or(standing.held)
+        .unwrap_or(standing.held_key())
 }
 
 /// **THE METER ON THE RUNG THIS ROAD IS ACTUALLY RAISING**, `0..=1` — the route branch's twin of
@@ -1015,20 +1015,19 @@ pub fn road_neglect_grace_remaining(road: &Road, ladder: &LadderConfig) -> Optio
 /// in, and traffic does not care how far anybody's camp is. Only the two rungs a band **orders** —
 /// the ones [`FIRST_BUILT_RUNG`] and above — carry the remoteness quote, which is also what keeps
 /// [`traffic_ceiling`] a fixed number the accrual can cap against.
-pub fn road_rung_cost(rung: RungKey, ladder: &LadderConfig, remoteness: f32) -> Option<f32> {
-    let multiplier = if rung.is_at_or_above(FIRST_BUILT_RUNG) {
-        remoteness
-    } else {
-        NEAR_ENOUGH_TO_KEEP
+pub fn road_rung_cost(rung: &RungDef, remoteness: f32) -> Option<f32> {
+    let multiplier = match rung.cost_scale {
+        CostScale::Remoteness => remoteness,
+        _ => NEAR_ENOUGH_TO_KEEP,
     };
-    ladder.rung(rung).build_cost(multiplier)
+    rung.build_cost(multiplier)
 }
 
 /// **What a road standing at `position` buys.** Read off the rung it *holds*, so a half-worn dirt
 /// road buys exactly what the trail beneath it buys until the rung fills — the payoff is a property
 /// of the road you have, not of the one you are wearing in.
 pub fn road_payoff_at(ladder: &LadderConfig, position: f32, remoteness: f32) -> RungRoutePayoff {
-    let held = road_standing_at(ladder, position, remoteness).held;
+    let held = road_standing_at(ladder, position, remoteness).held_key();
     *ladder
         .rung(held)
         .route_payoff
@@ -1040,7 +1039,7 @@ pub fn road_payoff_at(ladder: &LadderConfig, position: f32, remoteness: f32) -> 
 /// stand*, so no call site re-derives a standing from a meter.
 pub fn road_standing_at(ladder: &LadderConfig, position: f32, remoteness: f32) -> RungStanding {
     RungStanding::at(ladder, RungBranch::Route, position, |rung| {
-        road_rung_cost(rung, ladder, remoteness)
+        road_rung_cost(rung, remoteness)
     })
 }
 
@@ -1048,7 +1047,9 @@ pub fn road_standing_at(ladder: &LadderConfig, position: f32, remoteness: f32) -
 /// `(0, 40)`, `route:dirt_road` `(40, 110)` and `route:paved_road` `(150, 260)` on the shipped
 /// ladder at [`NEAR_ENOUGH_TO_KEEP`].
 pub fn road_rung_span(rung: RungKey, ladder: &LadderConfig, remoteness: f32) -> (f32, f32) {
-    crate::intensification::rung_span(rung, &|key| road_rung_cost(key, ladder, remoteness))
+    crate::intensification::rung_span(ladder, ladder.rung(rung), &|def| {
+        road_rung_cost(def, remoteness)
+    })
 }
 
 /// ⛔ **THE POSITION TRAFFIC MAY BANK UP TO AND NO FURTHER** — the top of [`FREE_FLOOR_TOP_RUNG`]'s
@@ -1075,13 +1076,11 @@ pub fn traffic_ceiling(ladder: &LadderConfig) -> f32 {
 /// ladder — with no code edit. Sorted by the record's own `order`, which the ladder validates as a
 /// dense climb from `1`.
 pub fn route_rungs_in_climb_order(ladder: &LadderConfig) -> Vec<&RungDef> {
-    let mut rungs: Vec<&RungDef> = ladder
-        .rungs
-        .iter()
-        .filter(|rung| rung.branch == RungBranch::Route)
-        .collect();
-    rungs.sort_by_key(|rung| rung.order);
-    rungs
+    // The ladder declares exactly one `road` branch (validated), so this is that branch's rungs.
+    ladder
+        .branches_of(crate::intensification::SourceKind::Road)
+        .flat_map(|branch| ladder.rungs_of(branch))
+        .collect()
 }
 
 /// ⛔ **THE FURTHEST ANY ROUTE RUNG HOLDS A LINK OPEN — the widest distance the pooling test can
@@ -1776,7 +1775,11 @@ mod tests {
 
         for (index, key) in ROUTE_RUNGS.iter().enumerate() {
             let rung = ladder.rung(*key);
-            assert_eq!(rung.branch, RungBranch::Route, "{key:?} is a route rung");
+            assert_eq!(
+                rung.branch,
+                RungBranch::Route.to_id(),
+                "{key:?} is a route rung"
+            );
             assert_eq!(
                 rung.order as usize,
                 index + 1,
@@ -1786,13 +1789,13 @@ mod tests {
 
         // The floor is held at zero work, costs nothing, and is nobody's to keep.
         let floor = road_standing_at(&ladder, RUNG_UNSTARTED, NEAR_ENOUGH_TO_KEEP);
-        assert_eq!(floor.held, RungKey::RoutePath);
+        assert_eq!(floor.held_key(), RungKey::RoutePath);
         // ⛔ **THE FLOOR'S WIRE KEY IS PINNED AS A LITERAL, DELIBERATELY.** Every other rung
         // assertion in the workspace compares against `wire_key()` so a hand-typed string cannot
         // drift; here the client reads `"route:path"` as a literal of its own, so one side has to
         // state the spelling or the two can drift apart in silence.
         assert_eq!(RungKey::RoutePath.wire_key(), "route:path");
-        assert_eq!(floor.raising, Some(RungKey::RouteTrail));
+        assert_eq!(floor.raising_key(), Some(RungKey::RouteTrail));
         assert!(
             ladder.rung(RungKey::RoutePath).build.is_none()
                 && ladder.rung(RungKey::RoutePath).upkeep.is_none(),
@@ -1807,11 +1810,15 @@ mod tests {
             .sum();
         let top = road_standing_at(&ladder, all_the_work, NEAR_ENOUGH_TO_KEEP);
         assert_eq!(
-            top.held,
+            top.held_key(),
             RungKey::RoutePavedRoad,
             "banking every rung's work reaches the top of the branch"
         );
-        assert_eq!(top.raising, None, "there is nothing above a paved road");
+        assert_eq!(
+            top.raising_key(),
+            None,
+            "there is nothing above a paved road"
+        );
     }
 
     /// ⛔ **THE FREE FLOOR AND THE FIRST BUILT RUNG ARE ADJACENT, AND THE FLOOR IS EXACTLY THE RUNGS
@@ -1907,7 +1914,7 @@ mod tests {
                 rung.branch.as_str(),
                 rung.id
             );
-            if rung.branch == RungBranch::Route {
+            if rung.branch == RungBranch::Route.to_id() {
                 route_rungs_with_upkeep += 1;
             }
         }
@@ -1988,9 +1995,9 @@ mod tests {
         );
 
         // The build half — the same seam, the same edit.
-        let near_cost = road_rung_cost(RungKey::RouteDirtRoad, &ladder, NEAR_ENOUGH_TO_KEEP)
+        let near_cost = road_rung_cost(ladder.rung(RungKey::RouteDirtRoad), NEAR_ENOUGH_TO_KEEP)
             .expect("a dirt road is something to build");
-        let far_cost = road_rung_cost(RungKey::RouteDirtRoad, &ladder, remote)
+        let far_cost = road_rung_cost(ladder.rung(RungKey::RouteDirtRoad), remote)
             .expect("a dirt road is something to build");
         assert!(
             far_cost > near_cost,
@@ -2000,8 +2007,8 @@ mod tests {
         // ⛔ **AND THE FREE FLOOR IS NEVER RE-PRICED**, which is what keeps the traffic cap one
         // number for every road on the map.
         assert_eq!(
-            road_rung_cost(RungKey::RouteTrail, &ladder, remote),
-            road_rung_cost(RungKey::RouteTrail, &ladder, NEAR_ENOUGH_TO_KEEP),
+            road_rung_cost(ladder.rung(RungKey::RouteTrail), remote),
+            road_rung_cost(ladder.rung(RungKey::RouteTrail), NEAR_ENOUGH_TO_KEEP),
             "traffic wears a trail in and traffic does not care how far anybody's camp is"
         );
     }

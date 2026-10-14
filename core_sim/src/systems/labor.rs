@@ -2351,7 +2351,7 @@ fn site_keeping_claims(
                 working.zip(ground).map(|(working, ground)| {
                     let measure = crate::extraction::deposit_measure(working, ground, extraction);
                     (
-                        working.standing().held.branch(),
+                        working.standing().held_key().branch(),
                         // **The rung the working STANDS on**, which is what its crew is holding —
                         // not whatever a queued `quarry` is climbing toward.
                         working.rung(),
@@ -7457,7 +7457,10 @@ pub fn advance_labor_allocation(
                             // Cultivated on the way. **The QUEUE only retires at the DESTINATION** —
                             // an entry names where the land should end up and stays at the head until
                             // it arrives, so a two-leg `sow` does not hand the pool away at 50.
-                            if arrived_at_destination(entry_destination, patch.standing().held) {
+                            if arrived_at_destination(
+                                entry_destination,
+                                patch.standing().held_key(),
+                            ) {
                                 completed.push((
                                     BuildSource::Patch(*tile),
                                     entry_job.unwrap_or(BuildJob::Rung(Improvement::Cultivate)),
@@ -9648,7 +9651,7 @@ pub fn advance_labor_allocation(
                             .source(*tile, material)
                             .expect("the working was just opened");
                         (
-                            working.standing().held.branch(),
+                            working.standing().held_key().branch(),
                             *working.standing(),
                             working.ladder_position(),
                             // ⛔ **THE LIVE ROT, read here with the rest of the working's facts.**
@@ -9704,7 +9707,7 @@ pub fn advance_labor_allocation(
                         // free floor is doing *felling* work this turn, so it resolves and wears the
                         // felling tool. The destination caps the climb; it does not price it.
                         let in_flight = standing
-                            .raising
+                            .raising_key()
                             .filter(|next| destination.is_at_or_above(*next))
                             .unwrap_or(destination);
                         let entry_gear = builders_gear.for_source(&deposit_source, Some(in_flight));
@@ -9785,7 +9788,7 @@ pub fn advance_labor_allocation(
                     // `deposit_take` applies on the rungs it names (the sled on the floors, the axe
                     // on felling and coppice), read at the rung the working held when this turn
                     // began — a working raised mid-walk picks its new rung's tools up next turn.
-                    let held_rung = standing.held;
+                    let held_rung = standing.held_key();
                     let held_key = held_rung.wire_key();
                     let deposit_gear = equipment_cfg.deposit_gear(
                         &crew_coverage,
@@ -9879,7 +9882,7 @@ pub fn advance_labor_allocation(
                     // turn a rung completes the old rung's tool term would price the whole horizon —
                     // and disagree with `answer_work_party_forecast`, which reads the working as it
                     // stands. The take's own one-turn lag is the TAKE's and stays above.
-                    let forecast_rung = working.standing().held;
+                    let forecast_rung = working.standing().held_key();
                     let forecast_key = forecast_rung.wire_key();
                     if let (Some(posting), Some(pricing)) =
                         (postings.get_mut(&idx), caravan_pricing.as_ref())
@@ -10049,7 +10052,7 @@ pub fn advance_labor_allocation(
                     // floor and this row's, so a crew asked to leave everything standing is credited
                     // nothing without a second test saying so.
                     credit_rung_lesson(
-                        ladder.rung(standing.held),
+                        ladder.rung(standing.held_key()),
                         // **THE ROW'S OWN FLOOR PRICES THE LESSON WHERE THE DIAL PARTICIPATES**,
                         // through the shared `intensification::learn_multiplier` both food webs go
                         // through: a crew told to leave more of a wood standing learns
@@ -10080,7 +10083,7 @@ pub fn advance_labor_allocation(
                         crew_at_the_source
                             && source_is_workable(outcome.reachable_before)
                             && ground_takes_the_rung_this_lesson_unlocks(
-                                ladder.rung(standing.held),
+                                ladder.rung(standing.held_key()),
                                 &ladder,
                                 ground,
                                 material,

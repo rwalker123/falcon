@@ -1346,6 +1346,7 @@ fn ground_pen(
         &graze,
         &NO_PREY,
         &s.now,
+        &core_sim::LadderConfig::builtin(),
         FIXTURE_MAP,
         FIXTURE_MAP,
         FIXTURE_WRAP,
