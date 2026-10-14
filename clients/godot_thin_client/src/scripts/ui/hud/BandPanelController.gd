@@ -8399,6 +8399,7 @@ func _build_parties_inspector(exp: Dictionary) -> PanelContainer:
     var y := int(exp.get("current_y", -1))
     var head := HBoxContainer.new()
     head.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
+    head.add_child(HudWidgets.build_mission_mark(String(exp.get("expedition_mission", ""))))
     var title := Label.new()
     title.text = HudFormat.panel_expedition_summary(exp, _herd_label_for_id,
         _band_labor.host_label_for_id)
@@ -8444,8 +8445,8 @@ func _build_party_row(exp: Dictionary) -> HBoxContainer:
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
     var body := Button.new()
-    body.text = HudFormat.panel_expedition_summary(exp, _herd_label_for_id,
-        _band_labor.host_label_for_id)
+    HudWidgets.set_button_mission_mark(body, String(exp.get("expedition_mission", "")),
+        HudFormat.panel_expedition_summary(exp, _herd_label_for_id, _band_labor.host_label_for_id))
     body.alignment = HORIZONTAL_ALIGNMENT_LEFT
     body.focus_mode = Control.FOCUS_NONE
     body.clip_text = true

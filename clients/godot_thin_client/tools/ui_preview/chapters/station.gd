@@ -60,6 +60,10 @@ const NEAR_HOST_OFFSET_TILES := 1
 ## The shipped messenger reach: a host this close reports the same turn.
 const COMM_RANGE_TILES := 2
 
+## The four party missions the Parties row marks, and the first entity of the fixture parties.
+const MARK_MISSIONS := ["scout", "deny", "trade", "station"]
+const MARK_PARTY_ENTITY_BASE := 7390
+
 const TIE_LIVE := 0.75
 const TIE_PARKED := 0.0
 
@@ -159,9 +163,32 @@ func run(harness) -> void:
 			and not parties_text.contains(str(BandFx.FIXTURE_BAND_ID_OFFSET + WALKING_ENTITY)))
 	h._assert_hud("station: …and no food runway or cargo readout on either",
 		not parties_text.contains("999") and not parties_text.to_lower().contains("carried"))
+	# ---- (c2) ALL FOUR MISSION MARKS ARE ART, on the Parties row ------------------------------------
+	h._hud.update_band_alerts([_home_band(), _walking_band()] + _four_mission_parties())
+	h._hud.show_unit_selection(_home_band())
+	await h._settle()
+	await h._save("station_party_marks")
+	var row_icons: Array = []
+	_collect_icons(panel, row_icons)
+	for mission in MARK_MISSIONS:
+		var wanted: Texture2D = HudSprites.for_mark(HudFormat.expedition_mission_mark(mission))
+		h._assert_hud("station: the `%s` party's Parties row draws its hud/ art, not the glyph" % mission,
+			wanted != null and row_icons.has(wanted))
+	h._assert_hud("station: the station mark is not the scout's (an absent mission is the scout's)",
+		HudSprites.for_mark(HudFormat.expedition_mission_mark("station"))
+			!= HudSprites.for_mark(HudFormat.expedition_mission_mark("scout")))
+	h._assert_hud("station: the map marker for a stationed party resolves art too",
+		ExpeditionSprites.for_mission(HudExpeditionVocab.EXPEDITION_MISSION_STATION) != null)
+	h._hud.update_band_alerts([_home_band(), _walking_band(), _party_stationed(), _party_walking()])
+	h._hud.show_unit_selection(_home_band())
+	await h._settle()
 	# The party's own detail, selected: a Host row, no Provisions row.
 	h._hud.show_unit_selection(_party_stationed())
 	await h._settle()
+	var roster_icons: Array = []
+	_collect_icons(h._hud, roster_icons)
+	h._assert_hud("station: the selection card's party row draws the station art, not the glyph",
+		roster_icons.has(HudSprites.for_mark("station")))
 	await h._save("station_party_detail")
 	var party_text: String = h._hud.occupant_detail.text
 	h._assert_hud("station: the party's detail names its host and mission",
@@ -383,6 +410,26 @@ func _find_link(root: Node, host_id: int) -> Button:
 		if found != null:
 			return found
 	return null
+
+## Every texture a `Button.icon` or `TextureRect` under `root` carries.
+func _collect_icons(root: Node, out: Array) -> void:
+	if root is Button and (root as Button).icon != null:
+		out.append((root as Button).icon)
+	elif root is TextureRect and (root as TextureRect).texture != null:
+		out.append((root as TextureRect).texture)
+	for child in root.get_children():
+		_collect_icons(child, out)
+
+## One party per mission on the home band, so the Parties zone draws all four marks at once.
+func _four_mission_parties() -> Array:
+	var out: Array = []
+	var entity := MARK_PARTY_ENTITY_BASE
+	for mission in ["scout", "deny", "trade", "station"]:
+		var party := _party(entity, 2, "outbound", STATIONED_ENTITY, HOME_TILE)
+		party["expedition_mission"] = mission
+		out.append(party)
+		entity += 1
+	return out
 
 func _text_of(root: Node) -> String:
 	var text := ""

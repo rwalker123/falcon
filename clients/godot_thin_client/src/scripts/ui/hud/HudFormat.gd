@@ -44,8 +44,8 @@ const PANEL_EXPEDITION_DENY_GLYPH := "💀"
 ## the denial glyph above states: one mission, one glyph, at every scale.
 const PANEL_EXPEDITION_TRADE_GLYPH := "📦"
 ## The STATIONED party's mark (issue #774) — a party that has dropped anchor at a tied band. Text, not
-## art: the mission has no bundled sprite, and `expedition_mission_glyph` must not hand it the scout
-## flag, which would read a posted party as one out looking for something.
+## the FALLBACK only (`hud/station.png` is its art), and `expedition_mission_glyph` must not hand it
+## the scout flag, which would read a posted party as one out looking for something.
 const PANEL_EXPEDITION_STATION_GLYPH := "⚓"
 
 ## The mark for a party on `expedition_mission` — the ONE resolution of the three constants above, so
@@ -63,6 +63,19 @@ static func expedition_mission_glyph(mission: String) -> String:
     if key == HudExpeditionVocab.EXPEDITION_MISSION_STATION:
         return PANEL_EXPEDITION_STATION_GLYPH
     return PANEL_EXPEDITION_SCOUT_GLYPH
+
+## The `HudSprites` mark id for a party on `mission` — `scout` / `deny` / `trade` / `station`, resolved
+## by the same fork `expedition_mission_glyph` takes (an absent or unknown mission is the scout's), so
+## a party's art and its fallback glyph cannot name two different missions.
+static func expedition_mission_mark(mission: String) -> String:
+    var key := mission.strip_edges().to_lower()
+    if key == HudExpeditionVocab.EXPEDITION_MISSION_DENY:
+        return "deny"
+    if key == HudExpeditionVocab.EXPEDITION_MISSION_TRADE:
+        return "trade"
+    if key == HudExpeditionVocab.EXPEDITION_MISSION_STATION:
+        return "station"
+    return "scout"
 
 ## **THE LAST-RESORT BAND NAME, KEYED ON THE DURABLE `band_id` — NEVER ON A ROW NUMBER.** Used only
 ## when the cohort carries no `name`, which a real snapshot never produces (the sim mints one at
@@ -434,6 +447,9 @@ static func expedition_destination_label(exp: Dictionary,
     return String(band_label_for_id.call(
         int(exp.get("expedition_destination_band", HudConst.NO_BAND_ID)))).strip_edges()
 
+## A party row's TEXT, with no mission mark in it: the mark is drawn beside this string by the host
+## (`HudWidgets.build_mission_mark`, or a `Button.icon`), so the emoji of the fallback glyph never
+## sits inside a plain Label string where each platform renders it differently.
 static func panel_expedition_summary(exp: Dictionary, herd_label_for_id: Callable,
         band_label_for_id: Callable = Callable()) -> String:
     var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
@@ -441,7 +457,7 @@ static func panel_expedition_summary(exp: Dictionary, herd_label_for_id: Callabl
     # DENIAL — the quarry with the mission's own mark and NO floor glyph: the mission has no floor.
     if mission == HudExpeditionVocab.EXPEDITION_MISSION_DENY:
         var quarry := String(herd_label_for_id.call(String(exp.get("expedition_target_herd", "")).strip_edges()))
-        return "%s %s%s" % [PANEL_EXPEDITION_DENY_GLYPH, quarry, phase_suffix]
+        return "%s%s" % [quarry, phase_suffix]
     # A SHIPMENT names WHO IT IS FOR — never by `expedition_destination_band`, which is the key the
     # command addresses. `expedition_destination_label` is the one resolution (the sim's published
     # name, else this client's own label for that band), so this row, the drawer's `Bound for` row and
@@ -452,8 +468,8 @@ static func panel_expedition_summary(exp: Dictionary, herd_label_for_id: Callabl
         # An unresolvable destination leaves the row as the mission's mark and its phase, rather than
         # an orphaned separator in front of nothing.
         if destination == "":
-            return "%s%s" % [PANEL_EXPEDITION_TRADE_GLYPH, phase_suffix]
-        return "%s %s%s" % [PANEL_EXPEDITION_TRADE_GLYPH, destination, phase_suffix]
+            return phase_suffix.strip_edges()
+        return "%s%s" % [destination, phase_suffix]
     # A STATIONED party names the band it is posted with, in a sentence per phase. The phase reads in
     # the sentence, so only `returning` keeps its glyph; `stationed` has none and `outbound`'s arrow
     # would repeat "Going to stay". Carries no food runway and no cargo — the home band feeds it.
@@ -466,10 +482,10 @@ static func panel_expedition_summary(exp: Dictionary, herd_label_for_id: Callabl
         elif phase == HudExpeditionVocab.EXPEDITION_PHASE_RETURNING:
             sentence_format = HudExpeditionVocab.STATION_ROW_RETURNING_FORMAT
         var tail := phase_suffix if phase == HudExpeditionVocab.EXPEDITION_PHASE_RETURNING else ""
-        return "%s %s%s" % [PANEL_EXPEDITION_STATION_GLYPH, sentence_format % host, tail]
+        return "%s%s" % [sentence_format % host, tail]
     var x := int(exp.get("current_x", -1))
     var y := int(exp.get("current_y", -1))
-    return "%s → (%d, %d)%s" % [PANEL_EXPEDITION_SCOUT_GLYPH, x, y, phase_suffix]
+    return "→ (%d, %d)%s" % [x, y, phase_suffix]
 
 ## A block-glyph bar for a 0–100 score. `cells` is passed by every caller — the Sedentarization meter
 ## (via FactionReadouts) at the standard width, the knowledge strip narrower, the herd-drawer danger

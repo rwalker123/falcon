@@ -512,7 +512,7 @@ static func _growth_line(bands: Array, disclosures: DisclosureController) -> Str
 ## which is exactly how it shipped. The Work tab passes the same entity twice, a row about a band
 ## jumping to that band.
 static func _summary_row(name: String, summary: String, severity: String, owner: int,
-        jump_owner: int, on_toggle: Callable, on_jump: Callable) -> Control:
+        jump_owner: int, on_toggle: Callable, on_jump: Callable, mark: Control = null) -> Control:
     var row := HBoxContainer.new()
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_theme_constant_override("separation", SUMMARY_ROW_SEPARATION)
@@ -529,6 +529,8 @@ static func _summary_row(name: String, summary: String, severity: String, owner:
     var jump := HudWidgets.build_inline_link(name, HudStyle.SIGNAL, on_jump.bind(jump_owner))
     jump.add_theme_font_size_override("font_size", STAT_ROW_FONT_SIZE)
     row.add_child(jump)
+    if mark != null:
+        row.add_child(mark)
     var body := HudWidgets.build_inline_link(summary, HudStyle.INK_DIM, on_toggle.bind(owner))
     body.add_theme_font_size_override("font_size", STAT_ROW_FONT_SIZE)
     body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -692,7 +694,7 @@ static func build_parties_zone(labor: HudBandLaborState, herd_label_for_id: Call
             HudFormat.panel_expedition_summary(party, herd_label_for_id,
                 labor.host_label_for_id),
             worst_severity(alerts), entity, int(party.get("home_band_entity", -1)),
-            on_toggle, on_jump))
+            on_toggle, on_jump, HudWidgets.build_mission_mark(String(party.get("expedition_mission", "")))))
         if entity == open_owner:
             block.add_child(_summary_detail(_party_detail_lines(party), alerts))
     _append_more_row(block, parties.size() - shown)

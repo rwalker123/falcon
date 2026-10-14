@@ -6546,6 +6546,15 @@ cohort carries `expeditionForecastHorizonTurns` the sentence quotes it:
 
 ### The mission's mark is `💀`, on all three surfaces
 
+**Every party mission mark on the panel is `hud/` ART now.** The Parties row's body `Button` carries
+it on `icon` (`HudWidgets.set_button_mission_mark`), the parties inspector strip's title and the
+faction page's party rows put a `HudWidgets.build_mission_mark` `TextureRect` beside the text, and the
+selection card's party row takes it through `SelectionCardController._band_row_sprite`. The four marks
+are `hud/scout.png`, `deny.png`, `trade.png` and `station.png`, named by
+`HudFormat.expedition_mission_mark`; the text glyph is only the fallback on a null texture.
+`HudFormat.panel_expedition_summary` returns the row text with no mark in it, so no emoji sits inside
+a plain Label string. `ui_preview`'s `station_party_marks` frame draws all four on one Parties list.
+
 `HudComposeVocab.BAND_VERBS`' Deny entry (the verb button), `HudFormat.PANEL_EXPEDITION_DENY_GLYPH`
 (the Active-parties row) and `MapView.EXPEDITION_DENY_GLYPH` (the map marker) are one glyph, so the
 mission reads the same at every scale. The parties row deliberately renders **no floor glyph** — the
@@ -7699,9 +7708,10 @@ none of them a new panel.
   `Main.format_station_expedition` is its own builder: `station_expedition <f> <band> <workers>
   <host>`.
 - **The Parties row** reads `Stationed with <host>` / `Going to stay with <host>` / `Coming home from
-  <host>` (`HudFormat.panel_expedition_summary`, `HudExpeditionVocab.STATION_ROW_*`), marked `⚓`
-  (`PANEL_EXPEDITION_STATION_GLYPH`, text, so `expedition_mission_glyph` does not hand it the scout
-  flag). The party's strip names its `Host` and states NO `Provisions` / `Carried` row
+  <host>` (`HudFormat.panel_expedition_summary`, `HudExpeditionVocab.STATION_ROW_*`), marked with
+  `hud/station.png` (`HudFormat.expedition_mission_mark("station")`; the `⚓` of
+  `PANEL_EXPEDITION_STATION_GLYPH` is only the fallback, and `expedition_mission_glyph` does not hand
+  it the scout flag). The party's strip names its `Host` and states NO `Provisions` / `Carried` row
   (`BandDetailLines._station_summary_lines`): the home band feeds it, and its `turns_of_food` of 999
   would print a runway for a larder it does not have. **The host's name goes through
   `HudBandLaborState.host_label_for_id`** — the roster's label, else the name the tie remembers, else

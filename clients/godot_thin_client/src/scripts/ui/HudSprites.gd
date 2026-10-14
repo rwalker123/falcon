@@ -14,9 +14,9 @@ class_name HudSprites
 ## the map's, so the art takes the `crops/` sub-style (no outline, front-on, pale fill on near-black)
 ## and `assets/icons/icon_prompts.txt` documents it per DIRECTORY: everything in `hud/` takes it.
 ##
-## **THE TABLE CARRIES ALL FIFTEEN MARKS `assets/icons/hud/` SHIPS** — the `cairn` of issue #581,
+## **THE TABLE CARRIES ALL SIXTEEN MARKS `assets/icons/hud/` SHIPS** — the `cairn` of issue #581,
 ## the twelve wired by issue #249: `forage` / `hunt` / `scout` / `warrior` (activities and kit
-## faces), `deny` / `trade` (band verbs), `workers` / `starving` (turn-orb rows), `children` /
+## faces), `deny` / `trade` (band verbs, which are also the party MISSION marks the Parties rows and the selection card's party rows draw, with `station` the stationed party's),  `workers` / `starving` (turn-orb rows), `children` /
 ## `working_age` / `elders` (the PEOPLE key) and `kit_fallback`; and `move` / `split`, which close
 ## the band verb row of issue #529. It held the cairn alone while the
 ## rest had no call site, because a path nothing loads is dead data rather than coverage; giving
@@ -46,6 +46,7 @@ const SPRITE_PATHS := {
 	"warrior": SPRITE_DIR + "warrior.png",
 	"deny": SPRITE_DIR + "deny.png",
 	"trade": SPRITE_DIR + "trade.png",
+	"station": SPRITE_DIR + "station.png",
 	"move": SPRITE_DIR + "move.png",
 	"split": SPRITE_DIR + "split.png",
 	"workers": SPRITE_DIR + "workers.png",
@@ -61,7 +62,7 @@ const SPRITE_PATHS := {
 ## contract every other art family has with its emoji.
 ##
 ## Takes `IconSprites.texture_for`'s DEFAULT `warn: true`: this family's coverage is complete for
-## what it declares — all FIFTEEN keys above have a committed, imported PNG behind them — so a
+## what it declares — all SIXTEEN keys above have a committed, imported PNG behind them — so a
 ## failed load is a DEFECT and must surface. (Contrast `FloraSprites`, the one family that passes
 ## `false` because a species without art is its expected state.)
 static func for_mark(mark_id: String) -> Texture2D:

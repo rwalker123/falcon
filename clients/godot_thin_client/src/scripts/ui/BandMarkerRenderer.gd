@@ -473,7 +473,7 @@ func _draw_expedition_body(unit: Dictionary, center: Vector2, marker_radius: flo
 	var art_mission := HudExpeditionVocab.EXPEDITION_MISSION_SCOUT
 	if mission == _view.EXPEDITION_DENY_MISSION or mission == _view.EXPEDITION_TRADE_MISSION \
 			or mission == _view.EXPEDITION_STATION_MISSION:
-		# A mission with no bundled art (station) resolves no sprite and falls to its glyph below.
+		# A mission whose sprite fails to resolve falls to its glyph below.
 		art_mission = mission
 	if mission == _view.EXPEDITION_DENY_MISSION:
 		glyph = _view.EXPEDITION_DENY_GLYPH

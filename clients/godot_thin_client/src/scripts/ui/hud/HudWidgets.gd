@@ -378,6 +378,28 @@ static func build_marker_icon(texture: Texture2D, glyph: String, box_px: float, 
     label.mouse_filter = Control.MOUSE_FILTER_IGNORE
     return label
 
+## A party's MISSION mark: `hud/<mission>.png` through `HudSprites`, with the mission's text glyph
+## (`HudFormat.expedition_mission_glyph`) only as the fallback when the texture is null. A row that
+## must keep one `Button` hosts it as `Button.icon` through `set_button_mission_mark` instead.
+static func build_mission_mark(mission: String, glyph_color = null) -> Control:
+    return build_marker_icon(
+        HudSprites.for_mark(HudFormat.expedition_mission_mark(mission)),
+        HudFormat.expedition_mission_glyph(mission),
+        HudWorkVocab.WORK_ROW_ICON_WIDTH, HudWorkVocab.WORK_ROW_FONT_SIZE, glyph_color)
+
+## Writes a party row's text and mission mark onto a `Button`: the art on `icon` (capped by
+## `icon_max_width`, as the action bar's art faces are), else the glyph prefixed to the text.
+static func set_button_mission_mark(btn: Button, mission: String, text: String) -> void:
+    var tex := HudSprites.for_mark(HudFormat.expedition_mission_mark(mission))
+    if tex != null:
+        btn.icon = tex
+        btn.expand_icon = true
+        btn.add_theme_constant_override("icon_max_width", int(HudWorkVocab.WORK_ROW_ICON_WIDTH))
+        btn.text = text
+    else:
+        btn.icon = null
+        btn.text = "%s %s" % [HudFormat.expedition_mission_glyph(mission), text]
+
 ## The shared −/+ stepper controls (minus, centered count, plus) appended to a row's HBox, so the
 ## one-line and two-line forms compose the same stepper. `on_change` fires with the new count.
 ##

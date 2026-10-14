@@ -735,7 +735,7 @@ const EXPEDITION_DENY_GLYPH := "💀"
 const EXPEDITION_TRADE_MISSION := "trade"
 const EXPEDITION_TRADE_GLYPH := "📦"
 # STATIONED party (issue #774) — people posted at a tied band. Its own marker, the ⚓ the Parties row
-# wears (`HudFormat.PANEL_EXPEDITION_STATION_GLYPH`); it has no bundled art, so the glyph IS the face.
+# wears (`HudFormat.PANEL_EXPEDITION_STATION_GLYPH`); its art is `expeditions/station.png`, the glyph the fallback.
 const EXPEDITION_STATION_MISSION := "station"
 const EXPEDITION_STATION_GLYPH := "⚓"
 

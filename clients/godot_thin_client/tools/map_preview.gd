@@ -1221,8 +1221,10 @@ func _ready() -> void:
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_expedition_art")
-	_assert_map("a stationed party resolves NO marker art, so it wears its glyph and not the scout's",
-		ExpeditionSprites.for_mission(HudExpeditionVocab.EXPEDITION_MISSION_STATION) == null)
+	_assert_map("a stationed party resolves its OWN marker art, not the glyph and not the scout's",
+		ExpeditionSprites.for_mission(HudExpeditionVocab.EXPEDITION_MISSION_STATION) != null
+			and ExpeditionSprites.for_mission(HudExpeditionVocab.EXPEDITION_MISSION_STATION)
+				!= ExpeditionSprites.for_mission(HudExpeditionVocab.EXPEDITION_MISSION_SCOUT))
 	_assert_map("scout, deny and trade parties resolve marker art",
 		ExpeditionSprites.for_mission(HudExpeditionVocab.EXPEDITION_MISSION_SCOUT) != null
 			and ExpeditionSprites.for_mission(HudExpeditionVocab.EXPEDITION_MISSION_DENY) != null
@@ -4835,7 +4837,7 @@ func _snapshot_quarry_targeting() -> Dictionary:
 			"x": BAND_X + QUARRY_FAR_OFFSET, "y": BAND_Y, "biomass": 800.0, "huntable": true},
 	])
 
-## One party per mission for the marker-art frame: scout, deny and trade.
+## One party per mission for the marker-art frame: scout, deny, trade and station.
 func _snapshot_expedition_art() -> Dictionary:
 	var snap := _base_snapshot(_band([], 2, 2), [_deer_herd()])
 	snap["populations"].append(_expedition(9211, 11, 3, "outbound"))
@@ -4845,7 +4847,7 @@ func _snapshot_expedition_art() -> Dictionary:
 	var trade := _expedition(9213, 10, 8, "awaiting")
 	trade["expedition_mission"] = HudExpeditionVocab.EXPEDITION_MISSION_TRADE
 	snap["populations"].append(trade)
-	# A stationed party (issue #774): no art, so its disc wears the ⚓ glyph rather than the scout flag.
+	# A stationed party (issue #774): its own `expeditions/station.png` in the disc.
 	var station := _expedition(9214, 8, 2, "stationed")
 	station["expedition_mission"] = HudExpeditionVocab.EXPEDITION_MISSION_STATION
 	snap["populations"].append(station)
