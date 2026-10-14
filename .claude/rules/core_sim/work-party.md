@@ -765,7 +765,12 @@ save.
 **`planned_crew` is the crew the hunt WANTS** (`NeedAssessment::wanted_crew`): the meal-sized crew
 before the equipment cap, so where bare hands cannot wound the quarry a band short of spears sends the
 few it can equip, or nobody, and where they can it sends the whole wanted crew; the craft suggestions
-ask for the spears the wanted crew needs. `muster_crew` is
+ask for the spears the wanted crew needs. **A band holding none of the kit on such a quarry** raises
+no useful crew over its own gear, so nothing is sent (`muster_crew` 0, `turnsToKill` 0,
+`turnsUntilHunt` `NO_HUNT_NEEDED`) - but `wanted_crew` (and so `planned_crew`) is sized from the
+curve priced as if every hand held the whole take kit (`hunt_by_need::unarmed_assessment`: a
+`fully_equipped_ledger` of the kit's items unworn at their default tier, no competing rows, no
+muster), by the same meal sizing; `0` when even that curve finds no useful crew. `muster_crew` is
 the capped crew that goes out; the wire's `musterCrew`, `turnsToKill` and `turnsUntilHunt` are read
 off the same capped assessment the turn makes.
 

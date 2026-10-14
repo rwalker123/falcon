@@ -1378,7 +1378,10 @@ those zeros as the zeros they are.
   (`LaborAssignment::planned_crew > 0`: the meal-sized crew the labor pass priced at its foot,
   **whether the row is sending or still waiting, and before the equipment cap**
   (`NeedAssessment::wanted_crew`) - a band short of spears still asks for the spears the wanted crew
-  needs, however few hands it can equip and send - so the kit is flagged ahead of the hunt and the
+  needs, however few hands it can equip and send, and **even a band holding none of the kit on a
+  quarry bare hands cannot wound** (its `wanted_crew` is sized as if every hand were equipped -
+  `work-party.md` -> "Hunting by need"; `mustered_take_gear` strikes the need row's claim with the
+  kit in hand when the real one is nothing, so its `kitToe` line states the missing spears) - so the kit is flagged ahead of the hunt and the
   band can make it in time), the allocation is cloned, that crew is mustered through `LaborAllocation::muster_donors` (kit-carrying donors bring
   their kit - `work-party.md` -> "Hunting by need"), every row's claim and the item budget are struck
   again, and the take rows' lines are built a second time

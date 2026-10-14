@@ -522,7 +522,29 @@ pub(crate) fn mustered_take_gear(
         mustered.assignments[*row].workers -= hands;
     }
     mustered.assignments[need_idx].workers = plan.total();
-    let claims = crate::take_claims::row_claims(sources, &mustered, wear);
+    let mut claims = crate::take_claims::row_claims(sources, &mustered, wear);
+    // **A CREW THE BAND CANNOT ARM STILL CLAIMS THE KIT IT WOULD NEED.** On a quarry bare hands
+    // cannot wound, a band holding none of the kit prices its need row's one equipped hand at the
+    // bare attack - a claim of nothing, so the row would show no shortfall and no spear would be
+    // suggested. The row's claim is then struck as if the kit were in hand (the reference ledger
+    // the wanted crew is sized on), so its `kitToe` states what the crew is missing.
+    if mustered.assignments[need_idx].workers > 0 && claims.claims[need_idx] <= 0.0 {
+        let reference = crate::hunt_by_need::fully_equipped_ledger(
+            &hunt_kit,
+            equipment,
+            mustered.assignments[need_idx].workers,
+        );
+        let split = crate::take_claims::take_kit_claim(
+            sources,
+            &reference,
+            crate::take_claims::declared_on(&mustered, &mustered.assignments[need_idx].target),
+            &mustered.assignments[need_idx].target,
+            &hunt_kit,
+            mustered.assignments[need_idx].workers,
+        );
+        claims.claims[need_idx] = split.claim;
+        claims.keep_hands[need_idx] = split.keep_hands;
+    }
     // The same settled gear the capture and auto-craft read (`take_row_gear`), now for the mustered
     // allocation.
     let gear = crate::craft_suggestions::take_row_gear(equipment, &mustered, &claims, wear);

@@ -2737,17 +2737,24 @@ fn a_band_short_of_the_kit_sends_only_the_hands_it_can_equip_and_leaves_the_benc
     );
 }
 
-/// ⛔ **A BAND WITH NO KIT SENDS NOBODY ON A QUARRY BARE HANDS CANNOT WOUND.** No hand can be
-/// armed and an unarmed one deals nothing, so no crew can be raised: nothing goes out, the row waits
-/// for ever ([`NO_HUNT_NEEDED`]) and the bench and idle hands stay home.
+/// ⛔ **A BAND WITH NO KIT SENDS NOBODY ON A QUARRY BARE HANDS CANNOT WOUND, BUT THE HUNT STILL
+/// ASKS FOR THE KIT.** No hand can be armed and an unarmed one deals nothing, so nothing goes out,
+/// the row waits for ever ([`NO_HUNT_NEEDED`]) and the bench and idle hands stay home. The crew the
+/// hunt WANTS is sized as if every hand held the kit, so `planned_crew` is positive, the spear
+/// suggestion for it is on the panel, and auto-craft queues it. The control holds the kit and sends
+/// a crew.
 #[test]
 fn a_band_with_no_kit_sends_nobody_on_a_quarry_bare_hands_cannot_wound() {
-    let (app, band) = capped_world(0);
-    let need = row(&app, band, NEED_HERD);
+    let (mut app, band) = capped_world(0);
+    let (muster_crew, planned_crew) = {
+        let need = row(&app, band, NEED_HERD);
+        (need.muster_crew, need.planned_crew)
+    };
 
-    assert_eq!(
-        need.muster_crew, 0,
-        "nothing can be equipped, so nobody goes"
+    assert_eq!(muster_crew, 0, "nothing can be equipped, so nobody goes");
+    assert!(
+        planned_crew > 0,
+        "the hunt still wants a crew, sized as if it were equipped"
     );
     let wire = published(&app);
     assert_eq!(wire.row(NEED_HERD).muster_crew, 0);
@@ -2755,6 +2762,26 @@ fn a_band_with_no_kit_sends_nobody_on_a_quarry_bare_hands_cannot_wound() {
     assert_eq!(wire.row(NEED_HERD).turns_until_hunt, NO_HUNT_NEEDED);
     assert_eq!(wire.idle_mustered, 0, "no idle hand is mustered either");
     assert_eq!(published_bench_lent(&app), 0);
+    assert!(
+        suggested(&app, "spears").is_some_and(|count| count > 0),
+        "the craft suggestions ask for the spears the wanted crew needs"
+    );
+
+    auto_bench_with_materials(&mut app, band);
+    let queued = queued_recipes(&app, band);
+    assert!(
+        queued.iter().any(|recipe| is_stalking_gear(recipe)),
+        "auto-craft queues the stalking gear, got {queued:?}"
+    );
+
+    let (armed, band_a) = capped_world(ENOUGH_UNITS);
+    let need_a = row(&armed, band_a, NEED_HERD);
+    assert!(need_a.muster_crew > 0, "control: with the kit a crew goes");
+    assert_eq!(
+        need_a.planned_crew, need_a.muster_crew,
+        "and it is the crew the unarmed band wanted"
+    );
+    assert_eq!(need_a.planned_crew, planned_crew);
 }
 
 /// ⛔ **A BAND WITH NO KIT STILL HUNTS A QUARRY BARE HANDS WOUND, AND THE CRAFT SUGGESTIONS STILL ASK

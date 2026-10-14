@@ -439,6 +439,53 @@ fn bare_hands_wound(inputs: &HuntCrewCurveInputs<'_>) -> bool {
     })
 }
 
+/// **THE ITEMS-IN-HAND LEDGER A FULLY EQUIPPED CREW IS PRICED OVER** - every item of the need row's
+/// take kit, unworn at its default tier ([`crate::equipment_config::ItemDefinition::default_tier`]),
+/// one unit per hand of `hands`. A reference for sizing what the
+/// hunt WANTS, never a claim on the band's real gear.
+pub(crate) fn fully_equipped_ledger(
+    kit: &KitChoice,
+    equipment: &EquipmentConfig,
+    hands: u32,
+) -> BandEquipment {
+    let mut ledger = BandEquipment::default();
+    for item in kit.uses() {
+        if let Some(def) = equipment.item(item) {
+            ledger.stock(item, hands, &def.default_tier().id, None);
+        }
+    }
+    ledger
+}
+
+/// **THE ASSESSMENT WHEN THE BAND'S OWN GEAR RAISES NO USEFUL CREW** - nothing is sent. Where the
+/// bare hunter wounds the quarry there is simply no crew to raise ([`NeedAssessment::NO_CREW`]).
+/// Where it cannot, the kit is what clears the gate and the band holds none of it: the crew the hunt
+/// WANTS is sized from the curve priced as if every hand held the whole take kit
+/// ([`fully_equipped_ledger`], no competing rows, no muster), by the same meal sizing, so the craft
+/// suggestions still ask for the gear. `wanted_crew` stays [`NO_USEFUL_CREW`] when even that curve
+/// finds none.
+fn unarmed_assessment(inputs: &HuntCrewCurveInputs<'_>, meal: &NeedMeal) -> NeedAssessment {
+    if bare_hands_wound(inputs) {
+        return NeedAssessment::NO_CREW;
+    }
+    let ledger = fully_equipped_ledger(inputs.kit, inputs.equipment, inputs.max_workers);
+    let reference = HuntCrewCurveInputs {
+        wear: &ledger,
+        other_rows: &[],
+        muster: None,
+        ..*inputs
+    };
+    let curve = hunt_crew_take_curve(&reference);
+    let useful = hunt_useful_crew(&curve);
+    if useful == NO_USEFUL_CREW {
+        return NeedAssessment::NO_CREW;
+    }
+    NeedAssessment {
+        wanted_crew: hunt_crew_for_animals(&curve, meal.animals(), useful),
+        ..NeedAssessment::NO_CREW
+    }
+}
+
 /// **THE NEED DECISION FOR ONE ROW** — `inputs` is the hunt crew curve's own input bundle with
 /// `max_workers` set to the musterable pool; `runway` is the band's food runway, the very value the
 /// snapshot publishes as `turnsOfFood`; `margin` is `follow.need_margin_turns`.
@@ -470,7 +517,7 @@ pub fn assess_need(
     let curve = hunt_crew_take_curve(inputs);
     let useful = hunt_useful_crew(&curve);
     if useful == NO_USEFUL_CREW {
-        return NeedAssessment::NO_CREW;
+        return unarmed_assessment(inputs, meal);
     }
     let wanted = hunt_crew_for_animals(&curve, meal.animals(), useful);
     // **The crew is capped at the hands the band can fully equip**: a crew sized to the meal
