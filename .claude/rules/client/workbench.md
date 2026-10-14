@@ -367,3 +367,7 @@ quietly rendering a wrong hint.
 The restart-scoped contract is stated **on the surface** (the standing banner), not only in a doc:
 someone who edits a value and watches the running world not change must not have to read this file to
 find out why.
+
+The manifest's `fauna` kind (`FAUNA_CONFIG_PATH`, server `ConfigOverrideKind::Fauna`) carries the two
+`drives` levers of the roaming skills: `/hunt/drive_engage_gain` (0.5, 0-2) and
+`/hunt/drive_full_head_count` (100, 10-600). The kind list is the manifest alone; no GDScript keeps its own.

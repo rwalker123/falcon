@@ -687,6 +687,12 @@ func _knowledge_frames() -> void:
 	await h._save("knowledge_panel_detail")
 	await _assert_selection_toggles()
 
+	# STATE 3b — a roaming skill selected (#799): the standalone `roam` fan, its unlock note and the
+	# practice line, in the roster-driven reading.
+	await _press_node(KnowledgeFx.KNOWLEDGE_HERD_LORE)
+	await h._save("knowledge_panel_roam")
+	await _press_node(KnowledgeFx.KNOWLEDGE_HERD_LORE)
+
 	# **STATE 4 — A FILTER LIVE, so the DIMMING is in a frame.** Non-matching nodes keep their place
 	# at `FILTERED_OUT_ALPHA`; the shape of the tree is most of what this screen teaches.
 	var pill := NodeQuery.find_meta_node(h._hud.knowledge_panel().panel(), HudKnowledgeVocab.FILTER_META)
@@ -1896,7 +1902,16 @@ func _assert_the_areas_gather_the_domains() -> void:
 	h._assert_hud("knowledge areas — the shipped ladder's %d domains render as %d headings, in the wire's order (%s)"
 			% [domains.size(), areas.size(), str(keys)],
 		keys == [StringName(KnowledgeFx.AREA_FOOD), StringName(KnowledgeFx.AREA_MAKING),
-			StringName(KnowledgeFx.AREA_WORKS)])
+			StringName(KnowledgeFx.AREA_WORKS), StringName(KnowledgeFx.AREA_REACH)])
+	# …REACH gathers the standalone roaming branch (#799), and it is a FAN: no step in it, so no rail
+	# between three knowledges that have no order to teach.
+	var roam := _domain_by_key(domains, StringName(KnowledgeFx.BRANCH_ROAM))
+	h._assert_hud("knowledge areas — `reach` gathers the standalone roam branch as a FAN of 3 (%s, %s)"
+			% [str(_domain_keys_of(areas, StringName(KnowledgeFx.AREA_REACH))),
+				str(roam.get(HudKnowledgeVocab.DOMAIN_SHAPE, ""))],
+		_domain_keys_of(areas, StringName(KnowledgeFx.AREA_REACH)) == [StringName(KnowledgeFx.BRANCH_ROAM)]
+			and roam.get(HudKnowledgeVocab.DOMAIN_SHAPE, "") == HudKnowledgeVocab.DOMAIN_SHAPE_FAN
+			and (roam.get(HudKnowledgeVocab.DOMAIN_NODES, []) as Array).size() == 3)
 	# …and the three the config names but nothing teaches under are ABSENT rather than empty, which
 	# is the "never draw an empty domain row" rule one level up.
 	var declared := KnowledgeFx.ladder_areas().size()
@@ -1935,7 +1950,8 @@ func _assert_the_areas_gather_the_domains() -> void:
 	h._assert_hud("knowledge areas — with NO order on the wire the headings fall back on first-seen (%s)"
 			% str(_area_keys(unordered)),
 		_area_keys(unordered) == [StringName(KnowledgeFx.AREA_FOOD),
-			StringName(KnowledgeFx.AREA_WORKS), StringName(KnowledgeFx.AREA_MAKING)])
+			StringName(KnowledgeFx.AREA_WORKS), StringName(KnowledgeFx.AREA_MAKING),
+			StringName(KnowledgeFx.AREA_REACH)])
 
 	# ⛔ THE TWO FALLBACKS, both of which have to DRAW.
 	var degenerate := KnowledgeRoster.group_areas(

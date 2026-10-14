@@ -667,7 +667,10 @@
     "provisions_per_biomass": 0.06,
     "pursuit_radius": 1,
     "pursuit_tiles_per_turn": 3,
-    "max_pursuit_turns": 12
+    "max_pursuit_turns": 12,
+    "_comment_drives": "THE DRIVES ROAMING SKILL (#799, docs/plan_roaming_bands.md). A faction that has learned `drives` (taught by camp kills on a herd the band follows) engages more animals from a large herd: fauna::herd_engage_rate is multiplied by 1 + drive_engage_gain x min(head_count / drive_full_head_count, 1), on the same arm the pastoral and pen gains use, so the live take, the forecast and every crew curve read the same reach. `drive_engage_gain` 0.5 = half again as many animals engaged from a full herd. `drive_full_head_count` 100 is in HEADS (biomass / body_mass): a migratory herd is 4,000-12,000 biomass (abundance.migratory), which at the light-bodied roster's body masses (reindeer 20, horse 40, marsh grazer 47, steppe runner 53) is roughly 75-600 head, so 100 is the small end of a real herd - a typical herd drives at full strength - while a mammoth herd (800 each, 5-15 head) gains almost nothing, the honest answer for an animal nobody drives. PLAYTEST DIALS. Validated: gain finite >= 0, full head count finite > 0.",
+    "drive_engage_gain": 0.5,
+    "drive_full_head_count": 100.0
   },
   "ecology": {
     "regrowth_rate": 0.05,

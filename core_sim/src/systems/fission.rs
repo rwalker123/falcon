@@ -297,8 +297,10 @@ pub fn split_band_from_parent_with(
     // (its `food_share`), and how much of it crosses is resolved against the goods on its card —
     // here for the default, and again on every revision (`starting_loadout::resolve_split_food`).
     // Taking fewer tools brings more food, which is the player's food dial without a food row.
-    let expedition = crate::starting_loadout::carry_config(world);
-    let carry_cfg = &expedition.carry;
+    // **The pack as the parent's people carry it** (#799): a people that has learned travois sends
+    // its splinter out with the lifted load, so the split, the long move and the panel agree.
+    let faction_pack = crate::starting_loadout::faction_carry(world, cohort.faction);
+    let carry_cfg = &faction_pack;
     let carry_cap = carry_capacity(asked, carry_cfg);
     let food_share = cohort.stores.get(crate::components::FOOD) * share;
     let fodder_share = cohort.stores.get(crate::components::FODDER) * share;
@@ -949,11 +951,11 @@ fn outfit_grant_splinter(
         .map(|row| (row.material_id.clone(), row.units))
         .collect();
     let carry = window.supply.struck_carry()?;
-    let expedition = crate::starting_loadout::carry_config(world);
+    let pack = crate::starting_loadout::faction_carry(world, faction);
     let food = window
         .dowry
         .as_ref()
-        .map_or_else(scalar_zero, |dowry| dowry.share_mass(&expedition.carry));
+        .map_or_else(scalar_zero, |dowry| dowry.share_mass(&pack));
     let equipment = world
         .get_resource::<EquipmentConfigHandle>()
         .map(|handle| handle.get())
@@ -965,7 +967,7 @@ fn outfit_grant_splinter(
         food,
         carry,
         &equipment,
-        &expedition.carry,
+        &pack,
     );
     let minted = MintedRows {
         kits: fitted.kits.iter().cloned().collect(),
@@ -1064,7 +1066,7 @@ fn rebalance_partitioned_grant(
         .get_resource::<EquipmentConfigHandle>()
         .map(|handle| handle.get())
         .unwrap_or_else(EquipmentConfig::builtin);
-    let expedition = crate::starting_loadout::carry_config(world);
+    let pack = crate::starting_loadout::faction_carry(world, faction);
     let Some(parent_entity) = world
         .query::<(Entity, &BandId)>()
         .iter(world)
@@ -1073,16 +1075,15 @@ fn rebalance_partitioned_grant(
     else {
         return;
     };
-    let Some(parent_budget) =
-        crate::starting_loadout::window_people(world, parent_entity, &expedition.carry)
-            .map(|people| parent_window.goods_allowance(&people, &expedition.carry))
+    let Some(parent_budget) = crate::starting_loadout::window_people(world, parent_entity, &pack)
+        .map(|people| parent_window.goods_allowance(&people, &pack))
     else {
         return;
     };
 
     let standing = crate::starting_loadout::allocation_load(
         &equipment,
-        &expedition.carry,
+        &pack,
         &parent_kits,
         &parent_materials,
     );
@@ -1091,7 +1092,7 @@ fn rebalance_partitioned_grant(
         // food now, so its own food is re-resolved against the goods it keeps.
         let goods = crate::starting_loadout::allocation_load(
             &equipment,
-            &expedition.carry,
+            &pack,
             &parent_kits,
             &parent_materials,
         );
@@ -1106,7 +1107,7 @@ fn rebalance_partitioned_grant(
         &parent_materials,
         parent_budget,
         &equipment,
-        &expedition.carry,
+        &pack,
     );
 
     let kits: Vec<KitAllocation> = crate::starting_loadout::kit_rows_from(fitted.kits);

@@ -602,6 +602,10 @@ pub fn stamp_starting_loadout(
     profile: Option<Res<ActiveStartProfile>>,
     bands: Query<(&BandId, &PopulationCohort), With<StartingUnit>>,
     expedition: Option<Res<ExpeditionConfigHandle>>,
+    // What each people already knows (#799) — a start profile may grant travois, and the opening
+    // card must price the pack the long move will.
+    discovery: Option<Res<crate::resources::DiscoveryProgressLedger>>,
+    ladder: Option<Res<crate::intensification::LadderConfigHandle>>,
 ) {
     if profile.is_none() {
         return;
@@ -633,10 +637,23 @@ pub fn stamp_starting_loadout(
     for (faction, (band, cohort)) in opening_bands {
         // The band's own carry, read live (`carry_budget: None`).
         let window = LoadoutWindow::opened(LoadoutSupply::Grant { carry_budget: None });
+        let carry =
+            expedition
+                .carry
+                .for_faction(discovery.as_deref().zip(ladder.as_deref()).is_some_and(
+                    |(ledger, ladder)| {
+                        crate::roaming_skills::faction_knows(
+                            ledger,
+                            &ladder.get(),
+                            faction,
+                            crate::roaming_skills::TRAVOIS_DISCOVERY_ID,
+                        )
+                    },
+                ));
         // Worldgen has sent no party yet, so the band's people are the band.
-        let people = WindowPeople::of_band(cohort, &expedition.carry);
-        let carry_budget = window.carry(&people, &expedition.carry);
-        let goods_allowance = window.goods_allowance(&people, &expedition.carry);
+        let people = WindowPeople::of_band(cohort, &carry);
+        let carry_budget = window.carry(&people, &carry);
+        let goods_allowance = window.goods_allowance(&people, &carry);
         loadout.open(band, window);
         info!(
             target: "shadow_scale::campaign",
@@ -744,8 +761,8 @@ pub(crate) fn outfit_band_with_defaults(world: &mut World, faction: FactionId, b
     let Some(entity) = entity_of(world, band) else {
         return;
     };
-    let expedition = carry_config(world);
-    let Some(people) = window_people(world, entity, &expedition.carry) else {
+    let carry = faction_carry(world, faction);
+    let Some(people) = window_people(world, entity, &carry) else {
         return;
     };
     let Some(profile) = world.get_resource::<ActiveStartProfile>() else {
@@ -764,13 +781,13 @@ pub(crate) fn outfit_band_with_defaults(world: &mut World, faction: FactionId, b
     };
     let opening = &archetype.opening_loadout;
     let equipment = world.resource::<EquipmentConfigHandle>().get();
-    let goods_allowance = window.goods_allowance(&people, &expedition.carry);
+    let goods_allowance = window.goods_allowance(&people, &carry);
     let fitted = fit_to_carry(
         &opening.kit_defaults,
         &opening.material_defaults,
         goods_allowance,
         &equipment,
-        &expedition.carry,
+        &carry,
     );
     // **The pre-fill's only sanity check** — the first moment a config fault of that shape can be
     // observed, because the room does not exist until the band and its larder do.
@@ -782,7 +799,7 @@ pub(crate) fn outfit_band_with_defaults(world: &mut World, faction: FactionId, b
             goods_allowance = goods_allowance.to_f32(),
             declared = allocation_load(
                 &equipment,
-                &expedition.carry,
+                &carry,
                 &opening.kit_defaults,
                 &opening.material_defaults,
             )
@@ -815,6 +832,19 @@ pub(crate) fn carry_config(world: &World) -> std::sync::Arc<ExpeditionConfig> {
         .get_resource::<ExpeditionConfigHandle>()
         .map(|handle| handle.get())
         .unwrap_or_else(ExpeditionConfig::builtin)
+}
+
+/// **The pack as `faction`'s people carry it** (#799) — the expedition config's carry with the
+/// travois multiplier applied when the faction has learned it. Every window arithmetic that prices a
+/// band's room goes through this, so the card agrees with the long move and the band panel.
+pub(crate) fn faction_carry(world: &World, faction: FactionId) -> CarryConfig {
+    carry_config(world)
+        .carry
+        .for_faction(crate::roaming_skills::world_faction_knows(
+            world,
+            faction,
+            crate::roaming_skills::TRAVOIS_DISCOVERY_ID,
+        ))
 }
 
 /// `kit → count` rows as the allocation lines an apply takes.
@@ -1142,7 +1172,7 @@ pub fn apply_starting_loadout(
     // what it already stands on. On a take it is asked after the
     // parent-supply and onward-take checks, which name the line the player must change.
     let wanted_items = expand_kits(&equipment, kits);
-    let carry_cfg = carry_config(world).carry.clone();
+    let carry_cfg = faction_carry(world, faction);
     let load = order_load(&carry_cfg, &wanted_items, material_total);
     let Some(capacity) = window_people(world, entity, &carry_cfg)
         .map(|people| window.goods_allowance(&people, &carry_cfg))
@@ -1295,7 +1325,13 @@ pub(crate) fn resolve_split_food(world: &mut World, band: BandId, goods_load: Sc
     let Some(dowry) = window.dowry.clone() else {
         return;
     };
-    let carry_cfg = carry_config(world).carry.clone();
+    let carry_cfg = entity_of(world, band)
+        .and_then(|entity| world.get::<PopulationCohort>(entity))
+        .map(|cohort| cohort.faction)
+        .map_or_else(
+            || carry_config(world).carry.clone(),
+            |faction| faction_carry(world, faction),
+        );
     let Some(carry) = entity_of(world, band)
         .and_then(|entity| window_people(world, entity, &carry_cfg))
         .map(|people| window.carry(&people, &carry_cfg))

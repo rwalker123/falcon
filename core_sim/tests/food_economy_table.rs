@@ -335,6 +335,7 @@ fn hunt_party(outfit: &Outfit, body_mass: f32, shipped: &Shipped) -> HuntingPart
         intrinsic: shipped.creatures.person(),
         tuning: shipped.combat.tuning(),
         hunt_injury_damage_per_animal: shipped.combat.hunt_injury_damage_per_animal,
+        drives_known: false,
     }
     .party_against(Quarry::Mass(body_mass))
 }
@@ -986,7 +987,7 @@ fn fauna_rows(shipped: &Shipped) -> Vec<(Row, FaunaExtras)> {
                     kit,
                 },
                 FaunaExtras {
-                    engage_rate: herd_engage_rate(&herd, &shipped.fauna),
+                    engage_rate: herd_engage_rate(&herd, &shipped.fauna, false),
                     body_mass: herd.body_mass,
                     regrowth: regrowth_facts(&herd, rung, shipped),
                 },
@@ -2134,7 +2135,7 @@ fn steady_terms(
     for turn in 1..=shipped.labor.yield_average_horizon_turns {
         regrow_biomass(&mut quarry, fauna);
         let room = herd_take_room(&quarry, DEFAULT_ESCAPEMENT_FLOOR, fauna);
-        let reach = animals_engaged(workers as f32, herd_engage_rate(&quarry, fauna));
+        let reach = animals_engaged(workers as f32, herd_engage_rate(&quarry, fauna, false));
         let before = quarry.clone();
         let take_at = |herd: &mut Herd, seed: u64| {
             hunt_take(
@@ -2211,8 +2212,8 @@ fn print_mammoth(shipped: &Shipped) {
     println!(
         "\n  species terms: body {:.0}, engage_rate {:.2}  ->  authored ceiling {:.1} biomass/hunter/turn (the roster's highest)",
         def.body_mass,
-        herd_engage_rate(&herd, &shipped.fauna),
-        herd_engage_rate(&herd, &shipped.fauna) * def.body_mass,
+        herd_engage_rate(&herd, &shipped.fauna, false),
+        herd_engage_rate(&herd, &shipped.fauna, false) * def.body_mass,
     );
     println!(
         "  herd terms:    r {:.3}, K {:.0} (roster band), seated at floor x K = {:.0}, one turn's growth {:.1} biomass = {:.2} bodies",
@@ -2298,10 +2299,10 @@ fn print_mammoth(shipped: &Shipped) {
     println!("  its sleds carry home a fraction of the carcass. What binds, stage by stage:");
     println!(
         "   • REACH IS UNDER ONE ANIMAL until 20 hunters. `animals_engaged = workers x engage_rate`, and at {:.2} that is {:.2} bodies per",
-        herd_engage_rate(&herd, &shipped.fauna),
-        herd_engage_rate(&herd, &shipped.fauna),
+        herd_engage_rate(&herd, &shipped.fauna, false),
+        herd_engage_rate(&herd, &shipped.fauna, false),
     );
-    let rate = herd_engage_rate(&herd, &shipped.fauna);
+    let rate = herd_engage_rate(&herd, &shipped.fauna, false);
     println!(
         "     hunter — so it takes {:.0} hunters to reach exactly ONE whole mammoth per turn. The retreat then shaves that fraction",
         if rate > 0.0 { 1.0 / rate } else { f32::INFINITY },

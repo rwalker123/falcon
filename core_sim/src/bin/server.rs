@@ -3422,6 +3422,17 @@ fn seed_source_yield(
     {
         return;
     }
+    // **The band's people, and what they have learned** (#799): the seed resolves the reach the
+    // turn's take will have, so a band that knows `drives` is quoted the driven herd.
+    let Some(cohort) = app.world.get::<PopulationCohort>(band) else {
+        return;
+    };
+    let faction = cohort.faction;
+    let drives_known = core_sim::roaming_skills::world_faction_knows(
+        &app.world,
+        faction,
+        core_sim::roaming_skills::DRIVES_DISCOVERY_ID,
+    );
     // **The kit this crew was assigned with, read off the assignment itself** — not off the band's
     // stock. `set_assignment` has already stored it, so the seed and the turn resolve the identical
     // tier through the identical seam, which is what `forecast == actual` rests on.
@@ -3451,9 +3462,10 @@ fn seed_source_yield(
                     .iter()
                     .position(|assignment| assignment.target.same_source(target))?;
                 let assignment = &allocation.assignments[index];
-                let claims = core_sim::take_claims::with_world_sources(&app.world, |sources| {
-                    core_sim::take_claims::row_claims(sources, allocation, &band_wear)
-                });
+                let claims =
+                    core_sim::take_claims::with_world_sources(&app.world, faction, |sources| {
+                        core_sim::take_claims::row_claims(sources, allocation, &band_wear)
+                    });
                 Some((
                     assignment.kit_choice(&equipment_cfg),
                     assignment.priority,
@@ -3474,9 +3486,6 @@ fn seed_source_yield(
     let Some((crew_kit, crew_priority, item_budget, other_rows, crew_split, row_claims)) =
         crew_gear
     else {
-        return;
-    };
-    let Some(cohort) = app.world.get::<PopulationCohort>(band) else {
         return;
     };
     let current_tile = cohort.current_tile;
@@ -3738,6 +3747,7 @@ fn seed_source_yield(
                 intrinsic: app.world.resource::<CreaturesConfigHandle>().get().person(),
                 tuning: combat_cfg.tuning(),
                 hunt_injury_damage_per_animal: combat_cfg.hunt_injury_damage_per_animal,
+                drives_known,
             }
             .party_against(core_sim::Quarry::Mass(herd.body_mass));
             // **THE HUNT ROW IS THE HERD'S CREW AND KEEPS IT FIRST** (`docs/plan_site_crews.md`
@@ -3794,6 +3804,7 @@ fn seed_source_yield(
                     carry,
                     carry(&equipment_cfg.no_kit()),
                     hunting_party.stay_fraction(core_sim::herd_wariness(&quarry, &fauna)),
+                    drives_known,
                 ),
                 keep_hands,
             );
@@ -3814,6 +3825,7 @@ fn seed_source_yield(
                     &combat_cfg,
                     app.world.resource::<CreaturesConfigHandle>().get().person(),
                     herd.body_mass,
+                    drives_known,
                 );
                 let forecast = core_sim::work_party::forecast_hunt_caravan(
                     &party,
@@ -6001,6 +6013,7 @@ fn launch_forecast_party(
     kit: &KitChoice,
     party_workers: u32,
     quarry_body_mass: f32,
+    faction: FactionId,
 ) -> (HuntingParty, f32) {
     let ledger = app
         .world
@@ -6013,6 +6026,7 @@ fn launch_forecast_party(
         kit,
         party_workers,
         quarry_body_mass,
+        faction,
     )
 }
 
@@ -6362,8 +6376,14 @@ fn handle_send_denial_raid(
         registry.find(&fauna_id).map(|herd| {
             // Resolved INSIDE the herd lookup: the attack tier is a fact about this party against
             // THIS animal, not about the party alone.
-            let (party, per_worker_haul) =
-                launch_forecast_party(app, outfit.band.entity, &kit, party_workers, herd.body_mass);
+            let (party, per_worker_haul) = launch_forecast_party(
+                app,
+                outfit.band.entity,
+                &kit,
+                party_workers,
+                herd.body_mass,
+                faction,
+            );
             denial_forecast(
                 party_workers,
                 herd,
@@ -6934,7 +6954,16 @@ fn resolve_shipment(
 
     // --- it fits in the packs of the people being sent ----------------------------------------
     let cfg = app.world.resource::<ExpeditionConfigHandle>().get();
-    let cap = core_sim::carry_capacity(party_workers, &cfg.carry).to_f32();
+    // **The pack as the sending people carry it** (#799): travois lifts the cap the launch enforces
+    // and the `carryPerWorker` echo the picker multiplies by, from one config.
+    let pack = cfg
+        .carry
+        .for_faction(core_sim::roaming_skills::world_faction_knows(
+            &app.world,
+            faction,
+            core_sim::roaming_skills::TRAVOIS_DISCOVERY_ID,
+        ));
+    let cap = core_sim::carry_capacity(party_workers, &pack).to_f32();
     let mass = core_sim::CarryLoad {
         food,
         fodder,
@@ -6943,7 +6972,7 @@ fn resolve_shipment(
             .iter()
             .fold(Scalar::zero(), |total, (_, amount)| total + *amount),
     }
-    .load(&cfg.carry)
+    .load(&pack)
     .to_f32();
     if mass > cap {
         emit_command_failure(
@@ -21519,6 +21548,7 @@ mod tests {
             &kit,
             SHORTFALL_ROW_CREW,
             herd.body_mass,
+            FactionId(0),
         );
         let launched = denial_forecast(
             SHORTFALL_ROW_CREW,

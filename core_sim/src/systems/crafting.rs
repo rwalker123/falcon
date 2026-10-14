@@ -362,6 +362,7 @@ fn pass_is_affordable(store: &LocalStore, recipe: &RecipeDef, tiers: &BenchTiers
 /// affordable**.
 pub fn bench_material_rate(
     bench: Option<&BandBench>,
+    lent_to_hunt: u32,
     store: &LocalStore,
     recipes: &crate::recipes_config::RecipesConfig,
     materials: &MaterialsConfig,
@@ -386,7 +387,12 @@ pub fn bench_material_rate(
         return rates;
     };
     let tiers = bench_tiers(material, materials, equipment, wear);
-    let rate = rate_per_turn(bench.workers, &recipes.crafting, tiers.speed);
+    // The crew the turn actually works: the bench's hands less those out with a hunting crew.
+    let rate = rate_per_turn(
+        bench.workers.saturating_sub(lent_to_hunt),
+        &recipes.crafting,
+        tiers.speed,
+    );
     if recipe.work <= 0.0 || rate <= 0.0 {
         return rates;
     }
@@ -502,6 +508,9 @@ fn spend_axis_for<'a>(material: &str, materials: &'a MaterialsConfig) -> Option<
         .map(String::as_str)
 }
 
+/// The bench lent nobody to a hunt this turn.
+const NO_HANDS_LENT: u32 = 0;
+
 /// **The bench, once per band per turn.**
 ///
 /// Scheduled after `advance_labor_allocation` so it draws on the materials **this turn's** take
@@ -528,6 +537,15 @@ pub fn advance_crafting(
     let knowledge_threshold = ladder.knowledge.completion_threshold;
 
     for (mut cohort, mut bench, mut wear, _) in bands.iter_mut() {
+        // **THE HANDS THE BENCH LENT TO THIS TURN'S HUNT ARE NOT AT THE BENCH.** The labor pass cut
+        // them for its own row walk and handed the crew back before this system runs, so the bench's
+        // recorded loan is what keeps them out of this pass. Read and cleared before any early exit,
+        // so a loan never outlives the turn it was made in.
+        let lent = if bench.lent_to_hunt == NO_HANDS_LENT {
+            NO_HANDS_LENT
+        } else {
+            std::mem::take(&mut bench.lent_to_hunt)
+        };
         // **ONLY THE WORKED ORDER IS WORKED** — the first, in queue order, that holds a pile or can
         // draw one now. A short order keeps its place and is skipped, so one order missing its
         // inputs no longer stalls the queue behind it; every order not worked is at rest.
@@ -552,7 +570,7 @@ pub fn advance_crafting(
         };
         let tiers = bench_tiers(material, &materials, &equipment, &wear);
         let faction = cohort.faction;
-        let workers = bench.workers;
+        let workers = bench.workers.saturating_sub(lent);
 
         let drawn_grade = {
             let head = &mut bench.orders[worked];

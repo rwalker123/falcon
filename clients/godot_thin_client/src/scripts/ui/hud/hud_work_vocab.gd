@@ -648,6 +648,11 @@ const WORKFORCE_KEY_FORAGE := "Forage"
 
 const WORKFORCE_KEY_HUNT := "Hunt"
 
+## The hands cutting a working (`extract` rows: wood, stone). The crew noun the WORKINGS / GROUNDWORK
+## block uses (`hud_deposit_vocab.gd`, "cutters"). Netted out of idle like every row, so without its
+## own segment those hands vanish and the bar stops partitioning `working_age`.
+const WORKFORCE_KEY_EXTRACT := "Cutters"
+
 const WORKFORCE_KEY_ROLES := "Roles"
 
 ## The hands on a source's BUILD (`docs/plan_standing_upkeep.md` §2.2) — the second allocation, which
@@ -1492,6 +1497,9 @@ const WORK_ROW_NEED_METER_META := &"work_row_need_meter"
 
 ## The Workforce head's idle readout while hands are out on a hunt.
 const WORKFORCE_IDLE_OUT_FORMAT := "%d idle · %d out hunting"
+## The Workforce bar's segment for every hand the next hunting-by-need muster takes (idle hands plus
+## the hands lent off source rows and the bench). Warn ink, like the "back after the kill" lines.
+const WORKFORCE_KEY_OUT_HUNTING := "Out hunting"
 
 static func need_turns_word(turns: int) -> String:
     return WORK_ROW_TURN_ONE if turns == WORK_ROW_NEED_TURN_SINGULAR else WORK_ROW_TURN_MANY

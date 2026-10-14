@@ -872,3 +872,24 @@ that must still be announced — a fix that merely went quiet would pass every o
 Sabotage-verified: narrowing the fold back to `first_seen` fails 5 of those legs, with the three
 non-vacuous legs still passing.
 
+
+## THE ROAMING SKILLS ARE A STANDALONE FAN UNDER `reach` (#799)
+
+`herd_lore`, `travois` and `drives` ride the roster as branch `roam`, area `reach`, `is_step = false`
+(`intensification_ladder.json` `standalone_knowledges`; no rung teaches them). Three client facts:
+
+- **A branch with no step in it is a FAN, not a ladder** (`KnowledgeRoster.build_domains`): a rail
+  between three knowledges would claim an order they do not have. The ladder shape is kept for any
+  branch with at least one step, so `animal` (with its non-step `foddering`) is unchanged. This is
+  the first time `reach` draws; its row label is **Roaming** (`DOMAIN_KEY_ROAM`).
+- **Their copy is authored beside the siblings'**: the unlock lines in
+  `FactionReadouts.KNOWLEDGE_UNLOCK_NOTES` (*See where a migrating herd goes next.* / *Each worker
+  carries more on the move.* / *Hunters take more from a big herd.*) and the learning lines in
+  `HudKnowledgeVocab.PRACTISE_NOTES`.
+- **The chips do NOT wear the `gates nothing` capsule**: each skill changes play by itself. The
+  roster marks every node of a step-less branch `standalone` (`NODE_STANDALONE`, set in
+  `build_domains` from the same no-step test that picks the fan), and the capsule is skipped for it.
+  `foddering` (non-step, but in a branch that has steps) and the rung knowledges keep the capsule.
+
+Harness: `fixtures_knowledge.gd` carries the three rows; `knowledge_panel.gd` asserts `reach` gathers
+`roam` as a fan of three and saves `knowledge_panel_roam`.

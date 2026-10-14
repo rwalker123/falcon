@@ -790,6 +790,8 @@ enum ConfigOverrideKind {
   CONFIG_OVERRIDE_KIND_RECIPES = 7;
   // The wellbeing spine — staged for the independence threshold (#284).
   CONFIG_OVERRIDE_KIND_WELLBEING = 8;
+  // The fauna table — staged for the roaming-skills drive levers (#799). Append-only.
+  CONFIG_OVERRIDE_KIND_FAUNA = 9;
 }
 
 // Stage a config-tuning override that takes effect at the NEXT new_game — `build_headless_app`

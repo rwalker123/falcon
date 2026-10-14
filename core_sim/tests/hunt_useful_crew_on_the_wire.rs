@@ -320,6 +320,7 @@ fn party_of(app: &App, workers: u32, wear: &BandEquipment) -> core_sim::HuntingP
         intrinsic,
         tuning: combat.tuning(),
         hunt_injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
+        drives_known: false,
     }
     .party_against(core_sim::Quarry::Mass(body_mass))
 }

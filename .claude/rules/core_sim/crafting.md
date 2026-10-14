@@ -655,6 +655,25 @@ one. Pinned by the liveness pair `server::tests::a_bench_crew_is_missing_from_th
 `::the_published_idle_count_is_what_assign_labor_will_staff` (the published number is exactly what the
 command path staffs — without it, a sim that stopped publishing idle at all would pass the first).
 
+### A hunting-by-need muster can lend the bench's crew for one turn
+
+The bench is a muster donor beside the worked rows (`work-party.md` → "Hunting by need"): ranked by
+`BandBench::priority`, ahead of its tier's rows. The loan is non-destructive — queue, progress, made
+count and drawn pile all stay — and is recorded in `BandBench::lent_to_hunt`, which `advance_crafting`
+reads as `workers − lent_to_hunt` and clears, because the crew is handed back before the bench works.
+A fully lent bench banks nothing and draws nothing that turn. The hands next turn's muster takes are
+on the wire as `BenchState.lentToHunt`.
+
+**The quoted output is priced at the crew the turn will work.** `BenchState.ratePerTurn` and
+`bench_material_rate` (the wire's material income and the labor pass's shortfall Alert) take the
+lent hands as an argument and use `workers − lent`: the capture passes the bench's share of the
+plan that fills `lentToHunt` (`MusterPlan::from_bench`), the labor pass passes this turn's
+`BandBench::lent_to_hunt`. A fully lent bench quotes `0` and banks `0`. The client's turns-to-finish
+is `ceil((work − progress) / ratePerTurn)`, so it follows. `BenchState.workers` and the "No one at
+the bench" reason stay on the player's crew, and the craft suggestions' wear-forecast lead time
+(a multi-turn estimate) keeps its own crew quote. Pinned by
+`hunt_by_need::the_quoted_rate_is_the_progress_the_turn_banks_with_hands_lent`.
+
 ### The shed can take the bench's crew, so a running job with nobody on it now exists
 
 The bench spends the band's people, so when a band cannot field what it is holding the **shedding
@@ -1357,7 +1376,12 @@ those zeros as the zeros they are.
 - **A need row's crew is a second, hunt-turn pass.** A hunting-by-need row stands at zero hands, so
   the standing lines never see the kit its crew would claim. For a band whose need row has a **planned crew**
   (`LaborAssignment::planned_crew > 0`: the meal-sized crew the labor pass priced at its foot,
-  **whether the row is sending or still waiting**, so the kit is flagged ahead of the hunt and the
+  **whether the row is sending or still waiting, and before the equipment cap**
+  (`NeedAssessment::wanted_crew`) - a band short of spears still asks for the spears the wanted crew
+  needs, however few hands it can equip and send, and **even a band holding none of the kit on a
+  quarry bare hands cannot wound** (its `wanted_crew` is sized as if every hand were equipped -
+  `work-party.md` -> "Hunting by need"; `mustered_take_gear` strikes the need row's claim with the
+  kit in hand when the real one is nothing, so its `kitToe` line states the missing spears) - so the kit is flagged ahead of the hunt and the
   band can make it in time), the allocation is cloned, that crew is mustered through `LaborAllocation::muster_donors` (kit-carrying donors bring
   their kit - `work-party.md` -> "Hunting by need"), every row's claim and the item budget are struck
   again, and the take rows' lines are built a second time
@@ -1376,6 +1400,14 @@ those zeros as the zeros they are.
   auto_craft_queues_the_kit_a_hunt_crew_is_short_of,
   a_waiting_rows_planned_crew_is_equipped_ahead_of_the_hunt}` (each with its control) and
   `craft_suggestions::tests::the_larger_of_two_passes_wins_per_item_and_they_are_never_summed`.
+  **The same mustered pass is published on the rows.** While a crew is going out
+  (`muster_crew > 0`) the turn crews the need row before the kit settles, so the capture publishes
+  every take row's `kitToe` from that mustered gear (`snapshot::population::mustered_take_gear`, the
+  one computation `hunt_turn_lines` reuses, never derived twice): the need row's line is its crew's
+  claim, the donors' and other hunt rows' lines what they hold that turn. A waiting row
+  (`muster_crew == 0`, even with a `planned_crew`) keeps the standing reading, and `craftSuggestions`,
+  `kitItemConditions` / `workersOnQuotedJob` and auto-craft are unchanged. Pinned on the encoded frame
+  by `hunt_by_need::a_crew_going_out_publishes_the_shortage_on_the_rows_and_a_waiting_row_does_not`.
 - **The score is workers going without** — `(required − filled).max(0) × workers_per_unit`, summed
   over sources.
 - **The order** (`craft_suggestions::rank_of`): every **non-build** shortage first (a pool other than

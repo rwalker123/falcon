@@ -3838,14 +3838,32 @@ pub struct BranchDef {
     pub area: String,
 }
 
+/// **A KNOWLEDGE NO RUNG TEACHES, FILED UNDER A BRANCH OF ITS OWN** — the roaming skills (#799:
+/// `herd_lore`, `travois`, `drives`). A rung-taught knowledge is placed by the rung that earns it;
+/// these are earned by a practice signal coded beside the system that teaches it, so the config
+/// states the placement itself. `branch` is a **string token, not a [`RungBranch`]**: no rung sits
+/// on it, so it needs no ladder machinery and no enum variant to be drawn as a column.
+#[derive(Debug, Clone, Deserialize)]
+pub struct StandaloneKnowledge {
+    /// The knowledge name — a key of `knowledge.lesson_costs` and of the sim's name→id lookup.
+    pub knowledge: String,
+    /// The wire branch token (`"roam"`): WHICH COLUMN. Wire vocabulary, never player copy.
+    pub branch: String,
+    /// The subject area it sits under; must be a member of [`LadderConfig::areas`].
+    pub area: String,
+    /// The position in the column, bottom first.
+    pub order: u32,
+}
+
 /// **One knowledge the ladder teaches, with the two facts that place it** — see
 /// [`LadderConfig::knowledge_roster`], which is the only producer of these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LadderKnowledgeEntry<'a> {
     /// The config's own knowledge id (`"cultivation"`, `"roadbuilding"`, …).
     pub knowledge: &'a str,
-    /// The branch of the rung that teaches it.
-    pub branch: RungBranch,
+    /// The wire token of the branch that teaches it: a rung's [`RungBranch::as_str`], or — for a
+    /// knowledge no rung teaches — the [`StandaloneKnowledge::branch`] the config files it under.
+    pub branch: &'a str,
     /// **The subject area of the branch that teaches it** — [`BranchDef::area`], read through
     /// [`LadderConfig::branch_area`]. `""` when the branch names none, which a client draws under a
     /// fallback heading rather than dropping the row.
@@ -3904,6 +3922,10 @@ pub struct LadderConfig {
     ///
     /// **Required for the same reason [`Self::branches`] is.**
     pub areas: Vec<String>,
+    /// **KNOWLEDGES NO RUNG TEACHES**, each filed under a branch and area by the config — see
+    /// [`StandaloneKnowledge`]. They ride the knowledge roster after the rung-taught ones.
+    /// **Required**, like [`Self::branches`].
+    pub standalone_knowledges: Vec<StandaloneKnowledge>,
     /// How fast traffic raises the **route** branch — see [`RouteTraffic`].
     pub route_traffic: RouteTraffic,
     /// How far a band keeps a road at the rung's own price — see [`RouteRange`], and read it through
@@ -4126,13 +4148,26 @@ impl LadderConfig {
             }
             roster.push(LadderKnowledgeEntry {
                 knowledge: name,
-                branch: rung.branch,
+                branch: rung.branch.as_str(),
                 area: self.branch_area(rung.branch),
                 order: rung.order,
                 is_step: self.knowledge_gates_a_rung(name),
                 discovery_id: rung
                     .earns_discovery_id()
                     .expect("a taught knowledge resolves to a discovery (validated at load)"),
+            });
+        }
+        // The knowledges no rung teaches but the config files under a branch of their own — the
+        // roaming skills. Appended after the rung-taught ones, in the config's declared order.
+        for standalone in &self.standalone_knowledges {
+            roster.push(LadderKnowledgeEntry {
+                knowledge: standalone.knowledge.as_str(),
+                branch: standalone.branch.as_str(),
+                area: standalone.area.as_str(),
+                order: standalone.order,
+                is_step: false,
+                discovery_id: discovery_id_for(&standalone.knowledge)
+                    .expect("a standalone knowledge resolves to a discovery (validated at load)"),
             });
         }
         roster
@@ -4401,6 +4436,26 @@ impl LadderConfig {
                 });
             }
         }
+        for standalone in &self.standalone_knowledges {
+            let where_ = format!("standalone_knowledges[{}]", standalone.knowledge);
+            if discovery_id_for(&standalone.knowledge).is_none() {
+                return Err(LadderConfigError::Invalid {
+                    field: where_,
+                    constraint: "name a knowledge the sim resolves to a discovery id — a name \
+                                 with no id could never be credited or published"
+                        .to_string(),
+                    value: standalone.knowledge.clone(),
+                });
+            }
+            if standalone.branch.is_empty() || !seen_areas.contains(standalone.area.as_str()) {
+                return Err(LadderConfigError::Invalid {
+                    field: where_,
+                    constraint: "name a branch token and an area that `areas` gives a position to"
+                        .to_string(),
+                    value: format!("branch '{}', area '{}'", standalone.branch, standalone.area),
+                });
+            }
+        }
         for (branch, def) in &self.branches {
             let where_ = format!("branches[{}].area", branch.as_str());
             if def.area.is_empty() {
@@ -4439,9 +4494,11 @@ impl LadderConfig {
             .iter()
             .filter_map(|rung| rung.earns_knowledge.as_deref());
         let rot_taught = std::iter::once(crate::spoilage::STORAGE_KNOWLEDGE);
+        let roaming = crate::roaming_skills::ROAMING_SKILLS.iter().copied();
         for name in taught
             .chain(crate::crafting::CRAFTS_WITH_A_DISCOVERY.iter().copied())
             .chain(rot_taught)
+            .chain(roaming)
         {
             if self.knowledge.lesson_cost(name).is_none() {
                 return Err(LadderConfigError::Invalid {
@@ -4784,6 +4841,11 @@ fn discovery_id_for(name: &str) -> Option<u32> {
         // `roadbuilding` / `paving` keep 2012 / 2013 rather than sliding down onto it.
         "roadbuilding" => Some(crate::routes::ROADBUILDING_DISCOVERY_ID),
         "paving" => Some(crate::routes::PAVING_DISCOVERY_ID),
+        // **The three ROAMING skills** (#799). No rung or bench teaches them: each is taught by its
+        // own practice signal, coded in `roaming_skills`, where the ids live.
+        crate::roaming_skills::HERD_LORE => Some(crate::roaming_skills::HERD_LORE_DISCOVERY_ID),
+        crate::roaming_skills::TRAVOIS => Some(crate::roaming_skills::TRAVOIS_DISCOVERY_ID),
+        crate::roaming_skills::DRIVES => Some(crate::roaming_skills::DRIVES_DISCOVERY_ID),
         // **The two deposit branches' three lessons** (`docs/plan_extraction.md` §3). Gathering
         // deadfall teaches you to fell; felling — being in a position to ruin a wood — teaches you
         // conservationism; picking loose stone teaches you to quarry, and the minerals arc's `mine`
@@ -5578,12 +5640,18 @@ mod tests {
         assert!(!roster.is_empty(), "the builtin ladder teaches knowledges");
 
         for entry in &roster {
-            assert_eq!(
-                entry.area,
-                ladder.branch_area(entry.branch),
-                "{}'s area is read off its branch's descriptor and nowhere else",
-                entry.knowledge
-            );
+            if let Some(rung) = ladder
+                .rungs
+                .iter()
+                .find(|rung| rung.earns_knowledge.as_deref() == Some(entry.knowledge))
+            {
+                assert_eq!(
+                    entry.area,
+                    ladder.branch_area(rung.branch),
+                    "{}'s area is read off its branch's descriptor and nowhere else",
+                    entry.knowledge
+                );
+            }
             assert!(
                 ladder.areas.iter().any(|area| area == entry.area),
                 "{}'s area '{}' has a position in the display order",

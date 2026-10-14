@@ -396,3 +396,9 @@ paths:
   fodder` — the barren footprint fodder carries outright); map_preview:
   `map_pasture_pen_footprint` (the green footprint disc, the A/B against `map_pasture_herd_range`'s
   gold roam-range).
+
+## Next grounds (Herd Lore, #799)
+
+`FaunaPanel` appends `Next grounds: (x, y)` under `Next waypoint` when the herd row's
+`next_ground_x/y` are `>= 0`, and nothing otherwise (the sim sends `-1` until the viewer knows Herd
+Lore, and always for non-migratory herds). The map draws the same tile (`map-markers.md`).

@@ -5144,6 +5144,9 @@ struct AppliedMuster {
     lent: Vec<(usize, u32)>,
     /// The need rows that were crewed this turn — their `workers` go back to zero.
     crewed: Vec<usize>,
+    /// The hands the crafting bench lent (taken off `BandBench::workers`, handed back by
+    /// [`restore_muster`]; the turn's craft pass reads them as `BandBench::lent_to_hunt`).
+    bench_lent: u32,
 }
 
 impl AppliedMuster {
@@ -5176,6 +5179,7 @@ struct MusterGear<'a> {
     claims: &'a [f32],
 }
 
+#[allow(clippy::too_many_arguments)] // The bench is the one `&mut` the borrowed `MusterGear` cannot carry.
 fn apply_muster(
     allocation: &mut LaborAllocation,
     mut idle: u32,
@@ -5184,8 +5188,15 @@ fn apply_muster(
     labor: &crate::labor_config::LaborConfig,
     grid: (u32, u32, bool),
     gear: &MusterGear<'_>,
+    mut bench: Option<&mut BandBench>,
 ) -> AppliedMuster {
     let mut applied = AppliedMuster::default();
+    // **A bench that lent hands last turn has been cleared by `advance_crafting`; this clears a
+    // stale mark where that system did not run** (a band without a ledger), so a lent count never
+    // outlives the pass that wrote it.
+    if let Some(bench) = bench.as_deref_mut().filter(|bench| bench.lent_to_hunt != 0) {
+        bench.lent_to_hunt = 0;
+    }
     let need_rows: Vec<usize> = allocation
         .assignments
         .iter()
@@ -5222,12 +5233,27 @@ fn apply_muster(
             need_idx,
             idle,
             is_local: &is_local,
+            bench: bench
+                .as_deref()
+                .and_then(crate::components::MusterBench::of),
             claims: gear.claims,
         }
         .plan_at(crew, &hunt_kit, gear.equipment, gear.wear);
         for (row, hands) in &plan.from_rows {
             allocation.assignments[*row].workers -= hands;
             applied.lent.push((*row, *hands));
+        }
+        // **The bench's crew is cut for the turn, and only its crew**: the queue, every order's
+        // progress and made count, the drawn pile and the last grade all stay (the shed's
+        // non-destructive path; `remove_order` would forfeit the pile). The cut is recorded on the
+        // bench so this turn's craft pass, which runs after the crew is handed back, still works
+        // the smaller crew.
+        if plan.from_bench > 0 {
+            if let Some(bench) = bench.as_deref_mut() {
+                bench.workers -= plan.from_bench;
+                bench.lent_to_hunt += plan.from_bench;
+                applied.bench_lent += plan.from_bench;
+            }
         }
         idle -= plan.from_idle;
         allocation.assignments[need_idx].workers = plan.total();
@@ -5239,9 +5265,18 @@ fn apply_muster(
 /// **GIVE THE BORROWED HANDS BACK** — every donor row's crew restored, every crewed need row back
 /// to the zero workers it holds between hunts. Row indices are the ones [`apply_muster`] saw, so it
 /// runs before anything removes a row.
-fn restore_muster(allocation: &mut LaborAllocation, applied: &AppliedMuster) {
+fn restore_muster(
+    allocation: &mut LaborAllocation,
+    applied: &AppliedMuster,
+    bench: Option<&mut BandBench>,
+) {
     for (row, hands) in &applied.lent {
         allocation.assignments[*row].workers += hands;
+    }
+    if applied.bench_lent > 0 {
+        if let Some(bench) = bench {
+            bench.workers += applied.bench_lent;
+        }
     }
     for row in &applied.crewed {
         allocation.assignments[*row].workers = NO_CREW_ON_THIS_ACTIVITY;
@@ -5484,6 +5519,14 @@ pub fn advance_labor_allocation(
             .cloned()
             .unwrap_or_else(|| BandEquipment::start_stocked_for(&equipment_cfg, available as f32));
         let faction = cohort.faction;
+        // **Does this band's people know `drives`?** (#799) Resolved once per band per turn, like the
+        // kit tiers above, so every party this band fields this turn reaches at one rate.
+        let drives_known = crate::intensification::knows(
+            &discovery,
+            faction,
+            crate::roaming_skills::DRIVES_DISCOVERY_ID,
+            knowledge_dials.completion_threshold,
+        );
         // **THE SIZE OF THE LAND UNDER A PLANT CLAIM** — the tile's own `K` through the one
         // `forage::tile_forage_capacity` seam, resolved the way every other tile reading in this
         // system is (the registry index, then the query), and handed to
@@ -5703,6 +5746,7 @@ pub fn advance_labor_allocation(
                         materials: &materials_cfg,
                         combat: &combat_config,
                         person: person_profile,
+                        drives_known,
                         start: fauna::ProjectionStart::AfterRegrowth,
                     },
                     &allocation,
@@ -5723,6 +5767,7 @@ pub fn advance_labor_allocation(
                     .as_ref()
                     .map_or(&[][..], |claims| claims.claims.as_slice()),
             },
+            bench.as_deref_mut(),
         );
         // **THE HAY LEDGER IS CLEARED BEFORE ANY EXIT OUT OF THIS BAND'S TURN**, and re-summed at the
         // foot of the loop from the rows it actually resolved. Every other per-turn ledger the
@@ -6191,6 +6236,7 @@ pub fn advance_labor_allocation(
                     materials: &materials_cfg,
                     combat: &combat_config,
                     person: person_profile,
+                    drives_known,
                     start: fauna::ProjectionStart::AfterRegrowth,
                 },
                 &allocation,
@@ -6472,6 +6518,7 @@ pub fn advance_labor_allocation(
                 intrinsic: person_profile,
                 tuning: combat_tuning,
                 hunt_injury_damage_per_animal: hunt_injury_damage,
+                drives_known,
             };
             let party_for = |body_mass: f32| {
                 party_resolution.party_against(crate::equipment_config::Quarry::Mass(body_mass))
@@ -6505,6 +6552,7 @@ pub fn advance_labor_allocation(
                         &combat_config,
                         person_profile,
                         body_mass,
+                        drives_known,
                     )
                 })
             };
@@ -7749,7 +7797,10 @@ pub fn advance_labor_allocation(
                     };
                 }
                 LaborTarget::Hunt {
-                    fauna_id, floor, ..
+                    fauna_id,
+                    floor,
+                    move_with_herd,
+                    ..
                 } => {
                     if registry.find(fauna_id).is_none() {
                         // Herd despawned (extinction / another hunter) → lapse.
@@ -8655,6 +8706,7 @@ pub fn advance_labor_allocation(
                                 ),
                                 party_for(herd.body_mass)
                                     .stay_fraction(fauna::herd_wariness(herd, &fauna)),
+                                drives_known,
                             ),
                             overdraws: false,
                         };
@@ -8772,6 +8824,28 @@ pub fn advance_labor_allocation(
                         faction,
                         &mut discovery,
                     );
+                    // **A DRIVE IS PRACTICED BY A CAMP KILL ON A FOLLOWED HERD** (#799, the `drives`
+                    // roaming skill): the band is camped in the herd it follows
+                    // (`move_with_herd`), the crew is working it (the same gate as the lesson above),
+                    // and the kill is made inside `band_work_range` — a far posting walks its take
+                    // home and is not a drive. Once per source per turn, never scaled by the crew.
+                    let camp_kill = !postings.contains_key(&idx)
+                        && crate::grid_utils::hex_distance_wrapped(
+                            band_pos,
+                            herd.position(),
+                            grid_width,
+                            wrap_horizontal,
+                        ) <= crate::work_party::party_begins_past(&labor);
+                    if *move_with_herd && crew_at_the_source && working_the_herd && camp_kill {
+                        crate::roaming_skills::credit(
+                            &mut discovery,
+                            &ladder,
+                            faction,
+                            crate::roaming_skills::DRIVES,
+                            crate::roaming_skills::DRIVES_DISCOVERY_ID,
+                            crate::roaming_skills::drives_practice(knowledge_dials),
+                        );
+                    }
                     // **THE take's yield: product × intensity** (`docs/plan_hunt_yield_model.md`).
                     // `hunt_take` above decided HOW MUCH biomass came home (the policy's job); the
                     // species' `HuntYield` decides WHAT that biomass is worth, in one call that
@@ -9405,6 +9479,7 @@ pub fn advance_labor_allocation(
                             &band_kit,
                         ),
                         party_for(herd.body_mass).stay_fraction(fauna::herd_wariness(herd, &fauna)),
+                        drives_known,
                     );
                     // **The arrival schedule — computed POST-take, unlike `realized`.** It
                     // answers "when does the next food land", so it must start from the state the
@@ -10048,7 +10123,7 @@ pub fn advance_labor_allocation(
         }
         // **THE MUSTERED HANDS GO BACK** — every donor's crew restored and the need row to zero, so
         // nothing past the row walk (the lapse sweep, the wire, next turn) sees a borrowed hand.
-        restore_muster(&mut allocation, &muster);
+        restore_muster(&mut allocation, &muster, bench.as_deref_mut());
         // **WHICH HERDS A CREW WORKED THIS TURN**, by id — the rows' indices shift when the lapse
         // sweep below removes one, and the decision at the foot of the pass reads this after it.
         let herds_crewed_this_turn: Vec<String> = muster
@@ -10129,6 +10204,7 @@ pub fn advance_labor_allocation(
         let band_material_income =
             allocation.material_income(&crate::systems::bench_material_rate(
                 bench.as_deref(),
+                bench.as_deref().map_or(0, |bench| bench.lent_to_hunt),
                 &cohort.stores,
                 &recipes_cfg,
                 &materials_cfg,
@@ -10622,6 +10698,7 @@ pub fn advance_labor_allocation(
                     combat: &combat_config,
                     person: person_profile,
                     // Between turns, exactly as the snapshot's readout is struck.
+                    drives_known,
                     start: fauna::ProjectionStart::BeforeRegrowth,
                 },
                 &allocation,
@@ -10682,6 +10759,9 @@ pub fn advance_labor_allocation(
                         need_idx: idx,
                         idle: idle_now,
                         is_local: &is_local,
+                        bench: bench
+                            .as_deref()
+                            .and_then(crate::components::MusterBench::of),
                         claims: &claims.claims,
                     };
                     let assessment = crate::hunt_by_need::assess_need(
@@ -10700,7 +10780,13 @@ pub fn advance_labor_allocation(
                             range_sigmas: combat_config.forecast_range_sigmas,
                             floor: *floor,
                             baseline_haul_rate,
-                            max_workers: allocation.musterable_pool(idle_now, idx, &is_local),
+                            drives_known,
+                            max_workers: allocation.musterable_pool(
+                                idle_now,
+                                idx,
+                                &is_local,
+                                pricing.bench,
+                            ),
                             keeping: fauna::herd_crew_keeping_next_turn(
                                 herd, &fauna, &ladder, None,
                             ),
@@ -10722,7 +10808,9 @@ pub fn advance_labor_allocation(
                         } else {
                             NO_CREW_ON_THIS_ACTIVITY
                         },
-                        assessment.crew,
+                        // The craft suggestions equip toward the crew the hunt WANTS, not the
+                        // capped one that can go out, so a band short of spears still asks for them.
+                        assessment.wanted_crew,
                     )
                 })
                 .collect();
@@ -13343,6 +13431,10 @@ pub struct RaidConfigs<'w> {
     pub extraction: Res<'w, crate::extraction_config::ExtractionConfigHandle>,
     /// What a death adds to the place it happens on (`crate::belief`).
     pub belief: Res<'w, BeliefConfigHandle>,
+    /// What each people has learned (#799) — the warrior line's take-kit claim is struck at the
+    /// reach the band's hunt rows have, so it reads the band's `drives`. Optional, for the minimal
+    /// worlds that never insert a ledger.
+    pub discovery: Option<Res<'w, DiscoveryProgressLedger>>,
 }
 
 /// **Predators Phase 1b — the raid trigger, and the Warrior role's first live consumer**
@@ -13495,6 +13587,14 @@ pub fn advance_predator_raids(
                     materials: &configs.materials.get(),
                     combat: &configs.combat.get(),
                     person,
+                    drives_known: configs.discovery.as_deref().is_some_and(|ledger| {
+                        crate::roaming_skills::faction_knows(
+                            ledger,
+                            &configs.ladder.get(),
+                            cohort.faction,
+                            crate::roaming_skills::DRIVES_DISCOVERY_ID,
+                        )
+                    }),
                     start: fauna::ProjectionStart::AfterRegrowth,
                 },
                 &alloc,
@@ -15294,7 +15394,7 @@ mod labor_yield_tests {
                 herd.body_mass,
                 // The keepers' handling rate — the species' own reach through
                 // `husbandry.pen_engage_gain`.
-                crate::fauna::herd_engage_rate(herd, &fauna),
+                crate::fauna::herd_engage_rate(herd, &fauna, false),
                 // …and the retreat a fence calms the herd to, at the party this harness fields.
                 // The bands here carry no `BandEquipment`, which every rate in this module reads as
                 // the fully-kitted reference (`equipped_haul_rate`), so the shipped equipped party

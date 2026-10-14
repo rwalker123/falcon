@@ -1101,6 +1101,7 @@ fn partly_speared(workers: f32, spears_owned: u32, body_mass: f32) -> HuntingPar
         intrinsic: CreaturesConfig::builtin().person(),
         tuning: combat.tuning(),
         hunt_injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
+        drives_known: false,
     }
     .party_against(core_sim::Quarry::Mass(body_mass))
 }

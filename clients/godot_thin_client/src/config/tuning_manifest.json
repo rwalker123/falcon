@@ -222,6 +222,17 @@
       "env_var": "EXPEDITION_CONFIG_PATH",
       "params": [
         {
+          "pointer": "/carry/travois_carry_multiplier",
+          "label": "Travois pack multiplier",
+          "type": "float",
+          "min": 1.0,
+          "max": 3.0,
+          "step": 0.05,
+          "default": 1.5,
+          "unit": "x",
+          "hint": "What one worker's pack is multiplied by once the faction has learned Travois. 1.0 changes nothing."
+        },
+        {
           "pointer": "/observe_sight_range",
           "label": "Scout sight range",
           "type": "int",
@@ -304,6 +315,35 @@
           "default": 1.0,
           "unit": "grievance",
           "hint": "Grievance at which bands cut off from the heart of their people break away as a people of their own. Low: any far band with a bad season leaves once out of touch. High: only a starving band ever leaves."
+        }
+      ]
+    },
+    {
+      "kind": "fauna",
+      "label": "Fauna",
+      "env_var": "FAUNA_CONFIG_PATH",
+      "params": [
+        {
+          "pointer": "/hunt/drive_engage_gain",
+          "label": "Drive reach gain",
+          "type": "float",
+          "min": 0,
+          "max": 2,
+          "step": 0.05,
+          "default": 0.5,
+          "unit": "x reach",
+          "hint": "Extra animals a crew engages from a full herd once its people have learned drives. 0.5 is half again as many. 0 makes the skill do nothing."
+        },
+        {
+          "pointer": "/hunt/drive_full_head_count",
+          "label": "Full drive herd size",
+          "type": "float",
+          "min": 10,
+          "max": 600,
+          "step": 10,
+          "default": 100.0,
+          "unit": "head",
+          "hint": "Herd size, in animals, at which a drive reaches its full gain. Low: even a small herd drives at full strength. High: only the great herds do."
         }
       ]
     },

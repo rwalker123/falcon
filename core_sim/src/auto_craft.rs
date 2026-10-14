@@ -149,7 +149,9 @@ fn band_suggestions_and_offers(
     let cohort = world.get::<PopulationCohort>(band)?;
     let allocation = world.get::<LaborAllocation>(band)?;
     let wear = band_wear(world, band, &configs.equipment);
-    let claims = with_world_sources(world, |sources| row_claims(sources, allocation, &wear));
+    let claims = with_world_sources(world, cohort.faction, |sources| {
+        row_claims(sources, allocation, &wear)
+    });
     let gear = take_row_gear(&configs.equipment, allocation, &claims, &wear);
     let take_rows = gear.iter().enumerate().flat_map(|(row, gear)| {
         gear.toe
@@ -186,7 +188,7 @@ fn band_suggestions_and_offers(
             expedition_sight_range: expedition.observe_sight_range as f32,
         },
     };
-    let offers = band_craft_state(&cohort.stores, Some(bench), &wear, &inputs).craft_offers;
+    let offers = band_craft_state(&cohort.stores, Some(bench), 0, &wear, &inputs).craft_offers;
     // The offers come first: the wear forecast reads the recipe each item's row marks `suggested`.
     let suggestions = band_suggestions(
         allocation,
@@ -235,14 +237,16 @@ fn hunt_turn_pass(
     let is_local = |target: &crate::components::LaborTarget| {
         crate::hunt_by_need::source_is_local(target, herds, band_pos, &labor, (width, wrap))
     };
-    with_world_sources(world, |sources| {
+    with_world_sources(world, cohort.faction, |sources| {
         crate::snapshot::population::hunt_turn_lines(
             allocation,
             idle,
             &is_local,
+            crate::components::MusterBench::of(bench),
             sources,
             wear,
             &configs.equipment,
+            None,
         )
     })
 }

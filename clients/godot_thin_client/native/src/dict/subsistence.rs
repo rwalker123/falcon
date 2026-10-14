@@ -96,6 +96,10 @@ pub(crate) fn herds_to_array(
         let _ = dict.insert("route_length", herd.routeLength() as i64);
         let _ = dict.insert("next_x", herd.nextX() as i64);
         let _ = dict.insert("next_y", herd.nextY() as i64);
+        // Herd Lore: the herd's next seasonal ground (next route anchor). -1 unless the viewer
+        // knows Herd Lore and the herd is migratory.
+        let _ = dict.insert("next_ground_x", herd.nextGroundX() as i64);
+        let _ = dict.insert("next_ground_y", herd.nextGroundY() as i64);
         if let Some(size_class) = herd.sizeClass() {
             let _ = dict.insert("size_class", size_class);
         }

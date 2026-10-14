@@ -2364,6 +2364,8 @@
       ],
       "meter_rot_per_turn": 36.529999,
       "neglect_grace_remaining": 142,
+      "next_ground_x": 22,
+      "next_ground_y": 11,
       "next_x": 68,
       "next_y": 57,
       "pastoral_material": [
@@ -2612,6 +2614,8 @@
       ],
       "meter_rot_per_turn": 45.049999,
       "neglect_grace_remaining": 57,
+      "next_ground_x": 149,
+      "next_ground_y": 160,
       "next_x": 1,
       "next_y": 12,
       "pastoral_material": [
@@ -2860,6 +2864,8 @@
       ],
       "meter_rot_per_turn": 50.34,
       "neglect_grace_remaining": 8,
+      "next_ground_x": 28,
+      "next_ground_y": 17,
       "next_x": 18,
       "next_y": 7,
       "pastoral_material": [
@@ -4415,6 +4421,7 @@
             "material_id": "populations[0].bench.drawn_inputs[2].material_id"
           }
         ],
+        "lent_to_hunt": 43,
         "orders": [
           {
             "auto": true,
@@ -4609,6 +4616,7 @@
       "carry_material_weight": 39.889999,
       "carry_per_worker": 112.379997,
       "children": 97,
+      "comm_range_tiles": 188,
       "craft_offers": [
         {
           "available": true,
@@ -5907,6 +5915,7 @@
             "material_id": "populations[1].bench.drawn_inputs[2].material_id"
           }
         ],
+        "lent_to_hunt": 170,
         "orders": [
           {
             "auto": true,
@@ -6101,6 +6110,7 @@
       "carry_material_weight": 81.660004,
       "carry_per_worker": 74.93,
       "children": 148,
+      "comm_range_tiles": 93,
       "craft_offers": [
         {
           "available": true,
@@ -7360,6 +7370,7 @@
             "material_id": "populations[2].bench.drawn_inputs[2].material_id"
           }
         ],
+        "lent_to_hunt": 137,
         "orders": [
           {
             "auto": true,
@@ -7554,6 +7565,7 @@
       "carry_material_weight": 33.52,
       "carry_per_worker": 84.809998,
       "children": 39,
+      "comm_range_tiles": 118,
       "craft_offers": [
         {
           "available": true,

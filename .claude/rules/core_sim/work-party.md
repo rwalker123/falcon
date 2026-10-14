@@ -13,6 +13,8 @@ paths:
   - "core_sim/tests/migration_mode.rs"
   - "core_sim/src/hunt_by_need.rs"
   - "core_sim/tests/hunt_by_need.rs"
+  - "core_sim/src/roaming_skills.rs"
+  - "core_sim/tests/roaming_skills.rs"
 ---
 
 # The work party — hunt, forage and extract are one model, and distance is a caravan
@@ -760,6 +762,18 @@ range): a waiting row has `muster_crew == 0` and a planned crew, and the craft s
 crew ahead of the hunt (`crafting.md` -> "Craft suggestions"). Also outside the `PartialEq`, and on the
 save.
 
+**`planned_crew` is the crew the hunt WANTS** (`NeedAssessment::wanted_crew`): the meal-sized crew
+before the equipment cap, so where bare hands cannot wound the quarry a band short of spears sends the
+few it can equip, or nobody, and where they can it sends the whole wanted crew; the craft suggestions
+ask for the spears the wanted crew needs. **A band holding none of the kit on such a quarry** raises
+no useful crew over its own gear, so nothing is sent (`muster_crew` 0, `turnsToKill` 0,
+`turnsUntilHunt` `NO_HUNT_NEEDED`) - but `wanted_crew` (and so `planned_crew`) is sized from the
+curve priced as if every hand held the whole take kit (`hunt_by_need::unarmed_assessment`: a
+`fully_equipped_ledger` of the kit's items unworn at their default tier, no competing rows, no
+muster), by the same meal sizing; `0` when even that curve finds no useful crew. `muster_crew` is
+the capped crew that goes out; the wire's `musterCrew`, `turnsToKill` and `turnsUntilHunt` are read
+off the same capped assessment the turn makes.
+
 **The decision, at the foot of the band's labor pass for next turn** (`assess_need`):
 
 | step | rule |
@@ -767,6 +781,7 @@ save.
 | herd gone, or beyond `band_work_range` of the band | `muster_crew = 0` — **only a camp kill is mustered**; a one-turn crew cannot run a caravan, so a need row never posts a party and a band still catching up hunts nothing |
 | crew | **sized to the meal** (below): the smallest row of `hunt_crew_take_curve(..)` landing the animals the meal calls for, never above `hunt_useful_crew`, priced with `max_workers` = the musterable pool (idle + every donor row's hands) |
 | no crew | `0` |
+| equipment cap | the crew is capped at **the hands the band can fully equip with the kit items that bind a camp kill** (`MusterPricing::equippable_crew`): per such item, the units no row claims (`unclaimed_units x workers_per_unit`, floored) plus the hands the lendable donor rows' settled units would arm (each row capped at the hands it has present), and the least over those items. **The items that bind a camp kill** (`hunt_by_need::kill_bearing_items`, one list for the cap and for `muster_kit`'s shortfall) are the kit's items declaring a stat the kill reads - `attack`, `dispersion` or `exposure` (`EquipmentStat::bears_on_a_kill`), on the item or any tier - never an item id; the sled (`hunt_carry`, `deposit_take`) is not one, because a need crew is only mustered inside `band_work_range`, where nothing is hauled and the sled wears nothing. **Never caps (`NO_KIT_CAP`)** when no item of the kit binds a camp kill, or when the bare hunter already wounds the quarry (`combat::strike_damage(inputs.intrinsic.attack, defense) > 0` against the quarry the hunt curve prices): the gate is cleared bare-handed, so a kit shortage does not stop the hunt. `crew = min(meal-sized, cap)`; a cap of `0` sends nobody (`muster_crew` 0, `turnsToKill` 0, `turnsUntilHunt` `NO_HUNT_NEEDED`, even mid-hunt) |
 | a hunt in progress | the crew was out this turn, the herd has `wounds.pending() > 0` and **no kill landed** → send, whatever the larder says |
 | otherwise | send iff `runway <= turns_to_kill + follow.need_margin_turns` (default **1**); `turns_to_kill` is the first non-zero slot of `fauna::project_arrivals_hunt` at that crew (`fauna::hunt_crew_turns_to_kill`), `runway` is the **need clock's** (`snapshot::kill_turns_of_food`, below) and the `NOT_FOOD_LIMITED_TURNS` sentinel never triggers |
 
@@ -854,8 +869,8 @@ after the kill sends nobody.
 
 **Applied in `advance_labor_allocation`, after the starvation shed and before the pools, the site
 keeping and the row claims**: for each need row with `muster_crew > 0` whose herd is inside
-`band_work_range`, `muster_donors(idle, need_idx, crew)` is clamped to what the donors hold now, the
-donor rows' `workers` are cut and the need row's set to the crew. Everything downstream reads those
+`band_work_range`, `muster_donors(idle, need_idx, crew, ..)` is clamped to what the donors hold now,
+the donor rows' `workers` (and the bench's crew) are cut and the need row's set to the crew. Everything downstream reads those
 numbers; kits come through the ordinary claims at the need row's own Priority. After the row walk
 `restore_muster` hands every donor its hands back and the need row returns to zero.
 
@@ -863,8 +878,44 @@ numbers; kits come through the ordinary claims at the need row's own Priority. A
   row and **whose source is within `band_work_range` of the band** — decided by geometry
   (`hunt_by_need::source_is_local`, on `work_party::party_begins_past`, the threshold `post_a_party`
   posts past), never by "a party exists yet", so a brand-new far row can't lend. Order is `Low` →
-  `Normal` → `High`, the later row first within a tier. Role rows, the bench and road keepers never
-  lend. It may come up short. The turn and the capture pass the same predicate to `muster_donors`.
+  `Normal` → `High`, the later row first within a tier. Role rows and road keepers never lend. It
+  may come up short. The turn and the capture pass the same predicate to `muster_donors`.
+- **Idle hands give way to the kit when it is short.** With the take kit short
+  (`MusterKit::shortfall > 0`) `muster_donors` takes idle hands only for `crew - shortfall` first,
+  then the kit-carrying donors up to the shortfall, then the rest of the idle hands, then the ordinary
+  donor order - so a bare idle hand never takes the place of a hand carrying a spear. With no
+  shortfall the order is idle, then Priority alone. `MusterPlan::from_idle` is the total idle taken.
+  The shortfall is struck over the same kill-binding items as the cap (a sled shortage reorders no
+  donor). On a quarry bare hands cannot wound the curve prices only the hands the kit arms, so the
+  crew is the free kit's hands and the crafting bench is reached only by a crew the kit fully arms - a
+  band short of spears does not strip its bench of the crafters who would make them; on a quarry
+  bare hands wound the shortage caps nothing and the whole wanted crew goes, bare hands included.
+  Pinned by
+  `hunt_by_need::{a_band_short_of_the_kit_sends_only_the_hands_it_can_equip_and_leaves_the_bench_alone,
+  a_band_with_no_kit_sends_nobody_on_a_quarry_bare_hands_cannot_wound,
+  a_band_with_no_kit_hunts_bare_where_bare_hands_wound_and_still_asks_for_spears,
+  a_band_with_spears_and_no_sleds_sends_the_speared_crew,
+  a_kit_shortage_binds_only_where_bare_hands_cannot_wound,
+  a_short_kit_is_lent_by_its_donor_before_any_idle_hand_goes}` and
+  `components::tests::a_short_kit_holds_the_idle_back_until_the_donors_holding_it_have_lent`.
+- **The crafting bench lends like a row.** It is not a `LaborTarget`, so `muster_donors` takes it as
+  a `MusterBench { priority: BandBench::priority, hands: BandBench::workers }` beside the allocation
+  (`MusterBench::of`; `None` for a bench nobody is at). It joins the donor order as one candidate
+  ranked by its own mark among the source rows, and **within a tier it lends before that tier's
+  rows** (a bench pays into no account — the famine shed's own tie-break, `yield-forecast.md` →
+  "The crafting bench is a candidate in the walk"). It stands at camp, so it is always local, and it
+  carries no hunt take kit, so it only joins the ordinary-order pass, never the kit-carrying one.
+  `MusterPlan::from_bench` is its share (`total()` includes it) and `musterable_pool` counts its
+  crew. `MusterPricing::bench`, `HuntCrewGear::bench` and the forecast query's `MusterScene` carry
+  it to every reader, so the board, the turn, the crew pricing and the craft suggestions agree.
+- **Applying the bench's loan is non-destructive** (`apply_muster` / `restore_muster`): the bench's
+  `workers` are cut for the row walk and handed back with the rows' — never `remove_order`, so the
+  queue, every order's progress and made count, the drawn pile and the last grade all stay. The
+  labor pass hands the crew back **before** `advance_crafting` runs (it follows the labor pass in
+  the Population chain), so the loan is also written to `BandBench::lent_to_hunt`, and
+  `advance_crafting` works `workers − lent_to_hunt` and clears it. That is what makes this turn's
+  craft progress reflect the lent hands, and a fully lent bench bank nothing and draw nothing (the
+  `AN_IDLE_BENCH` gate reads the reduced crew). The field is `0` at every turn boundary.
 - **Kit-aware order** (`MusterKit`, struck by `hunt_by_need::muster_kit` from the band's own
   `BandItemBudget` on the rows' standing claims): an item of the need row's kit is *short* when the
   units no row claims (`BandItemBudget::unclaimed_units`) arm fewer hands than the crew. When one is,
@@ -877,6 +928,12 @@ numbers; kits come through the ordinary claims at the need row's own Priority. A
   call. Pinned by `hunt_by_need::{when_the_hunts_kit_is_short_the_donor_holding_it_lends_first,
   when_the_kit_is_not_short_the_lowest_priority_lends_first, the_turn_lends_the_donors_the_board_named}`
   and `components::tests::a_short_kit_puts_the_donors_holding_it_first_up_to_the_shortfall`.
+- **A going-out crew's kit shortage shows on the rows.** `apply_muster` crews the need row ahead of
+  the turn's kit settlement, so while `muster_crew > 0` each take row's published `kitToe` is read
+  off the mustered gear (`mustered_take_gear`, shared with the hunt-turn craft lines —
+  `crafting.md` → "Craft suggestions"), and so is `kitWorkersHolding` (the same pass's coverage), so
+  the two agree; a waiting row keeps the standing reading for both. Pinned by
+  `hunt_by_need::a_crew_going_out_publishes_the_shortage_on_the_rows_and_a_waiting_row_does_not`.
 - **A donor emptied for the turn is not lapsed**: the holding test asks `row_is_held` (hands before
   the loan), while the lesson test still asks who is actually there.
 - **Priced over the gear the muster brings** (`hunt_by_need::MusterPricing`): a need row holds no
@@ -909,6 +966,7 @@ numbers; kits come through the ordinary claims at the need row's own Priority. A
 |---|---|
 | `musterCrew` | the hands this need row sends next turn (`0` = waiting) |
 | `lentToHunt` | on a donor row, the hands it gives up next turn (same `muster_donors` call) |
+| `BenchState.lentToHunt` | the hands the crafting bench gives up next turn — the bench's share of that same call (`MusterPlan::from_bench`); `BenchState.workers` stays the crew the player set. Pinned on the encoded frame by `hunt_by_need::{the_bench_lends_by_its_mark_and_before_the_rows_of_its_tier, this_turns_craft_progress_reflects_the_lent_hands, a_lent_bench_keeps_its_order_progress_and_drawn_pile}` |
 | `needRunway` | on a need row, the turns the meat on hand lasts (the need clock above); `0` elsewhere |
 | `turnsUntilHunt` | on a waiting need row, `ceil(runway - turns_to_kill - margin)`, floor 1; `NO_HUNT_NEEDED` (`u32::MAX`) when the larder is not food-limited, no crew can be raised or the herd is out of camp range; `0` on a sending row |
 | `turnsToKill` | turns until the animal is down at the planned crew, counting wounds; `0` when no crew can be raised |
@@ -924,6 +982,54 @@ turn took against the published plan, the small band, the wound rule and the who
 herd, the save and the wire both ways), `components::tests` (the donor order and exclusions), and
 `bin/server.rs` `a_follow_order_creates_the_need_row_at_zero_…` / `unfollowing_…` /
 `a_move_order_ends_a_need_row`.
+
+## The roaming skills — herd lore, travois, drives (#799)
+
+Design: `docs/plan_roaming_bands.md` §"The roaming skills — decided". Three **faction knowledges** on
+the discovery ledger, owned by `core_sim/src/roaming_skills.rs`. They are not ladder rungs — nothing
+is built or held — so each has its **own practice signal**, the way `storage` is taught by rot, and
+each is priced in `intensification_ladder.json` → `knowledge.lesson_costs` (all **20**, like every
+lesson) and credited through `LadderKnowledge::ledger_credit` (practice ÷ cost), the one seam that
+turns practice into ledger progress. Ids continue the sequence (2011 is retired, 2018 is storage):
+`herd_lore` **2019**, `travois` **2020**, `drives` **2021**, resolved by `discovery_id_for` and
+mirrored in `start_profile_knowledge_tags.json` (which grants none of them at the start).
+
+| Skill | Taught by (quantum) | Effect |
+|---|---|---|
+| `herd_lore` | each hex a **resident** band steps in `advance_band_movement` while the herd its hunt row follows (`LaborAllocation::followed_herd`) is on a `RoamState::Migrate` leg — `learn_rate` per hex. A herd that loiters teaches nothing; a band under a plain move order is not following | `HerdTelemetryState.nextGroundX/Y` — see below |
+| `travois` | a departure's long-move shed: `learn_rate × shed share`, share = shed load ÷ held load (`carry::shed_share`, both measured by `CarryLoad::load`), clamped `0..=1`, **once per departure** (the `!departed` branch). A move that sheds nothing teaches nothing | `carry.travois_carry_multiplier` on `per_worker_carry` — see `band-carry.md` |
+| `drives` | each turn a crew works the herd its band follows (`move_with_herd`) **as a camp kill** — the same `crew_at_the_source && working_the_herd` gate as the hunt lesson, and the herd inside `band_work_range` (`work_party::party_begins_past`), not a posting. `learn_rate` per source per turn, never scaled by the crew | `hunt.drive_engage_gain` / `hunt.drive_full_head_count` on `herd_engage_rate` |
+
+**Herd lore's field is the grounds the herd goes to next, in both phases.** `step_index` is the anchor
+the herd is AT while it loiters and the anchor it LEFT while it migrates (arrival advances it), so
+`route[(step_index + 1) % len]` ([`roaming_skills::next_ground`]) is the ground it leaves for after
+the current loiter and, mid-leg, the destination it is already walking to. `nextX`/`nextY` stay the
+leg's next single hex. The pair is `-1` unless the viewer's people know herd lore, and always `-1` for
+a graze-wandering herd or a route of fewer than two anchors. It rides the herd row, so the row's own
+fog gate (`herd_is_visible`) is the visibility gate; **the ground tile is deliberately not
+fog-checked** — seeing past the fog to where a herd is going is the lesson. `HerdSnapshotInputs
+.herd_lore_known` is resolved once per capture off the ledger.
+
+**Drives is one multiplier on one seam.** `fauna::herd_engage_rate(herd, fauna, drives_known)` takes a
+wild herd's rate × `1 + drive_engage_gain × min(head_count / drive_full_head_count, 1)`
+(`roaming_skills::drive_engage_multiplier`; head count = `biomass / body_mass`). It is the wild arm
+alone — a pen and a halter have their own reach gains. The flag travels on the party:
+`HuntingParty::drives_known`, set from `PartyResolution::drives_known` (a **required** field, so a new
+construction site must answer), and on `HuntCrewCurveInputs` / `HuntCrewLevers` / `ClaimSources` where
+no party exists yet. `resolve_hunt_engagement`, `engagement_reach`, `hunt_useful_take_hands`,
+`hunt_crew_needed`, the projections and `forecast_source_yield`'s `engage_rate` therefore read one
+value; every construction site resolves it for ITS faction (`labor.rs` per band, `advance_expeditions`
+off the home people, `forecast_query` / `seed_source_yield` off the asking band,
+`take_claims::with_world_sources(world, faction, ..)`). The shipped `drive_full_head_count` **100** is
+in heads: a migratory herd is 4,000–12,000 biomass, which at the light roster's body masses
+(reindeer 20 … steppe runner 53) is roughly 75–600 head, while a mammoth herd (5–15 head) gains almost
+nothing.
+
+**The roster carries them as a branch of their own.** `LadderConfig::standalone_knowledges` (required)
+files a knowledge no rung teaches under a wire `branch` token and an `area` (here `roam` / `reach`,
+orders 1–3); `knowledge_roster()` appends them after the rung-taught ones with `is_step: false`, so
+`ladderKnowledge` and `intensificationKnowledge` publish them with no client list. See
+`intensification.md` → "Knowledge no rung teaches".
 
 ## The tests that carry the arc
 
@@ -949,3 +1055,9 @@ herd, the save and the wire both ways), `components::tests` (the donor order and
 | `work_party_caravan::a_far_felling_crew_with_the_woodcutting_kit_carries_the_sled_pack` | the kit is claimed whole, so a felling party's pack is the sled's haul over the weight, larger than bare |
 | `work_party_caravan::a_local_extract_take_is_capped_by_carry_over_weight` | on a material heavy enough, a bare crew's cut is exactly its carry over the weight, and the sled raises it |
 | `work_party_caravan::a_pack_is_the_haul_carry_over_the_materials_weight` | twice the weight, half the units per pack — the material's one number is the whole difference |
+| `roaming_skills::walking_beside_a_migrating_herd_teaches_herd_lore_a_hex_at_a_time` and its two negatives (`following_a_loitering_herd_…`, `a_band_that_is_not_following_the_herd_…`) | herd lore: one `learn_rate` per hex stepped beside a `Migrate` herd, nothing for a loitering herd or an unfollowing band |
+| `roaming_skills::a_departure_that_sheds_teaches_travois_once`, `a_long_move_that_sheds_nothing_teaches_no_travois`, `knowing_travois_sheds_less_and_lifts_the_published_pack` | travois: credited once per departure in proportion to the share shed, not at all when nothing is shed; a knowing band walks off with `travois_carry_multiplier` times the pack and the wire's `carryPerWorker` echoes it |
+| `roaming_skills::camp_kills_on_a_followed_herd_teach_drives_a_turn_at_a_time` and its two negatives (`a_camp_kill_on_a_herd_nobody_follows_…`, `a_band_still_catching_up_to_the_herd_…`) | drives: one `learn_rate` per worked camp-kill turn on a followed herd; not on an unfollowed herd, not beyond `band_work_range` |
+| `roaming_skills::the_next_ground_is_published_only_with_herd_lore_and_is_the_next_anchor_in_both_phases`, `…_wraps_the_route`, `a_graze_wandering_herd_…`, `a_herd_in_the_fog_…` | the encoded `nextGroundX/Y`: `-1` without the lesson, the next anchor with it in both phases, wrapping, absent for a graze-wanderer, no row in the fog |
+| `roaming_skills::the_roaming_skills_ride_the_roster_as_a_branch_in_the_reach_area` | the three on the encoded roster as branch `roam`, area `reach`, `is_step` false, progress riding `intensificationKnowledge` |
+| `fauna::tests::a_drive_scales_the_wild_reach_with_head_count_and_caps` | the engage gain is the identity unknown, scales with head count, caps at `drive_full_head_count`, and reaches `resolve_hunt_engagement` through the party |

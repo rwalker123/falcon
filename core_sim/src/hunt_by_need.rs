@@ -12,8 +12,9 @@ use crate::components::{BandEquipment, LaborAllocation, MusterKit, PopulationCoh
 use crate::demographics_config::DemographicsConfig;
 use crate::equipment_config::{EquipmentConfig, KitChoice};
 use crate::fauna::{
-    herd_food_per_animal, hunt_crew_for_animals, hunt_crew_take_curve, hunt_crew_turns_to_kill,
-    hunt_useful_crew, HuntCrewCurveInputs, NO_USEFUL_CREW,
+    herd_fight_stage, herd_food_per_animal, hunt_crew_for_animals, hunt_crew_take_curve,
+    hunt_crew_turns_to_kill, hunt_useful_crew, next_turns_quarry, HuntCrewCurveInputs,
+    NO_USEFUL_CREW,
 };
 use crate::fauna_config::FaunaConfig;
 use crate::snapshot::{kill_food_terms, kill_turns_of_food, BandFoodTerms, NOT_FOOD_LIMITED_TURNS};
@@ -47,6 +48,9 @@ pub(crate) fn source_is_local(
     crate::grid_utils::hex_distance_wrapped(band, source, grid.0, grid.1)
         <= crate::work_party::party_begins_past(labor)
 }
+
+/// The crew cap of a kit that names no item: nothing can run short of it, so it never caps.
+pub const NO_KIT_CAP: u32 = u32::MAX;
 
 /// The fewest animals a hunt can bring down: an animal is indivisible, so even a meal of nothing is
 /// one whole animal.
@@ -150,6 +154,24 @@ pub(crate) fn need_clock(
     }
 }
 
+/// **THE ITEMS OF A KIT THAT BIND A CAMP KILL** - the kit's items that contribute a stat bearing on
+/// the kill itself - attack, dispersion, exposure
+/// ([`crate::equipment_config::ItemDefinition::bears_on_a_kill`]). A need crew is only
+/// ever mustered for a kill inside `band_work_range`, where nothing is hauled: the sled does nothing
+/// there (no carry bound, no wear), so its shortage must neither cap the crew nor reorder the
+/// donors. The cap ([`MusterPricing::equippable_crew`]) and the shortfall ([`muster_kit`]) both
+/// read this one list.
+fn kill_bearing_items<'a>(
+    kit: &'a KitChoice,
+    equipment: &'a EquipmentConfig,
+) -> impl Iterator<Item = &'a str> {
+    kit.uses().filter(|item| {
+        equipment
+            .item(item)
+            .is_some_and(|def| def.bears_on_a_kill())
+    })
+}
+
 /// The `need_idx` of a hunt no row stands on yet: the Assign hunters sheet pricing a crew before the
 /// row exists. No donor is excluded as "the need row", and no claim is zeroed for it.
 pub const NO_NEED_ROW: usize = usize::MAX;
@@ -174,13 +196,9 @@ pub(crate) fn muster_kit(
     wear: &BandEquipment,
 ) -> MusterKit {
     let budget = allocation.item_budget(equipment, claims);
-    let per_unit = |item: &str| equipment.item(item).map_or(1, |def| def.workers_per_unit) as f32;
-    let short_items: Vec<(&str, u32)> = hunt_kit
-        .uses()
+    let short_items: Vec<(&str, u32)> = kill_bearing_items(hunt_kit, equipment)
         .filter_map(|item| {
-            let free_hands =
-                (budget.unclaimed_units(item, wear, equipment) * per_unit(item)).floor();
-            let gap = crew as f32 - free_hands;
+            let gap = crew as f32 - free_hands(&budget, item, wear, equipment) as f32;
             (gap > 0.0).then_some((item, gap as u32))
         })
         .collect();
@@ -195,21 +213,47 @@ pub(crate) fn muster_kit(
             if idx == need_idx || row.is_need_row() {
                 return 0;
             }
-            let row_kit = row.kit_choice(equipment);
-            let at = budget.row_of(&row.target);
             short_items
                 .iter()
-                .filter(|(item, _)| row_kit.uses().any(|used| used == *item))
-                .map(|(item, _)| {
-                    (budget.units_for_row(item, at, wear, equipment) * per_unit(item)).floor()
-                        as u32
-                })
+                .map(|(item, _)| row_carried_hands(&budget, row, item, wear, equipment))
                 .max()
                 .unwrap_or(0)
                 .min(allocation.hands_present_on(row))
         })
         .collect();
     MusterKit { shortfall, carried }
+}
+
+/// The hands per unit of `item` (a unit that arms two hands is worth two).
+fn hands_per_unit(equipment: &EquipmentConfig, item: &str) -> f32 {
+    equipment.item(item).map_or(1, |def| def.workers_per_unit) as f32
+}
+
+/// **THE HANDS THE UNITS NO ROW CLAIMS WOULD ARM** - `floor(unclaimed units x hands per unit)`.
+fn free_hands(
+    budget: &crate::equipment_config::BandItemBudget,
+    item: &str,
+    wear: &BandEquipment,
+    equipment: &EquipmentConfig,
+) -> u32 {
+    (budget.unclaimed_units(item, wear, equipment) * hands_per_unit(equipment, item)).floor() as u32
+}
+
+/// **THE HANDS A DONOR ROW'S SETTLED UNITS OF `item` WOULD ARM** - `0` when the row's kit does not
+/// use the item. Not yet capped at the hands the row has present.
+fn row_carried_hands(
+    budget: &crate::equipment_config::BandItemBudget,
+    row: &crate::components::LaborAssignment,
+    item: &str,
+    wear: &BandEquipment,
+    equipment: &EquipmentConfig,
+) -> u32 {
+    if !row.kit_choice(equipment).uses().any(|used| used == item) {
+        return 0;
+    }
+    let at = budget.row_of(&row.target);
+    (budget.units_for_row(item, at, wear, equipment) * hands_per_unit(equipment, item)).floor()
+        as u32
 }
 
 /// **THE GEAR THE MUSTER BRINGS AT A CREW OF `c`** - the one function the crew-take curve, the
@@ -235,6 +279,8 @@ pub struct MusterPricing<'a> {
     pub idle: u32,
     /// Whether a source is within the band's work range (donors must be).
     pub is_local: &'a dyn Fn(&LaborTarget) -> bool,
+    /// The crafting bench as a donor beside the rows (`None` = no bench, or nobody at it).
+    pub bench: Option<crate::components::MusterBench>,
     /// Every row's standing take-kit claim, index-aligned with the allocation.
     pub claims: &'a [f32],
 }
@@ -257,6 +303,47 @@ impl MusterPricing<'_> {
             .collect()
     }
 
+    /// **THE MOST HANDS THE BAND CAN FULLY EQUIP WITH THE KIT ITEMS THAT BIND A CAMP KILL** - per
+    /// such item ([`kill_bearing_items`]: the sled, whose only effect is haul carry, is not one),
+    /// the hands the units no row claims would arm plus the hands the lendable donor rows' settled
+    /// units would arm (each row capped at the hands it has present), and the least of those over
+    /// the items. Exactly the donor rows [`LaborAllocation::muster_donors`] could lend, so the cap
+    /// and the muster cannot disagree about whose gear is on offer.
+    ///
+    /// **Never caps ([`NO_KIT_CAP`])** when no item of the kit binds a camp kill, or when
+    /// `bare_hands_wound` - the bare hunter profile already deals damage to the quarry, so the gate
+    /// is cleared without gear and a kit shortage must not stop the hunt.
+    pub fn equippable_crew(
+        &self,
+        hunt_kit: &KitChoice,
+        equipment: &EquipmentConfig,
+        wear: &BandEquipment,
+        bare_hands_wound: bool,
+    ) -> u32 {
+        if bare_hands_wound {
+            return NO_KIT_CAP;
+        }
+        let standing = self.standing_claims();
+        let budget = self.allocation.item_budget(equipment, &standing);
+        let donors = self
+            .allocation
+            .lendable_donor_rows(self.need_idx, self.is_local);
+        kill_bearing_items(hunt_kit, equipment)
+            .map(|item| {
+                let lent: u32 = donors
+                    .iter()
+                    .map(|&idx| {
+                        let row = &self.allocation.assignments[idx];
+                        row_carried_hands(&budget, row, item, wear, equipment)
+                            .min(self.allocation.hands_present_on(row))
+                    })
+                    .sum();
+                free_hands(&budget, item, wear, equipment).saturating_add(lent)
+            })
+            .min()
+            .unwrap_or(NO_KIT_CAP)
+    }
+
     /// Who a crew of `crew` is made of, kit-aware.
     pub fn plan_at(
         &self,
@@ -275,8 +362,14 @@ impl MusterPricing<'_> {
             equipment,
             wear,
         );
-        self.allocation
-            .muster_donors(self.idle, self.need_idx, crew, self.is_local, &kit)
+        self.allocation.muster_donors(
+            self.idle,
+            self.need_idx,
+            crew,
+            self.is_local,
+            self.bench,
+            &kit,
+        )
     }
 
     /// **The rows a crew of `crew` competes with for the band's gear** once the donors it musters
@@ -317,6 +410,11 @@ pub struct NeedAssessment {
     /// On a waiting row, turns until a crew goes out if nothing changes ([`NO_HUNT_NEEDED`] when it
     /// never will); `0` on a row that is sending.
     pub turns_until_hunt: u32,
+    /// The meal-sized crew **before** the equipment cap - the crew the hunt wants. Equals
+    /// [`Self::crew`] unless the band cannot fully equip that many with the need row's take kit
+    /// ([`MusterPricing::equippable_crew`]); the craft suggestions equip toward this one, so a band
+    /// short of spears still asks for them. [`NO_USEFUL_CREW`] when no crew can be raised.
+    pub wanted_crew: u32,
 }
 
 impl NeedAssessment {
@@ -326,7 +424,66 @@ impl NeedAssessment {
         turns_to_kill: 0,
         send: false,
         turns_until_hunt: NO_HUNT_NEEDED,
+        wanted_crew: NO_USEFUL_CREW,
     };
+}
+
+/// **DO THE BARE HANDS ALREADY WOUND THIS QUARRY?** - the band's unequipped hunter profile
+/// (`inputs.intrinsic`) through the gate ([`crate::combat::strike_damage`]) against the quarry the
+/// hunt curve prices (`next_turns_quarry`, `herd_fight_stage`). A quarry with no fight stage (a pen)
+/// has no gate at all.
+fn bare_hands_wound(inputs: &HuntCrewCurveInputs<'_>) -> bool {
+    let quarry = next_turns_quarry(inputs.herd, inputs.fauna);
+    herd_fight_stage(&quarry, inputs.fauna).is_none_or(|fight| {
+        crate::combat::strike_damage(inputs.intrinsic.attack, fight.profile.defense) > 0.0
+    })
+}
+
+/// **THE ITEMS-IN-HAND LEDGER A FULLY EQUIPPED CREW IS PRICED OVER** - every item of the need row's
+/// take kit, unworn at its default tier ([`crate::equipment_config::ItemDefinition::default_tier`]),
+/// one unit per hand of `hands`. A reference for sizing what the
+/// hunt WANTS, never a claim on the band's real gear.
+pub(crate) fn fully_equipped_ledger(
+    kit: &KitChoice,
+    equipment: &EquipmentConfig,
+    hands: u32,
+) -> BandEquipment {
+    let mut ledger = BandEquipment::default();
+    for item in kit.uses() {
+        if let Some(def) = equipment.item(item) {
+            ledger.stock(item, hands, &def.default_tier().id, None);
+        }
+    }
+    ledger
+}
+
+/// **THE ASSESSMENT WHEN THE BAND'S OWN GEAR RAISES NO USEFUL CREW** - nothing is sent. Where the
+/// bare hunter wounds the quarry there is simply no crew to raise ([`NeedAssessment::NO_CREW`]).
+/// Where it cannot, the kit is what clears the gate and the band holds none of it: the crew the hunt
+/// WANTS is sized from the curve priced as if every hand held the whole take kit
+/// ([`fully_equipped_ledger`], no competing rows, no muster), by the same meal sizing, so the craft
+/// suggestions still ask for the gear. `wanted_crew` stays [`NO_USEFUL_CREW`] when even that curve
+/// finds none.
+fn unarmed_assessment(inputs: &HuntCrewCurveInputs<'_>, meal: &NeedMeal) -> NeedAssessment {
+    if bare_hands_wound(inputs) {
+        return NeedAssessment::NO_CREW;
+    }
+    let ledger = fully_equipped_ledger(inputs.kit, inputs.equipment, inputs.max_workers);
+    let reference = HuntCrewCurveInputs {
+        wear: &ledger,
+        other_rows: &[],
+        muster: None,
+        ..*inputs
+    };
+    let curve = hunt_crew_take_curve(&reference);
+    let useful = hunt_useful_crew(&curve);
+    if useful == NO_USEFUL_CREW {
+        return NeedAssessment::NO_CREW;
+    }
+    NeedAssessment {
+        wanted_crew: hunt_crew_for_animals(&curve, meal.animals(), useful),
+        ..NeedAssessment::NO_CREW
+    }
 }
 
 /// **THE NEED DECISION FOR ONE ROW** — `inputs` is the hunt crew curve's own input bundle with
@@ -360,9 +517,29 @@ pub fn assess_need(
     let curve = hunt_crew_take_curve(inputs);
     let useful = hunt_useful_crew(&curve);
     if useful == NO_USEFUL_CREW {
-        return NeedAssessment::NO_CREW;
+        return unarmed_assessment(inputs, meal);
     }
-    let crew = hunt_crew_for_animals(&curve, meal.animals(), useful);
+    let wanted = hunt_crew_for_animals(&curve, meal.animals(), useful);
+    // **The crew is capped at the hands the band can fully equip**: a crew sized to the meal
+    // regardless of the kit went out bare and took the crafting bench's hands with it.
+    let cap = inputs.muster.map_or(NO_KIT_CAP, |pricing| {
+        pricing.equippable_crew(
+            inputs.kit,
+            inputs.equipment,
+            inputs.wear,
+            bare_hands_wound(inputs),
+        )
+    });
+    let crew = wanted.min(cap);
+    if crew == NO_USEFUL_CREW {
+        return NeedAssessment {
+            crew: NO_USEFUL_CREW,
+            turns_to_kill: 0,
+            send: false,
+            turns_until_hunt: NO_HUNT_NEEDED,
+            wanted_crew: wanted,
+        };
+    }
     let turns_to_kill = hunt_crew_turns_to_kill(inputs, crew, horizon);
     let reported_turns = turns_to_kill.unwrap_or(0);
     if finishing {
@@ -371,6 +548,7 @@ pub fn assess_need(
             turns_to_kill: reported_turns,
             send: true,
             turns_until_hunt: 0,
+            wanted_crew: wanted,
         };
     }
     let food_limited = runway < NOT_FOOD_LIMITED_TURNS;
@@ -380,6 +558,7 @@ pub fn assess_need(
             turns_to_kill: reported_turns,
             send: false,
             turns_until_hunt: NO_HUNT_NEEDED,
+            wanted_crew: wanted,
         };
     };
     let slack = runway - turns as f32 - margin;
@@ -389,6 +568,7 @@ pub fn assess_need(
             turns_to_kill: turns,
             send: true,
             turns_until_hunt: 0,
+            wanted_crew: wanted,
         };
     }
     NeedAssessment {
@@ -396,5 +576,6 @@ pub fn assess_need(
         turns_to_kill: turns,
         send: false,
         turns_until_hunt: (slack.ceil() as u32).max(MIN_TURNS_UNTIL_HUNT),
+        wanted_crew: wanted,
     }
 }

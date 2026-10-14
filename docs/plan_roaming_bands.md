@@ -167,7 +167,7 @@ it decline) or **splits** and sends the new band after a second migrating herd �
 Roaming has to achieve something, or nobody will do it. Two layers:
 
 **1. Skills learned by doing.** Migrating with a herd is practice on the same knowledge ledger the
-intensification ladder uses (learn a thing by doing the thing below it). Candidates:
+intensification ladder uses (learn a thing by doing the thing below it):
 
 | Skill | What it does | Built on |
 |---|---|---|
@@ -175,6 +175,27 @@ intensification ladder uses (learn a thing by doing the thing below it). Candida
 | **Travois / pack animals** | more carry per worker, so a long migration sheds less | the existing carry model (`carry.rs`) |
 | **Drying** | lengthens `flesh`'s shelf life | #708 |
 | **Drives** (e.g. a bison jump) | more kills at once from a large herd | the hunt fight |
+
+#### The roaming skills — decided (#799)
+
+Herd lore, travois and drives are faction knowledges on the discovery ledger, each with a lesson
+cost like every other lesson. They are not rungs: nothing is built or upkept, so each has its own
+practice signal, the way `storage` is taught by rot. They draw as their own **roaming** branch in the
+Knowledge panel's *reach* area.
+
+- **Herd lore — taught by walking with a migrating herd.** Each hex a band steps while following a
+  herd that is on a `Migrate` leg is practice. Knowing it, the viewer sees the **next seasonal
+  ground** (the herd's next route anchor) of every visible migratory herd, not only its next step —
+  so a band can be waiting at the grounds before the herd arrives. The anchor is gated like the
+  next step: fog on the herd, and the viewer's knowledge.
+- **Travois — taught by what a long move sheds.** The goods a long move leaves behind are the
+  practice, in proportion to the share of the load shed — loss teaches, as rot teaches storage. A
+  band that never overloads never learns it. Knowing it multiplies per-worker carry (a lever), at
+  the one carry seam, so capacity, ferry load and the long-move shed all read it.
+- **Drives — taught by camp kills on a followed herd.** Each turn a crew works a herd the band is
+  camped in is practice. Knowing it, hunters engage more animals from a large herd: an engage-rate
+  gain that grows with the herd's head count up to a full-drive head count (both levers), on the
+  same arm the pastoral and pen rungs use, so the forecast and the crew curves read it too.
 
 **2. The score.** It reads the band's standing on that roaming track and how far it has travelled with
 its herds — the roaming counterpart to `SedentarizationScore`. It feeds the manual's **Cultural

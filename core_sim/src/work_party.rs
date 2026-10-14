@@ -1102,6 +1102,7 @@ impl CaravanPricing {
         combat: &crate::combat_config::CombatConfig,
         intrinsic: crate::combat::CombatStats,
         body_mass: f32,
+        drives_known: bool,
     ) -> HuntingParty {
         crate::fauna::PartyResolution {
             equipment,
@@ -1110,6 +1111,7 @@ impl CaravanPricing {
             intrinsic,
             tuning: combat.tuning(),
             hunt_injury_damage_per_animal: combat.hunt_injury_damage_per_animal,
+            drives_known,
         }
         .party_against(crate::equipment_config::Quarry::Mass(body_mass))
     }

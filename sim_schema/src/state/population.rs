@@ -2188,6 +2188,12 @@ pub struct BenchState {
     /// **The item ids the player skipped** while auto-craft waited on them, sorted. Appended last.
     #[serde(default)]
     pub auto_skipped: Vec<String>,
+    /// **The hands the bench lends to a hunting-by-need crew next turn** — the bench's share of the
+    /// one `muster_donors` call that fills each donor row's [`LaborAssignmentState::lent_to_hunt`].
+    /// [`Self::workers`] stays the crew the player set; this is the part of it away for the one
+    /// turn. `0` when nothing is lent. Appended last.
+    #[serde(default)]
+    pub lent_to_hunt: u32,
 }
 
 /// **One order on a bench's queue** — `recipe × count`, a row of [`BenchState::orders`].

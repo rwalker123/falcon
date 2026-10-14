@@ -101,6 +101,10 @@ func _on_item_selected(index: int) -> void:
 	if next_x >= 0 and next_y >= 0:
 		lines.append("")
 		lines.append("Next waypoint (%d, %d)" % [next_x, next_y])
+	var ground_x := int(info.get("next_ground_x", -1))
+	var ground_y := int(info.get("next_ground_y", -1))
+	if ground_x >= 0 and ground_y >= 0:
+		lines.append("Next grounds: (%d, %d)" % [ground_x, ground_y])
 	_detail_text.text = "\n".join(lines)
 
 func _herd_reward_summary_lines(biomass: float) -> Array[String]:

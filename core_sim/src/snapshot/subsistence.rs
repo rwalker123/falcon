@@ -473,6 +473,9 @@ pub(crate) struct HerdSnapshotInputs<'a> {
     /// same faction — so a herd can never be drawn on a tile the raster paints black.
     pub(crate) visibility: &'a crate::visibility::VisibilityLedger,
     pub(crate) viewer: FactionId,
+    /// **Does the viewer's faction know `herd_lore`?** (#799) — the roaming skill that shows a
+    /// migratory herd's next seasonal ground. Resolved once per capture off the discovery ledger.
+    pub(crate) herd_lore_known: bool,
     /// `SimulationConfig::fog_enabled` — the server-owned fog-of-war master switch. When it is off
     /// the filter below is a no-op, which is the ONLY way to reveal hidden fauna: unseen herds never
     /// reach the wire, so no client render flag could put them back.
@@ -651,6 +654,16 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 .map(|herd| herd.next_position())
                 .unwrap_or(entry.next_position)
                 .filter(|pos| inputs.herd_is_visible(herd, *pos));
+            // **THE NEXT SEASONAL GROUND (#799, herd lore)** — a migratory herd's next route anchor
+            // ([`crate::roaming_skills::next_ground`]; the same anchor while it loiters and while it
+            // walks the leg). Gated on the herd and on the viewer's knowledge: the row only exists
+            // when the viewer can see the herd (the fog gate above), and the ground is published
+            // only to a people who know herd lore. **The ground tile is deliberately NOT fog-checked**
+            // — seeing past the fog to where a herd is going is what the lesson is. `-1` covers
+            // "you do not know the lore" and "it does not migrate" alike.
+            let next_ground = herd
+                .filter(|_| inputs.herd_lore_known)
+                .and_then(crate::roaming_skills::next_ground);
             // The neglect countdown, off the live registry herd (the display `entry` carries no
             // counter). A herd the registry cannot resolve has nothing at risk to report.
             let neglect_grace =
@@ -712,6 +725,8 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     .unwrap_or(entry.route_length),
                 next_x: next_position.map(|pos| pos.x as i32).unwrap_or(-1),
                 next_y: next_position.map(|pos| pos.y as i32).unwrap_or(-1),
+                next_ground_x: next_ground.map(|pos| pos.x as i32).unwrap_or(-1),
+                next_ground_y: next_ground.map(|pos| pos.y as i32).unwrap_or(-1),
                 size_class: entry.size_class.clone(),
                 huntable: entry.huntable,
                 // **THE WORD IS RE-DERIVED AT CAPTURE, from the same stock, capacity and ecology the
@@ -2342,7 +2357,7 @@ pub(crate) fn snapshot_ladder_knowledge(ladder: &LadderConfig) -> Vec<LadderKnow
         .map(|entry| LadderKnowledgeState {
             knowledge_id: entry.knowledge.to_string(),
             display_name: knowledge_title_from_id(entry.knowledge),
-            branch: entry.branch.as_str().to_string(),
+            branch: entry.branch.to_string(),
             area: entry.area.to_string(),
             order: entry.order,
             is_step: entry.is_step,

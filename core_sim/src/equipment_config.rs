@@ -299,6 +299,14 @@ impl EquipmentStat {
         matches!(self, Self::BuildWork | Self::DepositTake)
     }
 
+    /// **Does this stat bear on a hunter's kill at the source?** - the three the hunt's fight
+    /// reads: the attack that clears the gate, the dispersion that decides whether the quarry bolts
+    /// and the exposure that decides who is hurt. The carry stats (a sled's haul) and the build and
+    /// deposit stats act on other work, or only once something is hauled away.
+    pub fn bears_on_a_kill(self) -> bool {
+        matches!(self, Self::Attack | Self::Dispersion | Self::Exposure)
+    }
+
     /// The neutral value — what the stat reads when **no** item declares it. Only the stats resolved
     /// through [`KitChoice::best_declared`] have one; the tiered stats resolve against a rate the
     /// caller already holds, so asking for their neutral value is a category error the type refuses
@@ -897,6 +905,17 @@ fn one_worker() -> u32 {
 }
 
 impl ItemDefinition {
+    /// **Does this item contribute a stat that bears on a kill at the source?** - read off the
+    /// item's own effects and every tier's ([`EquipmentStat::bears_on_a_kill`]), never an item id.
+    /// A spear's attack does; a sled's haul carry (and its extraction `deposit_take`) does not, so
+    /// it changes only what is hauled away.
+    pub fn bears_on_a_kill(&self) -> bool {
+        self.effects
+            .iter()
+            .chain(self.tiers.iter().flat_map(|tier| tier.effects.iter()))
+            .any(|effect| effect.stat.bears_on_a_kill())
+    }
+
     /// **What this item pays for one use of `quantum`**, or `None` if that quantum does not wear it
     /// at all.
     ///

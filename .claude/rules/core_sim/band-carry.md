@@ -228,6 +228,28 @@ own cap and the weights a client prices an order with are in `starting-loadout.m
 the long-move forecast above (with the ferry reach) is the only carry statement a band row makes. The
 sim still computes both (`band_carry_capacity`, `held_load`) for the shed and the window.
 
+## Travois lifts the pack at the one seam (#799)
+
+`carry.travois_carry_multiplier` (**1.5**, validated finite and `>= 1.0`) multiplies
+`per_worker_carry` for a faction that has learned `travois` (`roaming_skills.rs`; taught by what a
+long move sheds, see `work-party.md` → "The roaming skills"). It reaches the seam by
+**`CarryConfig::for_faction(travois_known)`** — a copy of the config with the lifted
+`per_worker_carry` — rather than by a flag threaded through `per_worker_carry` / `carry_capacity` /
+`band_carry_capacity`, whose signatures (and the many fixtures that call them) are unchanged: the seam
+reads whatever config it is handed, so every reader that is handed the faction's copy agrees. Callers
+that know whose back is under the load hand it over: `advance_band_movement` (the shed and the share it
+pays), the split (`systems/fission.rs`: the splinter's cap, the parent's carry after, the dowry and the
+rebalance), the outfitting window (`starting_loadout::faction_carry` and `stamp_starting_loadout`), the
+trade-shipment launch cap in `bin/server.rs`, and the snapshot (`viewer_carry` in `capture.rs` serves
+every viewer-owned band row: the long-move forecast, the shipment cap, the window cap and the
+`carryPerWorker` echo — a foreign band's row is redacted before any of it). A caller with no faction in
+hand (a unit fixture) reads the bare config, the un-skilled pack. The resolved carry stays positive.
+A raid's pack is a different number (`hunt.per_worker_carry`, a raw lever) and is not lifted.
+
+`carry::shed_share(stores, equipment, plan, carry)` is the practice quantum: the plan's shed load over
+the load held, both through `CarryLoad::load`. It is struck before the shed is applied and against the
+faction's own pack, so a people that has learned travois sheds — and learns — less.
+
 ## Config files
 
 | File | Key | Purpose |
@@ -235,4 +257,5 @@ sim still computes both (`band_carry_capacity`, `held_load`) for the shed and th
 | `src/data/expedition_config.json` | `carry.per_worker_carry` (**7.0**) | One worker's pack, in food units — THE pack for every carrier (was `trade.per_worker_carry` 6.0). History: 6.0 left a splinter its food *or* its tools; 8.0 gave the opening band ≈ 65 of goods room against the old ≈ 47, and with one currency all of it could become kits (playtest: 17 spare baskets on 17 workers); 7.0 puts the opening room back at the old total |
 | | `carry.item_carry_weight` (**1.0**) | Load of one item unit relative to one food unit |
 | | `carry.material_carry_weight` (1.0), `carry.fodder_carry_weight` (0.5) | Load of a material unit and a unit of hay |
+| | `carry.travois_carry_multiplier` (**1.5**) | The pack multiplier for a faction that knows `travois`; finite and `>= 1.0`. Playtest dial |
 | `src/data/supply_network_config.json` | `reach_tiles` (3) | The base of `move_ferry_reach_tiles` |

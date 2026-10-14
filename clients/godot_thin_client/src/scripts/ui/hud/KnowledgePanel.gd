@@ -620,7 +620,8 @@ func _build_node_chip(node: Dictionary, filter: StringName, selected: String) ->
 	# absent from that table puts the player-facing words *"gates nothing"* on a knowledge that gates
 	# something, which is exactly why every chip in `knowledge_panel_stress` wears the capsule. The
 	# lookup's blind spot is on the FACE now rather than only in the reading's `Where, now` line.
-	if not bool(node.get(HudKnowledgeVocab.NODE_UNSPENT_TESTABLE, false)):
+	if not bool(node.get(HudKnowledgeVocab.NODE_UNSPENT_TESTABLE, false)) \
+			and not bool(node.get(HudKnowledgeVocab.NODE_STANDALONE, false)):
 		face.add_child(_build_capability_capsule())
 
 	# **DIM, NEVER HIDE** — see the class docstring. `modulate` on the CHIP itself: there is no row
