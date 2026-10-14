@@ -1110,6 +1110,7 @@ const AUTO_HEAD_NAME := "Clubs"
 const AUTO_HEAD_COUNT := SUGGEST_CLUBS_COUNT
 const AUTO_SKIPPED_ITEM := "clubs"
 const AUTO_SHORT_BONE := 4.9
+const BENCH_LENT_HANDS := 2
 const AUTO_SKIPPED_LINE := "Auto skipped — back when bone is in"
 const AUTO_FREE_LINE := "Auto takes it back when the bench is free"
 
@@ -1312,6 +1313,21 @@ func _auto_craft_states() -> void:
 	await h._save("crafting_auto_idle")
 	h._hud.close_crafting_panel()
 	await h._settle()
+
+	# (d) a bench lending hands to a hunting-by-need muster (`BenchState.lentToHunt`): the donor rows'
+	# own line, in warn ink under the bar. And the same bench lending nothing draws no such line.
+	var lending := _auto_working_band()
+	(lending["bench"] as Dictionary)["lent_to_hunt"] = BENCH_LENT_HANDS
+	panel = await _auto_show(lending)
+	var lent_text: String = HudWorkVocab.WORK_ROW_LENT_LINE_FORMAT % BENCH_LENT_HANDS
+	h._assert_hud("crafting/bench — a bench lending %d hands reads `%s`" % [BENCH_LENT_HANDS, lent_text],
+		panel != null and _label_with_text(panel, lent_text) != null)
+	await h._save("crafting_bench_lent_to_hunt")
+	h._hud.close_crafting_panel()
+	await h._settle()
+	panel = await _auto_show(_auto_working_band())
+	h._assert_hud("crafting/bench — a bench lending nothing draws no lent line",
+		panel != null and _label_with_text(panel, lent_text) == null)
 	await _build_queue_suggestion_states()
 
 const BQ_FACE := "Tame Wild Boar"

@@ -779,6 +779,8 @@ fn create_populations<'a>(
                         // **AUTO-CRAFT** — appended last.
                         auto: cohort.bench.auto,
                         autoSkipped: Some(auto_skipped),
+                        // **THE HANDS LENT TO NEXT TURN'S HUNT** — appended last.
+                        lentToHunt: cohort.bench.lent_to_hunt,
                     },
                 )
             };
@@ -1563,6 +1565,7 @@ fn decode_bench(bench: fb::BenchState<'_>) -> Result<BenchState, DecodeError> {
         worked: bench.worked(),
         auto: bench.auto(),
         auto_skipped: decode_strings(bench.autoSkipped()),
+        lent_to_hunt: bench.lentToHunt(),
     })
 }
 

@@ -5144,6 +5144,9 @@ struct AppliedMuster {
     lent: Vec<(usize, u32)>,
     /// The need rows that were crewed this turn — their `workers` go back to zero.
     crewed: Vec<usize>,
+    /// The hands the crafting bench lent (taken off `BandBench::workers`, handed back by
+    /// [`restore_muster`]; the turn's craft pass reads them as `BandBench::lent_to_hunt`).
+    bench_lent: u32,
 }
 
 impl AppliedMuster {
@@ -5176,6 +5179,7 @@ struct MusterGear<'a> {
     claims: &'a [f32],
 }
 
+#[allow(clippy::too_many_arguments)] // The bench is the one `&mut` the borrowed `MusterGear` cannot carry.
 fn apply_muster(
     allocation: &mut LaborAllocation,
     mut idle: u32,
@@ -5184,8 +5188,15 @@ fn apply_muster(
     labor: &crate::labor_config::LaborConfig,
     grid: (u32, u32, bool),
     gear: &MusterGear<'_>,
+    mut bench: Option<&mut BandBench>,
 ) -> AppliedMuster {
     let mut applied = AppliedMuster::default();
+    // **A bench that lent hands last turn has been cleared by `advance_crafting`; this clears a
+    // stale mark where that system did not run** (a band without a ledger), so a lent count never
+    // outlives the pass that wrote it.
+    if let Some(bench) = bench.as_deref_mut().filter(|bench| bench.lent_to_hunt != 0) {
+        bench.lent_to_hunt = 0;
+    }
     let need_rows: Vec<usize> = allocation
         .assignments
         .iter()
@@ -5222,12 +5233,27 @@ fn apply_muster(
             need_idx,
             idle,
             is_local: &is_local,
+            bench: bench
+                .as_deref()
+                .and_then(crate::components::MusterBench::of),
             claims: gear.claims,
         }
         .plan_at(crew, &hunt_kit, gear.equipment, gear.wear);
         for (row, hands) in &plan.from_rows {
             allocation.assignments[*row].workers -= hands;
             applied.lent.push((*row, *hands));
+        }
+        // **The bench's crew is cut for the turn, and only its crew**: the queue, every order's
+        // progress and made count, the drawn pile and the last grade all stay (the shed's
+        // non-destructive path; `remove_order` would forfeit the pile). The cut is recorded on the
+        // bench so this turn's craft pass, which runs after the crew is handed back, still works
+        // the smaller crew.
+        if plan.from_bench > 0 {
+            if let Some(bench) = bench.as_deref_mut() {
+                bench.workers -= plan.from_bench;
+                bench.lent_to_hunt += plan.from_bench;
+                applied.bench_lent += plan.from_bench;
+            }
         }
         idle -= plan.from_idle;
         allocation.assignments[need_idx].workers = plan.total();
@@ -5239,9 +5265,18 @@ fn apply_muster(
 /// **GIVE THE BORROWED HANDS BACK** — every donor row's crew restored, every crewed need row back
 /// to the zero workers it holds between hunts. Row indices are the ones [`apply_muster`] saw, so it
 /// runs before anything removes a row.
-fn restore_muster(allocation: &mut LaborAllocation, applied: &AppliedMuster) {
+fn restore_muster(
+    allocation: &mut LaborAllocation,
+    applied: &AppliedMuster,
+    bench: Option<&mut BandBench>,
+) {
     for (row, hands) in &applied.lent {
         allocation.assignments[*row].workers += hands;
+    }
+    if applied.bench_lent > 0 {
+        if let Some(bench) = bench {
+            bench.workers += applied.bench_lent;
+        }
     }
     for row in &applied.crewed {
         allocation.assignments[*row].workers = NO_CREW_ON_THIS_ACTIVITY;
@@ -5732,6 +5767,7 @@ pub fn advance_labor_allocation(
                     .as_ref()
                     .map_or(&[][..], |claims| claims.claims.as_slice()),
             },
+            bench.as_deref_mut(),
         );
         // **THE HAY LEDGER IS CLEARED BEFORE ANY EXIT OUT OF THIS BAND'S TURN**, and re-summed at the
         // foot of the loop from the rows it actually resolved. Every other per-turn ledger the
@@ -10087,7 +10123,7 @@ pub fn advance_labor_allocation(
         }
         // **THE MUSTERED HANDS GO BACK** — every donor's crew restored and the need row to zero, so
         // nothing past the row walk (the lapse sweep, the wire, next turn) sees a borrowed hand.
-        restore_muster(&mut allocation, &muster);
+        restore_muster(&mut allocation, &muster, bench.as_deref_mut());
         // **WHICH HERDS A CREW WORKED THIS TURN**, by id — the rows' indices shift when the lapse
         // sweep below removes one, and the decision at the foot of the pass reads this after it.
         let herds_crewed_this_turn: Vec<String> = muster
@@ -10168,6 +10204,7 @@ pub fn advance_labor_allocation(
         let band_material_income =
             allocation.material_income(&crate::systems::bench_material_rate(
                 bench.as_deref(),
+                bench.as_deref().map_or(0, |bench| bench.lent_to_hunt),
                 &cohort.stores,
                 &recipes_cfg,
                 &materials_cfg,
@@ -10722,6 +10759,9 @@ pub fn advance_labor_allocation(
                         need_idx: idx,
                         idle: idle_now,
                         is_local: &is_local,
+                        bench: bench
+                            .as_deref()
+                            .and_then(crate::components::MusterBench::of),
                         claims: &claims.claims,
                     };
                     let assessment = crate::hunt_by_need::assess_need(
@@ -10741,7 +10781,12 @@ pub fn advance_labor_allocation(
                             floor: *floor,
                             baseline_haul_rate,
                             drives_known,
-                            max_workers: allocation.musterable_pool(idle_now, idx, &is_local),
+                            max_workers: allocation.musterable_pool(
+                                idle_now,
+                                idx,
+                                &is_local,
+                                pricing.bench,
+                            ),
                             keeping: fauna::herd_crew_keeping_next_turn(
                                 herd, &fauna, &ladder, None,
                             ),

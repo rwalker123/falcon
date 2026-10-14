@@ -66,6 +66,11 @@ const BENCH_OUTPUT_GRADE_KEY := "output_grade"
 ## half the turns it takes. `0` is a STATE — no crew, no recipe, or a craft speed of zero — and the
 ## refusal beside it says which.
 const BENCH_RATE_PER_TURN_KEY := "rate_per_turn"
+## The hands the bench lends to a hunting-by-need muster next turn (`BenchState.lentToHunt`). Shown in
+## the donor rows' own words (`HudWorkVocab.WORK_ROW_LENT_LINE_FORMAT`); `rate_per_turn` already
+## subtracts them. Nothing is drawn at 0.
+const BENCH_LENT_TO_HUNT_KEY := "lent_to_hunt"
+const BENCH_LENT_LINE_META := &"bench_lent_line"
 ## **THE PILE ALREADY CUT, so a clear can name what it destroys.** The WITHDRAWN amounts, not the
 ## recipe's inputs and not a shortfall's `required` — a bench tool's material efficiency sits between
 ## the book and the withdrawal, and naming what will really be lost is the whole point. Empty on an

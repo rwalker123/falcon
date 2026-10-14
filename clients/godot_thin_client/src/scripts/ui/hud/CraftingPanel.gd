@@ -762,6 +762,17 @@ func _build_bench(payload: Dictionary) -> void:
 	var fraction := clampf(progress / work, 0.0, 1.0) if work > 0.0 else 0.0
 	inner.add_child(_bar(fraction, HudStyle.SIGNAL, HudCraftingVocab.BENCH_BAR_HEIGHT))
 
+	# A bench on a band with a hunting-by-need row is a donor like a worked source row: say how many of
+	# its hands are out hunting, in the donor rows' words and warn ink. Nothing at 0.
+	var lent := int(bench.get(HudCraftingVocab.BENCH_LENT_TO_HUNT_KEY, 0))
+	if lent > 0:
+		var lent_line := Label.new()
+		lent_line.text = HudWorkVocab.WORK_ROW_LENT_LINE_FORMAT % lent
+		lent_line.set_meta(HudCraftingVocab.BENCH_LENT_LINE_META, lent_line.text)
+		lent_line.add_theme_font_size_override("font_size", HudCraftingVocab.BENCH_TEACH_FONT_SIZE)
+		lent_line.add_theme_color_override("font_color", HudStyle.WARN)
+		inner.add_child(lent_line)
+
 	var teaches := String(bench.get(HudCraftingVocab.BENCH_TEACHES_KEY, ""))
 	if recipe_id != "" and teaches != "":
 		var teach := Label.new()

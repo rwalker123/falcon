@@ -479,11 +479,18 @@ fn need_herd(app: &App) -> &Herd {
         .expect("the need herd is still in the registry")
 }
 
+/// The crafting bench as a muster donor, as the sim reads it (`None` for a band with no bench).
+fn donor_bench(app: &App, band: Entity) -> Option<core_sim::MusterBench> {
+    app.world
+        .get::<core_sim::BandBench>(band)
+        .and_then(core_sim::MusterBench::of)
+}
+
 /// The hands the band could lend its need row right now: idle plus every donor row's.
 fn musterable_pool(app: &App, band: Entity) -> u32 {
     let idle = published(app).idle_workers;
     let need = index_of(app, band, NEED_HERD);
-    allocation(app, band).musterable_pool(idle, need, &|_| true)
+    allocation(app, band).musterable_pool(idle, need, &|_| true, donor_bench(app, band))
 }
 
 /// What a row's source paid this turn (`SourceYield::actual`), by herd.
@@ -610,6 +617,7 @@ fn a_lean_larder_musters_the_useful_crew_and_hands_every_donor_back() {
         idx,
         need.muster_crew,
         &|_| true,
+        donor_bench(&app, band),
         &core_sim::MusterKit::default(),
     );
     assert_eq!(wire.idle_mustered, plan.from_idle);
@@ -755,7 +763,12 @@ fn a_far_row_with_no_party_yet_is_not_a_donor() {
         .expect("the far forage row is on the wire");
     assert_eq!(far.lent_to_hunt, 0, "a far row never lends, party or not");
     let idx = index_of(&app, band, NEED_HERD);
-    let pool = allocation(&app, band).musterable_pool(wire.idle_workers, idx, &|_| true);
+    let pool = allocation(&app, band).musterable_pool(
+        wire.idle_workers,
+        idx,
+        &|_| true,
+        donor_bench(&app, band),
+    );
     assert_eq!(
         pool,
         wire.idle_workers + stock.low_hands + stock.normal_hands + FAR_ROW_HANDS,
@@ -2127,5 +2140,270 @@ fn a_waiting_rows_planned_crew_is_equipped_ahead_of_the_hunt() {
             .iter()
             .any(|recipe| is_stalking_gear(recipe)),
         "control: no planned crew, nothing to equip"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// THE CRAFTING BENCH LENDS LIKE A ROW
+// ---------------------------------------------------------------------------------------------
+
+/// Hands at the crafting bench in the bench-donor worlds.
+const BENCH_CREW: u32 = 4;
+/// The bench's job: the sled (8 work; hide and fibre, both banked by the fixture).
+const BENCH_RECIPE: &str = "sled";
+/// An order the fixture never finishes, so a turn's progress is never a completion.
+const UNFINISHED_ORDER: u32 = 1_000;
+/// A band with no idle hands: the two donor rows and the bench hold everybody.
+const NO_IDLE_HANDS: Stock = Stock {
+    working: LOW_DONOR_HANDS + NORMAL_DONOR_HANDS + BENCH_CREW,
+    ..Stock::ROOMY
+};
+
+/// The no-idle-hands world with a staffed bench of the given mark, its sled materials banked.
+fn bench_world(priority: SourcePriority) -> (App, Entity) {
+    let (mut app, band) = world(NO_IDLE_HANDS);
+    bank_material(
+        &mut app,
+        band,
+        "hide",
+        &[("toughness", 0.6), ("suppleness", 0.5)],
+    );
+    bank_material(
+        &mut app,
+        band,
+        "fibre",
+        &[("fineness", 0.5), ("strength", 0.5)],
+    );
+    app.world.entity_mut(band).insert(core_sim::BandBench {
+        orders: vec![core_sim::BenchOrder::new(BENCH_RECIPE, UNFINISHED_ORDER)],
+        workers: BENCH_CREW,
+        priority,
+        ..Default::default()
+    });
+    recapture_snapshot_in_place(&mut app.world);
+    (app, band)
+}
+
+/// The bench's `lentToHunt` on the ENCODED frame.
+fn published_bench_lent(app: &App) -> u32 {
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    envelope
+        .payload_as_snapshot()
+        .and_then(|snapshot| snapshot.population())
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.bandId() == BAND)
+        .and_then(|cohort| cohort.bench())
+        .expect("the band publishes its bench")
+        .lentToHunt()
+}
+
+fn bench_of(app: &App, band: Entity) -> &core_sim::BandBench {
+    app.world
+        .get::<core_sim::BandBench>(band)
+        .expect("the band keeps its bench")
+}
+
+/// **A TURN WITH THE BENCH IN IT**: the labor pass lends and restores, then the bench works, in the
+/// Population chain's order.
+fn turn_with_bench(app: &mut App) {
+    app.world.resource_mut::<SimulationTick>().0 += 1;
+    app.world.run_system_once(advance_herds);
+    app.world.run_system_once(follow_hunted_herds);
+    app.world.run_system_once(advance_band_movement);
+    app.world.run_system_once(advance_labor_allocation);
+    app.world.run_system_once(core_sim::advance_crafting);
+    recapture_snapshot_in_place(&mut app.world);
+}
+
+/// What the wire says the bench and each row give up for a crew of `crew`, as
+/// `(bench, normal row, low row)`.
+fn lent_for(priority: SourcePriority, crew: u32) -> (u32, u32, u32) {
+    let (mut app, band) = bench_world(priority);
+    set_muster(&mut app, band, crew);
+    let wire = published(&app);
+    (
+        published_bench_lent(&app),
+        wire.row(NORMAL_DONOR_HERD).lent_to_hunt,
+        wire.row(LOW_DONOR_HERD).lent_to_hunt,
+    )
+}
+
+/// ⛔ **THE BENCH IS A DONOR, RANKED BY ITS OWN MARK AND BEFORE ITS TIER'S ROWS** — on the encoded
+/// frame, with no idle hand to spend.
+#[test]
+fn the_bench_lends_by_its_mark_and_before_the_rows_of_its_tier() {
+    // A Low bench lends before a Normal row (and before the Low row beside it).
+    assert_eq!(
+        lent_for(SourcePriority::Low, BENCH_CREW),
+        (BENCH_CREW, 0, 0),
+        "a Low bench lends first of all"
+    );
+    // A Normal bench lends before the Normal row, after the Low row.
+    assert_eq!(
+        lent_for(SourcePriority::Normal, LOW_DONOR_HANDS + 2),
+        (2, 0, LOW_DONOR_HANDS),
+        "Low row whole, then the Normal bench ahead of the Normal row"
+    );
+    // A High bench lends only once every Low and Normal row is exhausted.
+    assert_eq!(
+        lent_for(SourcePriority::High, LOW_DONOR_HANDS + NORMAL_DONOR_HANDS),
+        (0, NORMAL_DONOR_HANDS, LOW_DONOR_HANDS),
+        "the High bench lends nothing while a lower row still has hands"
+    );
+    assert_eq!(
+        lent_for(
+            SourcePriority::High,
+            LOW_DONOR_HANDS + NORMAL_DONOR_HANDS + 1
+        ),
+        (1, NORMAL_DONOR_HANDS, LOW_DONOR_HANDS),
+        "then it lends"
+    );
+}
+
+/// What one turn of the bench leaves with `lent` of its `BENCH_CREW` hands out hunting, read off the
+/// bench itself: `(progress, drawn, crew after the turn, hide left in the store)`.
+fn bench_turn_with_lent(lent: u32) -> (f32, bool, u32, f32) {
+    let (mut app, band) = bench_world(SourcePriority::Low);
+    set_muster(&mut app, band, lent);
+    assert_eq!(
+        published_bench_lent(&app),
+        lent,
+        "the board states the hands the turn will take"
+    );
+    turn_with_bench(&mut app);
+    let bench = bench_of(&app, band);
+    let hide_left = app
+        .world
+        .get::<PopulationCohort>(band)
+        .expect("the band keeps its cohort")
+        .stores
+        .material_total("hide")
+        .to_f32();
+    (
+        bench.orders[0].progress.to_f32(),
+        bench.orders[0].drawn.is_some(),
+        bench.workers,
+        hide_left,
+    )
+}
+
+/// ⛔ **THIS TURN'S CRAFT REFLECTS THE LENT HANDS, AND THE CREW COMES BACK.** The bench runs after
+/// the labor pass has handed the crew back, so the lent hands are recorded on the bench and the
+/// craft pass works `workers − lent`. Lending half the crew banks half the progress; lending all of
+/// it banks nothing and draws nothing; the full crew is back on the bench afterwards either way.
+#[test]
+fn this_turns_craft_progress_reflects_the_lent_hands() {
+    let (whole, whole_drawn, whole_crew, hide_whole) = bench_turn_with_lent(0);
+    assert!(
+        whole > 0.0 && whole_drawn,
+        "liveness: an unlent bench banks and draws"
+    );
+    assert_eq!(whole_crew, BENCH_CREW);
+
+    let (half, half_drawn, half_crew, _) = bench_turn_with_lent(BENCH_CREW / 2);
+    assert!(half_drawn, "a half-crewed bench still draws");
+    assert!(
+        (half * 2.0 - whole).abs() < 1e-4,
+        "half the crew banks half the progress: {half} against {whole}"
+    );
+    assert_eq!(half_crew, BENCH_CREW, "the crew is back after the turn");
+
+    let (none, none_drawn, none_crew, hide_left) = bench_turn_with_lent(BENCH_CREW);
+    assert_eq!(none, 0.0, "a fully lent bench banks nothing");
+    assert!(!none_drawn, "and draws nothing: the zero-crew gate holds");
+    assert_eq!(none_crew, BENCH_CREW, "the whole crew is restored");
+    assert!(
+        hide_left > hide_whole,
+        "the fully lent bench left the store alone ({hide_left} against {hide_whole})"
+    );
+}
+
+/// ⛔ **THE LOAN IS NOT A REMOVAL**: the queue, the order's progress and its drawn pile all survive
+/// a turn with the whole crew out hunting, and the crew works again the turn after.
+#[test]
+fn a_lent_bench_keeps_its_order_progress_and_drawn_pile() {
+    let (mut app, band) = bench_world(SourcePriority::Low);
+    turn_with_bench(&mut app);
+    let before = bench_of(&app, band).orders[0].clone();
+    assert!(
+        before.progress.to_f32() > 0.0 && before.drawn.is_some(),
+        "liveness: the first turn drew a pile and banked progress"
+    );
+
+    set_muster(&mut app, band, BENCH_CREW);
+    turn_with_bench(&mut app);
+    let during = bench_of(&app, band);
+    assert_eq!(during.orders.len(), 1, "the queue is intact");
+    assert_eq!(during.orders[0].recipe_id, BENCH_RECIPE);
+    assert_eq!(
+        during.orders[0].progress, before.progress,
+        "no progress is lost or gained"
+    );
+    assert_eq!(during.orders[0].drawn, before.drawn, "the drawn pile stays");
+    assert_eq!(during.workers, BENCH_CREW, "the crew is restored");
+    assert_eq!(during.lent_to_hunt, 0, "the loan does not outlive the turn");
+
+    set_muster(&mut app, band, 0);
+    turn_with_bench(&mut app);
+    assert!(
+        bench_of(&app, band).orders[0].progress > before.progress,
+        "the crew works again the turn after"
+    );
+}
+
+/// The bench's `ratePerTurn` on the ENCODED frame.
+fn published_bench_rate(app: &App) -> f32 {
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    envelope
+        .payload_as_snapshot()
+        .and_then(|snapshot| snapshot.population())
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .find(|cohort| cohort.bandId() == BAND)
+        .and_then(|cohort| cohort.bench())
+        .expect("the band publishes its bench")
+        .ratePerTurn()
+}
+
+/// ⛔ **THE QUOTED RATE IS THE PROGRESS THE TURN BANKS, LOAN INCLUDED.** `ratePerTurn` describes next
+/// turn, and next turn the bench works `workers − lentToHunt`: the published rate, read off the
+/// encoded frame before the turn, equals the progress the turn then banks — whole, half lent, and
+/// fully lent (quoted `0`, banks `0`).
+#[test]
+fn the_quoted_rate_is_the_progress_the_turn_banks_with_hands_lent() {
+    let mut quoted = Vec::new();
+    for lent in [0, BENCH_CREW / 2, BENCH_CREW] {
+        let (mut app, band) = bench_world(SourcePriority::Low);
+        set_muster(&mut app, band, lent);
+        assert_eq!(published_bench_lent(&app), lent, "the plan lends {lent}");
+        let rate = published_bench_rate(&app);
+        turn_with_bench(&mut app);
+        let banked = bench_of(&app, band).orders[0].progress.to_f32();
+        assert!(
+            (rate - banked).abs() < 1e-4,
+            "lent {lent}: quoted {rate}, banked {banked}"
+        );
+        quoted.push(rate);
+    }
+    assert!(
+        quoted[0] > quoted[1] && quoted[1] > 0.0 && quoted[2] == 0.0,
+        "liveness: the quote falls with the loan, got {quoted:?}"
     );
 }

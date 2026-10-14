@@ -1602,6 +1602,12 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         .map(crate::dict::strings_to_variant_array)
         .unwrap_or_default();
     let _ = bench_dict.insert("auto_skipped", &auto_skipped);
+    // **THE HANDS THE BENCH LENDS TO A HUNT NEXT TURN** — the bench as a donor, from the same muster
+    // plan that fills each donor row's `lent_to_hunt`. `rate_per_turn` already subtracts them.
+    let _ = bench_dict.insert(
+        "lent_to_hunt",
+        i64::from(cohort.bench().map_or(0, |b| b.lentToHunt())),
+    );
     let _ = dict.insert("bench", &bench_dict);
 
     // **WHAT TO MAKE NEXT, RANKED SIM-SIDE BY WHO IS GOING WITHOUT** (§7 → "Suggestions"). In rank

@@ -856,8 +856,8 @@ after the kill sends nobody.
 
 **Applied in `advance_labor_allocation`, after the starvation shed and before the pools, the site
 keeping and the row claims**: for each need row with `muster_crew > 0` whose herd is inside
-`band_work_range`, `muster_donors(idle, need_idx, crew)` is clamped to what the donors hold now, the
-donor rows' `workers` are cut and the need row's set to the crew. Everything downstream reads those
+`band_work_range`, `muster_donors(idle, need_idx, crew, ..)` is clamped to what the donors hold now,
+the donor rows' `workers` (and the bench's crew) are cut and the need row's set to the crew. Everything downstream reads those
 numbers; kits come through the ordinary claims at the need row's own Priority. After the row walk
 `restore_muster` hands every donor its hands back and the need row returns to zero.
 
@@ -865,8 +865,26 @@ numbers; kits come through the ordinary claims at the need row's own Priority. A
   row and **whose source is within `band_work_range` of the band** — decided by geometry
   (`hunt_by_need::source_is_local`, on `work_party::party_begins_past`, the threshold `post_a_party`
   posts past), never by "a party exists yet", so a brand-new far row can't lend. Order is `Low` →
-  `Normal` → `High`, the later row first within a tier. Role rows, the bench and road keepers never
-  lend. It may come up short. The turn and the capture pass the same predicate to `muster_donors`.
+  `Normal` → `High`, the later row first within a tier. Role rows and road keepers never lend. It
+  may come up short. The turn and the capture pass the same predicate to `muster_donors`.
+- **The crafting bench lends like a row.** It is not a `LaborTarget`, so `muster_donors` takes it as
+  a `MusterBench { priority: BandBench::priority, hands: BandBench::workers }` beside the allocation
+  (`MusterBench::of`; `None` for a bench nobody is at). It joins the donor order as one candidate
+  ranked by its own mark among the source rows, and **within a tier it lends before that tier's
+  rows** (a bench pays into no account — the famine shed's own tie-break, `yield-forecast.md` →
+  "The crafting bench is a candidate in the walk"). It stands at camp, so it is always local, and it
+  carries no hunt take kit, so it only joins the ordinary-order pass, never the kit-carrying one.
+  `MusterPlan::from_bench` is its share (`total()` includes it) and `musterable_pool` counts its
+  crew. `MusterPricing::bench`, `HuntCrewGear::bench` and the forecast query's `MusterScene` carry
+  it to every reader, so the board, the turn, the crew pricing and the craft suggestions agree.
+- **Applying the bench's loan is non-destructive** (`apply_muster` / `restore_muster`): the bench's
+  `workers` are cut for the row walk and handed back with the rows' — never `remove_order`, so the
+  queue, every order's progress and made count, the drawn pile and the last grade all stay. The
+  labor pass hands the crew back **before** `advance_crafting` runs (it follows the labor pass in
+  the Population chain), so the loan is also written to `BandBench::lent_to_hunt`, and
+  `advance_crafting` works `workers − lent_to_hunt` and clears it. That is what makes this turn's
+  craft progress reflect the lent hands, and a fully lent bench bank nothing and draw nothing (the
+  `AN_IDLE_BENCH` gate reads the reduced crew). The field is `0` at every turn boundary.
 - **Kit-aware order** (`MusterKit`, struck by `hunt_by_need::muster_kit` from the band's own
   `BandItemBudget` on the rows' standing claims): an item of the need row's kit is *short* when the
   units no row claims (`BandItemBudget::unclaimed_units`) arm fewer hands than the crew. When one is,
@@ -911,6 +929,7 @@ numbers; kits come through the ordinary claims at the need row's own Priority. A
 |---|---|
 | `musterCrew` | the hands this need row sends next turn (`0` = waiting) |
 | `lentToHunt` | on a donor row, the hands it gives up next turn (same `muster_donors` call) |
+| `BenchState.lentToHunt` | the hands the crafting bench gives up next turn — the bench's share of that same call (`MusterPlan::from_bench`); `BenchState.workers` stays the crew the player set. Pinned on the encoded frame by `hunt_by_need::{the_bench_lends_by_its_mark_and_before_the_rows_of_its_tier, this_turns_craft_progress_reflects_the_lent_hands, a_lent_bench_keeps_its_order_progress_and_drawn_pile}` |
 | `needRunway` | on a need row, the turns the meat on hand lasts (the need clock above); `0` elsewhere |
 | `turnsUntilHunt` | on a waiting need row, `ceil(runway - turns_to_kill - margin)`, floor 1; `NO_HUNT_NEEDED` (`u32::MAX`) when the larder is not food-limited, no crew can be raised or the herd is out of camp range; `0` on a sending row |
 | `turnsToKill` | turns until the animal is down at the planned crew, counting wounds; `0` when no crew can be raised |

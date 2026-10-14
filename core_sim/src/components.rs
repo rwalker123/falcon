@@ -3301,6 +3301,40 @@ pub struct MusterPlan {
     pub from_idle: u32,
     /// `(row index, hands)` taken from donor rows, in the order they gave them up.
     pub from_rows: Vec<(usize, u32)>,
+    /// Hands taken from the crafting bench's crew. The bench is a donor beside the rows
+    /// ([`MusterBench`]), so its share is part of the one plan every reader asks.
+    pub from_bench: u32,
+}
+
+/// **THE CRAFTING BENCH AS A MUSTER DONOR** — what [`LaborAllocation::muster_donors`] needs of it: the
+/// player's rank on the bench and the crew standing at it. The bench is not a [`LaborTarget`] row, so
+/// it is handed in beside the allocation rather than found in it. It lends like a worked row does —
+/// ranked by its own [`BandBench::priority`] among the source rows, and **before that tier's rows**
+/// (a bench pays into no account, the famine shed's own tie-break). It stands at camp, so it is
+/// always local. It carries no hunt take kit, so it never joins the kit-carrying pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MusterBench {
+    /// The bench's own rank ([`BandBench::priority`]).
+    pub priority: SourcePriority,
+    /// The crew at the bench ([`BandBench::workers`]).
+    pub hands: u32,
+}
+
+impl MusterBench {
+    /// The bench as a donor, or `None` when nobody is at it (nothing to lend).
+    pub fn of(bench: &BandBench) -> Option<Self> {
+        (bench.workers > NO_CREW_ON_THIS_ACTIVITY).then_some(Self {
+            priority: bench.priority,
+            hands: bench.workers,
+        })
+    }
+}
+
+/// One candidate in the muster's donor order: a worked source row, or the crafting bench.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum MusterDonor {
+    Row(usize),
+    Bench,
 }
 
 /// **HOW SHORT THE HUNT'S TAKE KIT IS, AND WHO IS HOLDING IT** — what [`LaborAllocation::muster_donors`]
@@ -3327,7 +3361,9 @@ impl MusterKit {
 impl MusterPlan {
     /// The crew this plan raises — it may be short of the one asked for.
     pub fn total(&self) -> u32 {
-        self.from_idle + self.from_rows.iter().map(|(_, hands)| hands).sum::<u32>()
+        self.from_idle
+            + self.from_rows.iter().map(|(_, hands)| hands).sum::<u32>()
+            + self.from_bench
     }
 
     /// What donor row `idx` gives up under this plan.
@@ -5061,6 +5097,17 @@ pub struct BandBench {
     /// never preempts a running order). Switching auto off clears it. `BTreeSet` so the checkpoint
     /// and the wire iterate in a stable order. **Persisted** with the rest of the bench.
     pub auto_skipped: BTreeSet<String>,
+    /// **THE HANDS THE BENCH HAS LENT TO A HUNTING-BY-NEED CREW THIS TURN** - written by the labor
+    /// pass when [`LaborAllocation::muster_donors`] takes crafters for the hunt, and read by
+    /// `advance_crafting` as `workers - lent_to_hunt`. The labor pass hands the crew back
+    /// (`workers` is the player's number again) before `advance_crafting` runs later in the same
+    /// stage, so this field is how the lent hands stay absent from THIS turn's craft pass: the bench
+    /// banks and draws as a bench of the smaller crew. `advance_crafting` clears it, so it is `0` at
+    /// every turn boundary. A turn fact, not an order; `workers` stays what the player set. Not
+    /// persisted (`serde(skip)`): it is `0` whenever a checkpoint or a save can be taken, so the
+    /// save format is unchanged.
+    #[serde(skip)]
+    pub lent_to_hunt: u32,
 }
 
 impl BandBench {
@@ -6506,87 +6553,122 @@ impl LaborAllocation {
     /// cannot disagree.
     ///
     /// **Idle hands first**, then the band's other *source* rows (forage, hunt, extract) that have no
-    /// work party posted and are not need rows themselves, ordered by [`SourcePriority`] `Low` →
-    /// `Normal` → `High`, ties broken by the **later row first**. Role rows (scouts, warriors,
-    /// builders), the bench's crew and road keepers are never donors. It takes up to `crew` and may
-    /// come up short ([`MusterPlan::total`] is what it got).
+    /// work party posted and are not need rows themselves, **and the crafting bench**
+    /// ([`MusterBench`]), ordered by [`SourcePriority`] `Low` → `Normal` → `High`. Within a tier **the
+    /// bench lends before that tier's rows** (a bench pays into no account — the famine shed's own
+    /// tie-break); rows break ties **later row first**. Role rows (scouts, warriors, builders) and
+    /// road keepers are never donors. It takes up to `crew` and may come up short
+    /// ([`MusterPlan::total`] is what it got).
     ///
     /// **When the hunt's take kit is short** (`kit.shortfall > 0`), donors that are holding it come
     /// first — lowest Priority first among them, the later row first on a tie — and give up hands
     /// only as far as the shortfall in kitted hands, because a lent hand's unit goes to the crew
     /// instead of leaving its own row bare to be stripped by the budget. Then the rest, in the
-    /// ordinary order. With the kit not short the order is Priority alone.
+    /// ordinary order. With the kit not short the order is Priority alone. The bench carries no hunt
+    /// kit, so it only ever joins the ordinary pass.
     ///
-    /// **A donor's source must be within the band's work range**, decided by geometry through
+    /// **A donor row's source must be within the band's work range**, decided by geometry through
     /// `is_local` (see [`crate::hunt_by_need::source_is_local`]) rather than by whether a party has
-    /// been posted yet: a brand-new far row has no party and must still never lend.
+    /// been posted yet: a brand-new far row has no party and must still never lend. The bench stands
+    /// at camp, so it is always local.
     pub fn muster_donors(
         &self,
         idle: u32,
         need_idx: usize,
         crew: u32,
         is_local: &dyn Fn(&LaborTarget) -> bool,
+        bench: Option<MusterBench>,
         kit: &MusterKit,
     ) -> MusterPlan {
         let from_idle = idle.min(crew);
         let mut wanted = crew - from_idle;
-        let order = self.donor_order(need_idx, is_local);
-        let mut taken: BTreeMap<usize, u32> = BTreeMap::new();
-        fn give(taken: &mut BTreeMap<usize, u32>, idx: usize, hands: u32, wanted: &mut u32) {
+        let order = self.donor_order(need_idx, is_local, bench);
+        let mut taken: BTreeMap<MusterDonor, u32> = BTreeMap::new();
+        fn give(
+            taken: &mut BTreeMap<MusterDonor, u32>,
+            donor: MusterDonor,
+            hands: u32,
+            wanted: &mut u32,
+        ) {
             let hands = hands.min(*wanted);
             if hands > 0 {
-                *taken.entry(idx).or_insert(0) += hands;
+                *taken.entry(donor).or_insert(0) += hands;
                 *wanted -= hands;
             }
         }
-        // The kit-carrying donors first, only as far as the kitted shortfall.
+        // The kit-carrying donors first, only as far as the kitted shortfall. The bench carries no
+        // hunt kit (`carried_by` only names rows).
         let mut owed = kit.shortfall.min(wanted);
-        for &idx in order.iter().filter(|idx| kit.carried_by(**idx) > 0) {
+        for &donor in &order {
+            let MusterDonor::Row(idx) = donor else {
+                continue;
+            };
+            if kit.carried_by(idx) == 0 {
+                continue;
+            }
             if owed == 0 || wanted == 0 {
                 break;
             }
             let hands = self.hands_present(idx).min(kit.carried_by(idx)).min(owed);
             owed -= hands.min(wanted);
-            give(&mut taken, idx, hands, &mut wanted);
+            give(&mut taken, donor, hands, &mut wanted);
         }
         // Then everyone, in the ordinary order, from what each still holds.
-        for &idx in &order {
+        for &donor in &order {
             if wanted == 0 {
                 break;
             }
-            let held = self.hands_present(idx) - taken.get(&idx).copied().unwrap_or(0);
-            give(&mut taken, idx, held, &mut wanted);
+            let held = self.donor_hands(donor, bench) - taken.get(&donor).copied().unwrap_or(0);
+            give(&mut taken, donor, held, &mut wanted);
         }
         // Reported in the ordinary donor order, so the plan reads the same however it was reached.
         let from_rows = order
             .iter()
-            .filter_map(|idx| taken.get(idx).map(|hands| (*idx, *hands)))
+            .filter_map(|donor| match donor {
+                MusterDonor::Row(idx) => taken.get(donor).map(|hands| (*idx, *hands)),
+                MusterDonor::Bench => None,
+            })
             .collect();
         MusterPlan {
             from_idle,
             from_rows,
+            from_bench: taken.get(&MusterDonor::Bench).copied().unwrap_or(0),
         }
     }
 
     /// **Every hand the band could lend row `need_idx` this turn** — `idle` plus every donor row's
-    /// head count. The pool a need row's crew is priced over.
+    /// head count plus the bench's crew. The pool a need row's crew is priced over.
     pub fn musterable_pool(
         &self,
         idle: u32,
         need_idx: usize,
         is_local: &dyn Fn(&LaborTarget) -> bool,
+        bench: Option<MusterBench>,
     ) -> u32 {
         idle + self
-            .donor_order(need_idx, is_local)
+            .donor_order(need_idx, is_local, bench)
             .into_iter()
-            .map(|idx| self.hands_present(idx))
+            .map(|donor| self.donor_hands(donor, bench))
             .sum::<u32>()
     }
 
-    /// The donor rows' indices in the order they give hands up: `Low` first, the later row first
-    /// within a tier. See [`Self::muster_donors`].
-    fn donor_order(&self, need_idx: usize, is_local: &dyn Fn(&LaborTarget) -> bool) -> Vec<usize> {
-        let mut donors: Vec<usize> = self
+    /// The hands donor `donor` holds that it could lend.
+    fn donor_hands(&self, donor: MusterDonor, bench: Option<MusterBench>) -> u32 {
+        match donor {
+            MusterDonor::Row(idx) => self.hands_present(idx),
+            MusterDonor::Bench => bench.map_or(NO_CREW_ON_THIS_ACTIVITY, |bench| bench.hands),
+        }
+    }
+
+    /// The donors in the order they give hands up: `Low` first; within a tier the bench, then the
+    /// rows, the later row first. See [`Self::muster_donors`].
+    fn donor_order(
+        &self,
+        need_idx: usize,
+        is_local: &dyn Fn(&LaborTarget) -> bool,
+        bench: Option<MusterBench>,
+    ) -> Vec<MusterDonor> {
+        let mut donors: Vec<MusterDonor> = self
             .assignments
             .iter()
             .enumerate()
@@ -6598,9 +6680,26 @@ impl LaborAllocation {
                     && is_local(&row.target)
                     && self.hands_present_on(row) > 0
             })
-            .map(|(idx, _)| idx)
+            .map(|(idx, _)| MusterDonor::Row(idx))
             .collect();
-        donors.sort_by_key(|idx| (self.assignments[*idx].priority, std::cmp::Reverse(*idx)));
+        if bench.is_some_and(|bench| bench.hands > NO_CREW_ON_THIS_ACTIVITY) {
+            donors.push(MusterDonor::Bench);
+        }
+        let priority_of = |donor: &MusterDonor| match donor {
+            MusterDonor::Row(idx) => self.assignments[*idx].priority,
+            MusterDonor::Bench => bench.map_or(SourcePriority::default(), |bench| bench.priority),
+        };
+        // Within a tier the bench (`false`) precedes every row (`true`); rows run later row first.
+        donors.sort_by_key(|donor| {
+            (
+                priority_of(donor),
+                matches!(donor, MusterDonor::Row(_)),
+                std::cmp::Reverse(match donor {
+                    MusterDonor::Row(idx) => *idx,
+                    MusterDonor::Bench => 0,
+                }),
+            )
+        });
         donors
     }
 
@@ -10243,6 +10342,45 @@ mod tests {
         }
     }
 
+    /// ⛔ **THE BENCH LENDS LIKE A ROW, RANKED BY ITS OWN MARK, AND BEFORE ITS TIER'S ROWS.**
+    #[test]
+    fn the_bench_lends_by_its_own_priority_before_that_tiers_rows() {
+        let board = muster_board(vec![
+            muster_row(muster_hunt("normal", false), 3, SourcePriority::Normal),
+            muster_row(muster_hunt("low", false), 2, SourcePriority::Low),
+            muster_row(muster_hunt("high", false), 4, SourcePriority::High),
+        ]);
+        let bench = |priority| Some(MusterBench { priority, hands: 5 });
+        let ask = |priority, crew| {
+            board.muster_donors(
+                0,
+                0,
+                crew,
+                &|_| true,
+                bench(priority),
+                &MusterKit::default(),
+            )
+        };
+        // A Low bench ranks with the Low row, ahead of it: its 5 hands, then the Low row's.
+        let plan = ask(SourcePriority::Low, 6);
+        assert_eq!((plan.from_bench, plan.from_rows), (5, vec![(2, 1)]));
+        // A Normal bench lends before the Normal row and after every Low row.
+        let plan = ask(SourcePriority::Normal, 9);
+        assert_eq!((plan.from_bench, plan.from_rows), (5, vec![(2, 2), (1, 2)]));
+        let plan = ask(SourcePriority::Normal, 7);
+        assert_eq!((plan.from_bench, plan.from_rows), (5, vec![(2, 2)]));
+        // A High bench lends only once every Low and Normal row is exhausted.
+        let plan = ask(SourcePriority::High, 5);
+        assert_eq!((plan.from_bench, plan.from_rows), (0, vec![(2, 2), (1, 3)]));
+        let plan = ask(SourcePriority::High, 7);
+        assert_eq!((plan.from_bench, plan.total()), (2, 7));
+        // The pool counts the bench's crew.
+        assert_eq!(
+            board.musterable_pool(1, 0, &|_| true, bench(SourcePriority::Normal)),
+            1 + 3 + 2 + 4 + 5
+        );
+    }
+
     /// ⛔ **IDLE FIRST, THEN `Low` → `Normal` → `High`, THE LATER ROW FIRST WITHIN A TIER.**
     #[test]
     fn the_muster_takes_idle_then_low_then_normal_then_high_later_rows_first() {
@@ -10258,12 +10396,12 @@ mod tests {
             muster_row(muster_hunt("low_late", false), 4, SourcePriority::Low),
         ]);
         // Idle covers the whole crew: nobody else is asked.
-        let plan = board.muster_donors(6, 0, 4, &|_| true, &MusterKit::default());
+        let plan = board.muster_donors(6, 0, 4, &|_| true, None, &MusterKit::default());
         assert_eq!((plan.from_idle, plan.from_rows.len()), (4, 0));
 
         // Idle 2, crew 12: the 2 idle hands, then Low (the later row, 4, then the earlier, 1), then
         // Normal (the later row's 3, then 2 of the earlier's — the crew is full).
-        let plan = board.muster_donors(2, 0, 12, &|_| true, &MusterKit::default());
+        let plan = board.muster_donors(2, 0, 12, &|_| true, None, &MusterKit::default());
         assert_eq!(plan.from_idle, 2);
         assert_eq!(
             plan.from_rows,
@@ -10275,7 +10413,7 @@ mod tests {
         assert_eq!(plan.lent_by(2), 0, "High lends nothing while others can");
 
         // Asking for everything reaches High last, and a crew bigger than the band comes up short.
-        let plan = board.muster_donors(0, 0, 100, &|_| true, &MusterKit::default());
+        let plan = board.muster_donors(0, 0, 100, &|_| true, None, &MusterKit::default());
         assert_eq!(plan.from_rows.last(), Some(&(2, 5)), "High goes last");
         assert_eq!(
             plan.total(),
@@ -10297,7 +10435,7 @@ mod tests {
             shortfall: 3,
             carried: vec![0, 0, 4],
         };
-        let plan = board.muster_donors(0, 0, 5, &|_| true, &short);
+        let plan = board.muster_donors(0, 0, 5, &|_| true, None, &short);
         assert_eq!(
             plan.lent_by(2),
             3,
@@ -10311,11 +10449,11 @@ mod tests {
         assert_eq!(plan.total(), 5);
 
         // A crew past the shortfall continues in Priority order, from what each row still holds.
-        let plan = board.muster_donors(0, 0, 7, &|_| true, &short);
+        let plan = board.muster_donors(0, 0, 7, &|_| true, None, &short);
         assert_eq!((plan.lent_by(1), plan.lent_by(2)), (3, 4));
 
         // The kit not short: Priority alone, the Low row first.
-        let plan = board.muster_donors(0, 0, 5, &|_| true, &MusterKit::default());
+        let plan = board.muster_donors(0, 0, 5, &|_| true, None, &MusterKit::default());
         assert_eq!((plan.lent_by(1), plan.lent_by(2)), (3, 2));
     }
 
@@ -10335,13 +10473,13 @@ mod tests {
             muster_row(muster_hunt("empty", false), 0, SourcePriority::Low),
             muster_row(muster_hunt("donor", false), 2, SourcePriority::Normal),
         ]);
-        let plan = board.muster_donors(0, 0, 50, &|_| true, &MusterKit::default());
+        let plan = board.muster_donors(0, 0, 50, &|_| true, None, &MusterKit::default());
         assert_eq!(
             plan.from_rows,
             vec![(8, 2)],
             "only the plain source row lends"
         );
-        assert_eq!(board.musterable_pool(7, 0, &|_| true), 7 + 2);
+        assert_eq!(board.musterable_pool(7, 0, &|_| true, None), 7 + 2);
     }
 
     /// A need row holds no standing workers whatever count a command names, exists at zero, and

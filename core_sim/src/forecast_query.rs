@@ -279,6 +279,8 @@ struct MusterScene {
     claims: Vec<f32>,
     idle: u32,
     band_pos: Option<bevy::math::UVec2>,
+    /// The crafting bench as a donor beside the rows.
+    bench: Option<crate::components::MusterBench>,
 }
 
 /// The scene for `band_id`, or `None` for a band with no allocation (nothing to lend).
@@ -309,11 +311,15 @@ fn muster_scene(world: &mut World, faction: FactionId, band_id: u64) -> Option<M
     let claims = crate::take_claims::with_world_sources(world, faction, |sources| {
         crate::take_claims::row_claims(sources, &allocation, &wear).claims
     });
+    let bench = world
+        .get::<crate::components::BandBench>(entity)
+        .and_then(crate::components::MusterBench::of);
     Some(MusterScene {
         allocation,
         claims,
         idle,
         band_pos,
+        bench,
     })
 }
 
@@ -659,6 +665,7 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
                 .unwrap_or(crate::hunt_by_need::NO_NEED_ROW),
             idle: scene.idle,
             is_local: &is_local,
+            bench: scene.bench,
             claims: &scene.claims,
         });
     // **A `follow` ASK'S CAP IS A CEILING, NOT THE POOL**: locality is geometric, so the client
@@ -668,6 +675,7 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
             pricing.idle,
             pricing.need_idx,
             pricing.is_local,
+            pricing.bench,
         ))
     });
     let equipment = world.resource::<EquipmentConfigHandle>().get();

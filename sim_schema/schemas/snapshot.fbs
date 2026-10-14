@@ -5236,6 +5236,13 @@ table BenchState {
   // materials it is waiting on off the existing CraftOffer for that item (`suggested` offer's
   // `shortfalls`/`reason`). Cleared when auto is switched off. Sorted.
   autoSkipped:[string];
+  // --- THE HANDS THE BENCH LENDS TO A HUNT NEXT TURN (appended last) ----------------------------
+  // On a band with a hunting-by-need row (LaborAssignment.musterCrew > 0), the crafting bench is a
+  // donor like a worked source row: the hands it gives up next turn, from the SAME
+  // `muster_donors` call that fills each donor row's `lentToHunt`. `workers` above stays the crew the
+  // player set; this is the part of it that is out hunting for the one turn. 0 when the bench lends
+  // nothing, and on a band with no need row sending a crew.
+  lentToHunt:uint = 0;
 }
 
 // ONE ORDER ON A BENCH'S QUEUE — `recipe x count`. Every order has a count (>= 1); the

@@ -188,7 +188,7 @@ fn band_suggestions_and_offers(
             expedition_sight_range: expedition.observe_sight_range as f32,
         },
     };
-    let offers = band_craft_state(&cohort.stores, Some(bench), &wear, &inputs).craft_offers;
+    let offers = band_craft_state(&cohort.stores, Some(bench), 0, &wear, &inputs).craft_offers;
     // The offers come first: the wear forecast reads the recipe each item's row marks `suggested`.
     let suggestions = band_suggestions(
         allocation,
@@ -242,6 +242,7 @@ fn hunt_turn_pass(
             allocation,
             idle,
             &is_local,
+            crate::components::MusterBench::of(bench),
             sources,
             wear,
             &configs.equipment,

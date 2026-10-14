@@ -235,6 +235,8 @@ pub struct MusterPricing<'a> {
     pub idle: u32,
     /// Whether a source is within the band's work range (donors must be).
     pub is_local: &'a dyn Fn(&LaborTarget) -> bool,
+    /// The crafting bench as a donor beside the rows (`None` = no bench, or nobody at it).
+    pub bench: Option<crate::components::MusterBench>,
     /// Every row's standing take-kit claim, index-aligned with the allocation.
     pub claims: &'a [f32],
 }
@@ -275,8 +277,14 @@ impl MusterPricing<'_> {
             equipment,
             wear,
         );
-        self.allocation
-            .muster_donors(self.idle, self.need_idx, crew, self.is_local, &kit)
+        self.allocation.muster_donors(
+            self.idle,
+            self.need_idx,
+            crew,
+            self.is_local,
+            self.bench,
+            &kit,
+        )
     }
 
     /// **The rows a crew of `crew` competes with for the band's gear** once the donors it musters

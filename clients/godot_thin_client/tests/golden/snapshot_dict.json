@@ -4421,6 +4421,7 @@
             "material_id": "populations[0].bench.drawn_inputs[2].material_id"
           }
         ],
+        "lent_to_hunt": 43,
         "orders": [
           {
             "auto": true,
@@ -5914,6 +5915,7 @@
             "material_id": "populations[1].bench.drawn_inputs[2].material_id"
           }
         ],
+        "lent_to_hunt": 170,
         "orders": [
           {
             "auto": true,
@@ -7368,6 +7370,7 @@
             "material_id": "populations[2].bench.drawn_inputs[2].material_id"
           }
         ],
+        "lent_to_hunt": 137,
         "orders": [
           {
             "auto": true,

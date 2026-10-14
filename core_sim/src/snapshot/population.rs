@@ -243,6 +243,8 @@ pub(crate) struct HuntCrewGear<'a> {
     pub(crate) idle: u32,
     /// Whether a source is within the band's work range - the donor predicate.
     pub(crate) is_local: &'a dyn Fn(&LaborTarget) -> bool,
+    /// The crafting bench as a donor beside the rows (`None` = no bench, or nobody at it).
+    pub(crate) bench: Option<crate::components::MusterBench>,
 }
 
 /// **THE CREW BEYOND WHICH MORE HANDS ADD NOTHING ON THIS ROW, *FIGHT INCLUDED*** — the sim's
@@ -326,6 +328,7 @@ fn with_hunt_curve<R>(
         need_idx,
         idle: gear.idle,
         is_local: gear.is_local,
+        bench: gear.bench,
         claims: gear.claims,
     });
     Some(read(&crate::fauna::HuntCrewCurveInputs {
@@ -433,6 +436,7 @@ pub(crate) fn hunt_turn_lines(
     allocation: &LaborAllocation,
     idle: u32,
     is_local: &dyn Fn(&LaborTarget) -> bool,
+    bench: Option<crate::components::MusterBench>,
     sources: &crate::take_claims::ClaimSources<'_>,
     wear: &crate::components::BandEquipment,
     equipment: &crate::equipment_config::EquipmentConfig,
@@ -447,6 +451,7 @@ pub(crate) fn hunt_turn_lines(
         allocation.assignments[need_idx].planned_crew,
         idle,
         is_local,
+        bench,
         sources,
         wear,
         equipment,
@@ -460,6 +465,7 @@ fn hunt_turn_shortfall_lines(
     crew: u32,
     idle: u32,
     is_local: &dyn Fn(&LaborTarget) -> bool,
+    bench: Option<crate::components::MusterBench>,
     sources: &crate::take_claims::ClaimSources<'_>,
     wear: &crate::components::BandEquipment,
     equipment: &crate::equipment_config::EquipmentConfig,
@@ -472,6 +478,7 @@ fn hunt_turn_shortfall_lines(
         need_idx,
         idle,
         is_local,
+        bench,
         claims: &standing_claims.claims,
     }
     .plan_at(crew, &hunt_kit, equipment, wear);
@@ -1769,6 +1776,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             build_sources.grid,
         )
     };
+    let donor_bench = bench.and_then(crate::components::MusterBench::of);
     let muster_plan = allocation.and_then(|a| {
         a.assignments
             .iter()
@@ -1782,6 +1790,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     need_idx,
                     idle: idle_workers,
                     is_local: &donor_is_local,
+                    bench: donor_bench,
                     claims: &claims.claims,
                 }
                 .plan_at(crew, &hunt_kit, kit_levers.config, &kit)
@@ -1812,7 +1821,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     // **A NEED ROW'S POOL IS THE MUSTERABLE ONE** — it holds no hands of its own and
                     // its crew is made of idle hands plus what its donors lend.
                     let crew_pool = if assignment.is_need_row() {
-                        a.musterable_pool(idle_workers, i, &donor_is_local)
+                        a.musterable_pool(idle_workers, i, &donor_is_local, donor_bench)
                     } else {
                         assignment.workers.saturating_add(idle_workers)
                     };
@@ -1823,6 +1832,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                         claims: &claims.claims,
                         idle: idle_workers,
                         is_local: &donor_is_local,
+                        bench: donor_bench,
                     };
                     let hunt_useful_workers = assigned_hunt_useful_crew(
                         &assignment.target,
@@ -2171,14 +2181,25 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // store, its ledger and its bench tiers, so resolving them apart would walk the same three
     // structures four times. See `snapshot::crafting`: the refusal is turned into words *here*, not
     // on the client.
+    // The bench's share of next turn's muster: the hands its quoted rate must leave out.
+    let bench_lent = muster_plan.as_ref().map_or(0, |plan| plan.from_bench);
     let crate::snapshot::crafting::BandCraftState {
         material_batches,
-        bench: bench_state,
+        bench: mut bench_state,
         craft_offers,
         equipment_batches,
         bench_material_rate,
         queue_forecast,
-    } = crate::snapshot::crafting::band_craft_state(&cohort.stores, bench, &kit, craft_inputs);
+    } = crate::snapshot::crafting::band_craft_state(
+        &cohort.stores,
+        bench,
+        bench_lent,
+        &kit,
+        craft_inputs,
+    );
+    // **THE HANDS THE BENCH LENDS TO NEXT TURN'S HUNT** - the bench's share of the one muster plan
+    // above (the same `muster_donors` call that fills each donor row's `lentToHunt`).
+    bench_state.lent_to_hunt = bench_lent;
     // **WHAT TO MAKE NEXT** (`docs/plan_crafting_and_materials.md` §7 "Suggestions") — scored off the
     // same settled lines the wire publishes: the pools' and site crews' off the allocation, the take
     // rows' off `row_gear`, which is what each row's `kitToe` is copied from. **A detached party
@@ -2197,6 +2218,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 alloc,
                 idle_workers,
                 &donor_is_local,
+                donor_bench,
                 &claim_sources,
                 &kit,
                 kit_levers.config,

@@ -655,6 +655,25 @@ one. Pinned by the liveness pair `server::tests::a_bench_crew_is_missing_from_th
 `::the_published_idle_count_is_what_assign_labor_will_staff` (the published number is exactly what the
 command path staffs — without it, a sim that stopped publishing idle at all would pass the first).
 
+### A hunting-by-need muster can lend the bench's crew for one turn
+
+The bench is a muster donor beside the worked rows (`work-party.md` → "Hunting by need"): ranked by
+`BandBench::priority`, ahead of its tier's rows. The loan is non-destructive — queue, progress, made
+count and drawn pile all stay — and is recorded in `BandBench::lent_to_hunt`, which `advance_crafting`
+reads as `workers − lent_to_hunt` and clears, because the crew is handed back before the bench works.
+A fully lent bench banks nothing and draws nothing that turn. The hands next turn's muster takes are
+on the wire as `BenchState.lentToHunt`.
+
+**The quoted output is priced at the crew the turn will work.** `BenchState.ratePerTurn` and
+`bench_material_rate` (the wire's material income and the labor pass's shortfall Alert) take the
+lent hands as an argument and use `workers − lent`: the capture passes the bench's share of the
+plan that fills `lentToHunt` (`MusterPlan::from_bench`), the labor pass passes this turn's
+`BandBench::lent_to_hunt`. A fully lent bench quotes `0` and banks `0`. The client's turns-to-finish
+is `ceil((work − progress) / ratePerTurn)`, so it follows. `BenchState.workers` and the "No one at
+the bench" reason stay on the player's crew, and the craft suggestions' wear-forecast lead time
+(a multi-turn estimate) keeps its own crew quote. Pinned by
+`hunt_by_need::the_quoted_rate_is_the_progress_the_turn_banks_with_hands_lent`.
+
 ### The shed can take the bench's crew, so a running job with nobody on it now exists
 
 The bench spends the band's people, so when a band cannot field what it is holding the **shedding

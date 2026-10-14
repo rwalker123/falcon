@@ -293,6 +293,9 @@ pub(crate) struct BandCraftState {
 pub(crate) fn band_craft_state(
     store: &LocalStore,
     bench: Option<&BandBench>,
+    // The hands the bench lends to next turn's hunt (`MusterPlan::from_bench`): the bench's quoted
+    // rate is priced at `workers − lent_to_hunt`, the crew the turn will work.
+    lent_to_hunt: u32,
     wear: &BandEquipment,
     inputs: &BandCraftInputs<'_>,
 ) -> BandCraftState {
@@ -345,6 +348,7 @@ pub(crate) fn band_craft_state(
     );
     let bench_row = bench_state(
         bench,
+        lent_to_hunt,
         described,
         store,
         wear,
@@ -354,6 +358,7 @@ pub(crate) fn band_craft_state(
     );
     let bench_material_rate = crate::systems::bench_material_rate(
         bench,
+        lent_to_hunt,
         store,
         inputs.recipes,
         inputs.materials,
@@ -452,8 +457,10 @@ fn published_bench_priority(priority: SourcePriority) -> SourcePriorityState {
 /// **Once the pile is drawn only two things can stop the job**: nobody at the bench, and a zero
 /// craft rate (the bounding tool wore out mid-craft on a material that cannot be worked bare-handed
 /// — the one genuine *"a running job is stopped"* case). See [`NOTHING_SHORT_STOPS_A_DRAWN_PILE`].
+#[allow(clippy::too_many_arguments)] // One resolved bench row; each argument is a distinct input.
 fn bench_state(
     bench: Option<&BandBench>,
+    lent_to_hunt: u32,
     described: Option<usize>,
     store: &LocalStore,
     wear: &BandEquipment,
@@ -544,6 +551,9 @@ fn bench_state(
     BenchState {
         // Appended last, and read live off the bench — see [`published_bench_priority`].
         priority: published_priority,
+        // The capture stamps the hands next turn's hunt muster takes from the bench
+        // (`snapshot::population`), off the one plan every reader asks.
+        lent_to_hunt: 0,
         recipe_id: recipe_id.to_string(),
         // **The row's name with the recipe's label** — *Spears (Flint)* — because the running job is
         // one recipe of the item, and the row's name alone would not say which.
@@ -568,7 +578,11 @@ fn bench_state(
         // client that multiplied `workers × work` would read a bare-handed organic's `0.5` as `1.0`
         // and promise a finish in half the turns it takes. Resolved through the same helper
         // `advance_crafting` accrues with, so the published rate is the applied rate.
-        rate_per_turn: rate_per_turn(bench.workers, &inputs.recipes.crafting, tiers.speed),
+        rate_per_turn: rate_per_turn(
+            bench.workers.saturating_sub(lent_to_hunt),
+            &inputs.recipes.crafting,
+            tiers.speed,
+        ),
         // **What the store already lost for the job in flight** — the withdrawn amounts, not the
         // recipe's stated inputs, so a clear or a swap can name what it destroys. Empty on an
         // undrawn bench, which is the honest answer: nothing has been cut yet.
