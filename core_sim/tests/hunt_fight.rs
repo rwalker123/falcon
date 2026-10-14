@@ -23,6 +23,7 @@ fn equipped_haul_rate() -> f32 {
     )
 }
 
+use core_sim::shipped;
 use core_sim::{
     animals_engaged, herd_capacity, hunt_take, resolve_hunt_fight, BandEquipment, CombatConfig,
     CombatStats, CreaturesConfig, DamageLedger, EquipmentConfig, FaunaConfig, FaunaConfigHandle,
@@ -77,6 +78,7 @@ fn herd_of(fauna: &FaunaConfig, species: &str) -> Herd {
         def.fodder_per_biomass,
         def.regrowth_rate.unwrap_or(0.1),
         def.body_mass,
+        shipped::root_standing(shipped::animal()),
     )
 }
 

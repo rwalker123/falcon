@@ -169,7 +169,7 @@ the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoin
 
 > **The free path is gone (design fix).** Cultivation used to accrue **silently and for free** under
 > Sustain: same labor, same tile, no cost ⇒ cultivating was always correct and there was **no
-> decision**. It is now the **`Cultivate` improvement** (`Improvement::Cultivate`, plant-only — a
+> decision**. It is now the **`Cultivate` improvement** (the `cultivate` verb, plant-only — a
 > harvest-stance variant until issue #442 split the pressure axis from the build verb) with a real
 > up-front cost, and the **early-claim `claim_threshold` is removed** (it would let the player skip the
 > investment — the whole point). Gathering still *teaches* the faction Cultivation knowledge; it just
@@ -191,7 +191,7 @@ the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoin
   discovery 2003 mapping is declared in `start_profile_knowledge_tags.json` purely so it is mappable;
   **no start profile lists it**, so no faction begins knowing Cultivation.
 - **The `Cultivate` improvement — the investment.** In `advance_labor_allocation`'s **Forage** arm
-  (Population), a patch worked with `Improvement::Cultivate` in flight:
+  (Population), a patch worked with the `cultivate` verb in flight:
   - **Costs the hands it is staffed with, and nothing else.** `yield_fraction_while_building` is
     **retired** (`docs/plan_standing_upkeep.md` §2.2): `cultivate <faction> <x> <y>` **queues** the
     build and `assign_labor <f> <b> builders <n>` staffs the pool that raises it, so what a Cultivate
@@ -478,8 +478,8 @@ the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoin
   higher tended yield **place-locally** → move the band away and it goes feral, reverting to wild.
   Place-locality + feral + a sunk investment = the band is **pinned near its farm**: intensifying
   raises output *and* deepens the anchor.
-- **`cultivate` command (repurposed)** — `cultivate <faction> <x> <y>` (`handle_cultivate`; unchanged
-  proto/runtime/text plumbing, `CommandEventKind::Cultivate`) **sets the `Cultivate` improvement** on
+- **`cultivate` command (repurposed)** — `build cultivate <faction> <x> <y>` (`handle_build_rung`;
+  `CommandEventKind::Cultivate` is the rung's `feed_channel`) **sets the `Cultivate` improvement** on
   the band(s) already foraging that tile (`queue_build_on_working_bands`) — the command form of
   what the client's checkbox does. It **claims nothing**, and since issue #442 it touches the
   improvement slot only, so the band's stance and its committed crop survive by construction (the
@@ -511,7 +511,7 @@ the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoin
     "nothing is left of either improvement" and the derivation's "a meter at zero needs a
     declaration" are one notion of empty, pinned by
     `forage_cultivation::a_fully_feral_patch_clears_its_owner_species_and_rung_together`.
-- **Improvement validation** — `Improvement::valid_for_forage` / `valid_for_hunt`: `Cultivate`/`Sow`
+- **Improvement validation** — the forage / hunt build validators: `Cultivate`/`Sow`
   are plant-only and `Tame`/`Corral` animal-only, both stated as **exhaustive** matches so a new verb
   fails to compile until someone says which web it belongs to. `validate_improvement` rejects a
   cross-web verb (and a failed gate) with a clear failure event before touching the allocation.
@@ -720,7 +720,7 @@ whose fresh-water rule rung 1 does not carry.
 **Rung 3 places a food source where you want it** (`docs/plan_intensification_ladder.md` §2, slice 5).
 Once a faction knows **Seed Selection** (`SEED_SELECTION_DISCOVERY_ID` = 2005 — earned by *working
 tended patches*, slice 4's `plant:tended` `earns_knowledge`; earned then, spent here), a crew working
-a tile with **`Improvement::Sow`** in flight builds a **Field** on it. A Field is not a new entity: it is a
+a tile with the **`sow`** verb in flight builds a **Field** on it. A Field is not a new entity: it is a
 `ForagePatch` **at rung 3** — its `ladder_position` carried up into that rung's span, exactly as a
 `Herd`'s position carries up into `animal:pen`'s. There is **no "extend
 the field"**: each tile is its own patch, so you sow another field (the pen extends only because one
@@ -855,9 +855,8 @@ herd has one appetite).
   rung 2 down with it either: *the least-established improvement is the most fragile*. Ownership
   clears only once nothing is left of either meter. See "Feral if unworked" above for the grace, the
   ordering's own bug, and the feed line.
-- **`sow <faction> <x> <y>` command** (`handle_sow`; `SowCommand` proto field **41**, its `workers`
-  field `reserved`,
-  `CommandEventKind::Sow`) — **sets the `Sow` improvement** on the bands already foraging that tile,
+- **`build sow <faction> <x> <y>` command** (`handle_build_rung`; the retired `SowCommand`'s proto field
+  **41** is `reserved`, `CommandEventKind::Sow` is the rung's `feed_channel`) — **sets the `Sow` improvement** on the bands already foraging that tile,
   the command form of the client's checkbox (issue #442: the stance beside it is left alone). It sows nothing outright; the seed goes in when the crew
   works the ground, so the improvement need only be checked once. Rejections, each
   distinct (`validate_sow`, shared with the `assign_labor` path): no such tile / **the land will not
@@ -975,7 +974,7 @@ multiplier  = clamp(share_load, field_share_cost_floor, field_share_cost_ceiling
   that patch's `fieldWorkCost`, on the encoded envelope, at declaration and with the leg stamped alike
   (`sow_share_cost::the_per_crop_sow_price_is_the_price_this_patch_is_charged`).
 - **A crop that cannot climb to a Field here publishes NO figure** (`species_climbs` at
-  `RungKey::PlantField`) — `0`, which a client renders as no row. A measured price is never `0`: the
+  the field rung) — `0`, which a client renders as no row. A measured price is never `0`: the
   floor clamp is there because laying the rows and putting the seed in costs work on any ground. The
   **patch's** own price still answers `RUNG_COST_UNSCALED` on ground where nothing climbs, because a
   published price has to state something.

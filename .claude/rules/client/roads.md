@@ -983,7 +983,7 @@ other build surface in the game states a turns estimate. `route_track` had carri
   test is BEFORE the division in `_route_turns` rather than after it — a zero rate reaching
   `pool_work_supply` would answer whatever the KIT alone pays, which on a branch no kit serves is
   also `0` and would look like the same refusal for a different reason.
-- **The kit is asked for with `KitRoster.BUILD_BRANCH_ROUTE` (`"route"`, `RungBranch::Route`'s own
+- **The kit is asked for with `KitRoster.BUILD_BRANCH_ROUTE` (`"route"`, the route branch's own
   wire spelling) AND with the RUNG the row is raising.** **Asking with `BUILD_BRANCH_NONE` instead
   would be wrong**: that means *no branch test at all* and would credit the crook's 0.5 against a
   road.

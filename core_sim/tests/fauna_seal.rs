@@ -13,15 +13,16 @@
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::MinimalPlugins;
+use core_sim::shipped;
 
 use core_sim::{
     advance_graze_regrowth, advance_herd_grazing, advance_herds, classify_food_module,
     spawn_initial_graze, spawn_initial_herds, spawn_initial_world, CultureManager,
     DiscoveryProgressLedger, FactionInventory, FaunaConfig, FaunaConfigHandle, FoodModule,
     GenerationRegistry, GrazeRegistry, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
-    HusbandryCeiling, LadderConfigHandle, MapPresets, MapPresetsHandle, SimulationConfig,
-    SimulationTick, SizeClass, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
-    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, Tile,
+    LadderConfigHandle, MapPresets, MapPresetsHandle, SimulationConfig, SimulationTick, SizeClass,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle, Tile,
 };
 use sim_runtime::TerrainType;
 
@@ -95,7 +96,7 @@ fn seal_row_loads_as_wild_marine_forager() {
         .expect("the fauna roster defines the coastal seal colony");
 
     // Hunt-only: never climbs the husbandry ladder (mirrors mammoth/deer).
-    assert_eq!(seal.husbandry_ceiling, HusbandryCeiling::Wild);
+    assert_eq!(seal.husbandry_ceiling, Some(shipped::animal_wild()));
     assert!(
         !seal.migratory,
         "a haul-out colony is a stationary big-game herd, not migratory"
@@ -201,6 +202,7 @@ fn seal_colony_keeps_constant_carrying_capacity() {
             seal.fodder_per_biomass, // 0.0 → non-grazing
             seal.regrowth_rate_or(fauna.ecology.regrowth_rate),
             seal.body_mass,
+            shipped::root_standing(shipped::animal()),
         );
         herd.husbandry_ceiling = seal.husbandry_ceiling;
         registry.herds.push(herd);

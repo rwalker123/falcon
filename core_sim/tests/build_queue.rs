@@ -22,12 +22,13 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::prelude::Entity;
+use core_sim::shipped;
 
 use core_sim::{
     build_test_app, recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero,
-    BuildJob, BuildSource, FactionId, GenerationId, Improvement, LaborAllocation, LaborAssignment,
-    LaborTarget, LocalStore, MoraleCause, PopulationCohort, ResidentBand, SnapshotHistory,
-    SourcePriority, TileRegistry,
+    BuildJob, BuildSource, FactionId, GenerationId, LaborAllocation, LaborAssignment, LaborTarget,
+    LocalStore, MoraleCause, PopulationCohort, ResidentBand, SnapshotHistory, SourcePriority,
+    TileRegistry,
 };
 use sim_schema::{
     BUILD_METER_HOLDS, BUILD_NOT_YET_ESTIMATED, BUILD_QUEUE_BLOCKED, NOT_IN_ANY_BUILD_QUEUE,
@@ -95,7 +96,13 @@ fn cultivable_sites_in_one_work_range(app: &mut App) -> Vec<UVec2> {
             };
             let composition =
                 core_sim::tile_flora_composition(&flora, &labor.forage, tile, map_seed);
-            core_sim::default_species_for_rung(&composition, &flora, RungKey::PlantTended).is_some()
+            core_sim::default_species_for_rung(
+                &composition,
+                &flora,
+                shipped::ladder(),
+                shipped::plant_tended(),
+            )
+            .is_some()
         })
         .collect();
     cultivable.sort_by_key(|tile| (tile.y, tile.x));
@@ -127,7 +134,6 @@ fn cultivable_sites_in_one_work_range(app: &mut App) -> Vec<UVec2> {
 
 mod pen_materials_support;
 
-use core_sim::RungKey;
 use core_sim::TakeSelection;
 
 /// A world with one band that works `count` cultivable patches in its own work range, staffs
@@ -213,7 +219,7 @@ fn world_with_a_queue_knowing(
         .iter()
         .map(|source| core_sim::BuildQueueEntry {
             source: BuildSource::Patch(*source),
-            declared: BuildJob::Rung(Improvement::Cultivate),
+            declared: BuildJob::Climb(shipped::plant_tended()),
             // ⛔ **AN ENTRY'S KIT PRICES NOTHING** since `docs/plan_pool_toe.md`: a pool's tools
             // follow from the rung. The gear axis is held on the LEDGER below.
             priority: core_sim::SourcePriority::default(),
@@ -271,7 +277,7 @@ fn world_with_a_queue_knowing(
             },
         ))
         .id();
-    core_sim::disarm_the_builders(&mut app.world, band, RungKey::PlantTended);
+    core_sim::disarm_the_builders(&mut app.world, band, shipped::plant_tended());
     (app, band, sources)
 }
 
@@ -430,7 +436,7 @@ fn keeping_for(sources: usize) -> u32 {
         .world
         .resource::<core_sim::LadderConfigHandle>()
         .get()
-        .rung(RungKey::PlantTended)
+        .rung(shipped::plant_tended())
         .upkeep_crew_needed(richest);
     hands * sources as u32
 }
@@ -929,7 +935,7 @@ fn world_with_a_half_tamed_herd(crew: u32, floor: f32) -> (App, Entity, String) 
                 .clone()
         };
         ladder
-            .rung(RungKey::AnimalPastoral)
+            .rung(shipped::animal_pastoral())
             .build_cost(fauna.taming_cost_multiplier_for(&species))
             .expect("the pastoral rung builds")
     };
@@ -1030,7 +1036,7 @@ fn world_with_a_half_tamed_herd(crew: u32, floor: f32) -> (App, Entity, String) 
                 assignments,
                 build_queue: vec![core_sim::BuildQueueEntry {
                     source: BuildSource::Herd(herd_id.clone()),
-                    declared: BuildJob::Rung(Improvement::Tame),
+                    declared: BuildJob::Climb(shipped::animal_pastoral()),
                     priority: core_sim::SourcePriority::default(),
                 }],
                 ..Default::default()
@@ -1090,7 +1096,7 @@ fn herd_meter(app: &App, id: &str) -> f32 {
     let r = app.world.resource::<core_sim::HerdRegistry>();
     match r.find(id) {
         Some(h) => h.rung_work_done(
-            core_sim::RungKey::AnimalPastoral,
+            shipped::animal_pastoral(),
             &core_sim::LadderConfig::builtin(),
         ),
         None => panic!(
@@ -1147,7 +1153,7 @@ fn cost_of_taming(app: &App, id: &str) -> f32 {
     app.world
         .resource::<core_sim::LadderConfigHandle>()
         .get()
-        .rung(RungKey::AnimalPastoral)
+        .rung(shipped::animal_pastoral())
         .build_cost(fauna.taming_cost_multiplier_for(&species))
         .expect("the pastoral rung builds")
 }
@@ -1171,7 +1177,7 @@ fn keeping_a_herd_needs(app: &App, id: &str) -> u32 {
     app.world
         .resource::<core_sim::LadderConfigHandle>()
         .get()
-        .rung(RungKey::AnimalPastoral)
+        .rung(shipped::animal_pastoral())
         .upkeep_crew_needed(at_capacity)
 }
 
@@ -1320,7 +1326,7 @@ fn a_parked_half_built_meter_stays_the_neutral_holding_sentinel() {
             .world
             .resource::<core_sim::LadderConfigHandle>()
             .get()
-            .rung(RungKey::PlantTended)
+            .rung(shipped::plant_tended())
             .build_cost(core_sim::RUNG_COST_UNSCALED)
             .expect("the tended rung builds");
         let mut registry = app.world.resource_mut::<core_sim::ForageRegistry>();
@@ -1462,7 +1468,7 @@ fn abandon_drops_the_row_and_its_entry_and_leaves_the_meter_to_rot() {
     let grace = {
         let probe = build_test_app();
         let handle = probe.world.resource::<core_sim::LadderConfigHandle>().get();
-        handle.rung(RungKey::PlantTended).upkeep_grace_turns()
+        handle.rung(shipped::plant_tended()).upkeep_grace_turns()
     };
     for _ in 0..=(grace + 1) {
         resolve_a_turn(&mut app);
@@ -1671,24 +1677,21 @@ fn every_build_job_and_source_kind_is_stated() {
     }));
 
     for job in [
-        BuildJob::Rung(Improvement::Cultivate),
-        BuildJob::Rung(Improvement::Sow),
-        BuildJob::Rung(Improvement::Tame),
-        BuildJob::Rung(Improvement::Corral),
+        BuildJob::Climb(shipped::plant_tended()),
+        BuildJob::Climb(shipped::plant_field()),
+        BuildJob::Climb(shipped::animal_pastoral()),
+        BuildJob::Climb(shipped::animal_pen()),
         BuildJob::ExtendPen,
-        BuildJob::SetHerdOutput(core_sim::RungKey::AnimalPen),
+        BuildJob::SetHerdOutput(shipped::animal_pen()),
     ] {
         match job {
             // A rung verb names a meter, so the derived rung can answer for it.
-            BuildJob::Rung(improvement) => assert!(!improvement.as_str().is_empty()),
+            BuildJob::Climb(_) => {}
             // A ring names none — that is the gap this kind fills.
             BuildJob::ExtendPen => {}
             // Nor does an output commitment; it carries the rung it was priced against instead.
             BuildJob::SetHerdOutput(rung) => {
-                assert!(matches!(
-                    rung,
-                    core_sim::RungKey::AnimalPastoral | core_sim::RungKey::AnimalPen
-                ));
+                assert!(rung == shipped::animal_pastoral() || rung == shipped::animal_pen());
             }
         }
     }
@@ -1810,7 +1813,7 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
                     },
                     core_sim::BuildQueueEntry {
                         source: BuildSource::Patch(source),
-                        declared: BuildJob::Rung(Improvement::Cultivate),
+                        declared: BuildJob::Climb(shipped::plant_tended()),
                         priority: core_sim::SourcePriority::default(),
                     },
                 ],
@@ -1824,8 +1827,8 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
     pen_materials_support::stock_pen_materials(&mut app.world, band);
     // **Both branches this band builds on** — the ring stands on `animal:pen` and the entry behind
     // it on `plant:tended`, so the gear axis is held on each.
-    core_sim::disarm_the_builders(&mut app.world, band, RungKey::AnimalPen);
-    core_sim::disarm_the_builders(&mut app.world, band, RungKey::PlantTended);
+    core_sim::disarm_the_builders(&mut app.world, band, shipped::animal_pen());
+    core_sim::disarm_the_builders(&mut app.world, band, shipped::plant_tended());
     (app, band, RING_HERD.to_string(), source)
 }
 
@@ -1850,6 +1853,7 @@ fn seat_a_pen_mid_ring(app: &mut App, tile: UVec2) {
         RING_HERD_FODDER,
         RING_HERD_REGROWTH,
         RING_HERD_BODY_MASS,
+        core_sim::shipped::root_standing(core_sim::shipped::animal()),
     );
     herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
     assert!(
@@ -1982,7 +1986,7 @@ fn pen_ring_work_cost() -> f32 {
         .world
         .resource::<core_sim::LadderConfigHandle>()
         .get()
-        .rung(RungKey::AnimalPen)
+        .rung(shipped::animal_pen())
         .build_cost(core_sim::RUNG_COST_UNSCALED)
         .expect("the pen rung builds")
 }
@@ -2084,7 +2088,7 @@ fn tended_work_cost() -> f32 {
         .world
         .resource::<core_sim::LadderConfigHandle>()
         .get()
-        .rung(RungKey::PlantTended)
+        .rung(shipped::plant_tended())
         .build_cost(core_sim::RUNG_COST_UNSCALED)
         .expect("the tended rung builds")
 }
@@ -2137,7 +2141,7 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
     };
     let cultivate = |source: UVec2| core_sim::BuildQueueEntry {
         source: BuildSource::Patch(source),
-        declared: BuildJob::Rung(Improvement::Cultivate),
+        declared: BuildJob::Climb(shipped::plant_tended()),
         priority: core_sim::SourcePriority::default(),
     };
 
@@ -2200,7 +2204,7 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
             .find(|(_, id)| id.0 == spawned)
             .map(|(entity, _)| entity)
             .expect("the fixture spawned this band");
-        core_sim::disarm_the_builders(&mut app.world, entity, RungKey::PlantTended);
+        core_sim::disarm_the_builders(&mut app.world, entity, shipped::plant_tended());
     }
     (app, band, sources)
 }
@@ -2433,7 +2437,7 @@ const A_WHOLE_CULTIVATE: usize = 80;
 fn erode_the_finished_meter(app: &mut App, source: UVec2) -> f32 {
     let ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
     let cost = ladder
-        .rung(RungKey::PlantTended)
+        .rung(shipped::plant_tended())
         .build_cost(core_sim::RUNG_COST_UNSCALED)
         .expect("the tended rung has a build meter");
     let mut registry = app.world.resource_mut::<core_sim::ForageRegistry>();
@@ -2522,7 +2526,7 @@ fn an_unqueued_eroded_meter_publishes_no_estimate_and_a_re_queued_one_repairs_it
             .expect("the band keeps its allocation");
         allocation.enqueue_build(
             BuildSource::Patch(source),
-            BuildJob::Rung(Improvement::Cultivate),
+            BuildJob::Climb(shipped::plant_tended()),
         );
     }
     resolve_a_turn(&mut app);
@@ -2768,7 +2772,7 @@ const ROAD_MATERIAL: &str = "stone";
 /// The `route:paved_road` rung's declared pile — what a whole tile of pavement swallows.
 fn paving_pile() -> f32 {
     core_sim::LadderConfig::builtin()
-        .rung(core_sim::RungKey::RoutePavedRoad)
+        .rung(shipped::route_paved_road())
         .build_materials()
         .map(|(_, amount)| amount)
         .sum()
@@ -2780,7 +2784,7 @@ fn paving_pile() -> f32 {
 fn pave_a_road(app: &mut App, tile: UVec2) {
     let ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
     let (base, width) = core_sim::road_rung_span(
-        core_sim::RungKey::RouteDirtRoad,
+        shipped::route_dirt_road(),
         &ladder,
         core_sim::NEAR_ENOUGH_TO_KEEP,
     );
@@ -2857,7 +2861,7 @@ fn queue_a_pave(app: &mut App, band: Entity, tile: UVec2) {
             0,
             core_sim::BuildQueueEntry {
                 source: BuildSource::Road(tile),
-                declared: BuildJob::Rung(Improvement::Pave),
+                declared: BuildJob::Climb(shipped::route_paved_road()),
                 priority: core_sim::SourcePriority::default(),
             },
         );
@@ -2911,7 +2915,7 @@ fn an_empty_store_stalls_a_paving_and_a_part_store_stalls_it_proportionally() {
     // covers part of the pile and the arm must bank exactly that part.
     let one_turns_pile = full * paving_pile()
         / core_sim::road_rung_span(
-            core_sim::RungKey::RoutePavedRoad,
+            shipped::route_paved_road(),
             &core_sim::LadderConfig::builtin(),
             core_sim::NEAR_ENOUGH_TO_KEEP,
         )
@@ -2997,7 +3001,7 @@ fn a_road_entry_dies_with_its_keeper_and_frees_the_pool_behind_it() {
             0,
             core_sim::BuildQueueEntry {
                 source: BuildSource::Road(road_tile),
-                declared: BuildJob::Rung(Improvement::Grade),
+                declared: BuildJob::Climb(shipped::route_dirt_road()),
                 priority: core_sim::SourcePriority::default(),
             },
         );
@@ -3104,7 +3108,7 @@ fn build_work_per_hoed_worker() -> f32 {
     let worth = config.build_work_per_worker(
         &plant_build_kit,
         &core_sim::BandEquipment::start_stocked(&config),
-        core_sim::RungBranch::Plant,
+        shipped::plant(),
         None,
     );
     assert!(
@@ -3212,7 +3216,7 @@ fn a_build_head_beside_its_kept_site(head: KeptBuildHead) -> (App, Entity, UVec2
     {
         let ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
         let cost = ladder
-            .rung(RungKey::PlantTended)
+            .rung(shipped::plant_tended())
             .build_cost(core_sim::RUNG_COST_UNSCALED)
             .expect("the tended rung has a build meter");
         let mut registry = app.world.resource_mut::<core_sim::ForageRegistry>();
@@ -3856,6 +3860,7 @@ fn tame_at_floor(with_wolves: bool, floor: f32) -> (App, String) {
                 0.0,
                 WOLF_PACK_REGROWTH,
                 WOLF_PACK_BODY_MASS,
+                core_sim::shipped::root_standing(core_sim::shipped::animal()),
             ));
     }
     resolve_a_predated_turn(&mut app);

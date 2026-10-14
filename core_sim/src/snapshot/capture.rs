@@ -2753,7 +2753,7 @@ pub fn capture_snapshot(
     // tile it is looking at, and a patch is on every food-bearing tile there is (see
     // core_sim/CLAUDE.md → the Field).
     let patches_scope = crate::turn_profile::scope("snapshot.build.patches");
-    let field_rung = ladder_config.rung(RungKey::PlantField);
+    let field_rung = ladder_config.sown_patch_rung();
     let grid = config.grid_size;
     let wrap_horizontal = config.map_topology.wrap_horizontal;
     let mut sow_site_refusals: HashMap<UVec2, SiteRefusal> = HashMap::new();

@@ -77,7 +77,7 @@ use crate::{
     extraction_config::{ExtractionConfig, NEVER_RENEWS, NO_DEPOSIT},
     intensification::{
         build_fraction, interpolate, neglect_grace_remaining, rung_span, rung_work_done, BuildGate,
-        BuildTurns, LadderConfig, RungDef, RungExtractionPayoff, RungKey, RungStanding, SourceKind,
+        BuildTurns, LadderConfig, RungDef, RungExtractionPayoff, RungId, RungStanding, SourceKind,
         NEGLECT_NONE, NO_CREW_ON_THIS_ACTIVITY, NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT,
         RUNG_COST_UNSCALED, RUNG_UNSTARTED,
     },
@@ -286,7 +286,7 @@ pub struct DepositSource {
     /// rung completes, lowered when that rung is lost. A loss is announced only for a rung at or
     /// below it: a part-built meter rotting to empty was never had, so it is not "lost"
     /// (`intensification::settle_achieved_losses`). `None` = nothing above the branch's root.
-    pub peak_rung: Option<crate::intensification::RungKey>,
+    pub peak_rung: Option<crate::intensification::RungId>,
     /// **WHAT EVERY CREW TOOK OUT OF THIS WORKING THIS TURN**, in the material's own units.
     ///
     /// Accumulates (`+=`) across the bands cutting it — [`Self::upkeep_supplied`]'s rule, and for
@@ -360,21 +360,17 @@ fn not_in_any_build_queue() -> i32 {
 impl DepositSource {
     /// **A FRESH WORKING ON UNTOUCHED GROUND** — full stock, standing on its branch's free floor.
     ///
-    /// `branch` is the deposit's ([`crate::extraction_config::DepositDef::branch`]), because the
-    /// free floor differs by ladder
-    /// and only the config knows which one this material is worked by.
-    pub fn opening(
-        tile: UVec2,
-        material: &str,
-        capacity: f32,
-        branch: impl Into<BranchId>,
-    ) -> Self {
+    /// `root` is the standing at the root of the deposit's ladder
+    /// ([`RungStanding::unstarted_on`] of [`crate::extraction_config::DepositDef::branch`]),
+    /// because the free floor differs by ladder and only the config knows which one this material is
+    /// worked by.
+    pub fn opening(tile: UVec2, material: &str, capacity: f32, root: RungStanding) -> Self {
         Self {
             tile,
             material: material.to_string(),
             stock: capacity.max(DEPOSIT_EMPTY),
             ladder_position: RUNG_UNSTARTED,
-            standing: RungStanding::unstarted(branch.into()),
+            standing: root,
             upkeep_demanded: None,
             upkeep_supplied: NO_UPKEEP_DEMAND,
             upkeep_hands: NO_HANDS_ON_THE_DEPOSIT,
@@ -425,8 +421,8 @@ impl DepositSource {
     }
 
     /// **THE RUNG THIS WORKING HOLDS IN FULL** — what a lesson is read off and what a readout names.
-    pub fn rung(&self) -> RungKey {
-        self.standing.held_key()
+    pub fn rung(&self) -> RungId {
+        self.standing.held
     }
 
     /// **THE ONE WRITER OF THE POSITION**, which re-stamps the standing with it.
@@ -436,13 +432,13 @@ impl DepositSource {
         ladder: &LadderConfig,
         branch: impl Into<BranchId>,
     ) {
-        let was = self.standing.held_key();
+        let was = self.standing.held;
         self.ladder_position = position.max(RUNG_UNSTARTED);
         self.standing = deposit_standing(self.ladder_position, ladder, branch);
         // **A FINISHED RUNG STARTS WITH ITS FULL GRACE** ([`crate::intensification::rung_rose`]).
-        if crate::intensification::rung_rose(was, self.standing.held_key()) {
+        if crate::intensification::rung_rose(ladder, was, self.standing.held) {
             self.neglect_turns = crate::intensification::NEGLECT_NONE;
-            crate::intensification::raise_peak(&mut self.peak_rung, self.standing.held_key());
+            crate::intensification::raise_peak(ladder, &mut self.peak_rung, self.standing.held);
         }
     }
 }
@@ -463,7 +459,7 @@ pub fn deposit_standing(
 
 /// **THE BASE AND WIDTH OF ONE DEPOSIT RUNG**, in cumulative work units — [`deposit_standing`]'s
 /// twin, for a caller that needs to know where a rung's leg starts.
-pub fn deposit_rung_span(rung: RungKey, ladder: &LadderConfig) -> (f32, f32) {
+pub fn deposit_rung_span(rung: RungId, ladder: &LadderConfig) -> (f32, f32) {
     rung_span(ladder, ladder.rung(rung), &|def: &RungDef| {
         def.build
             .as_ref()
@@ -475,7 +471,7 @@ pub fn deposit_rung_span(rung: RungKey, ladder: &LadderConfig) -> (f32, f32) {
 /// branches' catalog, read straight off the config records. `routes::route_rungs_in_climb_order` is
 /// the precedent, one branch wider.
 ///
-/// ⛔ **IT WALKS `ladder.rungs` AND NOT [`RungKey::ALL`], DELIBERATELY.** The key enum names the
+/// ⛔ **IT WALKS `ladder.rungs` AND NOT a coded rung list, DELIBERATELY.** The key enum names the
 /// rungs a *system* reasons about; this answers *what does the config hold*, so a rung added to
 /// `intensification_ladder.json` is in the catalog — and therefore on the wire and in the client's
 /// ladder — with no code edit. That is not hypothetical here: the minerals arc's `mine` is already
@@ -500,7 +496,7 @@ pub fn deposit_payoff(standing: &RungStanding, ladder: &LadderConfig) -> RungExt
         interpolate(standing, |rung| {
             pick(
                 ladder
-                    .rung(rung)
+                    .rung(rung.id)
                     .extraction_payoff
                     .as_ref()
                     .expect("validate requires an extraction_payoff on every deposit rung"),
@@ -782,7 +778,7 @@ pub fn working_default_kit(
     source: &DepositSource,
 ) -> crate::equipment_config::KitChoice {
     let rung = source.rung();
-    equipment.extract_default_kit(rung.branch(), &rung.wire_key())
+    equipment.extract_default_kit(rung.branch, &rung.wire_key())
 }
 
 /// **THE `extract` KITS A CREW ON THIS WORKING MAY BE SENT WITH** — the roster's take kits for its
@@ -792,7 +788,7 @@ pub fn working_offered_kits(
     equipment: &crate::equipment_config::EquipmentConfig,
     source: &DepositSource,
 ) -> Vec<crate::equipment_config::KitChoice> {
-    equipment.deposit_kits_for(source.rung().branch())
+    equipment.deposit_kits_for(source.rung().branch)
 }
 
 /// **THE GEAR A PROSPECTIVE CREW WORKS `rung` WITH** — the one ration every deposit quote is armed
@@ -829,7 +825,7 @@ pub fn prospective_deposit_gear(
     take_hands: f32,
     claim: f32,
     band_kit: &crate::components::BandEquipment,
-    rung: RungKey,
+    rung: RungId,
     carry: &DepositCarry,
     keeping: &[(String, f32)],
 ) -> ProspectiveCrew {
@@ -854,7 +850,7 @@ pub fn prospective_deposit_gear(
         band_kit,
         budget.share_for_prospective(band_kit, equipment),
     );
-    let gear = equipment.deposit_gear(&coverage, band_kit, rung.branch(), Some(&key));
+    let gear = equipment.deposit_gear(&coverage, band_kit, rung.branch, Some(&key));
     ProspectiveCrew {
         lift: carry.lift(equipment, &coverage, band_kit, gear.take),
         kit_workers_holding: coverage.workers_holding_whole_kit(),
@@ -886,9 +882,9 @@ pub fn deposit_useful_take_hands(
         floor,
     );
     let hand = equipment.one_equipped_hand(kit, band_kit);
-    let held = working.standing().held_key();
+    let held = working.standing().held;
     let tools = equipment
-        .deposit_gear(&hand, band_kit, held.branch(), Some(&held.wire_key()))
+        .deposit_gear(&hand, band_kit, held.branch, Some(&held.wire_key()))
         .take;
     let lift = carry.map_or_else(
         || CrewLift::tools_only(tools),
@@ -979,7 +975,7 @@ pub fn next_rung_take_for(
     if workers == NO_CREW_ON_THE_DEPOSIT {
         return NO_TAKE_THIS_TURN;
     }
-    let Some(next) = working.rung().above() else {
+    let Some(next) = ladder.above_id(working.rung()) else {
         return NO_TAKE_THIS_TURN;
     };
     let Some(payoff) = ladder.rung(next).extraction_payoff else {
@@ -987,7 +983,7 @@ pub fn next_rung_take_for(
     };
     let mut raised = working.clone();
     let (base, width) = deposit_rung_span(next, ladder);
-    raised.set_ladder_position(base + width, ladder, next.branch());
+    raised.set_ladder_position(base + width, ladder, next.branch);
     raised.upkeep_demanded = None;
     let keeping = crew_keeping_issue(
         equipment, band_kit, &raised, ground, config, ladder, workers,
@@ -1043,7 +1039,7 @@ pub const USEFUL_CUTTERS_BARREN: u32 = 1;
 #[allow(clippy::too_many_arguments)] // the room, the rung, the coverage and the two rate sources
 pub fn deposit_crew_needed(
     room: f32,
-    held: RungKey,
+    held: RungId,
     payoff: &RungExtractionPayoff,
     reach: &crate::equipment_config::KitCoverage,
     equipment: &crate::equipment_config::EquipmentConfig,
@@ -1054,7 +1050,7 @@ pub fn deposit_crew_needed(
     let held_key = held.wire_key();
     let per_hand = |kit: &crate::equipment_config::KitChoice| {
         let cut = payoff.yield_per_worker_turn
-            + equipment.deposit_take_per_worker(kit, band_kit, held.branch(), Some(&held_key));
+            + equipment.deposit_take_per_worker(kit, band_kit, held.branch, Some(&held_key));
         carry.map_or(cut, |carry| {
             cut.min(carry.crew_carry(
                 equipment.hunt_per_worker_biomass_capacity(carry.haul_baseline, kit, band_kit),
@@ -1112,7 +1108,14 @@ pub fn useful_cutters(
     let mut working = deposits
         .source(*tile, material)
         .cloned()
-        .unwrap_or_else(|| DepositSource::opening(*tile, material, capacity, branch));
+        .unwrap_or_else(|| {
+            DepositSource::opening(
+                *tile,
+                material,
+                capacity,
+                RungStanding::unstarted_on(ladder, branch),
+            )
+        });
     renew_deposit(&mut working, ground, config, ladder);
     let payoff = deposit_payoff(working.standing(), ladder);
     let room = deposit_reachable(
@@ -1362,7 +1365,7 @@ pub fn deposit_measure(source: &DepositSource, ground: &Tile, config: &Extractio
 /// exactly nothing — `plant:wild` and `route:path`'s own reading, and what makes the floor free.
 pub fn deposit_upkeep_demand(source: &DepositSource, measure: f32, ladder: &LadderConfig) -> f32 {
     interpolate(&source.standing, |rung| {
-        ladder.rung(rung).upkeep_demand(measure)
+        ladder.rung(rung.id).upkeep_demand(measure)
     })
 }
 
@@ -1378,11 +1381,11 @@ pub fn deposit_keeping_basis(source: &DepositSource, measure: f32, ladder: &Ladd
 /// **THE RUNG AT RISK ON THIS WORKING** — the newest rung carrying work, which is the rung a decay
 /// eats and whose grace and rot rate govern. `routes::road_at_risk_rung`'s twin, and one helper for
 /// the same reason: the bill, the grace and the bleed must not read different rungs.
-pub fn deposit_at_risk_rung(standing: &RungStanding) -> RungKey {
+pub fn deposit_at_risk_rung(standing: &RungStanding) -> RungId {
     standing
-        .raising_key()
+        .raising
         .filter(|_| standing.banked > crate::intensification::NO_RUNG_WORK_BANKED)
-        .unwrap_or(standing.held_key())
+        .unwrap_or(standing.held)
 }
 
 /// **WHAT THIS WORKING'S METER WILL LOSE ON THE NEXT DECAY PASS**, in work units — the term a build
@@ -1455,7 +1458,12 @@ pub fn deposit_build_fraction(source: &DepositSource, ladder: &LadderConfig) -> 
     let at_risk = deposit_at_risk_rung(standing);
     let span = deposit_rung_span(at_risk, ladder);
     build_fraction(
-        rung_work_done(*standing, at_risk, source.ladder_position(), span),
+        rung_work_done(
+            *standing,
+            ladder.rung(at_risk),
+            source.ladder_position(),
+            span,
+        ),
         span.1,
     )
 }
@@ -1651,6 +1659,7 @@ impl DepositRegistry {
         material: &str,
         ground: &Tile,
         config: &ExtractionConfig,
+        ladder: &LadderConfig,
     ) -> Option<&mut DepositSource> {
         let capacity = tile_deposit_capacity(config, material, ground);
         if capacity <= NO_DEPOSIT {
@@ -1660,7 +1669,14 @@ impl DepositRegistry {
         Some(
             self.sources
                 .entry(Self::key(tile, material))
-                .or_insert_with(|| DepositSource::opening(tile, material, capacity, branch)),
+                .or_insert_with(|| {
+                    DepositSource::opening(
+                        tile,
+                        material,
+                        capacity,
+                        RungStanding::unstarted_on(ladder, branch),
+                    )
+                }),
         )
     }
 
@@ -1820,18 +1836,21 @@ pub fn projected_working(
     material: &str,
     ground: &Tile,
     config: &ExtractionConfig,
+    ladder: &LadderConfig,
 ) -> Option<DepositSource> {
     let capacity = tile_deposit_capacity(config, material, ground);
     if capacity <= NO_DEPOSIT {
         return None;
     }
     let branch = deposit_branch(config, material)?;
-    Some(
-        registry
-            .source(tile, material)
-            .cloned()
-            .unwrap_or_else(|| DepositSource::opening(tile, material, capacity, branch)),
-    )
+    Some(registry.source(tile, material).cloned().unwrap_or_else(|| {
+        DepositSource::opening(
+            tile,
+            material,
+            capacity,
+            RungStanding::unstarted_on(ladder, branch),
+        )
+    }))
 }
 
 /// ⛔ **ONE WORKING, STEPPED FORWARD A TURN AT A TIME — REGROW FIRST, THEN TAKE.** The deposit web's
@@ -1999,7 +2018,7 @@ pub fn advance_deposits(
             source.neglect_turns = NEGLECT_NONE;
         }
         // ## 2 — the bleed.
-        let branch = source.standing.held_key().branch();
+        let branch = source.standing.held.branch;
         let at_risk = deposit_at_risk_rung(&source.standing);
         let decay = ladder
             .rung(at_risk)
@@ -2010,12 +2029,17 @@ pub fn advance_deposits(
             source.set_ladder_position(bled, &ladder, branch);
             // **TWO EDGES, TWO IMPORTANCES** (`intensification::rung_decay_edges`).
             let mut edges = crate::intensification::rung_decay_edges(
+                &ladder,
                 branch,
                 was,
                 source.ladder_position(),
-                |rung| deposit_rung_span(rung, &ladder),
+                |rung| deposit_rung_span(rung.rung_id(), &ladder),
             );
-            crate::intensification::settle_achieved_losses(&mut edges, &mut source.peak_rung);
+            crate::intensification::settle_achieved_losses(
+                &ladder,
+                &mut edges,
+                &mut source.peak_rung,
+            );
             if let Some(log) = event_log.as_deref_mut() {
                 if !edges.is_empty() {
                     let candidates: Vec<_> = bands
@@ -2053,7 +2077,7 @@ pub fn advance_deposits(
                             tick.as_deref().map_or(0, |tick| tick.0),
                             faction,
                             crate::intensification::site_band_for(&candidates, faction),
-                            |_| crate::resources::CommandEventKind::Extraction,
+                            &ladder,
                             source.tile,
                             source.ladder_position(),
                             &edges,

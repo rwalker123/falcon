@@ -23,6 +23,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::prelude::Entity;
 use bevy::MinimalPlugins;
+use core_sim::shipped;
 
 use core_sim::{
     advance_graze_regrowth, advance_herd_grazing, advance_herds, advance_husbandry,
@@ -189,6 +190,7 @@ fn seat_pen(app: &mut App, tile: UVec2, cap: f32, biomass: f32) -> String {
         FODDER_RATE,
         WILD_R,
         PEN_BODY_MASS,
+        shipped::root_standing(shipped::animal()),
     );
     herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
     assert!(

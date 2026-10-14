@@ -169,6 +169,7 @@ pub fn drive_engage_multiplier(
 mod tests {
     use super::*;
     use crate::fauna_config::SizeClass;
+    use crate::ladder_ids::shipped;
 
     const HEAD: f32 = 1.0;
     const GAIN: f32 = 0.5;
@@ -190,6 +191,7 @@ mod tests {
             0.0,
             0.04,
             20.0,
+            shipped::root_standing(shipped::animal()),
         );
         herd.roam = roam;
         herd.step_index = step_index;

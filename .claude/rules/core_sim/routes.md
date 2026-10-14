@@ -150,16 +150,16 @@ top of `FREE_FLOOR_TOP_RUNG` — and no further**, capped in `advance_roads`.
 `!= path`. Its one consumer, `Road::grants_sight`, reasons from *"paying the upkeep IS the
 presence"*, so a free trail must light nothing however worn it is. `FREE_FLOOR_TOP_RUNG` and
 `FIRST_BUILT_RUNG` are pinned adjacent by `the_free_floor_and_the_first_built_rung_are_adjacent`,
-because `RungKey::above` is not `const`.
+because walking the ladder is not `const`.
 
-### ⛔ `RungBranch::is_crew_built` IS DELETED, AND ITS REPLACEMENT IS FINER
+### ⛔ `is_crew_built` IS DELETED, AND ITS REPLACEMENT IS FINER
 
 It answered *"does a band's `builders` pool raise this branch's rungs"* — `false` for `Route` alone.
 With `grade` and `pave` on the builders' pool the branch is **no longer uniformly crew-free**, so a
 branch-level answer is the wrong grain and would be wrong for half the rungs it covered.
 
 ***"Does this rung declare a `verb`"*** is the same question at the grain that can answer it, and
-every former caller was asking about a **rung**: `RungDef::verb` / `RungKey::builder_verb`. The
+every former caller was asking about a **rung**: `RungDef::verb`. The
 `debug_assert` inside `BuildersGear::on` went with it, and the branch gained a real (deliberately
 empty) gear reading — see "The build" below.
 
@@ -559,7 +559,7 @@ are the dials, and **13e tunes them** — the pass adds no lever of its own.
 
 ## The build — `grade` and `pave` are TILE commands on the builders' pool
 
-`grade <faction> <band> <x> <y>` → `route:dirt_road`. `pave <faction> <band> <x> <y>` →
+`build grade <faction> <band> <x> <y>` → `route:dirt_road`. `build pave <faction> <band> <x> <y>` →
 `route:paved_road`. `cultivate`/`sow`'s grammar **plus a band token**, and that token is the one
 structural difference: a patch's keeper is whoever is already foraging it, and **a road has no take
 row at all**, so who will keep the tile has to be said out loud.
@@ -818,9 +818,9 @@ whose output scales with people standing there, so a work row with a stepper is 
 **The pool was never the problem — the automatic billing was.** With the free floor free and `grade`
 the only way onto a paid rung, every road a band pays for is one it chose by typing a command. So
 `Roadwork` covers **the roads that band is the keeper of**, and the per-road choice is exercised
-with `abandon <faction> road <x> <y>`, which puts down the road alone (keeper and queue entry) and
+with `abandon <faction> route <x> <y>`, which puts down the road alone (keeper and queue entry) and
 leaves a patch on the same tile standing; a bare-tile `abandon <faction> <x> <y>` puts down both.
-`unqueue <faction> road <x> <y>` withdraws a queued `grade` / `pave` and leaves the keeper, and
+`unqueue <faction> route <x> <y>` withdraws a queued `grade` / `pave` and leaves the keeper, and
 `build_priority` / `build_order` reach the queued road build by the same address
 (`docs/plan_site_crews.md` §2.4). It is the **one band-level keeping pool left**: the food webs' and the deposits'
 keeping moved onto each site's own crew (`docs/plan_site_crews.md`), because a patch, a herd and a
@@ -971,7 +971,7 @@ you seen that tile"*. It **fails closed** on an absent faction map.
 | Field | What it is |
 |---|---|
 | `tileX` / `tileY` | **the row's identity**, and what replaced the retired `RouteId` — with one record per tile there is nothing left for a separate id to name |
-| `rung` | the rung it **holds**, `RungKey::wire_key`. **This string is the bool**; a rung is never inferred from the float beside it |
+| `rung` | the rung it **holds**, `RungId::wire_key`. **This string is the bool**; a rung is never inferred from the float beside it |
 | `buildFraction` | the meter on the rung being **raised**, through `routes::road_build_fraction` → `intensification::rung_work_done` / `build_fraction` |
 | `hasKeeper` / `keeperBandId` | **whose job this tile is.** Read the bool first — `0` is a real `BandId`. `false` across the whole free floor, which is the commonest road in the game |
 | `keeperRemoteness` | what distance did to the price, as a multiple — the only way a client can explain a bill larger than the rung says |
@@ -1014,10 +1014,10 @@ carrying no faction and no tile — and both are per-world constants, diffed who
 ⛔ **EVERY FIELD BUT ONE IS DERIVED FROM THE RUNG'S OWN RECORD; NOTHING IS RESTATED.** That is the whole point
 of publishing it at all: a rung added to the config appears in the client's ladder with **no client
 edit and no schema edit**, the same promise `ladderKnowledge` makes for the knowledge screen.
-`routes::route_rungs_in_climb_order` walks `ladder.rungs` — **not `RungKey::ALL`** — so a rung the
+`routes::route_rungs_in_climb_order` walks `ladder.rungs` — so a rung the
 coded climb has never heard of is in the catalog, and `RungDef::wire_key` /
 `RungDef::requires_rung_wire_key` answer the key off the **record** for the same reason
-(`RungKey::wire_key` answers for the rungs a *system* names; the two agree by construction).
+(the same `RungId::wire_key` the rung publishes).
 
 | Field | Reading |
 |---|---|

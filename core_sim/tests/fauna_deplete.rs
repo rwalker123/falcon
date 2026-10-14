@@ -9,6 +9,7 @@
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::MinimalPlugins;
+use core_sim::shipped;
 
 use core_sim::hunt_escapement_ceiling;
 use core_sim::{
@@ -458,7 +459,7 @@ fn deplete_hunt_does_not_domesticate() {
         .find(&herd)
         .map(|h| {
             h.rung_work_done(
-                core_sim::RungKey::AnimalPastoral,
+                shipped::animal_pastoral(),
                 &core_sim::LadderConfig::builtin(),
             )
         })

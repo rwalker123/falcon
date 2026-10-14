@@ -31,6 +31,7 @@ fn equipment_with_hunt_carry(rate: f32) -> Arc<core_sim::EquipmentConfig> {
     )
 }
 
+use core_sim::shipped;
 use std::sync::Arc;
 
 use bevy::app::App;
@@ -2275,7 +2276,7 @@ fn a_shed_assignment_is_announced_and_its_declaration_goes_with_it() {
     assert!(
         allocation.enqueue_build(
             source.clone(),
-            core_sim::BuildJob::Rung(core_sim::Improvement::Tame)
+            core_sim::BuildJob::Climb(shipped::animal_pastoral())
         ),
         "fixture: the band works the herd it declares a Tame on"
     );

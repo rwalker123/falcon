@@ -25,6 +25,7 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::MinimalPlugins;
+use core_sim::shipped;
 
 use core_sim::{
     advance_labor_allocation, build_test_app, hunt_engage_workers, hunt_haul_workers,
@@ -33,13 +34,12 @@ use core_sim::{
     CombatConfigHandle, CommandEventLog, CreaturesConfigHandle, CultureManager,
     DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfig, FaunaConfigHandle,
     FloraConfigHandle, ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap,
-    HerdRegistry, HerdTelemetry, HuntYield, HuntingParty, Improvement, LaborAllocation,
-    LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets,
-    MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, SimulationConfig,
-    SimulationTick, SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    SourcePriority, StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
-    TileRegistry, WellbeingConfigHandle, FOOD, MSY_BIOMASS_FRACTION, NO_IMPROVEMENT_UNDERWAY,
-    STRIP_IT_BARE,
+    HerdRegistry, HerdTelemetry, HuntYield, HuntingParty, LaborAllocation, LaborAssignment,
+    LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle,
+    MoraleCause, PopulationCohort, ResidentBand, SimulationConfig, SimulationTick, SnapshotHistory,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SourcePriority, StartLocation,
+    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, TileRegistry, VerbId,
+    WellbeingConfigHandle, FOOD, MSY_BIOMASS_FRACTION, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
 };
 
 /// Four depths on the intensity dial. Every one of them must pay the species' product vector; none
@@ -682,7 +682,7 @@ fn spawn_resident_crew(
     fauna_id: &str,
     floor: f32,
     workers: u32,
-    improvement: Option<Improvement>,
+    improvement: Option<VerbId>,
 ) -> bevy::prelude::Entity {
     // The builders pool this fixture stands up: the take crew's count when a verb is declared, and
     // nobody at all when there is nothing queued for them to raise.
@@ -769,7 +769,9 @@ fn spawn_resident_crew(
                 build_queue: improvement
                     .map(|declared| core_sim::BuildQueueEntry {
                         source: core_sim::BuildSource::Herd(fauna_id.to_string()),
-                        declared: core_sim::BuildJob::Rung(declared),
+                        declared: core_sim::BuildJob::Climb(core_sim::shipped::rung_of_verb(
+                            declared,
+                        )),
                         priority: core_sim::SourcePriority::default(),
                     })
                     .into_iter()
@@ -845,7 +847,7 @@ fn precommit_food_building(
     id: &str,
     policy: f32,
     workers: u32,
-    _improvement: Option<Improvement>,
+    _improvement: Option<VerbId>,
 ) -> f32 {
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
     let labor = app.world.resource::<LaborConfigHandle>().get();
@@ -1113,8 +1115,8 @@ fn the_forecast_equals_the_paid_take_with_a_build_in_flight_at_every_floor() {
         for floor in EXTRACTIVE {
             for improvement in [
                 NO_IMPROVEMENT_UNDERWAY,
-                Some(Improvement::Tame),
-                Some(Improvement::Corral),
+                Some(shipped::tame()),
+                Some(shipped::corral()),
             ] {
                 for crew in [LABOR_BOUND_CREW, UNBOUNDED_CREW, HAUL_THE_WHOLE_HERD_CREW] {
                     let (mut app, id, pos) = headless_with_species(species);
@@ -1175,7 +1177,7 @@ fn the_forecast_equals_the_paid_take_with_a_build_in_flight_at_every_floor() {
             exported_food(&app, band)
         };
         let harvesting = take(NO_IMPROVEMENT_UNDERWAY);
-        let taming = take(Some(Improvement::Tame));
+        let taming = take(Some(shipped::tame()));
         assert!(
             harvesting > 0.0,
             "floor {floor}: the harness must actually take something"

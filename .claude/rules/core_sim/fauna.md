@@ -1225,7 +1225,7 @@ elsewhere). Seeded per-turn from `map_seed ^ tick ^ salt` (deterministic under r
 `corral_progress`, each with its own stamped `*_cost` — is **gone**; both webs are now on the one
 position (`intensification.md` → "The storage: ONE position, and a STAMPED standing beside it").
 - *Accrual — the **`Tame`** verb, not a side effect of hunting*: in `advance_labor_allocation`
-  (Population), a Hunt assignment carrying **`Improvement::Tame`** adds the
+  (Population), a Hunt assignment carrying the **`tame`** verb adds the
   crew's own output in work units against `work_cost × the species' taming_cost_multiplier`, for the acting faction
   (sets `owner` on first accrual; only the owner accrues; gated on **Herding** + the species'
   husbandry ceiling + something standing above the crew's floor); the work lands on the herd's one

@@ -9,6 +9,7 @@
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::MinimalPlugins;
+use core_sim::shipped;
 
 use bevy::math::UVec2;
 
@@ -515,6 +516,7 @@ fn seat(app: &mut App, id: &str, species: &str, pos: UVec2, biomass: f32, cap: f
         0.0,
         r,
         30.0,
+        shipped::root_standing(shipped::animal()),
     ));
 }
 

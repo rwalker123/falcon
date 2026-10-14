@@ -144,100 +144,10 @@ message ForageTileCommand {
   optional uint64 band_id = 5;
 }
 
-// The intensification ladder's animal rung-2 verb: set the Tame policy on the bands already hunting
-// this herd (needs Herding knowledge, earned by Sustain-hunting a Thriving herd, and a species whose
-// husbandry_ceiling allows domestication). Taming pays a reduced take while the herd is gentled,
-// then the herd becomes pastoral livestock. Replaces the retired DomesticateCommand early-claim,
-// which let the player skip that investment.
-message TameCommand {
-  uint32 faction_id = 1;
-  string herd_id = 2;
-  // 3 was `workers`, THE BUILD'S OWN CREW, retired with the per-source build crew
-  // (docs/plan_standing_upkeep.md section 2.5). A VERB DECLARES; IT DOES NOT STAFF: this appends an
-  // entry to the band's ordered build queue, and the hands stand on the band-level `builders` role
-  // (`assign_labor <faction> <band> builders <n>`), whose whole output goes on the HEAD of that
-  // queue. Withdraw a declaration with `unqueue`; put the whole source down with `abandon`.
-  reserved 3;
-  reserved "workers";
-}
-
-message CultivateCommand {
-  uint32 faction_id = 1;
-  uint32 target_x = 2;
-  uint32 target_y = 3;
-  // 4 was `workers` - see TameCommand for why every build verb lost its crew.
-  reserved 4;
-  reserved "workers";
-}
-
-// The intensification ladder's plant rung-3 verb: set the Sow policy on the bands already foraging
-// this tile (needs Seed Selection knowledge, earned by working tended patches). Sow PLACES a food
-// source — it builds a Field even on a tile that carries no forage site at all, because seed travels.
-// But rung 3 carries seed, NOT water or fertilizer, so the land must already do the fertilizing: only
-// ground that is ALREADY VERY FERTILE (min_forage_capacity 195 — the delta/floodplain/alluvial class)
-// AND NEAR FRESH WATER will take it (the plant:field rung's site_requirement). That is ~46 of 4160
-// tiles on a standard map — merely bearing some food is nowhere near enough. Thin or dry ground waits
-// for rung 4 (Worked Land). The refusal says which: too_poor / too_dry / too_poor_and_too_dry.
-message SowCommand {
-  uint32 faction_id = 1;
-  uint32 target_x = 2;
-  uint32 target_y = 3;
-  // 4 was `workers` - see TameCommand for why every build verb lost its crew.
-  reserved 4;
-  reserved "workers";
-}
-
-// The intensification ladder's animal rung-3 verb: pen the domesticated herd standing on the target
-// tile into a fixed corral. Needs PENNING knowledge — earned by working an already-TAMED (pastoral)
-// herd, not by hunting a wild one: you learn to pen by keeping. (Herding gates `tame`, and only
-// `tame` — one knowledge per rung-transition.) A corralled herd stops roaming and pays its keeper
-// place-local.
-message CorralCommand {
-  uint32 faction_id = 1;
-  uint32 target_x = 2;
-  uint32 target_y = 3;
-  // 4 was `workers` - see TameCommand for why every build verb lost its crew.
-  reserved 4;
-  reserved "workers";
-}
-
-// The intensification ladder's ROUTE rung-3 verb: grade a roadbed on ONE TILE, and make that tile's
-// road the ordering band's job. Needs ROADBUILDING knowledge - earned by a trail carrying traffic,
-// which is the practice on this branch.
-//
-// *** A TILE COMMAND, IN cultivate/sow's OWN GRAMMAR, because a road is a PER-TILE improvement. ***
-// A path object cannot be half-maintained: there was no way to say "these people look after this end
-// and those people look after that end", which is the ordinary case the moment two camps sit at
-// either end of a long road. So each tile carries its own rung, its own meter and its own keeper.
-//
-// *** IT NAMES A BAND, unlike `cultivate`. *** A patch's keeper is whoever is already foraging it; a
-// road has no take row at all, so the band that will keep it has to be said out loud. ONE KEEPER PER
-// TILE, NEVER A SHARE - which is what makes "one band keeps half the tiles between two camps and
-// another the other half" the representable state and co-payment the unrepresentable one.
-//
-// Re-issuing it on a road nobody keeps is ADOPTION, and deliberately not a second verb. It is raised
-// by the named band's `builders` pool at the head of that band's queue, so it names no workers.
-message GradeCommand {
-  uint32 faction_id = 1;
-  uint64 band_id = 2;
-  uint32 target_x = 3;
-  uint32 target_y = 4;
-}
-
-// The route rung-4 verb: pave a graded tile. GradeCommand's twin one rung up, on the same terms and
-// naming a keeper the same way. Needs PAVING knowledge - earned by KEEPING a dirt road - and refuses
-// a tile that is not a dirt road yet.
-message PaveCommand {
-  uint32 faction_id = 1;
-  uint64 band_id = 2;
-  uint32 target_x = 3;
-  uint32 target_y = 4;
-}
-
 // Grazing 2d-beta: grow the fenced footprint of a built pen by one ring (pen_radius += 1), worked off
 // over turns by the keeper band's labor (the corral build ladder). A ring rides the SAME animal:pen
 // rung as the initial build, so it takes that rung's gate too: needs PENNING knowledge (not Herding —
-// see CorralCommand), an owned penned herd whose corral tile is (target_x, target_y), pen_radius below
+// see the `corral` verb), an owned penned herd whose corral tile is (target_x, target_y), pen_radius below
 // the configured max, and no extension already in flight.
 message ExtendPenCommand {
   uint32 faction_id = 1;
@@ -245,7 +155,7 @@ message ExtendPenCommand {
   uint32 target_y = 3;
   // 4 was `workers`, THE RING'S OWN CREW. A ring rides the same animal:pen rung as the pen it
   // widens, so it waits in the same queue and is funded by the same `builders` pool - see
-  // TameCommand.
+  // BuildRungCommand.
   reserved 4;
   reserved "workers";
 }
@@ -266,60 +176,30 @@ message SetHerdOutputCommand {
   float fraction = 3;
 }
 
-// ⛔ THE TWO DEPOSIT BRANCHES' THREE TILE VERBS - `fell`, `coppice` and `quarry`
-// (docs/plan_extraction.md section 4). Each declares a rung on the working at (target_x, target_y)
-// in `material`: an entry on the build queue of every band of the faction that already has an
-// `extract` row there, raised by that band's `builders` pool at the head of the queue - so none of
-// them names workers.
+// ONE COMMAND FOR EVERY BUILD VERB - `build <verb> ...` (docs/plan_standing_upkeep.md section 2.5,
+// issue #175). It replaces the nine per-verb messages (tame, cultivate, sow, corral, grade, pave,
+// fell, coppice, quarry): the verbs are CONFIG now (`intensification_ladder.json` -> rungs[].verb),
+// so a rung added by a mod needs no new message, and the wire carries the verb as a string the
+// server resolves against the ladder it loaded. sim_runtime stays config-free: it checks shape
+// only, never whether the verb exists.
 //
-// *** IT IS cultivate/sow's GRAMMAR, NOT grade/pave's, AND THE DIFFERENCE IS THE KEEPER. *** A road
-// has no work row at all, so the band that will keep it has to be a token; a WORKING belongs to a
-// camp exactly as a patch does (extraction.md: "the working belongs to a CAMP, like a patch"), and
-// its keeper is whoever already cuts or digs it. So there is no band token, and the verb reaches
-// every band working the source - which is also why several bands can quote one working's countdown.
-//
-// *** BUT IT NAMES A MATERIAL, WHICH NO OTHER TILE VERB DOES. *** The registry key is
-// (tile, material) because one hex can hold two workings - a wooded highland holds timber AND rock -
-// so a command carrying only the tile says which of them neither. It is the same token
-// AssignLaborCommand's `extract` role carries on `species`, and it means the same thing there:
-// which of the things on this ground are you here for.
-//
-// One message per verb rather than one carrying an improvement string - GradeCommand and
-// PaveCommand's own arrangement, so the dispatch names the rung it raises and a caller cannot get
-// it wrong.
-
-// Forestry rung 2: open a felling working on a wood. Needs WOODCRAFT knowledge, earned by gathering
-// deadfall. It is the rung at which over-cutting becomes possible, because the take is finally fast
-// enough to outpace what the wood puts back.
-message FellCommand {
+// WHAT THE SOURCE FIELDS MEAN follows the verb's SOURCE KIND, which the server reads off the ladder.
+// A patch or a working names target_x / target_y (and `material` for a working) and no band: the
+// keeper is whoever already works the source, and the verb reaches every such band. A herd names
+// herd_id and no band, for the same reason. A road (or any kind with no work row) names
+// target_x / target_y AND band_id: the band that will keep the tile has to be said out loud, one
+// keeper per tile, never a share. `branch` names the ladder branch when the verb alone does not.
+// A band the verb's kind refuses, or a missing one it requires, is refused by the server with a
+// typed rejection event, as is a verb the ladder does not define.
+message BuildRungCommand {
   uint32 faction_id = 1;
-  uint32 target_x = 2;
-  uint32 target_y = 3;
-  // The deposit's material key (`extraction.json` -> `deposits`), e.g. "wood". REQUIRED - see the
-  // block comment above for why a tile alone cannot name a working.
-  string material = 4;
-}
-
-// Forestry rung 3: bring a wood under management. Needs CONSERVATIONISM knowledge, earned by
-// FELLING - the first rung on either branch at which a wood can be ruined. It raises the deposit's
-// own regrowth and never its capacity: more per turn for ever, not more per turn.
-message CoppiceCommand {
-  uint32 faction_id = 1;
-  uint32 target_x = 2;
-  uint32 target_y = 3;
-  string material = 4;
-}
-
-// Extraction rung 2: open a cut working face. Needs QUARRYING knowledge, earned by picking loose
-// stone. What it buys is REACH and not rate - a finite deposit has no regrowth to raise - and it is
-// the one rung on either branch that asks something of the ground: the tile's own capacity for this
-// material must clear the rung's `min_deposit_capacity`, which is the whole of "you cannot quarry
-// just anywhere".
-message QuarryCommand {
-  uint32 faction_id = 1;
-  uint32 target_x = 2;
-  uint32 target_y = 3;
-  string material = 4;
+  optional uint64 band_id = 2;
+  string verb = 3;
+  optional uint32 target_x = 4;
+  optional uint32 target_y = 5;
+  optional string herd_id = 6;
+  optional string material = 7;
+  optional string branch = 8;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -601,8 +481,13 @@ message AbandonCommand {
   // A WORKING (docs/plan_site_crews.md 2.4): with the tile pair, names the deposit's material - one
   // hex can hold two workings, so the tile alone names neither. Absent = the tile's forage patch.
   optional string material = 5;
-  // A ROAD: with the tile pair, names the tile's road rather than its patch.
-  bool road = 6;
+  // 6 was `road`, a bool: the road ladder is one branch among several now, so the source names its
+  // BRANCH (a ladder branch id from intensification_ladder.json). Never reuse the number.
+  reserved 6;
+  reserved "road";
+  // With the tile pair, names the tile's source on THAT branch (the road branch's per-tile road)
+  // rather than the tile's patch. Absent = the tile's forage patch.
+  optional string branch = 7;
 }
 
 // PUT DOWN A WORKING - `abandon`'s deposit twin (issue #650). `abandon <f> <x> <y> <material>` is
@@ -651,8 +536,13 @@ message UnqueueCommand {
   // A WORKING (docs/plan_site_crews.md 2.4): with the tile pair, names the deposit's material - one
   // hex can hold two workings, so the tile alone names neither. Absent = the tile's forage patch.
   optional string material = 5;
-  // A ROAD: with the tile pair, names the tile's road rather than its patch.
-  bool road = 6;
+  // 6 was `road`, a bool: the road ladder is one branch among several now, so the source names its
+  // BRANCH (a ladder branch id from intensification_ladder.json). Never reuse the number.
+  reserved 6;
+  reserved "road";
+  // With the tile pair, names the tile's source on THAT branch (the road branch's per-tile road)
+  // rather than the tile's patch. Absent = the tile's forage patch.
+  optional string branch = 7;
 }
 
 // Move one band's build-queue entry to a 0-based position, clamped to the queue's length.
@@ -671,9 +561,12 @@ message BuildOrderCommand {
   // (`extraction.json` -> `deposits`) - one hex can hold two workings, so the tile alone names
   // neither. Absent = the tile's forage patch.
   optional string material = 7;
-  // A ROAD BUILD: with the tile pair, names the road's queue entry rather than the tile's patch.
-  // A road has no labor row, so `work_priority` refuses it by name.
-  bool road = 8;
+  // 8 was `road`, a bool - see AbandonCommand.branch. Never reuse the number.
+  reserved 8;
+  reserved "road";
+  // With the tile pair, names the queue entry on THAT branch (a road branch build has no labor row,
+  // so `work_priority` refuses it by name) rather than the tile's patch. Absent = the patch.
+  optional string branch = 9;
 }
 
 // Mark ONE WORKED ROW of one band with the player's own rank - `high` | `normal` | `low`, defaulting
@@ -699,9 +592,12 @@ message WorkPriorityCommand {
   // (`extraction.json` -> `deposits`) - one hex can hold two workings, so the tile alone names
   // neither. Absent = the tile's forage patch.
   optional string material = 7;
-  // A ROAD BUILD: with the tile pair, names the road's queue entry rather than the tile's patch.
-  // A road has no labor row, so `work_priority` refuses it by name.
-  bool road = 8;
+  // 8 was `road`, a bool - see AbandonCommand.branch. Never reuse the number.
+  reserved 8;
+  reserved "road";
+  // With the tile pair, names the queue entry on THAT branch (a road branch build has no labor row,
+  // so `work_priority` refuses it by name) rather than the tile's patch. Absent = the patch.
+  optional string branch = 9;
 }
 
 // Mark ONE QUEUED BUILD of one band with the player's own BUILD MARK - `high` | `normal` | `low`,
@@ -724,9 +620,12 @@ message BuildPriorityCommand {
   // (`extraction.json` -> `deposits`) - one hex can hold two workings, so the tile alone names
   // neither. Absent = the tile's forage patch.
   optional string material = 7;
-  // A ROAD BUILD: with the tile pair, names the road's queue entry rather than the tile's patch.
-  // A road has no labor row, so `work_priority` refuses it by name.
-  bool road = 8;
+  // 8 was `road`, a bool - see AbandonCommand.branch. Never reuse the number.
+  reserved 8;
+  reserved "road";
+  // With the tile pair, names the queue entry on THAT branch (a road branch build has no labor row,
+  // so `work_priority` refuses it by name) rather than the tile's patch. Absent = the patch.
+  optional string branch = 9;
 }
 
 message UpkeepModeCommand {
@@ -1620,7 +1519,10 @@ message CommandEnvelope {
   //      (docs/plan_crafting_and_materials.md 7, "The queue"): the repeat-until-cleared job is gone,
   //      `bench_enqueue` adds an order and `bench_remove` takes one off (the head's removal is what a
   //      clear used to be).
-  reserved 2, 5, 6, 7, 8, 9, 10, 24, 30, 46, 52, 53, 60, 63;
+  //   37 `cultivate`, 38 `corral`, 40 `tame`, 41 `sow`, 64 `grade`, 65 `pave`, 72 `fell`, 73 `coppice`
+  //   and 74 `quarry` - retired into `build_rung` (issue #175): the verbs are ladder config.
+  reserved 2, 5, 6, 7, 8, 9, 10, 24, 30, 37, 38, 40, 41, 46, 52, 53, 60, 63, 64, 65, 72, 73, 74;
+  reserved "cultivate", "corral", "tame", "sow", "grade", "pave", "fell", "coppice", "quarry";
   reserved "found_camp", "domesticate", "abandon_improvement", "build_kit", "upkeep_kit";
   reserved "set_bench", "clear_bench";
   reserved "heat", "axis_bias", "support_influencer", "suppress_influencer";
@@ -1650,11 +1552,7 @@ message CommandEnvelope {
     MoveBandCommand move_band = 33;
     SendExpeditionCommand send_expedition = 34;
     RecallExpeditionCommand recall_expedition = 35;
-    CultivateCommand cultivate = 37;
-    CorralCommand corral = 38;
     ExtendPenCommand extend_pen = 39;
-    TameCommand tame = 40;
-    SowCommand sow = 41;
     // Field numbers are immutable once released — 40 and 41 are held by `tame` and
     // `sow`, so `answer_fork` takes 42. Never renumber a field that has shipped.
     AnswerForkCommand answer_fork = 42;
@@ -1697,8 +1595,6 @@ message CommandEnvelope {
     BenchPriorityCommand bench_priority = 62;
     // 63 was `upkeep_kit` (RESERVED - retired, see above), so the route branch's two tile verbs
     // take 64-65 (append-only; never renumber).
-    GradeCommand grade = 64;
-    PaveCommand pave = 65;
     // 65 is held by `pave`, so the save-game verbs take 66-68 (append-only; never renumber). The
     // fourth save operation, `list_saves`, is a QueryCommand rather than one of these: it mutates
     // nothing, and the query channel is already the socket's way back.
@@ -1715,9 +1611,6 @@ message CommandEnvelope {
     ClaimSeatCommand claim_seat = 71;
     // 71 is held by `claim_seat`, so the two deposit branches' three tile verbs take 72-74
     // (append-only; never renumber).
-    FellCommand fell = 72;
-    CoppiceCommand coppice = 73;
-    QuarryCommand quarry = 74;
     // 74 is held by `quarry`, so the working's own walk-away takes 75 (append-only; never renumber).
     // It is not a field on `abandon` for the reason its message states: a deposit verb names a tile
     // AND a material, and `abandon` already puts down every holding on its tile.
@@ -1738,5 +1631,7 @@ message CommandEnvelope {
     BenchAutoSkipCommand bench_auto_skip = 83;
     // 83 is held by `bench_auto_skip`, so the stationed party takes 84 (append-only; never renumber).
     StationExpeditionCommand station_expedition = 84;
+    // 85 is the one build verb (issue #175); the nine per-verb numbers it replaces are reserved.
+    BuildRungCommand build_rung = 85;
   }
 }

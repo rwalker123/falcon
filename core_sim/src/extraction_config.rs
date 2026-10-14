@@ -473,6 +473,7 @@ pub fn load_extraction_config_from_env() -> (Arc<ExtractionConfig>, ExtractionCo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ladder_ids::shipped;
 
     /// The two shipped deposits — the materials this arc gives a producer.
     const WOOD: &str = "wood";
@@ -503,10 +504,7 @@ mod tests {
         let wood = config
             .deposit(WOOD)
             .expect("the shipped table carries wood");
-        assert_eq!(
-            wood.branch,
-            crate::intensification::RungBranch::Forestry.to_id()
-        );
+        assert_eq!(wood.branch, shipped::forestry());
         for (terrain, ground) in &wood.by_terrain {
             assert!(
                 ground.regrowth_rate > NEVER_RENEWS,
@@ -516,10 +514,7 @@ mod tests {
         let stone = config
             .deposit(STONE)
             .expect("the shipped table carries stone");
-        assert_eq!(
-            stone.branch,
-            crate::intensification::RungBranch::Extraction.to_id()
-        );
+        assert_eq!(stone.branch, shipped::extraction());
         // **The two populations in one table.** The rock bodies never renew and the scatters all do,
         // and the two do not overlap in size. **That the ladder's threshold falls in the gap** is a
         // separate claim and is asserted separately, against both files at once, by

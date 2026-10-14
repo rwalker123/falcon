@@ -36,6 +36,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::prelude::Entity;
 use bevy::MinimalPlugins;
+use core_sim::shipped;
 
 use core_sim::{
     advance_labor_allocation, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_graze,
@@ -198,6 +199,7 @@ fn seat_pens(app: &mut App, tile: UVec2, pens: &[(&str, f32)]) {
             FODDER_RATE,
             WILD_R,
             PEN_BODY_MASS,
+            shipped::root_standing(shipped::animal()),
         );
         herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
         assert!(

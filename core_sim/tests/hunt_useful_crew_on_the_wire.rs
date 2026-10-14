@@ -26,6 +26,7 @@
 use bevy::app::App;
 use bevy::math::UVec2;
 use bevy::prelude::Entity;
+use core_sim::shipped;
 
 use core_sim::{
     build_test_app, hunt_take_workers, recapture_snapshot_in_place, scalar_from_f32, scalar_one,
@@ -90,6 +91,7 @@ fn probe_herd_at(app: &App, species: &str, biomass: f32, capacity: f32) -> Herd 
         def.fodder_per_biomass,
         def.regrowth_rate.unwrap_or(0.1),
         def.body_mass,
+        shipped::root_standing(shipped::animal()),
     )
 }
 
@@ -1286,13 +1288,17 @@ fn keep_hands_of(app: &App, crew: u32, wear: &BandEquipment) -> f32 {
     let herd = registry
         .find(HERD_ID)
         .expect("the fixture herd is in the registry");
-    if !core_sim::herd_claims_keeping(herd, core_sim::herd_build_verb(herd, None)) {
+    if !core_sim::herd_claims_keeping(
+        herd,
+        shipped::ladder(),
+        core_sim::herd_build_verb(herd, shipped::ladder(), None),
+    ) {
         return core_sim::NO_HANDS;
     }
     core_sim::prospective_keep_hands(
         &EquipmentConfig::builtin(),
         wear,
-        herd.standing().held_key(),
+        herd.standing().held,
         core_sim::herd_keeping_basis(herd, &fauna, &ladder),
         crew,
     )

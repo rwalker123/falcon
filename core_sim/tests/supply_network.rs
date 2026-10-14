@@ -1185,7 +1185,7 @@ fn pooling_links_are_per_band_and_the_span_is_the_networks_longest_link() {
     };
     let (rich_middling, middling_poor) = (distance(rich, middling), distance(middling, poor));
     let membership = app.world.resource::<SupplyNetworkMembership>();
-    let links_of = |band: Entity| -> Vec<(BandId, u32, Option<core_sim::RungKey>)> {
+    let links_of = |band: Entity| -> Vec<(BandId, u32, Option<core_sim::RungId>)> {
         membership
             .pooling_links_of(band)
             .iter()

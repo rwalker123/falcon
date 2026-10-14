@@ -1810,7 +1810,7 @@ pub struct DepositState {
     /// The `extraction.json` deposit this working is on: `wood`, `stone`, and whatever the minerals
     /// arc adds.
     pub material: String,
-    /// **Which LADDER works this deposit** — `"forestry"` or `"extraction"`, `RungBranch`'s wire
+    /// **Which LADDER works this deposit** — `"forestry"` or `"extraction"`, the branch's wire
     /// form. It is **not** what decides the readout; see [`Self::regrowth_rate`].
     pub branch: String,
     /// **What is standing here right now**, in the material's own units — the only *saved* thing
@@ -1882,7 +1882,7 @@ pub struct DepositState {
     /// ⛔ **IT IS NOT [`Self::branch`].** Surface flint and a quarry are the same skill and the same
     /// branch, and only one of them runs out; what differs is the *terrain's* rate, which is this.
     pub regrowth_rate: f32,
-    /// The rung this working **holds**, as `"<branch>:<id>"` (`RungKey::wire_key`). **This string is
+    /// The rung this working **holds**, as `"<branch>:<id>"` (`RungId::wire_key`). **This string is
     /// the bool** — a rung is never to be inferred by thresholding [`Self::build_fraction`], which
     /// is a different rung's meter. [`crate::state::routes::RouteState::rung`] carries the same
     /// rule.

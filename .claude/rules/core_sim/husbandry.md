@@ -950,7 +950,7 @@ aurochs measures **7.02**; exactly 7.000 is not reachable, because a take quanti
 bodies lands on a lattice.
 
 **`pastoral_density` is untouched**, so the pastoral rung does not move: `pen_density` is read only at
-`RungKey::AnimalPen` (`rung_density_gain`). Verified — every wild and pastoral row is byte-identical
+the `enclosed` rung (`rung_density_gain`). Verified — every wild and pastoral row is byte-identical
 across the retune.
 
 ### What each pen is actually limited by, at five keepers
@@ -1238,7 +1238,7 @@ crosses whole units by itself.
 `set_herd_output <faction> <herd_id> <fraction>` (`SetHerdOutputCommand`, `handle_set_herd_output`) is
 modelled on `extend_pen` end to end, with one shape difference: **it names the HERD, not a tile**,
 because `steppe_runner` and `marsh_grazer` carry `husbandry_ceiling: "pastoral"`, can never be penned,
-and have no pen anchor to point at. It queues `BuildJob::SetHerdOutput(RungKey)` — the second entry
+and have no pen anchor to point at. It queues `BuildJob::SetHerdOutput(RungId)` — the second entry
 kind that names no rung verb — and the new fraction lands when the meter completes
 (`Herd::accrue_output_recommit`, resolved by `systems::labor`'s `advance_output_recommit` **after**
 the take, mirroring the ring).
@@ -1390,9 +1390,9 @@ gated, **paid** verb, so both food webs read the same:
 | rung 2 verb | `Cultivate` → tended patch | **`Tame`** → pastoral herd |
 | rung 3 verb | *(`Sow` — a later slice)* | `Corral` → pen |
 
-- **`Improvement::Tame`** (wire key `"tame"`) — **animal-only** (`Improvement::valid_for_hunt`; a
+- **The `tame` verb** (wire key `"tame"`) — **animal-only** (the hunt build validator; a
   Forage assignment carrying it is rejected at its command, exactly as `Corral` is). Since issue #442
-  it is an `Improvement`, not a pressure setting: it rides `LaborAssignment.improvement` **beside**
+  it is a build verb, not a pressure setting: it rides `LaborAssignment.improvement` **beside**
   whatever floor the crew holds, so a herd being tamed is still being hunted at that floor. It emits no
   `huntTripEstimates` row, because an expedition's mission carries a **floor** and therefore
   cannot name it at all.
@@ -1435,8 +1435,8 @@ gated, **paid** verb, so both food webs read the same:
   is still cleared each turn so it can't go stale, but its consumer (the retired decay-sparing) is gone.
   `taming_cost_multiplier` now prices only the `Tame` *job*, never a decay. **Distinct from an ordinary
   hunt at any other floor**: a plain hunt *harvests* a herd; only `Tame` raises the taming meter.
-- **`tame <faction_id> <herd_id>` command** (`handle_tame`; `TameCommand` proto field **40**, its
-  `workers` field `reserved`, `CommandEventKind::Tame`) — **queues the `Tame`** on the bands already
+- **`build tame <faction_id> <herd_id>` command** (`handle_build_rung`; the retired `TameCommand`'s
+  proto field **40** is `reserved`, `CommandEventKind::Tame` is the rung's `feed_channel`) — **queues the `Tame`** on the bands already
   hunting the herd,
   the command form of the client's checkbox (issue #442: the floor beside it is left alone). It **tames nothing outright**. It targets a **herd id**
   (not a tile like `corral`): taming is the verb you reach for on a *roaming* herd, identified by who
@@ -1523,7 +1523,7 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
   both webs now gate rung 2 on the knowledge rung 1 teaches, and rung 3 on the knowledge rung 2
   teaches. One knowledge per transition. See "The knowledge pattern".
 - **The `Corral` improvement — the investment.** In `advance_labor_allocation`'s **Hunt** arm, a herd
-  worked with `Improvement::Corral` (animal-only) in flight costs **the fencing crew the command
+  worked with the `corral` verb (animal-only) in flight costs **the fencing crew the command
   named** — hands not hunting (`docs/plan_standing_upkeep.md` §2.2; the rung's
   `yield_fraction_while_building` is retired, and the keepers beside the build take what they always
   took). `corral_progress` accrues that crew's own output in work units against the rung's
@@ -1598,8 +1598,9 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
 > `build_queue::a_ring_publishes_the_cost_its_progress_completes_at`, which asserts on the encoded
 > snapshot — an arm reading `Herd::pen_extend_cost` in process would pass even with the capture
 > never writing the field.
-- **`corral` command (repurposed)** — `corral <faction> <x> <y>` (`handle_corral`; `CorralCommand`
-  proto field 38 with its `workers` field `reserved`, `CommandEventKind::Corral`) **queues the
+- **`corral` command (repurposed)** — `build corral <faction> <x> <y>` (`handle_build_rung`; the
+  retired `CorralCommand`'s proto field 38 is `reserved`, `CommandEventKind::Corral` is the rung's
+  `feed_channel`) **queues the
   `Corral`** on the band(s) already hunting the herd standing on that tile — the command form of the
   client's checkbox. Since issue #442 it touches the improvement slot **only**: the band's
   stance and crew are untouched by construction. It **pens nothing outright**. Rejections: no herd there / faction

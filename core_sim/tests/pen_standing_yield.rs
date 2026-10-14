@@ -28,6 +28,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::prelude::Entity;
 use bevy::MinimalPlugins;
+use core_sim::shipped;
 
 use core_sim::grid_utils::hex_range_tiles;
 use core_sim::{
@@ -260,6 +261,7 @@ fn seat_herd(app: &mut App, tile: UVec2, species: &str, rung: Rung, fraction: f3
         fodder,
         wild_r,
         body_mass,
+        shipped::root_standing(shipped::animal()),
     );
     match rung {
         Rung::Wild => {}
@@ -917,7 +919,7 @@ fn a_commitment_is_priced_off_the_rung_and_lands_when_its_meter_completes() {
             .husbandry
             .output_recommit_work_fraction;
         ladder
-            .rung(core_sim::RungKey::AnimalPen)
+            .rung(shipped::animal_pen())
             .build_cost(core_sim::RUNG_COST_UNSCALED)
             .expect("the pen rung has a build meter")
             * share
@@ -945,7 +947,7 @@ fn a_commitment_is_priced_off_the_rung_and_lands_when_its_meter_completes() {
         .expect("the fixture keeper keeps its allocation")
         .enqueue_build(
             core_sim::BuildSource::Herd(id.clone()),
-            core_sim::BuildJob::SetHerdOutput(core_sim::RungKey::AnimalPen),
+            core_sim::BuildJob::SetHerdOutput(shipped::animal_pen()),
         );
 
     // One turn stamps the meter with its denominator; the fraction has NOT moved yet.

@@ -26,14 +26,14 @@
 //! is the thing that leaks.
 
 use bevy::prelude::*;
+use core_sim::shipped;
 
 mod faction_support;
 
 use core_sim::{
     patch_carrying_capacity, publish_baseline_snapshot, run_turn, BuildJob, BuildQueueEntry,
-    BuildSource, BuildTurns, ForagePatch, ForageRegistry, Improvement, LaborAllocation,
-    LaborConfigHandle, LadderConfigHandle, PopulationCohort, RungKey, SnapshotHistory,
-    VisibilityLedger,
+    BuildSource, BuildTurns, ForagePatch, ForageRegistry, LaborAllocation, LaborConfigHandle,
+    LadderConfigHandle, PopulationCohort, SnapshotHistory, VisibilityLedger,
 };
 use faction_support::{world_with, HOME, ONE_RIVAL, RIVAL};
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
@@ -242,7 +242,7 @@ fn raise_to_a_field(
 ) {
     let tile_capacity = patch.carrying_capacity;
     // `(base, width)` — the rung is complete at the TOP of its span, which is their sum.
-    let (base, width) = core_sim::plant_rung_span(RungKey::PlantField, ladder);
+    let (base, width) = core_sim::plant_rung_span(shipped::plant_field(), ladder);
     patch.set_ladder_position(base + width, ladder);
     patch.owner = Some(faction);
     patch.species = Some(species.to_string());
@@ -352,7 +352,7 @@ fn a_world_where_both_peoples_farm() -> (App, StagedTiles) {
             for tile in tiles {
                 allocation.build_queue.push(BuildQueueEntry {
                     source: BuildSource::Patch(*tile),
-                    declared: BuildJob::Rung(Improvement::Sow),
+                    declared: BuildJob::Climb(shipped::plant_field()),
                     priority: core_sim::SourcePriority::default(),
                 });
             }

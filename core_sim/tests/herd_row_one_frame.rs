@@ -25,6 +25,7 @@
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
+use core_sim::shipped;
 
 use core_sim::{
     advance_herds, advance_husbandry, build_test_app, recapture_snapshot_in_place,
@@ -214,7 +215,10 @@ fn a_herd_penned_this_turn_publishes_no_heading() {
             .expect("the fixture herd")
             .next_pos = Some(heading);
     }
-    let entries = app.world.resource::<HerdRegistry>().snapshot_entries();
+    let entries = app
+        .world
+        .resource::<HerdRegistry>()
+        .snapshot_entries(shipped::ladder());
     app.world.resource_mut::<HerdTelemetry>().entries = entries;
 
     let roaming = published_row(&mut app, &id);

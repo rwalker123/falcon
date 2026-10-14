@@ -58,7 +58,7 @@ makes an unopened deposit reachable from the client at all. See "The wire" below
 
 ## The two branches, and why they are two
 
-`RungBranch` gains **`Forestry`** and **`Extraction`**, and `ALL_BRANCHES` grows to five — the
+The ladder gains the **`forestry`** and **`extraction`** branches (five in all) — the
 constant exists precisely so every sweep breaks at compile time rather than silently skipping a
 ladder.
 
@@ -591,7 +591,7 @@ would make which one a builder carries an alphabetical accident.
 
 ## The working belongs to a CAMP, like a patch — not to nobody, like a road
 
-This is the one place the arc deliberately does **not** copy `RungBranch::Route`. A road follows no
+This is the one place the arc deliberately does **not** copy the `route` branch. A road follows no
 one and is free to leave, which is why it belongs to no camp. So `BuildSource::Deposit` *is* backed
 by a labor row (`LaborTarget::Extract`), and `holds_build_source` resolves it through that row like a
 patch's.
@@ -612,7 +612,8 @@ wild stand and its row goes.
 
 ## The three verbs — `fell`, `coppice`, `quarry`
 
-`fell <faction> <x> <y> <material>`, and the same shape for the other two. Each **declares**: an
+`build fell <faction> <x> <y> <material>`, and the same shape for the other two (`build coppice`,
+`build quarry`; one `build` verb carries every rung since #175). Each **declares**: an
 entry on the build queue of every band of the faction that already has an `extract` row on
 `(tile, material)`, raised by that band's `builders` pool at the head of the queue — so none of them
 names workers, exactly as no rung verb has since `plan_standing_upkeep.md` §2.5.
@@ -644,16 +645,16 @@ a `fell`. What refuses it is `validate_labor_policy`'s `Extract` arm at the mome
 assigned — absence in `by_terrain` *is* the answer — so a tile holding no wood has nobody on its wood
 for the verb to declare for, and the verb's own rejection names the crew.
 
-> ### ⛔ THE VERBS SHIPPED AS `Improvement` VARIANTS WITH NO COMMAND AT ALL, FOR A WHOLE ARC
+> ### ⛔ THE VERBS SHIPPED AS CODED VARIANTS WITH NO COMMAND AT ALL, FOR A WHOLE ARC
 >
-> `Improvement::Fell` / `Coppice` / `Quarry`, a `RungKey` apiece, `RungKey::built_by` mapping them,
+> The `fell` / `coppice` / `quarry` verbs, a coded key apiece, a mapping from key to builder,
 > `valid_for_extract` guarding them and `validate_deposit_verb` gating them — and **no grammar, no
 > proto message, no `Command` variant and no dispatch arm** (issue #650). Nothing failed to compile,
 > because a verb nobody sends is a verb nothing calls; the client's rung ladder was built and pressing
 > it could send nothing. A player could cultivate a patch, sow a field, grade a road and pave one, and
 > could not build a quarry by any means.
 >
-> The guard is `server::tests::every_build_verb_has_a_command_line`, which walks **`Improvement::ALL`**
+> The guard is `server::tests::every_build_verb_has_a_command_line`, which walks **every verb the ladder config carries**
 > — a new variant fails its exhaustive match until somebody states the line that declares it — and
 > drives each line through the *encoded* envelope: the grammar, the proto round trip and
 > `command_from_payload` are three separate crates that each compile perfectly without the next, so a

@@ -1525,12 +1525,12 @@ the one value that would look like it worked.
 **The site source grammar** (every queue verb: `abandon`, `unqueue`, `build_order`,
 `work_priority`, `build_priority` — `command_text::parse_site_source`) is the tile-or-herd grammar
 plus two shapes a tile alone cannot name: `<x> <y> <material>` is a **working** (one hex can hold
-two deposits; the material sits where `fell` carries it) and `road <x> <y>` is a **road** (a tile can
-carry a road and a patch, so the road is said out loud and leads). They ride `material` / `road` on
-each proto message (fields **7** / **8** on the band-scoped three, **5** / **6** on `abandon` /
-`unqueue`). The bare tile still names the patch. What each verb does with the two new shapes:
+two deposits; the material sits where `fell` carries it) and `<branch> <x> <y>` (`route 4 9`) is a
+**road** (a tile can carry a road and a patch, so the branch is said out loud and leads). They ride
+`material` / `branch` on each proto message (fields **7** / **9** on the band-scoped three, **5** /
+**7** on `abandon` / `unqueue`; the old `road` bool's field is reserved). The bare tile still names the patch. What each verb does with the two new shapes:
 
-| verb | `<x> <y> <material>` | `road <x> <y>` |
+| verb | `<x> <y> <material>` | `route <x> <y>` |
 |---|---|---|
 | `work_priority` | the extract row's Priority | **refused by name** — a road has no crew |
 | `build_priority` / `build_order` | the queued working build | the queued road build |

@@ -9,8 +9,9 @@
 //! `AlluvialPlain`, `K = 195`, the realization of tile `(0,0)` under seed `0xF10A_5EED_C011_0010` —
 //! `wild_emmer` 0.375 / `wild_tubers` 0.292 / `tobacco` 0.208 / `wild_rice` 0.125.
 
+use core_sim::shipped;
 use core_sim::{
-    commit_payoff, wild_payoff, FloraConfig, LaborConfig, RungKey, BUILTIN_LABOR_CONFIG,
+    commit_payoff, wild_payoff, FloraConfig, LaborConfig, RungId, BUILTIN_LABOR_CONFIG,
 };
 
 mod common;
@@ -69,7 +70,7 @@ const ACCEPTANCE_BAND: f32 = 0.05;
 /// Slack on the two rungs this arc does not touch — tight, because nothing about them moved.
 const UNCHANGED_BAND: f32 = 0.01;
 
-fn measured(rung: Option<RungKey>) -> f32 {
+fn measured(rung: Option<RungId>) -> f32 {
     let labor = LaborConfig::from_json_str(BUILTIN_LABOR_CONFIG).expect("builtin labor config");
     let flora = FloraConfig::builtin();
     let capacity = basket::capacity(&labor);
@@ -83,6 +84,7 @@ fn measured(rung: Option<RungKey>) -> f32 {
             &flora,
             &labor.forage,
             QUOTE_MULTIPLIER,
+            shipped::ladder(),
             rung,
         ),
         None => wild_payoff(
@@ -92,6 +94,7 @@ fn measured(rung: Option<RungKey>) -> f32 {
             &flora,
             &labor.forage,
             QUOTE_MULTIPLIER,
+            shipped::ladder(),
         ),
     }
 }
@@ -104,8 +107,8 @@ fn measured(rung: Option<RungKey>) -> f32 {
 #[test]
 fn the_re_expressed_field_lands_where_the_managed_rate_did() {
     let wild = measured(None);
-    let tended = measured(Some(RungKey::PlantTended));
-    let field = measured(Some(RungKey::PlantField));
+    let tended = measured(Some(shipped::plant_tended()));
+    let field = measured(Some(shipped::plant_field()));
 
     assert!(
         (wild - WILD_YIELD_BEFORE).abs() <= WILD_YIELD_BEFORE * UNCHANGED_BAND,

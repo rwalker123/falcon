@@ -1982,17 +1982,19 @@ impl Food {
                 if !survives(&projection) {
                     continue;
                 }
-                let declare = match climb {
-                    Climb::Tended => CommandPayload::Cultivate {
-                        faction_id: self.faction,
-                        target_x: tile.x,
-                        target_y: tile.y,
-                    },
-                    Climb::Field => CommandPayload::Sow {
-                        faction_id: self.faction,
-                        target_x: tile.x,
-                        target_y: tile.y,
-                    },
+                let declare = CommandPayload::BuildRung {
+                    faction_id: self.faction,
+                    band_id: None,
+                    verb: match climb {
+                        Climb::Tended => VERB_CULTIVATE,
+                        Climb::Field => VERB_SOW,
+                    }
+                    .to_owned(),
+                    target_x: Some(tile.x),
+                    target_y: Some(tile.y),
+                    herd_id: None,
+                    material: None,
+                    branch: None,
                 };
                 // The rows are reduced BEFORE the pool is staffed: `assign_labor` clamps a role
                 // to the band's idle hands at dispatch (`" (clamped from {} — only {} idle)"`,
@@ -3997,11 +3999,12 @@ mod tests {
         );
         assert!(matches!(
             proposal.commands[0],
-            CommandPayload::Cultivate {
-                target_x: 2,
-                target_y: 3,
+            CommandPayload::BuildRung {
+                target_x: Some(2),
+                target_y: Some(3),
+                ref verb,
                 ..
-            }
+            } if verb == VERB_CULTIVATE
         ));
         assert_eq!(
             assigned_to(&proposal.commands[1]),
@@ -6113,11 +6116,12 @@ mod tests {
         );
         assert!(matches!(
             proposal.commands[0],
-            CommandPayload::Cultivate {
-                target_x: 2,
-                target_y: 3,
+            CommandPayload::BuildRung {
+                target_x: Some(2),
+                target_y: Some(3),
+                ref verb,
                 ..
-            }
+            } if verb == VERB_CULTIVATE
         ));
         // The hands come off the near patch, and the pool is staffed after the row is reduced.
         assert_eq!(
@@ -6213,11 +6217,12 @@ mod tests {
             .expect("a sow");
         assert!(matches!(
             proposal.commands[0],
-            CommandPayload::Sow {
-                target_x: 2,
-                target_y: 3,
+            CommandPayload::BuildRung {
+                target_x: Some(2),
+                target_y: Some(3),
+                ref verb,
                 ..
-            }
+            } if verb == VERB_SOW
         ));
         assert!(
             proposal.reason.contains("sow 2,3 (hazel)"),

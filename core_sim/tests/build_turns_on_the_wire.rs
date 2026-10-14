@@ -54,13 +54,14 @@
 
 use bevy::app::App;
 use bevy::math::UVec2;
+use core_sim::shipped;
 
 use core_sim::TakeSelection;
 use core_sim::{
     build_test_app, recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero,
     FactionId, ForageRegistry, GenerationId, LaborAllocation, LaborAssignment, LaborTarget,
-    LadderConfigHandle, LocalStore, MoraleCause, PopulationCohort, ResidentBand, RungKey,
-    SnapshotHistory, SourcePriority, StartingUnit, TileRegistry, DEFAULT_ESCAPEMENT_FLOOR,
+    LadderConfigHandle, LocalStore, MoraleCause, PopulationCohort, ResidentBand, SnapshotHistory,
+    SourcePriority, StartingUnit, TileRegistry, DEFAULT_ESCAPEMENT_FLOOR,
 };
 use sim_schema::{
     BUILD_METER_HOLDS, BUILD_METER_ROTS, BUILD_NOT_YET_ESTIMATED, BUILD_QUEUE_BLOCKED,
@@ -104,7 +105,13 @@ fn a_cultivable_site(app: &mut App) -> UVec2 {
             };
             let composition =
                 core_sim::tile_flora_composition(&flora, &labor.forage, tile, map_seed);
-            core_sim::default_species_for_rung(&composition, &flora, RungKey::PlantTended).is_some()
+            core_sim::default_species_for_rung(
+                &composition,
+                &flora,
+                shipped::ladder(),
+                shipped::plant_tended(),
+            )
+            .is_some()
         })
         .expect("worldgen curated a gathering site whose basket the tended rung can commit to")
 }
@@ -178,7 +185,7 @@ fn keeping_demand_in_hands(app: &App, coord: UVec2) -> u32 {
     app.world
         .resource::<LadderConfigHandle>()
         .get()
-        .rung(RungKey::PlantTended)
+        .rung(shipped::plant_tended())
         .upkeep_crew_needed(tender_loads_at(app, coord))
 }
 
@@ -209,7 +216,7 @@ fn turns_past_the_grace(app: &App) -> u32 {
     app.world
         .resource::<LadderConfigHandle>()
         .get()
-        .rung(RungKey::PlantTended)
+        .rung(shipped::plant_tended())
         .upkeep_grace_turns()
         + 2
 }
@@ -276,7 +283,7 @@ fn world_with_a_patch_knowing(
         .world
         .resource::<LadderConfigHandle>()
         .get()
-        .rung(RungKey::PlantTended)
+        .rung(shipped::plant_tended())
         .build_cost(core_sim::RUNG_COST_UNSCALED)
         .expect("the tended rung builds");
     let crop = {
@@ -291,8 +298,13 @@ fn world_with_a_patch_knowing(
             .clone();
         let composition =
             core_sim::tile_flora_composition(&flora, &labor.forage, &ground, map_seed);
-        core_sim::default_species_for_rung(&composition, &flora, RungKey::PlantTended)
-            .expect("the site was chosen for having one")
+        core_sim::default_species_for_rung(
+            &composition,
+            &flora,
+            shipped::ladder(),
+            shipped::plant_tended(),
+        )
+        .expect("the site was chosen for having one")
     };
     {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
@@ -325,7 +337,7 @@ fn world_with_a_patch_knowing(
         // **nothing banked** is exactly the state a compose sheet is looking at — the player has
         // not queued it yet — and that is what makes the wire publish a *projection* rather than
         // a running countdown. A half-built meter is a build in flight and carries its entry.
-        (banked > core_sim::RUNG_UNSTARTED).then_some(core_sim::Improvement::Cultivate),
+        (banked > core_sim::RUNG_UNSTARTED).then_some(shipped::cultivate()),
     );
     (app, source)
 }
@@ -385,7 +397,7 @@ fn spawn_the_holding_band(
     source: UVec2,
     gatherers: u32,
     builders: u32,
-    declared: Option<core_sim::Improvement>,
+    declared: Option<core_sim::VerbId>,
 ) {
     app.world.spawn((
         PopulationCohort {
@@ -462,7 +474,7 @@ fn spawn_the_holding_band(
             build_queue: declared
                 .map(|declared| core_sim::BuildQueueEntry {
                     source: core_sim::BuildSource::Patch(source),
-                    declared: core_sim::BuildJob::Rung(declared),
+                    declared: core_sim::BuildJob::Climb(core_sim::shipped::rung_of_verb(declared)),
                     priority: core_sim::SourcePriority::default(),
                 })
                 .into_iter()
@@ -515,7 +527,7 @@ fn a_sowable_site(app: &mut App) -> UVec2 {
                     tiles.get(&neighbor).map(|tile| tile.terrain_tags)
                 });
             let refusal = core_sim::rung_site_refusal(
-                ladder.rung(RungKey::PlantField),
+                ladder.rung(shipped::plant_field()),
                 ground,
                 &labor.forage,
                 app.world
@@ -529,8 +541,13 @@ fn a_sowable_site(app: &mut App) -> UVec2 {
             }
             let composition =
                 core_sim::tile_flora_composition(&flora, &labor.forage, ground, map_seed);
-            if core_sim::default_species_for_rung(&composition, &flora, RungKey::PlantField)
-                .is_some()
+            if core_sim::default_species_for_rung(
+                &composition,
+                &flora,
+                shipped::ladder(),
+                shipped::plant_field(),
+            )
+            .is_some()
             {
                 return coord;
             }
@@ -573,10 +590,10 @@ fn an_abandoned_two_leg_sow_publishes_the_meter_state_rather_than_no_answer() {
     }
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     let tended_cost = ladder
-        .rung(RungKey::PlantTended)
+        .rung(shipped::plant_tended())
         .build_cost(core_sim::RUNG_COST_UNSCALED)
         .expect("the tended rung builds");
-    let (field_base, _) = core_sim::plant_rung_span(RungKey::PlantField, &ladder);
+    let (field_base, _) = core_sim::plant_rung_span(shipped::plant_field(), &ladder);
     let crop = {
         let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
         let flora = app.world.resource::<core_sim::FloraConfigHandle>().get();
@@ -589,8 +606,13 @@ fn an_abandoned_two_leg_sow_publishes_the_meter_state_rather_than_no_answer() {
             .clone();
         let composition =
             core_sim::tile_flora_composition(&flora, &labor.forage, &ground, map_seed);
-        core_sim::default_species_for_rung(&composition, &flora, RungKey::PlantField)
-            .expect("the site was chosen for having one")
+        core_sim::default_species_for_rung(
+            &composition,
+            &flora,
+            shipped::ladder(),
+            shipped::plant_field(),
+        )
+        .expect("the site was chosen for having one")
     };
     {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
@@ -616,7 +638,7 @@ fn an_abandoned_two_leg_sow_publishes_the_meter_state_rather_than_no_answer() {
         source,
         NOBODY_GATHERING,
         NOBODY_BUILDING,
-        Some(core_sim::Improvement::Sow),
+        Some(shipped::sow()),
     );
 
     let span = turns_past_the_grace(&app);
@@ -1000,7 +1022,7 @@ fn the_published_rot_is_exactly_what_the_next_decay_pass_bleeds() {
         .world
         .resource::<LadderConfigHandle>()
         .get()
-        .rung(RungKey::PlantTended)
+        .rung(shipped::plant_tended())
         .upkeep_grace_turns();
     assert!(
         grace > 0,
@@ -1140,7 +1162,7 @@ fn an_unstarted_patch_publishes_the_quoted_rungs_upkeep_where_the_billed_one_is_
         .world
         .resource::<LadderConfigHandle>()
         .get()
-        .rung(RungKey::PlantTended)
+        .rung(shipped::plant_tended())
         .upkeep_demand(tender_loads_at(&app, source));
     assert!(
         ladder_rate > core_sim::NO_UPKEEP_DEMAND,
@@ -1240,7 +1262,7 @@ fn the_published_tile_capacity_is_the_ground_and_not_the_rung() {
     // Seat a WHOLE Field, which is where the gain is fully applied.
     {
         let ladder = app.world.resource::<LadderConfigHandle>().get().clone();
-        let (field_base, field_width) = core_sim::plant_rung_span(RungKey::PlantField, &ladder);
+        let (field_base, field_width) = core_sim::plant_rung_span(shipped::plant_field(), &ladder);
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(source).expect("the fixture patch");
         patch.set_ladder_position(field_base + field_width, &ladder);
@@ -1396,7 +1418,7 @@ fn the_quoted_price_is_the_price_the_patch_will_be_billed() {
         .world
         .resource::<LadderConfigHandle>()
         .get()
-        .rung(RungKey::PlantTended)
+        .rung(shipped::plant_tended())
         .upkeep_demand(core_sim::ONE_TENDER_LOAD);
     assert!(
         (quoted - bare_rate).abs() > 1e-3,
@@ -1448,7 +1470,7 @@ fn a_blocked_head_publishes_no_supply_against_the_zero_demand_it_publishes() {
                     allocation.build_queue.push(core_sim::BuildQueueEntry {
                         source: core_sim::BuildSource::Patch(source),
                         priority: core_sim::SourcePriority::default(),
-                        declared: core_sim::BuildJob::Rung(core_sim::Improvement::Cultivate),});
+                        declared: core_sim::BuildJob::Climb(shipped::plant_tended()),});
                     found = true;
                 }
             }

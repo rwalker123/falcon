@@ -10,6 +10,7 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::Entity;
 use bevy::MinimalPlugins;
+use core_sim::shipped;
 
 use core_sim::{
     advance_crafting, deliver_bench_output, scalar_from_f32, scalar_one, scalar_zero, BandBench,
@@ -875,7 +876,7 @@ fn a_crafted_items_grade_decides_what_it_grants() {
 /// against exactly that defect.
 #[test]
 fn crafted_build_gear_grades_its_build_work_and_keeps_its_branch() {
-    use core_sim::RungBranch;
+    use core_sim::BranchId;
 
     const BONE: &str = "bone";
     const LENGTH: &str = "length";
@@ -898,8 +899,8 @@ fn crafted_build_gear_grades_its_build_work_and_keeps_its_branch() {
         kit: &'static str,
         reads: &'static str,
         other: &'static str,
-        web: RungBranch,
-        other_web: RungBranch,
+        web: BranchId,
+        other_web: BranchId,
     }
     let cases = [
         Case {
@@ -907,16 +908,16 @@ fn crafted_build_gear_grades_its_build_work_and_keeps_its_branch() {
             kit: "hurdling",
             reads: LENGTH,
             other: DENSITY,
-            web: RungBranch::Animal,
-            other_web: RungBranch::Plant,
+            web: shipped::animal(),
+            other_web: shipped::plant(),
         },
         Case {
             recipe: "hoes",
             kit: "tillage",
             reads: DENSITY,
             other: LENGTH,
-            web: RungBranch::Plant,
-            other_web: RungBranch::Animal,
+            web: shipped::plant(),
+            other_web: shipped::animal(),
         },
     ];
 
@@ -980,7 +981,7 @@ fn crafted_build_gear_grades_its_build_work_and_keeps_its_branch() {
 
         let poor = crafted(POOR_READING, POOR);
         let excellent = crafted(EXCELLENT_READING, EXCELLENT);
-        let paid = |ledger: &BandEquipment, web: RungBranch| {
+        let paid = |ledger: &BandEquipment, web: BranchId| {
             equipment.build_work_per_worker(&kit, ledger, web, None)
         };
 

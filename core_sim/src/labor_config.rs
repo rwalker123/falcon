@@ -222,7 +222,7 @@ const DEFAULT_CULTIVATION_FIELD_SHARE_COST_CEILING: f32 = 2.0;
 /// managed rate. They stay here for the same reason `pastoral_gain`/`pen_gain` stay in `fauna_config`:
 /// a rung's *payoff* is its web's economy, where its *build* is the ladder's grammar.
 ///
-/// A patch worked with the **Cultivate** improvement in flight ([`crate::components::Improvement::Cultivate`])
+/// A patch worked with the **Cultivate** improvement in flight (the `cultivate` verb)
 /// — faction knows Cultivation, and something stands above the crew's floor
 /// (`systems::labor::crew_is_working_the_source`; the old `Thriving` health gate is gone,
 /// `docs/plan_harvest_floor.md` §3.2) — accrues the `plant:tended` rung's

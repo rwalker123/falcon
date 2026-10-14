@@ -66,7 +66,7 @@ use crate::forage::{
     patch_material_yields, patch_provisions_per_biomass, patch_species_rates,
     tile_flora_composition, tile_forage_capacity, wild_payoff, ForagePatch, SpeciesRate,
 };
-use crate::intensification::{LadderConfig, RungKey};
+use crate::intensification::LadderConfig;
 use crate::labor_config::{ForageLaborConfig, LaborConfig};
 use crate::materials_config::MaterialYieldDef;
 
@@ -329,7 +329,12 @@ fn derive_tile_quotes(
         flora,
         forage,
         FORECAST_OUTPUT_MULTIPLIER,
+        ladder,
     );
+    // **The two rungs the picker quotes, named by what they ARE** - the first `managed` and the
+    // first `sown` rung of the plant ladder.
+    let managed_rung = ladder.managed_patch_rung().rung_id();
+    let sown_rung = ladder.sown_patch_rung().rung_id();
     let quotes = composition
         .iter()
         .map(|share| {
@@ -348,11 +353,12 @@ fn derive_tile_quotes(
                     flora,
                     forage,
                     FORECAST_OUTPUT_MULTIPLIER,
+                    ladder,
                     rung,
                 )
             };
-            let cultivate = payoff(RungKey::PlantTended);
-            let sow = payoff(RungKey::PlantField);
+            let cultivate = payoff(managed_rung);
+            let sow = payoff(sown_rung);
             // The two non-food accounts, per rung, through the same rung-parameterized seams — so the
             // Cultivate row of the crop picker states what a TENDED patch of this plant pays rather
             // than borrowing the Field's number (issue #419). Same closure shape as `payoff` above,
@@ -366,6 +372,7 @@ fn derive_tile_quotes(
                     flora,
                     forage,
                     FORECAST_OUTPUT_MULTIPLIER,
+                    ladder,
                     rung,
                 )
             };
@@ -380,6 +387,7 @@ fn derive_tile_quotes(
                     flora,
                     forage,
                     FORECAST_OUTPUT_MULTIPLIER,
+                    ladder,
                     rung,
                 )
                 .into_iter()
@@ -399,8 +407,8 @@ fn derive_tile_quotes(
                 // it says nothing about whether this tile is a good place for it — the payoff/ratio
                 // below answer that, and a legal-but-marginal crop is exactly the loss §4.3 leaves
                 // the player free to choose.
-                can_cultivate: def.cultivation_ceiling.allows_cultivate(),
-                can_sow: def.cultivation_ceiling.allows_sow(),
+                can_cultivate: flora.can_reach(&share.species, ladder, managed_rung),
+                can_sow: flora.can_reach(&share.species, ladder, sown_rung),
                 cultivate_payoff: cultivate,
                 sow_payoff: sow,
                 // **Is it worth it?** — the same payoffs over the same wild payoff, so the ratio can
@@ -411,14 +419,14 @@ fn derive_tile_quotes(
                 // through the same `commit_fodder_payoff` seam the sim's `field_fodder` pays with,
                 // so the picker can show hay's value where `sow_yield_ratio` reads 0×. `0` for a
                 // staple (no fodder in its vector) or a plant that cannot Sow here.
-                sow_fodder_payoff: fodder_payoff(RungKey::PlantField),
+                sow_fodder_payoff: fodder_payoff(sown_rung),
                 // **The same account one rung down** (#419) — what a completed TENDED PATCH of
                 // this plant would pay, through `tended_fodder`. The Cultivate row of the picker had
                 // only the Field figure above and quoted that, which is a managed rate standing in
                 // for an MSY skim on a rung the player commits 25 turns to.
                 //
                 // A cash crop quotes nothing *here* — its account is the material one below.
-                cultivate_fodder_payoff: fodder_payoff(RungKey::PlantTended),
+                cultivate_fodder_payoff: fodder_payoff(managed_rung),
                 // **What this plant is FOR** — the roster's own `role`, shipped verbatim as the
                 // display tag it is. Taken off `def` rather than re-read from the yield vector here,
                 // because a tag whose whole purpose is to be ONE definition must have exactly one
@@ -432,8 +440,8 @@ fn derive_tile_quotes(
                 //
                 // **Empty is "no row", never "zero"** — a food crop yields no material, and a `0`
                 // would read as a cash crop that pays badly.
-                sow_material_payoff: material_payoff(RungKey::PlantField),
-                cultivate_material_payoff: material_payoff(RungKey::PlantTended),
+                sow_material_payoff: material_payoff(sown_rung),
+                cultivate_material_payoff: material_payoff(managed_rung),
                 // **WHAT SOWING THIS CROP WOULD COST** (`docs/plan_standing_upkeep.md` §4.15) — the
                 // cost half of the picker's decision, and the only figure on this row that is not a
                 // payoff. A Sow is priced by how much of the tile the chosen crop still has to
@@ -453,8 +461,9 @@ fn derive_tile_quotes(
                     &share.species,
                     flora,
                     forage,
+                    ladder,
                 )
-                .and_then(|multiplier| ladder.rung(RungKey::PlantField).build_cost(multiplier))
+                .and_then(|multiplier| ladder.sown_patch_rung().build_cost(multiplier))
                 .unwrap_or(NO_SOW_WORK_COST),
             }
         })
@@ -486,7 +495,14 @@ fn derive_wild_ground_quotes(
     tile_capacity: f32,
     composition: &[FloraShare],
 ) -> WildGroundQuotes {
-    let bare = ForagePatch::new(tile, tile_capacity);
+    let bare = ForagePatch::new(
+        tile,
+        tile_capacity,
+        crate::intensification::RungStanding::unstarted_on(
+            ladder,
+            ladder.branch_of_kind(crate::intensification::SourceKind::Patch),
+        ),
+    );
     WildGroundQuotes {
         provisions_per_biomass: patch_provisions_per_biomass(&bare, composition, flora, forage),
         fodder_per_biomass: patch_fodder_per_biomass(&bare, composition, flora, forage),
@@ -513,6 +529,7 @@ const NO_SOW_WORK_COST: f32 = 0.0;
 mod tests {
     use super::*;
     use crate::components::Tile;
+    use crate::ladder_ids::shipped;
 
     fn tile_at(position: UVec2, terrain: TerrainType) -> Tile {
         Tile {
@@ -591,7 +608,11 @@ mod tests {
         let mut saw_a_material_row = false;
         for tile in &tiles {
             let composition = cache.tile_composition(tile.position).to_vec();
-            let bare = ForagePatch::new(tile.position, tile_forage_capacity(forage, tile));
+            let bare = ForagePatch::new(
+                tile.position,
+                tile_forage_capacity(forage, tile),
+                shipped::root_standing(shipped::plant()),
+            );
             // The gate the readout applies before it reads the memo at all: a freshly built patch is
             // bare ground, and if it were not, every value below would be answering the wrong patch.
             assert!(
@@ -651,12 +672,17 @@ mod tests {
         let tile = tile_at(UVec2::new(2, 2), TerrainType::AlluvialPlain);
         let capacity = tile_forage_capacity(&labor.forage, &tile);
 
-        let mut committed = ForagePatch::new(tile.position, capacity);
+        let mut committed = ForagePatch::new(
+            tile.position,
+            capacity,
+            shipped::root_standing(shipped::plant()),
+        );
         committed.species = Some(
             crate::forage::default_species_for_rung(
                 &crate::forage::tile_flora_composition(&flora, &labor.forage, &tile, 99),
                 &flora,
-                RungKey::PlantTended,
+                shipped::ladder(),
+                shipped::plant_tended(),
             )
             .expect("alluvial ground grows something tendable"),
         );
@@ -665,9 +691,13 @@ mod tests {
             "a committed patch is not bare ground"
         );
 
-        let mut worked = ForagePatch::new(tile.position, capacity);
+        let mut worked = ForagePatch::new(
+            tile.position,
+            capacity,
+            shipped::root_standing(shipped::plant()),
+        );
         worked.set_ladder_position(
-            crate::forage::plant_rung_span(RungKey::PlantTended, &ladder).1,
+            crate::forage::plant_rung_span(shipped::plant_tended(), &ladder).1,
             &ladder,
         );
         assert!(
@@ -865,8 +895,8 @@ mod tests {
             let capacity = capacity_of(tile);
             for quote in &quotes {
                 for (rung, published) in [
-                    (RungKey::PlantField, &quote.sow_material_payoff),
-                    (RungKey::PlantTended, &quote.cultivate_material_payoff),
+                    (shipped::plant_field(), &quote.sow_material_payoff),
+                    (shipped::plant_tended(), &quote.cultivate_material_payoff),
                 ] {
                     let expected = commit_material_payoff(
                         tile.position,
@@ -876,6 +906,7 @@ mod tests {
                         &flora,
                         forage,
                         FORECAST_OUTPUT_MULTIPLIER,
+                        shipped::ladder(),
                         rung,
                     );
                     assert_eq!(

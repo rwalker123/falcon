@@ -10,6 +10,7 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::prelude::Entity;
+use core_sim::shipped;
 
 use core_sim::{
     advance_labor_allocation, build_test_app, recapture_snapshot_in_place, scalar_from_f32,
@@ -81,6 +82,7 @@ fn world_hunting_at(distance: u32) -> (App, Entity) {
             def.fodder_per_biomass,
             def.regrowth_rate.unwrap_or(0.1),
             def.body_mass,
+            shipped::root_standing(shipped::animal()),
         )
     };
     {
@@ -260,7 +262,7 @@ fn set_live_herd_bill(app: &mut App, bill: f32) {
     let (held, live) = {
         let herd = &app.world.resource::<HerdRegistry>().herds[0];
         (
-            herd.standing().held_key(),
+            herd.standing().held,
             core_sim::herd_upkeep_demand(
                 &core_sim::next_turns_quarry(herd, &fauna),
                 &fauna,
@@ -324,7 +326,7 @@ fn a_kept_herd_inside_the_apron_is_quoted_what_its_crew_takes_after_keeping() {
             CREW as f32,
         );
         let keeping = core_sim::CrewKeeping {
-            rung: herd.standing().held_key(),
+            rung: herd.standing().held,
             demand: PROBE_BILL,
         };
         PROBE_BILL
@@ -421,7 +423,7 @@ fn a_far_kept_herds_caravan_forecast_is_what_its_party_lands_after_keeping() {
         let stocked = EquipmentConfig::for_a_stocked_fixture();
         let wear = BandEquipment::start_stocked_for(&stocked, CREW as f32);
         let keeping = core_sim::CrewKeeping {
-            rung: herd.standing().held_key(),
+            rung: herd.standing().held,
             demand: PROBE_BILL,
         };
         KEEPING_HANDS * PROBE_BILL / core_sim::crew_keep_hands(Some(keeping), &stocked, &wear, CREW)
@@ -1288,6 +1290,7 @@ fn a_local_working_takes_no_party_and_its_numbers_are_unchanged() {
             WOOD,
             &ground,
             &extraction,
+            shipped::ladder(),
         )
         .expect("fixture: the ground holds wood");
         // **The bare crew's own lift**: no tools, and the bare haul over the weight as its carry.
@@ -1608,17 +1611,18 @@ fn seat_the_wood_at_felling(app: &mut App, distance: u32) {
         .get::<core_sim::Tile>(entity)
         .expect("a map tile carries terrain")
         .clone();
-    let felling = core_sim::RungKey::ForestryFelling;
+    let felling = shipped::forestry_felling();
     let mut working = core_sim::extraction::projected_working(
         app.world.resource::<core_sim::DepositRegistry>(),
         tile,
         WOOD,
         &ground,
         &extraction,
+        shipped::ladder(),
     )
     .expect("fixture: the ground holds wood");
     let (base, width) = core_sim::extraction::deposit_rung_span(felling, &ladder);
-    working.set_ladder_position(base + width, &ladder, felling.branch());
+    working.set_ladder_position(base + width, &ladder, felling.branch);
     assert_eq!(working.rung(), felling, "fixture: seated on felling");
     app.world
         .resource_mut::<core_sim::DepositRegistry>()
@@ -1786,20 +1790,21 @@ fn a_far_workings_rate_home_on_the_turn_it_completes_a_rung_is_the_querys() {
             .get::<core_sim::Tile>(entity)
             .expect("a map tile carries terrain")
             .clone();
-        let felling = core_sim::RungKey::ForestryFelling;
+        let felling = shipped::forestry_felling();
         let mut working = core_sim::extraction::projected_working(
             app.world.resource::<core_sim::DepositRegistry>(),
             tile,
             WOOD,
             &ground,
             &extraction,
+            shipped::ladder(),
         )
         .expect("fixture: the ground holds wood");
         let (base, width) = core_sim::extraction::deposit_rung_span(felling, &ladder);
-        working.set_ladder_position(base + width - SHORT_OF_THE_TOP, &ladder, felling.branch());
+        working.set_ladder_position(base + width - SHORT_OF_THE_TOP, &ladder, felling.branch);
         assert_eq!(
             working.rung(),
-            core_sim::RungKey::ForestryDeadfall,
+            shipped::forestry_deadfall(),
             "fixture: the working must still hold deadfall when the turn begins"
         );
         app.world
@@ -1836,7 +1841,7 @@ fn a_far_workings_rate_home_on_the_turn_it_completes_a_rung_is_the_querys() {
                 tile,
                 material: WOOD.to_string(),
             },
-            core_sim::BuildJob::Rung(core_sim::Improvement::Fell),
+            core_sim::BuildJob::Climb(shipped::forestry_felling()),
         ));
     }
 
@@ -1847,7 +1852,7 @@ fn a_far_workings_rate_home_on_the_turn_it_completes_a_rung_is_the_querys() {
             .source(tile, WOOD)
             .expect("the far working")
             .rung(),
-        core_sim::RungKey::ForestryFelling,
+        shipped::forestry_felling(),
         "fixture: the raise must complete on this turn"
     );
     assert!(

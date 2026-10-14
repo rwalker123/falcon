@@ -8,6 +8,7 @@ mod pen_materials_support;
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::MinimalPlugins;
+use core_sim::shipped;
 
 use bevy::math::UVec2;
 use core_sim::NO_CREW_ON_THIS_ACTIVITY;
@@ -16,12 +17,12 @@ use core_sim::{
     scalar_from_f32, scalar_one, scalar_zero, spawn_initial_herds, spawn_initial_world,
     CommandEventEntry, CommandEventKind, CommandEventLog, CultureManager, DiscoveryProgressLedger,
     FactionId, FactionInventory, FaunaConfigHandle, ForageRegistry, GenerationId,
-    GenerationRegistry, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, Improvement,
-    LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle,
-    MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, RungKey,
-    SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    SourcePriority, StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
-    StartingUnit, TileRegistry, WellbeingConfigHandle, FODDER, FODDERING_DISCOVERY_ID, FOOD,
+    GenerationRegistry, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
+    LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle, MapPresets,
+    MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, SimulationConfig,
+    SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SourcePriority,
+    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
+    TileRegistry, VerbId, WellbeingConfigHandle, FODDER, FODDERING_DISCOVERY_ID, FOOD,
     FULLY_HERDED, HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID,
 };
 
@@ -584,7 +585,7 @@ fn probe_the_herd_rows_self_consistency() {
         {
             let mut registry = app.world.resource_mut::<HerdRegistry>();
             let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-            let cost = herd.rung_cost(core_sim::RungKey::AnimalPastoral, &ladder);
+            let cost = herd.rung_cost(shipped::animal_pastoral(), &ladder);
             herd.set_ladder_position(cost * fraction, &ladder);
         }
         let herd = herd_of(&app, &id);
@@ -795,9 +796,9 @@ fn probe_the_abandoned_herds_fate() {
         let grace = {
             let ladder = app.world.resource::<LadderConfigHandle>().get();
             let key = if penned {
-                core_sim::RungKey::AnimalPen
+                shipped::animal_pen()
             } else {
-                core_sim::RungKey::AnimalPastoral
+                shipped::animal_pastoral()
             };
             ladder.rung(key).upkeep_grace_turns()
         };
@@ -935,9 +936,9 @@ fn keeper_crew_at_capacity(app: &App, herd_id: &str) -> u32 {
     // two managed rungs, so the crew clears the rate on either side of a Corral as well.
     let load = core_sim::herd_keeper_load(&herd, &fauna);
     ladder
-        .rung(RungKey::AnimalPastoral)
+        .rung(shipped::animal_pastoral())
         .upkeep_crew_needed(load)
-        .max(ladder.rung(RungKey::AnimalPen).upkeep_crew_needed(load))
+        .max(ladder.rung(shipped::animal_pen()).upkeep_crew_needed(load))
 }
 
 /// A band hunting `herd_id` at the food peak while **building** `improvement`, staffed at the herd's
@@ -945,7 +946,7 @@ fn keeper_crew_at_capacity(app: &App, herd_id: &str) -> u32 {
 ///
 /// The build's **net** supply is this crew: `spawn_crew_of` adds the maintenance rate the builders
 /// are also paying, so the meter advances at the herd's own keeper crew per turn.
-fn spawn_builder(app: &mut App, herd_id: &str, improvement: Improvement) -> bevy::prelude::Entity {
+fn spawn_builder(app: &mut App, herd_id: &str, improvement: VerbId) -> bevy::prelude::Entity {
     let keepers = keeper_crew(app, herd_id);
     spawn_crew_of(
         app,
@@ -992,7 +993,7 @@ fn spawn_crew(
     app: &mut App,
     herd_id: &str,
     policy: f32,
-    improvement: Option<Improvement>,
+    improvement: Option<VerbId>,
 ) -> bevy::prelude::Entity {
     spawn_crew_of(app, herd_id, policy, improvement, HUNT_WORKERS)
 }
@@ -1002,7 +1003,7 @@ fn spawn_crew_of(
     app: &mut App,
     herd_id: &str,
     policy: f32,
-    improvement: Option<Improvement>,
+    improvement: Option<VerbId>,
     hunters: u32,
 ) -> bevy::prelude::Entity {
     let pos = app
@@ -1120,7 +1121,9 @@ fn spawn_crew_of(
                 build_queue: improvement
                     .map(|declared| core_sim::BuildQueueEntry {
                         source: core_sim::BuildSource::Herd(herd_id.to_string()),
-                        declared: core_sim::BuildJob::Rung(declared),
+                        declared: core_sim::BuildJob::Climb(core_sim::shipped::rung_of_verb(
+                            declared,
+                        )),
                         priority: core_sim::SourcePriority::default(),
                     })
                     .into_iter()
@@ -1191,9 +1194,9 @@ fn neglect_grace(app: &App, id: &str) -> u32 {
     let herd = herd_of(app, id);
     ladder
         .rung(if herd.is_corralled() {
-            RungKey::AnimalPen
+            shipped::animal_pen()
         } else {
-            RungKey::AnimalPastoral
+            shipped::animal_pastoral()
         })
         // **The UPKEEP's grace** — the animal branch counts consecutive turns of unmet keeping now
         // (`docs/plan_standing_upkeep.md` §2.4), so `build.grace_turns` is `null` on both rungs and
@@ -1377,7 +1380,7 @@ fn progress_of(app: &App, id: &str) -> f32 {
         .find(id)
         .map(|h| {
             h.rung_work_done(
-                core_sim::RungKey::AnimalPastoral,
+                shipped::animal_pastoral(),
                 &core_sim::LadderConfig::builtin(),
             )
         })
@@ -1417,7 +1420,7 @@ fn tame_policy_domesticates_thriving_herd() {
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
     grant_herding(&mut app);
-    spawn_builder(&mut app, &id, Improvement::Tame);
+    spawn_builder(&mut app, &id, shipped::tame());
 
     // A herd under active taming is spared the decay pass (`tamed_this_turn`, mirroring a patch under
     // Cultivate), so it accrues the FULL progress_per_turn(0.04) → 25 turns at the rung's own pace.
@@ -1440,7 +1443,7 @@ fn tame_policy_domesticates_thriving_herd() {
         herd.is_domesticated(),
         "sustained Tame work should domesticate: progress {}",
         herd.rung_work_done(
-            core_sim::RungKey::AnimalPastoral,
+            shipped::animal_pastoral(),
             &core_sim::LadderConfig::builtin()
         )
     );
@@ -1467,7 +1470,7 @@ fn sustain_hunt_no_longer_tames_it_only_teaches_herding() {
     let herd = herd_of(&app, &id);
     assert_eq!(
         herd.rung_work_done(
-            core_sim::RungKey::AnimalPastoral,
+            shipped::animal_pastoral(),
             &core_sim::LadderConfig::builtin()
         ),
         0.0,
@@ -1499,7 +1502,7 @@ fn sustain_hunt_no_longer_tames_it_only_teaches_herding() {
 fn a_tame_leaves_the_hunters_take_alone() {
     // One turn of a plain Sustain hunt (the MSY baseline) vs one turn of the same Sustain hunt with
     // a Tame build running, from an identical start — the two differ only in the improvement axis.
-    let harvest = |improvement: Option<Improvement>| -> f32 {
+    let harvest = |improvement: Option<VerbId>| -> f32 {
         let mut app = spawn_world();
         let id = prime_thriving_herd(&mut app);
         // Seated at **capacity**, so the escapement standing above the floor is `K/2` rather than
@@ -1518,7 +1521,7 @@ fn a_tame_leaves_the_hunters_take_alone() {
     };
 
     let sustained = harvest(None);
-    let tamed = harvest(Some(Improvement::Tame));
+    let tamed = harvest(Some(shipped::tame()));
     assert!(sustained > 0.0, "the Sustain baseline must pay something");
     assert_eq!(
         tamed, sustained,
@@ -1567,7 +1570,7 @@ fn a_deep_floor_beside_a_tame_build_buys_nothing_now_and_finishes_later() {
         } else {
             keeper_crew(&app, &id)
         };
-        spawn_crew_of(&mut app, &id, policy, Some(Improvement::Tame), keepers);
+        spawn_crew_of(&mut app, &id, policy, Some(shipped::tame()), keepers);
         let before = provisions_f32(&mut app);
         run_turns_with_hunt(&mut app, 1);
         let first_turn_take = provisions_f32(&mut app) - before;
@@ -1594,7 +1597,7 @@ fn a_deep_floor_beside_a_tame_build_buys_nothing_now_and_finishes_later() {
         sustain_herd.is_domesticated(),
         "control: a food-peak builder tames the herd within {TURNS} turns (progress {})",
         sustain_herd.rung_work_done(
-            core_sim::RungKey::AnimalPastoral,
+            shipped::animal_pastoral(),
             &core_sim::LadderConfig::builtin()
         )
     );
@@ -1621,25 +1624,25 @@ fn a_deep_floor_beside_a_tame_build_buys_nothing_now_and_finishes_later() {
         "the floor paces the LESSON, not the build — a deep-floor Tame finishes with the rest \
          (progress {})",
         deplete_herd.rung_work_done(
-            core_sim::RungKey::AnimalPastoral,
+            shipped::animal_pastoral(),
             &core_sim::LadderConfig::builtin()
         )
     );
     assert!(
         deplete_herd.rung_work_done(
-            core_sim::RungKey::AnimalPastoral,
+            shipped::animal_pastoral(),
             &core_sim::LadderConfig::builtin()
         ) <= sustain_herd.rung_work_done(
-            core_sim::RungKey::AnimalPastoral,
+            shipped::animal_pastoral(),
             &core_sim::LadderConfig::builtin()
         ),
         "the Deplete builder banks strictly less progress over the same span: {} vs {}",
         deplete_herd.rung_work_done(
-            core_sim::RungKey::AnimalPastoral,
+            shipped::animal_pastoral(),
             &core_sim::LadderConfig::builtin()
         ),
         sustain_herd.rung_work_done(
-            core_sim::RungKey::AnimalPastoral,
+            shipped::animal_pastoral(),
             &core_sim::LadderConfig::builtin()
         )
     );
@@ -1676,7 +1679,7 @@ fn turns_to_tame_with(species_key: &str, keepers: u32, cap_turns: u32) -> u32 {
         &mut app,
         &id,
         MSY_BIOMASS_FRACTION,
-        Some(Improvement::Tame),
+        Some(shipped::tame()),
         keepers,
     );
     for turn in 1..=cap_turns {
@@ -1712,7 +1715,7 @@ fn taming_is_a_per_species_cost_on_the_shared_rung() {
         let app = spawn_world();
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
         let ladder = app.world.resource::<LadderConfigHandle>().get();
-        let rung = ladder.rung(RungKey::AnimalPastoral);
+        let rung = ladder.rung(shipped::animal_pastoral());
         (
             rung.build_cost(fauna.taming_cost_multiplier_for("Rabbit Warren"))
                 .expect("the pastoral rung builds"),
@@ -1808,7 +1811,7 @@ fn an_untamed_herd_quotes_the_tame_it_would_take_on_and_the_quote_halves_with_th
         let ladder = probe.world.resource::<LadderConfigHandle>().get();
         let herd = herd_of(&probe, &id);
         ladder
-            .rung(RungKey::AnimalPastoral)
+            .rung(shipped::animal_pastoral())
             .upkeep_crew_needed(core_sim::herd_keeper_load(&herd, &fauna))
     };
     let quoted =
@@ -1897,7 +1900,7 @@ fn a_fully_abandoned_pastoral_herd_goes_feral_without_decaying_its_taming() {
         .map(|h| h.biomass)
         .sum();
     grant_herding(&mut app);
-    let band = spawn_builder(&mut app, &id, Improvement::Tame);
+    let band = spawn_builder(&mut app, &id, shipped::tame());
     run_turns_with_hunt(&mut app, 6);
     let built = progress_of(&app, &id);
     assert!(built > 0.0, "some progress should have accrued");
@@ -1911,13 +1914,13 @@ fn a_fully_abandoned_pastoral_herd_goes_feral_without_decaying_its_taming() {
         match app.world.resource::<HerdRegistry>().find(&id) {
             Some(herd) => assert_eq!(
                 herd.rung_work_done(
-                    core_sim::RungKey::AnimalPastoral,
+                    shipped::animal_pastoral(),
                     &core_sim::LadderConfig::builtin()
                 ),
                 built,
                 "tameness is never decayed by neglect: {built} -> {}",
                 herd.rung_work_done(
-                    core_sim::RungKey::AnimalPastoral,
+                    shipped::animal_pastoral(),
                     &core_sim::LadderConfig::builtin()
                 )
             ),
@@ -2087,7 +2090,7 @@ fn building_a_corral_costs_more_than_hunting_the_same_herd() {
         &mut app,
         &id,
         0.5,
-        Some(Improvement::Corral),
+        Some(shipped::corral()),
         DIP_VISIBLE_HUNTERS,
     );
     run_turns_with_hunt(&mut app, 1);
@@ -2227,12 +2230,7 @@ fn corral_progress_of(app: &App, id: &str) -> f32 {
     app.world
         .resource::<HerdRegistry>()
         .find(id)
-        .map(|h| {
-            h.rung_work_done(
-                core_sim::RungKey::AnimalPen,
-                &core_sim::LadderConfig::builtin(),
-            )
-        })
+        .map(|h| h.rung_work_done(shipped::animal_pen(), &core_sim::LadderConfig::builtin()))
         .unwrap_or(0.0)
 }
 
@@ -3178,8 +3176,8 @@ fn freshly_penned_herd_survives_its_grace_turn() {
     // rung's real top now, so the honest statement of *"still complete"* is done == cost.
     let ladder = core_sim::LadderConfig::builtin();
     assert_eq!(
-        herd.rung_work_done(core_sim::RungKey::AnimalPen, &ladder),
-        herd.rung_cost(core_sim::RungKey::AnimalPen, &ladder),
+        herd.rung_work_done(shipped::animal_pen(), &ladder),
+        herd.rung_cost(shipped::animal_pen(), &ladder),
         "a spared pen keeps its completed progress"
     );
     assert!(
@@ -3299,7 +3297,7 @@ fn half_built_pen_keeps_progress_when_its_keeper_leaves() {
         herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
     }
     grant_penning(&mut app);
-    let band = spawn_builder(&mut app, &id, Improvement::Corral);
+    let band = spawn_builder(&mut app, &id, shipped::corral());
 
     run_turns_with_hunt(&mut app, 5);
     let half_built = corral_progress_of(&app, &id);
@@ -3318,10 +3316,7 @@ fn half_built_pen_keeps_progress_when_its_keeper_leaves() {
         "a half-built pen never penned the herd"
     );
     assert_eq!(
-        herd.rung_work_done(
-            core_sim::RungKey::AnimalPen,
-            &core_sim::LadderConfig::builtin()
-        ),
+        herd.rung_work_done(shipped::animal_pen(), &core_sim::LadderConfig::builtin()),
         half_built,
         "a mid-build lapse keeps its progress"
     );
@@ -3404,11 +3399,7 @@ fn ladder_knowledge(app: &App, discovery: u32) -> f32 {
 /// appends a queue entry and names no crew; the hands stand on the band's `builders` row. So this
 /// does both, and withdrawing takes both away — a queue entry with an idle pool builds nothing, and
 /// a staffed pool with an empty queue has nothing to build.
-fn set_hunt_improvement(
-    app: &mut App,
-    band: bevy::prelude::Entity,
-    improvement: Option<Improvement>,
-) {
+fn set_hunt_improvement(app: &mut App, band: bevy::prelude::Entity, improvement: Option<VerbId>) {
     let (herd_id, stated) = {
         let allocation = app.world.get::<LaborAllocation>(band).expect("band exists");
         let assignment = &allocation.assignments[0];
@@ -3448,7 +3439,10 @@ fn set_hunt_improvement(
                     }),
                 }
                 assert!(
-                    allocation.enqueue_build(source, core_sim::BuildJob::Rung(declared)),
+                    allocation.enqueue_build(
+                        source,
+                        core_sim::BuildJob::Climb(core_sim::shipped::rung_of_verb(declared))
+                    ),
                     "the climb's band works the herd it is building on"
                 );
             }
@@ -3518,7 +3512,7 @@ fn the_full_wild_to_pen_climb_is_paced_by_practising_each_rung() {
     );
 
     // Leg 2 — `Tame` fills this herd's meter (Herding is the gate the leg above just opened).
-    set_hunt_improvement(&mut app, band, Some(Improvement::Tame));
+    set_hunt_improvement(&mut app, band, Some(shipped::tame()));
     let leg2 = turns_until(&mut app, "tame the herd", 120, |app| {
         herd_of(app, &id).is_domesticated()
     });
@@ -3536,7 +3530,7 @@ fn the_full_wild_to_pen_climb_is_paced_by_practising_each_rung() {
 
     // Leg 4 — `Corral`, gated on the Penning the leg above just earned. Re-staffed to the herd's
     // CURRENT keeper crew: it has grown while the legs above ran, and an under-staffed keeper sheds.
-    set_hunt_improvement(&mut app, band, Some(Improvement::Corral));
+    set_hunt_improvement(&mut app, band, Some(shipped::corral()));
     let keepers = keeper_crew(&app, &id);
     set_hunt_workers(&mut app, band, keepers);
     let leg4 = turns_until(&mut app, "build the pen", 60, |app| {
@@ -3675,13 +3669,13 @@ fn probe_the_price_of_holding_a_herd() {
     println!(
         "  rung rates: pastoral {:.2} work/keeper-load (grace {}), pen {:.2} (grace {})",
         ladder
-            .rung(RungKey::AnimalPastoral)
+            .rung(shipped::animal_pastoral())
             .upkeep_demand(core_sim::ONE_KEEPER_LOAD),
-        ladder.rung(RungKey::AnimalPastoral).upkeep_grace_turns(),
+        ladder.rung(shipped::animal_pastoral()).upkeep_grace_turns(),
         ladder
-            .rung(RungKey::AnimalPen)
+            .rung(shipped::animal_pen())
             .upkeep_demand(core_sim::ONE_KEEPER_LOAD),
-        ladder.rung(RungKey::AnimalPen).upkeep_grace_turns(),
+        ladder.rung(shipped::animal_pen()).upkeep_grace_turns(),
     );
     println!(
         "\n  {:<18} {:>9}  {:>26}",
@@ -3689,10 +3683,9 @@ fn probe_the_price_of_holding_a_herd() {
     );
     let mut rows: Vec<(String, f32, Vec<u32>)> = Vec::new();
     for species in fauna.species.values() {
-        if !matches!(
-            species.husbandry_ceiling,
-            core_sim::HusbandryCeiling::Pastoral | core_sim::HusbandryCeiling::Pen
-        ) {
+        if species.husbandry_ceiling != Some(shipped::animal_pastoral())
+            && species.husbandry_ceiling != Some(shipped::animal_pen())
+        {
             continue;
         }
         let aph = fauna.animals_per_herder_for(&species.display_name);
@@ -3748,10 +3741,9 @@ fn every_species_asks_for_the_keepers_it_asked_for_before() {
     for species in fauna.species.values() {
         // A `wild`-ceiling species is never herded, so it declares no `animals_per_herder` and has
         // no keeper demand to be neutral about.
-        if !matches!(
-            species.husbandry_ceiling,
-            core_sim::HusbandryCeiling::Pastoral | core_sim::HusbandryCeiling::Pen
-        ) {
+        if species.husbandry_ceiling != Some(shipped::animal_pastoral())
+            && species.husbandry_ceiling != Some(shipped::animal_pen())
+        {
             continue;
         }
         let aph = fauna.animals_per_herder_for(&species.display_name);
@@ -3861,18 +3853,28 @@ fn the_keeping_pool_holds_a_half_tamed_herd_and_a_tamed_one_alike() {
     }
     let herd = herd_of(&app, &id);
     assert_eq!(
-        core_sim::herd_upkeep_supply(&herd, Some(Improvement::Tame), A_KEEPERS_TURN),
+        core_sim::herd_upkeep_supply(
+            &herd,
+            shipped::ladder(),
+            Some(shipped::tame()),
+            A_KEEPERS_TURN
+        ),
         A_KEEPERS_TURN,
         "a meter being raised is held by the pool like any other"
     );
     assert_eq!(
-        core_sim::herd_upkeep_supply(&herd, None, A_KEEPERS_TURN),
+        core_sim::herd_upkeep_supply(&herd, shipped::ladder(), None, A_KEEPERS_TURN),
         A_KEEPERS_TURN,
         "AND A HALF-TAMED HERD NOBODY IS TAMING CAN BE HELD — the builders leave, the keepers stay"
     );
     // **A `Corral` answers for the PEN from its first turn**, before that meter has any progress.
     assert_eq!(
-        core_sim::herd_upkeep_supply(&herd, Some(Improvement::Corral), A_KEEPERS_TURN),
+        core_sim::herd_upkeep_supply(
+            &herd,
+            shipped::ladder(),
+            Some(shipped::corral()),
+            A_KEEPERS_TURN
+        ),
         A_KEEPERS_TURN,
         "the verb names the meter, so a Corral's first turn is credited to the pen it starts"
     );
@@ -3885,7 +3887,12 @@ fn the_keeping_pool_holds_a_half_tamed_herd_and_a_tamed_one_alike() {
     }
     let herd = herd_of(&app, &id);
     assert_eq!(
-        core_sim::herd_upkeep_supply(&herd, Some(Improvement::Tame), A_KEEPERS_TURN),
+        core_sim::herd_upkeep_supply(
+            &herd,
+            shipped::ladder(),
+            Some(shipped::tame()),
+            A_KEEPERS_TURN
+        ),
         A_KEEPERS_TURN,
         "a herd you have tamed is held by the same pool"
     );
@@ -3941,7 +3948,7 @@ fn a_tames_first_turn_draws_the_husbandry_pool_and_a_wild_hunt_draws_nothing() {
             // raised. The two came apart when the animal demand began interpolating on the position.
             demand: core_sim::herd_keeping_basis(&herd, &fauna, &ladder),
             progress: herd.rung_work_done(
-                core_sim::RungKey::AnimalPastoral,
+                shipped::animal_pastoral(),
                 &core_sim::LadderConfig::builtin(),
             ),
         }
@@ -3957,7 +3964,7 @@ fn a_tames_first_turn_draws_the_husbandry_pool_and_a_wild_hunt_draws_nothing() {
              claim and the verb term is never exercised"
         );
         grant_herding(&mut app);
-        spawn_builder(&mut app, &id, Improvement::Tame);
+        spawn_builder(&mut app, &id, shipped::tame());
         // **A whole turn in stage order**, because the fixture seats the herd exactly *at* the food
         // peak: the escapement room a build's `eligible` reads is `0` there until Logistics regrows
         // it, so a bare labor pass would measure a Tame that never started.
@@ -4136,12 +4143,16 @@ fn two_bands_keeping_one_herd_sum_their_hands() {
     let one_keeper = core_sim::pool_work_supply(
         1,
         equipment
-            .keeping_kit_for_branch(core_sim::RungBranch::Animal, None)
+            .keeping_kit_for_branch(
+                &core_sim::LadderConfig::builtin(),
+                core_sim::shipped::animal(),
+                None,
+            )
             .map(|kit| {
                 equipment.build_work_per_worker(
                     &kit,
                     &core_sim::BandEquipment::start_stocked(&equipment),
-                    core_sim::RungBranch::Animal,
+                    shipped::animal(),
                     None,
                 )
             })
@@ -4267,7 +4278,7 @@ fn an_over_stocked_managed_herd_converges_to_its_labor_capacity() {
         herd.is_domesticated(),
         "and its tameness is untouched by the shedding: {}",
         herd.rung_work_done(
-            core_sim::RungKey::AnimalPastoral,
+            shipped::animal_pastoral(),
             &core_sim::LadderConfig::builtin()
         )
     );
@@ -4375,7 +4386,7 @@ fn a_partially_herded_pastoral_herd_stays_tame_with_regrowth() {
         herd.is_domesticated(),
         "and its tameness is untouched: {}",
         herd.rung_work_done(
-            core_sim::RungKey::AnimalPastoral,
+            shipped::animal_pastoral(),
             &core_sim::LadderConfig::builtin()
         )
     );
@@ -4425,13 +4436,13 @@ fn neglect_never_un_tames_a_herd() {
         match app.world.resource::<HerdRegistry>().find(&id) {
             Some(herd) => assert_eq!(
                 herd.rung_work_done(
-                    core_sim::RungKey::AnimalPastoral,
+                    shipped::animal_pastoral(),
                     &core_sim::LadderConfig::builtin()
                 ),
                 partial,
                 "neglect sheds animals, it never touches tameness: {}",
                 herd.rung_work_done(
-                    core_sim::RungKey::AnimalPastoral,
+                    shipped::animal_pastoral(),
                     &core_sim::LadderConfig::builtin()
                 )
             ),
@@ -4560,7 +4571,7 @@ fn shed_animals_appear_in_the_wild_web() {
         assert!(h.owner.is_none(), "a wild carrier is unowned");
         assert_eq!(
             h.rung_work_done(
-                core_sim::RungKey::AnimalPastoral,
+                shipped::animal_pastoral(),
                 &core_sim::LadderConfig::builtin()
             ),
             0.0,
@@ -4933,10 +4944,17 @@ fn a_monotone_animal_meter_stays_building_until_it_completes() {
 
     // (1) A wild herd: nothing banked, so only the player can name a rung.
     let wild = herd_of(&app, &id);
-    assert_eq!(core_sim::herd_build_verb(&wild, None), None);
     assert_eq!(
-        core_sim::herd_build_verb(&wild, Some(Improvement::Tame)),
-        Some(Improvement::Tame),
+        core_sim::herd_build_verb(&wild, shipped::ladder(), None),
+        None
+    );
+    assert_eq!(
+        core_sim::herd_build_verb(
+            &wild,
+            shipped::ladder(),
+            Some(shipped::rung_of_verb(shipped::tame()))
+        ),
+        Some(shipped::tame()),
         "a zero meter has no answer of its own — the player declares"
     );
 
@@ -4949,8 +4967,8 @@ fn a_monotone_animal_meter_stays_building_until_it_completes() {
     }
     let part = herd_of(&app, &id);
     assert_eq!(
-        core_sim::herd_build_verb(&part, None),
-        Some(Improvement::Tame),
+        core_sim::herd_build_verb(&part, shipped::ladder(), None),
+        Some(shipped::tame()),
         "a meter with progress on it declares its own rung"
     );
 
@@ -4961,18 +4979,18 @@ fn a_monotone_animal_meter_stays_building_until_it_completes() {
     let after = herd_of(&app, &id);
     assert!(
         after.rung_work_done(
-            core_sim::RungKey::AnimalPastoral,
+            shipped::animal_pastoral(),
             &core_sim::LadderConfig::builtin()
         ) >= before,
         "monotone: an animal build meter never bleeds ({before} -> {})",
         after.rung_work_done(
-            core_sim::RungKey::AnimalPastoral,
+            shipped::animal_pastoral(),
             &core_sim::LadderConfig::builtin()
         )
     );
     assert_eq!(
-        core_sim::herd_build_verb(&after, None),
-        Some(Improvement::Tame),
+        core_sim::herd_build_verb(&after, shipped::ladder(), None),
+        Some(shipped::tame()),
         "…so the derived verb is the same answer every turn — no loop, just an unfinished build"
     );
 
@@ -4984,18 +5002,26 @@ fn a_monotone_animal_meter_stays_building_until_it_completes() {
     }
     let tamed = herd_of(&app, &id);
     assert_eq!(
-        core_sim::herd_build_verb(&tamed, None),
+        core_sim::herd_build_verb(&tamed, shipped::ladder(), None),
         None,
         "a full meter is maintaining"
     );
     assert_eq!(
-        core_sim::herd_build_verb(&tamed, Some(Improvement::Tame)),
+        core_sim::herd_build_verb(
+            &tamed,
+            shipped::ladder(),
+            Some(shipped::rung_of_verb(shipped::tame()))
+        ),
         None,
         "…and a stale `Tame` declaration on it is inert — nothing has to hunt it down and clear it"
     );
     assert_eq!(
-        core_sim::herd_build_verb(&tamed, Some(Improvement::Corral)),
-        Some(Improvement::Corral),
+        core_sim::herd_build_verb(
+            &tamed,
+            shipped::ladder(),
+            Some(shipped::rung_of_verb(shipped::corral()))
+        ),
+        Some(shipped::corral()),
         "but the pen's meter is at zero, so climbing to it is still the player's to say"
     );
 
@@ -5011,9 +5037,9 @@ fn a_monotone_animal_meter_stays_building_until_it_completes() {
         let ladder = core_sim::LadderConfig::builtin();
         let pen_base = {
             let herd = herd_of(&app, &id);
-            herd.rung_cost(core_sim::RungKey::AnimalPastoral, &ladder)
+            herd.rung_cost(shipped::animal_pastoral(), &ladder)
         };
-        let pen_cost = herd_of(&app, &id).rung_cost(core_sim::RungKey::AnimalPen, &ladder);
+        let pen_cost = herd_of(&app, &id).rung_cost(shipped::animal_pen(), &ladder);
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
         herd.set_ladder_position(pen_base + pen_cost * HALF_A_FENCE, &ladder);
@@ -5023,8 +5049,8 @@ fn a_monotone_animal_meter_stays_building_until_it_completes() {
     // **THE PRECONDITION** — the state really is part-fenced, and the credit really is zero, or the
     // arm under test is being asked an easier question than the defect was.
     assert_eq!(
-        part_fenced.standing().raising_key(),
-        Some(core_sim::RungKey::AnimalPen),
+        part_fenced.standing().raising,
+        Some(shipped::animal_pen()),
         "fixture: the herd must be raising the pen"
     );
     assert_eq!(
@@ -5039,13 +5065,17 @@ fn a_monotone_animal_meter_stays_building_until_it_completes() {
     );
 
     assert_eq!(
-        core_sim::herd_build_verb(&part_fenced, None),
-        Some(Improvement::Corral),
+        core_sim::herd_build_verb(&part_fenced, shipped::ladder(), None),
+        Some(shipped::corral()),
         "a pen with work banked on it declares its own rung, with no declaration to lean on"
     );
     assert_eq!(
-        core_sim::herd_build_verb(&part_fenced, Some(Improvement::Tame)),
-        Some(Improvement::Corral),
+        core_sim::herd_build_verb(
+            &part_fenced,
+            shipped::ladder(),
+            Some(shipped::rung_of_verb(shipped::tame()))
+        ),
+        Some(shipped::corral()),
         "…and it governs a stale `Tame` beside it — a pen with work on it is the rung in flight"
     );
 }
@@ -5060,12 +5090,16 @@ const HALF_A_FENCE: f32 = 0.5;
 fn animal_keeper_supply(keepers: u32) -> f32 {
     let equipment = core_sim::EquipmentConfig::builtin();
     let per_worker = equipment
-        .keeping_kit_for_branch(core_sim::RungBranch::Animal, None)
+        .keeping_kit_for_branch(
+            &core_sim::LadderConfig::builtin(),
+            core_sim::shipped::animal(),
+            None,
+        )
         .map(|kit| {
             equipment.build_work_per_worker(
                 &kit,
                 &core_sim::BandEquipment::start_stocked(&equipment),
-                core_sim::RungBranch::Animal,
+                shipped::animal(),
                 None,
             )
         })
@@ -5092,7 +5126,7 @@ fn second_tameable_herd_in_reach(app: &App, near: &str) -> String {
     registry
         .herds
         .iter()
-        .filter(|herd| herd.id != near && herd.can_domesticate())
+        .filter(|herd| herd.id != near && herd.can_domesticate(shipped::ladder()))
         .find(|herd| {
             core_sim::grid_utils::hex_distance_wrapped(anchor, herd.position(), width, wrap)
                 <= reach
@@ -5266,7 +5300,7 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
                 assignments: rows,
                 build_queue: vec![core_sim::BuildQueueEntry {
                     source: core_sim::BuildSource::Herd(build.clone()),
-                    declared: core_sim::BuildJob::Rung(Improvement::Tame),
+                    declared: core_sim::BuildJob::Climb(shipped::animal_pastoral()),
                     priority: core_sim::SourcePriority::default(),
                 }],
                 ..Default::default()
@@ -5313,7 +5347,7 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
             build_supplied,
             build_demand,
             build_progress: built.rung_work_done(
-                core_sim::RungKey::AnimalPastoral,
+                shipped::animal_pastoral(),
                 &core_sim::LadderConfig::builtin(),
             ),
             blocked_reason: built.build_blocked_reason.key().to_string(),

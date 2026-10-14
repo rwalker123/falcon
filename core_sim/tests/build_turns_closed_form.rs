@@ -33,15 +33,16 @@ mod pen_materials_support;
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
+use core_sim::shipped;
 
 use core_sim::TakeSelection;
 use core_sim::{
     advance_cultivation, advance_herds, advance_husbandry, advance_labor_allocation,
     build_fraction, build_test_app, recapture_snapshot_in_place, scalar_from_f32, scalar_one,
     scalar_zero, BandEquipment, DiscoveryProgressLedger, EquipmentConfig, FactionId,
-    FaunaConfigHandle, ForageRegistry, GenerationId, HerdRegistry, Improvement, LaborAllocation,
+    FaunaConfigHandle, ForageRegistry, GenerationId, HerdRegistry, LaborAllocation,
     LaborAssignment, LaborTarget, LadderConfigHandle, LocalStore, MoraleCause, PopulationCohort,
-    ResidentBand, RungKey, SimulationConfig, SnapshotHistory, SourcePriority, TileRegistry,
+    ResidentBand, SimulationConfig, SnapshotHistory, SourcePriority, TileRegistry, VerbId,
     DEFAULT_ESCAPEMENT_FLOOR, HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID,
 };
 
@@ -210,11 +211,11 @@ fn rate_in_hands(app: &App, fauna_id: &str) -> u32 {
     herd.biomass = herd.biomass.max(herd.carrying_capacity);
     let herd = &herd;
     ladder
-        .rung(core_sim::RungKey::AnimalPastoral)
+        .rung(shipped::animal_pastoral())
         .upkeep_crew_needed(core_sim::herd_keeper_load(herd, &fauna))
         .max(
             ladder
-                .rung(core_sim::RungKey::AnimalPen)
+                .rung(shipped::animal_pen())
                 .upkeep_crew_needed(core_sim::herd_keeper_load(herd, &fauna)),
         )
 }
@@ -228,7 +229,7 @@ fn spawn_taming_keepers(
     gear: GearHeld,
     builders: u32,
 ) -> bevy::prelude::Entity {
-    spawn_keepers_of(app, pos, fauna_id, gear, Some(Improvement::Tame), builders)
+    spawn_keepers_of(app, pos, fauna_id, gear, Some(shipped::tame()), builders)
 }
 
 /// The same band under a **stated** improvement — `None` is the crew that is hunting and *deciding*,
@@ -239,7 +240,7 @@ fn spawn_keepers_of(
     pos: UVec2,
     fauna_id: &str,
     gear: GearHeld,
-    improvement: Option<Improvement>,
+    improvement: Option<VerbId>,
     // **The BUILD's own crew** — the hands on the verb, now that the player states them
     // (`docs/plan_standing_upkeep.md` §2.2). The gear stamp and the turns quote both read it.
     builders: u32,
@@ -343,7 +344,9 @@ fn spawn_keepers_of(
                 build_queue: improvement
                     .map(|declared| core_sim::BuildQueueEntry {
                         source: core_sim::BuildSource::Herd(fauna_id.to_string()),
-                        declared: core_sim::BuildJob::Rung(declared),
+                        declared: core_sim::BuildJob::Climb(core_sim::shipped::rung_of_verb(
+                            declared,
+                        )),
                         // **The kit rides the ENTRY**, which is where a build's gear offset is read
                         // from since §4.7a ②.
                         // **Marked above the hunt row**, because the herd's own crew keeps it first
@@ -380,7 +383,7 @@ fn an_animal_build_is_geared_by_the_rungs_own_tool_and_by_nothing_else() {
         // **rung** since `docs/plan_pool_toe.md`, so an entry's kit prices nothing; what can still
         // separate a geared pool from a bare one is whether the band owns the tool the rung wants.
         if !tools {
-            core_sim::disarm_the_builders(&mut app.world, keepers, RungKey::AnimalPastoral);
+            core_sim::disarm_the_builders(&mut app.world, keepers, shipped::animal_pastoral());
         }
         app.world.run_system_once(advance_herds);
         app.world.run_system_once(advance_labor_allocation);
@@ -824,7 +827,7 @@ fn resolve_one_turn(app: &mut App) {
 
 /// Hand the keeper band its next verb — the fixture climbs Tame → Corral on one crew, because the
 /// pen rung is what publishes `corralled`.
-fn set_improvement(app: &mut App, band: bevy::prelude::Entity, improvement: Improvement) {
+fn set_improvement(app: &mut App, band: bevy::prelude::Entity, improvement: VerbId) {
     let mut band = app.world.entity_mut(band);
     let mut allocation = band
         .get_mut::<LaborAllocation>()
@@ -843,7 +846,7 @@ fn set_improvement(app: &mut App, band: bevy::prelude::Entity, improvement: Impr
     // The `builders` row the fixture spawned is untouched and simply moves to the new head.
     assert!(allocation.enqueue_build(
         core_sim::BuildSource::Herd(fauna_id),
-        core_sim::BuildJob::Rung(improvement),
+        core_sim::BuildJob::Climb(core_sim::shipped::rung_of_verb(improvement)),
     ));
 }
 
@@ -925,7 +928,7 @@ fn a_herds_published_build_meters_agree_with_their_work_pairs_on_the_turn_they_c
                     !herd.corralled,
                     "turn {turn}: a tamed herd is not yet penned"
                 );
-                set_improvement(&mut app, keepers, Improvement::Corral);
+                set_improvement(&mut app, keepers, shipped::corral());
             }
             continue;
         }
@@ -1059,7 +1062,7 @@ fn a_between_turns_quote_keeps_with_the_hands_the_next_turn_settles() {
             }
         }
         if tamed && penned_turn.is_none() && !corralled {
-            set_improvement(&mut app, keepers, Improvement::Corral);
+            set_improvement(&mut app, keepers, shipped::corral());
             penned_turn = Some(turn);
         }
         if corralled && corralled_before {
@@ -1158,7 +1161,7 @@ fn client_floor_food_peak() -> f32 {
 /// forbid.
 #[test]
 fn the_wire_publishes_the_whole_job_and_a_geared_pool_that_finishes_it_sooner() {
-    for improvement in [None, Some(Improvement::Tame)] {
+    for improvement in [None, Some(shipped::tame())] {
         let (mut app, id, pos) = world_with_a_herd_of(UNSCALED_TAMEABLE_SPECIES);
         let keepers = spawn_keepers_of(
             &mut app,
@@ -1321,8 +1324,12 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                 let tile = tiles.get(&position)?;
                 let composition =
                     core_sim::tile_flora_composition(&flora, &labor.forage, tile, map_seed);
-                let crop =
-                    core_sim::default_species_for_rung(&composition, &flora, RungKey::PlantTended)?;
+                let crop = core_sim::default_species_for_rung(
+                    &composition,
+                    &flora,
+                    shipped::ladder(),
+                    shipped::plant_tended(),
+                )?;
                 Some((position, crop))
             })
             .expect("worldgen curated a site whose basket the tended rung can commit to")
@@ -1342,7 +1349,7 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
 
     let (cost, grace) = {
         let ladder = app.world.resource::<LadderConfigHandle>().get();
-        let rung = ladder.rung(RungKey::PlantTended);
+        let rung = ladder.rung(shipped::plant_tended());
         (
             rung.build_cost(core_sim::RUNG_COST_UNSCALED)
                 .expect("the tended rung builds"),
@@ -1438,7 +1445,7 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                 ],
                 build_queue: vec![core_sim::BuildQueueEntry {
                     source: core_sim::BuildSource::Patch(source),
-                    declared: core_sim::BuildJob::Rung(Improvement::Cultivate),
+                    declared: core_sim::BuildJob::Climb(shipped::plant_tended()),
                     priority: core_sim::SourcePriority::default(),
                 }],
                 ..Default::default()

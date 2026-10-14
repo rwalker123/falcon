@@ -72,6 +72,7 @@
 //! that every printed rate is finite, that both webs actually paid something, and that no fauna row
 //! left its binding-stage column empty.
 
+use core_sim::shipped;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -85,9 +86,9 @@ use core_sim::{
     patch_upkeep_demand, plant_rung_span, regrow_biomass, retreat_mean, retreat_seed,
     selected_biomass_share, sustainable_yield, BandEquipment, CombatConfig, CreaturesConfig,
     EquipmentConfig, FactionId, FaunaConfig, FloraConfig, ForagePatch, Herd, HuntDraw,
-    HuntTakeBound, HuntingParty, HusbandryCeiling, KitChoice, KitCoverage, KitJob, LaborConfig,
-    LadderConfig, MaterialPayoff, OutcomeKills, PartyResolution, Quarry, RungKey, SourceYield,
-    SpeciesDef, TakeSelection, DEFAULT_ESCAPEMENT_FLOOR,
+    HuntTakeBound, HuntingParty, KitChoice, KitCoverage, KitJob, LaborConfig, LadderConfig,
+    MaterialPayoff, OutcomeKills, PartyResolution, Quarry, RungId, SourceYield, SpeciesDef,
+    TakeSelection, DEFAULT_ESCAPEMENT_FLOOR,
 };
 use sim_runtime::TerrainType;
 
@@ -410,15 +411,21 @@ fn render_bound(bound: Option<HuntTakeBound>) -> &'static str {
 /// write the standing with the position), the capacity is re-struck through the sim's own
 /// [`patch_carrying_capacity`] exactly as `advance_forage_regrowth` re-strikes it every turn, and the
 /// stock is then put on the operating point the shipped floor settles a stand at.
-fn seated_patch(terrain: TerrainType, rung: Option<RungKey>, shipped: &Shipped) -> ForagePatch {
+fn seated_patch(terrain: TerrainType, rung: Option<RungId>, shipped: &Shipped) -> ForagePatch {
     let tile_capacity = basket::capacity_of(&shipped.labor, terrain);
-    let mut patch = ForagePatch::new(basket::TILE, tile_capacity);
+    let mut patch = ForagePatch::new(
+        basket::TILE,
+        tile_capacity,
+        shipped::root_standing(shipped::plant()),
+    );
     if let Some(rung) = rung {
         // The commitment is what reweights the basket and what the conversion gain lands on; the
         // real Cultivate/Sow arm stamps it on the first turn a crew works the patch.
         patch.species = Some(basket::CROP.to_string());
         let seated = match rung {
-            RungKey::PlantField => patch.complete_field(TABLE_FACTION, &shipped.ladder),
+            matched_ if matched_ == shipped::plant_field() => {
+                patch.complete_field(TABLE_FACTION, &shipped.ladder)
+            }
             _ => patch.complete_cultivation(TABLE_FACTION, &shipped.ladder),
         };
         assert!(
@@ -490,11 +497,11 @@ fn forage_food_per_worker(
 /// **Cumulative work to stand on `rung`, at THIS patch's own price.** `plant:field` is priced by how
 /// much of the tile the crop has to replace (`docs/plan_standing_upkeep.md` §4.15), so the Field's
 /// figure is the declared `work_cost` times the multiplier this ground quotes.
-fn plant_build_work(rung: Option<RungKey>, field_multiplier: f32, shipped: &Shipped) -> f32 {
+fn plant_build_work(rung: Option<RungId>, field_multiplier: f32, shipped: &Shipped) -> f32 {
     match rung {
         None => 0.0,
-        Some(RungKey::PlantField) => {
-            let (base, width) = plant_rung_span(RungKey::PlantField, &shipped.ladder);
+        Some(matched_) if matched_ == shipped::plant_field() => {
+            let (base, width) = plant_rung_span(shipped::plant_field(), &shipped.ladder);
             base + width * field_multiplier
         }
         Some(rung) => {
@@ -507,7 +514,7 @@ fn plant_build_work(rung: Option<RungKey>, field_multiplier: f32, shipped: &Ship
 /// The Field price this ground quotes, live off the tended patch beneath it — which is where a
 /// two-leg Sow re-quotes its Field leg from.
 fn field_cost_multiplier(shipped: &Shipped) -> f32 {
-    let tended = seated_patch(basket::TERRAIN, Some(RungKey::PlantTended), shipped);
+    let tended = seated_patch(basket::TERRAIN, Some(shipped::plant_tended()), shipped);
     patch_field_cost_multiplier(
         &tended,
         &basket::composition(&shipped.flora),
@@ -525,8 +532,8 @@ fn flora_rows(shipped: &Shipped) -> Vec<Row> {
     let mut rows = Vec::new();
     for (label, rung) in [
         ("wild", None),
-        ("tended", Some(RungKey::PlantTended)),
-        ("field", Some(RungKey::PlantField)),
+        ("tended", Some(shipped::plant_tended())),
+        ("field", Some(shipped::plant_field())),
     ] {
         let patch = seated_patch(basket::TERRAIN, rung, shipped);
         for (selection_label, take) in [
@@ -613,7 +620,7 @@ fn flora_rows(shipped: &Shipped) -> Vec<Row> {
 /// roster's own full-group band times the density gain the rung buys — the same [`herd_density_gain`]
 /// the one `K` seam applies — and the stock is then put on the operating point the shipped floor
 /// settles a herd at.
-fn seated_herd(key: &str, def: &SpeciesDef, rung: RungKey, shipped: &Shipped) -> Option<Herd> {
+fn seated_herd(key: &str, def: &SpeciesDef, rung: RungId, shipped: &Shipped) -> Option<Herd> {
     let range_capacity = full_group_capacity(def);
     let mut herd = Herd::new(
         format!("table_{key}"),
@@ -631,17 +638,18 @@ fn seated_herd(key: &str, def: &SpeciesDef, rung: RungKey, shipped: &Shipped) ->
         def.regrowth_rate
             .unwrap_or(shipped.fauna.ecology.regrowth_rate),
         def.body_mass,
+        shipped::root_standing(shipped::animal()),
     );
     herd.husbandry_ceiling = def.husbandry_ceiling;
     herd.taming_cost_multiplier = shipped.fauna.taming_cost_multiplier_for(&herd.species);
     match rung {
-        RungKey::AnimalWild => {}
-        RungKey::AnimalPastoral => {
+        matched_ if matched_ == shipped::animal_wild() => {}
+        matched_ if matched_ == shipped::animal_pastoral() => {
             if !herd.tame_outright(TABLE_FACTION, &shipped.ladder) {
                 return None;
             }
         }
-        RungKey::AnimalPen => {
+        matched_ if matched_ == shipped::animal_pen() => {
             if !herd.tame_outright(TABLE_FACTION, &shipped.ladder)
                 || !herd.corral_at(FIXTURE_TILES[0], &shipped.ladder)
             {
@@ -857,13 +865,13 @@ fn drive_take(
 }
 
 /// The rungs `ceiling` allows, in climb order.
-fn rungs_for(ceiling: HusbandryCeiling) -> Vec<(&'static str, RungKey)> {
-    let mut rungs = vec![("wild hunt", RungKey::AnimalWild)];
-    if ceiling != HusbandryCeiling::Wild {
-        rungs.push(("pastoral", RungKey::AnimalPastoral));
+fn rungs_for(ceiling: Option<RungId>) -> Vec<(&'static str, RungId)> {
+    let mut rungs = vec![("wild hunt", shipped::animal_wild())];
+    if ceiling != Some(shipped::animal_wild()) {
+        rungs.push(("pastoral", shipped::animal_pastoral()));
     }
-    if ceiling == HusbandryCeiling::Pen {
-        rungs.push(("pen", RungKey::AnimalPen));
+    if ceiling == Some(shipped::animal_pen()) {
+        rungs.push(("pen", shipped::animal_pen()));
     }
     rungs
 }
@@ -901,10 +909,10 @@ impl RegrowthFacts {
     }
 }
 
-fn regrowth_facts(herd: &Herd, rung: RungKey, shipped: &Shipped) -> RegrowthFacts {
+fn regrowth_facts(herd: &Herd, rung: RungId, shipped: &Shipped) -> RegrowthFacts {
     let gain = match rung {
-        RungKey::AnimalPastoral => shipped.fauna.husbandry.pastoral_gain,
-        RungKey::AnimalPen => shipped.fauna.husbandry.pen_gain,
+        matched_ if matched_ == shipped::animal_pastoral() => shipped.fauna.husbandry.pastoral_gain,
+        matched_ if matched_ == shipped::animal_pen() => shipped.fauna.husbandry.pen_gain,
         _ => 1.0,
     };
     RegrowthFacts {
@@ -999,12 +1007,14 @@ fn fauna_rows(shipped: &Shipped) -> Vec<(Row, FaunaExtras)> {
 
 /// Cumulative work to stand on `rung`, at **this herd's** own price list (`taming_cost_multiplier`
 /// scales the pastoral leg per species).
-fn animal_build_work(herd: &Herd, rung: RungKey, shipped: &Shipped) -> f32 {
+fn animal_build_work(herd: &Herd, rung: RungId, shipped: &Shipped) -> f32 {
     match rung {
-        RungKey::AnimalPastoral => herd.rung_cost(RungKey::AnimalPastoral, &shipped.ladder),
-        RungKey::AnimalPen => {
-            herd.rung_cost(RungKey::AnimalPastoral, &shipped.ladder)
-                + herd.rung_cost(RungKey::AnimalPen, &shipped.ladder)
+        matched_ if matched_ == shipped::animal_pastoral() => {
+            herd.rung_cost(shipped::animal_pastoral(), &shipped.ladder)
+        }
+        matched_ if matched_ == shipped::animal_pen() => {
+            herd.rung_cost(shipped::animal_pastoral(), &shipped.ladder)
+                + herd.rung_cost(shipped::animal_pen(), &shipped.ladder)
         }
         _ => 0.0,
     }
@@ -1213,7 +1223,7 @@ fn print_section_a(rows: &[Row], shipped: &Shipped) {
     println!("    production in `sustainable` rather than an escapement MSY line — and that production is THIS TURN's take at the");
     println!("    operating point, not the horizon average the food columns carry. Compare it against food/turn, not against the rungs below.");
 
-    let (base, width) = plant_rung_span(RungKey::PlantField, &shipped.ladder);
+    let (base, width) = plant_rung_span(shipped::plant_field(), &shipped.ladder);
     println!(
         "\n  ⛔ THE FIELD'S BUILD WORK IS SCALED: plant:field declares {width:.1} work units, and this ground quotes it at x{multiplier:.4}"
     );
@@ -1233,6 +1243,7 @@ fn print_section_a(rows: &[Row], shipped: &Shipped) {
             &share.species,
             &shipped.flora,
             &shipped.labor.forage,
+            shipped::ladder(),
         );
         println!(
             "       {:<14} wild share {:.3}   sow price {}",
@@ -1433,11 +1444,13 @@ fn print_section_c(rows: &[&Row]) {
 /// The plant partner is the **whole-basket** row, which is what a band that has named no selection
 /// gathers; the food-only row is printed beside it because dropping the cash crops is a real move a
 /// player makes, and it moves the ratio.
-const RUNG_PAIRS: [(&str, &str, RungKey); 3] = [
-    ("wild hunt", "wild", RungKey::AnimalWild),
-    ("pastoral", "tended", RungKey::AnimalPastoral),
-    ("pen", "field", RungKey::AnimalPen),
-];
+fn rung_pairs() -> [(&'static str, &'static str, RungId); 3] {
+    [
+        ("wild hunt", "wild", shipped::animal_wild()),
+        ("pastoral", "tended", shipped::animal_pastoral()),
+        ("pen", "field", shipped::animal_pen()),
+    ]
+}
 
 /// The median of a set of rates. Even counts take the lower of the two middles — the pessimistic
 /// half, which is the one a ladder comparison should not be able to hide behind.
@@ -1490,8 +1503,8 @@ fn print_standardised(shipped: &Shipped) {
     // ---- the plant web ----
     for (label, rung) in [
         ("wild", None),
-        ("tended", Some(RungKey::PlantTended)),
-        ("field", Some(RungKey::PlantField)),
+        ("tended", Some(shipped::plant_tended())),
+        ("field", Some(shipped::plant_field())),
     ] {
         let patch = seated_patch(basket::TERRAIN, rung, shipped);
         for (selection, take) in [
@@ -1644,8 +1657,8 @@ fn print_plant_crew_curve(shipped: &Shipped) {
     let food_only = food_only_selection(&composition, shipped);
     for (label, rung) in [
         ("wild", None),
-        ("tended", Some(RungKey::PlantTended)),
-        ("field", Some(RungKey::PlantField)),
+        ("tended", Some(shipped::plant_tended())),
+        ("field", Some(shipped::plant_field())),
     ] {
         let patch = seated_patch(basket::TERRAIN, rung, shipped);
         for (selection_label, take) in [
@@ -1797,8 +1810,8 @@ fn print_steady_rates(shipped: &Shipped, fauna: &[(Row, FaunaExtras)]) {
     let food_only = food_only_selection(&composition, shipped);
     for (label, rung) in [
         ("wild", None),
-        ("tended", Some(RungKey::PlantTended)),
-        ("field", Some(RungKey::PlantField)),
+        ("tended", Some(shipped::plant_tended())),
+        ("field", Some(shipped::plant_field())),
     ] {
         let patch = seated_patch(basket::TERRAIN, rung, shipped);
         for (selection_label, take) in [
@@ -1864,7 +1877,7 @@ fn print_rung_pairs(flora: &[Row], fauna: &[(Row, FaunaExtras)]) {
         "  {:<10} {:<8} {:>10} {:>10} {:>10} | {:>10} {:>10} | {:>8} {:>8}",
         "", "rung", "basket", "food only", "BEST", "MEDIAN", "counted", "vs best", "vs med",
     );
-    for (animal_rung, plant_rung, _) in RUNG_PAIRS {
+    for (animal_rung, plant_rung, _) in rung_pairs() {
         let plant_basket = flora
             .iter()
             .find(|row| row.rung == plant_rung && row.source.contains("whole basket"))
@@ -2205,7 +2218,7 @@ fn print_mammoth(shipped: &Shipped) {
     println!("MAMMOTH DIAGNOSIS — the largest engage_rate x body_mass ceiling on the roster, and the last-paying row in Section C.");
     println!("{RULE}");
     let def = &shipped.fauna.species[MAMMOTH];
-    let Some(herd) = seated_herd(MAMMOTH, def, RungKey::AnimalWild, shipped) else {
+    let Some(herd) = seated_herd(MAMMOTH, def, shipped::animal_wild(), shipped) else {
         println!("  the mammoth could not be seated — nothing to diagnose");
         return;
     };

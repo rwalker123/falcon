@@ -9,11 +9,12 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::prelude::Entity;
+use core_sim::shipped;
 
 use core_sim::{
     build_test_app, recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero,
-    BuildJob, BuildQueueEntry, BuildSource, FactionId, GenerationId, Improvement, LaborAllocation,
-    LaborAssignment, LaborTarget, LocalStore, MoraleCause, PopulationCohort, ResidentBand, RungKey,
+    BuildJob, BuildQueueEntry, BuildSource, FactionId, GenerationId, LaborAllocation,
+    LaborAssignment, LaborTarget, LocalStore, MoraleCause, PopulationCohort, ResidentBand,
     SourcePriority, TakeSelection, TileRegistry,
 };
 
@@ -50,7 +51,13 @@ fn a_cultivable_site(app: &mut App) -> UVec2 {
             };
             let composition =
                 core_sim::tile_flora_composition(&flora, &labor.forage, tile, map_seed);
-            core_sim::default_species_for_rung(&composition, &flora, RungKey::PlantTended).is_some()
+            core_sim::default_species_for_rung(
+                &composition,
+                &flora,
+                shipped::ladder(),
+                shipped::plant_tended(),
+            )
+            .is_some()
         })
         .collect();
     cultivable.sort_by_key(|tile| (tile.y, tile.x));
@@ -101,7 +108,7 @@ fn world(cultivate_is_one_turn_from_done: bool) -> (App, Entity, UVec2, String) 
         let mut forage = app.world.resource_mut::<core_sim::ForageRegistry>();
         let patch = forage.patch_mut(anchor).expect("the patch exists");
         let tended_cost = ladder
-            .rung(RungKey::PlantTended)
+            .rung(shipped::plant_tended())
             .build_cost(1.0)
             .expect("tended builds");
         let almost = tended_cost - 0.01;
@@ -197,12 +204,12 @@ fn world(cultivate_is_one_turn_from_done: bool) -> (App, Entity, UVec2, String) 
                 build_queue: vec![
                     BuildQueueEntry {
                         source: BuildSource::Patch(anchor),
-                        declared: BuildJob::Rung(Improvement::Cultivate),
+                        declared: BuildJob::Climb(shipped::plant_tended()),
                         priority: SourcePriority::default(),
                     },
                     BuildQueueEntry {
                         source: BuildSource::Herd(herd_id.clone()),
-                        declared: BuildJob::Rung(Improvement::Tame),
+                        declared: BuildJob::Climb(shipped::animal_pastoral()),
                         priority: SourcePriority::default(),
                     },
                 ],

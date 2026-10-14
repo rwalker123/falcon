@@ -32,6 +32,7 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::MinimalPlugins;
+use core_sim::shipped;
 
 use core_sim::TakeSelection;
 use core_sim::{
@@ -42,7 +43,7 @@ use core_sim::{
     FloraShare, FoodModuleTag, ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap,
     HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfig, LaborConfigHandle,
     LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause,
-    PopulationCohort, RungKey, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
+    PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, SourcePriority, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry, WellbeingConfigHandle,
     BUILTIN_LABOR_CONFIG, FODDER, FOOD,
@@ -213,7 +214,11 @@ fn wild_food_rate(app: &App, coord: UVec2) -> f32 {
     let flora = FloraConfig::builtin();
     let forage = &labor().forage;
     let composition = tile_composition(app, coord);
-    let wild = core_sim::ForagePatch::new(coord, 1.0);
+    let wild = core_sim::ForagePatch::new(
+        coord,
+        1.0,
+        core_sim::shipped::root_standing(core_sim::shipped::plant()),
+    );
     patch_provisions_per_biomass(&wild, &composition, &flora, forage)
 }
 
@@ -721,7 +726,8 @@ fn the_published_cultivate_fodder_quote_is_the_fodder_a_tended_patch_actually_cr
         &flora,
         forage,
         NEUTRAL_MULTIPLIER,
-        RungKey::PlantTended,
+        shipped::ladder(),
+        shipped::plant_tended(),
     );
     assert!(quoted > 0.0, "a rung-2 hay patch must QUOTE its fodder");
 

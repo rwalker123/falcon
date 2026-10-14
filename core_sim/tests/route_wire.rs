@@ -12,13 +12,14 @@
 use bevy::app::App;
 use bevy::math::UVec2;
 use bevy::prelude::{Entity, With};
+use core_sim::shipped;
 
 use core_sim::{
     build_test_app, build_work_per_worker_turn, route_rungs_in_climb_order, rung_grants_sight,
     BandId, FactionId, LaborAllocation, LaborTarget, LadderConfig, PopulationCohort, ResidentBand,
-    RoadKeeper, RoadRegistry, RungKey, SimulationConfig, SnapshotHistory, Tile, TileRegistry,
-    ViewerFaction, FIRST_BUILT_RUNG, METER_FULL, NEAR_ENOUGH_TO_KEEP, NO_BUILD_GEAR,
-    NO_UPKEEP_DEMAND, PER_WORKER_OUTPUT, RUNG_COST_UNSCALED,
+    RoadKeeper, RoadRegistry, RungId, SimulationConfig, SnapshotHistory, Tile, TileRegistry,
+    ViewerFaction, METER_FULL, NEAR_ENOUGH_TO_KEEP, NO_BUILD_GEAR, NO_UPKEEP_DEMAND,
+    PER_WORKER_OUTPUT, RUNG_COST_UNSCALED,
 };
 
 /// A pinned earthlike world, so the terrain under every road below is the same one every run.
@@ -193,9 +194,9 @@ fn tile_east_of(app: &App, head: UVec2, steps: u32) -> UVec2 {
 /// keeps.
 fn built_road_dials() -> (f32, u32) {
     let ladder = LadderConfig::builtin();
-    let rung = ladder.rung(RungKey::RouteDirtRoad);
+    let rung = ladder.rung(shipped::route_dirt_road());
     let (base, width) =
-        core_sim::road_rung_span(RungKey::RouteDirtRoad, &ladder, NEAR_ENOUGH_TO_KEEP);
+        core_sim::road_rung_span(shipped::route_dirt_road(), &ladder, NEAR_ENOUGH_TO_KEEP);
     let grace = rung
         .upkeep
         .as_ref()
@@ -273,18 +274,17 @@ fn a_road_keepers_own_output() -> f32 {
     // The **reference** ledger — one unit of everything. A single keeper needs exactly one, so this
     // is the honest stock for a one-worker coverage and it cannot go stale on the spawn's own dials.
     let ledger = core_sim::BandEquipment::start_stocked(&equipment);
-    let rung = RungKey::RouteDirtRoad.wire_key();
-    let kit = equipment.keeping_kit_for(core_sim::RungBranch::Route, Some(&rung));
+    let rung = shipped::route_dirt_road().wire_key();
+    let kit = equipment.keeping_kit_for(
+        &core_sim::LadderConfig::builtin(),
+        core_sim::shipped::route(),
+        Some(&rung),
+    );
     build_work_per_worker_turn(
         equipment
             .coverage(&kit, 1.0, &ledger)
             .weighted_rate(|crew| {
-                equipment.build_work_per_worker(
-                    crew,
-                    &ledger,
-                    core_sim::RungBranch::Route,
-                    Some(&rung),
-                )
+                equipment.build_work_per_worker(crew, &ledger, shipped::route(), Some(&rung))
             }),
     )
 }
@@ -352,7 +352,7 @@ fn restock_the_fixture_band(app: &mut App, band: Entity) {
 fn stage_a_paving(app: &mut App, band: Entity, tile: UVec2, builders: u32, stone: f32) {
     let ladder = LadderConfig::builtin();
     let (base, width) = core_sim::road_rung_span(
-        RungKey::RouteDirtRoad,
+        shipped::route_dirt_road(),
         &ladder,
         core_sim::NEAR_ENOUGH_TO_KEEP,
     );
@@ -374,7 +374,7 @@ fn stage_a_paving(app: &mut App, band: Entity, tile: UVec2, builders: u32, stone
     allocation.set_assignment(LaborTarget::Builders, builders, builders.max(1), None);
     allocation.enqueue_build(
         core_sim::BuildSource::Road(tile),
-        core_sim::BuildJob::Rung(core_sim::Improvement::Pave),
+        core_sim::BuildJob::Climb(shipped::route_paved_road()),
     );
     app.world.entity_mut(band).insert(allocation);
 
@@ -451,7 +451,7 @@ fn stone_held(app: &App, band: Entity) -> f32 {
 fn seat_a_paved_road(app: &mut App, tile: UVec2, keeper: (FactionId, BandId)) {
     let ladder = LadderConfig::builtin();
     let (base, width) = core_sim::road_rung_span(
-        RungKey::RoutePavedRoad,
+        shipped::route_paved_road(),
         &ladder,
         core_sim::NEAR_ENOUGH_TO_KEEP,
     );
@@ -655,7 +655,7 @@ fn a_paving_roads_two_bills_are_struck_at_the_same_position() {
 
     let ladder = LadderConfig::builtin();
     let (base, width) = core_sim::road_rung_span(
-        RungKey::RoutePavedRoad,
+        shipped::route_paved_road(),
         &ladder,
         core_sim::NEAR_ENOUGH_TO_KEEP,
     );
@@ -680,8 +680,8 @@ fn a_paving_roads_two_bills_are_struck_at_the_same_position() {
     );
 
     // What each currency is owed at a given credit, off the ladder's own records — never typed.
-    let dirt = ladder.rung(RungKey::RouteDirtRoad);
-    let paved = ladder.rung(RungKey::RoutePavedRoad);
+    let dirt = ladder.rung(shipped::route_dirt_road());
+    let paved = ladder.rung(shipped::route_paved_road());
     const UNSCALED: f32 = 1.0;
     let measure = measure_of(&app, camp);
     let credit_of = |position: f32| ((position - base) / width).clamp(0.0, 1.0);
@@ -907,7 +907,7 @@ fn a_road_whose_keepers_came_back_stops_quoting_the_rot_it_no_longer_owes() {
         set_roadwork_crew(&mut app, band, UNKEPT);
         let ladder = LadderConfig::builtin();
         let (base, width) =
-            core_sim::road_rung_span(RungKey::RoutePavedRoad, &ladder, NEAR_ENOUGH_TO_KEEP);
+            core_sim::road_rung_span(shipped::route_paved_road(), &ladder, NEAR_ENOUGH_TO_KEEP);
         {
             let mut roads = app.world.resource_mut::<RoadRegistry>();
             roads
@@ -1395,7 +1395,7 @@ fn the_build_meter_is_the_rungs_own_and_reads_exactly_full_on_a_completed_rung()
     // Half-way into the paving, the meter is the PAVED road's — a different rung from the one held.
     let (dirt_top, _) = built_road_dials();
     let (_, paved_width) = core_sim::road_rung_span(
-        RungKey::RoutePavedRoad,
+        shipped::route_paved_road(),
         &LadderConfig::builtin(),
         NEAR_ENOUGH_TO_KEEP,
     );
@@ -1540,7 +1540,7 @@ fn a_road_on_ground_the_faction_has_never_seen_is_absent_from_its_frame() {
 fn the_row_states_what_the_rung_is_buying() {
     let ladder = LadderConfig::builtin();
     let dirt = ladder
-        .rung(RungKey::RouteDirtRoad)
+        .rung(shipped::route_dirt_road())
         .route_payoff
         .expect("every route rung declares a payoff");
 
@@ -1560,7 +1560,7 @@ fn the_row_states_what_the_rung_is_buying() {
     );
 }
 
-/// The route branch as the **coded** climb has it, bottom rung first. `RungKey::above` is pinned
+/// The route branch as the **coded** climb has it, bottom rung first. `LadderConfig::above_id` is pinned
 /// against the records' own `order` by `routes.rs`'s own module, so this is a second reading of the
 /// shipped ladder rather than a second authority over it — and it is what makes the catalog
 /// assertions below *liveness* claims rather than a comparison of the config with itself.
@@ -1568,12 +1568,14 @@ fn the_row_states_what_the_rung_is_buying() {
 /// which on the shipped ladder is the branch's floor and nothing else.
 const NO_BUILD_WORK: f32 = 0.0;
 
-const SHIPPED_ROUTE_CLIMB: [RungKey; 4] = [
-    RungKey::RoutePath,
-    RungKey::RouteTrail,
-    RungKey::RouteDirtRoad,
-    RungKey::RoutePavedRoad,
-];
+fn shipped_route_climb() -> [RungId; 4] {
+    [
+        shipped::route_path(),
+        shipped::route_trail(),
+        shipped::route_dirt_road(),
+        shipped::route_paved_road(),
+    ]
+}
 
 /// One published rung-catalog row, read off the encoded envelope.
 #[derive(Debug, Clone)]
@@ -1763,7 +1765,7 @@ fn the_route_rung_catalog_is_the_configs_own_climb() {
     let declared = route_rungs_in_climb_order(&ladder);
     assert_eq!(
         declared.len(),
-        SHIPPED_ROUTE_CLIMB.len(),
+        shipped_route_climb().len(),
         "the shipped ladder declares the four route rungs the coded climb names"
     );
 
@@ -1776,7 +1778,7 @@ fn the_route_rung_catalog_is_the_configs_own_climb() {
     );
 
     for (index, (row, rung)) in published.iter().zip(declared.iter()).enumerate() {
-        let key = SHIPPED_ROUTE_CLIMB[index];
+        let key = shipped_route_climb()[index];
         assert_eq!(
             row.rung_key,
             key.wire_key(),
@@ -1952,7 +1954,7 @@ fn the_catalogs_free_floor_names_no_verb_and_its_floor_requires_nothing() {
     let floor = &published[0];
     assert_eq!(
         floor.rung_key,
-        RungKey::RoutePath.wire_key(),
+        shipped::route_path().wire_key(),
         "the catalog opens at the branch's floor"
     );
     assert!(
@@ -1965,12 +1967,12 @@ fn the_catalogs_free_floor_names_no_verb_and_its_floor_requires_nothing() {
     );
 
     for row in &published {
-        let key = SHIPPED_ROUTE_CLIMB
+        let key = shipped_route_climb()
             .iter()
             .copied()
             .find(|key| key.wire_key() == row.rung_key)
             .expect("every published row is a rung the coded climb names");
-        if key.is_at_or_above(FIRST_BUILT_RUNG) {
+        if shipped::ladder().at_or_above(key, shipped::route_dirt_road()) {
             assert!(
                 !row.verb.is_empty(),
                 "{} is built by a command, so it names one",

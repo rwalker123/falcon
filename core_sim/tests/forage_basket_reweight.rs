@@ -18,6 +18,7 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::MinimalPlugins;
+use core_sim::shipped;
 
 use core_sim::TakeSelection;
 use core_sim::{
@@ -92,7 +93,7 @@ fn basket(entries: &[(&str, f32)]) -> Vec<FloraShare> {
 
 /// A patch standing on one rung, committed to `species`.
 fn patch_on_rung(species: Option<&str>, field: bool) -> ForagePatch {
-    let mut patch = ForagePatch::new(UVec2::ZERO, 1.0);
+    let mut patch = ForagePatch::new(UVec2::ZERO, 1.0, shipped::root_standing(shipped::plant()));
     patch.species = species.map(str::to_string);
     if species.is_some() {
         if field {
@@ -139,8 +140,8 @@ fn the_tiles_capacity_is_the_same_at_every_rung() {
             // patch, the top of the Field's for a Field, and zero for a wild stand.
             let ladder = core_sim::LadderConfig::builtin();
             let rung = match field {
-                Some(true) => Some(core_sim::RungKey::PlantField),
-                Some(false) => Some(core_sim::RungKey::PlantTended),
+                Some(true) => Some(shipped::plant_field()),
+                Some(false) => Some(shipped::plant_tended()),
                 None => None,
             };
             let position = rung.map_or(core_sim::RUNG_UNSTARTED, |key| {
@@ -475,9 +476,10 @@ fn a_basket_with_nothing_outside_the_worked_ground_reweights_exactly_as_before()
     let composition = basket(&[(CROP, 0.5), ("oak_mast", 0.3), ("mesquite", 0.2)]);
     for gathered in ["oak_mast", "mesquite"] {
         assert!(
-            !flora.species[gathered]
-                .cultivation_ceiling
-                .allows_cultivate(),
+            !core_sim::shipped::ladder().ceiling_reaches(
+                flora.species[gathered].cultivation_ceiling,
+                core_sim::shipped::plant_tended()
+            ),
             "{gathered} must be gather-only, or this says nothing about the ceiling"
         );
         assert!(
@@ -540,7 +542,7 @@ fn a_basket_with_nothing_outside_the_worked_ground_reweights_exactly_as_before()
 fn a_wild_patch_pays_its_own_baskets_average_in_every_currency() {
     let labor = labor();
     let flora = FloraConfig::builtin();
-    let wild = ForagePatch::new(UVec2::ZERO, 1.0);
+    let wild = ForagePatch::new(UVec2::ZERO, 1.0, shipped::root_standing(shipped::plant()));
 
     // Two tiles of one biome, different realizations, different food rates.
     let terrain = TerrainType::MixedWoodland;
@@ -585,7 +587,7 @@ fn the_conversion_gain_is_on_the_favored_term_only() {
 
     // A basket with a clear dominant and a clear marginal, both real food plants.
     let composition = basket(&[("wild_emmer", 0.7), ("oak_mast", 0.3)]);
-    let wild = ForagePatch::new(UVec2::ZERO, 1.0);
+    let wild = ForagePatch::new(UVec2::ZERO, 1.0, shipped::root_standing(shipped::plant()));
     let wild_rate = patch_provisions_per_biomass(&wild, &composition, &flora, &labor.forage);
 
     let rate_favoring = |species: &str| {
@@ -1147,7 +1149,7 @@ fn the_composition_seam_answers_the_rung_it_is_asked_about_not_the_one_the_patch
     let labor = labor();
     let composition = basket(&[("wild_emmer", 0.5), ("hazel", 0.3), ("oak_mast", 0.2)]);
 
-    let mut wild = ForagePatch::new(UVec2::ZERO, 1.0);
+    let mut wild = ForagePatch::new(UVec2::ZERO, 1.0, shipped::root_standing(shipped::plant()));
     wild.species = Some("wild_emmer".to_string());
     let mut tended = wild.clone();
     tended.complete_cultivation(FIXTURE_OWNER, &core_sim::LadderConfig::builtin());
@@ -1160,7 +1162,7 @@ fn the_composition_seam_answers_the_rung_it_is_asked_about_not_the_one_the_patch
             &composition,
             &FloraConfig::builtin(),
             &labor.forage,
-            core_sim::RungKey::PlantField,
+            core_sim::PlantPayoff::of_rung(shipped::ladder(), shipped::plant_field()),
         );
         assert_eq!(
             planted.len(),
@@ -1174,7 +1176,7 @@ fn the_composition_seam_answers_the_rung_it_is_asked_about_not_the_one_the_patch
             &composition,
             &FloraConfig::builtin(),
             &labor.forage,
-            core_sim::RungKey::PlantTended,
+            core_sim::PlantPayoff::of_rung(shipped::ladder(), shipped::plant_tended()),
         );
         let favored = weeded
             .iter()
@@ -1213,7 +1215,7 @@ fn the_map_wide_wild_income_is_unmoved_and_the_basket_is_alive() {
     let flora = app.world.resource::<core_sim::FloraConfigHandle>().get();
     let map_seed = app.world.resource::<SimulationConfig>().map_seed;
     let flat = labor.forage.provisions_per_biomass;
-    let wild = ForagePatch::new(UVec2::ZERO, 1.0);
+    let wild = ForagePatch::new(UVec2::ZERO, 1.0, shipped::root_standing(shipped::plant()));
 
     let mut old_food = 0.0_f64;
     let mut new_food = 0.0_f64;
@@ -1241,6 +1243,7 @@ fn the_map_wide_wild_income_is_unmoved_and_the_basket_is_alive() {
             &flora,
             &labor.forage,
             NEUTRAL_MULTIPLIER,
+            shipped::ladder(),
         ));
         let old_tile = f64::from(core_sim::wild_payoff(
             tile.position,
@@ -1249,6 +1252,7 @@ fn the_map_wide_wild_income_is_unmoved_and_the_basket_is_alive() {
             &flora,
             &labor.forage,
             NEUTRAL_MULTIPLIER,
+            shipped::ladder(),
         ));
         if old_tile <= 0.0 {
             continue; // a collapsed/zero-capacity stand offers no skim to compare.
@@ -1488,8 +1492,13 @@ fn default_crop(app: &App, tile_entity: bevy::prelude::Entity) -> String {
     let map_seed = app.world.resource::<SimulationConfig>().map_seed;
     let ground = app.world.get::<Tile>(tile_entity).expect("the tile");
     let composition = tile_flora_composition(&flora, &labor.forage, ground, map_seed);
-    core_sim::default_species_for_rung(&composition, &flora, core_sim::RungKey::PlantTended)
-        .expect("the fixture tile grows something the tended rung can commit to")
+    core_sim::default_species_for_rung(
+        &composition,
+        &flora,
+        shipped::ladder(),
+        shipped::plant_tended(),
+    )
+    .expect("the fixture tile grows something the tended rung can commit to")
 }
 
 /// What is growing on the tile at `coord`, through the one `tile_flora_composition` seam.

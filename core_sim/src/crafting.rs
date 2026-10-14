@@ -46,7 +46,7 @@ pub const BONE_WORKING_DISCOVERY_ID: u32 = 2010;
 /// renumber. 2012–2016 are roadbuilding, paving, woodcraft, conservationism and quarrying.
 ///
 /// ⛔ **KNAPPING IS NOT QUARRYING.** `quarrying` (2016) is the *ladder* rung that gets stone out of
-/// the ground — a `RungBranch::Extraction` gate on a crew standing on rock. This is the *bench*
+/// the ground — a the extraction branch gate on a crew standing on rock. This is the *bench*
 /// craft that works the stone once it is in the store, earned the way every craft is: by making
 /// something out of it. A faction can hold either without the other, and the two are priced
 /// separately in the ladder's `lesson_costs`.

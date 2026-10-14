@@ -2949,7 +2949,7 @@ func _expected_grade_line() -> String:
 ## hex (`docs/plan_site_crews.md` §2.4), and it drops the road's keeper and its queue entry. The band token that `grade` carries is absent here on purpose, and stating
 ## the whole line is the only way to see that a builder has not helpfully added one.
 func _expected_abandon_line() -> String:
-	return "abandon %d road %d %d" % [HudConst.PLAYER_FACTION_ID, ROAD_TILE.x, ROAD_TILE.y]
+	return "abandon %d route %d %d" % [HudConst.PLAYER_FACTION_ID, ROAD_TILE.x, ROAD_TILE.y]
 
 ## ---- THE ROAD LADDER, the tile card's route ACTION (arc #532 slice 13) -------------------------
 ##

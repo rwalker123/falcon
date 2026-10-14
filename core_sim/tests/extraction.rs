@@ -8,6 +8,7 @@
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::prelude::{Entity, World};
+use core_sim::shipped;
 
 use core_sim::extraction::{
     deposit_effective_floor, deposit_payoff, deposit_regrowth, deposit_standing, take_from_deposit,
@@ -18,8 +19,7 @@ use core_sim::{
     DiscoveryProgressLedger, ExtractionConfig, ExtractionConfigHandle, FactionId, FactionInventory,
     FoodSiteRegistry, ForageRegistry, GenerationId, HerdRegistry, LaborAllocation, LaborAssignment,
     LaborConfigHandle, LaborTarget, LadderConfig, LadderConfigHandle, LocalStore, MoraleCause,
-    PopulationCohort, RungBranch, RungKey, SimulationConfig, SimulationTick, SourcePriority, Tile,
-    TileRegistry,
+    PopulationCohort, RungId, SimulationConfig, SimulationTick, SourcePriority, Tile, TileRegistry,
 };
 use sim_schema::TerrainType;
 
@@ -209,7 +209,7 @@ fn run_full_turn(world: &mut World) {
 /// **SEAT A WORKING EXACTLY ON A RUNG'S TOP** — the standing `RungStanding::arrived_at` describes,
 /// written straight into the registry so a keeping fixture does not have to spend forty turns of
 /// builders getting there first.
-fn seat_working(world: &mut World, tile: UVec2, material: &str, rung: RungKey) {
+fn seat_working(world: &mut World, tile: UVec2, material: &str, rung: RungId) {
     let ladder = world.resource::<LadderConfigHandle>().get();
     let config = world.resource::<ExtractionConfigHandle>().get();
     let entity = world
@@ -221,9 +221,14 @@ fn seat_working(world: &mut World, tile: UVec2, material: &str, rung: RungKey) {
         .expect("the fixture tile carries terrain");
     let capacity = tile_deposit_capacity(&config, material, ground);
     assert!(capacity > 0.0, "fixture: that ground must hold {material}");
-    let mut working = DepositSource::opening(tile, material, capacity, rung.branch());
+    let mut working = DepositSource::opening(
+        tile,
+        material,
+        capacity,
+        shipped::root_standing(rung.branch),
+    );
     let (base, width) = core_sim::extraction::deposit_rung_span(rung, &ladder);
-    working.set_ladder_position(base + width, &ladder, rung.branch());
+    working.set_ladder_position(base + width, &ladder, rung.branch);
     assert_eq!(working.rung(), rung, "fixture: seated on the wrong rung");
     world.resource_mut::<DepositRegistry>().insert(working);
 }
@@ -376,7 +381,12 @@ fn a_crew_with_axes_cuts_more_off_a_felling_working_and_wears_only_the_axes() {
 
     let cut = |ledger: Option<core_sim::BandEquipment>| {
         let (mut world, home) = world_of(WOODED);
-        seat_working(&mut world, UVec2::new(0, 0), WOOD, RungKey::ForestryFelling);
+        seat_working(
+            &mut world,
+            UVec2::new(0, 0),
+            WOOD,
+            shipped::forestry_felling(),
+        );
         // **The bill stated at nothing**, so the whole crew cuts and the axes are the take's alone:
         // a felling working's own keeping claims an axe first (`docs/plan_site_crews.md` §2.3),
         // which `two_axes_arm_exactly_two_people_across_the_fellers_and_the_keepers` pins.
@@ -441,7 +451,7 @@ fn a_felling_kit_on_deadfall_neither_lifts_the_take_nor_wears_the_axe() {
             .expect("the crew opened the working");
         assert_eq!(
             working.rung(),
-            RungKey::ForestryDeadfall,
+            shipped::forestry_deadfall(),
             "fixture: the wood stands on its free floor"
         );
         let wear = world
@@ -476,7 +486,12 @@ fn a_sled_lifts_the_deadfall_take_and_nothing_above_it() {
     let cut = |felling: bool, sleds: u32| {
         let (mut world, home) = world_of(WOODED);
         if felling {
-            seat_working(&mut world, UVec2::new(0, 0), WOOD, RungKey::ForestryFelling);
+            seat_working(
+                &mut world,
+                UVec2::new(0, 0),
+                WOOD,
+                shipped::forestry_felling(),
+            );
         }
         let band = spawn_extractors(&mut world, home, WOOD, CREW);
         send_with_the_woodcutting_kit(&mut world, band);
@@ -535,7 +550,7 @@ fn two_axes_arm_exactly_two_people_across_the_fellers_and_the_keepers() {
     let run = |axes: u32| {
         let (mut world, home) = world_of(WOODED);
         let tile = UVec2::new(0, 0);
-        seat_working(&mut world, tile, WOOD, RungKey::ForestryFelling);
+        seat_working(&mut world, tile, WOOD, shipped::forestry_felling());
         let band = spawn_keepers(&mut world, home, &[(tile, WOOD)], FELLERS, KEEPERS);
         send_with_the_woodcutting_kit(&mut world, band);
         let mut ledger = core_sim::BandEquipment::default();
@@ -621,7 +636,7 @@ fn a_working_raised_this_turn_arms_no_more_people_than_there_are_axes() {
     let climbing = UVec2::new(1, 0);
     let run = |axes: u32| {
         let (mut world, home) = world_of(WOODED);
-        seat_working(&mut world, seated, WOOD, RungKey::ForestryFelling);
+        seat_working(&mut world, seated, WOOD, shipped::forestry_felling());
         {
             let ladder = world.resource::<LadderConfigHandle>().get();
             let config = world.resource::<ExtractionConfigHandle>().get();
@@ -631,18 +646,22 @@ fn a_working_raised_this_turn_arms_no_more_people_than_there_are_axes() {
                 ..Default::default()
             };
             let capacity = tile_deposit_capacity(&config, WOOD, &ground);
-            let mut working =
-                DepositSource::opening(climbing, WOOD, capacity, RungBranch::Forestry);
+            let mut working = DepositSource::opening(
+                climbing,
+                WOOD,
+                capacity,
+                shipped::root_standing(shipped::forestry()),
+            );
             let (base, width) =
-                core_sim::extraction::deposit_rung_span(RungKey::ForestryFelling, &ladder);
+                core_sim::extraction::deposit_rung_span(shipped::forestry_felling(), &ladder);
             working.set_ladder_position(
                 base + width - SHORT_OF_THE_TOP,
                 &ladder,
-                RungBranch::Forestry,
+                shipped::forestry(),
             );
             assert_eq!(
                 working.rung(),
-                RungKey::ForestryDeadfall,
+                shipped::forestry_deadfall(),
                 "fixture: the climbing working must still hold deadfall"
             );
             world.resource_mut::<DepositRegistry>().insert(working);
@@ -680,7 +699,7 @@ fn a_working_raised_this_turn_arms_no_more_people_than_there_are_axes() {
                     tile: climbing,
                     material: WOOD.to_string(),
                 },
-                core_sim::BuildJob::Rung(core_sim::Improvement::Fell),
+                core_sim::BuildJob::Climb(shipped::forestry_felling()),
             ));
         }
         let mut ledger = core_sim::BandEquipment::default();
@@ -696,7 +715,7 @@ fn a_working_raised_this_turn_arms_no_more_people_than_there_are_axes() {
                 .source(climbing, WOOD)
                 .expect("the climbing working")
                 .rung(),
-            RungKey::ForestryFelling,
+            shipped::forestry_felling(),
             "fixture: the raise must complete this turn ({axes} axes)"
         );
         let equipment = core_sim::EquipmentConfig::builtin();
@@ -778,7 +797,7 @@ fn the_quarry_rung_refuses_ground_with_no_rock_and_a_scatter_alike() {
     let config = ExtractionConfig::builtin();
     let ladder = LadderConfig::builtin();
     let site = ladder
-        .rung(RungKey::ExtractionQuarry)
+        .rung(shipped::extraction_quarry())
         .site_requirement
         .expect("the quarry rung states what the ground must be");
 
@@ -1039,7 +1058,7 @@ fn a_rock_working_reads_the_same_at_the_shipped_default_and_at_the_new_zero() {
     const A_SPELL_OF_QUARRYING: u32 = 4;
 
     let at = UVec2::new(0, 0);
-    let working_at = |rung: Option<RungKey>, floor: f32| -> (f32, f32, i32, f32) {
+    let working_at = |rung: Option<RungId>, floor: f32| -> (f32, f32, i32, f32) {
         let (mut world, home) = world_of(ROCK);
         // `None` is the branch's **free floor** — `extraction:gathering`, which a working stands on
         // with nothing built and which is what the shipped ladder has a crew earn `quarrying` from.
@@ -1085,7 +1104,8 @@ fn a_rock_working_reads_the_same_at_the_shipped_default_and_at_the_new_zero() {
 
     // The stock, the take and the runway, on the rung where the old default sat **below** the
     // rung's own floor and would therefore have bound.
-    let on_the_quarry_rung = working_at(Some(RungKey::ExtractionQuarry), core_sim::STRIP_IT_BARE);
+    let on_the_quarry_rung =
+        working_at(Some(shipped::extraction_quarry()), core_sim::STRIP_IT_BARE);
     let (stock, take, runway, _) = on_the_quarry_rung;
     assert!(
         take > 0.0 && stock > 0.0 && runway > 0,
@@ -1094,7 +1114,7 @@ fn a_rock_working_reads_the_same_at_the_shipped_default_and_at_the_new_zero() {
     );
     assert_eq!(
         working_at(
-            Some(RungKey::ExtractionQuarry),
+            Some(shipped::extraction_quarry()),
             core_sim::DEFAULT_ESCAPEMENT_FLOOR
         ),
         on_the_quarry_rung,
@@ -1189,7 +1209,7 @@ fn a_band_learns_woodcraft_at_the_free_floor_and_then_raises_a_felling_working()
                 tile: UVec2::new(0, 0),
                 material: WOOD.to_string(),
             },
-            core_sim::BuildJob::Rung(core_sim::Improvement::Fell),
+            core_sim::BuildJob::Climb(shipped::forestry_felling()),
         ));
     }
 
@@ -1202,7 +1222,7 @@ fn a_band_learns_woodcraft_at_the_free_floor_and_then_raises_a_felling_working()
             .source(UVec2::new(0, 0), WOOD)
             .expect("the working stands")
             .rung()
-            == RungKey::ForestryFelling
+            == shipped::forestry_felling()
         {
             raised = true;
             break;
@@ -1229,7 +1249,7 @@ fn a_band_learns_woodcraft_at_the_free_floor_and_then_raises_a_felling_working()
 // ---------------------------------------------------------------------------------------------
 
 /// A working seated at `rung`, on ground of `terrain`, at full stock.
-fn working_at(rung: RungKey, terrain: TerrainType, material: &str) -> (DepositSource, Tile) {
+fn working_at(rung: RungId, terrain: TerrainType, material: &str) -> (DepositSource, Tile) {
     let config = ExtractionConfig::builtin();
     let ladder = LadderConfig::builtin();
     let ground = Tile {
@@ -1239,11 +1259,16 @@ fn working_at(rung: RungKey, terrain: TerrainType, material: &str) -> (DepositSo
     };
     let capacity = tile_deposit_capacity(&config, material, &ground);
     assert!(capacity > 0.0, "fixture: {terrain:?} must hold {material}");
-    let mut source = DepositSource::opening(UVec2::new(0, 0), material, capacity, rung.branch());
+    let mut source = DepositSource::opening(
+        UVec2::new(0, 0),
+        material,
+        capacity,
+        shipped::root_standing(rung.branch),
+    );
     // Seat the position exactly on the rung's top, which is what `RungStanding::arrived_at`
     // describes: the rung held in full, raising whatever is above it at no credit.
     let (base, width) = core_sim::extraction::deposit_rung_span(rung, &ladder);
-    source.set_ladder_position(base + width, &ladder, rung.branch());
+    source.set_ladder_position(base + width, &ladder, rung.branch);
     assert_eq!(
         source.rung(),
         rung,
@@ -1264,7 +1289,7 @@ fn working_at(rung: RungKey, terrain: TerrainType, material: &str) -> (DepositSo
 fn a_worked_quarry_only_ever_goes_down_and_renews_nothing() {
     let config = ExtractionConfig::builtin();
     let ladder = LadderConfig::builtin();
-    let (mut working, ground) = working_at(RungKey::ExtractionQuarry, ROCK, STONE);
+    let (mut working, ground) = working_at(shipped::extraction_quarry(), ROCK, STONE);
     let mut previous = working.stock;
     let mut ever_took = false;
     for _ in 0..400 {
@@ -1306,7 +1331,7 @@ fn a_worked_quarry_only_ever_goes_down_and_renews_nothing() {
 fn a_cut_wood_climbs_back_and_stops_at_capacity() {
     let config = ExtractionConfig::builtin();
     let ladder = LadderConfig::builtin();
-    let (mut working, ground) = working_at(RungKey::ForestryFelling, WOODED, WOOD);
+    let (mut working, ground) = working_at(shipped::forestry_felling(), WOODED, WOOD);
     let capacity = tile_deposit_capacity(&config, WOOD, &ground);
 
     for _ in 0..40 {
@@ -1359,7 +1384,7 @@ fn a_cut_wood_climbs_back_and_stops_at_capacity() {
 fn enough_hands_drive_a_wood_down_turn_on_turn() {
     let config = ExtractionConfig::builtin();
     let ladder = LadderConfig::builtin();
-    let (mut working, ground) = working_at(RungKey::ForestryFelling, WOODED, WOOD);
+    let (mut working, ground) = working_at(shipped::forestry_felling(), WOODED, WOOD);
     let mut previous = working.stock;
     for turn in 0..30 {
         core_sim::renew_deposit(&mut working, &ground, &config, &ladder);
@@ -1391,7 +1416,7 @@ fn a_quarry_reaches_far_more_of_one_body_than_gathering_ever_can() {
     let config = ExtractionConfig::builtin();
     let ladder = LadderConfig::builtin();
 
-    let lifetime_take = |rung: RungKey| {
+    let lifetime_take = |rung: RungId| {
         let (mut working, ground) = working_at(rung, ROCK, STONE);
         let mut total = 0.0;
         for _ in 0..4000 {
@@ -1410,8 +1435,8 @@ fn a_quarry_reaches_far_more_of_one_body_than_gathering_ever_can() {
         total
     };
 
-    let shallow = lifetime_take(RungKey::ExtractionGathering);
-    let deep = lifetime_take(RungKey::ExtractionQuarry);
+    let shallow = lifetime_take(shipped::extraction_gathering());
+    let deep = lifetime_take(shipped::extraction_quarry());
     assert!(
         deep > shallow * 3.0,
         "a quarry must reach several times what gathering can: {deep} against {shallow}"
@@ -1425,16 +1450,16 @@ fn a_quarry_reaches_far_more_of_one_body_than_gathering_ever_can() {
             ..Default::default()
         }
     });
-    let floor_at = |rung: RungKey| {
+    let floor_at = |rung: RungId| {
         let standing = deposit_standing(
             core_sim::extraction::deposit_rung_span(rung, &ladder).0
                 + core_sim::extraction::deposit_rung_span(rung, &ladder).1,
             &ladder,
-            rung.branch(),
+            rung.branch,
         );
         core_sim::extraction::deposit_floor(capacity, &deposit_payoff(&standing, &ladder))
     };
-    assert!(floor_at(RungKey::ExtractionQuarry) < floor_at(RungKey::ExtractionGathering));
+    assert!(floor_at(shipped::extraction_quarry()) < floor_at(shipped::extraction_gathering()));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1478,7 +1503,12 @@ fn workers_needed_cutting_a_drawn_down_wood(crew: u32) -> u32 {
             .expect("the fixture tile carries terrain");
         let capacity = tile_deposit_capacity(&config, WOOD, ground);
         let regrowth = tile_deposit_regrowth(&config, WOOD, ground);
-        let mut working = DepositSource::opening(tile, WOOD, capacity, RungBranch::Forestry);
+        let mut working = DepositSource::opening(
+            tile,
+            WOOD,
+            capacity,
+            shipped::root_standing(shipped::forestry()),
+        );
         // The free rung's own rate and the floor the row's dial composes with it, read off the
         // config rather than written down, so a re-tuned ladder moves the fixture with it.
         let payoff = deposit_payoff(working.standing(), &ladder);
@@ -1569,19 +1599,19 @@ fn no_rung_on_either_branch_may_raise_capacity() {
         assert!(land > 0.0, "fixture: {terrain:?} must hold {material}");
         let branch = core_sim::extraction::deposit_branch(&config, material)
             .expect("a shipped deposit names its branch");
-        let mut rung = Some(
-            branch
-                .to_branch()
-                .expect("a shipped deposit branch is coded")
-                .root_rung(),
-        );
+        let mut rung = ladder.root_of(branch).map(core_sim::RungDef::rung_id);
         let mut seen = 0;
         while let Some(key) = rung {
             let (base, width) = core_sim::extraction::deposit_rung_span(key, &ladder);
             // Both ends of the rung, and the middle: a capacity that moved *within* a rung would be
             // an interpolated one, which is the shape every other per-rung quantity has.
             for position in [base, base + width * 0.5, base + width] {
-                let mut working = DepositSource::opening(UVec2::new(0, 0), material, land, branch);
+                let mut working = DepositSource::opening(
+                    UVec2::new(0, 0),
+                    material,
+                    land,
+                    shipped::root_standing(branch),
+                );
                 working.set_ladder_position(position, &ladder, branch);
                 assert_eq!(
                     tile_deposit_capacity(&config, material, &ground),
@@ -1600,7 +1630,7 @@ fn no_rung_on_either_branch_may_raise_capacity() {
                 );
             }
             seen += 1;
-            rung = key.above();
+            rung = ladder.above_id(key);
         }
         assert!(
             seen >= 2,
@@ -1609,8 +1639,8 @@ fn no_rung_on_either_branch_may_raise_capacity() {
     }
     // Both ladders were walked — stated so a branch dropping out of the loop is a failure rather
     // than a quieter pass.
-    assert!(core_sim::ALL_BRANCHES.contains(&RungBranch::Forestry));
-    assert!(core_sim::ALL_BRANCHES.contains(&RungBranch::Extraction));
+    assert!(ladder.root_of(shipped::forestry()).is_some());
+    assert!(ladder.root_of(shipped::extraction()).is_some());
 }
 
 /// **The forestry rungs raise the ground's OWN renewal, and rock's own rate is what refuses that
@@ -1630,17 +1660,17 @@ fn the_regrowth_multiplier_scales_the_grounds_own_rate_and_rock_has_none() {
         ..Default::default()
     };
 
-    let multiplier_of = |rung: RungKey| {
+    let multiplier_of = |rung: RungId| {
         let (base, width) = core_sim::extraction::deposit_rung_span(rung, &ladder);
         deposit_payoff(
-            &deposit_standing(base + width, &ladder, rung.branch()),
+            &deposit_standing(base + width, &ladder, rung.branch),
             &ladder,
         )
         .regrowth_multiplier
     };
-    let coppice = multiplier_of(RungKey::ForestryCoppice);
+    let coppice = multiplier_of(shipped::forestry_coppice());
     assert!(
-        coppice > multiplier_of(RungKey::ForestryFelling),
+        coppice > multiplier_of(shipped::forestry_felling()),
         "conservationism buys RENEWAL, so the coppice rung must raise the multiplier"
     );
 
@@ -1678,7 +1708,7 @@ fn the_regrowth_multiplier_scales_the_grounds_own_rate_and_rock_has_none() {
 fn an_unkept_working_slides_and_a_kept_one_stops_sliding() {
     let at = UVec2::new(0, 0);
     let (mut world, home) = world_of(WOODED);
-    seat_working(&mut world, at, WOOD, RungKey::ForestryFelling);
+    seat_working(&mut world, at, WOOD, shipped::forestry_felling());
     let band = spawn_keepers(&mut world, home, &[(at, WOOD)], 0, 0);
     let seated = position(&world, at, WOOD);
 
@@ -1714,7 +1744,7 @@ fn an_unkept_working_slides_and_a_kept_one_stops_sliding() {
 fn a_staffed_working_holds_its_rung_for_ever() {
     let at = UVec2::new(0, 0);
     let (mut world, home) = world_of(WOODED);
-    seat_working(&mut world, at, WOOD, RungKey::ForestryFelling);
+    seat_working(&mut world, at, WOOD, shipped::forestry_felling());
     spawn_keepers(&mut world, home, &[(at, WOOD)], 2, 1);
     let seated = position(&world, at, WOOD);
     for _ in 0..200 {
@@ -1745,7 +1775,7 @@ fn a_working_states_what_its_own_crew_kept_and_stops_when_the_row_goes() {
     const CREW: u32 = 2;
     let at = UVec2::new(0, 0);
     let (mut world, home) = world_of(WOODED);
-    seat_working(&mut world, at, WOOD, RungKey::ForestryFelling);
+    seat_working(&mut world, at, WOOD, shipped::forestry_felling());
     let band = spawn_keepers(&mut world, home, &[(at, WOOD)], 0, 0);
 
     let reading = |world: &World| {
@@ -1816,7 +1846,7 @@ fn the_quarry_threshold_splits_the_finite_rows_from_the_renewing_ones() {
     let config = ExtractionConfig::builtin();
     let ladder = LadderConfig::builtin();
     let threshold = ladder
-        .rung(RungKey::ExtractionQuarry)
+        .rung(shipped::extraction_quarry())
         .site_requirement
         .expect("the quarry rung states what the ground must be")
         .min_deposit_capacity;
@@ -1866,7 +1896,7 @@ fn the_quarry_threshold_splits_the_finite_rows_from_the_renewing_ones() {
 fn a_slumped_working_can_be_cut_back_open() {
     let at = UVec2::new(0, 0);
     let (mut world, home) = world_of(ROCK);
-    seat_working(&mut world, at, STONE, RungKey::ExtractionQuarry);
+    seat_working(&mut world, at, STONE, shipped::extraction_quarry());
     // **Nobody on the row**, so nobody keeps it: the quarry is left to slide.
     let band = spawn_keepers(&mut world, home, &[(at, STONE)], 0, 0);
     // The quarrying lesson, so the rung is buildable once the fixture wants it back.
@@ -1935,7 +1965,7 @@ fn a_slumped_working_can_be_cut_back_open() {
             .source(at, STONE)
             .expect("the working stands")
             .rung(),
-        RungKey::ExtractionGathering,
+        shipped::extraction_gathering(),
         "and slid the whole way back to its free floor"
     );
 
@@ -1977,7 +2007,7 @@ fn a_slumped_working_can_be_cut_back_open() {
                 tile: at,
                 material: STONE.to_string(),
             },
-            core_sim::BuildJob::Rung(core_sim::Improvement::Quarry),
+            core_sim::BuildJob::Climb(shipped::extraction_quarry()),
         ));
     }
     let mut recovered = false;
@@ -1988,7 +2018,7 @@ fn a_slumped_working_can_be_cut_back_open() {
             .source(at, STONE)
             .expect("the working stands")
             .rung()
-            == RungKey::ExtractionQuarry
+            == shipped::extraction_quarry()
         {
             recovered = true;
             break;
@@ -2030,7 +2060,7 @@ fn a_standing_material_rate_on_a_deposit_rung_is_refused() {
     // rejection above is about the *rate* and not about the material.
     assert!(
         LadderConfig::builtin()
-            .rung(RungKey::ExtractionQuarry)
+            .rung(shipped::extraction_quarry())
             .build
             .as_ref()
             .expect("the quarry rung is built")
@@ -2058,7 +2088,7 @@ fn two_bands_on_one_working_renew_it_once() {
     let at = UVec2::new(0, 0);
     let stand = |bands: u32| {
         let (mut world, home) = world_of(WOODED);
-        seat_working(&mut world, at, WOOD, RungKey::ForestryFelling);
+        seat_working(&mut world, at, WOOD, shipped::forestry_felling());
         // Cut it down first, so there is real room for the growth term to fill.
         world
             .resource_mut::<DepositRegistry>()
@@ -2102,8 +2132,8 @@ fn two_bands_on_one_working_renew_it_once() {
 fn an_abandoned_wood_still_recovers_and_an_abandoned_quarry_still_does_not() {
     let at = UVec2::new(0, 0);
     for (terrain, material, floor, should_grow) in [
-        (WOODED, WOOD, RungKey::ForestryDeadfall, true),
-        (ROCK, STONE, RungKey::ExtractionGathering, false),
+        (WOODED, WOOD, shipped::forestry_deadfall(), true),
+        (ROCK, STONE, shipped::extraction_gathering(), false),
     ] {
         let (mut world, _home) = world_of(terrain);
         seat_working(&mut world, at, material, floor);
@@ -2153,11 +2183,12 @@ fn an_abandoned_wood_still_recovers_and_an_abandoned_quarry_still_does_not() {
 fn a_working_whose_keeping_is_short_quotes_a_rotting_meter() {
     let config = ExtractionConfig::builtin();
     let ladder = LadderConfig::builtin();
-    let (mut working, ground) = working_at(RungKey::ForestryFelling, WOODED, WOOD);
+    let (mut working, ground) = working_at(shipped::forestry_felling(), WOODED, WOOD);
     // Part-way up the coppice rung above it, so there is a meter carrying work for a rot to eat and
     // an estimate to be given.
-    let (base, width) = core_sim::extraction::deposit_rung_span(RungKey::ForestryCoppice, &ladder);
-    working.set_ladder_position(base + width * 0.5, &ladder, RungBranch::Forestry);
+    let (base, width) =
+        core_sim::extraction::deposit_rung_span(shipped::forestry_coppice(), &ladder);
+    working.set_ladder_position(base + width * 0.5, &ladder, shipped::forestry());
 
     let measure = core_sim::deposit_measure(&working, &ground, &config);
     let bill = core_sim::deposit_keeping_basis(&working, measure, &ladder);
@@ -2167,10 +2198,10 @@ fn a_working_whose_keeping_is_short_quotes_a_rotting_meter() {
     working.neglect_turns = 9;
 
     let quote = |working: &core_sim::DepositSource, builders: u32| {
-        let rung = ladder.rung(RungKey::ForestryCoppice);
+        let rung = ladder.rung(shipped::forestry_coppice());
         let rot = core_sim::deposit_meter_rot(working, measure, &ladder);
         let balance = rung.build_balance(
-            Some(core_sim::Improvement::Coppice),
+            Some(shipped::coppice()),
             true,
             builders,
             core_sim::NO_BUILD_GEAR,
@@ -2231,8 +2262,8 @@ fn a_walked_away_working_draws_nothing_from_the_one_the_band_keeps() {
     let walked_away = UVec2::new(1, 0);
     let drive = |put_it_down: bool| {
         let (mut world, home) = world_of(WOODED);
-        seat_working(&mut world, live, WOOD, RungKey::ForestryFelling);
-        seat_working(&mut world, walked_away, WOOD, RungKey::ForestryFelling);
+        seat_working(&mut world, live, WOOD, shipped::forestry_felling());
+        seat_working(&mut world, walked_away, WOOD, shipped::forestry_felling());
         let band = spawn_keepers(&mut world, home, &[(live, WOOD), (walked_away, WOOD)], 0, 0);
         set_extract_crew(&mut world, band, live, WOOD, LIVE_CREW);
         if put_it_down {
@@ -2259,7 +2290,7 @@ fn a_walked_away_working_draws_nothing_from_the_one_the_band_keeps() {
 
     let seated = {
         let (mut world, _) = world_of(WOODED);
-        seat_working(&mut world, live, WOOD, RungKey::ForestryFelling);
+        seat_working(&mut world, live, WOOD, shipped::forestry_felling());
         position(&world, live, WOOD)
     };
     let (held_live, held_walked) = drive(false);
@@ -2319,7 +2350,7 @@ fn a_walked_away_working_draws_nothing_from_the_one_the_band_keeps() {
 fn the_coppice_threshold_splits_the_wood_table_with_no_overlap_in_what_it_buys() {
     let config = ExtractionConfig::builtin();
     let ladder = LadderConfig::builtin();
-    let coppice = ladder.rung(RungKey::ForestryCoppice);
+    let coppice = ladder.rung(shipped::forestry_coppice());
     let threshold = coppice
         .site_requirement
         .expect("the coppice rung states what the ground must hold")
@@ -2433,7 +2464,7 @@ fn a_deposit_lesson_is_credited_only_where_the_rung_it_unlocks_could_stand() {
     let config = ExtractionConfig::builtin();
     let ladder = LadderConfig::builtin();
     let threshold = ladder
-        .rung(RungKey::ExtractionQuarry)
+        .rung(shipped::extraction_quarry())
         .site_requirement
         .expect("the quarry rung states what the ground must hold")
         .min_deposit_capacity;
@@ -2514,7 +2545,12 @@ fn felling_a_stand_too_small_to_coppice_teaches_no_conservationism() {
 
     let fell_on = |terrain: TerrainType| -> (f32, f32) {
         let (mut world, home) = world_of(terrain);
-        seat_working(&mut world, UVec2::new(0, 0), WOOD, RungKey::ForestryFelling);
+        seat_working(
+            &mut world,
+            UVec2::new(0, 0),
+            WOOD,
+            shipped::forestry_felling(),
+        );
         let band = spawn_band_of(&mut world, home, WOOD, 20, 6);
         {
             let mut allocation = world
@@ -2545,7 +2581,7 @@ fn felling_a_stand_too_small_to_coppice_teaches_no_conservationism() {
     let config = ExtractionConfig::builtin();
     let ladder = LadderConfig::builtin();
     let threshold = ladder
-        .rung(RungKey::ForestryCoppice)
+        .rung(shipped::forestry_coppice())
         .site_requirement
         .expect("the coppice rung states what the ground must hold")
         .min_deposit_capacity;
@@ -2590,6 +2626,7 @@ mod wire {
     use bevy::app::App;
     use bevy::math::UVec2;
     use bevy::prelude::{Entity, With};
+    use core_sim::shipped;
 
     use std::sync::Arc;
 
@@ -2597,9 +2634,9 @@ mod wire {
     use core_sim::{
         build_test_app, build_work_per_worker_turn, deposit_rungs_in_climb_order, BandId,
         ExtractionConfig, LaborAllocation, LaborTarget, LadderConfig, LadderConfigHandle,
-        PopulationCohort, ResidentBand, RungKey, SnapshotHistory, Tile, TileRegistry,
-        ViewerFaction, VisibilityLedger, BUILTIN_INTENSIFICATION_LADDER, MSY_BIOMASS_FRACTION,
-        NO_BUILD_GEAR, NO_DEPOSIT_FLOOR, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED,
+        PopulationCohort, ResidentBand, RungId, SnapshotHistory, Tile, TileRegistry, ViewerFaction,
+        VisibilityLedger, BUILTIN_INTENSIFICATION_LADDER, MSY_BIOMASS_FRACTION, NO_BUILD_GEAR,
+        NO_DEPOSIT_FLOOR, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED,
     };
     use sim_schema::{TerrainType, DEPOSIT_RUNWAY_NOT_APPLICABLE, DEPOSIT_RUNWAY_NO_TAKE};
 
@@ -2828,7 +2865,7 @@ mod wire {
 
     /// **Seat a working exactly on a rung's top**, written straight into the registry so a keeping
     /// fixture does not have to spend 250 work units of builders getting there first.
-    fn seat_working(app: &mut App, tile: UVec2, material: &str, rung: RungKey) {
+    fn seat_working(app: &mut App, tile: UVec2, material: &str, rung: RungId) {
         let ladder = LadderConfig::builtin();
         let config = ExtractionConfig::builtin();
         let entity = app
@@ -2842,9 +2879,14 @@ mod wire {
             .expect("the fixture tile carries terrain");
         let capacity = tile_deposit_capacity(&config, material, ground);
         assert!(capacity > 0.0, "fixture: that ground must hold {material}");
-        let mut working = DepositSource::opening(tile, material, capacity, rung.branch());
+        let mut working = DepositSource::opening(
+            tile,
+            material,
+            capacity,
+            shipped::root_standing(rung.branch),
+        );
         let (base, width) = core_sim::extraction::deposit_rung_span(rung, &ladder);
-        working.set_ladder_position(base + width, &ladder, rung.branch());
+        working.set_ladder_position(base + width, &ladder, rung.branch);
         assert_eq!(working.rung(), rung, "fixture: seated on the wrong rung");
         app.world.resource_mut::<DepositRegistry>().insert(working);
     }
@@ -2917,7 +2959,7 @@ mod wire {
         reground(&mut app, rock, FINITE_GROUND);
         // **The rock working stands at the QUARRY rung**, so it owes a real keeping bill and the
         // published quad is three different numbers rather than three zeros.
-        seat_working(&mut app, rock, STONE, RungKey::ExtractionQuarry);
+        seat_working(&mut app, rock, STONE, shipped::extraction_quarry());
         staff(
             &mut app,
             band,
@@ -2947,7 +2989,7 @@ mod wire {
         // delivers `1 + 2 = 3` a turn — comfortably past this working's bill — and a crew of one
         // would publish `demand == supplied` with a zero shortfall, which is the one shape the
         // identity below cannot be read off.
-        core_sim::disarm_the_builders(&mut app.world, band, RungKey::ExtractionQuarry);
+        core_sim::disarm_the_builders(&mut app.world, band, shipped::extraction_quarry());
         app.update();
         (app, home, rock)
     }
@@ -3024,7 +3066,7 @@ mod wire {
         // **Felling, not deadfall** — the free floor's 0.3 a worker would need more hands than the
         // band has to out-cut mixed woodland's 4.5. Over-cutting first becomes *possible* at
         // `felling`, which is exactly why that rung is what teaches conservationism.
-        seat_working(&mut app, home, WOOD, RungKey::ForestryFelling);
+        seat_working(&mut app, home, WOOD, shipped::forestry_felling());
         staff(
             &mut app,
             band,
@@ -3070,7 +3112,7 @@ mod wire {
             app.update();
             let (band, home, working) = first_band(&mut app);
             reground(&mut app, home, RENEWING_GROUND);
-            seat_working(&mut app, home, WOOD, RungKey::ForestryFelling);
+            seat_working(&mut app, home, WOOD, shipped::forestry_felling());
             staff_at_floor(
                 &mut app,
                 band,
@@ -3108,7 +3150,7 @@ mod wire {
         app.update();
         let (band, home, working) = first_band(&mut app);
         reground(&mut app, home, FINITE_GROUND);
-        seat_working(&mut app, home, STONE, RungKey::ExtractionQuarry);
+        seat_working(&mut app, home, STONE, shipped::extraction_quarry());
         staff_at_floor(
             &mut app,
             band,
@@ -3161,7 +3203,7 @@ mod wire {
         app.update();
         let (band, home, working) = first_band(&mut app);
         reground(&mut app, home, RENEWING_GROUND);
-        seat_working(&mut app, home, WOOD, RungKey::ForestryFelling);
+        seat_working(&mut app, home, WOOD, shipped::forestry_felling());
         staff_at_floor(
             &mut app,
             band,
@@ -3226,7 +3268,7 @@ mod wire {
         app.update();
         let (band, home, working) = first_band(&mut app);
         reground(&mut app, home, RENEWING_GROUND);
-        seat_working(&mut app, home, WOOD, RungKey::ForestryFelling);
+        seat_working(&mut app, home, WOOD, shipped::forestry_felling());
         staff_at_floor(
             &mut app,
             band,
@@ -4069,6 +4111,7 @@ mod wire {
         "unlock_knowledge": "conservationism",
         "earns_knowledge": null,
         "label": "Old growth",
+        "feed_channel": "extraction",
         "label_fallback": "an old-growth wood",
         "requires_rung": "coppice",
         "ceiling_required": null,

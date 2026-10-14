@@ -219,7 +219,7 @@ pub(crate) struct BandCraftInputs<'a> {
     /// [`Self::plans`] and become a second reading of the bench.
     pub(crate) recipes: &'a RecipesConfig,
     /// **The reference job an equipment life gauge is quoted against**, in work units — the ladder's
-    /// [`crate::intensification::REFERENCE_BUILD_RUNG`] `work_cost`, resolved once per capture. See
+    /// [`crate::intensification::LadderConfig::reference_build_rung`] `work_cost`, resolved once per capture. See
     /// [`quantum_units_per_noun`] for why a build's wear cannot be counted in its own units.
     pub(crate) reference_build_cost: f32,
     /// **The equipped values that live OUTSIDE `equipment.json`**, for the `makes` line of an item
@@ -1248,7 +1248,7 @@ fn invitation(
 /// became one when improvements were priced in work (`docs/plan_unit_costed_work.md` §6.3): its unit
 /// is a **work unit** — one worker-turn at the food peak — while a player holding a hoe thinks in
 /// *builds*. So it is quoted against the **reference job**
-/// ([`crate::intensification::REFERENCE_BUILD_RUNG`], the `plant:tended` rung's own `work_cost`) and
+/// ([`crate::intensification::LadderConfig::reference_build_rung`], the `plant:tended` rung's own `work_cost`) and
 /// its noun reads *"gardens' worth"*.
 ///
 /// **The reference is the LADDER's, resolved here rather than carried as a literal**, so a retune of

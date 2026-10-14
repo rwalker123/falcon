@@ -11897,10 +11897,10 @@ func _assert_ready_mark_declares() -> void:
 		lines.append(String(MAIN_SCRIPT.format_improvement(seen[0] as Dictionary).get("line", "")))
 	lines.sort()
 	var want: Array[String] = [
-		"corral %d %d %d" % [HudConst.PLAYER_FACTION_ID,
+		"build corral %d %d %d" % [HudConst.PLAYER_FACTION_ID,
 			DECLARE_CORRAL_TILE.x, DECLARE_CORRAL_TILE.y],
-		"sow %d %d %d" % [HudConst.PLAYER_FACTION_ID, DECLARE_PATCH.x, DECLARE_PATCH.y],
-		"tame %d %s" % [HudConst.PLAYER_FACTION_ID, DECLARE_TAME_HERD],
+		"build sow %d %d %d" % [HudConst.PLAYER_FACTION_ID, DECLARE_PATCH.x, DECLARE_PATCH.y],
+		"build tame %d %s" % [HudConst.PLAYER_FACTION_ID, DECLARE_TAME_HERD],
 	]
 	want.sort()
 	_assert_band_panel("declare — the three ⌃ presses transmit %s (got %s)" % [str(want), str(lines)],
@@ -17930,7 +17930,7 @@ func _assert_a_queued_road_draws_its_row() -> void:
 		_hud.unqueue_requested.disconnect(sink)
 		var line := "" if seen.is_empty() 			else String(MAIN_SCRIPT.format_unqueue(seen[0] as Dictionary).get("line", ""))
 		# ⛔ **THE ROAD FORM** (`docs/plan_site_crews.md` §2.4) — the bare tile is the PATCH on that hex.
-		var wanted_line := "unqueue %d road %d %d" % [HudConst.PLAYER_FACTION_ID,
+		var wanted_line := "unqueue %d route %d %d" % [HudConst.PLAYER_FACTION_ID,
 			ROAD_QUEUE_TILE.x, ROAD_QUEUE_TILE.y]
 		print("band_panel_preview: queued road withdrawal -> %s" % line)
 		_assert_band_panel("…and pressing it sends `%s` — the ROAD form, and never `abandon` (got \"%s\")"
@@ -18369,7 +18369,7 @@ func _assert_the_roadwork_roster_names_its_roads() -> void:
 		_hud.abandon_requested.disconnect(sink)
 		var line := "" if seen.is_empty() \
 			else String(MAIN_SCRIPT.format_abandon(seen[0] as Dictionary).get("line", ""))
-		var wanted_line := "abandon %d road %d %d" % [HudConst.PLAYER_FACTION_ID,
+		var wanted_line := "abandon %d route %d %d" % [HudConst.PLAYER_FACTION_ID,
 			ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y]
 		print("band_panel_preview: roadwork inspector put-down -> %s" % line)
 		_assert_band_panel("…and pressing it sends `%s` for that row's OWN tile (got \"%s\")"
@@ -19840,7 +19840,7 @@ func _assert_a_working_and_a_road_carry_their_marks() -> void:
 		if road_build != null:
 			var line := await _pressed_line(road_build, "build_priority_requested",
 				MAIN_SCRIPT.format_build_priority)
-			var wanted := "build_priority %d %d road %d %d " % [faction, band_id, ROSTER_NEAR_TILE.x,
+			var wanted := "build_priority %d %d route %d %d " % [faction, band_id, ROSTER_NEAR_TILE.x,
 				ROSTER_NEAR_TILE.y]
 			_assert_band_panel("…whose press names the ROAD (got \"%s\")" % line,
 				line.begins_with(wanted))

@@ -20,6 +20,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::prelude::Entity;
 use bevy::MinimalPlugins;
+use core_sim::shipped;
 
 use core_sim::grid_utils::hex_range_tiles;
 use core_sim::{
@@ -172,6 +173,7 @@ fn seat_pen(
         fodder,
         r,
         body_mass,
+        shipped::root_standing(shipped::animal()),
     );
     herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
     assert!(
@@ -657,7 +659,7 @@ fn extend_pen_accrues_a_ring_flips_the_radius_raises_k_and_caps_at_max() {
     const RING_TURNS: u32 = 28;
     let ring_turns_expected = core_sim::build_turns_remaining(
         core_sim::LadderConfig::builtin()
-            .rung(core_sim::RungKey::AnimalPen)
+            .rung(shipped::animal_pen())
             .build_cost(core_sim::RUNG_COST_UNSCALED)
             .expect("the pen rung builds"),
         core_sim::RUNG_UNSTARTED,
@@ -804,7 +806,8 @@ fn the_husbandry_density_ladder_scales_carrying_capacity_per_species() {
             100.0, // spawn cap (overwritten by the ecological recompute)
             0.10,  // fodder_per_biomass — same for every probe, so the base is shared
             0.20,  // wild r
-            20.0,  // body_mass
+            20.0,  // body_mass,
+            shipped::root_standing(shipped::animal()),
         );
         match rung {
             Rung::Wild => {}

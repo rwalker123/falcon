@@ -549,7 +549,7 @@ investment worked off over turns, reusing the corral build ladder — no materia
 
 **2d-δ — the husbandry ceiling: which species climb the ladder** (§4a). Not every animal can be herded,
 and not every herdable one can be penned. The ladder is a **sequence** (wild → pastoral → pen), so a
-species' reach is a single **enum** (`fauna_config::HusbandryCeiling` = `Wild | Pastoral | Pen`), not
+species' reach is a single **enum** (`SpeciesDef::husbandry_ceiling`, an `Option<RungId>`: `animal:wild` | `animal:pastoral` | `animal:pen`, omitted = the whole ladder), not
 two flags — which makes the incoherent "pennable but not tameable" state unrepresentable (no
 `validate()` combo guard).
 

@@ -32,13 +32,14 @@
 
 use bevy::app::App;
 use bevy::math::UVec2;
+use core_sim::shipped;
 
 use core_sim::{
     build_test_app, recapture_snapshot_in_place, run_turn, scalar_from_f32, scalar_one,
-    scalar_zero, FactionId, ForageRegistry, GenerationId, Improvement, LaborAllocation,
-    LaborAssignment, LaborTarget, LadderConfigHandle, LocalStore, MoraleCause, PopulationCohort,
-    ResidentBand, RungKey, SnapshotHistory, SourcePriority, StartingUnit, TakeSelection,
-    TileRegistry, DEFAULT_ESCAPEMENT_FLOOR,
+    scalar_zero, FactionId, ForageRegistry, GenerationId, LaborAllocation, LaborAssignment,
+    LaborTarget, LadderConfigHandle, LocalStore, MoraleCause, PopulationCohort, ResidentBand,
+    SnapshotHistory, SourcePriority, StartingUnit, TakeSelection, TileRegistry,
+    DEFAULT_ESCAPEMENT_FLOOR,
 };
 
 /// How close two work-unit figures have to be to be the same job — pure f32 slack.
@@ -108,7 +109,7 @@ fn an_informatively_priced_sowable_site(app: &mut App) -> UVec2 {
                     tiles.get(&neighbor).map(|tile| tile.terrain_tags)
                 });
             if core_sim::rung_site_refusal(
-                ladder.rung(RungKey::PlantField),
+                ladder.rung(shipped::plant_field()),
                 ground,
                 &labor.forage,
                 app.world
@@ -123,8 +124,13 @@ fn an_informatively_priced_sowable_site(app: &mut App) -> UVec2 {
             }
             let composition =
                 core_sim::tile_flora_composition(&flora, &labor.forage, ground, map_seed);
-            if core_sim::default_species_for_rung(&composition, &flora, RungKey::PlantField)
-                .is_none()
+            if core_sim::default_species_for_rung(
+                &composition,
+                &flora,
+                shipped::ladder(),
+                shipped::plant_field(),
+            )
+            .is_none()
             {
                 continue;
             }
@@ -258,7 +264,7 @@ fn spawn_the_farming_band(app: &mut App, tile: bevy::prelude::Entity, source: UV
             ],
             build_queue: vec![core_sim::BuildQueueEntry {
                 source: core_sim::BuildSource::Patch(source),
-                declared: core_sim::BuildJob::Rung(Improvement::Sow),
+                declared: core_sim::BuildJob::Climb(shipped::plant_field()),
                 priority: core_sim::SourcePriority::default(),
             }],
             ..Default::default()
@@ -361,7 +367,7 @@ const NO_SOW_WORK_COST: f32 = 0.0;
 /// per-patch and per-crop figure published here is a multiple of.
 fn field_declared_cost(app: &App) -> f32 {
     core_sim::plant_rung_span(
-        RungKey::PlantField,
+        shipped::plant_field(),
         &app.world.resource::<LadderConfigHandle>().get(),
     )
     .1
@@ -369,7 +375,7 @@ fn field_declared_cost(app: &App) -> f32 {
 
 fn field_base(app: &App) -> f32 {
     core_sim::plant_rung_span(
-        RungKey::PlantField,
+        shipped::plant_field(),
         &app.world.resource::<LadderConfigHandle>().get(),
     )
     .0
@@ -408,8 +414,13 @@ fn a_two_leg_sow_re_quotes_its_field_leg_off_the_weeded_ground() {
             .get::<core_sim::Tile>(entity)
             .expect("the fixture tile");
         let composition = core_sim::tile_flora_composition(&flora, &labor.forage, ground, map_seed);
-        let crop = core_sim::default_species_for_rung(&composition, &flora, RungKey::PlantField)
-            .expect("the site was chosen for having one");
+        let crop = core_sim::default_species_for_rung(
+            &composition,
+            &flora,
+            shipped::ladder(),
+            shipped::plant_field(),
+        )
+        .expect("the site was chosen for having one");
         let wild_share = composition
             .iter()
             .find(|entry| entry.species == crop)
@@ -470,7 +481,7 @@ fn a_two_leg_sow_re_quotes_its_field_leg_off_the_weeded_ground() {
 
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     let quoted_at_declaration = ladder
-        .rung(RungKey::PlantField)
+        .rung(shipped::plant_field())
         .build_cost(weeded_price)
         .expect("the Field rung builds");
     assert!(
@@ -492,7 +503,7 @@ fn the_published_sow_price_is_the_work_the_field_rung_takes() {
     let (mut app, source) = a_two_leg_sow();
     let base = field_base(&app);
     let declared = core_sim::plant_rung_span(
-        RungKey::PlantField,
+        shipped::plant_field(),
         &app.world.resource::<LadderConfigHandle>().get(),
     )
     .1;
@@ -647,8 +658,13 @@ fn auto_picked_crop(app: &App, source: UVec2) -> String {
         .get::<core_sim::Tile>(entity)
         .expect("the fixture tile");
     let composition = core_sim::tile_flora_composition(&flora, &labor.forage, ground, map_seed);
-    core_sim::default_species_for_rung(&composition, &flora, RungKey::PlantField)
-        .expect("the site was chosen for having a crop that climbs to a Field")
+    core_sim::default_species_for_rung(
+        &composition,
+        &flora,
+        shipped::ladder(),
+        shipped::plant_field(),
+    )
+    .expect("the site was chosen for having a crop that climbs to a Field")
 }
 
 /// ⛔ **A CROP THAT ALREADY HOLDS THE GROUND IS CHEAPER TO SOW THAN A MARGINAL ONE**, and every

@@ -20,10 +20,11 @@
 
 use bevy::app::App;
 use bevy::math::UVec2;
+use core_sim::shipped;
 
 use core_sim::{
     classify_food_module, tile_forage_capacity, tile_is_fresh_watered, FoodSiteRegistry,
-    FoodSiteWaterBiasReport, LaborConfigHandle, LadderConfigHandle, RungKey, SimulationConfig,
+    FoodSiteWaterBiasReport, LaborConfigHandle, LadderConfigHandle, SimulationConfig,
     SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, Tile, TileRegistry,
 };
 
@@ -132,7 +133,7 @@ fn is_sowable(app: &App, pos: UVec2) -> bool {
     let labor = app.world.resource::<LaborConfigHandle>().get();
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     core_sim::rung_site_refusal(
-        ladder.rung(RungKey::PlantField),
+        ladder.rung(shipped::plant_field()),
         tile,
         &labor.forage,
         true,

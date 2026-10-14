@@ -74,7 +74,7 @@ use std::{
 use bevy::prelude::*;
 
 use crate::{
-    components::{take_overdraws, Improvement, SourceYield, TakeSelection, Tile},
+    components::{take_overdraws, SourceYield, TakeSelection, Tile, VerbId},
     fauna::{
         classify_ecology_phase, escapement_ceiling, floor_reach_band, forecast_source_yield,
         peak_regrowth_between, reseeding_logistic_regrowth, sustainable_yield, EcologyPhase,
@@ -85,14 +85,14 @@ use crate::{
     food::FoodModuleTag,
     intensification::{
         self, interpolate, rung_span, upkeep_shortfall, BuildLeg, CostScale, LadderConfig,
-        LadderConfigHandle, RungBranch, RungDef, RungKey, RungStanding, RungTrait, SiteRefusal,
-        LEG_ALREADY_PAID, NEGLECT_NONE, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY, NO_RUNG_CREDIT,
-        NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
+        LadderConfigHandle, RungDef, RungId, RungStanding, RungTrait, RungTraits, SiteRefusal,
+        SourceKind, LEG_ALREADY_PAID, NEGLECT_NONE, NO_BUILD_GEAR, NO_CREW_ON_THIS_ACTIVITY,
+        NO_RUNG_CREDIT, NO_UPKEEP_DECAY, NO_UPKEEP_DEMAND, RUNG_COST_UNSCALED, RUNG_UNSTARTED,
     },
     labor_config::{ForageLaborConfig, LaborConfigHandle, NO_FORAGE_CAPACITY},
     materials_config::MaterialPayoff,
     orders::FactionId,
-    resources::{CommandEventKind, CommandEventLog, SimulationTick},
+    resources::{CommandEventLog, SimulationTick},
     scalar::{scalar_from_f32, Scalar},
 };
 
@@ -288,7 +288,7 @@ pub struct ForagePatch {
     /// this rung's **top**, not when an intermediate rung fills.
     ///
     /// Transient per-turn scratch on [`Self::build_turns_remaining`]'s cycle, and for its reason.
-    pub build_destination: Option<crate::intensification::RungKey>,
+    pub build_destination: Option<crate::intensification::RungId>,
     /// **THE LEGS THE ENTRY STILL HAS TO LAY**, in climb order, first-incomplete first, each with its
     /// own **chained** turns ([`crate::intensification::BuildLeg`] plus the chain the publish pass
     /// stamps). Empty when the source is not queued, or has already arrived.
@@ -345,7 +345,7 @@ pub struct ForagePatch {
     /// rung completes, lowered when that rung is lost. A loss is announced only for a rung at or
     /// below it: a part-built meter rotting to empty was never had, so it is not "lost"
     /// (`intensification::settle_achieved_losses`). `None` = nothing above the branch's root.
-    pub peak_rung: Option<crate::intensification::RungKey>,
+    pub peak_rung: Option<crate::intensification::RungId>,
     /// **WHAT THE AT-RISK METER'S OWN CREW SUPPLIED THIS TURN**, in work units — the **keepers**
     /// once that rung is built and the **builders** while it is not
     /// ([`patch_upkeep_supply`], `docs/plan_standing_upkeep.md` §2.4), stamped by the labor arm that
@@ -482,11 +482,15 @@ pub struct ForagePatch {
 /// **The declaration is honoured only at a zero meter**, which is what makes a spent one inert: once
 /// the first accrual lands, the meter answers and the stale declaration is filtered out here rather
 /// than having to be cleaned up somewhere.
-pub fn patch_build_verb(patch: &ForagePatch, declared: Option<Improvement>) -> Option<Improvement> {
+pub fn patch_build_rung(
+    patch: &ForagePatch,
+    ladder: &LadderConfig,
+    declared: Option<RungId>,
+) -> Option<RungId> {
     // **THE RUNG BEING RAISED IS THE FLOOR OF THE ANSWER.** `None` at the top of the branch: a Field
-    // has nothing above it, so a `Cultivate` declared on one is dead rather than stalled — the case
+    // has nothing above it, so a `Cultivate` declared on one is dead rather than stalled - the case
     // that used to need the retired "nothing left to build" test.
-    let raising = patch.standing().raising_key()?;
+    let raising = patch.standing().raising?;
 
     // **A LIVE DECLARATION NAMES THE JOB, and it may name a rung ABOVE the one in flight.** A `sow`
     // on untended ground is the player asking for a Field: the crew works toward `plant:field` and
@@ -498,28 +502,36 @@ pub fn patch_build_verb(patch: &ForagePatch, declared: Option<Improvement>) -> O
     // want different tools. Deriving `Cultivate` there would honour the tool and **dead-end the rung**:
     // `Sow` is the create-from-nothing verb, its accrual deliberately carries no work predicate
     // (bare ground stands below every floor by construction), and the Cultivate arm's gate does carry
-    // one — so a bare-ground Sow would bank nothing, for ever, with the queue entry live. The whole
+    // one - so a bare-ground Sow would bank nothing, for ever, with the queue entry live. The whole
     // capability rung 3 exists for would go. The kit question is left open rather than answered by
     // making the verb unusable.
     //
-    // A declaration **below** the rung in flight is dead — a `Cultivate` on ground already tended —
+    // A declaration **below** the rung in flight is dead - a `Cultivate` on ground already tended -
     // which is the state the retired two-meter form could not tell apart from a stalled one.
-    if let Some(target) = declared.map(RungKey::built_by) {
-        if target.is_at_or_above(raising) {
-            return target.builder_verb();
+    if let Some(target) = declared {
+        if ladder.at_or_above(target, raising) {
+            return Some(target);
         }
     }
 
-    // **WITH NO USABLE DECLARATION THE METER ANSWERS FOR ITSELF** — work banked on the rung in
+    // **WITH NO USABLE DECLARATION THE METER ANSWERS FOR ITSELF** - work banked on the rung in
     // flight *is* the statement that this rung is being raised, which is what lets a player who has
     // watched a rung slip add hands rather than a command. Nothing banked and nothing declared is a
     // live entry that has simply not started, and answers `None`.
-    (patch.standing().credit > NO_RUNG_CREDIT)
-        .then(|| raising.builder_verb())
-        .flatten()
+    (patch.standing().credit > NO_RUNG_CREDIT).then_some(raising)
 }
 
-/// **IS THE RUNG THIS QUEUE ENTRY DECLARED ALREADY STANDING?** — the test that retires a **dead**
+/// **THE VERB OF THE RUNG BEING RAISED** - [`patch_build_rung`] spelled as the verb the rung
+/// declares, for the readouts that name it. `None` when no rung is in flight or the rung has no verb.
+pub fn patch_build_verb(
+    patch: &ForagePatch,
+    ladder: &LadderConfig,
+    declared: Option<RungId>,
+) -> Option<VerbId> {
+    patch_build_rung(patch, ladder, declared).and_then(|rung| ladder.rung(rung).verb_id())
+}
+
+/// **IS THE RUNG THIS QUEUE ENTRY DECLARED ALREADY STANDING?** - the test that retires a **dead**
 /// entry (`docs/plan_standing_upkeep.md` §2.5), and the plant twin of
 /// `fauna::herd_rung_already_built`.
 ///
@@ -532,14 +544,17 @@ pub fn patch_build_verb(patch: &ForagePatch, declared: Option<Improvement>) -> O
 ///
 /// # AND IT IS EMPHATICALLY NOT "THE DERIVED VERB IS `None`"
 ///
-/// [`patch_build_verb`] also answers `None` for a source with nothing banked and nothing declared —
-/// a live entry that has simply not started — so retiring on that would drop an entry the turn the
+/// [`patch_build_rung`] also answers `None` for a source with nothing banked and nothing declared -
+/// a live entry that has simply not started - so retiring on that would drop an entry the turn the
 /// player made it.
-pub fn patch_rung_already_built(patch: &ForagePatch, declared: Improvement) -> bool {
-    let target = RungKey::built_by(declared);
-    // A rung the animal web owns can never stand on ground; `is_at_or_above` answers `false` across
+pub fn patch_rung_already_built(
+    patch: &ForagePatch,
+    ladder: &LadderConfig,
+    declared: RungId,
+) -> bool {
+    // A rung the animal web owns can never stand on ground; `at_or_above` answers `false` across
     // branches, so the cross-web case needs no arm of its own.
-    patch.standing().held_key().is_at_or_above(target)
+    ladder.at_or_above(patch.standing().held, declared)
 }
 
 /// **WHERE A BUILD METER LANDS THIS TURN** — what was banked plus what the crew produced, capped at
@@ -562,7 +577,7 @@ pub(crate) fn banked_up_to_cost(banked: f32, cost: f32) -> f32 {
 impl ForagePatch {
     /// A fresh patch at full biomass (= carrying capacity). Phase is `Thriving` until refreshed
     /// against the ecology config.
-    pub fn new(tile: UVec2, carrying_capacity: f32) -> Self {
+    pub fn new(tile: UVec2, carrying_capacity: f32, root: RungStanding) -> Self {
         Self {
             tile,
             biomass: carrying_capacity,
@@ -571,9 +586,10 @@ impl ForagePatch {
             carrying_capacity,
             ecology_phase: EcologyPhase::Thriving,
             ladder_position: RUNG_UNSTARTED,
-            // The pair is written together here as everywhere else — `unstarted` is the walk's own
-            // answer for a position of zero, stated ladder-free so worldgen needs no config.
-            standing: RungStanding::unstarted(RungBranch::Plant),
+            // The pair is written together here as everywhere else - `root` is the walk's own
+            // answer for a position of zero ([`RungStanding::unstarted_on`]), handed in by the code
+            // that has the ladder.
+            standing: root,
             // **Unquoted, which is not the same as unscaled**: the Field leg has not started, so
             // every forward-looking price is the live measure and nothing this patch derives can
             // depend on the Field rung's width yet.
@@ -598,7 +614,7 @@ impl ForagePatch {
     }
 
     /// **A patch a crew has just put seed into** — the plant rung-3 verb's create-from-nothing case
-    /// ([`crate::components::Improvement::Sow`] on hospitable ground that carried no forage site at all,
+    /// (the `sow` verb on hospitable ground that carried no forage site at all,
     /// `docs/plan_intensification_ladder.md` §2). It is an ordinary patch from this moment on: same
     /// biomass model, same **tile** capacity (`tile_forage_capacity` — the *same* source a wild patch
     /// is seeded from, never a Field-specific table), same logistic regrowth.
@@ -609,10 +625,15 @@ impl ForagePatch {
     /// the `Sow` accrual is *not* gated on the patch being Thriving (see `advance_labor_allocation`):
     /// a freshly sown tile is Collapsing by construction, and gating it would make sowing bare ground
     /// impossible.
-    pub(crate) fn sown(tile: UVec2, carrying_capacity: f32, reseed_floor_fraction: f32) -> Self {
+    pub(crate) fn sown(
+        tile: UVec2,
+        carrying_capacity: f32,
+        reseed_floor_fraction: f32,
+        root: RungStanding,
+    ) -> Self {
         Self {
             biomass: carrying_capacity * reseed_floor_fraction,
-            ..Self::new(tile, carrying_capacity)
+            ..Self::new(tile, carrying_capacity, root)
         }
     }
 
@@ -680,11 +701,16 @@ impl ForagePatch {
     /// **The ECOLOGY is what stays**: the standing biomass is what anyone looking at the ground can
     /// see, and it is re-classified here against the wild capacity so the published phase agrees with
     /// the published pair rather than with the capacity the row denies.
-    pub(crate) fn as_wild_ground(&self, tile_capacity: f32, forage: &ForageLaborConfig) -> Self {
+    pub(crate) fn as_wild_ground(
+        &self,
+        tile_capacity: f32,
+        forage: &ForageLaborConfig,
+        root: RungStanding,
+    ) -> Self {
         let mut wild = Self {
             biomass: self.biomass,
             biomass_before_regrowth: self.biomass_before_regrowth,
-            ..Self::new(self.tile, tile_capacity)
+            ..Self::new(self.tile, tile_capacity, root)
         };
         wild.refresh_ecology_phase(&patch_ecology(&wild, forage));
         wild
@@ -724,16 +750,19 @@ impl ForagePatch {
     /// tended rung's top and is the ladder's own, never this patch's — the multiplier scales
     /// `plant:field` alone, so nothing below it can move.
     pub fn set_ladder_position(&mut self, position: f32, ladder: &LadderConfig) {
-        let was = self.standing.held_key();
+        let was = self.standing.held;
         self.ladder_position = position.max(RUNG_UNSTARTED);
-        if self.ladder_position <= plant_rung_span(RungKey::PlantField, ladder).0 {
-            self.field_cost_multiplier = None;
+        if let Some(priced) = ladder.first_rung_scaled(SourceKind::Patch, CostScale::ReplacedShare)
+        {
+            if self.ladder_position <= plant_rung_span(priced.rung_id(), ladder).0 {
+                self.field_cost_multiplier = None;
+            }
         }
         self.standing = plant_standing(self.ladder_position, ladder, self.field_cost_in_force());
         // **A FINISHED RUNG STARTS WITH ITS FULL GRACE** ([`crate::intensification::rung_rose`]).
-        if crate::intensification::rung_rose(was, self.standing.held_key()) {
+        if crate::intensification::rung_rose(ladder, was, self.standing.held) {
             self.neglect_turns = crate::intensification::NEGLECT_NONE;
-            crate::intensification::raise_peak(&mut self.peak_rung, self.standing.held_key());
+            crate::intensification::raise_peak(ladder, &mut self.peak_rung, self.standing.held);
         }
         self.reconcile_owner();
     }
@@ -832,8 +861,8 @@ impl ForagePatch {
         faction: FactionId,
         amount: f32,
         ladder: &LadderConfig,
-    ) -> Vec<RungKey> {
-        let Some(raising) = self.standing.raising_key() else {
+    ) -> Vec<RungId> {
+        let Some(raising) = self.standing.raising else {
             // Top of the branch — there is nothing left to raise, so there is nothing to bank.
             return Vec::new();
         };
@@ -859,9 +888,9 @@ impl ForagePatch {
         &mut self,
         faction: FactionId,
         amount: f32,
-        destination: RungKey,
+        destination: RungId,
         ladder: &LadderConfig,
-    ) -> Vec<RungKey> {
+    ) -> Vec<RungId> {
         self.accrue_toward(faction, amount, destination, ladder)
     }
 
@@ -869,13 +898,13 @@ impl ForagePatch {
         &mut self,
         faction: FactionId,
         amount: f32,
-        target: RungKey,
+        target: RungId,
         ladder: &LadderConfig,
-    ) -> Vec<RungKey> {
-        let Some(raising) = self.standing.raising_key() else {
+    ) -> Vec<RungId> {
+        let Some(raising) = self.standing.raising else {
             return Vec::new();
         };
-        if !target.is_at_or_above(raising) {
+        if !ladder.at_or_above(target, raising) {
             return Vec::new();
         }
         if self.owner.is_none() {
@@ -884,7 +913,7 @@ impl ForagePatch {
         if self.owner != Some(faction) {
             return Vec::new();
         }
-        let was = self.standing.held_key();
+        let was = self.standing.held;
         // **THIS PATCH'S OWN TOP, not the ladder's** — the destination's span on the price list this
         // patch is climbing at, so a Sow quoted dear has more rung to cover and one quoted cheap has
         // less.
@@ -895,20 +924,7 @@ impl ForagePatch {
         // destination and lays every leg to it, so a `sow` on untended ground raises the tended rung
         // on the way — and *that* completion is news a player who ordered "take it to Field" wants
         // to see. The queue still retires only at the destination; only the announcement is per rung.
-        rungs_between(was, self.standing.held_key())
-    }
-
-    /// **The `Cultivate` arm's accrual** — banks toward `plant:tended` and no further, so a crew that
-    /// has already finished the rung (or is standing on a Field) banks nothing. Returns *did this
-    /// call finish it*, the feed line's trigger.
-    pub(crate) fn accrue_cultivation(
-        &mut self,
-        faction: FactionId,
-        amount: f32,
-        ladder: &LadderConfig,
-    ) -> bool {
-        self.accrue_toward(faction, amount, RungKey::PlantTended, ladder)
-            .contains(&RungKey::PlantTended)
+        ladder.rungs_between(was, self.standing.held)
     }
 
     // **RETIRED: `accrue_field`** — the `Sow` arm's own bool wrapper, *"did this call finish the
@@ -925,17 +941,23 @@ impl ForagePatch {
     /// **It takes the ladder** because the rung boundaries are live config now: there is no
     /// fabricated cost a patch could carry that would put it on a real rung.
     pub fn complete_cultivation(&mut self, faction: FactionId, ladder: &LadderConfig) -> bool {
-        self.complete_rung(faction, RungKey::PlantTended, ladder)
+        let rung = ladder
+            .first_rung_with(SourceKind::Patch, RungTrait::Managed)
+            .rung_id();
+        self.complete_rung(faction, rung, ladder)
     }
 
-    /// **A fixture's already-sown Field** — the rung-3 twin of [`Self::complete_cultivation`].
+    /// **A fixture's already-sown Field** - the rung-3 twin of [`Self::complete_cultivation`].
     pub fn complete_field(&mut self, faction: FactionId, ladder: &LadderConfig) -> bool {
-        self.complete_rung(faction, RungKey::PlantField, ladder)
+        let rung = ladder
+            .first_rung_with(SourceKind::Patch, RungTrait::Sown)
+            .rung_id();
+        self.complete_rung(faction, rung, ladder)
     }
 
     /// Move the position to the top of `rung`, taking ownership as the real accrual would. Returns
     /// whether the patch now holds that rung.
-    fn complete_rung(&mut self, faction: FactionId, rung: RungKey, ladder: &LadderConfig) -> bool {
+    fn complete_rung(&mut self, faction: FactionId, rung: RungId, ladder: &LadderConfig) -> bool {
         if self.owner.is_none() {
             self.owner = Some(faction);
         }
@@ -944,7 +966,7 @@ impl ForagePatch {
         }
         let (base, width) = patch_rung_span(self, rung, ladder);
         self.set_ladder_position(base + width, ladder);
-        self.standing.held_key().is_at_or_above(rung)
+        ladder.at_or_above(self.standing.held, rung)
     }
 
     /// **DECAY EATS FROM THE TOP, FOR FREE** — the position simply falls by `amount`, floored at
@@ -972,12 +994,12 @@ impl ForagePatch {
     /// **There is no retention bar left to cross.** A rung ends where its span ends, which is safe
     /// only because the payout interpolates: at 49.99 of the tended rung's 50 the patch pays 99.98%
     /// of a tended patch, so the predicate flipping there is a rounding rather than a cliff.
-    pub fn decay_ladder(&mut self, amount: f32, ladder: &LadderConfig) -> Vec<RungKey> {
-        let was = self.standing.held_key();
+    pub fn decay_ladder(&mut self, amount: f32, ladder: &LadderConfig) -> Vec<RungId> {
+        let was = self.standing.held;
         self.set_ladder_position(self.ladder_position - amount, ladder);
         // Newest first, which is the order the unwind runs in: the Field goes before the ground
         // beneath it, so the feed reads the way the loss happened.
-        let mut lost = rungs_between(self.standing.held_key(), was);
+        let mut lost = ladder.rungs_between(self.standing.held, was);
         lost.reverse();
         lost
     }
@@ -1020,31 +1042,6 @@ impl ForagePatch {
     }
 }
 
-/// **THE RUNGS STRICTLY ABOVE `floor`, UP TO AND INCLUDING `ceiling`** — in climb order, and empty
-/// when the two are the same.
-///
-/// The one walk both meter edges read: an accrual crossed *these* rungs upward, a decay crossed
-/// *these* rungs downward. **A single call can cross more than one** — a crew that out-produces the
-/// remainder of a leg, a bleed larger than a rung's span — and a seam reporting only the outermost
-/// would announce one of them and lose the rest in silence, which on a 25-turn investment is the
-/// half a player most needs told.
-fn rungs_between(floor: RungKey, ceiling: RungKey) -> Vec<RungKey> {
-    if floor == ceiling {
-        // The overwhelmingly common case, and it allocates nothing: `Vec::new` does not.
-        return Vec::new();
-    }
-    let mut crossed = Vec::new();
-    let mut cursor = floor.above();
-    while let Some(rung) = cursor {
-        crossed.push(rung);
-        if rung == ceiling {
-            break;
-        }
-        cursor = rung.above();
-    }
-    crossed
-}
-
 /// **A PLANT RUNG'S COST AT ONE PRICE LIST** — the resolver [`RungStanding::at`] and [`rung_span`]
 /// take, bound to a Field multiplier.
 ///
@@ -1067,13 +1064,13 @@ fn plant_rung_cost(rung: &RungDef, field_cost_multiplier: f32) -> Option<f32> {
 /// **This is the REFERENCE span, not any patch's.** A Sow's price varies with how much of the tile
 /// it replaces, so a patch with a quoted Field leg is wider than this; ask [`patch_rung_span`] for
 /// that patch's own. The tended rung is the same on both, always.
-pub fn plant_rung_span(rung: RungKey, ladder: &LadderConfig) -> (f32, f32) {
+pub fn plant_rung_span(rung: RungId, ladder: &LadderConfig) -> (f32, f32) {
     plant_rung_span_at(rung, ladder, RUNG_COST_UNSCALED)
 }
 
 /// [`plant_rung_span`] at a named Field price.
 fn plant_rung_span_at(
-    rung: RungKey,
+    rung: RungId,
     ladder: &LadderConfig,
     field_cost_multiplier: f32,
 ) -> (f32, f32) {
@@ -1088,7 +1085,7 @@ fn plant_rung_span_at(
 ///
 /// It differs from [`plant_rung_span`] only on `plant:field`, and only once that leg has been quoted
 /// ([`ForagePatch::quoted_field_cost_multiplier`]).
-pub fn patch_rung_span(patch: &ForagePatch, rung: RungKey, ladder: &LadderConfig) -> (f32, f32) {
+pub fn patch_rung_span(patch: &ForagePatch, rung: RungId, ladder: &LadderConfig) -> (f32, f32) {
     plant_rung_span_at(rung, ladder, patch.field_cost_in_force())
 }
 
@@ -1099,9 +1096,12 @@ fn plant_standing(
     ladder: &LadderConfig,
     field_cost_multiplier: f32,
 ) -> RungStanding {
-    RungStanding::at(ladder, RungBranch::Plant, position, |def| {
-        plant_rung_cost(def, field_cost_multiplier)
-    })
+    RungStanding::at(
+        ladder,
+        ladder.branch_of_kind(SourceKind::Patch),
+        position,
+        |def| plant_rung_cost(def, field_cost_multiplier),
+    )
 }
 
 /// **THE LEGS A QUEUE ENTRY STILL HAS TO LAY ON THIS PATCH** — every rung from where the position
@@ -1128,21 +1128,20 @@ fn plant_standing(
 /// and a chained date for a job the sim will charge something else for.
 pub fn patch_build_legs(
     patch: &ForagePatch,
-    destination: RungKey,
+    destination: RungId,
     ladder: &LadderConfig,
     field_cost_multiplier: f32,
 ) -> Vec<BuildLeg> {
-    if destination.branch() != RungBranch::Plant {
+    if ladder.source_kind(destination.branch) != Some(SourceKind::Patch) {
         // A rung the animal web owns can never stand on ground.
         return Vec::new();
     }
     let position = patch.ladder_position();
     let mut legs = Vec::new();
-    let mut cursor = RungBranch::Plant.root_rung();
-    while let Some(rung) = cursor.above() {
-        if !destination.is_at_or_above(rung) {
-            break;
-        }
+    for rung in ladder
+        .rungs_between(ladder.kind_root(SourceKind::Patch).rung_id(), destination)
+        .into_iter()
+    {
         let (base, width) = plant_rung_span_at(rung, ladder, field_cost_multiplier);
         // What is left of THIS rung from where the source stands: the whole of it when the position
         // has not reached its base, part of it mid-rung, none of it once the position is past its top.
@@ -1153,7 +1152,6 @@ pub fn patch_build_legs(
                 work_remaining: owed,
             });
         }
-        cursor = rung;
     }
     legs
 }
@@ -1167,10 +1165,10 @@ pub fn patch_build_legs(
 /// than subtracting: a rung the patch *holds* reads full here because it is held, so the meter
 /// cannot contradict `is_field()` by a rounding. Nothing in the sim branches on it; the position and
 /// its standing decide everything, and this only restates them in the shape the client already reads.
-pub fn patch_rung_work_done(patch: &ForagePatch, rung: RungKey, ladder: &LadderConfig) -> f32 {
+pub fn patch_rung_work_done(patch: &ForagePatch, rung: RungId, ladder: &LadderConfig) -> f32 {
     crate::intensification::rung_work_done(
         patch.standing(),
-        rung,
+        ladder.rung(rung),
         patch.ladder_position(),
         patch_rung_span(patch, rung, ladder),
     )
@@ -1430,9 +1428,49 @@ pub fn patch_composition<'a>(
     // on a take *ceiling* that sits above the worker cap on any normally-staffed row. So the mix was
     // the only term that moved, and it moved in one step: a tile committed to a cash crop went from
     // paying food and fibre to paying nothing at all on the turn its Sow completed.
-    intensification::interpolate_composition(&patch.standing(), |rung| {
-        composition_for_rung(patch, tile_composition, flora, forage, rung)
+    intensification::interpolate_composition(&patch.standing(), |mark| {
+        composition_for_rung(
+            patch,
+            tile_composition,
+            flora,
+            forage,
+            PlantPayoff::of(mark.traits),
+        )
     })
+}
+
+/// **WHICH OF THE PLANT PAYOFF TABLES A RUNG SELECTS** - derived from what the rung *is* (its
+/// traits), never from which rung it is. A rung carrying `sown` pays the Field block
+/// (`field_*` gains, the planted basket); one that is `managed` and not `sown` pays the tended block;
+/// anything below pays neither. A configured third plant rung with the right traits is paid with no
+/// code edit, and the config's `tended_*` / `field_*` blocks keep their names because they are the
+/// payoff *for* a trait, not a rung's identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlantPayoff {
+    /// Nothing built: the wild stand.
+    Wild,
+    /// The `managed` block.
+    Tended,
+    /// The `sown` block.
+    Field,
+}
+
+impl PlantPayoff {
+    /// The block a rung with `traits` pays.
+    pub fn of(traits: RungTraits) -> Self {
+        if traits.has(RungTrait::Sown) {
+            PlantPayoff::Field
+        } else if traits.has(RungTrait::Managed) {
+            PlantPayoff::Tended
+        } else {
+            PlantPayoff::Wild
+        }
+    }
+
+    /// The block `rung` pays on `ladder`.
+    pub fn of_rung(ladder: &LadderConfig, rung: RungId) -> Self {
+        Self::of(ladder.rung(rung).trait_set())
+    }
 }
 
 /// **A PER-RUNG QUANTITY AT THIS PATCH'S STANDING** — [`interpolate`] bound to the patch, so no rate
@@ -1440,8 +1478,10 @@ pub fn patch_composition<'a>(
 ///
 /// `value_at` states the **absolute** each rung pays; a patch part-way up a rung gets everything
 /// below it in full plus its fraction of the step it is on.
-fn patch_interpolate(patch: &ForagePatch, value_at: impl Fn(RungKey) -> f32) -> f32 {
-    interpolate(&patch.standing(), value_at)
+fn patch_interpolate(patch: &ForagePatch, value_at: impl Fn(PlantPayoff) -> f32) -> f32 {
+    interpolate(&patch.standing(), |mark| {
+        value_at(PlantPayoff::of(mark.traits))
+    })
 }
 
 /// **The basket this patch's crop would make of the tile STANDING ON `rung`** — the seam every
@@ -1472,14 +1512,14 @@ pub fn composition_for_rung<'a>(
     tile_composition: &'a [FloraShare],
     flora: &FloraConfig,
     forage: &ForageLaborConfig,
-    rung: RungKey,
+    rung: PlantPayoff,
 ) -> Cow<'a, [FloraShare]> {
     let Some(favored) = patch.species.as_deref() else {
         return Cow::Borrowed(tile_composition);
     };
     match rung {
-        RungKey::PlantField => Cow::Owned(planted(tile_composition, favored, flora)),
-        RungKey::PlantTended => Cow::Owned(weeded(
+        PlantPayoff::Field => Cow::Owned(planted(tile_composition, favored, flora)),
+        PlantPayoff::Tended => Cow::Owned(weeded(
             tile_composition,
             favored,
             forage.cultivation.tended_weeding_gain,
@@ -1607,12 +1647,15 @@ pub fn patch_field_cost_multiplier(
     // number would state one meter from two denominators. A patch carrying Field work with no stamp
     // is a fixture that seated the position directly; it climbed at the ladder's own price and its
     // readout must divide by that.
-    if patch.ladder_position() > plant_rung_span(RungKey::PlantField, ladder).0 {
+    let sown = ladder
+        .first_rung_with(SourceKind::Patch, RungTrait::Sown)
+        .rung_id();
+    if patch.ladder_position() > plant_rung_span(sown, ladder).0 {
         return patch.field_cost_in_force();
     }
     let crop = match patch.species.as_deref() {
         Some(committed) => Cow::Borrowed(committed),
-        None => match default_species_for_rung(tile_composition, flora, RungKey::PlantField) {
+        None => match default_species_for_rung(tile_composition, flora, ladder, sown) {
             Some(picked) => Cow::Owned(picked),
             None => return RUNG_COST_UNSCALED,
         },
@@ -1644,12 +1687,16 @@ pub fn crop_field_cost_multiplier(
     crop: &str,
     flora: &FloraConfig,
     forage: &ForageLaborConfig,
+    ladder: &LadderConfig,
 ) -> Option<f32> {
     species_climbs(
         crop,
         share_of(tile_composition, crop),
         flora,
-        RungKey::PlantField,
+        ladder,
+        ladder
+            .first_rung_with(SourceKind::Patch, RungTrait::Sown)
+            .rung_id(),
     )
     .then(|| field_cost_multiplier_for_crop(tile_composition, crop, flora, forage))
 }
@@ -1887,17 +1934,17 @@ pub fn selected_biomass_share(composition: &[FloraShare], take: &TakeSelection) 
 
 /// Keyed on the **rung being asked about**, exactly as [`composition_for_rung`] is, so the gain and
 /// the basket it multiplies can never come from two different rungs.
-fn favored_conversion_gain(rung: RungKey, forage: &ForageLaborConfig) -> f32 {
+fn favored_conversion_gain(rung: PlantPayoff, forage: &ForageLaborConfig) -> f32 {
     match rung {
-        RungKey::PlantTended => forage.cultivation.tended_conversion_gain,
+        PlantPayoff::Tended => forage.cultivation.tended_conversion_gain,
         // **A FIELD KEEPS WHAT TENDING TAUGHT YOU.** This arm used to fall through to
         // [`NO_CONVERSION_GAIN`], so a Field converted each unit of biomass at *half* the tended
         // patch beneath it — a rung paying less than the rung it was built on, reported from play as
         // 2.00 food/turn dropping to 1.33 on the same tile with the same crew. Rung 3 was designed
         // with its own rate (`field_provisions_per_biomass`), that dial was retired with the
         // managed-harvest model, and nothing replaced it until `field_conversion_gain`.
-        RungKey::PlantField => forage.cultivation.field_conversion_gain,
-        _ => NO_CONVERSION_GAIN,
+        PlantPayoff::Field => forage.cultivation.field_conversion_gain,
+        PlantPayoff::Wild => NO_CONVERSION_GAIN,
     }
 }
 
@@ -1914,7 +1961,7 @@ fn rung_rate(
     tile_composition: &[FloraShare],
     flora: &FloraConfig,
     forage: &ForageLaborConfig,
-    rung: RungKey,
+    rung: PlantPayoff,
     take: &TakeSelection,
     rate_of: impl Fn(&crate::flora_config::FloraDef) -> f32,
     fallback: f32,
@@ -2131,7 +2178,7 @@ pub fn rung_material_yields(
     tile_composition: &[FloraShare],
     flora: &FloraConfig,
     forage: &ForageLaborConfig,
-    rung: RungKey,
+    rung: PlantPayoff,
 ) -> Vec<crate::materials_config::MaterialYieldDef> {
     rung_material_yields_at(
         patch,
@@ -2293,7 +2340,7 @@ fn rung_provisions_per_biomass(
     tile_composition: &[FloraShare],
     flora: &FloraConfig,
     forage: &ForageLaborConfig,
-    rung: RungKey,
+    rung: PlantPayoff,
 ) -> f32 {
     rung_rate(
         patch,
@@ -2324,11 +2371,12 @@ pub fn species_is_legal_here(
     species: &str,
     composition: &[FloraShare],
     flora: &FloraConfig,
-    rung: RungKey,
+    ladder: &LadderConfig,
+    rung: RungId,
 ) -> bool {
-    composition
-        .iter()
-        .any(|entry| entry.species == species && species_climbs(species, entry.share, flora, rung))
+    composition.iter().any(|entry| {
+        entry.species == species && species_climbs(species, entry.share, flora, ladder, rung)
+    })
 }
 
 /// **The share a species must exceed to count as present in a tile's basket.** A zero-share entry is
@@ -2358,11 +2406,12 @@ pub fn species_stands_in(composition: &[FloraShare], species: &str) -> bool {
 pub fn default_species_for_rung(
     composition: &[FloraShare],
     flora: &FloraConfig,
-    rung: RungKey,
+    ladder: &LadderConfig,
+    rung: RungId,
 ) -> Option<String> {
     composition
         .iter()
-        .find(|entry| species_is_legal_here(&entry.species, composition, flora, rung))
+        .find(|entry| species_is_legal_here(&entry.species, composition, flora, ladder, rung))
         .map(|entry| entry.species.clone())
 }
 
@@ -2406,27 +2455,26 @@ pub fn resolve_committed_species(
     selection: Option<&str>,
     composition: &[FloraShare],
     flora: &FloraConfig,
-    rung: RungKey,
+    ladder: &LadderConfig,
+    rung: RungId,
 ) -> Result<String, SpeciesRefusal> {
     match selection {
         Some(species) => {
-            if species_is_legal_here(species, composition, flora, rung) {
+            if species_is_legal_here(species, composition, flora, ladder, rung) {
                 return Ok(species.to_string());
             }
             let Some(def) = flora.species.get(species) else {
                 return Err(SpeciesRefusal::Unknown);
             };
-            let climbs = match rung {
-                RungKey::PlantField => def.cultivation_ceiling.allows_sow(),
-                _ => def.cultivation_ceiling.allows_cultivate(),
-            };
+            let _ = def;
+            let climbs = flora.can_reach(species, ladder, rung);
             Err(if climbs {
                 SpeciesRefusal::NotHere
             } else {
                 SpeciesRefusal::CeilingTooLow
             })
         }
-        None => default_species_for_rung(composition, flora, rung)
+        None => default_species_for_rung(composition, flora, ladder, rung)
             .ok_or(SpeciesRefusal::NothingClimbsHere),
     }
 }
@@ -2502,7 +2550,7 @@ pub fn rung_payoff(
     forage: &ForageLaborConfig,
     flora: &FloraConfig,
     output_multiplier: f32,
-    rung: RungKey,
+    rung: PlantPayoff,
 ) -> f32 {
     // **ONE SHAPE AT EVERY RUNG** — the MSY skim on that rung's own curve, priced through that
     // rung's own basket and conversion. **No rung changes the DRAW**: rung 3 used to branch here into
@@ -2551,7 +2599,12 @@ pub fn rung_payoff(
 /// be written together with a `LadderConfig` in hand, and these quotes are memoized per
 /// `(terrain, resource_terrain)` in `snapshot/flora_quotes.rs` with no config in scope. A fabricated
 /// standing beside a zero position would be exactly the drift the pair exists to forbid.
-fn hypothetical_patch(tile: UVec2, tile_capacity: f32, species: Option<&str>) -> ForagePatch {
+fn hypothetical_patch(
+    tile: UVec2,
+    tile_capacity: f32,
+    species: Option<&str>,
+    ladder: &LadderConfig,
+) -> ForagePatch {
     // **The TILE's own capacity, and the operating point every rung now settles at.** A Field used to
     // be quoted at its FULL standing crop because it was never drawn down; it is drawn down like
     // everything else now, so it settles where a Sustain skim leaves it.
@@ -2559,7 +2612,11 @@ fn hypothetical_patch(tile: UVec2, tile_capacity: f32, species: Option<&str>) ->
     // **The rung's capacity gain is NOT applied here** — [`rung_msy_take`] re-bases onto the
     // asked-about rung, and it must be the only place that does, or a quote taken through this
     // construction would carry the gain twice.
-    let mut patch = ForagePatch::new(tile, tile_capacity);
+    let mut patch = ForagePatch::new(
+        tile,
+        tile_capacity,
+        RungStanding::unstarted_on(ladder, ladder.branch_of_kind(SourceKind::Patch)),
+    );
     patch.biomass = tile_capacity * crate::fauna::MSY_BIOMASS_FRACTION;
     if let Some(key) = species {
         patch.species = Some(key.to_string());
@@ -2603,13 +2660,21 @@ pub fn commit_payoff(
     flora: &FloraConfig,
     forage: &ForageLaborConfig,
     output_multiplier: f32,
-    rung: RungKey,
+    ladder: &LadderConfig,
+    rung: RungId,
 ) -> f32 {
-    if !species_climbs(species, share_of(composition, species), flora, rung) {
+    if !species_climbs(species, share_of(composition, species), flora, ladder, rung) {
         return CANNOT_CLIMB_RATIO;
     }
-    let patch = hypothetical_patch(tile, tile_capacity, Some(species));
-    rung_payoff(&patch, composition, forage, flora, output_multiplier, rung)
+    let patch = hypothetical_patch(tile, tile_capacity, Some(species), ladder);
+    rung_payoff(
+        &patch,
+        composition,
+        forage,
+        flora,
+        output_multiplier,
+        PlantPayoff::of_rung(ladder, rung),
+    )
 }
 
 /// **The FODDER (hay) committing this tile to THIS plant would pay per turn, on `rung`** (Flora Roster
@@ -2631,13 +2696,21 @@ pub fn commit_fodder_payoff(
     flora: &FloraConfig,
     forage: &ForageLaborConfig,
     output_multiplier: f32,
-    rung: RungKey,
+    ladder: &LadderConfig,
+    rung: RungId,
 ) -> f32 {
-    if !species_climbs(species, share_of(composition, species), flora, rung) {
+    if !species_climbs(species, share_of(composition, species), flora, ladder, rung) {
         return 0.0;
     }
-    let patch = hypothetical_patch(tile, tile_capacity, Some(species));
-    rung_fodder_payoff(&patch, composition, forage, flora, output_multiplier, rung)
+    let patch = hypothetical_patch(tile, tile_capacity, Some(species), ladder);
+    rung_fodder_payoff(
+        &patch,
+        composition,
+        forage,
+        flora,
+        output_multiplier,
+        PlantPayoff::of_rung(ladder, rung),
+    )
 }
 
 /// **What a patch pays in FODDER, standing on `rung`** — the fodder arm of [`rung_payoff`],
@@ -2651,7 +2724,7 @@ pub fn rung_fodder_payoff(
     forage: &ForageLaborConfig,
     flora: &FloraConfig,
     output_multiplier: f32,
-    rung: RungKey,
+    rung: PlantPayoff,
 ) -> f32 {
     // The fodder twin of [`rung_payoff`], on the identical shape — one harvest, split by account.
     forage_provisions(
@@ -2694,13 +2767,21 @@ pub fn commit_material_payoff(
     flora: &FloraConfig,
     forage: &ForageLaborConfig,
     output_multiplier: f32,
-    rung: RungKey,
+    ladder: &LadderConfig,
+    rung: RungId,
 ) -> Vec<MaterialPayoff> {
-    if !species_climbs(species, share_of(composition, species), flora, rung) {
+    if !species_climbs(species, share_of(composition, species), flora, ladder, rung) {
         return Vec::new();
     }
-    let patch = hypothetical_patch(tile, tile_capacity, Some(species));
-    rung_material_payoff(&patch, composition, forage, flora, output_multiplier, rung)
+    let patch = hypothetical_patch(tile, tile_capacity, Some(species), ladder);
+    rung_material_payoff(
+        &patch,
+        composition,
+        forage,
+        flora,
+        output_multiplier,
+        PlantPayoff::of_rung(ladder, rung),
+    )
 }
 
 /// **What a patch pays in MATERIALS, standing on `rung`** — the material arm of [`rung_payoff`],
@@ -2714,10 +2795,10 @@ fn rung_material_payoff(
     forage: &ForageLaborConfig,
     flora: &FloraConfig,
     output_multiplier: f32,
-    rung: RungKey,
+    rung: PlantPayoff,
 ) -> Vec<MaterialPayoff> {
-    // Rung 1 pays no *committed* quote — a wild gather's fibre is not a commitment's payoff.
-    if !rung.is_at_or_above(RungKey::PlantTended) {
+    // Rung 1 pays no *committed* quote - a wild gather's fibre is not a commitment's payoff.
+    if rung == PlantPayoff::Wild {
         return Vec::new();
     }
     // **The same take the other three accounts are priced on**, at this rung's own curve.
@@ -2748,29 +2829,29 @@ pub fn wild_payoff(
     flora: &FloraConfig,
     forage: &ForageLaborConfig,
     output_multiplier: f32,
+    ladder: &LadderConfig,
 ) -> f32 {
-    let patch = hypothetical_patch(tile, tile_capacity, None);
+    let patch = hypothetical_patch(tile, tile_capacity, None, ladder);
     rung_payoff(
         &patch,
         composition,
         forage,
         flora,
         output_multiplier,
-        RungKey::PlantWild,
+        PlantPayoff::Wild,
     )
 }
 
 /// Can this plant climb `rung` on a tile where it holds `share` of the basket? The ceiling half of
 /// [`species_is_legal_here`], split out for the quote path, which already has the share in hand.
-fn species_climbs(species: &str, share: f32, flora: &FloraConfig, rung: RungKey) -> bool {
-    let Some(def) = flora.species.get(species) else {
-        return false;
-    };
-    let climbs = match rung {
-        RungKey::PlantField => def.cultivation_ceiling.allows_sow(),
-        _ => def.cultivation_ceiling.allows_cultivate(),
-    };
-    climbs && share > NO_SHARE
+fn species_climbs(
+    species: &str,
+    share: f32,
+    flora: &FloraConfig,
+    ladder: &LadderConfig,
+    rung: RungId,
+) -> bool {
+    flora.can_reach(species, ladder, rung) && share > NO_SHARE
 }
 
 /// **What committing THIS tile to THIS plant is worth, against just gathering it wild** — the single
@@ -2812,18 +2893,22 @@ pub fn spawn_initial_forage(
     mut registry: ResMut<ForageRegistry>,
     labor_config: Res<LaborConfigHandle>,
     tiles: Query<(&Tile, &FoodModuleTag)>,
+    ladder_config: Res<LadderConfigHandle>,
 ) {
     if !registry.patches.is_empty() {
         return;
     }
     let labor = labor_config.get();
     let forage = &labor.forage;
+    // **Every fresh patch starts at the plant ladder's root** - read from the ladder once, here.
+    let ladder = ladder_config.get();
+    let root = RungStanding::unstarted_on(&ladder, ladder.branch_of_kind(SourceKind::Patch));
     for (tile, _module) in tiles.iter() {
         let capacity = tile_forage_capacity(forage, tile);
         if capacity <= NO_FORAGE_CAPACITY {
             continue;
         }
-        let mut patch = ForagePatch::new(tile.position, capacity);
+        let mut patch = ForagePatch::new(tile.position, capacity, root);
         patch.refresh_ecology_phase(&forage.ecology);
         registry.patches.insert(tile.position, patch);
     }
@@ -2965,12 +3050,13 @@ pub fn patch_unwinding_rung<'a>(
 /// It is **one read of the standing**, and the newest-first unwind falls out of it rather than being
 /// a rule: the position eats from the top, so the rung being *raised* is at risk while it has any
 /// credit, and the rung *held* is at risk once the one above it is empty.
-pub fn patch_unwinding_key(patch: &ForagePatch) -> Option<RungKey> {
+pub fn patch_unwinding_key(patch: &ForagePatch) -> Option<RungId> {
     let standing = patch.standing();
     if standing.credit > NO_RUNG_CREDIT {
-        return standing.raising_key();
+        return standing.raising;
     }
-    (standing.held_key() != RungKey::PlantWild).then_some(standing.held_key())
+    (u32::from(standing.held_order) > crate::intensification::FIRST_RUNG_ORDER)
+        .then_some(standing.held)
 }
 
 /// **Turns of SHORTFALL this patch can still absorb before its feral bleed starts** — the wire's
@@ -3033,7 +3119,7 @@ pub fn patch_upkeep_demand(
 ) -> f32 {
     let loads = patch_tender_loads(tile_capacity, forage);
     interpolate(&patch.standing(), |rung| {
-        ladder.rung(rung).upkeep_demand(loads)
+        ladder.rung(rung.id).upkeep_demand(loads)
     })
 }
 
@@ -3095,11 +3181,11 @@ pub fn patch_crew_keeping(
     ladder: &LadderConfig,
     forage: &ForageLaborConfig,
     tile_capacity: Option<f32>,
-    declared: Option<Improvement>,
+    declared: Option<RungId>,
 ) -> Option<crate::fauna::CrewKeeping> {
-    patch_claims_keeping(patch, patch_build_verb(patch, declared)).then(|| {
+    patch_claims_keeping(patch, ladder, patch_build_verb(patch, ladder, declared)).then(|| {
         crate::fauna::CrewKeeping {
-            rung: patch.standing().held_key(),
+            rung: patch.standing().held,
             demand: patch_upkeep_demand(
                 patch,
                 ladder,
@@ -3150,20 +3236,16 @@ pub const ONE_TENDER_LOAD: f32 = 1.0;
 ///
 /// **Exhaustive on the verb, on purpose** — a new plant verb falling through to `false` would leave
 /// its first turn unclaimed, which is precisely that bug.
-pub fn patch_claims_keeping(patch: &ForagePatch, improvement: Option<Improvement>) -> bool {
+pub fn patch_claims_keeping(
+    patch: &ForagePatch,
+    ladder: &LadderConfig,
+    improvement: Option<VerbId>,
+) -> bool {
     let by_position = patch.ladder_position() > RUNG_UNSTARTED;
-    let by_verb = improvement.is_some_and(|verb| match verb {
-        Improvement::Cultivate | Improvement::Sow => true,
-        // A verb another branch owns can never be in flight on a patch. The three deposit verbs
-        // answer `false` here for the same reason `tame` does — this is the *plant* web's claim.
-        Improvement::Tame
-        | Improvement::Corral
-        | Improvement::Grade
-        | Improvement::Pave
-        | Improvement::Fell
-        | Improvement::Coppice
-        | Improvement::Quarry => false,
-    });
+    // A verb another branch owns can never be in flight on a patch: the verb's branch declares the
+    // source kind it applies to.
+    let by_verb =
+        improvement.is_some_and(|verb| ladder.verb_source_kind(verb) == Some(SourceKind::Patch));
     by_position || by_verb
 }
 
@@ -3218,10 +3300,11 @@ pub fn patch_at_risk_cost(patch: &ForagePatch) -> f32 {
 /// owed, so nothing can be short.
 pub fn patch_upkeep_supply(
     patch: &ForagePatch,
-    improvement: Option<Improvement>,
+    ladder: &LadderConfig,
+    improvement: Option<VerbId>,
     keeping_share: f32,
 ) -> f32 {
-    if patch_claims_keeping(patch, improvement) {
+    if patch_claims_keeping(patch, ladder, improvement) {
         keeping_share
     } else {
         NO_UPKEEP_DEMAND
@@ -3263,7 +3346,7 @@ pub fn patch_upkeep_material_demand(
 ) -> f32 {
     let loads = patch_tender_loads(tile_capacity, forage);
     interpolate(&patch.standing(), |rung| {
-        ladder.rung(rung).upkeep_material_demand(material, loads)
+        ladder.rung(rung.id).upkeep_material_demand(material, loads)
     })
 }
 
@@ -3516,12 +3599,14 @@ pub fn advance_cultivation(
                     let owner = patch.owner;
                     patch.decay_ladder(decay, &ladder);
                     let mut edges = crate::intensification::rung_decay_edges(
-                        RungBranch::Plant,
+                        &ladder,
+                        ladder.branch_of_kind(SourceKind::Patch),
                         was,
                         patch.ladder_position(),
-                        |rung| patch_rung_span(&before, rung, &ladder),
+                        |rung| patch_rung_span(&before, rung.rung_id(), &ladder),
                     );
                     crate::intensification::settle_achieved_losses(
+                        &ladder,
                         &mut edges,
                         &mut patch.peak_rung,
                     );
@@ -3551,7 +3636,7 @@ pub fn advance_cultivation(
                             tick.0,
                             owner,
                             crate::intensification::site_band_for(&candidates, owner),
-                            plant_rung_event_kind,
+                            &ladder,
                             patch.tile,
                             patch.ladder_position(),
                             &edges,
@@ -3585,16 +3670,6 @@ pub fn advance_cultivation(
         // band restates it.
         patch.upkeep_materials_demanded.clear();
         patch.upkeep_materials_supplied.clear();
-    }
-}
-
-/// **Which feed channel a plant rung's slip or loss rides** — the verb that builds it
-/// (`cultivate` / `sow`), so a rung's whole life — the command, the completion, the decay — reads on
-/// one channel, exactly as the pen's does.
-fn plant_rung_event_kind(rung: RungKey) -> CommandEventKind {
-    match rung {
-        RungKey::PlantField => CommandEventKind::Sow,
-        _ => CommandEventKind::Cultivate,
     }
 }
 
@@ -3665,14 +3740,14 @@ pub(crate) fn patch_rung<'a>(patch: &ForagePatch, ladder: &'a LadderConfig) -> &
 }
 
 /// **[`patch_rung`] without the ladder** — the same top-down reading, answered as the key rather than
-/// the record, for the callers that want to walk the ladder from it ([`RungKey::above`], and the
-/// `RungKey`-taking seams like [`resolve_committed_species`]) instead of reading a record's dials.
+/// the record, for the callers that want to walk the ladder from it (`LadderConfig::above_id`, and the
+/// `RungId`-taking seams like [`resolve_committed_species`]) instead of reading a record's dials.
 ///
 /// It exists so the "sown → field, cultivated → tended, else wild" test has exactly **one** home: a
 /// projection that re-derived it from `is_cultivated()` at its own call site is the second copy this
 /// seam was created to prevent.
-pub(crate) fn patch_rung_key(patch: &ForagePatch) -> RungKey {
-    patch.standing().held_key()
+pub(crate) fn patch_rung_key(patch: &ForagePatch) -> RungId {
+    patch.standing().held
 }
 
 /// The forage counterpart of `fauna::hunt_take`: resolve the **escapement ceiling**, cap it by the
@@ -3974,12 +4049,12 @@ pub(crate) fn tended_provisions(
     output_multiplier: f32,
 ) -> f32 {
     forage_provisions(
-        rung_msy_take(patch, forage, RungKey::PlantTended),
+        rung_msy_take(patch, forage, PlantPayoff::Tended),
         // The rate this patch converts at **on the TENDED rung** — asked about rung 2 by name, so a
         // patch mid-Cultivate quotes the weeded basket it is planting rather than the one it is
         // still in, and a patch that has already climbed to a Field still answers what rung 2 pays
         // here rather than borrowing rung 3's.
-        rung_provisions_per_biomass(patch, tile_composition, flora, forage, RungKey::PlantTended),
+        rung_provisions_per_biomass(patch, tile_composition, flora, forage, PlantPayoff::Tended),
         output_multiplier,
     )
 }
@@ -3996,7 +4071,7 @@ pub(crate) fn tended_provisions(
 /// `forage_take`'s policy ceiling and worker cap ([`tended_take_fodder`] /
 /// and the material rows [`crate::materials_config::credit_material_yield`] deposits off the same
 /// take), and at the food-peak floor the two coincide.
-fn rung_msy_take(patch: &ForagePatch, forage: &ForageLaborConfig, rung: RungKey) -> f32 {
+fn rung_msy_take(patch: &ForagePatch, forage: &ForageLaborConfig, rung: PlantPayoff) -> f32 {
     // **THE GROUND AS `rung` WOULD HAVE IT** — the patch's own capacity re-based onto the asked-about
     // rung's, and its standing crop with it. `fieldYield` is published for **every** patch including
     // a tended one, so a rung-3 quote taken on the patch's own `K` would quote rung 3's curve over
@@ -4031,8 +4106,8 @@ pub(crate) fn tended_fodder(
     output_multiplier: f32,
 ) -> f32 {
     forage_provisions(
-        rung_msy_take(patch, forage, RungKey::PlantTended),
-        rung_fodder_per_biomass(patch, tile_composition, flora, forage, RungKey::PlantTended),
+        rung_msy_take(patch, forage, PlantPayoff::Tended),
+        rung_fodder_per_biomass(patch, tile_composition, flora, forage, PlantPayoff::Tended),
         output_multiplier,
     )
 }
@@ -4055,11 +4130,11 @@ pub(crate) fn tended_fodder(
 ///
 /// The two gains **multiply** through `r × K / 4`; see
 /// [`crate::labor_config::CultivationConfig::field_regrowth_gain`].
-fn rung_regrowth_gain(rung: RungKey, forage: &ForageLaborConfig) -> f32 {
+fn rung_regrowth_gain(rung: PlantPayoff, forage: &ForageLaborConfig) -> f32 {
     match rung {
-        RungKey::PlantTended => forage.cultivation.tended_regrowth_gain,
-        RungKey::PlantField => forage.cultivation.field_regrowth_gain,
-        _ => NO_GROWTH_GAIN,
+        PlantPayoff::Tended => forage.cultivation.tended_regrowth_gain,
+        PlantPayoff::Field => forage.cultivation.field_regrowth_gain,
+        PlantPayoff::Wild => NO_GROWTH_GAIN,
     }
 }
 
@@ -4069,10 +4144,10 @@ fn rung_regrowth_gain(rung: RungKey, forage: &ForageLaborConfig) -> f32 {
 /// **A rung may RAISE `K` and may never LOWER it** (#433). A retired concentration term shrank
 /// capacity to `share × gain` and threw the remainder away, which made a commitment cost production;
 /// the config bound is `>= 1.0` so that cannot come back by a retune.
-fn rung_capacity_gain(rung: RungKey, forage: &ForageLaborConfig) -> f32 {
+fn rung_capacity_gain(rung: PlantPayoff, forage: &ForageLaborConfig) -> f32 {
     match rung {
-        RungKey::PlantField => forage.cultivation.field_capacity_gain,
-        _ => NO_GROWTH_GAIN,
+        PlantPayoff::Field => forage.cultivation.field_capacity_gain,
+        PlantPayoff::Tended | PlantPayoff::Wild => NO_GROWTH_GAIN,
     }
 }
 
@@ -4102,7 +4177,7 @@ pub fn patch_ecology(patch: &ForagePatch, forage: &ForageLaborConfig) -> Ecology
 
 /// [`patch_ecology`] asked about a rung the patch may not stand on — the forecast's *"what will this
 /// pay once cultivated?"*, and the per-rung quotes'.
-fn rung_ecology(rung: RungKey, forage: &ForageLaborConfig) -> EcologyConfig {
+fn rung_ecology(rung: PlantPayoff, forage: &ForageLaborConfig) -> EcologyConfig {
     scaled_ecology(forage, rung_regrowth_gain(rung, forage))
 }
 
@@ -4145,7 +4220,10 @@ fn patch_capacity_at(
     standing: &RungStanding,
     forage: &ForageLaborConfig,
 ) -> f32 {
-    tile_capacity * interpolate(standing, |rung| rung_capacity_gain(rung, forage))
+    tile_capacity
+        * interpolate(standing, |mark| {
+            rung_capacity_gain(PlantPayoff::of(mark.traits), forage)
+        })
 }
 
 /// **THE CAPACITY THIS PATCH WILL HOLD AT THE RUNG ITS BUILD IS HEADING FOR** — `None` when no band
@@ -4292,7 +4370,7 @@ fn rung_fodder_per_biomass(
     tile_composition: &[FloraShare],
     flora: &FloraConfig,
     forage: &ForageLaborConfig,
-    rung: RungKey,
+    rung: PlantPayoff,
 ) -> f32 {
     rung_rate(
         patch,
@@ -4924,6 +5002,7 @@ mod stance_probe;
 
 #[cfg(test)]
 mod tests {
+    use crate::ladder_ids::shipped;
     /// **The shipped EQUIPPED gather rate** — what a kitted crew carries, off the baskets' own
     /// tier. `labor_config`'s `forage.per_worker_biomass_capacity` is the *bare-handed* baseline
     /// since quality tiers landed, so a fixture that wants "an ordinary band" asks the item table.
@@ -4967,9 +5046,10 @@ mod tests {
         let cap = forage.capacity_for(TEST_BIOME);
         let composition = flora.realized_composition(TEST_BIOME, REF_TILE, REF_SEED);
 
-        let seat_and_take = |rung: RungKey| -> (f32, f32, f32) {
+        let seat_and_take = |rung: RungId| -> (f32, f32, f32) {
             let (base, width) = plant_rung_span(rung, &ladder);
-            let mut patch = ForagePatch::new(REF_TILE, cap);
+            let mut patch =
+                ForagePatch::new(REF_TILE, cap, shipped::root_standing(shipped::plant()));
             patch.set_ladder_position(base + width, &ladder);
             patch.commit_species(REF_CROP);
             patch.carrying_capacity = patch_carrying_capacity(cap, &patch, &forage);
@@ -4996,8 +5076,8 @@ mod tests {
             (food.to_f32(), room, carry)
         };
 
-        let (tended_food, tended_room, carry) = seat_and_take(RungKey::PlantTended);
-        let (field_food, field_room, _) = seat_and_take(RungKey::PlantField);
+        let (tended_food, tended_room, carry) = seat_and_take(shipped::plant_tended());
+        let (field_food, field_room, _) = seat_and_take(shipped::plant_field());
 
         // **THE PRECONDITION** — both crews are bounded by their ARMS, not by the ground. If the
         // floor were binding, the Field's bigger stand would pay for the lost conversion and this
@@ -5031,7 +5111,7 @@ mod tests {
     fn the_conversion_gain_is_flat_across_the_sow() {
         let forage = test_forage_config();
         let ladder = LadderConfig::builtin();
-        let (base, width) = plant_rung_span(RungKey::PlantField, &ladder);
+        let (base, width) = plant_rung_span(shipped::plant_field(), &ladder);
         let tended_gain = forage.cultivation.tended_conversion_gain;
         assert!(
             tended_gain > NO_CONVERSION_GAIN,
@@ -5040,7 +5120,11 @@ mod tests {
 
         for step in 0..=10 {
             let fraction = step as f32 / 10.0;
-            let mut patch = ForagePatch::new(REF_TILE, forage.capacity_for(TEST_BIOME));
+            let mut patch = ForagePatch::new(
+                REF_TILE,
+                forage.capacity_for(TEST_BIOME),
+                shipped::root_standing(shipped::plant()),
+            );
             patch.set_ladder_position(base + width * fraction, &ladder);
             let gain = patch_interpolate(&patch, |rung| favored_conversion_gain(rung, &forage));
             assert!(
@@ -5075,11 +5159,19 @@ mod tests {
         println!("  quote basis (unbounded crew), provisions/turn:");
         println!(
             "    wild   = {:.4}",
-            wild_payoff(REF_TILE, cap, &composition, &flora, &forage, 1.0)
+            wild_payoff(
+                REF_TILE,
+                cap,
+                &composition,
+                &flora,
+                &forage,
+                1.0,
+                shipped::ladder()
+            )
         );
         for (label, rung) in [
-            ("tended", RungKey::PlantTended),
-            ("field ", RungKey::PlantField),
+            ("tended", shipped::plant_tended()),
+            ("field ", shipped::plant_field()),
         ] {
             let paid = commit_payoff(
                 REF_TILE,
@@ -5089,6 +5181,7 @@ mod tests {
                 &flora,
                 &forage,
                 1.0,
+                shipped::ladder(),
                 rung,
             );
             println!("    {label} = {:.4}", paid);
@@ -5101,11 +5194,12 @@ mod tests {
         let carry = TENDERS as f32 * forage.per_worker_biomass_capacity;
         println!("\n  two tenders, carry-capped at {carry} biomass/turn:");
         for (label, rung) in [
-            ("tended", RungKey::PlantTended),
-            ("field ", RungKey::PlantField),
+            ("tended", shipped::plant_tended()),
+            ("field ", shipped::plant_field()),
         ] {
             let (base, width) = plant_rung_span(rung, &ladder);
-            let mut patch = ForagePatch::new(REF_TILE, cap);
+            let mut patch =
+                ForagePatch::new(REF_TILE, cap, shipped::root_standing(shipped::plant()));
             patch.set_ladder_position(base + width, &ladder);
             patch.commit_species(REF_CROP);
             patch.carrying_capacity = patch_carrying_capacity(cap, &patch, &forage);
@@ -5126,7 +5220,10 @@ mod tests {
             println!(
                 "    {label}: K={:8.2}  conversion x{:.2}  food/turn = {:.4}",
                 patch.carrying_capacity,
-                favored_conversion_gain(rung, &forage),
+                favored_conversion_gain(
+                    crate::forage::PlantPayoff::of_rung(shipped::ladder(), rung),
+                    &forage
+                ),
                 paid.to_f32()
             );
         }
@@ -5152,7 +5249,11 @@ mod tests {
     /// caller seats it — the fixture every price assertion below is struck on.
     fn reference_patch(position: f32, ladder: &LadderConfig) -> ForagePatch {
         let forage = test_forage_config();
-        let mut patch = ForagePatch::new(REF_TILE, forage.capacity_for(TEST_BIOME));
+        let mut patch = ForagePatch::new(
+            REF_TILE,
+            forage.capacity_for(TEST_BIOME),
+            shipped::root_standing(shipped::plant()),
+        );
         patch.commit_species(REF_CROP);
         patch.set_ladder_position(position, ladder);
         patch
@@ -5188,8 +5289,8 @@ mod tests {
             (multiplier - RUNG_COST_UNSCALED).abs() < SAME_JOB,
             "the reference basket must price a Sow at the ladder's own figure, got {multiplier}"
         );
-        let declared = plant_rung_span(RungKey::PlantField, &ladder).1;
-        let here = plant_rung_span_at(RungKey::PlantField, &ladder, multiplier).1;
+        let declared = plant_rung_span(shipped::plant_field(), &ladder).1;
+        let here = plant_rung_span_at(shipped::plant_field(), &ladder, multiplier).1;
         assert!(
             (here - declared).abs() < SAME_JOB,
             "and therefore the same span in work units: {here} against {declared}"
@@ -5252,14 +5353,14 @@ mod tests {
 
             let mut patch = reference_patch(RUNG_UNSTARTED, &ladder);
             patch.price_field_rung(multiplier, &ladder);
-            let (base, width) = patch_rung_span(&patch, RungKey::PlantField, &ladder);
+            let (base, width) = patch_rung_span(&patch, shipped::plant_field(), &ladder);
             if base + width - base != width {
                 prices_that_round += 1;
             }
             patch.accrue_to(
                 faction,
                 WORK_ENOUGH_FOR_ANY_FIELD,
-                RungKey::PlantField,
+                shipped::plant_field(),
                 &ladder,
             );
 
@@ -5268,7 +5369,7 @@ mod tests {
                 "PRECONDITION at share {share}: a crew with {WORK_ENOUGH_FOR_ANY_FIELD} work \
                  must finish a Field costing {width}"
             );
-            let done = patch_rung_work_done(&patch, RungKey::PlantField, &ladder);
+            let done = patch_rung_work_done(&patch, shipped::plant_field(), &ladder);
             let fraction = intensification::build_fraction(done, width);
             assert_eq!(
                 fraction,
@@ -5354,7 +5455,7 @@ mod tests {
         let flora = crate::flora_config::FloraConfig::builtin();
         let ladder = LadderConfig::builtin();
         let composition = reference_basket();
-        let field_base = plant_rung_span(RungKey::PlantField, &ladder).0;
+        let field_base = plant_rung_span(shipped::plant_field(), &ladder).0;
 
         // A Sow that began on ground the crop barely holds — priced dear, and stamped.
         const A_DEAR_SOW: f32 = 1.8;
@@ -5363,7 +5464,7 @@ mod tests {
             patch.price_field_rung(A_DEAR_SOW, &ladder),
             "the first quote is the quote"
         );
-        let quoted_span = patch_rung_span(&patch, RungKey::PlantField, &ladder).1;
+        let quoted_span = patch_rung_span(&patch, shipped::plant_field(), &ladder).1;
 
         let mut shares = Vec::new();
         let mut prices = Vec::new();
@@ -5408,7 +5509,7 @@ mod tests {
     #[test]
     fn a_field_bled_back_to_its_base_is_re_quoted() {
         let ladder = LadderConfig::builtin();
-        let field_base = plant_rung_span(RungKey::PlantField, &ladder).0;
+        let field_base = plant_rung_span(shipped::plant_field(), &ladder).0;
         const A_DEAR_SOW: f32 = 1.8;
         let mut patch = reference_patch(field_base, &ladder);
         patch.price_field_rung(A_DEAR_SOW, &ladder);
@@ -5437,7 +5538,7 @@ mod tests {
         let forage = test_forage_config();
         let ladder = LadderConfig::builtin();
         let tile_capacity = test_tile_capacity();
-        let field_base = plant_rung_span(RungKey::PlantField, &ladder).0;
+        let field_base = plant_rung_span(shipped::plant_field(), &ladder).0;
 
         let demands: Vec<f32> = [
             forage.cultivation.field_share_cost_floor,
@@ -5449,7 +5550,7 @@ mod tests {
             let mut patch = reference_patch(field_base, &ladder);
             patch.price_field_rung(multiplier, &ladder);
             // Each one a FINISHED Field — its own top, at its own price.
-            let (base, width) = patch_rung_span(&patch, RungKey::PlantField, &ladder);
+            let (base, width) = patch_rung_span(&patch, shipped::plant_field(), &ladder);
             patch.set_ladder_position(base + width, &ladder);
             assert!(
                 patch.is_field(),
@@ -5561,7 +5662,11 @@ mod tests {
         );
 
         // Seed FULL, exactly as real forage patches spawn.
-        let mut patch = ForagePatch::new(UVec2::new(1, 1), cap);
+        let mut patch = ForagePatch::new(
+            UVec2::new(1, 1),
+            cap,
+            shipped::root_standing(shipped::plant()),
+        );
         patch.biomass = cap;
         patch.refresh_ecology_phase(&forage.ecology);
         assert_eq!(patch.ecology_phase, EcologyPhase::Thriving);
@@ -5657,7 +5762,11 @@ mod tests {
     fn heavy_take_depletes_patch_and_drops_phase() {
         let forage = test_forage_config();
         let cap = forage.capacity_for(TEST_BIOME);
-        let mut patch = ForagePatch::new(UVec2::new(2, 3), cap);
+        let mut patch = ForagePatch::new(
+            UVec2::new(2, 3),
+            cap,
+            shipped::root_standing(shipped::plant()),
+        );
         patch.refresh_ecology_phase(&forage.ecology);
         assert_eq!(patch.ecology_phase, EcologyPhase::Thriving);
 
@@ -5706,7 +5815,11 @@ mod tests {
 
         // One-turn take under each policy from the same starting biomass.
         let take_under = |policy: f32| -> (f32, f32) {
-            let mut patch = ForagePatch::new(UVec2::new(1, 1), cap);
+            let mut patch = ForagePatch::new(
+                UVec2::new(1, 1),
+                cap,
+                shipped::root_standing(shipped::plant()),
+            );
             patch.biomass = start;
             let provisions = forage_take(
                 &mut patch,
@@ -5755,7 +5868,11 @@ mod tests {
     fn below_cap_patch_regrows_toward_cap() {
         let forage = test_forage_config();
         let cap = forage.capacity_for(TEST_BIOME);
-        let mut patch = ForagePatch::new(UVec2::new(0, 0), cap);
+        let mut patch = ForagePatch::new(
+            UVec2::new(0, 0),
+            cap,
+            shipped::root_standing(shipped::plant()),
+        );
         patch.biomass = 0.25 * cap;
         patch.refresh_ecology_phase(&forage.ecology);
 
@@ -5777,7 +5894,11 @@ mod tests {
         // (plants have no critical-depensation crash / extinction floor).
         let forage = test_forage_config();
         let cap = forage.capacity_for(TEST_BIOME);
-        let mut patch = ForagePatch::new(UVec2::new(4, 4), cap);
+        let mut patch = ForagePatch::new(
+            UVec2::new(4, 4),
+            cap,
+            shipped::root_standing(shipped::plant()),
+        );
         patch.biomass = 0.02 * cap;
         patch.refresh_ecology_phase(&forage.ecology);
         assert_eq!(patch.ecology_phase, EcologyPhase::Collapsing);
@@ -5801,7 +5922,11 @@ mod tests {
         let floor = forage.reseed_floor_fraction * cap;
         assert!(floor > 0.0, "reseed floor must be a positive standing crop");
 
-        let mut patch = ForagePatch::new(UVec2::new(5, 5), cap);
+        let mut patch = ForagePatch::new(
+            UVec2::new(5, 5),
+            cap,
+            shipped::root_standing(shipped::plant()),
+        );
         patch.biomass = 0.0;
         patch.refresh_ecology_phase(&forage.ecology);
 
@@ -5831,7 +5956,11 @@ mod tests {
         let forage = test_forage_config();
         let cap = forage.capacity_for(TEST_BIOME);
         let floor = forage.reseed_floor_fraction * cap;
-        let mut patch = ForagePatch::new(UVec2::new(6, 6), cap);
+        let mut patch = ForagePatch::new(
+            UVec2::new(6, 6),
+            cap,
+            shipped::root_standing(shipped::plant()),
+        );
         patch.refresh_ecology_phase(&forage.ecology);
 
         // Hammer with Eradicate + regrowth: biomass crashes but never sits at 0 — it floats at/above
@@ -5884,9 +6013,17 @@ mod tests {
         let cap = forage.capacity_for(TEST_BIOME);
         let start = 0.5 * cap; // comfortably above reseed_floor_fraction × cap.
 
-        let mut with_floor = ForagePatch::new(UVec2::new(7, 7), cap);
+        let mut with_floor = ForagePatch::new(
+            UVec2::new(7, 7),
+            cap,
+            shipped::root_standing(shipped::plant()),
+        );
         with_floor.biomass = start;
-        let mut without_floor = ForagePatch::new(UVec2::new(8, 8), cap);
+        let mut without_floor = ForagePatch::new(
+            UVec2::new(8, 8),
+            cap,
+            shipped::root_standing(shipped::plant()),
+        );
         without_floor.biomass = start;
 
         for _ in 0..30 {
@@ -5934,36 +6071,40 @@ mod tests {
     /// cost, so the arithmetic reads in the units the config states. Read off the ladder rather than
     /// transcribed: a retune must move these fixtures with it, not silently invalidate them.
     fn cultivate_cost(ladder: &LadderConfig) -> f32 {
-        plant_rung_span(RungKey::PlantTended, ladder).1
+        plant_rung_span(shipped::plant_tended(), ladder).1
     }
 
     /// The Sow job's own span, one rung up.
     fn field_cost(ladder: &LadderConfig) -> f32 {
-        plant_rung_span(RungKey::PlantField, ladder).1
+        plant_rung_span(shipped::plant_field(), ladder).1
     }
 
     #[test]
     fn cultivation_accrual_is_owner_locked_and_clamped() {
         let ladder = LadderConfig::builtin();
         let cost = cultivate_cost(&ladder);
-        let mut patch = ForagePatch::new(UVec2::new(1, 1), 120.0);
+        let mut patch = ForagePatch::new(
+            UVec2::new(1, 1),
+            120.0,
+            shipped::root_standing(shipped::plant()),
+        );
         // First accrual claims ownership for the acting faction.
-        patch.accrue_cultivation(FactionId(0), 15.0, &ladder);
+        patch.accrue_to(FactionId(0), 15.0, shipped::plant_tended(), &ladder);
         assert_eq!(patch.owner, Some(FactionId(0)));
         assert!((patch.ladder_position() - 15.0).abs() < 1e-6);
         // A different faction cannot accrue on an already-owned patch.
-        patch.accrue_cultivation(FactionId(1), 25.0, &ladder);
+        patch.accrue_to(FactionId(1), 25.0, shipped::plant_tended(), &ladder);
         assert_eq!(patch.owner, Some(FactionId(0)));
         assert!((patch.ladder_position() - 15.0).abs() < 1e-6);
         // Owner accrues; the position clamps at the RUNG'S OWN TOP and latches cultivated.
-        patch.accrue_cultivation(FactionId(0), 45.0, &ladder);
+        patch.accrue_to(FactionId(0), 45.0, shipped::plant_tended(), &ladder);
         assert!(patch.is_cultivated());
         assert_eq!(patch.ladder_position(), cost);
         // **THE CAP IS THE RUNG, NOT THE PATCH.** A crew that out-produces what is left of the
         // tended rung banks nothing past it — a Cultivate's work may never implicitly finish the
         // Field above it, or the player would be doing Sow's work with Cultivate's tool
         // (`docs/plan_standing_upkeep.md` §2.8, rule 1).
-        patch.accrue_cultivation(FactionId(0), cost, &ladder);
+        patch.accrue_to(FactionId(0), cost, shipped::plant_tended(), &ladder);
         assert_eq!(patch.ladder_position(), cost);
         assert!(patch.is_cultivated());
         assert!(!patch.is_field());
@@ -5973,10 +6114,14 @@ mod tests {
     /// branch's wild rung and raising the tended one at no credit.
     #[test]
     fn a_wild_patch_is_not_cultivated_even_though_its_position_reads_zero() {
-        let patch = ForagePatch::new(UVec2::new(7, 7), 120.0);
+        let patch = ForagePatch::new(
+            UVec2::new(7, 7),
+            120.0,
+            shipped::root_standing(shipped::plant()),
+        );
         assert_eq!(patch.ladder_position(), RUNG_UNSTARTED);
-        assert_eq!(patch.standing().held_key(), RungKey::PlantWild);
-        assert_eq!(patch.standing().raising_key(), Some(RungKey::PlantTended));
+        assert_eq!(patch.standing().held, shipped::plant_wild());
+        assert_eq!(patch.standing().raising, Some(shipped::plant_tended()));
         assert!(!patch.is_cultivated());
         assert!(!patch.is_field());
         assert!(!patch.is_managed());
@@ -6008,14 +6153,18 @@ mod tests {
             patch_provisions_per_biomass(patch, &composition, &flora, &forage)
         };
         let committed = |position: f32| -> ForagePatch {
-            let mut patch = ForagePatch::new(UVec2::new(0, 0), cap);
+            let mut patch = ForagePatch::new(
+                UVec2::new(0, 0),
+                cap,
+                shipped::root_standing(shipped::plant()),
+            );
             patch.species = Some(CROP.to_string());
             patch.set_ladder_position(position, &ladder);
             patch
         };
 
-        let (tended_base, tended_width) = plant_rung_span(RungKey::PlantTended, &ladder);
-        let (field_base, field_width) = plant_rung_span(RungKey::PlantField, &ladder);
+        let (tended_base, tended_width) = plant_rung_span(shipped::plant_tended(), &ladder);
+        let (field_base, field_width) = plant_rung_span(shipped::plant_field(), &ladder);
         let tended = rate_of(&committed(tended_base + tended_width));
         let field = rate_of(&committed(field_base + field_width));
         assert!(
@@ -6060,7 +6209,11 @@ mod tests {
             patch_provisions_per_biomass(patch, &composition, &flora, &forage)
         };
         let committed = |position: f32| -> ForagePatch {
-            let mut patch = ForagePatch::new(UVec2::new(2, 2), cap);
+            let mut patch = ForagePatch::new(
+                UVec2::new(2, 2),
+                cap,
+                shipped::root_standing(shipped::plant()),
+            );
             patch.species = Some(CROP.to_string());
             patch.set_ladder_position(position, &ladder);
             patch
@@ -6068,8 +6221,12 @@ mod tests {
 
         // **The wild reference is an UNCOMMITTED patch** — a wild stand is the whole mixed basket,
         // and committing is what the rung buys.
-        let wild = rate_of(&ForagePatch::new(UVec2::new(2, 2), cap));
-        let (_, tended_width) = plant_rung_span(RungKey::PlantTended, &ladder);
+        let wild = rate_of(&ForagePatch::new(
+            UVec2::new(2, 2),
+            cap,
+            shipped::root_standing(shipped::plant()),
+        ));
+        let (_, tended_width) = plant_rung_span(shipped::plant_tended(), &ladder);
         let tended = rate_of(&committed(tended_width));
         assert!(
             tended > wild,
@@ -6110,12 +6267,12 @@ mod tests {
         const HALF_WAY_UP: f32 = 0.5;
         let forage = test_forage_config();
         let ladder = LadderConfig::builtin();
-        let (field_base, field_width) = plant_rung_span(RungKey::PlantField, &ladder);
+        let (field_base, field_width) = plant_rung_span(shipped::plant_field(), &ladder);
         let tended = ladder
-            .rung(RungKey::PlantTended)
+            .rung(shipped::plant_tended())
             .upkeep_demand(ONE_TENDER_LOAD);
         let field = ladder
-            .rung(RungKey::PlantField)
+            .rung(shipped::plant_field())
             .upkeep_demand(ONE_TENDER_LOAD);
         assert!(
             field > tended,
@@ -6131,7 +6288,11 @@ mod tests {
              invisible ({loads})"
         );
 
-        let mut patch = ForagePatch::new(UVec2::new(4, 4), tile_capacity);
+        let mut patch = ForagePatch::new(
+            UVec2::new(4, 4),
+            tile_capacity,
+            shipped::root_standing(shipped::plant()),
+        );
         patch.set_ladder_position(field_base + field_width * HALF_WAY_UP, &ladder);
         let owed = patch_upkeep_demand(&patch, &ladder, tile_capacity, &forage);
         let expected = loads * (tended + HALF_WAY_UP * (field - tended));
@@ -6172,7 +6333,11 @@ mod tests {
         const WELL_BELOW_CAPACITY: f32 = 0.4;
         let forage = test_forage_config();
         let cap = forage.capacity_for(TEST_BIOME);
-        let mut patch = ForagePatch::new(UVec2::new(1, 1), cap);
+        let mut patch = ForagePatch::new(
+            UVec2::new(1, 1),
+            cap,
+            shipped::root_standing(shipped::plant()),
+        );
         patch.biomass = cap * WELL_BELOW_CAPACITY;
         regrow_patch(&mut patch, &forage);
         (patch, forage)
@@ -6287,7 +6452,7 @@ mod tests {
 
         let forage = test_forage_config();
         let cap = forage.capacity_for(TEST_BIOME);
-        let mut patch = ForagePatch::new(REF_TILE, cap);
+        let mut patch = ForagePatch::new(REF_TILE, cap, shipped::root_standing(shipped::plant()));
         patch.biomass = cap * WELL_UNDER_THE_FLOOR;
         patch.biomass_before_regrowth = patch.biomass;
         let patch = patch;
@@ -6376,7 +6541,11 @@ mod tests {
 
         let forage = test_forage_config();
         let flora = crate::flora_config::FloraConfig::builtin();
-        let mut patch = ForagePatch::new(REF_TILE, forage.capacity_for(TEST_BIOME));
+        let mut patch = ForagePatch::new(
+            REF_TILE,
+            forage.capacity_for(TEST_BIOME),
+            shipped::root_standing(shipped::plant()),
+        );
         let composition = flora.realized_composition(TEST_BIOME, patch.tile, REF_SEED);
         let gather = |patch: &mut ForagePatch| {
             forage_take(
@@ -6458,13 +6627,21 @@ mod tests {
     fn a_rich_patch_costs_more_to_hold_than_a_thin_one() {
         let forage = test_forage_config();
         let ladder = LadderConfig::builtin();
-        let (base, width) = plant_rung_span(RungKey::PlantTended, &ladder);
+        let (base, width) = plant_rung_span(shipped::plant_tended(), &ladder);
         let held = base + width;
 
         let rich_capacity = forage.capacity_for(SCALED_TILE_BIOME);
         let thin_capacity = forage.capacity_for(THIN_TILE_BIOME);
-        let mut rich = ForagePatch::new(UVec2::new(1, 1), rich_capacity);
-        let mut thin = ForagePatch::new(UVec2::new(2, 2), thin_capacity);
+        let mut rich = ForagePatch::new(
+            UVec2::new(1, 1),
+            rich_capacity,
+            shipped::root_standing(shipped::plant()),
+        );
+        let mut thin = ForagePatch::new(
+            UVec2::new(2, 2),
+            thin_capacity,
+            shipped::root_standing(shipped::plant()),
+        );
         rich.set_ladder_position(held, &ladder);
         thin.set_ladder_position(held, &ladder);
 
@@ -6508,12 +6685,16 @@ mod tests {
     fn climbing_to_field_does_not_compound_the_capacity_gain() {
         let forage = test_forage_config();
         let ladder = LadderConfig::builtin();
-        let (field_base, field_width) = plant_rung_span(RungKey::PlantField, &ladder);
+        let (field_base, field_width) = plant_rung_span(shipped::plant_field(), &ladder);
 
         // Deliberately NOT the reference tile, so `tile_K / capacity_per_tender ≠ 1` and the two
         // readings below are different numbers.
         let tile_capacity = forage.capacity_for(SCALED_TILE_BIOME);
-        let mut patch = ForagePatch::new(UVec2::new(5, 5), tile_capacity);
+        let mut patch = ForagePatch::new(
+            UVec2::new(5, 5),
+            tile_capacity,
+            shipped::root_standing(shipped::plant()),
+        );
         patch.set_ladder_position(field_base + field_width, &ladder);
         // The one write that sets a patch's capacity (`advance_forage_regrowth`), replayed here.
         patch.carrying_capacity = patch_carrying_capacity(tile_capacity, &patch, &forage);
@@ -6535,7 +6716,7 @@ mod tests {
         );
 
         let field_rate = ladder
-            .rung(RungKey::PlantField)
+            .rung(shipped::plant_field())
             .upkeep_demand(ONE_TENDER_LOAD);
         let expected = field_rate * tile_capacity / forage.cultivation.capacity_per_tender;
         let owed = patch_upkeep_demand(&patch, &ladder, tile_capacity, &forage);
@@ -6567,11 +6748,15 @@ mod tests {
         );
 
         for (key, expected) in [
-            (RungKey::PlantTended, TENDED_RATE_BEFORE_THE_MEASURE),
-            (RungKey::PlantField, FIELD_RATE_BEFORE_THE_MEASURE),
+            (shipped::plant_tended(), TENDED_RATE_BEFORE_THE_MEASURE),
+            (shipped::plant_field(), FIELD_RATE_BEFORE_THE_MEASURE),
         ] {
             let (base, width) = plant_rung_span(key, &ladder);
-            let mut patch = ForagePatch::new(UVec2::new(0, 0), reference);
+            let mut patch = ForagePatch::new(
+                UVec2::new(0, 0),
+                reference,
+                shipped::root_standing(shipped::plant()),
+            );
             patch.set_ladder_position(base + width, &ladder);
             let owed = patch_upkeep_demand(&patch, &ladder, reference, &forage);
             assert!(
@@ -6607,7 +6792,11 @@ mod tests {
         let mut saw_bare = false;
         for step in 0..=SWEEP_STEPS {
             let position = top * PAST_THE_TOP * (step as f32 / SWEEP_STEPS as f32);
-            let mut patch = ForagePatch::new(UVec2::new(0, 0), 120.0);
+            let mut patch = ForagePatch::new(
+                UVec2::new(0, 0),
+                120.0,
+                shipped::root_standing(shipped::plant()),
+            );
             patch.set_ladder_position(position, &ladder);
             assert!(
                 !patch.is_field() || patch.is_cultivated(),
@@ -6632,7 +6821,11 @@ mod tests {
         let field = field_cost(&ladder);
         const HALF_A_FIELD: f32 = 0.5;
         const BLEED_STEPS: u32 = 40;
-        let mut patch = ForagePatch::new(UVec2::new(5, 5), 120.0);
+        let mut patch = ForagePatch::new(
+            UVec2::new(5, 5),
+            120.0,
+            shipped::root_standing(shipped::plant()),
+        );
         patch.set_ladder_position(tended + field * HALF_A_FIELD, &ladder);
         assert!(patch.is_cultivated() && !patch.is_field());
 
@@ -6640,7 +6833,7 @@ mod tests {
         for step in 1..=BLEED_STEPS {
             patch.decay_ladder(bleed, &ladder);
             assert!(
-                crate::forage::patch_rung_work_done(&patch, RungKey::PlantTended, &ladder)
+                crate::forage::patch_rung_work_done(&patch, shipped::plant_tended(), &ladder)
                     >= tended
                     || patch.ladder_position() < tended,
                 "the tended meter moved at step {step} while Field progress remained"
@@ -6663,8 +6856,12 @@ mod tests {
     fn cultivation_decay_clears_owner_at_zero_and_takes_cultivated_feral() {
         let ladder = LadderConfig::builtin();
         let cost = cultivate_cost(&ladder);
-        let mut patch = ForagePatch::new(UVec2::new(2, 2), 120.0);
-        patch.accrue_cultivation(FactionId(0), 2.5, &ladder);
+        let mut patch = ForagePatch::new(
+            UVec2::new(2, 2),
+            120.0,
+            shipped::root_standing(shipped::plant()),
+        );
+        patch.accrue_to(FactionId(0), 2.5, shipped::plant_tended(), &ladder);
         patch.decay_ladder(1.0, &ladder);
         assert!((patch.ladder_position() - 1.5).abs() < 1e-6);
         assert_eq!(patch.owner, Some(FactionId(0)), "owner held above zero");
@@ -6675,7 +6872,7 @@ mod tests {
         // A completed rung is lost the moment the position drops below its top — there is no
         // retention bar left, which is safe because the payout fades continuously rather than
         // cliffing (see `RungMeterDecay`'s gravestone).
-        patch.accrue_cultivation(FactionId(1), cost, &ladder);
+        patch.accrue_to(FactionId(1), cost, shipped::plant_tended(), &ladder);
         assert!(patch.is_cultivated());
         patch.decay_ladder(cost * 0.5, &ladder);
         assert!(
@@ -6691,7 +6888,11 @@ mod tests {
     #[test]
     fn a_species_commitment_is_one_way_and_lapses_only_when_the_patch_goes_fully_feral() {
         let ladder = LadderConfig::builtin();
-        let mut patch = ForagePatch::new(UVec2::new(3, 4), 120.0);
+        let mut patch = ForagePatch::new(
+            UVec2::new(3, 4),
+            120.0,
+            shipped::root_standing(shipped::plant()),
+        );
         patch.commit_species("wild_emmer");
         assert_eq!(patch.species.as_deref(), Some("wild_emmer"));
         // One-way while the ground is committed: a later assignment cannot re-crop it for free.
@@ -6741,7 +6942,7 @@ mod tests {
         /// larger than any shipped `grace_turns`, so the decay is certainly biting.
         const WELL_PAST_ANY_GRACE: u16 = 32;
         let ladder = LadderConfig::builtin();
-        for key in [RungKey::PlantTended, RungKey::PlantField] {
+        for key in [shipped::plant_tended(), shipped::plant_field()] {
             let rung = ladder.rung(key);
             let cost = rung
                 .build_cost(RUNG_COST_UNSCALED)
@@ -6790,15 +6991,19 @@ mod tests {
         let forage = test_forage_config();
         let ladder = LadderConfig::builtin();
         let cost = ladder
-            .rung(RungKey::PlantTended)
+            .rung(shipped::plant_tended())
             .build_cost(RUNG_COST_UNSCALED)
             .expect("the tended rung builds");
         let demand = ladder
-            .rung(RungKey::PlantTended)
+            .rung(shipped::plant_tended())
             .upkeep_demand(ONE_TENDER_LOAD);
 
         const HALF_WAY_UP: f32 = 0.5;
-        let mut patch = ForagePatch::new(UVec2::new(1, 1), forage.capacity_for(TEST_BIOME));
+        let mut patch = ForagePatch::new(
+            UVec2::new(1, 1),
+            forage.capacity_for(TEST_BIOME),
+            shipped::root_standing(shipped::plant()),
+        );
 
         // --- Half-built: billed to the pool, at the INTERPOLATED rate. -------------------------
         patch.set_ladder_position(cost * HALF_WAY_UP, &ladder);
@@ -6808,12 +7013,17 @@ mod tests {
             "hands to meet the rate the position actually owes"
         );
         assert_eq!(
-            patch_upkeep_supply(&patch, Some(Improvement::Cultivate), A_KEEPERS_TURN),
+            patch_upkeep_supply(
+                &patch,
+                shipped::ladder(),
+                Some(shipped::cultivate()),
+                A_KEEPERS_TURN
+            ),
             A_KEEPERS_TURN,
             "a meter being raised is held by the pool like any other"
         );
         assert_eq!(
-            patch_upkeep_supply(&patch, None, A_KEEPERS_TURN),
+            patch_upkeep_supply(&patch, shipped::ladder(), None, A_KEEPERS_TURN),
             A_KEEPERS_TURN,
             "AND A HALF-BUILT METER NOBODY IS BUILDING CAN BE HELD — the defect the fullness test \
              made unreachable: the builders leave, the keepers stay, the ground holds"
@@ -6823,7 +7033,12 @@ mod tests {
         // only the progress would credit the keeping to the rung underneath and then let the next
         // turn's pass bleed the Field they had just started.
         assert_eq!(
-            patch_upkeep_supply(&patch, Some(Improvement::Sow), A_KEEPERS_TURN),
+            patch_upkeep_supply(
+                &patch,
+                shipped::ladder(),
+                Some(shipped::sow()),
+                A_KEEPERS_TURN
+            ),
             A_KEEPERS_TURN,
             "a verb in flight claims, so a Sow's first turn is not billed against a share of zero"
         );
@@ -6835,12 +7050,12 @@ mod tests {
         assert_eq!(
             patch_upkeep_workers_needed(&patch, &ladder, test_tile_capacity(), &forage),
             ladder
-                .rung(RungKey::PlantTended)
+                .rung(shipped::plant_tended())
                 .upkeep_crew_needed(ONE_TENDER_LOAD),
             "a held rung asks for the hands that hold it"
         );
         assert_eq!(
-            patch_upkeep_supply(&patch, Some(Improvement::Cultivate), A_KEEPERS_TURN),
+            patch_upkeep_supply(&patch, shipped::ladder(), Some(shipped::cultivate()), A_KEEPERS_TURN),
             A_KEEPERS_TURN,
             "a finished rung is held by the pool, whatever verb is still hanging off the assignment"
         );
@@ -6851,7 +7066,7 @@ mod tests {
         const ALL_BUT_FINISHED: f32 = 0.99;
         patch.set_ladder_position(cost * ALL_BUT_FINISHED, &ladder);
         assert_eq!(
-            patch_upkeep_supply(&patch, None, A_KEEPERS_TURN),
+            patch_upkeep_supply(&patch, shipped::ladder(), None, A_KEEPERS_TURN),
             A_KEEPERS_TURN,
             "a dipped rung does not stop being the keeping pool's when it starts needing it"
         );
@@ -6871,26 +7086,39 @@ mod tests {
         // --- A crew doing something else no longer withholds the keeping. -----------------------
         // The meter answered for is the newest (the half-sown Field); the pool holds it whether or
         // not the hands on the row are the ones filling it.
-        let mut half_sown = ForagePatch::new(UVec2::new(3, 3), forage.capacity_for(TEST_BIOME));
+        let mut half_sown = ForagePatch::new(
+            UVec2::new(3, 3),
+            forage.capacity_for(TEST_BIOME),
+            shipped::root_standing(shipped::plant()),
+        );
         let field_cost = ladder
-            .rung(RungKey::PlantField)
+            .rung(shipped::plant_field())
             .build_cost(RUNG_COST_UNSCALED)
             .expect("the field rung builds");
         half_sown.set_ladder_position(cost + field_cost * HALF_WAY_UP, &ladder);
         assert_eq!(
-            patch_upkeep_supply(&half_sown, Some(Improvement::Cultivate), A_KEEPERS_TURN),
+            patch_upkeep_supply(
+                &half_sown,
+                shipped::ladder(),
+                Some(shipped::cultivate()),
+                A_KEEPERS_TURN
+            ),
             A_KEEPERS_TURN,
             "the pool holds the Field, whatever the crew standing on the tile is doing"
         );
 
         // --- A wild patch: nothing built, nothing owed, nobody wanted. -------------------------
-        let wild = ForagePatch::new(UVec2::new(2, 2), forage.capacity_for(TEST_BIOME));
+        let wild = ForagePatch::new(
+            UVec2::new(2, 2),
+            forage.capacity_for(TEST_BIOME),
+            shipped::root_standing(shipped::plant()),
+        );
         assert_eq!(
             patch_upkeep_demand(&wild, &ladder, test_tile_capacity(), &forage),
             NO_UPKEEP_DEMAND
         );
         assert_eq!(
-            patch_upkeep_supply(&wild, None, A_KEEPERS_TURN),
+            patch_upkeep_supply(&wild, shipped::ladder(), None, A_KEEPERS_TURN),
             NO_UPKEEP_DEMAND,
             "ground with nothing on it cannot be billed, so nothing can be short"
         );
@@ -6914,7 +7142,7 @@ mod tests {
     fn a_half_staffed_keeping_is_half_short_on_the_meter_it_is_raising() {
         let forage = test_forage_config();
         let ladder = LadderConfig::builtin();
-        let rung = ladder.rung(RungKey::PlantTended);
+        let rung = ladder.rung(shipped::plant_tended());
         let cost = rung
             .build_cost(RUNG_COST_UNSCALED)
             .expect("the tended rung builds");
@@ -6923,7 +7151,11 @@ mod tests {
         // whole of it. The pool that pays it is unchanged (§4.6a); what moved is the amount, and it
         // moved to match the payout, which interpolates on the same standing.
         const HALF_WAY_UP: f32 = 0.5;
-        let mut patch = ForagePatch::new(UVec2::new(1, 1), forage.capacity_for(TEST_BIOME));
+        let mut patch = ForagePatch::new(
+            UVec2::new(1, 1),
+            forage.capacity_for(TEST_BIOME),
+            shipped::root_standing(shipped::plant()),
+        );
         patch.set_ladder_position(cost * HALF_WAY_UP, &ladder);
         let demand = patch_upkeep_demand(&patch, &ladder, test_tile_capacity(), &forage);
         assert!(
@@ -6932,7 +7164,12 @@ mod tests {
         );
 
         let short_at = |keeping_share: f32| -> f32 {
-            let supplied = patch_upkeep_supply(&patch, Some(Improvement::Cultivate), keeping_share);
+            let supplied = patch_upkeep_supply(
+                &patch,
+                shipped::ladder(),
+                Some(shipped::cultivate()),
+                keeping_share,
+            );
             crate::intensification::upkeep_shortfall(
                 patch_upkeep_demand(&patch, &ladder, test_tile_capacity(), &forage),
                 supplied,
@@ -6963,7 +7200,7 @@ mod tests {
     fn a_kept_patch_is_spared_and_an_unkept_one_goes_feral() {
         let forage = test_forage_config();
         let ladder = LadderConfig::builtin();
-        let tended_rung = ladder.rung(RungKey::PlantTended);
+        let tended_rung = ladder.rung(shipped::plant_tended());
         let demand = tended_rung.upkeep_demand(ONE_TENDER_LOAD);
         let cost = tended_rung
             .build_cost(RUNG_COST_UNSCALED)
@@ -6971,8 +7208,12 @@ mod tests {
         assert!(demand > 0.0, "the tended rung costs something to hold");
 
         // Kept every turn → the shortfall is zero, so nothing bleeds however long you wait.
-        let mut kept = ForagePatch::new(UVec2::new(1, 1), forage.capacity_for(TEST_BIOME));
-        kept.accrue_cultivation(FactionId(0), cost, &ladder);
+        let mut kept = ForagePatch::new(
+            UVec2::new(1, 1),
+            forage.capacity_for(TEST_BIOME),
+            shipped::root_standing(shipped::plant()),
+        );
+        kept.accrue_to(FactionId(0), cost, shipped::plant_tended(), &ladder);
         for _ in 0..200 {
             kept.decay_ladder(
                 crate::intensification::upkeep_shortfall(demand, demand),
@@ -6984,8 +7225,12 @@ mod tests {
 
         // Nobody keeping it → the whole demand is unmet, and that is the bleed.
         let unkept_bleed = crate::intensification::upkeep_shortfall(demand, NO_UPKEEP_DEMAND);
-        let mut feral = ForagePatch::new(UVec2::new(2, 2), forage.capacity_for(TEST_BIOME));
-        feral.accrue_cultivation(FactionId(0), cost, &ladder);
+        let mut feral = ForagePatch::new(
+            UVec2::new(2, 2),
+            forage.capacity_for(TEST_BIOME),
+            shipped::root_standing(shipped::plant()),
+        );
+        feral.accrue_to(FactionId(0), cost, shipped::plant_tended(), &ladder);
         feral.decay_ladder(unkept_bleed, &ladder);
         assert!(
             !feral.is_cultivated(),
@@ -7011,7 +7256,7 @@ mod tests {
     #[test]
     fn a_half_staffed_keeping_bleeds_at_half_rate() {
         let ladder = LadderConfig::builtin();
-        let rung = ladder.rung(RungKey::PlantTended);
+        let rung = ladder.rung(shipped::plant_tended());
         let demand = rung.upkeep_demand(ONE_TENDER_LOAD);
         let half = demand / 2.0;
         assert!(
@@ -7035,11 +7280,23 @@ mod tests {
     fn cultivated_count_filters_by_owner() {
         let ladder = LadderConfig::builtin();
         let mut registry = ForageRegistry::default();
-        let mut a = ForagePatch::new(UVec2::new(0, 0), 120.0);
+        let mut a = ForagePatch::new(
+            UVec2::new(0, 0),
+            120.0,
+            shipped::root_standing(shipped::plant()),
+        );
         a.complete_cultivation(FactionId(0), &ladder);
-        let mut b = ForagePatch::new(UVec2::new(1, 0), 120.0);
+        let mut b = ForagePatch::new(
+            UVec2::new(1, 0),
+            120.0,
+            shipped::root_standing(shipped::plant()),
+        );
         b.complete_cultivation(FactionId(1), &ladder);
-        let uncultivated = ForagePatch::new(UVec2::new(2, 0), 120.0);
+        let uncultivated = ForagePatch::new(
+            UVec2::new(2, 0),
+            120.0,
+            shipped::root_standing(shipped::plant()),
+        );
         registry.patches.insert(a.tile, a);
         registry.patches.insert(b.tile, b);
         registry.patches.insert(uncultivated.tile, uncultivated);

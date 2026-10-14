@@ -1217,20 +1217,21 @@ fn resolved_build_job(
         (crate::components::BuildJob::SetHerdOutput(_), _) => {
             crate::systems::labor::SET_HERD_OUTPUT_ACTION.to_string()
         }
-        (
-            crate::components::BuildJob::Rung(declared),
-            crate::components::BuildSource::Patch(tile),
-        ) => sources
-            .forage
-            .patch(*tile)
-            .and_then(|patch| crate::forage::patch_build_verb(patch, Some(*declared)))
-            .map(|improvement| improvement.as_str().to_string())
-            .unwrap_or_default(),
-        (crate::components::BuildJob::Rung(declared), crate::components::BuildSource::Herd(id)) => {
+        (crate::components::BuildJob::Climb(rung), crate::components::BuildSource::Patch(tile)) => {
+            sources
+                .forage
+                .patch(*tile)
+                .and_then(|patch| {
+                    crate::forage::patch_build_verb(patch, sources.ladder, Some(*rung))
+                })
+                .map(|improvement| improvement.as_str().to_string())
+                .unwrap_or_default()
+        }
+        (crate::components::BuildJob::Climb(rung), crate::components::BuildSource::Herd(id)) => {
             sources
                 .herds
                 .find(id)
-                .and_then(|herd| crate::fauna::herd_build_verb(herd, Some(*declared)))
+                .and_then(|herd| crate::fauna::herd_build_verb(herd, sources.ladder, Some(*rung)))
                 .map(|improvement| improvement.as_str().to_string())
                 .unwrap_or_default()
         }
@@ -1239,17 +1240,25 @@ fn resolved_build_job(
         // carrying work declares for itself and a stale entry must not override it. A road has no
         // second declaration to reconcile: `grade` / `pave` are the only things that ever raise one,
         // and the entry's own `declared` is that statement.
-        (crate::components::BuildJob::Rung(declared), crate::components::BuildSource::Road(_)) => {
-            declared.as_str().to_string()
+        (crate::components::BuildJob::Climb(rung), crate::components::BuildSource::Road(_)) => {
+            sources
+                .ladder
+                .rung_by_id(*rung)
+                .and_then(|record| record.verb.clone())
+                .unwrap_or_default()
         }
         // **A deposit answers as a road does, and for the road's exact reason.** `fell`, `coppice`
         // and `quarry` are the only things that ever raise a working, so the entry's own `declared`
         // is the whole statement — there is no second, meter-derived declaration on a deposit for a
         // stale entry to override.
         (
-            crate::components::BuildJob::Rung(declared),
+            crate::components::BuildJob::Climb(rung),
             crate::components::BuildSource::Deposit { .. },
-        ) => declared.as_str().to_string(),
+        ) => sources
+            .ladder
+            .rung_by_id(*rung)
+            .and_then(|record| record.verb.clone())
+            .unwrap_or_default(),
     }
 }
 
@@ -3225,6 +3234,7 @@ static EMPTY_PARENT_STORE: std::sync::OnceLock<LocalStore> = std::sync::OnceLock
 mod tests {
     use super::*;
     use crate::expedition_config::ExpeditionConfig;
+    use crate::ladder_ids::shipped;
 
     // Test-only since the restore path that shared them was deleted.
     use crate::components::{
@@ -3852,9 +3862,7 @@ mod tests {
                 .iter()
                 .map(|source| crate::components::BuildQueueEntry {
                     source: source.clone(),
-                    declared: crate::components::BuildJob::Rung(
-                        crate::components::Improvement::Cultivate,
-                    ),
+                    declared: crate::components::BuildJob::Climb(shipped::plant_tended()),
                     priority: SourcePriority::default(),
                 })
                 .collect(),

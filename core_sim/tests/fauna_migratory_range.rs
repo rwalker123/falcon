@@ -60,6 +60,9 @@ fn spawn_world_with_fauna(seed: u64, fauna: FaunaConfig) -> App {
     app.world.insert_resource(HerdDensityMap::default());
     app.world
         .insert_resource(FaunaConfigHandle::new(Arc::new(fauna)));
+    app.world.insert_resource(core_sim::LadderConfigHandle::new(
+        core_sim::LadderConfig::builtin(),
+    ));
     app.world.run_system_once(spawn_initial_herds);
     app
 }

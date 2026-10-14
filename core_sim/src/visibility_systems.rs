@@ -1287,6 +1287,7 @@ pub fn log_visibility_stats(ledger: Res<VisibilityLedger>) {
 mod tests {
     use super::*;
     use crate::components::TakeSelection;
+    use crate::ladder_ids::shipped;
 
     #[test]
     fn prune_sweep_tracker_forgets_despawned_source() {
@@ -1605,6 +1606,7 @@ mod tests {
             0.05,
             // A body mass this fixture never divides by — it is a fog-reveal test, not a take test.
             10.0,
+            shipped::root_standing(shipped::animal()),
         );
 
         let mut allocation = LaborAllocation::default();

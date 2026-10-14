@@ -26,6 +26,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::prelude::Entity;
 use bevy::MinimalPlugins;
+use core_sim::shipped;
 
 /// **An order no fixture finishes** — what the retired repeat-until-cleared job was, as a count.
 const NEVER_FINISHED: u32 = u32::MAX;
@@ -178,6 +179,7 @@ fn seat_two_pens(app: &mut App, tile: UVec2) {
             FODDER_RATE,
             WILD_R,
             PEN_BODY_MASS,
+            shipped::root_standing(shipped::animal()),
         );
         herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
         assert!(
@@ -540,7 +542,7 @@ const STORE_QUANTUM_SLACK: f32 = 1e-2;
 /// ring costs.
 fn pen_build_cost() -> f32 {
     core_sim::LadderConfig::builtin()
-        .rung(core_sim::RungKey::AnimalPen)
+        .rung(shipped::animal_pen())
         .build_cost(core_sim::RUNG_COST_UNSCALED)
         .expect("the pen rung has a build meter")
 }
@@ -548,7 +550,7 @@ fn pen_build_cost() -> f32 {
 /// The `animal:pen` rung's build **pile** of the good — the whole amount raising it swallows.
 fn pen_build_pile() -> f32 {
     core_sim::LadderConfig::builtin()
-        .rung(core_sim::RungKey::AnimalPen)
+        .rung(shipped::animal_pen())
         .build_materials()
         .find(|(id, _)| *id == PEN_MATERIAL)
         .map(|(_, amount)| amount)
@@ -638,6 +640,7 @@ fn seat_a_pastoral_herd(app: &mut App, tile: UVec2) {
         FODDER_RATE,
         WILD_R,
         PEN_BODY_MASS,
+        shipped::root_standing(shipped::animal()),
     );
     herd.tame_outright(FactionId(0), &core_sim::LadderConfig::builtin());
     registry.herds.push(herd);
@@ -897,7 +900,7 @@ fn a_ring_and_a_fresh_pen_draw_the_same_pile_for_the_same_work_banked() {
         &mut app,
         keeper,
         core_sim::BuildSource::Herd("pen_fresh".to_string()),
-        core_sim::BuildJob::Rung(core_sim::Improvement::Corral),
+        core_sim::BuildJob::Climb(shipped::animal_pen()),
     );
     stock_material(&mut app, keeper, AMPLE);
     app.world.run_system_once(advance_labor_allocation);
@@ -906,10 +909,7 @@ fn a_ring_and_a_fresh_pen_draw_the_same_pile_for_the_same_work_banked() {
         .resource::<HerdRegistry>()
         .find("pen_fresh")
         .expect("the herd persists")
-        .rung_work_done(
-            core_sim::RungKey::AnimalPen,
-            &core_sim::LadderConfig::builtin(),
-        );
+        .rung_work_done(shipped::animal_pen(), &core_sim::LadderConfig::builtin());
     // A herd below the pen rung owes no material RATE, so the whole of the store's fall is the pile.
     assert!(
         paid(&app, "pen_fresh").abs() < EPSILON,

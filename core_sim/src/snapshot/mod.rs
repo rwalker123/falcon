@@ -70,7 +70,7 @@ use crate::{
     },
     heightfield::ElevationField,
     influencers::InfluentialRoster,
-    intensification::{LadderConfig, RungKey, SiteRefusal, SITE_ACCEPTED},
+    intensification::{LadderConfig, RungId, SiteRefusal, SITE_ACCEPTED},
     knowledge_ledger::{encode_ledger_key, KnowledgeLedger, KnowledgeSnapshotPayload},
     labor_config::ForageLaborConfig,
     map_preset::MapPresetsHandle,
@@ -594,6 +594,7 @@ fn diff_appended(
 #[cfg(test)]
 mod indexed_diff_tests {
     use super::*;
+
     use sim_runtime::{MountainKind, TerrainTags, TerrainType};
 
     /// Half a hundredth: below `same_published_state`'s rounding grid, so a tile carrying it is
@@ -904,6 +905,7 @@ mod indexed_diff_tests {
 
 #[cfg(test)]
 mod tests {
+    use crate::ladder_ids::shipped;
 
     /// One animal, for the snapshot fixtures (slice 8). These tests assert what crosses the wire, not
     /// what a take pays, so the quantum is deliberately small enough never to bind.
@@ -1091,6 +1093,7 @@ mod tests {
         let seeded = ForagePatch::new(
             at(module_terrain).position,
             forage.capacity_for(module_terrain),
+            shipped::root_standing(shipped::plant()),
         );
         assert_eq!(capture(module_terrain, None), seeded.carrying_capacity);
 
@@ -1879,9 +1882,7 @@ mod tests {
         let state = labor_assignment_to_state(
             &assignment,
             &SourceYield::ZERO,
-            crate::components::Improvement::Cultivate
-                .as_str()
-                .to_string(),
+            shipped::cultivate().as_str().to_string(),
             assignment.kit_choice(&crate::equipment_config::EquipmentConfig::builtin()),
             // These fixtures assert on the floor and the build axis, not on the take ceiling.
             crate::fauna::NO_USEFUL_CREW,
@@ -2400,9 +2401,17 @@ mod tests {
     fn snapshot_forage_patches_reports_cultivation_and_owner() {
         let mut registry = ForageRegistry::default();
         // A wild, untended patch: no cultivation, no owner.
-        let wild = ForagePatch::new(UVec2::new(1, 0), 100.0);
+        let wild = ForagePatch::new(
+            UVec2::new(1, 0),
+            100.0,
+            shipped::root_standing(shipped::plant()),
+        );
         // A tended (cultivated) patch owned by faction 3.
-        let mut tended = ForagePatch::new(UVec2::new(0, 1), 100.0);
+        let mut tended = ForagePatch::new(
+            UVec2::new(0, 1),
+            100.0,
+            shipped::root_standing(shipped::plant()),
+        );
         tended.complete_cultivation(
             FactionId(0),
             &crate::intensification::LadderConfig::builtin(),
@@ -2466,7 +2475,7 @@ mod tests {
     /// plant branch's three positions crosses as its own token — a bottom rung included, since `""`
     /// is not one of the three.
     ///
-    /// **Asserted against `RungKey::…::wire_key()`, never a typed `"plant:tended"`.** A literal here
+    /// **Asserted against `RungId::wire_key()`, never a typed `"plant:tended"`.** A literal here
     /// would keep passing if the `<branch>:<id>` spelling moved under it, which is the one change
     /// that breaks every client parsing the token.
     #[test]
@@ -2474,10 +2483,22 @@ mod tests {
         let ladder = LadderConfig::builtin();
         let mut registry = ForageRegistry::default();
         // One patch per rung, laid along `y = 0` so the capture's stable `(y, x)` order is `x`.
-        let wild = ForagePatch::new(UVec2::new(0, 0), 100.0);
-        let mut tended = ForagePatch::new(UVec2::new(1, 0), 100.0);
+        let wild = ForagePatch::new(
+            UVec2::new(0, 0),
+            100.0,
+            shipped::root_standing(shipped::plant()),
+        );
+        let mut tended = ForagePatch::new(
+            UVec2::new(1, 0),
+            100.0,
+            shipped::root_standing(shipped::plant()),
+        );
         assert!(tended.complete_cultivation(FactionId(1), &ladder));
-        let mut field = ForagePatch::new(UVec2::new(2, 0), 100.0);
+        let mut field = ForagePatch::new(
+            UVec2::new(2, 0),
+            100.0,
+            shipped::root_standing(shipped::plant()),
+        );
         assert!(field.complete_field(FactionId(1), &ladder));
         for patch in [wild, tended, field] {
             registry.patches.insert(patch.tile, patch);
@@ -2517,9 +2538,9 @@ mod tests {
         assert_eq!(
             published,
             vec![
-                RungKey::PlantWild.wire_key(),
-                RungKey::PlantTended.wire_key(),
-                RungKey::PlantField.wire_key(),
+                shipped::plant_wild().wire_key(),
+                shipped::plant_tended().wire_key(),
+                shipped::plant_field().wire_key(),
             ],
             "each patch must publish its OWN rung, bottom rung included"
         );
@@ -2705,6 +2726,7 @@ mod tests {
             0.0,
             0.05,
             SNAPSHOT_BODY_MASS,
+            shipped::root_standing(shipped::animal()),
         );
         assert!(
             penned.corral_at(
@@ -2725,10 +2747,11 @@ mod tests {
             0.0,
             0.05,
             SNAPSHOT_BODY_MASS,
+            shipped::root_standing(shipped::animal()),
         ));
 
         let telemetry = HerdTelemetry {
-            entries: registry.snapshot_entries(),
+            entries: registry.snapshot_entries(shipped::ladder()),
         };
         let labor = LaborConfig::builtin();
         let fauna = FaunaConfig::builtin();
@@ -2749,7 +2772,7 @@ mod tests {
     /// three husbandry positions cross as their own token, so a client never has to read
     /// `domestication` against a threshold and then `corralled` to work out where a herd stands.
     ///
-    /// Same rule on the assertion: compared against `RungKey::…::wire_key()`, because a hand-typed
+    /// Same rule on the assertion: compared against `RungId::wire_key()`, because a hand-typed
     /// `"animal:pastoral"` would survive exactly the spelling change that breaks a client.
     #[test]
     fn herd_snapshot_publishes_the_rung_each_herd_stands_on() {
@@ -2768,6 +2791,7 @@ mod tests {
                 0.0,
                 0.05,
                 SNAPSHOT_BODY_MASS,
+                shipped::root_standing(shipped::animal()),
             )
         };
         let mut registry = HerdRegistry::default();
@@ -2788,7 +2812,7 @@ mod tests {
         registry.herds.push(penned);
 
         let telemetry = HerdTelemetry {
-            entries: registry.snapshot_entries(),
+            entries: registry.snapshot_entries(shipped::ladder()),
         };
         let labor = LaborConfig::builtin();
         let fauna = FaunaConfig::builtin();
@@ -2800,9 +2824,9 @@ mod tests {
             &all_seeing_ledger(64),
         );
         for (id, expected) in [
-            ("herd_wild", RungKey::AnimalWild),
-            ("herd_tamed", RungKey::AnimalPastoral),
-            ("herd_penned", RungKey::AnimalPen),
+            ("herd_wild", shipped::animal_wild()),
+            ("herd_tamed", shipped::animal_pastoral()),
+            ("herd_penned", shipped::animal_pen()),
         ] {
             let row = states.iter().find(|h| h.id == id).unwrap();
             assert_eq!(
@@ -2820,7 +2844,7 @@ mod tests {
     /// never be tamed); a herd already managed exports the same value in both.
     #[test]
     fn herd_snapshot_reports_the_would_be_herder_count_ownership_independently() {
-        use crate::fauna_config::{HusbandryCeiling, SizeClass};
+        use crate::fauna_config::SizeClass;
         let herd = |id: &str| {
             Herd::new(
                 id.to_string(),
@@ -2832,6 +2856,7 @@ mod tests {
                 0.0,
                 0.05,
                 SNAPSHOT_BODY_MASS,
+                shipped::root_standing(shipped::animal()),
             )
         };
         let mut registry = HerdRegistry::default();
@@ -2839,7 +2864,7 @@ mod tests {
         registry.herds.push(herd("herd_wild_tameable"));
         // (2) A wild-CEILING species (never tames).
         let mut untameable = herd("herd_untameable");
-        untameable.husbandry_ceiling = HusbandryCeiling::Wild;
+        untameable.husbandry_ceiling = Some(shipped::animal_wild());
         registry.herds.push(untameable);
         // (3) A herd already managed (owned).
         // **Tamed through the real accrual**, not by setting `owner` alone: with one position per
@@ -2953,6 +2978,7 @@ mod tests {
                 0.0,
                 0.05,
                 SNAPSHOT_BODY_MASS,
+                shipped::root_standing(shipped::animal()),
             );
             // **Tamed through the real accrual, then walked back down the rung** — ownership is
             // recorded by the accrual and `set_ladder_position` deliberately does not reconcile it,
@@ -2962,7 +2988,7 @@ mod tests {
                 herd.tame_outright(VIEWER, &ladder),
                 "the swept species must be tameable, or this fixture stands on no keeping rung"
             );
-            let rung = herd.rung_cost(RungKey::AnimalPastoral, &ladder);
+            let rung = herd.rung_cost(shipped::animal_pastoral(), &ladder);
             herd.set_ladder_position(rung * fraction, &ladder);
 
             let mut registry = HerdRegistry::default();
@@ -3015,12 +3041,16 @@ mod tests {
         let tile_capacity = LOADS_AT_THE_TOP * labor.forage.cultivation.capacity_per_tender;
         let tile_capacities = HashMap::from([(tile, tile_capacity)]);
         let tended_cost = ladder
-            .rung(RungKey::PlantTended)
+            .rung(shipped::plant_tended())
             .build_cost(crate::intensification::RUNG_COST_UNSCALED)
             .expect("the tended rung builds");
         let mut a_patch_bill_was_fractional = false;
         for fraction in UP_THE_RUNG {
-            let mut patch = ForagePatch::new(tile, tile_capacity);
+            let mut patch = ForagePatch::new(
+                tile,
+                tile_capacity,
+                shipped::root_standing(shipped::plant()),
+            );
             patch.set_ladder_position(tended_cost * fraction, &ladder);
             let mut registry = ForageRegistry::default();
             registry.patches.insert(patch.tile, patch);
@@ -3088,6 +3118,7 @@ mod tests {
             0.0,
             0.05,
             SNAPSHOT_BODY_MASS,
+            shipped::root_standing(shipped::animal()),
         )
     }
 
@@ -3096,7 +3127,7 @@ mod tests {
         ledger: &crate::visibility::VisibilityLedger,
     ) -> Vec<HerdTelemetryState> {
         let telemetry = HerdTelemetry {
-            entries: registry.snapshot_entries(),
+            entries: registry.snapshot_entries(shipped::ladder()),
         };
         export_herds(
             &telemetry,
@@ -3193,7 +3224,7 @@ mod tests {
         // The same ledger and the same registry as the leak test above: only the switch differs.
         let ledger = ledger_seeing(64, &[UVec2::new(4, 4)]);
         let telemetry = HerdTelemetry {
-            entries: registry.snapshot_entries(),
+            entries: registry.snapshot_entries(shipped::ladder()),
         };
         let export = |fog_enabled: bool| {
             export_herds_with_fog(
@@ -3305,6 +3336,7 @@ mod tests {
             0.10,
             0.35,
             2.0,
+            shipped::root_standing(shipped::animal()),
         ));
         registry.herds.push(Herd::new(
             "herd_big".to_string(),
@@ -3316,6 +3348,7 @@ mod tests {
             0.05,
             0.10,
             60.0,
+            shipped::root_standing(shipped::animal()),
         ));
         registry.herds.push(Herd::new(
             "herd_migratory".to_string(),
@@ -3327,10 +3360,11 @@ mod tests {
             0.011,
             0.04,
             800.0,
+            shipped::root_standing(shipped::animal()),
         ));
 
         let telemetry = HerdTelemetry {
-            entries: registry.snapshot_entries(),
+            entries: registry.snapshot_entries(shipped::ladder()),
         };
         let states = export_herds(
             &telemetry,
@@ -3400,6 +3434,7 @@ mod tests {
             0.0,
             0.15,
             60.0,
+            shipped::root_standing(shipped::animal()),
         ));
         registry.herds.push(Herd::new(
             "herd_deer".to_string(),
@@ -3411,10 +3446,11 @@ mod tests {
             0.0,
             0.10,
             60.0,
+            shipped::root_standing(shipped::animal()),
         ));
 
         let telemetry = HerdTelemetry {
-            entries: registry.snapshot_entries(),
+            entries: registry.snapshot_entries(shipped::ladder()),
         };
         // Merge reconciliation: origin/main's fog-filter refactored `herd_snapshot_entries` to take
         // `HerdSnapshotInputs` (with a visibility ledger + viewer). Reuse the sibling helpers — an
@@ -3469,6 +3505,7 @@ mod tests {
             0.0,
             0.05,
             SNAPSHOT_BODY_MASS,
+            shipped::root_standing(shipped::animal()),
         );
         assert!(
             penned.corral_at(
@@ -3490,10 +3527,11 @@ mod tests {
             0.0,
             0.05,
             SNAPSHOT_BODY_MASS,
+            shipped::root_standing(shipped::animal()),
         ));
 
         let telemetry = HerdTelemetry {
-            entries: registry.snapshot_entries(),
+            entries: registry.snapshot_entries(shipped::ladder()),
         };
         let labor = LaborConfig::builtin();
         let fauna = FaunaConfig::builtin();

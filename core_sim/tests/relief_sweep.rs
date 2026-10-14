@@ -31,6 +31,7 @@
 //! cutoff only by shrinking the foothill skirt or flattening the peaks respectively. See
 //! `core_sim/CLAUDE.md` → "Highland biomes are mask-driven".
 
+use core_sim::shipped;
 use std::sync::Arc;
 
 use bevy::app::App;
@@ -42,7 +43,7 @@ use core_sim::{
     rung_site_refusal, spawn_initial_world, tile_is_fresh_watered, CultureManager,
     DiscoveryProgressLedger, FactionInventory, FoodSiteRegistry, GenerationRegistry,
     HydrologyState, LaborConfig, LaborConfigHandle, LadderConfig, LadderConfigHandle, MapPresets,
-    MapPresetsHandle, RungKey, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
+    MapPresetsHandle, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, Tile, TileRegistry, BUILTIN_MAP_PRESETS,
 };
@@ -440,7 +441,7 @@ fn sowable_and_deltas(world: &World) -> (usize, usize, usize) {
                     .map(|t| t.terrain_tags)
             });
             if rung_site_refusal(
-                ladder.rung(RungKey::PlantField),
+                ladder.rung(shipped::plant_field()),
                 ground,
                 &labor.forage,
                 world

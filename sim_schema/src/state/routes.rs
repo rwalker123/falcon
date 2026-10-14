@@ -17,7 +17,7 @@ pub struct RouteState {
     /// separate id to name.
     pub tile_x: u32,
     pub tile_y: u32,
-    /// The rung this road **holds**, as `"<branch>:<id>"` (`RungKey::wire_key`). **This string is
+    /// The rung this road **holds**, as `"<branch>:<id>"` (`RungId::wire_key`). **This string is
     /// the bool** — a rung is never to be inferred from [`Self::build_fraction`], which is a
     /// different rung's meter.
     pub rung: String,

@@ -1842,7 +1842,7 @@ static func format_improvement(payload: Dictionary) -> Dictionary:
         if herd_id == "":
             return {}
         return {
-            "line": "%s %d %s" % [improvement, faction, herd_id],
+            "line": "build %s %d %s" % [improvement, faction, herd_id],
             "message": "%s %s — queued for this band's builders." % [
                 improvement.capitalize(), herd_id],
         }
@@ -1858,7 +1858,7 @@ static func format_improvement(payload: Dictionary) -> Dictionary:
         if band == IMPROVEMENT_NO_BAND:
             return {}
         return {
-            "line": "%s %d %d %d %d" % [improvement, faction, band, x, y],
+            "line": "build %s %d %d %d %d" % [improvement, faction, band, x, y],
             "message": "%s (%d, %d) — this band's road now, queued for its builders." % [
                 improvement.capitalize(), x, y],
         }
@@ -1872,12 +1872,12 @@ static func format_improvement(payload: Dictionary) -> Dictionary:
         if material == IMPROVEMENT_NO_MATERIAL:
             return {}
         return {
-            "line": "%s %d %d %d %s" % [improvement, faction, x, y, material],
+            "line": "build %s %d %d %d %s" % [improvement, faction, x, y, material],
             "message": "%s the %s at (%d, %d) — queued for this band's builders." % [
                 improvement.capitalize(), material, x, y],
         }
     return {
-        "line": "%s %d %d %d" % [improvement, faction, x, y],
+        "line": "build %s %d %d %d" % [improvement, faction, x, y],
         "message": "%s (%d, %d) — queued for this band's builders." % [
             improvement.capitalize(), x, y],
     }
@@ -2014,8 +2014,9 @@ static func site_address(payload: Dictionary, allow_road: bool = true) -> String
         return "%d %d %s" % [x, y, material]
     return "%d %d" % [x, y]
 
-## The token that leads a road build's address.
-const SITE_ADDRESS_ROAD_TOKEN := "road"
+## The token that leads a road build's address: the ladder's ROAD BRANCH id (`route` in
+## `intensification_ladder.json`), which the server resolves against the loaded ladder.
+const SITE_ADDRESS_ROAD_TOKEN := "route"
 
 ## **THE SAME SITE, AS THE FEED LINE NAMES IT** — `(x, y)` for a patch, `(x, y) <material>` for a
 ## working, `the road at (x, y)` for a road, the herd id for a herd. The address above is grammar; this

@@ -35,6 +35,7 @@
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
+use core_sim::shipped;
 
 use bevy::prelude::Entity;
 
@@ -42,7 +43,7 @@ use core_sim::{
     advance_labor_allocation, build_test_app, recapture_snapshot_in_place, scalar_from_f32,
     BuildJob, BuildSource, FactionId, FaunaConfigHandle, Herd, HerdRegistry, LaborAllocation,
     LaborAssignment, LaborTarget, LadderConfig, MaterialsConfig, PopulationCohort, RecipesConfig,
-    RungKey, SizeClass, SnapshotHistory, SourcePriority, TileRegistry, RUNG_COST_UNSCALED,
+    SizeClass, SnapshotHistory, SourcePriority, TileRegistry, RUNG_COST_UNSCALED,
 };
 
 /// The keeper faction — the capture's default viewer, so its own herds are on the wire whatever the
@@ -99,6 +100,7 @@ fn seat_pastoral_herds(app: &mut App, tile: UVec2) {
             FODDER_RATE,
             WILD_R,
             BODY_MASS,
+            shipped::root_standing(shipped::animal()),
         );
         herd.tame_outright(FACTION, &ladder);
         assert!(
@@ -115,7 +117,10 @@ fn resolve_and_publish(app: &mut App) {
     app.world.run_system_once(advance_labor_allocation);
     // The published herd list is the display telemetry, not the registry — see
     // `grazing_hay_readout.rs` for why a fixture that seats herds has to rebuild it.
-    let entries = app.world.resource::<HerdRegistry>().snapshot_entries();
+    let entries = app
+        .world
+        .resource::<HerdRegistry>()
+        .snapshot_entries(shipped::ladder());
     app.world.resource_mut::<core_sim::HerdTelemetry>().entries = entries;
     recapture_snapshot_in_place(&mut app.world);
 }
@@ -406,7 +411,7 @@ const STORE_QUANTUM_SLACK: f32 = 1e-2;
 /// number copied out of the JSON, so a retune moves the fixture with the game.
 fn pen_build_pile() -> f32 {
     LadderConfig::builtin()
-        .rung(RungKey::AnimalPen)
+        .rung(shipped::animal_pen())
         .build_materials()
         .find(|(id, _)| *id == PEN_MATERIAL)
         .map(|(_, amount)| amount)
@@ -416,7 +421,7 @@ fn pen_build_pile() -> f32 {
 /// The `animal:pen` rung's work span, **unscaled** — the width `head_ring_leg` prices a ring at.
 fn pen_build_cost() -> f32 {
     LadderConfig::builtin()
-        .rung(RungKey::AnimalPen)
+        .rung(shipped::animal_pen())
         .build_cost(RUNG_COST_UNSCALED)
         .expect("the shipped pen rung carries a build meter")
 }
@@ -436,6 +441,7 @@ fn seat_a_corralled_herd(app: &mut App, tile: UVec2) {
         FODDER_RATE,
         WILD_R,
         BODY_MASS,
+        shipped::root_standing(shipped::animal()),
     );
     herd.tame_outright(FACTION, &ladder);
     assert!(

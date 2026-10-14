@@ -8,7 +8,8 @@
 //! `boreal_arctic` had no abundance row, so the north could only ever hold the two migratory herds
 //! no matter what any species claimed as a host.
 
-use core_sim::{FaunaConfig, HusbandryCeiling};
+use core_sim::shipped;
+use core_sim::FaunaConfig;
 
 /// Each addition with the biome it is meant to make huntable.
 const WILD_ADDITIONS: [(&str, &str); 4] = [
@@ -36,7 +37,7 @@ fn wild_additions_are_huntable_in_their_host_biomes() {
         );
         assert_eq!(
             def.husbandry_ceiling,
-            HusbandryCeiling::Wild,
+            Some(shipped::animal_wild()),
             "{key} is hunt-only"
         );
         // A `wild` ceiling never tames or herds, so the roster states no husbandry dials for it and

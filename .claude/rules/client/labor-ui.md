@@ -5712,7 +5712,7 @@ spelled and never a raw count.
     (two bands, one tile — picker flips enabled↔disabled).
 
   - **Cultivate / Sow / Tame / Corral — the FOUR INVESTMENT rungs** (on BOTH assign controls; the
-    sim's `Improvement::Cultivate` / `Sow` / `Tame` / `Corral` since #442 — they are their OWN
+    sim's `cultivate` / `sow` / `tame` / `corral` verbs since #442 — they are their OWN
     control, not rungs of this picker; `SourceForecast.FORAGE_IMPROVEMENTS` / `HUNT_IMPROVEMENTS` name the
     set). The extractive four take from a wild source; these pay an **up-front cost** — while the
     source is being prepared it yields only its dip ceiling, then steps up a rung. Each ladder runs a

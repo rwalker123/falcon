@@ -979,11 +979,11 @@ now feeds every account at rung 2:
   trade-account tests that sat beside them are deleted with the axis, and the file's own gravestone
   names each one and where its surviving claim moved to.
 - **The CROP PICKER quotes rung 2's FODDER account** (issue #419) — `commit_fodder_payoff` takes a
-  **`RungKey`**, exactly as `commit_payoff` does, and dispatches through `rung_fodder_payoff`, which
+  **`RungId`**, exactly as `commit_payoff` does, and dispatches through `rung_fodder_payoff`, which
   asks the rung it is given for that rung's own fodder skim (at the time of writing, the retired
   `field_fodder` at rung 3 and `tended_fodder` at rung 2; `0` below). On the wire as
   `FloraShareInfo.cultivateFodderPayoff`, the tended twin of `sowFodderPayoff`. Until then the seam
-  hardcoded `RungKey::PlantField`, so a tended fodder crop was *paid* correctly (above) and
+  hardcoded field rung, so a tended fodder crop was *paid* correctly (above) and
   *previewed* with a **Field's** number — a managed rate on the full standing crop standing in for an
   MSY skim off a merely-weeded basket, on the rung the player was about to spend 25 turns on. **Two
   fields per account per rung, for `cultivatePayoff`/`sowPayoff`'s reason**: the rungs differ in
