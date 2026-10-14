@@ -1504,6 +1504,9 @@ pub enum ConfigOverrideKind {
     /// The wellbeing spine (`wellbeing_config.json`) — staged for the independence threshold, the
     /// one lever a playtest moves on a cut-off band's break-away (#284).
     Wellbeing,
+    /// The fauna table (`fauna_config.json`) — staged for the `drives` roaming-skill levers
+    /// (`hunt.drive_engage_gain`, `hunt.drive_full_head_count`, #799).
+    Fauna,
 }
 
 impl ConfigOverrideKind {
@@ -1518,6 +1521,7 @@ impl ConfigOverrideKind {
         ConfigOverrideKind::Materials,
         ConfigOverrideKind::Recipes,
         ConfigOverrideKind::Wellbeing,
+        ConfigOverrideKind::Fauna,
     ];
 
     /// The wire spelling, shared with the client's `tuning_manifest.json` `kind` field.
@@ -1531,6 +1535,7 @@ impl ConfigOverrideKind {
             ConfigOverrideKind::Materials => "materials",
             ConfigOverrideKind::Recipes => "recipes",
             ConfigOverrideKind::Wellbeing => "wellbeing",
+            ConfigOverrideKind::Fauna => "fauna",
         }
     }
 
@@ -3328,6 +3333,7 @@ fn config_override_kind_to_proto(kind: ConfigOverrideKind) -> pb::ConfigOverride
         ConfigOverrideKind::Materials => pb::ConfigOverrideKind::Materials,
         ConfigOverrideKind::Recipes => pb::ConfigOverrideKind::Recipes,
         ConfigOverrideKind::Wellbeing => pb::ConfigOverrideKind::Wellbeing,
+        ConfigOverrideKind::Fauna => pb::ConfigOverrideKind::Fauna,
     }
 }
 
@@ -3341,6 +3347,7 @@ fn config_override_kind_from_proto(value: i32) -> Result<ConfigOverrideKind, Com
         Ok(pb::ConfigOverrideKind::Materials) => Ok(ConfigOverrideKind::Materials),
         Ok(pb::ConfigOverrideKind::Recipes) => Ok(ConfigOverrideKind::Recipes),
         Ok(pb::ConfigOverrideKind::Wellbeing) => Ok(ConfigOverrideKind::Wellbeing),
+        Ok(pb::ConfigOverrideKind::Fauna) => Ok(ConfigOverrideKind::Fauna),
         Ok(pb::ConfigOverrideKind::Unspecified) | Err(_) => Err(CommandDecodeError::InvalidEnum {
             field: "ConfigOverrideKind",
             value,

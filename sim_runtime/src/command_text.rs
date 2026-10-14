@@ -355,7 +355,7 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         verb: "set_config_override",
         aliases: &[],
         summary: "Stage a sparse config patch, validated now and applied at the next new_game.",
-        usage: "set_config_override <simulation|labor|demographics|expedition|combat|materials|recipes|wellbeing> <json>",
+        usage: "set_config_override <simulation|labor|demographics|expedition|combat|materials|recipes|wellbeing|fauna> <json>",
     },
     CommandVerbHelp {
         verb: "clear_config_overrides",

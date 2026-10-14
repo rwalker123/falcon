@@ -29,6 +29,7 @@ use crate::{
     config_load::{clear_override_paths, override_path_for, set_override_path},
     demographics_config::{DemographicsConfig, BUILTIN_DEMOGRAPHICS_CONFIG},
     expedition_config::{ExpeditionConfig, BUILTIN_EXPEDITION_CONFIG},
+    fauna_config::{FaunaConfig, BUILTIN_FAUNA_CONFIG},
     labor_config::{LaborConfig, BUILTIN_LABOR_CONFIG},
     materials_config::{MaterialsConfig, BUILTIN_MATERIALS_CONFIG},
     recipes_config::{RecipesConfig, BUILTIN_RECIPES_CONFIG},
@@ -122,6 +123,13 @@ pub fn spec_for(kind: ConfigOverrideKind) -> ConfigKindSpec {
             default_rel_path: "src/data/wellbeing_config.json",
             builtin_json: BUILTIN_WELLBEING_CONFIG,
             validate: |json| erase(WellbeingConfig::from_json_str(json)),
+        },
+        ConfigOverrideKind::Fauna => ConfigKindSpec {
+            kind,
+            env_var: "FAUNA_CONFIG_PATH",
+            default_rel_path: "src/data/fauna_config.json",
+            builtin_json: BUILTIN_FAUNA_CONFIG,
+            validate: |json| erase(FaunaConfig::from_json_str(json)),
         },
     }
 }
